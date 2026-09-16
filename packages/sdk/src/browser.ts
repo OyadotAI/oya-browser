@@ -116,11 +116,16 @@ export class Browser {
     return data.tab_id;
   }
 
-  async switchTab(tabId: string): Promise<void> { await this.command('switch_tab', { tab_id: tabId }); }
-  async closeTab(tabId: string): Promise<void> { await this.command('close_tab', { tab_id: tabId }); }
+  async switchTab(tabId: string): Promise<void> { 
+    await this.command('switch_tab', { tab_id: tabId }); 
+  }
+
+  async closeTab(tabId: string): Promise<void> { 
+    await this.command('close_tab', { tab_id: tabId }); 
+  }
 
   /**
-   * Detect and clear a CAPTCHA. Providers that solve natively are left to do
+  x * Detect and clear a CAPTCHA. Providers that solve natively are left to do
    * it; everything else goes to the configured solver.
    */
   solveCaptcha(): Promise<CaptchaResult> {

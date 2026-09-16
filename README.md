@@ -6,7 +6,7 @@
 
 <p align="center">
   One API over Oya Cloud, Browserbase, Steel, Anchor, Browser Use and your own Chrome.<br>
-  Device personas that score 0% headless on CreepJS, CAPTCHA and MFA handling, and a live console where a human can take over.
+  Turn a portal task into a reusable playbook. Replay with new inputs, review agent repairs, and bring in a person when a run needs help.
 </p>
 
 <p align="center">
@@ -38,19 +38,107 @@
 npm install @oya-ai/browser
 ```
 
-```ts
+Set `OYA_API_KEY` from [browser.getoya.ai](https://browser.getoya.ai). The SDK supports Node.js 18+; this example uses ES modules.
+
+```js
 import { Oya } from "@oya-ai/browser";
 
-const oya = new Oya();                        // reads OYA_API_KEY
-await using browser = await oya.browser.start({ persona: "auto", captcha: "auto" });
-
-await browser.goto("https://news.ycombinator.com");
-console.log(await browser.ask("What are the top 3 stories?"));
+const oya = new Oya(); // Reads OYA_API_KEY; optional OYA_BASE_URL for self-hosting.
+const browser = await oya.browser.start({ captcha: "auto" });
+try {
+  await browser.goto("https://example.com");
+  console.log(await browser.ask("What is the main heading?"));
+} finally {
+  await browser.stop();
+}
 ```
 
-Which vendor runs that browser is a setting on your key, not a rewrite. `await using` needs Node 24+ or TypeScript 5.2+ (`tsx` works); otherwise call `browser.stop()` in a `finally`.
+Choose the provider in your key settings or pass `provider` to `start()`. On Node.js 24+, `await using browser = await oya.browser.start()` handles cleanup automatically.
 
-The snippets below continue from this one. Runnable versions of all of them are in [`examples/`](examples): CAPTCHA, MFA, personas, five vendors in parallel, Playwright.
+## Portal automation: record once, replay with new inputs
+
+Adapted from the portal-automation project, with a fictional request and environment-based credentials. Set `PORTAL_URL`, `PORTAL_USERNAME`, and `PORTAL_PASSWORD` to your test portal and adapt the instructions to its pages. Save this as `portal.mjs` and run `node portal.mjs`.
+
+```js
+import { createInterface } from "node:readline/promises";
+import { Oya } from "@oya-ai/browser";
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Set ${name} before running.`);
+  return value;
+}
+
+const oya = new Oya({ apiKey: requiredEnv("OYA_API_KEY") });
+const portalUrl = requiredEnv("PORTAL_URL");
+const name = "portal-request-review";
+const data = { customerName: "Alex Example", requestId: "DEMO-0001" };
+const secrets = {
+  username: requiredEnv("PORTAL_USERNAME"),
+  password: requiredEnv("PORTAL_PASSWORD"),
+};
+const persona = (await oya.personas.list()).find((p) => p.name === "portal-demo")
+  ?? await oya.personas.create({ name: "portal-demo" });
+const browser = await oya.browser.start({ persona: persona.id, captcha: "auto" });
+
+try {
+  await browser.goto(portalUrl);
+  const exists = (await oya.playbooks.list()).some((p) => p.name === name);
+  const run = await browser.submit(
+    exists ? { playbook: name } : { prompt: [
+      "If needed, log in with {{username}} and {{password}}.",
+      "Open New Request. Enter {{customerName}} and reference {{requestId}}.",
+      "Stop on the review page. Do not submit the request.",
+    ].join("\n") },
+    {
+      ...(exists ? { data: { ...data, ...secrets } } : { data, secrets }),
+      onHealed: (result) => console.log("Repair draft ready:", result.draft),
+      onHumanAttention: async (request) => {
+        console.log("Attention needed:", request.reason);
+        console.log("Open:", request.liveViewUrl ?? browser.liveViewUrl());
+        console.log(request.message);
+        const terminal = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          const answer = await terminal.question(request.reason === "agent"
+            ? "Answer the agent: "
+            : "Handle this in the live view, then press Enter: ");
+          await request.respond(answer || "done");
+        } finally {
+          terminal.close();
+        }
+      },
+    },
+  );
+  await run.done; // Rejects on failure; save only a successful run.
+  if (!exists) await browser.toPlaybook(name);
+} finally {
+  await browser.stop();
+}
+```
+
+- **Reusable inputs:** `data` is readable by the agent; `secrets` provides credentials for typing. Refer to both through `{{placeholders}}`. Replay takes all variables in `data` and remembers which names are secret.
+- **Repair drafts:** a broken replay can hand over to the agent and save `<name>:draft`. Review and test it before `oya.playbooks.promote(name)`. Set `autoHeal: false` to fail without agent repair.
+- **Human handoff:** `submit()` reports CAPTCHA, MFA, agent questions, and failed healing through `onHumanAttention`. The run waits up to 30 minutes for a response. `run.done` settles when it ends; `run.status()` reads its record.
+- **Browser reuse:** `oya.browser.get(id)` attaches to an existing browser. Stop only the browser your application owns.
+
+The [full SDK example](packages/sdk/README.md#portal-automation-record-once-replay-with-new-inputs) includes a working terminal response handler, browser reuse, and draft review. Keep input values out of prompt text and inspect exported playbooks before sharing; placeholders do not redact every page, screenshot, or log.
+
+## Your model, your live view
+
+Configure your own model key once for subsequent agent runs:
+
+```js
+const modelKey = process.env.GEMINI_API_KEY;
+if (!modelKey) throw new Error("Set GEMINI_API_KEY first.");
+await oya.config.set({
+  llm_provider: "gemini", // Also supports "openai" and "anthropic".
+  openai_api_key: modelKey, // Shared field name for every provider.
+});
+```
+
+`browser.liveViewUrl()` opens the signed-in dashboard. `await browser.shareUrl({ control: true, expiresInSeconds: 900 })` creates an expiring operator link; omit `control` for view-only access. Deliver it privately and revoke it with `browser.revokeShare(share.id)`. For embedded JPEG frames over SSE, `await browser.liveStreamUrl()` mints a single-use connection ticket.
+
+See the [SDK README](packages/sdk/README.md) for the current API reference and [`examples/`](examples) for runnable CAPTCHA, MFA, persona, provider, and Playwright examples. The shorter snippets below assume an initialized `oya` client and, where needed, an active `browser`.
 
 ## 🧠 Give it to your agent
 
@@ -173,6 +261,7 @@ Every cloud-browser vendor has its own API, session model and outages — couple
 | **Stealth** | The vendor's claims | [0% CreepJS headless, 0 lies, 31/31 Sannysoft](#stealth-0-headless-0-lies), reproducible with `oya stealth-test --live` |
 | **Logins** | Scripted login flows | Sign in once on the desktop; remote personas inherit the cookies |
 | **CAPTCHA and MFA** | Vendor-specific, or build it yourself | Native solver where there is one, CapSolver or 2Captcha otherwise, sealed TOTP, live takeover |
+| **Repeatable tasks** | Build and maintain your own scripts | Record playbooks, replay with new inputs, and review agent repair drafts |
 | **Fleet operations** | One dashboard per vendor | One console, Prometheus `/metrics`, an audit log, spend per key, stop-all |
 
 **6 backends** — Oya Cloud, Browserbase, Steel, Anchor, Browser Use, your own Chrome — behind **4 surfaces**: CDP, MCP, REST and the SDK.

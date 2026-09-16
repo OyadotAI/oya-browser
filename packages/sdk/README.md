@@ -26,81 +26,191 @@ Get an API key at [browser.getoya.ai](https://browser.getoya.ai) or self-host yo
 
 ---
 
-## ⚡ Quickstart
+## Quickstart
 
-### Natural Language Driving
+Requires Node.js 18+; examples use ES modules. Set `OYA_API_KEY` in your environment. `OYA_BASE_URL` optionally points to a self-hosted control plane.
 
-```ts
+```js
 import { Oya } from "@oya-ai/browser";
 
-const oya = new Oya(); // Reads process.env.OYA_API_KEY
-
-// Explicit resource management (Node 24+ / TS 5.2+)
-// Stops the browser automatically when the scope exits, even on error
-await using browser = await oya.browser.start({ persona: "auto", captcha: "auto" });
-
-await browser.goto("https://news.ycombinator.com");
-const answer = await browser.ask("What are the top 3 stories and their points?");
-console.log(answer);
+const oya = new Oya();
+const browser = await oya.browser.start({ captcha: "auto" });
+try {
+  await browser.goto("https://example.com");
+  console.log(await browser.ask("What is the main heading on this page?"));
+} finally {
+  await browser.stop();
+}
 ```
 
-### Data and secrets
+On Node.js 24+, `await using browser = await oya.browser.start()` also stops the browser when its scope exits, including on error.
 
-```ts
-await browser.ask("Log in as {{user}} with {{password}}, then book {{patient}} born {{dob}}", {
-  data: { patient: "John Smith", dob: "Jan 5, 1970" }, // the agent reads these
-  secrets: { user: "ops", password: process.env.PORTAL_PASSWORD! }, // the agent never sees these
+## Portal automation: record once, replay with new inputs
+
+This example adapts the portal-automation project's workflow: reuse a persona, attach to an existing browser or start one, run a prompt the first time, then replay its saved playbook. The portal, workflow names, and request values below are fictional. Supply your own test portal and credentials through environment variables; adapt the task to its actual pages.
+
+Save as `portal.mjs` and run `node portal.mjs` after setting `OYA_API_KEY`, `PORTAL_URL`, `PORTAL_USERNAME`, and `PORTAL_PASSWORD`. Set `OYA_BROWSER_ID` only to reuse an already running browser.
+
+```js
+import { createInterface } from "node:readline/promises";
+import { Oya } from "@oya-ai/browser";
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (!value) throw new Error(`Set ${name} before running this example.`);
+  return value;
+}
+
+const oya = new Oya({ apiKey: requiredEnv("OYA_API_KEY") });
+const portalUrl = requiredEnv("PORTAL_URL");
+const playbookName = "portal-request-review";
+const secrets = {
+  username: requiredEnv("PORTAL_USERNAME"),
+  password: requiredEnv("PORTAL_PASSWORD"),
+};
+// Fictional test inputs. data is visible to the agent.
+const data = {
+  customerName: "Alex Example",
+  requestId: "DEMO-0001",
+  requestedDate: "2030-01-15",
+};
+const task = [
+  "If not logged in, log in with {{username}} and {{password}}.",
+  "Open New Request and enter {{requestId}} as the reference.",
+  "Fill first name {{customerName|first}} and last name {{customerName|last}}.",
+  "Set the requested date to {{requestedDate|date:MM/DD/YYYY}}.",
+  "If a field is already correct, do not type its value again.",
+  "If an action times out, inspect the page before retrying it.",
+  "If information is missing, ask the person instead of guessing.",
+  "Stop on the review page. Do not submit the request.",
+].join("\n");
+
+const existingId = process.env.OYA_BROWSER_ID;
+let browser;
+if (existingId) {
+  browser = await oya.browser.get(existingId);
+} else {
+  const persona = (await oya.personas.list())
+    .find((p) => p.name === "portal-demo")
+    ?? await oya.personas.create({ name: "portal-demo" });
+  browser = await oya.browser.start({ persona: persona.id, captcha: "auto" });
+}
+
+try {
+  console.log("Watch in your Oya dashboard:", browser.liveViewUrl());
+  await browser.goto(portalUrl);
+  const exists = (await oya.playbooks.list()).some((p) => p.name === playbookName);
+  const run = await browser.submit(
+    exists ? { playbook: playbookName } : { prompt: task },
+    {
+      // Replay accepts all variables in data; the playbook remembers secret names.
+      ...(exists ? { data: { ...data, ...secrets } } : { data, secrets }),
+      onSuccess: () => console.log("Run succeeded."),
+      onFailure: (error) => console.error("Run failed with status:", error.status),
+      onHealed: (result) => {
+        console.log("A repair draft is ready for review:", result.draft);
+      },
+      onHumanAttention: async (request) => {
+        console.log("Attention needed:", request.reason);
+        console.log(request.message);
+        console.log("Open:", request.liveViewUrl ?? browser.liveViewUrl());
+        const terminal = createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          const answer = await terminal.question(request.reason === "agent"
+            ? "Answer the agent: "
+            : "Handle this in the live view, then press Enter: ");
+          await request.respond(answer || "done");
+        } finally {
+          terminal.close();
+        }
+      },
+    },
+  );
+
+  await run.done; // Rejects on failure; do not save a failed run as a playbook.
+  const info = await run.status();
+  console.log("Run status:", info.status);
+  if (!exists) {
+    const playbook = await browser.toPlaybook(playbookName);
+    console.log("Saved:", playbook.name, "Steps:", playbook.steps);
+    console.log("Variables:", playbook.variables);
+    // playbook.code contains the flow as an exported Playwright module.
+  }
+} finally {
+  // Leave an attached browser open; stop only the browser this script started.
+  if (!existingId) await browser.stop();
+}
+```
+
+`submit()` starts a background run and returns a `Run` handle. The SDK polls every two seconds by default (`pollMs` overrides this). `run.done` resolves with the result or rejects with an error; `run.status()` reads the run record. Attention reasons are `captcha`, `mfa`, `agent`, and `heal_failed`. A run waits up to 30 minutes for `request.respond()` or `run.respond()`. Run records are held in server memory for one hour after completion; they do not survive a server restart.
+
+### Data, secrets, and reusable placeholders
+
+Use `{{name}}` references in prompts instead of interpolating values into the prompt text. `data` is available to the agent for reasoning; `secrets` supplies values for typing without including them as readable task inputs. Filters include `first`, `last`, `digits`, and `date:MM/DD/YYYY`.
+
+For prompt runs, pass credentials in `secrets`. For replay, pass all variables in `data`: the saved playbook tracks which variables are secret, including during healing. Placeholder-based inputs remain variables in the saved flow. This is not a blanket redaction guarantee for page content, screenshots, agent replies, or application logs; inspect exported code before sharing it.
+
+### Review a repaired playbook
+
+Replay normally runs recorded steps without an LLM. With `autoHeal: true` (the default), a broken step can hand over to the agent, which saves a repair as `<name>:draft`. Promotion replaces the saved playbook with that draft.
+
+The following continues with an active `browser` and the inputs above. Replaying a draft performs its actions, so review its code and use test inputs before promoting it.
+
+```js
+const saved = (await oya.playbooks.list())
+  .find((p) => p.name === playbookName);
+if (saved?.draft) {
+  // Review saved.draft.code before executing it.
+  await browser.play(`${playbookName}:draft`, { ...data, ...secrets }, { autoHeal: false });
+  await oya.playbooks.promote(playbookName);
+}
+```
+
+Use `autoHeal: false` with `play()` or `submit({ playbook: name }, options)` to fail at a broken step without agent repair. `oya.playbooks.remove(name)` removes a playbook and its draft; `remove("<name>:draft")` removes only the draft.
+
+## Use your own model key
+
+As in the portal-automation project's model setup script, configure the model on your Oya API key once for subsequent agent runs:
+
+```js
+import { Oya } from "@oya-ai/browser";
+
+const modelKey = process.env.GEMINI_API_KEY;
+if (!modelKey) throw new Error("Set GEMINI_API_KEY first.");
+const oya = new Oya();
+await oya.config.set({
+  llm_provider: "gemini", // "openai" | "anthropic" | "gemini"
+  openai_api_key: modelKey, // Shared field name for every supported provider.
+  // chat_model: process.env.OYA_CHAT_MODEL, // Optional provider model override.
 });
 ```
 
-The agent types every value as a placeholder, transforming it with filters when a form needs a piece or another format: `{{patient|first}}`, `{{patient|last}}`, `{{dob|date:MM/DD/YYYY}}`, `{{dob|date:YYYY}}`, `{{phone|digits}}`. A playbook saved from the run stores the placeholders, never the values.
+Omit `chat_model` to use the configured provider's default. `oya.config.get()` reads configuration. To return to the shared model configuration:
 
-### Playbooks: ask once, replay without the LLM
-
-```ts
-const pb = await browser.toPlaybook("download-invoice");
-console.log(pb.variables); // ["orderNumber"]
-console.log(pb.code);      // the same flow as Playwright
-
-// Later, on any browser. If the site changed, the agent finishes the task
-// and saves its fix as a draft ("download-invoice:draft").
-const result = await browser.play("download-invoice", { orderNumber: "2077" });
-if (result.healed) await oya.playbooks.promote("download-invoice"); // after reviewing it
-// autoHeal: false throws at the broken step instead.
+```js
+await oya.config.set({ llm_provider: null, openai_api_key: null, chat_model: null });
 ```
 
-### Submit and get called back
+## Live view, sharing, and embedded streams
 
-```ts
-const run = await browser.submit({ playbook: "download-invoice" }, {
-  data: { orderNumber: "2077" },
-  onSuccess: (result) => console.log("done", result),
-  onFailure: (error) => console.error("failed", error.message),
-  // CAPTCHA or MFA it could not clear, the agent asking a question, or a replay it could not heal.
-  onHumanAttention: async (req) => {
-    console.log(req.reason, req.message, req.liveViewUrl);
-    await req.respond("done"); // or your answer, when req.reason === "agent"
-  },
-  onHealed: (result) => console.log("fix saved as", result.draft),
-});
-await run.done;
+`browser.liveViewUrl()` returns a dashboard link without an API key; the viewer signs into Oya. For a scoped handoff to someone else, create an expiring share link:
+
+```js
+const share = await browser.shareUrl({ control: true, expiresInSeconds: 900 });
+// Deliver share.url privately to the intended operator.
+// Once the handoff is finished:
+await browser.revokeShare(share.id);
 ```
 
-> **Universal Lifecycle:** If you are not using `await using`, manage lifecycle with `try / finally`:
-> ```ts
-> const browser = await oya.browser.start();
-> try {
->   await browser.goto("https://example.com");
-> } finally {
->   await browser.stop();
-> }
-> ```
+Share links are view-only by default. `control: true` permits browser interaction. Anyone holding the link has its access until expiry or revocation.
+
+For an embedded SSE stream of JPEG frames, use `await browser.liveStreamUrl()`. It mints a single-use connection ticket valid for 60 seconds; request a new URL for each connection.
 
 ---
 
 ## 🛡️ Deterministic Personas (Anti-Ban Identity)
 
-A persona is a permanent, mathematically seeded device identity: **fingerprint + cookie jar + residential proxy**, identical on every run to eliminate bot-farm and device-farm flags.
+A persona groups a stable device fingerprint, saved login cookies, and a proxy assignment for reuse across browser sessions.
 
 ```ts
 import { Oya } from "@oya-ai/browser";
@@ -112,7 +222,7 @@ const persona = await oya.personas.create({
   name: "us-shopper",
   prefs: { platform: "MacIntel", timezone: "America/New_York", locale: "en-US" },
   proxy: { geo: "US" },
-  maxConcurrent: 2, // Concurrency cap prevents device-farm detection
+  maxConcurrent: 2, // Limit simultaneous sessions for this identity
 });
 
 // Launch a browser with this persona (or persona: 'auto' for least-recently-used)
@@ -208,7 +318,7 @@ console.log("Page Title:", await page.title());
 
 ---
 
-## 📚 Complete API Reference
+## API reference
 
 ### Initialization
 
@@ -243,14 +353,18 @@ const oya = new Oya({
 - `queueMs?: number` — Wait duration for fleet capacity (ms)
 - `budgetUsd?: number` — Enforce budget limit for session
 - `idempotencyKey?: string` — Safe retry token
-- `governed?: boolean` — Enforce strict isolation policies
+- `governed?: boolean` — Enable governed session controls
+- `profile?: string` — Saved login profile (takes precedence over `persona`)
+- `priority?: 'low' | 'normal' | 'high'` — Queue priority
+- `policy?: { allowedHosts?, humanHosts?, region?, redactRecording? }` — Session policy
+- `readyTimeoutMs?: number` — Wait budget for a starting browser to connect
 
 ### Browser Instance Methods (`browser.*`)
 
 | Method | Returns | Description |
 |:---|:---|:---|
 | `goto(url)` | `Promise<void>` | Navigate to URL (with optional auto-CAPTCHA) |
-| `ask(prompt)` | `Promise<string>` | Natural-language AI driving using key's configured model |
+| `ask(prompt, { data?, secrets? }?)` | `Promise<string>` | Natural-language AI driving using key's configured model |
 | `analyze()` | `Promise<Analysis>` | Returns markdown representation and numbered elements |
 | `elements()` | `Promise<Element[]>` | Returns only visible interactable elements |
 | `click(elementId)` | `Promise<void>` | Click element by numeric ID from `analyze()` |
@@ -266,11 +380,19 @@ const oya = new Oya({
 | `closeTab(tabId)` | `Promise<void>` | Close target tab |
 | `solveCaptcha()` | `Promise<CaptchaResult>` | Detect and solve on-screen CAPTCHA |
 | `completeMfa()` | `Promise<MfaResult>` | Resolve TOTP/SMS MFA or return `liveViewUrl` |
-| `liveViewUrl()` | `string` | SSE JPEG stream URL for sub-second human takeover |
+| `liveViewUrl()` | `string` | Dashboard link for this browser |
+| `liveStreamUrl()` | `Promise<string>` | SSE frame stream URL with a single-use ticket |
+| `shareUrl(options?)` | `Promise<{ url, id, expiresAt }>` | Expiring browser share link; optional control access |
+| `revokeShare(id)` | `Promise<void>` | Revoke a share link |
+| `submit(task, options?)` | `Promise<Run>` | Background prompt or playbook with callbacks |
+| `toPlaybook(name)` | `Promise<Playbook>` | Save the latest agent flow and export Playwright code |
+| `play(name, data?, { autoHeal? }?)` | `Promise<PlayResult>` | Replay a saved flow |
 | `status()` | `Promise<BrowserDetail>` | Instance metrics, health, and recent activity log |
 | `stop()` | `Promise<StopResult>` | Tear down sandbox and release CDP session |
 
-### Persona Management (`oya.personas`)
+### Profile and persona management (`oya.profiles`, `oya.personas`)
+
+`oya.profiles` exposes the same methods as `oya.personas`; the persona name remains available for existing integrations.
 
 | Method | Description |
 |:---|:---|
@@ -312,7 +434,7 @@ await oya.personas.pinProxy(persona.id, proxy.id);
 | `session(id)` | Get detailed session execution state |
 | `takeover(id, 'acquire' \| 'release' \| 'resume')` | Manage human control leases |
 | `ticket(id)` | Generate single-use connection ticket for secure handoff |
-| `events(after?)` | Stream append-only audit event log |
+| `events(after?)` | Read audit events and a pagination cursor |
 | `createCredential(options)` | Mint scoped service credential (`viewer` / `operator` / `administrator`) |
 | `createWebhook(url, types)` | Register HMAC-signed webhook for fleet lifecycle events |
 
@@ -320,7 +442,7 @@ await oya.personas.pinProxy(persona.id, proxy.id);
 
 ## 🚨 Error Handling
 
-All failed API and command operations throw an `OyaError`:
+API error responses and failed browser commands throw `OyaError`. Network failures, request timeouts, and configuration errors may throw other error types:
 
 ```ts
 import { Oya, OyaError } from "@oya-ai/browser";
@@ -331,7 +453,9 @@ try {
 } catch (err) {
   if (err instanceof OyaError) {
     console.error(`Oya API Error (${err.status}):`, err.message);
-    console.error("Payload:", err.body);
+    // err.body contains response details; inspect privately if needed.
+  } else {
+    throw err;
   }
 }
 ```
