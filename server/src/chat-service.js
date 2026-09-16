@@ -15,11 +15,12 @@ const SYSTEM_PROMPT = `You are a web automation agent, not a chat assistant. You
 HOW TO ACT
 1. Call analyze_page before any click or type. Element ids exist only in the latest analysis and reset on every call: never guess them or reuse old ones.
 2. After navigate, or any click or key that may change the page, call analyze_page again.
-3. Use element tools (click, type, select_option, press_key). Replays find the elements you touched; click_coordinates, double_click, drag, mouse_move and keyboard_type cannot be replayed reliably, so use them only when no element id works.
+3. Use element tools (click, type, select_option, upload_file, press_key). Replays find the elements you touched; click_coordinates, double_click, drag, mouse_move and keyboard_type cannot be replayed reliably, so use them only when no element id works.
 4. If a tool says "Element not found", analyze again and retry with the new id.
 
 FORMS
 - Fill each field the task gives you, in page order, one at a time. Never invent a value the task does not provide; leave optional fields empty.
+- Upload fields: use upload_file with a name from FILES. Clicking one opens the operating system's file picker, which you cannot use, so never click it.
 - Native dropdowns (select elements): use select_option with the option's text. Custom dropdowns, radio groups and autocompletes: open or type, analyze, then click the option that matches.
 - Fit values to the fields: split a full name across first and last name fields, and put a date in the format or parts the form asks for. If type() reports AUTOCOMPLETE SUGGESTIONS ARE VISIBLE, analyze and click a suggestion instead of pressing Enter.
 - Before submitting, analyze and fix any validation message rather than resubmitting blindly.
@@ -37,7 +38,7 @@ FINISH
 // The last run per browser as replayable steps, for playbook.js. Element ids die
 // with each analysis, so steps keep the analyzer's stable metadata instead.
 // ponytail: in memory, oldest evicted past 1000 browsers; a run is lost on restart unless saved as a playbook.
-const RECORDED = new Set(['navigate', 'click', 'type', 'select_option', 'press_key', 'scroll', 'wait']);
+const RECORDED = new Set(['navigate', 'click', 'type', 'select_option', 'upload_file', 'press_key', 'scroll', 'wait']);
 const runs = new Map(); // browserId -> { prompt, steps, elements }
 const stable = ({ type, tag, text, domId, name, ariaLabel, testId, placeholder, href } = {}) =>
   ({ type, tag, text, domId, name, ariaLabel, testId, placeholder, href });
@@ -130,6 +131,93 @@ export async function selectOptionIn(browserId, el, option) {
   return r.data?.result ?? r.data ?? { ok: false, error: 'select failed' };
 }
 
+/**
+ * Put a file into a page's file input. Main world, like select_option, because the
+ * analyzer's element ids live in an isolated world and its tag attribute is randomised
+ * per session — so the element is found by the stable handles analyze recorded.
+ *
+ * The input itself is usually not what the agent can see: upload widgets hide the real
+ * `<input type=file>` behind a button or a drop zone, and a hard-hidden node never gets
+ * an element id at all. So the handle names whatever was visible and the input is found
+ * from there.
+ *
+ * ponytail: a 10MB file rides as a ~13.4MB Runtime.evaluate expression; chunk it only if
+ * that measurably hurts. Top document only, so inputs inside iframes or shadow roots are
+ * out of reach, and a drop zone with no file input behind it cannot be fed this way.
+ */
+export const UPLOAD_FILE_JS = (el, f) => `(() => {
+  const handle = ${JSON.stringify({ domId: el.domId, name: el.name, ariaLabel: el.ariaLabel, text: el.text })};
+  const meta = ${JSON.stringify({ file: f.file, type: f.type })};
+  const b64 = ${JSON.stringify(String(f.b64 || ''))};
+  const inputs = [...document.querySelectorAll('input[type="file"]')];
+  if (!inputs.length) return { ok: false, error: 'this page has no file input' };
+
+  const named = handle.domId || handle.name || handle.ariaLabel || handle.text;
+  const pool = [...document.querySelectorAll('input,button,label,a,div,span,p,section,form,[role]')];
+  const byId = handle.domId && document.getElementById(handle.domId);
+  const anchor = byId
+    || (handle.name && pool.find((e) => e.getAttribute('name') === handle.name))
+    || (handle.ariaLabel && pool.find((e) => e.getAttribute('aria-label') === handle.ariaLabel))
+    || (handle.text && pool.find((e) => (e.textContent || '').trim() === handle.text))
+    || null;
+  if (named && !anchor) return { ok: false, error: 'that element is no longer on the page; analyze again' };
+
+  const isFileInput = (n) => n && n.tagName === 'INPUT' && n.type === 'file';
+  const near = (node) => {
+    if (!node) return null;
+    if (isFileInput(node)) return node;
+    if (node.htmlFor) { const t = document.getElementById(node.htmlFor); if (isFileInput(t)) return t; }
+    const inside = node.querySelector && node.querySelector('input[type="file"]');
+    if (inside) return inside;
+    let up = node.parentElement;
+    for (let i = 0; i < 4 && up; i++, up = up.parentElement) {
+      const found = up.querySelector('input[type="file"]');
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const input = near(anchor) || (inputs.length === 1 ? inputs[0] : null);
+  if (!input) {
+    return { ok: false, error: anchor
+      ? 'no file input belongs to that element'
+      : 'this page has ' + inputs.length + ' file inputs; pass the element id of the upload button or field you mean' };
+  }
+  if (input.disabled) return { ok: false, error: 'that file input is disabled' };
+
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const dt = new DataTransfer();
+  dt.items.add(new File([bytes], meta.file, { type: meta.type }));
+  try { input.files = dt.files; } catch (e) { return { ok: false, error: 'the page would not take the file: ' + e.message }; }
+  if (!input.files.length) return { ok: false, error: 'the page cleared the file straight away' };
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return { ok: true, field: input.name || input.id || (input.labels && input.labels[0] && input.labels[0].textContent.trim()) || 'the file input' };
+})()`;
+
+/** The upload twin of selectOptionIn. `el` is null when the agent named no element. */
+export async function uploadFileIn(browserId, el, f) {
+  const r = await sendCommand(browserId, 'evaluate_raw', { expression: UPLOAD_FILE_JS(el || {}, f || {}) }, 120_000);
+  if (!r.ok) return { ok: false, error: r.error || 'upload failed' };
+  return r.data?.result ?? r.data ?? { ok: false, error: 'upload failed' };
+}
+
+/** A file task value, as the SDK's file() builds it. */
+export const isFileValue = (v) => !!v && typeof v === 'object' && typeof v.b64 === 'string';
+
+/**
+ * upload_file takes the name of a file, not a placeholder — but every other tool is
+ * taught to write `{{name}}`, so the model reaches for one here too. Take both.
+ */
+export const dataKey = (v) => String(v ?? '').replace(/^\{\{\s*|\s*\}\}$/g, '');
+
+const fileSize = (f) => {
+  const kb = Math.round((f.b64.length * 3) / 4 / 1024);
+  return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB` : `${kb} KB`;
+};
+
 const REQUEST_HUMAN = {
   type: 'function',
   function: {
@@ -148,12 +236,14 @@ function recordStep(browserId, name, args, values) {
   const run = runs.get(browserId);
   if (!run || !RECORDED.has(name)) return;
   const step = { action: name };
-  if (name === 'click' || name === 'type' || name === 'select_option') {
+  if (['click', 'type', 'select_option', 'upload_file'].includes(name) && args.element_id != null) {
     const el = stable(run.elements.find((e) => e.id === Number(args.element_id)));
     // Visible data and secrets alike: a playbook stores placeholders, never values.
     for (const k of Object.keys(el)) el[k] = redact(el[k], values);
     step.el = el;
   }
+  // The bytes never enter a playbook; the variable name does, so a replay brings its own file.
+  if (name === 'upload_file' && args.name) step.file = `{{${dataKey(args.name)}}}`;
   for (const k of ['url', 'text', 'option', 'key', 'direction', 'amount', 'selector', 'timeout']) if (args[k] !== undefined) step[k] = args[k];
   run.steps.push(step);
 }
@@ -161,7 +251,7 @@ function recordStep(browserId, name, args, values) {
 /**
  * Execute a tool by name and return the result as a string for the LLM.
  */
-async function executeTool(browserId, name, args) {
+async function executeTool(browserId, name, args, files = {}) {
   try {
     switch (name) {
       case 'analyze_page': {
@@ -221,6 +311,18 @@ async function executeTool(browserId, name, args) {
         return r.ok
           ? `Selected "${r.chosen}" in element ${args.element_id}`
           : `Error: ${r.error}${r.options ? `. Options: ${r.options.join(' | ')}` : ''}`;
+      }
+      case 'upload_file': {
+        const key = dataKey(args.name);
+        const f = files[key];
+        if (!f) {
+          const have = Object.keys(files);
+          return `Error: no file named "${key}" in the task data.${have.length ? ` Available: ${have.join(', ')}.` : ' This task was given no files.'}`;
+        }
+        const el = args.element_id != null ? runs.get(browserId)?.elements.find((e) => e.id === Number(args.element_id)) : null;
+        if (args.element_id != null && !el) return 'Error: Element not found. Call analyze_page and use a current id.';
+        const r = await uploadFileIn(browserId, el, f);
+        return r.ok ? `Attached ${f.file} to ${r.field}` : `Error: ${r.error}`;
       }
       case 'screenshot': {
         const r = await sendCommand(browserId, 'screenshot');
@@ -323,8 +425,12 @@ export async function runChat(browserId, messages, { apiKey, onToolCall, onText,
   const MODEL = model;
 
   const prompt = messages.filter((m) => m.role === 'user').at(-1)?.content;
+  // A file is attached, never typed, so it is split out before anything that fills or
+  // redacts a placeholder sees it — String(a file) is "[object Object]".
+  const files = Object.fromEntries(Object.entries(data).filter(([, v]) => isFileValue(v)));
+  const scalars = Object.fromEntries(Object.entries(data).filter(([, v]) => !isFileValue(v)));
   // `data` the model reads; `secrets` it never does. Both are typed through placeholders.
-  const values = { ...data, ...secrets };
+  const values = { ...scalars, ...secrets };
   const run = { prompt: typeof prompt === 'string' ? redact(prompt, values) : '', steps: [], elements: [], secrets: Object.keys(secrets) };
   // The page the run starts on, so a playbook replays from the same place.
   const tabs = await sendCommand(browserId, 'list_tabs').catch(() => null);
@@ -338,8 +444,11 @@ export async function runChat(browserId, messages, { apiKey, onToolCall, onText,
   if (Object.keys(values).length) {
     system.push('TASK VALUES: type every task value as its {{placeholder}}, never as literal text, so the recorded playbook replays with other data. Transform a value with filters instead of retyping part of it: {{name|first}}, {{name|last}}, {{name|part:2}} (Nth word), {{x|upper}}, {{x|lower}}, {{x|digits}}, {{dob|date:MM/DD/YYYY}} (tokens YYYY YY MMMM MMM MM M DD D; separate month, day and year fields take {{dob|date:MM}}, {{dob|date:DD}}, {{dob|date:YYYY}}). select_option takes placeholders too.');
   }
-  if (Object.keys(data).length) {
-    system.push(`DATA (you can read these to decide what to do):\n${Object.entries(data).map(([k, v]) => `{{${k}}} = ${JSON.stringify(String(v))}`).join('\n')}`);
+  if (Object.keys(scalars).length) {
+    system.push(`DATA (you can read these to decide what to do):\n${Object.entries(scalars).map(([k, v]) => `{{${k}}} = ${JSON.stringify(String(v))}`).join('\n')}`);
+  }
+  if (Object.keys(files).length) {
+    system.push(`FILES you can attach:\n${Object.entries(files).map(([k, f]) => `  ${k} — "${f.file}" (${f.type}, ${fileSize(f)})`).join('\n')}\nUse upload_file with the name on the left. The real file input is usually hidden behind a "Choose file" or "Upload" button or a drop zone, so pass the element id of whatever you can see there and it will be found; leave element_id out only when the page has a single upload field.`);
   }
   if (Object.keys(secrets).length) {
     system.push(`SECRETS (hidden from you): ${Object.keys(secrets).map((k) => `{{${k}}}`).join(', ')}. Type them as placeholders; the real value is filled in and reads back as the placeholder, so a field showing one is filled correctly. Filters work on them too.`);
@@ -412,7 +521,7 @@ export async function runChat(browserId, messages, { apiKey, onToolCall, onText,
         try {
           result = name === 'request_human' && requestHuman
             ? `The person replied: ${await requestHuman({ reason: 'agent', message: String(args.message || '') })}`
-            : await executeTool(browserId, name, Object.fromEntries(Object.entries(args).map(([k, v]) => [k, ['text', 'option', 'url'].includes(k) ? fill(v, values) : v])));
+            : await executeTool(browserId, name, Object.fromEntries(Object.entries(args).map(([k, v]) => [k, ['text', 'option', 'url'].includes(k) ? fill(v, values) : v])), files);
         } catch (err) {
           result = `Error: ${err.message}`;
         }

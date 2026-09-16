@@ -115,7 +115,15 @@ app.get('/openapi.json', (req, res) => res.type('application/json').sendFile(joi
 app.get('/json/version', handleJsonVersion);
 app.get('/json/list', handleJsonList);
 
-app.use('/api', express.json(), apiRouter);
+// 15mb, not the 100kb default: a task file in `data` rides inline as base64, which
+// inflates a 10MB upload to ~13.4MB. Every /api route is behind authMiddleware.
+// The SDK caps one file at 10MB, so what lands here is a run carrying several at once;
+// express's own answer is an HTML stack trace, which reads as a server fault rather than
+// a request that asked for too much.
+app.use('/api', express.json({ limit: '15mb' }), (err, req, res, next) => {
+  if (err?.type !== 'entity.too.large') return next(err);
+  res.status(413).json({ error: 'This request is over 15MB. Task files ride inline, so send fewer or smaller ones in one run.' });
+}, apiRouter);
 // Prometheus convention is /metrics at the root; the same handler also serves
 // /api/metrics for callers that prefix everything.
 app.get(['/health', '/metrics'], apiRouter);

@@ -86,6 +86,23 @@ Use element IDs with click/type tools. Includes page metadata, full content, and
   {
     type: 'function',
     function: {
+      name: 'upload_file',
+      description: `Attach one of the task's files to an upload field. Only the files listed under FILES exist; you cannot upload anything else, and you never see or need the contents.
+The real <input type="file"> is normally hidden behind a styled "Choose file" / "Upload" / "Attach" button or a drop zone, so it often has no element id of its own: pass the id of the visible button, drop zone or field and the input behind it is found. Omit element_id only when the page has a single upload field.`,
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'The file\'s name in the task data, as listed under FILES (not the filename)' },
+          element_id: { type: 'number', description: 'The upload button, drop zone or file field from analyze_page' },
+        },
+        required: ['name'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'screenshot',
       description: 'Capture a screenshot of the visible browser tab.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },

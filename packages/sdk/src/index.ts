@@ -17,11 +17,12 @@ import { Browser, Run } from './browser.js';
 import {
   OyaError,
   type ControlOverview, type ControlSession, type ControlRole, type ControlCredential, type HumanInputAction, type ProjectSettings, type ControlEvent,
-  type BrowserInfo, type Fingerprint, type MfaConfig, type OyaOptions,
+  type BrowserInfo, type Config, type ConfigUpdate, type Fingerprint, type MfaConfig, type OyaOptions,
   type PersonaInfo, type PersonaPrefs, type Playbook, type PlaybookSummary, type ProxyInfo, type ProxyCreate, type StartOptions, type StartResult, type StopResult,
 } from './types.js';
 
 export { Browser, Run, OyaError };
+export { file, MAX_FILE_BYTES } from './file.js';
 export * from './types.js';
 
 const DEFAULT_BASE_URL = 'https://browser.getoya.ai';
@@ -176,14 +177,15 @@ export class Oya {
    *
    * Bring your own LLM key (it pays for its own tokens, so no hourly chat quota applies):
    *   await oya.config.set({ llm_provider: 'gemini', openai_api_key: process.env.GEMINI_API_KEY });
-   * `llm_provider` is 'openai' | 'anthropic' | 'gemini' | 'vertex'; `chat_model` overrides
-   * its default model. 'vertex' is Gemini Enterprise (ex-Vertex AI) in express mode, which
-   * needs no GCP project; for a project-scoped endpoint, set `openai_base_url` to
-   * `.../endpoints/openapi` and pass an OAuth access token as `openai_api_key`.
+   * `llm_provider` is the {@link LlmProvider} union, so an editor offers the choices and a
+   * typo is a compile error; `chat_model` overrides its default model. 'vertex' is Gemini
+   * Enterprise (ex-Vertex AI) in express mode, which needs no GCP project; for a
+   * project-scoped endpoint, set `openai_base_url` to `.../endpoints/openapi` and pass an
+   * OAuth access token as `openai_api_key`. See {@link ConfigUpdate} for every field.
    */
   readonly config = {
-    get: <T = Record<string, unknown>>(): Promise<T> => this.http.request<T>('GET', '/api/config'),
-    set: <T = Record<string, unknown>>(values: Record<string, unknown>): Promise<T> =>
+    get: <T = Config>(): Promise<T> => this.http.request<T>('GET', '/api/config'),
+    set: <T = Config>(values: ConfigUpdate): Promise<T> =>
       this.http.request<T>('POST', '/api/config', values),
   };
 

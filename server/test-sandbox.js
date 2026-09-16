@@ -128,6 +128,22 @@ try {
   const vertex = keyConfig.resolve('k-vertex');
   assert(vertex.baseUrl === 'https://aiplatform.googleapis.com/v1/publishers/google' && vertex.model === 'gemini-2.5-flash',
     'a Gemini Enterprise key resolves to the express-mode endpoint and default model');
+  // A typo used to be stored and then silently resolve to the OpenAI defaults, which
+  // looks like a broken key rather than a rejected setting.
+  let refused = null;
+  try { await keyConfig.set('k-vertex', { llm_provider: 'vertx' }); }
+  catch (e) { refused = e; }
+  assert(refused?.status === 400 && /openai, anthropic, gemini, vertex/.test(refused.message),
+    'an unknown llm_provider is refused with the list of valid ones');
+  assert(keyConfig.resolve('k-vertex').model === 'gemini-2.5-flash', 'the refused write left the previous provider in place');
+  for (const [field, value] of [['browser_provider', 'not-a-provider'], ['captcha_solver', 'not-a-solver']]) {
+    let bad = null;
+    try { await keyConfig.set('k-vertex', { [field]: value }); } catch (e) { bad = e; }
+    assert(bad?.status === 400, `an unknown ${field} is refused`);
+  }
+  // Every choice the UI and CLI offer must actually be accepted.
+  for (const id of keyConfig.PROVIDER_CHOICES.map((p) => p.id)) await keyConfig.set('k-choices', { browser_provider: id });
+
   // The project-scoped enterprise endpoint is reached by overriding the base URL, which
   // is only honoured alongside the key's own credential.
   await keyConfig.set('k-vertex', { openai_base_url: 'https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/endpoints/openapi' });

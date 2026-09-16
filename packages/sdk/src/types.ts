@@ -1,5 +1,56 @@
 /** Everything the API returns or accepts, in one place. */
 
+/** Which model drives `ask()` and the chat API. */
+export type LlmProvider =
+  | 'openai'
+  | 'anthropic'
+  /** Gemini via AI Studio. */
+  | 'gemini'
+  /** Gemini Enterprise, ex-Vertex AI. Express mode by default; set `openai_base_url` to a
+   *  project-scoped `.../endpoints/openapi` endpoint to use an enterprise project. */
+  | 'vertex';
+
+/** Empty disables solving. */
+export type CaptchaSolver = 'capsolver' | '2captcha' | '';
+
+/**
+ * What a key can configure. Mirrors the server's field allowlist exactly: a field not
+ * listed here is ignored rather than stored, so the type is the whole surface.
+ * `null` clears a field and falls back to the deployment default.
+ */
+export interface ConfigUpdate {
+  llm_provider?: LlmProvider | null;
+  /** The credential for whichever `llm_provider` is set — the field name is shared. */
+  openai_api_key?: string | null;
+  /** Only honoured alongside this key's own `openai_api_key`. */
+  openai_base_url?: string | null;
+  /** Overrides the provider's default model. */
+  chat_model?: string | null;
+  browser_provider?: Provider | null;
+  anchor_api_key?: string | null;
+  browserbase_api_key?: string | null;
+  browserbase_project_id?: string | null;
+  steel_api_key?: string | null;
+  browseruse_api_key?: string | null;
+  cdp_ws_url?: string | null;
+  captcha_solver?: CaptchaSolver | null;
+  captcha_api_key?: string | null;
+  onboarded?: string | null;
+}
+
+/** What `config.get()` returns. Secrets read back masked, never in full. */
+export interface Config extends Omit<ConfigUpdate, 'llm_provider' | 'browser_provider' | 'captcha_solver'> {
+  llm_provider?: LlmProvider | '';
+  browser_provider?: Provider | '';
+  captcha_solver?: CaptchaSolver;
+  /** What this key would actually use right now, deployment defaults included. */
+  effective: { baseUrl: string; model: string; hasLlmKey: boolean };
+  /** True when the LLM key in play belongs to the deployment, not this key. */
+  inherited: boolean;
+  has_openai_key: boolean;
+  providers: Array<{ id: Provider; label: string; needs: string[]; configured: boolean }>;
+}
+
 /** Where a browser comes from. Configuration, not something a caller must know. */
 export type Provider =
   | 'oya-cloud'
@@ -80,11 +131,28 @@ export interface PlaybookSummary extends Playbook {
 }
 
 /**
+ * A file attached to a task value. Build it with `file()`, never by hand. Only `data`
+ * takes one: a file is not typed through a placeholder, so `secrets` has nothing to hide
+ * and rejects it.
+ */
+export interface FileValue {
+  /** The filename the site sees. */
+  file: string;
+  /** MIME type, guessed from the extension unless you pass one. */
+  type: string;
+  /** The bytes, base64. 10MB ceiling. */
+  b64: string;
+}
+
+/**
  * Task values, referred to as `{{name}}` in prompts. As `data` the agent can read them
  * (to split a name or pick the right option); as `secrets` it never sees them. Either
  * way they are typed through placeholders, so playbooks store no values.
+ *
+ * A {@link FileValue} from `file()` is the exception: the agent attaches it with its
+ * upload tool rather than typing it.
  */
-export type RunData = Record<string, string | number>;
+export type RunData = Record<string, string | number | FileValue>;
 
 export interface AttentionRequest {
   id: string;

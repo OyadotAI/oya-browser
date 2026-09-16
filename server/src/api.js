@@ -904,9 +904,24 @@ async function evaluateIn(browserId, expression) {
 // twice and can race their own attempt.
 const NATIVE_CAPTCHA = ['anchor', 'browserbase', 'steel', 'browseruse'];
 
-/** Agent data and playbook variables: names to strings or numbers. */
-const validData = (d) => !!d && typeof d === 'object' && !Array.isArray(d)
-  && Object.entries(d).every(([k, v]) => /^\w{1,64}$/.test(k) && ['string', 'number'].includes(typeof v));
+/** Mirrors MAX_FILE_BYTES in the SDK's file(); express.json()'s limit is sized for it. */
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+/** A task file from the SDK's `file()`. Checked here because this is the trust boundary. */
+const validFile = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+  && typeof v.file === 'string' && v.file.length > 0 && v.file.length <= 255
+  && typeof v.type === 'string' && v.type.length > 0 && v.type.length <= 128
+  && typeof v.b64 === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(v.b64)
+  && v.b64.length <= Math.ceil(MAX_FILE_BYTES / 3) * 4;
+
+/**
+ * Agent data and playbook variables: names to strings, numbers, or a file.
+ * `secrets` passes `{ files: false }` — a file is never typed through a placeholder, so
+ * redact() cannot hide one and accepting it would be a silent downgrade, not a secret.
+ */
+export const validData = (d, { files = true } = {}) => !!d && typeof d === 'object' && !Array.isArray(d)
+  && Object.entries(d).every(([k, v]) => /^\w{1,64}$/.test(k)
+    && (['string', 'number'].includes(typeof v) || (files && validFile(v))));
 
 /**
  * Between page-changing steps of a run: clear a CAPTCHA or MFA prompt, or park the
@@ -1364,7 +1379,7 @@ router.post('/browsers/:browserId/chat', authMiddleware, enforce('chat'), async 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'messages array required' });
   }
-  if (!validData(data) || !validData(secrets)) return res.status(400).json({ error: 'data and secrets must map names to strings or numbers' });
+  if (!validData(data) || !validData(secrets, { files: false })) return res.status(400).json({ error: 'data must map names to strings, numbers or a file() value; secrets takes strings and numbers only' });
 
   if (!registry.isConnected(browserId) || !canAccess(req, browserId)) {
     return res.status(404).json({ error: `Browser ${browserId} not connected` });
@@ -1437,7 +1452,7 @@ router.post('/browsers/:browserId/playbooks/:name/play', authMiddleware, enforce
   if (!registry.isConnected(browserId) || !canAccess(req, browserId)) {
     return res.status(404).json({ error: `Browser ${browserId} not connected` });
   }
-  if (!validData(variables)) return res.status(400).json({ error: 'variables must map names to strings or numbers' });
+  if (!validData(variables)) return res.status(400).json({ error: 'variables must map names to strings, numbers or a file() value' });
   const pb = keyConfig.getPlaybook(getKey(req), name);
   if (!pb) return res.status(404).json({ error: `No playbook named ${name}` });
   const missing = playbooks.missingVariables(pb, variables);
@@ -1475,7 +1490,7 @@ router.post('/browsers/:browserId/runs', authMiddleware, enforce('chat'), async 
   if (!registry.isConnected(browserId) || !canAccess(req, browserId)) {
     return res.status(404).json({ error: `Browser ${browserId} not connected` });
   }
-  if (!validData(data) || !validData(secrets)) return res.status(400).json({ error: 'data and secrets must map names to strings or numbers' });
+  if (!validData(data) || !validData(secrets, { files: false })) return res.status(400).json({ error: 'data must map names to strings, numbers or a file() value; secrets takes strings and numbers only' });
   if ((typeof prompt === 'string') === (typeof playbook === 'string')) {
     return res.status(400).json({ error: 'Pass exactly one of prompt or playbook' });
   }

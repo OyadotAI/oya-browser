@@ -121,3 +121,55 @@
 .page .container :global(code.syntax-code .token.punctuation) { color: #65695f; }
 .page .container :global(code.syntax-code .token.variable),
 .page .container :global(code.syntax-code .token.builtin) { color: #21746b; }
+
+.downloads { margin-top: 30px; padding-top: 24px; border-top: 1px solid #dce3d7; scroll-margin-top: 24px; font-size: 14px; }
+.downloads p { color: #1a261e; font-size: 16px; font-weight: 600; }
+.downloads nav { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.downloads nav a { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 46px; padding: 11px 18px; border: 1px solid #16733b; border-radius: 5px; background: #16733b; color: #fff; font-weight: 600; transition: background 150ms, border-color 150ms; }
+.downloads nav a:hover { background: #105c2e; border-color: #105c2e; text-decoration: none; }
+.downloads a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.installHelp { display: inline-block; margin-top: 10px; color: #626b62; font-size: 12px; }
+
+.controlPlane { margin-top: 46px; padding: 48px; border: 1px solid #e2e8dc; border-radius: 9px; background: #f7f9f3; }
+.controlPlaneIntro { display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: end; }
+.controlPlaneIntro .eyebrow { margin-bottom: 18px; font-size: 12px; }
+.controlPlaneIntro h2 { font-size: clamp(32px, 3.7vw, 48px); font-weight: 500; letter-spacing: -.05em; line-height: 1.12; }
+.controlPlaneIntro h2 span { color: #16733b; }
+.controlPlaneIntro > div > p:not(.eyebrow) { max-width: 420px; color: #626b62; font-size: 15px; line-height: 1.75; }
+.controlPlaneIntro a { display: inline-flex; align-items: center; gap: 10px; margin-top: 18px; color: #16733b; font-size: 13px; font-weight: 500; }
+.controlPlaneIntro a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.planeDiagram { display: grid; grid-template-columns: 1fr 48px 1fr 48px 1fr; align-items: center; gap: 16px; margin: 40px 0 0; padding: 32px 0; border-top: 1px solid #dce3d7; border-bottom: 1px solid #dce3d7; }
+.planeEndpoint { min-width: 0; }
+.planeLabel { display: block; color: #626b62; font-size: 10px; font-weight: 500; letter-spacing: .12em; }
+.planeEndpoint strong { display: block; margin-top: 12px; font-size: 17px; font-weight: 500; letter-spacing: -.025em; }
+.planeTags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 17px; }
+.planeTags span { padding: 5px 7px; border: 1px solid #dce3d7; border-radius: 4px; background: #fff; color: #506349; font-family: var(--font-geist-mono), monospace; font-size: 10px; }
+.planeConnector { display: flex; align-items: center; color: #7d9572; }
+.planeConnector::before { content: ''; flex: 1; height: 1px; background: #aebda4; }
+.planeHub { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 24px 12px; background: #1b2d22; color: #c7f7a4; border: 1px solid #364e3b; border-radius: 7px; }
+.planeHub strong { color: #f5f7ed; font-size: 29px; font-weight: 500; letter-spacing: -.04em; }
+.planeHub span { font-size: 11px; text-align: center; }
+.planeProviders { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; color: #626b62; font-size: 12px; }
+.controlPlaneBenefits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin-top: 30px; }
+.controlPlaneBenefits article > svg { color: #16733b; }
+.controlPlaneBenefits h3 { margin-top: 12px; font-size: 17px; font-weight: 500; letter-spacing: -.025em; }
+.controlPlaneBenefits p { margin-top: 8px; color: #626b62; font-size: 13px; line-height: 1.75; }
+@media (max-width: 960px) {
+  .controlPlane { padding: 32px; }
+  .controlPlaneIntro { grid-template-columns: 1fr; gap: 24px; }
+  .planeDiagram { grid-template-columns: 1fr 22px 1fr 22px 1fr; gap: 10px; }
+  .controlPlaneBenefits { gap: 24px; }
+}
+@media (max-width: 600px) {
+  .controlPlane { margin-top: 30px; padding: 28px 22px; }
+  .planeDiagram { grid-template-columns: 1fr; justify-items: center; gap: 18px; margin-top: 28px; padding: 26px 0; text-align: center; }
+  .planeTags { justify-content: center; }
+  .planeConnector { width: 36px; transform: rotate(90deg); }
+  .planeHub { width: min(100%, 240px); }
+  .planeProviders { flex-direction: row; justify-content: center; flex-wrap: wrap; gap: 8px 14px; }
+  .controlPlaneBenefits { grid-template-columns: 1fr; gap: 22px; }
+  .controlPlaneBenefits article { display: grid; grid-template-columns: 20px 1fr; column-gap: 12px; }
+  .controlPlaneBenefits article > svg { margin-top: 2px; }
+  .controlPlaneBenefits h3 { margin-top: 0; }
+  .controlPlaneBenefits p { grid-column: 2; }
+}

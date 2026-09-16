@@ -37,13 +37,28 @@ const STORE = process.env.OYA_DATA_DIR
  *           makes providers.js and captcha.js work unchanged: they read an env
  *           object, and `envFor()` hands them one with the key's values on top.
  */
+/**
+ * A closed set, rejected rather than ignored. The SDK types these fields, but the CLI's
+ * key=value path, curl and any non-TypeScript client do not go through that — and an
+ * unknown provider used to be stored verbatim and then silently fall back to the OpenAI
+ * defaults, which reads as "my Gemini key is broken".
+ * Lazily referenced so the choice lists below can stay where they read best.
+ */
+const oneOf = (choices, label) => (value) => {
+  const allowed = choices();
+  if (!allowed.includes(value)) {
+    throw Object.assign(new Error(`${label} must be one of: ${allowed.join(', ')}`), { status: 400 });
+  }
+  return value;
+};
+
 export const FIELDS = {
-  llm_provider:           {},                                        // 'openai' | 'anthropic' | 'gemini' | 'vertex'
+  llm_provider:           { validate: oneOf(() => Object.keys(LLM_DEFAULTS), 'llm_provider') },
   openai_api_key:         { secret: true, envVar: 'OPENAI_API_KEY' },
   openai_base_url:        { validate: validateBaseUrl },
   chat_model:             {},
 
-  browser_provider:       {},                                        // see PROVIDER_CHOICES
+  browser_provider:       { validate: oneOf(() => PROVIDER_CHOICES.map((p) => p.id), 'browser_provider') },
   anchor_api_key:         { secret: true, envVar: 'ANCHOR_API_KEY' },
   browserbase_api_key:    { secret: true, envVar: 'BROWSERBASE_API_KEY' },
   browserbase_project_id: { envVar: 'BROWSERBASE_PROJECT_ID' },
@@ -51,7 +66,7 @@ export const FIELDS = {
   browseruse_api_key:     { secret: true, envVar: 'BROWSERUSE_API_KEY' },
   cdp_ws_url:             { secret: true, envVar: 'OYA_CDP_WS_URL' },
 
-  captcha_solver:         { envVar: 'OYA_CAPTCHA_PROVIDER' },        // 'capsolver' | '2captcha' | ''
+  captcha_solver:         { envVar: 'OYA_CAPTCHA_PROVIDER', validate: oneOf(() => ['capsolver', '2captcha'], 'captcha_solver') },
   captcha_api_key:        { secret: true, envVar: 'OYA_CAPTCHA_API_KEY' },
 
   onboarded:              {},

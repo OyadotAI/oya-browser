@@ -150,6 +150,28 @@ Use `{{name}}` references in prompts instead of interpolating values into the pr
 
 For prompt runs, pass credentials in `secrets`. For replay, pass all variables in `data`: the saved playbook tracks which variables are secret, including during healing. Placeholder-based inputs remain variables in the saved flow. This is not a blanket redaction guarantee for page content, screenshots, agent replies, or application logs; inspect exported code before sharing it.
 
+### Files
+
+`file()` puts a file in `data`. The agent attaches it with its upload tool: hand it the element id of whatever you can see — the "Choose file" button, the drop zone, the field itself — and the real `<input type="file">` is found from there, including the hidden ones most upload widgets use.
+
+```js
+import { Oya, file } from "@oya-ai/browser";
+
+await browser.ask("Attach my resume to the application and submit it", {
+  data: { name: "Ada Lovelace", resume: await file("./cv.pdf") },
+});
+```
+
+A string argument is a path on disk (Node only); a `Blob`, a `File`, or a `Uint8Array` works anywhere. `name` sets the filename the site sees and `type` overrides the MIME guessed from the extension. The ceiling is 10MB per file, and the bytes travel inline with the run — nothing is stored server-side after it ends.
+
+Files work in `data` for `ask()`, `submit()`, and `play()`; `secrets` rejects them, because a file is never typed through a placeholder. A run recorded with `toPlaybook()` keeps the upload as a variable, so the replay takes a different file:
+
+```js
+await browser.play("job-application", { name: "Ada Lovelace", resume: await file("./other.pdf") });
+```
+
+The generated Playwright module calls `setInputFiles`, where the same variable is a plain path rather than a `file()` value.
+
 ### Review a repaired playbook
 
 Replay normally runs recorded steps without an LLM. With `autoHeal: true` (the default), a broken step can hand over to the agent, which saves a repair as `<name>:draft`. Promotion replaces the saved playbook with that draft.
@@ -179,11 +201,27 @@ const modelKey = process.env.GEMINI_API_KEY;
 if (!modelKey) throw new Error("Set GEMINI_API_KEY first.");
 const oya = new Oya();
 await oya.config.set({
-  llm_provider: "gemini", // "openai" | "anthropic" | "gemini" | "vertex"
+  llm_provider: "gemini", // LlmProvider: "openai" | "anthropic" | "gemini" | "vertex"
   openai_api_key: modelKey, // Shared field name for every supported provider.
   // chat_model: process.env.OYA_CHAT_MODEL, // Optional provider model override.
 });
 ```
+
+`config.set` takes `ConfigUpdate` and `config.get()` returns `Config`, so an editor offers the valid providers and a typo fails to compile rather than silently falling back:
+
+```ts
+import { Oya, type LlmProvider } from "@oya-ai/browser";
+
+await oya.config.set({ llm_provider: "vertx" });
+//                                   ~~~~~~~ Type '"vertx"' is not assignable to type
+//                                           'LlmProvider'. Did you mean '"vertex"'?
+
+const provider: LlmProvider = "vertex";   // for your own config plumbing
+const { effective } = await oya.config.get();
+console.log(effective.baseUrl, effective.model, effective.hasLlmKey);
+```
+
+`browser_provider` is typed as `Provider` and `captcha_solver` as `CaptchaSolver` the same way. The server enforces the same sets, so a non-TypeScript caller gets a 400 listing the valid values instead of a silent fallback. Pass `null` to clear a field.
 
 ### Gemini Enterprise (ex-Vertex AI)
 
