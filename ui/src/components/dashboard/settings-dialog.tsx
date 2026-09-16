@@ -17,6 +17,7 @@ const MODELS: Record<string, { id: string; label: string }[]> = {
   openai: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }, { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini' }, { id: 'gpt-4.1', label: 'GPT-4.1' }],
   anthropic: [{ id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' }, { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' }],
   gemini: [{ id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' }, { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' }, { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' }],
+  vertex: [{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' }, { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' }],
 };
 const CREDENTIAL_LABELS: Record<string, string> = {
   anchor_api_key: 'Anchor API key', browserbase_api_key: 'Browserbase API key',
@@ -69,7 +70,7 @@ function SettingsEditor({ onClose, apiKey, onRerunSetup }: Props) {
     return updated;
   });
   const baseUrl = config?.effective.baseUrl || '';
-  const originalProvider = config?.llm_provider || (baseUrl.includes('anthropic.com') ? 'anthropic' : baseUrl.includes('generativelanguage.googleapis.com') ? 'gemini' : 'openai');
+  const originalProvider = config?.llm_provider || (baseUrl.includes('anthropic.com') ? 'anthropic' : baseUrl.includes('aiplatform.googleapis.com') ? 'vertex' : baseUrl.includes('generativelanguage.googleapis.com') ? 'gemini' : 'openai');
   const provider = value('llm_provider') || originalProvider;
   const providerChanged = provider !== originalProvider;
   const models = MODELS[provider] || [];

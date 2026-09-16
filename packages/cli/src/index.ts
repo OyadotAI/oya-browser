@@ -172,6 +172,7 @@ async function cmdInit(flags: Flags): Promise<void> {
     { id: 'anthropic', label: 'Claude (Anthropic)' },
     { id: 'openai', label: 'OpenAI' },
     { id: 'gemini', label: 'Gemini (Google)' },
+    { id: 'vertex', label: 'Gemini Enterprise (Vertex AI)' },
     { id: 'skip', label: 'Skip', note: current.has_openai_key ? 'keep what is configured' : 'no agent control' },
   ]);
 
@@ -179,6 +180,7 @@ async function cmdInit(flags: Flags): Promise<void> {
     anthropic: { name: 'Anthropic', model: 'claude-sonnet-4-5' },
     openai: { name: 'OpenAI', model: 'gpt-4o-mini' },
     gemini: { name: 'Gemini', model: 'gemini-3.8-flash' },
+    vertex: { name: 'Gemini Enterprise', model: 'gemini-2.5-flash' },
   };
   const updates: Record<string, unknown> = {};
   if (llm !== 'skip') {

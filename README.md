@@ -131,7 +131,7 @@ Configure your own model key once for subsequent agent runs:
 const modelKey = process.env.GEMINI_API_KEY;
 if (!modelKey) throw new Error("Set GEMINI_API_KEY first.");
 await oya.config.set({
-  llm_provider: "gemini", // Also supports "openai" and "anthropic".
+  llm_provider: "gemini", // Also supports "openai", "anthropic" and "vertex" (Gemini Enterprise).
   openai_api_key: modelKey, // Shared field name for every provider.
 });
 ```

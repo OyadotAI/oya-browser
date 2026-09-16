@@ -10,6 +10,7 @@
  */
 
 import { sendCommand } from './ws-handler.js';
+import { chatCompletion } from './llm.js';
 import { runChat, lastRun, fill, FILTERS, pipesOf, selectOptionIn } from './chat-service.js';
 import * as keyConfig from './key-config.js';
 import * as usage from './usage.js';
@@ -168,20 +169,13 @@ async function extractVariables(apiKey, pb) {
   const { openaiKey, baseUrl, model } = keyConfig.resolve(apiKey);
   if (!openaiKey) return;
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    redirect: 'error', // same reason as chat-service: a 30x must not bypass validateBaseUrl
-    method: 'POST',
-    headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: 'You turn a recorded browser automation into a reusable template. Given the task and the literal value used at each step, decide which values are per-run inputs (names, IDs, dates, codes, search terms, anything supplied by the task) and which are fixed UI (button labels, menu items, navigation links). Reply with JSON only, mapping step number to a camelCase variable name for inputs: {"3": "memberId"}. Reuse one name when the same input appears at several steps.' },
-        { role: 'user', content: JSON.stringify({ task: pb.prompt, values }) },
-      ],
-    }),
+  const data = await chatCompletion({
+    baseUrl, apiKey: openaiKey, model,
+    messages: [
+      { role: 'system', content: 'You turn a recorded browser automation into a reusable template. Given the task and the literal value used at each step, decide which values are per-run inputs (names, IDs, dates, codes, search terms, anything supplied by the task) and which are fixed UI (button labels, menu items, navigation links). Reply with JSON only, mapping step number to a camelCase variable name for inputs: {"3": "memberId"}. Reuse one name when the same input appears at several steps.' },
+      { role: 'user', content: JSON.stringify({ task: pb.prompt, values }) },
+    ],
   });
-  if (!res.ok) throw new Error(`LLM endpoint returned ${res.status}`);
-  const data = await res.json();
   if (data.usage?.prompt_tokens) usage.record(apiKey, 'chat_input_tokens', data.usage.prompt_tokens);
   if (data.usage?.completion_tokens) usage.record(apiKey, 'chat_output_tokens', data.usage.completion_tokens);
 

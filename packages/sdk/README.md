@@ -179,9 +179,28 @@ const modelKey = process.env.GEMINI_API_KEY;
 if (!modelKey) throw new Error("Set GEMINI_API_KEY first.");
 const oya = new Oya();
 await oya.config.set({
-  llm_provider: "gemini", // "openai" | "anthropic" | "gemini"
+  llm_provider: "gemini", // "openai" | "anthropic" | "gemini" | "vertex"
   openai_api_key: modelKey, // Shared field name for every supported provider.
   // chat_model: process.env.OYA_CHAT_MODEL, // Optional provider model override.
+});
+```
+
+### Gemini Enterprise (ex-Vertex AI)
+
+`llm_provider: "vertex"` targets express mode, whose API keys work against a global endpoint with no GCP project or location:
+
+```js
+await oya.config.set({ llm_provider: "vertex", openai_api_key: process.env.VERTEX_EXPRESS_KEY });
+```
+
+For an enterprise project instead, point at its OpenAI-compatible endpoint. That path authenticates with a Google OAuth access token rather than an API key, and the token expires after about an hour, so it suits a one-off run rather than a long-lived deployment:
+
+```js
+await oya.config.set({
+  llm_provider: "vertex",
+  openai_base_url: "https://us-central1-aiplatform.googleapis.com/v1/projects/PROJECT/locations/us-central1/endpoints/openapi",
+  openai_api_key: accessToken, // gcloud auth print-access-token
+  chat_model: "google/gemini-2.5-flash", // this endpoint prefixes model ids
 });
 ```
 

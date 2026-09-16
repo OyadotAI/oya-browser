@@ -176,7 +176,10 @@ export class Oya {
    *
    * Bring your own LLM key (it pays for its own tokens, so no hourly chat quota applies):
    *   await oya.config.set({ llm_provider: 'gemini', openai_api_key: process.env.GEMINI_API_KEY });
-   * `llm_provider` is 'openai' | 'anthropic' | 'gemini'; `chat_model` overrides its default model.
+   * `llm_provider` is 'openai' | 'anthropic' | 'gemini' | 'vertex'; `chat_model` overrides
+   * its default model. 'vertex' is Gemini Enterprise (ex-Vertex AI) in express mode, which
+   * needs no GCP project; for a project-scoped endpoint, set `openai_base_url` to
+   * `.../endpoints/openapi` and pass an OAuth access token as `openai_api_key`.
    */
   readonly config = {
     get: <T = Record<string, unknown>>(): Promise<T> => this.http.request<T>('GET', '/api/config'),

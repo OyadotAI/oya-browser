@@ -65,7 +65,7 @@ stops everything; the `oya-data` volume holds your personas and cookies, so keep
 | Control plane | Docker. Kubernetes and ECS are not wired into the wizard yet — [`k8s/`](../k8s) has manifests you can apply by hand. |
 | Database | SQLite, Supabase, or any Postgres (`DATABASE_URL`). |
 | Browsers | Docker workers, governed Docker (one container per session), a Kubernetes fleet (one pod per session), Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or your own Chrome over CDP. |
-| LLM | Anthropic, OpenAI, any OpenAI-compatible endpoint, or a local model (Ollama, vLLM, LM Studio). |
+| LLM | Anthropic, OpenAI, Gemini, Gemini Enterprise (ex-Vertex AI), any OpenAI-compatible endpoint, or a local model (Ollama, vLLM, LM Studio). |
 
 Options the wizard cannot yet finish are listed and dimmed rather than hidden, so the
 menu never promises something that does not work.

@@ -1,9 +1,35 @@
 /** Managed-only browser hooks. Network isolation remains the outer enforcement boundary. */
 const configuration = process.env.OYA_GOVERNANCE ? JSON.parse(process.env.OYA_GOVERNANCE) : null;
 let mode = 'agent';
+/**
+ * Host rules: an exact lowercase name, `*.domain` (any subdomain, never the bare
+ * domain), or a `*` inside a label (`*-aiplatform.googleapis.com`). A wildcard is
+ * `[^.]*`, so it never crosses a label boundary, and the `*.` prefix stays a raw
+ * suffix test — tightening it to a DNS-label class would stop matching real hosts
+ * like `_dmarc.example.com`, which reads as hardening but is a humanHosts bypass.
+ * Star count and rule length are capped by validatePolicy; without that cap these
+ * patterns backtrack catastrophically.
+ * Kept byte-identical to server/src/control/egress.js — the proxy and the renderer
+ * disagreeing means a host one allows and the other blocks.
+ */
+const patterns = new Map();
+function compile(rule) {
+  let pattern = patterns.get(rule);
+  if (!pattern) {
+    const subdomain = rule.startsWith('*.');
+    const body = (subdomain ? rule.slice(2) : rule)
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '[^.]*');
+    pattern = new RegExp(`^${subdomain ? '(?:[^.]*\\.)+' : ''}${body}$`);
+    // ponytail: clear-on-full, since rules are tenant-settable; LRU if it ever churns.
+    if (patterns.size > 500) patterns.clear();
+    patterns.set(rule, pattern);
+  }
+  return pattern;
+}
 function matches(host, rules) {
   host = host.toLowerCase().replace(/\.$/, '');
-  return rules.some(rule => rule.startsWith('*.') ? host.endsWith(rule.slice(1)) && host !== rule.slice(2) : host === rule);
+  return host.length <= 253 && rules.some(rule => compile(rule).test(host));
 }
 function allowed(raw) {
   if (!configuration) return true;

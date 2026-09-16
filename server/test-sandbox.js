@@ -124,6 +124,16 @@ try {
   assert(gemini.baseUrl === 'https://generativelanguage.googleapis.com/v1beta/openai' && gemini.model === 'gemini-3.8-flash',
     'a Gemini key resolves to the Gemini endpoint and default model');
 
+  await keyConfig.set('k-vertex', { llm_provider: 'vertex', openai_api_key: 'AIza-vertex' });
+  const vertex = keyConfig.resolve('k-vertex');
+  assert(vertex.baseUrl === 'https://aiplatform.googleapis.com/v1/publishers/google' && vertex.model === 'gemini-2.5-flash',
+    'a Gemini Enterprise key resolves to the express-mode endpoint and default model');
+  // The project-scoped enterprise endpoint is reached by overriding the base URL, which
+  // is only honoured alongside the key's own credential.
+  await keyConfig.set('k-vertex', { openai_base_url: 'https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/endpoints/openapi' });
+  assert(keyConfig.resolve('k-vertex').baseUrl.endsWith('/endpoints/openapi'),
+    'a Gemini Enterprise key can point at a project-scoped endpoint instead');
+
   // A blank own base URL must be ignored by BOTH layers. Before the fix get()
   // used ?? and resolve() used ||, so the dashboard showed blank while requests
   // used the server-wide value.
@@ -175,8 +185,13 @@ try {
   const good = keyConfig.resolve('k-ok');
   assert(good.baseUrl === 'https://203.0.113.30/openai/v1', 'a legitimate https endpoint is still accepted');
 
-  const src = (await import('fs')).readFileSync('./src/chat-service.js', 'utf8');
-  assert(/redirect:\s*'error'/.test(src), "the chat fetch refuses redirects (no 30x bypass)");
+  const { readFileSync } = await import('fs');
+  const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
+  assert(/redirect:\s*'error'/.test(read('./src/llm.js')), "the chat fetch refuses redirects (no 30x bypass)");
+  // The guard is only worth anything while every LLM request goes through llm.js; a
+  // caller that reaches for fetch again reintroduces the bypass.
+  assert(['./src/chat-service.js', './src/playbook.js'].every((f) => !/fetch\(/.test(read(f))),
+    'chat-service and playbook call the LLM through llm.js, not their own fetch');
 
   console.log('\nCloud sandbox lifecycle survives socket disconnects...');
   process.env.DAYTONA_API_KEY = 'isolated-daytona-key';

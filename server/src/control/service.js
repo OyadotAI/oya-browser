@@ -37,10 +37,24 @@ function atCapacity(sessions, p, { maxConcurrent, persona, personaLimit }, excep
 /** Metered spend (accumulated on the project, so pruning sessions loses nothing) plus outstanding reservations. */
 const spentUsd = (sessions, p) => sessions.reduce((n, x) => n + (terminal.has(x.state) ? 0 : x.reservedCostUsd || 0), p.costUsd || 0);
 
+// Shaped like the hostname rule it replaces — deliberately no TLD anchor, which would
+// reject `localhost`, IP literals and punycode TLDs that are valid today — plus `*`
+// as a label character so mid-label rules like `*-aiplatform.googleapis.com` parse.
+const HOST_RULE = /^(\*\.)?[a-z0-9*](?:[a-z0-9*.-]*[a-z0-9*])?$/;
+// Each `*` compiles to an unbounded quantifier and the engine enumerates every
+// partition on a failed match: on a 30-character host, 8 stars is 0.4s, 10 is 7.7s and
+// 12 saturates around 150s. The policy check runs before any DNS, on the shared
+// control plane, so one CONNECT would stall every tenant. Three stars against a
+// 2000-character host is 0ms. The length cap is for cache memory, not backtracking —
+// the pathological rules are only ~30 characters long.
+const badHostRule = h => typeof h !== 'string' || h.length > 253
+  || (h.match(/\*/g) || []).length > 3
+  || !HOST_RULE.test(h);
+
 export function validatePolicy(policy) {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy) || Object.keys(policy).some(k => !['allowedHosts', 'humanHosts', 'region', 'redactRecording'].includes(k))) throw fault('invalid_policy', 'Unknown policy field', 400);
   for (const name of ['allowedHosts', 'humanHosts']) {
-    if (name in policy && (!Array.isArray(policy[name]) || !policy[name].length || policy[name].some(h => typeof h !== 'string' || !/^(\*\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(h)))) throw fault('invalid_policy', `${name} must contain lowercase hostnames or *.domain rules`, 400);
+    if (name in policy && (!Array.isArray(policy[name]) || !policy[name].length || policy[name].length > 100 || policy[name].some(badHostRule))) throw fault('invalid_policy', `${name} must contain up to 100 lowercase hostname, *.domain or mid-label wildcard rules`, 400);
   }
   if ('region' in policy && (typeof policy.region !== 'string' || !/^[a-z0-9_-]{1,40}$/.test(policy.region))) throw fault('invalid_policy', 'Invalid region', 400);
   if ('redactRecording' in policy && typeof policy.redactRecording !== 'boolean') throw fault('invalid_policy', 'redactRecording must be boolean', 400);

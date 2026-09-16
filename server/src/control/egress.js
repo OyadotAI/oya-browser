@@ -3,9 +3,35 @@ import http from 'node:http';
 import net from 'node:net';
 import { control, hash, terminal } from './service.js';
 import { assertSafeTarget, isPrivateAddress } from '../net-guard.js';
+/**
+ * Host rules: an exact lowercase name, `*.domain` (any subdomain, never the bare
+ * domain), or a `*` inside a label (`*-aiplatform.googleapis.com`). A wildcard is
+ * `[^.]*`, so it never crosses a label boundary, and the `*.` prefix stays a raw
+ * suffix test — tightening it to a DNS-label class would stop matching real hosts
+ * like `_dmarc.example.com`, which reads as hardening but is a humanHosts bypass.
+ * Star count and rule length are capped by validatePolicy; without that cap these
+ * patterns backtrack catastrophically.
+ * Kept byte-identical to browser/governance.js — the proxy and the renderer
+ * disagreeing means a host one allows and the other blocks.
+ */
+const patterns = new Map();
+function compile(rule) {
+  let pattern = patterns.get(rule);
+  if (!pattern) {
+    const subdomain = rule.startsWith('*.');
+    const body = (subdomain ? rule.slice(2) : rule)
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '[^.]*');
+    pattern = new RegExp(`^${subdomain ? '(?:[^.]*\\.)+' : ''}${body}$`);
+    // ponytail: clear-on-full, since rules are tenant-settable; LRU if it ever churns.
+    if (patterns.size > 500) patterns.clear();
+    patterns.set(rule, pattern);
+  }
+  return pattern;
+}
 export function allowedHost(host, rules) {
   const normalized = host.toLowerCase().replace(/\.$/, '');
-  return rules.some(rule => rule.startsWith('*.') ? normalized.endsWith(rule.slice(1)) && normalized !== rule.slice(2) : normalized === rule);
+  return normalized.length <= 253 && rules.some(rule => compile(rule).test(normalized));
 }
 async function destination(req, raw) {
   const auth = req.headers['proxy-authorization'];

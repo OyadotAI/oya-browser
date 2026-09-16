@@ -4,6 +4,7 @@
 
 import { sendCommand } from './ws-handler.js';
 import { BROWSER_TOOLS } from './chat-tools.js';
+import { chatCompletion } from './llm.js';
 import * as keyConfig from './key-config.js';
 import { metrics } from './metrics.js';
 import * as usage from './usage.js';
@@ -373,32 +374,14 @@ export async function runChat(browserId, messages, { apiKey, onToolCall, onText,
       totalChars = allMessages.reduce((sum, m) => sum + (m.content?.length || 0) + JSON.stringify(m.tool_calls || '').length, 0);
     }
 
-    const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      redirect: 'error', // a 30x into an internal address would bypass validateBaseUrl
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: allMessages,
-        tools: requestHuman ? [...BROWSER_TOOLS, REQUEST_HUMAN] : BROWSER_TOOLS,
-        tool_choice: 'auto',
-        stream: false,
-      }),
-    });
-
-    if (!res.ok) {
-      // The body is not echoed back: the base URL is tenant-configurable, and
-      // returning what the endpoint said would turn a misconfigured (or
-      // deliberately pointed) URL into a read primitive for the caller.
-      console.error(`[chat] LLM endpoint ${res.status}: ${(await res.text()).slice(0, 500)}`);
-      throw new Error(`LLM endpoint returned ${res.status}`);
-    }
-
     // Not `data`: that name is the caller's hidden values, which fill() and redact() read below.
-    const completion = await res.json();
+    const completion = await chatCompletion({
+      baseUrl: OPENAI_BASE,
+      apiKey: openaiKey,
+      model: MODEL,
+      messages: allMessages,
+      tools: requestHuman ? [...BROWSER_TOOLS, REQUEST_HUMAN] : BROWSER_TOOLS,
+    });
 
     // Every iteration of the agentic loop bills, so account per iteration
     // rather than once per request.

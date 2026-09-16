@@ -38,7 +38,7 @@ const STORE = process.env.OYA_DATA_DIR
  *           object, and `envFor()` hands them one with the key's values on top.
  */
 export const FIELDS = {
-  llm_provider:           {},                                        // 'openai' | 'anthropic' | 'gemini'
+  llm_provider:           {},                                        // 'openai' | 'anthropic' | 'gemini' | 'vertex'
   openai_api_key:         { secret: true, envVar: 'OPENAI_API_KEY' },
   openai_base_url:        { validate: validateBaseUrl },
   chat_model:             {},
@@ -78,6 +78,12 @@ const LLM_DEFAULTS = {
   // Anthropic's OpenAI-compatible endpoint, so one client path covers both.
   anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5' },
   gemini:    { base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash' },
+  // Gemini Enterprise (ex-Vertex AI) in express mode: a global endpoint with no project
+  // or location, and an API key that only authenticates against native generateContent —
+  // the OpenAI-compatible .../endpoints/openapi path wants an OAuth token instead. llm.js
+  // translates for this base URL. A project-scoped enterprise endpoint still works: set
+  // openai_base_url to .../endpoints/openapi and use an access token as the key.
+  vertex:    { base: 'https://aiplatform.googleapis.com/v1/publishers/google', model: 'gemini-2.5-flash' },
 };
 
 /** owner -> { field: value }. Secret fields hold sealed base64. */

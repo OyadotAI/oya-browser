@@ -52,6 +52,7 @@ export const LLM_PRESETS = [
   { id: 'anthropic', label: 'Claude', model: 'claude-sonnet-4-5', hint: 'sk-ant-...' },
   { id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini', hint: 'sk-...' },
   { id: 'gemini', label: 'Gemini', model: 'gemini-3.8-flash', hint: 'AIza...' },
+  { id: 'vertex', label: 'Gemini Enterprise', model: 'gemini-2.5-flash', hint: 'AIza... (express mode)' },
 ];
 
 /** Whether a provider runs on our own infrastructure, and so can reuse desktop cookies. */

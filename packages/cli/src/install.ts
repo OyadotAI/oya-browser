@@ -175,6 +175,8 @@ const LLM_PRESETS: Record<string, { base: string; model: string; label: string }
   anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5', label: 'Anthropic (Claude)' },
   openai: { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini', label: 'OpenAI' },
   gemini: { base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash', label: 'Gemini (Google)' },
+  // Express mode: a global endpoint, no GCP project or location needed.
+  vertex: { base: 'https://aiplatform.googleapis.com/v1/publishers/google', model: 'gemini-2.5-flash', label: 'Gemini Enterprise (Vertex AI)' },
 };
 
 async function askLlm(): Promise<{ answers: Answers['llm']; key: string }> {
@@ -184,6 +186,7 @@ async function askLlm(): Promise<{ answers: Answers['llm']; key: string }> {
     { id: 'anthropic', label: 'Anthropic (Claude)' },
     { id: 'openai', label: 'OpenAI' },
     { id: 'gemini', label: 'Gemini (Google)' },
+    { id: 'vertex', label: 'Gemini Enterprise (Vertex AI)', note: 'express-mode API key' },
     { id: 'compatible', label: 'An OpenAI-compatible endpoint', note: 'OpenRouter, Together, Groq, Azure' },
     { id: 'local', label: 'A local model', note: 'Ollama, vLLM, LM Studio' },
     { id: 'skip', label: 'Skip', note: 'no agent control; add it later with `oya config`' },
@@ -226,7 +229,19 @@ async function verifyLlm(baseUrl: string, key: string, model: string): Promise<s
       ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' }
       : { Authorization: `Bearer ${key}` };
 
-    const res = await fetch(`${baseUrl}/models`, { headers });
+    // Gemini Enterprise express mode has no model listing (its /models 404s) and takes
+    // its key only in the query string — a header or bearer token answers 401. So it is
+    // verified by the cheapest real generation instead, which does separate a bad key
+    // (401) from a good one (200). Matched on the endpoint shape, the same way
+    // server/src/llm.js routes: Gemini's other endpoint is an OpenAI shim that wants a
+    // bearer token.
+    const res = /\/publishers\/google\/?$/.test(baseUrl)
+      ? await fetch(`${baseUrl.replace(/\/+$/, '')}/models/${encodeURIComponent(model || 'gemini-2.5-flash')}:generateContent?key=${encodeURIComponent(key)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }], generationConfig: { maxOutputTokens: 1 } }),
+        })
+      : await fetch(`${baseUrl}/models`, { headers });
     if (res.status === 401 || res.status === 403) {
       spin.fail();
       return `${baseUrl} rejected that key (HTTP ${res.status}).`;
