@@ -38,6 +38,17 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npm test --prefix browser
 
+  recording:
+    name: Electron recording
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix browser
+      - run: xvfb-run -a npm run test:recording --prefix browser -- --no-sandbox
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

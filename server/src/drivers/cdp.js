@@ -355,7 +355,6 @@ export class CDPDriver {
     this.recordChannel = new RecordingChannel({
       send: (method, params) => this.conn.send(method, params, sessionId),
       on: (method, fn) => this.conn.on(method, (params, sid) => { if (sid === sessionId) fn(params); }),
-      evaluate: (expression) => this.evaluate(expression),
       worldName: this.worldName,
       analyzer: getAnalyzer().replace('__OYA_ATTR__', this.tagAttr).replace('__OYA_RECORD__', 'false'),
       receive: (out) => this.collectRecording(out),
@@ -512,10 +511,9 @@ export class CDPDriver {
         } else if (params.mode === 'stop' && this.recording) {
           await this.recordChannel?.stop();
           this.recordChannel = null;
-          this.collectRecording(await this.evaluate('__acRecordDrain(true)'));
           this.recording = false;
         } else if (this.recording) {
-          this.collectRecording(await this.evaluate('__acRecordDrain(false)'));
+          await this.recordChannel?.drain();
         }
         return { ok: true, data: { recording: !!this.recording, steps: this.recorded || [], secrets: [...(this.recordedSecrets || [])] } };
       }

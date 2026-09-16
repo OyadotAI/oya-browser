@@ -152,7 +152,7 @@ const worldContexts = new WeakMap(); // view -> executionContextId
  * Create (or recreate) the isolated world for this view's main frame and load
  * the analyzer into it. Page.createIsolatedWorld returns the context id
  * directly, so this needs no Runtime.enable — that domain is a detection
- * vector and is deliberately never enabled on a page we drive.
+ * vector. Only an active recording enables it to receive captured events.
  */
 async function ensureWorld(view, { force = false } = {}) {
   if (!force && worldContexts.has(view)) return worldContexts.get(view);
@@ -1350,15 +1350,8 @@ function recordNavigation(url) {
 /** Collect what one page buffered. Steps carry their own timestamps; the merge sorts by them. */
 async function drainView(view, final = false) {
   if (!view) return;
-  try {
-    const out = await worldEval(view, `__acRecordDrain(${final ? 'true' : 'false'})`);
-    if (!out) return;
-    for (const name of out.secrets || []) recordedSecrets.add(name);
-    for (const step of out.steps || []) pushRecordedStep(step);
-    recordedSteps.sort((a, b) => a.t - b.t);
-  } catch {
-    // A page mid-navigation has no isolated world; the next drain picks it up.
-  }
+  await recordingChannels.get(view)?.drain(final);
+  recordedSteps.sort((a, b) => a.t - b.t);
 }
 
 async function armRecordingView(view) {
@@ -1371,7 +1364,7 @@ async function armRecordingView(view) {
       dbg.on('message', listener);
       return () => dbg.off('message', listener);
     },
-    evaluate: (expression) => worldEval(view, expression),
+    disableRuntimeOnStop: true,
     worldName: ISOLATED_WORLD,
     analyzer: analyzerScript.replace('__OYA_ATTR__', 'data-' + require('crypto').randomBytes(4).toString('hex')).replace('__OYA_RECORD__', 'false'),
     receive: (out) => {
@@ -1465,7 +1458,7 @@ ipcMain.handle('activate-tab', (e, id) => activateTab(id));
 ipcMain.handle('start-recording', () => queueRecording(startRecording));
 ipcMain.handle('stop-recording', () => queueRecording(stopRecording));
 ipcMain.handle('clear-recording', () => queueRecording(async () => {
-  for (const tab of tabs) await worldEval(tab.view, '__acRecordClear()');
+  for (const channel of recordingChannels.values()) await channel.clear();
   recordedSteps = []; recordedSecrets = new Set(); recordedIds.clear();
   const url = getActiveView()?.webContents.getURL();
   if (recording && /^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });

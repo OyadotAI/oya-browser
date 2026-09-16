@@ -291,7 +291,7 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
   /** Where the flow starts. Typed here rather than clicked, and recorded as the first step. */
   const go = async () => {
     const target = url.trim();
-    if (!target) return;
+    if (!target || busy) return;
     await send('navigate', { url: /^https?:\/\//i.test(target) ? target : `https://${target}` });
   };
 
@@ -388,7 +388,7 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
           <div>
             <label className="label" htmlFor="rec-browser">Browser</label>
             {browsers.length
-              ? <select id="rec-browser" className="field" value={browserId} onChange={(e) => setBrowserId(e.target.value)}>
+              ? <select id="rec-browser" className="field" disabled={!!busy} value={browserId} onChange={(e) => setBrowserId(e.target.value)}>
                   {browsers.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.id}</option>)}
                 </select>
               : <p className="text-sm text-text-muted">No browser is running. Start one from the Browsers tab.</p>}
@@ -410,10 +410,10 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
               <>
                 <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); go(); }}>
                   <input className="field flex-1 font-mono text-[12px]" value={url} onChange={(e) => setUrl(e.target.value)}
-                    placeholder="Go to a page — example.com/login" aria-label="Address" spellCheck={false} autoComplete="off" />
-                  <button className="btn-ghost" type="submit" disabled={!url.trim()}>Go</button>
+                    placeholder="Go to a page — example.com/login" aria-label="Address" spellCheck={false} autoComplete="off" disabled={!!busy} />
+                  <button className="btn-ghost" type="submit" disabled={!!busy || !url.trim()}>Go</button>
                 </form>
-                <LiveView frameSrc={frame} fps={fps} frameAgeMs={frameAt ? Date.now() - frameAt : null} send={send} />
+                <LiveView frameSrc={frame} fps={fps} frameAgeMs={frameAt ? Date.now() - frameAt : null} send={send} interactive={!busy} />
               </>
             )}
 

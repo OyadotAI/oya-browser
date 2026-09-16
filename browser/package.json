@@ -11,7 +11,8 @@
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
     "dist:linux": "electron-builder --linux --publish never",
-    "test": "node test-regressions.js && node test-release.cjs"
+    "test": "node test-regressions.js && node test-release.cjs",
+    "test:recording": "electron test-recording-electron.cjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
