@@ -1883,19 +1883,19 @@ export default function Home() {
             <div className="mt-5 sm:mt-6 flex flex-wrap items-center gap-3 sm:gap-4">
               <a
                 className="btn-primary h-10 px-4 text-[12px] font-semibold"
-                href="/downloads/Oya.Browser-1.0.82-universal.dmg"
+                href="/downloads/Oya.Browser-1.0.83-universal.dmg"
               >
                 Download macOS (.dmg) <ArrowUpRight size={14} />
               </a>
               <a
                 className="btn-ghost h-10 px-4 text-[12px]"
-                href="/downloads/Oya.Browser-1.0.82-x64.exe"
+                href="/downloads/Oya.Browser-1.0.83-x64.exe"
               >
                 Windows (.exe)
               </a>
               <a
                 className="btn-ghost h-10 px-4 text-[12px]"
-                href="/downloads/Oya.Browser-1.0.82-x64.AppImage"
+                href="/downloads/Oya.Browser-1.0.83-x64.AppImage"
               >
                 Linux (.AppImage)
               </a>
