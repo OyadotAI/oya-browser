@@ -8,7 +8,7 @@
     "source": "github"
   },
   "websiteUrl": "https://browser.getoya.ai",
-  "version": "1.0.87",
+  "version": "1.0.88",
   "remotes": [
     {
       "type": "streamable-http",
