@@ -5,6 +5,7 @@ import { control, hash, fault, projectId } from './service.js';
 import { assertSafeTarget } from '../net-guard.js';
 import { registry } from '../connection-registry.js';
 import { sendCommand } from '../ws-handler.js';
+import * as flow from '../flow-recorder.js';
 
 export const controlRouter = Router();
 controlRouter.use(authMiddleware);
@@ -50,7 +51,7 @@ controlRouter.post('/sessions/:id/control', wrap(async (req, res) => {
   for (;;) {
     try {
       if (registry.get(req.params.id)?.pending) throw fault('commands_pending', 'Wait for in-flight commands to settle before transferring control');
-      state = await control().takeover(key(req), req.params.id, req.body?.action, holder);
+      state = await control().takeover(key(req), req.params.id, req.body?.action, holder, { force: req.body?.force === true });
       break;
     } catch (e) {
       if (e.code !== 'commands_pending' || Date.now() >= deadline) throw e;
@@ -64,7 +65,26 @@ controlRouter.post('/sessions/:id/input', wrap(async (req, res) => {
   const browser = registry.get(req.params.id);
   if (!browser || browser.apiKey !== key(req)) throw fault('not_found', 'Browser not connected', 404);
   if (!['click', 'type', 'press_key', 'scroll', 'click_coordinates', 'double_click', 'drag', 'mouse_move', 'scroll_at', 'type_text', 'keyboard_type', 'navigate', 'back', 'forward', 'reload', 'screenshot', 'analyze', 'read_page'].includes(req.body?.action)) throw fault('invalid_action', 'Unsupported human input', 400);
-  res.json(await sendCommand(req.params.id, req.body.action, req.body.params || {}, undefined, hash(req.authToken)));
+  const result = await sendCommand(req.params.id, req.body.action, req.body.params || {}, undefined, hash(req.authToken));
+  // A recording in progress keeps the navigations the person asked for in the live
+  // view; what they click and type is seen in the page itself.
+  if (result?.ok !== false) flow.noteCommand(req.params.id, req.body.action, req.body.params || {});
+  res.json(result);
+}));
+/**
+ * Recording a flow the person demonstrates here. It runs under the same takeover as
+ * their clicks, so the poll is not an agent command competing with them for the browser.
+ */
+controlRouter.post('/sessions/:id/record', wrap(async (req, res) => {
+  const browser = registry.get(req.params.id);
+  if (!browser || browser.apiKey !== key(req)) throw fault('not_found', 'Browser not connected', 404);
+  const holder = hash(req.authToken);
+  const dispatch = (action, params) => sendCommand(req.params.id, action, params, undefined, holder);
+  const mode = req.body?.mode;
+  if (mode === 'start') return res.json(await flow.start(req.params.id, dispatch));
+  if (mode === 'stop') return res.json((await flow.stop(req.params.id, dispatch)) || (await flow.status(req.params.id)));
+  if (mode === 'status') return res.json(await flow.status(req.params.id, dispatch));
+  throw fault('invalid_mode', 'mode must be start, stop or status', 400);
 }));
 controlRouter.post('/sessions/:id/stop', wrap(async (req, res) => {
   const { stopBrowser } = await import('../api.js');

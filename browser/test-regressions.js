@@ -98,6 +98,26 @@ for (const block of inline) {
   assert.doesNotThrow(() => new Function(body), 'renderer inline script does not parse');
 }
 
+// ── Recording ──
+// A recorded password must never leave the page: the step keeps a placeholder and the
+// name is reported separately. Anything that buffers the raw value is the bug.
+const analyzer = fs.readFileSync(path.join(__dirname, 'scripts', 'analyzer.js'), 'utf8');
+for (const [re, msg] of [
+  [/window\.__acRecordStart\b/, 'the recorder lost its start hook'],
+  [/window\.__acRecordStop\b/, 'the recorder lost its stop hook'],
+  [/window\.__acRecordDrain\b/, 'the recorder lost its drain hook — main.js has no way to collect steps'],
+  [/isSecretField\(node\) \? secretPlaceholder\(node\) : value/, 'a typed password is no longer masked before it is buffered'],
+  [/recordedSecrets\.add\(name\)/, 'secret field names are no longer reported, so the playbook cannot hide them'],
+  [/const RECORD_ON = '__OYA_RECORD__' === 'true'/, 'the recorder cannot be armed at injection time'],
+  [/e\.detail === 0 && last && last\.action === 'press_key'/, 'Enter on a button would record twice: the key and the click the browser makes from it'],
+]) assert.ok(re.test(analyzer), msg);
+
+// ...and the loader must substitute that flag, or a recording stops at the first navigation.
+assert.ok(/\.replace\('__OYA_RECORD__', String\(recording\)\)/.test(src),
+  'ensureWorld does not arm the recorder in a new document');
+assert.ok(/steps: recordedSteps\.map\(\(\{ t, \.\.\.step \}\) => step\)/.test(src),
+  'capture timestamps are being sent to the server as part of the steps');
+
 // A tab whose first load never settles must not wedge every later command on
 // it. Unbounded awaits here made a broken browser image look like a dead server.
 assert.ok(!/await tabs\.find\(.*?\)\?\.ready/.test(src),

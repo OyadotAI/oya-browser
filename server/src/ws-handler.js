@@ -424,14 +424,19 @@ function dispatchCommand(browserId, action, params = {}, timeoutMs) {
   }
 
   const id = uuidv4();
-  const timeout = timeoutMs || (action === 'navigate' ? 90000 : 30000);
+  // 30s was under what a slow portal page needs: eviCore's eligibility screen answers a
+  // page read in ~7s, so a type (find, click, clear, key-by-key) ran over and the agent,
+  // told the type failed, typed the value a second time into a field that already had it.
+  const timeout = timeoutMs || (action === 'navigate' ? 90000 : Number(process.env.OYA_COMMAND_TIMEOUT_MS) || 60000);
 
   // Outbound clients (CDP: Anchor, Browserbase, Steel, plain Chrome) are driven
   // directly rather than by handing a command to a socket and awaiting a
   // cmd_result. Same action vocabulary either way, so callers never branch.
   // Server-internal actions are not what the browser is "doing"; keep them
   // out of the activity log so it reads as the agent's own steps.
-  const visible = action !== 'evaluate_raw';
+  // `record` is a poll, several a second while someone is recording: in the activity
+  // log it would evict every action a person actually took.
+  const visible = action !== 'evaluate_raw' && action !== 'record';
   const summary = summarise(action, params);
   if (visible) registry.commandStarted(browserId);
 

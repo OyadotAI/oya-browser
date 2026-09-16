@@ -189,6 +189,7 @@ const KEY_CODES = {
 
 export const CDP_CAPABILITIES = new Set([
   'navigate', 'reload', 'back', 'forward', 'screenshot', 'analyze', 'read_page',
+  'record',
   'click', 'click-coords', 'hover', 'type', 'select', 'wait', 'cookies',
   // Both spellings, because normalise() accepts both. A caller checking this
   // set must not conclude that press_key is unsupported when it is.
@@ -265,6 +266,9 @@ export class CDPDriver {
     this.sessionId = sessionId;
     this.targetId = targetId;
     this.analyzerLoaded = false;
+    this.recording = false;
+    this.recorded = [];
+    this.recordedSecrets = new Set();
     for (const domain of ['Page', 'Runtime', 'DOM', 'Network']) {
       await this.conn.send(`${domain}.enable`, {}, sessionId).catch(() => {});
     }
@@ -351,7 +355,8 @@ export class CDPDriver {
     this.worldContext = executionContextId;
 
     await this.conn.send('Runtime.evaluate', {
-      expression: analyzer.replace('__OYA_ATTR__', this.tagAttr),
+      // A recording that started on the previous page keeps going on this one.
+      expression: analyzer.replace('__OYA_ATTR__', this.tagAttr).replace('__OYA_RECORD__', String(!!this.recording)),
       contextId: executionContextId, returnByValue: true,
     }, this.sessionId);
     return executionContextId;
@@ -462,6 +467,29 @@ export class CDPDriver {
       }
       case 'read_page':
         return { ok: true, data: await this.pageInfo() };
+      /**
+       * Recording what a person does in the live view. Every answer is the whole
+       * buffer, not a delta, so a poll that never arrives loses nothing.
+       */
+      case 'record': {
+        await this.ensureAnalyzer();
+        if (params.mode === 'start') {
+          this.recording = true;
+          this.recorded = [];
+          this.recordedSecrets = new Set();
+          // Replay has to start on the page the person started from.
+          const url = await this.evaluate('location.href').catch(() => null);
+          if (/^https?:\/\//i.test(url || '')) this.recorded.push({ action: 'navigate', url, start: true, t: Date.now() });
+          await this.evaluate('__acRecordStart()');
+        } else if (params.mode === 'stop') {
+          this.recording = false;
+          await this.evaluate('__acRecordStop()').catch(() => {});
+        }
+        const out = await this.evaluate(`__acRecordDrain(${params.mode === 'stop' ? 'true' : 'false'})`).catch(() => null);
+        for (const step of out?.steps || []) this.recorded.push(step);
+        for (const name of out?.secrets || []) this.recordedSecrets.add(name);
+        return { ok: true, data: { recording: !!this.recording, steps: this.recorded || [], secrets: [...(this.recordedSecrets || [])] } };
+      }
       case 'click': {
         if (!params.element_id) return { ok: false, error: 'element_id required' };
         const { x, y } = await this.locate(elementSelector(params.element_id));

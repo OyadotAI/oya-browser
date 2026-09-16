@@ -300,6 +300,25 @@
     }
     .dev-btn:hover { background: #e4e4e7; color: #52525b; }
     .dev-btn.active { color: #3b82f6; border-color: #3b82f6; background: #dbeafe; }
+    .dev-btn.recording { color: #ef4444; border-color: #ef4444; background: #fee2e2; }
+    @keyframes rec-blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .dev-btn.recording { animation: rec-blink 1.2s infinite; }
+
+    .rec-steps, .rec-code {
+      margin: 6px 10px;
+      padding: 8px;
+      background: #f4f4f5;
+      border-radius: 6px;
+      font-family: ui-monospace, 'SF Mono', monospace;
+      font-size: 10px;
+      color: #52525b;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-y: auto;
+    }
+    .rec-steps { flex: 1; min-height: 80px; }
+    .rec-code { max-height: 40%; display: none; }
+    .rec-code.visible { display: block; }
 
     /* ── Dev Panel ── */
 
@@ -783,6 +802,7 @@
       <span class="dot"></span>
       <span id="conn-label">Offline</span>
     </div>
+    <button class="dev-btn" id="btn-record" title="Record what you do, then save it as a playbook">&#9679;</button>
     <button class="dev-btn" id="btn-dev" title="Dev Panel">{}</button>
   </div>
 
@@ -804,6 +824,7 @@
       <button class="dev-tab" data-pane="actions">Actions</button>
       <button class="dev-tab" data-pane="network">Network</button>
       <button class="dev-tab" data-pane="source">Source</button>
+      <button class="dev-tab" data-pane="record">Record</button>
       <span class="dev-tab-spacer"></span>
       <button class="dev-tab-btn" id="dev-clear" title="Clear">Clear</button>
     </div>
@@ -896,6 +917,30 @@
         <button class="net-filter" data-filter="result">Results</button>
       </div>
       <div class="net-log" id="net-log"></div>
+    </div>
+
+    <!-- Record pane -->
+    <div class="dev-pane" id="pane-record">
+      <div class="action-label">Recording</div>
+      <div class="action-input-row">
+        <button class="action-btn action-btn-sm" id="record-toggle"><span class="action-icon">&#9679;</span> Start recording</button>
+        <button class="action-btn action-btn-sm" id="record-clear">Clear</button>
+        <span id="record-count" style="font-size:11px;color:#a1a1aa"></span>
+      </div>
+      <div class="rec-steps" id="record-steps">Turn recording on, then do the task. Clicks, what you type and the pages you visit are kept as steps.</div>
+      <div class="action-label">Save as playbook</div>
+      <div class="action-input-row">
+        <input class="action-field" id="record-name" type="text" placeholder="Name: letters, digits, - or _" spellcheck="false">
+      </div>
+      <div class="action-input-row">
+        <input class="action-field" id="record-desc" type="text" placeholder="What does this flow do?" spellcheck="false">
+        <button class="action-btn action-btn-sm" id="record-save">Save</button>
+      </div>
+      <div class="action-result" id="record-result"></div>
+      <pre class="rec-code" id="record-code"></pre>
+      <div class="action-input-row" id="record-copy-row" style="display:none">
+        <button class="action-btn action-btn-sm" id="record-copy">Copy Playwright code</button>
+      </div>
     </div>
 
     <!-- Source pane -->
@@ -1203,11 +1248,7 @@
 
     document.querySelectorAll('.dev-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        const pane = tab.dataset.pane;
-        if (!pane) return;
-        activeDevPane = pane;
-        document.querySelectorAll('.dev-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === pane));
-        document.querySelectorAll('.dev-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + pane));
+        if (tab.dataset.pane) showDevPane(tab.dataset.pane);
       });
     });
 
@@ -1220,6 +1261,87 @@
       devPanel.classList.toggle('open', open);
       devBtn.classList.toggle('active', open);
     });
+
+    // ── Recording ──
+
+    (function () {
+      const recBtn = document.getElementById('btn-record');
+      const toggle = document.getElementById('record-toggle');
+      const stepsEl = document.getElementById('record-steps');
+      const countEl = document.getElementById('record-count');
+      const resultEl = document.getElementById('record-result');
+      const codeEl = document.getElementById('record-code');
+      const copyRow = document.getElementById('record-copy-row');
+      let isRecording = false;
+
+      const describe = (s) => {
+        const label = s.el ? (s.el.text || s.el.name || s.el.domId || s.el.testId || s.el.tag || '') : '';
+        if (s.action === 'navigate') return 'navigate  ' + s.url;
+        if (s.action === 'type') return 'type      ' + label + '  \u2190 ' + s.text;
+        if (s.action === 'select_option') return 'select    ' + label + '  \u2190 ' + s.option;
+        if (s.action === 'press_key') return 'key       ' + s.key;
+        return s.action.padEnd(9, ' ') + ' ' + label;
+      };
+
+      function render(state) {
+        isRecording = !!state.recording;
+        recBtn.classList.toggle('recording', isRecording);
+        toggle.innerHTML = isRecording
+          ? '<span class="action-icon">&#9632;</span> Stop recording'
+          : '<span class="action-icon">&#9679;</span> Start recording';
+        const steps = state.steps || [];
+        countEl.textContent = steps.length ? steps.length + ' step' + (steps.length === 1 ? '' : 's') : '';
+        stepsEl.textContent = steps.length
+          ? steps.map((s, i) => String(i + 1).padStart(2, ' ') + '. ' + describe(s)).join('\n')
+          : 'Turn recording on, then do the task. Clicks, what you type and the pages you visit are kept as steps.';
+      }
+
+      function say(message, isError) {
+        resultEl.textContent = message;
+        resultEl.classList.toggle('error', !!isError);
+        resultEl.classList.toggle('visible', !!message);
+      }
+
+      async function setRecording(on) {
+        say('');
+        render(on ? await oyaBrowser.startRecording() : await oyaBrowser.stopRecording());
+      }
+
+      recBtn.addEventListener('click', async () => {
+        if (!devOpen) oyaBrowser.toggleDevPanel();
+        showDevPane('record');
+        await setRecording(!isRecording);
+      });
+      toggle.addEventListener('click', () => setRecording(!isRecording));
+
+      document.getElementById('record-clear').addEventListener('click', async () => {
+        say('');
+        codeEl.classList.remove('visible');
+        copyRow.style.display = 'none';
+        render(await oyaBrowser.clearRecording());
+      });
+
+      document.getElementById('record-save').addEventListener('click', async () => {
+        const name = document.getElementById('record-name').value.trim();
+        const desc = document.getElementById('record-desc').value.trim();
+        if (!/^[\w-]{1,64}$/.test(name)) return say('Name must be 1-64 letters, digits, - or _', true);
+        if (!desc) return say('Describe the flow: the agent needs it if a replay has to be healed.', true);
+        say('Saving…');
+        const res = await oyaBrowser.saveRecording(name, desc);
+        if (res.error) return say(res.error, true);
+        say(res.name + ' saved — ' + res.steps + ' steps' + (res.variables?.length ? ', variables: ' + res.variables.join(', ') : ''));
+        codeEl.textContent = res.code || '';
+        codeEl.classList.toggle('visible', !!res.code);
+        copyRow.style.display = res.code ? '' : 'none';
+        render({ recording: false, steps: [] });
+      });
+
+      document.getElementById('record-copy').addEventListener('click', () => {
+        navigator.clipboard.writeText(codeEl.textContent).then(() => say('Copied.'), () => say('Could not copy.', true));
+      });
+
+      oyaBrowser.onRecordedSteps(render);
+    })();
 
     document.getElementById('dev-clear').addEventListener('click', () => {
       if (activeDevPane === 'chat') {
@@ -1516,15 +1638,13 @@
       }
     }
 
-    function switchToSourcePane() {
-      document.querySelectorAll('.dev-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.dev-pane').forEach(p => p.classList.remove('active'));
-      const sourceTab = document.querySelector('.dev-tab[data-pane="source"]');
-      const sourcePane = document.getElementById('pane-source');
-      if (sourceTab) sourceTab.classList.add('active');
-      if (sourcePane) sourcePane.classList.add('active');
-      activeDevPane = 'source';
+    function showDevPane(pane) {
+      document.querySelectorAll('.dev-tab').forEach(t => t.classList.toggle('active', t.dataset.pane === pane));
+      document.querySelectorAll('.dev-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + pane));
+      activeDevPane = pane;
     }
+
+    const switchToSourcePane = () => showDevPane('source');
 
     // ── View Page Source ──
 

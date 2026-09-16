@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   newTab: (url) => ipcRenderer.invoke('new-tab', url),
   closeTab: (id) => ipcRenderer.invoke('close-tab', id),
   activateTab: (id) => ipcRenderer.invoke('activate-tab', id),
+  // Recording
+  startRecording: () => ipcRenderer.invoke('start-recording'),
+  stopRecording: () => ipcRenderer.invoke('stop-recording'),
+  clearRecording: () => ipcRenderer.invoke('clear-recording'),
+  saveRecording: (name, description) => ipcRenderer.invoke('save-recording', name, description),
+  onRecordedSteps: (cb) => ipcRenderer.on('recorded-steps', (e, state) => cb(state)),
   // Events
   onUrlChanged: (cb) => ipcRenderer.on('url-changed', (e, url) => cb(url)),
   onTitleChanged: (cb) => ipcRenderer.on('title-changed', (e, title) => cb(title)),

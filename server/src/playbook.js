@@ -32,6 +32,56 @@ export function matchElement(el = {}, elements = [], text) {
     || by('name', true) || by('placeholder', true) || by('href') || null;
 }
 
+/** Actions a recording may contain — the same set the agent records, minus what cannot replay. */
+const RECORDABLE = new Set(['navigate', 'click', 'type', 'select_option', 'press_key', 'scroll']);
+const EL_FIELDS = ['type', 'tag', 'text', 'domId', 'name', 'ariaLabel', 'testId', 'placeholder', 'href'];
+const STEP_FIELDS = ['url', 'text', 'option', 'key', 'direction'];
+const FIELDY = new Set(['input', 'textarea', 'editable', 'select']);
+const MAX_STEPS = 500;
+const MAX_LEN = 2000;
+
+const sameEl = (a = {}, b = {}) => EL_FIELDS.every((k) => a[k] === b[k]);
+
+/**
+ * Steps recorded in a browser, cleaned up and checked before they become a playbook.
+ * The caller is authenticated but the payload is built in a web page, so nothing
+ * here trusts a shape: unknown actions, unknown fields and oversized strings are
+ * dropped rather than stored and replayed later.
+ */
+export function sanitizeSteps(steps) {
+  if (!Array.isArray(steps)) throw fail(400, 'steps must be an array');
+  if (steps.length > MAX_STEPS) throw fail(400, `A recording is limited to ${MAX_STEPS} steps`);
+  const str = (v) => (typeof v === 'string' ? v.slice(0, MAX_LEN) : typeof v === 'number' ? String(v) : undefined);
+
+  const out = [];
+  for (const raw of steps) {
+    if (!raw || !RECORDABLE.has(raw.action)) continue;
+    const step = { action: raw.action };
+    if (raw.start) step.start = true;
+    for (const k of STEP_FIELDS) { const v = str(raw[k]); if (v !== undefined) step[k] = v; }
+    if (raw.amount !== undefined) step.amount = Math.min(Math.abs(Number(raw.amount)) || 0, 100000);
+    if (raw.el && typeof raw.el === 'object') {
+      const el = {};
+      for (const k of EL_FIELDS) { const v = str(raw.el[k]); if (v) el[k] = v; }
+      if (Object.keys(el).length) step.el = el;
+    }
+    if (step.action === 'navigate' && !/^https?:\/\//i.test(step.url || '')) continue;
+    if (['click', 'type', 'select_option'].includes(step.action) && !step.el) continue;
+
+    // Two sources can see the same navigation — the browser's own address bar and the
+    // command the live view sent — and going there twice is a slower way to be nowhere new.
+    if (step.action === 'navigate' && out[out.length - 1]?.action === 'navigate' && out[out.length - 1].url === step.url) continue;
+
+    // A click into a field, then typing in it, is one action to a person and two
+    // to the DOM. Replaying the click adds a step that can only go wrong.
+    const prev = out[out.length - 1];
+    if (step.action === 'type' && prev?.action === 'click' && FIELDY.has(prev.el?.type) && sameEl(prev.el, step.el)) out.pop();
+    out.push(step);
+  }
+  if (!out.some((s) => s.action !== 'navigate')) throw fail(400, 'Nothing to save: the recording has no actions.');
+  return out;
+}
+
 /** Every placeholder the steps use, in order of appearance. */
 export const variablesOf = (steps) => [...new Set([...JSON.stringify(steps).matchAll(/\{\{(\w+)(?:\|[^}]*)?\}\}/g)].map((m) => m[1]))];
 
@@ -106,7 +156,9 @@ const describe = (pb) => ({ name: pb.name, variables: variablesOf(pb.steps), ste
  */
 async function extractVariables(apiKey, pb) {
   // A run given `data` already said what varies; guessing more turns buttons and menu picks into inputs.
-  if (variablesOf(pb.steps).length) return;
+  // Secrets do not count: a recording masks its password fields in the page, and that
+  // one placeholder must not stop the rest of the flow from being templated.
+  if (variablesOf(pb.steps).some((v) => !(pb.secrets || []).includes(v))) return;
   const values = {};
   pb.steps.forEach((step, i) => {
     const v = step.action === 'type' ? step.text : step.action === 'click' ? step.el?.text : null;
@@ -144,9 +196,9 @@ async function extractVariables(apiKey, pb) {
   }
 }
 
-export async function create(apiKey, browserId, name) {
+/** `run` defaults to the browser's last ask(); a recording passes its own steps in. */
+export async function create(apiKey, browserId, name, run = lastRun(browserId)) {
   if (typeof name !== 'string' || !NAME.test(name)) throw fail(400, 'Playbook name must be 1-64 letters, digits, _ or -');
-  const run = lastRun(browserId);
   if (!run?.steps.some((s) => s.action !== 'navigate')) throw fail(409, 'Nothing to save: run ask() on this browser first.');
 
   // Which keys were secrets, so a healing replay keeps them hidden from the model.
@@ -265,7 +317,7 @@ async function heal(apiKey, browserId, pb, i, err, values, hooks) {
     const secrets = Object.fromEntries(Object.entries(values).filter(([k]) => hidden.has(k)));
     result = await runChat(browserId, [{ role: 'user', content: task }], { apiKey, data, secrets, ...hooks });
     if (result.limited) throw new Error('the agent hit its step limit');
-    if (/^\s*FAILED:/i.test(result.text)) throw new Error(result.text.trim());
+    if (/(^|\n)\s*FAILED:/i.test(result.text)) throw new Error(result.text.trim());
   } catch (healErr) {
     if (!hooks.requestHuman) throw healErr;
     await hooks.requestHuman({ reason: 'heal_failed', message: `Replay broke at step ${i + 1} and the agent could not finish (${healErr.message}). Finish it in the live view, then respond.` });

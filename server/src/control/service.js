@@ -376,13 +376,19 @@ export class ControlService {
       c.revokedAt = stamp(); tx.emit(c.project, 'credential.revoked', null, { id }); return { ok: true };
     });
   }
-  async takeover(key, id, action, holder) {
+  /**
+   * `force` takes the browser from whoever is holding it. The hold exists so two
+   * operators do not fight over one page, not to lock out the project that owns it:
+   * a tab that closed without releasing, or a lease renewed by a forgotten dialog,
+   * otherwise blocks its owner for five minutes with nothing they can do about it.
+   */
+  async takeover(key, id, action, holder, { force = false } = {}) {
     return this.store.transact(async tx => {
       const x = await ownSession(tx, key, id);
       if (x.state !== 'ready') throw fault('not_ready', 'Session must be ready');
       if (action === 'acquire') {
         if (x.inFlight > 0) throw fault('commands_pending', 'In-flight commands must settle before takeover');
-        if (x.control.mode === 'human' && x.control.expiresAt > stamp() && x.control.holder !== holder) throw fault('control_busy', 'Another operator has control');
+        if (!force && x.control.mode === 'human' && x.control.expiresAt > stamp() && x.control.holder !== holder) throw fault('control_busy', 'Another operator has control');
         x.control = { mode: 'human', holder, expiresAt: stamp() + 300000 };
       } else if (action === 'release') {
         if (x.control.mode === 'human' && x.control.holder !== holder) throw fault('control_busy', 'Another operator has control');

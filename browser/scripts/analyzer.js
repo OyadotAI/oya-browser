@@ -449,25 +449,34 @@
 
   // ─── Annotate interactive element ───
 
+  /**
+   * The handles that survive a reload: what a playbook step stores about an element
+   * and what the server matches on later (server/src/playbook.js matchElement).
+   * `text` is passed in where the caller already has it — getLabel walks the DOM.
+   */
+  function stableOf(node, type, text = getLabel(node, type)) {
+    const el = { type, tag: node.tagName.toLowerCase(), text };
+    if (node.href) el.href = node.href;
+    if (node.placeholder) el.placeholder = node.placeholder;
+    if (node.id) el.domId = node.id;
+    if (node.name) el.name = node.name;
+    const ariaLabel = node.getAttribute('aria-label');
+    if (ariaLabel) el.ariaLabel = ariaLabel;
+    const testId = node.getAttribute('data-testid');
+    if (testId) el.testId = testId;
+    return el;
+  }
+
   function annotateInteractive(node, type) {
     elementCounter++;
     const id = elementCounter;
     node.setAttribute(ATTR, String(id));
     elementRefs.set(id, node); // keep live reference for click/type
     const text = getLabel(node, type);
-    const entry = { id, type, tag: node.tagName.toLowerCase(), selector: `[${ATTR}="${id}"]`, text };
-    if (node.href) entry.href = node.href;
+    const entry = { id, ...stableOf(node, type, text), selector: `[${ATTR}="${id}"]` };
     if (node.value !== undefined && node.value !== '') entry.value = node.value;
-    if (node.placeholder) entry.placeholder = node.placeholder;
     if (node.disabled) entry.disabled = true;
     if (node.checked !== undefined) entry.checked = node.checked;
-    if (node.id) entry.domId = node.id;
-    // Rich metadata for SPA recovery
-    if (node.name) entry.name = node.name;
-    const ariaLabel = node.getAttribute('aria-label');
-    if (ariaLabel) entry.ariaLabel = ariaLabel;
-    const testId = node.getAttribute('data-testid');
-    if (testId) entry.testId = testId;
     // Form context
     const form = node.closest('form');
     if (form) entry.formName = form.getAttribute('aria-label') || form.getAttribute('name') || form.getAttribute('action') || '';
@@ -976,4 +985,133 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'checked', 'value', 'aria-disabled'], characterData: true });
+  // ─── Recorder: what the person does, as playbook steps ───
+  //
+  // Same step shape the agent produces (server/src/chat-service.js recordStep), so a
+  // recording replays and exports to Playwright through the code that already exists.
+  // The loader substitutes the flag, so a recording started on the previous page keeps
+  // running in the document that replaces it.
+  // ponytail: main frame only — ensureWorld() creates the isolated world for the top
+  // frame, so a flow that happens inside an iframe records nothing. Per-frame injection
+  // if that turns up on a real site.
+  const RECORD_ON = '__OYA_RECORD__' === 'true';
+
+  const RECORD_KEYS = new Set(['Enter', 'Tab', 'Escape']);
+  const TEXTUAL = new Set(['input', 'textarea', 'editable']);
+  const SECRET_AUTOCOMPLETE = /current-password|new-password|one-time-code/i;
+  const MAX_RECORDED = 500;
+
+  let recording = false;
+  let recorded = [];
+  const recordedSecrets = new Set();
+  let typing = null;   // { node, el, value } — the field being typed into
+  let focused = null;  // { node, el } — captured before typing, so a label is never the typed text
+
+  /** The interactive element an event really landed on. */
+  function recordTarget(event) {
+    let node = (event.composedPath && event.composedPath()[0]) || event.target;
+    for (let i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < 6; i++, node = node.parentElement) {
+      const type = getInteractiveType(node);
+      if (type) return { node, type };
+    }
+    return null;
+  }
+
+  const isSecretField = (node) => String(node.type || '').toLowerCase() === 'password'
+    || SECRET_AUTOCOMPLETE.test(node.getAttribute('autocomplete') || '');
+
+  /** A password never leaves the page: the step keeps a placeholder, the name is flagged. */
+  function secretPlaceholder(node) {
+    const raw = node.getAttribute('name') || node.id || '';
+    const name = /^[A-Za-z_]\w{0,39}$/.test(raw) ? raw : 'password';
+    recordedSecrets.add(name);
+    return '{{' + name + '}}';
+  }
+
+  function pushStep(step) {
+    if (!recording || recorded.length >= MAX_RECORDED) return;
+    recorded.push({ ...step, t: Date.now() });
+  }
+
+  /** One `type` step per field, not one per keystroke. */
+  function flushTyping() {
+    if (!typing) return;
+    const { node, el, value } = typing;
+    typing = null;
+    if (value !== '') pushStep({ action: 'type', el, text: isSecretField(node) ? secretPlaceholder(node) : value });
+  }
+
+  function onRecordFocus(e) {
+    if (!recording) return;
+    const hit = recordTarget(e);
+    if (!hit || !TEXTUAL.has(hit.type)) return;
+    if (typing && typing.node !== hit.node) flushTyping();
+    focused = { node: hit.node, el: stableOf(hit.node, hit.type) };
+  }
+
+  function onRecordInput(e) {
+    if (!recording) return;
+    const hit = recordTarget(e);
+    if (!hit || !TEXTUAL.has(hit.type)) return;
+    if (typing && typing.node !== hit.node) flushTyping();
+    const raw = hit.type === 'editable' ? (hit.node.innerText || '') : (hit.node.value || '');
+    const el = (typing && typing.node === hit.node && typing.el)
+      || (focused && focused.node === hit.node && focused.el)
+      || stableOf(hit.node, hit.type);
+    typing = { node: hit.node, el, value: String(raw).slice(0, 2000) };
+  }
+
+  function onRecordClick(e) {
+    if (!recording) return;
+    const hit = recordTarget(e);
+    if (!hit) return;
+    // A click inside the field being typed into is the caret moving, not a step.
+    if (typing && typing.node === hit.node) return;
+    flushTyping();
+    if (hit.type === 'select') return; // the change event carries the option
+    // Enter on a focused button, and Enter submitting a form, arrive as a key *and* as
+    // a click the browser synthesized (detail 0). One act, so keep one step — the click,
+    // which names the control instead of depending on where the focus happens to be.
+    const last = recorded[recorded.length - 1];
+    if (e.detail === 0 && last && last.action === 'press_key' && Date.now() - last.t < 1000) recorded.pop();
+    pushStep({ action: 'click', el: stableOf(hit.node, hit.type) });
+  }
+
+  function onRecordChange(e) {
+    if (!recording) return;
+    const hit = recordTarget(e);
+    if (!hit) return;
+    if (hit.type === 'select') {
+      flushTyping();
+      const opt = hit.node.selectedOptions && hit.node.selectedOptions[0];
+      if (opt) pushStep({ action: 'select_option', el: stableOf(hit.node, hit.type), option: String(opt.label || opt.textContent || '').trim() });
+    } else if (TEXTUAL.has(hit.type)) {
+      flushTyping();
+    }
+  }
+
+  function onRecordKey(e) {
+    if (!recording || !RECORD_KEYS.has(e.key)) return;
+    flushTyping();  // the value is the step; the key is what submits it
+    pushStep({ action: 'press_key', key: e.key });
+  }
+
+  document.addEventListener('focusin', onRecordFocus, true);
+  document.addEventListener('input', onRecordInput, true);
+  document.addEventListener('change', onRecordChange, true);
+  document.addEventListener('click', onRecordClick, true);
+  document.addEventListener('keydown', onRecordKey, true);
+
+  window.__acRecordStart = function () { recording = true; return true; };
+  window.__acRecordStop = function () { flushTyping(); recording = false; return true; };
+
+  /** Steps since the last call, and every secret name seen. Clears the step buffer. */
+  window.__acRecordDrain = function (final) {
+    if (final) flushTyping();
+    const steps = recorded;
+    recorded = [];
+    return { steps, secrets: [...recordedSecrets] };
+  };
+
+  if (RECORD_ON) recording = true;
 })();

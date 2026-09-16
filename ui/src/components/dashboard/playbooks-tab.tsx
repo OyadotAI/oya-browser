@@ -1,10 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { Code, ExternalLink, Play, Trash2, Workflow } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CircleDot, Code, ExternalLink, Play, Trash2, Workflow } from 'lucide-react';
 import { ago, api, errorMessage } from '@/lib/api-client';
 import Dialog, { Confirm } from '@/components/ui/dialog';
 import SyntaxCode from '@/components/ui/syntax-code';
+import LiveView from './live-view';
+import { subscribeFrames } from '@/lib/live-stream';
 import { useToast } from './toast';
 import type { BrowserRow } from './types';
 
@@ -38,6 +40,7 @@ export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string
   const [running, setRunning] = useState<PlaybookInfo | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [recording, setRecording] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!apiKey) return;
@@ -79,8 +82,12 @@ export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-5 lg:px-6">
         <div className="mr-auto">
           <h2 className="text-[22px] font-medium tracking-tight text-text">Playbooks <span className="ml-2 text-[14px] text-text-dim">{list.length}</span></h2>
-          <p className="text-[12px] text-text-muted">Flows recorded from an ask() run, replayed without the LLM. Values stay out of them as variables.</p>
+          <p className="text-[12px] text-text-muted">Flows recorded from an ask() run, or from you doing it yourself. Replayed without the LLM; values stay out of them as variables.</p>
         </div>
+        <button className="btn-primary" onClick={() => setRecording(true)} disabled={!browsers.length}
+          title={browsers.length ? 'Do the task yourself in a live browser and keep it as a playbook' : 'Start a browser first'}>
+          <CircleDot className="h-4 w-4" /> Record a flow
+        </button>
       </div>
 
       {loadError && <div role="alert" className="mx-4 mb-3 rounded-lg border border-red/30 bg-red/10 px-3 py-2 text-sm text-red lg:mx-6">Could not load playbooks: {loadError}</div>}
@@ -140,7 +147,7 @@ export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string
           <div className="flex flex-col items-center justify-center gap-3 px-6 py-24 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-bg-card"><Workflow className="h-5 w-5 text-text-muted" /></div>
             <p className="text-[15px] font-medium text-text">No playbooks yet</p>
-            <p className="max-w-md text-[13px] text-text-muted">Run a task with ask(), then save it from code:</p>
+            <p className="max-w-md text-[13px] text-text-muted">Record one yourself with the button above, or run a task with ask() and save it from code:</p>
             <pre className="max-w-full overflow-x-auto rounded-lg border border-border bg-bg-card px-4 py-3 text-left text-[12px]"><SyntaxCode code={RECORD_SNIPPET} language="typescript" /></pre>
           </div>
         )}
@@ -151,6 +158,8 @@ export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string
       </Dialog>
 
       {running && <RunDialog apiKey={apiKey} playbook={running} browsers={browsers} onClose={() => setRunning(null)} onFinished={refresh} />}
+
+      {recording && <RecordDialog apiKey={apiKey} browsers={browsers} onClose={() => setRecording(false)} onSaved={refresh} />}
 
       <Confirm open={!!removing} onClose={() => setRemoving(null)} onConfirm={doRemove} danger busy={busy}
         title={removing?.endsWith(':draft') ? 'Discard the healed draft?' : `Delete ${removing}?`}
@@ -168,6 +177,205 @@ const ATTENTION: Record<NonNullable<RunInfo['attention']>['reason'], string> = {
   agent: 'Agent question',
   heal_failed: 'Could not heal',
 };
+
+interface RecordedStep {
+  action: string;
+  url?: string; text?: string; option?: string; key?: string;
+  el?: { text?: string; name?: string; domId?: string; testId?: string; tag?: string };
+}
+interface RecordState { recording: boolean; steps: RecordedStep[]; secrets: string[] }
+
+const describeStep = (s: RecordedStep) => {
+  const label = s.el ? (s.el.text || s.el.name || s.el.domId || s.el.testId || s.el.tag || '') : '';
+  if (s.action === 'navigate') return `navigate ${s.url}`;
+  if (s.action === 'type') return `type ${label} ← ${s.text}`;
+  if (s.action === 'select_option') return `select ${label} ← ${s.option}`;
+  if (s.action === 'press_key') return `key ${s.key}`;
+  return `${s.action} ${label}`;
+};
+
+/**
+ * Record a flow by doing it. The page watches what the person does in the live view
+ * and reports it as steps, so coordinate clicks come back as elements — the same
+ * shape an ask() run leaves behind, saved as a playbook by the same route.
+ */
+function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
+  apiKey: string; browsers: BrowserRow[]; onClose: () => void; onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [browserId, setBrowserId] = useState(browsers[0]?.id || '');
+  const [state, setState] = useState<RecordState | null>(null);
+  const [frame, setFrame] = useState<string | null>(null);
+  const [fps, setFps] = useState(0);
+  const [frameAt, setFrameAt] = useState<number | null>(null);
+  const frames = useRef(0);
+  const [busy, setBusy] = useState<'start' | 'stop' | 'save' | null>(null);
+  const [held, setHeld] = useState(false);
+  const [url, setUrl] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+
+  const recording = !!state?.recording;
+  const steps = state?.steps || [];
+
+  // `started`, not `state`: the poll below replaces that object every 800ms, and
+  // depending on it tore the frame stream down and rebuilt it just as often — the
+  // view never got a frame, and with no frame there is nothing to map a click onto.
+  const started = !!state;
+  useEffect(() => {
+    if (!started || !browserId) return;
+    const stop = subscribeFrames(browserId, apiKey, (f) => { setFrame(f); frames.current++; setFrameAt(Date.now()); }, () => setFrame(null));
+    // The indicator reads "connecting" until a frame lands, which is the difference
+    // between a view that is merely slow and one that is not there at all.
+    const fpsTimer = setInterval(() => { setFps(frames.current); frames.current = 0; }, 1000);
+    return () => { stop(); clearInterval(fpsTimer); };
+  }, [started, browserId, apiKey]);
+
+  // The steps are collected on the server, so the list survives a reload of this page.
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(async () => {
+      try {
+        setState(await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode: 'status' } }));
+      } catch { /* keep recording */ }
+    }, 800);
+    return () => clearInterval(timer);
+  }, [recording, browserId, apiKey]);
+
+  const send = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
+    const r = await api<{ ok: boolean; error?: string }>(`/control/sessions/${encodeURIComponent(browserId)}/input`, {
+      key: apiKey, method: 'POST', body: { action, params },
+    }).catch((err) => ({ ok: false, error: errorMessage(err) }));
+    if (r.ok === false) toast(r.error || `${action} failed`, 'error');
+    return r;
+  }, [browserId, apiKey, toast]);
+
+  /** Where the flow starts. Typed here rather than clicked, and recorded as the first step. */
+  const go = async () => {
+    const target = url.trim();
+    if (!target) return;
+    await send('navigate', { url: /^https?:\/\//i.test(target) ? target : `https://${target}` });
+  };
+
+  // Human input is refused unless a person holds the browser, and the hold expires
+  // in five minutes — shorter than plenty of flows, so recording renews it.
+  const takeControl = useCallback((force = false) => api(`/control/sessions/${encodeURIComponent(browserId)}/control`, {
+    key: apiKey, method: 'POST', body: { action: 'acquire', force },
+  }), [browserId, apiKey]);
+
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => { void takeControl().catch(() => undefined); }, 120000);
+    return () => clearInterval(timer);
+  }, [recording, takeControl]);
+
+  const record = async (mode: 'start' | 'stop', force = false) => {
+    setBusy(mode);
+    try {
+      if (mode === 'start') await takeControl(force);
+      setState(await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode } }));
+    } catch (err) {
+      const code = (err as { body?: { code?: string } }).body?.code;
+      setHeld(code === 'control_busy');
+      toast(code === 'control_busy' ? 'Another tab or operator is holding this browser.'
+        : code === 'commands_pending' ? 'The browser is still finishing a command. Try again in a moment.'
+        : errorMessage(err), 'error');
+    }
+    finally { setBusy(null); }
+  };
+
+  const save = async () => {
+    setBusy('save');
+    try {
+      const saved = await api<PlaybookBody>(`/browsers/${encodeURIComponent(browserId)}/playbooks`, {
+        key: apiKey, method: 'POST',
+        body: { name: name.trim(), prompt: description.trim(), steps, secrets: state?.secrets || [] },
+      });
+      toast(`${saved.name} saved — ${saved.steps} steps`, 'success');
+      onSaved();
+      onClose();
+    } catch (err) { toast(errorMessage(err), 'error'); }
+    finally { setBusy(null); }
+  };
+
+  const nameOk = /^[\w-]{1,64}$/.test(name.trim());
+
+  return (
+    <Dialog open onClose={onClose} size="lg" title="Record a flow"
+      description="Do the task yourself in the live view. What you click and type becomes a playbook, and a Playwright module."
+      footer={
+        <>
+          <button className="btn-ghost" onClick={onClose}>Close</button>
+          {!state
+            ? <button className="btn-primary" onClick={() => record('start', held)} disabled={!browserId || busy === 'start'}>
+                {busy === 'start' ? 'Starting…' : held ? 'Take over and record' : 'Start recording'}
+              </button>
+            : recording
+              ? <button className="btn-primary" onClick={() => record('stop')} disabled={busy === 'stop'}>{busy === 'stop' ? 'Stopping…' : 'Stop'}</button>
+              : <button className="btn-primary" onClick={save} disabled={!nameOk || !description.trim() || !steps.length || busy === 'save'}>{busy === 'save' ? 'Saving…' : 'Save playbook'}</button>}
+        </>
+      }>
+      <div className="flex flex-col gap-4">
+        {!state ? (
+          <div>
+            <label className="label" htmlFor="rec-browser">Browser</label>
+            {browsers.length
+              ? <select id="rec-browser" className="field" value={browserId} onChange={(e) => setBrowserId(e.target.value)}>
+                  {browsers.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.id}</option>)}
+                </select>
+              : <p className="text-sm text-text-muted">No browser is running. Start one from the Browsers tab.</p>}
+            <p className="mt-2 text-[12px] text-text-muted">Recording takes control of the browser so your input reaches the page. Passwords are masked in the page and saved as variables.</p>
+            {held && <p className="mt-2 text-[12px] text-yellow">Someone else is holding this browser — another dashboard tab, or one that was closed without releasing. Take over to record anyway; their live view stops driving it.</p>}
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-[12px]">
+              <span className={recording ? 'inline-flex items-center gap-1.5 text-red' : 'text-text-muted'}>
+                {recording && <span className="h-2 w-2 animate-pulse rounded-full bg-red" />}
+                {recording ? 'Recording' : 'Stopped'}
+              </span>
+              <span className="text-text-dim">·</span>
+              <span className="text-text-secondary">{steps.length} step{steps.length === 1 ? '' : 's'}</span>
+            </div>
+
+            {recording && (
+              <>
+                <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); go(); }}>
+                  <input className="field flex-1 font-mono text-[12px]" value={url} onChange={(e) => setUrl(e.target.value)}
+                    placeholder="Go to a page — example.com/login" aria-label="Address" spellCheck={false} autoComplete="off" />
+                  <button className="btn-ghost" type="submit" disabled={!url.trim()}>Go</button>
+                </form>
+                <LiveView frameSrc={frame} fps={fps} frameAgeMs={frameAt ? Date.now() - frameAt : null} send={send} />
+              </>
+            )}
+
+            <div className="max-h-40 overflow-auto rounded-lg border border-border bg-bg-card px-3 py-2 font-mono text-[11px] text-text-secondary">
+              {steps.length
+                ? steps.map((s, i) => <div key={i} className="truncate">{i + 1}. {describeStep(s)}</div>)
+                : <span className="text-text-dim">Nothing yet — click and type in the view above.</span>}
+            </div>
+
+            {!recording && (
+              <>
+                <div>
+                  <label className="label" htmlFor="rec-name">Name</label>
+                  <input id="rec-name" className="field font-mono" value={name} autoComplete="off" placeholder="portal-login"
+                    onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label" htmlFor="rec-desc">What does this flow do?</label>
+                  <input id="rec-desc" className="field" value={description} autoComplete="off" placeholder="Log into the portal and open the eligibility screen"
+                    onChange={(e) => setDescription(e.target.value)} />
+                  <p className="mt-1 text-[12px] text-text-muted">Used to turn the values you typed into variables, and to finish the job if a replay breaks.</p>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </Dialog>
+  );
+}
 
 /** Run a playbook on a live browser and follow it, answering it if it stops for a person. */
 function RunDialog({ apiKey, playbook, browsers, onClose, onFinished }: {

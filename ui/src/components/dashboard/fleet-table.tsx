@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Square, Search, X, Monitor, Code2, Plug, Copy, Camera, PanelRightOpen, ExternalLink } from 'lucide-react';
+import { ArrowDown, ArrowUp, Square, Search, X, Monitor, MonitorSmartphone, Code2, Plug, Copy, Camera, PanelRightOpen, ExternalLink } from 'lucide-react';
 import ContextMenu, { type MenuItem } from '@/components/ui/context-menu';
 import type { BrowserRow, Health } from './types';
 import { providerLabel } from './types';
 import type { FleetFilter } from './fleet-strip';
 import { ago, shortId, api } from '@/lib/api-client';
 import Kbd from '@/components/ui/kbd';
+import { desktopSignInUrl } from './config';
+import { useToast } from './toast';
 
 type SortKey = 'name' | 'health' | 'persona' | 'provider' | 'currentUrl' | 'commands' | 'errors' | 'lastSeen' | 'connectedAt';
 
@@ -65,6 +67,22 @@ export default function FleetTable({
   const [limit, setLimit] = useState(PAGE);
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; row: BrowserRow } | null>(null);
+  const [pairing, setPairing] = useState(false);
+  const toast = useToast();
+
+  /**
+   * The desktop browser signs in as this key's identity, and cloud browsers inherit
+   * those logins. The link carries a single-use pairing code, never the key itself.
+   */
+  const connectDesktop = async () => {
+    setPairing(true);
+    try {
+      window.location.href = await desktopSignInUrl(apiKey);
+      toast('Opening the desktop browser. Not installed yet? Download it from /downloads.', 'info');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not start desktop sign-in', 'error');
+    } finally { setPairing(false); }
+  };
 
   // Right-click: everything you can do to one browser, without hunting for a button.
   const menuItems = (r: BrowserRow): MenuItem[] => {
@@ -176,6 +194,10 @@ export default function FleetTable({
             <button className="btn-ghost h-9 text-[12px]" onClick={() => onStop(rows.map((r) => r.id))}>Stop all</button>
           )}
           <button className="btn-ghost h-9" onClick={onCode} title="Code that starts browsers here"><Code2 className="h-3.5 w-3.5" /> Code</button>
+          <button className="btn-ghost h-9" onClick={connectDesktop} disabled={pairing}
+            title="Pair the browser on this machine, so cloud browsers inherit its logins">
+            <MonitorSmartphone className="h-3.5 w-3.5" /> Connect desktop browser
+          </button>
           <button className="btn-primary h-9" onClick={onStart}>Start browser <Kbd>N</Kbd></button>
         </div>
       </div>

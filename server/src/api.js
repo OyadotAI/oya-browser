@@ -34,6 +34,7 @@ import * as proxies from './proxies.js';
 import * as captcha from './captcha.js';
 import * as mfa from './mfa.js';
 import * as playbooks from './playbook.js';
+import * as flow from './flow-recorder.js';
 import * as runs from './runs.js';
 import * as keyConfig from './key-config.js';
 import { PREF_OPTIONS } from './fingerprint.js';
@@ -1317,7 +1318,7 @@ router.get('/live/:browserId', authMiddleware, (req, res) => {
  * cookies and logged-in sessions — the CDP driver already refuses it, and the
  * Oya client must not be the way around that.
  */
-const INTERNAL_ACTIONS = new Set(['evaluate_raw', 'evaluate']);
+const INTERNAL_ACTIONS = new Set(['evaluate_raw', 'evaluate', 'record']);
 
 router.post('/browsers/:browserId/command', authMiddleware, enforce('command'), async (req, res) => {
   // Navigate can take up to 90s — disable socket timeout for this request
@@ -1340,6 +1341,9 @@ router.post('/browsers/:browserId/command', authMiddleware, enforce('command'), 
 
   try {
     const result = await sendCommand(browserId, action, params || {});
+    // A recording in progress keeps the navigations the person asked for here; what
+    // they click and type is seen in the page itself.
+    if (result?.ok !== false) flow.noteCommand(browserId, action, params || {});
     usage.record(getKey(req), 'commands');
     if (result?.ok === false) usage.record(getKey(req), 'command_errors');
     res.json(result);
@@ -1397,14 +1401,28 @@ async function longJson(res, work) {
   }
 }
 
-// Playbooks — save this browser's last ask() by name, then replay it without the LLM
+// Playbooks — save this browser's last ask() by name, then replay it without the LLM.
+// With `steps` in the body, the browser recorded a person doing the task instead:
+// same schema, same storage, same Playwright export.
 router.post('/browsers/:browserId/playbooks', authMiddleware, enforce('chat'), async (req, res) => {
   const { browserId } = req.params;
   if (!registry.isConnected(browserId) || !canAccess(req, browserId)) {
     return res.status(404).json({ error: `Browser ${browserId} not connected` });
   }
   try {
-    res.json(await playbooks.create(getKey(req), browserId, req.body?.name));
+    const { name, steps, prompt, secrets } = req.body || {};
+    let run;
+    if (steps !== undefined) {
+      if (secrets !== undefined && (!Array.isArray(secrets) || secrets.some((k) => !/^\w{1,64}$/.test(String(k))))) {
+        return res.status(400).json({ error: 'secrets must be an array of variable names' });
+      }
+      run = {
+        prompt: String(prompt || name || '').slice(0, 2000),
+        steps: playbooks.sanitizeSteps(steps),
+        secrets: (secrets || []).map(String),
+      };
+    }
+    res.json(await playbooks.create(getKey(req), browserId, name, run));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -1471,7 +1489,9 @@ router.post('/browsers/:browserId/runs', authMiddleware, enforce('chat'), async 
     if (pb) return playbooks.play(key, browserId, pb, { ...data, ...secrets }, { autoHeal: autoHeal !== false, checkpoint, requestHuman });
     const result = await runChat(browserId, [{ role: 'user', content: prompt }], { apiKey: key, data, secrets, checkpoint, requestHuman });
     if (result.limited) throw new Error('The agent hit its step limit without finishing');
-    if (/^\s*FAILED:/i.test(result.text)) throw new Error(result.text.trim());
+    // Anywhere in the reply, not just the first line: a model that narrates before
+    // its verdict still failed, and a "succeeded" run saves the broken steps as a playbook.
+    if (/(^|\n)\s*FAILED:/i.test(result.text)) throw new Error(result.text.trim());
     return { text: result.text };
   });
   res.status(202).json(run);

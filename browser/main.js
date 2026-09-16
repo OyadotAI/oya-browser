@@ -166,7 +166,9 @@ async function ensureWorld(view, { force = false } = {}) {
   // DOM are not a constant any MutationObserver can match on.
   const attr = 'data-' + require('crypto').randomBytes(4).toString('hex');
   await cdp(view, 'Runtime.evaluate', {
-    expression: analyzerScript.replace('__OYA_ATTR__', attr),
+    // The recorder arms itself as the document loads: a recording that started on
+    // the previous page must not stop because the user followed a link.
+    expression: analyzerScript.replace('__OYA_ATTR__', attr).replace('__OYA_RECORD__', String(recording)),
     contextId: executionContextId,
     returnByValue: true,
   });
@@ -1015,6 +1017,8 @@ function createTab(url, activate = true) {
   };
   view.webContents.on('did-navigate', updateUrl);
   view.webContents.on('did-navigate-in-page', updateUrl);
+  // Last chance to collect what the page buffered: the isolated world dies with the document.
+  view.webContents.on('did-start-navigation', () => { if (recording) drainView(view); });
   view.webContents.on('page-title-updated', (e, title) => {
     tab.title = title;
     if (tab.id === activeTabId) sendToRenderer('title-changed', title);
@@ -1300,6 +1304,86 @@ async function injectScripts(view) {
   }
 }
 
+// ─── Recording: a person demonstrates the task, the server keeps it as a playbook ───
+//
+// The page buffers what the user does (scripts/analyzer.js) in the same step shape the
+// agent produces, so a recording gets replay, healing and the Playwright export for
+// free from server/src/playbook.js. Nothing here interprets the steps.
+
+let recording = false;
+let recordedSteps = [];
+let recordedSecrets = new Set();
+let drainTimer = null;
+
+/** The HTTP origin behind the control socket. */
+function serverHttpBase() {
+  return (config.serverUrl || '').replace(/^wss/, 'https').replace(/^ws/, 'http').replace(/\/ws\/?$/, '');
+}
+
+function pushRecordedStep(step) {
+  if (!recording || recordedSteps.length >= 500) return;
+  recordedSteps.push({ t: Date.now(), ...step });
+}
+
+/**
+ * Only a URL the person asked for — the address bar, a new tab. Where a click or a
+ * form submission lands is already the click's step, and a goto over it replays past
+ * whatever that click set up (and pins a one-off session URL into the playbook).
+ */
+function recordNavigation(url) {
+  if (!recording || !/^https?:\/\//i.test(url || '')) return;
+  const last = recordedSteps[recordedSteps.length - 1];
+  if (last && last.action === 'navigate' && last.url === url) return;
+  pushRecordedStep({ action: 'navigate', url });
+}
+
+/** Collect what one page buffered. Steps carry their own timestamps; the merge sorts by them. */
+async function drainView(view, final = false) {
+  if (!view) return;
+  try {
+    const out = await worldEval(view, `__acRecordDrain(${final ? 'true' : 'false'})`);
+    if (!out) return;
+    for (const name of out.secrets || []) recordedSecrets.add(name);
+    for (const step of out.steps || []) pushRecordedStep(step);
+    recordedSteps.sort((a, b) => a.t - b.t);
+  } catch {
+    // A page mid-navigation has no isolated world; the next drain picks it up.
+  }
+}
+
+// ponytail: polled, so a click that navigates inside the window can be lost. A push
+// would need Runtime.enable, which this app never turns on (see ensureWorld).
+async function drainAll(final = false) {
+  for (const tab of tabs) await drainView(tab.view, final);
+  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+}
+
+async function startRecording() {
+  if (recording) return { recording: true, steps: recordedSteps };
+  recording = true;
+  recordedSteps = [];
+  recordedSecrets = new Set();
+  const view = getActiveView();
+  const url = view?.webContents.getURL();
+  // Replay has to start where the person started, the way an ask() run does.
+  if (/^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
+  for (const tab of tabs) await worldEval(tab.view, '__acRecordStart()').catch(() => {});
+  drainTimer = setInterval(() => drainAll().catch(() => {}), 400);
+  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+  return { recording: true, steps: recordedSteps };
+}
+
+async function stopRecording() {
+  if (!recording) return { recording: false, steps: recordedSteps };
+  clearInterval(drainTimer);
+  drainTimer = null;
+  for (const tab of tabs) await worldEval(tab.view, '__acRecordStop()').catch(() => {});
+  await drainAll(true);
+  recording = false;
+  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+  return { recording: false, steps: recordedSteps };
+}
+
 // ─── IPC ───
 
 ipcMain.handle('navigate', async (e, url) => {
@@ -1307,6 +1391,7 @@ ipcMain.handle('navigate', async (e, url) => {
   const view = getActiveView();
   if (!view) return;
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  recordNavigation(url);
   await pullCookiesFor(url);
   view.webContents.loadURL(url);
 });
@@ -1330,9 +1415,37 @@ ipcMain.handle('get-status', () => ({
 }));
 
 ipcMain.handle('enter-browsing', () => enterBrowsingMode('https://google.com'));
-ipcMain.handle('new-tab', (e, url) => createTab(url || 'https://google.com', true));
+ipcMain.handle('new-tab', (e, url) => { recordNavigation(url || 'https://google.com'); return createTab(url || 'https://google.com', true); });
 ipcMain.handle('close-tab', (e, id) => closeTab(id));
 ipcMain.handle('activate-tab', (e, id) => activateTab(id));
+
+ipcMain.handle('start-recording', () => startRecording());
+ipcMain.handle('stop-recording', () => stopRecording());
+ipcMain.handle('clear-recording', () => { recordedSteps = []; recordedSecrets = new Set(); return { recording, steps: [] }; });
+
+/** Hand the recording to the server, which saves it as a playbook and returns its Playwright code. */
+ipcMain.handle('save-recording', async (e, name, description) => {
+  if (!wsReady || !browserId) return { error: 'Not connected to server' };
+  if (recording) await stopRecording();
+  if (!recordedSteps.length) return { error: 'Nothing recorded yet' };
+  try {
+    const res = await fetch(`${serverHttpBase()}/api/browsers/${browserId}/playbooks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
+      body: JSON.stringify({
+        name,
+        prompt: description,
+        steps: recordedSteps.map(({ t, ...step }) => step),
+        secrets: [...recordedSecrets],
+      }),
+    });
+    const body = await res.json().catch(() => ({ error: `Server returned ${res.status}` }));
+    if (res.ok) { recordedSteps = []; recordedSecrets = new Set(); }
+    return body;
+  } catch (err) {
+    return { error: err.message };
+  }
+});
 
 ipcMain.handle('show-overlay', () => {
   const view = getActiveView();
@@ -1378,11 +1491,8 @@ ipcMain.handle('get-fingerprint', () => {
 
 ipcMain.handle('send-chat', async (e, messages) => {
   if (!wsReady || !browserId) return { error: 'Not connected to server' };
-  // Derive HTTP base URL from WebSocket URL
-  const wsUrl = config.serverUrl || '';
-  let httpBase = wsUrl.replace(/^wss/, 'https').replace(/^ws/, 'http').replace(/\/ws\/?$/, '');
   try {
-    const res = await fetch(`${httpBase}/api/browsers/${browserId}/chat`, {
+    const res = await fetch(`${serverHttpBase()}/api/browsers/${browserId}/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1797,6 +1907,17 @@ async function handleCommand(msg) {
   try {
     // ── Tab management ──
 
+    // The server drives recording too, so a flow can be demonstrated from the
+    // dashboard's live view. Both routes share one buffer: the panel here and the
+    // dashboard show the same steps.
+    if (action === 'record') {
+      const mode = params?.mode;
+      if (mode === 'start') await startRecording();
+      else if (mode === 'stop') await stopRecording();
+      else await drainAll();
+      sendResult(id, true, { recording, steps: recordedSteps, secrets: [...recordedSecrets] });
+      return;
+    }
     if (action === 'list_tabs') {
       sendResult(id, true, { tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url, active: t.id === activeTabId })) });
       return;
@@ -2271,7 +2392,14 @@ function startStream(fps) {
     streamCapturing = true;
     try {
       const img = await view.webContents.capturePage();
-      wsSend({ type: 'frame', data: 'data:image/jpeg;base64,' + img.toJPEG(40).toString('base64') });
+      // capturePage() returns device pixels — 2x the page on a retina screen. The
+      // live view maps a click through the frame's own width and sends it as CSS
+      // pixels, so an unscaled frame puts every click at twice the distance from
+      // the top-left: near enough at the corner, nowhere near the target at the
+      // other edge. Send the page at the size the page thinks it is.
+      const { width, height } = view.getBounds();
+      const frame = width > 0 && img.getSize().width !== width ? img.resize({ width, height, quality: 'good' }) : img;
+      wsSend({ type: 'frame', data: 'data:image/jpeg;base64,' + frame.toJPEG(40).toString('base64') });
     } catch {} finally { streamCapturing = false; }
   }, ms);
 }

@@ -7,7 +7,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { matchElement, renderPlaywright, variablesOf, missingVariables } from './src/playbook.js';
+import { matchElement, renderPlaywright, variablesOf, missingVariables, sanitizeSteps } from './src/playbook.js';
 import { fill, redact } from './src/chat-service.js';
 import * as runs from './src/runs.js';
 
@@ -78,6 +78,56 @@ assert.deepEqual(calls, [
   ['fill', '[id="txtMember"]', '1'],
   ['select', '[id="state"]', 'CA'],
 ]);
+
+// ── A person demonstrating the task: the browser records steps, the server cleans them up ──
+// (browser/scripts/analyzer.js builds these in the page, so nothing here trusts the shape)
+const demoed = [
+  { action: 'navigate', url: 'https://portal.example.com/login', start: true, t: 1 },
+  { action: 'click', el: { type: 'input', tag: 'input', text: 'User ID', domId: 'user' }, t: 2 },
+  { action: 'type', el: { type: 'input', tag: 'input', text: 'User ID', domId: 'user' }, text: 'mk@oya.ai', t: 3 },
+  { action: 'type', el: { type: 'input', tag: 'input', text: 'Password', domId: 'pw' }, text: '{{password}}', t: 4 },
+  { action: 'select_option', el: { type: 'select', tag: 'select', domId: 'state' }, option: 'CA', t: 5 },
+  { action: 'press_key', key: 'Enter', t: 6 },
+  { action: 'mouse_move', x: 10, y: 20, t: 7 },                       // not replayable
+  { action: 'click', el: {}, t: 8 },                                  // no stable handle
+  { action: 'navigate', url: 'javascript:alert(1)', t: 9 },           // not a page
+  { action: 'click', el: { type: 'button', tag: 'button', text: 'Sign in', evil: '<script>' }, t: 10 },
+];
+const clean = sanitizeSteps(demoed);
+assert.deepEqual(clean.map((s) => s.action), ['navigate', 'type', 'type', 'select_option', 'press_key', 'click'],
+  'the click into a field it then types in is dropped, and so is everything that cannot replay');
+assert.equal(clean[0].start, true, 'replay starts where the person started');
+assert.equal(clean[1].text, 'mk@oya.ai');
+assert.equal(clean[2].text, '{{password}}', 'the password was masked in the page and stays masked');
+assert.equal(clean[5].el.evil, undefined, 'unknown element fields are dropped, not stored');
+assert.equal(clean.find((s) => s.t !== undefined), undefined, 'capture timestamps do not become part of the playbook');
+assert.throws(() => sanitizeSteps('nope'), /must be an array/);
+assert.throws(() => sanitizeSteps(new Array(501).fill({ action: 'press_key', key: 'Enter' })), /limited to 500/);
+assert.throws(() => sanitizeSteps([{ action: 'navigate', url: 'https://x.test' }]), /no actions/);
+
+const demoedCode = renderPlaywright({ name: 'portal-login', steps: clean });
+assert.ok(!demoedCode.includes('mouse'), 'nothing unreplayable reaches the code');
+const recCalls = [];
+const recLoc = (desc) => ({ first: () => ({
+  click: async () => recCalls.push(['click', desc]),
+  fill: async (v) => recCalls.push(['fill', desc, v]),
+  selectOption: async (o) => recCalls.push(['select', desc, o.label]),
+}) });
+await new Function(demoedCode.replace('export default ', 'return '))()({
+  goto: async (u) => recCalls.push(['goto', u]),
+  getByText: recLoc, getByTestId: recLoc, getByLabel: recLoc, getByPlaceholder: recLoc, locator: recLoc,
+  keyboard: { press: async (k) => recCalls.push(['press', k]) },
+  mouse: { wheel: async (_, y) => recCalls.push(['wheel', y]) },
+}, { password: 'hunter2' });
+assert.deepEqual(recCalls, [
+  ['goto', 'https://portal.example.com/login'],
+  ['fill', '[id="user"]', 'mk@oya.ai'],
+  ['fill', '[id="pw"]', 'hunter2'],
+  ['select', '[id="state"]', 'CA'],
+  ['press', 'Enter'],
+  ['click', 'Sign in'],
+]);
+assert.ok(!demoedCode.includes('hunter2'), 'the demoed password is never in the code');
 
 // Human attention: the run parks, only its owner can see and answer it, then it finishes.
 const run = runs.start('owner', 'b1', async ({ requestHuman }) => ({ text: await requestHuman({ reason: 'agent', message: 'Which plan?' }) }));
