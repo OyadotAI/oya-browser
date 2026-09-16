@@ -46,6 +46,11 @@ try {
   assert.equal((await call(`/api/browsers/${id}/command`, 'POST', { action: 'navigate' })).status, 409);
   await call(`/api/control/sessions/${id}/control`, 'POST', { action: 'resume' });
   assert.equal((await call(`/api/browsers/${id}/command`, 'POST', { action: 'navigate' })).status, 200);
+  await call(`/api/control/sessions/${id}/control`, 'POST', { action: 'acquire' });
+  assert.equal((await call(`/api/control/sessions/${id}/record`, 'POST', { mode: 'start' })).status, 200);
+  assert.equal((await call(`/api/control/sessions/${id}/record`, 'POST', { mode: 'stop', resume: true })).status, 200);
+  assert.equal((await call(`/api/browsers/${id}/command`, 'POST', { action: 'navigate' })).status, 200, 'stopping a recording hands control back to automation');
+  assert.equal((await call(`/api/control/sessions/${id}/record`, 'POST', { mode: 'status' })).body.recording, false);
   await call('/api/operator/drain', 'POST', { draining: true }, 'operator');
   for (const path of ['/api/browsers/start', '/api/browsers/connect', '/api/browsers/provision']) assert.equal((await call(path, 'POST', {})).status, 503);
   await call('/api/operator/drain', 'POST', { draining: false }, 'operator');

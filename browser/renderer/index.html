@@ -1273,6 +1273,7 @@
       const codeEl = document.getElementById('record-code');
       const copyRow = document.getElementById('record-copy-row');
       let isRecording = false;
+      let recordBusy = false;
 
       const describe = (s) => {
         const label = s.el ? (s.el.text || s.el.name || s.el.domId || s.el.testId || s.el.tag || '') : '';
@@ -1303,8 +1304,13 @@
       }
 
       async function setRecording(on) {
+        if (recordBusy) return;
+        recordBusy = true;
+        toggle.disabled = true;
         say('');
-        render(on ? await oyaBrowser.startRecording() : await oyaBrowser.stopRecording());
+        try { render(on ? await oyaBrowser.startRecording() : await oyaBrowser.stopRecording()); }
+        catch (err) { say(err.message || 'Could not change recording state', true); }
+        finally { recordBusy = false; toggle.disabled = false; }
       }
 
       recBtn.addEventListener('click', async () => {
@@ -1318,7 +1324,8 @@
         say('');
         codeEl.classList.remove('visible');
         copyRow.style.display = 'none';
-        render(await oyaBrowser.clearRecording());
+        try { render(await oyaBrowser.clearRecording()); }
+        catch (err) { say(err.message || 'Could not clear recording', true); }
       });
 
       document.getElementById('record-save').addEventListener('click', async () => {
@@ -1327,7 +1334,7 @@
         if (!/^[\w-]{1,64}$/.test(name)) return say('Name must be 1-64 letters, digits, - or _', true);
         if (!desc) return say('Describe the flow: the agent needs it if a replay has to be healed.', true);
         say('Saving…');
-        const res = await oyaBrowser.saveRecording(name, desc);
+        const res = await oyaBrowser.saveRecording(name, desc).catch((err) => ({ error: err.message || 'Could not save recording' }));
         if (res.error) return say(res.error, true);
         say(res.name + ' saved — ' + res.steps + ' steps' + (res.variables?.length ? ', variables: ' + res.variables.join(', ') : ''));
         codeEl.textContent = res.code || '';

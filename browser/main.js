@@ -144,6 +144,7 @@ async function cdp(view, method, params = {}) {
 // UNPATCHED getBoundingClientRect — which is why the analyzer no longer needs a
 // flag to switch the fingerprint noise off while it measures.
 
+const { RecordingChannel } = require('./scripts/recording.cjs');
 const ISOLATED_WORLD = 'w' + require('crypto').randomBytes(8).toString('hex');
 const worldContexts = new WeakMap(); // view -> executionContextId
 
@@ -166,9 +167,8 @@ async function ensureWorld(view, { force = false } = {}) {
   // DOM are not a constant any MutationObserver can match on.
   const attr = 'data-' + require('crypto').randomBytes(4).toString('hex');
   await cdp(view, 'Runtime.evaluate', {
-    // The recorder arms itself as the document loads: a recording that started on
-    // the previous page must not stop because the user followed a link.
-    expression: analyzerScript.replace('__OYA_ATTR__', attr).replace('__OYA_RECORD__', String(recording)),
+    // RecordingChannel arms new documents while a recording is active.
+    expression: analyzerScript.replace('__OYA_ATTR__', attr).replace('__OYA_RECORD__', 'false'),
     contextId: executionContextId,
     returnByValue: true,
   });
@@ -1017,8 +1017,8 @@ function createTab(url, activate = true) {
   };
   view.webContents.on('did-navigate', updateUrl);
   view.webContents.on('did-navigate-in-page', updateUrl);
-  // Last chance to collect what the page buffered: the isolated world dies with the document.
-  view.webContents.on('did-start-navigation', () => { if (recording) drainView(view); });
+  // New tabs join an active recording before the user can interact with them.
+  tabReady.then(() => { if (recording) return armRecordingView(view); }).catch((err) => console.error('[recording]', err));
   view.webContents.on('page-title-updated', (e, title) => {
     tab.title = title;
     if (tab.id === activeTabId) sendToRenderer('title-changed', title);
@@ -1314,6 +1314,14 @@ let recording = false;
 let recordedSteps = [];
 let recordedSecrets = new Set();
 let drainTimer = null;
+const recordingChannels = new Map();
+const recordedIds = new Set();
+let recordingTask = Promise.resolve();
+function queueRecording(work) {
+  const next = recordingTask.then(work);
+  recordingTask = next.catch(() => {});
+  return next;
+}
 
 /** The HTTP origin behind the control socket. */
 function serverHttpBase() {
@@ -1322,6 +1330,8 @@ function serverHttpBase() {
 
 function pushRecordedStep(step) {
   if (!recording || recordedSteps.length >= 500) return;
+  if (step.id && recordedIds.has(step.id)) return;
+  if (step.id) recordedIds.add(step.id);
   recordedSteps.push({ t: Date.now(), ...step });
 }
 
@@ -1351,8 +1361,31 @@ async function drainView(view, final = false) {
   }
 }
 
-// ponytail: polled, so a click that navigates inside the window can be lost. A push
-// would need Runtime.enable, which this app never turns on (see ensureWorld).
+async function armRecordingView(view) {
+  if (recordingChannels.has(view)) return recordingChannels.get(view).ready;
+  const channel = new RecordingChannel({
+    send: (method, params) => cdp(view, method, params),
+    on: (method, fn) => {
+      const dbg = cdpAttach(view);
+      const listener = (_event, name, params) => { if (name === method) fn(params); };
+      dbg.on('message', listener);
+      return () => dbg.off('message', listener);
+    },
+    evaluate: (expression) => worldEval(view, expression),
+    worldName: ISOLATED_WORLD,
+    analyzer: analyzerScript.replace('__OYA_ATTR__', 'data-' + require('crypto').randomBytes(4).toString('hex')).replace('__OYA_RECORD__', 'false'),
+    receive: (out) => {
+      if (!recording) return;
+      for (const name of out.secrets || []) recordedSecrets.add(name);
+      for (const step of out.steps || []) pushRecordedStep(step);
+    },
+  });
+  recordingChannels.set(view, channel);
+  channel.ready = channel.start();
+  try { await channel.ready; }
+  catch (err) { recordingChannels.delete(view); throw err; }
+}
+
 async function drainAll(final = false) {
   for (const tab of tabs) await drainView(tab.view, final);
   sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
@@ -1363,12 +1396,18 @@ async function startRecording() {
   recording = true;
   recordedSteps = [];
   recordedSecrets = new Set();
+  recordedIds.clear();
   const view = getActiveView();
   const url = view?.webContents.getURL();
   // Replay has to start where the person started, the way an ask() run does.
   if (/^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
-  for (const tab of tabs) await worldEval(tab.view, '__acRecordStart()').catch(() => {});
-  drainTimer = setInterval(() => drainAll().catch(() => {}), 400);
+  try {
+    for (const tab of tabs) await armRecordingView(tab.view);
+  } catch (err) {
+    await stopRecording();
+    throw err;
+  }
+  drainTimer = setInterval(() => sendToRenderer('recorded-steps', { recording, steps: recordedSteps }), 400);
   sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
   return { recording: true, steps: recordedSteps };
 }
@@ -1377,7 +1416,11 @@ async function stopRecording() {
   if (!recording) return { recording: false, steps: recordedSteps };
   clearInterval(drainTimer);
   drainTimer = null;
-  for (const tab of tabs) await worldEval(tab.view, '__acRecordStop()').catch(() => {});
+  for (const [view, channel] of recordingChannels) {
+    await channel.ready.catch(() => {});
+    await channel.stop().catch((err) => { if (!view.webContents.isDestroyed()) throw err; });
+  }
+  recordingChannels.clear();
   await drainAll(true);
   recording = false;
   sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
@@ -1419,12 +1462,18 @@ ipcMain.handle('new-tab', (e, url) => { recordNavigation(url || 'https://google.
 ipcMain.handle('close-tab', (e, id) => closeTab(id));
 ipcMain.handle('activate-tab', (e, id) => activateTab(id));
 
-ipcMain.handle('start-recording', () => startRecording());
-ipcMain.handle('stop-recording', () => stopRecording());
-ipcMain.handle('clear-recording', () => { recordedSteps = []; recordedSecrets = new Set(); return { recording, steps: [] }; });
+ipcMain.handle('start-recording', () => queueRecording(startRecording));
+ipcMain.handle('stop-recording', () => queueRecording(stopRecording));
+ipcMain.handle('clear-recording', () => queueRecording(async () => {
+  for (const tab of tabs) await worldEval(tab.view, '__acRecordClear()');
+  recordedSteps = []; recordedSecrets = new Set(); recordedIds.clear();
+  const url = getActiveView()?.webContents.getURL();
+  if (recording && /^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
+  return { recording, steps: recordedSteps };
+}));
 
 /** Hand the recording to the server, which saves it as a playbook and returns its Playwright code. */
-ipcMain.handle('save-recording', async (e, name, description) => {
+ipcMain.handle('save-recording', (e, name, description) => queueRecording(async () => {
   if (!wsReady || !browserId) return { error: 'Not connected to server' };
   if (recording) await stopRecording();
   if (!recordedSteps.length) return { error: 'Nothing recorded yet' };
@@ -1445,7 +1494,7 @@ ipcMain.handle('save-recording', async (e, name, description) => {
   } catch (err) {
     return { error: err.message };
   }
-});
+}));
 
 ipcMain.handle('show-overlay', () => {
   const view = getActiveView();
@@ -1912,10 +1961,13 @@ async function handleCommand(msg) {
     // dashboard show the same steps.
     if (action === 'record') {
       const mode = params?.mode;
-      if (mode === 'start') await startRecording();
-      else if (mode === 'stop') await stopRecording();
-      else await drainAll();
-      sendResult(id, true, { recording, steps: recordedSteps, secrets: [...recordedSecrets] });
+      const result = await queueRecording(async () => {
+        if (mode === 'start') await startRecording();
+        else if (mode === 'stop') await stopRecording();
+        else await drainAll();
+        return { recording, steps: [...recordedSteps], secrets: [...recordedSecrets] };
+      });
+      sendResult(id, true, result);
       return;
     }
     if (action === 'list_tabs') {

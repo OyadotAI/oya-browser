@@ -20,6 +20,7 @@ import { createRequire } from 'module';
 import { userAgentFor, metadataFor } from '../ua.js';
 
 const require = createRequire(import.meta.url);
+const { RecordingChannel } = require('../../../browser/scripts/recording.cjs');
 const { LoginState, cdpCookies } = require('../../../browser/login-state.js');
 
 /**
@@ -240,6 +241,10 @@ export class CDPDriver {
     this.fingerprint = fingerprint || null;
     this.worldName = 'w' + randomBytes(8).toString('hex');
     this.acceptLanguage = fingerprint?.navigator?.languages?.join(',') || null;
+    this.recording = false;
+    this.recorded = [];
+    this.recordedSecrets = new Set();
+    this.recordedIds = new Set();
     this.login = login;
     this.loginState = login ? new LoginState(login.origins || {}, onStorage) : null;
   }
@@ -262,13 +267,11 @@ export class CDPDriver {
   }
 
   async attach(targetId) {
+    if (this.recordChannel) { await this.recordChannel.stop(); this.recordChannel = null; }
     const { sessionId } = await this.conn.send('Target.attachToTarget', { targetId, flatten: true });
     this.sessionId = sessionId;
     this.targetId = targetId;
     this.analyzerLoaded = false;
-    this.recording = false;
-    this.recorded = [];
-    this.recordedSecrets = new Set();
     for (const domain of ['Page', 'Runtime', 'DOM', 'Network']) {
       await this.conn.send(`${domain}.enable`, {}, sessionId).catch(() => {});
     }
@@ -328,12 +331,36 @@ export class CDPDriver {
     // per-session random tag attribute as the desktop path.
     this.tagAttr = 'data-' + randomBytes(4).toString('hex');
     this.worldContext = null;
+    if (this.recording) await this.armRecording();
     if (this.loginState) {
       await this.loginState.attach(
         (method, params = {}) => this.conn.send(method, params, sessionId),
         (method, fn) => this.conn.on(method, (params, sid) => { if (sid === sessionId) fn(params); }),
       );
     }
+  }
+
+  collectRecording(out) {
+    if (!this.recording) return;
+    for (const step of out?.steps || []) {
+      if (this.recorded.length >= 500 || this.recordedIds.has(step.id)) continue;
+      if (step.id) this.recordedIds.add(step.id);
+      this.recorded.push(step);
+    }
+    for (const name of out?.secrets || []) this.recordedSecrets.add(name);
+  }
+
+  async armRecording() {
+    const sessionId = this.sessionId;
+    this.recordChannel = new RecordingChannel({
+      send: (method, params) => this.conn.send(method, params, sessionId),
+      on: (method, fn) => this.conn.on(method, (params, sid) => { if (sid === sessionId) fn(params); }),
+      evaluate: (expression) => this.evaluate(expression),
+      worldName: this.worldName,
+      analyzer: getAnalyzer().replace('__OYA_ATTR__', this.tagAttr).replace('__OYA_RECORD__', 'false'),
+      receive: (out) => this.collectRecording(out),
+    });
+    await this.recordChannel.start();
   }
 
   isAlive() { return !!this.conn && !this.conn.closed; }
@@ -355,8 +382,8 @@ export class CDPDriver {
     this.worldContext = executionContextId;
 
     await this.conn.send('Runtime.evaluate', {
-      // A recording that started on the previous page keeps going on this one.
-      expression: analyzer.replace('__OYA_ATTR__', this.tagAttr).replace('__OYA_RECORD__', String(!!this.recording)),
+      // RecordingChannel arms new documents while a recording is active.
+      expression: analyzer.replace('__OYA_ATTR__', this.tagAttr).replace('__OYA_RECORD__', 'false'),
       contextId: executionContextId, returnByValue: true,
     }, this.sessionId);
     return executionContextId;
@@ -473,21 +500,23 @@ export class CDPDriver {
        */
       case 'record': {
         await this.ensureAnalyzer();
-        if (params.mode === 'start') {
-          this.recording = true;
+        if (params.mode === 'start' && !this.recording) {
           this.recorded = [];
           this.recordedSecrets = new Set();
-          // Replay has to start on the page the person started from.
-          const url = await this.evaluate('location.href').catch(() => null);
+          this.recordedIds = new Set();
+          const url = await this.evaluate('location.href');
           if (/^https?:\/\//i.test(url || '')) this.recorded.push({ action: 'navigate', url, start: true, t: Date.now() });
-          await this.evaluate('__acRecordStart()');
-        } else if (params.mode === 'stop') {
+          this.recording = true;
+          try { await this.armRecording(); }
+          catch (err) { this.recording = false; throw err; }
+        } else if (params.mode === 'stop' && this.recording) {
+          await this.recordChannel?.stop();
+          this.recordChannel = null;
+          this.collectRecording(await this.evaluate('__acRecordDrain(true)'));
           this.recording = false;
-          await this.evaluate('__acRecordStop()').catch(() => {});
+        } else if (this.recording) {
+          this.collectRecording(await this.evaluate('__acRecordDrain(false)'));
         }
-        const out = await this.evaluate(`__acRecordDrain(${params.mode === 'stop' ? 'true' : 'false'})`).catch(() => null);
-        for (const step of out?.steps || []) this.recorded.push(step);
-        for (const name of out?.secrets || []) this.recordedSecrets.add(name);
         return { ok: true, data: { recording: !!this.recording, steps: this.recorded || [], secrets: [...(this.recordedSecrets || [])] } };
       }
       case 'click': {

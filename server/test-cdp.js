@@ -200,6 +200,41 @@ try {
     assert((await driver.send('analyze')).ok, 'analyze still works from the isolated world');
   }
 
+  console.log('\nRecording survives document replacement without a status poll...');
+  await driver.send('navigate', { url: siteUrl });
+  // Desktop deliberately does not enable Runtime: binding events must still work.
+  await driver.conn.send('Runtime.disable', {}, driver.sessionId);
+  const startRecording = await driver.send('record', { mode: 'start' });
+  assert(startRecording.ok, 'recording starts');
+  await driver.evaluateMain(`document.querySelector('input').value = 'prefilled';
+    document.querySelector('input').focus();
+    document.querySelector('input').value = '';
+    document.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+    document.querySelector('input').dispatchEvent(new Event('change', { bubbles: true }));
+    const a = document.createElement('a'); a.href = '/next'; a.id = 'next-link'; a.textContent = 'Next';
+    document.body.appendChild(a); a.click();`);
+  await wait(300);
+  // Use the page's world here: no analyzer/read/status command may reinject it.
+  await driver.evaluateMain(`document.querySelector('input').focus();
+    document.querySelector('input').value = 'second page';
+    document.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));`);
+  const recordedFlow = await driver.send('record', { mode: 'stop' });
+  assert(recordedFlow.ok, 'recording stops');
+  assert(recordedFlow.data.steps.some(s => s.action === 'click' && s.el.domId === 'next-link'), 'navigation click survives without polling');
+  assert(recordedFlow.data.steps.some(s => s.action === 'type' && s.text === ''), 'clearing a field is retained');
+  assert(recordedFlow.data.steps.some(s => s.action === 'type' && s.text === 'second page'), 'new document records before first poll and stop flushes current field');
+  assert(await driver.evaluateMain(`typeof window.__acRecordSink === 'undefined'`), 'recorder binding stays out of site globals');
+  await driver.send('record', { mode: 'start' });
+  const freshFlow = await driver.send('record', { mode: 'stop' });
+  assert(freshFlow.data.steps.length === 1, 'a fresh recording contains no previous steps');
+  await driver.send('record', { mode: 'start' });
+  await driver.evaluateMain(`const p = document.createElement('input');
+    p.type = 'password'; p.name = 'secret'; document.body.appendChild(p); p.focus();
+    p.value = 'never-export-this'; p.dispatchEvent(new Event('input', { bubbles: true }));`);
+  const secretFlow = await driver.send('record', { mode: 'stop' });
+  assert(!JSON.stringify(secretFlow).includes('never-export-this'), 'password never leaves the isolated recorder');
+  assert(secretFlow.data.steps.some(s => s.text === '{{secret}}') && secretFlow.data.secrets.includes('secret'), 'password placeholder and secret name survive push capture');
+
   console.log('\n\u0039\ufe0f\u20e3  A persona actually reaches the page...');
   {
     const fp = getFingerprintForPersona({ id: 'cdp-test-persona', seed: 4242 });

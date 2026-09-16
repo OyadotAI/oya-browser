@@ -82,9 +82,17 @@ controlRouter.post('/sessions/:id/record', wrap(async (req, res) => {
   const dispatch = (action, params) => sendCommand(req.params.id, action, params, undefined, holder);
   const mode = req.body?.mode;
   if (mode === 'start') return res.json(await flow.start(req.params.id, dispatch));
-  if (mode === 'stop') return res.json((await flow.stop(req.params.id, dispatch)) || (await flow.status(req.params.id)));
+  if (mode === 'stop') {
+    const final = (await flow.stop(req.params.id, dispatch)) || (await flow.status(req.params.id));
+    if (req.body?.resume === true) {
+      await control().takeover(key(req), req.params.id, 'release', holder);
+      await control().takeover(key(req), req.params.id, 'resume', holder);
+    }
+    return res.json(final);
+  }
+  if (mode === 'discard') return res.json(await flow.discard(req.params.id));
   if (mode === 'status') return res.json(await flow.status(req.params.id, dispatch));
-  throw fault('invalid_mode', 'mode must be start, stop or status', 400);
+  throw fault('invalid_mode', 'mode must be start, stop, status or discard', 400);
 }));
 controlRouter.post('/sessions/:id/stop', wrap(async (req, res) => {
   const { stopBrowser } = await import('../api.js');

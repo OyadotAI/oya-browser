@@ -508,3 +508,40 @@ test('profiles manage proxies: add, check, and remove after confirming', async (
   await remove.click();
   await expect(dialog.getByText('No proxies yet')).toBeVisible();
 });
+
+test('recording ignores a late poll, hands back control, and closes an active flow', async ({ page }) => {
+  await dashboard(page);
+  await page.route('**/api/playbooks', route => route.fulfill({ json: { playbooks: [] } }));
+  let recording = false;
+  let delayPoll = false;
+  let releasePoll: (() => void) | undefined;
+  const stops: Array<{ mode: string; resume?: boolean }> = [];
+  await page.route('**/api/control/sessions/qa-browser/record', async route => {
+    const request = route.request().postDataJSON();
+    if (request.mode === 'start') recording = true;
+    if (request.mode === 'stop') { recording = false; stops.push(request); }
+    const response = { recording, steps: recording || stops.length ? [{ action: 'click', el: { text: 'Continue' } }] : [], secrets: [] };
+    if (request.mode === 'status' && delayPoll) {
+      delayPoll = false;
+      await new Promise<void>(resolve => { releasePoll = resolve; });
+    }
+    await route.fulfill({ json: response });
+  });
+  await page.getByRole('button', { name: 'Playbooks', exact: true }).click();
+  await page.getByRole('button', { name: 'Record a flow', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Record a flow' });
+  await dialog.getByRole('button', { name: 'Start recording', exact: true }).click();
+  delayPoll = true;
+  await expect.poll(() => !!releasePoll).toBe(true);
+  await dialog.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(dialog.getByText('Stopped', { exact: true })).toBeVisible();
+  releasePoll!();
+  await expect(dialog.getByRole('button', { name: 'Save playbook', exact: true })).toBeVisible();
+  expect(stops[0].resume).toBe(true);
+  await dialog.getByRole('button', { name: 'Start new recording', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+  await expect(dialog).not.toBeVisible();
+  expect(stops).toHaveLength(2);
+  expect(stops[1].resume).toBe(true);
+});

@@ -202,8 +202,7 @@ git tag "$TAG"
 log_ok "Tagged $TAG"
 
 git push origin "$(git branch --show-current)"
-git push origin "$TAG"
-log_ok "Pushed branch and tag"
+log_ok "Pushed branch; publishing desktop assets before pushing the tag"
 
 # ── Create GitHub release with binaries ──
 
@@ -213,15 +212,19 @@ log_info "Creating GitHub release $TAG..."
 # Windows builds to this release, and the macOS binary stays on the release
 # that last shipped one.
 if [ "$BUILD_DESKTOP" = "0" ]; then
-  gh release create "$TAG" --title "Oya Browser $TAG" --generate-notes
+  gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "Oya Browser $TAG" --generate-notes
   log_ok "GitHub release $TAG created (no desktop build in this one)"
 else
-  gh release create "$TAG" "$DST_DMG" "$SRC_ZIP" "$SRC_YML" \
+  gh release create "$TAG" "$DST_DMG" "$SRC_ZIP" "$SRC_YML" --target "$(git rev-parse HEAD)" \
     --title "Oya Browser $TAG" \
     --generate-notes
   log_ok "GitHub release $TAG created with macOS binary and update feed"
 fi
-log_ok "Linux build + prod deploy will be triggered by the tag push"
+# Release creation may create the remote tag itself. Either way CI waits for
+# publication before downloading, so it cannot mistake an uploading draft for
+# a release without desktop assets.
+git push origin "$TAG"
+log_ok "Published release and pushed tag"
 
 # ── Publish SDK and CLI to npm ──
 #

@@ -109,12 +109,12 @@ for (const [re, msg] of [
   [/isSecretField\(node\) \? secretPlaceholder\(node\) : value/, 'a typed password is no longer masked before it is buffered'],
   [/recordedSecrets\.add\(name\)/, 'secret field names are no longer reported, so the playbook cannot hide them'],
   [/const RECORD_ON = '__OYA_RECORD__' === 'true'/, 'the recorder cannot be armed at injection time'],
-  [/e\.detail === 0 && last && last\.action === 'press_key'/, 'Enter on a button would record twice: the key and the click the browser makes from it'],
+  [/e\.detail === 0 && lastKey\?\.key === 'Enter'/, 'Enter on a button would record twice: the key and the click the browser makes from it'],
 ]) assert.ok(re.test(analyzer), msg);
 
-// ...and the loader must substitute that flag, or a recording stops at the first navigation.
-assert.ok(/\.replace\('__OYA_RECORD__', String\(recording\)\)/.test(src),
-  'ensureWorld does not arm the recorder in a new document');
+// Both desktop and CDP clients must deliver events before a document disappears.
+assert.ok(/new RecordingChannel\(/.test(src),
+  'desktop recording must use the navigation-safe event channel');
 assert.ok(/steps: recordedSteps\.map\(\(\{ t, \.\.\.step \}\) => step\)/.test(src),
   'capture timestamps are being sent to the server as part of the steps');
 

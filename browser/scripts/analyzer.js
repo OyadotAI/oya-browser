@@ -1003,6 +1003,9 @@
 
   let recording = false;
   let recorded = [];
+  let sequence = 0;
+  let lastKey = null;
+  const documentId = Math.random().toString(36).slice(2);
   const recordedSecrets = new Set();
   let typing = null;   // { node, el, value } — the field being typed into
   let focused = null;  // { node, el } — captured before typing, so a label is never the typed text
@@ -1030,7 +1033,14 @@
 
   function pushStep(step) {
     if (!recording || recorded.length >= MAX_RECORDED) return;
-    recorded.push({ ...step, t: Date.now() });
+    const entry = { ...step, t: Date.now(), id: documentId + ':' + (++sequence) };
+    recorded.push(entry);
+    if (window.__acRecordSink) {
+      try {
+        window.__acRecordSink({ steps: [entry], secrets: [...recordedSecrets] });
+        recorded.pop();
+      } catch { /* retain for the next drain */ }
+    }
   }
 
   /** One `type` step per field, not one per keystroke. */
@@ -1038,7 +1048,7 @@
     if (!typing) return;
     const { node, el, value } = typing;
     typing = null;
-    if (value !== '') pushStep({ action: 'type', el, text: isSecretField(node) ? secretPlaceholder(node) : value });
+    pushStep({ action: 'type', el, text: value !== '' && isSecretField(node) ? secretPlaceholder(node) : value });
   }
 
   function onRecordFocus(e) {
@@ -1070,10 +1080,10 @@
     flushTyping();
     if (hit.type === 'select') return; // the change event carries the option
     // Enter on a focused button, and Enter submitting a form, arrive as a key *and* as
-    // a click the browser synthesized (detail 0). One act, so keep one step — the click,
-    // which names the control instead of depending on where the focus happens to be.
-    const last = recorded[recorded.length - 1];
-    if (e.detail === 0 && last && last.action === 'press_key' && Date.now() - last.t < 1000) recorded.pop();
+    // a click the browser synthesized (detail 0). The key was already delivered,
+    // so omit the synthesized click instead of replaying the submit twice.
+    if (e.detail === 0 && lastKey?.key === 'Enter' && Date.now() - lastKey.t < 1000) return;
+    lastKey = null;
     pushStep({ action: 'click', el: stableOf(hit.node, hit.type) });
   }
 
@@ -1093,6 +1103,7 @@
   function onRecordKey(e) {
     if (!recording || !RECORD_KEYS.has(e.key)) return;
     flushTyping();  // the value is the step; the key is what submits it
+    lastKey = { key: e.key, t: Date.now() };
     pushStep({ action: 'press_key', key: e.key });
   }
 
@@ -1102,7 +1113,13 @@
   document.addEventListener('click', onRecordClick, true);
   document.addEventListener('keydown', onRecordKey, true);
 
-  window.__acRecordStart = function () { recording = true; return true; };
+  window.__acRecordStart = function () {
+    if (!recording) { recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null; }
+    recording = true; return true;
+  };
+  window.__acRecordClear = function () {
+    recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null;
+  };
   window.__acRecordStop = function () { flushTyping(); recording = false; return true; };
 
   /** Steps since the last call, and every secret name seen. Clears the step buffer. */

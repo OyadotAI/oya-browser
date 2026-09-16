@@ -126,6 +126,11 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Wait for release publication
+      run: bash k8s/scripts/wait-release.sh "${GITHUB_REF_NAME}"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Download browser binaries from release
       run: |
         mkdir -p server/downloads

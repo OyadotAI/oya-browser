@@ -215,8 +215,39 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
 
+  const acquired = useRef(false);
+  const mounted = useRef(true);
+  const revision = useRef(0);
   const recording = !!state?.recording;
   const steps = state?.steps || [];
+
+  // Stop capture and hand control back on every exit, including navigation
+  // away from this tab. The server retains the final steps for recovery.
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (acquired.current) {
+        void api(`/control/sessions/${encodeURIComponent(browserId)}/record`, {
+          key: apiKey, method: 'POST', body: { mode: 'stop', resume: true },
+        }).catch(() => undefined);
+      }
+    };
+  }, [browserId, apiKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const version = revision.current;
+    void api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, {
+      key: apiKey, method: 'POST', body: { mode: 'status' },
+    }).then((saved) => {
+      if (!cancelled && version === revision.current && (saved.recording || saved.steps.length)) {
+        // An active flow is rejoined through Start, which acquires control.
+        if (!saved.recording) setState(saved);
+      }
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [browserId, apiKey]);
 
   // `started`, not `state`: the poll below replaces that object every 800ms, and
   // depending on it tore the frame stream down and rebuilt it just as often — the
@@ -231,16 +262,23 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
     return () => { stop(); clearInterval(fpsTimer); };
   }, [started, browserId, apiKey]);
 
-  // The steps are collected on the server, so the list survives a reload of this page.
+  // Never overlap status requests or let a response resurrect a stopped flow.
   useEffect(() => {
-    if (!recording) return;
-    const timer = setInterval(async () => {
+    if (!recording || busy) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
       try {
-        setState(await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode: 'status' } }));
-      } catch { /* keep recording */ }
-    }, 800);
-    return () => clearInterval(timer);
-  }, [recording, browserId, apiKey]);
+        const next = await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, {
+          key: apiKey, method: 'POST', body: { mode: 'status' },
+        });
+        if (!cancelled) setState(next);
+      } catch (err) { if (!cancelled) toast(errorMessage(err), 'error'); }
+      if (!cancelled) timer = setTimeout(poll, 800);
+    };
+    timer = setTimeout(poll, 800);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [recording, busy, browserId, apiKey, toast]);
 
   const send = useCallback(async (action: string, params: Record<string, unknown> = {}) => {
     const r = await api<{ ok: boolean; error?: string }>(`/control/sessions/${encodeURIComponent(browserId)}/input`, {
@@ -271,10 +309,21 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
 
   const record = async (mode: 'start' | 'stop', force = false) => {
     setBusy(mode);
+    revision.current++;
     try {
-      if (mode === 'start') await takeControl(force);
-      setState(await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode } }));
+      if (mode === 'start') { await takeControl(force); acquired.current = true; }
+      if (!mounted.current) {
+        await api(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode: 'stop', resume: true } });
+        acquired.current = false;
+        return;
+      }
+      const next = await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode, resume: mode === 'stop' } });
+      if (mode === 'stop') acquired.current = false;
+      if (mounted.current) setState(next);
     } catch (err) {
+      if (mode === 'start' && acquired.current) {
+        await api(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode: 'stop', resume: true } }).then(() => { acquired.current = false; }).catch(() => undefined);
+      }
       const code = (err as { body?: { code?: string } }).body?.code;
       setHeld(code === 'control_busy');
       toast(code === 'control_busy' ? 'Another tab or operator is holding this browser.'
@@ -291,6 +340,7 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
         key: apiKey, method: 'POST',
         body: { name: name.trim(), prompt: description.trim(), steps, secrets: state?.secrets || [] },
       });
+      await api(`/control/sessions/${encodeURIComponent(browserId)}/record`, { key: apiKey, method: 'POST', body: { mode: 'discard' } });
       toast(`${saved.name} saved — ${saved.steps} steps`, 'success');
       onSaved();
       onClose();
@@ -298,14 +348,32 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
     finally { setBusy(null); }
   };
 
+  const close = async () => {
+    if (busy) return;
+    if (recording || acquired.current) {
+      setBusy('stop');
+      revision.current++;
+      try {
+        const final = await api<RecordState>(`/control/sessions/${encodeURIComponent(browserId)}/record`, {
+          key: apiKey, method: 'POST', body: { mode: 'stop', resume: true },
+        });
+        acquired.current = false;
+        setState(final);
+      } catch (err) { toast(errorMessage(err), 'error'); return; }
+      finally { setBusy(null); }
+    }
+    onClose();
+  };
+
   const nameOk = /^[\w-]{1,64}$/.test(name.trim());
 
   return (
-    <Dialog open onClose={onClose} size="lg" title="Record a flow"
+    <Dialog open onClose={() => { void close(); }} size="lg" title="Record a flow"
       description="Do the task yourself in the live view. What you click and type becomes a playbook, and a Playwright module."
       footer={
         <>
-          <button className="btn-ghost" onClick={onClose}>Close</button>
+          <button className="btn-ghost" onClick={close} disabled={!!busy}>Close</button>
+          {state && !recording && <button className="btn-ghost" onClick={() => record('start')} disabled={!!busy}>Start new recording</button>}
           {!state
             ? <button className="btn-primary" onClick={() => record('start', held)} disabled={!browserId || busy === 'start'}>
                 {busy === 'start' ? 'Starting…' : held ? 'Take over and record' : 'Start recording'}
