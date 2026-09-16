@@ -7,7 +7,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { matchElement, renderPlaywright, variablesOf, missingVariables, sanitizeSteps } from './src/playbook.js';
+import { matchElement, renderPlaywright, variablesOf, missingVariables, sanitizeSteps, templateValues } from './src/playbook.js';
 import { fill, redact } from './src/chat-service.js';
 import * as runs from './src/runs.js';
 
@@ -128,6 +128,84 @@ assert.deepEqual(recCalls, [
   ['click', 'Sign in'],
 ]);
 assert.ok(!demoedCode.includes('hunter2'), 'the demoed password is never in the code');
+
+// ── Every value becomes a field ──
+// What a person typed, picked or clicked is an input with the recorded value as its
+// default, so a replay that passes nothing still does what was demonstrated.
+const templated = templateValues({
+  prompt: 'Log in as mk@oya.ai and pick a state',
+  steps: structuredClone(clean),
+  defaults: {},
+});
+assert.deepEqual(variablesOf(templated.steps), ['user', 'password', 'state', 'signIn']);
+assert.deepEqual(templated.defaults, { user: 'mk@oya.ai', state: 'CA', signIn: 'Sign in' },
+  'the password has no default: it never left the page');
+assert.equal(templated.steps[0].url, 'https://portal.example.com/login', 'the addresses are the flow, not its data');
+assert.equal(templated.prompt, 'Log in as {{user}} and pick a state',
+  'the healing agent reads the prompt, so the data in it travels too — but not a button label');
+assert.deepEqual(missingVariables(templated, {}), ['password'], 'only the secret has to be supplied');
+assert.deepEqual(templated.labels, ['signIn'], 'a button label is how the flow was clicked, not what it was about');
+
+// The export of a templated recording: hand it the defaults and it repeats the run.
+const fieldsCode = renderPlaywright({ name: 'portal-login', steps: templated.steps });
+assert.ok(!fieldsCode.includes('mk@oya.ai'), 'the recorded values stay out of the generated code');
+const fieldCalls = [];
+const fieldLoc = (desc) => ({ first: () => ({
+  click: async () => fieldCalls.push(['click', desc]),
+  fill: async (v) => fieldCalls.push(['fill', desc, v]),
+  selectOption: async (o) => fieldCalls.push(['select', desc, o.label]),
+}) });
+const fieldPage = {
+  goto: async (u) => fieldCalls.push(['goto', u]),
+  getByText: fieldLoc, getByTestId: fieldLoc, getByLabel: fieldLoc, getByPlaceholder: fieldLoc, locator: fieldLoc,
+  keyboard: { press: async (k) => fieldCalls.push(['press', k]) },
+  mouse: { wheel: async (_, y) => fieldCalls.push(['wheel', y]) },
+};
+const runExport = (vars) => new Function(fieldsCode.replace('export default ', 'return '))()(fieldPage, vars);
+await runExport({ ...templated.defaults, password: 'hunter2' });
+assert.deepEqual(fieldCalls, recCalls, 'the defaults replay exactly what was demonstrated');
+
+fieldCalls.length = 0;
+await runExport({ ...templated.defaults, user: 'ada@oya.ai', state: 'NY', password: 'hunter2' });
+assert.deepEqual(fieldCalls, [
+  ['goto', 'https://portal.example.com/login'],
+  ['fill', '[id="user"]', 'ada@oya.ai'],
+  ['fill', '[id="pw"]', 'hunter2'],
+  ['select', '[id="state"]', 'NY'],
+  ['press', 'Enter'],
+  ['click', 'Sign in'],
+], 'and any one of them can be swapped');
+
+// Naming: one field typed into twice is one input; two fields are two, however they were filled.
+const named = templateValues({
+  prompt: '',
+  defaults: {},
+  steps: [
+    { action: 'type', el: { domId: 'from', ariaLabel: 'From' }, text: 'Ada' },
+    { action: 'type', el: { domId: 'to', ariaLabel: 'To' }, text: 'Ada' },
+    { action: 'type', el: { name: 'q' }, text: 'widgets' },
+    { action: 'type', el: { name: 'q' }, text: 'gadgets' },
+    { action: 'type', el: { placeholder: 'Date of birth' }, text: '1984-02-11' },
+    { action: 'type', el: { type: 'input', tag: 'input', ariaLabel: '2024 total' }, text: '900' },
+    { action: 'type', el: { tag: 'input' }, text: 'nameless' },
+    { action: 'click', el: { type: 'button', tag: 'button', testId: 'submit' } },   // an icon button
+  ],
+});
+// Never a bare `field`: a label that cannot be an identifier is told what it names,
+// and a box the page never labelled is named after what it is and where it was.
+assert.deepEqual(named.defaults, {
+  from: 'Ada', to: 'Ada', q: 'widgets', q2: 'gadgets', dateOfBirth: '1984-02-11',
+  input2024Total: '900', input7: 'nameless',
+});
+assert.equal(named.steps[1].text, '{{to}}', 'From and To stay separate inputs, however they were filled');
+assert.equal(named.steps[3].text, '{{q2}}', 'the same field, corrected, is a second input');
+assert.equal(named.steps[7].el.text, undefined, 'an icon button has no text to name or match on');
+
+// A click matches on its full precedence while the value is the recorded one, and falls
+// back to the value only once the caller changes it — see runStep's click branch.
+assert.equal(matchElement({ ...page[1], text: 'Member ID' }, page).id, 2, 'unchanged: DOM id still wins');
+assert.equal(matchElement({ type: 'option', tag: 'li', text: 'Acme Health Plan' }, page, 'Aetna').id, 4,
+  'changed: the old handle belongs to another choice, so the value is the key');
 
 // Human attention: the run parks, only its owner can see and answer it, then it finishes.
 const run = runs.start('owner', 'b1', async ({ requestHuman }) => ({ text: await requestHuman({ reason: 'agent', message: 'Which plan?' }) }));

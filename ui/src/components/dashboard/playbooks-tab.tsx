@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleDot, Code, ExternalLink, Play, Trash2, Workflow } from 'lucide-react';
 import { ago, api, errorMessage } from '@/lib/api-client';
 import Dialog, { Confirm } from '@/components/ui/dialog';
@@ -8,9 +8,9 @@ import SyntaxCode from '@/components/ui/syntax-code';
 import LiveView from './live-view';
 import { subscribeFrames } from '@/lib/live-stream';
 import { useToast } from './toast';
-import type { BrowserRow } from './types';
+import type { BrowserRow, Persona } from './types';
 
-interface PlaybookBody { name: string; variables: string[]; steps: number; code: string }
+interface PlaybookBody { name: string; variables: string[]; defaults: Record<string, string>; steps: number; code: string }
 interface PlaybookInfo extends PlaybookBody {
   createdAt: string | null;
   promotedAt: string | null;
@@ -32,7 +32,7 @@ await browser.play('order', { name: 'Alan' }); // replayed without the LLM`;
  * Flows recorded from ask() runs. Each replays without the LLM; a replay that
  * breaks can heal itself into a draft, which waits here for review.
  */
-export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string; browsers: BrowserRow[]; now: number }) {
+export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiKey: string; browsers: BrowserRow[]; personas: Persona[]; now: number }) {
   const toast = useToast();
   const [playbooks, setPlaybooks] = useState<PlaybookInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -82,7 +82,7 @@ export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-5 lg:px-6">
         <div className="mr-auto">
           <h2 className="text-[22px] font-medium tracking-tight text-text">Playbooks <span className="ml-2 text-[14px] text-text-dim">{list.length}</span></h2>
-          <p className="text-[12px] text-text-muted">Flows recorded from an ask() run, or from you doing it yourself. Replayed without the LLM; values stay out of them as variables.</p>
+          <p className="text-[12px] text-text-muted">Flows recorded from an ask() run, or from you doing it yourself. Replayed without the LLM; every value you typed, picked or clicked is a variable you can override.</p>
         </div>
         <button className="btn-primary" onClick={() => setRecording(true)} disabled={!browsers.length}
           title={browsers.length ? 'Do the task yourself in a live browser and keep it as a playbook' : 'Start a browser first'}>
@@ -157,7 +157,7 @@ export default function PlaybooksTab({ apiKey, browsers, now }: { apiKey: string
         {code && <pre className="max-h-[60vh] overflow-auto rounded-lg border border-border bg-bg-card px-4 py-3 text-[12px]"><SyntaxCode code={code.code} language="typescript" /></pre>}
       </Dialog>
 
-      {running && <RunDialog apiKey={apiKey} playbook={running} browsers={browsers} onClose={() => setRunning(null)} onFinished={refresh} />}
+      {running && <RunDialog apiKey={apiKey} playbook={running} browsers={browsers} personas={personas} onClose={() => setRunning(null)} onFinished={refresh} />}
 
       {recording && <RecordDialog apiKey={apiKey} browsers={browsers} onClose={() => setRecording(false)} onSaved={refresh} />}
 
@@ -369,7 +369,7 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
 
   return (
     <Dialog open onClose={() => { void close(); }} size="lg" title="Record a flow"
-      description="Do the task yourself in the live view. What you click and type becomes a playbook, and a Playwright module."
+      description="Do the task yourself in the live view. What you click and type becomes a playbook of named fields, and a Playwright module."
       footer={
         <>
           <button className="btn-ghost" onClick={close} disabled={!!busy}>Close</button>
@@ -434,7 +434,7 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
                   <label className="label" htmlFor="rec-desc">What does this flow do?</label>
                   <input id="rec-desc" className="field" value={description} autoComplete="off" placeholder="Log into the portal and open the eligibility screen"
                     onChange={(e) => setDescription(e.target.value)} />
-                  <p className="mt-1 text-[12px] text-text-muted">Used to turn the values you typed into variables, and to finish the job if a replay breaks.</p>
+                  <p className="mt-1 text-[12px] text-text-muted">Used to finish the job if a replay breaks. Every value you typed, picked or clicked is already a variable.</p>
                 </div>
               </>
             )}
@@ -445,17 +445,28 @@ function RecordDialog({ apiKey, browsers, onClose, onSaved }: {
   );
 }
 
+/** How long a browser started from here gets to dial in — cloud ones take up to ~90s. */
+const CONNECT_TIMEOUT_MS = 150_000;
+
 /** Run a playbook on a live browser and follow it, answering it if it stops for a person. */
-function RunDialog({ apiKey, playbook, browsers, onClose, onFinished }: {
-  apiKey: string; playbook: PlaybookInfo; browsers: BrowserRow[]; onClose: () => void; onFinished: () => void;
+function RunDialog({ apiKey, playbook, browsers, personas, onClose, onFinished }: {
+  apiKey: string; playbook: PlaybookInfo; browsers: BrowserRow[]; personas: Persona[];
+  onClose: () => void; onFinished: () => void;
 }) {
   const toast = useToast();
+  // A profile is chosen when a browser starts, never at replay, so picking one here
+  // means picking a browser already running it — or starting one that does.
+  const [persona, setPersona] = useState('');
+  const matching = useMemo(() => (persona ? browsers.filter((b) => b.persona === persona) : browsers), [browsers, persona]);
   const [browserId, setBrowserId] = useState(browsers[0]?.id || '');
-  const [values, setValues] = useState<Record<string, string>>({});
+  // Prefilled with what the recording used, which is what the replay does with an
+  // untouched field anyway — so the form shows the run it is about to make.
+  const [values, setValues] = useState<Record<string, string>>(() => ({ ...playbook.defaults }));
   const [autoHeal, setAutoHeal] = useState(true);
   const [run, setRun] = useState<RunInfo | null>(null);
   const [reply, setReply] = useState('');
   const [starting, setStarting] = useState(false);
+  const [pending, setPending] = useState<{ id: string; until: number } | null>(null);
 
   const runId = run?.id;
   const ended = run?.status === 'succeeded' || run?.status === 'failed';
@@ -471,15 +482,41 @@ function RunDialog({ apiKey, playbook, browsers, onClose, onFinished }: {
     return () => clearInterval(timer);
   }, [runId, ended, apiKey, onFinished]);
 
-  const start = async () => {
+  const start = useCallback(async (on: string) => {
     setStarting(true);
     try {
-      setRun(await api<RunInfo>(`/browsers/${encodeURIComponent(browserId)}/runs`, {
+      setRun(await api<RunInfo>(`/browsers/${encodeURIComponent(on)}/runs`, {
         key: apiKey, method: 'POST', body: { playbook: playbook.name, data: values, autoHeal },
       }));
     } catch (err) { toast(errorMessage(err), 'error'); }
     finally { setStarting(false); }
+  }, [apiKey, playbook.name, values, autoHeal, toast]);
+
+  // Keep the browser choice inside the profile filter.
+  useEffect(() => {
+    if (!matching.some((b) => b.id === browserId)) setBrowserId(matching[0]?.id || '');
+  }, [matching, browserId]);
+
+  /** Nothing is running on this profile: start one, then replay on it once it dials in. */
+  const startAndRun = async () => {
+    setStarting(true);
+    try {
+      const { id } = await api<{ id: string }>('/browsers/start', { key: apiKey, method: 'POST', body: { persona } });
+      setPending({ id, until: Date.now() + CONNECT_TIMEOUT_MS });
+    } catch (err) { toast(errorMessage(err), 'error'); setStarting(false); }
   };
+
+  // The dashboard already polls GET /browsers every 3s, so watching the prop is the
+  // whole wait — no second poller, and it ends on its own deadline.
+  useEffect(() => {
+    if (!pending) return;
+    if (browsers.some((b) => b.id === pending.id)) { setPending(null); void start(pending.id); }
+    else if (Date.now() > pending.until) {
+      setPending(null);
+      setStarting(false);
+      toast('The browser did not connect in time. It may still come up — check the Browsers tab.', 'error');
+    }
+  }, [pending, browsers, start, toast]);
 
   const respond = async () => {
     if (!run) return;
@@ -498,17 +535,28 @@ function RunDialog({ apiKey, playbook, browsers, onClose, onFinished }: {
         ? <button className="btn-ghost" onClick={onClose}>Close</button>
         : <>
             <button className="btn-ghost" onClick={onClose}>Cancel</button>
-            <button className="btn-primary" onClick={start} disabled={!browserId || starting}>{starting ? 'Starting…' : 'Run'}</button>
+            {matching.length
+              ? <button className="btn-primary" onClick={() => start(browserId)} disabled={!browserId || starting}>{starting ? 'Starting…' : 'Run'}</button>
+              : <button className="btn-primary" onClick={startAndRun} disabled={!persona || starting}>{starting ? 'Starting a browser…' : 'Start one and run'}</button>}
           </>}>
       {!run ? (
         <div className="flex flex-col gap-4">
           <div>
+            <label className="label" htmlFor="pb-persona">Profile</label>
+            <select id="pb-persona" className="field" value={persona} onChange={(e) => setPersona(e.target.value)} disabled={starting}>
+              <option value="">Any profile</option>
+              {personas.map((p) => <option key={p.id} value={p.id}>{p.name}{p.isDefault ? ' · default' : ''}</option>)}
+            </select>
+          </div>
+          <div>
             <label className="label" htmlFor="pb-browser">Browser</label>
-            {browsers.length
-              ? <select id="pb-browser" className="field" value={browserId} onChange={(e) => setBrowserId(e.target.value)}>
-                  {browsers.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.id}</option>)}
+            {matching.length
+              ? <select id="pb-browser" className="field" value={browserId} onChange={(e) => setBrowserId(e.target.value)} disabled={starting}>
+                  {matching.map((b) => <option key={b.id} value={b.id}>{b.name} · {b.id}</option>)}
                 </select>
-              : <p className="text-sm text-text-muted">No browser is running. Start one from the Browsers tab.</p>}
+              : persona
+                ? <p className="text-sm text-yellow">No browser is running this profile. Start one and the replay follows it there — its logins, fingerprint and exit IP come with it.</p>
+                : <p className="text-sm text-text-muted">No browser is running. Start one from the Browsers tab.</p>}
           </div>
           {playbook.variables.map((v) => (
             <div key={v}>

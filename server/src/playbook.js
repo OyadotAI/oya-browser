@@ -2,18 +2,18 @@
  * Playbooks: an ask() run frozen into steps that replay without the LLM.
  *
  * Steps carry the analyzer's stable element metadata (testId, DOM id, aria-label,
- * text, name), never the numeric id, which dies with each analysis. Per-run values
- * are `{{name}}` placeholders, filled at replay, so a playbook never stores the data
- * it was recorded with. Replay re-analyzes and matches, so it works on every
- * provider. The Playwright code is an export to read or run yourself; nothing here
- * ever evaluates it.
+ * text, name), never the numeric id, which dies with each analysis. Every value that
+ * was typed, picked or clicked is a `{{name}}` placeholder filled at replay, with the
+ * recorded value kept as its default — so a playbook is a form, not a transcript, and
+ * a run that passes nothing still does what was demonstrated. Passwords are the one
+ * value with no default: they never leave the page. Replay re-analyzes and matches,
+ * so it works on every provider. The Playwright code is an export to read or run
+ * yourself; nothing here ever evaluates it.
  */
 
 import { sendCommand } from './ws-handler.js';
-import { chatCompletion } from './llm.js';
 import { runChat, lastRun, fill, FILTERS, pipesOf, selectOptionIn, uploadFileIn, isFileValue } from './chat-service.js';
 import * as keyConfig from './key-config.js';
-import * as usage from './usage.js';
 
 const NAME = /^[\w-]{1,64}$/;
 const IDENT = /^[A-Za-z_]\w{0,39}$/;
@@ -156,45 +156,69 @@ export function renderPlaywright(pb) {
   ].join('\n');
 }
 
-const describe = (pb) => ({ name: pb.name, variables: variablesOf(pb.steps), steps: pb.steps.length, code: renderPlaywright(pb) });
+const describe = (pb) => ({ name: pb.name, variables: variablesOf(pb.steps), defaults: pb.defaults || {}, steps: pb.steps.length, code: renderPlaywright(pb) });
+
+const CAMEL = (s) => String(s).trim().toLowerCase()
+  .replace(/[^a-z0-9]+(.)?/g, (_, c) => (c ? c.toUpperCase() : ''))
+  .slice(0, 40);
 
 /**
- * Values typed as literals (the prompt carried them, not `data`) that are really
- * per-run inputs become placeholders, with the recorded value kept as a default.
+ * The variable name a step's value gets, from whatever the element says about itself.
+ * Never a bare `field`: a form of anonymous boxes is one nobody can fill, so a value
+ * with no handle to read is named after what it is and the step it was at.
  */
-async function extractVariables(apiKey, pb) {
-  // A run given `data` already said what varies; guessing more turns buttons and menu picks into inputs.
-  // Secrets do not count: a recording masks its password fields in the page, and that
-  // one placeholder must not stop the rest of the flow from being templated.
-  if (variablesOf(pb.steps).some((v) => !(pb.secrets || []).includes(v))) return;
-  const values = {};
-  pb.steps.forEach((step, i) => {
-    const v = step.action === 'type' ? step.text : step.action === 'click' ? step.el?.text : null;
-    if (v && !HAS_PLACEHOLDER.test(v)) values[i] = v;
-  });
-  if (!Object.keys(values).length) return;
-  const { openaiKey, baseUrl, model } = keyConfig.resolve(apiKey);
-  if (!openaiKey) return;
-
-  const data = await chatCompletion({
-    baseUrl, apiKey: openaiKey, model,
-    messages: [
-      { role: 'system', content: 'You turn a recorded browser automation into a reusable template. Given the task and the literal value used at each step, decide which values are per-run inputs (names, IDs, dates, codes, search terms, anything supplied by the task) and which are fixed UI (button labels, menu items, navigation links). Reply with JSON only, mapping step number to a camelCase variable name for inputs: {"3": "memberId"}. Reuse one name when the same input appears at several steps.' },
-      { role: 'user', content: JSON.stringify({ task: pb.prompt, values }) },
-    ],
-  });
-  if (data.usage?.prompt_tokens) usage.record(apiKey, 'chat_input_tokens', data.usage.prompt_tokens);
-  if (data.usage?.completion_tokens) usage.record(apiKey, 'chat_output_tokens', data.usage.completion_tokens);
-
-  const map = JSON.parse(data.choices?.[0]?.message?.content?.match(/\{[\s\S]*\}/)?.[0] || '{}');
-  for (const [i, name] of Object.entries(map)) {
-    if (!(i in values) || typeof name !== 'string' || !IDENT.test(name)) continue;
-    const step = pb.steps[Number(i)];
-    if (step.action === 'type') step.text = `{{${name}}}`;
-    else step.el.text = `{{${name}}}`;
-    pb.defaults[name] = values[i];
-    pb.prompt = pb.prompt.split(values[i]).join(`{{${name}}}`);
+function nameFor(step, i) {
+  const el = step.el || {};
+  const kind = CAMEL(el.type || el.tag || '') || 'field';
+  const from = step.action === 'click'
+    ? [el.text, el.ariaLabel, el.testId, el.domId, el.name]
+    : [el.name, el.domId, el.ariaLabel, el.placeholder, el.text, el.testId];
+  for (const raw of from) {
+    const name = raw && CAMEL(raw);
+    if (!name) continue;
+    if (IDENT.test(name)) return name;
+    // "2024" or "1st line" is a fine name once it is told what it names.
+    const prefixed = `${kind}${name[0].toUpperCase()}${name.slice(1)}`.slice(0, 40);
+    if (IDENT.test(prefixed)) return prefixed;
   }
+  return `${kind}${i + 1}`;
+}
+
+/**
+ * Every value a person typed, picked or clicked becomes a `{{name}}`, with the
+ * recorded value as its default — so a replay that passes nothing behaves exactly as
+ * it was recorded, and every value is an input the caller can override. Values that
+ * already carry a placeholder (an ask() run, a masked password) are left alone, and
+ * so are navigate URLs: the addresses are the flow, not its data.
+ *
+ * ponytail: names come from DOM handles, so a field the page never labelled lands on
+ * what it is and where — `input6`. A rename step in the record dialog if that bites.
+ */
+export function templateValues(pb) {
+  const taken = new Map();   // name -> the value it was first given
+  pb.labels = [];            // the click-label ones: a button name is not task data
+  for (const [i, step] of pb.steps.entries()) {
+    const key = step.action === 'type' ? 'text' : step.action === 'select_option' ? 'option' : null;
+    // An icon button records no text: nothing to name a variable after, and nothing
+    // for a replay to match it on, so it stays the element handle it already is.
+    const value = key ? step[key] : step.action === 'click' ? step.el?.text : null;
+    if (!value || HAS_PLACEHOLDER.test(value)) continue;
+
+    const base = nameFor(step, i);
+    let name = base;
+    // One field typed into twice is one input. Two fields that derive the same name are two,
+    // even when the person happened to type the same thing into both.
+    for (let n = 2; taken.has(name) && taken.get(name) !== value; n++) name = `${base}${n}`;
+    taken.set(name, value);
+
+    if (key) step[key] = `{{${name}}}`;
+    else { step.el.text = `{{${name}}}`; pb.labels.push(name); }
+    pb.defaults[name] = value;
+    // A healing agent reads the prompt, so the data in it has to travel too. Only
+    // what was typed or picked: substituting a button label mangles the description.
+    if (key && pb.prompt && value.length >= 3) pb.prompt = pb.prompt.split(value).join(`{{${name}}}`);
+  }
+  return pb;
 }
 
 /** `run` defaults to the browser's last ask(); a recording passes its own steps in. */
@@ -204,8 +228,7 @@ export async function create(apiKey, browserId, name, run = lastRun(browserId)) 
 
   // Which keys were secrets, so a healing replay keeps them hidden from the model.
   const pb = { name, prompt: run.prompt, steps: structuredClone(run.steps), defaults: {}, secrets: run.secrets || [], createdAt: new Date().toISOString() };
-  // Without extraction the playbook still replays, with the recorded literals.
-  await extractVariables(apiKey, pb).catch((err) => console.error(`[playbook] variable extraction failed: ${err.message}`));
+  templateValues(pb);
   await keyConfig.savePlaybook(apiKey, name, pb);
   return describe(pb);
 }
@@ -261,16 +284,20 @@ async function find(browserId, el, text) {
   throw new Error(`no element matching ${JSON.stringify(el?.text ?? el?.domId ?? el?.name ?? '')}`);
 }
 
-async function runStep(browserId, step, values) {
+async function runStep(browserId, step, values, defaults = {}) {
   switch (step.action) {
     case 'navigate': return command(browserId, 'navigate', { url: fill(step.url, values) }, 90_000);
     case 'press_key': return command(browserId, 'press_key', { key: step.key });
     case 'scroll': return command(browserId, 'scroll', { direction: step.direction, amount: step.amount });
     case 'wait': return command(browserId, 'wait', { selector: step.selector, timeout: step.timeout });
     case 'click': {
-      // A data-driven option (an insurer, a plan) is found by its value; its old DOM id belonged to another choice.
-      const byValue = HAS_PLACEHOLDER.test(step.el?.text || '') ? fill(step.el.text, values) : undefined;
-      const el = await find(browserId, step.el, byValue);
+      const key = (step.el?.text || '').match(/^\{\{(\w+)\}\}$/)?.[1];
+      const filled = key ? fill(step.el.text, values) : undefined;
+      // Still the recorded label: match on the full precedence, testId first. Changed —
+      // a data-driven option, an insurer, a plan — and the old DOM id belonged to
+      // another choice, so the value is the only handle left.
+      const byValue = filled !== undefined && filled !== defaults[key] ? filled : undefined;
+      const el = await find(browserId, filled === undefined ? step.el : { ...step.el, text: filled }, byValue);
       return command(browserId, 'click', { selector: `[data-ac-id="${el.id}"]` });
     }
     case 'type': {
@@ -308,7 +335,7 @@ export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, 
   for (let i = 0; i < total; i++) {
     const step = pb.steps[i];
     try {
-      await runStep(browserId, step, values);
+      await runStep(browserId, step, values, pb.defaults || {});
     } catch (err) {
       if (!autoHeal) throw fail(422, `Step ${i + 1} of ${total} (${step.action}) failed: ${err.message}`);
       return heal(apiKey, browserId, pb, i, err, values, { checkpoint, requestHuman });
@@ -324,7 +351,11 @@ async function heal(apiKey, browserId, pb, i, err, values, hooks) {
   let result;
   try {
     const hidden = new Set(pb.secrets || []);
-    const data = Object.fromEntries(Object.entries(values).filter(([k]) => !hidden.has(k)));
+    // Button and link labels are how the flow was clicked, not what it was about. Handing
+    // them over as data makes redact() rewrite "Sign in" to {{signIn}} in the page the
+    // agent is reading, which is the opposite of help.
+    const ignored = new Set([...hidden, ...(pb.labels || [])]);
+    const data = Object.fromEntries(Object.entries(values).filter(([k]) => !ignored.has(k)));
     const secrets = Object.fromEntries(Object.entries(values).filter(([k]) => hidden.has(k)));
     result = await runChat(browserId, [{ role: 'user', content: task }], { apiKey, data, secrets, ...hooks });
     if (result.limited) throw new Error('the agent hit its step limit');

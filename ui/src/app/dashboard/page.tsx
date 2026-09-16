@@ -282,7 +282,7 @@ export default function DashboardPage() {
                 <PersonasTab apiKey={apiKey} browsers={browsers} personas={personas} refresh={fetchPersonas}
                   openId={openPersona} onOpen={setOpenPersona} onShowBrowsers={showBrowsersFor} now={now} />
               )}
-              {tab === 'playbooks' && <PlaybooksTab key={project ?? ''} apiKey={apiKey} browsers={browsers} now={now} />}
+              {tab === 'playbooks' && <PlaybooksTab key={project ?? ''} apiKey={apiKey} browsers={browsers} personas={personas} now={now} />}
               {tab === 'control' && <div className="h-full min-w-0 overflow-hidden"><ControlTab key={project ?? ''} apiKey={apiKey} /></div>}
             </div>
 

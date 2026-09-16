@@ -105,6 +105,8 @@ export interface Playbook {
   name: string;
   /** Inputs `play()` accepts; any left out reuse the recorded value. */
   variables: string[];
+  /** What each variable was recorded with. A secret has none — it never left the page. */
+  defaults: Record<string, string>;
   steps: number;
   /** The same flow as a Playwright module: `export default async function run(page, vars)`. */
   code: string;

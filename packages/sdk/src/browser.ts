@@ -157,9 +157,10 @@ export class Browser {
   }
 
   /**
-   * Save the last `ask()` on this browser as a named playbook. Values that came
-   * from the prompt (names, IDs, dates) become variables; `code` is the same
-   * flow as a Playwright module, to read or run yourself.
+   * Save the last `ask()` on this browser as a named playbook. Every value that was
+   * typed, picked or clicked becomes a variable, with what the run used kept in
+   * `defaults`, so `play()` with nothing repeats the run and any one value can be
+   * swapped. `code` is the same flow as a Playwright module, to read or run yourself.
    */
   toPlaybook(name: string): Promise<Playbook> {
     return this.http.request<Playbook>('POST', `/api/browsers/${this.id}/playbooks`, { name }, 120_000);
