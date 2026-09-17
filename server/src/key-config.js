@@ -25,6 +25,7 @@ import { fingerprint as ownerOf } from './audit.js';
 import { sealText, openText } from './secrets.js';
 import { runtimeConfig, validateBaseUrl } from './runtime-config.js';
 import { isConfigured as cloudConfigured } from './sandbox.js';
+import { cleanPlaybook } from './playbook-cleanup.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const STORE = process.env.OYA_DATA_DIR
@@ -301,6 +302,29 @@ export function getPlaybook(apiKey, name) {
   try { return { ...JSON.parse(openText(scopeFor(owner), sealed)), name }; } catch { return null; }
 }
 
+/** Upgrade saved playbooks and healed drafts without losing their sealed originals. */
+export async function cleanupPlaybooks() {
+  let updated = 0, unreadable = 0;
+  for (const [owner, row] of store) {
+    for (const [field, sealed] of Object.entries(row)) {
+      if (!field.startsWith('_playbook:')) continue;
+      let original;
+      try { original = JSON.parse(openText(scopeFor(owner), sealed)); }
+      catch { unreadable++; continue; }
+      const cleaned = cleanPlaybook(original);
+      if (JSON.stringify(cleaned) === JSON.stringify(original)) continue;
+      const replacement = sealText(scopeFor(owner), JSON.stringify(cleaned));
+      const backup = `_playbook-backup:v1:${field.slice('_playbook:'.length)}`;
+      if (!Object.hasOwn(row, backup)) row[backup] = sealed;
+      row[field] = replacement;
+      dirty = true;
+      updated++;
+    }
+  }
+  if (updated) await flush();
+  return { updated, unreadable };
+}
+
 // ── Persistence ──
 
 let writeQueue = Promise.resolve();
@@ -354,6 +378,7 @@ export async function restore() {
         store.set(row.owner, cur);
       }
       if (store.size) console.log(`[key-config] restored settings for ${store.size} keys`);
+      await cleanupPlaybooks();
       return;
     }
   } catch (e) {
@@ -361,6 +386,7 @@ export async function restore() {
   }
   try { load(JSON.parse(await readFile(STORE, 'utf8'))); }
   catch (e) { if (e.code !== 'ENOENT') console.error('[key-config] restore failed:', e.message); }
+  await cleanupPlaybooks();
 }
 
 export async function drain() { await flush(); }

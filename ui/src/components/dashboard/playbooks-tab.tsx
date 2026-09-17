@@ -82,7 +82,7 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
       <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-5 lg:px-6">
         <div className="mr-auto">
           <h2 className="text-[22px] font-medium tracking-tight text-text">Playbooks <span className="ml-2 text-[14px] text-text-dim">{list.length}</span></h2>
-          <p className="text-[12px] text-text-muted">Flows recorded from an ask() run, or from you doing it yourself. Replayed without the LLM; every value you typed, picked or clicked is a variable you can override.</p>
+          <p className="text-[12px] text-text-muted">Flows recorded from an ask() run, or from you doing it yourself. Replayed without the LLM; values you enter or select are variables you can override.</p>
         </div>
         <button className="btn-primary" onClick={() => setRecording(true)} disabled={!browsers.length}
           title={browsers.length ? 'Do the task yourself in a live browser and keep it as a playbook' : 'Start a browser first'}>

@@ -1010,10 +1010,30 @@
   let typing = null;   // { node, el, value } — the field being typed into
   let focused = null;  // { node, el } — captured before typing, so a label is never the typed text
 
+  // Check at event time, not when flushing: a real edit may hide/remove its field.
+  // Do not require viewport intersection: keyboard users can focus scrolled content.
+  function recordVisible(node) {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE || !node.isConnected) return false;
+    if (node.tagName === 'INPUT' && node.type === 'hidden') return false;
+    for (let el = node; el; el = el.parentElement || el.getRootNode()?.host) {
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden'
+        || style.visibility === 'collapse' || style.opacity === '0'
+        || style.contentVisibility === 'hidden') return false;
+    }
+    return [...node.getClientRects()].some(r => r.width > 0 && r.height > 0);
+  }
+
   /** The interactive element an event really landed on. */
   function recordTarget(event) {
+    if (!event.isTrusted) return null;
     let node = (event.composedPath && event.composedPath()[0]) || event.target;
+    if (!recordVisible(node)) return null;
     for (let i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < 6; i++, node = node.parentElement) {
+      // Styled checkboxes often hide their native input. Replay the visible label;
+      // the browser-forwarded click on its hidden control is excluded above.
+      if (event.type === 'click' && node.tagName === 'LABEL' && node.control
+        && !recordVisible(node.control)) return { node, type: 'button' };
       const type = getInteractiveType(node);
       if (type) return { node, type };
     }
@@ -1101,7 +1121,8 @@
   }
 
   function onRecordKey(e) {
-    if (!recording || !RECORD_KEYS.has(e.key)) return;
+    if (!recording || !e.isTrusted || !RECORD_KEYS.has(e.key)) return;
+    if (!recordVisible(e.composedPath?.()[0] || e.target)) return;
     flushTyping();  // the value is the step; the key is what submits it
     lastKey = { key: e.key, t: Date.now() };
     pushStep({ action: 'press_key', key: e.key });

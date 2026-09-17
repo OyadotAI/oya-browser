@@ -208,16 +208,16 @@ try {
   assert(startRecording.ok, 'recording starts');
   await driver.evaluateMain(`document.querySelector('input').value = 'prefilled';
     document.querySelector('input').focus();
-    document.querySelector('input').value = '';
-    document.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
-    document.querySelector('input').dispatchEvent(new Event('change', { bubbles: true }));
+    document.querySelector('input').select();
     const a = document.createElement('a'); a.href = '/next'; a.id = 'next-link'; a.textContent = 'Next';
-    document.body.appendChild(a); a.click();`);
+    document.body.prepend(a);`);
+  await driver.send('press-key', { key: 'Backspace' });
+  const linkPoint = await driver.evaluateMain(`(() => { const r = document.getElementById('next-link').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+  await driver.send('click-coords', linkPoint);
   await wait(300);
   // Use the page's world here: no analyzer/read/status command may reinject it.
-  await driver.evaluateMain(`document.querySelector('input').focus();
-    document.querySelector('input').value = 'second page';
-    document.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));`);
+  await driver.evaluateMain(`document.querySelector('input').focus()`);
+  await driver.send('keyboard_type', { text: 'second page' });
   const recordedFlow = await driver.send('record', { mode: 'stop' });
   assert(recordedFlow.ok, 'recording stops');
   assert(recordedFlow.data.steps.some(s => s.action === 'click' && s.el.domId === 'next-link'), 'navigation click survives without polling');
@@ -229,8 +229,8 @@ try {
   assert(freshFlow.data.steps.length === 1, 'a fresh recording contains no previous steps');
   await driver.send('record', { mode: 'start' });
   await driver.evaluateMain(`const p = document.createElement('input');
-    p.type = 'password'; p.name = 'secret'; document.body.appendChild(p); p.focus();
-    p.value = 'never-export-this'; p.dispatchEvent(new Event('input', { bubbles: true }));`);
+    p.type = 'password'; p.name = 'secret'; document.body.appendChild(p); p.focus();`);
+  await driver.send('keyboard_type', { text: 'never-export-this' });
   const secretFlow = await driver.send('record', { mode: 'stop' });
   assert(!JSON.stringify(secretFlow).includes('never-export-this'), 'password never leaves the isolated recorder');
   assert(secretFlow.data.steps.some(s => s.text === '{{secret}}') && secretFlow.data.secrets.includes('secret'), 'password placeholder and secret name survive push capture');
