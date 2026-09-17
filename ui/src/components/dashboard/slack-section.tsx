@@ -100,6 +100,17 @@ export default function SlackSection({ apiKey, Row }: { apiKey: string; Row: (pr
   if (!config) return <div className="flex min-h-[270px] items-center justify-center gap-2 text-sm text-text-muted" role="status"><Loader2 className="h-4 w-4 animate-spin" />Loading your Slack settings…</div>;
 
   const selected = channels?.find(c => c.id === config.channelId);
+  const tokenForm = (
+    <div className="space-y-4">
+      <Row id="slack-token" label="Bot token" hint="From your app’s OAuth & Permissions page. Needs chat:write, channels:join, channels:read and groups:read.">
+        <input id="slack-token" className="settings-input font-mono text-[12px]" type="password" autoComplete="off" spellCheck={false}
+          placeholder="xoxb-…" value={token} onChange={e => setToken(e.target.value)} />
+      </Row>
+      <button type="button" className="btn-ghost h-9" disabled={busy || !token.trim()} onClick={() => void save({ botToken: token.trim() })}>
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}Connect
+      </button>
+    </div>
+  );
   return (
     <>
       <div className="mb-7">
@@ -141,18 +152,25 @@ export default function SlackSection({ apiKey, Row }: { apiKey: string; Row: (pr
                   )}
                 </>
               )}
-              <details open={!config.oauthAvailable} className={config.oauthAvailable ? 'border-t border-border pt-4' : ''}>
-                <summary className={`cursor-pointer text-[12px] font-medium text-text-muted hover:text-text ${config.oauthAvailable ? '' : 'list-none'}`}>Use your own Slack app instead</summary>
-                <div className="mt-4 space-y-4">
-                  <Row id="slack-token" label="Bot token" hint="From your app’s OAuth page. Needs chat:write and channels:read.">
-                    <input id="slack-token" className="settings-input font-mono text-[12px]" type="password" autoComplete="off" spellCheck={false}
-                      placeholder="xoxb-…" value={token} onChange={e => setToken(e.target.value)} />
-                  </Row>
-                  <button type="button" className="btn-ghost h-9" disabled={busy || !token.trim()} onClick={() => void save({ botToken: token.trim() })}>
-                    {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}Connect
-                  </button>
-                </div>
-              </details>
+              {/* With an app configured this is the secondary path, folded away behind
+                  the one-click button. Without one it is the only path, so it is not
+                  an "instead" of anything — a details element there renders as an inert
+                  line of text above a field, which reads like a mislabelled form. */}
+              {config.oauthAvailable ? (
+                <details className="border-t border-border pt-4">
+                  <summary className="cursor-pointer text-[12px] font-medium text-text-muted hover:text-text">Use your own Slack app instead</summary>
+                  <div className="mt-4">{tokenForm}</div>
+                </details>
+              ) : (
+                <>
+                  <p className="text-[12px] leading-5 text-text-muted">
+                    This deployment has no Slack app of its own, so connect one you control:
+                    create an app at <span className="text-text">api.slack.com/apps</span>, give it
+                    the scopes below, install it to your workspace, and paste its bot token.
+                  </p>
+                  {tokenForm}
+                </>
+              )}
             </div>
           )}
         </Step>
