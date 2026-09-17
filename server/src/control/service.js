@@ -25,6 +25,16 @@ async function ensure(tx, key) {
   if (p.deletedAt) throw fault('project_deleted', 'Project has been deleted', 410);
   return p;
 }
+/**
+ * The API key a project was created with, by id — what background work uses when
+ * it has a project and no caller. Null rather than throwing where the caller is a
+ * worker or a redirect that can only drop the job, not report a 503 to anyone.
+ */
+export async function keyOfProject(id, service = control()) {
+  const p = await service.store.get('project', id);
+  if (!p?.key) return null;
+  try { return service.projectKey(p); } catch { return null; }
+}
 const publicProject = ({ key, alerts, recentCloud, ...rest }) => rest;
 const publicSession = ({ cleanup, response, requestHash, queuedRequest, egressHash, enrollmentHash, ...rest }) => rest;
 const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v);
@@ -430,6 +440,37 @@ export class ControlService {
       return { id, url, types, secret };
     });
   }
+  /**
+   * The project's Slack sink, as one webhook row with a derived id, so connecting
+   * twice replaces the sink instead of stacking duplicates. It carries no secret:
+   * the bot token lives in the key's sealed settings and is resolved at send time,
+   * which is also what lets one install serve both the OAuth and pasted-token paths.
+   */
+  async slackSink(key, patch = {}) {
+    return this.store.transact(async tx => {
+      const p = await ensure(tx, key);
+      const id = `slack:${p.id}`;
+      const existing = await tx.get('webhook', id);
+      // Only what the caller passed changes: the worker disables a dead install
+      // without knowing which channel it was pointed at.
+      const hook = tx.put('webhook', id, {
+        channel: null, types: SLACK_EVENTS, enabled: true, ...existing, ...patch,
+        id, project: p.id, kind: 'slack', url: null,
+      });
+      tx.emit(p.id, existing ? 'webhook.updated' : 'webhook.created', null, { id, kind: 'slack' });
+      return { id, channel: hook.channel, types: hook.types, enabled: hook.enabled };
+    });
+  }
+  /**
+   * Record an event for a project that already exists. Used by paths outside the
+   * control plane's own state machine — SDK runs — so their failures and handover
+   * requests reach the same delivery pipeline as session events.
+   */
+  async emit(key, type, sessionId = null, detail = {}) {
+    await this.store.transact(async tx => { tx.emit(projectId(key), type, sessionId, detail); });
+  }
 }
+/** What a Slack sink subscribes to when it is created. */
+export const SLACK_EVENTS = ['run.needs_attention', 'run.failed', 'session.failed'];
 let singleton;
 export const control = () => singleton ||= new ControlService();

@@ -82,6 +82,14 @@ Project settings include `maxConcurrent`, `budgetUsd`, provider `rates` in USD/b
 
 The `/api/control` overview includes the latest 100 events. Read the full retained log using `/api/control/events?after={cursor}` or export administrator audit data from `/api/control/audit/export` as NDJSON. Webhooks use a durable outbox, at-least-once delivery, exponential retries for 24 hours, and manual replay through `/api/control/deliveries/{id}/replay`. Deduplicate with `Oya-Event-Id`. Validate `Oya-Signature: t=<seconds>,v1=<hex>` as HMAC-SHA256 of `<seconds>.<raw request body>` with the returned secret, using a constant-time comparison and an appropriate timestamp tolerance.
 
+SDK runs publish to the same log, so a task that ends badly is visible to the same subscribers as a session that does: `run.needs_attention` carries the reason (`captcha`, `mfa`, `agent`, `heal_failed`) and the message shown to a person, and `run.failed` carries the error. Both name the browser as their session, so a subscriber can open or share it.
+
+## Slack
+
+A project may point one Slack channel at its events. Connect either by installing the Slack app (`GET /api/slack/install`, available when the deployment sets `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and `SLACK_SIGNING_SECRET`) or by sending a bot token from your own app to `PUT /api/slack` with `{ botToken, channelId }`; the token needs `chat:write`, `chat:write.public`, `channels:read` and `groups:read`, and is stored sealed against the project's key. `GET /api/slack/channels` lists what the bot can post to. A private channel also needs the bot invited. The install's `state` is single-use, expires in five minutes, and is bound to the browser that requested it by an `HttpOnly` cookie, so an authorize link cannot be completed anywhere else — finish an install in the browser that started it.
+
+The sink subscribes to `run.needs_attention`, `run.failed` and `session.failed`, and rides the same outbox and retries as any webhook. Each message carries a share link — an operator credential scoped to that one browser, expiring in an hour — so the person who sees it can take the browser over without an Oya account, and an attention message carries a button that answers the run. Set `OYA_CONSOLE_URL` wherever the console's public address is not derivable from `OYA_PUBLIC_WS_URL`, or those links will point at the wrong host. A revoked token, or a channel that was deleted or archived, disables the sink rather than retrying for a day.
+
 Recording access stays tenant-scoped. Private object storage makes completed recordings available across replicas. Failed uploads remain in the local spool for retry. Retention deletes local and archived recordings; pending upload spools require persistent disk. Real Supabase Storage integration should be verified in the deployment's private bucket before relying on archival durability.
 
 ## Clients and validation

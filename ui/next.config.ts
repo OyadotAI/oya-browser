@@ -14,9 +14,19 @@ const SECURITY_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
 ];
 
+/**
+ * Dev-only: Next blocks cross-origin requests to /_next dev assets, which a tunnel
+ * always is. Reaching the console through one is how Slack's OAuth redirect and the
+ * live-browser share links get exercised locally, so the tunnel hosts are allowed by
+ * wildcard — free tunnel hostnames rotate, and pinning one means editing this file
+ * every restart. Ignored entirely by `next build`.
+ */
+const DEV_TUNNEL_ORIGINS = ["*.ngrok-free.app", "*.ngrok.app", "*.trycloudflare.com"];
+
 const nextConfig: NextConfig = {
   output: "standalone",
   devIndicators: false,
+  allowedDevOrigins: DEV_TUNNEL_ORIGINS,
   // This is a running App Router application. Express owns /api and the
   // browser WebSockets; all frontend requests go to the Next.js runtime.
   outputFileTracingRoot: __dirname,

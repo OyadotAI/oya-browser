@@ -60,6 +60,7 @@ export default function DashboardPage() {
 
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<'alerts' | undefined>(undefined);
   const [showStart, setShowStart] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [stopIds, setStopIds] = useState<string[] | null>(null);
@@ -147,6 +148,17 @@ export default function DashboardPage() {
   }, [openProject]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
+
+  // Coming back from the Slack install. Land the person on the channel picker
+  // rather than an unchanged dashboard, and drop the parameter so a refresh is quiet.
+  useEffect(() => {
+    const outcome = new URLSearchParams(window.location.search).get('slack');
+    if (!outcome) return;
+    history.replaceState(null, '', window.location.pathname);
+    if (outcome === 'pick-channel') { setSettingsSection('alerts'); setShowSettings(true); toast('Slack connected — choose a channel', 'success'); }
+    else if (outcome === 'connected') toast('Slack connected', 'success');
+    else toast(`Slack install failed: ${outcome.replace(/_/g, ' ')}`, 'error');
+  }, [toast]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -328,7 +340,7 @@ export default function DashboardPage() {
         {shot && <img src={shot.src} alt="Screenshot" className="w-full rounded-md border border-border" />}
       </Dialog>
 
-      <SettingsDialog open={showSettings} onClose={() => { setShowSettings(false); fetchConfig(); }} apiKey={apiKey} onRerunSetup={() => setShowOnboarding(true)} />
+      <SettingsDialog open={showSettings} initialSection={settingsSection} onClose={() => { setShowSettings(false); setSettingsSection(undefined); fetchConfig(); }} apiKey={apiKey} onRerunSetup={() => setShowOnboarding(true)} />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import https from 'node:https';
 import { isIP } from 'node:net';
 import { createHmac, randomUUID } from 'node:crypto';
 import { heartbeatInstance, clusterOrigin } from './cluster.js';
-import { control, instanceId, terminal, attachOnly, holdsSlot, live } from './service.js';
+import { control, instanceId, terminal, attachOnly, holdsSlot, live, keyOfProject } from './service.js';
 import { openText } from '../secrets.js';
 import { registry } from '../connection-registry.js';
 import { sessions as gateways } from '../gateway.js';
@@ -13,6 +13,8 @@ import { assertSafeTarget } from '../net-guard.js';
 import { maintain as maintainRecordings } from '../recorder.js';
 import { metrics } from '../metrics.js';
 import { authenticateToken } from '../auth.js';
+import * as slack from '../slack.js';
+import * as keyConfig from '../key-config.js';
 
 const DAY = 86400000, METER_MS = 30000;
 let timer, accessTimer, leaseTimer, heartbeating = false, running = false, validating = false, provisioning = null, maintenance = null, lastMaintenance = 0;
@@ -148,21 +150,57 @@ export async function deliver(service, sender = sendWebhook) {
   });
   const events = new Map((await service.store.events({ seqs: batch.map(d => d.eventSeq) })).map(e => [e.id, e]));
   await Promise.all(batch.map(async d => {
-    let ok = false;
+    let ok = false, dead = false;
     try {
       const event = events.get(d.eventSeq);
       if (!event) throw new Error('Event is past retention');
-      const body = JSON.stringify(event), timestamp = String(Math.floor(Date.now() / 1000));
-      const signature = createHmac('sha256', openText(`webhook:${d.hook.id}`, d.hook.secret)).update(`${timestamp}.${body}`).digest('hex');
-      ok = await sender(d.hook.url, body, { 'Content-Type': 'application/json', 'Oya-Event-Id': String(event.id), 'Oya-Signature': `t=${timestamp},v1=${signature}` });
+      if (d.hook.kind === 'slack') ({ ok, dead } = await postSlack(service, d.hook, event));
+      else {
+        const body = JSON.stringify(event), timestamp = String(Math.floor(Date.now() / 1000));
+        const signature = createHmac('sha256', openText(`webhook:${d.hook.id}`, d.hook.secret)).update(`${timestamp}.${body}`).digest('hex');
+        ok = await sender(d.hook.url, body, { 'Content-Type': 'application/json', 'Oya-Event-Id': String(event.id), 'Oya-Signature': `t=${timestamp},v1=${signature}` });
+      }
     } catch { /* delivery state retains the retry obligation */ }
     await service.store.transact(async tx => {
       const current = await tx.get('delivery', d.id);
       if (current?.claim !== claim) return;
+      // A revoked token or a deleted channel is not a transient failure: retrying it
+      // every backoff step for a day would bury the queue behind an install that is gone.
+      if (dead) {
+        Object.assign(current, { state: 'cancelled', leaseUntil: null });
+        const hook = await tx.get('webhook', d.hook.id);
+        if (hook) hook.enabled = false;
+        return;
+      }
       Object.assign(current, { state: ok ? 'delivered' : 'pending', leaseUntil: null, nextAt: Date.now() + Math.min(3600000, 1000 * 2 ** Math.min(d.attempts, 12)) });
     });
   }));
   return pending;
+}
+/**
+ * One event as a Slack message. The bot token lives in the project key's sealed
+ * settings rather than on the hook row, so an OAuth install and a pasted token
+ * arrive here identically. The live link is minted per message and expires in an
+ * hour: a share credential scoped to that one browser, which is what makes the
+ * alert actionable for someone with no Oya account.
+ */
+async function postSlack(service, hook, event) {
+  const key = await keyOfProject(hook.project, service);
+  if (!key) return { ok: false, dead: false };
+  const install = keyConfig.getSlack(key);
+  const channel = hook.channel || install?.channelId;
+  // Settings sealed under a rotated secret read as absent, which is recoverable —
+  // retry rather than disabling a sink the customer never touched. Disconnecting
+  // disables the hook itself, and those deliveries are cancelled before they reach here.
+  if (!install?.botToken || !channel) return { ok: false, dead: false };
+  let liveUrl = null;
+  if (event.sessionId) {
+    // Fails for a browser that has already ended — then the message goes out without the button.
+    const share = await service.share(key, { id: event.sessionId, control: true, expiresIn: 3600 }).catch(() => null);
+    if (share) liveUrl = `${slack.consoleUrl()}/live/${encodeURIComponent(event.sessionId)}#t=${encodeURIComponent(share.token)}`;
+  }
+  const result = await slack.call(install.botToken, 'chat.postMessage', { channel, unfurl_links: false, ...slack.blocksFor(event, liveUrl) });
+  return { ok: !!result?.ok, dead: !result?.ok && slack.isDeadInstall(result?.error) };
 }
 async function sendWebhook(url, body, headers) {
   const target = await assertSafeTarget(url, { protocols: ['https:'], label: 'webhook URL' });

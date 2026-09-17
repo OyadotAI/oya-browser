@@ -38,6 +38,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import cors from 'cors';
 import { router as apiRouter } from './api.js';
+import { slackActionsRouter } from './slack.js';
 import { drain as drainAudit } from './audit.js';
 import {
   handleJsonVersion, handleJsonList, handleUpgrade as handleGatewayUpgrade, sessions as gatewaySessions,
@@ -120,6 +121,10 @@ app.get('/json/list', handleJsonList);
 // The SDK caps one file at 10MB, so what lands here is a run carrying several at once;
 // express's own answer is an HTML stack trace, which reads as a server fault rather than
 // a request that asked for too much.
+// Slack posts its interactivity payloads form-encoded and signs the raw bytes, so
+// this one path is parsed before — and differently from — every other /api route.
+app.use('/api/slack/actions', express.urlencoded({ extended: false, verify: (req, _res, buf) => { req.rawBody = buf; } }), slackActionsRouter);
+
 app.use('/api', express.json({ limit: '15mb' }), (err, req, res, next) => {
   if (err?.type !== 'entity.too.large') return next(err);
   res.status(413).json({ error: 'This request is over 15MB. Task files ride inline, so send fewer or smaller ones in one run.' });

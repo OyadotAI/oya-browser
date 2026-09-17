@@ -1,17 +1,19 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowUpRight, Check, ChevronDown, Cpu, Eye, EyeOff, KeyRound, Loader2, Monitor, RotateCcw, ShieldCheck } from 'lucide-react';
+import { ArrowUpRight, Bell, Check, ChevronDown, Cpu, Eye, EyeOff, KeyRound, Loader2, Monitor, RotateCcw, ShieldCheck } from 'lucide-react';
 import Dialog from '@/components/ui/dialog';
 import { useToast } from './toast';
 import { loadConfig, saveConfig, desktopSignInUrl, LLM_PRESETS, isOyaProvider, type KeyConfig } from './config';
+import SlackSection from './slack-section';
 
-type Props = { open: boolean; onClose: () => void; apiKey: string; onRerunSetup?: () => void };
-type Section = 'model' | 'browsers' | 'verification';
+type Props = { open: boolean; onClose: () => void; apiKey: string; onRerunSetup?: () => void; initialSection?: Section };
+type Section = 'model' | 'browsers' | 'verification' | 'alerts';
 const SECTIONS = [
   { id: 'model' as const, label: 'AI model', icon: Cpu },
   { id: 'browsers' as const, label: 'Browsers', icon: Monitor },
   { id: 'verification' as const, label: 'Verification', icon: ShieldCheck },
+  { id: 'alerts' as const, label: 'Alerts', icon: Bell },
 ];
 const MODELS: Record<string, { id: string; label: string }[]> = {
   openai: [{ id: 'gpt-4o-mini', label: 'GPT-4o mini' }, { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini' }, { id: 'gpt-4.1', label: 'GPT-4.1' }],
@@ -44,9 +46,9 @@ export default function SettingsDialog(props: Props) {
   return props.open ? <SettingsEditor key={props.apiKey} {...props} /> : null;
 }
 
-function SettingsEditor({ onClose, apiKey, onRerunSetup }: Props) {
+function SettingsEditor({ onClose, apiKey, onRerunSetup, initialSection }: Props) {
   const toast = useToast();
-  const [section, setSection] = useState<Section>('model');
+  const [section, setSection] = useState<Section>(initialSection || 'model');
   const [config, setConfig] = useState<KeyConfig | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -113,7 +115,8 @@ function SettingsEditor({ onClose, apiKey, onRerunSetup }: Props) {
             if (!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Home','End'].includes(e.key)) return;
             e.preventDefault();
             const index = SECTIONS.findIndex(s => s.id === section);
-            const next = e.key === 'Home' ? 0 : e.key === 'End' ? 2 : (index + (['ArrowRight','ArrowDown'].includes(e.key) ? 1 : 2)) % 3;
+            const last = SECTIONS.length - 1;
+            const next = e.key === 'Home' ? 0 : e.key === 'End' ? last : (index + (['ArrowRight','ArrowDown'].includes(e.key) ? 1 : last)) % SECTIONS.length;
             setSection(SECTIONS[next].id);
             e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next].focus();
           }}>
@@ -141,6 +144,7 @@ function SettingsEditor({ onClose, apiKey, onRerunSetup }: Props) {
                 {isOyaProvider(value('browser_provider')) && <div className="mt-7 border-t border-border pt-5"><div className="flex items-start gap-3"><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-bg-sunken"><Monitor className="h-4 w-4 text-text-secondary" /></div><div><h4 className="text-[13px] font-medium">Bring your signed-in accounts.</h4><p className="mt-1 text-[12px] leading-5 text-text-muted">Connect Oya Desktop to save your sessions to a profile.</p><div className="mt-3 flex flex-wrap items-center gap-3"><button type="button" className="btn-ghost" onClick={openDesktop} disabled={pairing}>{pairing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}Open desktop</button><a href="/downloads" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] text-text-muted hover:text-text">Download<ArrowUpRight className="h-3.5 w-3.5" /></a></div></div></div></div>}
                 {browserProvider && !browserProvider.configured && !browserProvider.needs.length && <p className="mt-5 rounded-lg border border-yellow/20 bg-yellow/5 p-3 text-[12px] leading-5 text-text-secondary">Cloud setup must be completed on this server before new sessions can start. Your connected desktop is still available.</p>}
               </>}
+              {section === 'alerts' && <SlackSection apiKey={apiKey} Row={Row} />}
               {section === 'verification' && <>
                 <div className="mb-7"><p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-accent">Continuity</p><h3 className="text-[22px] font-semibold tracking-[-0.035em]">Keep the session moving.</h3><p className="mt-1.5 text-[13px] leading-6 text-text-muted">Choose how browsers handle verification prompts.</p></div>
                 <div className="space-y-5"><Row id="settings-captcha" label="CAPTCHA solver" hint="Optional automatic solving."><Select id="settings-captcha" value={value('captcha_solver')} onChange={v => set('captcha_solver',v)}><option value="">Manual · ask for help</option><option value="capsolver">CapSolver</option></Select></Row>{value('captcha_solver') && <Row id="settings-captcha-key" label="Solver API key" hint="From your solver account."><Secret id="settings-captcha-key" value={draft.captcha_api_key ?? ''} onChange={v => set('captcha_api_key',v)} placeholder={config.captcha_api_key ? 'Saved · leave blank to keep' : 'Enter solver API key'} /></Row>}</div>

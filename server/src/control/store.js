@@ -22,7 +22,7 @@ const STATE_FIELD = { credential: 'role', hold: 'resource', attachment: 'instanc
 /** Indexed columns and the time after which the pruner may delete the row. */
 export function columns(kind, body) {
   const expiresAt = kind === 'session' ? (TERMINAL.includes(body.state) ? (body.updatedAt || body.createdAt) + 7 * DAY : null)
-    : ['ticket', 'invite', 'hold'].includes(kind) ? body.expiresAt
+    : ['ticket', 'invite', 'hold', 'slack_state'].includes(kind) ? body.expiresAt
     : kind === 'attachment' ? body.leaseUntil
     : kind === 'idempotency' ? body.createdAt + 7 * DAY
     : kind === 'delivery' ? (body.state === 'pending' ? null : body.at + 30 * DAY)

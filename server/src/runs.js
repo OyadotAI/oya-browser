@@ -8,6 +8,8 @@
  */
 
 import { randomUUID } from 'crypto';
+import { control } from './control/service.js';
+import { fingerprint } from './audit.js';
 
 const HUMAN_WAIT_MS = 30 * 60_000;
 const KEEP_MS = 60 * 60_000;
@@ -15,9 +17,17 @@ const runs = new Map();
 
 const view = ({ owner, waiter, ...run }) => run;
 
-export function start(owner, browserId, work) {
+export function start(apiKey, browserId, work) {
+  const owner = fingerprint(apiKey);
   const run = { id: `run_${randomUUID()}`, owner, browserId, status: 'running', createdAt: Date.now(), attention: null };
   runs.set(run.id, run);
+
+  // Announce on the project's event log, which is what carries a run to Slack and
+  // to customer webhooks. Never on the critical path: a sink that is down or
+  // misconfigured must not fail the run it is reporting on.
+  const announce = (type, detail) => control()
+    .emit(apiKey, type, browserId, { runId: run.id, owner, ...detail })
+    .catch((err) => console.error(`[runs] ${type} not recorded:`, err.message));
 
   const requestHuman = (attention) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -30,11 +40,15 @@ export function start(owner, browserId, work) {
       attention: { id: randomUUID(), at: Date.now(), ...attention },
       waiter: (response) => { clearTimeout(timer); resolve(response); },
     });
+    announce('run.needs_attention', { reason: attention?.reason, message: attention?.message });
   });
 
   work({ requestHuman })
     .then((result) => Object.assign(run, { status: 'succeeded', result }))
-    .catch((err) => Object.assign(run, { status: 'failed', error: err.message, errorStatus: err.status || 500 }))
+    .catch((err) => {
+      Object.assign(run, { status: 'failed', error: err.message, errorStatus: err.status || 500 });
+      announce('run.failed', { error: err.message });
+    })
     .finally(() => {
       Object.assign(run, { endedAt: Date.now(), attention: null, waiter: null });
       setTimeout(() => runs.delete(run.id), KEEP_MS).unref?.();

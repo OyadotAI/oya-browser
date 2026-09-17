@@ -37,6 +37,7 @@ import * as playbooks from './playbook.js';
 import * as flow from './flow-recorder.js';
 import * as runs from './runs.js';
 import * as keyConfig from './key-config.js';
+import { slackRouter } from './slack.js';
 import { PREF_OPTIONS } from './fingerprint.js';
 import * as pairing from './pairing.js';
 
@@ -58,6 +59,7 @@ for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
 }
 router.use(forwardHttp);
 router.use('/control', controlRouter);
+router.use('/slack', slackRouter);
 router.use('/auth/projects', projectAccountRouter);
 
 async function browserCdpUrl(req, id) {
@@ -1499,7 +1501,7 @@ router.post('/browsers/:browserId/runs', authMiddleware, enforce('chat'), async 
   const missing = pb ? playbooks.missingVariables(pb, { ...data, ...secrets }) : [];
   if (missing.length) return res.status(400).json({ error: `Missing data: ${missing.join(', ')}` });
 
-  const run = runs.start(fingerprint(key), browserId, async ({ requestHuman }) => {
+  const run = runs.start(key, browserId, async ({ requestHuman }) => {
     const checkpoint = checkpointFor(key, browserId, requestHuman);
     if (pb) return playbooks.play(key, browserId, pb, { ...data, ...secrets }, { autoHeal: autoHeal !== false, checkpoint, requestHuman });
     const result = await runChat(browserId, [{ role: 'user', content: prompt }], { apiKey: key, data, secrets, checkpoint, requestHuman });

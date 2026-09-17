@@ -234,6 +234,34 @@ export function restoreRouting(pool) {
   }
 }
 
+// The Slack install for this key: bot token, workspace and the channel notifications
+// go to. Sealed like routing and, like routing, kept out of FIELDS — POST /config
+// must not be able to overwrite a bot token, and this is an object, not a scalar.
+// Both ways in (OAuth install and a pasted bot token) write this one row.
+export function getSlack(apiKey) {
+  const owner = ownerOf(apiKey);
+  const sealed = store.get(owner)?._slack;
+  if (!sealed) return null;
+  // Like reveal(): a row sealed under a rotated secret reads as absent rather than throwing.
+  try { return JSON.parse(openText(scopeFor(owner), sealed)); } catch { return null; }
+}
+
+export async function saveSlack(apiKey, install) {
+  const owner = ownerOf(apiKey);
+  store.set(owner, { ...(store.get(owner) || {}), _slack: sealText(scopeFor(owner), JSON.stringify(install)) });
+  dirty = true;
+  await flush();
+}
+
+export async function clearSlack(apiKey) {
+  const owner = ownerOf(apiKey);
+  const row = { ...(store.get(owner) || {}) };
+  delete row._slack;
+  store.set(owner, row);
+  dirty = true;
+  await flush();
+}
+
 // Playbooks ride the same sealed store as routing, one row each; their steps can
 // hold whatever the user typed. ponytail: in-memory per replica like the rest of
 // this store; move to a table if playbooks must appear on other replicas without a restart.
