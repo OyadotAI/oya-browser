@@ -98,7 +98,57 @@ let server, win, channel;
   steps.length = 0; secrets.clear();
   await channel.stop(); channel = null;
   assert.equal(steps.length, 0, 'clear drops an unflushed field in the actual recorder world');
-  console.log('Electron recording: cross-site login, secret masking, submit, final field, stop and clear passed');
+  await view.webContents.executeJavaScript(`document.body.innerHTML = \`
+    <input id="visible"><input id="hidden" type="hidden">
+    <div style="display:none"><input id="ancestorHidden"></div>
+    <input id="transparent" style="opacity:0">
+    <input id="invisible" style="visibility:hidden">
+    <button id="custom" onclick="hidden.value='background'; hidden.dispatchEvent(new Event('input', {bubbles:true}))">Choose</button>
+    <label id="checkLabel" for="check">Agree</label><input id="check" type="checkbox" style="display:none">
+    <label id="nativeLabel" for="nativeCheck">Native</label><input id="nativeCheck" type="checkbox">
+    <select id="choice" size="2"><option selected>One</option><option>Two</option></select>
+    <input id="vanishing"><button id="keyboardButton">Submit</button>\``);
+  await start();
+  await view.webContents.executeJavaScript(`(() => {
+    for (const id of ['visible', 'hidden', 'ancestorHidden', 'transparent', 'invisible']) {
+      const el = document.getElementById(id); el.value = 'background';
+      for (const type of ['focusin', 'input', 'change', 'click']) el.dispatchEvent(new Event(type, {bubbles:true}));
+      el.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+    }
+    document.getElementById('custom').click();
+  })()`);
+  await channel.drain(true);
+  assert.equal(steps.length, 0, 'script-dispatched events never record, even on visible fields');
+  // Browser-generated focus events are trusted, even when script focuses an invisible field.
+  for (const id of ['transparent', 'invisible', 'ancestorHidden', 'hidden']) {
+    await view.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(id)}).focus()`);
+    await send('Input.insertText', { text: 'ignored' });
+  }
+  await channel.drain(true);
+  assert.equal(steps.length, 0, 'hidden targets do not produce edits');
+  await click('custom');
+  await click('checkLabel');
+  await click('nativeLabel');
+  await view.webContents.executeJavaScript(`document.getElementById('choice').focus()`);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40 });
+  await click('visible');
+  await view.webContents.executeJavaScript(`document.getElementById('visible').select()`);
+  await send('Input.insertText', { text: 'real edit' });
+  await click('vanishing'); await send('Input.insertText', { text: 'keep this edit' });
+  await view.webContents.executeJavaScript(`document.getElementById('vanishing').remove(); document.getElementById('keyboardButton').focus()`);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await channel.stop(); channel = null;
+  assert.equal(steps.filter(s => s.el?.domId === 'custom').length, 1, 'custom control records only the visible interaction');
+  assert.equal(steps.filter(s => s.el?.domId === 'checkLabel').length, 1, 'hidden checkbox records its visible label');
+  assert.equal(steps.filter(s => s.el?.domId === 'nativeCheck').length, 1, 'native label activation records one checkbox click');
+  assert(!steps.some(s => ['hidden', 'ancestorHidden', 'transparent', 'invisible', 'check'].includes(s.el?.domId)));
+  assert(steps.some(s => s.action === 'select_option' && s.option === 'Two'), 'native keyboard selection captured');
+  assert.deepEqual(steps.filter(s => s.action === 'type').map(s => s.text), ['real edit', 'keep this edit'], 'real edits survive field removal in order');
+  assert.equal(steps.filter(s => s.action === 'press_key' && s.key === 'Enter').length, 1);
+  assert(!steps.some(s => s.action === 'click' && s.el?.domId === 'keyboardButton'), 'Enter activation is not duplicated');
+  console.log('Electron recording: navigation, secrets, hidden/synthetic events, custom controls, labels, selection, field removal, keyboard submission, stop and clear passed');
 })().catch(err => { console.error(err); process.exitCode = 1; }).finally(async () => {
   await channel?.stop().catch(() => {});
   win?.destroy(); server?.close();

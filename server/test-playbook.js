@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { matchElement, renderPlaywright, variablesOf, missingVariables, sanitizeSteps, templateValues } from './src/playbook.js';
 import { fill, redact } from './src/chat-service.js';
 import * as runs from './src/runs.js';
+import { fingerprint } from './src/audit.js';
 
 const page = [
   { id: 1, type: 'link', tag: 'a', text: 'Exam or Specialty Procedure', visible: true },
@@ -130,25 +131,27 @@ assert.deepEqual(recCalls, [
 assert.ok(!demoedCode.includes('hunter2'), 'the demoed password is never in the code');
 
 // ── Every value becomes a field ──
-// What a person typed, picked or clicked is an input with the recorded value as its
+// What a person typed or picked is an input with the recorded value as its
 // default, so a replay that passes nothing still does what was demonstrated.
 const templated = templateValues({
   prompt: 'Log in as mk@oya.ai and pick a state',
   steps: structuredClone(clean),
   defaults: {},
 });
-assert.deepEqual(variablesOf(templated.steps), ['user', 'password', 'state', 'signIn']);
-assert.deepEqual(templated.defaults, { user: 'mk@oya.ai', state: 'CA', signIn: 'Sign in' },
+assert.deepEqual(variablesOf(templated.steps), ['user', 'password', 'state']);
+assert.deepEqual(templated.defaults, { user: 'mk@oya.ai', state: 'CA' },
   'the password has no default: it never left the page');
 assert.equal(templated.steps[0].url, 'https://portal.example.com/login', 'the addresses are the flow, not its data');
 assert.equal(templated.prompt, 'Log in as {{user}} and pick a state',
   'the healing agent reads the prompt, so the data in it travels too — but not a button label');
 assert.deepEqual(missingVariables(templated, {}), ['password'], 'only the secret has to be supplied');
-assert.deepEqual(templated.labels, ['signIn'], 'a button label is how the flow was clicked, not what it was about');
+assert.deepEqual(templated.labels, [], 'click labels remain fixed');
+assert.equal(templated.steps.at(-1).el.text, 'Sign in');
 
 // The export of a templated recording: hand it the defaults and it repeats the run.
-const fieldsCode = renderPlaywright({ name: 'portal-login', steps: templated.steps });
-assert.ok(!fieldsCode.includes('mk@oya.ai'), 'the recorded values stay out of the generated code');
+const fieldsCode = renderPlaywright({ ...templated, name: 'portal-login' });
+assert.ok(fieldsCode.includes('mk@oya.ai'), 'non-secret defaults are included in the export');
+assert.ok(!renderPlaywright({ ...templated, secrets: ['user'] }).includes('mk@oya.ai'), 'secret defaults are excluded defensively');
 const fieldCalls = [];
 const fieldLoc = (desc) => ({ first: () => ({
   click: async () => fieldCalls.push(['click', desc]),
@@ -162,11 +165,11 @@ const fieldPage = {
   mouse: { wheel: async (_, y) => fieldCalls.push(['wheel', y]) },
 };
 const runExport = (vars) => new Function(fieldsCode.replace('export default ', 'return '))()(fieldPage, vars);
-await runExport({ ...templated.defaults, password: 'hunter2' });
+await runExport({ password: 'hunter2' });
 assert.deepEqual(fieldCalls, recCalls, 'the defaults replay exactly what was demonstrated');
 
 fieldCalls.length = 0;
-await runExport({ ...templated.defaults, user: 'ada@oya.ai', state: 'NY', password: 'hunter2' });
+await runExport({ user: 'ada@oya.ai', state: 'NY', password: 'hunter2' });
 assert.deepEqual(fieldCalls, [
   ['goto', 'https://portal.example.com/login'],
   ['fill', '[id="user"]', 'ada@oya.ai'],
@@ -209,21 +212,21 @@ assert.equal(matchElement({ type: 'option', tag: 'li', text: 'Acme Health Plan' 
 
 // Human attention: the run parks, only its owner can see and answer it, then it finishes.
 const run = runs.start('owner', 'b1', async ({ requestHuman }) => ({ text: await requestHuman({ reason: 'agent', message: 'Which plan?' }) }));
-assert.equal(runs.get('owner', run.id).status, 'needs_attention');
-assert.equal(runs.get('owner', run.id).attention.message, 'Which plan?');
+assert.equal(runs.get(fingerprint('owner'), run.id).status, 'needs_attention');
+assert.equal(runs.get(fingerprint('owner'), run.id).attention.message, 'Which plan?');
 assert.equal(runs.get('intruder', run.id), null);
 assert.equal(runs.respond('intruder', run.id, 'x'), false);
-assert.equal(runs.respond('owner', run.id, 'Gold'), true);
-assert.equal(runs.respond('owner', run.id, 'again'), false, 'one answer per request');
+assert.equal(runs.respond(fingerprint('owner'), run.id, 'Gold'), true);
+assert.equal(runs.respond(fingerprint('owner'), run.id, 'again'), false, 'one answer per request');
 await new Promise((r) => setImmediate(r));
-assert.equal(runs.get('owner', run.id).status, 'succeeded');
-assert.deepEqual(runs.get('owner', run.id).result, { text: 'Gold' });
+assert.equal(runs.get(fingerprint('owner'), run.id).status, 'succeeded');
+assert.deepEqual(runs.get(fingerprint('owner'), run.id).result, { text: 'Gold' });
 
 const failing = runs.start('owner', 'b1', async () => { throw Object.assign(new Error('Chat token quota reached'), { status: 429 }); });
 await new Promise((r) => setImmediate(r));
-assert.equal(runs.get('owner', failing.id).status, 'failed');
-assert.equal(runs.get('owner', failing.id).error, 'Chat token quota reached');
-assert.equal(runs.get('owner', failing.id).errorStatus, 429, 'a failed run keeps its real status');
+assert.equal(runs.get(fingerprint('owner'), failing.id).status, 'failed');
+assert.equal(runs.get(fingerprint('owner'), failing.id).error, 'Chat token quota reached');
+assert.equal(runs.get(fingerprint('owner'), failing.id).errorStatus, 429, 'a failed run keeps its real status');
 
 // An hourly quota lifts when the hour turns, even if the blocked key records nothing since.
 const usage = await import('./src/usage.js');
