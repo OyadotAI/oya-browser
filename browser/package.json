@@ -1,7 +1,7 @@
 {
   "name": "oya-browser",
   "version": "1.0.92",
-  "description": "AI-controlled browser — your real browser as an MCP server",
+  "description": "AI-controlled browser \u2014 your real browser as an MCP server",
   "main": "main.js",
   "author": "Oya <hello@oya.ai>",
   "scripts": {
@@ -11,12 +11,14 @@
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
     "dist:linux": "electron-builder --linux --publish never",
-    "test": "node test-regressions.js && node test-control-state.cjs && node test-release.cjs",
+    "test": "node test-regressions.js && node test-control-state.cjs && node test-release.cjs && node test-workflow.cjs",
     "test:recording": "electron test-recording-electron.cjs",
     "test:shell": "node test-shell.mjs",
-    "test:control": "node test-control.mjs"
+    "test:control": "node test-control.mjs",
+    "test:workflow": "electron test-workflow-electron.cjs"
   },
   "dependencies": {
+    "@playwright/test": "^1.63.0",
     "electron-updater": "^6.8.9",
     "ws": "^8.18.1"
   },

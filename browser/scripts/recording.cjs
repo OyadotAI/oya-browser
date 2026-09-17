@@ -9,6 +9,8 @@ class RecordingChannel {
     this.binding = 'r' + randomBytes(12).toString('hex');
     this.worldName = worldName + '-' + this.binding;
     this.contexts = new Set();
+    this.contextFrames = new Map();
+    this.delivery = Promise.resolve();
     this.listeners = [];
   }
 
@@ -25,7 +27,7 @@ class RecordingChannel {
     const ready = new Promise(resolve => { acknowledge = resolve; });
     this.listeners.push(
       this.on('Runtime.executionContextCreated', ({ context }) => {
-        if (context.name === this.worldName && context.auxData?.frameId === this.frameId) this.contexts.add(context.id);
+        if (context.name === this.worldName) { this.contexts.add(context.id); this.contextFrames.set(context.id, context.auxData?.frameId); }
       }),
       this.on('Runtime.executionContextDestroyed', ({ executionContextId }) => this.contexts.delete(executionContextId)),
       this.on('Runtime.executionContextsCleared', () => this.contexts.clear()),
@@ -34,7 +36,7 @@ class RecordingChannel {
         let data;
         try { data = JSON.parse(event.payload); } catch { return; }
         if (data.ready === this.binding) acknowledge();
-        else this.receive(data);
+        else this.deliver(data, event.executionContextId);
       }),
     );
     try {
@@ -45,7 +47,6 @@ class RecordingChannel {
       this.runtimeStarted = true;
       await this.send('Runtime.addBinding', { name: this.binding, executionContextName: this.worldName });
       const source = `(() => {
-        if (window.top !== window) return;
         window.__acRecordCancelled = false;
         window.__acRecordSink = data => window[${JSON.stringify(this.binding)}](JSON.stringify(data));
         const arm = () => {
@@ -59,8 +60,21 @@ class RecordingChannel {
       const { identifier } = await this.send('Page.addScriptToEvaluateOnNewDocument', { source, worldName: this.worldName });
       this.script = identifier;
       const { executionContextId } = await this.send('Page.createIsolatedWorld', { frameId: this.frameId, worldName: this.worldName });
-      this.contexts.add(executionContextId);
+      this.contexts.add(executionContextId); this.contextFrames.set(executionContextId, this.frameId);
       await this.evaluate(executionContextId, source);
+      const armChildren = async tree => {
+        for (const child of tree.childFrames || []) {
+          try {
+            const world = await this.send('Page.createIsolatedWorld', { frameId: child.frame.id, worldName: this.worldName });
+            this.contexts.add(world.executionContextId); this.contextFrames.set(world.executionContextId, child.frame.id);
+            await this.evaluate(world.executionContextId, source);
+          } catch {
+            this.receive({ steps: [{ action: 'unsupported_frame', captureIssue: 'An embedded frame could not be recorded. Review this part of the workflow before validation.' }] });
+          }
+          await armChildren(child);
+        }
+      };
+      await armChildren(frameTree);
       await this.evaluate(executionContextId, `window[${JSON.stringify(this.binding)}](${JSON.stringify(JSON.stringify({ ready: this.binding }))})`);
       let timeout;
       try {
@@ -74,11 +88,37 @@ class RecordingChannel {
     }
   }
 
+  async framePath(frameId) {
+    if (!frameId || frameId === this.frameId) return [];
+    const { frameTree } = await this.send('Page.getFrameTree');
+    const find = (tree, chain = []) => tree.frame.id === frameId ? chain : (tree.childFrames || []).map(child => find(child, [...chain, child.frame.id])).find(Boolean);
+    const chain = find(frameTree); if (!chain) throw new Error('Frame detached');
+    const selectors = [];
+    for (const id of chain) {
+      const owner = await this.send('DOM.getFrameOwner', { frameId: id });
+      const { node } = await this.send('DOM.describeNode', { backendNodeId: owner.backendNodeId });
+      const attributes = {}; for (let i = 0; i < (node.attributes || []).length; i += 2) attributes[node.attributes[i]] = node.attributes[i + 1];
+      const key = ['data-testid', 'id', 'name', 'src'].find(key => attributes[key]);
+      if (!key) throw new Error('Frame has no stable selector');
+      selectors.push(`${node.localName || 'iframe'}[${key}=${JSON.stringify(attributes[key])}]`);
+    }
+    return selectors;
+  }
+  deliver(data, contextId) {
+    const frameId = this.contextFrames.get(contextId);
+    this.delivery = this.delivery.then(async () => {
+      if (!data.steps?.length) return this.receive(data);
+      let frames = [], issue;
+      try { frames = await this.framePath(frameId); } catch { issue = 'The frame target could not be identified. Set its frame selector before validation.'; }
+      this.receive({ ...data, steps: data.steps.map(step => ({ ...step, frames, ...(issue ? { captureIssue: issue } : {}) })) });
+    });
+    return this.delivery;
+  }
   async visit(expression) {
     for (const id of this.contexts) {
       try {
         const out = await this.evaluate(id, expression);
-        if (out) this.receive(out);
+        if (out) await this.deliver(out, id);
       } catch (err) {
         // Navigation can destroy a context while a status/stop is in flight.
         if (!/context|Cannot find/i.test(err.message || '')) throw err;
@@ -101,7 +141,8 @@ class RecordingChannel {
       await this.send('Runtime.removeBinding', { name: this.binding }).catch(() => {});
       for (const off of this.listeners) off();
       this.listeners = [];
-      this.contexts.clear();
+      await this.delivery;
+      this.contexts.clear(); this.contextFrames.clear();
       this.script = null;
       if (this.runtimeStarted && this.disableRuntimeOnStop) await this.send('Runtime.disable').catch(() => {});
       this.runtimeStarted = false;

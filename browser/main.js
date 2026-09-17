@@ -8,7 +8,7 @@ const governance = require('./governance');
  * Protocol for full native control. Human-like timing and mouse paths.
  */
 
-const { app, BrowserWindow, BrowserView, ipcMain, session: electronSession, nativeImage, Menu, nativeTheme, dialog, Notification } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, session: electronSession, nativeImage, Menu, nativeTheme, dialog, Notification, safeStorage, utilityProcess } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -35,7 +35,7 @@ if (process.env.OYA_USER_DATA_DIR) app.setPath('userData', path.resolve(process.
 // let any web page on the machine drive it.
 const CDP_PORT = Number(process.env.OYA_REMOTE_DEBUGGING_PORT) || 0;
 const CDP_RELAY_TOKEN = crypto.randomBytes(32).toString('hex');
-if (CDP_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(CDP_PORT + 1));
+app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT ? String(CDP_PORT + 1) : '0');
 
 // Prevent crashes from unhandled errors
 process.on('uncaughtException', (err) => {
@@ -151,6 +151,23 @@ async function cdp(view, method, params = {}) {
 // flag to switch the fingerprint noise off while it measures.
 
 const { RecordingChannel } = require('./scripts/recording.cjs');
+const { Workspace } = require('./scripts/workspace.cjs');
+const { DraftStore } = require('./scripts/draft-store.cjs');
+const { normalizeStep, normalizeDraft } = require('./scripts/workflow.cjs');
+const { redact } = require('./scripts/diagnostics.cjs');
+let workspace;
+const recordingTabMap = new Map();
+function recordingTab(id) {
+  if (!recordingTabMap.has(id)) { const used = new Set([...recordingTabMap.values(), ...recordedSteps.map(s => s.tab)]); let n = 1; while (used.has('tab-' + n)) n++; recordingTabMap.set(id, 'tab-' + n); }
+  return recordingTabMap.get(id);
+}
+let captureSignature = '';
+function emitRecording() {
+  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+  const signature = JSON.stringify([recording, recordedSteps, [...recordedSecrets]]);
+  if (workspace && signature !== captureSignature) { captureSignature = signature; workspace.capture(recordedSteps, recordedSecrets, recording); }
+}
+
 const ISOLATED_WORLD = 'w' + require('crypto').randomBytes(8).toString('hex');
 const worldContexts = new WeakMap(); // view -> executionContextId
 
@@ -393,6 +410,7 @@ const backdropWaiters = new Map();
 const controlPopups = new Set();
 const desktopControl = createControlState({ send: message => wsSend(message), changed: state => {
   sendToRenderer('control-state', state);
+  if (recording && recordingOrigin === 'desktop' && !state.interactive && recordingCutoff === Infinity) { recordingCutoff = Date.now(); queueRecording(stopRecording).catch(() => {}); }
   for (const id of ['browser-new-tab', 'browser-close-tab', 'browser-reload']) {
     const item = Menu.getApplicationMenu()?.getMenuItemById(id);
     if (item) item.enabled = state.interactive;
@@ -991,6 +1009,14 @@ app.whenReady().then(async () => {
   }
 
   await setupBrowserSession();
+  workspace = new Workspace({
+    store: new DraftStore(path.join(app.getPath('userData'), 'workflow-drafts'), safeStorage),
+    runStore: new DraftStore(path.join(app.getPath('userData'), 'workflow-runs'), safeStorage),
+    notify: state => sendToRenderer('workspace-state', state),
+    runner: (draft, options, event) => require('./scripts/validation.cjs').validate({ draft, options, event, app, utilityProcess, control: desktopControl, tabs: () => tabs, createTab: url => { if (!browsingMode) { enterBrowsingMode(url); return activeTabId; } return createTab(url, true); }, closeTab, cdpPort: CDP_PORT ? CDP_PORT + 1 : 0 }),
+  });
+  recordedSteps = workspace.draft.steps; recordedSecrets = new Set(workspace.draft.secrets);
+  captureSignature = JSON.stringify([false, recordedSteps, [...recordedSecrets]]);
   createWindow();
   if (CDP_PORT) require('./cdp-front-door').start({
     port: CDP_PORT, upstream: CDP_PORT + 1,
@@ -1059,7 +1085,7 @@ function installShellShortcuts(contents) {
       : ({ l: 'address', k: 'commands', t: 'new-tab', w: 'close-tab' })[key];
     if (!command) return;
     event.preventDefault();
-    if (command === 'new-tab') { if (desktopControl.snapshot().interactive) { recordNavigation('https://google.com'); createTab('https://google.com', true); } }
+    if (command === 'new-tab') { if (desktopControl.snapshot().interactive) { createTab('https://google.com', true); recordNavigation('https://google.com'); } }
     else if (command === 'close-tab') { if (desktopControl.snapshot().interactive) closeTab(activeTabId); }
     else if (command.endsWith('-tab')) {
       const index = tabs.findIndex(tab => tab.id === activeTabId);
@@ -1396,7 +1422,13 @@ function sendTabList() {
 let panelMotionTimer;
 let panelProgress = 0;
 let panelSaveTimer;
-app.on('before-quit', () => {
+let finishingQuit = false;
+app.on('before-quit', event => {
+  if (recording && !finishingQuit) {
+    event.preventDefault(); finishingQuit = true;
+    queueRecording(stopRecording).finally(() => app.quit()); return;
+  }
+  if (workspace?.busy()) { workspace.receive({ type: 'finished', status: 'interrupted', error: 'Oya closed during validation. Check the website before retrying.' }); workspace.session?.dispose(); }
   clearInterval(panelMotionTimer);
   if (panelSaveTimer) { clearTimeout(panelSaveTimer); saveConfig(); }
 });
@@ -1442,6 +1474,8 @@ async function injectScripts(view) {
 // free from server/src/playbook.js. Nothing here interprets the steps.
 
 let recording = false;
+let recordingOrigin = 'desktop';
+let recordingCutoff = Infinity;
 let recordedSteps = [];
 let recordedSecrets = new Set();
 let drainTimer = null;
@@ -1460,10 +1494,11 @@ function serverHttpBase() {
 }
 
 function pushRecordedStep(step) {
-  if (!recording || recordedSteps.length >= 500) return;
+  if (!recording || (step.t || Date.now()) > recordingCutoff) return;
+  if (recordedSteps.length >= 500) { recordedSteps[499].captureIssue = 'The 500-step capture limit was reached. Later actions were not recorded. Split this workflow and review its ending.'; queueRecording(stopRecording); return; }
   if (step.id && recordedIds.has(step.id)) return;
   if (step.id) recordedIds.add(step.id);
-  recordedSteps.push({ t: Date.now(), ...step });
+  recordedSteps.push(normalizeStep({ t: Date.now(), tab: recordingTab(activeTabId), ...step }));
 }
 
 /**
@@ -1474,7 +1509,7 @@ function pushRecordedStep(step) {
 function recordNavigation(url) {
   if (!recording || !/^https?:\/\//i.test(url || '')) return;
   const last = recordedSteps[recordedSteps.length - 1];
-  if (last && last.action === 'navigate' && last.url === url) return;
+  if (last && last.action === 'navigate' && last.url === url && last.tab === recordingTab(activeTabId)) return;
   pushRecordedStep({ action: 'navigate', url });
 }
 
@@ -1487,6 +1522,7 @@ async function drainView(view, final = false) {
 
 async function armRecordingView(view) {
   if (recordingChannels.has(view)) return recordingChannels.get(view).ready;
+  const startingUrl = view.webContents.getURL();
   const channel = new RecordingChannel({
     send: (method, params) => cdp(view, method, params),
     on: (method, fn) => {
@@ -1501,7 +1537,9 @@ async function armRecordingView(view) {
     receive: (out) => {
       if (!recording) return;
       for (const name of out.secrets || []) recordedSecrets.add(name);
-      for (const step of out.steps || []) pushRecordedStep(step);
+      const owner = tabs.find(t => t.view === view), tabName = recordingTab(owner?.id);
+      if (out.steps?.length && !recordedSteps.some(step => step.tab === tabName) && /^https?:\/\//i.test(startingUrl)) pushRecordedStep({ action: 'navigate', url: startingUrl, tab: tabName, t: (out.steps[0].t || Date.now()) - 1 });
+      for (const step of out.steps || []) { const tab = tabs.find(t => t.view === view); pushRecordedStep({ ...step, tab: recordingTab(tab?.id) }); }
     },
   });
   recordingChannels.set(view, channel);
@@ -1512,27 +1550,31 @@ async function armRecordingView(view) {
 
 async function drainAll(final = false) {
   for (const tab of tabs) await drainView(tab.view, final);
-  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+  emitRecording();
 }
 
-async function startRecording() {
+async function startRecording(resume = false, origin = 'desktop') {
   if (recording) return { recording: true, steps: recordedSteps };
-  recording = true;
-  recordedSteps = [];
-  recordedSecrets = new Set();
-  recordedIds.clear();
+  if (workspace?.busy()) throw new Error('Stop validation before recording');
+  if (!resume && workspace) workspace.edit({ type: 'new' });
+  recording = true; recordingOrigin = origin; recordingCutoff = Infinity;
+  recordedSteps = resume && workspace ? structuredClone(workspace.draft.steps) : [];
+  recordedSecrets = new Set(resume && workspace ? workspace.draft.secrets : []);
+  recordedIds.clear(); for (const step of recordedSteps) recordedIds.add(step.id);
+  if (!resume) recordingTabMap.clear();
+  if (!recordingTabMap.size) recordingTabMap.set(activeTabId, resume ? recordedSteps.at(-1)?.tab || 'main' : 'main');
   const view = getActiveView();
   const url = view?.webContents.getURL();
   // Replay has to start where the person started, the way an ask() run does.
-  if (/^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
+  if (!resume && /^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
   try {
     for (const tab of tabs) await armRecordingView(tab.view);
   } catch (err) {
     await stopRecording();
     throw err;
   }
-  drainTimer = setInterval(() => sendToRenderer('recorded-steps', { recording, steps: recordedSteps }), 400);
-  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+  drainTimer = setInterval(emitRecording, 400);
+  emitRecording();
   return { recording: true, steps: recordedSteps };
 }
 
@@ -1547,7 +1589,7 @@ async function stopRecording() {
   recordingChannels.clear();
   await drainAll(true);
   recording = false;
-  sendToRenderer('recorded-steps', { recording, steps: recordedSteps });
+  emitRecording();
   return { recording: false, steps: recordedSteps };
 }
 
@@ -1605,9 +1647,45 @@ ipcMain.handle('get-status', () => ({
 }));
 
 ipcMain.handle('enter-browsing', () => enterBrowsingMode('https://google.com'));
-ipcMain.handle('new-tab', (e, url) => { requireHumanControl(); recordNavigation(url || 'https://google.com'); return createTab(url || 'https://google.com', true); });
+ipcMain.handle('new-tab', (e, url) => { requireHumanControl(); const id = createTab(url || 'https://google.com', true); recordNavigation(url || 'https://google.com'); return id; });
 ipcMain.handle('close-tab', (e, id) => { requireHumanControl(); closeTab(id); });
 ipcMain.handle('activate-tab', (e, id) => activateTab(id));
+
+function requireShell(event) {
+  if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Only the Oya workspace can use this command');
+}
+ipcMain.handle('workspace', async (event, command = {}) => {
+  requireShell(event);
+  if (!workspace) throw new Error('Workspace is starting');
+  if (command.type === 'get') return workspace.snapshot();
+  if (command.type === 'resume-recording') { requireHumanControl(); await queueRecording(() => startRecording(true)); return workspace.snapshot(); }
+  if (command.type === 'pick') {
+    requireHumanControl();
+    if (workspace.busy() || recording) throw new Error('Pause recording and stop validation before picking a target');
+    const draftId = workspace.draft.id;
+    const view = getActiveView(); if (!view) throw new Error('Open a page first');
+    const candidates = await require('./scripts/target-picker.cjs').pickTarget(view);
+    if (workspace.draft.id !== draftId) throw new Error('Draft changed during target selection');
+    const state = workspace.edit({ type: 'update', id: command.id, patch: { candidates, captureIssue: undefined } });
+    recordedSteps = structuredClone(workspace.draft.steps); return state;
+  }
+  if (command.type === 'validate') {
+    const answer = await dialog.showMessageBox(mainWindow, { type: 'question', title: 'Validate workflow', message: 'Run on the real website?', detail: 'Oya opens a fresh tab using your current login. This can submit forms, send messages, upload files, or change data. Steps run exactly as shown in the exported Playwright module.', buttons: ['Cancel', 'Run workflow'], defaultId: 0, cancelId: 0 });
+    if (answer.response !== 1) return workspace.snapshot();
+    return workspace.start(command);
+  }
+  if (command.type === 'control') return workspace.control(command.command);
+  if (command.type === 'support') {
+    const report = workspace.support();
+    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: 'oya-diagnostics.json', filters: [{ name: 'JSON diagnostics', extensions: ['json'] }] });
+    if (!result.canceled && result.filePath) fs.writeFileSync(result.filePath, JSON.stringify(report, null, 2), { mode: 0o600 });
+    return workspace.snapshot();
+  }
+  const state = workspace.edit(command);
+  recordedSteps = structuredClone(workspace.draft.steps); recordedSecrets = new Set(workspace.draft.secrets);
+  captureSignature = JSON.stringify([recording, recordedSteps, [...recordedSecrets]]);
+  return state;
+});
 
 ipcMain.handle('start-recording', () => { requireHumanControl(); return queueRecording(startRecording); });
 ipcMain.handle('stop-recording', () => queueRecording(stopRecording));
@@ -1616,6 +1694,7 @@ ipcMain.handle('clear-recording', () => queueRecording(async () => {
   recordedSteps = []; recordedSecrets = new Set(); recordedIds.clear();
   const url = getActiveView()?.webContents.getURL();
   if (recording && /^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
+  emitRecording();
   return { recording, steps: recordedSteps };
 }));
 
@@ -1624,11 +1703,13 @@ ipcMain.handle('save-recording', (e, name, description) => queueRecording(async 
   if (!wsReady || !browserId) return { error: 'Not connected to server' };
   if (recording) await stopRecording();
   if (!recordedSteps.length) return { error: 'Nothing recorded yet' };
+  const publishingId = workspace?.draft.id, publishingRevision = workspace?.draft.revision;
   try {
     const res = await fetch(`${serverHttpBase()}/api/browsers/${browserId}/playbooks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
       body: JSON.stringify({
+        schemaVersion: 2, variables: workspace?.draft.variables || {},
         name,
         prompt: description,
         steps: recordedSteps.map(({ t, ...step }) => step),
@@ -1636,7 +1717,7 @@ ipcMain.handle('save-recording', (e, name, description) => queueRecording(async 
       }),
     });
     const body = await res.json().catch(() => ({ error: `Server returned ${res.status}` }));
-    if (res.ok) { recordedSteps = []; recordedSecrets = new Set(); }
+    if (res.ok && workspace?.draft.id === publishingId && workspace.draft.revision === publishingRevision) { workspace.draft.publishedAt = Date.now(); workspace.persist(); }
     return body;
   } catch (err) {
     return { error: err.message };
@@ -1715,7 +1796,7 @@ ipcMain.handle('save-ui-preferences', (_e, preferences) => {
 ipcMain.handle('export-playwright', async (_e, payload) => {
   if (typeof payload?.code !== 'string' || payload.code.length > 2_000_000) throw new Error('Invalid Playwright export');
   const name = typeof payload.name === 'string' && /^[\w-]{1,64}$/.test(payload.name) ? payload.name : 'playbook';
-  const result = await dialog.showSaveDialog(mainWindow, { title: 'Save Playwright script', defaultPath: name + '.js', filters: [{ name: 'JavaScript', extensions: ['js'] }] });
+  const result = await dialog.showSaveDialog(mainWindow, { title: 'Save Playwright script', defaultPath: name + '.mjs', filters: [{ name: 'JavaScript', extensions: ['mjs'] }] });
   if (result.canceled) return { canceled: true };
   await fs.promises.writeFile(result.filePath, payload.code, { mode: 0o600 });
   return { saved: true };
@@ -1919,7 +2000,7 @@ function devLog(direction, type, data) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const entry = {
     ts: Date.now(), dir: direction, type,
-    data: typeof data === 'string' ? data : JSON.stringify(data, null, 2),
+    data: JSON.stringify(redact(data), null, 2),
   };
   if (entry.data && entry.data.length > 8000) entry.data = entry.data.slice(0, 8000) + '\n... (truncated)';
   mainWindow.webContents.send('dev-log', entry);
@@ -2175,10 +2256,24 @@ async function handleCommand(msg) {
     // The server drives recording too, so a flow can be demonstrated from the
     // dashboard's live view. Both routes share one buffer: the panel here and the
     // dashboard show the same steps.
+    if (action === 'workflow') {
+      if (!workspace || workspace.busy() || recording) throw new Error('Finish the active recording or validation before playing a workflow');
+      workspace.persist();
+      workspace.draft = normalizeDraft({ ...params.draft, id: crypto.randomUUID(), phase: 'paused' });
+      workspace.history = []; workspace.future = []; workspace.persist();
+      recordedSteps = structuredClone(workspace.draft.steps); recordedSecrets = new Set(workspace.draft.secrets);
+      captureSignature = JSON.stringify([false, recordedSteps, [...recordedSecrets]]);
+      await workspace.start({ vars: params.variables || {}, autoHeal: params.autoHeal !== false });
+      const started = Date.now();
+      while (workspace.busy() && Date.now() - started < 540000 && wsReady) await sleep(200);
+      if (workspace.busy()) { workspace.session?.dispose(); workspace.receive({ type: 'finished', status: 'interrupted', error: 'Remote validation disconnected or exceeded its time limit. Check the website before retrying.' }); }
+      sendResult(id, true, { id: workspace.run.id, status: workspace.run.status, assertions: workspace.run.assertions || 0, error: workspace.run.error });
+      return;
+    }
     if (action === 'record') {
       const mode = params?.mode;
       const result = await queueRecording(async () => {
-        if (mode === 'start') await startRecording();
+        if (mode === 'start') await startRecording(false, 'remote');
         else if (mode === 'stop') await stopRecording();
         else await drainAll();
         return { recording, steps: [...recordedSteps], secrets: [...recordedSecrets] };

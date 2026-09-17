@@ -13,7 +13,7 @@
     "start": "OYA_UI_MODE=production node --env-file-if-exists=server/.env server/src/index.js",
     "build:sdk": "npm run build --workspace=@oya-ai/browser && npm run build --workspace=@oya-ai/cli",
     "lint": "npm run lint --prefix ui",
-    "test:server": "cd server && for t in test-flow-recorder test-playbook-cleanup test-control-lock test-desktop-control test-durable-control test-control-api test-control-worker test-control-cluster test-security test-pool test-sandbox test-cdp test-mcp-lifecycle test-control-plane test-providers test-provider-flow test-persona-persistence test-gateway test-anonymity test-challenges test-login-flow test-control-pg-client test-fleet-k8s test-key-storage test-slack; do node $t.js || exit 1; done",
+    "test:server": "cd server && for t in test-flow-recorder test-workflow-v2 test-playbook-cleanup test-control-lock test-desktop-control test-durable-control test-control-api test-control-worker test-control-cluster test-security test-pool test-sandbox test-cdp test-mcp-lifecycle test-control-plane test-providers test-provider-flow test-persona-persistence test-gateway test-anonymity test-challenges test-login-flow test-control-pg-client test-fleet-k8s test-key-storage test-slack; do node $t.js || exit 1; done",
     "test:cli": "npm run build --workspace=@oya-ai/cli && node packages/cli/test-prompt.mjs && node packages/cli/test-install.mjs"
   }
 }

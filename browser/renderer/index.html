@@ -165,15 +165,28 @@
       <div class="net-log" id="net-log"></div>
     </div>
 
-    <section class="dev-pane active" id="pane-record" aria-label="Recording workspace">
-      <div class="record-heading"><div><div class="eyebrow">Workflow recorder</div><h2 id="record-title">Make it repeatable.</h2></div><span id="record-count" class="count-badge">0 steps</span></div>
-      <div class="record-controls"><button class="primary-button" id="record-toggle"><span data-icon="record"></span>Start recording</button><button class="text-button" id="record-clear" disabled>Discard</button></div>
-      <div class="rec-steps" id="record-steps" aria-label="Recorded steps"></div>
-      <details class="export-section" id="record-export" hidden><summary>Playwright script <span>.js</span></summary><pre class="rec-code" id="record-code" tabindex="0" aria-label="Generated Playwright code"></pre><div class="export-actions"><button class="secondary-button" id="record-copy">Copy code</button><button class="secondary-button" id="record-download">Save .js</button></div></details>
-      <footer class="record-footer" id="record-footer" hidden>
-        <div class="record-fields"><div class="field"><label for="record-name">Playbook name</label><input id="record-name" placeholder="e.g. member-lookup" maxlength="64" spellcheck="false"></div><div class="field"><label for="record-desc">Description <span>Optional</span></label><input id="record-desc" placeholder="What does this workflow do?"></div></div>
-        <button class="primary-button" id="record-save">Save playbook</button>
-      </footer>
+    <section class="dev-pane active" id="pane-record" aria-label="Workflow workspace">
+      <div class="record-heading"><div><div class="eyebrow">Workflow studio</div><h2 id="record-title">Make it repeatable.</h2></div><span id="record-count" class="count-badge">0 steps</span></div>
+      <div class="studio-library"><select id="draft-library" aria-label="Saved local drafts"></select><button class="text-button" id="record-clear">New</button><button class="text-button" id="studio-expand" aria-label="Expand workspace">Expand</button></div>
+      <div class="studio-save-state" id="draft-status" role="status"></div>
+      <div class="record-controls"><button class="primary-button" id="record-toggle">Start recording</button><button class="secondary-button" id="record-validate">Validate</button></div>
+      <section class="record-finish" id="record-finish" hidden aria-label="Save recorded workflow">
+        <div class="finish-heading"><span class="finish-check" aria-hidden="true">✓</span><div><h3 id="record-finish-title">Recording captured</h3><p id="record-finish-copy">Your draft is safe on this device. Name it and save a playbook to reuse it in Oya.</p></div></div>
+        <div class="finish-save"><label class="sr-only" for="record-name">Playbook name</label><input id="record-name" placeholder="Name this playbook" maxlength="64" spellcheck="false"><button class="primary-button" id="record-save">Save playbook</button></div>
+        <p class="finish-connection" id="record-save-hint"></p>
+      </section>
+      <div class="studio-tabs" role="tablist" aria-label="Workflow view"><button role="tab" aria-selected="true" data-studio="steps">Steps</button><button role="tab" aria-selected="false" data-studio="run">Run</button><button role="tab" aria-selected="false" data-studio="inspect">Inspect</button></div>
+      <div class="studio-scroll">
+        <section id="studio-steps" role="tabpanel">
+          <div class="studio-toolbar"><button id="step-undo" class="text-button">Undo</button><button id="step-redo" class="text-button">Redo</button><select id="step-add" aria-label="Add step"><option value="">+ Add step</option><option value="assert_visible">Assert visible</option><option value="assert_text">Assert text</option><option value="assert_value">Assert value</option><option value="assert_url">Assert URL</option><option value="wait">Wait for element</option><option value="checkpoint">Human checkpoint</option><option value="navigate">Navigate</option><option value="click">Click</option><option value="type">Fill</option></select></div>
+          <div class="rec-steps" id="record-steps" aria-label="Recorded steps"></div>
+          <section id="step-editor" class="step-editor" hidden aria-label="Selected step editor"></section>
+          <details class="studio-details"><summary>Variables &amp; inputs</summary><div id="workflow-variables"></div><button class="text-button" id="variable-add">+ Add variable</button><p>Use {{variable_name}} in a step. Secret values are requested for each run and never saved as defaults.</p></details>
+          <footer class="record-footer" id="record-footer"><div class="record-fields"><div class="field"><label for="record-desc">Description <span>Optional</span></label><input id="record-desc" placeholder="What does this workflow do?"></div></div><p class="studio-hint">Edits save to your local draft automatically. Save the playbook again to publish a new version.</p></footer>
+        </section>
+        <section id="studio-run" role="tabpanel" hidden><div class="run-heading"><span class="eyebrow">Validation</span><h3 id="run-title">Ready when you are.</h3><p id="run-summary">Run the exported Playwright module in a fresh tab with your current login.</p></div><div class="run-controls"><button class="secondary-button" data-run="pause">Pause</button><button class="secondary-button" data-run="resume">Continue</button><button class="secondary-button" data-run="step">Step</button><button class="text-button" data-run="stop">Stop</button></div><div class="studio-library"><select id="run-history" aria-label="Previous validation runs"><option value="">Previous runs</option></select></div><div id="run-inputs"></div><div id="run-events" aria-label="Validation timeline"></div><div id="run-repairs"></div></section>
+        <section id="studio-inspect" role="tabpanel" hidden><div class="run-heading"><span class="eyebrow">Evidence &amp; code</span><h3>See what happened.</h3><p>Network metadata and console severity only. Request bodies, headers, cookies, and page text are excluded.</p></div><div id="inspect-issues"></div><details class="export-section" id="record-export"><summary>Generated Playwright <span>.mjs</span></summary><pre class="rec-code" id="record-code" tabindex="0" aria-label="Generated Playwright code"></pre><div class="export-actions"><button class="secondary-button" id="record-copy">Copy code</button><button class="secondary-button" id="record-download">Save module</button></div></details><details class="studio-details"><summary>Diagnostic bundle preview</summary><pre id="support-preview" tabindex="0"></pre><button class="secondary-button" id="support-export">Export diagnostics</button></details></section>
+      </div>
       <div class="record-status" id="record-result" role="status" aria-live="polite"></div>
     </section>
     <!-- Source pane -->

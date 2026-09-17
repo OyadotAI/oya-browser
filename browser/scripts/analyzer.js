@@ -456,6 +456,8 @@
    */
   function stableOf(node, type, text = getLabel(node, type)) {
     const el = { type, tag: node.tagName.toLowerCase(), text };
+    const role = node.getAttribute('role') || (node.tagName === 'BUTTON' ? 'button' : node.tagName === 'A' ? 'link' : undefined);
+    if (role) el.role = role;
     if (node.href) el.href = node.href;
     if (node.placeholder) el.placeholder = node.placeholder;
     if (node.id) el.domId = node.id;
@@ -1041,12 +1043,13 @@
   }
 
   const isSecretField = (node) => String(node.type || '').toLowerCase() === 'password'
-    || SECRET_AUTOCOMPLETE.test(node.getAttribute('autocomplete') || '');
+    || SECRET_AUTOCOMPLETE.test(node.getAttribute('autocomplete') || '')
+    || /password|passwd|secret|token|otp|verification.?code|security.?code/i.test([node.name, node.id, node.getAttribute('aria-label')].join(' '));
 
   /** A password never leaves the page: the step keeps a placeholder, the name is flagged. */
   function secretPlaceholder(node) {
     const raw = node.getAttribute('name') || node.id || '';
-    const name = /^[A-Za-z_]\w{0,39}$/.test(raw) ? raw : 'password';
+    const name = /^[A-Za-z_]\w{0,39}$/.test(raw) && !['__proto__', 'constructor', 'prototype'].includes(raw) ? raw : 'password';
     recordedSecrets.add(name);
     return '{{' + name + '}}';
   }
@@ -1111,7 +1114,8 @@
     if (!recording) return;
     const hit = recordTarget(e);
     if (!hit) return;
-    if (hit.type === 'select') {
+    if (hit.node.type === 'file') { flushTyping(); pushStep({ action: 'upload_file', el: stableOf(hit.node, hit.type), file: '{{upload_file}}' }); }
+    else if (hit.type === 'select') {
       flushTyping();
       const opt = hit.node.selectedOptions && hit.node.selectedOptions[0];
       if (opt) pushStep({ action: 'select_option', el: stableOf(hit.node, hit.type), option: String(opt.label || opt.textContent || '').trim() });
@@ -1125,9 +1129,17 @@
     if (!recordVisible(e.composedPath?.()[0] || e.target)) return;
     flushTyping();  // the value is the step; the key is what submits it
     lastKey = { key: e.key, t: Date.now() };
-    pushStep({ action: 'press_key', key: e.key });
+    const key = [e.ctrlKey && 'Control', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', e.key].filter(Boolean).join('+');
+    pushStep({ action: 'press_key', key });
   }
 
+  function onUnsupportedInteraction(event) {
+    if (!recording || !event.isTrusted || !recordVisible(event.composedPath?.()[0] || event.target)) return;
+    flushTyping();
+    pushStep({ action: 'unsupported_' + event.type, captureIssue: 'This ' + event.type + ' interaction needs a manual step before replay.' });
+  }
+  document.addEventListener('drop', onUnsupportedInteraction, true);
+  document.addEventListener('click', event => { if (event.target?.tagName === 'CANVAS') onUnsupportedInteraction(event); }, true);
   document.addEventListener('focusin', onRecordFocus, true);
   document.addEventListener('input', onRecordInput, true);
   document.addEventListener('change', onRecordChange, true);
