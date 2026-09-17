@@ -13,7 +13,7 @@ const http = require('http');
 const { isIP } = require('net');
 const WebSocket = require('ws');
 
-const isUi = (info) => info?.type === 'page' && /^file:.*\/renderer\/index\.html/.test(info.url || '');
+const isUi = (info) => info?.type === 'page' && /^file:.*\/renderer\/(?:index|control-shield)\.html/.test(info.url || '');
 
 /**
  * Chromium refuses a debug request whose Host is neither an IP literal nor
@@ -32,7 +32,7 @@ const localHost = (req) => {
   return host === 'localhost' || isIP(host) !== 0;
 };
 
-function start({ port, upstream, host, tabs, createTab, closeTab }) {
+function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand = () => () => {}, clientChanged = () => {}, relayToken }) {
   const up = `127.0.0.1:${upstream}`;
   const hidden = new Set();
 
@@ -73,7 +73,9 @@ function start({ port, upstream, host, tabs, createTab, closeTab }) {
         // a form cannot open a tab in the persona on the victim's behalf.
         if (req.method !== 'PUT') return send(405, { error: '/json/new requires PUT' });
         const url = decodeURIComponent(req.url.split('?')[1] || '') || 'about:blank';
-        const targetId = await openTab(url);
+        const finish = await beginCommand();
+        let targetId;
+        try { targetId = await openTab(url); } finally { finish(); }
         const target = (await refreshHidden()).find((t) => t.id === targetId);
         return send(200, rewrite(JSON.stringify(target || { id: targetId })));
       }
@@ -81,8 +83,11 @@ function start({ port, upstream, host, tabs, createTab, closeTab }) {
         const list = await refreshHidden();
         return send(200, rewrite(JSON.stringify(list.filter((t) => !hidden.has(t.id)))));
       }
-      const upRes = await fetch(`http://${up}${req.url}`, { method: req.method });
-      send(upRes.status, rewrite(await upRes.text()));
+      const finish = path === '/json/version' || path === '/json/protocol' ? () => {} : await beginCommand();
+      try {
+        const upRes = await fetch(`http://${up}${req.url}`, { method: req.method });
+        send(upRes.status, rewrite(await upRes.text()));
+      } finally { finish(); }
     } catch (e) {
       send(502, { error: e.message });
     }
@@ -94,28 +99,46 @@ function start({ port, upstream, host, tabs, createTab, closeTab }) {
     const m = req.url.match(/^\/devtools\/(browser|page)\/([^/?]+)/);
     try { await refreshHidden(); } catch { return socket.destroy(); }
     if (!m || hidden.has(m[2])) return socket.destroy();
-    wss.handleUpgrade(req, socket, head, (client) => bridge(client, `ws://${up}${req.url}`, m[1] === 'browser'));
+    const relay = !!relayToken && req.headers['x-oya-relay'] === relayToken;
+    wss.handleUpgrade(req, socket, head, (client) => bridge(client, `ws://${up}${req.url}`, m[1] === 'browser', relay));
   });
 
-  function bridge(client, url, isBrowser) {
+  function bridge(client, url, isBrowser, relay) {
+    // Gateway relays have already acquired the server's actor-specific gate.
+    // A process-random credential keeps direct clients on the local agent gate.
+    if (!relay) clientChanged(1);
+    const pending = new Map();
+    const commandKey = msg => JSON.stringify([msg.sessionId || '', msg.id]);
+    const complete = msg => { const key = commandKey(msg); pending.get(key)?.(); pending.delete(key); };
     const upstreamWs = new WebSocket(url, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
     const queued = [];
     const hiddenSessions = new Set();
     const filterReplies = new Set();
     const toUpstream = (text) => (upstreamWs.readyState === WebSocket.OPEN ? upstreamWs.send(text) : queued.push(text));
-    const reply = (id, result) => client.send(JSON.stringify({ id, result }));
-    const fail = (id, message) => client.send(JSON.stringify({ id, error: { code: -32000, message } }));
+    const reply = (id, result) => { complete({ id }); client.send(JSON.stringify({ id, result })); };
+    const fail = (id, message, sessionId) => { complete({ id, sessionId }); client.send(JSON.stringify({ id, sessionId, error: { code: -32000, message } })); };
 
     upstreamWs.on('open', () => { for (const text of queued.splice(0)) upstreamWs.send(text); });
     upstreamWs.on('close', () => client.close());
     upstreamWs.on('error', () => client.close());
-    client.on('close', () => upstreamWs.close());
+    client.on('close', () => { upstreamWs.close(); if (!relay) clientChanged(-1); for (const finish of pending.values()) finish(); pending.clear(); });
 
-    client.on('message', (data) => {
+    let admissionQueue = Promise.resolve();
+    client.on('message', data => { admissionQueue = admissionQueue.then(() => dispatch(data)).catch(() => client.close()); });
+    async function dispatch(data) {
       const text = data.toString();
-      if (!isBrowser) return toUpstream(text);
       let msg;
-      try { msg = JSON.parse(text); } catch { return toUpstream(text); }
+      try { msg = JSON.parse(text); } catch { return client.close(); }
+      if (!Number.isFinite(msg.id) || typeof msg.method !== 'string') return client.close();
+      const key = commandKey(msg);
+      if (pending.has(key)) return client.close();
+      pending.set(key, () => {});
+      try {
+        const finish = relay ? () => {} : await beginCommand();
+        if (client.readyState !== WebSocket.OPEN) { finish(); return; }
+        pending.set(key, finish);
+      } catch (error) { return fail(msg.id, error.message, msg.sessionId); }
+      if (!isBrowser) return toUpstream(text);
       if (!msg.sessionId && msg.method === 'Target.createTarget') {
         openTab(msg.params?.url).then((targetId) => reply(msg.id, { targetId }), (e) => fail(msg.id, e.message));
         return;
@@ -126,10 +149,11 @@ function start({ port, upstream, host, tabs, createTab, closeTab }) {
       }
       if (!msg.sessionId && msg.method === 'Target.getTargets') filterReplies.add(msg.id);
       toUpstream(text);
-    });
+    }
 
     upstreamWs.on('message', (data) => {
       const text = data.toString();
+      try { const response = JSON.parse(text); if (response.id !== undefined) complete(response); } catch {}
       if (!isBrowser) return client.send(text);
       let msg;
       try { msg = JSON.parse(text); } catch { return client.send(text); }

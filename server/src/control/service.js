@@ -409,8 +409,20 @@ export class ControlService {
   async takeover(key, id, action, holder, { force = false } = {}) {
     return this.store.transact(async tx => {
       const x = await ownSession(tx, key, id);
+      const revision = Math.max(stamp(), (x.control.revision || 0) + 1);
       if (x.state !== 'ready') throw fault('not_ready', 'Session must be ready');
-      if (action === 'acquire') {
+      if (x.control.takeover && x.control.expiresAt > stamp() && x.control.holder !== holder) throw fault('control_busy', 'Another operator is taking control');
+      if (action === 'request') {
+        if (x.control.mode === 'human' && x.control.expiresAt > stamp() && x.control.holder !== holder) throw fault('control_busy', 'Another operator has control');
+        if (x.control.mode !== 'human' || x.control.expiresAt <= stamp()) x.control = { mode: 'paused', holder, takeover: true, expiresAt: stamp() + 10000 };
+      } else if (action === 'renew') {
+        if (x.control.mode !== 'human' || x.control.holder !== holder || x.control.expiresAt <= stamp()) throw fault('control_busy', 'Human control has expired or changed');
+        x.control.expiresAt = stamp() + 300000;
+      } else if (action === 'return') {
+        if (x.control.mode === 'agent') return x.control;
+        if (x.control.holder !== holder || !['human', 'paused'].includes(x.control.mode)) throw fault('control_busy', 'Only the current operator can return control');
+        x.control = { mode: 'agent' };
+      } else if (action === 'acquire') {
         if (x.inFlight > 0) throw fault('commands_pending', 'In-flight commands must settle before takeover');
         if (!force && x.control.mode === 'human' && x.control.expiresAt > stamp() && x.control.holder !== holder) throw fault('control_busy', 'Another operator has control');
         x.control = { mode: 'human', holder, expiresAt: stamp() + 300000 };
@@ -421,6 +433,7 @@ export class ControlService {
         if (x.control.mode === 'human' && x.control.expiresAt > stamp()) throw fault('control_busy', 'Human control must be released first');
         x.control = { mode: 'agent' };
       } else throw fault('invalid_action', 'Use acquire, release, or resume', 400);
+      x.control.revision = revision;
       tx.emit(x.project, `control.${x.control.mode}`, id);
       return x.control;
     });

@@ -1,4 +1,5 @@
 import https from 'node:https';
+import { desktopState } from './desktop.js';
 import { isIP } from 'node:net';
 import { createHmac, randomUUID } from 'node:crypto';
 import { heartbeatInstance, clusterOrigin } from './cluster.js';
@@ -249,14 +250,14 @@ async function renewLeases() {
       for (const x of await tx.getMany('session', [...registry.browsers.keys(), ...gateways.keys()])) {
         if (x.instance !== instanceId || terminal.has(x.state)) continue;
         if (x.leaseUntil < now + 20000) x.leaseUntil = now + 30000;
-        if (x.control.mode === 'human' && x.control.expiresAt <= now) { x.control = { mode: 'paused' }; tx.emit(x.project, 'control.paused', x.id); }
-        if (x.runtime) modes.push([x.id, x.control.mode]);
+        if (x.control.mode === 'human' && x.control.expiresAt <= now) { x.control = { mode: 'paused', revision: Math.max(now, (x.control.revision || 0) + 1) }; tx.emit(x.project, 'control.paused', x.id); }
+        modes.push([x.id, desktopState(x.id, x.control)]);
       }
       return modes;
     });
-    for (const [id, mode] of modes) {
+    for (const [id, state] of modes) {
       const ws = registry.get(id)?.ws;
-      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'control_mode', mode }));
+      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'control_mode', mode: state.mode, state }));
     }
   } finally { heartbeating = false; }
 }

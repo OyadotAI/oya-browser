@@ -19,9 +19,14 @@ const { createPersonaApplier } = require('./anonymity/apply');
 const { LoginState } = require('./login-state');
 const { configureProxy, takeProxyBytes, applyDNSLeakPrevention } = require('./anonymity/proxy');
 const { ProfileStore } = require('./anonymity/profile-store');
+const { shellLayout } = require('./shell-layout.cjs');
+const { createControlState } = require('./control-state.cjs');
+// Branding must not move existing cookies, profiles, or saved settings.
+const desktopUserDataPath = app.getPath('userData');
+app.setName('Oya Browser');
+app.setPath('userData', desktopUserDataPath);
 
-// Default to light mode
-nativeTheme.themeSource = 'light';
+// Shell appearance is independent of the websites' preferred color scheme.
 if (process.env.OYA_USER_DATA_DIR) app.setPath('userData', path.resolve(process.env.OYA_USER_DATA_DIR));
 // CDP for automation harnesses. Off unless asked for: whoever reaches this port
 // owns the browser. Chromium listens one port up on loopback; cdp-front-door.js
@@ -29,6 +34,7 @@ if (process.env.OYA_USER_DATA_DIR) app.setPath('userData', path.resolve(process.
 // remote-allow-origins — CDP clients send no Origin, and allowing one would
 // let any web page on the machine drive it.
 const CDP_PORT = Number(process.env.OYA_REMOTE_DEBUGGING_PORT) || 0;
+const CDP_RELAY_TOKEN = crypto.randomBytes(32).toString('hex');
 if (CDP_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(CDP_PORT + 1));
 
 // Prevent crashes from unhandled errors
@@ -380,8 +386,45 @@ async function cdpEval(view, expression) {
 let mainWindow = null;
 let browsingMode = false;
 let devPanelOpen = false;
-let devPanelWidth = 380;
-const TOOLBAR_HEIGHT = 102; // 52px toolbar + 30px tab bar + 20px fingerprint bar
+let devPanelWidth = 360;
+const shellOverlays = new Set();
+let controlShield;
+const backdropWaiters = new Map();
+const controlPopups = new Set();
+const desktopControl = createControlState({ send: message => wsSend(message), changed: state => {
+  sendToRenderer('control-state', state);
+  for (const id of ['browser-new-tab', 'browser-close-tab', 'browser-reload']) {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+    if (item) item.enabled = state.interactive;
+  }
+  for (const popup of controlPopups) if (!popup.isDestroyed()) popup.setEnabled(state.interactive);
+  if (mainWindow && !mainWindow.isDestroyed()) syncControlShield();
+} });
+function requireHumanControl() {
+  if (!desktopControl.snapshot().interactive) throw new Error('Take control before interacting with this page');
+}
+function prepareControlShield() {
+  if (controlShield) return;
+  controlShield = new BrowserView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+  controlShield.setBackgroundColor('#00000000');
+  controlShield.webContents.loadFile(path.join(__dirname, 'renderer/control-shield.html'));
+  installShellShortcuts(controlShield.webContents);
+}
+function syncControlShield() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!browsingMode || shellOverlays.size || desktopControl.snapshot().interactive) {
+    if (controlShield) mainWindow.removeBrowserView(controlShield);
+    return;
+  }
+  prepareControlShield();
+  const view = getActiveView();
+  if (view) {
+    controlShield.setBounds(view.getBounds());
+    if (!mainWindow.getBrowserViews().includes(controlShield)) mainWindow.addBrowserView(controlShield);
+    mainWindow.setTopBrowserView(controlShield);
+    if (view.webContents.isFocused()) mainWindow.webContents.focus();
+  }
+}
 
 /** @type {{ id: number, view: BrowserView, title: string, url: string }[]} */
 const tabs = [];
@@ -904,7 +947,32 @@ ipcMain.handle('get-version', () => app.getVersion());
 
 // ─── App Lifecycle ───
 
+function installApplicationMenu() {
+  const humanAction = run => () => { if (desktopControl.snapshot().interactive) run(); };
+  app.setAboutPanelOptions({ applicationName: 'Oya Browser', applicationVersion: app.getVersion() });
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{ label: 'Oya Browser', submenu: [
+      { role: 'about', label: 'About Oya Browser' }, { type: 'separator' },
+      { role: 'services' }, { type: 'separator' },
+      { role: 'hide', label: 'Hide Oya Browser' }, { role: 'hideOthers' }, { role: 'unhide' },
+      { type: 'separator' }, { role: 'quit', label: 'Quit Oya Browser' },
+    ] }] : []),
+    { label: 'File', submenu: [
+      { id: 'browser-new-tab', label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: humanAction(() => createTab('https://google.com', true)) },
+      { id: 'browser-close-tab', label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: humanAction(() => closeTab(activeTabId)) },
+      ...(process.platform === 'darwin' ? [] : [{ role: 'quit', label: 'Quit Oya Browser' }]),
+    ] },
+    { role: 'editMenu' },
+    { label: 'View', submenu: [
+      { id: 'browser-reload', label: 'Reload Page', accelerator: 'CmdOrCtrl+R', click: humanAction(reloadActivePage) },
+      { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+      { type: 'separator' }, { role: 'togglefullscreen' },
+    ] },
+    { role: 'windowMenu' },
+  ]));
+}
 app.whenReady().then(async () => {
+  installApplicationMenu();
   loadConfig();
 
   // Registering in dev needs the interpreter and script path, or the OS
@@ -936,6 +1004,9 @@ app.whenReady().then(async () => {
       return activeTabId;
     },
     closeTab,
+    beginCommand: () => desktopControl.beginLocalCommand(),
+    clientChanged: delta => desktopControl.localClient(delta),
+    relayToken: CDP_RELAY_TOKEN,
   });
   startCookieChangeListener();
   if (config.apiKey || process.env.OYA_AUTO_CONNECT === 'true') connect();
@@ -950,20 +1021,55 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => { disconnect(); app.quit(); });
 
 function createWindow() {
+  devPanelWidth = Number(config.ui?.panelWidth) || 360;
   mainWindow = new BrowserWindow({
     width: 1280, height: 860, minWidth: 600, minHeight: 400,
     icon: path.join(__dirname, 'build', process.platform === 'darwin' ? 'icon.icns' : 'icon_1024.png'),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 12 } : undefined,
-    backgroundColor: '#ffffff',
+    backgroundColor: shellBackground(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false,
     },
   });
-  mainWindow.loadFile('renderer/index.html');
+  mainWindow.loadFile(path.join(__dirname, 'renderer/index.html')).then(prepareControlShield);
+  installShellShortcuts(mainWindow.webContents);
+  mainWindow.webContents.on('did-finish-load', layoutActiveTab);
+  nativeTheme.on('updated', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.setBackgroundColor(shellBackground());
+    sendToRenderer('shell-appearance', nativeTheme.shouldUseDarkColors);
+  });
   if (process.env.OYA_DOCKER === 'true') mainWindow.maximize();
   mainWindow.on('resize', layoutActiveTab);
+}
+
+function shellBackground() {
+  const dark = config.ui?.theme === 'dark' || (config.ui?.theme !== 'light' && nativeTheme.shouldUseDarkColors);
+  return dark ? '#1b1e1c' : '#f5f5f2';
+}
+
+function installShellShortcuts(contents) {
+  contents.on('before-input-event', (event, input) => {
+    if (contents !== mainWindow?.webContents && !desktopControl.snapshot().interactive) event.preventDefault();
+    if (input.type !== 'keyDown' || !(process.platform === 'darwin' ? input.meta : input.control) || input.alt) return;
+    const key = input.code === 'BracketRight' ? ']' : input.code === 'BracketLeft' ? '[' : input.key.toLowerCase();
+    const command = input.shift ? ({ r: 'record', d: 'tools', ']': 'next-tab', '[': 'previous-tab' })[key]
+      : ({ l: 'address', k: 'commands', t: 'new-tab', w: 'close-tab' })[key];
+    if (!command) return;
+    event.preventDefault();
+    if (command === 'new-tab') { if (desktopControl.snapshot().interactive) { recordNavigation('https://google.com'); createTab('https://google.com', true); } }
+    else if (command === 'close-tab') { if (desktopControl.snapshot().interactive) closeTab(activeTabId); }
+    else if (command.endsWith('-tab')) {
+      const index = tabs.findIndex(tab => tab.id === activeTabId);
+      const target = tabs[(index + (command === 'next-tab' ? 1 : tabs.length - 1)) % tabs.length];
+      if (target) activateTab(target.id);
+    } else {
+      mainWindow.webContents.focus();
+      sendToRenderer('shell-command', command);
+    }
+  });
 }
 
 // ─── Tab Management ───
@@ -979,6 +1085,17 @@ function createTab(url, activate = true) {
 
   const tab = { id, view, title: 'New Tab', url: url || '' };
   tabs.push(tab);
+  installShellShortcuts(view.webContents);
+  view.webContents.on('focus', () => { if (!desktopControl.snapshot().interactive) mainWindow?.webContents.focus(); });
+  view.webContents.on('did-start-loading', () => { tab.loadError = null; sendTabList(); });
+  view.webContents.on('did-stop-loading', sendTabList);
+  view.webContents.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
+    if (!mainFrame || code === -3) return;
+    tab.navigationPending = false; tab.loadError = `Page could not load: ${description}. Try Reload.`; sendTabList();
+  });
+  view.webContents.on('render-process-gone', (_event, details) => {
+    tab.navigationPending = false; tab.loadError = `Page renderer stopped (${details.reason}). Reload to recover.`; sendTabList();
+  });
 
   // Attach CDP debugger and auto-inject scripts into every new document.
   // A view has no renderer until its first navigation, and CDP's Page domain
@@ -1059,6 +1176,9 @@ function createTab(url, activate = true) {
   // allowlist includes bot-detection vendors, which therefore read a completely
   // unspoofed browser and only saw the overrides afterwards.
   view.webContents.on('did-create-window', (childWindow) => {
+    controlPopups.add(childWindow);
+    childWindow.setEnabled(desktopControl.snapshot().interactive);
+    childWindow.once('closed', () => controlPopups.delete(childWindow));
     try {
       const dbg = childWindow.webContents.debugger;
       if (!dbg.isAttached()) dbg.attach(CDP_VERSION);
@@ -1156,7 +1276,8 @@ function createTab(url, activate = true) {
     menu.popup({ window: mainWindow });
   });
 
-  tab.ready = Promise.resolve(tabReady).then(() => url ? view.webContents.loadURL(url) : undefined);
+  tab.setup = tabReady;
+  tab.ready = Promise.resolve(tabReady).then(() => url && !tab.navigationRequest ? view.webContents.loadURL(url) : undefined);
   tab.ready.catch((e) => console.error('[tab] Could not open page:', e.message));
   if (activate) activateTab(id);
   sendTabList();
@@ -1218,12 +1339,9 @@ async function setupTabCDP(view) {
 function activateTab(id) {
   const tab = tabs.find(t => t.id === id);
   if (!tab) return;
-  if (activeTabId !== null) {
-    const old = tabs.find(t => t.id === activeTabId);
-    if (old) mainWindow.removeBrowserView(old.view);
-  }
+  if (activeTabId === id) return;
   activeTabId = id;
-  mainWindow.setBrowserView(tab.view);
+  if (!shellOverlays.size) mainWindow.setBrowserView(tab.view);
   layoutActiveTab();
   sendToRenderer('url-changed', tab.url);
   sendToRenderer('title-changed', tab.title);
@@ -1269,19 +1387,32 @@ function getActiveView() {
 function sendTabList() {
   sendToRenderer('tabs-updated', tabs.map(t => ({
     id: t.id, title: t.title, url: t.url, active: t.id === activeTabId,
+    loading: !!t.navigationPending || t.view.webContents.isLoading(), loadError: t.loadError || null,
+    canGoBack: t.view.webContents.navigationHistory.canGoBack(),
+    canGoForward: t.view.webContents.navigationHistory.canGoForward(),
   })));
 }
 
-function layoutActiveTab() {
+let panelMotionTimer;
+let panelProgress = 0;
+let panelSaveTimer;
+app.on('before-quit', () => {
+  clearInterval(panelMotionTimer);
+  if (panelSaveTimer) { clearTimeout(panelSaveTimer); saveConfig(); }
+});
+function layoutActiveTab(progress) {
+  if (typeof progress !== 'number') {
+    clearInterval(panelMotionTimer);
+    progress = devPanelOpen ? 1 : 0;
+  }
+  panelProgress = progress;
   const view = getActiveView();
-  if (!mainWindow || !view || !browsingMode) return;
+  if (!mainWindow) return;
   const bounds = mainWindow.getContentBounds();
-  const panelW = devPanelOpen ? devPanelWidth : 0;
-  view.setBounds({
-    x: 0, y: TOOLBAR_HEIGHT,
-    width: bounds.width - panelW,
-    height: bounds.height - TOOLBAR_HEIGHT,
-  });
+  const layout = shellLayout(bounds.width, bounds.height, progress, devPanelWidth);
+  sendToRenderer('shell-layout', layout);
+  if (view && browsingMode) view.setBounds(layout.page);
+  syncControlShield();
 }
 
 function enterBrowsingMode(url) {
@@ -1423,18 +1554,41 @@ async function stopRecording() {
 // ─── IPC ───
 
 ipcMain.handle('navigate', async (e, url) => {
+  requireHumanControl();
   if (!browsingMode) { enterBrowsingMode(url); return; }
   const view = getActiveView();
   if (!view) return;
+  const tab = tabs.find(tab => tab.view === view);
+  const request = tab.navigationRequest = (tab.navigationRequest || 0) + 1;
+  tab.navigationPending = true; tab.loadError = null; sendTabList();
+  url = String(url).trim();
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   recordNavigation(url);
-  await pullCookiesFor(url);
-  view.webContents.loadURL(url);
+  await Promise.all([pullCookiesFor(url), tab.setup]);
+  if (view.webContents.isDestroyed() || tab.navigationRequest !== request) return;
+  if (!desktopControl.snapshot().interactive) { tab.navigationPending = false; sendTabList(); return; }
+  tab.navigationPending = false;
+  view.webContents.loadURL(url).catch(() => {});
+  sendTabList();
 });
 
-ipcMain.handle('go-back', () => getActiveView()?.webContents.goBack());
-ipcMain.handle('go-forward', () => getActiveView()?.webContents.goForward());
-ipcMain.handle('reload', () => getActiveView()?.webContents.reload());
+ipcMain.handle('go-back', () => { requireHumanControl(); getActiveView()?.webContents.goBack(); });
+ipcMain.handle('go-forward', () => { requireHumanControl(); getActiveView()?.webContents.goForward(); });
+function reloadActivePage() {
+  requireHumanControl();
+  const tab = tabs.find(tab => tab.id === activeTabId);
+  if (!tab) return;
+  if (tab.navigationPending || tab.view.webContents.isLoading()) {
+    tab.navigationRequest = (tab.navigationRequest || 0) + 1;
+    tab.navigationPending = false; tab.view.webContents.stop(); sendTabList();
+  } else { tab.loadError = null; tab.view.webContents.reload(); }
+}
+ipcMain.handle('reload', reloadActivePage);
+ipcMain.handle('get-control-state', () => desktopControl.snapshot());
+ipcMain.handle('change-control', async (_event, action) => {
+  try { return { state: await desktopControl.change(action) }; }
+  catch (error) { return { error: error.message, state: desktopControl.snapshot() }; }
+});
 ipcMain.handle('get-config', () => config);
 
 ipcMain.handle('save-config', (e, newConfig) => {
@@ -1451,11 +1605,11 @@ ipcMain.handle('get-status', () => ({
 }));
 
 ipcMain.handle('enter-browsing', () => enterBrowsingMode('https://google.com'));
-ipcMain.handle('new-tab', (e, url) => { recordNavigation(url || 'https://google.com'); return createTab(url || 'https://google.com', true); });
-ipcMain.handle('close-tab', (e, id) => closeTab(id));
+ipcMain.handle('new-tab', (e, url) => { requireHumanControl(); recordNavigation(url || 'https://google.com'); return createTab(url || 'https://google.com', true); });
+ipcMain.handle('close-tab', (e, id) => { requireHumanControl(); closeTab(id); });
 ipcMain.handle('activate-tab', (e, id) => activateTab(id));
 
-ipcMain.handle('start-recording', () => queueRecording(startRecording));
+ipcMain.handle('start-recording', () => { requireHumanControl(); return queueRecording(startRecording); });
 ipcMain.handle('stop-recording', () => queueRecording(stopRecording));
 ipcMain.handle('clear-recording', () => queueRecording(async () => {
   for (const channel of recordingChannels.values()) await channel.clear();
@@ -1489,26 +1643,86 @@ ipcMain.handle('save-recording', (e, name, description) => queueRecording(async 
   }
 }));
 
-ipcMain.handle('show-overlay', () => {
+ipcMain.handle('backdrop-ready', (_event, token) => { backdropWaiters.get(token)?.(); });
+ipcMain.handle('show-overlay', async (_e, name = 'legacy') => {
+  if (!['legacy', 'shell'].includes(name)) return;
   const view = getActiveView();
+  if (!shellOverlays.size && view && browsingMode) {
+    try {
+      const screenshot = await view.webContents.capturePage();
+      const token = crypto.randomUUID();
+      await new Promise(resolve => {
+        const timer = setTimeout(() => { backdropWaiters.delete(token); resolve(); }, 300);
+        backdropWaiters.set(token, () => { clearTimeout(timer); backdropWaiters.delete(token); resolve(); });
+        sendToRenderer('page-backdrop', { token, image: screenshot.toDataURL(), bounds: view.getBounds() });
+      });
+    } catch { /* A crashed page has no frame to preserve; the reload status remains visible. */ }
+  }
+  shellOverlays.add(name);
   if (view && browsingMode) mainWindow.removeBrowserView(view);
+  syncControlShield();
 });
-ipcMain.handle('hide-overlay', () => {
+ipcMain.handle('hide-overlay', (_e, name = 'legacy') => {
+  shellOverlays.delete(name);
   const view = getActiveView();
-  if (view && browsingMode) { mainWindow.setBrowserView(view); layoutActiveTab(); }
+  if (view && browsingMode && !shellOverlays.size) { mainWindow.setBrowserView(view); layoutActiveTab(); }
+  if (!shellOverlays.size) sendToRenderer('page-backdrop', null);
 });
 
-ipcMain.handle('toggle-dev-panel', () => {
+ipcMain.handle('toggle-dev-panel', (_event, reducedMotion = false) => {
   devPanelOpen = !devPanelOpen;
-  layoutActiveTab();
+  clearInterval(panelMotionTimer);
+  const from = panelProgress;
+  const target = devPanelOpen ? 1 : 0;
+  const started = performance.now();
+  if (reducedMotion) layoutActiveTab();
+  else {
+    const tick = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) { clearInterval(panelMotionTimer); return; }
+      const elapsed = Math.min(1, (performance.now() - started) / 220);
+      const eased = 1 - Math.pow(1 - elapsed, 3);
+      layoutActiveTab(from + (target - from) * eased);
+      if (elapsed === 1) clearInterval(panelMotionTimer);
+    };
+    panelMotionTimer = setInterval(tick, 16);
+    tick();
+  }
   sendToRenderer('dev-panel-state', devPanelOpen);
   return devPanelOpen;
 });
 
 ipcMain.handle('resize-dev-panel', (e, width) => {
-  devPanelWidth = Math.max(250, Math.min(width, 1200));
+  if (!Number.isFinite(width)) return devPanelWidth;
+  devPanelWidth = Math.max(320, Math.min(width, 560));
+  config.ui = { ...config.ui, panelWidth: devPanelWidth };
+  clearTimeout(panelSaveTimer);
+  panelSaveTimer = setTimeout(() => { panelSaveTimer = null; saveConfig(); }, 180);
   layoutActiveTab();
   return devPanelWidth;
+});
+
+ipcMain.handle('get-ui-preferences', () => ({ theme: 'system', pane: 'record', ...config.ui, platform: process.platform, systemDark: nativeTheme.shouldUseDarkColors }));
+ipcMain.handle('save-ui-preferences', (_e, preferences) => {
+  if (!preferences || typeof preferences !== 'object') return false;
+  const ui = { ...config.ui };
+  if (['system', 'light', 'dark'].includes(preferences.theme)) ui.theme = preferences.theme;
+  if (['record', 'chat', 'actions', 'network', 'source'].includes(preferences.pane)) ui.pane = preferences.pane;
+  config.ui = ui;
+  saveConfig();
+  mainWindow?.setBackgroundColor(shellBackground());
+  return true;
+});
+ipcMain.handle('export-playwright', async (_e, payload) => {
+  if (typeof payload?.code !== 'string' || payload.code.length > 2_000_000) throw new Error('Invalid Playwright export');
+  const name = typeof payload.name === 'string' && /^[\w-]{1,64}$/.test(payload.name) ? payload.name : 'playbook';
+  const result = await dialog.showSaveDialog(mainWindow, { title: 'Save Playwright script', defaultPath: name + '.js', filters: [{ name: 'JavaScript', extensions: ['js'] }] });
+  if (result.canceled) return { canceled: true };
+  await fs.promises.writeFile(result.filePath, payload.code, { mode: 0o600 });
+  return { saved: true };
+});
+ipcMain.handle('confirm-discard-recording', async () => {
+  const result = await dialog.showMessageBox(mainWindow, { type: 'question', title: 'Discard recording?', message: 'Discard these recorded steps?', detail: 'This cannot be undone. Save your playbook first if you want to keep it.', buttons: ['Keep recording', 'Discard'], defaultId: 0, cancelId: 0 });
+  return result.response === 1;
 });
 
 ipcMain.handle('get-fingerprint', () => {
@@ -1574,6 +1788,7 @@ ipcMain.handle('dev-action', async (e, action, params) => {
   const view = getActiveView();
   if (!view && action !== 'list-tabs') return { ok: false, error: 'No active tab' };
   try {
+    if (!['analyze', 'screenshot', 'list-tabs'].includes(action)) requireHumanControl();
     switch (action) {
       case 'analyze': {
         await injectScripts(view);
@@ -1751,6 +1966,7 @@ function connect() {
 
     socket.on('close', (code) => {
       wsReady = false;
+      desktopControl.disconnect();
       closeCdpRelays();
       clearInterval(pingInterval);
       sendStatus();
@@ -1777,7 +1993,7 @@ function disconnect() {
   clearTimeout(reconnectTimer); clearInterval(pingInterval);
   reconnectTimer = null; reconnectAttempts = 0; missedPongs = 0;
   if (ws) { ws.removeAllListeners(); try { ws.close(); } catch {} ws = null; }
-  wsReady = false; sendStatus();
+  wsReady = false; desktopControl.disconnect(); sendStatus();
 }
 
 function scheduleReconnect() {
@@ -1801,7 +2017,12 @@ ipcMain.handle('save-profile', async () => {
 async function handleServerMessage(msg) {
   switch (msg.type) {
     case 'control_mode':
-      governance.setMode(msg.mode);
+      if (msg.state) desktopControl.receive(msg.state);
+      governance.setMode(msg.state ? desktopControl.snapshot().mode : msg.mode);
+      break;
+    case 'desktop_control_result':
+      desktopControl.result(msg);
+      if (msg.state) governance.setMode(desktopControl.snapshot().mode);
       break;
     case 'auth_ok':
       reconnectAttempts = 0;
@@ -1815,6 +2036,8 @@ async function handleServerMessage(msg) {
       // Same API key = same fingerprint on every browser, guaranteed.
       if (msg.fingerprint) await applyServerFingerprint(msg.fingerprint, msg.cookies || []);
       wsReady = true;
+      desktopControl.connect(msg.control);
+      if (msg.control) governance.setMode(msg.control.mode);
       config.profileName = msg.persona?.name || 'Default';
       saveConfig();
       startPingLoop(); sendStatus();
@@ -1851,7 +2074,7 @@ async function openCdpRelay(sid) {
   if (!CDP_PORT) return fail('CDP is off in this browser. Start it with OYA_REMOTE_DEBUGGING_PORT set.');
   try {
     const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json();
-    const sock = new WebSocket(`ws://127.0.0.1:${CDP_PORT}${new URL(webSocketDebuggerUrl).pathname}`, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
+    const sock = new WebSocket(`ws://127.0.0.1:${CDP_PORT}${new URL(webSocketDebuggerUrl).pathname}`, { headers: { 'X-Oya-Relay': CDP_RELAY_TOKEN }, perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
     cdpRelays.set(sid, sock);
     sock.on('open', () => wsSend({ type: 'cdp_opened', sid }));
     sock.on('message', (data) => wsSend({ type: 'cdp', sid, data: data.toString() }));
