@@ -87,15 +87,17 @@ assert.ok(/gh release create[^\n]*SRC_ZIP/.test(release), 'release.sh must uploa
 assert.ok(/if \[ "\$CONCLUSION" = "success" \]; then\s*\n\s*gh secret set DAYTONA_SNAPSHOT/.test(release),
   'release.sh moves DAYTONA_SNAPSHOT without first confirming the snapshot was registered');
 
-// The renderer's script is inline, so a syntax error there is silent — the
-// page just stops running. This caught a real collision with an existing
-// updatePill() function.
+// Check every renderer entrypoint: a parse failure otherwise silently stops the UI.
 const html = fs.readFileSync(path.join(__dirname, 'renderer', 'index.html'), 'utf8');
 const inline = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g) || [];
-assert.ok(inline.length, 'no inline renderer script found');
+const external = [...html.matchAll(/<script src="([^"]+)"/g)].map(match => match[1]);
+assert.ok(inline.length + external.length, 'no renderer scripts found');
 for (const block of inline) {
   const body = block.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
   assert.doesNotThrow(() => new Function(body), 'renderer inline script does not parse');
+}
+for (const file of external) {
+  assert.doesNotThrow(() => new Function(fs.readFileSync(path.join(__dirname, 'renderer', file), 'utf8')), `${file} does not parse`);
 }
 
 // ── Recording ──
@@ -159,7 +161,8 @@ assert.ok(/if \(req\.method !== 'PUT'\) return send\(405/.test(door),
 
 // ...and it must parse a bracketed IPv6 Host: a naive split on ':' reads
 // "[::1]" as "[" and locks out every IPv6 loopback client.
-const { localHost } = require('./cdp-front-door');
+const { localHost, isUi } = require('./cdp-front-door');
+assert(isUi({ type: 'page', url: 'file:///app/renderer/control-shield.html' }), 'native input shield must never be exposed as an agent target');
 for (const [host, want] of [['127.0.0.1:9222', true], ['localhost:9222', true], ['[::1]:9222', true],
   ['[::1]', true], ['10.0.0.4:9222', true], ['rebind.attacker.test:9222', false], ['', false]]) {
   assert.strictEqual(localHost({ headers: { host } }), want, `localHost(${JSON.stringify(host)})`);

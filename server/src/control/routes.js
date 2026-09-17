@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { inviteMember, removeMember } from './membership.js';
 import { authMiddleware } from '../auth.js';
 import { control, hash, fault, projectId } from './service.js';
+import { desktopState } from './desktop.js';
 import { assertSafeTarget } from '../net-guard.js';
 import { registry } from '../connection-registry.js';
 import { sendCommand } from '../ws-handler.js';
@@ -58,7 +59,7 @@ controlRouter.post('/sessions/:id/control', wrap(async (req, res) => {
       await new Promise(r => setTimeout(r, 200));
     }
   }
-  registry.get(req.params.id)?.ws?.send(JSON.stringify({ type: 'control_mode', mode: state.mode }));
+  registry.get(req.params.id)?.ws?.send(JSON.stringify({ type: 'control_mode', mode: state.mode, state: desktopState(req.params.id, state) }));
   res.json(state);
 }));
 controlRouter.post('/sessions/:id/input', wrap(async (req, res) => {

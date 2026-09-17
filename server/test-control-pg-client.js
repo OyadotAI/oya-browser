@@ -41,6 +41,9 @@ await a.update(key, session.id, { state: 'ready' });
 // Command gating, so control_begin/control_finish round-trip (text + bigint args).
 const end = await a.beginCommand(session.id);
 await assert.rejects(b.takeover(key, session.id, 'acquire', 'operator'), { code: 'commands_pending' });
+await b.takeover(key, session.id, 'request', 'operator');
+await assert.rejects(a.beginCommand(session.id), { code: 'control_paused' });
+await assert.rejects(a.takeover(key, session.id, 'acquire', 'another-operator'), { code: 'control_busy' });
 await end();
 await b.takeover(key, session.id, 'acquire', 'operator');
 await assert.rejects(a.beginCommand(session.id), { code: 'control_paused' });

@@ -1,4 +1,5 @@
 import { control, hash } from './control/service.js';
+import { desktopControl } from './control/desktop.js';
 /**
  * WebSocket handler — manages browser connections, auth, ping/pong, and command dispatch.
  */
@@ -54,6 +55,8 @@ export function handleConnection(ws, req) {
   }, 10000);
 
   let authenticating = false;
+  let changingControl = false;
+  const localCommands = new Map();
   ws.on('message', async (raw) => {
     try {
     let msg;
@@ -181,6 +184,7 @@ export function handleConnection(ws, req) {
       ws.send(JSON.stringify({
         type: 'auth_ok',
         browser_id: browserId,
+        control: await desktopControl(apiKey, browserId, 'get'),
         fingerprint,
         persona: { id: persona.id, name: persona.name },
         cookies: getAllCookies(persona.id),
@@ -202,6 +206,34 @@ export function handleConnection(ws, req) {
     }
 
     if (!authenticated) return;
+    if (msg.type === 'desktop_control') {
+      if (registry.get(browserId)?.ws !== ws || typeof msg.id !== 'string' || msg.id.length > 80) return;
+      if (msg.action === 'command-start' || msg.action === 'command-end') {
+        try {
+          if (msg.action === 'command-start') {
+            if (localCommands.size >= 1024) throw new Error('Too many pending local commands');
+            const finish = await control().beginCommand(browserId);
+            if (ws.readyState !== 1) { await finish(); return; }
+            const token = uuidv4(); localCommands.set(token, finish);
+            ws.send(JSON.stringify({ type: 'desktop_control_result', id: msg.id, token }));
+          } else {
+            const finish = localCommands.get(msg.token);
+            localCommands.delete(msg.token); await finish?.();
+            ws.send(JSON.stringify({ type: 'desktop_control_result', id: msg.id }));
+          }
+        } catch (error) { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'desktop_control_result', id: msg.id, error: error.message })); }
+        return;
+      }
+      if (changingControl) { ws.send(JSON.stringify({ type: 'desktop_control_result', id: msg.id, error: 'A control handoff is already in progress' })); return; }
+      changingControl = true;
+      try {
+        const state = await desktopControl(apiKey, browserId, msg.action, () => registry.get(browserId)?.ws === ws && ws.readyState === 1);
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'desktop_control_result', id: msg.id, state }));
+      } catch (error) {
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'desktop_control_result', id: msg.id, error: error.message, state: await desktopControl(apiKey, browserId, 'get').catch(() => null) }));
+      } finally { changingControl = false; }
+      return;
+    }
 
     // ── Residential proxy bytes, counted in the sandbox (billed per GB) ──
     if (msg.type === 'proxy_bytes') {
@@ -332,6 +364,8 @@ export function handleConnection(ws, req) {
   });
 
   ws.on('close', () => {
+    for (const finish of localCommands.values()) void finish().catch(() => {});
+    localCommands.clear();
     clearTimeout(authTimeout);
     clearInterval(pingTimer);
 

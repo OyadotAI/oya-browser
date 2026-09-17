@@ -5,14 +5,16 @@
   "main": "main.js",
   "author": "Oya <hello@oya.ai>",
   "scripts": {
-    "start": "electron . 2>/dev/null",
-    "dev": "electron . --dev",
+    "start": "node launch.cjs",
+    "dev": "node launch.cjs --dev",
     "dist": "electron-builder --publish never",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:win": "electron-builder --win --publish never",
     "dist:linux": "electron-builder --linux --publish never",
-    "test": "node test-regressions.js && node test-release.cjs",
-    "test:recording": "electron test-recording-electron.cjs"
+    "test": "node test-regressions.js && node test-control-state.cjs && node test-release.cjs",
+    "test:recording": "electron test-recording-electron.cjs",
+    "test:shell": "node test-shell.mjs",
+    "test:control": "node test-control.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -33,6 +35,8 @@
       "main.js",
       "preload.js",
       "login-state.js",
+      "shell-layout.cjs",
+      "control-state.cjs",
       "governance.js",
       "cdp-front-door.js",
       "renderer/**/*",
