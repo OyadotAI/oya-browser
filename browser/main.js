@@ -1674,7 +1674,10 @@ ipcMain.handle('workspace', async (event, command = {}) => {
     if (answer.response !== 1) return workspace.snapshot();
     return workspace.start(command);
   }
-  if (command.type === 'control') return workspace.control(command.command);
+  if (command.type === 'control') {
+    if (['resume', 'step'].includes(command.command) && desktopControl.snapshot().mode === 'human' && desktopControl.snapshot().mine) await desktopControl.change('return');
+    return workspace.control(command.command);
+  }
   if (command.type === 'support') {
     const report = workspace.support();
     const result = await dialog.showSaveDialog(mainWindow, { defaultPath: 'oya-diagnostics.json', filters: [{ name: 'JSON diagnostics', extensions: ['json'] }] });
