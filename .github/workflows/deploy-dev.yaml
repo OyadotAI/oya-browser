@@ -147,6 +147,11 @@ jobs:
         DAYTONA_SNAPSHOT: ${{ secrets.DAYTONA_SNAPSHOT }}
         DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
         DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
+        # Slack alerts. Optional: with no app configured the console still offers
+        # the bring-your-own-bot-token path, so a missing value must not fail the deploy.
+        SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+        SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+        SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
       run: |
         : "${DAYTONA_API_KEY:?Missing DAYTONA_API_KEY deployment secret}"
         # Without it the server generates a new key per restart and every stored project becomes unreadable.
@@ -161,6 +166,9 @@ jobs:
           --from-literal=DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT}" \
           --from-literal=DAYTONA_API_URL="${DAYTONA_API_URL}" \
           --from-literal=DAYTONA_TARGET="${DAYTONA_TARGET}" \
+          --from-literal=SLACK_CLIENT_ID="${SLACK_CLIENT_ID}" \
+          --from-literal=SLACK_CLIENT_SECRET="${SLACK_CLIENT_SECRET}" \
+          --from-literal=SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET}" \
           -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Create GHCR pull secret

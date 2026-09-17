@@ -305,6 +305,12 @@ jobs:
         # This release's snapshot, or the previous one if registration failed.
         DAYTONA_SNAPSHOT: ${{ needs['register-snapshot'].outputs.snapshot || secrets.DAYTONA_SNAPSHOT }}
         DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+        # Slack alerts. Optional, unlike the Daytona values below: with no app
+        # configured the console still offers the bring-your-own-bot-token path,
+        # so a missing value must not fail the deploy.
+        SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+        SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+        SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
         DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
       run: |
         : "${DAYTONA_API_KEY:?Missing DAYTONA_API_KEY deployment secret}"
@@ -320,6 +326,9 @@ jobs:
           --from-literal=DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT}" \
           --from-literal=DAYTONA_API_URL="${DAYTONA_API_URL}" \
           --from-literal=DAYTONA_TARGET="${DAYTONA_TARGET}" \
+          --from-literal=SLACK_CLIENT_ID="${SLACK_CLIENT_ID}" \
+          --from-literal=SLACK_CLIENT_SECRET="${SLACK_CLIENT_SECRET}" \
+          --from-literal=SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET}" \
           -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Create GHCR pull secret
