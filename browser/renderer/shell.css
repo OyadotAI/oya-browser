@@ -246,3 +246,66 @@ button:active:not(:disabled) { filter: brightness(.94); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Workflow studio: restrained chrome, stable step list, progressive detail. */
+#pane-record { gap: 0; }
+#pane-record [hidden] { display: none !important; }
+.studio-library { display: flex; align-items: center; gap: 8px; padding: 0 18px 6px; }
+.studio-library select { min-width: 0; flex: 1; }
+.studio-save-state { padding: 2px 18px 10px; color: var(--secondary); font-size: 11px; line-height: 1.5; }
+.studio-tabs { display: flex; padding: 0 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; gap: 24px; }
+.studio-tabs button { border: 0; background: none; color: var(--secondary); padding: 11px 0; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; }
+.studio-tabs button[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+.studio-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
+.studio-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 10px 18px; }
+.studio-toolbar select { margin-left: auto; max-width: 170px; }
+#pane-record select, .studio-field input { border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); padding: 7px 8px; font: inherit; font-size: 12px; }
+#pane-record .rec-steps { flex: none; min-height: 0; max-height: 300px; padding: 0 10px 10px; }
+.studio-step { width: 100%; display: flex; text-align: left; align-items: center; gap: 10px; padding: 11px 8px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); cursor: pointer; font: inherit; }
+.studio-step:hover { background: var(--hover); }
+.studio-step.selected { border-color: var(--border); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.studio-step.disabled { opacity: .5; }
+.studio-step .step-copy { min-width: 0; flex: 1; }
+.studio-step strong { font-size: 12px; }
+.studio-step .step-value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; margin-top: 3px; }
+.step-editor { padding: 16px 18px; border-top: 1px solid var(--border); }
+.editor-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.editor-heading h3, .run-heading h3 { font-size: 15px; font-weight: 600; margin: 0; }
+.step-editor .studio-toolbar { padding: 10px 0; }
+.studio-field { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; font-size: 11px; color: var(--secondary); }
+.studio-field input, .studio-field select { width: 100%; box-sizing: border-box; }
+.studio-details { margin: 0 18px; padding: 14px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.studio-details summary { cursor: pointer; font-weight: 500; }
+.studio-details p, .studio-hint, .run-heading p { color: var(--secondary); font-size: 11px; line-height: 1.65; }
+.studio-details pre { max-height: 260px; overflow: auto; font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.variable-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.studio-checkbox { display: inline-flex; gap: 5px; align-items: center; margin-left: 12px; }
+.studio-checkbox input { width: auto; }
+.run-heading { padding: 20px 18px 8px; }
+.run-heading h3 { margin-top: 8px; }
+.run-controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 12px; }
+#run-inputs { padding: 0 18px; }
+.run-event { display: flex; align-items: baseline; gap: 10px; padding: 10px 18px; font-size: 11px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.run-event > span:nth-child(2) { flex: 1; }
+.run-event small { flex-shrink: 0; color: var(--secondary); font-variant-numeric: tabular-nums; }
+.run-event.passed .step-number { color: var(--accent); }
+.studio-issue, .step-issue, .studio-save-state.error, .run-event.failed, .run-event.outcome-unknown { color: #d98876; }
+.studio-issue { padding: 8px 18px; font-size: 12px; line-height: 1.5; }
+.repair-review { margin: 16px 18px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+#pane-record button:focus-visible, #pane-record input:focus-visible, #pane-record select:focus-visible, .run-event:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 959px) { #pane-record.active { display: flex; overflow: hidden; } .studio-scroll { overflow-y: auto; } .studio-save-state { padding-bottom: 4px; } .studio-tabs button { padding: 6px 0; } }
+
+@media (max-width: 959px) { #pane-record.active { display: block; overflow-y: auto; } .studio-scroll { overflow: visible; } }
+.record-finish { margin: 0 18px 14px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--accent) 5%, var(--surface)); flex-shrink: 0; }
+.finish-heading { display: flex; gap: 9px; align-items: flex-start; }
+.finish-check { color: var(--accent); font-size: 16px; line-height: 20px; }
+.finish-heading h3 { font-size: 13px; margin: 0 0 5px; font-weight: 600; }
+.finish-heading p, .finish-connection { font-size: 11px; line-height: 1.5; color: var(--secondary); margin: 0; }
+.finish-save { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.finish-save input { min-width: 100px; flex: 1; width: 100%; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 6px; padding: 8px 9px; font: inherit; font-size: 12px; }
+.finish-save .primary-button { flex-shrink: 0; padding: 8px 11px; }
+.finish-connection { margin-top: 8px; }
+@media (max-width: 959px) { .record-finish { margin-bottom: 10px; } }
+.code-line { display: block; white-space: pre; min-height: 1.6em; }
+.code-line.selected { background: color-mix(in srgb, var(--accent) 15%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.code-line-number { display: inline-block; width: 3ch; margin-right: 2ch; color: var(--secondary); opacity: .65; user-select: none; text-align: right; }

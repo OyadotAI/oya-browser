@@ -32,13 +32,13 @@ const localHost = (req) => {
   return host === 'localhost' || isIP(host) !== 0;
 };
 
-function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand = () => () => {}, clientChanged = () => {}, relayToken }) {
+function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand = () => () => {}, clientChanged = () => {}, relayToken, runToken, allowedTarget }) {
   const up = `127.0.0.1:${upstream}`;
   const hidden = new Set();
 
   const refreshHidden = async () => {
     const list = await (await fetch(`http://${up}/json/list`)).json();
-    for (const t of list) if (isUi(t)) hidden.add(t.id);
+    for (const t of list) if (isUi(t) || allowedTarget && !allowedTarget(t.id)) hidden.add(t.id);
     return list;
   };
 
@@ -65,9 +65,11 @@ function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand =
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(typeof body === 'string' ? body : JSON.stringify(body));
     };
+    if (runToken && req.headers['x-oya-run'] !== runToken) return send(403, { error: 'Run authentication required' });
     if (!localHost(req)) return send(403, { error: 'Host header must be an IP address or localhost' });
     try {
       const path = req.url.split('?')[0].replace(/\/$/, '');
+      if (runToken && !['/json/version', '/json/protocol', '/json', '/json/list'].includes(path)) return send(403, { error: 'Endpoint unavailable for validation' });
       if (path === '/json/new') {
         // PUT-only, as Chromium made it: a page cannot send one, so an <img> or
         // a form cannot open a tab in the persona on the victim's behalf.
@@ -96,6 +98,7 @@ function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand =
   const wss = new WebSocket.Server({ noServer: true, perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 });
   server.on('upgrade', async (req, socket, head) => {
     if (!localHost(req) || req.headers.origin) return socket.destroy();
+    if (runToken && req.headers['x-oya-run'] !== runToken) return socket.destroy();
     const m = req.url.match(/^\/devtools\/(browser|page)\/([^/?]+)/);
     try { await refreshHidden(); } catch { return socket.destroy(); }
     if (!m || hidden.has(m[2])) return socket.destroy();
@@ -138,6 +141,12 @@ function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand =
         if (client.readyState !== WebSocket.OPEN) { finish(); return; }
         pending.set(key, finish);
       } catch (error) { return fail(msg.id, error.message, msg.sessionId); }
+      if (runToken) {
+        if (msg.sessionId && hiddenSessions.has(msg.sessionId)) return fail(msg.id, 'Target is outside this validation', msg.sessionId);
+        if (msg.params?.targetId && !allowedTarget(msg.params.targetId)) return fail(msg.id, 'Target is outside this validation', msg.sessionId);
+        if (!msg.sessionId && msg.method === 'Browser.setDownloadBehavior') return reply(msg.id, {});
+        if (!msg.sessionId && !['Browser.getVersion', 'Target.setAutoAttach', 'Target.setDiscoverTargets', 'Target.getTargets', 'Target.getTargetInfo', 'Target.attachToTarget', 'Target.detachFromTarget', 'Target.createTarget', 'Target.closeTarget'].includes(msg.method)) return fail(msg.id, 'Browser command unavailable for validation');
+      }
       if (!isBrowser) return toUpstream(text);
       if (!msg.sessionId && msg.method === 'Target.createTarget') {
         openTab(msg.params?.url).then((targetId) => reply(msg.id, { targetId }), (e) => fail(msg.id, e.message));
@@ -159,19 +168,20 @@ function start({ port, upstream, host, tabs, createTab, closeTab, beginCommand =
       try { msg = JSON.parse(text); } catch { return client.send(text); }
       if (msg.sessionId && hiddenSessions.has(msg.sessionId)) return;
       const info = msg.params?.targetInfo;
-      if (info && (hidden.has(info.targetId) || isUi(info))) {
+      if (info && (hidden.has(info.targetId) || isUi(info) || allowedTarget && !allowedTarget(info.targetId))) {
         hidden.add(info.targetId);
         if (msg.method === 'Target.attachedToTarget') hiddenSessions.add(msg.params.sessionId);
         return;
       }
       if (filterReplies.delete(msg.id) && msg.result?.targetInfos) {
-        msg.result.targetInfos = msg.result.targetInfos.filter((t) => !hidden.has(t.targetId) && !isUi(t));
+        msg.result.targetInfos = msg.result.targetInfos.filter((t) => !hidden.has(t.targetId) && !isUi(t) && (!allowedTarget || allowedTarget(t.targetId)));
         return client.send(JSON.stringify(msg));
       }
       client.send(text);
     });
   }
 
+  server.on('close', () => { for (const client of wss.clients) client.terminate(); wss.close(); });
   server.listen(port, host, () => console.log(`[cdp] front door on ${host}:${port} → ${up}`));
   return server;
 }

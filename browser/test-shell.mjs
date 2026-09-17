@@ -23,7 +23,7 @@ let application;
 try {
   await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${site.address().port}/`;
-  application = await electron.launch({ executablePath: createRequire(import.meta.url)('./launch.cjs').developmentExecutable(), args: [fileURLToPath(new URL('./main.js', import.meta.url))], cwd: fileURLToPath(new URL('.', import.meta.url)), env: { ...process.env,
+  application = await electron.launch({ executablePath: process.env.OYA_TEST_EXECUTABLE || createRequire(import.meta.url)('./launch.cjs').developmentExecutable(), args: [fileURLToPath(new URL('./main.js', import.meta.url))], cwd: fileURLToPath(new URL('.', import.meta.url)), env: { ...process.env,
     OYA_USER_DATA_DIR: profile, OYA_API_KEY: '', OYA_AUTO_CONNECT: 'false', OYA_SERVER_URL: '', OYA_REMOTE_DEBUGGING_PORT: '0' } });
   const page = await application.firstWindow();
   assert.equal(await application.evaluate(({ app }) => app.getName()), 'Oya Browser');
@@ -128,7 +128,7 @@ try {
   });
   assert(await page.evaluate(() => window.menuReloadSentinel && document.body.classList.contains('mode-browsing')), 'native Reload preserves the shell');
   await page.locator('#record-toggle').click();
-  await page.waitForFunction(() => !document.getElementById('record-toggle').disabled && document.getElementById('record-toggle').textContent.includes('Stop recording'));
+  await page.waitForFunction(() => !document.getElementById('record-toggle').disabled && document.getElementById('record-toggle').textContent.includes('Finish recording'));
   await application.evaluate(async ({ BrowserWindow }) => {
     const wc = BrowserWindow.getAllWindows()[0].getBrowserView().webContents;
     await wc.executeJavaScript("document.getElementById('member').focus()");
@@ -136,11 +136,13 @@ try {
     await wc.executeJavaScript("document.getElementById('dob').focus()");
     await wc.debugger.sendCommand('Input.insertText', { text: '06/12/1988' });
   });
-  await page.locator('#record-count').filter({ hasText: /[2-9] steps/ }).waitFor();
+  await page.locator('#record-count').filter({ hasText: /[2-9] \/ 500/ }).waitFor();
   await capture('recording-light');
   await page.locator('#record-toggle').click();
   await page.locator('#record-footer').waitFor({ state: 'visible' });
   assert(await page.locator('#record-save').isDisabled(), 'offline save is explained and disabled');
+  assert(await page.locator('#record-finish').isVisible(), 'finishing recording presents the save action immediately');
+  assert.match(await page.locator('#record-finish-copy').innerText(), /saved on this device/);
   await capture('review-light');
   for (const size of [[800, 600], [600, 400]]) {
     await application.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setContentSize(...size), size);
@@ -153,11 +155,28 @@ try {
     await capture(`review-light-${size[0]}`);
   }
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 860));
-  const originalCount = await page.locator('.step').count();
-  // Native confirmation stays in the main process. Stub only the user's choice.
-  await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 0 }); });
+  const originalCount = await page.locator('.studio-step').count();
+  // Pause/resume preserves the same draft instead of replacing the recording.
+  const draftBeforeResume = await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }));
   await page.locator('#record-toggle').click();
-  assert.equal(await page.locator('.step').count(), originalCount, 'cancel replacement keeps the recording');
+  await page.waitForFunction(() => document.getElementById('record-toggle').textContent.includes('Finish recording'));
+  await page.locator('#record-toggle').click();
+  await page.waitForFunction(() => document.getElementById('record-toggle').textContent.includes('Resume recording'));
+  const draftAfterResume = await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }));
+  assert.equal(draftAfterResume.draft.id, draftBeforeResume.draft.id);
+  assert.equal(draftAfterResume.draft.steps.length, draftBeforeResume.draft.steps.length);
+  assert.equal(draftAfterResume.storageError, null, 'draft encrypted on disk');
+  await application.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+  await page.locator('#record-validate').click();
+  await page.waitForFunction(async () => (await window.oyaBrowser.workspace({ type: 'get' })).run?.status === 'succeeded', null, { timeout: 30000 });
+  await page.getByText('Steps completed.', { exact: true }).waitFor();
+  await capture('validation-passed-light');
+  const validated = await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }));
+  assert(validated.run.events.some(event => event.status === 'passed'));
+  assert(validated.runHistory.some(run => run.id === validated.run.id), 'validation history persisted');
+  await page.locator('[data-studio=steps]').click();
+  // Keep the original native tab count for the later tab-overflow assertions.
+  const baselineTabs = await page.locator('#tab-list [role=tab]').count();
   // Stub the server boundary, leaving the actual renderer state machine and IPC intact.
   await application.evaluate(({ BrowserWindow, ipcMain }) => {
     BrowserWindow.getAllWindows()[0].webContents.send('ws-status', { connected: true, browserId: 'test-browser', profileName: 'Work' });
@@ -169,21 +188,22 @@ try {
   await page.locator('#record-save').click();
   await page.getByText('Connection interrupted. Try again.', { exact: true }).waitFor();
   await capture('save-failed-light');
-  assert.equal(await page.locator('.step').count(), originalCount);
+  assert.equal(await page.locator('.studio-step').count(), originalCount);
   await page.locator('#record-save').click();
-  await page.getByText('Ready to run again.', { exact: true }).waitFor();
-  assert.equal(await page.locator('.step').count(), originalCount, 'saved recording stays reviewable');
+  await page.getByText('Playbook “member-lookup” saved to Oya. Your local draft is retained.', { exact: true }).waitFor();
+  await page.locator('[data-studio=inspect]').click();
+  assert.equal(await page.locator('.studio-step').count(), originalCount, 'saved recording stays reviewable');
   await page.locator('#record-export summary').click();
   await capture('export-light');
   const exportedPath = join(profile, 'export.js');
   await application.evaluate(({ dialog }, filePath) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath }); }, exportedPath);
   await page.locator('#record-download').click();
-  await page.getByText('Playwright script saved.', { exact: true }).waitFor();
+  await page.getByText('Playwright module exported.', { exact: true }).waitFor();
   const { readFile } = await import('node:fs/promises');
   assert.match(await readFile(exportedPath, 'utf8'), /export default/);
   await page.evaluate(() => Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async () => { throw new Error('denied'); } }));
   await page.locator('#record-copy').click();
-  await page.getByText(/Could not copy. Expand/).waitFor();
+  await page.locator('#record-result').filter({ hasText: /denied/ }).waitFor();
   await page.locator('#btn-commands').click();
   await page.locator('#shell-overlay').waitFor({ state: 'visible' });
   assert(await page.locator('#page-backdrop').evaluate(el => !el.hidden && el.naturalWidth > 0), 'dialog preserves a decoded page preview');
@@ -206,7 +226,7 @@ try {
   await page.locator('#chat-input').press('Shift+Enter');
   await page.locator('#chat-input').pressSequentially('Second line');
   assert.equal(await page.locator('#chat-input').inputValue(), 'First line\nSecond line');
-  await page.getByRole('tab', { name: 'Inspect', exact: true }).click();
+  await page.locator('.dev-panel-header').getByRole('tab', { name: 'Inspect', exact: true }).click();
   await capture('inspect-dark');
   await page.getByRole('tab', { name: 'Record', exact: true }).click();
   await page.locator('#btn-commands').click();
@@ -238,10 +258,10 @@ try {
   await page.waitForFunction(() => document.activeElement.id === 'url-bar');
   // Native tab status plus overflow and keyboard tab navigation.
   for (let index = 0; index < 7; index++) await page.evaluate(url => window.oyaBrowser.newTab(url), url + '?tab=' + index);
-  await page.waitForFunction(() => document.querySelectorAll('#tab-list [role="tab"]').length === 8);
+  await page.waitForFunction(expected => document.querySelectorAll('#tab-list [role="tab"]').length === expected, baselineTabs + 7);
   const activeTab = page.locator('#tab-list [role="tab"][aria-selected="true"]');
   await activeTab.focus(); await page.keyboard.press('ArrowLeft');
-  await page.waitForFunction(() => document.querySelector('#tab-list .tab-item:nth-child(7) [role="tab"]').getAttribute('aria-selected') === 'true');
+  await page.waitForFunction(expected => document.querySelector(`#tab-list .tab-item:nth-child(${expected}) [role="tab"]`).getAttribute('aria-selected') === 'true', baselineTabs + 6);
   await capture('many-tabs-dark');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const preferences = JSON.parse(await readFile(join(profile, 'config.json'), 'utf8'));

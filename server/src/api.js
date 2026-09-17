@@ -1427,7 +1427,8 @@ router.post('/browsers/:browserId/playbooks', authMiddleware, enforce('chat'), a
     return res.status(404).json({ error: `Browser ${browserId} not connected` });
   }
   try {
-    const { name, steps, prompt, secrets } = req.body || {};
+    const { name, steps, prompt, secrets, schemaVersion, variables } = req.body || {};
+    if (schemaVersion !== undefined && schemaVersion !== 2) return res.status(400).json({ error: 'Unsupported workflow version' });
     let run;
     if (steps !== undefined) {
       if (secrets !== undefined && (!Array.isArray(secrets) || secrets.some((k) => !/^\w{1,64}$/.test(String(k))))) {
@@ -1435,7 +1436,8 @@ router.post('/browsers/:browserId/playbooks', authMiddleware, enforce('chat'), a
       }
       run = {
         prompt: String(prompt || name || '').slice(0, 2000),
-        steps: playbooks.sanitizeSteps(steps),
+        steps: schemaVersion === 2 ? playbooks.validateWorkflow({ schemaVersion, steps, variables, secrets }).steps : playbooks.sanitizeSteps(steps),
+        ...(schemaVersion === 2 ? { schemaVersion, variables: playbooks.validateWorkflow({ schemaVersion, steps, variables, secrets }).variables } : {}),
         secrets: (secrets || []).map(String),
       };
     }

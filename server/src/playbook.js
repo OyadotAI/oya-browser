@@ -1,3 +1,4 @@
+import workflow from '../../browser/scripts/workflow.cjs';
 /**
  * Playbooks: an ask() run frozen into steps that replay without the LLM.
  *
@@ -86,7 +87,7 @@ export function sanitizeSteps(steps) {
 /** Every placeholder the steps use, in order of appearance. */
 export const variablesOf = (steps) => [...new Set([...JSON.stringify(steps).matchAll(/\{\{(\w+)(?:\|[^}]*)?\}\}/g)].map((m) => m[1]))];
 
-export const missingVariables = (pb, vars = {}) => variablesOf(pb.steps).filter((k) => vars[k] == null && pb.defaults?.[k] == null);
+export const missingVariables = (pb, vars = {}) => (pb.schemaVersion === 2 ? workflow.variableNames(workflow.normalizeDraft(pb)) : variablesOf(pb.steps)).filter((k) => vars[k] == null && pb.defaults?.[k] == null && (!pb.variables?.[k] || pb.variables[k].secret || pb.variables[k].default == null));
 
 /** A JS expression for a recorded string; placeholders become `vars["name"]`, filtered ones `v(vars, "name", pipes)`. */
 function expr(text) {
@@ -115,6 +116,7 @@ function locator(step) {
 
 /** A Playwright module with non-secret defaults and caller-supplied overrides. */
 export function renderPlaywright(pb) {
+  if (pb.schemaVersion === 2) return workflow.generate(pb).code;
   const s = JSON.stringify;
   const vars = variablesOf(pb.steps);
   const secrets = new Set(pb.secrets || []);
@@ -159,7 +161,7 @@ export function renderPlaywright(pb) {
   ].join('\n');
 }
 
-const describe = (pb) => ({ name: pb.name, variables: variablesOf(pb.steps), defaults: pb.defaults || {}, steps: pb.steps.length, code: renderPlaywright(pb) });
+const describe = (pb) => ({ name: pb.name, variables: pb.schemaVersion === 2 ? workflow.variableNames(workflow.normalizeDraft(pb)) : variablesOf(pb.steps), defaults: pb.defaults || {}, steps: pb.steps.length, code: renderPlaywright(pb) });
 
 const CAMEL = (s) => String(s).trim().toLowerCase()
   .replace(/[^a-z0-9]+(.)?/g, (_, c) => (c ? c.toUpperCase() : ''))
@@ -229,7 +231,8 @@ export async function create(apiKey, browserId, name, run = lastRun(browserId)) 
 
   // Which keys were secrets, so a healing replay keeps them hidden from the model.
   const pb = { name, prompt: run.prompt, steps: structuredClone(run.steps), defaults: {}, secrets: run.secrets || [], createdAt: new Date().toISOString() };
-  templateValues(pb);
+  if (run.schemaVersion === 2) { pb.schemaVersion = 2; pb.variables = run.variables || {}; pb.defaults = Object.fromEntries(Object.entries(pb.variables).filter(([,v]) => !v.secret && v.default !== undefined).map(([k,v]) => [k,v.default])); workflow.generate(pb); }
+  else templateValues(pb);
   await keyConfig.savePlaybook(apiKey, name, pb);
   return describe(pb);
 }
@@ -331,6 +334,13 @@ async function runStep(browserId, step, values, defaults = {}) {
  * finishes the task and its steps are saved as the draft `<name>:draft`.
  */
 export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, checkpoint, requestHuman } = {}) {
+  if (pb.schemaVersion === 2) {
+    const draft = validateWorkflow(pb);
+    if (draft.steps.some(step => step.enabled && step.action === 'checkpoint')) throw fail(409, 'Open this workflow in Oya Browser for interactive human checkpoints.');
+    const result = await command(browserId, 'workflow', { draft, variables: vars, autoHeal }, 600000);
+    if (result.status !== 'succeeded') throw fail(422, result.error || `Playwright validation ${result.status}`);
+    return { steps: draft.steps.filter(step => step.enabled).length, total: draft.steps.length, fellBack: false, assertions: result.assertions, runId: result.id };
+  }
   const values = { ...pb.defaults, ...vars };
   const total = pb.steps.length;
   for (let i = 0; i < total; i++) {
@@ -371,3 +381,5 @@ async function heal(apiKey, browserId, pb, i, err, values, hooks) {
   await keyConfig.savePlaybook(apiKey, `${pb.name}:draft`, draft);
   return { steps: i, total, fellBack: true, healed: true, draft: `${pb.name}:draft`, text: result.text };
 }
+
+export function validateWorkflow(input) { try { const draft = workflow.normalizeDraft(input); workflow.generate(draft); return draft; } catch (error) { throw fail(400, error.message); } }

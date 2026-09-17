@@ -148,7 +148,16 @@ let server, win, channel;
   assert.deepEqual(steps.filter(s => s.action === 'type').map(s => s.text), ['real edit', 'keep this edit'], 'real edits survive field removal in order');
   assert.equal(steps.filter(s => s.action === 'press_key' && s.key === 'Enter').length, 1);
   assert(!steps.some(s => s.action === 'click' && s.el?.domId === 'keyboardButton'), 'Enter activation is not duplicated');
-  console.log('Electron recording: navigation, secrets, hidden/synthetic events, custom controls, labels, selection, field removal, keyboard submission, stop and clear passed');
+  steps.length = 0;
+  await view.webContents.executeJavaScript(`new Promise(resolve => { const frame = document.createElement('iframe'); frame.id = 'payment'; frame.srcdoc = '<label>Reference<input id="reference"></label>'; frame.onload = resolve; document.body.replaceChildren(frame); })`);
+  await start();
+  await view.webContents.executeJavaScript(`document.getElementById('payment').contentDocument.getElementById('reference').focus()`);
+  await send('Input.insertText', { text: 'frame entry' });
+  await channel.stop(); channel = null;
+  const frameStep = steps.find(step => step.action === 'type' && step.text === 'frame entry');
+  assert(frameStep, 'trusted input inside a frame is captured');
+  assert.deepEqual(frameStep.frames, ['iframe[id="payment"]']);
+  console.log('Electron recording: navigation, secrets, hidden/synthetic events, custom controls, labels, selection, field removal, keyboard submission, stop, clear and frame context passed');
 })().catch(err => { console.error(err); process.exitCode = 1; }).finally(async () => {
   await channel?.stop().catch(() => {});
   win?.destroy(); server?.close();

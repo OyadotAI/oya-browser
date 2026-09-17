@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   newTab: (url) => ipcRenderer.invoke('new-tab', url),
   closeTab: (id) => ipcRenderer.invoke('close-tab', id),
   activateTab: (id) => ipcRenderer.invoke('activate-tab', id),
+  workspace: command => ipcRenderer.invoke('workspace', command),
+  onWorkspace: cb => ipcRenderer.on('workspace-state', (_event, state) => cb(state)),
   // Recording
   startRecording: () => ipcRenderer.invoke('start-recording'),
   stopRecording: () => ipcRenderer.invoke('stop-recording'),
