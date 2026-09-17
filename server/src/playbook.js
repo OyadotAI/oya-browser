@@ -247,6 +247,23 @@ export async function promote(apiKey, name) {
   return describe({ ...pb, name });
 }
 
+/** Rename a playbook; its healed draft moves with it. */
+export async function rename(apiKey, name, newName) {
+  if (typeof newName !== 'string' || !NAME.test(newName)) throw fail(400, 'Playbook name must be 1-64 letters, digits, _ or -');
+  const pb = keyConfig.getPlaybook(apiKey, name);
+  if (!pb || name.endsWith(':draft')) throw fail(404, `No playbook named ${name}`);
+  if (newName === name) return describe(pb);
+  if (keyConfig.getPlaybook(apiKey, newName)) throw fail(409, `A playbook named ${newName} already exists`);
+  await keyConfig.savePlaybook(apiKey, newName, { ...pb, name: newName });
+  const draft = keyConfig.getPlaybook(apiKey, `${name}:draft`);
+  if (draft) {
+    await keyConfig.savePlaybook(apiKey, `${newName}:draft`, { ...draft, name: `${newName}:draft` });
+    await keyConfig.deletePlaybook(apiKey, `${name}:draft`);
+  }
+  await keyConfig.deletePlaybook(apiKey, name);
+  return describe({ ...pb, name: newName });
+}
+
 /** Every playbook, newest first, each with the healed draft waiting for review. */
 export function list(apiKey) {
   const all = keyConfig.listPlaybooks(apiKey);

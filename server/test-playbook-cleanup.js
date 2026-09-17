@@ -69,7 +69,22 @@ try {
   config.reset();
   await config.restore();
   assert.deepEqual(config.getPlaybook('alice', 'legacy'), cleaned, 'cleanup survives restart');
-  console.log('playbook cleanup: legacy labels, proven hidden inputs, preserved uncertain fields, drafts, tenant isolation, encrypted backup and restart passed');
+
+  // Rename carries the healed draft along and never lands on a name in use.
+  const playbooks = await import('./src/playbook.js');
+  await playbooks.rename('alice', 'legacy', 'renamed');
+  assert.equal(config.getPlaybook('alice', 'legacy'), null);
+  assert.equal(config.getPlaybook('alice', 'legacy:draft'), null);
+  assert.equal(config.getPlaybook('alice', 'renamed').name, 'renamed');
+  assert.equal(config.getPlaybook('alice', 'renamed:draft').healedFrom, 2);
+  assert.equal(config.getPlaybook('bob', 'legacy').defaults.patient, 'Bob', 'one tenant renaming leaves the other alone');
+  await assert.rejects(() => playbooks.rename('alice', 'renamed', 'not a name'), /1-64 letters/);
+  await assert.rejects(() => playbooks.rename('alice', 'gone', 'whatever'), /No playbook named gone/);
+  await config.savePlaybook('alice', 'taken', cleaned);
+  await assert.rejects(() => playbooks.rename('alice', 'renamed', 'taken'), /already exists/);
+  assert.equal(config.getPlaybook('alice', 'renamed').name, 'renamed', 'a refused rename changes nothing');
+
+  console.log('playbook cleanup: rename, legacy labels, proven hidden inputs, preserved uncertain fields, drafts, tenant isolation, encrypted backup and restart passed');
 } finally {
   config.reset();
   await rm(dir, { recursive: true, force: true });

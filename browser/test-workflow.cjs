@@ -2,13 +2,25 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { normalizeDraft, generate, issues } = require('./scripts/workflow.cjs');
+const { normalizeDraft, generate, issues, candidates } = require('./scripts/workflow.cjs');
 const { DraftStore } = require('./scripts/draft-store.cjs');
 const { Workspace } = require('./scripts/workspace.cjs');
 const { redact } = require('./scripts/diagnostics.cjs');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-workflow-unit-'));
 const safe = { isEncryptionAvailable: () => true, encryptString: value => Buffer.from(value), decryptString: value => value.toString() };
 try {
+  // A field leads with its DOM handles: the text a page hangs off an input is a hint or a
+  // title as often as a <label>, and getByLabel("Requires first letter") matches nothing.
+  assert.deepEqual(candidates({ type: 'input', tag: 'input', text: 'Requires first letter', domId: 'FirstName', name: 'first' }), [
+    { kind: 'css', value: '[id="FirstName"]' }, { kind: 'css', value: '[name="first"]' }, { kind: 'label', value: 'Requires first letter' },
+  ]);
+  assert.equal(candidates({ type: 'select', tag: 'select', text: '[Please Select One] Aetna Cigna', domId: 'plan' })[0].value, '[id="plan"]');
+  assert.deepEqual(candidates({ type: 'input', tag: 'input', text: 'Member ID', testId: 'member' })[0], { kind: 'testId', value: 'member' });
+  // A link or button is the other way round: its text is its accessible name.
+  assert.deepEqual(candidates({ type: 'link', tag: 'a', role: 'link', text: 'Save and Continue', href: 'https://x.test/2' }), [
+    { kind: 'role', role: 'link', value: 'Save and Continue' }, { kind: 'text', value: 'Save and Continue' }, { kind: 'css', value: 'a[href="https://x.test/2"]' },
+  ]);
+
   const store = new DraftStore(directory, safe);
   const draft = normalizeDraft({ name: 'login', secrets: ['password'], variables: { password: { default: 'DO_NOT_STORE' }, username: { default: 'demo' } }, steps: [{ action: 'navigate', url: 'https://example.com' }, { action: 'type', text: '{{password}}', candidates: [{ kind: 'label', value: 'Password' }] }, { action: 'assert_url', expected: 'https://example.com' }] });
   assert.equal(draft.variables.password.default, undefined);

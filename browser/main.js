@@ -1481,6 +1481,8 @@ let recordedSecrets = new Set();
 let drainTimer = null;
 const recordingChannels = new Map();
 const recordedIds = new Set();
+const pausedUrls = new Map();   // tab id -> the page recording was paused on
+
 let recordingTask = Promise.resolve();
 function queueRecording(work) {
   const next = recordingTask.then(work);
@@ -1561,12 +1563,17 @@ async function startRecording(resume = false, origin = 'desktop') {
   recordedSteps = resume && workspace ? structuredClone(workspace.draft.steps) : [];
   recordedSecrets = new Set(resume && workspace ? workspace.draft.secrets : []);
   recordedIds.clear(); for (const step of recordedSteps) recordedIds.add(step.id);
-  if (!resume) recordingTabMap.clear();
+  if (!resume) { recordingTabMap.clear(); pausedUrls.clear(); }
   if (!recordingTabMap.size) recordingTabMap.set(activeTabId, resume ? recordedSteps.at(-1)?.tab || 'main' : 'main');
   const view = getActiveView();
   const url = view?.webContents.getURL();
-  // Replay has to start where the person started, the way an ask() run does.
-  if (!resume && /^https?:\/\//i.test(url || '')) pushRecordedStep({ action: 'navigate', url, start: true });
+  // Replay has to start where the person started, the way an ask() run does — and when
+  // they browsed somewhere else while recording was paused, replay has to follow them
+  // there, or every step after the resume runs against the page the pause left behind.
+  if (/^https?:\/\//i.test(url || '')) {
+    if (!resume) pushRecordedStep({ action: 'navigate', url, start: true });
+    else if (pausedUrls.has(activeTabId) && pausedUrls.get(activeTabId) !== url) pushRecordedStep({ action: 'navigate', url });
+  }
   try {
     for (const tab of tabs) await armRecordingView(tab.view);
   } catch (err) {
@@ -1589,6 +1596,7 @@ async function stopRecording() {
   recordingChannels.clear();
   await drainAll(true);
   recording = false;
+  for (const tab of tabs) { try { pausedUrls.set(tab.id, tab.view.webContents.getURL()); } catch {} }
   emitRecording();
   return { recording: false, steps: recordedSteps };
 }

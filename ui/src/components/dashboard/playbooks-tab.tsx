@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleDot, Code, ExternalLink, Play, Trash2, Workflow } from 'lucide-react';
+import { CircleDot, Code, ExternalLink, Pencil, Play, Trash2, Workflow } from 'lucide-react';
 import { ago, api, errorMessage } from '@/lib/api-client';
 import Dialog, { Confirm } from '@/components/ui/dialog';
 import SyntaxCode from '@/components/ui/syntax-code';
@@ -39,6 +39,7 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
   const [code, setCode] = useState<PlaybookBody | null>(null);
   const [running, setRunning] = useState<PlaybookInfo | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<PlaybookInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
 
@@ -75,6 +76,18 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
     finally { setBusy(false); setRemoving(null); }
   };
 
+  const doRename = async (name: string) => {
+    if (!renaming) return;
+    setBusy(true);
+    try {
+      await api(`/playbooks/${encodeURIComponent(renaming.name)}`, { key: apiKey, method: 'PATCH', body: { name } });
+      toast(`Renamed to ${name}`, 'success');
+      setRenaming(null);
+      refresh();
+    } catch (err) { toast(errorMessage(err), 'error'); }
+    finally { setBusy(false); }
+  };
+
   const list = playbooks || [];
 
   return (
@@ -101,7 +114,7 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
               <th className="w-[70px] px-2 py-3 text-right">Steps</th>
               <th className="w-[28%] px-3 py-3">Healed draft</th>
               <th className="w-[90px] px-2 py-3 text-right">Created</th>
-              <th className="w-[120px] px-2 py-3" aria-label="Actions" />
+              <th className="w-[150px] px-2 py-3" aria-label="Actions" />
             </tr>
           </thead>
           <tbody>
@@ -135,6 +148,7 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
                 <td className="px-2 py-3">
                   <div className="flex justify-end gap-1">
                     <button className="btn-icon" title="Playwright code" aria-label={`Playwright code for ${p.name}`} onClick={() => setCode(p)}><Code className="h-4 w-4" /></button>
+                    <button className="btn-icon" title="Rename" aria-label={`Rename ${p.name}`} onClick={() => setRenaming(p)}><Pencil className="h-4 w-4" /></button>
                     <button className="btn-icon" title="Run" aria-label={`Run ${p.name}`} onClick={() => setRunning(p)}><Play className="h-4 w-4" /></button>
                     <button className="btn-icon" title="Delete" aria-label={`Delete ${p.name}`} onClick={() => setRemoving(p.name)}><Trash2 className="h-4 w-4" /></button>
                   </div>
@@ -157,6 +171,8 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
         {code && <pre className="max-h-[60vh] overflow-auto rounded-lg border border-border bg-bg-card px-4 py-3 text-[12px]"><SyntaxCode code={code.code} language="typescript" /></pre>}
       </Dialog>
 
+      {renaming && <RenameDialog current={renaming.name} busy={busy} onClose={() => setRenaming(null)} onRename={doRename} />}
+
       {running && <RunDialog apiKey={apiKey} playbook={running} browsers={browsers} personas={personas} onClose={() => setRunning(null)} onFinished={refresh} />}
 
       {recording && <RecordDialog apiKey={apiKey} browsers={browsers} onClose={() => setRecording(false)} onSaved={refresh} />}
@@ -168,6 +184,29 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: { apiK
           ? 'The playbook keeps its current steps. The next replay that breaks will heal again.'
           : 'The playbook and any healed draft are gone. Code calling play() with this name will fail.'} />
     </div>
+  );
+}
+
+/** Rename a saved playbook. Code calling play() with the old name breaks, so the dialog says so. */
+function RenameDialog({ current, busy, onClose, onRename }: {
+  current: string; busy: boolean; onClose: () => void; onRename: (name: string) => void;
+}) {
+  const [name, setName] = useState(current);
+  const trimmed = name.trim();
+  const ok = /^[\w-]{1,64}$/.test(trimmed) && trimmed !== current;
+  return (
+    <Dialog open onClose={onClose} title={`Rename ${current}`} description="Any healed draft moves with it. Code calling play() with the old name will fail."
+      footer={<>
+        <button className="btn-ghost" onClick={onClose} disabled={busy}>Cancel</button>
+        <button className="btn-primary" onClick={() => onRename(trimmed)} disabled={!ok || busy}>{busy ? 'Renaming…' : 'Rename'}</button>
+      </>}>
+      <form onSubmit={(e) => { e.preventDefault(); if (ok && !busy) onRename(trimmed); }}>
+        <label className="label" htmlFor="pb-rename">Name</label>
+        <input id="pb-rename" className="field font-mono" value={name} autoComplete="off" spellCheck={false}
+          onChange={(e) => setName(e.target.value)} />
+        <p className="mt-1 text-[12px] text-text-muted">1-64 letters, digits, _ or -.</p>
+      </form>
+    </Dialog>
   );
 }
 
