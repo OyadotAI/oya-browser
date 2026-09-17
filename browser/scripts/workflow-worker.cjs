@@ -72,7 +72,9 @@ async function run({ draft, endpoint, token, targetId, pageUrls, vars, directory
               if (!count) { await primary.waitFor({ state: 'attached', timeout: Math.max(1, Math.min(step.timeout, (repairDeadlines.get(id) || Infinity) - Date.now())) }).catch(() => {}); count = await countTarget(primary); }
               emit({ kind: 'target', stepId: id, count, message: count === 1 ? 'One matching target' : count ? 'Multiple matching targets' : 'Target not found' });
               if (count !== 1) {
-                if (autoHeal && count === 0 && !step.action.startsWith('assert_') && (attempts.get(id) || 0) < 2 && Date.now() < (repairDeadlines.get(id) || Infinity)) {
+                // Ambiguity is as repairable as absence: another recorded handle for the
+                // same element — its id, its name — often still matches exactly one.
+                if (autoHeal && !step.action.startsWith('assert_') && (attempts.get(id) || 0) < 2 && Date.now() < (repairDeadlines.get(id) || Infinity)) {
                   if (!repairDeadlines.has(id)) repairDeadlines.set(id, Date.now() + 30000);
                   for (const candidate of step.candidates.slice(1)) if (Date.now() < (repairDeadlines.get(id) || Infinity) && await countTarget(locate(scope, resolved(candidate))) === 1) {
                     if (!repairDeadlines.has(id)) repairDeadlines.set(id, Date.now() + 30000);

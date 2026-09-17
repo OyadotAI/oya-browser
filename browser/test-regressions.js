@@ -120,6 +120,13 @@ assert.ok(/new RecordingChannel\(/.test(src),
 assert.ok(/steps: recordedSteps\.map\(\(\{ t, \.\.\.step \}\) => step\)/.test(src),
   'capture timestamps are being sent to the server as part of the steps');
 
+// Pausing, browsing somewhere by hand, then resuming: without a step for that move the
+// replay stays on the paused page and every later step times out looking for a target.
+assert.ok(/pausedUrls\.set\(tab\.id, tab\.view\.webContents\.getURL\(\)\)/.test(src),
+  'stopRecording no longer remembers where the pause left each tab');
+assert.ok(/pausedUrls\.has\(activeTabId\) && pausedUrls\.get\(activeTabId\) !== url\) pushRecordedStep\(\{ action: 'navigate', url \}\)/.test(src),
+  'a resume on another page records no navigation — replay will run the rest against the paused page');
+
 // A tab whose first load never settles must not wedge every later command on
 // it. Unbounded awaits here made a broken browser image look like a dead server.
 assert.ok(!/await tabs\.find\(.*?\)\?\.ready/.test(src),

@@ -1478,6 +1478,14 @@ router.delete('/playbooks/:name', authMiddleware, async (req, res) => {
   }
 });
 
+router.patch('/playbooks/:name', authMiddleware, async (req, res) => {
+  try {
+    res.json(await playbooks.rename(getKey(req), req.params.name, req.body?.name));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 router.post('/playbooks/:name/promote', authMiddleware, async (req, res) => {
   try {
     res.json(await playbooks.promote(getKey(req), req.params.name));
