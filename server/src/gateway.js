@@ -185,7 +185,7 @@ class Session {
     sessions.delete(this.id);
     if (this.attachedTo) await control().store.transact(async tx => { if (await tx.get('attachment', this.id)) await tx.delete('attachment', this.id); }).catch(() => {});
 
-    await recorder.stop(this.id).catch(() => {});
+    if (await recorder.stop(this.id).catch(() => false)) void control().emit(this.apiKey, 'recording.ready', this.id, {}).catch(() => {});
     if (this.profile) {
       await profiles.capture(this.owner, this.profile, this)
         .catch((e) => console.error(`[gateway] profile capture failed for ${this.profile}:`, e.message));

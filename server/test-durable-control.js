@@ -85,6 +85,17 @@ try {
   await service.update('a', session.id, { state: 'stopped' });
   assert.equal((await service.read('a')).deliveries.filter(x => x.hook === hook.id).length, 1);
   await assert.rejects(service.update('a', session.id, { state: 'ready' }), { code: 'terminal_session' });
+  // The Settings endpoint: one per project, secret kept across edits, rotated on request.
+  const created = await service.webhook('c', { url: 'https://example.com/a', types: ['persona.created'] });
+  const edited = await service.webhook('c', { url: 'https://example.com/b', types: ['persona.created'] });
+  assert.ok(created.secret && !edited.secret && edited.id === created.id);
+  assert.equal((await service.read('c')).webhooks.length, 1);
+  assert.notEqual((await service.webhook('c', { url: 'https://example.com/b', types: ['persona.created'], roll: true })).secret, created.secret);
+  await service.emit('c', 'session.ready');
+  await service.emit('c', 'persona.created', null, { personaId: 'p1' });
+  const config = await service.webhookConfig('c');
+  assert.equal(config.hook.url, 'https://example.com/b');
+  assert.deepEqual(config.deliveries.map(d => d.type), ['persona.created']);
   assert.notEqual((await store.get('project', projectId('a'))).key, 'a', 'canonical key encrypted at rest');
   // Two connections to one file stand in for two replicas: admission must hold across them through row CAS and the project lock.
   const replicas = [new ControlService(new ControlStore({ path, lock: false })), new ControlService(new ControlStore({ path, lock: false }))];
