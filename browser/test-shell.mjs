@@ -17,6 +17,8 @@ body{margin:0;background:#f8fafb;color:#263443;font:14px -apple-system,system-ui
 const site = createServer((req, res) => {
   if (req.url === '/slow') { res.on('close', () => res.destroy()); return; }
   if (req.url === '/fail') { res.socket.destroy(); return; }
+  // No background of its own — the canvas underneath is whatever the browser paints.
+  if (req.url === '/bare') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Bare page</title><p>No background here.'); return; }
   res.setHeader('Content-Type', 'text/html'); res.end(fixture);
 });
 let application;
@@ -75,6 +77,23 @@ try {
     const contents = BrowserWindow.getAllWindows()[0].getBrowserView().webContents;
     if (contents.isLoading()) await new Promise(resolve => contents.once('did-stop-loading', resolve));
   });
+  // A page that paints no background must not show the dark shell colour through.
+  await application.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'dark'; });
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  await page.locator('#url-bar').fill(url + 'bare');
+  await page.locator('#url-bar').press('Enter');
+  await page.locator('#navigation-progress').waitFor({ state: 'hidden' });
+  const canvas = await application.evaluate(async ({ BrowserWindow }) => {
+    const image = await BrowserWindow.getAllWindows()[0].getBrowserView().webContents.capturePage();
+    return [...image.toBitmap().subarray(0, 3)].reverse(); // BGRA, top-left pixel
+  });
+  assert.deepEqual(canvas, [255, 255, 255], 'a page without its own background paints white, not the window colour');
+  await application.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'light'; });
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+  await page.locator('#url-bar').fill(url);
+  await page.locator('#url-bar').press('Enter');
+  await page.locator('#navigation-progress').waitFor({ state: 'hidden' });
+
   await page.locator('#btn-dev').click();
   await page.locator('#pane-record').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.documentElement.dataset.panelMoving === 'false');

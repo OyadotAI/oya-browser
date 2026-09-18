@@ -1188,6 +1188,10 @@ function createTab(url, activate = true) {
       partition: getPartitionName(),
     },
   });
+  // A page that sets no background of its own paints nothing, and the window's colour
+  // shows through — in the dark theme that is dark text on a dark canvas. White is what
+  // every other browser puts under a page; a page with its own background still wins.
+  view.setBackgroundColor('#ffffff');
 
   const tab = { id, view, title: 'New Tab', url: url || '' };
   tabs.push(tab);

@@ -32,15 +32,14 @@ export default function PersonaForm({ open, onClose, apiKey, onCreated }: Props)
   const [locale, setLocale] = useState('auto');
   const [geo, setGeo] = useState('');
   const [cap, setCap] = useState<string>('2');
-  const [mfaType, setMfaType] = useState<'' | 'totp' | 'email' | 'sms'>('');
-  const [mfaValue, setMfaValue] = useState('');
+  const [mfa, setMfa] = useState<MfaDraft>(newMfa(''));
   const [preview, setPreview] = useState<Fingerprint | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     api<Options>('/personas/options', { key: apiKey }).then(setOpts).catch((e) => toast(errorMessage(e), 'error'));
-    setName(''); setPlatform('auto'); setTimezone('auto'); setLocale('auto'); setGeo(''); setCap('2'); setMfaType(''); setMfaValue(''); setPreview(null);
+    setName(''); setPlatform('auto'); setTimezone('auto'); setLocale('auto'); setGeo(''); setCap('2'); setMfa(newMfa('')); setPreview(null);
   }, [open, apiKey, toast]);
 
   const prefs = useMemo(() => ({
@@ -71,10 +70,7 @@ export default function PersonaForm({ open, onClose, apiKey, onCreated }: Props)
       const body: Record<string, unknown> = { name: name || undefined, prefs, maxConcurrent: cap === '' ? null : Number(cap) };
       if (geo) body.proxy = { geo };
       const p = await api<Persona>('/personas', { key: apiKey, method: 'POST', body });
-      if (mfaType && mfaValue) {
-        await api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'PUT',
-          body: mfaType === 'totp' ? { type: 'totp', secret: mfaValue } : { type: mfaType, url: mfaValue } });
-      }
+      if (mfaReady(mfa)) await api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'PUT', body: mfaBody(mfa) });
       toast(`Created ${p.name}`, 'success');
       onCreated(p);
       onClose();
@@ -134,24 +130,85 @@ export default function PersonaForm({ open, onClose, apiKey, onCreated }: Props)
 
           <fieldset>
             <legend className="label">Second factor <span className="normal-case tracking-normal text-text-dim">(optional)</span></legend>
-            <div className="grid grid-cols-[140px_1fr] gap-2">
-              <select className="field" value={mfaType} onChange={(e) => setMfaType(e.target.value as typeof mfaType)} aria-label="MFA type">
-                <option value="">None</option>
-                <option value="totp">TOTP</option>
-                <option value="email">Email code</option>
-                <option value="sms">SMS code</option>
-              </select>
-              {mfaType && (
-                <input className="field font-mono" type={mfaType === 'totp' ? 'password' : 'url'} autoComplete="off" value={mfaValue} onChange={(e) => setMfaValue(e.target.value)}
-                  placeholder={mfaType === 'totp' ? 'Base32 secret from the QR code' : 'https://relay.example/latest — polled for the code'} />
-              )}
-            </div>
+            <MfaFields value={mfa} onChange={setMfa} none />
           </fieldset>
         </div>
 
         <Preview fp={preview} />
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * A second factor, however it arrives: a TOTP seed, a relay URL, or a mailbox
+ * the code is read out of. Shared by the create form and the drawer so both
+ * offer every type the server accepts.
+ */
+export type MfaDraft = { type: '' | 'totp' | 'email' | 'sms' | 'gmail' | 'graph'; value: string; clientId: string; clientSecret: string; tenant: string; domain: string };
+
+export const newMfa = (type: MfaDraft['type'] = 'totp'): MfaDraft => ({ type, value: '', clientId: '', clientSecret: '', tenant: '', domain: '' });
+
+const mailbox = (type: MfaDraft['type']) => type === 'gmail' || type === 'graph';
+
+export const mfaReady = (m: MfaDraft) => !!m.type && !!m.value.trim() && (!mailbox(m.type) || !!m.clientId.trim());
+
+export const mfaBody = (m: MfaDraft) => ({
+  ...(m.domain.trim() ? { domain: m.domain.trim() } : {}),
+  ...(m.type === 'totp' ? { type: m.type, secret: m.value.trim() }
+    : mailbox(m.type) ? {
+      type: m.type, refreshToken: m.value.trim(), clientId: m.clientId.trim(),
+      ...(m.clientSecret.trim() ? { clientSecret: m.clientSecret.trim() } : {}),
+      ...(m.type === 'graph' && m.tenant.trim() ? { tenant: m.tenant.trim() } : {}),
+    }
+    : { type: m.type, url: m.value.trim() }),
+});
+
+const MFA_HINT: Record<string, { label: string; placeholder: string; secret?: boolean }> = {
+  totp: { label: 'Secret', placeholder: 'Base32 secret from the QR code', secret: true },
+  email: { label: 'Relay URL', placeholder: 'https://relay.example/latest — polled for the code' },
+  sms: { label: 'Relay URL', placeholder: 'https://relay.example/latest — polled for the code' },
+  gmail: { label: 'Refresh token', placeholder: 'OAuth refresh token for the mailbox', secret: true },
+  graph: { label: 'Refresh token', placeholder: 'OAuth refresh token for the mailbox', secret: true },
+};
+
+export function MfaFields({ value, onChange, none = false }: { value: MfaDraft; onChange: (m: MfaDraft) => void; none?: boolean }) {
+  const set = (patch: Partial<MfaDraft>) => onChange({ ...value, ...patch });
+  const hint = MFA_HINT[value.type];
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-[140px_1fr] gap-2">
+        <select className="field" value={value.type} onChange={(e) => set({ type: e.target.value as MfaDraft['type'] })} aria-label="MFA type">
+          {none && <option value="">None</option>}
+          <option value="totp">TOTP</option>
+          <option value="email">Email relay</option>
+          <option value="sms">SMS relay</option>
+          <option value="gmail">Gmail mailbox</option>
+          <option value="graph">Microsoft 365 mailbox</option>
+        </select>
+        {hint && <input className="field font-mono" type={hint.secret ? 'password' : 'url'} autoComplete="off" aria-label={hint.label}
+          value={value.value} onChange={(e) => set({ value: e.target.value })} placeholder={hint.placeholder} />}
+      </div>
+      {mailbox(value.type) && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <input className="field font-mono" autoComplete="off" aria-label="OAuth client ID" value={value.clientId}
+              onChange={(e) => set({ clientId: e.target.value })} placeholder="Client ID" />
+            <input className="field font-mono" type="password" autoComplete="off" aria-label="OAuth client secret" value={value.clientSecret}
+              onChange={(e) => set({ clientSecret: e.target.value })} placeholder="Client secret (if the app has one)" />
+          </div>
+          {value.type === 'graph' && (
+            <input className="field font-mono" autoComplete="off" aria-label="Microsoft tenant" value={value.tenant}
+              onChange={(e) => set({ tenant: e.target.value })} placeholder="Tenant ID (blank = common)" />
+          )}
+          <p className="text-[11.5px] text-text-muted">The code is read out of this mailbox and typed into the portal. Mail.Read and offline_access are the only scopes needed.</p>
+        </>
+      )}
+      {!!value.type && (
+        <input className="field font-mono" autoComplete="off" aria-label="Site this factor is for" value={value.domain}
+          onChange={(e) => set({ domain: e.target.value })} placeholder="Site this factor is for — blank applies to every site" />
+      )}
+    </div>
   );
 }
 

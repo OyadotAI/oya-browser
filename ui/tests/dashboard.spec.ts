@@ -509,6 +509,31 @@ test('profiles manage proxies: add, check, and remove after confirming', async (
   await expect(dialog.getByText('No proxies yet')).toBeVisible();
 });
 
+test('a mailbox second factor is configurable from the profile drawer', async ({ page }) => {
+  await dashboard(page);
+  let stored: Record<string, unknown> | null = null;
+  await page.route('**/api/personas/profile-qa/mfa', async route => {
+    stored = route.request().postDataJSON();
+    return route.fulfill({ json: { configured: true, type: 'gmail', domain: 'portal.example.com' } });
+  });
+
+  await page.getByRole('button', { name: 'Profiles', exact: true }).click();
+  await page.getByRole('button', { name: 'Research workspace' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Research workspace' });
+  await drawer.getByLabel('MFA type').selectOption('gmail');
+  await drawer.getByLabel('Refresh token').fill('rt-from-the-mailbox');
+  // Store stays disabled until the mailbox has everything it needs to mint a token.
+  await expect(drawer.getByRole('button', { name: 'Store factor' })).toBeDisabled();
+  await drawer.getByLabel('OAuth client ID').fill('client-123.apps.googleusercontent.com');
+  await drawer.getByLabel('Site this factor is for').fill('portal.example.com');
+  await drawer.getByRole('button', { name: 'Store factor' }).click();
+  await expect.poll(() => stored).toEqual({
+    domain: 'portal.example.com', type: 'gmail',
+    refreshToken: 'rt-from-the-mailbox', clientId: 'client-123.apps.googleusercontent.com',
+  });
+  await expect(drawer.getByLabel('Refresh token')).toHaveValue('');
+});
+
 test('recording ignores a late poll, hands back control, and closes an active flow', async ({ page }) => {
   await dashboard(page);
   await page.route('**/api/playbooks', route => route.fulfill({ json: { playbooks: [] } }));

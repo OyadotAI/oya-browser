@@ -6,7 +6,7 @@ import Dialog, { Confirm } from '@/components/ui/dialog';
 import { api, errorMessage, ago } from '@/lib/api-client';
 import { useToast } from './toast';
 import type { Persona, BrowserRow } from './types';
-import { Preview } from './persona-form';
+import { Preview, MfaFields, newMfa, mfaBody, mfaReady, type MfaDraft } from './persona-form';
 import { desktopSignInUrl } from './config';
 
 interface Proxy { id: string; label: string; geo: string | null; available?: boolean; assigned: number; maxPersonas: number }
@@ -29,8 +29,7 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
   const [geo, setGeo] = useState('');
   const [proxies, setProxies] = useState<Proxy[]>([]);
   const [pin, setPin] = useState('');
-  const [mfaType, setMfaType] = useState<'totp' | 'email' | 'sms'>('totp');
-  const [mfaValue, setMfaValue] = useState('');
+  const [mfa, setMfa] = useState<MfaDraft>(newMfa());
   const [credDomain, setCredDomain] = useState('');
   const [credUser, setCredUser] = useState('');
   const [credPassword, setCredPassword] = useState('');
@@ -43,7 +42,7 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
     setCap(persona.maxConcurrent === null ? '' : String(persona.maxConcurrent));
     setGeo(persona.proxy?.geo || '');
     setPin(persona.exit?.id || '');
-    setMfaValue('');
+    setMfa(newMfa());
     api<{ proxies?: Proxy[] } | Proxy[]>('/proxies', { key: apiKey })
       .then((r) => setProxies(Array.isArray(r) ? r : r.proxies || [])).catch(() => setProxies([]));
   // Refreshing profile counts must not overwrite a form being edited.
@@ -68,9 +67,11 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
 
   const savePin = (proxyId: string) => run('pin', () => api(`/personas/${p.id}/proxy`, { key: apiKey, method: 'PUT', body: { proxyId: proxyId || null } }), proxyId ? 'Pinned' : 'Unpinned');
 
-  const setMfa = () => run('mfa', () => api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'PUT',
-    body: mfaType === 'totp' ? { type: 'totp', secret: mfaValue } : { type: mfaType, url: mfaValue } }), 'Second factor stored').then(() => setMfaValue(''));
-  const clearMfa = () => run('mfa', () => api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'DELETE' }), 'Second factor removed');
+  const storeMfa = () => run('mfa', () => api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'PUT', body: mfaBody(mfa) }), 'Second factor stored')
+    .then(() => setMfa(newMfa(mfa.type)));
+  const clearMfa = (domain?: string) => run('mfa',
+    () => api(`/personas/${p.id}/mfa${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`, { key: apiKey, method: 'DELETE' }),
+    'Second factor removed');
   const addCredential = () => run('cred', () => api(`/personas/${p.id}/credentials`, { key: apiKey, method: 'PUT',
     body: { domain: credDomain, username: credUser, password: credPassword } }), 'Sign-in stored')
     .then(() => { setCredDomain(''); setCredUser(''); setCredPassword(''); });
@@ -165,23 +166,31 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
           {/* MFA */}
           <section>
             <h3 className="label">Second factor</h3>
-            {p.mfa?.configured ? (
-              <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2 text-[12.5px]">
-                <ShieldCheck className="h-4 w-4 text-accent" />
-                <span className="text-text">{p.mfa.type?.toUpperCase()} configured</span>
-                <span className="text-text-dim">· the secret is never shown</span>
-                <button className="btn-ghost ml-auto h-7" onClick={clearMfa} disabled={busy === 'mfa'}><ShieldOff className="h-3.5 w-3.5" /> Remove</button>
+            {/* A persona can hold one default factor and one per site, so the form stays open either way. */}
+            {(p.mfa?.configured || p.sites?.mfa?.length) ? (
+              <div className="mb-2 rounded-md border border-border bg-bg text-[12.5px]">
+                {p.mfa?.configured && !p.mfa.domain && (
+                  <div className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-0">
+                    <ShieldCheck className="h-4 w-4 text-accent" />
+                    <span className="text-text">{p.mfa.type?.toUpperCase()}</span>
+                    <span className="text-text-dim">· every site · the secret is never shown</span>
+                    <button className="btn-ghost ml-auto h-7" onClick={() => clearMfa()} disabled={busy === 'mfa'}><ShieldOff className="h-3.5 w-3.5" /> Remove</button>
+                  </div>
+                )}
+                {p.sites?.mfa?.map((f) => (
+                  <div key={f.domain} className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-0">
+                    <ShieldCheck className="h-4 w-4 text-accent" />
+                    <span className="text-text">{f.type?.toUpperCase()}</span>
+                    <span className="text-text-dim">· {f.domain}</span>
+                    <button className="btn-ghost ml-auto h-7" onClick={() => clearMfa(f.domain)} disabled={busy === 'mfa'}><ShieldOff className="h-3.5 w-3.5" /> Remove</button>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <div className="grid grid-cols-[120px_1fr_auto] gap-2">
-                <select className="field" value={mfaType} onChange={(e) => setMfaType(e.target.value as typeof mfaType)} aria-label="MFA type">
-                  <option value="totp">TOTP</option><option value="email">Email code</option><option value="sms">SMS code</option>
-                </select>
-                <input className="field font-mono" type={mfaType === 'totp' ? 'password' : 'url'} autoComplete="off" value={mfaValue} onChange={(e) => setMfaValue(e.target.value)}
-                  placeholder={mfaType === 'totp' ? 'Base32 secret' : 'https://relay.example/latest'} />
-                <button className="btn-ghost" onClick={setMfa} disabled={!mfaValue || busy === 'mfa'}>Store</button>
-              </div>
-            )}
+            ) : null}
+            <div className="space-y-2">
+              <MfaFields value={mfa} onChange={setMfa} />
+              <button className="btn-ghost" onClick={storeMfa} disabled={!mfaReady(mfa) || busy === 'mfa'}>Store factor</button>
+            </div>
           </section>
 
           {/* Site sign-ins */}
@@ -209,7 +218,7 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
               <input className="field" value={credDomain} onChange={(e) => setCredDomain(e.target.value)} placeholder="portal.example.com" aria-label="Site" />
               <input className="field" autoComplete="off" value={credUser} onChange={(e) => setCredUser(e.target.value)} placeholder="Username" aria-label="Username" />
               <input className="field" type="password" autoComplete="new-password" value={credPassword} onChange={(e) => setCredPassword(e.target.value)} placeholder="Password" aria-label="Password" />
-              <button className="btn-ghost" onClick={addCredential} disabled={!credDomain || !credUser || !credPassword || busy === 'cred'}>Store</button>
+              <button className="btn-ghost" onClick={addCredential} disabled={!credDomain || !credUser || !credPassword || busy === 'cred'}>Store sign-in</button>
             </div>
           </section>
 
