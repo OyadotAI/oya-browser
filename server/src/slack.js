@@ -66,7 +66,7 @@ const TITLES = {
   'run.failed': { emoji: '⚠️', text: 'Run failed' },
   'session.failed': { emoji: '⚠️', text: 'Browser session failed' },
 };
-const REASONS = { captcha: 'a CAPTCHA', mfa: 'an MFA prompt', agent: 'the agent asked for a person', heal_failed: 'a broken playbook step' };
+const REASONS = { captcha: 'a CAPTCHA', login: 'a sign-in', mfa: 'an MFA prompt', agent: 'the agent asked for a person', heal_failed: 'a broken playbook step' };
 
 /** Block Kit for one event. `liveUrl` is absent when the browser is already gone. */
 export function blocksFor(event, liveUrl) {

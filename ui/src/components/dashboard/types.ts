@@ -66,7 +66,12 @@ export interface Persona {
     platform: string; timezone: string; locale: string; screen: string; webgl: string;
     hardwareConcurrency: number; deviceMemory: number; canvasSeed: number;
   };
-  mfa: { configured: boolean; type?: string };
+  mfa: { configured: boolean; type?: string; domain?: string };
+  /** Per-site factors and stored logins. Usernames and types only, never secrets. */
+  sites?: {
+    mfa: { domain: string; type: string }[];
+    credentials: { domain: string; username: string }[];
+  };
   login?: { cookies: number; sites: string[]; updatedAt: string | null };
 }
 

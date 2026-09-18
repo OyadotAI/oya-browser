@@ -17,7 +17,7 @@ import { Browser, Run } from './browser.js';
 import {
   OyaError,
   type ControlOverview, type ControlSession, type ControlRole, type ControlCredential, type HumanInputAction, type ProjectSettings, type ControlEvent,
-  type BrowserInfo, type Config, type ConfigUpdate, type Fingerprint, type MfaConfig, type OyaOptions,
+  type BrowserInfo, type Config, type ConfigUpdate, type Fingerprint, type MfaConfig, type OyaOptions, type SiteCredentials,
   type PersonaInfo, type PersonaPrefs, type Playbook, type PlaybookSummary, type ProxyInfo, type ProxyCreate, type StartOptions, type StartResult, type StopResult,
 } from './types.js';
 
@@ -169,7 +169,27 @@ export class Oya {
     setMfa: (id: string, config: MfaConfig): Promise<{ configured: boolean; type: string }> =>
       this.http.request('PUT', `/api/personas/${id}/mfa`, config),
 
-    clearMfa: async (id: string): Promise<void> => { await this.http.request('DELETE', `/api/personas/${id}/mfa`); },
+    clearMfa: async (id: string, domain?: string): Promise<void> => {
+      await this.http.request('DELETE', `/api/personas/${id}/mfa${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`);
+    },
+
+    /**
+     * Store a site login for this identity. Sealed at rest, never read back.
+     *
+     * Signing in once on the desktop and inheriting the cookies is still the
+     * better path. This is for portals that expire a session server-side
+     * between runs, where an unattended run has nothing else to recover with.
+     */
+    setCredentials: (id: string, config: SiteCredentials): Promise<{ configured: boolean; domain: string; username: string }> =>
+      this.http.request('PUT', `/api/personas/${id}/credentials`, config),
+
+    /** Which sites this identity can sign in to. Usernames only. */
+    credentials: (id: string): Promise<{ credentials: { domain: string; username: string }[] }> =>
+      this.http.request('GET', `/api/personas/${id}/credentials`),
+
+    clearCredentials: async (id: string, domain: string): Promise<void> => {
+      await this.http.request('DELETE', `/api/personas/${id}/credentials?domain=${encodeURIComponent(domain)}`);
+    },
   };
 
   /**
