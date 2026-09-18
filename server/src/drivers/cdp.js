@@ -12,6 +12,7 @@
  */
 
 import WebSocket from 'ws';
+import { AUTO_ACCEPT, describe as describeDialog } from '../dialogs.js';
 import { readFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { join, dirname } from 'path';
@@ -188,7 +189,10 @@ const KEY_CODES = {
   ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', windowsVirtualKeyCode: 39 },
 };
 
+const DIALOG_HELD = Symbol('dialog held');
+
 export const CDP_CAPABILITIES = new Set([
+  'handle_dialog',
   'navigate', 'reload', 'back', 'forward', 'screenshot', 'analyze', 'read_page',
   'record',
   'click', 'click-coords', 'hover', 'type', 'select', 'wait', 'cookies',
@@ -275,6 +279,10 @@ export class CDPDriver {
     for (const domain of ['Page', 'Runtime', 'DOM', 'Network']) {
       await this.conn.send(`${domain}.enable`, {}, sessionId).catch(() => {});
     }
+    // Page is enabled just above, which means Chromium routes every alert(),
+    // confirm() and prompt() to us and blocks the renderer until we answer. With
+    // no listener the tab wedges and every later command eats its whole timeout.
+    this.watchDialogs();
     // The UA is an HTTP header as well as a JS property, so it cannot be fixed
     // from an injected script — a page reads HeadlessChrome from the header no
     // matter what navigator.userAgent says. Emulation sets both.
@@ -447,13 +455,89 @@ export class CDPDriver {
   }
 
   /**
+   * Dialogs are answered here, not inside dispatch(): a held confirm blocks the
+   * renderer, so a command that touches the page would sit there until its
+   * timeout and report nothing useful. One wrapper beats a guard in forty
+   * returns.
+   */
+  async send(action, params = {}, timeoutMs = 30000) {
+    if (this.pendingDialog && action !== 'handle_dialog') {
+      return { ok: false, error: describeDialog(this.pendingDialog) };
+    }
+    if (action === 'handle_dialog') return this.answerDialog(params?.accept, params?.prompt_text ?? params?.promptText);
+
+    // The dialog usually opens *during* the command that triggered it — a click
+    // whose handler calls confirm() blocks the renderer before the click has
+    // finished reporting. Racing the held dialog against the command answers the
+    // caller now instead of waiting out a CDP timeout that cannot succeed.
+    const running = this.dispatch(action, params, timeoutMs);
+    running.catch(() => {}); // the loser of the race must not go unhandled
+    const { held, release } = this.dialogHeld();
+    const result = await Promise.race([running, held]);
+    release();
+    const note = this.takeDialogNotes();
+    if (result === DIALOG_HELD) return { ok: false, error: describeDialog(this.pendingDialog) };
+    return note ? { ...result, data: { ...(result?.data || {}), dialog: note } } : result;
+  }
+
+  /**
+   * Settles when a dialog is held open. The caller must `release()` once it no
+   * longer cares — every command asks, and a session that never sees a dialog
+   * would otherwise pile up a resolver per command.
+   */
+  dialogHeld() {
+    let settle;
+    const held = new Promise((resolve) => { settle = resolve; this.dialogWaiters.push(resolve); });
+    return { held, release: () => { this.dialogWaiters = this.dialogWaiters.filter((w) => w !== settle); } };
+  }
+
+  watchDialogs() {
+    if (this.dialogsWatched) return;
+    this.dialogsWatched = true;
+    this.dialogNotes = [];
+    this.dialogWaiters = [];
+    this.conn.on('Page.javascriptDialogClosed', (_params, sid) => {
+      if (sid === this.sessionId) this.pendingDialog = null;
+    });
+    this.conn.on('Page.javascriptDialogOpening', (params, sid) => {
+      if (sid !== this.sessionId) return;
+      const dialog = { type: params.type, message: params.message || '', defaultPrompt: params.defaultPrompt };
+      if (!AUTO_ACCEPT.has(dialog.type)) {
+        this.pendingDialog = dialog;
+        this.dialogNotes.push(describeDialog(dialog, false));
+        for (const settle of this.dialogWaiters.splice(0)) settle(DIALOG_HELD);
+        return;
+      }
+      this.dialogNotes.push(describeDialog(dialog, true));
+      this.conn.send('Page.handleJavaScriptDialog', { accept: true }, sid).catch(() => {});
+    });
+  }
+
+  takeDialogNotes() {
+    if (!this.dialogNotes?.length) return null;
+    const notes = this.dialogNotes.join(' ');
+    this.dialogNotes = [];
+    return notes;
+  }
+
+  async answerDialog(accept, promptText) {
+    const dialog = this.pendingDialog;
+    if (!dialog) return { ok: false, error: 'No dialog is open' };
+    const args = { accept: accept !== false };
+    if (promptText != null && dialog.type === 'prompt') args.promptText = String(promptText);
+    this.pendingDialog = null;
+    await this.conn.send('Page.handleJavaScriptDialog', args, this.sessionId);
+    return { ok: true, data: { type: dialog.type, message: dialog.message, accepted: args.accept } };
+  }
+
+  /**
    * Same action vocabulary as the Oya client, so callers never branch on client
    * type. The two grew apart — the Oya client speaks `press_key`, `list_tabs`,
    * `open_tab` and `scroll {direction}`, this driver grew hyphenated names —
    * so both spellings are accepted and normalised here rather than in every
    * caller. The SDK, the agent tools and the MCP server all go through this.
    */
-  async send(action, params = {}, timeoutMs = 30000) {
+  async dispatch(action, params = {}, timeoutMs = 30000) {
     if (!this.isAlive()) throw new Error('Browser not connected');
     ({ action, params } = normalise(action, params));
     const deadline = Date.now() + timeoutMs;

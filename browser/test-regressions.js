@@ -184,6 +184,19 @@ assert.deepStrictEqual([fromServer.type, fromServer.host, fromServer.port, fromS
 assert.strictEqual(normalizeProxy({ host: 'h', port: 1 }).host, 'h', 'a host/port proxy passes through');
 assert.strictEqual(normalizeProxy(null), null, 'no proxy stays no proxy');
 
+// Native dialogs. Page.enable is on for every tab and popup, so anything that
+// enables it without a watcher wedges that surface on the first alert().
+for (const enable of src.match(/sendCommand\('Page\.enable'\)[\s\S]{0,160}/g) || []) {
+  assert.ok(/attachDialogWatcher/.test(enable),
+    'Page.enable without attachDialogWatcher nearby — that surface blocks forever on an alert()');
+}
+// The early answer must go out BEFORE the id is parked, or sendResult drops the
+// very result being sent and the caller waits out the timeout anyway.
+const early = src.match(/if \(outcome !== DIALOG_HELD\) return;[\s\S]*?\n}/);
+assert.ok(early, 'the dialog race in handleCommand is gone');
+assert.ok(early[0].indexOf('sendResult(') < early[0].indexOf('answeredCommands.add('),
+  'answeredCommands.add() before sendResult() makes sendResult swallow the dialog answer');
+
 // Residential proxy bytes are billed per GB, so every byte both ways must be counted.
 (async () => {
   const net = require('net');
@@ -201,6 +214,6 @@ assert.strictEqual(normalizeProxy(null), null, 'no proxy stays no proxy');
   assert.strictEqual(takeProxyBytes(), 10, 'bytes are counted in both directions');
   assert.strictEqual(takeProxyBytes(), 0, 'and reset once reported');
   echo.close();
-  console.log('ok — tabs, cookies, sends, updates, renderer, tab waits, CDP setup, shm, persona isolation, the CDP front door guarded, proxies applied and metered');
+  console.log('ok — tabs, cookies, sends, updates, renderer, tab waits, CDP setup, shm, persona isolation, the CDP front door guarded, dialogs watched, proxies applied and metered');
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -2,7 +2,7 @@
  * Chat service — LLM + MCP-style tool execution for browser control.
  */
 
-import { sendCommand } from './ws-handler.js';
+import { sendCommand, takeDialogNote } from './ws-handler.js';
 import { BROWSER_TOOLS } from './chat-tools.js';
 import { chatCompletion } from './llm.js';
 import * as keyConfig from './key-config.js';
@@ -28,6 +28,7 @@ FORMS
 
 BLOCKERS
 - A CAPTCHA, an MFA prompt, a login you were not given, or a question only the user can answer: call request_human if you have it; otherwise stop and say exactly what blocked you. Never guess credentials or data.
+- A native browser dialog blocks the whole page. An alert is OK'd for you and its text is reported — read it, it usually says why the last action failed. A confirm or prompt waits for you: read the message and call handle_dialog, accepting only what the task actually asks for. Never retry an action while one is open.
 
 KEYBOARD SAFETY
 - press_key only with Enter, Escape, Tab, ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Backspace, Delete, Space, Home, End, PageUp or PageDown. Never F-keys, Meta, Control, Alt, Shift or key combos.
@@ -38,7 +39,7 @@ FINISH
 // The last run per browser as replayable steps, for playbook.js. Element ids die
 // with each analysis, so steps keep the analyzer's stable metadata instead.
 // ponytail: in memory, oldest evicted past 1000 browsers; a run is lost on restart unless saved as a playbook.
-const RECORDED = new Set(['navigate', 'click', 'type', 'select_option', 'upload_file', 'press_key', 'scroll', 'wait']);
+const RECORDED = new Set(['navigate', 'click', 'type', 'select_option', 'upload_file', 'press_key', 'scroll', 'wait', 'handle_dialog']);
 const runs = new Map(); // browserId -> { prompt, steps, elements }
 const stable = ({ type, tag, text, domId, name, ariaLabel, testId, placeholder, href } = {}) =>
   ({ type, tag, text, domId, name, ariaLabel, testId, placeholder, href });
@@ -244,14 +245,24 @@ function recordStep(browserId, name, args, values) {
   }
   // The bytes never enter a playbook; the variable name does, so a replay brings its own file.
   if (name === 'upload_file' && args.name) step.file = `{{${dataKey(args.name)}}}`;
-  for (const k of ['url', 'text', 'option', 'key', 'direction', 'amount', 'selector', 'timeout']) if (args[k] !== undefined) step[k] = args[k];
+  for (const k of ['url', 'text', 'option', 'key', 'direction', 'amount', 'selector', 'timeout', 'accept', 'prompt_text']) if (args[k] !== undefined) step[k] = args[k];
   run.steps.push(step);
 }
 
 /**
  * Execute a tool by name and return the result as a string for the LLM.
+ *
+ * A dialog that fired during the action is appended here rather than in each
+ * case: an alert's text is usually the reason the action did not do what the
+ * model expected, and losing it is what left runs stuck on a blocked page.
  */
 async function executeTool(browserId, name, args, files = {}) {
+  const out = await runTool(browserId, name, args, files);
+  const note = takeDialogNote(browserId);
+  return note ? `${out}\n\n${note}` : out;
+}
+
+async function runTool(browserId, name, args, files = {}) {
   try {
     switch (name) {
       case 'analyze_page': {
@@ -380,6 +391,11 @@ async function executeTool(browserId, name, args, files = {}) {
       case 'drag': {
         const r = await sendCommand(browserId, 'drag', { from_x: args.from_x, from_y: args.from_y, to_x: args.to_x, to_y: args.to_y });
         return r.ok ? `Dragged from ${args.from_x},${args.from_y} to ${args.to_x},${args.to_y}` : `Error: ${r.error}`;
+      }
+      case 'handle_dialog': {
+        const r = await sendCommand(browserId, 'handle_dialog', { accept: args.accept, prompt_text: args.prompt_text });
+        if (!r.ok) return `Error: ${r.error}`;
+        return `${r.data?.accepted === false ? 'Dismissed' : 'Accepted'} the ${r.data?.type || ''} dialog. Call analyze_page to see the page now.`;
       }
       case 'close_tab': {
         const r = await sendCommand(browserId, 'close_tab', { tab_id: args.tab_id });

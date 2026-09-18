@@ -85,6 +85,15 @@ export class Browser {
     await this.command('press_key', { key });
   }
 
+  /**
+   * Answer a native dialog holding the page. alert() and beforeunload are
+   * answered for you; a confirm() or prompt() waits for this, and every other
+   * command fails fast with the dialog's text until it is answered.
+   */
+  async handleDialog(accept: boolean, promptText?: string): Promise<{ type: string; message: string; accepted: boolean }> {
+    return this.command('handle_dialog', { accept, prompt_text: promptText });
+  }
+
   /** `at` aims the wheel at an inner scroller (a results panel, a chat pane) instead of the page. */
   async scroll(direction: 'up' | 'down' | 'top' | 'bottom', amount?: number, at?: { x: number; y: number }): Promise<void> {
     // An aimed scroll is one wheel event at that point; drivers only honour x/y in that mode.

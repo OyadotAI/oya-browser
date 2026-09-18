@@ -27,6 +27,13 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 Also available: `screenshot`, `wait(selector)`, `click_coordinates(x, y)`, `mouse_move(x, y)`, `double_click`, `keyboard_type(text)`, `drag`, `pool_status`.
 
+**Native dialogs.** An `alert()` or `beforeunload` is answered for you and its
+text comes back on the next tool result — read it, it usually says why the last
+action did not do what you expected. A `confirm()` or `prompt()` holds the page:
+every other command fails immediately with the dialog's message until you call
+`handle_dialog(accept, prompt_text?)`. Accept only what the task asks for — a
+confirm is often guarding something destructive.
+
 If a tool says no browser is running, call `start_browser`. If `pool_status` already lists browsers (the user's desktop app, say), you can drive those without starting one.
 
 ## Over the CLI

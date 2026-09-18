@@ -341,6 +341,7 @@ export function handleConnection(ws, req) {
             ms: Date.now() - pending.startedAt, error: msg.error,
           });
         }
+        if (msg.data?.dialog) dialogNotes.set(browserId, msg.data.dialog);
         pending.resolve({
           ok: msg.ok,
           data: msg.data,
@@ -438,6 +439,17 @@ registry.on('stream:stop', ({ id }) => {
   }
 });
 
+// A dialog that fired mid-action is reported on the next tool result rather than
+// thrown away. Both transports return through dispatchCommand, so stashing it
+// here is the one place that covers the Oya client and cloud CDP alike.
+const dialogNotes = new Map(); // browserId -> note
+
+export function takeDialogNote(browserId) {
+  const note = dialogNotes.get(browserId);
+  if (note) dialogNotes.delete(browserId);
+  return note || null;
+}
+
 /**
  * Send a command to a browser and wait for the result.
  * @returns {Promise<{ok: boolean, data: any, error: string?}>}
@@ -483,6 +495,7 @@ function dispatchCommand(browserId, action, params = {}, timeoutMs) {
         if (visible) registry.recordActivity(browserId, { action, summary, ok, ms: Date.now() - started, error: result?.error });
         // A driven browser does not announce where it is; navigate tells us.
         if (ok && typeof result?.data?.url === 'string') registry.updateUrl(browserId, result.data.url);
+        if (result?.data?.dialog) dialogNotes.set(browserId, result.data.dialog);
         return result;
       },
       (err) => {

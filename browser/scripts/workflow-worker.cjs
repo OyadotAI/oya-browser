@@ -39,7 +39,15 @@ async function run({ draft, endpoint, token, targetId, pageUrls, vars, directory
       p.on('pageerror', () => emit({ kind: 'console', stepId: current, level: 'error', message: 'Uncaught page error' }));
       p.on('requestfailed', request => emit({ kind: 'network', stepId: current, url: safeUrl(request.url()), message: 'Request failed' }));
       p.on('response', response => emit({ kind: 'network', stepId: current, url: safeUrl(response.url()), status: response.status() }));
-      p.on('dialog', async dialog => { emit({ kind: 'attention', stepId: current, message: 'A browser dialog requires a recorded checkpoint. Dialog dismissed.' }); await dialog.dismiss(); });
+      // An alert has one button, so dismissing it stalled replays that a person
+      // had clicked straight through. Accept those; a confirm or prompt is a
+      // decision nobody recorded, so it is still refused — but say which, and
+      // what it asked, instead of a fixed string.
+      p.on('dialog', async dialog => {
+        const accept = ['alert', 'beforeunload'].includes(dialog.type());
+        emit({ kind: 'attention', stepId: current, message: `Browser ${dialog.type()}: "${dialog.message()}" — ${accept ? 'accepted' : 'dismissed (no recorded checkpoint)'}.` });
+        await (accept ? dialog.accept() : dialog.dismiss());
+      });
       p.on('download', download => emit({ kind: 'download', stepId: current, message: 'Download started' }));
     };
     for (const p of pages.values()) attachEvidence(p); page.context().on('page', attachEvidence);

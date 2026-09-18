@@ -139,6 +139,86 @@ async function cdp(view, method, params = {}) {
   return dbg.sendCommand(method, params);
 }
 
+// ─── Native JavaScript dialogs ───
+//
+// Page.enable is on for every tab and popup below. With the Page domain enabled
+// and nobody answering Page.javascriptDialogOpening, Chromium hands the dialog
+// to us and the renderer blocks forever: every later command then eats its full
+// 60s timeout and the agent is told nothing about why. Puppeteer and Playwright
+// both ship an auto-dismiss for exactly this reason.
+//
+// An alert has one button, so answering it costs nothing as long as its text is
+// reported back. A confirm or prompt is a decision ("delete this?"), so it is
+// held open and handed to whoever is driving.
+const AUTO_ACCEPT_DIALOGS = new Set(['alert', 'beforeunload']);
+// Answerable while a dialog is held: they never reach the blocked renderer.
+const DIALOG_SAFE_ACTIONS = new Set(['handle_dialog', 'screenshot', 'list_tabs', 'record', 'workflow']);
+// ponytail: one pending dialog across all tabs — a blocked tab cannot raise a
+// second one, and only the active tab is driven. Per-view if that stops holding.
+let pendingDialog = null;
+let dialogNotes = [];
+let dialogWaiters = [];
+
+/**
+ * Settles when a dialog is held open. The caller must call the returned
+ * `release` once it no longer cares — every command asks, and a session that
+ * never sees a dialog would otherwise pile up a resolver per command.
+ */
+const DIALOG_HELD = Symbol('dialog held');
+function dialogHeld() {
+  let settle;
+  const held = new Promise((resolve) => { settle = resolve; dialogWaiters.push(resolve); });
+  return { held, release: () => { dialogWaiters = dialogWaiters.filter((w) => w !== settle); } };
+}
+
+function describeDialog({ type, message, defaultPrompt } = {}, handled = false) {
+  return handled
+    ? `Dialog (${type}): "${message}" — accepted automatically.`
+    : `A JavaScript ${type} dialog is open: "${message}"${defaultPrompt ? ` (default: "${defaultPrompt}")` : ''}. `
+      + 'The page is blocked until you call handle_dialog.';
+}
+
+function takeDialogNotes() {
+  if (!dialogNotes.length) return null;
+  const notes = dialogNotes.join(' ');
+  dialogNotes = [];
+  return notes;
+}
+
+/** Answer whatever dialog is open. Safe to call when none is. */
+async function answerDialog(accept, promptText) {
+  if (!pendingDialog) return { ok: false, error: 'No dialog is open' };
+  const { dbg, type, message } = pendingDialog;
+  const params = { accept: accept !== false };
+  if (promptText != null && type === 'prompt') params.promptText = String(promptText);
+  pendingDialog = null;
+  await dbg.sendCommand('Page.handleJavaScriptDialog', params);
+  return { ok: true, data: { type, message, accepted: params.accept } };
+}
+
+/**
+ * Watch one debugger session for dialogs. Called for every tab and every popup;
+ * without it that surface wedges on the first alert().
+ */
+function attachDialogWatcher(dbg) {
+  if (!dbg || dbg.oyaDialogWatcher) return;
+  dbg.oyaDialogWatcher = true;
+  dbg.on('message', (_event, method, params) => {
+    if (method === 'Page.javascriptDialogClosed') { pendingDialog = null; return; }
+    if (method !== 'Page.javascriptDialogOpening') return;
+    const dialog = { dbg, type: params.type, message: params.message || '', defaultPrompt: params.defaultPrompt };
+    if (!AUTO_ACCEPT_DIALOGS.has(dialog.type)) {
+      pendingDialog = dialog;
+      dialogNotes.push(describeDialog(dialog, false));
+      for (const settle of dialogWaiters.splice(0)) settle(DIALOG_HELD);
+      return;
+    }
+    dialogNotes.push(describeDialog(dialog, true));
+    dbg.sendCommand('Page.handleJavaScriptDialog', { accept: true })
+      .catch((e) => console.error('[oya] could not answer dialog:', e?.message || e));
+  });
+}
+
 // ─── Isolated world ───
 //
 // The analyzer runs in its own JS world, not the page's. The page can then
@@ -1210,6 +1290,7 @@ function createTab(url, activate = true) {
       if (!dbg.isAttached()) dbg.attach(CDP_VERSION);
       applyPersona(dbg, (what, e) => console.error(`[anonymity] popup ${what} failed — popup is NOT protected:`, e?.message || e));
       dbg.sendCommand('Page.enable').catch(() => {});
+      attachDialogWatcher(dbg);
 
       // A sign-in popup is where the session actually gets written, so it needs
       // the same localStorage transport a tab gets. Without this the cookies
@@ -1347,6 +1428,7 @@ async function setupTabCDP(view) {
     view.oyaConfigured = true;
     await applyPersona(view.webContents.debugger, fail);
     view.webContents.debugger.sendCommand('Page.enable').catch((e) => fail('Page.enable', e));
+    attachDialogWatcher(view.webContents.debugger);
     if (loginState) await loginState.attach(
       (method, params = {}) => cdp(view, method, params),
       (method, fn) => view.webContents.debugger.on('message', (_event, event, params) => { if (event === method) fn(params); }),
@@ -1899,6 +1981,8 @@ ipcMain.handle('dev-action', async (e, action, params) => {
         const r = await cdp(view, 'Page.captureScreenshot', { format: 'png' });
         return { ok: true, data: { screenshot: 'data:image/png;base64,' + r.data } };
       }
+      case 'handle_dialog':
+        return await answerDialog(params?.accept, params?.prompt_text ?? params?.promptText);
       case 'scroll-down': {
         const vp = await cdpEval(view, '({ w: window.innerWidth, h: window.innerHeight })');
         await cdpScroll(view, (vp?.w || 800) / 2, (vp?.h || 600) / 2, 0, params?.amount || 400);
@@ -2256,10 +2340,45 @@ function waitForTabReady(tab) {
   return Promise.race([tab.ready.catch(() => {}), sleep(TAB_READY_TIMEOUT)]);
 }
 
+/**
+ * A confirm() or prompt() opens *during* the command that triggered it and
+ * blocks the renderer, so the command it interrupted can never finish. Race the
+ * held dialog against it: the caller hears about the dialog now instead of
+ * waiting out a timeout that cannot succeed. The interrupted command is left to
+ * settle on its own; sendResult drops its late answer.
+ */
 async function handleCommand(msg) {
+  const { held, release } = dialogHeld();
+  // handleCommand is called fire-and-forget by the socket router, so a throw
+  // escaping here would take down the main process rather than one command.
+  const ran = runCommand(msg).then(() => null, (e) => { sendResult(msg.id, false, null, e?.message || String(e)); return null; });
+  const outcome = await Promise.race([ran, held]);
+  release();
+  if (outcome !== DIALOG_HELD) return;
+  // Answer first: marking the id before this would make sendResult drop the very
+  // result being sent, and the caller would wait out the timeout after all.
+  sendResult(msg.id, false, null, describeDialog(pendingDialog, false));
+  // The interrupted command is still out there; drop its answer when it lands.
+  answeredCommands.add(msg.id);
+}
+
+async function runCommand(msg) {
   const { id, action, params } = msg;
 
   if (!browsingMode) { sendResult(id, false, null, 'Browser not ready'); return; }
+
+  // A held dialog blocks the renderer: anything that touches the page would sit
+  // there until its timeout and tell the caller nothing. Answer with the dialog
+  // instead, so the next move is obvious and costs no wall clock.
+  if (pendingDialog && !DIALOG_SAFE_ACTIONS.has(action)) {
+    sendResult(id, false, null, describeDialog(pendingDialog, false));
+    return;
+  }
+  if (action === 'handle_dialog') {
+    const r = await answerDialog(params?.accept, params?.prompt_text ?? params?.promptText);
+    sendResult(id, r.ok, r.data, r.error);
+    return;
+  }
 
   try {
     // ── Tab management ──
@@ -2709,8 +2828,19 @@ function buildActionJS(action, params) {
   }
 }
 
+// Commands already answered early because a dialog interrupted them. Each entry
+// is removed by the late answer it is waiting for.
+// ponytail: an entry outlives the session if that answer never lands; bounded by
+// the number of dialogs raised.
+const answeredCommands = new Set();
+
 function sendResult(id, ok, data, error) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (answeredCommands.has(id)) { answeredCommands.delete(id); return; }
+  // Every command result passes through here, which makes it the one place a
+  // dialog that fired mid-action can be reported without editing 40 call sites.
+  const dialog = takeDialogNotes();
+  if (dialog) data = { ...(data || {}), dialog };
   const msg = { type: 'cmd_result', id, ok, data: data || null, error: error || null };
   const summary = { id: id.slice(0, 8), ok };
   if (error) summary.error = error;
@@ -2724,6 +2854,7 @@ function sendResult(id, ok, data, error) {
     if (data.tab_id) summary.tab_id = data.tab_id;
     if (data.viewport) summary.viewport = data.viewport;
     if (data.scroll) summary.scroll = data.scroll;
+    if (data.dialog) summary.dialog = data.dialog;
   }
   devLog('out', ok ? 'result: ok' : 'result: error', summary);
   wsSend(msg);
