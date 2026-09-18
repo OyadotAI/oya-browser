@@ -126,6 +126,19 @@ controlRouter.get('/audit/export', admin, wrap(async (req, res) => {
   for (let after = 0, page; (page = await control().events(key(req), { after, limit: 1000 })).length; after = page.at(-1).id) res.write(page.map(e => JSON.stringify(e)).join('\n') + '\n');
   res.end();
 }));
+// The Settings endpoint: one per project, edited in place.
+controlRouter.get('/webhook', admin, wrap(async (req, res) => res.json(await control().webhookConfig(key(req)))));
+controlRouter.put('/webhook', admin, wrap(async (req, res) => {
+  await assertSafeTarget(req.body?.url, { protocols: ['https:'], label: 'webhook URL' });
+  res.json(await control().webhook(key(req), { url: req.body.url, types: req.body.types ?? [], roll: req.body.roll === true }));
+}));
+controlRouter.delete('/webhook', admin, wrap(async (req, res) => {
+  await control().store.transact(async tx => {
+    const h = await tx.get('webhook', `hook:${projectId(key(req))}`);
+    if (h) h.enabled = false;
+  });
+  res.json({ ok: true });
+}));
 controlRouter.post('/webhooks', admin, wrap(async (req, res) => {
   await assertSafeTarget(req.body?.url, { protocols: ['https:'], label: 'webhook URL' });
   res.status(201).json(await control().webhook(key(req), req.body));

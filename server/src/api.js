@@ -687,6 +687,7 @@ router.post('/personas', authMiddleware, (req, res) => {
   });
   audit({ action: 'persona.create', actorKey: getKey(req), targetType: 'persona', targetId: created.id,
     meta: { name: created.name, prefs: created.prefs }, req });
+  announce(getKey(req), 'persona.created', null, { personaId: created.id, name: created.name });
   res.status(201).json(personas.describe(created));
 });
 
@@ -708,6 +709,7 @@ router.put('/personas/:id', authMiddleware, (req, res) => {
   if (!updated) return res.status(404).json({ error: 'No such persona' });
   audit({ action: 'persona.update', actorKey: getKey(req), targetType: 'persona', targetId: updated.id,
     meta: { fields: Object.keys(body) }, req });
+  announce(getKey(req), 'persona.updated', null, { personaId: updated.id, fields: Object.keys(body) });
   res.json(personas.describe(updated));
 });
 
@@ -716,6 +718,7 @@ router.post('/personas/:id/clone', authMiddleware, (req, res) => {
   if (!created) return res.status(404).json({ error: 'No such persona' });
   audit({ action: 'persona.create', actorKey: getKey(req), targetType: 'persona', targetId: created.id,
     meta: { name: created.name, clonedFrom: req.params.id }, req });
+  announce(getKey(req), 'persona.created', null, { personaId: created.id, name: created.name, clonedFrom: req.params.id });
   res.status(201).json(personas.describe(created));
 });
 
@@ -745,6 +748,7 @@ router.delete('/personas/:id', authMiddleware, (req, res) => {
     const removed = personas.remove(getKey(req), req.params.id);
     if (!removed) return res.status(404).json({ error: 'No such persona' });
     audit({ action: 'persona.delete', actorKey: getKey(req), targetType: 'persona', targetId: req.params.id, req });
+    announce(getKey(req), 'persona.deleted', null, { personaId: req.params.id });
     res.json({ ok: true });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -936,6 +940,9 @@ export const validData = (d, { files = true } = {}) => !!d && typeof d === 'obje
  * MFA prompt — or park the run on a person.
  * ponytail: three detection evals per page-changing step.
  */
+/** A control-plane event for this key's webhook; never fails the caller. */
+const announce = (key, type, sessionId, detail) => control().emit(key, type, sessionId, detail).catch(() => {});
+
 function checkpointFor(apiKey, browserId, requestHuman) {
   const liveViewUrl = `/dashboard/?browser=${encodeURIComponent(browserId)}`;
   const evaluate = (expr) => evaluateIn(browserId, expr);
@@ -956,6 +963,7 @@ function checkpointFor(apiKey, browserId, requestHuman) {
     // accepted a password, and a login page can carry a CAPTCHA of its own,
     // which is why this sits between the two.
     const l = await siteLogin.complete(evaluate, personaId, { domain, browserId, liveViewUrl }).catch(() => null);
+    if (l?.present) announce(apiKey, l.completed ? 'login.completed' : 'login.failed', browserId, { personaId, domain, method: l.method ?? null });
     if (l?.present && !l.completed) {
       await requestHuman({ reason: 'login', message: l.error || 'A sign-in needs completing in the live view.', liveViewUrl });
     }
@@ -968,6 +976,8 @@ function checkpointFor(apiKey, browserId, requestHuman) {
       // templates are rewritten constantly and the code is not always digits.
       llm,
     }).catch(() => null);
+    // Provider and outcome only: the code itself never leaves this process.
+    if (m?.present && m.completed) announce(apiKey, 'mfa.completed', browserId, { personaId, domain, method: m.method ?? null });
     if (m?.present && !m.completed) {
       const answer = await requestHuman({ reason: 'mfa', message: m.error || 'MFA needs completing in the live view.', liveViewUrl });
       // Someone who replies with the code — in Slack, the dashboard or the SDK —

@@ -443,15 +443,33 @@ export class ControlService {
     let ended = false;
     return async () => { if (ended) return; ended = true; await this.store.finishCommand(id, fence); };
   }
-  async webhook(key, { url, types = [] }) {
+  /**
+   * The project's one customer endpoint, Stripe-style: a derived id so saving again
+   * edits it rather than stacking a second hook. The secret survives edits and is
+   * returned only when minted — on first save or on `roll`.
+   */
+  async webhook(key, { url, types = [], roll = false }) {
     if (!Array.isArray(types) || types.some(x => typeof x !== 'string')) throw fault('invalid_events', 'Event types must be an array of strings', 400);
-    const secret = randomBytes(32).toString('base64url'), id = randomUUID();
     return this.store.transact(async tx => {
       const p = await ensure(tx, key);
-      tx.put('webhook', id, { id, project: p.id, url, types, secret: sealText(`webhook:${id}`, secret), enabled: true });
-      tx.emit(p.id, 'webhook.created', null, { id });
-      return { id, url, types, secret };
+      const id = `hook:${p.id}`, existing = await tx.get('webhook', id);
+      const secret = !existing?.secret || roll ? randomBytes(32).toString('base64url') : null;
+      tx.put('webhook', id, { ...existing, id, project: p.id, url, types, enabled: true, secret: secret ? sealText(`webhook:${id}`, secret) : existing.secret });
+      tx.emit(p.id, existing ? 'webhook.updated' : 'webhook.created', null, { id });
+      return { id, url, types, enabled: true, ...(secret ? { secret } : {}) };
     });
+  }
+  /** The project's endpoint without its secret, and its latest deliveries; null hook when never set. */
+  async webhookConfig(key) {
+    const id = `hook:${projectId(key)}`;
+    const hook = await this.store.get('webhook', id);
+    const deliveries = hook ? (await this.store.list('delivery', { project: projectId(key) })).filter(d => d.hook === id).sort((a, b) => b.at - a.at).slice(0, 20) : [];
+    const events = new Map((await this.store.events({ seqs: deliveries.map(d => d.eventSeq) })).map(e => [e.id, e.type]));
+    return {
+      hook: hook && { id, url: hook.url, types: hook.types, enabled: hook.enabled },
+      events: WEBHOOK_EVENTS,
+      deliveries: deliveries.map(({ id, state, attempts, at, eventSeq }) => ({ id, state, attempts, at, type: events.get(eventSeq) ?? null })),
+    };
   }
   /**
    * The project's Slack sink, as one webhook row with a derived id, so connecting
@@ -483,6 +501,14 @@ export class ControlService {
     await this.store.transact(async tx => { tx.emit(projectId(key), type, sessionId, detail); });
   }
 }
+/** What the Settings endpoint offers to subscribe to; an empty selection means all. */
+export const WEBHOOK_EVENTS = [
+  'session.ready', 'session.stopped', 'session.failed', 'session.disconnected',
+  'run.needs_attention', 'run.failed', 'budget.threshold',
+  'persona.created', 'persona.updated', 'persona.deleted',
+  'recording.ready', 'login.completed', 'login.failed', 'mfa.completed',
+  'credential.created', 'credential.revoked',
+];
 /** What a Slack sink subscribes to when it is created. */
 export const SLACK_EVENTS = ['run.needs_attention', 'run.failed', 'session.failed'];
 let singleton;
