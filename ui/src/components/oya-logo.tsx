@@ -10,6 +10,6 @@ export function OyaLogo({ size = 24 }: { size?: number }) {
 
 export function OyaWordmark({ href = '/' }: { href?: string }) {
   return <Link href={href} className="inline-flex shrink-0 items-center gap-2.5" aria-label="Oya Browser home">
-    <OyaLogo /><span className="font-display text-[15px] tracking-tight">Oya<span className="ml-2 font-sans text-xs font-medium tracking-normal text-text-muted">Browser</span></span>
+    <OyaLogo size={26} /><span className="font-display text-[15px] tracking-tight">Browser</span>
   </Link>;
 }
