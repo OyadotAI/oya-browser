@@ -1,0 +1,67 @@
+{
+  "name": "Oya Browser",
+  "description": "Drive a real Chrome browser through one API \u2014 on Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or the user's own machine with their cookies, logins and extensions. Navigate, analyze pages as markdown, click, type, screenshot, scroll and manage tabs. Personas keep a logged-in identity stable across runs and providers.",
+  "url": "https://browser.getoya.ai",
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false
+  },
+  "authentication": {
+    "schemes": [
+      "bearer"
+    ]
+  },
+  "defaultInputModes": [
+    "text/plain"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "image/png"
+  ],
+  "skills": [
+    {
+      "id": "browse",
+      "name": "Browser Automation",
+      "description": "Navigate to URLs, analyze page content, click elements, type text, take screenshots, scroll, and manage tabs in a real Chrome browser.",
+      "tags": [
+        "browser",
+        "automation",
+        "web",
+        "scraping",
+        "chrome"
+      ],
+      "examples": [
+        "Navigate to https://example.com and analyze the page",
+        "Click the login button and fill in the form",
+        "Take a screenshot of the current page",
+        "Search Google for 'weather today'"
+      ]
+    },
+    {
+      "id": "pool",
+      "name": "Browser Pool",
+      "description": "Dispatch commands across multiple browsers with round-robin load balancing and shared cookie synchronization.",
+      "tags": [
+        "pool",
+        "scaling",
+        "parallel",
+        "multi-browser"
+      ],
+      "examples": [
+        "Run the same search across 5 browsers in parallel",
+        "Check pool status and connected browsers"
+      ]
+    }
+  ],
+  "endpoints": {
+    "mcp": "/mcp/{browserId}",
+    "mcp_pool": "/mcp/pool",
+    "rest": "/browsers/{browserId}/command",
+    "rest_pool": "/pool/command",
+    "websocket": "/ws",
+    "health": "/health",
+    "openapi": "/openapi.json",
+    "llms_txt": "/llms.txt"
+  }
+}

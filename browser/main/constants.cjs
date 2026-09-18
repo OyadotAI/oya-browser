@@ -1,0 +1,69 @@
+/**
+ * Every number the main-process helper modules (main/*.cjs) run on, by name:
+ * timings, limits and sizes. One place to read what the browser waits for and
+ * how much it accepts.
+ */
+
+/** Bytes in a mebibyte. */
+const MIB = 1_048_576;
+
+/** Largest CDP message the relay and the front door accept (256 MiB): a full-page screenshot is big. */
+const MAX_CDP_PAYLOAD = 268_435_456;
+
+/** A host's cookies are pulled from the pool at most this often. */
+const COOKIE_PULL_TTL_MS = 30_000;
+/** A navigation never waits longer than this for a cookie pull. */
+const COOKIE_PULL_TIMEOUT_MS = 3000;
+/** Local cookie changes are batched for this long before they are sent. */
+const COOKIE_FLUSH_MS = 2000;
+/** A batch this large is sent at once rather than waiting out the timer. */
+const COOKIE_BATCH_MAX = 200;
+/** Hosts remembered as recently pulled; past this the memory is cleared. */
+const COOKIE_PULLED_HOSTS_MAX = 500;
+
+/** The fastest the live view streams: one frame per this many ms. */
+const STREAM_MIN_FRAME_MS = 200;
+/** Milliseconds per second, to turn frames per second into an interval. */
+const MS_PER_SECOND = 1000;
+/** Frames are skipped while the socket has this much still unsent. */
+const STREAM_MAX_BUFFERED = MIB;
+/** JPEG quality of live-view frames. */
+const STREAM_JPEG_QUALITY = 40;
+
+/** How long a pairing claim may take before it is abandoned. */
+const PAIRING_TIMEOUT_MS = 15_000;
+
+/** How often a packaged app checks for an update (six hours). */
+const UPDATE_CHECK_INTERVAL_MS = 21_600_000;
+/** The first check waits this long, so the first window can settle. */
+const UPDATE_FIRST_CHECK_MS = 10_000;
+
+/** Chrome version assumed when the session's user agent names none. */
+const FALLBACK_CHROME_VERSION = '134.0.0.0';
+/** The GREASE brand's version in Sec-CH-UA. */
+const GREASE_BRAND_VERSION = '24';
+/** The GREASE brand's full version in Sec-CH-UA-Full-Version-List. */
+const GREASE_BRAND_FULL_VERSION = '24.0.0.0';
+
+/** Random bytes in an isolated world's per-document tag attribute. */
+const WORLD_ATTR_BYTES = 4;
+
+module.exports = {
+  MAX_CDP_PAYLOAD,
+  COOKIE_PULL_TTL_MS,
+  COOKIE_PULL_TIMEOUT_MS,
+  COOKIE_FLUSH_MS,
+  COOKIE_BATCH_MAX,
+  COOKIE_PULLED_HOSTS_MAX,
+  STREAM_MIN_FRAME_MS,
+  MS_PER_SECOND,
+  STREAM_MAX_BUFFERED,
+  STREAM_JPEG_QUALITY,
+  PAIRING_TIMEOUT_MS,
+  UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_FIRST_CHECK_MS,
+  FALLBACK_CHROME_VERSION,
+  GREASE_BRAND_VERSION,
+  GREASE_BRAND_FULL_VERSION,
+  WORLD_ATTR_BYTES,
+};

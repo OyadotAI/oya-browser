@@ -1,0 +1,150 @@
+{
+  "name": "oya-browser",
+  "version": "1.0.97",
+  "description": "AI-controlled browser — your real browser as an MCP server",
+  "main": "main.js",
+  "author": "Oya <hello@oya.ai>",
+  "scripts": {
+    "start": "node launch.cjs",
+    "dev": "node launch.cjs --dev",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "node --test 'tests/unit/**/*.test.{js,cjs,mjs}'",
+    "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs",
+    "test:coverage": "node --test --experimental-test-coverage 'tests/unit/**/*.test.{js,cjs,mjs}'",
+    "test:recording": "electron tests/integration/recording-electron.cjs",
+    "test:shell": "node tests/integration/shell.mjs",
+    "test:control": "node tests/integration/control.mjs",
+    "test:workflow": "electron tests/integration/workflow-electron.cjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@playwright/test": "^1.63.0",
+    "electron-updater": "^6.8.9",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "electron": "^35.1.2",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsdoc": "^64.5.3",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.8"
+  },
+  "build": {
+    "appId": "ai.oya.browser",
+    "productName": "Oya Browser",
+    "artifactName": "Oya.Browser-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "main/**/*",
+      "preload.js",
+      "login-state.js",
+      "shell-layout.cjs",
+      "control-state.cjs",
+      "constants.cjs",
+      "governance.js",
+      "cdp-front-door.js",
+      "front-door/**/*",
+      "renderer/**/*",
+      "scripts/**/*",
+      "anonymity/**/*"
+    ],
+    "mac": {
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "extendInfo": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "Oya Browser",
+            "CFBundleURLSchemes": [
+              "oya"
+            ]
+          }
+        ]
+      }
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Oya.Browser-${version}-x64.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network",
+      "artifactName": "Oya.Browser-${version}-x64.${ext}"
+    },
+    "dmg": {
+      "title": "Oya Browser",
+      "iconSize": 80,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "protocols": [
+      {
+        "name": "Oya Browser",
+        "schemes": [
+          "oya"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "generic",
+      "url": "https://browser.getoya.ai/downloads",
+      "channel": "latest"
+    }
+  }
+}

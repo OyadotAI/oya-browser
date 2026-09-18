@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+coverage
+# Local tool settings.
+.claude
+# Page-side scripts keep their exact text (see eslint.config.mjs).
+scripts/analyzer.js
+anonymity/stealth.js
+anonymity/fingerprint.js
+anonymity/inject.js
+governance.js

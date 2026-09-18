@@ -1,0 +1,48 @@
+{
+  "name": "@oya-ai/cli",
+  "version": "1.0.97",
+  "description": "Command line for the Oya browser control plane.",
+  "license": "MIT",
+  "homepage": "https://browser.getoya.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OyadotAI/oya-browser.git",
+    "directory": "packages/cli"
+  },
+  "bugs": "https://github.com/OyadotAI/oya-browser/issues",
+  "keywords": [
+    "browser",
+    "ai-agents",
+    "cli",
+    "cdp",
+    "headless-chrome",
+    "browserbase",
+    "steel",
+    "browser-use",
+    "mcp"
+  ],
+  "type": "module",
+  "bin": {
+    "oya": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@oya-ai/browser": "1.0.97",
+    "@types/node": "^20.19.43",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0"
+  },
+  "author": "mk@getoya.ai"
+}

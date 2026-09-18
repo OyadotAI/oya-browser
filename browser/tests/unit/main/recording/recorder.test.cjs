@@ -1,0 +1,188 @@
+/**
+ * Unit tests for Recorder: step intake (limits, duplicates, late steps),
+ * navigation steps, start/resume/stop, the serialized task queue, and the
+ * hand-off when an agent takes control.
+ */
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
+const assert = require('node:assert/strict');
+const { Recorder } = require('../../../../main/recording/recorder.cjs');
+const { mainCtx, FakeBrowserView } = require('../../support/main-ctx.cjs');
+const { flush } = require('../../support/fakes.cjs');
+
+/** A fake workspace that remembers what it was handed. */
+function fakeWorkspace(draft = { steps: [], secrets: [] }) {
+  return {
+    draft,
+    captures: [],
+    edits: [],
+    busy: () => false,
+    capture(...args) {
+      this.captures.push(args);
+    },
+    edit(c) {
+      this.edits.push(c);
+    },
+  };
+}
+
+describe('Recorder', () => {
+  let ctx, view;
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1000 });
+    ctx = mainCtx({ recorder: Recorder });
+    view = new FakeBrowserView();
+    view.webContents.url = 'https://start.test/';
+    ctx.tabs = { list: [{ id: 1, view }], activeTabId: 1, getActiveView: () => view };
+    ctx.recorder.channels.armRecordingView = async () => {};
+    ctx.recorder.channels.stopAll = async () => {};
+    ctx.workspace = fakeWorkspace();
+  });
+  afterEach(() => mock.timers.reset());
+
+  it('starts where the person is, on a fresh draft', async () => {
+    const result = await ctx.recorder.startRecording();
+    assert.equal(result.recording, true);
+    assert.deepEqual(ctx.workspace.edits, [{ type: 'new' }]);
+    assert.equal(ctx.recorder.recordedSteps[0].action, 'navigate');
+    assert.equal(ctx.recorder.recordedSteps[0].url, 'https://start.test/');
+    assert.equal(ctx.recorder.recordedSteps[0].tab, 'main');
+  });
+
+  it('refuses to record during a validation', async () => {
+    ctx.workspace.busy = () => true;
+    await assert.rejects(ctx.recorder.startRecording(), /Stop validation before recording/);
+  });
+
+  it('records a move made while paused when it resumes', async () => {
+    await ctx.recorder.startRecording();
+    await ctx.recorder.stopRecording();
+    ctx.workspace.draft = { steps: structuredClone(ctx.recorder.recordedSteps), secrets: [] };
+    view.webContents.url = 'https://elsewhere.test/';
+    await ctx.recorder.startRecording(true);
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.url),
+      ['https://start.test/', 'https://elsewhere.test/'],
+    );
+  });
+
+  it('drops duplicate steps and steps after the cutoff', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({ id: 'a', action: 'click' });
+    ctx.recorder.pushRecordedStep({ id: 'a', action: 'click' });
+    ctx.recorder.recordingCutoff = 500;
+    ctx.recorder.pushRecordedStep({ id: 'b', action: 'click', t: 900 });
+    assert.deepEqual(ctx.recorder.recordedSteps.map((s) => s.id).slice(1), ['a']);
+  });
+
+  it('stops at the step limit and says so on the last step', async () => {
+    await ctx.recorder.startRecording();
+    for (let i = 0; i < 510; i++) ctx.recorder.pushRecordedStep({ action: 'click', id: 's' + i });
+    assert.equal(ctx.recorder.recordedSteps.length, 500);
+    assert.match(ctx.recorder.recordedSteps[499].captureIssue, /500-step capture limit/);
+    await ctx.recorder.recordingTask;
+    assert.equal(ctx.recorder.recording, false);
+  });
+
+  it('records only typed web addresses, once', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.recordNavigation('https://b.test/');
+    ctx.recorder.recordNavigation('https://b.test/');
+    ctx.recorder.recordNavigation('about:blank');
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.url),
+      ['https://start.test/', 'https://b.test/'],
+    );
+  });
+
+  it("starts a new tab's steps with the page it began on", async () => {
+    await ctx.recorder.startRecording();
+    const other = new FakeBrowserView();
+    ctx.tabs.list.push({ id: 2, view: other });
+    ctx.recorder.receive(other, 'https://other.test/', { steps: [{ action: 'click', t: 2000 }], secrets: ['pw'] });
+    const tabSteps = ctx.recorder.recordedSteps.filter((s) => s.tab === 'tab-1');
+    assert.deepEqual(
+      tabSteps.map((s) => [s.action, s.t]),
+      [
+        ['navigate', 1999],
+        ['click', 2000],
+      ],
+    );
+    assert.ok(ctx.recorder.recordedSecrets.has('pw'));
+  });
+
+  it('ignores page output when not recording', () => {
+    ctx.recorder.receive(view, 'https://x.test/', { steps: [{ action: 'click' }], secrets: ['pw'] });
+    assert.equal(ctx.recorder.recordedSteps.length, 0);
+  });
+
+  it('stops a failed start and reports why', async () => {
+    ctx.recorder.channels.armRecordingView = async () => {
+      throw new Error('no debugger');
+    };
+    await assert.rejects(ctx.recorder.startRecording(), /no debugger/);
+    assert.equal(ctx.recorder.recording, false);
+  });
+
+  it('refreshes the shell while recording and hands changes to the workspace once', async () => {
+    await ctx.recorder.startRecording();
+    const before = ctx.shell.sentOn('recorded-steps').length;
+    mock.timers.tick(400);
+    assert.equal(ctx.shell.sentOn('recorded-steps').length, before + 1);
+    assert.equal(ctx.workspace.captures.length, 1);
+  });
+
+  it('stops a desktop recording when an agent takes control', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.controlLost({ interactive: false });
+    await ctx.recorder.recordingTask;
+    assert.equal(ctx.recorder.recording, false);
+    assert.equal(ctx.recorder.recordingCutoff, 1000);
+  });
+
+  it('keeps a server-started recording going through a handoff', async () => {
+    await ctx.recorder.remote('start');
+    ctx.recorder.controlLost({ interactive: false });
+    assert.equal(ctx.recorder.recording, true);
+    assert.equal((await ctx.recorder.remote('stop')).recording, false);
+  });
+
+  it('runs recording tasks one at a time, each handed the last result', async () => {
+    const seen = [];
+    ctx.recorder.queueRecording(async () => 'first');
+    const failed = ctx.recorder.queueRecording(async () => {
+      throw new Error('x');
+    });
+    await assert.rejects(failed);
+    await ctx.recorder.queueRecording((previous) => seen.push(previous));
+    assert.deepEqual(seen, [undefined]);
+    await ctx.recorder.queueRecording(async () => 'third');
+    await ctx.recorder.queueRecording((previous) => seen.push(previous));
+    assert.deepEqual(seen, [undefined, 'third']);
+  });
+
+  it('clears the steps and restarts from the current page while recording', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.channels.clearAll = async () => {};
+    ctx.recorder.pushRecordedStep({ action: 'click' });
+    const result = await ctx.recorder.clear();
+    assert.deepEqual(
+      result.steps.map((s) => s.action),
+      ['navigate'],
+    );
+  });
+
+  it('adopts a draft and does not hand it straight back', () => {
+    ctx.recorder.adopt([{ action: 'click' }], ['pw']);
+    ctx.recorder.emitRecording();
+    assert.equal(ctx.workspace.captures.length, 0);
+  });
+
+  it('joins a new tab only while recording', async () => {
+    const armed = mock.method(ctx.recorder.channels, 'armRecordingView', async () => {});
+    ctx.recorder.joinIfRecording(view);
+    await ctx.recorder.startRecording();
+    ctx.recorder.joinIfRecording(view);
+    await flush();
+    assert.equal(armed.mock.calls.at(-1).arguments[0], view);
+  });
+});

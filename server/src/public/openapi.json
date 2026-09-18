@@ -1,0 +1,2104 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Oya Browser API",
+    "description": "REST API for controlling browsers connected to the Oya Browser server. Browsers connect via WebSocket; AI tools and clients use this REST API (or MCP) to send commands.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://browser.getoya.ai",
+      "description": "Production"
+    },
+    {
+      "url": "http://localhost:3100",
+      "description": "Local development"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/api/control": {
+      "get": {
+        "summary": "Project operational overview",
+        "operationId": "getApiControl",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        }
+      }
+    },
+    "/api/control/sessions": {
+      "get": {
+        "summary": "Durable inventory including unresolved cleanup",
+        "operationId": "getApiControlSessions",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ControlSession"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a durable browser session",
+        "operationId": "postApiControlSessions",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          },
+          "201": {
+            "description": "Provisioning accepted"
+          },
+          "202": {
+            "description": "Queued or existing operation; poll by returned ID"
+          },
+          "429": {
+            "description": "Capacity or budget exhausted"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string"
+                  },
+                  "persona": {
+                    "type": "string"
+                  },
+                  "governed": {
+                    "type": "boolean"
+                  },
+                  "queueMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 300000
+                  },
+                  "priority": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "normal",
+                      "high"
+                    ]
+                  },
+                  "budgetUsd": {
+                    "type": "number"
+                  },
+                  "policy": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stable per logical creation, retained seven days; changing the body conflicts."
+          }
+        ]
+      }
+    },
+    "/api/control/sessions/{id}": {
+      "get": {
+        "summary": "Read a durable session",
+        "operationId": "getApiControlSessionsId",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControlSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/control/sessions/{id}/cancel": {
+      "post": {
+        "summary": "Cancel work and retain cleanup obligation",
+        "operationId": "postApiControlSessionsIdCancel",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/sessions/{id}/stop": {
+      "post": {
+        "summary": "Stop browser; optionally proceed after profile-save failure",
+        "operationId": "postApiControlSessionsIdStop",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "force": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/sessions/{id}/recover": {
+      "post": {
+        "summary": "Recover original session or explicitly replace after cleanup",
+        "operationId": "postApiControlSessionsIdRecover",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "replace": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/sessions/{id}/control": {
+      "post": {
+        "summary": "Transfer human control; release leaves agent paused",
+        "operationId": "postApiControlSessionsIdControl",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "acquire",
+                      "release",
+                      "resume"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/sessions/{id}/input": {
+      "post": {
+        "summary": "Send input using the caller\u2019s human control lease",
+        "operationId": "postApiControlSessionsIdInput",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/sessions/{id}/ticket": {
+      "post": {
+        "summary": "Issue a one-use 60-second session-bound ticket",
+        "operationId": "postApiControlSessionsIdTicket",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/project": {
+      "patch": {
+        "summary": "Update limits, rates, retention and admission policy",
+        "operationId": "patchApiControlProject",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "maxConcurrent": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "budgetUsd": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "rates": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "number",
+                      "minimum": 0
+                    }
+                  },
+                  "policy": {
+                    "type": "object"
+                  },
+                  "recordingDays": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "auditDays": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/credentials": {
+      "post": {
+        "summary": "Create a credential; secret shown once",
+        "operationId": "postApiControlCredentials",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "operator",
+                      "administrator"
+                    ]
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/credentials/{id}": {
+      "delete": {
+        "summary": "Revoke credential and invalidate its attachments",
+        "operationId": "deleteApiControlCredentialsId",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/control/members": {
+      "get": {
+        "summary": "List project members",
+        "operationId": "getApiControlMembers",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential."
+      }
+    },
+    "/api/control/members/invite": {
+      "post": {
+        "summary": "Create one-use seven-day invitation",
+        "operationId": "postApiControlMembersInvite",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "viewer",
+                      "operator",
+                      "administrator"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/members/{id}": {
+      "delete": {
+        "summary": "Remove member and revoke linked credentials",
+        "operationId": "deleteApiControlMembersId",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/control/events": {
+      "get": {
+        "summary": "Read durable events after a cursor",
+        "operationId": "getApiControlEvents",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/control/audit/export": {
+      "get": {
+        "summary": "Export retained audit events as NDJSON",
+        "operationId": "getApiControlAuditExport",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Retained audit events",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential."
+      }
+    },
+    "/api/control/webhooks": {
+      "post": {
+        "summary": "Create signed at-least-once event subscription",
+        "operationId": "postApiControlWebhooks",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/control/webhooks/{id}": {
+      "delete": {
+        "summary": "Disable event subscription",
+        "operationId": "deleteApiControlWebhooksId",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/control/deliveries/{id}/replay": {
+      "post": {
+        "summary": "Replay a delivery within its audit retention period",
+        "operationId": "postApiControlDeliveriesIdReplay",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "description": "Requires an administrator credential.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/projects": {
+      "get": {
+        "summary": "List projects for authenticated account",
+        "operationId": "getApiAuthProjects",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        }
+      }
+    },
+    "/api/auth/projects/join": {
+      "post": {
+        "summary": "Redeem a project invitation using account JWT",
+        "operationId": "postApiAuthProjectsJoin",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/projects/{id}/access": {
+      "post": {
+        "summary": "Issue one-hour member-linked console credential using account JWT",
+        "operationId": "postApiAuthProjectsIdAccess",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/livez": {
+      "get": {
+        "summary": "Process liveness",
+        "operationId": "getLivez",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "security": []
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Storage and admission readiness",
+        "operationId": "getReadyz",
+        "tags": [
+          "Durable control"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "409": {
+            "description": "Lifecycle, idempotency, or control lease conflict"
+          },
+          "503": {
+            "description": "Storage or session owner unavailable"
+          }
+        },
+        "security": []
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "browsers": { "type": "integer", "description": "Number of connected browsers" },
+                    "uptime": { "type": "number", "description": "Server uptime in seconds" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browsers": {
+      "get": {
+        "summary": "List connected browsers",
+        "description": "Returns browsers connected with the caller's API key. Admin keys see all browsers.",
+        "operationId": "listBrowsers",
+        "responses": {
+          "200": {
+            "description": "List of connected browsers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Browser" }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browsers/{browserId}/command": {
+      "post": {
+        "summary": "Send a command to a browser",
+        "description": "Execute a browser action (analyze, navigate, click, type, press_key, screenshot, scroll, wait, list_tabs, open_tab, switch_tab, close_tab, read_page).",
+        "operationId": "sendCommand",
+        "parameters": [
+          { "$ref": "#/components/parameters/browserId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "analyze",
+                      "navigate",
+                      "click",
+                      "type",
+                      "press_key",
+                      "screenshot",
+                      "scroll",
+                      "wait",
+                      "read_page",
+                      "list_tabs",
+                      "open_tab",
+                      "switch_tab",
+                      "close_tab"
+                    ],
+                    "description": "The browser action to execute. Each action uses only specific params (see examples)."
+                  },
+                  "params": {
+                    "type": "object",
+                    "description": "Action-specific parameters. Only include params relevant to the chosen action.",
+                    "properties": {
+                      "url": { "type": "string", "description": "URL (for navigate, open_tab)" },
+                      "selector": { "type": "string", "description": "CSS selector, e.g. [data-ac-id=\"3\"] (for click, type, wait, read_page)" },
+                      "text": { "type": "string", "description": "Text to type (for type)" },
+                      "key": { "type": "string", "description": "Key to press (for press_key): Enter, Escape, Tab, Backspace, ArrowDown, ArrowUp, etc." },
+                      "direction": { "type": "string", "enum": ["up", "down"], "description": "Scroll direction (for scroll)" },
+                      "amount": { "type": "number", "description": "Pixels to scroll (for scroll, default 500)" },
+                      "timeout": { "type": "number", "description": "Timeout in ms (for wait, default 10000)" },
+                      "tab_id": { "type": "number", "description": "Tab ID (for switch_tab, close_tab)" },
+                      "limit": { "type": "number", "description": "Max elements (for read_page, default 50)" }
+                    }
+                  }
+                },
+                "examples": [
+                  { "action": "navigate", "params": { "url": "https://google.com" } },
+                  { "action": "analyze" },
+                  { "action": "click", "params": { "selector": "[data-ac-id=\"3\"]" } },
+                  { "action": "type", "params": { "selector": "[data-ac-id=\"9\"]", "text": "hello world" } },
+                  { "action": "press_key", "params": { "key": "Enter" } },
+                  { "action": "scroll", "params": { "direction": "down", "amount": 500 } },
+                  { "action": "screenshot" },
+                  { "action": "list_tabs" },
+                  { "action": "open_tab", "params": { "url": "https://gmail.com" } },
+                  { "action": "switch_tab", "params": { "tab_id": 2 } },
+                  { "action": "close_tab", "params": { "tab_id": 3 } },
+                  { "action": "wait", "params": { "selector": ".results", "timeout": 10000 } },
+                  { "action": "read_page", "params": { "limit": 20 } }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CommandResult" }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing action",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Browser not connected",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "500": {
+            "description": "Command failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browsers/{browserId}/chat": {
+      "post": {
+        "summary": "Chat with LLM-controlled browser",
+        "description": "Send a conversation to the LLM which uses browser tools to complete tasks. The LLM autonomously calls analyze_page, click, type, etc. until the task is done.",
+        "operationId": "chat",
+        "parameters": [
+          { "$ref": "#/components/parameters/browserId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["messages"],
+                "properties": {
+                  "messages": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["role", "content"],
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": ["user", "assistant", "system"]
+                        },
+                        "content": { "type": "string" }
+                      }
+                    },
+                    "description": "OpenAI-format chat messages"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "text": { "type": "string", "description": "LLM's final text response" },
+                    "toolCalls": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "args": { "type": "object" }
+                        }
+                      },
+                      "description": "Tools the LLM called during execution"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "404": {
+            "description": "Browser not connected",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "500": {
+            "description": "Chat error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/live/{browserId}": {
+      "get": {
+        "summary": "Live view stream",
+        "description": "Server-Sent Events stream of JPEG frames from the browser. Authorization header, or a single-use ?ticket= from POST /api/control/sessions/{id}/ticket for EventSource, which cannot set headers.",
+        "operationId": "liveView",
+        "parameters": [
+          { "$ref": "#/components/parameters/browserId" },
+          {
+            "name": "key",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "API key (alternative to Authorization header, for EventSource)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SSE stream of base64 JPEG frames",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Each event contains a data: line with a base64-encoded JPEG data URL"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Browser not connected",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/{browserId}": {
+      "post": {
+        "summary": "MCP Streamable HTTP endpoint",
+        "description": "Model Context Protocol endpoint for AI tool integration (Claude Desktop, Cursor, etc.). Implements the MCP Streamable HTTP transport.",
+        "operationId": "mcpPost",
+        "parameters": [
+          { "$ref": "#/components/parameters/browserId" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "MCP JSON-RPC request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MCP JSON-RPC response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "MCP JSON-RPC response"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Browser not connected",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "MCP SSE endpoint",
+        "operationId": "mcpGet",
+        "parameters": [
+          { "$ref": "#/components/parameters/browserId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "MCP SSE stream",
+            "content": {
+              "text/event-stream": {
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "MCP session cleanup",
+        "operationId": "mcpDelete",
+        "parameters": [
+          { "$ref": "#/components/parameters/browserId" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session closed"
+          }
+        }
+      }
+    },
+    "/pool": {
+      "get": {
+        "summary": "Pool status",
+        "operationId": "getPool",
+        "description": "Returns pool size and list of connected browsers sharing the caller's API key.",
+        "responses": {
+          "200": {
+            "description": "Pool status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "size": { "type": "integer", "description": "Number of browsers in pool" },
+                    "browsers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "currentUrl": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pool/command": {
+      "post": {
+        "summary": "Round-robin command",
+        "operationId": "poolCommand",
+        "description": "Send a command to the next browser in the pool via round-robin. Response includes _browser field showing which browser handled it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["action"],
+                "properties": {
+                  "action": { "type": "string", "description": "Command action (navigate, analyze, click, type, etc.)" },
+                  "params": { "type": "object", "description": "Action parameters" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Command result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/CommandResult" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_browser": { "type": "string", "description": "Browser ID that handled the command" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No browsers available in pool",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pool/cookies": {
+      "get": {
+        "summary": "View shared cookie jar",
+        "operationId": "getPoolCookies",
+        "description": "Returns all cookies in the shared pool cookie jar. Cookies are synced across all browsers in the pool.",
+        "responses": {
+          "200": {
+            "description": "Cookie jar",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "cookies": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "value": { "type": "string" },
+                          "domain": { "type": "string" },
+                          "path": { "type": "string" },
+                          "secure": { "type": "boolean" },
+                          "httpOnly": { "type": "boolean" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Clear shared cookie jar",
+        "operationId": "clearPoolCookies",
+        "responses": {
+          "200": {
+            "description": "Cookies cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fleet/provision": {
+      "post": {
+        "summary": "Batch-generate API keys",
+        "operationId": "fleetProvision",
+        "description": "Generate N API keys in one call. Admin key required. Use query param or body to specify count (max 10000).",
+        "parameters": [
+          {
+            "name": "count",
+            "in": "query",
+            "schema": { "type": "integer", "default": 1 },
+            "description": "Number of keys to generate"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Generated keys",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "count": { "type": "integer" },
+                    "keys": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin key required",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/pool": {
+      "post": {
+        "summary": "Pool MCP endpoint",
+        "operationId": "mcpPool",
+        "description": "MCP Streamable HTTP endpoint for the browser pool. Round-robins commands across all browsers sharing the caller's API key. navigate/analyze_page advance the round-robin; click/type/screenshot stay pinned to the last-used browser.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "MCP JSON-RPC request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MCP JSON-RPC response or SSE stream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "MCP JSON-RPC response"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config": {
+      "get": {
+        "summary": "Get server configuration",
+        "operationId": "getConfig",
+        "responses": {
+          "200": {
+            "description": "Server configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "openai_key": { "type": "string", "description": "OpenAI API key (masked)" },
+                    "openai_base": { "type": "string", "description": "OpenAI-compatible base URL" },
+                    "chat_model": { "type": "string", "description": "Chat model name" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Update server configuration",
+        "operationId": "setConfig",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "openai_key": { "type": "string" },
+                  "openai_base": { "type": "string" },
+                  "chat_model": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Config updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key passed as Bearer token. Create one from the dashboard after signing in."
+      }
+    },
+    "parameters": {
+      "browserId": {
+        "name": "browserId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" },
+        "description": "Browser session ID (from GET /browsers)"
+      }
+    },
+    "schemas": {
+      "ControlSession": {
+        "type": "object",
+        "required": [
+          "id",
+          "project",
+          "state",
+          "control"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "provisioning",
+              "ready",
+              "disconnected",
+              "cleanup_pending",
+              "unknown_outcome",
+              "stopped",
+              "failed"
+            ]
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "control": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "agent",
+                  "human",
+                  "paused"
+                ]
+              },
+              "expiresAt": {
+                "type": "integer",
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        }
+      },
+      "Browser": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "Browser session ID" },
+          "name": { "type": "string", "description": "Browser name (e.g. 'Chrome on macOS')" },
+          "currentUrl": { "type": "string", "description": "Current page URL" },
+          "connectedAt": { "type": "string", "format": "date-time" },
+          "lastSeenAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CommandResult": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "description": "Whether the command succeeded" },
+          "data": {
+            "type": "object",
+            "description": "Action-specific result data",
+            "properties": {
+              "url": { "type": "string" },
+              "title": { "type": "string" },
+              "screenshot": { "type": "string", "description": "Base64 PNG data URL (for screenshot action)" },
+              "markdown": { "type": "string", "description": "Page content as markdown (for analyze action)" },
+              "elements": {
+                "type": "array",
+                "description": "Interactive elements (for analyze/read_page actions)",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "integer" },
+                    "type": { "type": "string" },
+                    "text": { "type": "string" },
+                    "href": { "type": "string" },
+                    "visible": { "type": "boolean" }
+                  }
+                }
+              },
+              "tabs": {
+                "type": "array",
+                "description": "Open tabs (for list_tabs action)",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "integer" },
+                    "title": { "type": "string" },
+                    "url": { "type": "string" },
+                    "active": { "type": "boolean" }
+                  }
+                }
+              },
+              "tab_id": { "type": "integer", "description": "New tab ID (for open_tab action)" },
+              "selector": { "type": "string" },
+              "direction": { "type": "string" },
+              "amount": { "type": "number" },
+              "key": { "type": "string" },
+              "found": { "type": "boolean" },
+              "closed": { "type": "boolean" },
+              "needs_capture": { "type": "boolean" },
+              "scroll": {
+                "type": "object",
+                "properties": {
+                  "top": { "type": "number" },
+                  "height": { "type": "number" },
+                  "scrollHeight": { "type": "number" }
+                }
+              },
+              "viewport": {
+                "type": "object",
+                "properties": {
+                  "width": { "type": "number" },
+                  "height": { "type": "number" }
+                }
+              },
+              "truncated": { "type": "boolean" }
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true,
+            "description": "Error message if ok is false"
+          }
+        }
+      }
+    }
+  }
+}

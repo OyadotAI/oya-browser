@@ -1,0 +1,21 @@
+{
+  // Type-check only: Node runs src/*.ts directly by stripping types, so there is no emit.
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    // Migration ratchet: the JS was renamed in place. Turn these on as types land
+    // (tsc --strictNullChecks true reports what is left, ~240 today).
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
