@@ -191,6 +191,22 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
   {
     type: 'function',
     function: {
+      name: 'handle_dialog',
+      description: 'Answer a native browser dialog (confirm or prompt) that is blocking the page. Alerts are answered for you. Accept only what the task actually asks for — a confirm may be guarding something destructive.',
+      parameters: {
+        type: 'object',
+        properties: {
+          accept: { type: 'boolean', description: 'true clicks OK, false clicks Cancel' },
+          prompt_text: { type: 'string', description: 'The text to enter, for a prompt dialog only' },
+        },
+        required: ['accept'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'close_tab',
       description: 'Close a tab. Closes active tab if no tab_id specified.',
       parameters: {

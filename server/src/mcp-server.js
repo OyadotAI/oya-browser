@@ -394,6 +394,22 @@ Use element IDs with click/type tools. The output includes:
   );
 
   server.tool(
+    'handle_dialog',
+    'Answer a native browser dialog (confirm or prompt) blocking the page. Alerts are answered automatically.',
+    {
+      accept: z.boolean().describe('true clicks OK, false clicks Cancel'),
+      prompt_text: z.string().optional().describe('Text to enter, for a prompt dialog only'),
+    },
+    async ({ accept, prompt_text }) => {
+      const result = await sendCommand(browserId, 'handle_dialog', { accept, prompt_text });
+      if (!result.ok) {
+        return { content: [{ type: 'text', text: `Error: ${result.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text', text: `${result.data?.accepted === false ? 'Dismissed' : 'Accepted'} the ${result.data?.type || ''} dialog` }] };
+    }
+  );
+
+  server.tool(
     'close_tab',
     'Close a browser tab. Closes active tab if no tab_id specified.',
     { tab_id: z.number().optional().describe('Tab ID to close (default: active tab)') },
@@ -611,6 +627,17 @@ function createPoolMcpServer(apiKey, self = {}) {
       const result = await sendCommand(bid, 'press_key', { key });
       if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }], isError: true };
       return { content: [{ type: 'text', text: `${browserTag(bid)} Pressed ${key}` }] };
+    }
+  );
+
+  server.tool('handle_dialog', 'Answer a native browser dialog (confirm or prompt) blocking the page. Alerts are answered automatically.',
+    { accept: z.boolean(), prompt_text: z.string().optional() },
+    async ({ accept, prompt_text }) => {
+      const bid = pick(false);
+      if (!bid) return { content: [{ type: 'text', text: 'Error: no browser is running. Call start_browser first.' }], isError: true };
+      const result = await sendCommand(bid, 'handle_dialog', { accept, prompt_text });
+      if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }], isError: true };
+      return { content: [{ type: 'text', text: `${browserTag(bid)} ${result.data?.accepted === false ? 'Dismissed' : 'Accepted'} the ${result.data?.type || ''} dialog` }] };
     }
   );
 
