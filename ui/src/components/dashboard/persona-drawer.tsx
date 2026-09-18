@@ -31,6 +31,9 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
   const [pin, setPin] = useState('');
   const [mfaType, setMfaType] = useState<'totp' | 'email' | 'sms'>('totp');
   const [mfaValue, setMfaValue] = useState('');
+  const [credDomain, setCredDomain] = useState('');
+  const [credUser, setCredUser] = useState('');
+  const [credPassword, setCredPassword] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -68,6 +71,12 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
   const setMfa = () => run('mfa', () => api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'PUT',
     body: mfaType === 'totp' ? { type: 'totp', secret: mfaValue } : { type: mfaType, url: mfaValue } }), 'Second factor stored').then(() => setMfaValue(''));
   const clearMfa = () => run('mfa', () => api(`/personas/${p.id}/mfa`, { key: apiKey, method: 'DELETE' }), 'Second factor removed');
+  const addCredential = () => run('cred', () => api(`/personas/${p.id}/credentials`, { key: apiKey, method: 'PUT',
+    body: { domain: credDomain, username: credUser, password: credPassword } }), 'Sign-in stored')
+    .then(() => { setCredDomain(''); setCredUser(''); setCredPassword(''); });
+  const removeCredential = (domain: string) => run('cred',
+    () => api(`/personas/${p.id}/credentials?domain=${encodeURIComponent(domain)}`, { key: apiKey, method: 'DELETE' }),
+    'Sign-in removed');
 
   const clone = () => run('clone', async () => {
     const c = await api<Persona>(`/personas/${p.id}/clone`, { key: apiKey, method: 'POST', body: {} });
@@ -173,6 +182,35 @@ export default function PersonaDrawer({ persona, onClose, apiKey, browsers, onCh
                 <button className="btn-ghost" onClick={setMfa} disabled={!mfaValue || busy === 'mfa'}>Store</button>
               </div>
             )}
+          </section>
+
+          {/* Site sign-ins */}
+          <section>
+            <h3 className="label">Portal sign-ins</h3>
+            <p className="mb-2 text-xs text-text-muted">
+              Signing in on the desktop and inheriting the cookies is still the better path. Store a login only for
+              portals that drop the session between runs. Passwords are sealed and never shown again.
+            </p>
+            {p.sites?.credentials?.length ? (
+              <div className="mb-2 rounded-md border border-border bg-bg text-[12.5px]">
+                {p.sites.credentials.map((c) => (
+                  <div key={c.domain} className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-0">
+                    <Lock className="h-3.5 w-3.5 text-accent" />
+                    <span className="text-text">{c.domain}</span>
+                    <span className="text-text-dim">· {c.username}</span>
+                    <button className="btn-ghost ml-auto h-7" onClick={() => removeCredential(c.domain)} disabled={busy === 'cred'}>
+                      <Trash2 className="h-3.5 w-3.5" /> Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2">
+              <input className="field" value={credDomain} onChange={(e) => setCredDomain(e.target.value)} placeholder="portal.example.com" aria-label="Site" />
+              <input className="field" autoComplete="off" value={credUser} onChange={(e) => setCredUser(e.target.value)} placeholder="Username" aria-label="Username" />
+              <input className="field" type="password" autoComplete="new-password" value={credPassword} onChange={(e) => setCredPassword(e.target.value)} placeholder="Password" aria-label="Password" />
+              <button className="btn-ghost" onClick={addCredential} disabled={!credDomain || !credUser || !credPassword || busy === 'cred'}>Store</button>
+            </div>
           </section>
 
           {/* Device — locked */}

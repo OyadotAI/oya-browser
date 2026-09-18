@@ -8,5 +8,5 @@ if (!persona.mfa.configured) await oya.personas.setMfa(persona.id, { type: 'totp
 
 await using browser = await oya.browser.start({ persona: persona.id });
 await browser.goto(process.env.MFA_URL!); // after your login step: the page asking for the code
-const mfa = await browser.completeMfa(); // method: 'totp' | 'email' | 'sms' | 'handoff'
+const mfa = await browser.completeMfa(); // method: 'totp' | 'gmail' | 'graph' | 'email' | 'sms' | 'handoff'
 if (!mfa.completed) console.log('A person can finish it here:', mfa.liveViewUrl);

@@ -158,8 +158,8 @@ export type RunData = Record<string, string | number | FileValue>;
 
 export interface AttentionRequest {
   id: string;
-  /** captcha / mfa: finish it in the live view. agent: the agent's question. heal_failed: replay and the agent both gave up. */
-  reason: 'captcha' | 'mfa' | 'agent' | 'heal_failed';
+  /** captcha / login / mfa: finish it in the live view. agent: the agent's question. heal_failed: replay and the agent both gave up. */
+  reason: 'captcha' | 'login' | 'mfa' | 'agent' | 'heal_failed';
   message: string;
   liveViewUrl?: string;
   at: number;
@@ -301,7 +301,12 @@ export interface PersonaInfo {
   exit: { id: string; label: string; geo: string | null; healthy: boolean } | null;
   prefs: PersonaPrefs | null;
   fingerprint: Fingerprint;
-  mfa: { configured: boolean; type?: string };
+  mfa: { configured: boolean; type?: string; domain?: string };
+  /** Per-site factors and stored logins. Usernames and types only, never secrets. */
+  sites: {
+    mfa: { domain: string; type: string }[];
+    credentials: { domain: string; username: string }[];
+  };
   login: { cookies: number; sites: string[]; updatedAt: string | null };
   createdAt: string;
   lastUsedAt: string | null;
@@ -313,9 +318,27 @@ export interface Activity { ts: string; action: string; summary: string; ok: boo
 
 export interface StopResult { id: string; ok: boolean; provider?: string | null; sandboxRemoved?: boolean | null; error?: string }
 
-export type MfaConfig =
+/**
+ * A second factor. `domain` files it against one site, because a persona driving
+ * several portals meets several kinds of factor; without it the record is the
+ * persona-wide default.
+ *
+ * `gmail` and `graph` read the code straight out of a mailbox. `email` and `sms`
+ * poll an endpoint you host — set `x-oya-received-at` on its response (epoch ms)
+ * and a code from a previous run will never be reused.
+ *
+ * The code is pulled out of the message by your own configured LLM, because
+ * portals rewrite these templates constantly and the code is not always digits.
+ * `pattern` is only the fallback for when no LLM key is set or the call fails.
+ */
+export type MfaConfig = { domain?: string } & (
   | { type: 'totp'; secret: string }
-  | { type: 'email' | 'sms'; url: string; headers?: Record<string, string>; pattern?: string; timeoutMs?: number };
+  | { type: 'email' | 'sms'; url: string; headers?: Record<string, string>; pattern?: string; timeoutMs?: number }
+  | { type: 'gmail' | 'graph'; refreshToken: string; clientId: string; clientSecret?: string; tenant?: string; query?: string; pattern?: string; timeoutMs?: number }
+);
+
+/** A site login. The password is write-only: no API ever reads it back. */
+export interface SiteCredentials { domain: string; username: string; password: string }
 
 export interface BrowserInfo {
   id: string;

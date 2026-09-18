@@ -19,7 +19,7 @@ interface PlaybookInfo extends PlaybookBody {
 interface RunInfo {
   id: string;
   status: 'running' | 'needs_attention' | 'succeeded' | 'failed';
-  attention: { id: string; reason: 'captcha' | 'mfa' | 'agent' | 'heal_failed'; message: string; liveViewUrl?: string } | null;
+  attention: { id: string; reason: 'captcha' | 'login' | 'mfa' | 'agent' | 'heal_failed'; message: string; liveViewUrl?: string } | null;
   result?: { steps?: number; total?: number; fellBack?: boolean; healed?: boolean; draft?: string; text?: string };
   error?: string;
 }
@@ -212,6 +212,7 @@ function RenameDialog({ current, busy, onClose, onRename }: {
 
 const ATTENTION: Record<NonNullable<RunInfo['attention']>['reason'], string> = {
   captcha: 'CAPTCHA',
+  login: 'Sign-in',
   mfa: 'MFA',
   agent: 'Agent question',
   heal_failed: 'Could not heal',
@@ -631,7 +632,10 @@ function RunDialog({ apiKey, playbook, browsers, personas, onClose, onFinished }
               <p className="text-text-secondary">{run.attention.message}</p>
               <div className="flex gap-2">
                 <input className="field flex-1" value={reply} onChange={(e) => setReply(e.target.value)} aria-label="Reply"
-                  placeholder={run.attention.reason === 'agent' ? 'Your answer' : 'done'} onKeyDown={(e) => { if (e.key === 'Enter') respond(); }} />
+                  placeholder={run.attention.reason === 'agent' ? 'Your answer'
+                    : run.attention.reason === 'mfa' ? 'Paste the code, or finish in the live view and type done'
+                    : 'done'}
+                  onKeyDown={(e) => { if (e.key === 'Enter') respond(); }} />
                 <button className="btn-primary" onClick={respond}>{run.attention.reason === 'agent' ? 'Reply' : 'Done, continue'}</button>
               </div>
             </div>

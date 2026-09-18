@@ -27,6 +27,7 @@ import {
 export { prefsError } from './fingerprint.js';
 import { metrics } from './metrics.js';
 import * as mfa from './mfa.js';
+import * as credentials from './credentials.js';
 import * as proxies from './proxies.js';
 import { summary as loginSummary, clear as clearLogin } from './cookie-store.js';
 
@@ -97,6 +98,12 @@ export function describe(p) {
     prefs: publicPrefs(p.prefs),
     fingerprint: describeProfile(fingerprintFor(p)),
     mfa: mfa.describe(p.id),
+    // Per-site factors and credentials, so the dashboard can show which portals
+    // this persona can sign in to on its own. Usernames and types only.
+    sites: {
+      mfa: mfa.list(p.id),
+      credentials: credentials.list(p.id),
+    },
     login: loginSummary(p.id),
   };
 }
@@ -237,7 +244,10 @@ export function remove(apiKey, id) {
   if ((active.get(id)?.size || 0) > 0) throw Object.assign(new Error('Persona is in use'), { status: 409 });
   personas.delete(id);
   clearLogin(id);
-  mfa.clear(id);
+  // clearAll, not clear: a persona may hold a factor and a credential per
+  // portal, and leaving those behind would outlive the identity they belong to.
+  mfa.clearAll(id);
+  credentials.clearAll(id);
   active.delete(id);
   dirty = true;
   return true;

@@ -225,6 +225,13 @@ console.log(persona.fingerprint.platform, persona.fingerprint.timezone);  // sam
 
 Scripted logins break on Google SSO, Okta, passkeys and Cloudflare. Skip them: sign in **once** in the [desktop app](https://browser.getoya.ai), and every remote browser for that persona starts already signed in, on the same fingerprint. Cookies are sealed with AES-256-GCM.
 
+Some portals will not let you: they expire the session server-side between runs and ask for a password every time. For those, store the login on the persona and Oya signs in on its own — and stops rather than trying a password the site has already refused, because that is how a real account gets locked.
+
+```ts
+await oya.personas.setCredentials(persona.id, { domain: "portal.example.com", username: "alice", password: process.env.PORTAL_PASSWORD! });
+await oya.personas.setMfa(persona.id, { domain: "portal.example.com", type: "gmail", refreshToken, clientId });
+```
+
 ```ts
 await browser.goto("https://www.google.com/recaptcha/api2/demo");
 
@@ -259,8 +266,8 @@ Every cloud-browser vendor has its own API, session model and outages — couple
 | **Vendor outage at connect** | Your agents are down | `/connect` falls through to the next route |
 | **Device identity** | Whatever the vendor offers per session | A persona: seeded fingerprint, cookie jar and proxy, stable across runs |
 | **Stealth** | The vendor's claims | [0% CreepJS headless, 0 lies, 31/31 Sannysoft](#stealth-0-headless-0-lies), reproducible with `oya stealth-test --live` |
-| **Logins** | Scripted login flows | Sign in once on the desktop; remote personas inherit the cookies |
-| **CAPTCHA and MFA** | Vendor-specific, or build it yourself | Native solver where there is one, CapSolver or 2Captcha otherwise, sealed TOTP, live takeover |
+| **Logins** | Scripted login flows | Sign in once on the desktop; remote personas inherit the cookies, and stored credentials cover portals that expire them |
+| **CAPTCHA and MFA** | Vendor-specific, or build it yourself | Native solver where there is one, CapSolver or 2Captcha otherwise, sealed TOTP, codes read out of Gmail or Microsoft 365 by your own LLM, live takeover |
 | **Repeatable tasks** | Build and maintain your own scripts | Record playbooks, replay with new inputs, and review agent repair drafts |
 | **Fleet operations** | One dashboard per vendor | One console, Prometheus `/metrics`, an audit log, spend per key, stop-all |
 

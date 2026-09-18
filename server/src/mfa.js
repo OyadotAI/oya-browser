@@ -12,13 +12,21 @@
 
 import { createHmac } from 'crypto';
 import { sealText, openText } from './secrets.js';
+import * as inbox from './inbox.js';
+import { chatCompletion } from './llm.js';
 import { assertSafeTarget } from './net-guard.js';
 import { metrics } from './metrics.js';
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
-/** personaId -> sealed config */
+/**
+ * `personaId|domain` -> sealed config, or bare `personaId` for the persona-wide
+ * default. One persona drives several portals and they do not agree on a factor
+ * — an authenticator app here, an emailed code there — so the factor is filed
+ * per site, and the persona-wide record is the fallback (and what every
+ * mfa.json written before this keying was introduced still is).
+ */
 const configs = new Map();
 const STORE = join(process.env.OYA_DATA_DIR || join(dirname(fileURLToPath(import.meta.url)), '..', 'data'), 'mfa.json');
 export function restore() {
@@ -33,7 +41,8 @@ function persist() {
 }
 restore();
 
-const scopeFor = (personaId) => `mfa:${personaId}`;
+const keyFor = (personaId, domain) => (domain ? `${personaId}|${domain}` : String(personaId));
+const scopeFor = (key) => `mfa:${key}`;
 
 // ── TOTP (RFC 6238) ──
 
@@ -70,14 +79,21 @@ export function totp(secret, at = Math.floor(Date.now() / 1000), { digits = 6, p
 
 // ── Configuration ──
 
-export async function set(personaId, config) {
+export const TYPES = ['totp', 'email', 'sms', 'gmail', 'graph'];
+
+export async function set(personaId, config, domain = null) {
   const { type } = config || {};
-  if (!['totp', 'email', 'sms'].includes(type)) {
-    throw Object.assign(new Error('mfa type must be totp, email or sms'), { status: 400 });
+  if (!TYPES.includes(type)) {
+    throw Object.assign(new Error(`mfa type must be one of ${TYPES.join(', ')}`), { status: 400 });
   }
   if (type === 'totp') {
     if (!config.secret) throw Object.assign(new Error('a TOTP secret is required'), { status: 400 });
     totp(config.secret);            // fail now, not at the login prompt
+  } else if (type === 'gmail' || type === 'graph') {
+    // Fixed vendor hostnames, so there is no SSRF surface to check here — but a
+    // missing token is only discoverable at the login prompt otherwise.
+    if (!config.refreshToken) throw Object.assign(new Error(`a ${type} refreshToken is required`), { status: 400 });
+    if (!config.clientId) throw Object.assign(new Error(`a ${type} clientId is required`), { status: 400 });
   } else {
     // The relay URL is caller-supplied and the server fetches it, so it is an
     // SSRF primitive: rejected here so the tenant sees why, and again at fetch
@@ -85,25 +101,56 @@ export async function set(personaId, config) {
     if (!config.url) throw Object.assign(new Error(`a ${type} relay url is required`), { status: 400 });
     await assertSafeTarget(config.url, { protocols: ['http:', 'https:'], label: 'mfa relay url' });
   }
-  configs.set(personaId, sealText(scopeFor(personaId), config));
+  const key = keyFor(personaId, domain);
+  configs.set(key, sealText(scopeFor(key), config));
   persist();
-  return describe(personaId);
+  return describe(personaId, domain);
 }
 
-export function clear(personaId) { const removed = configs.delete(personaId); if (removed) persist(); return removed; }
+export function clear(personaId, domain = null) {
+  const removed = configs.delete(keyFor(personaId, domain));
+  if (removed) persist();
+  return removed;
+}
+
+/** Drop every factor for a persona, site-specific ones included. */
+export function clearAll(personaId) {
+  let removed = 0;
+  for (const key of [...configs.keys()]) {
+    if (key === personaId || key.startsWith(`${personaId}|`)) { configs.delete(key); removed++; }
+  }
+  if (removed) persist();
+  return removed;
+}
 
 /** Whether a factor is configured — never what it is. */
-export function describe(personaId) {
-  if (!configs.has(personaId)) return { configured: false };
-  const { type } = openText(scopeFor(personaId), configs.get(personaId));
-  return { configured: true, type };
+export function describe(personaId, domain = null) {
+  const found = resolve(personaId, domain);
+  if (!found) return { configured: false };
+  return { configured: true, type: found.config.type, ...(found.domain ? { domain: found.domain } : {}) };
 }
 
-function load(personaId) {
-  const sealed = configs.get(personaId);
-  if (!sealed) return null;
-  return openText(scopeFor(personaId), sealed);
+/** Every site-specific factor this persona holds, types only. */
+export function list(personaId) {
+  const out = [];
+  for (const key of configs.keys()) {
+    if (!key.startsWith(`${personaId}|`)) continue;
+    const domain = key.slice(personaId.length + 1);
+    out.push({ domain, type: openText(scopeFor(key), configs.get(key)).type });
+  }
+  return out.sort((a, b) => a.domain.localeCompare(b.domain));
 }
+
+/** The site's own factor, else the persona-wide one. */
+function resolve(personaId, domain) {
+  for (const candidate of [domain ? keyFor(personaId, domain) : null, String(personaId)].filter(Boolean)) {
+    const sealed = configs.get(candidate);
+    if (sealed) return { config: openText(scopeFor(candidate), sealed), domain: candidate === String(personaId) ? null : domain };
+  }
+  return null;
+}
+
+function load(personaId, domain) { return resolve(personaId, domain)?.config || null; }
 
 // ── Detection ──
 
@@ -160,32 +207,162 @@ export const fillCodeJS = (code, segmented) => `(() => {
 /**
  * Read a one-time code from a mailbox or SMS endpoint.
  *
- * Both are polled with a bounded window: the code is sent in response to the
- * login attempt, so it does not exist yet when the prompt appears.
+ * Polled with a bounded window: the code is sent in response to the login
+ * attempt, so it does not exist yet when the prompt appears.
+ *
+ * `since` is what stops the previous run's code being handed back. These codes
+ * expire in minutes and the portals offer a Resend button, so an old one is not
+ * merely stale — it fails in a way that reads like a broken detector. A relay
+ * that cannot say when its message arrived is trusted only for messages it
+ * returns after this call started polling.
  */
-async function fetchRelayCode(config) {
+/**
+ * Pull the code out of a message.
+ *
+ * A regex is the wrong primary tool here: portals rewrite these templates
+ * constantly, codes are not always digits, and a verification email is full of
+ * other numbers — a case reference, a phone number, "valid for 5 minutes". The
+ * tenant's own LLM reads it instead, with the regex kept as the fallback for
+ * self-hosters with no LLM key configured and for when the call fails.
+ *
+ * Only the one already-matched message is sent, truncated — never a mailbox.
+ * It goes to the same provider the tenant's agent runs on, which already sees
+ * page content.
+ */
+export async function extractCode(text, { llm, pattern } = {}) {
+  const body = String(text || '').slice(0, 4000);
+  const byPattern = () => {
+    const match = body.match(pattern || /\b(\d{4,8})\b/);
+    return match ? (match[1] || match[0]) : null;
+  };
+  if (!llm?.openaiKey) return byPattern();
+
+  try {
+    const completion = await chatCompletion({
+      baseUrl: llm.baseUrl,
+      apiKey: llm.openaiKey,
+      model: llm.model,
+      messages: [
+        { role: 'system', content: 'You extract one-time verification codes from messages. '
+          + 'Reply with the code alone and nothing else — no label, no quotes, no explanation. '
+          + 'The code is what the reader is meant to type into a website to finish signing in. '
+          + 'It is NOT a case or reference number, an account number, a phone number, an amount, a date, or a duration such as "valid for 5 minutes". '
+          + 'Codes are usually 4-8 characters and may contain letters. '
+          + 'If the message has no such code, reply exactly: NONE' },
+        { role: 'user', content: body },
+      ],
+    });
+    const answer = String(completion.choices?.[0]?.message?.content || '').trim();
+    // Trust it only when the answer is shaped like a code. A model that
+    // explains itself, or invents one, must not put prose in a login form.
+    if (/^[A-Za-z0-9-]{4,10}$/.test(answer) && answer.toUpperCase() !== 'NONE') return answer;
+    if (answer.toUpperCase() === 'NONE') return null;
+  } catch (e) {
+    console.error('[mfa] code extraction fell back to the pattern:', e.message);
+  }
+  return byPattern();
+}
+
+async function fetchRelayCode(config, since = 0, llm = null) {
   const deadline = Date.now() + (Number(config.timeoutMs) || 90_000);
-  const pattern = config.pattern ? new RegExp(config.pattern) : /\b(\d{4,8})\b/;
+  const pattern = config.pattern ? new RegExp(config.pattern) : null;
+  const readInbox = config.type === 'gmail' ? inbox.gmail : config.type === 'graph' ? inbox.graph : null;
+  const read = (text) => extractCode(text, { llm, pattern });
 
   while (Date.now() < deadline) {
     try {
-      // Re-checked every poll: the name was safe when it was stored, which
-      // says nothing about where it resolves now.
-      await assertSafeTarget(config.url, { protocols: ['http:', 'https:'], label: 'mfa relay url' });
-      const res = await fetch(config.url, {
-        headers: config.headers || {},
-        redirect: 'error',        // a 30x into an internal address would bypass the check above
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (res.ok) {
-        const body = await res.text();
-        const match = body.match(pattern);
-        if (match) return match[1] || match[0];
+      if (readInbox) {
+        const message = await readInbox(config, since);
+        const code = message && await read(message.text);
+        if (code) return code;
+      } else {
+        // Re-checked every poll: the name was safe when it was stored, which
+        // says nothing about where it resolves now.
+        await assertSafeTarget(config.url, { protocols: ['http:', 'https:'], label: 'mfa relay url' });
+        const res = await fetch(config.url, {
+          headers: config.headers || {},
+          redirect: 'error',        // a 30x into an internal address would bypass the check above
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (res.ok) {
+          const body = await res.text();
+          // An endpoint that timestamps its message is taken at its word; one
+          // that does not is only trusted from the second poll onward, by which
+          // point anything it returns arrived after this login.
+          const at = Number(res.headers.get('x-oya-received-at')) || 0;
+          if (!at || at >= since) {
+            const code = await read(body);
+            if (code) return code;
+          }
+        }
       }
-    } catch { /* keep polling until the window closes */ }
+    } catch (e) {
+      // A revoked refresh token never recovers by polling, and burning the
+      // whole window on it hides the one message that would fix it.
+      if (e.status === 502) throw e;
+    }
     await new Promise((r) => setTimeout(r, 5000));
   }
   throw Object.assign(new Error('No one-time code arrived within the window'), { status: 504 });
+}
+
+/**
+ * The code in what a person replied with, or null.
+ *
+ * They answer a parked run in a chat box, so the reply is "445566", or
+ * "the code is K7R4QP", or "done" meaning they finished it in the live view
+ * themselves. A code always carries a digit, which is what keeps "done",
+ * "ok" and "finished" out of a login form.
+ */
+export function codeInReply(reply) {
+  const text = String(reply || '').trim();
+  const looksLikeCode = (token) => /^[A-Za-z0-9][A-Za-z0-9-]{3,9}$/.test(token) && /\d/.test(token);
+  if (looksLikeCode(text)) return text;
+  for (const token of text.split(/[^A-Za-z0-9-]+/)) if (looksLikeCode(token)) return token;
+  return null;
+}
+
+/**
+ * Type a code into the challenge on the page and submit it.
+ *
+ * Split out of complete() because a code does not only come from a configured
+ * factor: a person who answers the parked run by replying with the code has
+ * answered the challenge, and making them open the live view to type it again
+ * would be the automation wasting their time.
+ */
+export async function submitCode(evaluate, code, segmented = null) {
+  // Detect first rather than trusting a caller's earlier pass: the relay poll
+  // can take 90 seconds and a parked run can wait half an hour, and the marks
+  // DETECT_JS leaves do not survive the navigation either one may have caused.
+  if (segmented === null) {
+    const found = await evaluate(DETECT_JS);
+    if (!found?.present || found.handoff) return { present: false, filled: false, submitted: false, completed: false };
+    segmented = !!found.segmented;
+  }
+  const filled = await evaluate(fillCodeJS(code, segmented));
+  if (!filled?.filled) return { present: true, filled: false, submitted: false, completed: false, reason: filled?.reason };
+
+  const submitted = !!await evaluate(`(() => {
+    const el = document.querySelector('[data-oya-mfa-target]');
+    if (!el) return false;
+    const form = el.form;
+    const button = [...(form || document).querySelectorAll('button, input[type="submit"]')].find((b) =>
+      !b.disabled && b.getClientRects().length && /^(verify|confirm|continue|submit|sign in|log in)( code)?$/i.test((b.innerText || b.value || '').trim()));
+    if (button) { button.click(); return true; }
+    if (form) { form.requestSubmit(); return true; }
+    return false;
+  })()`);
+
+  // Filling an input is not proof the site accepted a factor. A disappearing
+  // challenge after submission is the observable success signal.
+  let completed = false;
+  const deadline = Date.now() + (submitted ? 10_000 : 0);
+  do {
+    try { completed = !(await evaluate(DETECT_JS))?.present; } catch { /* navigation */ }
+    if (completed || Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
+  } while (true);
+  return { present: true, filled: true, submitted, completed };
 }
 
 /**
@@ -193,57 +370,42 @@ async function fetchRelayCode(config) {
  *
  * @param evaluate  runs a script in the page
  * @param personaId whose factor to use
+ * @param domain    the site being signed in to, so a persona can hold one
+ *        factor per portal; falls back to the persona-wide factor
+ * @param since     epoch ms of the login that asked for this code — anything
+ *        older belongs to a previous run
+ * @param llm       the tenant's own LLM, which reads the code out of the
+ *        message; without one the pattern is used instead
  * @param liveViewUrl surfaced when nothing can answer it — a person finishing
  *        the challenge by hand is a real outcome, not a failure, and it is the
  *        only answer for push-approval factors.
  */
-export async function complete(evaluate, personaId, { liveViewUrl = null } = {}) {
+export async function complete(evaluate, personaId, { liveViewUrl = null, domain = null, since = 0, llm = null } = {}) {
   const found = await evaluate(DETECT_JS);
   if (!found?.present) return { present: false, completed: false, method: 'none' };
 
-  const config = load(personaId);
+  const config = load(personaId, domain);
   if (!config || found.handoff) {
     metrics.mfaCompleted.inc({ method: 'handoff', outcome: 'needed' });
     return {
       present: true, completed: false, method: 'handoff', liveViewUrl,
-      error: 'No MFA factor is configured for this persona. Open the live view to complete it by hand.',
+      error: `No MFA factor is configured for ${domain ? `${domain} or ` : ''}this persona. Open the live view to complete it by hand.`,
     };
   }
 
   let code;
   try {
-    code = config.type === 'totp' ? totp(config.secret) : await fetchRelayCode(config);
+    code = config.type === 'totp' ? totp(config.secret) : await fetchRelayCode(config, since, llm);
   } catch (err) {
     metrics.mfaCompleted.inc({ method: config.type, outcome: 'error' });
     return { present: true, completed: false, method: config.type, liveViewUrl, error: err.message };
   }
 
-  const filled = await evaluate(fillCodeJS(code, found.segmented));
-  let submitted = false, completed = false;
-  if (filled?.filled) {
-    submitted = !!await evaluate(`(() => {
-      const el = document.querySelector('[data-oya-mfa-target]');
-      if (!el) return false;
-      const form = el.form;
-      const button = [...(form || document).querySelectorAll('button, input[type="submit"]')].find((b) =>
-        !b.disabled && b.getClientRects().length && /^(verify|confirm|continue|submit|sign in|log in)( code)?$/i.test((b.innerText || b.value || '').trim()));
-      if (button) { button.click(); return true; }
-      if (form) { form.requestSubmit(); return true; }
-      return false;
-    })()`);
-    // Filling an input is not proof the site accepted a factor. A disappearing
-    // challenge after submission is the observable success signal.
-    const deadline = Date.now() + (submitted ? 10_000 : 0);
-    do {
-      try { completed = !(await evaluate(DETECT_JS))?.present; } catch { /* navigation */ }
-      if (completed || Date.now() >= deadline) break;
-      await new Promise((r) => setTimeout(r, 250));
-    } while (true);
-  }
+  const { filled, submitted, completed } = await submitCode(evaluate, code, !!found.segmented);
   metrics.mfaCompleted.inc({ method: config.type, outcome: completed ? 'ok' : 'needs_attention' });
   return {
-    present: true, completed, filled: !!filled?.filled, submitted, method: config.type,
-    ...(completed ? {} : { liveViewUrl, error: filled?.filled ? 'The code was entered, but the site has not confirmed it. Open the live view to finish.' : filled?.reason || 'Could not fill the code field' }),
+    present: true, completed, filled, submitted, method: config.type, segmented: !!found.segmented,
+    ...(completed ? {} : { liveViewUrl, error: filled ? 'The code was entered, but the site has not confirmed it. Open the live view to finish.' : 'Could not fill the code field' }),
   };
 }
 

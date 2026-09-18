@@ -176,6 +176,7 @@ export const metrics = {
   captchaSeen: counter('oya_captcha_seen_total', 'CAPTCHA challenges detected by type'),
   captchaSolved: counter('oya_captcha_solved_total', 'CAPTCHA solve attempts by type and outcome'),
   mfaCompleted: counter('oya_mfa_completed_total', 'MFA challenges completed by method and outcome'),
+  loginCompleted: counter('oya_login_completed_total', 'Sign-ins attempted by method and outcome'),
 
   // Enforcement
   rateLimited: counter('oya_rate_limited_total', 'Requests rejected by a rate limit'),

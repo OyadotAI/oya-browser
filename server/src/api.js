@@ -33,6 +33,8 @@ import * as personas from './personas.js';
 import * as proxies from './proxies.js';
 import * as captcha from './captcha.js';
 import * as mfa from './mfa.js';
+import * as siteLogin from './login.js';
+import * as credentials from './credentials.js';
 import * as playbooks from './playbook.js';
 import * as flow from './flow-recorder.js';
 import * as runs from './runs.js';
@@ -97,6 +99,10 @@ registry.on('stream:start', ({ id }) => {
 registry.on('stream:stop', ({ id }) => {
   registry.get(id)?.driver?.stopScreencast?.().catch(() => {});
 });
+// Sign-in attempts are counted per browser so a wrong password cannot be typed
+// until the account locks. A browser that is gone cannot lock anything, and
+// keeping its tally would refuse a later browser that reused the id.
+registry.on('browser:disconnected', ({ id }) => siteLogin.forget(id));
 
 /** Everything is scoped to the calling key. There is no tier above it. */
 const ownerScope = (req) => fingerprint(getKey(req));
@@ -926,21 +932,49 @@ export const validData = (d, { files = true } = {}) => !!d && typeof d === 'obje
     && (['string', 'number'].includes(typeof v) || (files && validFile(v))));
 
 /**
- * Between page-changing steps of a run: clear a CAPTCHA or MFA prompt, or park the
- * run on a person. ponytail: two detection evals per page-changing step.
+ * Between page-changing steps of a run: clear a CAPTCHA, sign in, or answer an
+ * MFA prompt — or park the run on a person.
+ * ponytail: three detection evals per page-changing step.
  */
 function checkpointFor(apiKey, browserId, requestHuman) {
   const liveViewUrl = `/dashboard/?browser=${encodeURIComponent(browserId)}`;
   const evaluate = (expr) => evaluateIn(browserId, expr);
+  // Resolved once for the run, not per step: it decrypts this key's settings,
+  // and the key cannot change underneath a run that is already going.
+  const llm = keyConfig.resolve(apiKey);
   return async () => {
     const browser = registry.get(browserId);
+    const personaId = browser?.persona?.id || personas.defaultFor(apiKey).id;
+    const domain = credentials.domainOf(browser?.currentUrl || '');
+
     const c = await captcha.handle(evaluate, { providerSolves: NATIVE_CAPTCHA.includes(browser?.provider), env: keyConfig.envFor(apiKey) }).catch(() => null);
     if (c?.present && !c.solved && !c.invisible && c.method !== 'provider') {
       await requestHuman({ reason: 'captcha', message: c.error || 'A CAPTCHA needs solving. Solve it in the live view, then respond.', liveViewUrl });
     }
-    const m = await mfa.complete(evaluate, browser?.persona?.id || personas.defaultFor(apiKey).id, { liveViewUrl }).catch(() => null);
+
+    // Credentials before the code: the code prompt only exists once the site has
+    // accepted a password, and a login page can carry a CAPTCHA of its own,
+    // which is why this sits between the two.
+    const l = await siteLogin.complete(evaluate, personaId, { domain, browserId, liveViewUrl }).catch(() => null);
+    if (l?.present && !l.completed) {
+      await requestHuman({ reason: 'login', message: l.error || 'A sign-in needs completing in the live view.', liveViewUrl });
+    }
+
+    // `since` is the moment this login asked for a code, so a code sitting in
+    // the mailbox from the previous run is not mistaken for this one's.
+    const m = await mfa.complete(evaluate, personaId, {
+      liveViewUrl, domain, since: l?.submittedAt || l?.requestedAt || 0,
+      // The tenant's own LLM reads the code out of the message: these email
+      // templates are rewritten constantly and the code is not always digits.
+      llm,
+    }).catch(() => null);
     if (m?.present && !m.completed) {
-      await requestHuman({ reason: 'mfa', message: m.error || 'MFA needs completing in the live view.', liveViewUrl });
+      const answer = await requestHuman({ reason: 'mfa', message: m.error || 'MFA needs completing in the live view.', liveViewUrl });
+      // Someone who replies with the code — in Slack, the dashboard or the SDK —
+      // has answered the challenge. Type it for them rather than sending them to
+      // the live view to do the same thing again.
+      const code = mfa.codeInReply(answer);
+      if (code) await mfa.submitCode(evaluate, code).catch(() => null);
     }
   };
 }
@@ -977,6 +1011,9 @@ router.post('/browsers/:browserId/mfa', authMiddleware, enforce('command'), asyn
   try {
     const result = await mfa.complete((expr) => evaluateIn(browserId, expr), personaId, {
       liveViewUrl: `/dashboard/?browser=${encodeURIComponent(browserId)}`,
+      domain: credentials.domainOf(browser?.currentUrl || ''),
+      since: Number(req.body?.since) || 0,
+      llm: keyConfig.resolve(getKey(req)),
     });
     if (result.present) {
       audit({ action: 'mfa.complete', actorKey: getKey(req), targetType: 'browser', targetId: browserId,
@@ -988,14 +1025,24 @@ router.post('/browsers/:browserId/mfa', authMiddleware, enforce('command'), asyn
   }
 });
 
-/** Configure a persona's second factor. The secret is write-only. */
+/**
+ * Configure a persona's second factor. The secret is write-only.
+ *
+ * An optional `domain` files the factor against one site, because a persona
+ * that drives several portals meets several kinds of factor. Without it the
+ * record is the persona-wide default, which is what every factor stored before
+ * per-site keying still is.
+ */
 router.put('/personas/:id/mfa', authMiddleware, async (req, res) => {
   const p = personas.get(getKey(req), req.params.id);
   if (!p) return res.status(404).json({ error: 'No such persona' });
   try {
-    const described = await mfa.set(p.id, req.body);
+    const { domain = null, ...config } = req.body || {};
+    const site = domain ? credentials.domainOf(domain) : null;
+    if (domain && !site) return res.status(400).json({ error: 'domain is not a hostname' });
+    const described = await mfa.set(p.id, config, site);
     audit({ action: 'mfa.configure', actorKey: getKey(req), targetType: 'persona', targetId: p.id,
-      meta: { type: described.type }, req });
+      meta: { type: described.type, domain: site }, req });
     res.json(described);
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
@@ -1005,9 +1052,51 @@ router.put('/personas/:id/mfa', authMiddleware, async (req, res) => {
 router.delete('/personas/:id/mfa', authMiddleware, (req, res) => {
   const p = personas.get(getKey(req), req.params.id);
   if (!p) return res.status(404).json({ error: 'No such persona' });
-  mfa.clear(p.id);
-  audit({ action: 'mfa.clear', actorKey: getKey(req), targetType: 'persona', targetId: p.id, req });
+  const site = req.query.domain ? credentials.domainOf(String(req.query.domain)) : null;
+  mfa.clear(p.id, site);
+  audit({ action: 'mfa.clear', actorKey: getKey(req), targetType: 'persona', targetId: p.id, meta: { domain: site }, req });
   res.json({ ok: true });
+});
+
+// ─── Site credentials ────────────────────────────────────────────────────────
+//
+// The cookie jar is still how a persona stays signed in. These exist for the
+// portals that expire a session server-side between runs and then demand a real
+// login, where an unattended run has nothing else to recover with.
+
+/** Which sites this persona can sign in to. Usernames only, never passwords. */
+router.get('/personas/:id/credentials', authMiddleware, (req, res) => {
+  const p = personas.get(getKey(req), req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such persona' });
+  res.json({ credentials: credentials.list(p.id) });
+});
+
+/** Store a site login. The password is write-only and never read back. */
+router.put('/personas/:id/credentials', authMiddleware, (req, res) => {
+  const p = personas.get(getKey(req), req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such persona' });
+  try {
+    const { domain, username, password } = req.body || {};
+    const described = credentials.set(p.id, domain, { username, password });
+    // The domain and username are the whole audit value here: knowing which
+    // account was bound to which portal, and never the secret itself.
+    audit({ action: 'credentials.configure', actorKey: getKey(req), targetType: 'persona', targetId: p.id,
+      meta: { domain: described.domain, username: described.username }, req });
+    res.json(described);
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.delete('/personas/:id/credentials', authMiddleware, (req, res) => {
+  const p = personas.get(getKey(req), req.params.id);
+  if (!p) return res.status(404).json({ error: 'No such persona' });
+  const site = credentials.domainOf(String(req.query.domain || ''));
+  if (!site) return res.status(400).json({ error: 'a domain query parameter is required' });
+  const removed = credentials.clear(p.id, site);
+  audit({ action: 'credentials.clear', actorKey: getKey(req), targetType: 'persona', targetId: p.id,
+    meta: { domain: site }, outcome: removed ? 'ok' : 'error', req });
+  res.json({ ok: removed });
 });
 
 // ─── Proxies ─────────────────────────────────────────────────────────────────

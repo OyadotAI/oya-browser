@@ -96,7 +96,9 @@ Off-screen elements need a `scroll` first. While a modal is open, the analysis i
 ## CAPTCHA, MFA and humans
 
 - `captcha: "auto"` (SDK) solves CAPTCHAs as they appear; `browser.solveCaptcha()` solves one on demand.
-- `browser.completeMfa()` enters a TOTP code when the persona has one sealed. If it returns a `liveViewUrl`, a person has to approve (push, passkey, SMS): give the user that URL and wait.
+- `browser.completeMfa()` enters a code when the persona has a factor sealed — a TOTP seed, or a mailbox (Gmail / Microsoft 365) the code is read from. The code is extracted from the email by the configured LLM, not a regex, so a portal rewriting its template does not break it. If it returns a `liveViewUrl`, a person has to approve (push, passkey): give the user that URL and wait.
+- **Portal sign-ins happen on their own.** When a persona has credentials stored for a site, a run that meets that site's login page fills and submits it, asks for the code if the portal has a separate request step, and carries on — no tool call from you. A factor and a credential are filed per site, so one persona can drive several portals.
+- If the site refuses the stored password, the run stops and asks for a person. **Do not retry it and do not type a password you were not given for that site** — these portals lock accounts after a few attempts, and a locked clinical account is a support ticket, not a retry.
 - CLI takeover: `oya takeover <id>`, the human works in `oya open --id <id>`, then `oya release <id>` and `oya resume <id>`.
 - Never type the user's passwords or codes into a page unless they gave them to you for that site.
 
