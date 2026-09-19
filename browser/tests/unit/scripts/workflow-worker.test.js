@@ -130,6 +130,13 @@ describe('workflow worker', () => {
     assert.ok(page().settles.includes('load'), 'waited for the new page to load');
   });
 
+  it('says which page it was on when a target is not found', async () => {
+    load({ counts: { 'css:#gone': 0 } });
+    await run([{ id: 'b', action: 'click', candidates: [{ kind: 'css', value: '#gone' }] }]);
+    const missing = port.messages.map((m) => m.event).find((e) => e?.kind === 'target' && e.count === 0);
+    assert.ok(missing?.url, 'the not-found event carries the page address');
+  });
+
   it('checks each target and says how many elements match', async () => {
     load();
     await run([{ id: 'b', action: 'click', candidates: [{ kind: 'role', role: 'button', value: 'Save' }] }]);

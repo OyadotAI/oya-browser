@@ -69,10 +69,16 @@ async function countPrimary(run, step, primary, page) {
   return count;
 }
 
-/** The run event describing how many elements matched. */
-function targetEvent(id, count) {
+/** The run event describing how many elements matched, and on which page when none did. */
+function targetEvent(id, count, page) {
   const message = count === 1 ? 'One matching target' : count ? 'Multiple matching targets' : 'Target not found';
-  return { kind: 'target', stepId: id, count, message };
+  const url = !count && typeof page?.url === 'function' ? safeUrl(page.url()) : undefined;
+  return { kind: 'target', stepId: id, count, message, ...(url ? { url } : {}) };
+}
+
+/** A page address without its query or fragment, which can carry tokens. */
+function safeUrl(url) {
+  return String(url || '').split(/[?#]/)[0];
 }
 
 /** Whether the step may still be repaired: auto-heal on, not an assertion, attempts and time left. */
@@ -120,7 +126,7 @@ async function checkTarget(run, step, p) {
   let count = await countPrimary(run, step, primary, p);
   // One match that is plainly another element (another tag, a link elsewhere) is no match.
   if (count === 1 && !(await isRecorded(primary, step.el, remaining(run, step)))) count = 0;
-  run.emit(targetEvent(step.id, count));
+  run.emit(targetEvent(step.id, count, p));
   if (count === 1) return;
   await tryRepair(run, step, find);
   throw targetError(count);

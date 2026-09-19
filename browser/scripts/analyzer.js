@@ -115,7 +115,7 @@
         const m = modals[i];
         const rect = m.getBoundingClientRect();
         // Must be visible: has size and is not display:none/visibility:hidden
-        if (rect.width > 0 && rect.height > 0 && !isHardHidden(m) && isModal(m, rect)) {
+        if (rect.width > 0 && rect.height > 0 && !isHardHidden(m) && isShownOnTop(m, rect) && isModal(m, rect)) {
           activeModal = m;
           break;
         }
@@ -137,7 +137,7 @@
       if (aid) focusedId = parseInt(aid, 10);
     }
 
-    let md = nodeToMarkdown(root, 0).trim().replace(/\n{3,}/g, '\n\n');
+    let md = tidyMarkdown(nodeToMarkdown(root, 0));
 
     for (const el of elementMap) {
       const dom = queryShadow(el.selector);
@@ -223,6 +223,23 @@
     return false;
   }
 
+  /**
+   * Whether a dialog is really in front of the person: nothing above it is
+   * transparent or hidden from assistive tech, it is on screen, and it is what is
+   * drawn at its own centre. Sites keep closed login and cookie dialogs in the page
+   * (aria-modal and all); reading only one of those hid the whole page.
+   */
+  function isShownOnTop(m, rect) {
+    for (let n = m; n && n.nodeType === Node.ELEMENT_NODE; n = n.parentElement) {
+      if (n.getAttribute('aria-hidden') === 'true' || getComputedStyle(n).opacity === '0') return false;
+    }
+    const x = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+    const y = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= window.innerHeight || rect.left >= window.innerWidth) return false;
+    const hit = document.elementFromPoint(x, y);
+    return !!hit && (m.contains(hit) || hit.contains(m));
+  }
+
   /** Whether an open dialog blocks the rest of the page, so reading only it is right. */
   function isModal(m, rect) {
     if (m.matches(MODAL_SELECTOR)) return true;
@@ -299,7 +316,7 @@
       return isLeaf || interType === 'editable' ? annotated : withWrappedText(node, annotated);
     }
 
-    const children = childrenMarkdown(node, depth);
+    const children = renderedOnce(node, tag, depth) ?? childrenMarkdown(node, depth);
 
     // Forms get special context for LLM comprehension
     if (tag === 'FORM') {
@@ -325,13 +342,12 @@
       case 'H5': return `\n##### ${children.trim()}\n`;
       case 'H6': return `\n###### ${children.trim()}\n`;
       case 'P': return `\n${children.trim()}\n`;
-      case 'UL': case 'OL': return '\n' + listMarkdown(node, tag === 'OL', depth) + '\n';
+      case 'UL': case 'OL': return '\n' + children + '\n';
       case 'LI': { const i = children.trim(); return i ? `- ${i}\n` : ''; }
       case 'TABLE': {
         // HackerNews uses tables for layout — treat as container, not data table.
         // Also detect other layout tables: no <th> and mostly single-cell rows.
-        if (isHackerNews() || isLayoutTable(node)) return '\n' + childrenMarkdown(node, depth) + '\n';
-        return '\n' + tableMarkdown(node) + '\n';
+        return '\n' + children + '\n';
       }
       case 'IMG': {
         const alt = node.getAttribute('alt'), src = node.getAttribute('src') || '';
@@ -342,21 +358,15 @@
         return `![${alt}](${src.split('?')[0].slice(0, MAX_IMAGE_SRC)})`;
       }
       case 'BLOCKQUOTE': { const i = children.trim(); return i ? `\n> ${i.replace(/\n/g, '\n> ')}\n` : ''; }
-      case 'PRE': { const i = node.textContent.trim(); return i ? `\n\`\`\`\n${i}\n\`\`\`\n` : ''; }
+      // innerText keeps the lines a <br> or a block inside the <pre> makes; textContent runs them together.
+      case 'PRE': { const i = (node.innerText || node.textContent).trim(); return i ? `\n\`\`\`\n${i}\n\`\`\`\n` : ''; }
       case 'CODE': return node.parentElement?.tagName === 'PRE' ? node.textContent : `\`${node.textContent.trim()}\``;
       case 'STRONG': case 'B': return `**${children.trim()}**`;
       case 'EM': case 'I': return `*${children.trim()}*`;
       case 'HR': return '\n---\n';
       case 'BR': return '\n';
       case 'LABEL': return labelMarkdown(node, children);
-      case 'DETAILS': {
-        const summary = node.querySelector('summary');
-        const isOpen = node.hasAttribute('open');
-        let summaryAnnotation = '';
-        if (summary) summaryAnnotation = annotateInteractive(summary, 'button');
-        if (!isOpen) return `\n${summaryAnnotation} (collapsed)\n`;
-        return `\n${summaryAnnotation}\n${children.trim()}\n`;
-      }
+      case 'DETAILS': return children;
       case 'SUMMARY': return ''; // handled by DETAILS
       case 'SLOT': {
         const assigned = node.assignedNodes ? node.assignedNodes({ flatten: true }) : [];
@@ -412,6 +422,51 @@
     return `\n${annotated.trim()}\n${text}${full.length > MAX_WRAPPED_TEXT ? '…' : ''}\n`;
   }
 
+  /**
+   * Lists, data tables and <details> render from their own children, once.
+   * Rendering the children generically first as well tagged every link in them
+   * twice, and the first tags pointed at nothing: phantom elements for the agent.
+   */
+  function renderedOnce(node, tag, depth) {
+    if (tag === 'UL' || tag === 'OL') return listMarkdown(node, tag === 'OL', depth);
+    if (tag === 'TABLE' && !isHackerNews() && !isLayoutTable(node)) return tableMarkdown(node);
+    if (tag === 'DETAILS') return detailsMarkdown(node, depth);
+    return null;
+  }
+
+  /** A <details>: its summary as a button, and its body only when open. */
+  function detailsMarkdown(node, depth) {
+    const summary = node.querySelector(':scope > summary');
+    const head = summary ? annotateInteractive(summary, 'button') : '';
+    if (!node.hasAttribute('open')) return `\n${head} (collapsed)\n`;
+    let body = '';
+    for (const c of node.childNodes) if (c !== summary) body += nodeToMarkdown(c, depth);
+    return `\n${head}\n${body.trim()}\n`;
+  }
+
+  /**
+   * The markdown as a model reads best: one space between words, no spaces at
+   * line ends or before punctuation after a tag, no whitespace-only lines, and at
+   * most one blank line in a row. List indentation and code blocks are kept.
+   */
+  function tidyMarkdown(md) {
+    const out = [];
+    let fenced = false;
+    for (const raw of md.split('\n')) {
+      const fence = raw.trim().startsWith('```');
+      if (fenced || fence) {
+        if (fence) fenced = !fenced;
+        out.push(raw);
+        continue;
+      }
+      const indent = /^\s+(?:[-*]|\d+\.) /.test(raw) ? raw.match(/^\s*/)[0] : '';
+      const line = raw.trim().replace(/[ \t]{2,}/g, ' ').replace(/\] ([,.;:!?)])/g, ']$1');
+      if (!line && (!out.length || !out[out.length - 1])) continue;
+      out.push(line ? indent + line : '');
+    }
+    return out.join('\n').trim();
+  }
+
   function childrenMarkdown(node, depth) {
     let r = '';
     for (const c of (node.shadowRoot || node).childNodes) r += nodeToMarkdown(c, depth);
@@ -446,8 +501,10 @@
     const rows = [];
     // Its own rows and cells only: a table nested in a cell is part of that cell.
     for (const tr of el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr')) {
+      // Hidden rows and cells (a column kept for small screens) would repeat what the visible ones say.
+      if (isHardHidden(tr)) continue;
       const cells = [];
-      for (const td of tr.querySelectorAll(':scope > th, :scope > td')) cells.push(childrenMarkdown(td, 0).replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
+      for (const td of tr.querySelectorAll(':scope > th, :scope > td')) if (!isHardHidden(td)) cells.push(childrenMarkdown(td, 0).replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
       if (cells.length) rows.push(cells);
     }
     if (!rows.length) return '';
@@ -598,9 +655,42 @@
     // Always, as the last resort: a name the page repeats (a column header in a
     // sticky copy, "Cancel" in every dialog) leaves replay nothing unique without it.
     el.path = cssPath(node);
-    const scoped = scopedText(node, text);
-    if (scoped) el.scoped = scoped;
+    const stable = stableName(node);
+    if (stable && stable !== text) el.stableText = stable;
+    const { selector, repeats } = scopedText(node, text);
+    if (selector) el.scoped = selector;
+    // A name the page repeats ("View Order" on every row) is ambiguous on replay: say so.
+    if (repeats) el.repeats = 'true';
     return el;
+  }
+
+  /**
+   * The name without what changes between visits: screen-reader-only text ("1 new
+   * notification") and number badges ("1", "12+"). LinkedIn's nav link reads
+   * "1 1 new notification Notifications" today and "Notifications" tomorrow; a
+   * replay can only find it again by "Notifications".
+   */
+  function stableName(node) {
+    const parts = [];
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+      const value = t.textContent.replace(/\s+/g, ' ').trim();
+      if (!value || /^\d+\+?$/.test(value) || screenReaderOnly(t.parentElement, node)) continue;
+      parts.push(value);
+    }
+    return parts.join(' ').slice(0, 80);
+  }
+
+  /** Whether an element (below `root`) is hidden from sight but read to screen readers. */
+  function screenReaderOnly(el, root) {
+    for (let n = el; n && n !== root.parentElement; n = n.parentElement) {
+      const s = getComputedStyle(n);
+      if (s.display === 'none' || s.visibility === 'hidden') return true;
+      const clipped = (s.clip && s.clip !== 'auto') || (s.clipPath && s.clipPath !== 'none');
+      const r = n.getBoundingClientRect();
+      if (s.position === 'absolute' && (clipped || (r.width <= 1 && r.height <= 1))) return true;
+    }
+    return false;
   }
 
   // Attributes a page keeps stable across loads, in the order they identify a container best.
@@ -626,7 +716,7 @@
    * builds itself; a container named by its own attribute does not.
    */
   function scopedText(node, text) {
-    if (!text || text.length > 80 || !node.isConnected || node.getRootNode() !== document) return undefined;
+    if (!text || text.length > 80 || !node.isConnected || node.getRootNode() !== document) return {};
     const tag = node.localName;
     // Counted the way a replay's text locator counts: any element whose own text is
     // exactly this (the innermost one), not just elements of the clicked tag. The
@@ -634,12 +724,12 @@
     const norm = (n) => (n.textContent || '').replace(/\s+/g, ' ').trim();
     const own = (n) => norm(n) === text && ![...n.children].some((c) => norm(c) === text);
     const matches = (root) => [...root.getElementsByTagName('*')].filter(own).length;
-    if (matches(document) <= 1) return undefined;
+    if (matches(document) <= 1) return {};
     for (let a = node.parentElement, i = 0; a && a !== document.body && i < SCOPE_WALK; a = a.parentElement, i++) {
       const anchor = anchorOf(a);
-      if (anchor && matches(a) === 1) return `${anchor} ${tag}:text-is(${JSON.stringify(text)})`;
+      if (anchor && matches(a) === 1) return { repeats: true, selector: `${anchor} ${tag}:text-is(${JSON.stringify(text)})` };
     }
-    return undefined;
+    return { repeats: true };
   }
 
   /**
@@ -678,7 +768,10 @@
     if (form) entry.formName = form.getAttribute('aria-label') || form.getAttribute('name') || form.getAttribute('action') || '';
     elementMap.push(entry);
 
-    const label = text || node.tagName.toLowerCase();
+    // Quotes in a label are escaped, or the model cannot tell where the label ends. An element
+    // with no name gets none, rather than its tag name ("a"), which reads as if it said "a".
+    const label = (text || '').replace(/"/g, '\\"');
+    const named = label ? ` "${label}"` : '';
     const extra = (entry.disabled ? ' disabled' : '') + (state ? ' ' + state : '');
     switch (type) {
       case 'link': {
@@ -696,11 +789,11 @@
           const title = postRow?.querySelector('.titleline a')?.textContent?.slice(0, 40);
           if (title) return ` [#${id} link "${label}" on "${title}"] `;
         }
-        return ` [#${id} link "${label}"${h ? ' → ' + h.slice(0, 50) : ''}${extra}] `;
+        return ` [#${id} link${named}${h ? ' → ' + h.slice(0, 50) : ''}${extra}] `;
       }
-      case 'button': return ` [#${id} button "${label}"${extra}] `;
-      case 'checkbox': return ` [#${id} ${checked ? '☑' : '☐'} "${label}"${extra}] `;
-      case 'radio': return ` [#${id} ${checked ? '◉' : '○'} "${label}"${extra}] `;
+      case 'button': return ` [#${id} button${named}${extra}] `;
+      case 'checkbox': return ` [#${id} ${checked ? '☑' : '☐'}${named}${extra}] `;
+      case 'radio': return ` [#${id} ${checked ? '◉' : '○'}${named}${extra}] `;
       case 'input': {
         const t = (node.type || 'text').toLowerCase();
         return ` [#${id} input:${t}${fieldFacts(node, text)}] `;
@@ -715,7 +808,7 @@
         const preview = val.length > 200 ? val.slice(0, 197) + '...' : val;
         return ` [#${id} editable "${preview}"] `;
       }
-      default: return ` [#${id} ${type} "${label}"${extra}] `;
+      default: return ` [#${id} ${type}${named}${extra}] `;
     }
   }
 

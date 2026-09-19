@@ -71,8 +71,17 @@ const APP =
   `<button style="position:absolute;top:250px;left:10px">Under</button>` +
   `<div style="position:fixed;top:200px;left:0;width:100%;height:150px;background:#fff">Cookie banner</div></body>`;
 
+// Lists and tables of links (a message list, a file table): each link tagged once,
+// hidden columns left out, quotes in labels escaped, and no stray whitespace.
+const LISTS =
+  `<!doctype html><title>Lists fixture</title><body>` +
+  `<ul><li><a href="/a">Alpha</a></li><li><a href="/b">Beta</a></li></ul>` +
+  `<table><tr><th style="display:none">Name</th><th>Name</th><th>Message</th></tr>` +
+  `<tr><td style="display:none"><a href="/f">file</a></td><td><a href="/f">file</a></td><td><a href="/c">Revert "fix"</a></td></tr></table>` +
+  `<p>Read the   <a href="/terms">terms</a> , then   continue.</p><div>   </div><div> </div></body>`;
+
 /** Each fixture page by path; anything else is the main fixture. */
-const PAGES = { '/reader': READER, '/app': APP };
+const PAGES = { '/reader': READER, '/app': APP, '/lists': LISTS };
 
 const site = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -272,6 +281,18 @@ try {
     assert(app.markdown.split('Remember me').length === 2, 'a label wrapping its checkbox is not repeated');
     assert(!app.markdown.includes('[image]'), 'an image with no alt adds nothing');
     assert(app.markdown.includes('a\\|b'), 'a pipe inside a table cell is escaped');
+
+    await driver.send('navigate', { url: siteUrl + 'lists' });
+    const lists = (await driver.send('analyze')).data;
+    const ids = [...lists.markdown.matchAll(/\[#(\d+) /g)].map((m) => Number(m[1]));
+    assert(
+      ids.join() === ids.map((_, i) => i + 1).join() && lists.elements.length === ids.length,
+      `links in lists and tables are tagged once, with no phantom ids (${ids.join()})`,
+    );
+    assert(lists.markdown.includes('| Name | Message |'), 'a hidden table column is left out');
+    assert(lists.markdown.includes('"Revert \\"fix\\""'), 'quotes inside a label are escaped');
+    const body = lists.markdown.split('---\n').pop();
+    assert(!/ {2,}|^ +$|\] ,/m.test(body), 'no double spaces, whitespace-only lines or space before punctuation');
   }
 
   console.log('\n\u0038\ufe0f\u20e3  The page carries no trace of this product...');

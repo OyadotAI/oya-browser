@@ -20,7 +20,18 @@ const FIELD = new Set(['input', 'textarea', 'select', 'checkbox', 'radio', 'edit
 /** Field types whose recorded text is a label rather than visible text. */
 const LABELLED = ['input', 'textarea', 'editable'];
 
-/** CSS locators from the element's id, name and link target. */
+/** A link's locators: its target as written, and its path for the same page with another query. */
+function hrefCandidates(el) {
+  const href = el.rawHref ?? el.href;
+  // A link to "#" or a script matches every such link on the page: no locator at all.
+  if (!href || /^(#|javascript:)/i.test(href)) return [];
+  const base = href.split(/[?#]/)[0];
+  const exact = { kind: 'css', value: `a[href=${JSON.stringify(href)}]` };
+  // The same page with another query (a filter, a tracking tag) is still the link.
+  return base && base !== href ? [exact, { kind: 'css', value: `a[href^=${JSON.stringify(base)}]` }] : [exact];
+}
+
+/** CSS locators from the element's group and value, id, name and link target. */
 function attributeCandidates(el) {
   const out = [];
   // A checkbox or radio by its group and value: stable where the page makes up its id.
@@ -28,10 +39,7 @@ function attributeCandidates(el) {
     out.push({ kind: 'css', value: `input[name=${JSON.stringify(el.name)}][value=${JSON.stringify(el.choice)}]` });
   if (el.domId) out.push({ kind: 'css', value: `[id=${JSON.stringify(el.domId)}]` });
   if (el.name) out.push({ kind: 'css', value: `[name=${JSON.stringify(el.name)}]` });
-  const href = el.rawHref ?? el.href;
-  // A link to "#" or a script matches every such link on the page: no locator at all.
-  if (href && !/^(#|javascript:)/i.test(href)) out.push({ kind: 'css', value: `a[href=${JSON.stringify(href)}]` });
-  return out;
+  return [...out, ...hrefCandidates(el)];
 }
 
 /** Locators from what the element says about itself: role, label, text, placeholder. */
@@ -59,9 +67,26 @@ function candidates(el = {}) {
   const byTestId = el.testId ? [{ kind: 'testId', value: el.testId }] : [];
   // A repeated name scoped to the container where it is unique (recorded only when the name repeats).
   const byScope = el.scoped ? [{ kind: 'css', value: el.scoped }] : [];
-  const byName = [...nameCandidates(el), ...byScope];
-  const found = [...byTestId, ...(field ? [...byAttribute, ...byName] : [...byName, ...byAttribute])];
-  return withPath(found, el.path);
+  // A name with a live count, or one the page repeats, will not find it alone: its handles lead.
+  const handlesFirst = uniqueFirst(el, field, byScope);
+  const byName = handlesFirst || [...nameCandidates(el), ...byScope];
+  const ordered = field || handlesFirst ? [...byAttribute, ...byName] : [...byName, ...byAttribute];
+  return withPath([...byTestId, ...ordered], el.path);
+}
+
+/**
+ * When the name will not find the element alone, what follows its handles: the
+ * stable name for one with a live count, the scoped then plain name for one the
+ * page repeats (a "View Order" on every row). Null when the name leads as usual.
+ */
+function uniqueFirst(el, field, byScope) {
+  if (el.stableText) return stableCandidates(el, byScope);
+  return el.repeats && !field ? [...byScope, ...nameCandidates(el)] : null;
+}
+
+/** The stable name (without live counts), then the scoped name. */
+function stableCandidates(el, byScope) {
+  return [{ kind: 'text', value: el.stableText }, ...byScope];
 }
 
 /** Its position is the last resort: what replay falls back to when every name is ambiguous. */

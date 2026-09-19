@@ -15,7 +15,7 @@ HOW TO ACT
 
 READING THE PAGE
 - The analysis starts with a header: url, title, scroll (how far down the document is), and when they apply: modal (only that dialog was read), panel scroll (the content scrolls inside a panel, so scroll to see more even at 0%), covered (something drawn over elements must be closed first), truncated.
-- Elements appear inline as [#id type "label" state]; state words are disabled, expanded/collapsed, selected, current and pressed (the Element Index adds covered). ☑/☐ and ◉/○ are checked and unchecked.
+- Elements appear inline as [#id type "label" state] (an element with no name has no label, and a link shows where it goes after →); state words are disabled, expanded/collapsed, selected, current and pressed (the Element Index adds covered). ☑/☐ and ◉/○ are checked and unchecked.
 - The Element Index lists form fields (label, value, hint = expected format or options, state), then other visible elements, then off-screen ones to scroll to.
 - screenshot shows you the page as an image. Use it when layout, icons, images or a canvas matter; ids still come from analyze_page.
 

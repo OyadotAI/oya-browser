@@ -251,6 +251,7 @@ let server, win, channel;
     <ul id="menu" role="listbox" tabindex="0"><li role="option">A</li><li role="option">B</li></ul>
     <div id="plain" tabindex="0">Plain text</div>
     <input type="checkbox" id="id_912" name="reviews" value="344">
+    <a id="notifications" href="#notifications"><span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">1 new notification</span><span>1</span> <span id="notificationsLabel">Notifications</span></a>
     <a id="priceFilter" href="#price-0-100"><span>$0.00</span> - <span id="priceTo">$99.99</span></a>
     <div style="position:relative;width:60px;height:24px"><input id="switchInput" type="checkbox" style="position:absolute;left:0;top:0;margin:0">
       <label id="switchLabel" for="switchInput" style="position:absolute;left:0;top:0;width:60px;height:24px;background:#ccc"></label></div>
@@ -280,6 +281,7 @@ let server, win, channel;
   await click('menuSpan');
   await click('secondCancel');
   await click('id_912');
+  await click('notificationsLabel');
   await click('priceTo');
   await click('switchLabel');
   // Keys on something that is not a widget (the page, a plain block) scroll; they are not steps.
@@ -337,6 +339,8 @@ let server, win, channel;
     ['switchLabel'],
     'a switch whose input sits under its label records one click, on the label',
   );
+  const notifications = steps.find((s) => s.action === 'click' && s.el?.domId === 'notifications');
+  assert.equal(notifications?.el.stableText, 'Notifications', 'a live count is kept out of the stable name');
   const price = steps.find((s) => s.action === 'click' && s.el?.domId === 'priceFilter');
   assert.equal(price?.el.text, '$0.00 - $99.99', 'a link whose own text is only a dash is named by all it shows');
   const row = steps.find((s) => s.action === 'click' && s.el?.domId === 'id_912');

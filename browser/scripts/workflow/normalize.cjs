@@ -24,6 +24,8 @@ const ELEMENT_FIELDS = [
   'href',
   'rawHref',
   'choice',
+  'stableText',
+  'repeats',
   'scoped',
   'path',
 ];

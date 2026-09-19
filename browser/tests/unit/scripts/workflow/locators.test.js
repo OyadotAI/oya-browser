@@ -76,6 +76,33 @@ describe('candidates', () => {
     ]);
   });
 
+  it('leads with the link and its stable name when the recorded name carries a live count', () => {
+    const el = {
+      type: 'link',
+      role: 'link',
+      text: '1 1 new notification Notifications',
+      stableText: 'Notifications',
+      rawHref: 'https://in.test/notifications/?',
+    };
+    assert.deepEqual(candidates(el), [
+      { kind: 'css', value: 'a[href="https://in.test/notifications/?"]' },
+      { kind: 'css', value: 'a[href^="https://in.test/notifications/"]' },
+      { kind: 'text', value: 'Notifications' },
+    ]);
+  });
+
+  it('puts a link whose name repeats on the page behind its unique target', () => {
+    const el = {
+      type: 'link',
+      role: 'link',
+      text: 'View Order',
+      repeats: 'true',
+      rawHref: '/order/view/order_id/189/',
+    };
+    assert.deepEqual(candidates(el)[0], { kind: 'css', value: 'a[href="/order/view/order_id/189/"]' });
+    assert.equal(candidates(el).at(-1).value, 'View Order');
+  });
+
   it('gives nothing for an element with no handles', () => {
     assert.deepEqual(candidates(), []);
   });
