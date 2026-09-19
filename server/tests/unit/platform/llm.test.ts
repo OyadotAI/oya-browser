@@ -70,6 +70,20 @@ describe('chatCompletion', () => {
   });
 });
 
+describe('toGemini images', () => {
+  it('sends a screenshot turn as inline image data beside its text', () => {
+    const content = [
+      { type: 'text', text: 'Screenshot:' },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,QUJD' } },
+    ];
+    const { contents } = toGemini({ messages: [{ role: 'user', content }] });
+    assert.deepEqual(contents[0].parts, [
+      { text: 'Screenshot:' },
+      { inlineData: { mimeType: 'image/jpeg', data: 'QUJD' } },
+    ]);
+  });
+});
+
 describe('toGemini', () => {
   it('moves system prompts into systemInstruction and maps roles', () => {
     const out = toGemini({

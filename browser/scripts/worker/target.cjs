@@ -5,6 +5,8 @@
  */
 const { REPLAY } = require('../constants.cjs');
 const { locate, resolveCandidate } = require('./locate.cjs');
+const { HIDDEN_TARGET_ACTIONS } = require('../workflow/rules.cjs');
+const { isRecorded } = require('./identity.cjs');
 
 /** What the run reports when it swaps in a recorded alternative. */
 const REPAIRED = 'A recorded alternative uniquely matches the target.';
@@ -33,15 +35,37 @@ function countTarget(run, step, locator) {
 function targeting(run, step, p) {
   let scope = p;
   for (const frame of step.frames) scope = scope.frameLocator(frame);
-  return (candidate) => locate(scope, resolveCandidate(candidate, run.vars, run.draft));
+  // Counted as the generated code acts: among visible elements, except where a target may be hidden.
+  const visible = !HIDDEN_TARGET_ACTIONS.includes(step.action);
+  return (candidate) => {
+    const found = locate(scope, resolveCandidate(candidate, run.vars, run.draft));
+    return visible ? found.filter({ visible: true }) : found;
+  };
+}
+
+/** Whether a locator finds exactly one element, and it is the recorded one. */
+async function uniqueRecorded(run, step, locator) {
+  return (await countTarget(run, step, locator)) === 1 && isRecorded(locator, step.el, remaining(run, step));
+}
+
+/**
+ * A target that only appeared after waiting came with a page that was still
+ * changing (a search that submits from script a moment after Enter). Its
+ * widgets wire up once the page has loaded; acting before that is lost.
+ */
+async function settleArrived(page) {
+  if (typeof page?.waitForLoadState !== 'function') return;
+  await page.waitForLoadState('load', { timeout: REPLAY.SETTLE_MS }).catch(() => {});
+  await page.waitForLoadState('networkidle', { timeout: REPLAY.SETTLE_MS }).catch(() => {});
 }
 
 /** Matches for the step's first candidate, waiting once for it to attach when there are none. */
-async function countPrimary(run, step, primary) {
+async function countPrimary(run, step, primary, page) {
   let count = await countTarget(run, step, primary);
   if (count) return count;
   await primary.waitFor({ state: 'attached', timeout: remaining(run, step) }).catch(() => {});
   count = await countTarget(run, step, primary);
+  if (count) await settleArrived(page);
   return count;
 }
 
@@ -77,7 +101,7 @@ async function tryRepair(run, step, find) {
   if (!canRepair(run, step)) return;
   if (!run.repairDeadlines.has(step.id)) run.repairDeadlines.set(step.id, Date.now() + REPLAY.REPAIR_WINDOW_MS);
   for (const candidate of step.candidates.slice(1)) {
-    if (Date.now() < deadline(run, step.id) && (await countTarget(run, step, find(candidate))) === 1) {
+    if (Date.now() < deadline(run, step.id) && (await uniqueRecorded(run, step, find(candidate)))) {
       applyRepair(run, step, candidate);
     }
   }
@@ -92,7 +116,10 @@ function targetError(count) {
 /** Checks the step's target matches exactly one element, repairing it when it can; throws otherwise. */
 async function checkTarget(run, step, p) {
   const find = targeting(run, step, p);
-  const count = await countPrimary(run, step, find(step.candidates[0]));
+  const primary = find(step.candidates[0]);
+  let count = await countPrimary(run, step, primary, p);
+  // One match that is plainly another element (another tag, a link elsewhere) is no match.
+  if (count === 1 && !(await isRecorded(primary, step.el, remaining(run, step)))) count = 0;
   run.emit(targetEvent(step.id, count));
   if (count === 1) return;
   await tryRepair(run, step, find);

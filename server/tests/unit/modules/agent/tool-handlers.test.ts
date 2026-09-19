@@ -32,7 +32,9 @@ describe('tool handlers', () => {
   afterEach(() => browser.disconnect());
 
   it('has a handler for every tool offered to the model, and no more', () => {
-    assert.deepEqual(Object.keys(TOOL_HANDLERS).sort(), BROWSER_TOOLS.map((t) => t.function.name).sort());
+    // The loop answers screenshot itself: its result is an image, not text.
+    const offered = BROWSER_TOOLS.map((t) => t.function.name).filter((n) => n !== 'screenshot');
+    assert.deepEqual(Object.keys(TOOL_HANDLERS).sort(), offered.sort());
   });
 
   it('answers every tool’s browser error as Error text', async () => {
@@ -54,11 +56,14 @@ describe('tool handlers', () => {
       assert.equal(recorder.elementOf(BROWSER, 4), elements[0]);
     });
 
-    it('cuts an analysis that would fill the context window', async () => {
-      answer = () => ({ ok: true, data: { markdown: 'x'.repeat(MAX_ANALYSIS_CHARS * 2), elements: [] } });
+    it('cuts the markdown of an analysis that would fill the context window, keeping the element index whole', async () => {
+      const elements = [{ id: 7, type: 'button', text: 'Next', visible: true }];
+      const markdown = 'line of page text\n'.repeat(MAX_ANALYSIS_CHARS / 8);
+      answer = () => ({ ok: true, data: { markdown, elements } });
       const out = await run('analyze_page');
-      assert.ok(out.endsWith('⚠ Output truncated to fit context window.'));
-      assert.ok(out.length < MAX_ANALYSIS_CHARS + 100);
+      assert.ok(out.length <= MAX_ANALYSIS_CHARS);
+      assert.match(out, /line of page text\n\n⚠ Output truncated to fit context window\.\n\n## Element Index/);
+      assert.ok(out.includes('7,button,Next'));
     });
   });
 
@@ -150,31 +155,27 @@ describe('tool handlers', () => {
     });
   });
 
-  it('reports a screenshot without its bytes', async () => {
-    answer = () => ({ ok: true, data: { screenshot: 'base64' } });
-    assert.equal(await run('screenshot'), 'Screenshot captured (base64 image data available)');
-    answer = () => ({ ok: true });
-    assert.equal(await run('screenshot'), 'Screenshot captured');
-  });
-
   it('scrolls and waits', async () => {
     assert.equal(await run('scroll', { direction: 'down', amount: 100 }), 'Scrolled down');
     assert.equal(await run('wait', { selector: '#a', timeout: 10 }), 'Element found: #a');
   });
 
-  it('summarises the elements matching a selector', async () => {
-    answer = () => ({
-      ok: true,
-      data: {
-        url: 'https://a.test',
-        title: 'A',
-        elements: [{ tag: 'a', id: 'x', text: 'Go' }, { tag: 'div', aria_label: 'L' }, { tag: 'p' }],
-      },
-    });
-    assert.equal(
-      await run('read_elements', { selector: 'a' }),
-      'Page: A (https://a.test)\n\nElements (3):\na#x — Go\ndiv#? — L\np#? — (no text)',
-    );
+  it('shows the page a scroll landed on when the browser analysed it', async () => {
+    const elements = [{ id: 9, type: 'link', text: 'More', visible: true }];
+    answer = () => ({ ok: true, data: { markdown: '# Lower down', elements } });
+    const out = await run('scroll', { direction: 'down' });
+    assert.match(out, /^Scrolled down\.\n\n# Lower down\n\n## Element Index/);
+    assert.equal(recorder.elementOf(BROWSER, 9), elements[0]);
+  });
+
+  it('lists the elements with ids click accepts, keeping them for later steps', async () => {
+    const elements = [{ id: 3, type: 'button', text: 'Go', visible: true }];
+    answer = () => ({ ok: true, data: { url: 'https://a.test', title: 'A', markdown: '# A', elements } });
+    const out = await run('read_elements', { selector: 'a' });
+    assert.match(out, /^Page: A \(https:\/\/a\.test\)\n\n## Element Index \(1 total, 1 visible\)/);
+    assert.ok(out.includes('3,button,Go') && !out.includes('# A'));
+    assert.equal(recorder.elementOf(BROWSER, 3), elements[0]);
+    assert.deepEqual(browser.calls.at(-1).params, { selector: 'a' });
   });
 
   it('lists tabs, marking the active one', async () => {

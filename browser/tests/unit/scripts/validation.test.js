@@ -161,6 +161,22 @@ describe('validate', () => {
     assert.deepEqual(fs.readdirSync(path.join(tmp, 'temp')), []);
   });
 
+  it('fails instead of waiting forever when a validation tab never opens', async () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const side = fakeBrowserSide(tmp);
+    const createTab = side.createTab;
+    side.createTab = (url) => {
+      const id = createTab(url);
+      side.tabs.at(-1).ready = new Promise(() => {});
+      return id;
+    };
+    const run = start(side);
+    run.catch(() => {});
+    await flush();
+    mock.timers.tick(15000);
+    await assert.rejects(run, /validation tab did not open/);
+  });
+
   it('relays worker messages and cleans up once the run finishes', async () => {
     const side = fakeBrowserSide(tmp);
     await start(side);

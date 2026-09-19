@@ -71,6 +71,18 @@ class FakeWebContents extends EventEmitter {
     this.destroyed = false;
     /** Channel → payloads sent through send(). */
     this.messages = [];
+    /** Chromium zoom level; 0 is actual size. */
+    this.zoomLevel = 0;
+  }
+
+  /** As Electron's. */
+  getZoomLevel() {
+    return this.zoomLevel;
+  }
+
+  /** As Electron's. */
+  setZoomLevel(level) {
+    this.zoomLevel = level;
   }
 
   /** As Electron's. */

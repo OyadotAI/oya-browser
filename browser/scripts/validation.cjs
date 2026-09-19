@@ -17,6 +17,13 @@ const tabUrl = (name) => 'about:blank#oya-run-' + (name === 'main' ? 'main' : en
 /** Resolves after `ms`. */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** `promise`, or a rejection with `message` once `ms` has passed: a run never waits forever to start. */
+function withinTime(promise, ms, message) {
+  let timer;
+  const expired = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)));
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
 /** Reads Chromium's ephemeral debugging port from its profile, if it has written it yet. */
 function readDebugPort(app) {
   try {
@@ -70,8 +77,8 @@ class ValidationRun {
   /** Opens a run tab, waits for it, and registers its target. */
   async open(url) {
     const tab = this.addTab(url);
-    await tab.ready;
-    await this.registerTarget(tab);
+    const opened = Promise.resolve(tab.ready).then(() => this.registerTarget(tab));
+    await withinTime(opened, VALIDATION.TAB_OPEN_MS, 'The validation tab did not open. Close some tabs and try again.');
     return tab;
   }
 

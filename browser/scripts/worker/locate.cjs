@@ -3,11 +3,12 @@
  * Playwright locator, with `{{variables}}` in its value filled in.
  */
 const { PLACEHOLDER } = require('../workflow/rules.cjs');
+const { roleName } = require('../workflow/locators.cjs');
 
 /** The Playwright call behind each locator kind. */
 const LOCATE = {
   css: (page, c) => page.locator(c.value),
-  role: (page, c) => page.getByRole(c.role, { name: c.value, exact: true }),
+  role: (page, c) => page.getByRole(c.role, { name: roleName(c.value) }),
   testId: (page, c) => page.getByTestId(c.value, { exact: true }),
   label: (page, c) => page.getByLabel(c.value, { exact: true }),
   text: (page, c) => page.getByText(c.value, { exact: true }),

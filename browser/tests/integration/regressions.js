@@ -151,7 +151,7 @@ for (const [re, msg] of [
   [/recordedSecrets\.add\(name\)/, 'secret field names are no longer reported, so the playbook cannot hide them'],
   [/const RECORD_ON = '__OYA_RECORD__' === 'true'/, 'the recorder cannot be armed at injection time'],
   [
-    /e\.detail === 0 && lastKey\?\.key === 'Enter'/,
+    /detail === 0 && lastKey && \['Enter', ' '\]\.includes\(lastKey\.key\)/,
     'Enter on a button would record twice: the key and the click the browser makes from it',
   ],
 ])

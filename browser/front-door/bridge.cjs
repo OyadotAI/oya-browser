@@ -54,6 +54,16 @@ const BROWSER_COMMANDS = {
   },
 };
 
+/**
+ * Whether an attached target is a frame or worker of a run tab: it attaches
+ * under that tab's session. Hiding it would leave it paused for a debugger
+ * that never comes, so its page never loads.
+ */
+function joinsRun(msg, info, hiddenSessions) {
+  const underRunTab = !!msg.sessionId && !hiddenSessions.has(msg.sessionId);
+  return msg.method === 'Target.attachedToTarget' && underRunTab && info.type !== 'page';
+}
+
 /** One harness connection and its upstream socket. */
 class Bridge {
   /** Commands admitted and awaiting Chromium's reply, by [sessionId, id], with the function that ends each. */
@@ -66,6 +76,10 @@ class Bridge {
   filterReplies = new Set();
   /** Serializes admission so commands keep their order. */
   admissionQueue = Promise.resolve();
+  /** Ids of commands the bridge sends itself; their replies never reach the harness. */
+  ownIds = new Set();
+  /** The next such id: negative, so it never meets a harness's. */
+  nextOwnId = -1;
 
   /** Bridges `client` to Chromium at `url`; `relay` marks the server's gateway, already admitted there. */
   constructor(door, client, url, isBrowser, relay) {
@@ -184,7 +198,7 @@ class Bridge {
   /** Whether a command reaches a session or target outside the validation run. */
   outsideRun(msg) {
     if (msg.sessionId && this.hiddenSessions.has(msg.sessionId)) return true;
-    return !!msg.params?.targetId && !this.door.allowedTarget(msg.params.targetId);
+    return !!msg.params?.targetId && !this.door.inRun(msg.params.targetId);
   }
 
   /** Forwards a command, unless the browser endpoint answers it here. */
@@ -198,6 +212,7 @@ class Bridge {
   /** One message from Chromium: ends its command's admission, then reaches the harness unless hidden. */
   fromUpstream(text) {
     const msg = parseMessage(text);
+    if (msg?.id !== undefined && this.ownIds.delete(msg.id)) return;
     if (msg?.id !== undefined) this.complete(msg);
     if (!this.isBrowser || !msg) return this.client.send(text);
     if (msg.sessionId && this.hiddenSessions.has(msg.sessionId)) return;
@@ -216,10 +231,30 @@ class Bridge {
   /** A target event about a hidden target: remember it (and its session) and swallow the event. */
   hideTarget(msg) {
     const info = msg.params?.targetInfo;
-    if (!info || !this.door.isHidden(info)) return false;
+    if (!info) return false;
+    if (joinsRun(msg, info, this.hiddenSessions)) this.door.runChildren.add(info.targetId);
+    if (!this.door.isHidden(info)) return false;
     this.door.hidden.add(info.targetId);
-    if (msg.method === 'Target.attachedToTarget') this.hiddenSessions.add(msg.params.sessionId);
+    if (msg.method === 'Target.attachedToTarget') this.release(msg);
     return true;
+  }
+
+  /**
+   * A hidden target was attached, often paused until a debugger resumes it: the
+   * harness never sees it, so the bridge resumes it and lets it go.
+   */
+  release(msg) {
+    const child = msg.params.sessionId;
+    this.hiddenSessions.add(child);
+    this.sendOwn({ method: 'Runtime.runIfWaitingForDebugger', sessionId: child });
+    this.sendOwn({ method: 'Target.detachFromTarget', params: { sessionId: child }, sessionId: msg.sessionId });
+  }
+
+  /** Sends a command of the bridge's own; its reply is dropped. */
+  sendOwn(command) {
+    const id = this.nextOwnId--;
+    this.ownIds.add(id);
+    this.toUpstream(JSON.stringify({ id, ...command }));
   }
 }
 

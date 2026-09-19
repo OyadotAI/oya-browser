@@ -33,6 +33,16 @@ const TARGETED = [
 ];
 
 /** Names that would reach an object's prototype if used as keys. */
+/**
+ * Actions whose target may be hidden: a file input is almost always hidden behind
+ * its button. Every other target is matched among visible elements only, since a
+ * hidden one cannot be clicked or typed into (a collapsed menu repeats link names).
+ */
+const HIDDEN_TARGET_ACTIONS = ['upload_file'];
+
+/** The Playwright code that narrows a step's locator to what it may act on. */
+const visibleOnly = (action) => (HIDDEN_TARGET_ACTIONS.includes(action) ? '' : '.filter({visible:true})');
+
 const RESERVED = ['__proto__', 'constructor', 'prototype'];
 
 /** A variable name: an identifier of at most 64 characters. */
@@ -44,4 +54,13 @@ const PLACEHOLDER = /\{\{([A-Za-z_]\w*)\}\}/g;
 /** Whether `name` can be used as a variable. */
 const isVariableName = (name) => typeof name === 'string' && VARIABLE_NAME.test(name) && !RESERVED.includes(name);
 
-module.exports = { ACTIONS, TARGETED, RESERVED, VARIABLE_NAME, PLACEHOLDER, isVariableName };
+module.exports = {
+  ACTIONS,
+  TARGETED,
+  HIDDEN_TARGET_ACTIONS,
+  visibleOnly,
+  RESERVED,
+  VARIABLE_NAME,
+  PLACEHOLDER,
+  isVariableName,
+};

@@ -11,7 +11,22 @@ const { RESERVED, VARIABLE_NAME, isVariableName } = require('./rules.cjs');
 /** Step fields that are free text. */
 const STRING_FIELDS = ['action', 'url', 'text', 'option', 'file', 'key', 'direction', 'expected', 'captureIssue'];
 /** Recorded element fields kept for later repair. */
-const ELEMENT_FIELDS = ['type', 'tag', 'text', 'domId', 'name', 'placeholder', 'ariaLabel', 'testId', 'role', 'href'];
+const ELEMENT_FIELDS = [
+  'type',
+  'tag',
+  'text',
+  'domId',
+  'name',
+  'placeholder',
+  'ariaLabel',
+  'testId',
+  'role',
+  'href',
+  'rawHref',
+  'choice',
+  'scoped',
+  'path',
+];
 /** Draft fields copied through untouched when present. */
 const PASSTHROUGH = ['repairedFrom', 'publishedAt', 'run'];
 
@@ -40,10 +55,15 @@ function normalizeCandidate(c) {
   return { kind: c.kind, value: c.value, ...(c.kind === 'role' ? { role: c.role } : {}) };
 }
 
-/** The step's locators: the ones given, or ones derived from its recorded element. */
+/**
+ * The step's locators. Ones given (a saved or edited draft) must all be well
+ * formed. Ones derived from a recorded element skip what a page made unusable,
+ * such as a multi-word role or a huge href: losing one locator is better than
+ * losing the step.
+ */
 function stepCandidates(raw) {
-  const list = Array.isArray(raw.candidates) ? raw.candidates : candidates(raw.el);
-  return list.slice(0, DRAFT.MAX_CANDIDATES).map(normalizeCandidate);
+  if (Array.isArray(raw.candidates)) return raw.candidates.slice(0, DRAFT.MAX_CANDIDATES).map(normalizeCandidate);
+  return candidates(raw.el).filter(validCandidate).slice(0, DRAFT.MAX_CANDIDATES).map(normalizeCandidate);
 }
 
 /** The recorded element's text fields, each capped. */

@@ -66,6 +66,14 @@ describe('page commands', () => {
     assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,PNG' }]]);
   });
 
+  it('screenshot answers a JPEG when asked for one', async () => {
+    const view = pageView();
+    const ctx = await run(view, 'screenshot', { format: 'jpeg' });
+    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/jpeg;base64,PNG' }]]);
+    const sent = view.webContents.debugger.sent.find((s) => s.method === 'Page.captureScreenshot');
+    assert.equal(sent.params.format, 'jpeg');
+  });
+
   it('click answers a missing element with its error', async () => {
     const view = pageView();
     const ctx = await run(view, 'click', { selector: 'a' }, { world: { ok: false, error: 'Element not found: a' } });

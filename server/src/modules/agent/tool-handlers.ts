@@ -6,8 +6,8 @@ import { sendCommand } from '../browsers/socket.ts';
 import { selectOptionIn, uploadFileIn } from './page-scripts.ts';
 import { dataKey } from './placeholders.ts';
 import { elementOf, setElements } from './recorder.ts';
-import { elementIndex } from './element-index.ts';
-import { MAX_ANALYSIS_CHARS, NAVIGATE_TIMEOUT_MS } from './constants.ts';
+import { analysisText, elementList } from './element-index.ts';
+import { NAVIGATE_TIMEOUT_MS } from './constants.ts';
 
 /** Runs one tool call on a browser; `files` are the task's attachable files by name. */
 export type ToolHandler = (browserId: string, args: Record<string, any>, files: Record<string, any>) => Promise<string>;
@@ -24,11 +24,7 @@ async function analyzePage(browserId) {
   if (!r.ok) return `Error: ${r.error}`;
   const { markdown, elements, truncated } = r.data;
   setElements(browserId, elements);
-  // Cap total output to avoid blowing context window
-  const result = markdown + elementIndex(elements, truncated);
-  if (result.length > MAX_ANALYSIS_CHARS)
-    return result.slice(0, MAX_ANALYSIS_CHARS) + '\n\n⚠ Output truncated to fit context window.';
-  return result;
+  return analysisText(markdown, elements, truncated);
 }
 
 /** Goes to a URL, waiting as long as a slow site needs. */
@@ -97,18 +93,13 @@ async function uploadFile(browserId, args, files) {
   return r.ok ? `Attached ${f.file} to ${r.field}` : `Error: ${r.error}`;
 }
 
-/** Captures the screen; the model only learns that it worked. */
-async function screenshot(browserId) {
-  const r = await sendCommand(browserId, 'screenshot');
-  if (!r.ok) return `Error: ${r.error}`;
-  if (r.data?.screenshot) return `Screenshot captured (base64 image data available)`;
-  return 'Screenshot captured';
-}
-
-/** Scrolls the page. */
+/** Scrolls the page, and shows the page it landed on when the browser analysed it (the Oya client does). */
 async function scroll(browserId, args) {
   const r = await sendCommand(browserId, 'scroll', { direction: args.direction, amount: args.amount });
-  return r.ok ? `Scrolled ${args.direction}` : `Error: ${r.error}`;
+  if (!r.ok) return `Error: ${r.error}`;
+  if (!r.data?.markdown || !r.data?.elements) return `Scrolled ${args.direction}`;
+  setElements(browserId, r.data.elements);
+  return `Scrolled ${args.direction}.\n\n` + analysisText(r.data.markdown, r.data.elements, r.data.truncated);
 }
 
 /** Waits for a selector to appear. */
@@ -119,11 +110,10 @@ async function wait(browserId, args) {
 
 /** Lists the elements matching a selector. */
 async function readElements(browserId, args) {
-  const r = await sendCommand(browserId, 'read_page', { selector: args.selector, limit: args.limit });
+  const r = await sendCommand(browserId, 'analyze', args.selector ? { selector: args.selector } : {});
   if (!r.ok) return `Error: ${r.error}`;
-  const { url, title, elements } = r.data;
-  const summary = elements.map((e) => `${e.tag}#${e.id || '?'} — ${e.text || e.aria_label || '(no text)'}`).join('\n');
-  return `Page: ${title} (${url})\n\nElements (${elements.length}):\n${summary}`;
+  setElements(browserId, r.data.elements);
+  return elementList(r.data, args.limit);
 }
 
 /** Lists the open tabs, marking the active one. */
@@ -207,7 +197,6 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   type,
   select_option: selectOption,
   upload_file: uploadFile,
-  screenshot,
   scroll,
   wait,
   read_elements: readElements,

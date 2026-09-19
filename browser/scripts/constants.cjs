@@ -37,10 +37,25 @@ const PICKER = {
 };
 
 /** Validation: run token size, how long to wait for the debugging port, and the stop grace. */
-const VALIDATION = { TOKEN_BYTES: 32, PORT_POLLS: 50, PORT_POLL_MS: 100, STOP_GRACE_MS: 5000 };
+const VALIDATION = {
+  TOKEN_BYTES: 32,
+  PORT_POLLS: 50,
+  PORT_POLL_MS: 100,
+  STOP_GRACE_MS: 5000,
+  /** Longest a validation tab may take to open and report its target before the run fails. */
+  TAB_OPEN_MS: 15000,
+};
 
 /** Replay worker: auto-heal attempts per step and the window they must finish in. */
-const REPLAY = { MAX_REPAIRS: 2, REPAIR_WINDOW_MS: 30000, MIN_WAIT_MS: 1 };
+const REPLAY = {
+  MAX_REPAIRS: 2,
+  REPAIR_WINDOW_MS: 30000,
+  MIN_WAIT_MS: 1,
+  /** Longest a step waits for the page's network to go quiet before acting. */
+  SETTLE_MS: 5000,
+  /** After a step that sent input: the moment a page takes to start what it triggers (a grid's reload). */
+  SETTLE_GRACE_MS: 400,
+};
 
 /** Workspace: undo depth, run history retention, and how often run progress is published and saved. */
 const WORKSPACE = {

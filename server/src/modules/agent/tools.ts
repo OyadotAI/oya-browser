@@ -131,7 +131,8 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
     type: 'function',
     function: {
       name: 'screenshot',
-      description: 'Capture a screenshot of the visible browser tab.',
+      description:
+        'See the visible browser tab as an image. Use it when layout, images, icons or a canvas matter, or when analyze_page does not explain what is on screen. Element ids still come from analyze_page.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -171,7 +172,8 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
     type: 'function',
     function: {
       name: 'read_elements',
-      description: 'List interactive elements on the page. Lighter than analyze_page.',
+      description:
+        'List interactive elements on the page, with the same ids analyze_page gives. Lighter than analyze_page: no page text.',
       parameters: {
         type: 'object',
         properties: {

@@ -16,6 +16,37 @@
 
   const MAX_MARKDOWN_CHARS = 80000;
 
+  // Text of a clickable card (a link wrapping title, price, rating) shown under
+  // its tag when the tag's label cannot hold it.
+  const MAX_WRAPPED_TEXT = 600;
+
+  // Layout that starts a new line, and layout that sits beside its neighbours.
+  // React and minified pages put no whitespace between elements, so without
+  // these <div>$19.99</div><div>4.5 stars</div> reads as "$19.994.5 stars".
+  const BLOCK_DISPLAY = /^(block|flex|grid|list-item|table|table-row|flow-root)$/;
+  const SPACED_DISPLAY = /^(inline-block|inline-flex|inline-grid|table-cell)$/;
+
+  // A dialog narrows the analysis to itself only when it blocks the page: marked
+  // modal, opened with showModal(), a known site modal, or covering at least
+  // this share of the viewport. A chat widget or popover leaves the page readable.
+  const MODAL_SELECTOR = '[aria-modal="true"], .artdeco-modal__content, [data-testid="sheetDialog"]';
+  const MODAL_MIN_SHARE = 0.5;
+
+  // A panel that scrolls its own content (Gmail, Slack, a chat list) is reported
+  // when it covers this share of the viewport and has this much more to scroll.
+  const PANEL_MIN_SHARE = 0.25;
+  const PANEL_MIN_OVERFLOW_PX = 50;
+
+  // A fixed strip across the top no taller than this share of the viewport is a
+  // sticky header, not an overlay: clicks scroll their target clear of it.
+  const HEADER_MAX_SHARE = 0.25;
+
+  // Characters of an image address kept: enough to tell images apart, not a CDN's query string.
+  const MAX_IMAGE_SRC = 100;
+
+  // An element tag, ` [#12 button "Save"] `, with any ] inside its quoted label.
+  const TAG_PATTERN = / \[#\d+ (?:[^"\]]|"[^"]*")*\] /g;
+
   const COLORS = {
     link: '#22c55e', button: '#3b82f6', input: '#a855f7',
     select: '#f59e0b', textarea: '#06b6d4', editable: '#ec4899',
@@ -65,9 +96,6 @@
     elementMap = [];
     elementRefs.clear();
 
-    // Attach listeners for programmatic input (type command, etc)
-    attachInputListeners();
-
     // Resolve root — auto-detect open modal dialogs
     let root;
     let activeModal = null;
@@ -87,7 +115,7 @@
         const m = modals[i];
         const rect = m.getBoundingClientRect();
         // Must be visible: has size and is not display:none/visibility:hidden
-        if (rect.width > 0 && rect.height > 0 && !isHardHidden(m)) {
+        if (rect.width > 0 && rect.height > 0 && !isHardHidden(m) && isModal(m, rect)) {
           activeModal = m;
           break;
         }
@@ -119,6 +147,10 @@
         const top = rect.top + off.y, bottom = rect.bottom + off.y;
         const left = rect.left + off.x, right = rect.right + off.x;
         el.visible = bottom > 0 && top < vh && right > 0 && left < vw && rect.width > 0 && rect.height > 0;
+        if (el.visible && !off.x && !off.y && isCovered(dom, rect)) {
+          el.covered = true;
+          el.state = el.state ? el.state + ' covered' : 'covered';
+        }
       } else {
         el.visible = false;
       }
@@ -133,6 +165,7 @@
     if (md.length > MAX_MARKDOWN_CHARS) { md = md.slice(0, MAX_MARKDOWN_CHARS); truncated = true; }
 
     const visibleCount = elementMap.filter(e => e.visible).length;
+    const coveredCount = elementMap.filter(e => e.covered).length;
     const header = [
       `url: ${location.href}`, `title: ${document.title}`,
       `viewport: ${vw}x${vh}`, `scroll: ${scrollPct}% (${scrollY}px / ${pageH}px)`,
@@ -141,6 +174,12 @@
     if (activeModal) {
       const modalLabel = activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed';
       header.push(`modal: "${modalLabel}" (analysis scoped to this dialog)`);
+    }
+    if (coveredCount) header.push(`covered: ${coveredCount} visible elements are behind something drawn over them (a banner, overlay or dialog to close first)`);
+    const panel = scrollPanel(vw, vh);
+    if (panel) {
+      const top = Math.round(panel.scrollTop), max = panel.scrollHeight - panel.clientHeight;
+      header.push(`panel scroll: ${Math.round((top / max) * 100)}% (${top}px / ${panel.scrollHeight}px), the content scrolls inside a panel`);
     }
     if (focusedId) header.push(`focused: [#${focusedId}]`);
     if (truncated) header.push(`truncated: true`);
@@ -161,6 +200,53 @@
       },
     };
   };
+
+  /**
+   * Whether something else is drawn over the element's centre, such as a cookie
+   * banner or an overlay. A click there lands on that instead.
+   */
+  function isCovered(dom, rect) {
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!hit || dom.contains(hit)) return false;
+    for (let n = dom; n; n = n.parentNode || n.host) if (n === hit) return false;
+    return !isStickyHeader(hit);
+  }
+
+  /** Whether an element sits in a fixed or sticky strip across the top of the viewport. */
+  function isStickyHeader(el) {
+    for (let n = el; n && n.nodeType === Node.ELEMENT_NODE; n = n.parentElement) {
+      const position = window.getComputedStyle(n).position;
+      if (position !== 'fixed' && position !== 'sticky') continue;
+      const r = n.getBoundingClientRect();
+      return r.top <= 0 && r.bottom <= window.innerHeight * HEADER_MAX_SHARE;
+    }
+    return false;
+  }
+
+  /** Whether an open dialog blocks the rest of the page, so reading only it is right. */
+  function isModal(m, rect) {
+    if (m.matches(MODAL_SELECTOR)) return true;
+    try { if (m.matches(':modal')) return true; } catch {}
+    return rect.width * rect.height >= window.innerWidth * window.innerHeight * MODAL_MIN_SHARE;
+  }
+
+  /**
+   * The largest element that scrolls its own content. On apps that scroll
+   * inside a panel the document never scrolls, so without this the header says
+   * 0% and the agent thinks it has seen everything.
+   */
+  function scrollPanel(vw, vh) {
+    let best = null, bestArea = vw * vh * PANEL_MIN_SHARE;
+    for (const el of document.querySelectorAll('*')) {
+      if (el === document.documentElement || el === document.body) continue;
+      if (el.scrollHeight - el.clientHeight < PANEL_MIN_OVERFLOW_PX) continue;
+      const area = el.clientWidth * el.clientHeight;
+      if (area < bestArea) continue;
+      const overflow = window.getComputedStyle(el).overflowY;
+      if (overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') { best = el; bestArea = area; }
+    }
+    return best;
+  }
 
   // ─── Site Detection ───
 
@@ -209,7 +295,8 @@
       // Dedup: skip wrappers that contain actual interactive children.
       const isLeaf = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
       if (!isLeaf && hasInteractiveChild(node)) return childrenMarkdown(node, depth);
-      return annotateInteractive(node, interType);
+      const annotated = annotateInteractive(node, interType);
+      return isLeaf || interType === 'editable' ? annotated : withWrappedText(node, annotated);
     }
 
     const children = childrenMarkdown(node, depth);
@@ -249,8 +336,10 @@
       case 'IMG': {
         const alt = node.getAttribute('alt'), src = node.getAttribute('src') || '';
         // An inline data: image is thousands of characters of base64 that say nothing to the reader.
-        if (/^data:/i.test(src)) return alt ? `[image: ${alt}]` : '[image]';
-        return alt ? `![${alt}](${src})` : '[image]';
+        // An image with no alt says nothing either, and pages are full of them.
+        if (!alt) return '';
+        if (/^data:/i.test(src)) return `[image: ${alt}]`;
+        return `![${alt}](${src.split('?')[0].slice(0, MAX_IMAGE_SRC)})`;
       }
       case 'BLOCKQUOTE': { const i = children.trim(); return i ? `\n> ${i.replace(/\n/g, '\n> ')}\n` : ''; }
       case 'PRE': { const i = node.textContent.trim(); return i ? `\n\`\`\`\n${i}\n\`\`\`\n` : ''; }
@@ -259,7 +348,7 @@
       case 'EM': case 'I': return `*${children.trim()}*`;
       case 'HR': return '\n---\n';
       case 'BR': return '\n';
-      case 'LABEL': { const i = children.trim(); return i ? `${i}: ` : ''; }
+      case 'LABEL': return labelMarkdown(node, children);
       case 'DETAILS': {
         const summary = node.querySelector('summary');
         const isOpen = node.hasAttribute('open');
@@ -288,22 +377,39 @@
         }
         // HN spacer rows
         if (isHackerNews() && node.classList.contains('spacer')) return '\n';
-        return childrenMarkdown(node, depth);
+        return blockWrap(node, children);
       }
       case 'TD': {
         // Skip empty layout cells
         const text = node.textContent.trim();
         if (!text && !node.querySelector('a, button, input, select, textarea, [role="button"]')) return '';
-        return childrenMarkdown(node, depth);
+        return blockWrap(node, children);
       }
-      default: {
-        // Reddit custom elements: traverse into shadow DOM
-        if (tag.includes('-') && node.shadowRoot) {
-          return childrenMarkdown(node, depth);
-        }
-        return children;
-      }
+      default: return blockWrap(node, children); // children already include an open shadow root
     }
+  }
+
+  /** Separates an element's markdown from its neighbours the way the page lays it out. */
+  function blockWrap(node, md) {
+    if (!md.trim()) return md;
+    let display = '';
+    try { display = window.getComputedStyle(node).display; } catch {}
+    if (BLOCK_DISPLAY.test(display)) return `\n${md}\n`;
+    return SPACED_DISPLAY.test(display) ? ` ${md} ` : md;
+  }
+
+  /**
+   * A clickable card's tag, followed by the text its label could not hold.
+   * Uses innerText rather than walking the children: inside a link every child
+   * inherits cursor:pointer and would be tagged as a button of its own.
+   */
+  function withWrappedText(node, annotated) {
+    const label = elementMap[elementMap.length - 1].text || '';
+    const lines = (node.innerText || '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const full = lines.join(' ');
+    if (full.length <= label.length || label.includes(full)) return annotated;
+    const text = lines.join('\n').slice(0, MAX_WRAPPED_TEXT);
+    return `\n${annotated.trim()}\n${text}${full.length > MAX_WRAPPED_TEXT ? '…' : ''}\n`;
   }
 
   function childrenMarkdown(node, depth) {
@@ -322,11 +428,26 @@
     return items.join('\n');
   }
 
+  /**
+   * A label's text, unless its field's tag already carries it: a label wrapping
+   * its checkbox keeps only the tags, and a label pointing at a field elsewhere
+   * is dropped, because the field is tagged with the label text.
+   */
+  function labelMarkdown(node, children) {
+    const control = node.control;
+    const named = control && (control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby'));
+    if (control && !named && node.contains(control)) return (children.match(TAG_PATTERN) || []).join('');
+    if (control && !named && !isHardHidden(control)) return '';
+    const i = children.trim();
+    return i ? `${i}: ` : '';
+  }
+
   function tableMarkdown(el) {
     const rows = [];
-    for (const tr of el.querySelectorAll('tr')) {
+    // Its own rows and cells only: a table nested in a cell is part of that cell.
+    for (const tr of el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr')) {
       const cells = [];
-      for (const td of tr.querySelectorAll('th, td')) cells.push(childrenMarkdown(td, 0).replace(/\s+/g, ' ').trim());
+      for (const td of tr.querySelectorAll(':scope > th, :scope > td')) cells.push(childrenMarkdown(td, 0).replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
       if (cells.length) rows.push(cells);
     }
     if (!rows.length) return '';
@@ -461,14 +582,80 @@
     const role = node.getAttribute('role') || (node.tagName === 'BUTTON' ? 'button' : node.tagName === 'A' ? 'link' : undefined);
     if (role) el.role = role;
     if (node.href) el.href = node.href;
+    // The attribute as written: a CSS locator matches it, not the resolved URL.
+    const rawHref = node.getAttribute('href');
+    if (rawHref) el.rawHref = rawHref;
     if (node.placeholder) el.placeholder = node.placeholder;
     if (node.id) el.domId = node.id;
     if (node.name) el.name = node.name;
+    // Which box in a group: grids give each row's checkbox a fresh id per render,
+    // but its value (the row's record id) stays.
+    if ((node.type === 'checkbox' || node.type === 'radio') && node.getAttribute('value')) el.choice = node.getAttribute('value');
     const ariaLabel = node.getAttribute('aria-label');
     if (ariaLabel) el.ariaLabel = ariaLabel;
     const testId = node.getAttribute('data-testid');
     if (testId) el.testId = testId;
+    // Always, as the last resort: a name the page repeats (a column header in a
+    // sticky copy, "Cancel" in every dialog) leaves replay nothing unique without it.
+    el.path = cssPath(node);
+    const scoped = scopedText(node, text);
+    if (scoped) el.scoped = scoped;
     return el;
+  }
+
+  // Attributes a page keeps stable across loads, in the order they identify a container best.
+  const ANCHOR_ATTRS = ['id', 'data-testid', 'data-index', 'data-role', 'name', 'aria-label'];
+  // How far up the recorder looks for a container that makes a repeated text unique.
+  const SCOPE_WALK = 12;
+
+  /** A selector for a container, from its first stable attribute, when that picks out only it. */
+  function anchorOf(node) {
+    for (const attr of ANCHOR_ATTRS) {
+      const value = node.getAttribute(attr);
+      if (!value) continue;
+      const selector = `[${attr}=${JSON.stringify(value)}]`;
+      if (document.querySelectorAll(selector).length === 1) return selector;
+    }
+    return null;
+  }
+
+  /**
+   * When the element's text repeats on the page ("Content", "Cancel", a column
+   * name in a sticky header copy): the text inside the nearest stable container
+   * where it is unique, as a Playwright selector. Positions shift as a page
+   * builds itself; a container named by its own attribute does not.
+   */
+  function scopedText(node, text) {
+    if (!text || text.length > 80 || !node.isConnected || node.getRootNode() !== document) return undefined;
+    const tag = node.localName;
+    // Counted the way a replay's text locator counts: any element whose own text is
+    // exactly this (the innermost one), not just elements of the clicked tag. The
+    // admin menu's "Content" makes a section title "Content" ambiguous.
+    const norm = (n) => (n.textContent || '').replace(/\s+/g, ' ').trim();
+    const own = (n) => norm(n) === text && ![...n.children].some((c) => norm(c) === text);
+    const matches = (root) => [...root.getElementsByTagName('*')].filter(own).length;
+    if (matches(document) <= 1) return undefined;
+    for (let a = node.parentElement, i = 0; a && a !== document.body && i < SCOPE_WALK; a = a.parentElement, i++) {
+      const anchor = anchorOf(a);
+      if (anchor && matches(a) === 1) return `${anchor} ${tag}:text-is(${JSON.stringify(text)})`;
+    }
+    return undefined;
+  }
+
+  /**
+   * A CSS path to the element by position, from its nearest ancestor whose id is
+   * unique on the page (a sticky header's clone repeats ids, so those are passed over).
+   */
+  function cssPath(node) {
+    const parts = [];
+    const root = node.getRootNode();
+    const uniqueId = (n) => n.id && root.querySelectorAll?.(`[id="${CSS.escape(n.id)}"]`).length === 1;
+    for (let n = node; n && n.nodeType === Node.ELEMENT_NODE && n !== document.body; n = n.parentElement) {
+      if (uniqueId(n)) return [`[id="${CSS.escape(n.id)}"]`, ...parts].join(' > ');
+      const same = [...(n.parentElement?.children || [])].filter(c => c.tagName === n.tagName);
+      parts.unshift(same.length > 1 ? `${n.localName}:nth-of-type(${same.indexOf(n) + 1})` : n.localName);
+    }
+    return ['body', ...parts].join(' > ');
   }
 
   function annotateInteractive(node, type) {
@@ -481,13 +668,18 @@
     if (node.value !== undefined && node.value !== '') entry.value = node.type === 'password' ? '••••' : node.value;
     if (node.disabled) entry.disabled = true;
     if (['input', 'textarea', 'select'].includes(type)) Object.assign(entry, fieldEntry(node));
-    if (node.checked !== undefined) entry.checked = node.checked;
+    const checked = isChecked(node);
+    if (checked !== undefined) entry.checked = checked;
+    if (node.getAttribute('aria-disabled') === 'true') entry.disabled = true;
+    const state = ariaState(node);
+    if (state) entry.state = state;
     // Form context
     const form = node.closest('form');
     if (form) entry.formName = form.getAttribute('aria-label') || form.getAttribute('name') || form.getAttribute('action') || '';
     elementMap.push(entry);
 
     const label = text || node.tagName.toLowerCase();
+    const extra = (entry.disabled ? ' disabled' : '') + (state ? ' ' + state : '');
     switch (type) {
       case 'link': {
         let h = '';
@@ -504,11 +696,11 @@
           const title = postRow?.querySelector('.titleline a')?.textContent?.slice(0, 40);
           if (title) return ` [#${id} link "${label}" on "${title}"] `;
         }
-        return ` [#${id} link "${label}"${h ? ' → ' + h.slice(0, 50) : ''}] `;
+        return ` [#${id} link "${label}"${h ? ' → ' + h.slice(0, 50) : ''}${extra}] `;
       }
-      case 'button': return ` [#${id} button "${label}"${node.disabled ? ' disabled' : ''}] `;
-      case 'checkbox': return ` [#${id} ${node.checked ? '☑' : '☐'} "${label}"] `;
-      case 'radio': return ` [#${id} ${node.checked ? '◉' : '○'} "${label}"] `;
+      case 'button': return ` [#${id} button "${label}"${extra}] `;
+      case 'checkbox': return ` [#${id} ${checked ? '☑' : '☐'} "${label}"${extra}] `;
+      case 'radio': return ` [#${id} ${checked ? '◉' : '○'} "${label}"${extra}] `;
       case 'input': {
         const t = (node.type || 'text').toLowerCase();
         return ` [#${id} input:${t}${fieldFacts(node, text)}] `;
@@ -523,8 +715,30 @@
         const preview = val.length > 200 ? val.slice(0, 197) + '...' : val;
         return ` [#${id} editable "${preview}"] `;
       }
-      default: return ` [#${id} ${type} "${label}"] `;
+      default: return ` [#${id} ${type} "${label}"${extra}] `;
     }
+  }
+
+  /** A native checkbox's checked, or a custom one's aria-checked; undefined for anything else. */
+  function isChecked(node) {
+    if (node.checked !== undefined) return node.checked;
+    const aria = node.getAttribute('aria-checked');
+    return aria === null ? undefined : aria === 'true' || aria === 'mixed';
+  }
+
+  /**
+   * State a custom widget keeps only in ARIA attributes: whether a menu is open,
+   * which tab or option is selected, which nav link is the current page, whether
+   * a toggle button is on. Without it the agent re-clicks what is already done.
+   */
+  function ariaState(node) {
+    const attr = (name) => node.getAttribute(name);
+    const parts = [];
+    if (attr('aria-expanded') !== null) parts.push(attr('aria-expanded') === 'true' ? 'expanded' : 'collapsed');
+    if (attr('aria-selected') === 'true') parts.push('selected');
+    if (attr('aria-current') && attr('aria-current') !== 'false') parts.push('current');
+    if (attr('aria-pressed') === 'true' || attr('aria-pressed') === 'mixed') parts.push('pressed');
+    return parts.join(' ');
   }
 
   // ─── What a form field says about itself ───
@@ -618,8 +832,9 @@
     if (controlName && !node.textContent?.trim()) return controlName.replace(/[_-]/g, ' ').slice(0, 80);
     const direct = [];
     for (const c of node.childNodes) if (c.nodeType === Node.TEXT_NODE && c.textContent.trim()) direct.push(c.textContent.trim());
-    if (direct.length) return direct.join(' ').slice(0, 80);
-    const t = node.innerText?.replace(/\s+/g, ' ').trim();
+    // Only text that says something: the "-" between a price filter's two amounts is not its name.
+    if (direct.length && /[\p{L}\p{N}]/u.test(direct.join(''))) return direct.join(' ').slice(0, 80);
+    const t = shownText(node);
     if (t) return t.slice(0, 80);
     // Check title attribute (HN vote arrows use title="upvote")
     const title = node.getAttribute('title')?.trim();
@@ -628,6 +843,17 @@
     const childTitle = node.querySelector('[title]');
     if (childTitle) return childTitle.getAttribute('title').trim().slice(0, 80);
     return node.placeholder?.slice(0, 80) || node.name || '';
+  }
+
+  /**
+   * An element's visible text as its accessible name spells it. innerText skips
+   * hidden text but applies CSS text-transform ("REPORTS"); when that is the only
+   * difference, the text as written ("Reports") is what a replay's name match needs.
+   */
+  function shownText(node) {
+    const shown = node.innerText?.replace(/\s+/g, ' ').trim() || '';
+    const written = node.textContent?.replace(/\s+/g, ' ').trim() || '';
+    return written && shown.toLowerCase() === written.toLowerCase() ? written : shown;
   }
 
   /** Detect layout tables (no <th>, used for positioning not data). */
@@ -792,10 +1018,6 @@
   // ─── Cleanup ───
 
   function cleanup() {
-    document.removeEventListener('input', onInputChange, true);
-    document.removeEventListener('change', onInputChange, true);
-    if (pollStateTimer) cancelAnimationFrame(pollStateTimer);
-    if (stateCheckTimer) clearTimeout(stateCheckTimer);
     const c = document.getElementById('ac-labels'); if (c) c.remove();
     const s = document.getElementById('ac-highlight-style'); if (s) s.remove();
     document.querySelectorAll(`[${ATTR}]`).forEach(el => { el.removeAttribute(ATTR); el.style.removeProperty('--ac-hl-color'); });
@@ -813,65 +1035,12 @@
 
   window.__acCleanup = cleanup;
 
-  // ─── Force Poll State ───
-  // Called by the type command to immediately check button states after typing
-
-  window.__acForcePollState = function() {
-    checkButtonStates();
-  };
-
-  // ─── Event Listener for Programmatic Input ───
-  // Listens for input/change events which fire even when type is done programmatically
-
-  let pollStateTimer = null;
-
-  function onInputChange() {
-    if (!stateCheckTimer) {
-      stateCheckTimer = setTimeout(checkButtonStates, 50);
-    }
-  }
-
-  function pollButtonStates() {
-    checkButtonStates();
-    pollStateTimer = requestAnimationFrame(pollButtonStates);
-  }
-
-  function attachInputListeners() {
-    document.removeEventListener('input', onInputChange, true);
-    document.removeEventListener('change', onInputChange, true);
-    if (pollStateTimer) cancelAnimationFrame(pollStateTimer);
-    document.addEventListener('input', onInputChange, true);
-    document.addEventListener('change', onInputChange, true);
-    // Poll button states continuously for programmatic changes
-    pollStateTimer = requestAnimationFrame(pollButtonStates);
-  }
-
   // ─── Live DOM Observer ───
   // Auto-tags new interactive elements as they're added (React re-renders,
   // infinite scroll, dropdowns, modals, etc.) without needing a full re-analyze.
 
   let observerTimer = null;
   const pendingNodes = new Set();
-  let stateCheckTimer = null;
-
-  function checkButtonStates() {
-    stateCheckTimer = null;
-    if (!elementMap.length) return;
-    
-    for (const entry of elementMap) {
-      const dom = queryShadow(entry.selector);
-      if (!dom) continue;
-      
-      // Update disabled state: check multiple indicators
-      const wasDisabled = entry.disabled;
-      const isDisabledAttr = dom.disabled || dom.getAttribute('aria-disabled') === 'true';
-      const isDisabledClass = dom.className?.includes('disabled') || dom.className?.includes('is-disabled');
-      const isDisabledOpacity = window.getComputedStyle(dom).opacity === '0.5' || window.getComputedStyle(dom).opacity < 0.6;
-      
-      // Most reliable: disabled attribute or aria-disabled
-      entry.disabled = isDisabledAttr || isDisabledClass;
-    }
-  }
 
   function processNewNodes() {
     observerTimer = null;
@@ -989,37 +1158,8 @@
   }
 
   const observer = new MutationObserver((mutations) => {
-    let hasEditableChange = false;
     for (const m of mutations) {
-      if (m.type === 'attributes') {
-        const node = m.target;
-        if (node.hasAttribute(ATTR)) {
-          const id = parseInt(node.getAttribute(ATTR), 10);
-          const entry = elementMap.find(e => e.id === id);
-          if (entry) {
-            // Update dynamic properties
-            if (node.disabled !== undefined) entry.disabled = node.disabled;
-            if (node.checked !== undefined) entry.checked = node.checked;
-            if (node.value !== undefined) entry.value = node.value;
-            if (node.getAttribute('aria-disabled') !== null) entry.disabled = node.getAttribute('aria-disabled') === 'true';
-            // Update visibility if needed
-            const rect = node.getBoundingClientRect();
-            const vw = window.innerWidth, vh = window.innerHeight;
-            entry.visible = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw && rect.width > 0 && rect.height > 0;
-          }
-        }
-      } else if (m.type === 'characterData' && m.target.parentElement?.hasAttribute(ATTR)) {
-        // Detect text change in contenteditable elements
-        const el = m.target.parentElement;
-        if (el.getAttribute('contenteditable') === 'true') {
-          hasEditableChange = true;
-        }
-      } else if (m.type === 'childList' && m.target.hasAttribute(ATTR)) {
-        const el = m.target;
-        if (el.getAttribute('contenteditable') === 'true') {
-          hasEditableChange = true;
-        }
-      } else {
+      if (m.type === 'childList') {
         // Track removed elements for SPA re-render recovery
         for (const node of m.removedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -1043,25 +1183,32 @@
     if (pendingNodes.size > 0 && !observerTimer) {
       observerTimer = setTimeout(processNewNodes, 200);
     }
-    // When text changes in editable fields, re-check all button states after a short delay
-    if (hasEditableChange && !stateCheckTimer) {
-      stateCheckTimer = setTimeout(checkButtonStates, 150);
-    }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled', 'checked', 'value', 'aria-disabled'], characterData: true });
+  // A document with no body (a frameset, an XML page) has nothing to watch; throwing
+  // here would also stop the recorder below from ever listening.
+  if (document.body) observer.observe(document.body, { childList: true, subtree: true });
   // ─── Recorder: what the person does, as playbook steps ───
   //
   // Same step shape the agent produces (server/src/modules/agent/chat.ts recordStep), so a
   // recording replays and exports to Playwright through the code that already exists.
   // The loader substitutes the flag, so a recording started on the previous page keeps
   // running in the document that replaces it.
-  // ponytail: main frame only — ensureWorld() creates the isolated world for the top
-  // frame, so a flow that happens inside an iframe records nothing. Per-frame injection
-  // if that turns up on a real site.
+  // ponytail: same-origin frames only. A cross-site iframe is a separate target the
+  // recording channel does not attach to, so a flow inside one records nothing.
   const RECORD_ON = '__OYA_RECORD__' === 'true';
 
   const RECORD_KEYS = new Set(['Enter', 'Tab', 'Escape']);
+  // Keys that move through listboxes, menus, tabs and date pickers. Recorded only
+  // inside such a widget: in text they move the caret, on the page they scroll.
+  const NAV_KEYS = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
+  // How far up from the event target the recorder looks for what was clicked.
+  const RECORD_WALK = 10;
+  // A press whose element is gone before its click (menus and options that act on
+  // pointerdown) is recorded after this wait, if it moved less than this far.
+  const PRESS_CLICK_MS = 300;
+  const PRESS_SLOP_PX = 10;
+
   const TEXTUAL = new Set(['input', 'textarea', 'editable']);
   const SECRET_AUTOCOMPLETE = /current-password|new-password|one-time-code/i;
   const MAX_RECORDED = 500;
@@ -1077,24 +1224,66 @@
 
   // Check at event time, not when flushing: a real edit may hide/remove its field.
   // Do not require viewport intersection: keyboard users can focus scrolled content.
-  function recordVisible(node) {
+  // Transparent elements count for clicks and choices: styled checkboxes, switches
+  // and selects are real controls at opacity 0 that the person clicked. Typing into
+  // a field nobody can see is still never an edit.
+  function recordVisible(node, transparentOk = false) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE || !node.isConnected) return false;
     if (node.tagName === 'INPUT' && node.type === 'hidden') return false;
     for (let el = node; el; el = el.parentElement || el.getRootNode()?.host) {
       const style = getComputedStyle(el);
       if (style.display === 'none' || style.visibility === 'hidden'
-        || style.visibility === 'collapse' || style.opacity === '0'
+        || style.visibility === 'collapse' || (style.opacity === '0' && !transparentOk)
         || style.contentVisibility === 'hidden') return false;
     }
     return [...node.getClientRects()].some(r => r.width > 0 && r.height > 0);
   }
 
+  /** The element above `node`, crossing out of a shadow root to its host. */
+  const parentOf = (node) => node.parentElement || node.getRootNode()?.host || null;
+
+  // Elements that are interactive by what they are, not by how they look.
+  const SEMANTIC = 'a, button, input, select, textarea, summary, [contenteditable="true"], [role]';
+
+  /**
+   * The nearest element above the target that is interactive by what it is: the
+   * link around a menu item's <span>, the button around its label. A pointer
+   * cursor makes the span look clickable too, but only the link has a name and a
+   * role that a replay finds once.
+   */
+  function semanticTarget(start) {
+    for (let node = start, i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK; i++, node = parentOf(node)) {
+      if (!node.matches(SEMANTIC)) continue;
+      if (node.hasAttribute('role') && !INTERACTIVE_ROLES.has(node.getAttribute('role'))) continue;
+      const type = getInteractiveType(node);
+      if (type) return { node: coveredToggleLabel(node, type) || node, type };
+    }
+    return null;
+  }
+
+  /**
+   * A styled switch or checkbox: the real input sits under its own label (a Yes/No
+   * slider), so what the person clicked, and what a replay can click, is the label.
+   */
+  function coveredToggleLabel(node, type) {
+    if (type !== 'checkbox' && type !== 'radio' || node.tagName !== 'INPUT') return null;
+    const label = node.labels?.[0];
+    if (!label || !recordVisible(label, true)) return null;
+    const r = node.getBoundingClientRect();
+    if (!r.width || !r.height) return label;
+    const hit = node.getRootNode().elementFromPoint?.(r.x + r.width / 2, r.y + r.height / 2);
+    return hit && hit !== node ? label : null;
+  }
+
   /** The interactive element an event really landed on. */
   function recordTarget(event) {
     if (!event.isTrusted) return null;
-    let node = (event.composedPath && event.composedPath()[0]) || event.target;
-    if (!recordVisible(node)) return null;
-    for (let i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < 6; i++, node = node.parentElement) {
+    const start = (event.composedPath && event.composedPath()[0]) || event.target;
+    const choice = ['click', 'pointerdown', 'change'].includes(event.type);
+    if (!recordVisible(start, choice)) return null;
+    const semantic = semanticTarget(start);
+    if (semantic && !(event.type === 'click' && hiddenControlLabel(start, semantic.node))) return semantic;
+    for (let node = start, i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK; i++, node = parentOf(node)) {
       // Styled checkboxes often hide their native input. Replay the visible label;
       // the browser-forwarded click on its hidden control is excluded above.
       if (event.type === 'click' && node.tagName === 'LABEL' && node.control
@@ -1102,7 +1291,35 @@
       const type = getInteractiveType(node);
       if (type) return { node, type };
     }
+    return pointerTarget(start);
+  }
+
+  /**
+   * An icon button or a div with a script click handler: nothing marks it as
+   * interactive but its pointer cursor. The outermost element of the pointer run
+   * above the target is what the person meant.
+   */
+  function pointerTarget(start) {
+    let found = null;
+    for (let node = start, i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK; i++, node = parentOf(node)) {
+      if (getComputedStyle(node).cursor === 'pointer') found = node;
+      else if (found) break;
+    }
+    return found ? { node: found, type: 'button' } : null;
+  }
+
+  /** The label of a hidden checkbox between the target and `until`: the visible thing the person clicked. */
+  function hiddenControlLabel(start, until) {
+    for (let node = start; node && node !== until; node = parentOf(node)) {
+      if (node.tagName === 'LABEL' && node.control && !recordVisible(node.control)) return node;
+    }
     return null;
+  }
+
+  /** A file input's change: the input is almost always hidden behind a button, but the choice is real. */
+  function fileTarget(event) {
+    const node = event.target;
+    return event.isTrusted && node?.tagName === 'INPUT' && node.type === 'file' ? { node, type: 'input' } : null;
   }
 
   const isSecretField = (node) => String(node.type || '').toLowerCase() === 'password'
@@ -1119,7 +1336,7 @@
 
   function pushStep(step) {
     if (!recording || recorded.length >= MAX_RECORDED) return;
-    const entry = { ...step, t: Date.now(), id: documentId + ':' + (++sequence) };
+    const entry = { ...step, t: step.t || Date.now(), id: documentId + ':' + (++sequence) };
     recorded.push(entry);
     if (window.__acRecordSink) {
       try {
@@ -1132,9 +1349,10 @@
   /** One `type` step per field, not one per keystroke. */
   function flushTyping() {
     if (!typing) return;
-    const { node, el, value } = typing;
+    const { node, el, value, t } = typing;
     typing = null;
-    pushStep({ action: 'type', el, text: value !== '' && isSecretField(node) ? secretPlaceholder(node) : value });
+    // Stamped at the last keystroke: a flush after control passed to the agent still counts.
+    pushStep({ action: 'type', el, t, text: value !== '' && isSecretField(node) ? secretPlaceholder(node) : value });
   }
 
   function onRecordFocus(e) {
@@ -1154,28 +1372,78 @@
     const el = (typing && typing.node === hit.node && typing.el)
       || (focused && focused.node === hit.node && focused.el)
       || stableOf(hit.node, hit.type);
-    typing = { node: hit.node, el, value: String(raw).slice(0, 2000) };
+    typing = { node: hit.node, el, value: String(raw).slice(0, 2000), t: Date.now() };
+  }
+
+  let pressed = null;      // { hit, el, x, y, clicked } — the element under the last pointerdown
+
+  /**
+   * Menus, selects and options often act on pointerdown and remove themselves
+   * before the click, which then lands on a container or nowhere. The press is
+   * kept so the click can be recorded against what was really pressed.
+   */
+  function onRecordPointerDown(e) {
+    if (!recording || e.button !== 0) return;
+    const hit = recordTarget(e);
+    pressed = hit ? { hit, el: stableOf(hit.node, hit.type), x: e.clientX, y: e.clientY, clicked: false } : null;
+  }
+
+  /** A press that no click follows (its element was removed first) is recorded as the click. */
+  function onRecordPointerUp(e) {
+    const press = pressed;
+    if (!recording || !press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > PRESS_SLOP_PX) return;
+    setTimeout(() => {
+      if (press.clicked || pressed !== press) return;
+      pressed = null;
+      recordClick(press.hit, press.el, 1);
+    }, PRESS_CLICK_MS);
+  }
+
+  /** The element a click meant: the pressed one when the click lost it (removed, or retargeted to a container). */
+  function clickHit(e) {
+    const hit = recordTarget(e);
+    const press = pressed;
+    pressed = null;
+    if (!press) return hit && { hit, el: null };
+    press.clicked = true;
+    const lost = !press.hit.node.isConnected || !hit || (hit.node !== press.hit.node && hit.node.contains(press.hit.node));
+    return lost ? { hit: press.hit, el: press.el } : { hit, el: null };
+  }
+
+  /**
+   * A click on the label of a checkbox or radio the recorder can see: the browser
+   * forwards it to the control, and that forwarded click is the step. Recording
+   * both would toggle it twice on replay.
+   */
+  function labelOfVisibleToggle(e) {
+    const label = (e.composedPath?.() || []).find(n => n.tagName === 'LABEL');
+    const control = label?.control;
+    return !!control && control !== e.target && ['checkbox', 'radio'].includes(control.type) && recordVisible(control, true);
   }
 
   function onRecordClick(e) {
-    if (!recording) return;
-    const hit = recordTarget(e);
-    if (!hit) return;
+    if (!recording || labelOfVisibleToggle(e)) return;
+    const found = clickHit(e);
+    if (found) recordClick(found.hit, found.el, e.detail);
+  }
+
+  /** Records a click on `hit` (with `el` when it was captured before the element changed). */
+  function recordClick(hit, el, detail) {
     // A click inside the field being typed into is the caret moving, not a step.
     if (typing && typing.node === hit.node) return;
     flushTyping();
-    if (hit.type === 'select') return; // the change event carries the option
+    if (hit.node.tagName === 'SELECT') return; // the change event carries the option
     // Enter on a focused button, and Enter submitting a form, arrive as a key *and* as
     // a click the browser synthesized (detail 0). The key was already delivered,
     // so omit the synthesized click instead of replaying the submit twice.
-    if (e.detail === 0 && lastKey?.key === 'Enter' && Date.now() - lastKey.t < 1000) return;
+    if (detail === 0 && lastKey && ['Enter', ' '].includes(lastKey.key) && Date.now() - lastKey.t < 1000) return;
     lastKey = null;
-    pushStep({ action: 'click', el: stableOf(hit.node, hit.type) });
+    pushStep({ action: 'click', el: el || stableOf(hit.node, hit.type) });
   }
 
   function onRecordChange(e) {
     if (!recording) return;
-    const hit = recordTarget(e);
+    const hit = fileTarget(e) || recordTarget(e);
     if (!hit) return;
     if (hit.node.type === 'file') { flushTyping(); pushStep({ action: 'upload_file', el: stableOf(hit.node, hit.type), file: '{{upload_file}}' }); }
     else if (hit.type === 'select') {
@@ -1187,13 +1455,36 @@
     }
   }
 
+  // Widgets whose keyboard use is part of the task: a key there picks or moves something.
+  const KEY_WIDGETS = '[role="listbox"], [role="option"], [role="menu"], [role="menubar"], [role="menuitem"], '
+    + '[role="grid"], [role="gridcell"], [role="tree"], [role="treeitem"], [role="tablist"], [role="tab"], '
+    + '[role="radiogroup"], [role="slider"], [role="spinbutton"], [role="combobox"], input[type="radio"], input[type="range"]';
+
+  /** Whether a navigation key does something of its own here, rather than move the caret, scroll, or activate a click. */
+  function navKeyCounts(e, target) {
+    if (target.isContentEditable || target.tagName === 'SELECT') return false;
+    const type = getInteractiveType(target);
+    if (TEXTUAL.has(type) || !target.closest?.(KEY_WIDGETS)) return false;
+    // Space on a button, link or checkbox fires a click, which is the step.
+    return e.key !== ' ' || !['button', 'link', 'checkbox'].includes(type);
+  }
+
   function onRecordKey(e) {
-    if (!recording || !e.isTrusted || !RECORD_KEYS.has(e.key)) return;
-    if (!recordVisible(e.composedPath?.()[0] || e.target)) return;
+    if (!recording || !e.isTrusted) return;
+    const target = e.composedPath?.()[0] || e.target;
+    const nav = NAV_KEYS.has(e.key);
+    if (!RECORD_KEYS.has(e.key) && !(nav && navKeyCounts(e, target))) return;
+    if (!recordVisible(target)) return;
     flushTyping();  // the value is the step; the key is what submits it
     lastKey = { key: e.key, t: Date.now() };
-    const key = [e.ctrlKey && 'Control', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', e.key].filter(Boolean).join('+');
+    const name = e.key === ' ' ? 'Space' : e.key;
+    const key = [e.ctrlKey && 'Control', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', name].filter(Boolean).join('+');
     pushStep({ action: 'press_key', key });
+  }
+
+  /** Leaving the page (address bar, back, closing the tab) ends the typing in progress. */
+  function onRecordLeave() {
+    if (document.visibilityState === 'hidden') flushTyping();
   }
 
   function onUnsupportedInteraction(event) {
@@ -1207,14 +1498,18 @@
   document.addEventListener('input', onRecordInput, true);
   document.addEventListener('change', onRecordChange, true);
   document.addEventListener('click', onRecordClick, true);
+  document.addEventListener('pointerdown', onRecordPointerDown, true);
+  document.addEventListener('pointerup', onRecordPointerUp, true);
   document.addEventListener('keydown', onRecordKey, true);
+  document.addEventListener('visibilitychange', onRecordLeave, true);
+  window.addEventListener('pagehide', flushTyping, true);
 
   window.__acRecordStart = function () {
-    if (!recording) { recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null; }
+    if (!recording) { recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null; pressed = null; }
     recording = true; return true;
   };
   window.__acRecordClear = function () {
-    recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null;
+    recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null; pressed = null;
   };
   window.__acRecordStop = function () { flushTyping(); recording = false; return true; };
 

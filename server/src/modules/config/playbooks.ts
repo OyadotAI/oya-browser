@@ -5,7 +5,7 @@
  */
 import { fingerprint as ownerOf } from '../../platform/audit.ts';
 import { cleanPlaybook } from '../playbooks/cleanup.ts';
-import { store, state, seal, unseal, flush, writeField, dropField } from './store.ts';
+import { store, seal, unseal, flush, writeField, dropField, markChanged } from './store.ts';
 
 /** The field every playbook row name starts with. */
 const PREFIX = '_playbook:';
@@ -60,7 +60,7 @@ function replace(owner, row, field, sealed, cleaned) {
   const backup = `_playbook-backup:v1:${field.slice(PREFIX.length)}`;
   if (!Object.hasOwn(row, backup)) row[backup] = sealed;
   row[field] = replacement;
-  state.dirty = true;
+  markChanged(owner);
 }
 
 /** Clean one sealed playbook in place: 'updated', 'unreadable', or null when already clean. */

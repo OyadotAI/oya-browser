@@ -5,12 +5,49 @@
  * agent produces, so a recording gets replay, healing and the Playwright export for
  * free from server/src/modules/playbooks/service.ts. Nothing here interprets the steps.
  */
-const { normalizeStep } = require('../../scripts/workflow.cjs');
+const { normalizeStep, TARGETED } = require('../../scripts/workflow.cjs');
 const { RecordingChannels } = require('./channels.cjs');
 const { RecordingTabNames } = require('./tab-names.cjs');
 const { WEB_URL } = require('../tabs/constants.cjs');
 const { startRecording } = require('./start.cjs');
-const { MAX_RECORDED_STEPS } = require('./constants.cjs');
+const { MAX_RECORDED_STEPS, FILE_PICKER_CLICK_MS } = require('./constants.cjs');
+
+/** A recorded step normalized, or undefined when it is malformed: logged, never thrown, since a throw would stop the tab's later steps. */
+function safeStep(raw) {
+  try {
+    return parkUntargeted(normalizeStep(raw));
+  } catch (err) {
+    console.error('[recording] dropped a step:', err.message);
+    return undefined;
+  }
+}
+
+/**
+ * A step with nothing to find its element by would stop the whole workflow from
+ * saving or validating. It is kept, turned off, with the reason, for the person
+ * to pick a target or delete.
+ */
+function parkUntargeted(step) {
+  if (!TARGETED.includes(step.action) || step.candidates.length) return step;
+  return {
+    ...step,
+    enabled: false,
+    captureIssue: 'Nothing identifies this element. Pick a target, or delete the step.',
+  };
+}
+
+/**
+ * The click that opened a file picker, once its upload is recorded, is turned
+ * off: the upload sets the file itself, and replaying the click would open the
+ * operating system's dialog. It stays in the list for the person to turn back on.
+ */
+function disablePickerClick(steps) {
+  const i = steps.length - 1;
+  const last = steps[i];
+  const prev = steps[i - 1];
+  if (last?.action !== 'upload_file' || prev?.action !== 'click' || prev.tab !== last.tab) return;
+  if (last.t - prev.t < FILE_PICKER_CLICK_MS) prev.enabled = false;
+}
 
 /** The recording in progress (or paused) and its steps. */
 class Recorder {
@@ -83,8 +120,10 @@ class Recorder {
     if (this.recordedSteps.length >= MAX_RECORDED_STEPS) return this.stepLimitReached();
     if (step.id && this.recordedIds.has(step.id)) return;
     if (step.id) this.recordedIds.add(step.id);
-    const tab = this.names.recordingTab(this.ctx.tabs.activeTabId);
-    this.recordedSteps.push(normalizeStep({ t: Date.now(), tab, ...step }));
+    const normalized = safeStep({ t: Date.now(), tab: this.names.recordingTab(this.ctx.tabs.activeTabId), ...step });
+    if (!normalized) return;
+    this.recordedSteps.push(normalized);
+    disablePickerClick(this.recordedSteps);
   }
 
   /** Marks the last step and stops. */
@@ -113,7 +152,10 @@ class Recorder {
     for (const name of out.secrets || []) this.recordedSecrets.add(name);
     const owner = this.ctx.tabs.list.find((t) => t.view === view);
     const tabName = this.names.recordingTab(owner?.id);
-    this.markTabStart(tabName, startingUrl, out.steps);
+    // A new tab's channel is made while it is still about:blank; its first steps
+    // happened on the page it is showing now.
+    const start = WEB_URL.test(startingUrl || '') ? startingUrl : view.webContents?.getURL?.();
+    this.markTabStart(tabName, start || '', out.steps);
     for (const step of out.steps || []) this.pushRecordedStep({ ...step, tab: tabName });
   }
 

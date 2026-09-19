@@ -3,6 +3,7 @@
  * commands (new tab, close tab, reload) only act while a person has control.
  */
 const { HOME_URL } = require('../tabs/constants.cjs');
+const { ZOOM_STEP } = require('./constants.cjs');
 
 /** Quit, named for the product. */
 const QUIT = { role: 'quit', label: 'Quit Oya Browser' };
@@ -21,15 +22,30 @@ const MAC_APP_MENU = {
     QUIT,
   ],
 };
+/**
+ * A zoom item that zooms the page, never the shell. The built-in zoom roles act
+ * on whatever has focus, and while an agent drives that is the shell: its CSS
+ * shrinks while the page's view stays placed in window pixels, leaving gaps.
+ */
+function zoomItem(ctx, id, label, accelerator, level) {
+  const click = () => {
+    const contents = ctx.tabs.getActiveView()?.webContents;
+    if (contents) contents.setZoomLevel(level(contents.getZoomLevel()));
+  };
+  return { id, label, accelerator, click };
+}
+
 /** View's zoom and full-screen items, after Reload. */
-const VIEW_ITEMS = [
-  { type: 'separator' },
-  { role: 'resetZoom' },
-  { role: 'zoomIn' },
-  { role: 'zoomOut' },
-  { type: 'separator' },
-  { role: 'togglefullscreen' },
-];
+function viewItems(ctx) {
+  return [
+    { type: 'separator' },
+    zoomItem(ctx, 'zoom-reset', 'Actual Size', 'CmdOrCtrl+0', () => 0),
+    zoomItem(ctx, 'zoom-in', 'Zoom In', 'CmdOrCtrl+=', (level) => level + ZOOM_STEP),
+    zoomItem(ctx, 'zoom-out', 'Zoom Out', 'CmdOrCtrl+-', (level) => level - ZOOM_STEP),
+    { type: 'separator' },
+    { role: 'togglefullscreen' },
+  ];
+}
 
 /** A page command: it does nothing unless a person has control. */
 function humanItem(ctx, id, label, accelerator, run) {
@@ -47,7 +63,7 @@ function fileMenu(ctx, mac) {
 /** View: reload, zoom and full screen. */
 function viewMenu(ctx) {
   const reload = humanItem(ctx, 'browser-reload', 'Reload Page', 'CmdOrCtrl+R', () => ctx.tabs.reloadActivePage());
-  return { label: 'View', submenu: [reload, ...VIEW_ITEMS] };
+  return { label: 'View', submenu: [reload, ...viewItems(ctx)] };
 }
 
 /** Builds and installs the menu. */

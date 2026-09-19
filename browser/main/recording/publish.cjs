@@ -4,6 +4,7 @@
  */
 const { canCallServer, postToBrowserApi } = require('../connection/server-api.cjs');
 const { PLAYBOOK_SCHEMA_VERSION } = require('./constants.cjs');
+const { SAVE_TIMEOUT_MS } = require('../connection/constants.cjs');
 
 /** The playbook the server is sent. Capture timestamps stay here. */
 function playbookBody(ctx, name, description) {
@@ -34,9 +35,10 @@ async function readPlaybookAnswer(ctx, res, sent) {
 async function postPlaybook(ctx, name, description) {
   const sent = { id: ctx.workspace?.draft.id, revision: ctx.workspace?.draft.revision };
   try {
-    const res = await postToBrowserApi(ctx, 'playbooks', playbookBody(ctx, name, description));
+    const res = await postToBrowserApi(ctx, 'playbooks', playbookBody(ctx, name, description), SAVE_TIMEOUT_MS);
     return await readPlaybookAnswer(ctx, res, sent);
   } catch (err) {
+    if (err.name === 'TimeoutError') return { error: 'The server took too long to save. Try again.' };
     return { error: err.message };
   }
 }

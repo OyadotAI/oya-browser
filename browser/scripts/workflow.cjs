@@ -6,10 +6,20 @@
  * Behind it, one job per file in workflow/: rules (actions and names),
  * locators, normalize, issues and generate.
  */
-const { ACTIONS } = require('./workflow/rules.cjs');
+const { ACTIONS, TARGETED } = require('./workflow/rules.cjs');
 const { candidates, locatorCode } = require('./workflow/locators.cjs');
 const { normalizeStep, normalizeDraft } = require('./workflow/normalize.cjs');
 const { issues, variableNames } = require('./workflow/issues.cjs');
 const { generate } = require('./workflow/generate.cjs');
 
-module.exports = { ACTIONS, candidates, normalizeStep, normalizeDraft, issues, variableNames, locatorCode, generate };
+module.exports = {
+  ACTIONS,
+  TARGETED,
+  candidates,
+  normalizeStep,
+  normalizeDraft,
+  issues,
+  variableNames,
+  locatorCode,
+  generate,
+};

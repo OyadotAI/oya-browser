@@ -140,9 +140,6 @@ const CARET_START_JS = `(() => {
 /** Fills CARET_START_JS for one call. */
 const caretStartJs = (selector) => fill(CARET_START_JS, JSON.stringify(selector));
 
-/** Asks the analyzer to re-read the page state now. */
-const FORCE_POLL_JS = 'if (typeof window.__acForcePollState === "function") window.__acForcePollState()';
-
 /** Whether an autocomplete or suggestion list is showing. */
 const DROPDOWN_JS = `(() => {
         const lists = document.querySelectorAll('[role="listbox"], [role="menu"], [role="list"], .pac-container, [class*="suggest"], [class*="autocomplete"], [class*="dropdown"], [id*="suggest"], [id*="autocomplete"], ul[class*="result"]');
@@ -219,7 +216,6 @@ module.exports = {
   fieldValueJs,
   caretStartJs,
   setInputValueJs,
-  FORCE_POLL_JS,
   DROPDOWN_JS,
   VIEWPORT_JS,
   scrollResultJs,

@@ -10,6 +10,26 @@ import { STORE, writeDb, writeStoreFile } from './repository.ts';
 export const store = new Map();
 /** Whether the store holds changes not yet written. */
 export const state = { dirty: false };
+/** Owners whose rows changed since the last write; empty while dirty means every owner. */
+export const changed = new Set<string>();
+
+/** Marks one owner's row as changed, so the next write covers it (and only the rows that changed). */
+export function markChanged(owner) {
+  changed.add(owner);
+  state.dirty = true;
+}
+
+/**
+ * What the next write covers: the owners that changed, or every owner when a
+ * change was not attributed to one, with those owners' rows.
+ */
+export function pendingWrite() {
+  const owners = changed.size ? [...changed] : [...store.keys()];
+  const rows = owners.flatMap((owner) =>
+    Object.entries(store.get(owner) || {}).map(([key, value]) => ({ owner, key, value })),
+  );
+  return { owners, rows };
+}
 
 /** The sealing scope of one owner's values. */
 export const scopeFor = (owner) => `key-settings:${owner}`;
@@ -28,7 +48,7 @@ export function flush() {
 /** Set one field on an owner's row and write the store. */
 export async function writeField(owner, field, value) {
   store.set(owner, { ...(store.get(owner) || {}), [field]: value });
-  state.dirty = true;
+  markChanged(owner);
   await flush();
 }
 
@@ -37,29 +57,29 @@ export async function dropField(owner, field) {
   const row = { ...(store.get(owner) || {}) };
   delete row[field];
   store.set(owner, row);
-  state.dirty = true;
+  markChanged(owner);
   await flush();
 }
 
 /**
- * Write every key's settings to key_settings, or to data/key-settings.json when
- * there is no database or the write fails. A failed file write stays dirty.
+ * Write the changed owners' settings to key_settings (a save touches one row set,
+ * not every tenant's), or the whole store to data/key-settings.json when there
+ * is no database or the write fails. A failed file write stays dirty.
  */
 async function flushOnce() {
   if (!state.dirty) return;
+  const { owners, rows } = pendingWrite();
   state.dirty = false;
-  const rows = [...store.entries()].flatMap(([owner, fields]) =>
-    Object.entries(fields).map(([key, value]) => ({ owner, key, value })),
-  );
-  if (await wroteDatabase(rows)) return;
+  changed.clear();
+  if (await wroteDatabase(owners, rows)) return;
   await writeFallback();
 }
 
 /** Write to the database if there is one; false means fall back to the file. */
-async function wroteDatabase(rows) {
+async function wroteDatabase(owners, rows) {
   if (!db) return false;
   try {
-    await writeDb([...store.keys()], rows);
+    await writeDb(owners, rows);
     return true;
   } catch (e) {
     console.error(`[key-config] database write failed (${e.message}) — falling back to ${STORE}`);

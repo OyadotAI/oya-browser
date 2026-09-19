@@ -62,8 +62,11 @@ const SCROLL_STEP_PX = 120;
 const MIN_SCROLL_STEPS = 3;
 /** Default wait for an element to appear. */
 const ELEMENT_WAIT_MS = 10000;
+/** JPEG quality of a screenshot taken for a model: a retina PNG is megabytes. */
+const SCREENSHOT_JPEG_QUALITY = 70;
 
 module.exports = {
+  SCREENSHOT_JPEG_QUALITY,
   TAB_READY_TIMEOUT_MS,
   LOAD_TIMEOUT_MS,
   NAVIGATE_RETRIES,

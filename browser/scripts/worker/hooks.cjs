@@ -3,6 +3,7 @@
  * checkpoints, target checks, and the run events for each step.
  */
 const { checkTarget } = require('./target.cjs');
+const { REPLAY } = require('../constants.cjs');
 
 /** Actions that change the website once dispatched: a failure after them has an unknown outcome. */
 const INPUT_ACTIONS = ['click', 'press_key', 'upload_file', 'select_option'];
@@ -32,12 +33,25 @@ function markRunning(run, step) {
   run.emit({ kind: 'step', stepId: step.id, status: 'running', action: step.action });
 }
 
-/** Before a step: pause if asked, report it running, check its target, note whether it sends input. */
+/**
+ * Lets the page finish what its last load started. Script-heavy pages wire up
+ * menus and widgets after the load event, so a click made the moment it fires
+ * can land on a menu that does not open yet. A person waits; so does a step,
+ * until the network is quiet, but never longer than SETTLE_MS (pages that poll
+ * are never quiet).
+ */
+async function settle(run, p) {
+  // What an input triggers (a grid's sort reload) starts a moment later, while the network still looks quiet.
+  if (run.inputIssued) await p.waitForTimeout(REPLAY.SETTLE_GRACE_MS);
+  await p.waitForLoadState('networkidle', { timeout: REPLAY.SETTLE_MS }).catch(() => {});
+}
+
+/** Before a step: pause if asked, report it running, let the page settle, check its target, note whether it sends input. */
 async function beforeStep(run, id, p) {
   run.state.current = id;
-  run.inputIssued = false;
   const step = run.draft.steps.find((s) => s.id === id);
   await holdIfPaused(run, step);
+  await settle(run, p);
   markRunning(run, step);
   if (step.candidates.length) await checkTarget(run, step, p);
   // Once dispatched, a failed action may have changed the website.

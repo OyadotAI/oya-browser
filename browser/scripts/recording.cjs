@@ -52,6 +52,14 @@ function withTimeout(promise) {
   return Promise.race([promise, expire]).finally(() => clearTimeout(timeout));
 }
 
+/**
+ * A delivery that failed is logged and the chain goes on: left rejected, it would
+ * silently skip every later step from the tab and make stop throw.
+ */
+function deliveryFailed(err) {
+  console.error('[recording] delivery failed:', err.message);
+}
+
 /** Capture in a dedicated isolated world. In Electron, createIsolatedWorld can
  * return a different context from the same-named new-document script's world;
  * keep the actual recorder contexts instead of using the analyzer's evaluator. */
@@ -187,7 +195,7 @@ class RecordingChannel {
   /** Queues a recorder message for delivery, in order, with each step's frame path. */
   deliver(data, contextId) {
     const frameId = this.contextFrames.get(contextId);
-    this.delivery = this.delivery.then(() => this.forward(data, frameId));
+    this.delivery = this.delivery.then(() => this.forward(data, frameId)).catch(deliveryFailed);
     return this.delivery;
   }
 

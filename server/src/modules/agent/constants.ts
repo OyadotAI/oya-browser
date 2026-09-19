@@ -15,6 +15,8 @@ export const NAVIGATE_TIMEOUT_MS = 90_000;
 export const MAX_OFFSCREEN_LISTED = 30;
 /** Characters of a link the element index shows. */
 export const MAX_INDEX_LINK = 80;
+/** Elements read_elements lists when the model gives no limit. */
+export const READ_ELEMENTS_LIMIT = 50;
 /** An analysis longer than this is cut, so one page cannot fill the context window. */
 export const MAX_ANALYSIS_CHARS = 30_000;
 /** Conversation size (~4 chars per token) past which old tool results are dropped. */

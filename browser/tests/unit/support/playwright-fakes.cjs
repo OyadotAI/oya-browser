@@ -15,9 +15,20 @@ class FakeLocator {
     this.desc = desc;
   }
 
+  /** As Playwright's; matches still come from the description, but the page notes what was narrowed to visible. */
+  filter(options) {
+    if (options?.visible) this.page.visibleOnly = [...(this.page.visibleOnly || []), this.desc];
+    return this;
+  }
+
   /** Matches, from `page.counts` (1 when not listed). */
   async count() {
     return this.page.counts[this.desc] ?? 1;
+  }
+
+  /** As Playwright's, for the identity check: what the page says the found element is (consistent when unset). */
+  async evaluate() {
+    return this.page.identities?.[this.desc] ?? null;
   }
 
   /** Resolves at once; rejects when the page says this locator never appears. */
@@ -63,7 +74,9 @@ class FakeScope {
 
   /** As Playwright's. */
   getByRole(role, { name }) {
-    return this.make('role', `${role}:${name}`);
+    // A name pattern from roleName reads back as the text it was made from.
+    const text = name instanceof RegExp ? name.source.slice(4, -4).replace(/\\(.)/g, '$1') : name;
+    return this.make('role', `${role}:${text}`);
   }
 
   /** As Playwright's. */
@@ -95,7 +108,7 @@ class FakeScope {
 /** A page: emits Playwright page events, records actions in `log`. */
 class FakePage extends EventEmitter {
   /** `url` is what url() returns; `counts` sets how many elements each locator matches. */
-  constructor(url, { counts = {}, failing = [], context } = {}) {
+  constructor(url, { counts = {}, failing = [], context, identities = {} } = {}) {
     super();
     /** The page address. */
     this.address = url;
@@ -103,6 +116,8 @@ class FakePage extends EventEmitter {
     this.counts = counts;
     /** Locator descriptions whose actions throw. */
     this.failing = failing;
+    /** Locator description → what the identity check reads about its element. */
+    this.identities = identities;
     /** Every action, as [verb, target, value?]. */
     this.log = [];
     /** Its browser context. */
@@ -123,6 +138,16 @@ class FakePage extends EventEmitter {
   /** As Playwright's. */
   url() {
     return this.address;
+  }
+
+  /** As Playwright's; notes the grace waits, apart from the action log. */
+  async waitForTimeout(ms) {
+    this.graces = [...(this.graces || []), ms];
+  }
+
+  /** As Playwright's; counts the waits for the page to settle, apart from the action log. */
+  async waitForLoadState(state) {
+    this.settles = [...(this.settles || []), state];
   }
 
   /** As Playwright's. */

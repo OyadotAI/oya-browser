@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { sendCommand } from '../modules/browsers/socket.ts';
 import { analysis, type Page } from './analysis.ts';
+import { elementList } from '../modules/agent/chat.ts';
 import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
 import { fail } from './replies.ts';
 
@@ -30,14 +31,26 @@ const KEYS = [
 /** CSS selector for an element by the number analyze gave it. */
 const byId = (id: number) => `[data-ac-id="${id}"]`;
 
-/** What a tool hands back: a line of text, an analysis, or a base64 PNG. */
+/** What a tool hands back: a line of text, an analysis, or a base64 image. */
 type Reply =
   | string
   | Page
   | {
-      /** Base64 PNG to return as an image. */
+      /** Base64 image data, without its data-URL prefix. */
       image: string;
+      /** Its media type: Electron captures PNG, the CDP driver JPEG. */
+      mimeType: string;
     };
+
+/** A data URL's media type and base64 payload. */
+const DATA_URL = /^data:(image\/[\w+.-]+);base64,/;
+
+/** A screenshot data URL as an image reply; a bare payload is taken to be PNG. */
+function imageOf(dataUrl: string) {
+  const match = dataUrl.match(DATA_URL);
+  return { image: dataUrl.replace(DATA_URL, ''), mimeType: match ? match[1] : 'image/png' };
+}
+
 /**
  * name → description, input schema, the command it sends, and how its result
  * reads back. `text` returns a line, `{ page }` for an analysis, or `{ image }`.
@@ -92,13 +105,10 @@ Use element IDs with click/type tools. The output includes:
     text: (_, { element_id, text }) => `Typed "${text}" into element ${element_id}`,
   },
   screenshot: {
-    description: 'Capture a screenshot of the visible browser tab as a base64 PNG image.',
+    description: 'Capture a screenshot of the visible browser tab as an image.',
     schema: {},
     command: () => ['screenshot'],
-    text: (data) =>
-      data?.screenshot
-        ? { image: data.screenshot.replace(/^data:image\/png;base64,/, '') }
-        : 'Screenshot captured but no image data returned',
+    text: (data) => (data?.screenshot ? imageOf(data.screenshot) : 'Screenshot captured but no image data returned'),
   },
   press_key: {
     description: `Press a safe navigation key. Allowed: ${KEYS.join(', ')}. Do NOT use for F-keys, Meta, Control, Alt, or Shift.`,
@@ -128,17 +138,13 @@ Use element IDs with click/type tools. The output includes:
   },
   read_elements: {
     description:
-      'List interactive elements on the page. Lighter than analyze_page — returns element metadata without full page markdown.',
+      'List interactive elements on the page, with the same ids analyze_page gives. Lighter than analyze_page: the element index without the page markdown.',
     schema: {
       selector: z.string().optional().describe('CSS selector to scope the search (default: entire page)'),
       limit: z.number().optional().describe('Max elements to return (default 50)'),
     },
-    command: ({ selector, limit }) => ['read_page', { selector, limit }],
-    text: ({ url, title, elements }) =>
-      `Page: ${title} (${url})\n\nElements (${elements.length}):\n` +
-      elements
-        .map((e) => `${e.tag}${e.id ? '#' + e.id : ''} — ${e.text || e.aria_label || e.placeholder || '(no text)'}`)
-        .join('\n'),
+    command: ({ selector }) => ['analyze', selector ? { selector } : {}],
+    text: (data, { limit }) => ({ page: elementList(data, limit) }),
   },
   click_coordinates: {
     description:
@@ -269,7 +275,7 @@ async function runTool(tool: Tool, args, { pick, tag, noBrowser }: Required<Omit
 /** An image reply, or text prefixed with the answering browser's tag. */
 function reply(out: Reply, prefix: () => string) {
   if (typeof out === 'object' && 'image' in out)
-    return { content: [{ type: 'image' as const, data: out.image, mimeType: 'image/png' }] };
+    return { content: [{ type: 'image' as const, data: out.image, mimeType: out.mimeType }] };
   const tag = prefix();
   const text = typeof out === 'object' ? (tag ? `${tag}\n` : '') + out.page : (tag ? `${tag} ` : '') + out;
   return { content: [{ type: 'text' as const, text }] };

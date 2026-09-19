@@ -47,6 +47,8 @@ const HEX = 16;
 const WORKFLOW_LIMIT_MS = 540000;
 /** How often a remote workflow run is checked on. */
 const WORKFLOW_POLL_MS = 200;
+/** Longest a playbook save may wait for the server before the panel says so. */
+const SAVE_TIMEOUT_MS = 20000;
 
 module.exports = {
   CloseCode,
@@ -66,4 +68,5 @@ module.exports = {
   HEX,
   WORKFLOW_LIMIT_MS,
   WORKFLOW_POLL_MS,
+  SAVE_TIMEOUT_MS,
 };

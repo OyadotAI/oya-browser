@@ -18,16 +18,27 @@ function check({ error }) {
   if (error) throw new Error(error.message);
 }
 
+/** A key quoted for a PostgREST `in` list. */
+const quoted = (key) => `"${String(key).replace(/["\\]/g, (c) => '\\' + c)}"`;
+
 /**
- * Replace the given owners' rows. Deleting first is what makes a cleared field
- * actually clear; upsert alone would leave the old row behind.
+ * Replace the given owners' rows: upsert what they hold, then delete the keys
+ * they no longer have (a cleared field). Upserting first means a failure part
+ * way leaves the old rows, never none.
  */
-export async function writeDb(owners, rows) {
-  if (owners.length) check(await db.from(TABLE).delete().in('owner', owners));
+export async function writeDb(owners, rows, client = db) {
   if (rows.length) {
     const stamped = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
-    check(await db.from(TABLE).upsert(stamped, { onConflict: 'owner,key' }));
+    check(await client.from(TABLE).upsert(stamped, { onConflict: 'owner,key' }));
   }
+  await Promise.all(owners.map(async (owner) => check(await staleRows(client, owner, rows))));
+}
+
+/** Deletes one owner's rows whose keys are not among `rows`. */
+function staleRows(client, owner, rows) {
+  const keys = rows.filter((r) => r.owner === owner).map((r) => quoted(r.key));
+  const query = client.from(TABLE).delete().eq('owner', owner);
+  return keys.length ? query.not('key', 'in', `(${keys.join(',')})`) : query;
 }
 
 /** Every stored row from the database. */

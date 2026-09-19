@@ -2,7 +2,7 @@
  * analyze's result as the model reads it: the page's markdown followed by a
  * compact index of its interactive elements, grouped by visibility.
  */
-import { elementIndex } from '../modules/agent/chat.ts';
+import { analysisText } from '../modules/agent/chat.ts';
 
 /** One interactive element as analyze reports it. */
 type Element = {
@@ -22,6 +22,8 @@ type Element = {
   disabled?: boolean;
   /** In the viewport without scrolling. */
   visible?: boolean;
+  /** ARIA state the page keeps in attributes: expanded, selected, current, pressed. */
+  state?: string;
 };
 
 /** What analyze returns. */
@@ -40,7 +42,7 @@ export type Page = {
   page: string;
 };
 
-/** analyze's markdown plus the element index the agent reads (TOON tables of fields and elements). */
+/** analyze's markdown plus the element index the agent reads (TOON tables of fields and elements), capped like the agent's. */
 export function analysis({ markdown, elements, truncated }: Analyzed): Page {
-  return { page: markdown + elementIndex(elements, truncated) };
+  return { page: analysisText(markdown, elements, truncated) };
 }

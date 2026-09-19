@@ -74,6 +74,54 @@ describe('Recorder', () => {
     assert.deepEqual(ctx.recorder.recordedSteps.map((s) => s.id).slice(1), ['a']);
   });
 
+  it('drops a malformed step without losing the ones after it', async () => {
+    await ctx.recorder.startRecording();
+    const logged = mock.method(console, 'error', () => {});
+    ctx.recorder.pushRecordedStep({ id: 'bad', action: 'click', url: 5 });
+    ctx.recorder.pushRecordedStep({ id: 'good', action: 'click' });
+    assert.deepEqual(ctx.recorder.recordedSteps.map((s) => s.id).slice(1), ['good']);
+    assert.equal(logged.mock.callCount(), 1);
+  });
+
+  it('keeps a step whose element has a role no locator can use', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({ action: 'click', el: { tag: 'button', role: 'none presentation', text: 'Go' } });
+    assert.equal(ctx.recorder.recordedSteps.at(-1).action, 'click');
+  });
+
+  it('finds an element with no name or handle by its recorded position', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({
+      action: 'click',
+      el: { tag: 'div', type: 'button', path: '[id="bar"] > div:nth-of-type(2)' },
+    });
+    const step = ctx.recorder.recordedSteps.at(-1);
+    assert.deepEqual(step.candidates, [{ kind: 'css', value: '[id="bar"] > div:nth-of-type(2)' }]);
+    assert.equal(step.enabled, true);
+  });
+
+  it('turns off a step nothing identifies, saying why, so the workflow still saves', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({ action: 'click', el: { tag: 'div', type: 'button' } });
+    const step = ctx.recorder.recordedSteps.at(-1);
+    assert.equal(step.enabled, false);
+    assert.match(step.captureIssue, /Nothing identifies this element/);
+  });
+
+  it('turns off the click that opened a file picker once the upload is recorded', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({ action: 'click', el: { tag: 'button', text: 'Upload' }, t: 2000 });
+    ctx.recorder.pushRecordedStep({
+      action: 'upload_file',
+      el: { tag: 'input', name: 'cv' },
+      file: '{{upload_file}}',
+      t: 5000,
+    });
+    const [click, upload] = ctx.recorder.recordedSteps.slice(-2);
+    assert.equal(click.enabled, false);
+    assert.equal(upload.enabled, true);
+  });
+
   it('stops at the step limit and says so on the last step', async () => {
     await ctx.recorder.startRecording();
     for (let i = 0; i < 510; i++) ctx.recorder.pushRecordedStep({ action: 'click', id: 's' + i });
@@ -108,6 +156,16 @@ describe('Recorder', () => {
       ],
     );
     assert.ok(ctx.recorder.recordedSecrets.has('pw'));
+  });
+
+  it('starts a tab opened blank with the page its first steps happened on', async () => {
+    await ctx.recorder.startRecording();
+    const other = new FakeBrowserView();
+    other.webContents.url = 'https://landed.test/';
+    ctx.tabs.list.push({ id: 2, view: other });
+    ctx.recorder.receive(other, 'about:blank', { steps: [{ action: 'click', t: 2000 }] });
+    const first = ctx.recorder.recordedSteps.find((s) => s.tab === 'tab-1');
+    assert.deepEqual([first.action, first.url], ['navigate', 'https://landed.test/']);
   });
 
   it('ignores page output when not recording', () => {

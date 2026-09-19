@@ -5,7 +5,7 @@
  * agent fills forms from the field table, so it carries what the page shows
  * about each field: required, invalid and the page's error for it.
  */
-import { MAX_OFFSCREEN_LISTED, MAX_INDEX_LINK } from './constants.ts';
+import { MAX_OFFSCREEN_LISTED, MAX_INDEX_LINK, MAX_ANALYSIS_CHARS, READ_ELEMENTS_LIMIT } from './constants.ts';
 import { toonTable } from './toon.ts';
 
 /** Element kinds a person fills in rather than clicks. */
@@ -23,16 +23,19 @@ const FIELDS_NOTE = 'Form fields (hint is the format the field expects, or a sel
 /** Said after the index when the page was cut short. */
 const TRUNCATED = '\n⚠ Page content was truncated (very long page). Scroll down and re-analyze to see more.\n';
 
+/** Said where the page's markdown was cut to leave room for the index. */
+const CUT = '\n\n⚠ Output truncated to fit context window.';
+
 /** A checkbox or radio, whose value is its state rather than text. */
 const isToggle = (e) => e.type === 'checkbox' || e.type === 'radio';
 
 /** The field's kind: an input by its input type (text, date, password), anything else by its type. */
 const fieldKind = (e) => (e.type === 'input' ? e.inputType || 'text' : e.type);
 
-/** State words: required, checked, disabled, read-only, off-screen, and invalid with the page's error. */
+/** State words: required, checked, disabled, read-only, off-screen, ARIA state and covered, and invalid with the page's error. */
 function fieldState(e) {
   const parts = [e.required && 'required', isToggle(e) && (e.checked ? 'checked' : 'unchecked')];
-  parts.push(e.disabled && 'disabled', e.readOnly && 'readonly', !e.visible && 'off-screen');
+  parts.push(e.disabled && 'disabled', e.readOnly && 'readonly', !e.visible && 'off-screen', e.state);
   if (e.invalid || e.error) parts.push(e.error ? `invalid: ${e.error}` : 'invalid');
   return parts.filter(Boolean).join(' ');
 }
@@ -57,7 +60,7 @@ const fieldRow = (e) => ({
 const visibleRow = (e) => ({
   id: e.id,
   type: e.type,
-  label: e.disabled ? `${e.text || ''} (disabled)` : e.text,
+  label: [e.text || '', e.disabled && '(disabled)', e.state && `(${e.state})`].filter(Boolean).join(' '),
   link: (e.href || '').slice(0, MAX_INDEX_LINK),
 });
 
@@ -93,4 +96,29 @@ export function elementIndex(elements, truncated) {
   index += fieldsSection(elements) + visibleSection(others);
   if (offscreen.length) index += offscreenSection(offscreen);
   return truncated ? index + TRUNCATED : index;
+}
+
+/** The markdown cut at a line end to fit `room`, marked where it was cut. */
+function fitMarkdown(markdown, room) {
+  if (markdown.length <= room) return markdown;
+  const cut = markdown.slice(0, Math.max(room - CUT.length, 0));
+  const end = cut.lastIndexOf('\n');
+  return (end > 0 ? cut.slice(0, end) : cut) + CUT;
+}
+
+/**
+ * The analysis as the model reads it, within MAX_ANALYSIS_CHARS: the markdown
+ * gives way, the index is always whole, since the agent acts on its ids.
+ */
+export function analysisText(markdown, elements, truncated) {
+  const index = elementIndex(elements, truncated);
+  return fitMarkdown(markdown, MAX_ANALYSIS_CHARS - index.length) + index;
+}
+
+/**
+ * read_elements' answer: the page's name and the index of its first `limit`
+ * elements, from an analysis, so the ids are ones click and type accept.
+ */
+export function elementList({ url, title, elements }, limit = READ_ELEMENTS_LIMIT) {
+  return `Page: ${title} (${url})` + elementIndex(elements.slice(0, limit), false);
 }

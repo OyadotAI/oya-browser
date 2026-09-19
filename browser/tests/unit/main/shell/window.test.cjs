@@ -60,6 +60,14 @@ describe('ShellWindow', () => {
     assert.deepEqual(ctx.shell.window.webContents.openHandler(), { action: 'deny' });
   });
 
+  it('undoes a zoom left on the shell, whose layout is in window pixels', () => {
+    ctx.shell.create();
+    const contents = ctx.shell.window.webContents;
+    contents.zoomLevel = -1;
+    contents.emit('did-finish-load');
+    assert.equal(contents.zoomLevel, 0);
+  });
+
   it('repaints when the system theme changes', () => {
     ctx.shell.create();
     ctx.electron.nativeTheme.shouldUseDarkColors = true;
@@ -83,6 +91,22 @@ describe('application menu', () => {
     ctx.control.state.interactive = false;
     item(ctx, 'browser-new-tab').click();
     assert.equal(opened, 1);
+  });
+
+  it('zooms the page, never the shell', () => {
+    const ctx = mainCtx();
+    const page = { webContents: { zoomLevel: 0 } };
+    page.webContents.getZoomLevel = () => page.webContents.zoomLevel;
+    page.webContents.setZoomLevel = (level) => (page.webContents.zoomLevel = level);
+    ctx.tabs = { getActiveView: () => page };
+    installApplicationMenu(ctx);
+    item(ctx, 'zoom-out').click();
+    assert.ok(page.webContents.zoomLevel < 0);
+    item(ctx, 'zoom-reset').click();
+    item(ctx, 'zoom-in').click();
+    assert.ok(page.webContents.zoomLevel > 0);
+    ctx.tabs = { getActiveView: () => undefined };
+    assert.doesNotThrow(() => item(ctx, 'zoom-in').click());
   });
 
   it('names the product in the menus', () => {

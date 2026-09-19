@@ -74,6 +74,26 @@ describe('agentLoop', () => {
     ]);
   });
 
+  it('shows a screenshot to the model as an image after the tool results, keeping only the latest', async () => {
+    answer = (action, params) => ({ ok: true, data: { screenshot: `data:image/${params.format};base64,SHOT` } });
+    const llm = stubLlm([toolReply(['screenshot', {}]), toolReply(['screenshot', {}]), textReply('DONE')]);
+    await agentLoop(ctx(), start());
+    const third = llm.requests[2].messages;
+    const images = third.filter((m) => Array.isArray(m.content));
+    assert.equal(images.length, 1);
+    assert.equal(third.at(-1), images[0]);
+    assert.deepEqual(images[0].content[1], { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,SHOT' } });
+    assert.ok(third.some((m) => typeof m.content === 'string' && /earlier screenshot, removed/.test(m.content)));
+  });
+
+  it('withholds screenshots from a task with secrets, since an image cannot be redacted', async () => {
+    const llm = stubLlm([toolReply(['screenshot', {}]), textReply('DONE')]);
+    await agentLoop(ctx({ secrets: { pw: 'hunter22' } }), start());
+    const second = llm.requests[1].messages;
+    assert.deepEqual(browser.actions(), []);
+    assert.match(second.at(-1).content, /Screenshot withheld/);
+  });
+
   it('offers the browser tools, adding request_human only when a person can answer', async () => {
     const llm = stubLlm([textReply('DONE')]);
     await agentLoop(ctx(), start());

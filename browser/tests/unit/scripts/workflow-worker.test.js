@@ -81,6 +81,55 @@ describe('workflow worker', () => {
     assert.ok(browser.closed >= 1, 'the browser connection is closed after the run');
   });
 
+  it('lets the page settle before every step, so widgets wired after load are ready', async () => {
+    load();
+    await run([
+      { id: 'a', action: 'navigate', url: 'https://x.test' },
+      { id: 'b', action: 'click', candidates: [{ kind: 'css', value: '#go' }] },
+    ]);
+    assert.deepEqual(page().settles, ['networkidle', 'networkidle']);
+  });
+
+  it('gives the page a moment after a click before the next step, for what the click starts', async () => {
+    load();
+    await run([
+      { id: 'a', action: 'click', candidates: [{ kind: 'css', value: '#sort' }] },
+      { id: 'b', action: 'click', candidates: [{ kind: 'css', value: '#sort' }] },
+      { id: 'c', action: 'assert_url', expected: 'https://x.test' },
+    ]);
+    assert.equal(page().graces?.length, 2, 'after each of the two clicks, and not before the first step');
+  });
+
+  it('counts and acts on visible matches only: a collapsed menu repeats link names', async () => {
+    load();
+    await run([{ id: 'b', action: 'click', candidates: [{ kind: 'css', value: '#go' }] }]);
+    assert.ok(page().visibleOnly.every((desc) => desc === 'css:#go') && page().visibleOnly.length >= 2);
+  });
+
+  it('does not take one match for the recorded element when it is another link, and heals to one that is', async () => {
+    load({ identities: { 'text:Clothing': { within: true, href: 'https://x.test/clothing.html' } } });
+    const el = { tag: 'a', href: 'https://x.test/search?cat=5' };
+    const candidates = [
+      { kind: 'text', value: 'Clothing' },
+      { kind: 'css', value: 'a[href="/search?cat=5"]' },
+    ];
+    await run([{ id: 'b', action: 'click', el, candidates }]);
+    assert.deepEqual(page().log, [['click', 'css:a[href="/search?cat=5"]']]);
+  });
+
+  it('lets a page that arrived with the target finish loading before acting on it', async () => {
+    let looks = 0;
+    load({
+      counts: {
+        get 'css:#sorter'() {
+          return looks++ ? 1 : 0;
+        },
+      },
+    });
+    await run([{ id: 'b', action: 'select_option', option: 'Name', candidates: [{ kind: 'css', value: '#sorter' }] }]);
+    assert.ok(page().settles.includes('load'), 'waited for the new page to load');
+  });
+
   it('checks each target and says how many elements match', async () => {
     load();
     await run([{ id: 'b', action: 'click', candidates: [{ kind: 'role', role: 'button', value: 'Save' }] }]);

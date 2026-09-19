@@ -13,6 +13,30 @@ const { CDP_SERVER_ERROR } = require('../../constants.cjs');
 const UI = { id: 'ui', type: 'page', url: 'file:///app/renderer/index.html' };
 const PAGE = { id: 'page-1', type: 'page', url: 'https://a.test/' };
 
+/** Targets auto-attach announces, paused for a debugger: another tab's page, and a run tab's iframe. */
+const ATTACHED = [
+  {
+    method: 'Target.attachedToTarget',
+    params: {
+      sessionId: 's-other',
+      targetInfo: { targetId: 'other', type: 'page', url: 'https://b.test/' },
+      waitingForDebugger: true,
+    },
+  },
+  {
+    method: 'Target.attachedToTarget',
+    sessionId: 's-page',
+    params: {
+      sessionId: 's-frame',
+      targetInfo: { targetId: 'frame-1', type: 'iframe', url: 'https://pay.test/' },
+      waitingForDebugger: true,
+    },
+  },
+];
+
+/** Every command the fake Chromium received. */
+const received = [];
+
 /** A loopback Chromium: /json endpoints and a debugger socket that answers every command. */
 async function fakeChromium() {
   const server = http.createServer((req, res) => {
@@ -26,7 +50,12 @@ async function fakeChromium() {
   });
   const wss = new WebSocket.Server({ server });
   wss.on('connection', (sock) =>
-    sock.on('message', (data) => sock.send(JSON.stringify(chromiumReply(JSON.parse(data))))),
+    sock.on('message', (data) => {
+      const msg = JSON.parse(data);
+      received.push(msg);
+      sock.send(JSON.stringify(chromiumReply(msg)));
+      if (msg.method === 'Target.setAutoAttach') for (const event of ATTACHED) sock.send(JSON.stringify(event));
+    }),
   );
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return { server, wss, port: server.address().port };
@@ -287,6 +316,33 @@ describe('cdp front door', () => {
     try {
       await call({ id: 1, method: 'Browser.getVersion' });
       assert.deepEqual([app.admitted, app.clients], [0, 0]);
+    } finally {
+      sock.close();
+      door.close();
+    }
+  });
+
+  it('resumes and lets go of a hidden target, and lets a run tab’s iframe into the run', async () => {
+    const { door, port } = await openDoor(chromium, { runToken: 'run', allowedTarget: (id) => id === 'page-1' });
+    const { sock, call } = await harness(`ws://127.0.0.1:${port}/devtools/browser/b`, { 'x-oya-run': 'run' });
+    const seen = [];
+    sock.on('message', (data) => seen.push(JSON.parse(data)));
+    try {
+      received.length = 0;
+      await call({ id: 1, method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: true } });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const attached = seen
+        .filter((m) => m.method === 'Target.attachedToTarget')
+        .map((m) => m.params.targetInfo.targetId);
+      assert.deepEqual(attached, ['frame-1']);
+      const released = received.filter((m) => m.id < 0).map((m) => [m.method, m.sessionId || m.params?.sessionId]);
+      assert.deepEqual(released, [
+        ['Runtime.runIfWaitingForDebugger', 's-other'],
+        ['Target.detachFromTarget', 's-other'],
+      ]);
+      assert.ok(!seen.some((m) => m.id < 0), 'the bridge’s own replies never reach the harness');
+      const frame = await call({ id: 2, method: 'Target.getTargetInfo', params: { targetId: 'frame-1' } });
+      assert.equal(frame.result.echoed, 'Target.getTargetInfo');
     } finally {
       sock.close();
       door.close();

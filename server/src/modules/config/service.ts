@@ -21,7 +21,7 @@ import { sealText, openText } from '../../platform/secrets.ts';
 import { runtimeConfig } from '../../platform/runtime-config.ts';
 import { isConfigured as cloudConfigured } from '../../drivers/sandbox.ts';
 import { FIELDS, PROVIDER_CHOICES, LLM_DEFAULTS } from './fields.ts';
-import { store, state, scopeFor, flush } from './store.ts';
+import { store, state, scopeFor, flush, markChanged, changed } from './store.ts';
 import { MASK_TAIL } from './constants.ts';
 
 export { FIELDS, PROVIDER_CHOICES } from './fields.ts';
@@ -108,7 +108,7 @@ async function apply(owner, row, [field, spec], value) {
 /** Keep a changed row and write it out in the background. */
 function commit(owner, row) {
   store.set(owner, row);
-  state.dirty = true;
+  markChanged(owner);
   flush().catch((e) => console.error('[key-config] save failed:', e.message));
 }
 
@@ -186,4 +186,5 @@ export function providerFor(apiKey) {
 export function reset() {
   store.clear();
   state.dirty = false;
+  changed.clear();
 }

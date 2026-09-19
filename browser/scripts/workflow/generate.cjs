@@ -5,7 +5,7 @@
  */
 const { STEP } = require('../constants.cjs');
 const { locatorCode } = require('./locators.cjs');
-const { RESERVED } = require('./rules.cjs');
+const { RESERVED, visibleOnly } = require('./rules.cjs');
 const { normalizeDraft } = require('./normalize.cjs');
 const { issues, variableNames } = require('./issues.cjs');
 
@@ -20,6 +20,8 @@ const HEADER = [
 const HELPERS = [
   "  const value = x => String(x ?? '').replace(/\\{\\{([A-Za-z_]\\w*)\\}\\}/g, (_, key) => String(vars[key] ?? '')); ",
   "  const pages = hooks.pages || new Map([['main', page]]); let p = page;",
+  // The role-name rule of workflow/locators.cjs roleName: exact, give or take icons around it.
+  "  const named = x => new RegExp('^\\\\W*' + String(x).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\\\W*$');",
 ];
 
 /** The module's opening: header, variable defaults and the missing-variable check, helpers. */
@@ -57,7 +59,9 @@ function actionContext(step) {
   let owner = 'p';
   for (const frame of step.frames) owner += `.frameLocator(${JSON.stringify(frame)})`;
   const first = step.candidates[0];
-  const locator = first ? locatorCode(first, owner, `value(${JSON.stringify(first.value)})`) : null;
+  const locator = first
+    ? locatorCode(first, owner, `value(${JSON.stringify(first.value)})`) + visibleOnly(step.action)
+    : null;
   const val = (key) => `value(${JSON.stringify(step[key] ?? '')})`;
   return { step, locator, val, timeout: `{timeout:${step.timeout}}` };
 }

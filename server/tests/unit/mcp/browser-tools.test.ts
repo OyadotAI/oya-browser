@@ -61,6 +61,13 @@ describe('browser tools', () => {
     });
   });
 
+  it('returns a CDP screenshot as a JPEG, not a mislabelled PNG', async () => {
+    const { server } = tools(() => ({ ok: true, data: { screenshot: 'data:image/jpeg;base64,QUJD' } }));
+    assert.deepEqual(await server.call('screenshot'), {
+      content: [{ type: 'image', data: 'QUJD', mimeType: 'image/jpeg' }],
+    });
+  });
+
   it('says so when a screenshot comes back empty', async () => {
     const { server } = tools(() => ({ ok: true, data: {} }));
     assert.equal(textOf(await server.call('screenshot')), 'Screenshot captured but no image data returned');
@@ -82,16 +89,22 @@ describe('browser tools', () => {
     assert.deepEqual(driver.sent[1].params, { x: 1, y: 2 });
   });
 
-  it('lists elements with their best label', async () => {
+  it('lists elements with the ids analyze gives, scoped by a selector and limited', async () => {
     const data = {
       url: 'u',
       title: 'T',
-      elements: [{ tag: 'button', id: 'go', text: 'Go' }, { tag: 'input', placeholder: 'Email' }, { tag: 'div' }],
+      markdown: 'ignored',
+      elements: [
+        { id: 1, type: 'button', text: 'Go', visible: true },
+        { id: 2, type: 'link', text: 'Home', visible: true },
+      ],
     };
     const { server, driver } = tools(() => ({ ok: true, data }));
-    const out = textOf(await server.call('read_elements', { limit: 3 }));
-    assert.equal(out, 'Page: T (u)\n\nElements (3):\nbutton#go — Go\ninput — Email\ndiv — (no text)');
-    assert.equal(driver.sent[0].action, 'read_page');
+    const out = textOf(await server.call('read_elements', { selector: 'nav', limit: 1 }));
+    assert.ok(out.includes('Page: T (u)\n\n## Element Index (1 total, 1 visible)'));
+    assert.ok(out.includes('1,button,Go'));
+    assert.ok(!out.includes('Home') && !out.includes('ignored'));
+    assert.deepEqual([driver.sent[0].action, driver.sent[0].params], ['analyze', { selector: 'nav' }]);
   });
 
   it('lists tabs with the active one marked', async () => {

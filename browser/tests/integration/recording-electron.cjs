@@ -9,10 +9,14 @@ const path = require('node:path');
 const os = require('node:os');
 const { createServer } = require('node:http');
 const { RecordingChannel } = require('../../scripts/recording.cjs');
+const { candidates } = require('../../scripts/workflow.cjs');
 const { LoginState } = require('../../login-state');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-recorder-electron-'));
 app.setPath('userData', profile);
 app.commandLine.appendSwitch('disable-gpu');
+// Keep rendering with the screen locked or asleep: an unrendered page takes no real clicks.
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.once('quit', () => fs.rmSync(profile, { recursive: true, force: true }));
 const analyzerScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts/analyzer.js'), 'utf8');
 // The app's own analyzer context creation/recreation, alongside recording.
@@ -233,6 +237,119 @@ let server, win, channel;
   assert(
     !steps.some((s) => s.action === 'click' && s.el?.domId === 'keyboardButton'),
     'Enter activation is not duplicated',
+  );
+  steps.length = 0;
+  // Widgets the recorder used to miss: a transparent styled checkbox, an ARIA
+  // combobox whose option removes itself on pointerdown, an icon-only button,
+  // arrow keys in a list, and a hidden file input.
+  await view.webContents.executeJavaScript(`document.body.innerHTML = \`
+    <label><span style="position:relative;display:inline-block;width:30px;height:30px">
+      <input id="styledCheck" type="checkbox" style="position:absolute;left:0;top:0;width:30px;height:30px;margin:0;opacity:0"></span>Subscribe</label>
+    <div id="combo" role="combobox" tabindex="0" style="width:120px" onclick="list.style.display='block'">Country</div>
+    <div id="list" role="listbox" style="display:none"><div id="france" role="option" style="width:120px">France</div></div>
+    <div id="iconButton" style="cursor:pointer;width:30px;height:30px"><svg width="30" height="30"></svg></div>
+    <ul id="menu" role="listbox" tabindex="0"><li role="option">A</li><li role="option">B</li></ul>
+    <div id="plain" tabindex="0">Plain text</div>
+    <input type="checkbox" id="id_912" name="reviews" value="344">
+    <a id="priceFilter" href="#price-0-100"><span>$0.00</span> - <span id="priceTo">$99.99</span></a>
+    <div style="position:relative;width:60px;height:24px"><input id="switchInput" type="checkbox" style="position:absolute;left:0;top:0;margin:0">
+      <label id="switchLabel" for="switchInput" style="position:absolute;left:0;top:0;width:60px;height:24px;background:#ccc"></label></div>
+    <div data-index="first"><button>Cancel</button></div><div data-index="second"><button id="secondCancel">Cancel</button></div>
+    <input id="upload" type="file" style="display:none">
+    <a id="menuLink" href="#" style="text-transform:uppercase"><span id="menuSpan" style="cursor:pointer">Reports</span></a>\`;
+    document.getElementById('france').addEventListener('pointerdown', () => { combo.textContent = 'France'; list.remove(); });`);
+  await start();
+  await click('styledCheck');
+  await click('combo');
+  await click('france');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  await click('iconButton');
+  await view.webContents.executeJavaScript(`document.getElementById('menu').focus()`);
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'ArrowDown',
+    code: 'ArrowDown',
+    windowsVirtualKeyCode: 40,
+  });
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'ArrowDown',
+    code: 'ArrowDown',
+    windowsVirtualKeyCode: 40,
+  });
+  await click('menuSpan');
+  await click('secondCancel');
+  await click('id_912');
+  await click('priceTo');
+  await click('switchLabel');
+  // Keys on something that is not a widget (the page, a plain block) scroll; they are not steps.
+  await view.webContents.executeJavaScript(`document.getElementById('plain').focus()`);
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: ' ',
+    code: 'Space',
+    windowsVirtualKeyCode: 32,
+    text: ' ',
+  });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'ArrowDown',
+    code: 'ArrowDown',
+    windowsVirtualKeyCode: 40,
+  });
+  await send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'ArrowDown',
+    code: 'ArrowDown',
+    windowsVirtualKeyCode: 40,
+  });
+  const { root } = await send('DOM.getDocument', {});
+  const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: '#upload' });
+  await send('DOM.setFileInputFiles', { nodeId, files: [__filename] });
+  await channel.stop();
+  channel = null;
+  const clicked = (id) => steps.filter((s) => s.action === 'click' && s.el?.domId === id).length;
+  assert.equal(clicked('styledCheck'), 1, 'a transparent styled checkbox records its click');
+  assert.equal(clicked('combo'), 1, 'an ARIA combobox records the click that opens it');
+  assert(
+    steps.some((s) => s.action === 'click' && s.el?.domId === 'france'),
+    'an option that removes itself on pointerdown is still recorded',
+  );
+  assert.equal(clicked('iconButton'), 1, 'an icon-only pointer button records its click');
+  assert.equal(
+    steps.filter((s) => s.action === 'press_key' && s.key === 'ArrowDown').length,
+    1,
+    'arrow keys in a list are recorded, and not on a plain block',
+  );
+  assert(!steps.some((s) => s.action === 'press_key' && s.key === 'Space'), 'Space on a plain block is not recorded');
+  assert(
+    steps.some((s) => s.action === 'upload_file' && s.el?.domId === 'upload'),
+    'a hidden file input records the upload',
+  );
+  const menu = steps.find((s) => s.action === 'click' && ['menuLink', 'menuSpan'].includes(s.el?.domId));
+  assert.equal(menu?.el.domId, 'menuLink', 'a click on the span inside a link records the link');
+  assert.equal(menu?.el.text, 'Reports', 'the label is the text as written, not as CSS capitalises it');
+  assert.equal(menu?.el.rawHref, '#', 'the link keeps its href as written');
+  const toggles = steps.filter((s) => s.action === 'click' && ['switchInput', 'switchLabel'].includes(s.el?.domId));
+  assert.deepEqual(
+    toggles.map((s) => s.el.domId),
+    ['switchLabel'],
+    'a switch whose input sits under its label records one click, on the label',
+  );
+  const price = steps.find((s) => s.action === 'click' && s.el?.domId === 'priceFilter');
+  assert.equal(price?.el.text, '$0.00 - $99.99', 'a link whose own text is only a dash is named by all it shows');
+  const row = steps.find((s) => s.action === 'click' && s.el?.domId === 'id_912');
+  assert.equal(
+    candidates(row?.el)[0]?.value,
+    'input[name="reviews"][value="344"]',
+    'a grid checkbox is found by its value',
+  );
+  const cancel = steps.find((s) => s.action === 'click' && s.el?.domId === 'secondCancel');
+  assert.equal(
+    cancel?.el.scoped,
+    '[data-index="second"] button:text-is("Cancel")',
+    'a repeated name is scoped to the container where it is unique',
   );
   steps.length = 0;
   await view.webContents.executeJavaScript(

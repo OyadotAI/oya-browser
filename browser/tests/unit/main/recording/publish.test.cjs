@@ -71,6 +71,14 @@ describe('saveRecording', () => {
     assert.deepEqual(await saveRecording(ctx), { error: 'offline' });
   });
 
+  it('gives up on a server that does not answer, saying so', async () => {
+    globalThis.fetch.mock.mockImplementation(async (url, init) => {
+      assert.ok(init.signal instanceof AbortSignal, 'the save carries a timeout');
+      throw Object.assign(new Error('aborted'), { name: 'TimeoutError' });
+    });
+    assert.deepEqual(await saveRecording(ctx, 'n', 'd'), { error: 'The server took too long to save. Try again.' });
+  });
+
   it('stops a running recording before saving it', async () => {
     let stopped = false;
     ctx.recorder.recording = true;

@@ -49,9 +49,34 @@ const PAGE = `<!doctype html><title>CDP fixture</title>
 <input placeholder="name">
 <div style="height:3000px"></div>`;
 
+// What the analyzer's markdown has to carry for the agent to read a modern page:
+// React-style markup with no whitespace between elements, a link wrapping a
+// whole product card, and widgets whose state lives only in ARIA attributes.
+const READER =
+  `<!doctype html><title>Reader fixture</title><main><div>$19.99</div><div>4.5 stars</div>` +
+  `<a href="/p/1"><div>Espresso machine with a long name that runs past the label cap of the analyzer</div><div>Price $249.00</div></a>` +
+  `<div role="switch" aria-checked="true" tabindex="0">Dark mode</div>` +
+  `<div role="tablist"><div role="tab" aria-selected="true">Overview</div><div role="tab" aria-selected="false">Specs</div></div>` +
+  `<button aria-expanded="false">Menu</button><button aria-disabled="true">Buy</button></main>`;
+
+// A mail-style app: a small chat dialog that must not hide the page, a list
+// that scrolls inside a panel, a cookie banner over a button, a label that
+// wraps its checkbox, an image with no alt, and a cell holding a pipe.
+const APP =
+  `<!doctype html><title>App fixture</title><body style="margin:0">` +
+  `<div role="dialog" style="position:fixed;right:0;bottom:0;width:200px;height:120px">Chat with us</div>` +
+  `<div style="height:300px;overflow-y:auto"><div style="height:2000px">Inbox</div></div>` +
+  `<label><input type="checkbox"> Remember me</label><img src="/x.png">` +
+  `<table><tr><td>a|b</td><td>c</td></tr></table>` +
+  `<button style="position:absolute;top:250px;left:10px">Under</button>` +
+  `<div style="position:fixed;top:200px;left:0;width:100%;height:150px;background:#fff">Cookie banner</div></body>`;
+
+/** Each fixture page by path; anything else is the main fixture. */
+const PAGES = { '/reader': READER, '/app': APP };
+
 const site = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end(PAGE);
+  res.end(Object.hasOwn(PAGES, req.url) ? PAGES[req.url] : PAGE);
 });
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
@@ -219,6 +244,34 @@ try {
     assert(dc.ok, 'double_click is accepted');
     const dr = await driver.send('drag', { from_x: 5, from_y: 5, to_x: 50, to_y: 50 });
     assert(dr.ok, 'drag is accepted');
+  }
+
+  console.log('\n7\ufe0f\u20e3c  The markdown carries what the agent needs to read the page...');
+  {
+    await driver.send('navigate', { url: siteUrl + 'reader' });
+    const md = (await driver.send('analyze')).data?.markdown || '';
+    assert(/\$19\.99\s+4\.5 stars/.test(md), 'adjacent blocks are separated, not run together');
+    assert(md.includes('Price $249.00'), 'a link wrapping a card keeps the text its label cannot hold');
+    assert(/☑ "Dark mode"/.test(md), 'an aria-checked switch reads as checked');
+    assert(/"Overview" selected/.test(md) && !/"Specs" selected/.test(md), 'the selected tab is marked');
+    assert(/button "Menu" collapsed/.test(md), 'a collapsed menu button says so');
+    assert(/button "Buy" disabled/.test(md), 'an aria-disabled button reads as disabled');
+
+    await driver.send('navigate', { url: siteUrl + 'app' });
+    const app = (await driver.send('analyze')).data;
+    assert(
+      !/^modal:/m.test(app.markdown) && app.markdown.includes('Inbox'),
+      'a small non-modal dialog does not hide the page',
+    );
+    assert(/^panel scroll: 0% /m.test(app.markdown), 'a panel that scrolls its own content is reported');
+    const under = app.elements.find((e) => e.text === 'Under');
+    assert(
+      under?.covered === true && /^covered: 2 /m.test(app.markdown),
+      'a button (and the checkbox) behind a banner are marked covered',
+    );
+    assert(app.markdown.split('Remember me').length === 2, 'a label wrapping its checkbox is not repeated');
+    assert(!app.markdown.includes('[image]'), 'an image with no alt adds nothing');
+    assert(app.markdown.includes('a\\|b'), 'a pipe inside a table cell is escaped');
   }
 
   console.log('\n\u0038\ufe0f\u20e3  The page carries no trace of this product...');

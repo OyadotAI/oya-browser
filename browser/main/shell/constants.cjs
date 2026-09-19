@@ -18,6 +18,8 @@ const DEFAULT_PANEL_WIDTH = 360;
 const MIN_PANEL_WIDTH = 320;
 /** The widest the dev panel may be dragged. */
 const MAX_PANEL_WIDTH = 560;
+/** One zoom step, in Chromium zoom levels (each level is 20% larger). */
+const ZOOM_STEP = 0.5;
 /** A resize is saved once the drag has been still this long. */
 const PANEL_SAVE_DELAY_MS = 180;
 /** How long the dev panel takes to slide open or shut. */
@@ -45,6 +47,7 @@ module.exports = {
   DEFAULT_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
   MAX_PANEL_WIDTH,
+  ZOOM_STEP,
   PANEL_SAVE_DELAY_MS,
   PANEL_MOTION_MS,
   PANEL_FRAME_MS,

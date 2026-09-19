@@ -13,6 +13,8 @@ const isUi = (info) =>
 class FrontDoor {
   /** Target ids a harness must never see. */
   hidden = new Set();
+  /** Iframes and workers of a validation run's tabs: part of the run, though opened after it started. */
+  runChildren = new Set();
 
   /** The options `start` was given; `up` is Chromium's own endpoint. */
   constructor(options) {
@@ -23,9 +25,14 @@ class FrontDoor {
     this.up = `127.0.0.1:${options.upstream}`;
   }
 
+  /** Whether a target belongs to the validation run (always, outside a run): one of its tabs, or their frames and workers. */
+  inRun(id) {
+    return !this.allowedTarget || this.allowedTarget(id) || this.runChildren.has(id);
+  }
+
   /** Whether a target is off limits: the UI, or (in a validation run) outside the run. */
   blocked(info, id) {
-    return isUi(info) || (!!this.allowedTarget && !this.allowedTarget(id));
+    return isUi(info) || !this.inRun(id);
   }
 
   /** Whether a target seen over CDP (a TargetInfo) is hidden. */

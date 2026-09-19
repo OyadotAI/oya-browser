@@ -137,10 +137,23 @@ function addToolResult(contents, message) {
 
 /** A message's text and tool calls as Gemini parts. */
 function messageParts(message) {
-  const parts = [];
-  if (message.content) parts.push({ text: message.content });
+  const parts: any[] = contentParts(message.content);
   for (const call of message.tool_calls || []) parts.push(functionCallPart(call));
   return parts;
+}
+
+/** OpenAI message content, a string or text and image parts, as Gemini parts. */
+function contentParts(content) {
+  if (!Array.isArray(content)) return content ? [{ text: content }] : [];
+  return content.map((part) =>
+    part.type === 'image_url' ? imagePart(part.image_url?.url) : { text: part.text || '' },
+  );
+}
+
+/** A base64 data-URL image as Gemini inline data. */
+function imagePart(url) {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(String(url || ''));
+  return match ? { inlineData: { mimeType: match[1], data: match[2] } } : { text: '' };
 }
 
 /** One OpenAI tool call as a Gemini functionCall part. */

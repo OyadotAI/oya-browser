@@ -23,9 +23,14 @@ const LABELLED = ['input', 'textarea', 'editable'];
 /** CSS locators from the element's id, name and link target. */
 function attributeCandidates(el) {
   const out = [];
+  // A checkbox or radio by its group and value: stable where the page makes up its id.
+  if (el.name && el.choice)
+    out.push({ kind: 'css', value: `input[name=${JSON.stringify(el.name)}][value=${JSON.stringify(el.choice)}]` });
   if (el.domId) out.push({ kind: 'css', value: `[id=${JSON.stringify(el.domId)}]` });
   if (el.name) out.push({ kind: 'css', value: `[name=${JSON.stringify(el.name)}]` });
-  if (el.href) out.push({ kind: 'css', value: `a[href=${JSON.stringify(el.href)}]` });
+  const href = el.rawHref ?? el.href;
+  // A link to "#" or a script matches every such link on the page: no locator at all.
+  if (href && !/^(#|javascript:)/i.test(href)) out.push({ kind: 'css', value: `a[href=${JSON.stringify(href)}]` });
   return out;
 }
 
@@ -52,7 +57,26 @@ function candidates(el = {}) {
   const byAttribute = attributeCandidates(el);
   const field = FIELD.has(el.type);
   const byTestId = el.testId ? [{ kind: 'testId', value: el.testId }] : [];
-  return [...byTestId, ...(field ? byAttribute : []), ...nameCandidates(el), ...(field ? [] : byAttribute)];
+  // A repeated name scoped to the container where it is unique (recorded only when the name repeats).
+  const byScope = el.scoped ? [{ kind: 'css', value: el.scoped }] : [];
+  const byName = [...nameCandidates(el), ...byScope];
+  const found = [...byTestId, ...(field ? [...byAttribute, ...byName] : [...byName, ...byAttribute])];
+  return withPath(found, el.path);
+}
+
+/** Its position is the last resort: what replay falls back to when every name is ambiguous. */
+function withPath(found, path) {
+  return path && !found.some((c) => c.value === path) ? [...found, { kind: 'css', value: path }] : found;
+}
+
+/**
+ * A role name as a pattern: the recorded text exactly, allowing the icon glyphs
+ * and punctuation a page draws around it. Playwright counts CSS ::before icons
+ * in the accessible name (Magento's menu reads " Reports"), so an exact name
+ * would never match. The generated module carries the same rule as `named`.
+ */
+function roleName(text) {
+  return new RegExp('^\\W*' + String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\W*$');
 }
 
 /** Playwright code that locates `candidate` under `owner`, with `value` as the code for its value. */
@@ -60,8 +84,8 @@ function locatorCode(candidate, owner = 'p', value = JSON.stringify(candidate?.v
   const c = candidate;
   if (!c || !LOCATOR_KINDS.includes(c.kind)) throw new Error('Pick a supported locator');
   if (c.kind === 'css') return `${owner}.locator(${value})`;
-  if (c.kind === 'role') return `${owner}.getByRole(${JSON.stringify(c.role)}, {name: ${value}, exact:true})`;
+  if (c.kind === 'role') return `${owner}.getByRole(${JSON.stringify(c.role)}, {name: named(${value})})`;
   return `${owner}.${LOCATOR_METHODS[c.kind]}(${value}${c.kind === 'testId' ? '' : ', {exact:true}'})`;
 }
 
-module.exports = { LOCATOR_KINDS, LOCATOR_METHODS, candidates, locatorCode };
+module.exports = { LOCATOR_KINDS, LOCATOR_METHODS, candidates, locatorCode, roleName };

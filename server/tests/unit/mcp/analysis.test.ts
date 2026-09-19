@@ -31,6 +31,32 @@ describe('analysis', () => {
     assert.ok(!page.includes('visible['));
   });
 
+  it('caps a long page like the agent does, keeping the element index', () => {
+    const { page } = analysis({
+      markdown: 'y'.repeat(100_000),
+      elements: [{ id: 1, type: 'link', text: 'Home', visible: true }],
+    });
+    assert.ok(page.length < 100_000);
+    assert.ok(page.includes('⚠ Output truncated to fit context window.'));
+    assert.ok(page.includes('visible[1]{id,type,label,link}:\n  1,link,Home,'));
+  });
+
+  it('shows the ARIA state of a visible element beside its label', () => {
+    const { page } = analysis({
+      markdown: '',
+      elements: [{ id: 2, type: 'button', text: 'Menu', state: 'expanded', visible: true }],
+    });
+    assert.ok(page.includes('2,button,Menu (expanded),'));
+  });
+
+  it('shows a field’s ARIA state, and when it is covered, in its state column', () => {
+    const { page } = analysis({
+      markdown: '',
+      elements: [{ id: 5, type: 'select', text: 'Country', state: 'expanded covered', visible: true }],
+    });
+    assert.ok(page.includes('5,select,Country,"","",expanded covered'));
+  });
+
   it('warns when the page was cut short', () => {
     assert.match(analysis({ markdown: '', elements: [], truncated: true }).page, /Page content was truncated/);
   });

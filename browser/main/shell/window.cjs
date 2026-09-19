@@ -92,12 +92,19 @@ class ShellWindow {
     };
   }
 
-  /** The shell is a local page: it never navigates away or opens windows of its own. */
+  /**
+   * The shell is a local page: it never navigates away or opens windows of its
+   * own, and it is never zoomed. Its layout is in window pixels; Chromium
+   * remembers a zoom per origin, so one left by an older build is undone here.
+   */
   lockToShellPage() {
     const contents = this.window.webContents;
     contents.on('will-navigate', (event) => event.preventDefault());
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    contents.on('did-finish-load', () => this.ctx.layout.layoutActiveTab());
+    contents.on('did-finish-load', () => {
+      contents.setZoomLevel(0);
+      this.ctx.layout.layoutActiveTab();
+    });
   }
 
   /** Repaints the window and tells the page when the system theme changes. */

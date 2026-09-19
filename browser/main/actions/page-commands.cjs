@@ -184,7 +184,6 @@ const shownIfChanged = (shown, text) => (typeof shown === 'string' && shown !== 
 /** Waits for autocomplete to appear, then reports whether a suggestion list is showing. */
 async function suggestionsVisible(driver, view) {
   await sleep(c.SUGGESTIONS_MS);
-  await driver.ctx.worldEval(view, s.FORCE_POLL_JS).catch(() => {});
   await driver.ctx.injectScripts(view);
   return driver.ctx.worldEval(view, s.DROPDOWN_JS, true).catch(() => false);
 }
@@ -204,10 +203,12 @@ const PAGE_COMMANDS = {
     driver.ctx.sendResult(id, true, { url: view.webContents.getURL(), title: view.webContents.getTitle() });
   },
 
-  /** A PNG of the active tab, over CDP. */
-  async screenshot(driver, id) {
-    const result = await cdp(driver.ctx.getActiveView(), 'Page.captureScreenshot', { format: 'png' });
-    driver.ctx.sendResult(id, true, { screenshot: 'data:image/png;base64,' + result.data });
+  /** A PNG of the active tab over CDP, or a JPEG when asked (a model reads it). */
+  async screenshot(driver, id, params) {
+    const jpeg = params?.format === 'jpeg';
+    const shot = jpeg ? { format: 'jpeg', quality: c.SCREENSHOT_JPEG_QUALITY } : { format: 'png' };
+    const result = await cdp(driver.ctx.getActiveView(), 'Page.captureScreenshot', shot);
+    driver.ctx.sendResult(id, true, { screenshot: `data:image/${shot.format};base64,` + result.data });
   },
 
   /** Clicks an element with the CDP mouse and follows any navigation it starts. */

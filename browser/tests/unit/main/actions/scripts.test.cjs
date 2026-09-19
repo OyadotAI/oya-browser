@@ -29,7 +29,6 @@ describe('page scripts', () => {
       s.devWaitJs({ selector: 'a' }),
       s.scrollResultJs({ direction: 'up' }, 5),
       s.DROPDOWN_JS,
-      s.FORCE_POLL_JS,
       s.DEV_ANALYZE_JS,
     ]) {
       assert.doesNotThrow(() => new Function(js), js.slice(0, 60));

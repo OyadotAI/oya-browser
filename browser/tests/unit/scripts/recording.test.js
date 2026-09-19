@@ -122,6 +122,23 @@ describe('RecordingChannel', () => {
     assert.deepEqual(received.at(-1).steps[0].frames, []);
   });
 
+  it('keeps delivering after one delivery fails', async () => {
+    const page = fakePage();
+    let calls = 0;
+    const receive = (data) => {
+      calls++;
+      if (data.steps[0].action === 'bad') throw new Error('boom');
+    };
+    const { channel } = channelOn(page, { receive });
+    await channel.start();
+    const logged = mock.method(console, 'error', () => {});
+    await channel.deliver({ steps: [{ action: 'bad' }] }, 10);
+    await channel.deliver({ steps: [{ action: 'click' }] }, 10);
+    assert.equal(calls, 2);
+    assert.equal(logged.mock.callCount(), 1);
+    await assert.doesNotReject(channel.stop());
+  });
+
   it('delivers a status message untouched and ignores other bindings and bad JSON', async () => {
     const page = fakePage();
     const { channel, received } = channelOn(page);

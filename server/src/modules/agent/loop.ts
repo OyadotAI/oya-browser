@@ -8,6 +8,7 @@ import { executeTool } from './executor.ts';
 import { recordStep } from './recorder.ts';
 import { fill, redact } from './placeholders.ts';
 import { trimContext } from './context.ts';
+import { takeScreenshot, addImageTurn } from './screenshot.ts';
 import { chatCompletion } from '../../platform/llm.ts';
 import { metrics } from '../../platform/metrics.ts';
 import * as usage from '../../platform/usage.ts';
@@ -50,6 +51,8 @@ export type LoopContext = {
   checkpoint?: () => any;
   /** When given, lets the agent ask a person and wait for the reply. */
   requestHuman?: (ask: any) => any;
+  /** A screenshot taken in this turn, shown to the model after the tool results. */
+  image?: string;
   /** The last tool call and how many times in a row it was made. */
   lastCall?: {
     /** The call's name and arguments, as one string. */
@@ -79,9 +82,17 @@ function parseArgs(raw) {
 const filled = (args, values) =>
   Object.fromEntries(Object.entries(args).map(([k, v]) => [k, FILLED_ARGS.includes(k) ? fill(v, values) : v]));
 
-/** Runs a call: request_human asks the person, anything else goes to the browser. */
+/** Takes a screenshot, keeping its image for the turn after the tool results. */
+async function screenshotFor(ctx: LoopContext) {
+  const shot = await takeScreenshot(ctx.browserId, ctx.secrets);
+  ctx.image = shot.image;
+  return shot.text;
+}
+
+/** Runs a call: request_human asks the person, screenshot is shown as an image, anything else goes to the browser. */
 async function invoke(ctx: LoopContext, name, args) {
   try {
+    if (name === 'screenshot') return await screenshotFor(ctx);
     return name === 'request_human' && ctx.requestHuman
       ? `The person replied: ${await ctx.requestHuman({ reason: 'agent', message: String(args.message || '') })}`
       : await executeTool(ctx.browserId, name, filled(args, ctx.values), ctx.files);
@@ -151,6 +162,8 @@ async function handleToolCalls(ctx: LoopContext, allMessages, msg) {
   for (const tc of toolCalls) toolResults.push({ tool_call_id: tc.id, content: await callTool(ctx, tc) });
   allMessages.push(assistantTurn(msg, toolCalls));
   for (const tr of toolResults) allMessages.push({ role: 'tool', tool_call_id: tr.tool_call_id, content: tr.content });
+  if (ctx.image) addImageTurn(allMessages, ctx.image);
+  ctx.image = undefined;
 }
 
 /** Asks the model for its next move, billing the tokens. */
