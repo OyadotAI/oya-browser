@@ -15,6 +15,7 @@ const {
   missingIdentity,
   stableTarget,
   rawTargetOf,
+  volatileTarget,
   stableId,
   withoutLiveCount,
 } = require('./workflow/handles.cjs');
@@ -32,6 +33,7 @@ module.exports = {
   missingIdentity,
   stableTarget,
   rawTargetOf,
+  volatileTarget,
   stableId,
   withoutLiveCount,
   normalizeStep,

@@ -3,9 +3,13 @@
  * with each analysis, so steps keep the analyzer's stable metadata instead.
  * ponytail: in memory, oldest evicted past 1000 browsers; a run is lost on restart unless saved as a playbook.
  */
+import workflow from '../../../../browser/scripts/workflow.cjs';
+
 import { sendCommand } from '../browsers/socket.ts';
 import { redact, dataKey } from './placeholders.ts';
 import { MAX_RECORDED_RUNS } from './constants.ts';
+
+const { handlesOf } = workflow as any;
 
 /**
  * Tools whose calls become playbook steps.
@@ -77,8 +81,30 @@ const STABLE_KEYS = [
 /** browserId -> { prompt, steps, elements } */
 const runs = new Map();
 
-/** Only the fields the browser actually reported, so a gap there keeps the analysis's answer. */
+/** Only the fields the browser actually reported. */
 const defined = (handle = {}) => Object.fromEntries(Object.entries(handle || {}).filter(([, v]) => v !== undefined));
+
+/**
+ * The handles the browser reads off the element as it clicks it, whether or not the
+ * element has them. What it leaves out — the analyzer's own workings — is all the
+ * analysis still contributes once the browser has spoken.
+ */
+const REPORTED_KEYS = [
+  'tag',
+  'text',
+  'domId',
+  'name',
+  'ariaLabel',
+  'testId',
+  'placeholder',
+  'rawHref',
+  'href',
+  'role',
+  'path',
+];
+
+/** The analysis without the fields the browser reports for itself. */
+const analyzerOnly = (e = {}) => Object.fromEntries(Object.entries(e).filter(([k]) => !REPORTED_KEYS.includes(k)));
 
 /** An element's stable handles, without the id that dies with the analysis. */
 const stable = (e: any = {}) => Object.fromEntries(STABLE_KEYS.filter((k) => e[k] !== undefined).map((k) => [k, e[k]]));
@@ -125,13 +151,16 @@ export async function startRun(browserId, run) {
 
 /** The element a step acts on, with visible data and secrets alike redacted: a playbook stores placeholders, never values. */
 function redactedElement(run, elementId, values) {
-  // The analysis describes the element most fully; the browser's own reading of it
-  // is the one that cannot be stale. Merged, not chosen between: replacing the
-  // analysis lost the path and the worked-out names, and a page whose only handle
-  // is its structure then had nothing to aim at.
+  // The browser's own reading of the element it acted on cannot be stale, so where
+  // it speaks it decides — including about the handles the element does not have.
+  // Letting a missing field fall through to the analysis inherited an href from a
+  // different element: a click on a Start button was recorded as a click on the
+  // footer link that shared its id in a stale analysis, and replayed as one. The
+  // analysis still contributes what the browser never reports — the type, and the
+  // names it worked out for a repeated or drifting label.
   const analyzed = run.elements.find((e) => e.id === Number(elementId));
   const reported = run.handles?.get(Number(elementId));
-  const el = stable({ ...analyzed, ...defined(reported) });
+  const el = stable(reported ? { ...analyzerOnly(analyzed), ...defined(reported) } : analyzed);
   for (const k of Object.keys(el)) el[k] = redact(el[k], values);
   return el;
 }
@@ -146,8 +175,13 @@ async function tabHandle(browserId) {
   return tabs?.data?.tabs?.find((t) => t.active)?.url;
 }
 
-/** Whether any handle on this element could find it again. */
-const aimable = (el) => Object.values(el || {}).some((v) => v !== undefined && v !== null && v !== '');
+/**
+ * Whether any handle on this element could find it again — asked of the one table
+ * that knows. "Any field with something in it" was not the same question: an element
+ * carrying only a tag and an empty label passed it, and the step then failed on
+ * replay with nothing to name ("no element matching \"\"").
+ */
+const aimable = (el) => handlesOf(el || {}).length > 0;
 
 /** What the step aims at: the element's stable handles, and the file a replay must bring. */
 function aim(step, run, name, args, values) {
@@ -163,10 +197,24 @@ function aim(step, run, name, args, values) {
   for (const k of STEP_ARGS) if (args[k] !== undefined) step[k] = args[k];
 }
 
+/**
+ * Drops the start step when the run's first act is to navigate somewhere itself.
+ *
+ * The start step exists to put a replay back on the page the run began on. A run
+ * that immediately navigates read nothing from that page, and keeping the step
+ * sends every replay through wherever the browser happened to be left — the
+ * previous run's page, challenge wall and all — before going where it meant to.
+ */
+function dropRedundantStart(run, name) {
+  if (name !== 'navigate' || run.steps.length !== 1) return;
+  if (run.steps[0].start) run.steps.pop();
+}
+
 /** Append a replayable tool call to the browser's current run, with typed values redacted to placeholders. */
 export async function recordStep(browserId, name, args, values) {
   const run = runs.get(browserId);
   if (!run || !RECORDED.has(name)) return;
+  dropRedundantStart(run, name);
   const step: any = { action: name };
   aim(step, run, name, args, values);
   if (TAB_ACTIONS.has(name)) step.tabUrl = await tabHandle(browserId);

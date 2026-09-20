@@ -5,7 +5,7 @@
  * Pointer and raw keyboard commands are in pointer-commands.cjs.
  */
 const { cdp, cdpEval } = require('../cdp.cjs');
-const { keyDef, typingDelay, sleep, cdpPressKey, cdpTypeText, cdpClick, cdpMouseMove } = require('../input.cjs');
+const { sleep, cdpPressKey, cdpTypeText, cdpClick, cdpMouseMove } = require('../input.cjs');
 const { jitter } = require('../input/timing.cjs');
 const s = require('./scripts.cjs');
 const c = require('./constants.cjs');
@@ -91,20 +91,6 @@ async function focusField(driver, id, view, selector) {
   return info;
 }
 
-/** Use sendInputEvent (routes to focused frame) instead of CDP (main frame only). */
-async function pressInFocusedFrame(view, key) {
-  const def = keyDef(key);
-  view.webContents.sendInputEvent({ type: 'keyDown', keyCode: def.key });
-  await sleep(jitter(c.FOCUS_PAUSE));
-  view.webContents.sendInputEvent({ type: 'keyUp', keyCode: def.key });
-}
-
-/** Presses one character in the focused frame as a person does: key down, the character, key up. */
-function sendCharacter(view, ch) {
-  const keyCode = ch === '\n' ? 'Enter' : ch;
-  for (const type of ['keyDown', 'char', 'keyUp']) view.webContents.sendInputEvent({ type, keyCode });
-}
-
 /** The field's current text, or null when it cannot be read. */
 const fieldValue = (driver, view, selector) =>
   driver.ctx.worldEval(view, s.fieldValueJs(selector), true).catch(() => null);
@@ -130,26 +116,17 @@ async function clearField(driver, view, selector, press) {
 }
 
 /**
- * Types into a field inside an iframe. CDP keyboard events do not reach iframes,
- * so real key events go through the focused frame instead. Real keys matter:
- * masked fields (a date as __/__/____) reset themselves after a script clears
- * them and swallowed the first character of text inserted without key events.
- */
-async function typeIntoIframe(driver, view, selector, text) {
-  await clearField(driver, view, selector, pressInFocusedFrame);
-  let prev = '';
-  for (const ch of text) {
-    sendCharacter(view, ch);
-    await sleep(typingDelay(ch, prev));
-    prev = ch;
-  }
-}
-
-/**
  * Clear existing content — use JS to target the specific element instead of
  * CDP Cmd+A which can select the entire page — then type with human cadence.
+ *
+ * One path for the page and for a frame inside it. A second path existed for
+ * iframes, on the belief that CDP keyboard events do not reach them; they do —
+ * clicking an input inside an iframe and typing through CDP puts the characters in
+ * it and fires the frame's own keydown. What the frame path actually did was
+ * nothing, in a frame or out of it, so typing into an iframe silently did nothing
+ * at all. Real key events still matter for masked fields, and these are real ones.
  */
-async function typeIntoPage(driver, view, selector, text) {
+async function typeIntoField(driver, view, selector, text) {
   await clearField(driver, view, selector, cdpPressKey);
   await cdpTypeText(view, text);
 }
@@ -175,8 +152,8 @@ async function setDate(driver, id, view, selector, { type, value }) {
 }
 
 /** Types into a text field, then reports whether suggestions appeared. */
-async function typeAndReport(driver, id, view, { selector, text, inIframe, handle }) {
-  await (inIframe ? typeIntoIframe : typeIntoPage)(driver, view, selector, text);
+async function typeAndReport(driver, id, view, { selector, text, handle }) {
+  await typeIntoField(driver, view, selector, text);
   const suggestions = await suggestionsVisible(driver, view);
   driver.ctx.sendResult(id, true, {
     typed: true,
@@ -242,16 +219,16 @@ const PAGE_COMMANDS = {
     const text = params?.text || '';
     if (!text) return driver.ctx.sendResult(id, true, { typed: true, ...withHandle(info) });
     if (await fillIfDate(driver, id, view, selector, text)) return;
-    await typeAndReport(driver, id, view, { selector, text, inIframe: info.data.inIframe, handle: info.data.handle });
+    await typeAndReport(driver, id, view, { selector, text, handle: info.data.handle });
   },
 
-  /** Presses one key in the focused frame; keys that change browser state are refused. */
+  /** Presses one key where the focus is; keys that change browser state are refused. */
   async press_key(driver, id, params) {
     const view = driver.ctx.getActiveView();
     const key = params?.key || 'Enter';
     if (BLOCKED_KEYS.has(key))
       return driver.ctx.sendResult(id, false, null, `Key "${key}" is blocked — it can change browser state`);
-    await pressInFocusedFrame(view, key);
+    await cdpPressKey(view, key);
     if (key === 'Enter' && (await settleNavigation(driver, view))) await driver.ctx.injectScripts(view);
     driver.ctx.sendResult(id, true, { key });
   },

@@ -2,6 +2,8 @@
  * Replay without the LLM: each recorded step is matched to the live page by its
  * stable handles and sent to the browser as a command. Works on every provider.
  */
+import workflow from '../../../../browser/scripts/workflow.cjs';
+
 import { sendCommand } from '../browsers/socket.ts';
 import { fill, selectOptionIn, uploadFileIn, isFileValue } from '../agent/chat.ts';
 import { HttpError } from '../../platform/errors.ts';
@@ -18,6 +20,8 @@ import {
 import { matchElement } from './match.ts';
 import { validateWorkflow } from './sanitize.ts';
 import { heal } from './heal.ts';
+
+const { contradicts, volatileTarget } = workflow as any;
 
 /** Replays one step against a browser. */
 type Replayer = (browserId: string, step: any, values: any, defaults: any) => Promise<any>;
@@ -101,10 +105,13 @@ async function find(browserId, el, text?) {
  */
 function directSelector(el) {
   if (el?.testId) return `[data-testid=${JSON.stringify(el.testId)}]`;
-  // As written, which is what the attribute selector matches.
+  // As written, which is what the attribute selector matches — and only where what
+  // was written will be written the same way again. Amazon's "page 2" link carries
+  // the visit's own qid and xpid, so as a selector it finds nothing on the next
+  // visit; comparing targets with that noise dropped is the analyzer pass's job.
   const target = el?.rawHref ?? el?.href;
-  if (target && String(el.tag || '').toLowerCase() === 'a') return `a[href=${JSON.stringify(target)}]`;
-  return null;
+  if (!target || String(el.tag || '').toLowerCase() !== 'a' || volatileTarget(target)) return null;
+  return `a[href=${JSON.stringify(target)}]`;
 }
 
 /** Clicks the recorded element, or the option a data-driven click now names. */
@@ -147,19 +154,17 @@ function withValues(el = {}, values) {
 /**
  * Whether what the browser clicked is what the recording meant. The click reports
  * the element's own handles, so a selector that resolved to something else — the
- * same test id reused on a different control, a link whose target now sits
- * elsewhere — is caught here rather than three steps later, when the replay has
- * already typed a member id into the wrong form.
+ * same test id reused on a different control — is caught here rather than three
+ * steps later, when the replay has already typed a member id into the wrong form.
+ *
+ * The judgement is the shared one, not a second opinion. Asking separately went
+ * wrong on Amazon, where the "Next" button and the "2" link carry the same href:
+ * the fast path clicked Next, the texts differed, and a step that had in fact
+ * reached page 2 was called a failure. Text is a handle that drifts, so it does
+ * not decide identity here either.
  */
 function clickedTheRight(el, clicked) {
-  if (!clicked) return true;
-  if (el.testId && clicked.testId && el.testId !== clicked.testId) return false;
-  if (el.tag && clicked.tag && el.tag.toLowerCase() !== clicked.tag.toLowerCase()) return false;
-  // Text drifts legitimately (a count, a date), so it is compared only when both
-  // sides have one and neither contains the other.
-  const [was, now] = [String(el.text || '').trim(), String(clicked.text || '').trim()];
-  if (!was || !now) return true;
-  return was.includes(now) || now.includes(was);
+  return !clicked || !contradicts(el, clicked);
 }
 
 /** Clicks a strong handle straight away, or null when there is none or it missed. */
@@ -170,7 +175,17 @@ async function clickDirect(browserId, el) {
   // Nothing resolved: fall back to analyzing and matching as before.
   if (!result) return null;
   if (clickedTheRight(el, result.handle)) return result;
-  throw new Error(`${selector} no longer points at ${JSON.stringify(el.text || el.testId)} — the page has changed`);
+  throw new Error(`${selector} no longer points at ${JSON.stringify(el.text || el.testId)}${whereItWent(result)}`);
+}
+
+/**
+ * Where the click actually left the browser, for the message that says the handle
+ * missed. "The page has changed" was true of eBay redirecting a pagination click to
+ * its own sign-up wall, and useless: the page it changed to is the whole diagnosis.
+ */
+function whereItWent(result) {
+  const title = String(result?.title || '').trim();
+  return title ? ` — the page is now ${JSON.stringify(title)}` : ' — the page has changed';
 }
 
 /** Types the step's value into the recorded field. */

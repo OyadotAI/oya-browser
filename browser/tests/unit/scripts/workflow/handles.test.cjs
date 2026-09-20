@@ -14,13 +14,30 @@ const {
   missingIdentity,
   stableId,
   withoutLiveCount,
+  volatileTarget,
 } = require('../../../../scripts/workflow/handles.cjs');
 
 describe('the order of trust', () => {
   it('puts what the page author wrote before what a renderer invented', () => {
     assert.deepEqual(
       HANDLES.map((h) => h.kind),
-      ['testId', 'href', 'domId', 'ariaLabel', 'text', 'name', 'placeholder', 'path'],
+      ['testId', 'href', 'domId', 'ariaLabel', 'scoped', 'text', 'name', 'placeholder', 'path'],
+    );
+  });
+
+  it('prefers a name scoped to its own row over the bare name', () => {
+    assert.deepEqual(
+      handlesOf({ tag: 'button', text: 'View', scoped: '[data-row="7"] button:text-is("View")' }).map((h) => h.kind),
+      ['scoped', 'text'],
+    );
+  });
+
+  it('offers nothing of a name the page repeats, since it never said which one', () => {
+    assert.deepEqual(
+      handlesOf({ tag: 'button', text: 'Delete', repeats: 'true', path: 'li:nth-of-type(2) > button' }).map(
+        (h) => h.kind,
+      ),
+      ['path'],
     );
   });
 
@@ -78,8 +95,19 @@ describe('a link target across two visits', () => {
   });
 
   it('leaves a plain link alone', () => {
-    assert.equal(stableTarget('https://en.wikipedia.org/wiki/Managed_care'), 'https://en.wikipedia.org/wiki/Managed_care');
+    assert.equal(
+      stableTarget('https://en.wikipedia.org/wiki/Managed_care'),
+      'https://en.wikipedia.org/wiki/Managed_care',
+    );
     assert.equal(stableTarget('/r/programming/comments/abc/title/'), '/r/programming/comments/abc/title/');
+  });
+
+  it('says which targets cannot be matched literally, and which can', () => {
+    assert.equal(volatileTarget('/s?k=kb&page=2&qid=1789940643&xpid=njio9'), true);
+    assert.equal(volatileTarget('/s?k=kb&page=2'), false);
+    // No query to be noisy, and nothing at all: both are matchable as written.
+    assert.equal(volatileTarget('https://news.ycombinator.com'), false);
+    assert.equal(volatileTarget(undefined), false);
   });
 
   it('drops the tracking tags that follow a shared link around', () => {

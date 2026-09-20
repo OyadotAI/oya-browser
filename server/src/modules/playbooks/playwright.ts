@@ -4,7 +4,7 @@
  */
 import workflow from '../../../../browser/scripts/workflow.cjs';
 
-const { handlesOf, withoutLiveCount, rawTargetOf } = workflow as any;
+const { handlesOf, withoutLiveCount, rawTargetOf, volatileTarget } = workflow as any;
 
 import { FILTERS, pipesOf } from '../agent/chat.ts';
 import { DEFAULT_SCROLL_PX, FIND_ATTEMPTS, FIND_RETRY_MS, WORKFLOW_SCHEMA } from './constants.ts';
@@ -44,9 +44,14 @@ function exprPart(part) {
  */
 const AS_LOCATOR: Record<string, LocatorFor> = {
   testId: (el) => `page.getByTestId(${s(el.testId)})`,
-  href: (el) => `page.locator(${s(`a[href=${s(rawTargetOf(el))}]`)})`,
+  // Only where the target will be written the same way again: a link carrying the
+  // visit's own qid matches nothing on the next run, so a lower handle takes it.
+  href: (el) => (volatileTarget(rawTargetOf(el)) ? null : `page.locator(${s(`a[href=${s(rawTargetOf(el))}]`)})`),
   domId: (el) => `page.locator(${s(`[id=${s(el.domId)}]`)})`,
   ariaLabel: (el) => `page.getByLabel(${s(withoutLiveCount(el.ariaLabel))}, { exact: true })`,
+  // Already a Playwright selector: the analyzer writes it as one, anchored on the
+  // container where this name occurs once ('[data-row="7"] button:text-is("View")').
+  scoped: (el) => `page.locator(${s(el.scoped)})`,
   text: (el, step) =>
     step.action === 'type' ? `page.getByLabel(${expr(el.text)})` : `page.getByText(${expr(el.text)}, { exact: true })`,
   name: (el) => `page.locator(${s(`${el.tag || ''}[name=${s(el.name)}]`)})`,
@@ -54,15 +59,50 @@ const AS_LOCATOR: Record<string, LocatorFor> = {
   path: (el) => `page.locator(${s(el.path)})`,
 };
 
+/**
+ * The first recorded handle that renders as a locator at all, in the shared order of
+ * trust. A handle whose renderer declines — a link target that will read differently
+ * next visit — is passed over, exactly as it is in the live replay.
+ */
+function locatorFor(el, step) {
+  return (
+    handlesOf(el)
+      .map((h) => AS_LOCATOR[h.kind]?.(el, step))
+      .find(Boolean) || null
+  );
+}
+
 /** The recorded element as a Playwright locator, by the shared order of trust. */
 function locator(step) {
   const el = step.el || {};
   if (step.action === 'click' && HAS_PLACEHOLDER.test(el.text || ''))
     return `page.getByText(${expr(el.text)}, { exact: true })`;
-  const handle = handlesOf(el).find((h) => AS_LOCATOR[h.kind]);
-  return handle
-    ? AS_LOCATOR[handle.kind](el, step)
-    : `page.locator(${s(el.tag || 'body')}) /* no stable handle was recorded */`;
+  // Unaimable steps never reach here — stepLine refuses them — so the floor is only
+  // for an action that needs no element.
+  return locatorFor(el, step) || `page.locator(${s(el.tag || 'body')})`;
+}
+
+/** Actions that cannot run without knowing which element they act on. */
+const NEEDS_ELEMENT = new Set(['click', 'double_click', 'type', 'select_option']);
+
+/** Whether this step can be aimed at anything on a later page. */
+function aimable(step) {
+  const el = step.el || {};
+  if (step.unaimable) return false;
+  // A data-driven click aims by the value it is given, not by a recorded handle.
+  if (step.action === 'click' && HAS_PLACEHOLDER.test(el.text || '')) return true;
+  return Boolean(locatorFor(el, step));
+}
+
+/**
+ * A step nothing can aim. It used to render as a click on `page.locator("body")`,
+ * which runs, does nothing, and lets the rest of the script carry on as though the
+ * step had worked. An export that cannot reach its element says so and stops.
+ */
+function refusal(step) {
+  const what = step.el?.tag ? `a <${step.el.tag}>` : 'an element';
+  const why = `Cannot replay this ${step.action}: no stable handle was recorded for ${what}. Re-record this step.`;
+  return `throw new Error(${s(why)});`;
 }
 
 /** A scroll step: to the top, to the bottom, or by an amount. */
@@ -117,7 +157,9 @@ function pathOf(url) {
 /** One step as Playwright, or a comment for an action the export does not know. */
 function stepLine(step) {
   const known = typeof step.action === 'string' && Object.hasOwn(LINES, step.action);
-  return known ? LINES[step.action](step) : `// skipped unknown step ${s(step.action)}`;
+  if (!known) return `// skipped unknown step ${s(step.action)}`;
+  if (NEEDS_ELEMENT.has(step.action) && !aimable(step)) return refusal(step);
+  return LINES[step.action](step);
 }
 
 /** A Playwright module with non-secret defaults and caller-supplied overrides. */

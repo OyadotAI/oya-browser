@@ -32,7 +32,13 @@ describe('matchElement', () => {
   });
 
   it('matches a link by its href last', () => {
-    assert.equal(matchElement({ href: '/x' }, [live(1, { href: '/x' })]).id, 1);
+    assert.equal(matchElement({ tag: 'a', href: '/x' }, [live(1, { tag: 'a', href: '/x' })]).id, 1);
+  });
+
+  it('does not take a target as identifying anything that is not a link', () => {
+    // A button with an href is a button whose handle came from somewhere else.
+    const els = [live(1, { tag: 'a', href: '/x' })];
+    assert.equal(matchElement({ tag: 'button', href: '/x' }, els), null);
   });
 
   it('prefers a visible element over an off-screen one with the same handle', () => {
@@ -114,4 +120,3 @@ describe('matchElement across two visits of the same link', () => {
     assert.equal(matchElement(recorded, pool), null);
   });
 });
-

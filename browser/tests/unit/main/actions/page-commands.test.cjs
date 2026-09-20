@@ -7,7 +7,15 @@ const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { createPageActions } = require('../../../../main/page-actions.cjs');
 const c = require('../../../../main/actions/constants.cjs');
-const { instantTimers, fixedRandom, pageView, pageCtx, results, mouseEvents } = require('../../support/page.cjs');
+const {
+  instantTimers,
+  fixedRandom,
+  pageView,
+  pageCtx,
+  results,
+  mouseEvents,
+  keyEvents,
+} = require('../../support/page.cjs');
 
 /** An element the analyzer found in the main document. */
 const FOUND = { ok: true, data: { x: 10, y: 20, inIframe: false } };
@@ -165,45 +173,46 @@ describe('page commands', () => {
     assert.deepEqual(results(ctx), [['c1', false, null, 'The date field did not accept 2024-01-15']]);
   });
 
-  it('type into an iframe presses each character as real keys in the focused frame', async () => {
+  it('type into an iframe goes through CDP, the same as anywhere else', async () => {
     const view = pageView();
+    // A second path existed for iframes, on the belief that CDP keyboard events do
+    // not reach them. They do; what that path did was nothing, so typing into an
+    // iframe silently dropped every character.
     const ctx = await run(
       view,
       'type',
       { selector: 'i', text: 'a/' },
       { world: (e) => (e.includes('listbox') ? false : IN_IFRAME) },
     );
+    assert.deepEqual(view.webContents.calls, []);
     assert.deepEqual(
-      view.webContents.calls.map(([, event]) => [event.type, event.keyCode]),
+      keyEvents(view).map((e) => [e.type, e.key]),
       [
         ['keyDown', 'a'],
-        ['char', 'a'],
         ['keyUp', 'a'],
         ['keyDown', '/'],
-        ['char', '/'],
         ['keyUp', '/'],
       ],
     );
     assert.deepEqual(results(ctx), [['c1', true, { typed: true, suggestions_visible: false }]]);
   });
 
-  it('type into an iframe clears a masked field with a real Backspace first', async () => {
+  it('a filled field in an iframe is cleared with a real Backspace first', async () => {
     const view = pageView();
     const world = (e) => (e.includes('el.select()') ? 'select' : e.includes('listbox') ? false : IN_IFRAME);
     await run(view, 'type', { selector: 'i', text: '1' }, { world });
     assert.deepEqual(
-      view.webContents.calls.map(([, event]) => [event.type, event.keyCode]),
+      keyEvents(view).map((e) => [e.type, e.key]),
       [
         ['keyDown', 'Backspace'],
         ['keyUp', 'Backspace'],
         ['keyDown', '1'],
-        ['char', '1'],
         ['keyUp', '1'],
       ],
     );
   });
 
-  it('type into an iframe presses Enter for a line break', async () => {
+  it('a line break in an iframe is a real Enter', async () => {
     const view = pageView();
     await run(
       view,
@@ -211,7 +220,10 @@ describe('page commands', () => {
       { selector: 'i', text: '\n' },
       { world: (e) => (e.includes('listbox') ? false : IN_IFRAME) },
     );
-    assert.deepEqual(view.webContents.calls[1][1], { type: 'char', keyCode: 'Enter' });
+    assert.deepEqual(
+      keyEvents(view).map((e) => e.key),
+      ['Enter', 'Enter'],
+    );
   });
 
   it('type into an unfilled mask moves the caret to its start instead of clearing it', async () => {
@@ -252,19 +264,38 @@ describe('page commands', () => {
     assert.deepEqual(view.webContents.calls, []);
   });
 
-  it('press_key sends down and up to the focused frame, Enter by default', async () => {
+  it('press_key reaches the page through CDP, Enter by default', async () => {
     const view = pageView();
-    const ctx = await run(view, 'press_key', {});
-    assert.deepEqual(view.webContents.calls, [
-      ['input', { type: 'keyDown', keyCode: 'Enter' }],
-      ['input', { type: 'keyUp', keyCode: 'Enter' }],
-    ]);
+    // Electron's own key events reached nothing on an ordinary page: a page that
+    // echoes the key it was given stayed unchanged through Enter, Tab and the arrows.
+    const ctx = await run(view, 'press_key', {}, { world: false });
+    assert.deepEqual(
+      keyEvents(view).map((e) => [e.type, e.key]),
+      [
+        ['keyDown', 'Enter'],
+        ['keyUp', 'Enter'],
+      ],
+    );
+    assert.deepEqual(view.webContents.calls, []);
     assert.deepEqual(results(ctx), [['c1', true, { key: 'Enter' }]]);
   });
 
+  it('press_key sends the same CDP events wherever the focus is', async () => {
+    const view = pageView();
+    await run(view, 'press_key', { key: 'ArrowDown' }, { world: IN_IFRAME });
+    assert.deepEqual(
+      keyEvents(view).map((e) => [e.type, e.key]),
+      [
+        ['keyDown', 'ArrowDown'],
+        ['keyUp', 'ArrowDown'],
+      ],
+    );
+    assert.deepEqual(view.webContents.calls, []);
+  });
+
   it('Enter that starts a navigation reloads the analyzer', async () => {
-    const ctx = await run(pageView({ loading: true }), 'press_key', { key: 'Enter' });
-    assert.deepEqual(ctx.calls[0], ['inject']);
+    const ctx = await run(pageView({ loading: true }), 'press_key', { key: 'Enter' }, { world: false });
+    assert.ok(ctx.calls.some(([name]) => name === 'inject'));
   });
 
   it('another key never waits for a navigation', async () => {

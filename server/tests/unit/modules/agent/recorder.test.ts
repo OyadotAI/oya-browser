@@ -130,6 +130,40 @@ describe('recorder', () => {
     assert.equal(step.unaimable, true);
   });
 
+  it('drops the page it started on when the run navigates somewhere itself', async () => {
+    const run = await started('https://leftover.test/previous-run');
+    await recorder.recordStep(BROWSER, 'navigate', { url: 'https://a.test/real-start' }, {});
+    // Not two navigations: replaying through whatever the last run left on screen is
+    // how a challenge wall from an unrelated site came to stop every later replay.
+    assert.deepEqual(run.steps, [{ action: 'navigate', url: 'https://a.test/real-start' }]);
+  });
+
+  it('keeps the page it started on when the run acts on that page first', async () => {
+    const run = await started('https://a.test/dashboard');
+    recorder.setElements(BROWSER, [EL]);
+    await recorder.recordStep(BROWSER, 'click', { element_id: '7' }, {});
+    await recorder.recordStep(BROWSER, 'navigate', { url: 'https://a.test/next' }, {});
+    assert.equal(run.steps[0].start, true);
+    assert.equal(run.steps.length, 3);
+  });
+
+  it('marks a step whose element has a tag and nothing else as unaimable', async () => {
+    const run = await started();
+    // A tag is not a handle. This used to count as aimable and fail on replay with
+    // nothing even to name: no element matching "".
+    recorder.setElements(BROWSER, [{ id: 5, tag: 'input', type: 'input', text: '', visible: true }]);
+    await recorder.recordStep(BROWSER, 'click', { element_id: 5 }, {});
+    assert.equal(run.steps.at(-1).unaimable, true);
+  });
+
+  it('keeps a step whose element has only where it sits', async () => {
+    const run = await started();
+    recorder.setElements(BROWSER, [{ id: 6, tag: 'input', type: 'input', path: 'form > input', visible: true }]);
+    await recorder.recordStep(BROWSER, 'click', { element_id: 6 }, {});
+    assert.equal(run.steps.at(-1).unaimable, undefined);
+    assert.equal(run.steps.at(-1).el.path, 'form > input');
+  });
+
   it('records nothing on a browser with no run', () => {
     recorder.recordStep('b-never', 'click', {}, {});
     recorder.setElements('b-never', [EL]);

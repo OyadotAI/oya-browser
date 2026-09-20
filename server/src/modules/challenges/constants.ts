@@ -14,6 +14,14 @@ export const DEFAULT_CAPTCHA_TIMEOUT_MS = 120_000;
 export const CAPTCHA_REQUEST_TIMEOUT_MS = 30_000;
 /** Pause between polls for a solver's answer. */
 export const CAPTCHA_POLL_MS = 3000;
+/**
+ * The smallest a challenge widget can be drawn and still be one a person is being
+ * asked to do: a reCAPTCHA checkbox is about 300x78, Turnstile 300x65. Anything
+ * smaller is the badge or the scoring frame a site keeps on every page.
+ */
+export const MIN_CHALLENGE_WIDTH_PX = 100;
+/** The same floor for height. */
+export const MIN_CHALLENGE_HEIGHT_PX = 30;
 
 // ── Mailbox ──
 

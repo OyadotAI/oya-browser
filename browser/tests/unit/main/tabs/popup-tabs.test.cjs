@@ -52,7 +52,7 @@ function fakeWindow(url = 'https://vendor.example.com/sso') {
 
 describe('opensNamedWindow', () => {
   it('is true for a target the page can post a form into', () => {
-    assert.equal(opensNamedWindow('carelonWin'), true);
+    assert.equal(opensNamedWindow('vendorWin'), true);
   });
 
   it('is false for the anonymous targets, which name no window', () => {

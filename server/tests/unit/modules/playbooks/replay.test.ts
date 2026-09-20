@@ -446,18 +446,31 @@ describe('play across tabs', () => {
       assert.ok(Date.now() - started >= REPLAY_SETTLE_MS.min);
     });
 
-    it('stops when the fast selector turns out to point at something else', async () => {
+    it('stops when the fast selector reaches a control that names itself differently', async () => {
       answer = (action, params) => {
-        // The test id now belongs to a different control.
+        // The test id now belongs to a different control, and says so.
         if (action === 'click' && params.selector === '[data-testid="submit"]')
           return {
             ok: true,
-            data: { clicked: true, handle: { tag: 'button', testId: 'submit', text: 'Delete account' } },
+            data: { clicked: true, handle: { tag: 'button', testId: 'submit', ariaLabel: 'Delete account' } },
           };
         return page(action, params);
       };
-      const steps = [{ action: 'click', el: { tag: 'button', testId: 'submit', text: 'Submit claim' } }];
+      const steps = [{ action: 'click', el: { tag: 'button', testId: 'submit', ariaLabel: 'Submit claim' } }];
       await assert.rejects(play(KEY, BROWSER, pb(steps), {}, { autoHeal: false }), /no longer points at/);
+    });
+
+    it('accepts the control it reached when only the visible text differs', async () => {
+      // Amazon: the "Next" button and the "2" link carry the same href, so the
+      // fast path may click either. Both reach page 2; the text is incidental.
+      answer = (action, params) => {
+        if (action === 'click' && params.selector === 'a[href="/s?page=2"]')
+          return { ok: true, data: { clicked: true, handle: { tag: 'a', rawHref: '/s?page=2', text: 'Next' } } };
+        return page(action, params);
+      };
+      const steps = [{ action: 'click', el: { tag: 'a', rawHref: '/s?page=2', text: '2' } }];
+      const result = await play(KEY, BROWSER, pb(steps), {}, { autoHeal: false });
+      assert.equal(result.steps, 1);
     });
 
     it('accepts a click whose text merely grew a suffix', async () => {

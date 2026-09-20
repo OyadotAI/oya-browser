@@ -80,4 +80,8 @@ const results = (ctx) => ctx.calls.filter((c) => c[0] === 'result').map((c) => c
 const mouseEvents = (view) =>
   view.webContents.debugger.sent.filter((c) => c.method === 'Input.dispatchMouseEvent').map((c) => c.params);
 
-module.exports = { instantTimers, fixedRandom, pageView, pageCtx, results, mouseEvents };
+/** The CDP key events a view was sent, in order. */
+const keyEvents = (view) =>
+  view.webContents.debugger.sent.filter((c) => c.method === 'Input.dispatchKeyEvent').map((c) => c.params);
+
+module.exports = { instantTimers, fixedRandom, pageView, pageCtx, results, mouseEvents, keyEvents };
