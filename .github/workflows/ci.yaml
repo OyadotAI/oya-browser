@@ -39,6 +39,10 @@ jobs:
       - run: npm ci --prefix browser
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # The analyzer DOM checks run the injected script in a real page, so this
+      # one browser binary is the exception to "no Electron binary needed".
+      - run: npx playwright install chromium
+        working-directory: browser
       - run: npm test --prefix browser
 
   recording:
