@@ -38,6 +38,18 @@ function consoleEntry({ level, message, line, sourceId }) {
   };
 }
 
+/** One network record as it is kept: url without its query, error only when real. */
+function networkEntry({ url, method, resourceType, statusCode, error }) {
+  return {
+    at: Date.now(),
+    url: safeUrl(url),
+    method,
+    type: resourceType,
+    status: statusCode ?? null,
+    error: error && error !== NO_ERROR ? error : null,
+  };
+}
+
 /** Whether this is traffic the page itself made, rather than a browser extension's. */
 function isPageRequest(url) {
   return /^https?:\/\//i.test(String(url ?? ''));
@@ -69,11 +81,9 @@ class Observer {
    * whatever Electron called it, and only the page's own traffic is kept: an
    * extension failing to load its own icon is not an answer to "what failed?".
    */
-  addRequest({ url, method, resourceType, statusCode, error }) {
-    if (!isPageRequest(url)) return;
-    const failure = error && error !== NO_ERROR ? error : null;
-    const entry = { at: Date.now(), url: safeUrl(url), method, type: resourceType, status: statusCode ?? null, error: failure };
-    push(this.network, entry, NETWORK_MAX);
+  addRequest(request) {
+    if (!isPageRequest(request.url)) return;
+    push(this.network, networkEntry(request), NETWORK_MAX);
   }
 
   /** Console entries, newest first, optionally only one level or matching text. */

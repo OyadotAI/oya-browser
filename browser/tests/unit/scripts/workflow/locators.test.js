@@ -4,7 +4,13 @@
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { stableId, withoutLiveCount, candidates, locatorCode, roleName } = require('../../../../scripts/workflow/locators.cjs');
+const {
+  stableId,
+  withoutLiveCount,
+  candidates,
+  locatorCode,
+  roleName,
+} = require('../../../../scripts/workflow/locators.cjs');
 const { generate, normalizeDraft } = require('../../../../scripts/workflow.cjs');
 
 describe('candidates', () => {
@@ -185,4 +191,3 @@ describe('handles that only look stable', () => {
     assert.equal(withoutLiveCount('Page 2'), 'Page 2');
   });
 });
-

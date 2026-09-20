@@ -7,8 +7,14 @@
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { HANDLES, handlesOf, contradicts, missingIdentity, stableId, withoutLiveCount } =
-  require('../../../../scripts/workflow/handles.cjs');
+const {
+  HANDLES,
+  handlesOf,
+  contradicts,
+  missingIdentity,
+  stableId,
+  withoutLiveCount,
+} = require('../../../../scripts/workflow/handles.cjs');
 
 describe('the order of trust', () => {
   it('puts what the page author wrote before what a renderer invented', () => {
@@ -41,7 +47,8 @@ describe('the order of trust', () => {
 describe('stableId', () => {
   it('keeps an id a person wrote and refuses one a render made up', () => {
     for (const id of ['search-conversations', 'authWizardNextButton']) assert.equal(stableId(id), true, id);
-    for (const id of ['ember80', 'mwCg', ':r3:', 'ext-gen1023', 'user_1234567890']) assert.equal(stableId(id), false, id);
+    for (const id of ['ember80', 'mwCg', ':r3:', 'ext-gen1023', 'user_1234567890'])
+      assert.equal(stableId(id), false, id);
   });
 });
 

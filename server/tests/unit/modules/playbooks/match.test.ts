@@ -54,8 +54,22 @@ describe('matchElement', () => {
 describe('matchElement refuses the wrong neighbour', () => {
   /** A message composer: emoji, expand and send are siblings of the same shape. */
   const composer = [
-    { id: 1, tag: 'button', type: 'button', ariaLabel: 'Open Emoji Keyboard', path: 'div > button:nth-of-type(2)', visible: true },
-    { id: 2, tag: 'button', type: 'button', ariaLabel: 'Expand to full screen', path: 'div > button:nth-of-type(3)', visible: true },
+    {
+      id: 1,
+      tag: 'button',
+      type: 'button',
+      ariaLabel: 'Open Emoji Keyboard',
+      path: 'div > button:nth-of-type(2)',
+      visible: true,
+    },
+    {
+      id: 2,
+      tag: 'button',
+      type: 'button',
+      ariaLabel: 'Expand to full screen',
+      path: 'div > button:nth-of-type(3)',
+      visible: true,
+    },
     { id: 3, tag: 'button', type: 'button', ariaLabel: 'Send', path: 'div > button:nth-of-type(4)', visible: true },
   ];
 
@@ -72,7 +86,9 @@ describe('matchElement refuses the wrong neighbour', () => {
   });
 
   it('will not match an id a framework invented, even when it is still on the page', () => {
-    const pool = [{ id: 7, tag: 'button', type: 'button', domId: 'ember80', ariaLabel: 'Report this post', visible: true }];
+    const pool = [
+      { id: 7, tag: 'button', type: 'button', domId: 'ember80', ariaLabel: 'Report this post', visible: true },
+    ];
     assert.equal(matchElement({ tag: 'button', type: 'button', domId: 'ember80', ariaLabel: 'Send' }, pool), null);
   });
 
@@ -82,4 +98,3 @@ describe('matchElement refuses the wrong neighbour', () => {
     assert.equal(matchElement(recorded, pool)?.id, 4);
   });
 });
-

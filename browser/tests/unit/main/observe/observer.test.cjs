@@ -66,7 +66,12 @@ describe('readNetwork', () => {
   it('finds the request the server refused, which is the question being asked', () => {
     const o = new Observer();
     o.addRequest({ url: 'https://portal.example.com/ok', method: 'GET', resourceType: 'script', statusCode: 200 });
-    o.addRequest({ url: 'https://portal.example.com/auth-workflow/v2?id=1', method: 'POST', resourceType: 'xhr', statusCode: 400 });
+    o.addRequest({
+      url: 'https://portal.example.com/auth-workflow/v2?id=1',
+      method: 'POST',
+      resourceType: 'xhr',
+      statusCode: 400,
+    });
     const failed = o.readNetwork({ failedOnly: true });
     assert.equal(failed.length, 1);
     assert.deepEqual([failed[0].status, failed[0].url], [400, 'https://portal.example.com/auth-workflow/v2']);
@@ -103,7 +108,8 @@ describe('readNetwork', () => {
 
   it('keeps only the most recent requests', () => {
     const o = new Observer();
-    for (let i = 0; i < NETWORK_MAX + 5; i++) o.addRequest({ url: `https://x.test/${i}`, method: 'GET', statusCode: 200 });
+    for (let i = 0; i < NETWORK_MAX + 5; i++)
+      o.addRequest({ url: `https://x.test/${i}`, method: 'GET', statusCode: 200 });
     assert.equal(o.network.length, NETWORK_MAX);
   });
 });

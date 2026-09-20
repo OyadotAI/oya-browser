@@ -13,7 +13,15 @@
  */
 const AUTO_ACCEPT_DIALOGS = new Set(['alert', 'beforeunload']);
 // Answerable while a dialog is held: they never reach the blocked renderer.
-const DIALOG_SAFE_ACTIONS = new Set(['handle_dialog', 'screenshot', 'list_tabs', 'read_console', 'read_network', 'record', 'workflow']);
+const DIALOG_SAFE_ACTIONS = new Set([
+  'handle_dialog',
+  'screenshot',
+  'list_tabs',
+  'read_console',
+  'read_network',
+  'record',
+  'workflow',
+]);
 // ponytail: one pending dialog across all tabs — a blocked tab cannot raise a
 // second one, and only the active tab is driven. Per-view if that stops holding.
 let pendingDialog = null;
