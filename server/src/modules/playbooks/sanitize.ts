@@ -11,7 +11,26 @@ import { MAX_LEN, MAX_SCROLL_AMOUNT, MAX_STEPS } from './constants.ts';
 /** Actions a recording may contain — the same set the agent records, minus what cannot replay. */
 const RECORDABLE = new Set(['navigate', 'click', 'type', 'select_option', 'upload_file', 'press_key', 'scroll']);
 /** Element handles kept from a recorded step. */
-const EL_FIELDS = ['type', 'tag', 'text', 'domId', 'name', 'ariaLabel', 'testId', 'placeholder', 'href'];
+const EL_FIELDS = [
+  'type',
+  'tag',
+  'text',
+  'domId',
+  'name',
+  'ariaLabel',
+  'testId',
+  'placeholder',
+  'href',
+  // Kept because they are how an element with no name of its own is found again:
+  // the link target as written, its role, where it sits, and the names the
+  // analyzer worked out for a live count or a label the page repeats.
+  'rawHref',
+  'role',
+  'path',
+  'stableText',
+  'scoped',
+  'repeats',
+];
 /** Step fields kept from a recorded step. */
 const STEP_FIELDS = ['url', 'text', 'option', 'file', 'key', 'direction'];
 /** Element types a person types into. */

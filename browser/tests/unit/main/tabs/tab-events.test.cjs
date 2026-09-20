@@ -91,10 +91,33 @@ describe('tab events', () => {
     assert.equal(opened.view.webContents.loadOptions[0].httpReferrer, undefined, 'an empty referrer is not sent');
   });
 
-  it('protects every popup the page creates', () => {
+  it('protects every popup the page creates, and puts it on the tab list', () => {
     const protect = mock.method(ctx.protection, 'protectPopup', () => {});
+    const adopt = mock.method(ctx.tabs, 'adoptWindow', () => 2);
     tab.view.webContents.emit('did-create-window', { id: 'popup' });
     assert.deepEqual(protect.mock.calls[0].arguments, [{ id: 'popup' }]);
+    assert.deepEqual(adopt.mock.calls[0].arguments, [{ id: 'popup' }]);
+  });
+
+  it('keeps a window the page named, because the page keeps using what it opened', () => {
+    const before = ctx.tabs.list.length;
+    const decision = tab.view.webContents.openHandler({
+      url: 'https://vendor.example.com/sso',
+      features: '',
+      frameName: 'vendorWin',
+    });
+    assert.equal(decision.action, 'allow');
+    assert.equal(ctx.tabs.list.length, before, 'no tab is opened behind its back');
+  });
+
+  it('still turns an anonymous target=_blank into a tab', () => {
+    const decision = tab.view.webContents.openHandler({
+      url: 'https://example.test/page',
+      features: '',
+      frameName: '_blank',
+    });
+    assert.equal(decision.action, 'deny');
+    assert.equal(ctx.tabs.list.at(-1).url, 'https://example.test/page');
   });
 
   it('joins a recording once the tab is protected', async () => {

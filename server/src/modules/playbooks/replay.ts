@@ -9,6 +9,8 @@ import { Status } from '../../platform/http-status.ts';
 import {
   FIND_ATTEMPTS,
   FIND_RETRY_MS,
+  REPLAY_PAUSE_MS,
+  REPLAY_SETTLE_MS,
   NAVIGATE_TIMEOUT_MS,
   WORKFLOW_SCHEMA,
   WORKFLOW_TIMEOUT_MS,
@@ -24,6 +26,9 @@ type Replayer = (browserId: string, step: any, values: any, defaults: any) => Pr
 const PAGE_CHANGING = new Set(['navigate', 'click', 'double_click', 'click_coordinates', 'press_key', 'switch_tab']);
 /** Resolves after `ms`. */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** A pause somewhere in the given range, never the same twice. */
+const pauseWithin = ({ min, max }) => sleep(min + Math.random() * (max - min));
 /** The variable a step's value is, when the value is exactly one placeholder. */
 const soleVariable = (value) => (value || '').match(/^\{\{(\w+)\}\}$/)?.[1];
 
@@ -34,28 +39,122 @@ async function command(browserId, action, params = {}, timeout?) {
   return r.data;
 }
 
-/** Re-analyze the page until the recorded element appears, for up to about five seconds. */
-async function find(browserId, el, text?) {
-  // Pages settle after a click or navigation; give the element a few seconds to show up.
+/**
+ * The analysis of the page this browser is on, kept between steps.
+ *
+ * Analyzing serializes the whole page, which on a heavy one costs seconds — and
+ * a replay used to pay it per step, so removing the model from a ten-step Amazon
+ * flow saved two seconds out of a hundred and forty. A form filled in twenty
+ * fields is one page: it deserves one analysis, not twenty.
+ *
+ * A browser replays one playbook at a time, which is what makes a map by browser
+ * id enough; the entry goes the moment anything could have changed the page.
+ */
+const analyses = new Map<string, any[]>();
+
+/** The page's elements, analyzing only when there is nothing in hand. */
+async function elementsOf(browserId) {
+  if (analyses.has(browserId)) return analyses.get(browserId);
+  const { elements } = await command(browserId, 'analyze');
+  analyses.set(browserId, elements);
+  return elements;
+}
+
+/** Forgets the analysis: the page may no longer be the one it described. */
+function pageChanged(browserId) {
+  analyses.delete(browserId);
+}
+
+/** The recorded element in the analysis in hand, or null. */
+async function matchHere(browserId, el, text?) {
+  return matchElement(el, await elementsOf(browserId), text);
+}
+
+/** Re-analyzes until the recorded element appears, for up to about five seconds. */
+async function waitFor(browserId, el, text?) {
   for (let attempt = 0; attempt < FIND_ATTEMPTS; attempt++) {
-    const { elements } = await command(browserId, 'analyze');
-    const match = matchElement(el, elements, text);
+    const match = await matchHere(browserId, el, text);
     if (match) return match;
+    pageChanged(browserId);
     await sleep(FIND_RETRY_MS);
   }
+  return null;
+}
+
+/**
+ * The recorded element on the live page. The first look uses the analysis already
+ * in hand, which on a page that has not changed is the whole cost of the step;
+ * after that it re-analyzes on the same budget as before.
+ */
+async function find(browserId, el, text?) {
+  const found = await waitFor(browserId, el, text);
+  if (found) return found;
   throw new Error(`no element matching ${JSON.stringify(el?.text ?? el?.domId ?? el?.name ?? '')}`);
+}
+
+/**
+ * A selector strong enough to aim the recorded element without analyzing at all:
+ * a test id the page author wrote, or a link's own target. Deliberately not an
+ * id (a framework may have made it up for that render) and not a `name` (pages
+ * reuse `q` and `search` everywhere) — a fast path that hits the wrong element
+ * is worse than a slow one.
+ */
+function directSelector(el) {
+  if (el?.testId) return `[data-testid=${JSON.stringify(el.testId)}]`;
+  if (el?.href && String(el.tag || '').toLowerCase() === 'a') return `a[href=${JSON.stringify(el.href)}]`;
+  return null;
 }
 
 /** Clicks the recorded element, or the option a data-driven click now names. */
 async function replayClick(browserId, step, values, defaults) {
   const key = soleVariable(step.el?.text);
-  const filled = key ? fill(step.el.text, values) : undefined;
-  // Still the recorded label: match on the full precedence, testId first. Changed —
-  // a data-driven option, an insurer, a plan — and the old DOM id belonged to
-  // another choice, so the value is the only handle left.
-  const byValue = filled !== undefined && filled !== defaults[key] ? filled : undefined;
-  const el = await find(browserId, filled === undefined ? step.el : { ...step.el, text: filled }, byValue);
+  // A data-driven click aims by value, so it cannot take the fast path.
+  const direct = key ? null : await clickDirect(browserId, step.el);
+  if (direct) return direct;
+  const el = await find(browserId, ...aimedAt(step, key, values, defaults));
   return command(browserId, 'click', { selector: `[data-ac-id="${el.id}"]` });
+}
+
+/**
+ * What to look for: the recorded element, or the one a data-driven click now
+ * names. Still the recorded label — match on the full precedence, testId first.
+ * Changed — a data-driven option, an insurer, a plan — and the old DOM id
+ * belonged to another choice, so the value is the only handle left.
+ */
+function aimedAt(step, key, values, defaults): [any, string | undefined] {
+  if (!key) return [step.el, undefined];
+  const filled = fill(step.el.text, values);
+  const byValue = filled !== defaults[key] ? filled : undefined;
+  return [{ ...step.el, text: filled }, byValue];
+}
+
+/**
+ * Whether what the browser clicked is what the recording meant. The click reports
+ * the element's own handles, so a selector that resolved to something else — the
+ * same test id reused on a different control, a link whose target now sits
+ * elsewhere — is caught here rather than three steps later, when the replay has
+ * already typed a member id into the wrong form.
+ */
+function clickedTheRight(el, clicked) {
+  if (!clicked) return true;
+  if (el.testId && clicked.testId && el.testId !== clicked.testId) return false;
+  if (el.tag && clicked.tag && el.tag.toLowerCase() !== clicked.tag.toLowerCase()) return false;
+  // Text drifts legitimately (a count, a date), so it is compared only when both
+  // sides have one and neither contains the other.
+  const [was, now] = [String(el.text || '').trim(), String(clicked.text || '').trim()];
+  if (!was || !now) return true;
+  return was.includes(now) || now.includes(was);
+}
+
+/** Clicks a strong handle straight away, or null when there is none or it missed. */
+async function clickDirect(browserId, el) {
+  const selector = directSelector(el);
+  if (!selector) return null;
+  const result = await command(browserId, 'click', { selector }).catch(() => null);
+  // Nothing resolved: fall back to analyzing and matching as before.
+  if (!result) return null;
+  if (clickedTheRight(el, result.handle)) return result;
+  throw new Error(`${selector} no longer points at ${JSON.stringify(el.text || el.testId)} — the page has changed`);
 }
 
 /** Types the step's value into the recorded field. */
@@ -186,12 +285,25 @@ export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, 
 /** Replays the steps in order, running the checkpoint after page-changing ones; a failure heals or throws. */
 async function replaySteps(apiKey, browserId, pb, values, options) {
   const total = pb.steps.length;
+  // Nothing in hand describes this page yet.
+  pageChanged(browserId);
   for (let i = 0; i < total; i++) {
     const failed = await tryStep(browserId, pb, i, values);
     if (failed) return recover(apiKey, browserId, pb, i, failed.err, values, options);
-    if (PAGE_CHANGING.has(pb.steps[i].action)) await options.checkpoint?.();
+    await afterStep(browserId, pb.steps[i].action, options);
   }
   return { steps: total, total, fellBack: false };
+}
+
+/**
+ * After a step that may have changed the page: drop the analysis, let the page be
+ * read the way a person would before the next action, and run the checkpoint.
+ */
+async function afterStep(browserId, action, options) {
+  if (!PAGE_CHANGING.has(action)) return await pauseWithin(REPLAY_PAUSE_MS);
+  pageChanged(browserId);
+  await pauseWithin(REPLAY_SETTLE_MS);
+  await options.checkpoint?.();
 }
 
 /** Runs step `i`; the error it failed with, or null. */

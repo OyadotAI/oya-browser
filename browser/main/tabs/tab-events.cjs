@@ -3,7 +3,8 @@
  * tries to open, and its right-click menu. Wired once, when the tab is made.
  */
 const { sleep } = require('../input.cjs');
-const { isAuthPopup } = require('../auth-popup.cjs');
+const { isAuthPopup, opensNamedWindow } = require('../auth-popup.cjs');
+const { watchContents } = require('../observe/install.cjs');
 const { showContextMenu } = require('./context-menu.cjs');
 const { CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE } = require('./constants.cjs');
 
@@ -104,6 +105,7 @@ function wireTabPage(ctx, tab, tabReady) {
   // New tabs join an active recording before the user can interact with them.
   tabReady.then(() => ctx.recorder.joinIfRecording(tab.view)).catch((err) => console.error('[recording]', err));
   contents.on('page-title-updated', (_e, title) => ctx.tabs.titleChanged(tab, title));
+  if (ctx.observer) watchContents(ctx.observer, contents);
 }
 
 /** Loads the analyzer, and lightens view-source pages. */
@@ -119,21 +121,30 @@ function pageLoaded(ctx, view) {
 function wireTabWindows(ctx, tab) {
   const contents = tab.view.webContents;
   contents.setWindowOpenHandler((details) => openWindow(ctx, details));
-  contents.on('did-create-window', (childWindow) => ctx.protection.protectPopup(childWindow));
+  contents.on('did-create-window', (childWindow) => adoptPopup(ctx, childWindow));
   contents.on('context-menu', (_e, params) => showContextMenu(ctx, tab.view, params));
 }
 
 /**
- * target="_blank" / window.open → new tab.
- * But allow OAuth popups (Google, GitHub, etc.) to work natively.
+ * An anonymous target="_blank" becomes a tab, which is what a person wants.
+ * A sign-in popup and any window the page named stay real windows, because the
+ * page holds on to what `window.open` gave it. Those are then adopted as tabs
+ * (adoptPopup) so an agent can still list, switch to and drive them.
  */
 function openWindow(ctx, details) {
-  if (isAuthPopup(details.url, details.features)) {
-    const webPreferences = { partition: ctx.persona.partitionName() };
+  const webPreferences = { partition: ctx.persona.partitionName() };
+  if (isAuthPopup(details.url, details.features))
     return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
-  }
+  if (opensNamedWindow(details.frameName))
+    return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
   ctx.tabs.createTab(details.url, true, loadOptionsFor(details));
   return { action: 'deny' };
+}
+
+/** Protects a window the page opened, and puts it on the tab list so it can be driven. */
+function adoptPopup(ctx, childWindow) {
+  ctx.protection.protectPopup(childWindow);
+  ctx.tabs.adoptWindow?.(childWindow);
 }
 
 /**

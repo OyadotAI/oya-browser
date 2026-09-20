@@ -1066,6 +1066,9 @@
   }
 
   window.__acQueryShadow = queryShadow;
+  // The analyzer's own idea of where an element sits, so an action can record the
+  // same path the analysis would have given it. One implementation, not two.
+  window.__acCssPath = cssPath;
 
   // Element lookup: ID-only. Never falls back to CSS selectors.
   window.__acFindElement = function (selector) {

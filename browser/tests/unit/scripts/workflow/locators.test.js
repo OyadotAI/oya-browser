@@ -4,7 +4,7 @@
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { candidates, locatorCode, roleName } = require('../../../../scripts/workflow/locators.cjs');
+const { stableId, withoutLiveCount, candidates, locatorCode, roleName } = require('../../../../scripts/workflow/locators.cjs');
 const { generate, normalizeDraft } = require('../../../../scripts/workflow.cjs');
 
 describe('candidates', () => {
@@ -147,3 +147,42 @@ describe('locatorCode', () => {
     assert.throws(() => locatorCode(null), /supported locator/);
   });
 });
+describe('handles that only look stable', () => {
+  it('keeps an id a person wrote', () => {
+    for (const id of ['search-input', 'pagination-next', 'main-content', 'authWizardNextButton'])
+      assert.equal(stableId(id), true, id);
+  });
+
+  it('demotes an id a framework made up for this render', () => {
+    // Parsoid numbers every Wikipedia node; React, Ember, ExtJS and Radix all do their own.
+    for (const id of ['mwCg', 'mwAQ', ':r3:', 'ember1204', 'ext-gen1023', 'radix-:r1:', 'user_1234567890'])
+      assert.equal(stableId(id), false, id);
+  });
+
+  it("prefers a link's target over an id invented for this render", () => {
+    const first = candidates({ tag: 'a', domId: 'mwCg', rawHref: '/wiki/Managed_care' })[0];
+    assert.deepEqual(first, { kind: 'css', value: 'a[href="/wiki/Managed_care"]' });
+  });
+
+  it('still offers the generated id last, when nothing else can find the element', () => {
+    const all = candidates({ tag: 'div', domId: 'mwCg' });
+    assert.deepEqual(all.at(-1), { kind: 'css', value: '[id="mwCg"]' });
+  });
+
+  it('tries where the element sits before an id this render invented', () => {
+    // Wikipedia renumbers every node per render; its place in the article does not move.
+    const all = candidates({ tag: 'a', domId: 'mwDQ', path: 'div.mw-parser-output > p:nth-child(4) > a' });
+    assert.deepEqual(all, [
+      { kind: 'css', value: 'div.mw-parser-output > p:nth-child(4) > a' },
+      { kind: 'css', value: '[id="mwDQ"]' },
+    ]);
+  });
+
+  it('strips a live count from a name so a nav link survives a notification', () => {
+    assert.equal(withoutLiveCount('Home, 1 new notification'), 'Home');
+    assert.equal(withoutLiveCount('Messaging, 0 new notifications'), 'Messaging');
+    assert.equal(withoutLiveCount('Inbox (12)'), 'Inbox');
+    assert.equal(withoutLiveCount('Page 2'), 'Page 2');
+  });
+});
+

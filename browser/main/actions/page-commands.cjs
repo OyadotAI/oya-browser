@@ -54,6 +54,13 @@ async function loadWithRetries(view, url) {
   }
 }
 
+/**
+ * The handles a replay finds this element by again, when the finder read them.
+ * Reported from here because here the element is unambiguous — an id from an
+ * earlier analysis may name nothing by the time the step is recorded.
+ */
+const withHandle = (info) => (info?.data?.handle ? { handle: info.data.handle } : {});
+
 /** Gives a click or Enter time to start a navigation and waits it out; true when there was one. */
 async function settleNavigation(driver, view) {
   await sleep(c.NAVIGATION_START_MS);
@@ -168,12 +175,13 @@ async function setDate(driver, id, view, selector, { type, value }) {
 }
 
 /** Types into a text field, then reports whether suggestions appeared. */
-async function typeAndReport(driver, id, view, { selector, text, inIframe }) {
+async function typeAndReport(driver, id, view, { selector, text, inIframe, handle }) {
   await (inIframe ? typeIntoIframe : typeIntoPage)(driver, view, selector, text);
   const suggestions = await suggestionsVisible(driver, view);
   driver.ctx.sendResult(id, true, {
     typed: true,
     suggestions_visible: suggestions,
+    ...(handle ? { handle } : {}),
     ...shownIfChanged(await fieldValue(driver, view, selector), text),
   });
 }
@@ -222,7 +230,7 @@ const PAGE_COMMANDS = {
     // mouse events may not trigger framework handlers (jsaction, etc.) in iframes.
     if (info.data.inIframe) await driver.ctx.worldEval(view, s.iframeClickJs(selector), true).catch(() => {});
     const { url, title } = await landedPage(driver, view);
-    driver.ctx.sendResult(id, true, { clicked: true, url, title });
+    driver.ctx.sendResult(id, true, { clicked: true, url, title, ...withHandle(info) });
   },
 
   /** Clicks a field like a human, clears it, types, and reports visible suggestions. */
@@ -232,9 +240,9 @@ const PAGE_COMMANDS = {
     const info = await focusField(driver, id, view, selector);
     if (!info) return;
     const text = params?.text || '';
-    if (!text) return driver.ctx.sendResult(id, true, { typed: true });
+    if (!text) return driver.ctx.sendResult(id, true, { typed: true, ...withHandle(info) });
     if (await fillIfDate(driver, id, view, selector, text)) return;
-    await typeAndReport(driver, id, view, { selector, text, inIframe: info.data.inIframe });
+    await typeAndReport(driver, id, view, { selector, text, inIframe: info.data.inIframe, handle: info.data.handle });
   },
 
   /** Presses one key in the focused frame; keys that change browser state are refused. */

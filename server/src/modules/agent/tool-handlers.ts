@@ -2,10 +2,11 @@
  * Tool name → handler: what each browser tool the model calls does, answered as
  * text for the model. Errors a browser reports come back as `Error: …` text.
  */
+import { Status } from '../../platform/http-status.ts';
 import { sendCommand } from '../browsers/socket.ts';
 import { selectOptionIn, uploadFileIn } from './page-scripts.ts';
 import { dataKey } from './placeholders.ts';
-import { elementOf, setElements } from './recorder.ts';
+import { elementOf, rememberHandle, setElements } from './recorder.ts';
 import { analysisText, elementList } from './element-index.ts';
 import { NAVIGATE_TIMEOUT_MS, PAGE_FORMAT } from './constants.ts';
 
@@ -48,7 +49,9 @@ async function withControls(browserId, said) {
 /** Clicks an element by id. */
 async function click(browserId, args) {
   const r = await sendCommand(browserId, 'click', { selector: byId(args.element_id) });
-  return r.ok ? withControls(browserId, `Clicked element ${args.element_id}`) : `Error: ${r.error}`;
+  if (!r.ok) return `Error: ${r.error}`;
+  rememberHandle(browserId, args.element_id, r.data?.handle);
+  return withControls(browserId, `Clicked element ${args.element_id}`);
 }
 
 /** Presses one safe key. */
@@ -60,7 +63,9 @@ async function pressKey(browserId, args) {
 /** Types into an element, pointing the model at autocomplete suggestions when they appear. */
 async function type(browserId, args) {
   const r = await sendCommand(browserId, 'type', { selector: byId(args.element_id), text: args.text });
-  return r.ok ? withControls(browserId, typedReport(args, r.data || {})) : `Error: ${r.error}`;
+  if (!r.ok) return `Error: ${r.error}`;
+  rememberHandle(browserId, args.element_id, r.data?.handle);
+  return withControls(browserId, typedReport(args, r.data || {}));
 }
 
 /**
@@ -127,6 +132,39 @@ async function readElements(browserId, args) {
   if (!r.ok) return `Error: ${r.error}`;
   setElements(browserId, r.data.elements);
   return elementList(r.data, args.limit);
+}
+
+/** One console entry as the model reads it. */
+const consoleLine = (e) => `[${e.level}] ${e.message}${e.source ? ` (${e.source}:${e.line})` : ''}`;
+
+/** One request as the model reads it: how it ended, then what it was. */
+const requestLine = (q) => `${q.status ?? q.error} ${q.method} ${q.url}${q.type ? ` (${q.type})` : ''}`;
+
+/** What the page logged, newest first, so a failure can be read rather than guessed at. */
+async function readConsole(browserId, args) {
+  const params = { level: args.level, pattern: args.pattern, limit: args.limit };
+  const r = await sendCommand(browserId, 'read_console', params);
+  if (!r.ok) return `Error: ${r.error}`;
+  const entries = r.data?.entries || [];
+  return entries.length ? entries.map(consoleLine).join('\n') : 'The page has logged nothing matching that.';
+}
+
+/**
+ * Whether the browser really refused this request. Checked here as well as in
+ * the browser because a fleet runs mixed versions, and an older one calls a
+ * successful request's error `net::OK` — which would fill an agent's answer with
+ * failures that never happened.
+ */
+const trulyFailed = (q) => (q.error && q.error !== 'net::OK') || (q.status !== null && q.status >= Status.BAD_REQUEST);
+
+/** What the page requested and how the server answered. */
+async function readNetwork(browserId, args) {
+  const params = { failedOnly: args.failed_only === true, pattern: args.pattern, limit: args.limit };
+  const r = await sendCommand(browserId, 'read_network', params);
+  if (!r.ok) return `Error: ${r.error}`;
+  const all = r.data?.requests || [];
+  const requests = args.failed_only === true ? all.filter(trulyFailed) : all;
+  return requests.length ? requests.map(requestLine).join('\n') : 'No requests matching that.';
 }
 
 /** Lists the open tabs, marking the active one. */
@@ -215,6 +253,8 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   read_elements: readElements,
   list_tabs: listTabs,
   open_tab: openTab,
+  read_console: readConsole,
+  read_network: readNetwork,
   switch_tab: switchTab,
   // Offered in BROWSER_TOOLS for pages element ids cannot reach; not recorded, since replays cannot aim them.
   click_coordinates: clickCoordinates,

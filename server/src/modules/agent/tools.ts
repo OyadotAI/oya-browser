@@ -196,6 +196,40 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
   {
     type: 'function',
     function: {
+      name: 'read_console',
+      description:
+        'Read what the page logged: its own errors and warnings. Use this when a step failed, a page stalled, or the portal showed an error you cannot read on screen — it says what the page itself complained about.',
+      parameters: {
+        type: 'object',
+        properties: {
+          level: { type: 'string', description: "Only this level: 'error', 'warning', 'info' or 'debug' (optional)" },
+          pattern: { type: 'string', description: 'Only messages matching this regular expression (optional)' },
+          limit: { type: 'number', description: 'How many entries, newest first (default 100)' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_network',
+      description:
+        'Read the requests the page made and how the server answered. Use failed_only when a submit or a handoff did not work: a 400 or 500 here names the request the server refused, which is the difference between bad data and a broken page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          failed_only: { type: 'boolean', description: 'Only requests that failed or answered 400 and above' },
+          pattern: { type: 'string', description: 'Only urls matching this regular expression (optional)' },
+          limit: { type: 'number', description: 'How many requests, newest first (default 100)' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_tabs',
       description: 'List all open tabs (ID, title, URL, which is active).',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
