@@ -135,8 +135,7 @@ function openWindow(ctx, details) {
   const webPreferences = { partition: ctx.persona.partitionName() };
   if (isAuthPopup(details.url, details.features))
     return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
-  if (opensNamedWindow(details.frameName))
-    return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
+  if (opensNamedWindow(details.frameName)) return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
   ctx.tabs.createTab(details.url, true, loadOptionsFor(details));
   return { action: 'deny' };
 }

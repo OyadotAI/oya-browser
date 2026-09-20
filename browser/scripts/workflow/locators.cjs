@@ -109,7 +109,10 @@ function generatedId(el) {
  * target has nothing better to offer.
  */
 function withPath(found, path, el = {}) {
-  const tail = [...(path && !found.some((c) => c.value === path) ? [{ kind: 'css', value: path }] : []), ...generatedId(el)];
+  const tail = [
+    ...(path && !found.some((c) => c.value === path) ? [{ kind: 'css', value: path }] : []),
+    ...generatedId(el),
+  ];
   return [...found, ...tail.filter((c) => !found.some((f) => f.value === c.value))];
 }
 

@@ -114,4 +114,14 @@ function handlesOf(el = {}) {
   return HANDLES.filter((h) => h.of(el) !== undefined && h.of(el) !== '' && h.of(el) !== null);
 }
 
-module.exports = { HANDLES, handlesOf, contradicts, missingIdentity, stableId, withoutLiveCount, targetOf, GENERATED_ID, LIVE_COUNT };
+module.exports = {
+  HANDLES,
+  handlesOf,
+  contradicts,
+  missingIdentity,
+  stableId,
+  withoutLiveCount,
+  targetOf,
+  GENERATED_ID,
+  LIVE_COUNT,
+};
