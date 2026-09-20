@@ -469,4 +469,36 @@ describe('play at a human pace', () => {
   });
 });
 
+describe('play fills the placeholders in a handle', () => {
+  beforeEach(() => {
+    answer = page;
+    browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p));
+  });
+  afterEach(() => {
+    browser.disconnect();
+    mock.restoreAll();
+    mock.timers.reset();
+    keyConfig.reset();
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it("clicks a link whose target was recorded with the run's own value in it", async () => {
+    // Reddit: the post link is recorded as "{{start}}comments/abc/", because the
+    // listing url was a variable. Unfilled, that handle matches nothing at all.
+    const steps = [{ action: 'click', el: { tag: 'a', rawHref: '{{start}}comments/abc/' } }];
+    await play(KEY, BROWSER, pb(steps), { start: 'https://r.test/r/x/' });
+    const clicked = commands().find((c) => c.action === 'click');
+    assert.deepEqual(clicked.params, { selector: 'a[href="https://r.test/r/x/comments/abc/"]' });
+  });
+
+  it('matches a field whose name carried a value', async () => {
+    const elements = [{ id: 9, type: 'input', tag: 'input', name: 'field-Basic', visible: true }];
+    answer = (action, params) => (action === 'analyze' ? { ok: true, data: { elements } } : page(action, params));
+    const steps = [{ action: 'type', text: 'x', el: { tag: 'input', type: 'input', name: 'field-{{plan}}' } }];
+    await play(KEY, BROWSER, pb(steps), { plan: 'Basic' });
+    const typed = commands().find((c) => c.action === 'type');
+    assert.deepEqual(typed.params, { selector: '[data-ac-id="9"]', text: 'x' });
+  });
+});
+
 });
