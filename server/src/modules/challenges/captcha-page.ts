@@ -2,10 +2,17 @@
  * The page side of CAPTCHA handling: scripts that run in the browser to find a
  * challenge and to hand a solved token back to it.
  */
+import { MIN_CHALLENGE_HEIGHT_PX, MIN_CHALLENGE_WIDTH_PX } from './constants.ts';
 
 /**
  * Find a challenge and read what a solver needs from it. Runs in the page.
  * Deliberately read-only — it identifies, it does not interact.
+ *
+ * `invisible` is the difference between a challenge and a widget. Sites keep a
+ * reCAPTCHA on pages that are not asking anything — behind a login form, as the
+ * badge in the corner, as the frame that scores the visit — and a run that parks a
+ * person on every one of those never finishes. Stack Overflow's question list
+ * carries one, and it stopped four replays of a page with nothing to solve.
  */
 export const DETECT_JS = `(() => {
   if (document.readyState !== 'complete') return { present: false, loading: true };
@@ -16,11 +23,20 @@ export const DETECT_JS = `(() => {
     return m ? decodeURIComponent(m[1]) : null;
   };
 
+  // Drawn large enough for a person to be answering it, and not hidden.
+  const shown = (el) => {
+    const box = el.getBoundingClientRect();
+    if (box.width < ${MIN_CHALLENGE_WIDTH_PX} || box.height < ${MIN_CHALLENGE_HEIGHT_PX}) return false;
+    const style = getComputedStyle(el);
+    return style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity || '1') > 0;
+  };
+
   // Turnstile
   const ts = document.querySelector('[data-sitekey].cf-turnstile, .cf-turnstile[data-sitekey]')
     || [...document.querySelectorAll('iframe')].find((f) => /challenges\\.cloudflare\\.com/.test(f.src || ''));
   if (ts) {
     out.present = true; out.type = 'turnstile';
+    out.invisible = !shown(ts);
     out.sitekey = ts.dataset?.sitekey || frameKey(ts.src, 'k') || null;
     return out;
   }
@@ -30,6 +46,7 @@ export const DETECT_JS = `(() => {
     || [...document.querySelectorAll('iframe')].find((f) => /hcaptcha\\.com/.test(f.src || ''));
   if (hc) {
     out.present = true; out.type = 'hcaptcha';
+    out.invisible = !shown(hc);
     out.sitekey = hc.dataset?.sitekey || frameKey(hc.src, 'sitekey') || null;
     return out;
   }
@@ -40,8 +57,12 @@ export const DETECT_JS = `(() => {
   if (rc) {
     out.present = true;
     out.sitekey = rc.dataset?.sitekey || frameKey(rc.src, 'k') || null;
-    out.invisible = /size=invisible/.test(rc.src || '') || rc.dataset?.size === 'invisible';
-    out.type = out.invisible ? 'recaptcha_v3' : 'recaptcha_v2';
+    // What kind it is comes from how the page declared it; whether anyone is being
+    // asked to do it also depends on whether it was drawn. A v2 widget nobody can
+    // see is still a v2 widget, and solving it as v3 would buy the wrong answer.
+    const declaredInvisible = /size=invisible/.test(rc.src || '') || rc.dataset?.size === 'invisible';
+    out.type = declaredInvisible ? 'recaptcha_v3' : 'recaptcha_v2';
+    out.invisible = declaredInvisible || !shown(rc);
     return out;
   }
 

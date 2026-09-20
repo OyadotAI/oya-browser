@@ -5,6 +5,9 @@ const { sleep, jitter, typingDelay } = require('./timing.cjs');
 
 /** The CDP key event fields for a named key or a single character. */
 function keyDef(ch) {
+  // A line break is the Enter key, not a character with no key code behind it: a
+  // textarea takes the break either way, but a form watching for Enter sees nothing.
+  if (ch === '\n') return { ...KEY_DEFS.Enter };
   if (KEY_DEFS[ch]) return { ...KEY_DEFS[ch] };
   const upper = ch.toUpperCase();
   const isLetter = /^[a-zA-Z]$/.test(ch);
@@ -23,11 +26,18 @@ const keyFields = (def, modifiers) => ({
   code: def.code,
 });
 
-/** Sends a key down; a key that produces text is a `keyDown`, others a `rawKeyDown`. */
+/**
+ * Sends a key down. `keyDown` for every key, text or not: a `rawKeyDown` — which is
+ * what a raw key event is called and what other drivers send for a key with no text —
+ * arrives through Electron's debugger without ever becoming a DOM keydown. A page
+ * that echoes `$(document).keydown` showed nothing for ArrowLeft, Tab, PageDown or
+ * Escape while a typed character came straight back. Chrome raises no keypress for a
+ * key carrying no text, so nothing is gained by the raw form and a key press is lost.
+ */
 async function cdpKeyDown(view, def, modifiers = 0) {
   const isChar = !!def.text;
   await cdp(view, 'Input.dispatchKeyEvent', {
-    type: isChar ? 'keyDown' : 'rawKeyDown',
+    type: 'keyDown',
     ...keyFields(def, modifiers),
     text: isChar ? def.text : undefined,
     unmodifiedText: isChar ? def.text : undefined,

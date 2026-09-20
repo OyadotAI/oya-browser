@@ -98,7 +98,7 @@ describe('renderPlaywright', () => {
 
     it('then the link target, the written id, the label, the text, the name, the placeholder and the position', () => {
       // A link's own target outranks an id: the id may be this render's invention.
-      assert.equal(click({ href: '/x', domId: 'd' }), 'page.locator("a[href=\\"/x\\"]")');
+      assert.equal(click({ tag: 'a', href: '/x', domId: 'd' }), 'page.locator("a[href=\\"/x\\"]")');
       assert.equal(click({ domId: 'd', ariaLabel: 'a' }), 'page.locator("[id=\\"d\\"]")');
       assert.equal(click({ ariaLabel: 'a', text: 'x' }), 'page.getByLabel("a", { exact: true })');
       assert.equal(click({ text: 'Go', name: 'n' }), 'page.getByText("Go", { exact: true })');
@@ -106,6 +106,29 @@ describe('renderPlaywright', () => {
       assert.equal(click({ name: 'n' }), 'page.locator("[name=\\"n\\"]")');
       assert.equal(click({ placeholder: 'p', path: 'form > input' }), 'page.getByPlaceholder("p")');
       assert.equal(click({ path: 'div > p > a' }), 'page.locator("div > p > a")');
+    });
+
+    it('passes over a link target that carries the request id of the visit it was recorded in', () => {
+      // Recorded from Amazon's page-2 link. As an attribute selector it matches the
+      // visit it was recorded in and nothing after it, so the label takes over.
+      const el = { tag: 'a', rawHref: '/s?k=kb&page=2&qid=1789940643&xpid=njio9', ariaLabel: 'Go to page 2' };
+      assert.equal(click(el), 'page.getByLabel("Go to page 2", { exact: true })');
+    });
+
+    it('aims a repeated name at the container where it occurs once', () => {
+      const scoped = '[data-row="7"] button:text-is("View")';
+      // Three rows with a View button each: the name alone clicks the first row.
+      assert.equal(
+        click({ text: 'View', repeats: 'true', scoped, tag: 'button' }),
+        `page.locator(${JSON.stringify(scoped)})`,
+      );
+    });
+
+    it('falls to position for a repeated name no container could pin down', () => {
+      assert.equal(
+        click({ text: 'Delete', repeats: 'true', tag: 'button', path: 'li:nth-of-type(2) > button' }),
+        'page.locator("li:nth-of-type(2) > button")',
+      );
     });
 
     it('never aims at an id a framework invented for that render', () => {
@@ -122,9 +145,22 @@ describe('renderPlaywright', () => {
       );
     });
 
-    it('falls back to the tag, saying no stable handle was recorded', () => {
-      assert.equal(click({ tag: 'button' }), 'page.locator("button") /* no stable handle was recorded */');
-      assert.equal(click(undefined), 'page.locator("body") /* no stable handle was recorded */');
+    it('refuses a step nothing can aim, rather than clicking the page body', () => {
+      // A body click runs, does nothing, and lets the rest of the script continue
+      // as though the step had worked — the worst of the three outcomes.
+      const line = lineFor({ action: 'click', el: { tag: 'button' } });
+      assert.match(line, /^throw new Error\("Cannot replay this click: no stable handle/);
+      assert.match(lineFor({ action: 'click' }), /no stable handle was recorded for an element/);
+      assert.match(lineFor({ action: 'type', text: 'x', el: {} }), /Cannot replay this type/);
+    });
+
+    it('still runs a step that needs no element', () => {
+      assert.equal(lineFor({ action: 'press_key', key: 'Tab' }), 'await page.keyboard.press("Tab");');
+      assert.match(lineFor({ action: 'scroll', direction: 'down' }), /mouse\.wheel/);
+    });
+
+    it('refuses a step the recorder marked unaimable', () => {
+      assert.match(lineFor({ action: 'click', el: { testId: 'go' }, unaimable: true }), /^throw new Error/);
     });
 
     it('finds a data-driven click by its filled-in text before any id', () => {

@@ -215,7 +215,7 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
     function: {
       name: 'read_network',
       description:
-        'Read the requests the page made and how the server answered. Use failed_only when a submit or a handoff did not work: a 400 or 500 here names the request the server refused, which is the difference between bad data and a broken page.',
+        'Read the requests the page made and how the server answered. Use failed_only when a submit or a handoff did not work: a 400 or 500 here names the request the server refused, which is the difference between bad data and a broken page. Judge only requests to the site you are working on — adverts, trackers and analytics fail on almost every commercial page and explain nothing about your task.',
       parameters: {
         type: 'object',
         properties: {

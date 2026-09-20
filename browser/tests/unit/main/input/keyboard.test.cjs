@@ -40,15 +40,17 @@ describe('keyDef', () => {
 describe('CDP keyboard', () => {
   afterEach(() => mock.restoreAll());
 
-  it('a press is a raw down then an up, held for a moment', async () => {
+  it('a press is a down then an up, held for a moment', async () => {
     const delays = instantTimers();
     fixedRandom(0);
     const view = pageView();
     await cdpPressKey(view, 'Tab', Modifier.CTRL);
     assert.deepEqual(
       keyEvents(view).map((e) => [e.type, e.key, e.modifiers]),
+      // keyDown, not rawKeyDown: a raw down never became a DOM keydown through
+      // Electron's debugger, so no key with no text of its own reached the page.
       [
-        ['rawKeyDown', 'Tab', Modifier.CTRL],
+        ['keyDown', 'Tab', Modifier.CTRL],
         ['keyUp', 'Tab', Modifier.CTRL],
       ],
     );
@@ -90,7 +92,7 @@ describe('CDP keyboard', () => {
       [
         ['keyDown', 'a', modifier],
         ['keyUp', 'a', modifier],
-        ['rawKeyDown', 'Backspace', 0],
+        ['keyDown', 'Backspace', 0],
         ['keyUp', 'Backspace', 0],
       ],
     );

@@ -85,6 +85,32 @@ function withoutNoise(url) {
 const targetOf = (el) => stableTarget(rawTargetOf(el));
 
 /**
+ * Whether this element is the kind of thing a target belongs to.
+ *
+ * A target only identifies a link. A button that has somehow acquired one — an href
+ * inherited from a stale analysis entry — must not be aimed at as `a[href="..."]`,
+ * which is how a recorded click on a Start button replayed onto a footer link.
+ */
+const isLink = (el) => String(el.tag || '').toLowerCase() === 'a' || el.type === 'link';
+
+/**
+ * Whether a target carries per-visit noise, and so cannot be matched literally.
+ *
+ * Comparing two targets is safe — the noise is dropped from both. Writing one into
+ * a selector is not: `a[href="...&qid=1789940643"]` matched the link it was recorded
+ * from and nothing at all on the next visit, and the replay went on to click
+ * whatever the browser found instead.
+ */
+function volatileTarget(href) {
+  if (!href) return false;
+  try {
+    return [...new URL(String(href), RELATIVE_BASE).searchParams.keys()].some((k) => VOLATILE_PARAMS.test(k));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The handles, most trustworthy first.
  *
  * `of` reads the handle from a recorded or live element, or nothing when it has
@@ -93,14 +119,24 @@ const targetOf = (el) => stableTarget(rawTargetOf(el));
  */
 const HANDLES = [
   { kind: 'testId', of: (el) => el.testId },
-  { kind: 'href', of: targetOf },
+  { kind: 'href', of: (el) => (isLink(el) ? targetOf(el) : undefined), scope: 'tag' },
   // An id the page author wrote. One this render invented is not a handle at all.
   { kind: 'domId', of: (el) => (stableId(el.domId) ? el.domId : undefined) },
   { kind: 'ariaLabel', of: (el) => (el.ariaLabel ? withoutLiveCount(el.ariaLabel) : undefined), scope: 'tag' },
+  // The same name, inside the nearest container where it is the only one: what the
+  // analyzer works out for a name the page repeats. "Delete" in the second row is
+  // this, and it is the difference between the right row and the first one.
+  { kind: 'scoped', of: (el) => el.scoped, scope: 'tag' },
   // `drifts` because visible text is the handle most likely to read differently
   // and still be the same control: a data-driven label, a count, a date. Its
   // absence is evidence; a different value is not.
-  { kind: 'text', of: (el) => el.text, scope: 'type', drifts: true },
+  //
+  // `ambiguous` for a name the analyzer marked as repeating: it cannot be used to
+  // find the element, because it never said which one — `scoped` above carries it
+  // when a container could be named, and position is what is left when none could.
+  // It is still read for identity, though: a slot whose occupant has lost the name
+  // that was recorded is the wrong occupant, repeating name or not.
+  { kind: 'text', of: (el) => el.text, scope: 'type', drifts: true, ambiguous: (el) => Boolean(el.repeats) },
   { kind: 'name', of: (el) => el.name, scope: 'tag' },
   { kind: 'placeholder', of: (el) => el.placeholder, scope: 'tag' },
   // Where it sits: all that is left for an element with no name and no target.
@@ -147,9 +183,14 @@ function missingIdentity(el = {}, candidate = {}) {
   });
 }
 
-/** The handles this element actually has, in order of trust. */
+/**
+ * The handles this element can be found again by, in order of trust. A handle the
+ * element does not carry is left out, and so is one that cannot tell this element
+ * from its siblings — both are handles nothing can aim with.
+ */
 function handlesOf(el = {}) {
-  return HANDLES.filter((h) => h.of(el) !== undefined && h.of(el) !== '' && h.of(el) !== null);
+  const has = (v) => v !== undefined && v !== '' && v !== null;
+  return HANDLES.filter((h) => has(h.of(el)) && !h.ambiguous?.(el));
 }
 
 module.exports = {
@@ -162,6 +203,7 @@ module.exports = {
   targetOf,
   stableTarget,
   rawTargetOf,
+  volatileTarget,
   GENERATED_ID,
   LIVE_COUNT,
 };
