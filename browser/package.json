@@ -1,7 +1,7 @@
 {
   "name": "oya-browser",
   "version": "1.0.99",
-  "description": "AI-controlled browser — your real browser as an MCP server",
+  "description": "AI-controlled browser \u2014 your real browser as an MCP server",
   "main": "main.js",
   "author": "Oya <hello@oya.ai>",
   "scripts": {
@@ -13,7 +13,7 @@
     "dist:linux": "electron-builder --linux --publish never",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node --test 'tests/unit/**/*.test.{js,cjs,mjs}'",
-    "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs",
+    "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs && npm run test:analyzer",
     "test:coverage": "node --test --experimental-test-coverage 'tests/unit/**/*.test.{js,cjs,mjs}'",
     "test:recording": "electron tests/integration/recording-electron.cjs",
     "test:shell": "node tests/integration/shell.mjs",
@@ -21,7 +21,8 @@
     "test:workflow": "electron tests/integration/workflow-electron.cjs",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:analyzer": "node tests/integration/analyzer-dom.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",

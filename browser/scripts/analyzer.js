@@ -117,7 +117,9 @@
           break;
         }
       }
-      root = activeModal || document.body;
+      // documentElement stands in while a new document is still being parsed,
+      // when body does not exist yet: a page mid-navigation is still readable.
+      root = activeModal || document.body || document.documentElement;
     }
 
     if (!root) return { ok: false, error: `Root not found: ${options.selector}` };
@@ -361,7 +363,7 @@
       if (alt) { flush(ctx); blocks.push({ region: ctx.region, kind: 'image', text: alt }); }
       return true;
     },
-    TABLE: (node, ctx) => !isHackerNews() && !isLayoutTable(node) && tableBlocks(node, ctx),
+    TABLE: (node, ctx) => !isHackerNews() && !isLayoutTable(node) && !isPickerGrid(node) && tableBlocks(node, ctx),
     DETAILS: (node, ctx) => detailsBlocks(node, ctx),
     SUMMARY: () => true,
     LABEL: (node, ctx) => labelBlocks(node, ctx),
@@ -497,6 +499,7 @@
   function stateWords(entry) {
     const words = [];
     if (entry.checked !== undefined && ['checkbox', 'radio'].includes(entry.type)) words.push(entry.checked ? 'checked' : 'unchecked');
+    if (entry.choiceOf) words.push(entry.choiceOf);
     if (entry.disabled) words.push('disabled');
     if (entry.required) words.push('required');
     if (entry.readOnly) words.push('readonly');
@@ -539,6 +542,8 @@
 
   function getInteractiveType(node) {
     const tag = node.tagName;
+    const hidden = hiddenControl(node);
+    if (hidden) return hidden.type.toLowerCase();
 
     // Native HTML interactive tags
     if (tag === 'A') return 'link';
@@ -576,6 +581,9 @@
 
     // Explicit click handler attributes
     if (hasClickHandler(node)) return 'button';
+
+    // A date picker's day: no role, no handler, no pointer cursor of its own.
+    if (isPickerDay(node)) return 'button';
 
     // Tabindex: only interactive if also has cursor:pointer
     const tabindex = node.getAttribute('tabindex');
@@ -751,6 +759,8 @@
     if (['input', 'textarea', 'select'].includes(type)) Object.assign(entry, fieldEntry(node));
     const checked = isChecked(node);
     if (checked !== undefined) entry.checked = checked;
+    const place = choiceOf(node);
+    if (place) entry.choiceOf = place;
     if (node.getAttribute('aria-disabled') === 'true') entry.disabled = true;
     const state = ariaState(node);
     if (state) entry.state = state;
@@ -760,9 +770,35 @@
     return entry;
   }
 
-  /** A native checkbox's checked, or a custom one's aria-checked; undefined for anything else. */
+  /**
+   * The hidden checkbox or radio a visible label stands for. Star ratings,
+   * Material and Chakra controls hide the input and show the label, so the
+   * label is what a person clicks and what carries the control's state.
+   */
+  function hiddenControl(node) {
+    const control = node.tagName === 'LABEL' ? node.control : null;
+    if (!control || !isHardHidden(control)) return null;
+    const type = (control.type || '').toLowerCase();
+    return type === 'checkbox' || type === 'radio' ? control : null;
+  }
+
+  /**
+   * Where a radio sits in its group, said in words, for a group whose choices
+   * look alike: five identical stars, or a scale of dots, where the label text
+   * alone cannot say which choice is which.
+   */
+  function choiceOf(node) {
+    const control = hiddenControl(node) || node;
+    if ((control.type || '').toLowerCase() !== 'radio' || !control.name) return '';
+    const group = [...document.getElementsByName(control.name)];
+    const at = group.indexOf(control);
+    return group.length > 1 && at >= 0 ? `choice ${at + 1} of ${group.length}` : '';
+  }
+
+  /** A native checkbox's checked, a label's hidden control's, or a custom one's aria-checked. */
   function isChecked(node) {
-    if (node.checked !== undefined) return node.checked;
+    const control = hiddenControl(node) || node;
+    if (control.checked !== undefined) return control.checked;
     const aria = node.getAttribute('aria-checked');
     return aria === null ? undefined : aria === 'true' || aria === 'mixed';
   }
@@ -873,6 +909,9 @@
     if (controlName && !node.textContent?.trim()) return controlName.replace(/[_-]/g, ' ').slice(0, 80);
     const direct = [];
     for (const c of node.childNodes) if (c.nodeType === Node.TEXT_NODE && c.textContent.trim()) direct.push(c.textContent.trim());
+    // A name broken up by styling is still one name: a search list marks the part
+    // that matched, so "<b>ANTHEM</b> - CA" must not read as "- CA".
+    if (direct.length && inlineOnly(node) && shownText(node)) return shownText(node).slice(0, 80);
     // Only text that says something: the "-" between a price filter's two amounts is not its name.
     if (direct.length && /[\p{L}\p{N}]/u.test(direct.join(''))) return direct.join(' ').slice(0, 80);
     const t = shownText(node);
@@ -883,7 +922,47 @@
     // Check child element titles (HN: <a><div class="votearrow" title="upvote"></div></a>)
     const childTitle = node.querySelector('[title]');
     if (childTitle) return childTitle.getAttribute('title').trim().slice(0, 80);
-    return node.placeholder?.slice(0, 80) || node.name || '';
+    return iconName(node) || nearbyName(node) || node.placeholder?.slice(0, 80) || node.name || '';
+  }
+
+  /** Tags that only style the text they wrap, so a name split across them is still one name. */
+  const INLINE_NAME_TAGS = new Set(
+    ['MARK', 'STRONG', 'B', 'EM', 'I', 'SPAN', 'SMALL', 'U', 'SUP', 'SUB', 'CODE', 'ABBR', 'FONT', 'BDI', 'S', 'INS', 'DEL'],
+  );
+
+  /** Whether an element's children only style its text, so its whole text reads as its name. */
+  const inlineOnly = (node) => [...node.children].every((c) => INLINE_NAME_TAGS.has(c.tagName));
+
+  /** A class name's icon word: fa-search, icon-trash, glyphicon-plus. */
+  function iconWord(node) {
+    for (const kid of node.querySelectorAll('[class]')) {
+      const cls = String(kid.className?.baseVal ?? kid.className ?? '');
+      const found = /(?:^|\s)(?:fa|fas|far|fal|fab|icon|glyphicon|material-icons)[-\s]([a-z0-9-]{2,30})/i.exec(cls);
+      if (found) return found[1];
+    }
+    return '';
+  }
+
+  /** What an icon says a control does, for a button that shows a picture and no words. */
+  function iconName(node) {
+    const titled = node.querySelector('svg title, [data-icon]');
+    const title = titled?.textContent?.trim() || titled?.getAttribute?.('data-icon') || '';
+    if (title) return title.replace(/[-_]/g, ' ').slice(0, 80);
+    const use = node.querySelector('use');
+    const sprite = (use?.getAttribute('href') || use?.getAttribute('xlink:href') || '').split('#')[1] || '';
+    return (sprite || iconWord(node)).replace(/[-_]/g, ' ').slice(0, 80);
+  }
+
+  /**
+   * What the row or card around a nameless control holds. A results list gives
+   * its buttons ids like "selectProvider0", which say nothing about the record
+   * they choose; the row's own text does.
+   */
+  function nearbyName(node) {
+    const box = node.closest('tr, li, [role="row"], [class*="card"], [class*="result"]');
+    if (!box || box === node) return '';
+    const text = (box.innerText || box.textContent || '').replace(/\s+/g, ' ').trim();
+    return /[\p{L}\p{N}]/u.test(text) ? text.slice(0, 80) : '';
   }
 
   /**
@@ -895,6 +974,28 @@
     const shown = node.innerText?.replace(/\s+/g, ' ').trim() || '';
     const written = node.textContent?.replace(/\s+/g, ' ').trim() || '';
     return written && shown.toLowerCase() === written.toLowerCase() ? written : shown;
+  }
+
+  /**
+   * A date picker's month grid. Its day cells carry no role, no handler and no
+   * pointer cursor — the widget listens on the container — so the grid is left
+   * to the ordinary walk, where each day registers as an element to click.
+   */
+  function isPickerGrid(table) {
+    return !!table.closest('[class*="datepicker"], [class*="date-picker"], [class*="calendar"], [role="dialog"][class*="picker"]')
+      && !!table.querySelector('td[class*="day"], td[class*="date"]');
+  }
+
+  /**
+   * One day in a date picker's grid: clickable although nothing in the markup
+   * says so. A day cell holds its number and nothing else, which keeps the
+   * widget's own containers (datepicker-days and the like) out of it.
+   */
+  function isPickerDay(node) {
+    if (!/^\d{1,2}$/.test((node.textContent || '').trim())) return false;
+    const cls = typeof node.className === 'string' ? node.className : '';
+    if (!/(^|\s)(day|date)(\s|$)|-day(\s|$)|-date(\s|$)/.test(cls)) return false;
+    return !!node.closest('[class*="datepicker"], [class*="date-picker"], [class*="calendar"], [role="dialog"][class*="picker"]');
   }
 
   /** Detect layout tables (no <th>, used for positioning not data). */

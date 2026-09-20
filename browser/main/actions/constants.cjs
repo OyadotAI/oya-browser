@@ -19,6 +19,12 @@ const NAVIGATE_RETRY_MS = 1000;
 const NAVIGATION_START_MS = 300;
 /** Settle time after a coordinate click, hover or double click. */
 const AFTER_POINTER_MS = 100;
+/**
+ * Pause before analysing a page again that read as having no elements at all.
+ * A heavy app (a payer portal, a store) can answer a navigation before it has
+ * drawn anything, and an empty read tells the agent the page is broken.
+ */
+const EMPTY_ANALYSIS_RETRY_MS = 1200;
 /** Time for autocomplete suggestions to appear after typing. */
 const SUGGESTIONS_MS = 800;
 /** Pause after focusing a field from the dev panel, before clearing it. */
@@ -88,6 +94,7 @@ module.exports = {
   FALLBACK_VIEWPORT,
   HALF,
   SCROLL_SETTLE_MS,
+  EMPTY_ANALYSIS_RETRY_MS,
   SCROLL_AMOUNT,
   DEV_SCROLL_AMOUNT,
   SCROLL_STEP_PX,

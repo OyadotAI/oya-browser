@@ -6,7 +6,11 @@ const { describe, it, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { createPageActions } = require('../../../../main/page-actions.cjs');
 const { PageDriver } = require('../../../../main/actions/driver.cjs');
-const { TAB_READY_TIMEOUT_MS, LOAD_TIMEOUT_MS } = require('../../../../main/actions/constants.cjs');
+const {
+  TAB_READY_TIMEOUT_MS,
+  LOAD_TIMEOUT_MS,
+  EMPTY_ANALYSIS_RETRY_MS,
+} = require('../../../../main/actions/constants.cjs');
 const { pageView, pageCtx, results } = require('../../support/page.cjs');
 const { flush } = require('../../support/fakes.cjs');
 
@@ -22,6 +26,29 @@ describe('PageDriver', () => {
     await createPageActions(ctx).runPageAction('c1', 'read_page', {}, view);
     assert.deepEqual(ctx.calls[0], ['inject']);
     assert.deepEqual(results(ctx), [['c1', false, 1, 'e']]);
+  });
+
+  it('reads a page again when an analysis found no element at all', async () => {
+    const view = pageView();
+    const pages = [
+      { ok: true, data: { elements: [], blocks: [] } },
+      { ok: true, data: { elements: [{ id: 1 }], blocks: [] } },
+    ];
+    const ctx = pageCtx(view, { world: () => pages.shift() });
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const done = createPageActions(ctx).runPageAction('c1', 'analyze', {}, view);
+    await flush();
+    mock.timers.tick(EMPTY_ANALYSIS_RETRY_MS);
+    await done;
+    assert.equal(ctx.calls.filter((c) => c[0] === 'world').length, 2);
+    assert.equal(results(ctx)[0][2].elements.length, 1);
+  });
+
+  it('reads a page once when the analysis found elements', async () => {
+    const view = pageView();
+    const ctx = pageCtx(view, { world: { ok: true, data: { elements: [{ id: 1 }], blocks: [] } } });
+    await createPageActions(ctx).runPageAction('c1', 'analyze', {}, view);
+    assert.equal(ctx.calls.filter((c) => c[0] === 'world').length, 1);
   });
 
   it('an empty script result counts as success', async () => {

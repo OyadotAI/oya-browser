@@ -6,7 +6,7 @@
 const { sleep } = require('../input.cjs');
 const { findElementJs, actionScript } = require('./scripts.cjs');
 const { renderedAnalysis } = require('../page-format.cjs');
-const { TAB_READY_TIMEOUT_MS, LOAD_TIMEOUT_MS } = require('./constants.cjs');
+const { TAB_READY_TIMEOUT_MS, LOAD_TIMEOUT_MS, EMPTY_ANALYSIS_RETRY_MS } = require('./constants.cjs');
 const { PAGE_COMMANDS } = require('./page-commands.cjs');
 const { DEV_COMMANDS, UNGUARDED_DEV_COMMANDS } = require('./dev-commands.cjs');
 
@@ -83,9 +83,21 @@ class PageDriver {
   /** An action with no handler of its own runs as an analyzer script. */
   async runInjected(id, action, params, view) {
     await this.ctx.injectScripts(view);
-    const raw = await this.ctx.worldEval(view, actionScript(action, params));
+    const raw = await this.analysed(action, params, view);
     const result = action === 'analyze' ? renderedAnalysis(this.ctx, raw, params) : raw;
     this.ctx.sendResult(id, result?.ok ?? true, result?.data, result?.error);
+  }
+
+  /**
+   * The script's result. An analysis that found no element at all is read once
+   * more after a pause: an app that answered before it drew anything is still
+   * loading, and an empty page would tell the agent the site is broken.
+   */
+  async analysed(action, params, view) {
+    const raw = await this.ctx.worldEval(view, actionScript(action, params));
+    if (action !== 'analyze' || raw?.data?.elements?.length) return raw;
+    await new Promise((resolve) => setTimeout(resolve, EMPTY_ANALYSIS_RETRY_MS));
+    return this.ctx.worldEval(view, actionScript(action, params));
   }
 
   /** The dev panel's quick actions; answers by return value, never throws. */
