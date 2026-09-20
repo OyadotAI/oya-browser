@@ -43,8 +43,46 @@ function withoutLiveCount(name) {
   return cleaned || String(name ?? '');
 }
 
+/**
+ * Query parameters a site regenerates per visit: a request id, a session id, a
+ * tracking tag. Amazon's pagination link carries `qid` (an epoch) and `xpid` (a
+ * session), so the same "page 2" link reads differently every time — while
+ * `page=2` itself is exactly what distinguishes it from page 3. Dropping the
+ * volatile ones and keeping the rest is what makes a link comparable at all.
+ */
+const VOLATILE_PARAMS =
+  /^(utm_[a-z]+|qid|xpid|_gl|_ga|gclid|fbclid|msclkid|igshid|ved|ei|sa|usg|sid|sessionid|sessid|nonce|csrf|csrftoken|requestid|rid|reqid|ts|timestamp|trk|trackingid|rdt|si|correlationid)$/i;
+
 /** A link's target as the page wrote it, which is what a CSS locator matches. */
-const targetOf = (el) => el.rawHref ?? el.href;
+const rawTargetOf = (el) => el.rawHref ?? el.href;
+
+/**
+ * The same target with the per-visit noise removed and the rest in a fixed order,
+ * so two renderings of one link compare equal and two different links do not.
+ */
+function stableTarget(href) {
+  if (!href) return undefined;
+  try {
+    return withoutNoise(new URL(String(href), RELATIVE_BASE));
+  } catch {
+    return String(href);
+  }
+}
+
+/** The base a relative href is parsed against, and stripped from the answer again. */
+const RELATIVE_BASE = 'http://relative.invalid';
+
+/** The url without its per-visit parameters, its remaining query in a fixed order. */
+function withoutNoise(url) {
+  for (const key of [...url.searchParams.keys()]) if (VOLATILE_PARAMS.test(key)) url.searchParams.delete(key);
+  url.searchParams.sort();
+  const query = url.searchParams.toString();
+  const origin = url.origin === RELATIVE_BASE ? '' : url.origin;
+  return `${origin}${url.pathname}${query ? `?${query}` : ''}`;
+}
+
+/** A link's target for comparison: what it points at, not which visit wrote it. */
+const targetOf = (el) => stableTarget(rawTargetOf(el));
 
 /**
  * The handles, most trustworthy first.
@@ -122,6 +160,8 @@ module.exports = {
   stableId,
   withoutLiveCount,
   targetOf,
+  stableTarget,
+  rawTargetOf,
   GENERATED_ID,
   LIVE_COUNT,
 };

@@ -98,3 +98,20 @@ describe('matchElement refuses the wrong neighbour', () => {
     assert.equal(matchElement(recorded, pool)?.id, 4);
   });
 });
+describe('matchElement across two visits of the same link', () => {
+  it("finds Amazon's page-2 link although its request and session ids changed", () => {
+    const pool = [
+      { id: 1, tag: 'a', type: 'link', rawHref: '/s?k=kb&page=2&xpid=NEW&qid=1789999999&ref=sr_pg_2', visible: true },
+      { id: 2, tag: 'a', type: 'link', rawHref: '/s?k=kb&page=3&xpid=NEW&qid=1789999999&ref=sr_pg_3', visible: true },
+    ];
+    const recorded = { tag: 'a', type: 'link', rawHref: '/s?k=kb&page=2&xpid=OLD&qid=1789935022&ref=sr_pg_2' };
+    assert.equal(matchElement(recorded, pool)?.id, 1);
+  });
+
+  it('does not take page 3 for page 2, because the query is what tells them apart', () => {
+    const pool = [{ id: 2, tag: 'a', type: 'link', rawHref: '/s?k=kb&page=3&qid=2&ref=sr_pg_3', visible: true }];
+    const recorded = { tag: 'a', type: 'link', rawHref: '/s?k=kb&page=2&qid=1&ref=sr_pg_2' };
+    assert.equal(matchElement(recorded, pool), null);
+  });
+});
+
