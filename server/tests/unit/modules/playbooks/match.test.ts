@@ -51,3 +51,35 @@ describe('matchElement', () => {
     assert.equal(matchElement(undefined, [live(1)], undefined), null);
   });
 });
+describe('matchElement refuses the wrong neighbour', () => {
+  /** A message composer: emoji, expand and send are siblings of the same shape. */
+  const composer = [
+    { id: 1, tag: 'button', type: 'button', ariaLabel: 'Open Emoji Keyboard', path: 'div > button:nth-of-type(2)', visible: true },
+    { id: 2, tag: 'button', type: 'button', ariaLabel: 'Expand to full screen', path: 'div > button:nth-of-type(3)', visible: true },
+    { id: 3, tag: 'button', type: 'button', ariaLabel: 'Send', path: 'div > button:nth-of-type(4)', visible: true },
+  ];
+
+  it('finds Send by its name even when the buttons have been reordered', () => {
+    const recorded = { tag: 'button', type: 'button', ariaLabel: 'Send', path: 'div > button:nth-of-type(3)' };
+    assert.equal(matchElement(recorded, composer)?.id, 3);
+  });
+
+  it('does not take the button that now sits where Send used to', () => {
+    const recorded = { tag: 'button', type: 'button', ariaLabel: 'Send', path: 'div > button:nth-of-type(2)' };
+    const found = matchElement(recorded, composer);
+    assert.notEqual(found?.ariaLabel, 'Open Emoji Keyboard');
+    assert.equal(found?.ariaLabel, 'Send');
+  });
+
+  it('will not match an id a framework invented, even when it is still on the page', () => {
+    const pool = [{ id: 7, tag: 'button', type: 'button', domId: 'ember80', ariaLabel: 'Report this post', visible: true }];
+    assert.equal(matchElement({ tag: 'button', type: 'button', domId: 'ember80', ariaLabel: 'Send' }, pool), null);
+  });
+
+  it('matches a nav link whose count has changed since it was recorded', () => {
+    const pool = [{ id: 4, tag: 'a', type: 'link', ariaLabel: 'Messaging, 3 new notifications', visible: true }];
+    const recorded = { tag: 'a', type: 'link', ariaLabel: 'Messaging, 0 new notifications' };
+    assert.equal(matchElement(recorded, pool)?.id, 4);
+  });
+});
+

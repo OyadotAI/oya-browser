@@ -4,6 +4,8 @@
  */
 
 /** Every locator kind a step may use. */
+const { stableId, withoutLiveCount } = require('./handles.cjs');
+
 const LOCATOR_KINDS = ['testId', 'role', 'label', 'text', 'placeholder', 'css'];
 
 /** The Playwright page method behind each text-based locator kind. */
@@ -29,20 +31,6 @@ function hrefCandidates(el) {
   const exact = { kind: 'css', value: `a[href=${JSON.stringify(href)}]` };
   // The same page with another query (a filter, a tracking tag) is still the link.
   return base && base !== href ? [exact, { kind: 'css', value: `a[href^=${JSON.stringify(base)}]` }] : [exact];
-}
-
-/**
- * Ids a framework makes up per render, which look like handles and are not:
- * Wikipedia's Parsoid numbers every node `mwAQ`, `mwCg`; React's useId gives
- * `:r3:`; Ember, ExtJS and Radix have their own. A recording that aims at one
- * finds a different element, or none, the next time the page renders.
- */
-const GENERATED_ID =
-  /^(mw[\w-]{1,4}|:r[0-9a-z]+:|ember\d+|ext-gen\d+|radix-[\w:-]+|[a-f0-9]{8}-[a-f0-9]{4}-)|[0-9]{6,}/i;
-
-/** Whether this id will still name the same element after a re-render. */
-function stableId(domId) {
-  return Boolean(domId) && !GENERATED_ID.test(String(domId));
 }
 
 /** CSS locators from the element's group and value, id, name and link target. */
@@ -123,25 +111,6 @@ function generatedId(el) {
 function withPath(found, path, el = {}) {
   const tail = [...(path && !found.some((c) => c.value === path) ? [{ kind: 'css', value: path }] : []), ...generatedId(el)];
   return [...found, ...tail.filter((c) => !found.some((f) => f.value === c.value))];
-}
-
-/**
- * A count a page keeps up to date, inside an accessible name: LinkedIn labels its
- * nav "Home, 1 new notification" and renames it the moment a notification
- * arrives, so a locator built on the whole label finds nothing on the next run.
- * The analyzer already drops number-only text nodes; a count written into an
- * aria-label is the same thing in the place it does not look.
- */
-const LIVE_COUNT = /,?\s*\d+\+?\s+(new|unread)\b[^,]*|\s*\(\d+\+?\)\s*$/gi;
-
-/** The name without its live count, or the name itself when that leaves nothing. */
-function withoutLiveCount(name) {
-  const cleaned = String(name ?? '')
-    .replace(LIVE_COUNT, '')
-    .replace(/\s+/g, ' ')
-    .replace(/[,\s]+$/, '')
-    .trim();
-  return cleaned || String(name ?? '');
 }
 
 /**

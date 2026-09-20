@@ -4,6 +4,8 @@
  */
 import workflow from '../../../../browser/scripts/workflow.cjs';
 
+const { handlesOf, withoutLiveCount } = workflow as any;
+
 import { FILTERS, pipesOf } from '../agent/chat.ts';
 import { DEFAULT_SCROLL_PX, FIND_ATTEMPTS, FIND_RETRY_MS, WORKFLOW_SCHEMA } from './constants.ts';
 import { HAS_PLACEHOLDER, variablesOf } from './variables.ts';
@@ -35,29 +37,32 @@ function exprPart(part) {
 }
 
 /** Each recorded handle and its locator, in matchElement's order. */
-const LOCATORS: [string, LocatorFor][] = [
-  ['testId', (el) => `page.getByTestId(${s(el.testId)})`],
-  ['domId', (el) => `page.locator(${s(`[id=${s(el.domId)}]`)})`],
-  ['ariaLabel', (el) => `page.getByLabel(${s(el.ariaLabel)}, { exact: true })`],
-  [
-    'text',
-    (el, step) =>
-      step.action === 'type'
-        ? `page.getByLabel(${expr(el.text)})`
-        : `page.getByText(${expr(el.text)}, { exact: true })`,
-  ],
-  ['name', (el) => `page.locator(${s(`${el.tag || ''}[name=${s(el.name)}]`)})`],
-  ['placeholder', (el) => `page.getByPlaceholder(${s(el.placeholder)})`],
-  ['href', (el) => `page.locator(${s(`a[href=${s(el.href)}]`)})`],
-];
+/**
+ * How each handle reads as a Playwright locator. Which handle to reach for first
+ * is not decided here — `HANDLES` decides, so this export and the live replay
+ * always aim at the same element.
+ */
+const AS_LOCATOR: Record<string, LocatorFor> = {
+  testId: (el) => `page.getByTestId(${s(el.testId)})`,
+  href: (el) => `page.locator(${s(`a[href=${s(el.rawHref ?? el.href)}]`)})`,
+  domId: (el) => `page.locator(${s(`[id=${s(el.domId)}]`)})`,
+  ariaLabel: (el) => `page.getByLabel(${s(withoutLiveCount(el.ariaLabel))}, { exact: true })`,
+  text: (el, step) =>
+    step.action === 'type' ? `page.getByLabel(${expr(el.text)})` : `page.getByText(${expr(el.text)}, { exact: true })`,
+  name: (el) => `page.locator(${s(`${el.tag || ''}[name=${s(el.name)}]`)})`,
+  placeholder: (el) => `page.getByPlaceholder(${s(el.placeholder)})`,
+  path: (el) => `page.locator(${s(el.path)})`,
+};
 
-/** Same precedence as matchElement, as a Playwright locator expression. */
+/** The recorded element as a Playwright locator, by the shared order of trust. */
 function locator(step) {
   const el = step.el || {};
   if (step.action === 'click' && HAS_PLACEHOLDER.test(el.text || ''))
     return `page.getByText(${expr(el.text)}, { exact: true })`;
-  const found = LOCATORS.find(([field]) => el[field]);
-  return found ? found[1](el, step) : `page.locator(${s(el.tag || 'body')}) /* no stable handle was recorded */`;
+  const handle = handlesOf(el).find((h) => AS_LOCATOR[h.kind]);
+  return handle
+    ? AS_LOCATOR[handle.kind](el, step)
+    : `page.locator(${s(el.tag || 'body')}) /* no stable handle was recorded */`;
 }
 
 /** A scroll step: to the top, to the bottom, or by an amount. */
