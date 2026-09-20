@@ -5,12 +5,7 @@
 import workflow from '../../../../browser/scripts/workflow.cjs';
 
 import { FILTERS, pipesOf } from '../agent/chat.ts';
-import {
-  DEFAULT_SCROLL_PX,
-  FIND_ATTEMPTS,
-  FIND_RETRY_MS,
-  WORKFLOW_SCHEMA,
-} from './constants.ts';
+import { DEFAULT_SCROLL_PX, FIND_ATTEMPTS, FIND_RETRY_MS, WORKFLOW_SCHEMA } from './constants.ts';
 import { HAS_PLACEHOLDER, variablesOf } from './variables.ts';
 
 /** Renders one step as a line of Playwright. */
@@ -89,7 +84,9 @@ const LINES: Record<string, LineFor> = {
     `await page.waitForSelector(${s(step.selector)}${step.timeout ? `, { timeout: ${Number(step.timeout)} }` : ''});`,
   scroll: scrollLine,
   double_click: (step) =>
-    step.el ? `await ${locator(step)}.first().dblclick();` : `await page.mouse.dblclick(${Number(step.x)}, ${Number(step.y)});`,
+    step.el
+      ? `await ${locator(step)}.first().dblclick();`
+      : `await page.mouse.dblclick(${Number(step.x)}, ${Number(step.y)});`,
   // A point, not a handle. Exported so the run is complete, flagged so whoever
   // reads the export knows this is the line that breaks when a layout moves.
   click_coordinates: (step) =>

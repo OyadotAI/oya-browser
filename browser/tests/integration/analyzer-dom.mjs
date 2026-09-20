@@ -75,7 +75,7 @@ assert.match(payer.text, /PAYER\s*-\s*CA/);
 // A results-list button named by its DOM id says what it selects.
 const select = elements.find((e) => e.domId === 'selectProvider0');
 assert.ok(select, 'the select button is registered');
-assert.match(select.text, /Charles Edward Smith/, 'it is named after the row it selects');
+assert.match(select.text, /Jordan Example Provider/, 'it is named after the row it selects');
 assert.doesNotMatch(select.text, /selectProvider/, 'never named after the developer id');
 
 // An icon-only button is named after its icon.

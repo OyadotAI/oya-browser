@@ -282,7 +282,8 @@ describe('play across tabs', () => {
 
   /** A tab list where the handoff tab carries a fresh SSO token, as a real one does. */
   const tabsWith = (urls) => (action, params) => {
-    if (action === 'list_tabs') return { ok: true, data: { tabs: urls.map((url, i) => ({ id: i + 1, url, active: i === 0 })) } };
+    if (action === 'list_tabs')
+      return { ok: true, data: { tabs: urls.map((url, i) => ({ id: i + 1, url, active: i === 0 })) } };
     return page(action, params);
   };
 
@@ -299,7 +300,10 @@ describe('play across tabs', () => {
     answer = (action, params) => {
       if (action === 'list_tabs') {
         listed += 1;
-        const urls = listed > 2 ? ['https://portal.example.com/x', 'https://vendor.example.com/order/new'] : ['https://portal.example.com/x'];
+        const urls =
+          listed > 2
+            ? ['https://portal.example.com/x', 'https://vendor.example.com/order/new']
+            : ['https://portal.example.com/x'];
         return { ok: true, data: { tabs: urls.map((url, i) => ({ id: i + 1, url, active: i === 0 })) } };
       }
       return page(action, params);
