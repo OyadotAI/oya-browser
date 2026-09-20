@@ -13,6 +13,8 @@ const {
   handlesOf,
   contradicts,
   missingIdentity,
+  stableTarget,
+  rawTargetOf,
   stableId,
   withoutLiveCount,
 } = require('./workflow/handles.cjs');
@@ -28,6 +30,8 @@ module.exports = {
   handlesOf,
   contradicts,
   missingIdentity,
+  stableTarget,
+  rawTargetOf,
   stableId,
   withoutLiveCount,
   normalizeStep,

@@ -4,7 +4,7 @@
  */
 import workflow from '../../../../browser/scripts/workflow.cjs';
 
-const { handlesOf, withoutLiveCount } = workflow as any;
+const { handlesOf, withoutLiveCount, rawTargetOf } = workflow as any;
 
 import { FILTERS, pipesOf } from '../agent/chat.ts';
 import { DEFAULT_SCROLL_PX, FIND_ATTEMPTS, FIND_RETRY_MS, WORKFLOW_SCHEMA } from './constants.ts';
@@ -44,7 +44,7 @@ function exprPart(part) {
  */
 const AS_LOCATOR: Record<string, LocatorFor> = {
   testId: (el) => `page.getByTestId(${s(el.testId)})`,
-  href: (el) => `page.locator(${s(`a[href=${s(el.rawHref ?? el.href)}]`)})`,
+  href: (el) => `page.locator(${s(`a[href=${s(rawTargetOf(el))}]`)})`,
   domId: (el) => `page.locator(${s(`[id=${s(el.domId)}]`)})`,
   ariaLabel: (el) => `page.getByLabel(${s(withoutLiveCount(el.ariaLabel))}, { exact: true })`,
   text: (el, step) =>

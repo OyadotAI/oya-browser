@@ -61,6 +61,32 @@ describe('withoutLiveCount', () => {
   });
 });
 
+describe('a link target across two visits', () => {
+  const { stableTarget } = require('../../../../scripts/workflow/handles.cjs');
+
+  it('ignores the request and session ids a site regenerates per visit', () => {
+    // Amazon's pagination: qid is an epoch, xpid a session. Same link, new noise.
+    const recorded = '/s?k=mechanical+keyboard&page=2&xpid=6lALgpQXYt46F&qid=1789935022&ref=sr_pg_2';
+    const live = '/s?k=mechanical+keyboard&page=2&xpid=ZZZZZZ&qid=1789999999&ref=sr_pg_2';
+    assert.equal(stableTarget(recorded), stableTarget(live));
+  });
+
+  it('still tells page 2 from page 3, which is what the query is for', () => {
+    const two = '/s?k=kb&page=2&qid=1&ref=sr_pg_2';
+    const three = '/s?k=kb&page=3&qid=2&ref=sr_pg_3';
+    assert.notEqual(stableTarget(two), stableTarget(three));
+  });
+
+  it('leaves a plain link alone', () => {
+    assert.equal(stableTarget('https://en.wikipedia.org/wiki/Managed_care'), 'https://en.wikipedia.org/wiki/Managed_care');
+    assert.equal(stableTarget('/r/programming/comments/abc/title/'), '/r/programming/comments/abc/title/');
+  });
+
+  it('drops the tracking tags that follow a shared link around', () => {
+    assert.equal(stableTarget('/p?id=7&utm_source=x&gclid=y&trk=z'), stableTarget('/p?id=7'));
+  });
+});
+
 describe('contradicts', () => {
   const send = { tag: 'button', ariaLabel: 'Send', path: 'div > button:nth-of-type(3)' };
 
