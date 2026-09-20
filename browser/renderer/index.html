@@ -1,0 +1,519 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- Local scripts only; styles and data: images are what the shell renders into innerHTML. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>Oya Browser</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="shell.css" />
+  </head>
+  <body class="mode-setup">
+    <!-- ── Full-page setup screen ── -->
+    <div class="setup-screen">
+      <div class="setup-card">
+        <svg class="brand-mark" viewBox="0 0 512 512" width="48" height="48" fill="none" aria-hidden="true">
+          <circle cx="276" cy="276" r="160" stroke="var(--logo-green)" stroke-width="80" />
+          <circle cx="236" cy="236" r="160" stroke="var(--text)" stroke-width="80" />
+        </svg>
+        <div class="eyebrow">Oya Browser</div>
+        <h1>Your browser.<br />Your workflows.</h1>
+        <div class="sub">Connect your workspace to record workflows and put your browser to work.</div>
+
+        <div class="field">
+          <label for="cfg-server">Server address</label>
+          <input id="cfg-server" type="text" placeholder="ws://localhost:3100/ws" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="cfg-key">API key</label>
+          <input id="cfg-key" type="password" placeholder="Enter API key" />
+          <div class="hint">Use the API key from your Oya workspace settings.</div>
+        </div>
+        <div class="field">
+          <label for="cfg-name">Browser name</label>
+          <input id="cfg-name" type="text" placeholder="Oya Browser" spellcheck="false" />
+          <div class="hint">How this browser shows up in the dashboard</div>
+        </div>
+
+        <div role="alert" class="setup-error" id="setup-error"></div>
+
+        <div class="setup-btns">
+          <button class="btn-skip" id="btn-skip">Browse offline</button>
+          <button class="btn-connect" id="btn-connect">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <nav class="tab-bar" id="tab-bar" aria-label="Browser tabs">
+      <svg class="window-brand" viewBox="0 0 512 512" fill="none" aria-hidden="true">
+        <circle cx="276" cy="276" r="160" stroke="var(--logo-green)" stroke-width="80" />
+        <circle cx="236" cy="236" r="160" stroke="var(--text)" stroke-width="80" />
+      </svg>
+      <div class="tab-list" id="tab-list" role="tablist" aria-label="Open pages"></div>
+      <button
+        class="tab-new"
+        id="btn-new-tab"
+        aria-label="New tab"
+        title="New tab (⌘/Ctrl T)"
+        data-icon="plus"
+      ></button>
+      <button
+        class="nav-btn"
+        id="btn-commands"
+        aria-label="Commands and settings"
+        title="Commands (⌘/Ctrl K)"
+        data-icon="menu"
+      ></button>
+    </nav>
+    <nav class="toolbar" aria-label="Browser navigation">
+      <button class="nav-btn" id="btn-back" aria-label="Back" title="Back" data-icon="back" disabled></button>
+      <button
+        class="nav-btn"
+        id="btn-forward"
+        aria-label="Forward"
+        title="Forward"
+        data-icon="forward"
+        disabled
+      ></button>
+      <button class="nav-btn" id="btn-reload" aria-label="Reload page" title="Reload" data-icon="reload"></button>
+      <div class="address-wrap">
+        <span class="address-icon" data-icon="globe" aria-hidden="true"></span
+        ><input
+          class="url-bar"
+          id="url-bar"
+          aria-label="Search or enter URL"
+          type="text"
+          placeholder="Search or enter URL"
+          spellcheck="false"
+        /><span id="navigation-status" role="status" aria-live="polite"></span>
+      </div>
+      <button class="update-pill" id="update-pill" hidden>Update available</button>
+      <button class="conn-pill" id="conn-pill" title="Connection and profile" aria-label="Connection and profile">
+        <span class="dot"></span><span id="conn-label">Offline</span>
+      </button>
+      <div class="control-status" id="control-status" data-mode="offline">
+        <span class="control-orbit" aria-hidden="true"></span
+        ><span id="control-label" role="status">Offline · your control</span
+        ><button id="control-action" hidden>Take control</button
+        ><button id="control-resume" hidden>Return to agent</button>
+      </div>
+      <button class="dev-btn agent-button" id="btn-dev" aria-expanded="false" title="Oya Agent (⌘/Ctrl Shift D)">
+        <span class="agent-dot" aria-hidden="true"></span><span data-icon="spark"></span
+        ><span class="button-label">Oya Agent</span>
+      </button>
+      <div id="navigation-progress" hidden aria-hidden="true"></div>
+    </nav>
+    <img id="page-backdrop" alt="" hidden />
+    <!-- ── Dev Panel (right side) ── -->
+    <div class="dev-panel" id="dev-panel">
+      <div class="dev-panel-resize" id="dev-panel-resize"></div>
+      <header class="tool-heading">
+        <span class="tool-title"><span class="tool-mark" data-icon="spark" aria-hidden="true"></span>Agent</span
+        ><button class="nav-btn" id="tools-close" aria-label="Close agent panel" data-icon="close"></button>
+      </header>
+      <div class="dev-panel-header" role="tablist" aria-label="Agent tools">
+        <button class="dev-tab active" data-pane="chat" role="tab" aria-selected="true">Ask</button>
+        <button class="dev-tab" data-pane="record" role="tab" aria-selected="false">Record</button>
+        <button class="dev-tab" data-pane="actions" role="tab" aria-selected="false" id="inspect-tab">Inspect</button>
+      </div>
+      <div class="inspect-nav" id="inspect-nav" hidden>
+        <button data-inspect="actions">Actions</button><button data-inspect="network">Activity</button
+        ><button data-inspect="source">Source</button>
+        <button class="dev-tab-btn" id="dev-clear" title="Clear this tool">Clear</button>
+      </div>
+      <!-- Chat pane -->
+      <div class="dev-pane active" id="pane-chat">
+        <div class="chat-messages" id="chat-messages">
+          <div class="chat-empty">
+            <span class="empty-icon" data-icon="spark"></span>
+            <h2>A little help, right here.</h2>
+            <p>Ask Oya to navigate, find information, or complete a task on the current page.</p>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <div class="chat-composer">
+            <textarea
+              class="chat-input"
+              id="chat-input"
+              rows="1"
+              aria-label="Ask Oya"
+              placeholder="Ask about this page or give a task…"
+              spellcheck="false"
+            ></textarea>
+            <button class="chat-send" id="chat-send" aria-label="Send message" data-icon="send"></button>
+          </div>
+          <p class="chat-hint">Enter to send · Shift Enter for a new line</p>
+        </div>
+      </div>
+
+      <!-- Actions pane -->
+      <div class="dev-pane" id="pane-actions">
+        <div class="actions-scroll">
+          <div class="action-label">Page</div>
+          <div class="actions-grid">
+            <button class="action-btn" data-action="analyze"><span class="action-icon">&#9776;</span> Analyze</button>
+            <button class="action-btn" data-action="screenshot">
+              <span class="action-icon">&#128247;</span> Screenshot
+            </button>
+            <button class="action-btn" data-action="reload"><span class="action-icon">&#8635;</span> Reload</button>
+            <button class="action-btn" data-action="scroll-down">
+              <span class="action-icon">&#8595;</span> Scroll Down
+            </button>
+            <button class="action-btn" data-action="scroll-up">
+              <span class="action-icon">&#8593;</span> Scroll Up
+            </button>
+          </div>
+
+          <div class="action-label">Navigate</div>
+          <div class="action-input-row">
+            <input class="action-field" id="action-url" type="text" placeholder="URL" spellcheck="false" />
+            <button class="action-btn action-btn-sm" data-action="navigate" data-from="action-url">Go</button>
+          </div>
+
+          <div class="action-label">Click Element</div>
+          <div class="action-input-row">
+            <input class="action-field" id="action-click-id" type="text" placeholder="Element #" />
+            <button class="action-btn action-btn-sm" data-action="click" data-from="action-click-id">Click</button>
+          </div>
+
+          <div class="action-label">Type into Element</div>
+          <div class="action-input-row">
+            <input class="action-field action-field-sm" id="action-type-id" type="text" placeholder="#" />
+            <input class="action-field" id="action-type-text" type="text" placeholder="Text to type" />
+            <button class="action-btn action-btn-sm" data-action="type" data-from="action-type-id,action-type-text">
+              Type
+            </button>
+          </div>
+
+          <div class="action-label">Press Key</div>
+          <div class="action-input-row">
+            <input class="action-field" id="action-key" type="text" placeholder="Enter, Escape, Tab..." />
+            <button class="action-btn action-btn-sm" data-action="press-key" data-from="action-key">Press</button>
+          </div>
+
+          <div class="action-label">Hover Element</div>
+          <div class="action-input-row">
+            <input class="action-field" id="action-hover-id" type="text" placeholder="Element #" />
+            <button class="action-btn action-btn-sm" data-action="hover" data-from="action-hover-id">Hover</button>
+          </div>
+
+          <div class="action-label">Click Coordinates</div>
+          <div class="action-input-row">
+            <input class="action-field action-field-sm" id="action-cx" type="text" placeholder="X" />
+            <input class="action-field action-field-sm" id="action-cy" type="text" placeholder="Y" />
+            <button class="action-btn action-btn-sm" data-action="click-coords" data-from="action-cx,action-cy">
+              Click
+            </button>
+          </div>
+
+          <div class="action-label">Wait for Selector</div>
+          <div class="action-input-row">
+            <input class="action-field" id="action-wait-sel" type="text" placeholder="CSS selector" />
+            <button class="action-btn action-btn-sm" data-action="wait" data-from="action-wait-sel">Wait</button>
+          </div>
+
+          <div class="action-label">Tabs</div>
+          <div class="actions-grid">
+            <button class="action-btn" data-action="list-tabs">
+              <span class="action-icon">&#9776;</span> List Tabs
+            </button>
+            <button class="action-btn" data-action="new-tab"><span class="action-icon">+</span> New Tab</button>
+          </div>
+        </div>
+        <div class="action-result" id="action-result"></div>
+      </div>
+
+      <!-- Network pane -->
+      <div class="dev-pane" id="pane-network">
+        <div class="net-filters">
+          <button class="net-filter active" data-filter="all">All</button>
+          <button class="net-filter" data-filter="in">&#9660; In</button>
+          <button class="net-filter" data-filter="out">&#9650; Out</button>
+          <button class="net-filter" data-filter="cmd">Commands</button>
+          <button class="net-filter" data-filter="result">Results</button>
+        </div>
+        <div class="net-log" id="net-log"></div>
+      </div>
+
+      <section class="dev-pane" id="pane-record" aria-label="Workflow workspace">
+        <div class="record-heading">
+          <div>
+            <div class="eyebrow">Workflow studio</div>
+            <h2 id="record-title">Make it repeatable.</h2>
+          </div>
+          <span id="record-count" class="count-badge">0 steps</span>
+        </div>
+        <div class="studio-library">
+          <select id="draft-library" aria-label="Saved local drafts"></select
+          ><button class="text-button" id="record-clear">New</button
+          ><button class="text-button" id="studio-expand" aria-label="Expand workspace">Expand</button>
+        </div>
+        <div class="studio-save-state" id="draft-status" role="status"></div>
+        <div class="record-controls">
+          <button class="primary-button" id="record-toggle">Start recording</button
+          ><button class="secondary-button" id="record-validate">Validate</button>
+        </div>
+        <section class="record-finish" id="record-finish" hidden aria-label="Save recorded workflow">
+          <div class="finish-heading">
+            <span class="finish-check" aria-hidden="true">✓</span>
+            <div>
+              <h3 id="record-finish-title">Recording captured</h3>
+              <p id="record-finish-copy">
+                Your draft is safe on this device. Name it and save a playbook to reuse it in Oya.
+              </p>
+            </div>
+          </div>
+          <div class="finish-save">
+            <label class="sr-only" for="record-name">Playbook name</label
+            ><input id="record-name" placeholder="Name this playbook" maxlength="64" spellcheck="false" /><button
+              class="primary-button"
+              id="record-save"
+            >
+              Save playbook
+            </button>
+          </div>
+          <p class="finish-connection" id="record-save-hint"></p>
+        </section>
+        <div class="studio-tabs" role="tablist" aria-label="Workflow view">
+          <button role="tab" aria-selected="true" data-studio="steps">Steps</button
+          ><button role="tab" aria-selected="false" data-studio="run">Run</button
+          ><button role="tab" aria-selected="false" data-studio="inspect">Inspect</button>
+        </div>
+        <div class="studio-scroll">
+          <section id="studio-steps" role="tabpanel">
+            <div class="studio-toolbar">
+              <button id="step-undo" class="text-button">Undo</button
+              ><button id="step-redo" class="text-button">Redo</button
+              ><select id="step-add" aria-label="Add step">
+                <option value="">+ Add step</option>
+                <option value="assert_visible">Assert visible</option>
+                <option value="assert_text">Assert text</option>
+                <option value="assert_value">Assert value</option>
+                <option value="assert_url">Assert URL</option>
+                <option value="wait">Wait for element</option>
+                <option value="checkpoint">Human checkpoint</option>
+                <option value="navigate">Navigate</option>
+                <option value="click">Click</option>
+                <option value="type">Fill</option>
+              </select>
+            </div>
+            <div class="rec-steps" id="record-steps" aria-label="Recorded steps"></div>
+            <section id="step-editor" class="step-editor" hidden aria-label="Selected step editor"></section>
+            <details class="studio-details">
+              <summary>Variables &amp; inputs</summary>
+              <div id="workflow-variables"></div>
+              <button class="text-button" id="variable-add">+ Add variable</button>
+              <p>
+                Use {{variable_name}} in a step. Secret values are requested for each run and never saved as defaults.
+              </p>
+            </details>
+            <footer class="record-footer" id="record-footer">
+              <div class="record-fields">
+                <div class="field">
+                  <label for="record-desc">Description <span>Optional</span></label
+                  ><input id="record-desc" placeholder="What does this workflow do?" />
+                </div>
+              </div>
+              <p class="studio-hint">
+                Edits save to your local draft automatically. Save the playbook again to publish a new version.
+              </p>
+            </footer>
+          </section>
+          <section id="studio-run" role="tabpanel" hidden>
+            <div class="run-heading">
+              <span class="eyebrow">Validation</span>
+              <h3 id="run-title">Ready when you are.</h3>
+              <p id="run-summary">Run the exported Playwright module in a fresh tab with your current login.</p>
+            </div>
+            <div class="run-controls">
+              <button class="secondary-button" data-run="pause">Pause</button
+              ><button class="secondary-button" data-run="resume">Continue</button
+              ><button class="secondary-button" data-run="step">Step</button
+              ><button class="text-button" data-run="stop">Stop</button>
+            </div>
+            <div class="studio-library">
+              <select id="run-history" aria-label="Previous validation runs">
+                <option value="">Previous runs</option>
+              </select>
+            </div>
+            <div id="run-inputs"></div>
+            <div id="run-events" aria-label="Validation timeline"></div>
+            <div id="run-repairs"></div>
+          </section>
+          <section id="studio-inspect" role="tabpanel" hidden>
+            <div class="run-heading">
+              <span class="eyebrow">Evidence &amp; code</span>
+              <h3>See what happened.</h3>
+              <p>
+                Network metadata and console severity only. Request bodies, headers, cookies, and page text are
+                excluded.
+              </p>
+            </div>
+            <div id="inspect-issues"></div>
+            <details class="export-section" id="record-export">
+              <summary>Generated Playwright <span>.mjs</span></summary>
+              <pre class="rec-code" id="record-code" tabindex="0" aria-label="Generated Playwright code"></pre>
+              <div class="export-actions">
+                <button class="secondary-button" id="record-copy">Copy code</button
+                ><button class="secondary-button" id="record-download">Save module</button>
+              </div>
+            </details>
+            <details class="studio-details">
+              <summary>Diagnostic bundle preview</summary>
+              <pre id="support-preview" tabindex="0"></pre>
+              <button class="secondary-button" id="support-export">Export diagnostics</button>
+            </details>
+          </section>
+        </div>
+        <div class="record-status" id="record-result" role="status" aria-live="polite"></div>
+      </section>
+      <!-- Source pane -->
+      <div class="dev-pane" id="pane-source">
+        <div class="source-tabs">
+          <span class="source-hint">The current page, as the agent reads it</span>
+          <div class="source-formats" role="radiogroup" aria-label="Page format">
+            <label><input type="radio" name="source-format" value="markdown" checked />Markdown</label
+            ><label><input type="radio" name="source-format" value="toon" />TOON</label
+            ><label><input type="radio" name="source-format" value="jsonl" />JSONL</label>
+          </div>
+          <button class="source-refresh" id="source-refresh">&#8635; Refresh</button>
+        </div>
+        <div class="source-split">
+          <section class="source-block" aria-label="Page">
+            <h3 class="source-panel-label" id="source-page-label">Markdown</h3>
+            <div class="source-content empty" id="source-markdown">Right-click → View Page Source or click Refresh</div>
+          </section>
+          <section class="source-block" aria-label="HTML">
+            <h3 class="source-panel-label">HTML</h3>
+            <div class="source-content empty" id="source-html">Right-click → View Page Source or click Refresh</div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Reconnect overlay (shown when clicking pill in browsing mode) ── -->
+    <div
+      class="reconnect-overlay"
+      id="reconnect-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Connection settings"
+    >
+      <div class="setup-card">
+        <div class="logo">Server Connection</div>
+        <div class="sub" id="reconn-sub">Update connection settings</div>
+
+        <div class="field">
+          <label for="reconn-server">Server address</label>
+          <input id="reconn-server" type="text" placeholder="ws://localhost:3100/ws" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="reconn-key">API key</label>
+          <input id="reconn-key" type="password" placeholder="API key" />
+        </div>
+        <div class="field">
+          <label for="reconn-name">Browser name</label>
+          <input id="reconn-name" type="text" placeholder="Oya Browser" spellcheck="false" />
+        </div>
+
+        <div role="alert" class="setup-error" id="reconn-error"></div>
+
+        <div class="setup-btns">
+          <button class="btn-skip" id="reconn-cancel">Cancel</button>
+          <button class="btn-connect" id="reconn-save">Save &amp; Reconnect</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="shell-overlay"
+      id="shell-overlay"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-label="Commands and settings"
+    >
+      <div class="shell-dialog">
+        <header>
+          <h2 id="shell-dialog-title">Commands</h2>
+          <button class="nav-btn" id="shell-dialog-close" aria-label="Close dialog" data-icon="close"></button>
+        </header>
+        <section id="commands-section">
+          <input id="command-search" aria-label="Search commands" placeholder="Search commands…" autocomplete="off" />
+          <div id="command-list"></div>
+        </section>
+        <section id="profile-section" hidden>
+          <div class="profile-avatar" data-icon="profile"></div>
+          <h3 id="profile-title">This browser</h3>
+          <p id="fp-content">Your account sessions stay on this desktop.</p>
+          <dl>
+            <dt>Server</dt>
+            <dd><span id="profile-server"></span><button class="text-button" id="copy-server">Copy</button></dd>
+            <dt>Browser ID</dt>
+            <dd>
+              <span id="profile-browser-id">Not connected</span
+              ><button class="text-button" id="copy-browser-id">Copy</button>
+            </dd>
+          </dl>
+          <div class="export-actions">
+            <button class="secondary-button" id="save-profile">Save profile</button
+            ><button class="secondary-button" id="connection-edit">Connection settings</button>
+          </div>
+          <p id="profile-save-status" role="status"></p>
+        </section>
+        <footer>
+          <label for="theme-preference">Appearance</label
+          ><select id="theme-preference">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option></select
+          ><label for="page-format-preference">Page format</label
+          ><select id="page-format-preference">
+            <option value="markdown">Markdown</option>
+            <option value="toon">TOON</option>
+            <option value="jsonl">JSONL</option></select
+          ><span id="app-version">Oya Browser</span>
+        </footer>
+      </div>
+    </div>
+    <script src="core/constants.js"></script>
+    <script src="core/dom.js"></script>
+    <script src="core/state.js"></script>
+    <script src="shell/icons.js"></script>
+    <script src="shell/dialogs.js"></script>
+    <script src="shell/layout.js"></script>
+    <script src="shell/backdrop.js"></script>
+    <script src="shell/tool-nav.js"></script>
+    <script src="shell/tabs.js"></script>
+    <script src="shell/shell-dialog.js"></script>
+    <script src="shell/commands.js"></script>
+    <script src="connection/updates.js"></script>
+    <script src="connection/setup.js"></script>
+    <script src="connection/status.js"></script>
+    <script src="connection/reconnect.js"></script>
+    <script src="connection/profile.js"></script>
+    <script src="connection/toolbar.js"></script>
+    <script src="panes/net-log.js"></script>
+    <script src="panes/chat-playbook.js"></script>
+    <script src="panes/chat.js"></script>
+    <script src="panes/chat-progress.js"></script>
+    <script src="panes/source.js"></script>
+    <script src="panes/actions.js"></script>
+    <script src="panes/panel.js"></script>
+    <script src="panes/resize.js"></script>
+    <script src="shell/theme.js"></script>
+    <script src="studio/studio.js"></script>
+    <script src="studio/view.js"></script>
+    <script src="studio/steps.js"></script>
+    <script src="studio/editor.js"></script>
+    <script src="studio/variables.js"></script>
+    <script src="studio/run.js"></script>
+    <script src="studio/actions.js"></script>
+    <script src="control.js"></script>
+    <script src="ready.js"></script>
+  </body>
+</html>

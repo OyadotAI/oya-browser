@@ -1,0 +1,16 @@
+# Docker matches these against context-root-relative paths, so a bare name only
+# ever means the top-level one. `node_modules` and `.env` were doing exactly
+# that: ui/node_modules was uploaded and then COPYed over the image's own
+# `npm ci` output (host binaries into a Linux image), and server/.env — which
+# holds SUPABASE_SERVICE_KEY, DAYTONA_API_KEY, OPENAI_API_KEY and
+# OYA_PROFILE_SECRET — went into the build context on every build.
+**/node_modules
+**/.env
+**/.env.*
+**/dist
+.git
+*.log
+.DS_Store
+extension
+.claude
+README.md

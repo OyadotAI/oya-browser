@@ -1,0 +1,19 @@
+{
+  "name": "oya-browser-examples",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "postinstall": "npm install --prefix .. --no-audit --no-fund && npm run build:sdk --prefix ..",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p playwright/reddit"
+  },
+  "dependencies": {
+    "@oya-ai/browser": "file:../packages/sdk",
+    "playwright-core": "^1.63.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.4.0"
+  }
+}

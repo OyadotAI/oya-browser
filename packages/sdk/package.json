@@ -1,0 +1,65 @@
+{
+  "name": "@oya-ai/browser",
+  "version": "1.0.102",
+  "description": "Rotate thousands of browsers behind one API — personas, proxies, stealth, CAPTCHA and MFA.",
+  "license": "MIT",
+  "homepage": "https://browser.getoya.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OyadotAI/oya-browser.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": "https://github.com/OyadotAI/oya-browser/issues",
+  "keywords": [
+    "browser",
+    "ai-agents",
+    "cdp",
+    "playwright",
+    "puppeteer",
+    "headless-chrome",
+    "browserbase",
+    "steel",
+    "browser-use",
+    "captcha",
+    "fingerprint",
+    "mcp"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "prepublishOnly": "npm run build",
+    "check": "publint && attw --pack ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "publint": "^0.3.24",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0"
+  },
+  "author": "mk@getoya.ai"
+}

@@ -1,0 +1,50 @@
+{
+  "name": "oya-browser-server",
+  "version": "1.0.0",
+  "description": "Oya Browser — MCP server for browser control",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node src/index.ts",
+    "dev": "node --watch src/index.ts",
+    "typecheck": "tsc -p .",
+    "test": "npm run test:unit && npm run test:integration",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:unit": "node --import ./tests/support/hermetic.js --test 'tests/unit/**/*.test.ts'",
+    "test:integration": "node --import ./tests/support/hermetic.js --test --test-concurrency=1 tests/integration/flow-recorder.test.js tests/integration/workflow-v2.test.js tests/integration/playbook-cleanup.test.js tests/integration/control-lock.test.js tests/integration/desktop-control.test.js tests/integration/durable-control.test.js tests/integration/control-api.test.js tests/integration/control-worker.test.js tests/integration/control-cluster.test.js tests/integration/security.test.js tests/integration/pool.test.js tests/integration/sandbox.test.js tests/integration/cdp.test.js tests/integration/dialog.test.js tests/integration/login-auto.test.js tests/integration/mcp-lifecycle.test.js tests/integration/control-plane.test.js tests/integration/providers.test.js tests/integration/provider-flow.test.js tests/integration/persona-persistence.test.js tests/integration/persona-repository.test.js tests/integration/gateway.test.js tests/integration/anonymity.test.js tests/integration/challenges.test.js tests/integration/login-flow.test.js tests/integration/control-pg-client.test.js tests/integration/fleet-k8s.test.js tests/integration/key-storage.test.js tests/integration/slack.test.js",
+    "test:coverage": "node --import ./tests/support/hermetic.js --test --experimental-test-coverage --test-coverage-lines=95 --test-coverage-branches=90 --test-coverage-functions=90 --test-coverage-include='src/**' --test-coverage-exclude='src/public/**' 'tests/unit/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@daytona/sdk": "0.211.2",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@supabase/supabase-js": "^2.99.3",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "pg": "^8.23.0",
+    "ws": "^8.18.1"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.13.5",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsdoc": "^64.5.3",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.8",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}

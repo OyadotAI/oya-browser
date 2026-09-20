@@ -1,0 +1,24 @@
+/**
+ * Loaded before every test (`node --import`, inherited by forked children), so
+ * no test reaches live services by accident: server/.env is never read, and
+ * each test file gets its own scratch data directory unless it chooses one.
+ * Set OYA_TEST_LIVE=1 for the suites that exist to talk to a real service.
+ */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+
+if (!process.env.OYA_TEST_LIVE) process.env.DOTENV_CONFIG_PATH = join(tmpdir(), 'oya-test-no-env');
+
+/**
+ * The runner's own process and every test file process get a fresh directory;
+ * a process a test spawns (a server under test) keeps the one it was handed.
+ * Sharing one directory across parallel test files made them trip over each
+ * other's audit logs, stores and locks.
+ */
+const isTestFile = /\.test\.[cm]?[jt]s$/.test(basename(process.argv[1] || ''));
+const inherited = process.env.OYA_DATA_DIR && process.env.OYA_DATA_DIR === process.env.OYA_TEST_SCRATCH;
+if (!process.env.OYA_DATA_DIR || (inherited && isTestFile)) {
+  process.env.OYA_DATA_DIR = mkdtempSync(join(tmpdir(), 'oya-test-'));
+  process.env.OYA_TEST_SCRATCH = process.env.OYA_DATA_DIR;
+}

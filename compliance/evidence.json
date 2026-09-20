@@ -1,0 +1,55 @@
+{
+  "generated": "2026-09-20T16:26:12.283Z",
+  "controls": [
+    {
+      "id": "164.312(b)",
+      "verdict": "PASS",
+      "detail": "11 passed, 0 failed; audit_log carries who/what/outcome/source: true"
+    },
+    {
+      "id": "164.312(c)(1)",
+      "verdict": "PASS",
+      "detail": "11 passed, 0 failed"
+    },
+    {
+      "id": "164.312(c)(2)",
+      "verdict": "PASS",
+      "detail": "update refused: true; delete refused: true; service_role holds INSERT,SELECT"
+    },
+    {
+      "id": "164.312(d)",
+      "verdict": "PASS",
+      "detail": "36 passed, 0 failed"
+    },
+    {
+      "id": "164.312(e)(1)",
+      "verdict": "PASS",
+      "detail": "11 passed, 0 failed"
+    },
+    {
+      "id": "164.308(a)(4)",
+      "verdict": "PASS",
+      "detail": "11 passed, 0 failed"
+    },
+    {
+      "id": "164.312(a)(2)(iv)",
+      "verdict": "PASS",
+      "detail": "8 passed, 0 failed; api keys stored as sha256: true"
+    },
+    {
+      "id": "164.502(b)",
+      "verdict": "GAP",
+      "detail": "redaction exists in 10 files but targets secrets and placeholders, not PHI"
+    },
+    {
+      "id": "164.308(b)(1)",
+      "verdict": "PASS",
+      "detail": "no third-party proxy configured: egress is direct or customer-owned"
+    },
+    {
+      "id": "164.316(b)(2)",
+      "verdict": "GAP",
+      "detail": "no audit retention floor and no purge job found in server/src"
+    }
+  ]
+}

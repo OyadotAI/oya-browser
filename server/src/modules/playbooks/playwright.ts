@@ -1,0 +1,217 @@
+/**
+ * The Playwright export: a playbook as a module to read or run yourself. Nothing
+ * here evaluates it. Locators follow matchElement's precedence.
+ */
+import workflow from '../../../../browser/scripts/workflow.cjs';
+
+import { FILTERS, pipesOf } from '../agent/chat.ts';
+import {
+  DEFAULT_SCROLL_PX,
+  FIND_ATTEMPTS,
+  FIND_RETRY_MS,
+  WORKFLOW_SCHEMA,
+} from './constants.ts';
+import { HAS_PLACEHOLDER, variablesOf } from './variables.ts';
+
+/** Renders one step as a line of Playwright. */
+type LineFor = (step: any) => string;
+/** Renders a recorded element as a Playwright locator. */
+type LocatorFor = (el: any, step: any) => string;
+
+/** JSON as a JavaScript literal. */
+const s = JSON.stringify;
+
+/** A JS expression for a recorded string; placeholders become `vars["name"]`, filtered ones `v(vars, "name", pipes)`. */
+function expr(text) {
+  if (!HAS_PLACEHOLDER.test(text)) return JSON.stringify(text);
+  return `\`${text
+    .split(/(\{\{\w+(?:\|[^}]*)?\}\})/)
+    .map(exprPart)
+    .join('')}\``;
+}
+
+/** One piece of a template literal: escaped text, or a placeholder's interpolation. */
+function exprPart(part) {
+  const m = part.match(/^\{\{(\w+)((?:\|[^}]*)?)\}\}$/);
+  if (!m) return part.replace(/[\\`$]/g, '\\$&');
+  return m[2]
+    ? `\${v(vars, ${JSON.stringify(m[1])}, ${JSON.stringify(pipesOf(m[2]))})}`
+    : `\${vars[${JSON.stringify(m[1])}]}`;
+}
+
+/** Each recorded handle and its locator, in matchElement's order. */
+const LOCATORS: [string, LocatorFor][] = [
+  ['testId', (el) => `page.getByTestId(${s(el.testId)})`],
+  ['domId', (el) => `page.locator(${s(`[id=${s(el.domId)}]`)})`],
+  ['ariaLabel', (el) => `page.getByLabel(${s(el.ariaLabel)}, { exact: true })`],
+  [
+    'text',
+    (el, step) =>
+      step.action === 'type'
+        ? `page.getByLabel(${expr(el.text)})`
+        : `page.getByText(${expr(el.text)}, { exact: true })`,
+  ],
+  ['name', (el) => `page.locator(${s(`${el.tag || ''}[name=${s(el.name)}]`)})`],
+  ['placeholder', (el) => `page.getByPlaceholder(${s(el.placeholder)})`],
+  ['href', (el) => `page.locator(${s(`a[href=${s(el.href)}]`)})`],
+];
+
+/** Same precedence as matchElement, as a Playwright locator expression. */
+function locator(step) {
+  const el = step.el || {};
+  if (step.action === 'click' && HAS_PLACEHOLDER.test(el.text || ''))
+    return `page.getByText(${expr(el.text)}, { exact: true })`;
+  const found = LOCATORS.find(([field]) => el[field]);
+  return found ? found[1](el, step) : `page.locator(${s(el.tag || 'body')}) /* no stable handle was recorded */`;
+}
+
+/** A scroll step: to the top, to the bottom, or by an amount. */
+function scrollLine(step) {
+  if (step.direction === 'top') return 'await page.evaluate(() => window.scrollTo(0, 0));';
+  if (step.direction === 'bottom') return 'await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));';
+  return `await page.mouse.wheel(0, ${(step.direction === 'up' ? -1 : 1) * (Number(step.amount) || DEFAULT_SCROLL_PX)});`;
+}
+
+/** Action → its line of Playwright. */
+const LINES: Record<string, LineFor> = {
+  navigate: (step) => `await page.goto(${expr(step.url)});`,
+  click: (step) => `await ${locator(step)}.first().click();`,
+  type: (step) => `await ${locator(step)}.first().fill(${expr(step.text ?? '')});`,
+  select_option: (step) => `await ${locator(step)}.first().selectOption({ label: ${expr(step.option ?? '')} });`,
+  // Not locator(step): the recorded handle is the visible button or drop zone, and
+  // setInputFiles needs the input itself — which the replay finds from that anchor.
+  upload_file: (step) => `await page.locator('input[type="file"]').first().setInputFiles(${expr(step.file ?? '')});`,
+  press_key: (step) => `await page.keyboard.press(${s(step.key)});`,
+  // The handler installed below already answered it; without this the recorded
+  // step would read as unknown and the export would carry a stray comment.
+  handle_dialog: () => `// dialog answered by the handler above`,
+  wait: (step) =>
+    `await page.waitForSelector(${s(step.selector)}${step.timeout ? `, { timeout: ${Number(step.timeout)} }` : ''});`,
+  scroll: scrollLine,
+  double_click: (step) =>
+    step.el ? `await ${locator(step)}.first().dblclick();` : `await page.mouse.dblclick(${Number(step.x)}, ${Number(step.y)});`,
+  // A point, not a handle. Exported so the run is complete, flagged so whoever
+  // reads the export knows this is the line that breaks when a layout moves.
+  click_coordinates: (step) =>
+    `await page.mouse.click(${Number(step.x)}, ${Number(step.y)}); // recorded as a point: re-record if the layout changes`,
+  keyboard_type: (step) => `await page.keyboard.type(${expr(step.text ?? '')});`,
+  open_tab: (step) => `page = await context.newPage();\n  await page.goto(${expr(step.url ?? step.tabUrl ?? '')});`,
+  // The tab is found by where it went, since a tab index is not stable across runs
+  // and an SSO url carries a fresh token every time.
+  switch_tab: (step) => `page = await tabAt(context, ${s(pathOf(step.tabUrl))});`,
+  close_tab: () => `await page.close();\n  page = context.pages()[context.pages().length - 1];`,
+};
+
+/** The origin and path of a url, which is what identifies a tab across runs. */
+function pathOf(url) {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return String(url ?? '');
+  }
+}
+
+/** One step as Playwright, or a comment for an action the export does not know. */
+function stepLine(step) {
+  const known = typeof step.action === 'string' && Object.hasOwn(LINES, step.action);
+  return known ? LINES[step.action](step) : `// skipped unknown step ${s(step.action)}`;
+}
+
+/** A Playwright module with non-secret defaults and caller-supplied overrides. */
+export function renderPlaywright(pb) {
+  if (pb.schemaVersion === WORKFLOW_SCHEMA) return workflow.generate(pb).code;
+  const vars = variablesOf(pb.steps);
+  return [...header(pb, vars), ...runFunction(pb, vars), ''].join('\n');
+}
+
+/** The module's opening comments and, when steps use filters, the filter helpers. */
+function header(pb, vars) {
+  return [
+    `// Playbook ${s(pb.name)}, generated by Oya.`,
+    `// vars: ${vars.length ? vars.join(', ') : '(none)'}`,
+    ...uploadNote(pb.steps),
+    ...filterHelpers(pb.steps),
+  ];
+}
+
+/**
+ * In this module they are paths, because that is what setInputFiles takes — the SDK's
+ * play() wants a file() value for the same variable.
+ */
+function uploadNote(steps) {
+  const uploads = steps
+    .filter((step) => step.action === 'upload_file')
+    .map((step) => variablesOf([step])[0])
+    .filter(Boolean);
+  if (!uploads.length) return [];
+  const what = uploads.length > 1 ? 'are file paths' : 'is a file path';
+  return [`// here ${uploads.join(', ')} ${what}, not an Oya file() value`];
+}
+
+/** The filter functions and `v()` helper, only when a placeholder uses a filter. */
+function filterHelpers(steps) {
+  if (!/\{\{\w+\|/.test(JSON.stringify(steps))) return [];
+  return [
+    'const FILTERS = {',
+    ...Object.entries(FILTERS).map(([name, fn]) => `  ${name}: ${fn},`),
+    '};',
+    "const v = (vars, key, pipes) => pipes.reduce((s, [name, arg]) => (FILTERS[name] ? FILTERS[name](s, arg) : s), String(vars[key] ?? ''));",
+  ];
+}
+
+/** Actions whose exported line needs the browser context and the tab finder. */
+const TAB_STEPS = new Set(['open_tab', 'switch_tab', 'close_tab']);
+
+/**
+ * Finds a tab by where it went. An SSO handoff opens its tab a moment after the
+ * click that starts it, and its url carries a fresh token each run, so this waits
+ * and matches on origin and path rather than on an index or a whole url.
+ */
+const TAB_FINDER = [
+  `  const context = page.context();`,
+  `  const tabAt = async (context, target) => {`,
+  `    for (let attempt = 0; attempt < ${FIND_ATTEMPTS}; attempt++) {`,
+  `      const found = context.pages().find((p) => p.url().startsWith(target));`,
+  `      if (found) return found;`,
+  `      await page.waitForTimeout(${FIND_RETRY_MS});`,
+  `    }`,
+  `    throw new Error('no tab at ' + target);`,
+  `  };`,
+];
+
+/** The tab finder, added only when the run used more than one tab. */
+function tabPreamble(steps) {
+  return steps.some((step) => TAB_STEPS.has(step.action)) ? TAB_FINDER : [];
+}
+
+/** The exported run function: defaults, the dialog handler, then the steps. */
+function runFunction(pb, vars) {
+  return [
+    `export default async function run(page, vars = {}) {`,
+    `  vars = { ...${s(exportDefaults(pb, vars))}, ...vars };`,
+    ...dialogHandler(pb.steps),
+    ...tabPreamble(pb.steps),
+    ...pb.steps.map((step) => `  ${stepLine(step)}`),
+    `}`,
+  ];
+}
+
+/** Recorded defaults the steps use, minus secrets. */
+function exportDefaults(pb, vars) {
+  const secrets = new Set(pb.secrets || []);
+  return Object.fromEntries(
+    Object.entries(pb.defaults || {}).filter(([key]) => vars.includes(key) && !secrets.has(key)),
+  );
+}
+
+/**
+ * Playwright blocks the page on a dialog nobody answers. The recording shows
+ * which way this flow went, so the export answers the same way.
+ */
+function dialogHandler(steps) {
+  const dialogs = steps.filter((step) => step.action === 'handle_dialog' && step.accept !== false);
+  if (!dialogs.length) return [];
+  const answered = dialogs.find((step) => step.prompt_text);
+  return [`  page.on('dialog', (d) => d.accept(${answered ? s(answered.prompt_text) : ''}));`];
+}

@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: browser
+  labels:
+    app: browser
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: browser
+  template:
+    metadata:
+      labels:
+        app: browser
+    spec:
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        - name: ghcr-oyadotai
+      # This pod renders whatever page an agent is pointed at. The image runs as
+      # uid 10001 (browser/Dockerfile); this is the cluster saying the same thing
+      # so a future image that forgets USER fails to schedule instead of
+      # silently running as root.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: browser
+        image: ghcr.io/oyadotai/oya-browser:latest
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            # NET_RAW in particular: ARP and DNS spoofing against neighbouring
+            # pods is the first thing a renderer compromise reaches for.
+            drop: ["ALL"]
+        env:
+        - name: OYA_SERVER_URL
+          value: "ws://server:3100/ws"
+        - name: OYA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: API_KEYS
+        - name: OYA_AUTO_CONNECT
+          value: "true"
+        - name: OYA_BROWSER_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: SCREEN_WIDTH
+          value: "1920"
+        - name: SCREEN_HEIGHT
+          value: "1080"
+        # OYA_DOCKER is set in the Dockerfile
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        # /dev/shm must be large enough for Chromium
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 4Gi
+---
+# The pod's egress boundary. It has to reach the public internet — that is the
+# job — but nothing inside the cluster except the control plane, and never the
+# node metadata endpoint, which is a credential vending machine one SSRF away.
+#
+# Needs a CNI that enforces NetworkPolicy (GKE Dataplane V2, Calico, Cilium).
+# Where nothing enforces it this is inert, not a false sense of security: check
+# with `kubectl get networkpolicy -n oya-browser` and your CNI's docs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: browser-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: browser
+  policyTypes: ["Egress"]
+  egress:
+    # DNS to the cluster resolver.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The control plane, to enrol and to carry commands.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: server
+    # The public internet, and only the public internet.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32   # cloud metadata
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16

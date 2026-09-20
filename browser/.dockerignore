@@ -1,0 +1,15 @@
+# The build context is what gets shipped to the daemon (or uploaded to a remote
+# builder) before anything is copied. Without this it is 6.2GB — almost all of
+# it Electron output nobody needs in a headless image.
+node_modules
+dist
+out
+*.dmg
+*.AppImage
+*.zip
+*.blockmap
+.DS_Store
+npm-debug.log*
+.env
+.env.*
+data
