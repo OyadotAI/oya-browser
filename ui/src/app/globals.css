@@ -1,0 +1,639 @@
+@import 'tailwindcss';
+
+/* Oya tokens shared with A2ABaseAI/frontend. Secondary text is raised for
+   legibility in dense tables; the brand surfaces and primary are identical. */
+:root {
+  color-scheme: dark;
+  --background: #0c0c0a;
+  --foreground: rgba(255, 255, 255, 0.88);
+  --primary: #39ed35;
+  --primary-foreground: #0c0c0a;
+  --card: #1c1c18;
+  --elevated: #242420;
+  --sunken: #141410;
+  --border: rgba(255, 255, 255, 0.12);
+  --secondary: rgba(255, 255, 255, 0.76);
+  --muted: rgba(255, 255, 255, 0.64);
+  --dim: rgba(255, 255, 255, 0.5);
+  --info: #6cb4ff;
+  --warning: #f5a623;
+  --destructive: #ff6b6b;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --background: #f4f3ef;
+  --foreground: #0c0c0a;
+  --primary: #157a13;
+  --primary-foreground: #fff;
+  --card: #fff;
+  --elevated: #eceae4;
+  --sunken: #fafaf8;
+  --border: rgba(12, 12, 10, 0.14);
+  --secondary: #45453e;
+  --muted: #62625a;
+  --dim: #72726a;
+  --info: #1d4ed8;
+  --warning: #92400e;
+  --destructive: #b91c1c;
+}
+
+@theme inline {
+  --color-bg: var(--background);
+  --color-bg-card: var(--card);
+  --color-bg-elevated: var(--elevated);
+  --color-bg-sunken: var(--sunken);
+  --color-bg-input: transparent;
+  --color-border: var(--border);
+  --color-border-focus: var(--primary);
+  --color-text: var(--foreground);
+  --color-text-muted: var(--muted);
+  --color-text-dim: var(--dim);
+  --color-text-secondary: var(--secondary);
+  --color-accent: var(--primary);
+  --color-accent-foreground: var(--primary-foreground);
+  --color-accent-hover: color-mix(in srgb, var(--primary) 85%, var(--foreground));
+  --color-green-surface: color-mix(in srgb, var(--primary) 10%, transparent);
+  --color-green-border: color-mix(in srgb, var(--primary) 22%, transparent);
+  --color-indigo: var(--info);
+  --color-indigo-hover: var(--info);
+  --color-red: var(--destructive);
+  --color-yellow: var(--warning);
+
+  --font-sans: var(--font-dm-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-display: var(--font-archivo), Impact, 'Arial Black', sans-serif;
+  --font-mono: 'Cascadia Code', ui-monospace, 'Source Code Pro', Menlo, Monaco, Consolas, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 8px 32px rgba(12, 12, 10, 0.12);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  min-height: 100dvh;
+}
+
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Selection */
+::selection {
+  background: rgba(57, 237, 53, 0.2);
+  color: var(--foreground);
+}
+
+/* Focus visible */
+:focus-visible {
+  outline: 1px solid rgba(57, 237, 53, 0.55);
+  outline-offset: 2px;
+}
+
+/* Smooth transitions globally */
+button,
+a,
+input,
+select,
+textarea {
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── Console primitives ──
+   Buttons, table rows and inputs read the same everywhere. Numbers are
+   tabular so a refreshing column does not jitter. */
+@utility btn-base {
+  @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold tracking-[0.01em] whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+}
+@utility btn-primary {
+  @apply btn-base bg-accent text-accent-foreground hover:bg-accent-hover;
+}
+@utility btn-ghost {
+  @apply btn-base border border-border bg-transparent text-text-secondary hover:border-text/20 hover:bg-text/5 hover:text-text;
+}
+@utility btn-danger {
+  @apply btn-base bg-red/15 text-red hover:bg-red/25 border border-red/30;
+}
+@utility btn-icon {
+  @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-text/5 hover:text-text disabled:opacity-40;
+}
+@utility field {
+  @apply h-8 w-full rounded-md border border-border bg-bg px-2.5 text-[13px] text-text placeholder:text-text-dim focus:border-border-focus focus:outline-none focus:ring-1 focus:ring-border-focus;
+}
+@utility label {
+  @apply mb-1.5 block text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted;
+}
+@utility num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A thousand rows: paint only what is on screen. */
+.row-lazy {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 40px;
+}
+
+/* Health dots. One place, so the strip and the table agree. */
+.dot {
+  @apply inline-block h-2 w-2 shrink-0 rounded-full;
+}
+.dot-ok {
+  @apply bg-accent shadow-[0_0_8px_rgba(57,237,53,0.7)];
+}
+.dot-stale {
+  @apply bg-yellow;
+}
+.dot-errors {
+  @apply bg-red;
+}
+.dot-dead {
+  @apply bg-text/25;
+}
+
+/* Landing page subtle grid */
+.landing-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* ─── Entrance & high-end motion animations ─── */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes flow-line {
+  0% {
+    stroke-dashoffset: 24;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes scan-line {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(1000%);
+  }
+}
+
+@keyframes beam-travel {
+  0% {
+    left: -30%;
+    opacity: 0;
+  }
+  30% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    left: 130%;
+    opacity: 0;
+  }
+}
+
+.flow-anim {
+  stroke-dasharray: 6 6;
+  animation: flow-line 1.2s linear infinite;
+}
+
+.beam-effect {
+  position: relative;
+  overflow: hidden;
+}
+.beam-effect::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(57, 237, 53, 0.15), transparent);
+  animation: beam-travel 3.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Glassmorphism & double-bezel */
+.double-bezel {
+  border-radius: 1.5rem;
+  padding: 3px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  box-shadow:
+    0 20px 50px -20px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+.double-bezel-inner {
+  border-radius: calc(1.5rem - 3px);
+}
+
+/* Toast */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+/* Staggered fade-in utility */
+.animate-in {
+  animation: fade-in-up 0.6s ease-out both;
+}
+.delay-1 {
+  animation-delay: 0.1s;
+}
+.delay-2 {
+  animation-delay: 0.2s;
+}
+.delay-3 {
+  animation-delay: 0.3s;
+}
+.delay-4 {
+  animation-delay: 0.4s;
+}
+.delay-5 {
+  animation-delay: 0.5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Settings: one control height, one label column, calm section rhythm. */
+@utility settings-input {
+  @apply h-11 w-full min-w-0 rounded-lg border border-border bg-bg-sunken px-3.5 text-[13px] text-text placeholder:text-text-dim focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/10 disabled:opacity-50;
+}
+.settings-row {
+  display: grid;
+  gap: 8px;
+}
+@media (min-width: 640px) {
+  .settings-row {
+    grid-template-columns: 140px minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+}
+
+/* Shared code palette. Keep syntax visible without competing with controls. */
+.syntax-code {
+  color: var(--foreground);
+  white-space: pre;
+  tab-size: 2;
+}
+.syntax-code .token.comment,
+.syntax-code .token.prolog {
+  color: #8d9689;
+}
+.syntax-code .token.keyword,
+.syntax-code .token.atrule {
+  color: #c5aff4;
+}
+.syntax-code .token.string,
+.syntax-code .token.char,
+.syntax-code .token.attr-value {
+  color: #afd79b;
+}
+.syntax-code .token.function,
+.syntax-code .token.function-name {
+  color: #8fc7ee;
+}
+.syntax-code .token.number,
+.syntax-code .token.boolean,
+.syntax-code .token.constant {
+  color: #edbd86;
+}
+.syntax-code .token.property,
+.syntax-code .token.class-name {
+  color: #d6c49e;
+}
+.syntax-code .token.operator,
+.syntax-code .token.punctuation {
+  color: #b1b2a8;
+}
+.syntax-code .token.variable,
+.syntax-code .token.builtin {
+  color: #90d3cb;
+}
+:root[data-theme='light'] .syntax-code .token.comment,
+:root[data-theme='light'] .syntax-code .token.prolog {
+  color: #687364;
+}
+:root[data-theme='light'] .syntax-code .token.keyword,
+:root[data-theme='light'] .syntax-code .token.atrule {
+  color: #7849a1;
+}
+:root[data-theme='light'] .syntax-code .token.string,
+:root[data-theme='light'] .syntax-code .token.char,
+:root[data-theme='light'] .syntax-code .token.attr-value {
+  color: #3d6a2a;
+}
+:root[data-theme='light'] .syntax-code .token.function,
+:root[data-theme='light'] .syntax-code .token.function-name {
+  color: #226797;
+}
+:root[data-theme='light'] .syntax-code .token.number,
+:root[data-theme='light'] .syntax-code .token.boolean,
+:root[data-theme='light'] .syntax-code .token.constant {
+  color: #99541f;
+}
+:root[data-theme='light'] .syntax-code .token.property,
+:root[data-theme='light'] .syntax-code .token.class-name {
+  color: #80601b;
+}
+:root[data-theme='light'] .syntax-code .token.operator,
+:root[data-theme='light'] .syntax-code .token.punctuation {
+  color: #65695f;
+}
+:root[data-theme='light'] .syntax-code .token.variable,
+:root[data-theme='light'] .syntax-code .token.builtin {
+  color: #21746b;
+}
+
+/* Public surfaces: deliberate scale, quiet borders, generous reading space. */
+.site-width {
+  width: min(100% - 48px, 1120px);
+  margin-inline: auto;
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.marketing-title {
+  font-size: clamp(44px, 5.7vw, 76px);
+  font-weight: 500;
+  line-height: 1.06;
+  letter-spacing: -0.065em;
+}
+.marketing-heading {
+  font-size: clamp(28px, 3.2vw, 40px);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+}
+.section-space {
+  padding-block: 80px;
+}
+.product-preview {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 20px 70px -45px #000;
+}
+.preview-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 50px;
+  gap: 16px;
+  align-items: center;
+  padding-inline: 20px;
+}
+@media (max-width: 639px) {
+  .site-width {
+    width: calc(100% - 32px);
+  }
+  .section-space {
+    padding-block: 48px;
+  }
+  .preview-columns {
+    grid-template-columns: minmax(0, 1fr) 72px 42px;
+    gap: 10px;
+    padding-inline: 16px;
+  }
+  .preview-columns-header {
+    display: none !important;
+  }
+}
+
+/* Data workspaces retain readable column geometry regardless of cell content. */
+.workspace-list {
+  max-width: 1680px;
+  margin-inline: auto;
+}
+.data-scroll {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.fleet-data {
+  min-width: 1040px;
+}
+.profile-data {
+  min-width: 1160px;
+}
+.data-table tbody tr {
+  height: 60px;
+}
+.data-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.data-table th {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.data-table input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.control-workspace {
+  max-width: 1440px;
+  margin-inline: auto;
+}
+.control-content {
+  width: 100%;
+}
+.control-table table {
+  min-width: 640px;
+  table-layout: fixed;
+}
+.control-table th {
+  padding: 14px 16px;
+  font-weight: 500;
+}
+.control-table td {
+  padding: 14px 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.docs-page main {
+  color: var(--secondary);
+}
+.docs-page main p {
+  line-height: 1.85;
+}
+.docs-page main table {
+  min-width: 560px;
+}
+.docs-page main h3 {
+  color: var(--foreground);
+  scroll-margin-top: 110px;
+}
+@media (max-width: 767px) {
+  .fleet-data,
+  .profile-data {
+    min-width: 0;
+  }
+  .fleet-data th:nth-child(1) {
+    width: 28px;
+  }
+  .fleet-data th:nth-child(2) {
+    width: 18px;
+  }
+  .fleet-data th:nth-child(3) {
+    width: auto;
+  }
+  .fleet-data th:nth-child(5) {
+    width: 78px;
+  }
+  .fleet-data th:nth-child(10) {
+    width: 64px;
+  }
+  .fleet-data :is(th, td):nth-child(4),
+  .fleet-data :is(th, td):nth-child(6),
+  .fleet-data :is(th, td):nth-child(7),
+  .fleet-data :is(th, td):nth-child(8),
+  .fleet-data :is(th, td):nth-child(9) {
+    display: none;
+  }
+  .fleet-data :is(th, td) {
+    padding-inline: 5px;
+  }
+  .profile-data th:first-child {
+    width: 55%;
+  }
+  .profile-data th:nth-child(2) {
+    width: 45%;
+  }
+  .profile-data :is(th, td):nth-child(n + 3) {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .fleet-data th:nth-child(10) {
+    width: 92px;
+  }
+  .fleet-data td:last-child .btn-icon {
+    width: 40px;
+    height: 40px;
+  }
+}
