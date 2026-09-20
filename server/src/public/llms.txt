@@ -115,16 +115,24 @@ Stop a browser and release its session.
 Parameters: browser_id (string, optional; defaults to the one being driven)
 
 ### analyze_page
-Analyzes the current page. Returns full page as structured markdown with every interactive element numbered as [#id type "label"]. Includes viewport size, scroll position, visibility flags.
+Analyzes the current page. Returns the full page with every interactive element numbered, written as markdown (the default), TOON or JSONL. Includes viewport size, scroll position and each element's state (off-screen, disabled, checked, a field's hint).
 
-No parameters.
+Parameters: format (string, optional): "markdown", "toon" or "jsonl". Left out, the server's OYA_PAGE_FORMAT when it sets one, else the default picked in the Oya Browser's settings (markdown unless changed).
 
 IMPORTANT: Always call analyze_page BEFORE click or type. Element IDs only exist after analysis and reset on every call. After navigating or clicking a link that changes the page, call analyze_page again.
 
-Returns:
-- Page metadata (url, title, viewport, scroll position)
-- Full page content as markdown with inline element annotations
+Returns, as markdown:
+- Page metadata (url, title, viewport, scroll position) as a header
+- Full page content with element tags like [#12 link "Settings" → /settings]
 - Element index grouped by visible/off-screen
+
+Returns, as TOON (toonformat.dev), fewer tokens:
+- page: facts (url, title, viewport, scroll; panelScroll, modal, covered, truncated when they apply)
+- blocks[N]{id,region,kind,text,target,state}: one row per heading, paragraph, list item, table row, image and element, in reading order
+
+Returns, as JSONL, one JSON object per line:
+- {"page":{...facts}} first
+- then one object per block, in reading order, with id, region, kind, text, target, state (empty fields left out)
 
 ### navigate
 Navigate the browser to a URL.
@@ -183,12 +191,17 @@ Parameters: selector (string, optional), limit (number, optional, default 50)
 
 ## Element Annotation Format
 
-analyze_page returns elements inline in the markdown:
+analyze_page returns elements as tags in markdown:
 
     [#5 button "Submit"]
-    [#9 input:email placeholder="you@example.com" required]
+    [#9 input:email "Email" (required; hint: you@example.com)]
     [#12 link "Settings" → /settings]
-    [#8 ☑ "Remember me"]
+    [#8 checkbox "Remember me" (checked)]
+
+and as rows in TOON:
+
+    5,main,button,Submit,"",""
+    12,nav,link,Settings,/settings,""
 
 Element IDs are real attributes (data-ac-id) on the DOM — click(5) resolves via querySelector('[data-ac-id="5"]').
 
@@ -275,7 +288,7 @@ Navigation actions:
   list_tabs   — no params                           — List all open tabs
 
 Page analysis actions:
-  analyze     — no params                           — Full page as markdown + numbered elements
+  analyze     — format? (markdown | toon | jsonl)    — Full page + numbered elements, as markdown (default), TOON or JSONL
   read_page   — params: selector, limit (default 50) — Lightweight element listing
   screenshot  — no params                           — Capture page as PNG
 

@@ -155,7 +155,9 @@ describe('resultSummary', () => {
   it('shows the shape of a result, not its payload', () => {
     const summary = resultSummary('abcdefghijkl', true, {
       screenshot: 'x'.repeat(2048),
-      markdown: 'm'.repeat(600),
+      format: 'toon',
+      page: 'm'.repeat(600),
+      blocks: [1, 2, 3],
       elements: [1, 2],
       tabs: [1],
     });
@@ -163,7 +165,9 @@ describe('resultSummary', () => {
       id: 'abcdefgh',
       ok: true,
       screenshot: '2KB',
-      markdown: 'm'.repeat(500) + '...',
+      format: 'toon',
+      page: 'm'.repeat(500) + '...',
+      blocks: '3 blocks',
       elements: '2 elements',
       tabs: '1 tabs',
     });

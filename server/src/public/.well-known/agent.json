@@ -1,6 +1,6 @@
 {
   "name": "Oya Browser",
-  "description": "Drive a real Chrome browser through one API \u2014 on Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or the user's own machine with their cookies, logins and extensions. Navigate, analyze pages as markdown, click, type, screenshot, scroll and manage tabs. Personas keep a logged-in identity stable across runs and providers.",
+  "description": "Drive a real Chrome browser through one API \u2014 on Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or the user's own machine with their cookies, logins and extensions. Navigate, analyze pages as markdown, TOON or JSONL, click, type, screenshot, scroll and manage tabs. Personas keep a logged-in identity stable across runs and providers.",
   "url": "https://browser.getoya.ai",
   "version": "1.0.0",
   "capabilities": {

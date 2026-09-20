@@ -66,7 +66,7 @@ const ITEMS: [string, string, string][] = [
   ['Claude Code', 'claude-code', 'H3'],
   ['analyze_page', 'analyze_page', 'H2'],
   [
-    'Analyzes the current page. Returns the full page as structured markdown with every interactive element numbered.',
+    'Analyzes the current page. Returns the full page, as markdown (default), TOON or JSONL, with every interactive element numbered.',
     'analyze_page',
     'P',
   ],

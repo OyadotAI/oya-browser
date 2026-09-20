@@ -5,6 +5,7 @@
  */
 const { sleep } = require('../input.cjs');
 const { findElementJs, actionScript } = require('./scripts.cjs');
+const { renderedAnalysis } = require('../page-format.cjs');
 const { TAB_READY_TIMEOUT_MS, LOAD_TIMEOUT_MS } = require('./constants.cjs');
 const { PAGE_COMMANDS } = require('./page-commands.cjs');
 const { DEV_COMMANDS, UNGUARDED_DEV_COMMANDS } = require('./dev-commands.cjs');
@@ -82,7 +83,8 @@ class PageDriver {
   /** An action with no handler of its own runs as an analyzer script. */
   async runInjected(id, action, params, view) {
     await this.ctx.injectScripts(view);
-    const result = await this.ctx.worldEval(view, actionScript(action, params));
+    const raw = await this.ctx.worldEval(view, actionScript(action, params));
+    const result = action === 'analyze' ? renderedAnalysis(this.ctx, raw, params) : raw;
     this.ctx.sendResult(id, result?.ok ?? true, result?.data, result?.error);
   }
 

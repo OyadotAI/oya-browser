@@ -164,7 +164,11 @@ const REST_API_ROWS_2: ReactNode[][] = [
 
 /** Rows of a table in the REST API section. */
 const REST_API_ROWS_3: ReactNode[][] = [
-  [<InlineCode key="a1">analyze</InlineCode>, <em key="params">none</em>, 'Full page as markdown + numbered elements'],
+  [
+    <InlineCode key="a1">analyze</InlineCode>,
+    <InlineCode key="params">format?</InlineCode>,
+    'Full page + numbered elements, as markdown (default), toon or jsonl',
+  ],
   [
     <InlineCode key="a2">read_page</InlineCode>,
     <span key="p2">

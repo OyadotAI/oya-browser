@@ -5,114 +5,43 @@
  * agent fills forms from the field table, so it carries what the page shows
  * about each field: required, invalid and the page's error for it.
  */
-import { MAX_OFFSCREEN_LISTED, MAX_INDEX_LINK, MAX_ANALYSIS_CHARS, READ_ELEMENTS_LIMIT } from './constants.ts';
-import { toonTable } from './toon.ts';
+import pageRender from '../../../../browser/scripts/page-render.cjs';
+import { MAX_ANALYSIS_CHARS, READ_ELEMENTS_LIMIT, PAGE_FORMAT } from './constants.ts';
 
-/** Element kinds a person fills in rather than clicks. */
-const FIELD_TYPES = new Set(['input', 'textarea', 'select', 'checkbox', 'radio', 'editable']);
+/** The element index (TOON tables of fields and elements), shared with the markdown page renderer. */
+export const elementIndex: (elements: any[], truncated?: boolean) => string = pageRender.elementIndex;
 
-/** The field table's columns. */
-const FIELD_COLUMNS = ['id', 'type', 'label', 'value', 'hint', 'state'];
-
-/** The visible-element table's columns. */
-const VISIBLE_COLUMNS = ['id', 'type', 'label', 'link'];
-
-/** What the field table is, said once above it. */
-const FIELDS_NOTE = 'Form fields (hint is the format the field expects, or a select’s options):\n';
-
-/** Said after the index when the page was cut short. */
-const TRUNCATED = '\n⚠ Page content was truncated (very long page). Scroll down and re-analyze to see more.\n';
-
-/** Said where the page's markdown was cut to leave room for the index. */
+/** Said where an older analyzer's markdown was cut to leave room for the index. */
 const CUT = '\n\n⚠ Output truncated to fit context window.';
 
-/** A checkbox or radio, whose value is its state rather than text. */
-const isToggle = (e) => e.type === 'checkbox' || e.type === 'radio';
-
-/** The field's kind: an input by its input type (text, date, password), anything else by its type. */
-const fieldKind = (e) => (e.type === 'input' ? e.inputType || 'text' : e.type);
-
-/** State words: required, checked, disabled, read-only, off-screen, ARIA state and covered, and invalid with the page's error. */
-function fieldState(e) {
-  const parts = [e.required && 'required', isToggle(e) && (e.checked ? 'checked' : 'unchecked')];
-  parts.push(e.disabled && 'disabled', e.readOnly && 'readonly', !e.visible && 'off-screen', e.state);
-  if (e.invalid || e.error) parts.push(e.error ? `invalid: ${e.error}` : 'invalid');
-  return parts.filter(Boolean).join(' ');
-}
-
-/** The format a field expects, or a select's options; blank when it only repeats the label. */
-function fieldHint(e) {
-  const hint = e.options || e.placeholder || '';
-  return hint === e.text ? '' : hint;
-}
-
-/** One row of the field table. */
-const fieldRow = (e) => ({
-  id: e.id,
-  type: fieldKind(e),
-  label: e.text,
-  value: isToggle(e) ? '' : e.value,
-  hint: fieldHint(e),
-  state: fieldState(e),
-});
-
-/** One row for a visible element that is not a field. */
-const visibleRow = (e) => ({
-  id: e.id,
-  type: e.type,
-  label: [e.text || '', e.disabled && '(disabled)', e.state && `(${e.state})`].filter(Boolean).join(' '),
-  link: (e.href || '').slice(0, MAX_INDEX_LINK),
-});
-
-/** The first off-screen elements, and a count of the rest. */
-function offscreenSection(offscreen) {
-  const rows = offscreen.slice(0, MAX_OFFSCREEN_LISTED).map((e) => ({ id: e.id, type: e.type, label: e.text }));
-  let section = '\nOff-screen (scroll to reveal):\n' + toonTable('offscreen', ['id', 'type', 'label'], rows) + '\n';
-  if (offscreen.length > MAX_OFFSCREEN_LISTED)
-    section += `  ... and ${offscreen.length - MAX_OFFSCREEN_LISTED} more off-screen elements\n`;
-  return section;
-}
-
-/** Every field, the visible ones first: the whole form in one table. */
-function fieldsSection(elements) {
-  const fields = elements.filter((e) => FIELD_TYPES.has(e.type));
-  if (!fields.length) return '';
-  fields.sort((a, b) => Number(!a.visible) - Number(!b.visible));
-  return FIELDS_NOTE + toonTable('fields', FIELD_COLUMNS, fields.map(fieldRow)) + '\n';
-}
-
-/** The visible elements that are not fields. */
-function visibleSection(others) {
-  const visible = others.filter((e) => e.visible);
-  if (!visible.length) return '';
-  return '\nOther visible elements:\n' + toonTable('visible', VISIBLE_COLUMNS, visible.map(visibleRow)) + '\n';
-}
-
-/** The index for an analysis's elements, noting when the page content was truncated. */
-export function elementIndex(elements, truncated) {
-  const others = elements.filter((e) => !FIELD_TYPES.has(e.type));
-  const offscreen = others.filter((e) => !e.visible);
-  let index = `\n\n## Element Index (${elements.length} total, ${elements.filter((e) => e.visible).length} visible)\n\n`;
-  index += fieldsSection(elements) + visibleSection(others);
-  if (offscreen.length) index += offscreenSection(offscreen);
-  return truncated ? index + TRUNCATED : index;
-}
-
-/** The markdown cut at a line end to fit `room`, marked where it was cut. */
-function fitMarkdown(markdown, room) {
-  if (markdown.length <= room) return markdown;
+/** An older desktop app's analysis (markdown, no blocks): its markdown cut on a line, then the index. */
+function legacyText({ markdown = '', elements = [], truncated }) {
+  const index = elementIndex(elements, truncated);
+  const room = MAX_ANALYSIS_CHARS - index.length;
+  if (markdown.length <= room) return markdown + index;
   const cut = markdown.slice(0, Math.max(room - CUT.length, 0));
-  const end = cut.lastIndexOf('\n');
-  return (end > 0 ? cut.slice(0, end) : cut) + CUT;
+  return cut.slice(0, cut.lastIndexOf('\n') > 0 ? cut.lastIndexOf('\n') : cut.length) + CUT + index;
 }
 
 /**
- * The analysis as the model reads it, within MAX_ANALYSIS_CHARS: the markdown
- * gives way, the index is always whole, since the agent acts on its ids.
+ * The analysis as the model reads it, within MAX_ANALYSIS_CHARS, in the format the
+ * browser wrote it in (else markdown). The renderer decides what gives
+ * way; an older analyzer without blocks gets its markdown and the element index.
  */
-export function analysisText(markdown, elements, truncated) {
-  const index = elementIndex(elements, truncated);
-  return fitMarkdown(markdown, MAX_ANALYSIS_CHARS - index.length) + index;
+export function analysisText(data) {
+  if (!Array.isArray(data?.blocks)) return legacyText(data || {});
+  return pageRender.createRenderer(data.format).forAgent(data, MAX_ANALYSIS_CHARS);
+}
+
+/** Leads the guides when the format is not pinned, so the agent reads whichever it gets. */
+const UNPINNED_GUIDE =
+  '- The browser picks the page format (markdown, TOON or JSONL); read whichever analyze_page returns:';
+
+/** How the agent is told to read the page: the pinned format's guide, or every format's when none is pinned. */
+export function pageGuide(): string {
+  if (PAGE_FORMAT) return pageRender.createRenderer(PAGE_FORMAT).guide;
+  const guides = pageRender.FORMATS.map((format: string) => pageRender.createRenderer(format).guide);
+  return [UNPINNED_GUIDE, ...guides].join('\n');
 }
 
 /**

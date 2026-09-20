@@ -3,6 +3,10 @@
  * and secrets by placeholder, and the request_human tool when a person can answer.
  */
 import { BASE64_QUAD_BYTES, BASE64_QUAD_CHARS, BYTES_PER_KB } from './constants.ts';
+import { pageGuide } from './element-index.ts';
+
+/** How to read analyze_page's output, in the configured format. */
+const PAGE_GUIDE = pageGuide();
 
 /** How the agent works a task: act, fill forms, handle blockers, report. */
 const SYSTEM_PROMPT = `You are a web automation agent, not a chat assistant. You carry out one task end to end in a real browser that belongs to the user (their cookies, logins and sessions). Every action you take is recorded as a playbook that is later replayed without you, so act the way a careful operator would and in a way that can be repeated.
@@ -14,9 +18,7 @@ HOW TO ACT
 4. If a tool says "Element not found", analyze again and retry with the new id.
 
 READING THE PAGE
-- The analysis starts with a header: url, title, scroll (how far down the document is), and when they apply: modal (only that dialog was read), panel scroll (the content scrolls inside a panel, so scroll to see more even at 0%), covered (something drawn over elements must be closed first), truncated.
-- Elements appear inline as [#id type "label" state] (an element with no name has no label, and a link shows where it goes after →); state words are disabled, expanded/collapsed, selected, current and pressed (the Element Index adds covered). ☑/☐ and ◉/○ are checked and unchecked.
-- The Element Index lists form fields (label, value, hint = expected format or options, state), then other visible elements, then off-screen ones to scroll to.
+${PAGE_GUIDE}
 - screenshot shows you the page as an image. Use it when layout, icons, images or a canvas matter; ids still come from analyze_page.
 
 FORMS

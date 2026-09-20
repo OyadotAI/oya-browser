@@ -61,9 +61,26 @@ describe('IPC handlers', () => {
 
   it('keeps only known themes and panes', () => {
     assert.equal(call('save-ui-preferences', null), false);
-    call('save-ui-preferences', { theme: 'dark', pane: 'evil' });
+    call('save-ui-preferences', { theme: 'dark', pane: 'evil', pageFormat: 'xml' });
     assert.deepEqual(ctx.config.values.ui, { theme: 'dark' });
     assert.equal(call('get-ui-preferences').pane, 'chat');
+  });
+
+  it('saves the default page format chosen in settings, markdown until one is', () => {
+    assert.equal(call('get-ui-preferences').pageFormat, 'markdown');
+    assert.deepEqual(call('get-ui-preferences').pageFormats, ['markdown', 'toon', 'jsonl']);
+    call('save-ui-preferences', { pageFormat: 'jsonl' });
+    assert.equal(call('get-ui-preferences').pageFormat, 'jsonl');
+  });
+
+  it('renders a kept analysis again in the format asked for, and nothing for an unknown one', () => {
+    const analysis = { facts: { url: 'https://a.test/' }, blocks: [{ region: 'main', kind: 'h1', text: 'Hi' }] };
+    assert.equal(
+      call('render-page', analysis, 'jsonl'),
+      '{"page":{"url":"https://a.test/"}}\n{"region":"main","kind":"h1","text":"Hi"}',
+    );
+    assert.equal(call('render-page', analysis, 'xml'), '');
+    assert.equal(call('render-page', { markdown: '# old' }, 'toon'), '');
   });
 
   it('refuses to save a profile while offline', async () => {

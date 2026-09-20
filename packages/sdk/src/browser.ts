@@ -7,6 +7,7 @@
 import type { Http } from './client.js';
 import type {
   Analysis,
+  AnalyzeOptions,
   BrowserDetail,
   CaptchaResult,
   Element,
@@ -97,9 +98,12 @@ export class Browser {
     if (this.autoCaptcha) assertCaptchaCleared(await this.solveCaptcha());
   }
 
-  /** The page as markdown plus numbered elements to act on. */
-  async analyze(): Promise<Analysis> {
-    return this.command<Analysis>('analyze');
+  /**
+   * The page, written as markdown (the default), TOON or JSONL, plus its blocks and
+   * the numbered elements to act on.
+   */
+  async analyze(options: AnalyzeOptions = {}): Promise<Analysis> {
+    return this.command<Analysis>('analyze', options.format ? { format: options.format } : {});
   }
 
   /** Only the visible elements, which is what an agent almost always wants. */

@@ -30,7 +30,7 @@ const RECONNECT_JITTER_MS = 500;
 const DEFAULT_STREAM_FPS = 2;
 /** Characters of a command id shown in the dev log. */
 const ID_PREVIEW_CHARS = 8;
-/** Characters of a markdown result shown in the dev log. */
+/** Characters of an analysis's page (markdown, TOON) shown in the dev log. */
 const MARKDOWN_PREVIEW_CHARS = 500;
 /** Characters of an unparseable server answer shown to the person. */
 const ERROR_PREVIEW_CHARS = 200;

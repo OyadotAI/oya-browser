@@ -60,8 +60,8 @@ const DevActions = {
     if (!result?.ok) return DevActions.failed(resultEl, result);
     if (action === 'screenshot' && result.data?.screenshot) {
       resultEl.innerHTML = '<img style="width:100%;border-radius:4px;" src="' + Dom.esc(result.data.screenshot) + '">';
-    } else if (action === 'analyze' && result.data?.markdown) {
-      resultEl.textContent = result.data.markdown.slice(0, RendererConstants.ANALYZE_PREVIEW);
+    } else if (action === 'analyze' && result.data?.page) {
+      resultEl.textContent = result.data.page.slice(0, RendererConstants.ANALYZE_PREVIEW);
     } else DevActions.data(resultEl, result);
   },
 

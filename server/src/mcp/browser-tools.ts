@@ -7,7 +7,8 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { sendCommand } from '../modules/browsers/socket.ts';
 import { analysis, type Page } from './analysis.ts';
-import { elementList } from '../modules/agent/chat.ts';
+import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
+import pageRender from '../../../browser/scripts/page-render.cjs';
 import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
 import { fail } from './replies.ts';
 
@@ -72,13 +73,16 @@ type Tool = {
 /** Every browser tool, by name. */
 const TOOLS: Record<string, Tool> = {
   analyze_page: {
-    description: `Analyze the current page. Returns structured markdown with all interactive elements numbered as [#id type "label"].
-Use element IDs with click/type tools. The output includes:
-- Page metadata (URL, title, viewport, scroll position)
-- Full page content as markdown with inline element annotations
-- Element index with visibility flags (visible = in viewport without scrolling)`,
-    schema: {},
-    command: () => ['analyze'],
+    description: `Analyze the current page. Returns its content and every interactive element with an id to use with click/type tools,
+plus page facts (url, title, viewport, scroll, and when they apply: panelScroll, modal, covered, truncated) and each element's state (off-screen, disabled, checked, a field's hint).
+format picks how it is written: markdown (default) or toon (one table of blocks, fewer tokens).`,
+    schema: {
+      format: z
+        .enum(pageRender.FORMATS as [string, ...string[]])
+        .optional()
+        .describe('How the page is written; the server default when left out'),
+    },
+    command: ({ format }) => ['analyze', { format: format || PAGE_FORMAT }],
     text: (data) => analysis(data),
   },
   navigate: {
@@ -122,10 +126,10 @@ Use element IDs with click/type tools. The output includes:
       direction: z.enum(['up', 'down']).describe('Scroll direction'),
       amount: z.number().optional().describe('Pixels to scroll (default 500)'),
     },
-    command: ({ direction, amount }) => ['scroll', { direction, amount }, SCROLL_TIMEOUT_MS],
+    command: ({ direction, amount }) => ['scroll', { direction, amount, format: PAGE_FORMAT }, SCROLL_TIMEOUT_MS],
     // Scroll may re-analyze the page it lands on.
     text: (data, { direction, amount }) =>
-      data?.markdown && data?.elements ? analysis(data) : `Scrolled ${direction} ${amount || DEFAULT_SCROLL_PX}px`,
+      data?.elements ? analysis(data) : `Scrolled ${direction} ${amount || DEFAULT_SCROLL_PX}px`,
   },
   wait: {
     description: 'Wait for an element matching a CSS selector to appear on the page.',

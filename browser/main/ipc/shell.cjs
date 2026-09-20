@@ -1,12 +1,16 @@
 /** IPC: overlays over the page, the dev panel, and the shell's own preferences. */
 const { THEMES, PANES } = require('./constants.cjs');
+const { FORMATS, DEFAULT_FORMAT } = require('../../scripts/page-render.cjs');
 
-/** Saves the theme and pane the shell chose, ignoring anything else. */
+/** Each preference the shell may save, and the values it accepts. */
+const PREFERENCES = { theme: THEMES, pane: PANES, pageFormat: FORMATS };
+
+/** Saves the theme, pane and page format the shell chose, ignoring anything else. */
 function saveUiPreferences(ctx, _e, preferences) {
   if (!preferences || typeof preferences !== 'object') return false;
   const ui = { ...ctx.config.values.ui };
-  if (THEMES.includes(preferences.theme)) ui.theme = preferences.theme;
-  if (PANES.includes(preferences.pane)) ui.pane = preferences.pane;
+  for (const [key, allowed] of Object.entries(PREFERENCES))
+    if (allowed.includes(preferences[key])) ui[key] = preferences[key];
   ctx.config.values.ui = ui;
   ctx.config.save();
   ctx.shell.window?.setBackgroundColor(ctx.shell.background());
@@ -23,6 +27,8 @@ const SHELL_HANDLERS = {
   'get-ui-preferences': (ctx) => ({
     theme: 'system',
     pane: 'chat',
+    pageFormat: DEFAULT_FORMAT,
+    pageFormats: FORMATS,
     ...ctx.config.values.ui,
     platform: process.platform,
     systemDark: ctx.electron.nativeTheme.shouldUseDarkColors,

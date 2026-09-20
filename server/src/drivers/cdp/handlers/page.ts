@@ -7,6 +7,7 @@ import { ANALYZE_JS, SCROLL_TO_JS, SET_VALUE_JS } from '../page-scripts.ts';
 import queries from '../../../../../browser/scripts/page-queries.cjs';
 import { SCREENSHOT_QUALITY, WAIT_TIMEOUT_MS, WAIT_POLL_MS } from '../constants.ts';
 import type { Handler } from './types.ts';
+import pageRender from '../../../../../browser/scripts/page-render.cjs';
 
 /** A JPEG of the viewport, as a data URL. */
 export const screenshot: Handler = async (driver, params, remaining) => {
@@ -18,7 +19,8 @@ export const screenshot: Handler = async (driver, params, remaining) => {
 /** The analyzer's structured view of the page. */
 export const analyze: Handler = async (driver, params) => {
   await driver.ensureAnalyzer();
-  return driver.evaluate(ANALYZE_JS(params));
+  // Written in the format asked for (markdown unless configured), as the desktop app does.
+  return pageRender.withPage(await driver.evaluate(ANALYZE_JS(params)), params?.format);
 };
 
 /** The visible elements matching a selector, in the page and its iframes, with its URL and title. */

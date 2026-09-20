@@ -84,7 +84,7 @@ function Sdk() {
         types. Element IDs come from <InlineCode>analyze()</InlineCode> and are only valid until the page changes —
         after a navigation or a click that redraws, analyze again.
       </p>
-      <CodeBlock>{`const page = await browser.analyze();      // markdown + numbered elements
+      <CodeBlock>{`const page = await browser.analyze();      // markdown + numbered elements ({ format: 'toon' } for TOON)
 const els  = await browser.elements();     // just the visible ones
 
 await browser.click(13);

@@ -2,6 +2,7 @@
  * The right-click menu on a page: navigation, clipboard, and the developer
  * tools (page source and element inspection, shown in the dev panel).
  */
+const { renderedAnalysis } = require('../page-format.cjs');
 const { readPageSource } = require('./page-source.cjs');
 
 /**
@@ -105,7 +106,7 @@ async function viewPageSource(ctx, view) {
 async function inspectElement(ctx, view, params) {
   try {
     await ctx.protection.injectScripts(view);
-    const result = await ctx.world.worldEval(view, inspectScript(params), true);
+    const result = renderedAnalysis(ctx, await ctx.world.worldEval(view, inspectScript(params), true));
     // Open dev panel and show result in source pane
     ctx.layout.reveal();
     ctx.shell.send('inspect-result', result);

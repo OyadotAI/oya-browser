@@ -375,11 +375,16 @@
       <div class="dev-pane" id="pane-source">
         <div class="source-tabs">
           <span class="source-hint">The current page, as the agent reads it</span>
+          <div class="source-formats" role="radiogroup" aria-label="Page format">
+            <label><input type="radio" name="source-format" value="markdown" checked />Markdown</label
+            ><label><input type="radio" name="source-format" value="toon" />TOON</label
+            ><label><input type="radio" name="source-format" value="jsonl" />JSONL</label>
+          </div>
           <button class="source-refresh" id="source-refresh">&#8635; Refresh</button>
         </div>
         <div class="source-split">
-          <section class="source-block" aria-label="Markdown">
-            <h3 class="source-panel-label">Markdown</h3>
+          <section class="source-block" aria-label="Page">
+            <h3 class="source-panel-label" id="source-page-label">Markdown</h3>
             <div class="source-content empty" id="source-markdown">Right-click → View Page Source or click Refresh</div>
           </section>
           <section class="source-block" aria-label="HTML">
@@ -466,6 +471,11 @@
             <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option></select
+          ><label for="page-format-preference">Page format</label
+          ><select id="page-format-preference">
+            <option value="markdown">Markdown</option>
+            <option value="toon">TOON</option>
+            <option value="jsonl">JSONL</option></select
           ><span id="app-version">Oya Browser</span>
         </footer>
       </div>

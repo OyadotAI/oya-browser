@@ -14,7 +14,8 @@
   // MutationObserver and identifies the product.
   const ATTR = '__OYA_ATTR__';
 
-  const MAX_MARKDOWN_CHARS = 80000;
+  // The most block rows an analysis hands over.
+  const MAX_BLOCKS = 5000;
 
   // Text of a clickable card (a link wrapping title, price, rating) shown under
   // its tag when the tag's label cannot hold it.
@@ -41,11 +42,7 @@
   // sticky header, not an overlay: clicks scroll their target clear of it.
   const HEADER_MAX_SHARE = 0.25;
 
-  // Characters of an image address kept: enough to tell images apart, not a CDN's query string.
-  const MAX_IMAGE_SRC = 100;
 
-  // An element tag, ` [#12 button "Save"] `, with any ] inside its quoted label.
-  const TAG_PATTERN = / \[#\d+ (?:[^"\]]|"[^"]*")*\] /g;
 
   const COLORS = {
     link: '#22c55e', button: '#3b82f6', input: '#a855f7',
@@ -137,7 +134,11 @@
       if (aid) focusedId = parseInt(aid, 10);
     }
 
-    let md = tidyMarkdown(nodeToMarkdown(root, 0));
+    blocks = [];
+    buffer = '';
+    const top = { region: '' };
+    walk(root, top);
+    flush(top);
 
     for (const el of elementMap) {
       const dom = queryShadow(el.selector);
@@ -161,28 +162,24 @@
       if (aid) focusedId = parseInt(aid, 10);
     }
 
-    let truncated = false;
-    if (md.length > MAX_MARKDOWN_CHARS) { md = md.slice(0, MAX_MARKDOWN_CHARS); truncated = true; }
-
     const visibleCount = elementMap.filter(e => e.visible).length;
     const coveredCount = elementMap.filter(e => e.covered).length;
-    const header = [
-      `url: ${location.href}`, `title: ${document.title}`,
-      `viewport: ${vw}x${vh}`, `scroll: ${scrollPct}% (${scrollY}px / ${pageH}px)`,
-      `elements: ${elementMap.length} total, ${visibleCount} visible`,
-    ];
-    if (activeModal) {
-      const modalLabel = activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed';
-      header.push(`modal: "${modalLabel}" (analysis scoped to this dialog)`);
-    }
-    if (coveredCount) header.push(`covered: ${coveredCount} visible elements are behind something drawn over them (a banner, overlay or dialog to close first)`);
+    // Element rows' state, now that where each element is (on screen, covered) is known.
+    for (const row of blocks) if (row.entry) { row.state = stateWords(row.entry); delete row.entry; }
     const panel = scrollPanel(vw, vh);
-    if (panel) {
-      const top = Math.round(panel.scrollTop), max = panel.scrollHeight - panel.clientHeight;
-      header.push(`panel scroll: ${Math.round((top / max) * 100)}% (${top}px / ${panel.scrollHeight}px), the content scrolls inside a panel`);
-    }
-    if (focusedId) header.push(`focused: [#${focusedId}]`);
-    if (truncated) header.push(`truncated: true`);
+    const facts = {
+      url: location.href,
+      title: document.title,
+      viewport: `${vw}x${vh}`,
+      scroll: `${scrollPct}% (${scrollY}px of ${pageH}px)`,
+      panelScroll: panel ? `${Math.round((panel.scrollTop / (panel.scrollHeight - panel.clientHeight)) * 100)}% (${Math.round(panel.scrollTop)}px of ${panel.scrollHeight}px); the content scrolls inside a panel` : '',
+      elements: `${elementMap.length} total, ${visibleCount} visible`,
+      modal: activeModal ? `${activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed'} (only this dialog was read)` : '',
+      covered: coveredCount ? `${coveredCount} visible elements are behind something drawn over them (close it first)` : '',
+      focused: focusedId || '',
+    };
+    const truncated = blocks.length > MAX_BLOCKS;
+    if (truncated) facts.truncated = `showing ${MAX_BLOCKS} of ${blocks.length} blocks; scroll and analyze again for the rest`;
 
     if (options.highlight !== false) addHighlights();
 
@@ -195,7 +192,8 @@
         focusedElement: focusedId,
         modal: activeModal ? (activeModal.getAttribute('aria-label') || true) : null,
         truncated,
-        markdown: `---\n${header.join('\n')}\n---\n\n${md}`,
+        facts,
+        blocks: blocks.slice(0, MAX_BLOCKS),
         elements: elementMap,
       },
     };
@@ -271,251 +269,243 @@
     return location.hostname === 'news.ycombinator.com';
   }
 
-  // ─── DOM → Markdown ───
+  // ─── Page → blocks ───
+  // The page as data: one row per heading, paragraph, list item, table row, image
+  // and interactive element, in reading order, each with its region, kind, text,
+  // target and state. Renderers outside the page (scripts/page-render.cjs) write
+  // the rows as markdown, TOON or any other format; nothing here is format.
 
-  function nodeToMarkdown(node, depth) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const text = node.textContent.replace(/[ \t]+/g, ' ');
-      return text.trim() ? text : (text.includes('\n') ? '\n' : ' ');
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return '';
-    const tag = node.tagName;
-    if (SKIP_TAGS.has(tag)) return '';
-    if (isHardHidden(node)) return '';
-    if (node.id === 'ac-labels' || node.id === 'ac-highlight-style') return '';
-    // Only skip aria-hidden elements if they're also visually hidden (zero size or no opacity).
-    // LinkedIn sets aria-hidden="true" on main content when messaging is open.
-    // Reddit uses aria-hidden on expandable content.
-    if (node.getAttribute('aria-hidden') === 'true') {
-      const r = node.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return '';
-      try { if (window.getComputedStyle(node).opacity === '0') return ''; } catch {}
-    }
+  const HEADINGS = { H1: 'h1', H2: 'h2', H3: 'h3', H4: 'h4', H5: 'h5', H6: 'h6' };
+  const TEXT_KINDS = { LI: 'item', BLOCKQUOTE: 'quote', FIGCAPTION: 'caption', CAPTION: 'caption', DT: 'term' };
 
-    // ── Iframes: traverse into same-origin iframes ──
-    if (tag === 'IFRAME') {
-      try {
-        const iframeDoc = node.contentDocument;
-        if (iframeDoc && iframeDoc.body) {
-          const src = node.src || '';
-          let iframeLabel = 'iframe';
-          try { iframeLabel = new URL(src, location.origin).pathname; } catch {}
-          return `\n<!-- iframe: ${iframeLabel} -->\n${nodeToMarkdown(iframeDoc.body, depth)}\n<!-- /iframe -->\n`;
-        }
-      } catch {}
-      const src = node.src || '';
-      return src ? ` [iframe: ${src.slice(0, 80)}] ` : '';
-    }
+  // Query parameters that only track the click: noise in a link's target.
+  const TRACKING_PARAM = /^(utm_\w+|trk\w*|ref|ref_src|fbclid|gclid|mc_cid|mc_eid|_ga|igshid|si)$/i;
 
-    const interType = getInteractiveType(node);
-    if (interType) {
-      // Dedup: skip wrappers that contain actual interactive children.
-      const isLeaf = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
-      if (!isLeaf && hasInteractiveChild(node)) return childrenMarkdown(node, depth);
-      const annotated = annotateInteractive(node, interType);
-      return isLeaf || interType === 'editable' ? annotated : withWrappedText(node, annotated);
-    }
+  let blocks = [];   // rows so far, in reading order
+  let buffer = '';   // inline text not yet in a row
 
-    const children = renderedOnce(node, tag, depth) ?? childrenMarkdown(node, depth);
-
-    // Forms get special context for LLM comprehension
-    if (tag === 'FORM') {
-      const c = children.trim();
-      if (!c) return '';
-      const action = node.getAttribute('action') || '';
-      const name = node.getAttribute('aria-label') || node.getAttribute('name') || '';
-      const label = name ? `form: ${name}` : 'form';
-      return `\n<!-- ${label}${action ? ' → ' + action : ''} -->\n${c}\n<!-- /form -->\n`;
-    }
-
-    const landmark = LANDMARK_TAGS[tag] || landmarkFromRole(node);
-    if (landmark && landmark !== 'form' && children.trim()) {
-      const label = node.getAttribute('aria-label');
-      return `\n<!-- ${label ? landmark + ': ' + label : landmark} -->\n${children}\n<!-- /${landmark} -->\n`;
-    }
-
-    switch (tag) {
-      case 'H1': return `\n# ${children.trim()}\n`;
-      case 'H2': return `\n## ${children.trim()}\n`;
-      case 'H3': return `\n### ${children.trim()}\n`;
-      case 'H4': return `\n#### ${children.trim()}\n`;
-      case 'H5': return `\n##### ${children.trim()}\n`;
-      case 'H6': return `\n###### ${children.trim()}\n`;
-      case 'P': return `\n${children.trim()}\n`;
-      case 'UL': case 'OL': return '\n' + children + '\n';
-      case 'LI': { const i = children.trim(); return i ? `- ${i}\n` : ''; }
-      case 'TABLE': {
-        // HackerNews uses tables for layout — treat as container, not data table.
-        // Also detect other layout tables: no <th> and mostly single-cell rows.
-        return '\n' + children + '\n';
-      }
-      case 'IMG': {
-        const alt = node.getAttribute('alt'), src = node.getAttribute('src') || '';
-        // An inline data: image is thousands of characters of base64 that say nothing to the reader.
-        // An image with no alt says nothing either, and pages are full of them.
-        if (!alt) return '';
-        if (/^data:/i.test(src)) return `[image: ${alt}]`;
-        return `![${alt}](${src.split('?')[0].slice(0, MAX_IMAGE_SRC)})`;
-      }
-      case 'BLOCKQUOTE': { const i = children.trim(); return i ? `\n> ${i.replace(/\n/g, '\n> ')}\n` : ''; }
-      // innerText keeps the lines a <br> or a block inside the <pre> makes; textContent runs them together.
-      case 'PRE': { const i = (node.innerText || node.textContent).trim(); return i ? `\n\`\`\`\n${i}\n\`\`\`\n` : ''; }
-      case 'CODE': return node.parentElement?.tagName === 'PRE' ? node.textContent : `\`${node.textContent.trim()}\``;
-      case 'STRONG': case 'B': return `**${children.trim()}**`;
-      case 'EM': case 'I': return `*${children.trim()}*`;
-      case 'HR': return '\n---\n';
-      case 'BR': return '\n';
-      case 'LABEL': return labelMarkdown(node, children);
-      case 'DETAILS': return children;
-      case 'SUMMARY': return ''; // handled by DETAILS
-      case 'SLOT': {
-        const assigned = node.assignedNodes ? node.assignedNodes({ flatten: true }) : [];
-        return assigned.map(c => nodeToMarkdown(c, depth)).join('');
-      }
-      case 'TIME': {
-        const dt = node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim();
-        return dt;
-      }
-      case 'TR': {
-        // HN post rows: render as a line with separator
-        if (isHackerNews() && node.classList.contains('athing')) {
-          return '\n' + childrenMarkdown(node, depth).trim() + ' ';
-        }
-        // HN subtext row (points, author, comments)
-        if (isHackerNews() && node.querySelector('.subtext')) {
-          return childrenMarkdown(node, depth).trim() + '\n';
-        }
-        // HN spacer rows
-        if (isHackerNews() && node.classList.contains('spacer')) return '\n';
-        return blockWrap(node, children);
-      }
-      case 'TD': {
-        // Skip empty layout cells
-        const text = node.textContent.trim();
-        if (!text && !node.querySelector('a, button, input, select, textarea, [role="button"]')) return '';
-        return blockWrap(node, children);
-      }
-      default: return blockWrap(node, children); // children already include an open shadow root
-    }
+  /** Ends the text gathered so far as one row of the context's kind (dropped where the context is muted). */
+  function flush(ctx) {
+    const text = buffer.replace(/\s+/g, ' ').trim();
+    buffer = '';
+    // Punctuation left between inline links ("," ", and") says nothing on its own.
+    if (text && !ctx.mute && /[\p{L}\p{N}]/u.test(text)) blocks.push({ region: ctx.region, kind: ctx.kind || 'text', text });
   }
 
-  /** Separates an element's markdown from its neighbours the way the page lays it out. */
-  function blockWrap(node, md) {
-    if (!md.trim()) return md;
+  /** Whether an element is left out: not content, hidden, the analyzer's own overlay, or aria-hidden and unseen. */
+  function skipped(node) {
+    if (SKIP_TAGS.has(node.tagName) || isHardHidden(node)) return true;
+    if (node.id === 'ac-labels' || node.id === 'ac-highlight-style') return true;
+    // Only aria-hidden elements that are also unseen: LinkedIn marks main content aria-hidden while messaging is open.
+    if (node.getAttribute('aria-hidden') !== 'true') return false;
+    const r = node.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return true;
+    try { return window.getComputedStyle(node).opacity === '0'; } catch { return false; }
+  }
+
+  /** A node's children, its open shadow root's instead when it has one. */
+  const childrenOf = (node) => (node.shadowRoot || node).childNodes;
+  /** Form fields whose own element is the target, whatever they contain. */
+  const isLeafField = (tag) => tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+
+  /** The context inside `node`: a landmark (nav, main, a named form or section) starts a region. */
+  function regionOf(node, ctx) {
+    const landmark = LANDMARK_TAGS[node.tagName] || landmarkFromRole(node);
+    const label = (node.getAttribute('aria-label') || node.getAttribute('name') || '').trim().slice(0, 40);
+    // An unnamed section says nothing; named, it tells the agent which part of the page this is.
+    if (!landmark || (landmark === 'section' && !label)) return ctx;
+    return { ...ctx, region: label ? `${landmark}/${label}` : landmark };
+  }
+
+  /** Walks one node, adding its rows. */
+  function walk(node, ctx) {
+    if (node.nodeType === Node.TEXT_NODE) { buffer += node.textContent; return; }
+    if (node.nodeType !== Node.ELEMENT_NODE || skipped(node)) return;
+    const tag = node.tagName;
+    const type = getInteractiveType(node);
+    // A wrapper around real controls is walked; the controls are the rows.
+    if (type && (isLeafField(tag) || !hasInteractiveChild(node))) return addElement(node, type, ctx);
+    const inner = regionOf(node, ctx);
+    if (Object.hasOwn(SPECIAL, tag) && SPECIAL[tag](node, inner, ctx)) return;
+    walkBlock(node, inner, ctx);
+  }
+
+  /** Walks an ordinary element: a block boundary or heading ends the text around it; inline spacing is kept. */
+  function walkBlock(node, inner, ctx) {
+    const kind = HEADINGS[node.tagName] || TEXT_KINDS[node.tagName];
     let display = '';
     try { display = window.getComputedStyle(node).display; } catch {}
-    if (BLOCK_DISPLAY.test(display)) return `\n${md}\n`;
-    return SPACED_DISPLAY.test(display) ? ` ${md} ` : md;
+    const block = !!kind || inner !== ctx || BLOCK_DISPLAY.test(display);
+    const spaced = SPACED_DISPLAY.test(display);
+    if (block) flush(ctx);
+    if (spaced) buffer += ' ';
+    const within = kind ? { ...inner, kind } : inner;
+    for (const c of childrenOf(node)) walk(c, within);
+    if (block) flush(within);
+    else if (spaced) buffer += ' ';
   }
 
-  /**
-   * A clickable card's tag, followed by the text its label could not hold.
-   * Uses innerText rather than walking the children: inside a link every child
-   * inherits cursor:pointer and would be tagged as a button of its own.
-   */
-  function withWrappedText(node, annotated) {
-    const label = elementMap[elementMap.length - 1].text || '';
-    const lines = (node.innerText || '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    const full = lines.join(' ');
-    if (full.length <= label.length || label.includes(full)) return annotated;
-    const text = lines.join('\n').slice(0, MAX_WRAPPED_TEXT);
-    return `\n${annotated.trim()}\n${text}${full.length > MAX_WRAPPED_TEXT ? '…' : ''}\n`;
+  /** Elements rendered their own way; each returns true once handled. */
+  const SPECIAL = {
+    IFRAME: (node, ctx) => walkFrame(node, ctx),
+    PRE: (node, ctx) => {
+      flush(ctx);
+      // innerText keeps the lines a <br> or a block inside the <pre> makes; textContent runs them together.
+      const text = (node.innerText || node.textContent).trim();
+      if (text) blocks.push({ region: ctx.region, kind: 'code', text });
+      return true;
+    },
+    IMG: (node, ctx) => {
+      // An image with no alt says nothing, and pages are full of them.
+      const alt = (node.getAttribute('alt') || '').trim();
+      if (alt) { flush(ctx); blocks.push({ region: ctx.region, kind: 'image', text: alt }); }
+      return true;
+    },
+    TABLE: (node, ctx) => !isHackerNews() && !isLayoutTable(node) && tableBlocks(node, ctx),
+    DETAILS: (node, ctx) => detailsBlocks(node, ctx),
+    SUMMARY: () => true,
+    LABEL: (node, ctx) => labelBlocks(node, ctx),
+    BR: () => { buffer += ' '; return true; },
+    HR: (node, ctx) => { flush(ctx); return true; },
+    TIME: (node) => {
+      buffer += ' ' + (node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim()) + ' ';
+      return true;
+    },
+    SLOT: (node, ctx) => {
+      for (const c of node.assignedNodes ? node.assignedNodes({ flatten: true }) : []) walk(c, ctx);
+      return true;
+    },
+  };
+
+  /** A same-origin iframe is read as part of the page; another site's is one row naming it. */
+  function walkFrame(node, ctx) {
+    flush(ctx);
+    let doc = null;
+    try { doc = node.contentDocument; } catch {}
+    if (doc?.body) {
+      const inner = { ...ctx, region: 'iframe' };
+      for (const c of doc.body.childNodes) walk(c, inner);
+      flush(inner);
+    } else if (node.src) {
+      blocks.push({ region: ctx.region, kind: 'iframe', target: node.src.slice(0, 120) });
+    }
+    return true;
   }
 
-  /**
-   * Lists, data tables and <details> render from their own children, once.
-   * Rendering the children generically first as well tagged every link in them
-   * twice, and the first tags pointed at nothing: phantom elements for the agent.
-   */
-  function renderedOnce(node, tag, depth) {
-    if (tag === 'UL' || tag === 'OL') return listMarkdown(node, tag === 'OL', depth);
-    if (tag === 'TABLE' && !isHackerNews() && !isLayoutTable(node)) return tableMarkdown(node);
-    if (tag === 'DETAILS') return detailsMarkdown(node, depth);
-    return null;
+  /** A data table: a row per table row, cells separated by " | "; hidden rows and cells (a small-screen column) left out. */
+  function tableBlocks(el, ctx) {
+    flush(ctx);
+    for (const tr of el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr')) {
+      if (isHardHidden(tr)) continue;
+      const cells = [...tr.querySelectorAll(':scope > th, :scope > td')].filter((c) => !isHardHidden(c));
+      const row = { ...ctx, kind: cells.every((c) => c.tagName === 'TH') ? 'header' : 'row' };
+      cells.forEach((cell, i) => {
+        if (i) buffer += ' | ';
+        // A | inside a cell is escaped, so it is never read as a cell boundary.
+        const start = buffer.length;
+        for (const c of childrenOf(cell)) walk(c, row);
+        buffer = buffer.slice(0, start) + buffer.slice(start).replace(/\|/g, '\\|');
+      });
+      flush(row);
+    }
+    return true;
   }
 
-  /** A <details>: its summary as a button, and its body only when open. */
-  function detailsMarkdown(node, depth) {
+  /** A <details>: its summary as a button, collapsed or expanded, and its body only when open. */
+  function detailsBlocks(node, ctx) {
+    flush(ctx);
     const summary = node.querySelector(':scope > summary');
-    const head = summary ? annotateInteractive(summary, 'button') : '';
-    if (!node.hasAttribute('open')) return `\n${head} (collapsed)\n`;
-    let body = '';
-    for (const c of node.childNodes) if (c !== summary) body += nodeToMarkdown(c, depth);
-    return `\n${head}\n${body.trim()}\n`;
+    if (summary) addElement(summary, 'button', ctx, node.hasAttribute('open') ? 'expanded' : 'collapsed');
+    if (!node.hasAttribute('open')) return true;
+    for (const c of node.childNodes) if (c !== summary) walk(c, ctx);
+    flush(ctx);
+    return true;
   }
 
   /**
-   * The markdown as a model reads best: one space between words, no spaces at
-   * line ends or before punctuation after a tag, no whitespace-only lines, and at
-   * most one blank line in a row. List indentation and code blocks are kept.
+   * A label's text, unless its field's row already carries it: a label wrapping its
+   * checkbox leaves only the checkbox's row, and a label pointing at a field
+   * elsewhere is dropped, because the field is named by it.
    */
-  function tidyMarkdown(md) {
-    const out = [];
-    let fenced = false;
-    for (const raw of md.split('\n')) {
-      const fence = raw.trim().startsWith('```');
-      if (fenced || fence) {
-        if (fence) fenced = !fenced;
-        out.push(raw);
-        continue;
-      }
-      const indent = /^\s+(?:[-*]|\d+\.) /.test(raw) ? raw.match(/^\s*/)[0] : '';
-      const line = raw.trim().replace(/[ \t]{2,}/g, ' ').replace(/\] ([,.;:!?)])/g, ']$1');
-      if (!line && (!out.length || !out[out.length - 1])) continue;
-      out.push(line ? indent + line : '');
-    }
-    return out.join('\n').trim();
-  }
-
-  function childrenMarkdown(node, depth) {
-    let r = '';
-    for (const c of (node.shadowRoot || node).childNodes) r += nodeToMarkdown(c, depth);
-    return r;
-  }
-
-  function listMarkdown(el, ordered, depth) {
-    const items = []; let idx = 1;
-    for (const c of el.children) {
-      if (c.tagName !== 'LI') continue;
-      const i = childrenMarkdown(c, depth + 1).trim();
-      if (i) { items.push(`${'  '.repeat(depth)}${ordered ? idx + '. ' : '- '}${i}`); idx++; }
-    }
-    return items.join('\n');
-  }
-
-  /**
-   * A label's text, unless its field's tag already carries it: a label wrapping
-   * its checkbox keeps only the tags, and a label pointing at a field elsewhere
-   * is dropped, because the field is tagged with the label text.
-   */
-  function labelMarkdown(node, children) {
+  function labelBlocks(node, ctx) {
     const control = node.control;
     const named = control && (control.hasAttribute('aria-label') || control.hasAttribute('aria-labelledby'));
-    if (control && !named && node.contains(control)) return (children.match(TAG_PATTERN) || []).join('');
-    if (control && !named && !isHardHidden(control)) return '';
-    const i = children.trim();
-    return i ? `${i}: ` : '';
+    if (!control || named) return false;
+    if (!node.contains(control)) return !isHardHidden(control);
+    flush(ctx);
+    const muted = { ...ctx, mute: true };
+    for (const c of childrenOf(node)) walk(c, muted);
+    flush(muted);
+    return true;
   }
 
-  function tableMarkdown(el) {
-    const rows = [];
-    // Its own rows and cells only: a table nested in a cell is part of that cell.
-    for (const tr of el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr')) {
-      // Hidden rows and cells (a column kept for small screens) would repeat what the visible ones say.
-      if (isHardHidden(tr)) continue;
-      const cells = [];
-      for (const td of tr.querySelectorAll(':scope > th, :scope > td')) if (!isHardHidden(td)) cells.push(childrenMarkdown(td, 0).replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
-      if (cells.length) rows.push(cells);
+  /** An interactive element's row, then a clickable card's text that its name could not hold. */
+  function addElement(node, type, ctx, state) {
+    flush(ctx);
+    const entry = registerElement(node, type);
+    if (state) entry.state = [entry.state, state].filter(Boolean).join(' ');
+    blocks.push({ id: entry.id, region: ctx.region, kind: elementKind(node, type), text: elementText(node, entry), target: elementTarget(node, type), entry });
+    if (type !== 'editable' && !isLeafField(node.tagName)) cardText(node, entry, ctx);
+  }
+
+  /** The row kind: an input by its input type (input:email), anything else by what it is. */
+  const elementKind = (node, type) => (type === 'input' ? `input:${(node.type || 'text').toLowerCase()}` : type);
+
+  /** The row's text: the element's name, with Hacker News context where its name alone is ambiguous. */
+  function elementText(node, entry) {
+    const label = entry.text || '';
+    if (!isHackerNews()) return label;
+    if (label === 'reply') {
+      const user = node.closest('.athing')?.querySelector('.hnuser')?.textContent;
+      if (user) return `reply to ${user}`;
     }
-    if (!rows.length) return '';
-    const cols = Math.max(...rows.map(r => r.length));
-    const lines = [];
-    rows.forEach((row, i) => {
-      const p = row.concat(Array(cols - row.length).fill(''));
-      lines.push('| ' + p.join(' | ') + ' |');
-      if (i === 0) lines.push('| ' + p.map(() => '---').join(' | ') + ' |');
-    });
-    return lines.join('\n');
+    if (/^\d+\s*comment/.test(label)) {
+      const title = node.closest('tr')?.previousElementSibling?.querySelector('.titleline a')?.textContent?.slice(0, 40);
+      if (title) return `${label} on "${title}"`;
+    }
+    return label;
+  }
+
+  /** Where a link goes, or what a field holds now (never a password), or a select's chosen option. */
+  function elementTarget(node, type) {
+    if (type === 'link') {
+      try {
+        const u = new URL(node.href || '', location.origin);
+        for (const key of [...u.searchParams.keys()]) if (TRACKING_PARAM.test(key)) u.searchParams.delete(key);
+        return (u.hostname === location.hostname ? u.pathname + u.search : u.hostname + u.pathname + u.search).slice(0, 80);
+      } catch { return ''; }
+    }
+    if (type === 'select') return node.options?.[node.selectedIndex]?.text?.trim() || '';
+    if (type === 'editable') {
+      const val = node.innerText?.replace(/\s+/g, ' ').trim() || '';
+      return val.length > 200 ? val.slice(0, 197) + '...' : val;
+    }
+    if (type !== 'input' && type !== 'textarea' || !node.value) return '';
+    return node.type === 'password' ? '••••' : String(node.value).slice(0, 80);
+  }
+
+  /** A clickable card (a link around a product's title, price and rating): the text its name could not hold. */
+  function cardText(node, entry, ctx) {
+    const label = entry.text || '';
+    const lines = (node.innerText || '').split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const full = lines.join(' ');
+    if (full.length <= label.length || label.includes(full)) return;
+    blocks.push({ region: ctx.region, kind: 'text', text: full.slice(0, MAX_WRAPPED_TEXT) + (full.length > MAX_WRAPPED_TEXT ? '…' : '') });
+  }
+
+  /** An element row's state words: what the page says about it now, its expected format, and where it is. */
+  function stateWords(entry) {
+    const words = [];
+    if (entry.checked !== undefined && ['checkbox', 'radio'].includes(entry.type)) words.push(entry.checked ? 'checked' : 'unchecked');
+    if (entry.disabled) words.push('disabled');
+    if (entry.required) words.push('required');
+    if (entry.readOnly) words.push('readonly');
+    if (entry.invalid || entry.error) words.push(entry.error ? `invalid: ${entry.error}` : 'invalid');
+    if (entry.state) words.push(entry.state);
+    const hint = entry.options || (entry.placeholder && entry.placeholder !== entry.text ? entry.placeholder : '');
+    if (hint) words.push(`hint: ${String(hint).slice(0, 120)}`);
+    if (!entry.visible) words.push('off-screen');
+    return words.join('; ');
   }
 
   // ─── Interactive Element Detection ───
@@ -748,7 +738,8 @@
     return ['body', ...parts].join(' > ');
   }
 
-  function annotateInteractive(node, type) {
+  /** Tags an interactive element with its id and records what the agent and the recorder know about it. */
+  function registerElement(node, type) {
     elementCounter++;
     const id = elementCounter;
     node.setAttribute(ATTR, String(id));
@@ -763,53 +754,10 @@
     if (node.getAttribute('aria-disabled') === 'true') entry.disabled = true;
     const state = ariaState(node);
     if (state) entry.state = state;
-    // Form context
     const form = node.closest('form');
     if (form) entry.formName = form.getAttribute('aria-label') || form.getAttribute('name') || form.getAttribute('action') || '';
     elementMap.push(entry);
-
-    // Quotes in a label are escaped, or the model cannot tell where the label ends. An element
-    // with no name gets none, rather than its tag name ("a"), which reads as if it said "a".
-    const label = (text || '').replace(/"/g, '\\"');
-    const named = label ? ` "${label}"` : '';
-    const extra = (entry.disabled ? ' disabled' : '') + (state ? ' ' + state : '');
-    switch (type) {
-      case 'link': {
-        let h = '';
-        try { const u = new URL(node.href || '', location.origin); h = u.hostname === location.hostname ? u.pathname : u.hostname + u.pathname; } catch {}
-        // HN: enrich "reply" links with the comment author for context
-        if (isHackerNews() && label === 'reply') {
-          const commentRow = node.closest('.athing');
-          const user = commentRow?.querySelector('.hnuser')?.textContent;
-          if (user) return ` [#${id} link "reply to ${user}"] `;
-        }
-        // HN: enrich "N comments" links with post title
-        if (isHackerNews() && /^\d+\s*comment/.test(label)) {
-          const postRow = node.closest('tr')?.previousElementSibling;
-          const title = postRow?.querySelector('.titleline a')?.textContent?.slice(0, 40);
-          if (title) return ` [#${id} link "${label}" on "${title}"] `;
-        }
-        return ` [#${id} link${named}${h ? ' → ' + h.slice(0, 50) : ''}${extra}] `;
-      }
-      case 'button': return ` [#${id} button${named}${extra}] `;
-      case 'checkbox': return ` [#${id} ${checked ? '☑' : '☐'}${named}${extra}] `;
-      case 'radio': return ` [#${id} ${checked ? '◉' : '○'}${named}${extra}] `;
-      case 'input': {
-        const t = (node.type || 'text').toLowerCase();
-        return ` [#${id} input:${t}${fieldFacts(node, text)}] `;
-      }
-      case 'textarea': return ` [#${id} textarea${fieldFacts(node, text)}] `;
-      case 'select': {
-        const s = node.options?.[node.selectedIndex];
-        return ` [#${id} select${fieldName(node, text)} "${s ? s.text : ''}" (${node.options?.length || 0} options${optionPreview(node)})${fieldState(node)}] `;
-      }
-      case 'editable': {
-        const val = node.innerText?.replace(/\s+/g, ' ').trim() || '';
-        const preview = val.length > 200 ? val.slice(0, 197) + '...' : val;
-        return ` [#${id} editable "${preview}"] `;
-      }
-      default: return ` [#${id} ${type}${named}${extra}] `;
-    }
+    return entry;
   }
 
   /** A native checkbox's checked, or a custom one's aria-checked; undefined for anything else. */

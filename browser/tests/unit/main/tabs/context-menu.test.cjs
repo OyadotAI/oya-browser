@@ -50,7 +50,9 @@ describe('context menu', () => {
       .find((i) => i.label === 'View Page Source')
       .click();
     await flush();
-    assert.deepEqual(ctx.shell.sentOn('view-source'), [{ html: '<html>', markdown: '# A', url: 'https://a.test/' }]);
+    assert.deepEqual(ctx.shell.sentOn('view-source'), [
+      { html: '<html>', markdown: '# A', analysis: { markdown: '# A' }, url: 'https://a.test/' },
+    ]);
   });
 
   it('reports a source read that failed', async () => {
@@ -93,6 +95,6 @@ describe('page source', () => {
     const view = new FakeBrowserView();
     assert.equal(await pageMarkdown(ctx, view), '');
     ctx.tabs = { getActiveView: () => view };
-    assert.deepEqual(await activePageSource(ctx), { html: '<p>', markdown: '', url: 'about:blank' });
+    assert.deepEqual(await activePageSource(ctx), { html: '<p>', markdown: '', analysis: null, url: 'about:blank' });
   });
 });

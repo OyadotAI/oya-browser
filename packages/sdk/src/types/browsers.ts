@@ -101,10 +101,43 @@ export interface Element {
   formName?: string;
 }
 
+/** How `analyze()` writes the page: markdown (the default) or toon (toonformat.dev). */
+export type PageFormat = 'markdown' | 'toon' | 'jsonl';
+
+/** What `analyze()` accepts. */
+export interface AnalyzeOptions {
+  /** How the page is written: markdown (the default) or toon. */
+  format?: PageFormat;
+}
+
+/** One block of a page, in reading order: a heading, paragraph, list item, table row, image or element. */
+export interface Block {
+  /** The element's id, for interactive elements; act on it with click and type. */
+  id?: number;
+  /** The part of the page it is in: nav, main, form/…, dialog, or empty. */
+  region: string;
+  /** What it is: h1-h6, text, item, row, header, quote, code, image, or an element kind (link, button, input:email…). */
+  kind: string;
+  /** Its text, or an element's name. */
+  text?: string;
+  /** Where a link goes, or what a field holds now. */
+  target?: string;
+  /** An element's state: checked, disabled, required, off-screen, hint… */
+  state?: string;
+}
+
 /** The page as `analyze()` sees it. */
 export interface Analysis {
-  /** The page as markdown. */
-  markdown: string;
+  /** The format `page` is written in. */
+  format?: PageFormat;
+  /** The page, written in `format`. */
+  page?: string;
+  /** The page as markdown; present when the format is markdown (the default). */
+  markdown?: string;
+  /** The page's facts: url, title, scroll, and when they apply panelScroll, modal, covered, truncated. */
+  facts?: Record<string, string | number>;
+  /** The page as data: every block in reading order, whatever the format. */
+  blocks?: Block[];
   /** Every numbered element, visible or not. */
   elements: Element[];
   /** The window size, in CSS pixels. */

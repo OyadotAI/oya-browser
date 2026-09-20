@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { elementIndex } from '../../../../src/modules/agent/element-index.ts';
+import { elementIndex, pageGuide } from '../../../../src/modules/agent/element-index.ts';
 import { MAX_OFFSCREEN_LISTED } from '../../../../src/modules/agent/constants.ts';
 
 /** The index's lines, trimmed. */
@@ -101,5 +101,12 @@ describe('elementIndex', () => {
   it('says when the page content was truncated', () => {
     assert.match(elementIndex([], true), /⚠ Page content was truncated/);
     assert.doesNotMatch(elementIndex([], false), /truncated/);
+  });
+});
+
+describe('pageGuide', () => {
+  it('explains every format when the server pins none, since each browser picks its own', () => {
+    const guide = pageGuide();
+    for (const format of ['as markdown', 'as TOON', 'as JSONL']) assert.ok(guide.includes(format), format);
   });
 });

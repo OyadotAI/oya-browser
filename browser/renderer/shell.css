@@ -898,7 +898,8 @@ kbd {
   color: var(--secondary);
   font-size: 12px;
 }
-#theme-preference {
+#theme-preference,
+#page-format-preference {
   background: var(--muted-surface);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -1996,14 +1997,27 @@ button:active:not(:disabled) {
 
 /* Inspect: Source */
 .source-tabs {
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
 }
 .source-hint {
-  flex: 1;
+  flex: 1 0 100%;
   color: var(--secondary);
   font-size: 12px;
+}
+.source-formats {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+.source-formats label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
 }
 .source-refresh {
   height: 26px;

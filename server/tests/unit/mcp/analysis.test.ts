@@ -57,6 +57,33 @@ describe('analysis', () => {
     assert.ok(page.includes('5,select,Country,"","",expanded covered'));
   });
 
+  it('reads an analysis with blocks in the format the browser wrote it in', () => {
+    const data = {
+      format: 'toon',
+      facts: { url: 'https://a.test/' },
+      blocks: [{ id: 1, region: 'main', kind: 'button', text: 'Go', target: '', state: '' }],
+      elements: [{ id: 1, type: 'button', text: 'Go', visible: true }],
+    };
+    assert.ok(analysis(data).page.includes('blocks[1]{id,region,kind,text,target,state}:\n  1,main,button,Go,"",""'));
+    const md = analysis({ ...data, format: 'markdown' }).page;
+    assert.ok(md.includes('[#1 button "Go"]') && md.includes('## Element Index (1 total, 1 visible)'));
+    const jsonl = analysis({ ...data, format: 'jsonl' }).page.split('\n');
+    assert.deepEqual(JSON.parse(jsonl[1]), { id: 1, region: 'main', kind: 'button', text: 'Go' });
+  });
+
+  it('keeps a cut TOON page valid: its row count matches the rows it kept', () => {
+    const blocks = Array.from({ length: 4000 }, (_, i) => ({
+      region: 'main',
+      kind: 'text',
+      text: `paragraph ${i} `.repeat(4),
+    }));
+    const page = analysis({ format: 'toon', facts: { url: 'https://a.test/' }, blocks, elements: [] }).page;
+    const kept = Number(/blocks\[(\d+)\]/.exec(page)[1]);
+    assert.ok(page.length <= 30_000 && kept < 4000);
+    assert.equal(page.split('\n').filter((line) => line.startsWith('  "",main,text,')).length, kept);
+    assert.match(page, /truncated: "showing \d+ of 4000 blocks/);
+  });
+
   it('warns when the page was cut short', () => {
     assert.match(analysis({ markdown: '', elements: [], truncated: true }).page, /Page content was truncated/);
   });

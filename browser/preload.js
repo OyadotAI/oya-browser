@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   // Dev panel
   resizeDevPanel: (width) => ipcRenderer.invoke('resize-dev-panel', width),
   getPageSource: () => ipcRenderer.invoke('get-page-source'),
+  renderPage: (analysis, format) => ipcRenderer.invoke('render-page', analysis, format),
   devAction: (action, params) => ipcRenderer.invoke('dev-action', action, params),
   sendChat: (messages) => ipcRenderer.invoke('send-chat', messages),
   saveChatPlaybook: (name) => ipcRenderer.invoke('save-chat-playbook', name),

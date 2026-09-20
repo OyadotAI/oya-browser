@@ -7,6 +7,7 @@ const { cdp, cdpEval } = require('../cdp.cjs');
 const { sleep, cdpPressKey, cdpTypeText, cdpClearField, cdpMouseMove, cdpClick, cdpScroll } = require('../input.cjs');
 const { answerDialog } = require('../dialogs.cjs');
 const { VIEWPORT_JS, DEV_ANALYZE_JS, devWaitJs, devSelectJs } = require('./scripts.cjs');
+const { renderedAnalysis } = require('../page-format.cjs');
 const c = require('./constants.cjs');
 
 /** Actions that run without human control: they only read the page or the tab list. */
@@ -27,7 +28,7 @@ const DEV_COMMANDS = {
   /** The analyzer's full read of the page. */
   async analyze(driver, view) {
     await driver.ctx.injectScripts(view);
-    return await driver.ctx.worldEval(view, DEV_ANALYZE_JS);
+    return renderedAnalysis(driver.ctx, await driver.ctx.worldEval(view, DEV_ANALYZE_JS));
   },
 
   /**

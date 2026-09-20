@@ -8,8 +8,8 @@ export const BROWSER_TOOLS = [
     type: 'function',
     function: {
       name: 'analyze_page',
-      description: `Analyze the current page. Returns structured markdown with all interactive elements numbered as [#id type "label"].
-Use element IDs with click/type tools. Includes page metadata, full content, and element index with visibility flags.`,
+      description: `Analyze the current page. Returns it as TOON: page facts (url, title, scroll), then one table of blocks in reading order, blocks[N]{id,region,kind,text,target,state}.
+Rows with an id are elements to use with click/type tools; the rest is the page's content.`,
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },

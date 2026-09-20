@@ -1,6 +1,7 @@
 /** IPC: the dev panel's chat, page source and quick actions. */
 const { canCallServer, postToBrowserApi } = require('../connection/server-api.cjs');
 const { activePageSource } = require('../tabs/page-source.cjs');
+const { renderPage, FORMATS } = require('../../scripts/page-render.cjs');
 const { ERROR_PREVIEW_CHARS } = require('../connection/constants.cjs');
 
 /** The server's JSON answer, or an error quoting what it sent instead. */
@@ -32,11 +33,18 @@ const sendChat = (ctx, _e, messages) => askServer(ctx, 'chat', { messages });
  */
 const saveChatPlaybook = (ctx, _e, name) => askServer(ctx, 'playbooks', { name });
 
+/** A kept analysis written again in a known format (the Source pane's format switch); '' otherwise. */
+function renderKeptPage(_ctx, _e, analysis, format) {
+  if (!FORMATS.includes(format) || !Array.isArray(analysis?.blocks)) return '';
+  return renderPage(analysis, format);
+}
+
 /** Channel → handler. */
 const DEV_HANDLERS = {
   'send-chat': sendChat,
   'save-chat-playbook': saveChatPlaybook,
   'get-page-source': (ctx) => activePageSource(ctx),
+  'render-page': renderKeptPage,
   'dev-action': (ctx, _e, action, params) => ctx.actions.runDevAction(action, params),
 };
 

@@ -7,7 +7,7 @@ import { selectOptionIn, uploadFileIn } from './page-scripts.ts';
 import { dataKey } from './placeholders.ts';
 import { elementOf, setElements } from './recorder.ts';
 import { analysisText, elementList } from './element-index.ts';
-import { NAVIGATE_TIMEOUT_MS } from './constants.ts';
+import { NAVIGATE_TIMEOUT_MS, PAGE_FORMAT } from './constants.ts';
 
 /** Runs one tool call on a browser; `files` are the task's attachable files by name. */
 export type ToolHandler = (browserId: string, args: Record<string, any>, files: Record<string, any>) => Promise<string>;
@@ -20,11 +20,10 @@ const byId = (elementId) => `[data-ac-id="${elementId}"]`;
 
 /** The page as markdown plus the element index, capped to fit the context window. */
 async function analyzePage(browserId) {
-  const r = await sendCommand(browserId, 'analyze');
+  const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT });
   if (!r.ok) return `Error: ${r.error}`;
-  const { markdown, elements, truncated } = r.data;
-  setElements(browserId, elements);
-  return analysisText(markdown, elements, truncated);
+  setElements(browserId, r.data.elements);
+  return analysisText(r.data);
 }
 
 /** Goes to a URL, waiting as long as a slow site needs. */
@@ -95,11 +94,12 @@ async function uploadFile(browserId, args, files) {
 
 /** Scrolls the page, and shows the page it landed on when the browser analysed it (the Oya client does). */
 async function scroll(browserId, args) {
-  const r = await sendCommand(browserId, 'scroll', { direction: args.direction, amount: args.amount });
+  const { direction, amount } = args;
+  const r = await sendCommand(browserId, 'scroll', { direction, amount, format: PAGE_FORMAT });
   if (!r.ok) return `Error: ${r.error}`;
-  if (!r.data?.markdown || !r.data?.elements) return `Scrolled ${args.direction}`;
+  if (!r.data?.elements) return `Scrolled ${args.direction}`;
   setElements(browserId, r.data.elements);
-  return `Scrolled ${args.direction}.\n\n` + analysisText(r.data.markdown, r.data.elements, r.data.truncated);
+  return `Scrolled ${args.direction}.\n\n` + analysisText(r.data);
 }
 
 /** Waits for a selector to appear. */

@@ -7,6 +7,7 @@ const { cdp, cdpEval } = require('../cdp.cjs');
 const { sleep, cdpTypeText, cdpClick, cdpMouseMove, cdpScroll } = require('../input.cjs');
 const { jitter } = require('../input/timing.cjs');
 const { VIEWPORT_JS, scrollResultJs } = require('./scripts.cjs');
+const { renderedAnalysis } = require('../page-format.cjs');
 const c = require('./constants.cjs');
 
 /** Where a double click lands: given coordinates, or an element's centre. Null once an error is answered. */
@@ -92,6 +93,13 @@ async function smoothScroll(view, vp, delta) {
   }
 }
 
+/** Answers a scroll with the page it landed on, analysed and rendered in the format that applies. */
+async function sendAnalysis(driver, id, view, params, amount) {
+  const raw = await driver.ctx.worldEval(view, scrollResultJs(params, amount), true);
+  const result = renderedAnalysis(driver.ctx, raw, params);
+  driver.ctx.sendResult(id, result?.ok ?? true, result?.data, result?.error);
+}
+
 /** The handler for each pointer and raw keyboard command. */
 const POINTER_COMMANDS = {
   /** A CDP click at page coordinates. */
@@ -155,8 +163,7 @@ const POINTER_COMMANDS = {
     const amount = params?.amount || c.SCROLL_AMOUNT;
     await smoothScroll(view, vp, params?.direction === 'up' ? -amount : amount);
     await sleep(c.SCROLL_SETTLE_MS);
-    const result = await driver.ctx.worldEval(view, scrollResultJs(params, amount), true);
-    driver.ctx.sendResult(id, result?.ok ?? true, result?.data, result?.error);
+    await sendAnalysis(driver, id, view, params, amount);
   },
 };
 

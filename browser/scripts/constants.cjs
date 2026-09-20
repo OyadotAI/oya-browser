@@ -36,6 +36,12 @@ const PICKER = {
   CONTENT_ALPHA: 0.3,
 };
 
+/**
+ * Page rendering: the longest page an analysis returns, the budget cut keeps for
+ * its note, and the element index's off-screen list and link lengths.
+ */
+const PAGE_RENDER = { MAX_PAGE_CHARS: 80000, TRUNCATED_ROOM: 120, MAX_OFFSCREEN_LISTED: 30, MAX_INDEX_LINK: 80 };
+
 /** Validation: run token size, how long to wait for the debugging port, and the stop grace. */
 const VALIDATION = {
   TOKEN_BYTES: 32,
@@ -90,4 +96,17 @@ const DATES = {
 /** The agent's read_elements: how many elements it lists when not told. */
 const QUERIES = { DEFAULT_LIMIT: 50 };
 
-module.exports = { REDACT, DRAFT, STEP, CRYPTO, RECORDING, PICKER, VALIDATION, REPLAY, WORKSPACE, DATES, QUERIES };
+module.exports = {
+  PAGE_RENDER,
+  REDACT,
+  DRAFT,
+  STEP,
+  CRYPTO,
+  RECORDING,
+  PICKER,
+  VALIDATION,
+  REPLAY,
+  WORKSPACE,
+  DATES,
+  QUERIES,
+};

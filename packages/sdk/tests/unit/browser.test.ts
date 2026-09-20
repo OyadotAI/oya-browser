@@ -27,6 +27,20 @@ describe('Browser commands', () => {
     assert.deepEqual(calls[0].body, { action: 'analyze', params: {} });
   });
 
+  it('asks for the page in the format given, and returns it with its blocks', async () => {
+    const data = {
+      format: 'toon',
+      page: 'page:\n  url: x',
+      blocks: [{ region: 'main', kind: 'h1', text: 'Hi' }],
+      elements: [],
+    };
+    const { b, calls } = await browser({ [CMD]: { body: { ok: true, data } } });
+    const analysis = await b.analyze({ format: 'toon' });
+    assert.equal(analysis.page, 'page:\n  url: x');
+    assert.equal(analysis.blocks?.[0].kind, 'h1');
+    assert.deepEqual(calls[0].body, { action: 'analyze', params: { format: 'toon' } });
+  });
+
   it('throws a 422 OyaError when a command ran and failed', async () => {
     const { b } = await browser({ [CMD]: { body: { ok: false, error: 'no such element' } } });
     await assert.rejects(b.pressKey('Enter'), { name: 'OyaError', status: 422, message: 'no such element' });

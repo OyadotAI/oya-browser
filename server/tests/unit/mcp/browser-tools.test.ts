@@ -54,6 +54,23 @@ describe('browser tools', () => {
     assert.match(textOf(await server.call('analyze_page')), /^# Hi\n\n## Element Index \(0 total/);
   });
 
+  it('asks the browser for the page in the format the caller picks, else leaves it to the browser settings', async () => {
+    const { server, driver } = tools(() => ({ ok: true, data: { markdown: '# Hi', elements: [] } }));
+    await server.call('analyze_page', { format: 'toon' });
+    await server.call('analyze_page');
+    assert.deepEqual(
+      driver.sent.map((s) => s.params.format),
+      ['toon', undefined],
+    );
+  });
+
+  it('offers only the page formats there is a renderer for', () => {
+    const { server } = tools(() => ({ ok: true, data: {} }));
+    const format = (server.tools.get('analyze_page').schema as any).format;
+    for (const name of ['markdown', 'toon', 'jsonl']) assert.ok(format.safeParse(name).success, name);
+    assert.equal(format.safeParse('xml').success, false);
+  });
+
   it('returns a screenshot as a PNG image without its data-URL prefix', async () => {
     const { server } = tools(() => ({ ok: true, data: { screenshot: 'data:image/png;base64,QUJD' } }));
     assert.deepEqual(await server.call('screenshot'), {

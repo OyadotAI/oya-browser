@@ -261,10 +261,19 @@ try {
     const md = (await driver.send('analyze')).data?.markdown || '';
     assert(/\$19\.99\s+4\.5 stars/.test(md), 'adjacent blocks are separated, not run together');
     assert(md.includes('Price $249.00'), 'a link wrapping a card keeps the text its label cannot hold');
-    assert(/☑ "Dark mode"/.test(md), 'an aria-checked switch reads as checked');
-    assert(/"Overview" selected/.test(md) && !/"Specs" selected/.test(md), 'the selected tab is marked');
-    assert(/button "Menu" collapsed/.test(md), 'a collapsed menu button says so');
-    assert(/button "Buy" disabled/.test(md), 'an aria-disabled button reads as disabled');
+    assert(/"Dark mode" \(checked\)/.test(md), 'an aria-checked switch reads as checked');
+    assert(/"Overview" \(selected\)/.test(md) && !/"Specs" \(selected\)/.test(md), 'the selected tab is marked');
+    assert(/button "Menu" \(collapsed\)/.test(md), 'a collapsed menu button says so');
+    assert(/button "Buy" \(disabled\)/.test(md), 'an aria-disabled button reads as disabled');
+
+    // The same page as TOON: one table of blocks, the switch a row with its id and state.
+    const toon = (await driver.send('analyze', { format: 'toon' })).data;
+    assert(toon.format === 'toon' && toon.markdown === undefined, 'a TOON analysis says so and carries no markdown');
+    assert(/^blocks\[\d+\]\{id,region,kind,text,target,state\}:$/m.test(toon.page), 'a TOON page is one block table');
+    assert(
+      /^ {2}\d+,main,checkbox,Dark mode,"",checked$/m.test(toon.page),
+      'the switch is a row with its id and state',
+    );
 
     await driver.send('navigate', { url: siteUrl + 'app' });
     const app = (await driver.send('analyze')).data;
@@ -272,7 +281,7 @@ try {
       !/^modal:/m.test(app.markdown) && app.markdown.includes('Inbox'),
       'a small non-modal dialog does not hide the page',
     );
-    assert(/^panel scroll: 0% /m.test(app.markdown), 'a panel that scrolls its own content is reported');
+    assert(/^panelScroll: 0% /m.test(app.markdown), 'a panel that scrolls its own content is reported');
     const under = app.elements.find((e) => e.text === 'Under');
     assert(
       under?.covered === true && /^covered: 2 /m.test(app.markdown),

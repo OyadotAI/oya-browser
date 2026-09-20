@@ -25,16 +25,20 @@ function AnalyzePage() {
       {/* ============ TOOLS ============ */}
       <SectionHeading id="analyze_page">analyze_page</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
-        Analyzes the current page. Returns the full page as structured markdown with every interactive element numbered.
+        Analyzes the current page. Returns the full page with every interactive element numbered, as markdown (the
+        default), TOON or JSONL. The default is the one picked in the Oya Browser&apos;s settings, unless the
+        server&apos;s <InlineCode>OYA_PAGE_FORMAT</InlineCode> pins one.
       </p>
-      <CodeBlock>{`// No parameters
-analyze_page()`}</CodeBlock>
+      <CodeBlock>{`analyze_page()                  // markdown
+analyze_page({ format: 'toon' }) // TOON: fewer tokens
+analyze_page({ format: 'jsonl' }) // one JSON object per line`}</CodeBlock>
       <p className="mb-3 text-[15px] leading-relaxed">Returns:</p>
       <ul className="list-disc list-inside space-y-1 mb-4 text-[15px] leading-relaxed">
         <li>Page metadata — URL, title, viewport size, scroll position</li>
         <li>
-          Full page content as markdown with inline element annotations like{' '}
-          <InlineCode>{`[#5 button "Submit"]`}</InlineCode>
+          Full page content with element tags like <InlineCode>{`[#5 button "Submit"]`}</InlineCode> in markdown, or one{' '}
+          <InlineCode>{`blocks[N]{id,region,kind,text,target,state}`}</InlineCode> row per block in TOON, or one JSON
+          object per block in JSONL
         </li>
         <li>Element index — all elements listed with IDs, types, labels, visibility flags</li>
       </ul>

@@ -17,6 +17,13 @@ export const MAX_OFFSCREEN_LISTED = 30;
 export const MAX_INDEX_LINK = 80;
 /** Elements read_elements lists when the model gives no limit. */
 export const READ_ELEMENTS_LIMIT = 50;
+/**
+ * The format analyze_page writes the page in for the agent and MCP clients, when
+ * the server pins one (markdown, toon or jsonl). Unset, each browser uses the
+ * default chosen in its settings (markdown unless changed). Read from the
+ * environment here and only here.
+ */
+export const PAGE_FORMAT: string | undefined = process.env.OYA_PAGE_FORMAT || undefined;
 /** An analysis longer than this is cut, so one page cannot fill the context window. */
 export const MAX_ANALYSIS_CHARS = 30_000;
 /** Conversation size (~4 chars per token) past which old tool results are dropped. */

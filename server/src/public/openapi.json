@@ -2038,7 +2038,10 @@
               "url": { "type": "string" },
               "title": { "type": "string" },
               "screenshot": { "type": "string", "description": "Base64 PNG data URL (for screenshot action)" },
-              "markdown": { "type": "string", "description": "Page content as markdown (for analyze action)" },
+              "format": { "type": "string", "enum": ["markdown", "toon", "jsonl"], "description": "The format page is written in (for analyze action)" },
+              "page": { "type": "string", "description": "The page, written in format (for analyze action)" },
+              "markdown": { "type": "string", "description": "Page content as markdown, when format is markdown (for analyze action)" },
+              "blocks": { "type": "array", "description": "The page as data: one block per heading, paragraph, list item, table row, image and element, in reading order (for analyze action)", "items": { "type": "object" } },
               "elements": {
                 "type": "array",
                 "description": "Interactive elements (for analyze/read_page actions)",

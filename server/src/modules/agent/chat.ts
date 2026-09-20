@@ -17,7 +17,8 @@ import { agentLoop } from './loop.ts';
 export { FILTERS, PLACEHOLDER, pipesOf, fill, redact, isFileValue, dataKey } from './placeholders.ts';
 export { selectOptionIn, UPLOAD_FILE_JS, uploadFileIn } from './page-scripts.ts';
 export { lastRun } from './recorder.ts';
-export { elementIndex, analysisText, elementList } from './element-index.ts';
+export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
+export { PAGE_FORMAT } from './constants.ts';
 
 /**
  * A runaway agent loop is the most expensive thing this control plane can do
