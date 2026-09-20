@@ -156,7 +156,8 @@ const REPLAYERS: Record<string, Replayer> = {
   upload_file: replayUpload,
   handle_dialog: (browserId, step) =>
     command(browserId, 'handle_dialog', { accept: step.accept !== false, prompt_text: step.prompt_text }),
-  keyboard_type: (browserId, step, values) => command(browserId, 'keyboard_type', { text: fill(step.text ?? '', values) }),
+  keyboard_type: (browserId, step, values) =>
+    command(browserId, 'keyboard_type', { text: fill(step.text ?? '', values) }),
   open_tab: (browserId, step, values) =>
     command(browserId, 'open_tab', { url: fill(step.url ?? step.tabUrl ?? '', values) }, NAVIGATE_TIMEOUT_MS),
   switch_tab: replaySwitchTab,

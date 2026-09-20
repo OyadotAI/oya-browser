@@ -228,8 +228,13 @@ describe('renderPlaywright', () => {
   });
 
   it('adds the tab finder only when a run used more than one tab', () => {
-    const single = renderPlaywright({ name: 'one', prompt: 'p', defaults: {}, secrets: [], steps: [{ action: 'press_key', key: 'Tab' }] });
+    const single = renderPlaywright({
+      name: 'one',
+      prompt: 'p',
+      defaults: {},
+      secrets: [],
+      steps: [{ action: 'press_key', key: 'Tab' }],
+    });
     assert.equal(single.includes('tabAt'), false);
   });
-
 });

@@ -23,6 +23,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrors: 'none', ignoreRestSiblings: true }],
     },
   },
+  { files: ['compliance/**/*.mjs'], languageOptions: { globals: globals.node } },
   { files: ['packages/*/src/**/*.ts'], rules: { ...docRules(), ...designRules() } },
   prettier,
 );
