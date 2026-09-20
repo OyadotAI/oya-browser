@@ -96,14 +96,30 @@ describe('renderPlaywright', () => {
       assert.equal(click({ testId: 't', domId: 'd', text: 'x' }), 'page.getByTestId("t")');
     });
 
-    it('then the DOM id, the aria label, the text, the name, the placeholder and the link', () => {
+    it('then the link target, the written id, the label, the text, the name, the placeholder and the position', () => {
+      // A link's own target outranks an id: the id may be this render's invention.
+      assert.equal(click({ href: '/x', domId: 'd' }), 'page.locator("a[href=\\"/x\\"]")');
       assert.equal(click({ domId: 'd', ariaLabel: 'a' }), 'page.locator("[id=\\"d\\"]")');
       assert.equal(click({ ariaLabel: 'a', text: 'x' }), 'page.getByLabel("a", { exact: true })');
       assert.equal(click({ text: 'Go', name: 'n' }), 'page.getByText("Go", { exact: true })');
       assert.equal(click({ name: 'n', tag: 'input', placeholder: 'p' }), 'page.locator("input[name=\\"n\\"]")');
       assert.equal(click({ name: 'n' }), 'page.locator("[name=\\"n\\"]")');
-      assert.equal(click({ placeholder: 'p', href: '/x' }), 'page.getByPlaceholder("p")');
-      assert.equal(click({ href: '/x' }), 'page.locator("a[href=\\"/x\\"]")');
+      assert.equal(click({ placeholder: 'p', path: 'form > input' }), 'page.getByPlaceholder("p")');
+      assert.equal(click({ path: 'div > p > a' }), 'page.locator("div > p > a")');
+    });
+
+    it('never aims at an id a framework invented for that render', () => {
+      // The failure this came from: a recorded Send button whose only id was
+      // Ember's, which belongs to a different element on the next render.
+      assert.equal(click({ domId: 'ember80', text: 'Send', tag: 'button' }), 'page.getByText("Send", { exact: true })');
+      assert.equal(click({ domId: 'mwCg', path: 'p > a' }), 'page.locator("p > a")');
+    });
+
+    it('drops a live count from a label, so a nav link survives a notification', () => {
+      assert.equal(
+        click({ ariaLabel: 'Messaging, 0 new notifications', tag: 'a' }),
+        'page.getByLabel("Messaging", { exact: true })',
+      );
     });
 
     it('falls back to the tag, saying no stable handle was recorded', () => {
