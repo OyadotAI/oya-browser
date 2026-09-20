@@ -199,6 +199,15 @@ describe('persona site routes', () => {
     assert.doesNotMatch(JSON.stringify(recent({})), /"pw"/);
   });
 
+  it('lists which portals have a second factor, by kind, never the secret', async () => {
+    const p = service.create(KEY);
+    await mfa.set(p.id, { type: 'totp', secret: 'JBSWY3DPEHPK3PXP' }, 'availity.com');
+    const res = await call('GET', `/personas/${p.id}/mfa`);
+    // configured is the persona-wide default; a factor filed against one portal is a site.
+    assert.deepEqual(res.body, { configured: false, sites: [{ domain: 'availity.com', type: 'totp' }] });
+    assert.doesNotMatch(JSON.stringify(res.body), /JBSWY3DPEHPK3PXP/);
+  });
+
   it('lists site logins by username only', async () => {
     const p = service.create(KEY);
     credentials.set(p.id, 'a.com', { username: 'me', password: 'pw' });
