@@ -6,6 +6,7 @@
 const { wireTab } = require('./tab-events.cjs');
 const { navigateActive, normalizeAddress } = require('./navigation.cjs');
 const { HOME_URL, PAGE_BACKGROUND } = require('./constants.cjs');
+const popups = require('./popup-tabs.cjs');
 
 /** What the tab strip shows for one tab. */
 function tabSummary(t, activeTabId) {
@@ -21,11 +22,13 @@ function tabSummary(t, activeTabId) {
 
 /** Whether the tab is loading, and why it failed if it did. */
 function loadSummary(t) {
-  return { loading: !!t.navigationPending || t.view.webContents.isLoading(), loadError: t.loadError || null };
+  const loading = !!t.navigationPending || Boolean(t.view.webContents.isLoading?.());
+  return { loading, loadError: t.loadError || null };
 }
 
 /** Whether Back and Forward can go anywhere. */
 function historySummary(history) {
+  if (!history) return { canGoBack: false, canGoForward: false };
   return { canGoBack: history.canGoBack(), canGoForward: history.canGoForward() };
 }
 
@@ -63,6 +66,11 @@ class TabManager {
     return this.find(this.activeTabId)?.view || null;
   }
 
+  /** Puts a window the page opened on the tab list, so an agent can drive it. */
+  adoptWindow(win) {
+    return popups.adoptWindow(this, win);
+  }
+
   /** Opens a tab on `url`, loaded with Electron's `loadOptions` (a referrer, a POST body); returns its id. */
   createTab(url, activate = true, loadOptions = undefined) {
     const tab = this.addTab(url);
@@ -96,11 +104,17 @@ class TabManager {
     tab.ready.catch((e) => console.error('[tab] Could not open page:', e.message));
   }
 
-  /** Shows a tab. */
+  /** Shows a tab. A popup has a window of its own, so it is raised rather than mounted. */
   activateTab(id) {
     const tab = this.find(id);
     if (!tab || this.activeTabId === id) return;
     this.activeTabId = id;
+    if (tab.window) return popups.raiseWindow(this, tab);
+    this.showInShell(tab);
+  }
+
+  /** Mounts a tab's view on the shell window and tells the strip what is showing. */
+  showInShell(tab) {
     if (!this.ctx.overlays.names.size) this.ctx.shell.window.setBrowserView(tab.view);
     this.ctx.layout.layoutActiveTab();
     this.ctx.shell.send('url-changed', tab.url);
@@ -127,10 +141,11 @@ class TabManager {
   /** Takes a tab off the window and the list, and destroys its page. */
   removeTab(idx) {
     const tab = this.list[idx];
+    this.list.splice(idx, 1);
+    if (tab.window) return popups.closeWindowTab(tab);
     try {
       this.ctx.shell.window.removeBrowserView(tab.view);
     } catch {}
-    this.list.splice(idx, 1);
     destroyTabView(tab.view);
   }
 

@@ -3,6 +3,7 @@
  * the fingerprint and hide Electron, the persona's proxy, and governance.
  */
 const governance = require('../governance');
+const { watchSession } = require('./observe/install.cjs');
 const { configureProxy } = require('../anonymity/proxy');
 const { FALLBACK_CHROME_VERSION, GREASE_BRAND_VERSION, GREASE_BRAND_FULL_VERSION } = require('./constants.cjs');
 
@@ -60,8 +61,8 @@ function installClientHints(ses, hints) {
   });
 }
 
-/** Configure the persistent browser session — user-agent, cookies, privacy. */
-async function configureSession(ses, activeProfile) {
+/** Configure the persistent browser session — user-agent, cookies, privacy, and what the agent may read back. */
+async function configureSession(ses, activeProfile, observer = null) {
   // Telemetry blocking is handled by Chromium flags (applyTelemetryFlags).
   // Domain-level blocking via onBeforeRequest was removed — it interfered
   // with normal page loads and handler stacking on session reuse.
@@ -72,6 +73,7 @@ async function configureSession(ses, activeProfile) {
   installClientHints(ses, clientHints(chromeFullVer.split('.')[0], chromeFullVer, platformHintFor(platform)));
   await configureProxy(ses, governance.configuration?.proxy || activeProfile?.proxy);
   governance.install(ses);
+  if (observer) watchSession(observer, ses);
 }
 
 module.exports = { configureSession };

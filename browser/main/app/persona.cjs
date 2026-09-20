@@ -70,7 +70,7 @@ class Persona {
 
   /** Configure the persistent browser session — user-agent, cookies, privacy. */
   async setupBrowserSession() {
-    await configureSession(this.session(), this.active);
+    await configureSession(this.session(), this.active, this.ctx.observer);
   }
 
   /** The fingerprint bar's view of the active profile, or null. */

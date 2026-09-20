@@ -119,8 +119,10 @@ describe('playbook routes', () => {
       await as('POST', `/browsers/${BROWSER}/playbooks`, { name: 'signup', steps: STEPS });
       const submitted = await as('POST', `/browsers/${BROWSER}/runs`, { playbook: 'signup' });
       assert.equal(submitted.status, 202);
-      for (let i = 0; i < 20 && (await as('GET', `/runs/${submitted.body.id}`)).body.status === 'running'; i++)
-        await settle();
+      // A replay paces itself like a person, so this waits in real time rather
+      // than flushing microtasks: the pauses are setTimeouts, by design.
+      for (let i = 0; i < 60 && (await as('GET', `/runs/${submitted.body.id}`)).body.status === 'running'; i++)
+        await new Promise((r) => setTimeout(r, 250));
       assert.equal((await as('GET', `/runs/${submitted.body.id}`)).body.status, 'succeeded');
     });
 

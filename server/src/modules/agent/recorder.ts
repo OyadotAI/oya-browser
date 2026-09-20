@@ -54,13 +54,34 @@ const STEP_ARGS = [
   'y',
 ];
 /** Analyzer fields that survive a re-analysis, which a replay finds the element by. */
-const STABLE_KEYS = ['type', 'tag', 'text', 'domId', 'name', 'ariaLabel', 'testId', 'placeholder', 'href'];
+const STABLE_KEYS = [
+  'type',
+  'tag',
+  'text',
+  'domId',
+  'name',
+  'ariaLabel',
+  'testId',
+  'placeholder',
+  'href',
+  'rawHref',
+  'role',
+  // Where it sits, and the names the analyzer worked out: the only handles left for
+  // an element with no text and no target — a citation link, an icon button.
+  'path',
+  'stableText',
+  'scoped',
+  'repeats',
+];
 
 /** browserId -> { prompt, steps, elements } */
 const runs = new Map();
 
+/** Only the fields the browser actually reported, so a gap there keeps the analysis's answer. */
+const defined = (handle = {}) => Object.fromEntries(Object.entries(handle || {}).filter(([, v]) => v !== undefined));
+
 /** An element's stable handles, without the id that dies with the analysis. */
-const stable = (e: any = {}) => Object.fromEntries(STABLE_KEYS.map((k) => [k, e[k]]));
+const stable = (e: any = {}) => Object.fromEntries(STABLE_KEYS.filter((k) => e[k] !== undefined).map((k) => [k, e[k]]));
 
 /** The last recorded ask() run on a browser (prompt, steps, latest elements), or null. */
 export function lastRun(browserId) {
@@ -72,6 +93,19 @@ export function elementOf(browserId, elementId) {
   return runs.get(browserId)?.elements.find((e) => e.id === Number(elementId));
 }
 
+/**
+ * The handles the browser read off the element as it acted on it.
+ *
+ * The analysis list is a snapshot: by the time a click is recorded, the id the
+ * model used may name a different element or none at all, and a step recorded
+ * without handles replays as a click on the page body. What the browser saw
+ * when it actually clicked cannot be stale, so it wins.
+ */
+export function rememberHandle(browserId, elementId, handle) {
+  const run = runs.get(browserId);
+  if (run && handle) run.handles.set(Number(elementId), handle);
+}
+
 /** Keeps the latest analysis, so steps can name elements by their stable handles. */
 export function setElements(browserId, elements) {
   const run = runs.get(browserId);
@@ -80,6 +114,7 @@ export function setElements(browserId, elements) {
 
 /** Makes `run` the browser's current run, starting from the page it is on so a playbook replays from the same place. */
 export async function startRun(browserId, run) {
+  run.handles = new Map();
   const tabs = await sendCommand(browserId, 'list_tabs').catch(() => null);
   const startUrl = tabs?.data?.tabs?.find((t) => t.active)?.url;
   if (/^https?:/.test(startUrl || '')) run.steps.push({ action: 'navigate', url: startUrl, start: true });
@@ -90,7 +125,13 @@ export async function startRun(browserId, run) {
 
 /** The element a step acts on, with visible data and secrets alike redacted: a playbook stores placeholders, never values. */
 function redactedElement(run, elementId, values) {
-  const el = stable(run.elements.find((e) => e.id === Number(elementId)));
+  // The analysis describes the element most fully; the browser's own reading of it
+  // is the one that cannot be stale. Merged, not chosen between: replacing the
+  // analysis lost the path and the worked-out names, and a page whose only handle
+  // is its structure then had nothing to aim at.
+  const analyzed = run.elements.find((e) => e.id === Number(elementId));
+  const reported = run.handles?.get(Number(elementId));
+  const el = stable({ ...analyzed, ...defined(reported) });
   for (const k of Object.keys(el)) el[k] = redact(el[k], values);
   return el;
 }
@@ -105,10 +146,18 @@ async function tabHandle(browserId) {
   return tabs?.data?.tabs?.find((t) => t.active)?.url;
 }
 
+/** Whether any handle on this element could find it again. */
+const aimable = (el) => Object.values(el || {}).some((v) => v !== undefined && v !== null && v !== '');
+
 /** What the step aims at: the element's stable handles, and the file a replay must bring. */
 function aim(step, run, name, args, values) {
-  if (ELEMENT_ACTIONS.includes(name) && args.element_id != null)
-    step.el = redactedElement(run, args.element_id, values);
+  if (ELEMENT_ACTIONS.includes(name) && args.element_id != null) {
+    const el = redactedElement(run, args.element_id, values);
+    // An element nothing can find again is not a handle. Say so on the step, so a
+    // replay refuses it instead of clicking the page body and carrying on.
+    if (aimable(el)) step.el = el;
+    else step.unaimable = true;
+  }
   // The bytes never enter a playbook; the variable name does, so a replay brings its own file.
   if (name === 'upload_file' && args.name) step.file = `{{${dataKey(args.name)}}}`;
   for (const k of STEP_ARGS) if (args[k] !== undefined) step[k] = args[k];

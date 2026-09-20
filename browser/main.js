@@ -20,6 +20,7 @@ const { applyDNSLeakPrevention } = require('./anonymity/proxy');
 const { createControlState } = require('./control-state.cjs');
 const { cdp } = require('./main/cdp.cjs');
 const { createWorld } = require('./main/world.cjs');
+const { Observer } = require('./main/observe/observer.cjs');
 const { createCookieSync } = require('./main/cookie-sync.cjs');
 const { createUpdater } = require('./main/updater.cjs');
 const { createPageActions } = require('./main/page-actions.cjs');
@@ -90,7 +91,17 @@ const analyzerScript = fs.readFileSync(path.join(__dirname, 'scripts', 'analyzer
 const ISOLATED_WORLD = 'w' + crypto.randomBytes(WORLD_NAME_BYTES).toString('hex');
 
 /** Every service, by name; each one reaches the others through it. */
-const ctx = { electron, analyzerScript, isolatedWorld: ISOLATED_WORLD, cdpPort: CDP_PORT, relayToken: CDP_RELAY_TOKEN };
+// What the page said and fetched, collected in this process so an agent can read
+// it back without a CDP domain the page could detect (see main/observe/).
+const observer = new Observer();
+const ctx = {
+  electron,
+  analyzerScript,
+  isolatedWorld: ISOLATED_WORLD,
+  cdpPort: CDP_PORT,
+  relayToken: CDP_RELAY_TOKEN,
+  observer,
+};
 ctx.workspace = null;
 ctx.config = new ConfigStore({ dir: () => app.getPath('userData') });
 ctx.shell = new ShellWindow(ctx);

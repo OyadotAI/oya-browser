@@ -11,7 +11,7 @@ import { ownDataDir } from '../../support/data-dir.ts';
 ownDataDir();
 const { play } = await import('../../../../src/modules/playbooks/replay.ts');
 const keyConfig = await import('../../../../src/modules/config/service.ts');
-const { FIND_ATTEMPTS, FIND_RETRY_MS, NAVIGATE_TIMEOUT_MS } =
+const { FIND_ATTEMPTS, FIND_RETRY_MS, NAVIGATE_TIMEOUT_MS, REPLAY_PAUSE_MS, REPLAY_SETTLE_MS } =
   await import('../../../../src/modules/playbooks/constants.ts');
 const { scriptedBrowser, stubLlm, textReply } = await import('../../support/agent.ts');
 const { advance } = await import('../../support/http.ts');
@@ -340,4 +340,133 @@ describe('play across tabs', () => {
     await run;
     assert.ok(!commands().some((c) => c.action === 'close_tab'));
   });
+describe('play without re-reading the page', () => {
+  beforeEach(() => {
+    answer = page;
+    browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p));
+  });
+  afterEach(() => {
+    browser.disconnect();
+    mock.restoreAll();
+    mock.timers.reset();
+    keyConfig.reset();
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  /** How many times the page was serialized. */
+  const analyses = () => browser.calls.filter((c) => c.action === 'analyze').length;
+
+  it('analyzes once for several steps on the same page', async () => {
+    const steps = [
+      { action: 'type', text: 'a@b', el: { name: 'email', tag: 'input' } },
+      { action: 'select_option', option: 'Pro', el: { name: 'plan', tag: 'select' } },
+      { action: 'type', text: 'c@d', el: { name: 'email', tag: 'input' } },
+    ];
+    await play(KEY, BROWSER, pb(steps), {});
+    assert.equal(analyses(), 1, 'the page was read once, not once per step');
+  });
+
+  it('reads the page again after a step that could have changed it', async () => {
+    const steps = [
+      { action: 'type', text: 'a@b', el: { name: 'email', tag: 'input' } },
+      { action: 'press_key', key: 'Enter' },
+      { action: 'type', text: 'c@d', el: { name: 'email', tag: 'input' } },
+    ];
+    await play(KEY, BROWSER, pb(steps), {});
+    assert.equal(analyses(), 2, 'once before the key, once after');
+  });
+
+  it('clicks a recorded test id without reading the page at all', async () => {
+    const steps = [{ action: 'click', el: { tag: 'button', testId: 'next-page', text: 'Next' } }];
+    await play(KEY, BROWSER, pb(steps), {});
+    assert.equal(analyses(), 0);
+    const clicked = commands().find((c) => c.action === 'click');
+    assert.deepEqual(clicked.params, { selector: '[data-testid="next-page"]' });
+  });
+
+  it("clicks a link by its own target without reading the page", async () => {
+    const steps = [{ action: 'click', el: { tag: 'a', href: '/wiki/Managed_care', text: 'Managed care' } }];
+    await play(KEY, BROWSER, pb(steps), {});
+    assert.equal(analyses(), 0);
+    assert.deepEqual(commands().find((c) => c.action === 'click').params, {
+      selector: 'a[href="/wiki/Managed_care"]',
+    });
+  });
+
+  it('falls back to matching when the fast path misses', async () => {
+    const byId: any[] = [{ id: 9, type: 'button', tag: 'button', text: 'Go', testId: 'slow', visible: true }];
+    let matched = 0;
+    answer = (action, params) => {
+      // The selector no longer resolves, though the element is still on the page:
+      // a framework re-rendered it, or it moved into a frame.
+      if (action === 'click' && params.selector === '[data-testid="slow"]') return { ok: false, error: 'not found' };
+      if (action === 'click' && params.selector === '[data-ac-id="9"]') matched += 1;
+      if (action === 'analyze') return { ok: true, data: { elements: byId } };
+      return page(action, params);
+    };
+    await play(KEY, BROWSER, pb([{ action: 'click', el: { tag: 'button', testId: 'slow', text: 'Go' } }]), {});
+    assert.equal(matched, 1, 'it still clicked, by matching the analysis');
+    assert.ok(analyses() > 0);
+  });
+
+  it('does not take the fast path for a click whose value comes from a variable', async () => {
+    const steps = [{ action: 'click', el: { tag: 'button', testId: 'plan', text: '{{plan}}' } }];
+    await play(KEY, BROWSER, pb(steps, { defaults: { plan: 'Basic' } }), { plan: 'Pro' });
+    assert.ok(analyses() > 0, 'a data-driven click aims by value, so it must read the page');
+  });
+});
+
+describe('play at a human pace', () => {
+  beforeEach(() => {
+    answer = page;
+    browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p));
+  });
+  afterEach(() => {
+    browser.disconnect();
+    mock.restoreAll();
+    mock.timers.reset();
+    keyConfig.reset();
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  it('waits between steps rather than firing them as fast as the network allows', async () => {
+    const started = Date.now();
+    const steps = [
+      { action: 'type', text: 'a@b', el: { name: 'email', tag: 'input' } },
+      { action: 'type', text: 'c@d', el: { name: 'email', tag: 'input' } },
+    ];
+    await play(KEY, BROWSER, pb(steps), {});
+    // Two steps, so at least one pause at the shortest it can be.
+    assert.ok(Date.now() - started >= REPLAY_PAUSE_MS.min, 'a replay that beats a human gets caught');
+  });
+
+  it('waits longer once the page has changed under it, the way a person reads it', async () => {
+    const started = Date.now();
+    await play(KEY, BROWSER, pb([{ action: 'press_key', key: 'Enter' }]), {});
+    assert.ok(Date.now() - started >= REPLAY_SETTLE_MS.min);
+  });
+
+  it('stops when the fast selector turns out to point at something else', async () => {
+    answer = (action, params) => {
+      // The test id now belongs to a different control.
+      if (action === 'click' && params.selector === '[data-testid="submit"]')
+        return { ok: true, data: { clicked: true, handle: { tag: 'button', testId: 'submit', text: 'Delete account' } } };
+      return page(action, params);
+    };
+    const steps = [{ action: 'click', el: { tag: 'button', testId: 'submit', text: 'Submit claim' } }];
+    await assert.rejects(play(KEY, BROWSER, pb(steps), {}, { autoHeal: false }), /no longer points at/);
+  });
+
+  it('accepts a click whose text merely grew a suffix', async () => {
+    answer = (action, params) => {
+      if (action === 'click' && params.selector === '[data-testid="next"]')
+        return { ok: true, data: { clicked: true, handle: { tag: 'button', testId: 'next', text: 'Next page' } } };
+      return page(action, params);
+    };
+    const steps = [{ action: 'click', el: { tag: 'button', testId: 'next', text: 'Next' } }];
+    const result = await play(KEY, BROWSER, pb(steps), {});
+    assert.equal(result.steps, 1);
+  });
+});
+
 });

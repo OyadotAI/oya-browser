@@ -31,22 +31,42 @@ function hrefCandidates(el) {
   return base && base !== href ? [exact, { kind: 'css', value: `a[href^=${JSON.stringify(base)}]` }] : [exact];
 }
 
+/**
+ * Ids a framework makes up per render, which look like handles and are not:
+ * Wikipedia's Parsoid numbers every node `mwAQ`, `mwCg`; React's useId gives
+ * `:r3:`; Ember, ExtJS and Radix have their own. A recording that aims at one
+ * finds a different element, or none, the next time the page renders.
+ */
+const GENERATED_ID =
+  /^(mw[\w-]{1,4}|:r[0-9a-z]+:|ember\d+|ext-gen\d+|radix-[\w:-]+|[a-f0-9]{8}-[a-f0-9]{4}-)|[0-9]{6,}/i;
+
+/** Whether this id will still name the same element after a re-render. */
+function stableId(domId) {
+  return Boolean(domId) && !GENERATED_ID.test(String(domId));
+}
+
 /** CSS locators from the element's group and value, id, name and link target. */
 function attributeCandidates(el) {
   const out = [];
   // A checkbox or radio by its group and value: stable where the page makes up its id.
   if (el.name && el.choice)
     out.push({ kind: 'css', value: `input[name=${JSON.stringify(el.name)}][value=${JSON.stringify(el.choice)}]` });
-  if (el.domId) out.push({ kind: 'css', value: `[id=${JSON.stringify(el.domId)}]` });
+  if (stableId(el.domId)) out.push({ kind: 'css', value: `[id=${JSON.stringify(el.domId)}]` });
   if (el.name) out.push({ kind: 'css', value: `[name=${JSON.stringify(el.name)}]` });
+  // A link's target outlives any id a renderer invents for it, so it comes before
+  // a generated id rather than after every attribute. The generated id itself is
+  // reported by `generatedId` so it can be ordered behind the element's position:
+  // where Wikipedia renumbers every node per render, its place in the article is
+  // the more durable of the two.
   return [...out, ...hrefCandidates(el)];
 }
 
 /** Locators from what the element says about itself: role, label, text, placeholder. */
 function nameCandidates(el) {
   const out = [];
-  if (el.role && (el.ariaLabel || el.text)) out.push({ kind: 'role', role: el.role, value: el.ariaLabel || el.text });
-  if (el.ariaLabel) out.push({ kind: 'label', value: el.ariaLabel });
+  const label = withoutLiveCount(el.ariaLabel);
+  if (el.role && (label || el.text)) out.push({ kind: 'role', role: el.role, value: label || el.text });
+  if (label) out.push({ kind: 'label', value: label });
   if (el.text) out.push({ kind: LABELLED.includes(el.type) ? 'label' : 'text', value: el.text });
   if (el.placeholder) out.push({ kind: 'placeholder', value: el.placeholder });
   return out;
@@ -71,7 +91,7 @@ function candidates(el = {}) {
   const handlesFirst = uniqueFirst(el, field, byScope);
   const byName = handlesFirst || [...nameCandidates(el), ...byScope];
   const ordered = field || handlesFirst ? [...byAttribute, ...byName] : [...byName, ...byAttribute];
-  return withPath([...byTestId, ...ordered], el.path);
+  return withPath([...byTestId, ...ordered], el.path, el);
 }
 
 /**
@@ -89,9 +109,39 @@ function stableCandidates(el, byScope) {
   return [{ kind: 'text', value: el.stableText }, ...byScope];
 }
 
-/** Its position is the last resort: what replay falls back to when every name is ambiguous. */
-function withPath(found, path) {
-  return path && !found.some((c) => c.value === path) ? [...found, { kind: 'css', value: path }] : found;
+/** The id this render invented, kept only as the very last thing to try. */
+function generatedId(el) {
+  return el.domId && !stableId(el.domId) ? [{ kind: 'css', value: `[id=${JSON.stringify(el.domId)}]` }] : [];
+}
+
+/**
+ * Its position, then an invented id: what replay falls back to when every name is
+ * ambiguous. A position survives a re-render that renumbers ids, so it goes first
+ * of the two — and both stay available, because an element with no name and no
+ * target has nothing better to offer.
+ */
+function withPath(found, path, el = {}) {
+  const tail = [...(path && !found.some((c) => c.value === path) ? [{ kind: 'css', value: path }] : []), ...generatedId(el)];
+  return [...found, ...tail.filter((c) => !found.some((f) => f.value === c.value))];
+}
+
+/**
+ * A count a page keeps up to date, inside an accessible name: LinkedIn labels its
+ * nav "Home, 1 new notification" and renames it the moment a notification
+ * arrives, so a locator built on the whole label finds nothing on the next run.
+ * The analyzer already drops number-only text nodes; a count written into an
+ * aria-label is the same thing in the place it does not look.
+ */
+const LIVE_COUNT = /,?\s*\d+\+?\s+(new|unread)\b[^,]*|\s*\(\d+\+?\)\s*$/gi;
+
+/** The name without its live count, or the name itself when that leaves nothing. */
+function withoutLiveCount(name) {
+  const cleaned = String(name ?? '')
+    .replace(LIVE_COUNT, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[,\s]+$/, '')
+    .trim();
+  return cleaned || String(name ?? '');
 }
 
 /**
@@ -113,4 +163,4 @@ function locatorCode(candidate, owner = 'p', value = JSON.stringify(candidate?.v
   return `${owner}.${LOCATOR_METHODS[c.kind]}(${value}${c.kind === 'testId' ? '' : ', {exact:true}'})`;
 }
 
-module.exports = { LOCATOR_KINDS, LOCATOR_METHODS, candidates, locatorCode, roleName };
+module.exports = { LOCATOR_KINDS, LOCATOR_METHODS, candidates, locatorCode, roleName, withoutLiveCount, stableId };

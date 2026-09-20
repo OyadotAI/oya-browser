@@ -52,21 +52,12 @@ describe('recorder', () => {
   it('records an element step by its stable handles with values redacted', async () => {
     const run = await started();
     recorder.setElements(BROWSER, [EL]);
-    recorder.recordStep(BROWSER, 'type', { element_id: '7', text: '{{email}}' }, { email: 'ada@x.test' });
+    await recorder.recordStep(BROWSER, 'type', { element_id: '7', text: '{{email}}' }, { email: 'ada@x.test' });
     assert.deepEqual(run.steps[1], {
       action: 'type',
       text: '{{email}}',
-      el: {
-        type: 'input',
-        tag: 'input',
-        text: '{{email}}',
-        domId: undefined,
-        name: 'email',
-        ariaLabel: undefined,
-        testId: undefined,
-        placeholder: undefined,
-        href: undefined,
-      },
+      // Only what is known: a handle carries no field the page never gave it.
+      el: { type: 'input', tag: 'input', text: '{{email}}', name: 'email' },
     });
   });
 
@@ -119,6 +110,24 @@ describe('recorder', () => {
       action: 'switch_tab',
       tabUrl: 'https://vendor.example.com/order/new?ssoToken=abc',
     });
+  });
+
+  it('prefers the handle the browser read as it clicked over a stale analysis', async () => {
+    const run = await started();
+    recorder.setElements(BROWSER, [{ ...EL, id: 3, text: 'stale' }]);
+    recorder.rememberHandle(BROWSER, 3, { tag: 'button', text: 'Next', ariaLabel: 'Next page' });
+    await recorder.recordStep(BROWSER, 'click', { element_id: 3 }, {});
+    assert.equal(run.steps.at(-1).el.text, 'Next');
+    assert.equal(run.steps.at(-1).el.ariaLabel, 'Next page');
+  });
+
+  it('marks a step whose element nothing can find again, rather than aiming it at the body', async () => {
+    const run = await started();
+    recorder.setElements(BROWSER, []);
+    await recorder.recordStep(BROWSER, 'click', { element_id: 99 }, {});
+    const step = run.steps.at(-1);
+    assert.equal(step.el, undefined);
+    assert.equal(step.unaimable, true);
   });
 
   it('records nothing on a browser with no run', () => {

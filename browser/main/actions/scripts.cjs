@@ -43,6 +43,11 @@ const FIND_ELEMENT_JS = `(() => {
       }} catch {}
     }
   }
+  // The handles a replay finds this element by again, read here because here is
+  // the only place the element is unambiguous: an id from an earlier analysis may
+  // name nothing by the time the action is recorded, and a step recorded without
+  // handles replays as a click on the body.
+  const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 200);
   return {
     ok: true,
     data: {
@@ -51,6 +56,21 @@ const FIND_ELEMENT_JS = `(() => {
       tag: el.tagName,
       editable: el.isContentEditable,
       inIframe: ownerDoc !== document,
+      handle: {
+        tag: (el.tagName || '').toLowerCase(),
+        text,
+        domId: el.id || undefined,
+        name: el.getAttribute('name') || undefined,
+        ariaLabel: el.getAttribute('aria-label') || undefined,
+        testId: el.getAttribute('data-testid') || undefined,
+        placeholder: el.getAttribute('placeholder') || undefined,
+        // As written, which is what a CSS locator matches.
+        rawHref: el.getAttribute('href') || undefined,
+        role: el.getAttribute('role') || undefined,
+        // Where it sits: the only durable handle for an element with no name and
+        // no target of its own, such as a citation link on a wiki page.
+        path: (window.__acCssPath && window.__acCssPath(el)) || undefined,
+      },
     },
   };
   } finally { window.__oyaInternalCall = false; }

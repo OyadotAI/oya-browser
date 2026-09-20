@@ -24,6 +24,22 @@ export const MIN_PROMPT_VALUE_LEN = 3;
 export const FIND_ATTEMPTS = 5;
 /** Pause between those analyses. */
 export const FIND_RETRY_MS = 1000;
+
+/**
+ * How long a replay waits before each step, and after one that changed the page.
+ *
+ * A replay knows every step in advance, so left alone it fires them as fast as
+ * the network allows — and that is what gives it away. Amazon let the agent
+ * through twice at fourteen seconds a step and challenged the replay at eight.
+ * A person reads the page they just loaded before acting on it, so a replay does
+ * too: a short jittered pause before each action, a longer one once the page has
+ * changed under it. This is deliberately not tunable down to zero — a replay
+ * that beats a human to the click is a replay that gets caught.
+ */
+export const REPLAY_PAUSE_MS = { min: 350, max: 1200 };
+
+/** The same, after a navigation or a click that moved the page: time to read it. */
+export const REPLAY_SETTLE_MS = { min: 900, max: 2600 };
 /** Navigation waits on slow sites. */
 export const NAVIGATE_TIMEOUT_MS = 90_000;
 /** A whole workflow run in the browser (10 minutes). */

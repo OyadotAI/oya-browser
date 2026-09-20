@@ -73,6 +73,14 @@ const TAB_COMMANDS = {
     const tabs = list.map((t) => ({ id: t.id, title: t.title, url: t.url, active: t.id === activeTabId }));
     runner.sendResult(id, true, { tabs });
   },
+  read_console: (runner, id, params) => {
+    const entries = runner.ctx.observer?.readConsole(params || {}) || [];
+    runner.sendResult(id, true, { entries });
+  },
+  read_network: (runner, id, params) => {
+    const requests = runner.ctx.observer?.readNetwork(params || {}) || [];
+    runner.sendResult(id, true, { requests });
+  },
   open_tab: openTab,
   switch_tab: (runner, id, params) => {
     if (!runner.ctx.tabs.find(params?.tab_id))
