@@ -101,7 +101,9 @@ async function find(browserId, el, text?) {
  */
 function directSelector(el) {
   if (el?.testId) return `[data-testid=${JSON.stringify(el.testId)}]`;
-  if (el?.href && String(el.tag || '').toLowerCase() === 'a') return `a[href=${JSON.stringify(el.href)}]`;
+  // As written, which is what the attribute selector matches.
+  const target = el?.rawHref ?? el?.href;
+  if (target && String(el.tag || '').toLowerCase() === 'a') return `a[href=${JSON.stringify(target)}]`;
   return null;
 }
 
@@ -109,7 +111,7 @@ function directSelector(el) {
 async function replayClick(browserId, step, values, defaults) {
   const key = soleVariable(step.el?.text);
   // A data-driven click aims by value, so it cannot take the fast path.
-  const direct = key ? null : await clickDirect(browserId, step.el);
+  const direct = key ? null : await clickDirect(browserId, withValues(step.el, values));
   if (direct) return direct;
   const el = await find(browserId, ...aimedAt(step, key, values, defaults));
   return command(browserId, 'click', { selector: `[data-ac-id="${el.id}"]` });
@@ -122,10 +124,24 @@ async function replayClick(browserId, step, values, defaults) {
  * belonged to another choice, so the value is the only handle left.
  */
 function aimedAt(step, key, values, defaults): [any, string | undefined] {
-  if (!key) return [step.el, undefined];
-  const filled = fill(step.el.text, values);
-  const byValue = filled !== defaults[key] ? filled : undefined;
-  return [{ ...step.el, text: filled }, byValue];
+  const el = withValues(step.el, values);
+  if (!key) return [el, undefined];
+  const byValue = el.text !== defaults[key] ? el.text : undefined;
+  return [el, byValue];
+}
+
+/**
+ * The recorded handles with their placeholders filled in.
+ *
+ * A handle is recorded with the run's own values replaced by their variable names,
+ * so a member id never sits in a saved playbook. That applies to every field, not
+ * just the typed text: a Reddit post link recorded as
+ * `{{start}}comments/1vz.../` is the same link once `start` is filled, and
+ * nothing at all until it is.
+ */
+function withValues(el = {}, values) {
+  const filled = Object.entries(el).map(([k, v]) => [k, typeof v === 'string' ? fill(v, values) : v]);
+  return Object.fromEntries(filled);
 }
 
 /**
@@ -159,13 +175,13 @@ async function clickDirect(browserId, el) {
 
 /** Types the step's value into the recorded field. */
 async function replayType(browserId, step, values) {
-  const el = await find(browserId, step.el);
+  const el = await find(browserId, withValues(step.el, values));
   return command(browserId, 'type', { selector: `[data-ac-id="${el.id}"]`, text: fill(step.text ?? '', values) });
 }
 
 /** Picks the step's option in the recorded select or dropdown. */
 async function replaySelect(browserId, step, values) {
-  const el = await find(browserId, step.el);
+  const el = await find(browserId, withValues(step.el, values));
   const r = await selectOptionIn(browserId, el, fill(step.option ?? '', values));
   if (!r.ok) throw new Error(`${r.error}${r.options ? ` (options: ${r.options.join(' | ')})` : ''}`);
   return r;
@@ -177,7 +193,7 @@ async function replayUpload(browserId, step, values) {
   const key = soleVariable(step.file);
   const f = key && values[key];
   if (!isFileValue(f)) throw new Error(`${key || 'this upload'} needs a file() value`);
-  const el = step.el ? await find(browserId, step.el) : null;
+  const el = step.el ? await find(browserId, withValues(step.el, values)) : null;
   const r = await uploadFileIn(browserId, el, f);
   if (!r.ok) throw new Error(r.error);
   return r;
@@ -225,9 +241,9 @@ async function replayCloseTab(browserId, step) {
 }
 
 /** Double-clicks the recorded element, or the recorded point when no element was named. */
-async function replayDoubleClick(browserId, step) {
+async function replayDoubleClick(browserId, step, values) {
   if (!step.el) return command(browserId, 'double_click', { x: step.x, y: step.y });
-  const el = await find(browserId, step.el);
+  const el = await find(browserId, withValues(step.el, values));
   return command(browserId, 'double_click', { element_id: el.id, selector: `[data-ac-id="${el.id}"]` });
 }
 
