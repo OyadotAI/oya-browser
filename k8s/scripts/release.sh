@@ -33,6 +33,10 @@ for arg in "$@"; do
   esac
 done
 
+# Local tags go stale (a fresh clone, a pruned tag) and the version is derived
+# from them, so without this the script picks a version GitHub has already
+# released — and only finds out after the commit, the tag and the branch push.
+git fetch --tags --force --quiet origin
 LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
 
 if [ -n "$VERSION_ARG" ]; then
@@ -48,6 +52,11 @@ else
     VERSION="${MAJOR}.${MINOR}.${PATCH}"
   fi
   TAG="v${VERSION}"
+fi
+
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || gh release view "$TAG" >/dev/null 2>&1; then
+  log_err "$TAG already exists as a tag or a GitHub release. Pick a free version: make release V=x.y.z"
+  exit 1
 fi
 
 log_info "Latest tag: ${LATEST:-none}"
