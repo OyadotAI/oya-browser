@@ -21,6 +21,12 @@ export function mountMfa(router: Router, personas: PersonaService) {
    * per-site keying still is.
    */
   router.put('/personas/:id/mfa', authMiddleware, setMfa(personas));
+  /**
+   * Which factors this persona holds: the persona-wide one, and the sites with one
+   * of their own. Kinds only, never a secret — an operator setting a factor per
+   * portal had no way to see which portals were done.
+   */
+  router.get('/personas/:id/mfa', authMiddleware, listMfa(personas));
   /** DELETE /personas/:id/mfa — clear the persona's second factor, for one site with ?domain= or the persona-wide default. */
   router.delete('/personas/:id/mfa', authMiddleware, clearMfa(personas));
 }
@@ -49,6 +55,12 @@ const setMfa = (personas: PersonaService) => async (req: Request, res: Response)
   const described: any = await mfa.set(p.id, config, site);
   auditPersona(req, 'mfa.configure', p.id, { meta: { type: described.type, domain: site } });
   res.json(described);
+};
+
+/** The persona-wide factor and the per-site ones, by kind. */
+const listMfa = (personas: PersonaService) => (req: Request, res: Response) => {
+  const p = ownedPersona(personas, req, res);
+  if (p) res.json({ ...mfa.describe(p.id), sites: mfa.list(p.id) });
 };
 
 /** Clears a second factor, for one site or persona-wide. */
