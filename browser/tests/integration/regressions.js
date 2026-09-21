@@ -186,10 +186,20 @@ assert.ok(
   'stopRecording no longer remembers where the pause left each tab',
 );
 assert.ok(
-  /pausedUrls\.has\(activeTabId\) && pausedUrls\.get\(activeTabId\) !== url\)\s*(?:\w+\.)?pushRecordedStep\(\{ action: 'navigate', url \}\)/.test(
+  /else if \(resumedElsewhere\(recorder, url\)\)\s*recorder\.pushRecordedStep\(\{ action: 'navigate', url \}\)/.test(
     src,
   ),
   'a resume on another page records no navigation, replay will run the rest against the paused page',
+);
+assert.ok(
+  /if \(known\) return recorder\.pausedUrls\.get\(tabId\) !== url;/.test(src),
+  'a resume no longer compares the page with where the pause left the tab',
+);
+assert.ok(
+  /const known = recorder\.pausedDraft === recorder\.ctx\.workspace\?\.draft\.id && recorder\.pausedUrls\.has\(tabId\);/.test(
+    src,
+  ),
+  "a resumed draft is compared with another draft's paused pages, and its move to this page goes unrecorded",
 );
 
 // A tab whose first load never settles must not wedge every later command on
