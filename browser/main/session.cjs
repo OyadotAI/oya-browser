@@ -61,6 +61,15 @@ function installClientHints(ses, hints) {
   });
 }
 
+/**
+ * The Chrome version the session presents: a mirrored persona's real Chrome
+ * version, else this Electron's bundled Chromium, else the fallback. A
+ * mirrored session's headers must read as the user's real Chrome.
+ */
+function chromeVersionFor(activeProfile, defaultUA) {
+  return activeProfile?.chromeVersion || defaultUA.match(/Chrome\/([\d.]+)/)?.[1] || FALLBACK_CHROME_VERSION;
+}
+
 /** Configure the persistent browser session, user-agent, cookies, privacy, and what the agent may read back. */
 async function configureSession(ses, activeProfile, observer = null) {
   // Telemetry blocking is handled by Chromium flags (applyTelemetryFlags).
@@ -68,7 +77,7 @@ async function configureSession(ses, activeProfile, observer = null) {
   // with normal page loads and handler stacking on session reuse.
   const defaultUA = ses.getUserAgent();
   const platform = activeProfile?.navigator?.platform;
-  const chromeFullVer = defaultUA.match(/Chrome\/([\d.]+)/)?.[1] || FALLBACK_CHROME_VERSION;
+  const chromeFullVer = chromeVersionFor(activeProfile, defaultUA);
   ses.setUserAgent(personaUserAgent(defaultUA, platform, chromeFullVer));
   installClientHints(ses, clientHints(chromeFullVer.split('.')[0], chromeFullVer, platformHintFor(platform)));
   await configureProxy(ses, governance.configuration?.proxy || activeProfile?.proxy);

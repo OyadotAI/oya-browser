@@ -71,6 +71,7 @@ const SESSION_HANDLERS = {
     browsing: !!ctx.shell.browsingMode,
   }),
   'save-profile': saveProfile,
+  'reimport-browser': (ctx) => ctx.mirror.reimport(),
   'sign-out': signOut,
   'get-fingerprint': (ctx) => ctx.persona.summary(),
 };

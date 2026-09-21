@@ -60,6 +60,8 @@ export const REGISTRABLE_LABELS = 2;
 
 /** Hex characters of the key hash that name a key's default persona. */
 export const DEFAULT_ID_HEX_CHARS = 12;
+/** Hex characters of the hash that names a persona mirroring one real profile. */
+export const MIRROR_ID_HEX_CHARS = 16;
 /** Random bytes in a new persona's id. */
 export const PERSONA_ID_BYTES = 8;
 /** LCG multiplier (Numerical Recipes); must match the browser side. */

@@ -2,7 +2,9 @@
  * Personas: creating, resolving and running as them. See model.ts for what a
  * persona is and why its device never changes.
  */
+import { createHash } from 'crypto';
 import { getFingerprintForPersona, previewProfile, defaultPersonaSeed, newPersonaSeed } from './fingerprint.ts';
+import { seedFromString } from './prng.ts';
 import {
   shape,
   markChecked,
@@ -16,7 +18,7 @@ import {
 import type { PersonaRepository } from './repository.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { MAX_NAME_CHARS } from './constants.ts';
+import { MAX_NAME_CHARS, MIRROR_ID_HEX_CHARS } from './constants.ts';
 import { PersonaStore } from './store.ts';
 import { PersonaSlots } from './slots.ts';
 import { describePersona } from './view.ts';
@@ -71,6 +73,36 @@ type ClonePersona = {
   /** Name for the copy; defaults to the source's plus "(copy)". */
   name?: string;
 };
+
+/** One real browser profile to mirror into a persona. */
+export type MirrorProfile = {
+  /** The source browser, e.g. "chrome"; part of the persona's stable id. */
+  source: string;
+  /** The profile directory, e.g. "Default"; part of the persona's stable id. */
+  profile: string;
+  /** Display name for the persona; defaults to the profile directory. */
+  name?: string;
+  /** The captured real-device fingerprint this persona runs as. */
+  device: any;
+};
+
+/** The stable id of the persona mirroring one profile: never collides across owners or profiles. */
+const mirroredId = (owner: string, source: string, profile: string) =>
+  'm-' + createHash('sha256').update(`${owner}:${source}:${profile}`).digest('hex').slice(0, MIRROR_ID_HEX_CHARS);
+
+/** The id and owner a mirrored persona is created under. */
+type MirroredOwner = Pick<Persona, 'id' | 'owner'>;
+
+/** A persona record that runs as a captured real device; its seed is derived from its stable id. */
+const mirroredPersona = (owner: MirroredOwner, name: string, device: any): Persona =>
+  shape({
+    ...owner,
+    name: name.slice(0, MAX_NAME_CHARS),
+    seed: seedFromString(owner.id),
+    device,
+    maxConcurrent: DEFAULT_MAX_CONCURRENT,
+    createdAt: new Date().toISOString(),
+  });
 
 /** A positive number as given, or `fallback`. */
 const positiveOr = (value: unknown, fallback: number) => (Number(value) > 0 ? Number(value) : fallback);
@@ -246,9 +278,35 @@ export class PersonaService {
     return owned[0];
   }
 
-  /** The device fingerprint this persona's seed, prefs and proxy produce. */
-  fingerprintFor(persona: Pick<Persona, 'id' | 'seed' | 'prefs' | 'proxy'>) {
+  /**
+   * The device fingerprint a persona runs as: its captured real device when it
+   * mirrors one, otherwise the profile its seed, prefs and proxy generate. The
+   * id and proxy are always the persona's own, so a device captured on one
+   * machine still carries this persona's id and proxy.
+   */
+  fingerprintFor(persona: Pick<Persona, 'id' | 'seed' | 'prefs' | 'proxy' | 'device'>) {
+    if (persona.device)
+      return { ...persona.device, id: persona.id, proxy: persona.proxy || persona.device.proxy || null };
     return getFingerprintForPersona({ id: persona.id, seed: persona.seed, prefs: persona.prefs, proxy: persona.proxy });
+  }
+
+  /**
+   * The persona that mirrors one real browser profile. Its id is derived from
+   * the owner, source browser and profile, so re-importing the same profile
+   * finds the same persona instead of making a second one. The device is set
+   * once, on creation, and left immutable like the seed.
+   */
+  mirror(apiKey: string, { source, profile, name, device }: MirrorProfile) {
+    const owner = this.deps.ownerOf(apiKey);
+    const id = mirroredId(owner, source, profile);
+    return this.store.get(id) || this.putMirrored({ id, owner }, name || profile, device);
+  }
+
+  /** Stores a new mirrored persona and returns it. */
+  private putMirrored(owner: MirroredOwner, name: string, device: any) {
+    const p = mirroredPersona(owner, name, device);
+    this.store.put(p);
+    return p;
   }
 
   /**

@@ -52,6 +52,13 @@ export interface Persona {
   seed: number;
   /** Device choices made at creation, or null to let the seed decide. */
   prefs: PersonaPrefs | null;
+  /**
+   * A captured real-device fingerprint that overrides the seeded one, or null
+   * for the usual generated device. Set once when a persona mirrors a real
+   * browser, then immutable like the seed: it is the device the cookie jar is
+   * paired with.
+   */
+  device: any | null;
   /** The persona's own proxy, or null to use an assigned or residential one. */
   proxy: PersonaProxy | null;
   /** How many browsers may run as this persona at once; Infinity for no cap. */
@@ -82,6 +89,7 @@ const deviceOf = (p: any) => ({
   // are the fingerprint, and the fingerprint is what must not change.
   prefs: p.prefs && typeof p.prefs === 'object' ? { ...p.prefs } : null,
   proxy: p.proxy || null,
+  device: p.device && typeof p.device === 'object' ? p.device : null,
 });
 
 /** How a persona is used: its cap, whether it is the default, and when it was made and last run. */
