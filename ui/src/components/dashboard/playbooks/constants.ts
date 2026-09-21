@@ -14,8 +14,15 @@ export const FPS_WINDOW_MS = 1000;
  * in five minutes, shorter than plenty of flows, so recording renews it this often.
  */
 export const CONTROL_RENEW_MS = 120_000;
+/** Shown when the hold could neither be renewed nor taken again. */
+export const HOLD_LOST =
+  'Could not keep control of the browser. Your steps so far are safe: stop and save, or take control again.';
+/** Minutes left at which a recording warns that the server is about to stop it. */
+export const RECORD_WARN_MINUTES = 5;
 /** How often a replay run is polled. */
 export const RUN_POLL_MS = 2000;
+/** Failed polls in a row before the person is told contact with the run is lost. */
+export const POLL_FAILURES_BEFORE_NOTICE = 3;
 /** How long a browser started from here gets to dial in, cloud ones take up to ~90s. */
 export const CONNECT_TIMEOUT_MS = 150_000;
 

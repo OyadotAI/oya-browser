@@ -43,8 +43,8 @@ export async function welcomeMessage(apiKey: string, browserId: string, persona,
   return { type: 'auth_ok', browser_id: browserId, control, fingerprint, ...personaState(persona) };
 }
 
-/** The persona as the browser needs it: its name, cookie jar and localStorage. */
+/** The persona as the browser needs it: its name, cookie jar and localStorage, and this server's clock, which the cookie stamps are on. */
 function personaState(persona) {
   const id = persona.id;
-  return { persona: { id, name: persona.name }, cookies: getAllCookies(id), origins: getStorage(id) };
+  return { persona: { id, name: persona.name }, cookies: getAllCookies(id), origins: getStorage(id), now: Date.now() };
 }

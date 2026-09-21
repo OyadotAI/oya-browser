@@ -9,6 +9,7 @@ import type {
   ControlCredential,
   ControlEvent,
   ControlRole,
+  Cookie,
   Fingerprint,
   PersonaInfo,
   PersonaPrefs,
@@ -202,6 +203,26 @@ export interface CredentialsSaved extends SiteLogin {
 export interface SiteLogins {
   /** Usernames only. */
   credentials: SiteLogin[];
+}
+
+/** `GET /api/pool/cookies`. */
+export interface CookieJar {
+  /** The persona the jar belongs to. */
+  persona: string;
+  /** Its cookies. */
+  cookies: Cookie[];
+}
+
+/** `PUT /api/pool/cookies`: what an import did. */
+export interface CookiesImported {
+  /** The persona the cookies went to. */
+  persona: string;
+  /** Cookies merged into the jar. */
+  imported: number;
+  /** Cookies left out: no name, value or domain, or already expired. */
+  skipped: number;
+  /** Cookies in the jar afterwards. */
+  total: number;
 }
 
 /** `GET /api/playbooks`. */

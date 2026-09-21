@@ -92,6 +92,27 @@ describe('the workflow studio', () => {
     assert.match($('record-finish-copy').textContent, /Save the changes to update it in Oya/);
   });
 
+  it('warns as a recording nears the step limit, and says why it stopped at it', async () => {
+    const many = (n) => Array.from({ length: n }, (_, i) => ({ ...STEPS[0], id: `s${i}` }));
+    const { ws, push, $ } = await studioApp({ steps: many(10) });
+    assert.equal($('record-limit').hidden, true);
+    ws.capture(many(460), [], true);
+    await push();
+    assert.equal(
+      $('record-limit').textContent,
+      '460 of 500 steps. Recording stops at 500: finish this part, save it, and record the rest as a second workflow.',
+    );
+    ws.capture(many(500), [], false);
+    await push();
+    assert.match($('record-limit').textContent, /^Recording stopped at the 500-step limit\./);
+    assert.equal($('record-limit').hidden, false);
+  });
+
+  it('shows the record shortcut on the button, since it is no longer the one people guess', async () => {
+    const { $ } = await studioApp();
+    assert.equal($('record-toggle').title, 'Start or stop recording (⌘⌥R)');
+  });
+
   it('counts steps in words, with one step singular', async () => {
     const { $ } = await studioApp({ steps: STEPS.slice(0, 1) });
     assert.equal($('record-count').textContent, '1 step');

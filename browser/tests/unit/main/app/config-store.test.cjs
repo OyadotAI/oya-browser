@@ -19,7 +19,7 @@ describe('ConfigStore', () => {
     assert.deepEqual(store.load(), {
       serverUrl: 'wss://oyabrowser.com/ws',
       apiKey: '',
-      browserName: 'Oya Browser linux',
+      browserName: 'Oya Browser on Linux',
       activeProfileId: null,
       mirroredFrom: '',
     });

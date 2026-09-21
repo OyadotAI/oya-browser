@@ -11,6 +11,31 @@ const any = (body: unknown = {}) => client(new Proxy({}, { get: () => ({ body })
 /** The method, path and body of each call. */
 const summary = (calls: Call[]) => calls.map((c) => [c.method, c.path, c.body]);
 
+describe('oya.personas cookies', () => {
+  it('exports a jar as stored or ready for Playwright, imports into one, and clears one', async () => {
+    const { oya, calls } = any({ cookies: [{ name: 'sid' }], imported: 1 });
+    assert.deepEqual(await oya.personas.cookies('p1'), [{ name: 'sid' }]);
+    await oya.personas.cookies('p1', 'playwright');
+    assert.equal((await oya.personas.importCookies('p2', [{ name: 'sid', value: 'v', domain: '.x.com' }])).imported, 1);
+    await oya.personas.clearCookies('p2');
+    assert.deepEqual(summary(calls), [
+      ['GET', '/api/pool/cookies?persona=p1&format=json', undefined],
+      ['GET', '/api/pool/cookies?persona=p1&format=playwright', undefined],
+      ['PUT', '/api/pool/cookies?persona=p2', { cookies: [{ name: 'sid', value: 'v', domain: '.x.com' }] }],
+      ['DELETE', '/api/pool/cookies?persona=p2', undefined],
+    ]);
+  });
+
+  it("copies one persona's logins into another", async () => {
+    const { oya, calls } = any({ cookies: [{ name: 'sid', value: 'v', domain: '.x.com' }], imported: 1 });
+    assert.equal((await oya.personas.copyCookies('p1', 'p2')).imported, 1);
+    assert.deepEqual(summary(calls), [
+      ['GET', '/api/pool/cookies?persona=p1&format=json', undefined],
+      ['PUT', '/api/pool/cookies?persona=p2', { cookies: [{ name: 'sid', value: 'v', domain: '.x.com' }] }],
+    ]);
+  });
+});
+
 describe('oya.personas', () => {
   it('unwraps the listing, the preview and a persona', async () => {
     const { oya } = any({ personas: [{ id: 'p1' }], fingerprint: { platform: 'Win32' } });

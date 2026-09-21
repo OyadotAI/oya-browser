@@ -122,7 +122,7 @@ Also [Cursor, Claude Desktop and any agent that reads skills](https://oyabrowser
 | **It proves what it did** | A hash-chained audit trail the database won't let you rewrite, host allow-listing, [regenerable evidence](compliance/EVIDENCE.md) |
 | **It isn't one vendor** | Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome ([why](docs/why-oya.md)) |
 | **It keeps your tools** | Every browser has a `cdpUrl`, so Playwright and Puppeteer connect unchanged |
-| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) |
+| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [moving logins](docs/logins.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) |
 
 ## Packages
 

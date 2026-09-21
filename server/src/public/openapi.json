@@ -1757,9 +1757,13 @@
     },
     "/pool/cookies": {
       "get": {
-        "summary": "View shared cookie jar",
+        "summary": "Export a persona's cookie jar",
         "operationId": "getPoolCookies",
-        "description": "Returns all cookies in the shared pool cookie jar. Cookies are synced across all browsers in the pool.",
+        "description": "The cookies of one of the caller's personas: the logins its browsers share. `format=playwright` answers the shape `context.addCookies()` takes; `format=netscape` answers a cookies.txt download for curl, wget and yt-dlp.",
+        "parameters": [
+          { "name": "persona", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Persona id; the key's default persona when omitted." },
+          { "name": "format", "in": "query", "required": false, "schema": { "type": "string", "enum": ["json", "playwright", "netscape"], "default": "json" } }
+        ],
         "responses": {
           "200": {
             "description": "Cookie jar",
@@ -1787,6 +1791,65 @@
               }
             }
           }
+        }
+      },
+      "put": {
+        "summary": "Import cookies into a persona's jar",
+        "operationId": "importPoolCookies",
+        "description": "Merges cookies into one of the caller's persona jars. The persona's browsers pick them up on their next visit to each site. Use it to bring in logins exported from another browser, or to copy one persona's logins to another. Audited.",
+        "parameters": [
+          { "name": "persona", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Persona id; the key's default persona when omitted." }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["cookies"],
+                "properties": {
+                  "cookies": {
+                    "type": "array",
+                    "maxItems": 20000,
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "value", "domain"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "value": { "type": "string" },
+                        "domain": { "type": "string" },
+                        "path": { "type": "string" },
+                        "secure": { "type": "boolean" },
+                        "httpOnly": { "type": "boolean" },
+                        "sameSite": { "type": "string" },
+                        "expirationDate": { "type": "number", "description": "Seconds since the epoch; `expires` is accepted too. Omit for a session cookie." }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was merged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "persona": { "type": "string" },
+                    "imported": { "type": "integer" },
+                    "skipped": { "type": "integer", "description": "Cookies without a name, value or domain, or already expired." },
+                    "total": { "type": "integer", "description": "Cookies in the jar afterwards." }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "No cookie list, or more than 20000 cookies" }
         }
       },
       "delete": {

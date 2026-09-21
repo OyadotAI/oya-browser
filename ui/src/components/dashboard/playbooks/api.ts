@@ -49,9 +49,13 @@ export const recordCall = <T = unknown>(key: string, browserId: string, body: Re
 export const postInput = (key: string, browserId: string, action: string, params: Record<string, unknown>) =>
   api<InputResult>(`/control/sessions/${seg(browserId)}/input`, { key, method: 'POST', body: { action, params } });
 
-/** Takes (or renews) a person's hold on a browser; `force` takes it from someone else. */
+/** Takes a person's hold on a browser; `force` takes it from someone else. */
 export const acquireControl = (key: string, browserId: string, force = false) =>
   api(`/control/sessions/${seg(browserId)}/control`, { key, method: 'POST', body: { action: 'acquire', force } });
+
+/** Extends the hold this person already has; refused when they no longer hold the browser. */
+export const renewControl = (key: string, browserId: string) =>
+  api(`/control/sessions/${seg(browserId)}/control`, { key, method: 'POST', body: { action: 'renew' } });
 
 /** Saves recorded steps as a playbook. */
 export const savePlaybook = (key: string, browserId: string, body: SaveRequest) =>

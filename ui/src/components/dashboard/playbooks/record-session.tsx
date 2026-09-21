@@ -5,6 +5,7 @@
 'use client';
 
 import LiveView from '../live-view';
+import { RECORD_WARN_MINUTES } from './constants';
 import { describeStep, frameAge, withScheme } from './format';
 import type { RecordForm } from './use-record-form';
 import type { useRecorder } from './use-recorder';
@@ -16,6 +17,9 @@ interface Props {
   /** The save form. */
   form: RecordForm;
 }
+
+/** Whether so few minutes are left that the person should be told. */
+const endingSoon = (minutes?: number) => minutes !== undefined && minutes <= RECORD_WARN_MINUTES;
 
 /** Props for the status line. */
 interface StatusProps {
@@ -38,6 +42,16 @@ function StatusLine({ recording, count }: StatusProps) {
         {count} step{count === 1 ? '' : 's'}
       </span>
     </div>
+  );
+}
+
+/** Said in the last minutes of a recording, which the server stops on its own: it used to stop without a word. */
+function EndingSoon({ minutes }: { /** Whole minutes left. */ minutes: number }) {
+  return (
+    <p className="text-[12px] text-yellow" role="status">
+      This recording stops on its own in {minutes} minute{minutes === 1 ? '' : 's'}. Stop and save it, then record the
+      rest.
+    </p>
   );
 }
 
@@ -134,6 +148,9 @@ export default function RecordSession({ session, form }: Props) {
   return (
     <>
       <StatusLine recording={recording} count={steps.length} />
+      {recording && endingSoon(session.r.state?.minutesLeft) && (
+        <EndingSoon minutes={session.r.state?.minutesLeft ?? 0} />
+      )}
       {recording && (
         <>
           <AddressBar session={session} form={form} />

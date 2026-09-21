@@ -37,3 +37,5 @@ export const MAX_PROVISION = 100;
 export const PROVISION_IN_FLIGHT = 10;
 /** The port a CDP URL names when the request carries no Host header. */
 export const DEFAULT_PORT = 3100;
+/** Cookies accepted by one PUT /pool/cookies; a whole browser profile fits, a runaway upload does not. */
+export const MAX_IMPORT_COOKIES = 20_000;

@@ -62,8 +62,11 @@ describe('Lifecycle', () => {
     assert.equal(flushed, true);
   });
 
-  it('disconnects and quits when the last window closes', () => {
+  it('sends the cookie changes still queued, then disconnects and quits, when the last window closes', () => {
+    let socketUpAtFlush = null;
+    ctx.cookies.flushCookieChanges = () => (socketUpAtFlush = !ctx.socket.disconnects);
     ctx.electron.app.emit('window-all-closed');
+    assert.equal(socketUpAtFlush, true, 'a login made a moment ago goes out while the socket is still up');
     assert.equal(ctx.socket.disconnects, 1);
     assert.equal(ctx.electron.app.quitted, true);
   });

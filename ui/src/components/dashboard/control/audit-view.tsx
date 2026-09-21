@@ -31,7 +31,7 @@ export default function AuditView({ audit }: { /** Audit trail. */ audit: AuditE
           {!audit.length && (
             <tr>
               <td colSpan={AUDIT_COLUMNS} className="px-3 py-8 text-center text-text-dim text-xs">
-                No audit events (admin key required).
+                No audit events yet. Starting, stopping and changing things with this key will show up here.
               </td>
             </tr>
           )}

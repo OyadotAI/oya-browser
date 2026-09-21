@@ -29,24 +29,27 @@ const persona = {
   login: { cookies: 1, sites: ['a.com', 'b.com'], updatedAt: null },
 } as unknown as Persona;
 
-/** Renders the tab with `personas`. */
-function setup(personas: Persona[] = [persona]) {
+/** Renders the tab with `personas`, loaded unless `status` says otherwise. */
+function setup(personas: Persona[] = [persona], status: 'loading' | 'ready' | 'failed' = 'ready') {
   const onOpen = vi.fn();
-  render(
+  const refresh = vi.fn();
+  const tab = (now: 'loading' | 'ready' | 'failed') => (
     <ToastProvider>
       <PersonasTab
         apiKey="k"
         browsers={[]}
         personas={personas}
-        refresh={vi.fn()}
+        status={now}
+        refresh={refresh}
         openId={null}
         onOpen={onOpen}
         onShowBrowsers={vi.fn()}
-        now={Date.now()}
+        now={0}
       />
-    </ToastProvider>,
+    </ToastProvider>
   );
-  return { onOpen };
+  const view = render(tab(status));
+  return { onOpen, refresh, rerenderWith: (next: 'loading' | 'ready' | 'failed') => view.rerender(tab(next)) };
 }
 
 describe('PersonasTab', () => {
@@ -75,6 +78,16 @@ describe('PersonasTab', () => {
     expect(screen.getByText('No profiles yet')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Create one' }));
     expect(await screen.findByRole('dialog', { name: 'New profile' })).toBeTruthy();
+  });
+
+  it('says it is loading, or that it could not load, instead of "No profiles yet"', async () => {
+    const view = setup([], 'loading');
+    expect(screen.getByText('Loading profiles…')).toBeTruthy();
+    expect(screen.queryByText('No profiles yet')).toBeNull();
+    view.rerenderWith('failed');
+    expect(screen.getByText('Could not load your profiles')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(view.refresh).toHaveBeenCalled();
   });
 
   it('opens the proxies dialog', async () => {

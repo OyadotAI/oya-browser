@@ -11,6 +11,8 @@ export const JSON_INDENT = 2;
 export const DEFAULT_BASE_URL = 'https://oyabrowser.com';
 /** The saved config holds a credential: owner read/write only. */
 export const CONFIG_FILE_MODE = 0o600;
+/** Permissions for a file of exported cookies: owner only, because it holds live sessions. */
+export const PRIVATE_FILE_MODE = 0o600;
 
 /** Column widths in `oya ls`. */
 export const LsColumns = {

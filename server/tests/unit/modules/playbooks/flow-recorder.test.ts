@@ -16,7 +16,7 @@ function recorderStub(queue: any[][] = [], extra: any = {}) {
   const dispatch = async (_action, { mode }) => {
     modes.push(mode);
     if (extra.fail?.(mode)) return { ok: false, error: extra.error };
-    return { ok: true, data: { steps: queue.shift() || [], secrets: extra.secrets } };
+    return { ok: true, data: { steps: queue.shift() || [], secrets: extra.secrets, ...extra.report?.(mode) } };
   };
   return { dispatch, modes };
 }
@@ -119,8 +119,46 @@ describe('flow recorder', () => {
     assert.deepEqual(modes, ['start', 'stop']);
   });
 
+  it('shows the recording as stopped once the browser says its recorder stopped', async () => {
+    const report = (mode) => (mode === 'drain' ? { recording: false } : { recording: true });
+    const { dispatch, modes } = recorderStub([[], [{ id: 'kept', action: 'click' }]], { report });
+    await flows.start(browserId, dispatch);
+    const seen = await flows.status(browserId, dispatch);
+    assert.deepEqual([seen.recording, seen.steps[0].id], [false, 'kept']);
+    mock.timers.tick(RECORD_POLL_MS);
+    await settle();
+    assert.deepEqual(modes, ['start', 'drain'], 'a stopped recording is no longer polled');
+  });
+
+  it('picks up a recording the browser is still running after this server restarted', async () => {
+    const report = () => ({ recording: true, origin: 'remote' });
+    const { dispatch, modes } = recorderStub([[{ id: 'before-restart', action: 'click' }]], { report });
+    const seen = await flows.status(browserId, dispatch);
+    assert.deepEqual([seen.recording, seen.steps[0].id], [true, 'before-restart']);
+    mock.timers.tick(RECORD_POLL_MS);
+    await settle();
+    assert.deepEqual(modes, ['drain', 'drain'], 'and polls it from then on');
+  });
+
+  it('leaves alone a recording a person started at the desktop, and a browser that cannot answer', async () => {
+    const desktop = recorderStub([[{ id: 'theirs', action: 'click' }]], {
+      report: () => ({ recording: true, origin: 'desktop' }),
+    });
+    assert.deepEqual(await flows.status(browserId, desktop.dispatch), { recording: false, steps: [], secrets: [] });
+    const down = recorderStub([], { fail: () => true });
+    assert.deepEqual(await flows.status(browserId, down.dispatch), { recording: false, steps: [], secrets: [] });
+  });
+
   it('answers null when stopping a browser that never recorded', async () => {
     assert.equal(await flows.stop('b-never', recorderStub().dispatch), null);
+  });
+
+  it('says how many minutes are left, so the console can warn before it stops on its own', async () => {
+    const { dispatch } = recorderStub();
+    const started = await flows.start(browserId, dispatch);
+    assert.equal(started.minutesLeft, RECORD_MAX_MS / 60_000);
+    mock.timers.tick(RECORD_MAX_MS - 4.5 * 60_000);
+    assert.equal((await flows.status(browserId)).minutesLeft, 5);
   });
 
   it('stops on its own after the longest recording, then forgets it later', async () => {

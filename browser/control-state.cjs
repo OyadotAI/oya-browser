@@ -185,6 +185,7 @@ class ControlState {
   /** Offline: the handoff is decided here. */
   settleLocally(action) {
     this.localHeld = action === 'acquire';
+    if (!this.localHeld) this.heldAtDrop = false;
     const mode = this.localHeld ? 'human' : this.localClients ? 'agent' : 'offline';
     this.state = { mode, mine: this.localHeld, local: true };
   }
@@ -212,13 +213,30 @@ class ControlState {
 
 /** The connection and local-command half of the control state: what the socket and the front door report. */
 class DesktopControl extends ControlState {
-  /** The socket authenticated; `value` is the server's control state, if it supports control. */
+  /** A person held control when the socket dropped, so a reconnect takes it back. */
+  heldAtDrop = false;
+
+  /**
+   * The socket authenticated; `value` is the server's control state, if it supports control.
+   * A server that forgot the person's hold (a restart, a lapse while offline) is asked for it
+   * again, so a network blip never hands a person's page to the agent mid-task.
+   */
   connect(value) {
-    this.connected = true;
-    this.supported = !!value;
-    this.localHeld = false;
-    this.state = value || { mode: 'unavailable' };
-    this.publish();
+    const reclaim = this.heldAtDrop && !!value && !(value.mode === 'human' && value.mine);
+    Object.assign(this, { heldAtDrop: false, connected: true, supported: !!value, localHeld: false });
+    this.state = reclaim
+      ? { ...value, mode: 'paused', mine: false, reclaiming: true }
+      : value || { mode: 'unavailable' };
+    if (reclaim) this.reclaim(value);
+    else this.publish();
+  }
+
+  /** Takes control back after a reconnect; when the server refuses before answering, its own state stands. */
+  reclaim(value) {
+    this.change('acquire').catch(() => {
+      if (this.state.reclaiming) this.state = value;
+      this.publish();
+    });
   }
 
   /** The socket closed: fall back to local control and fail every pending request. */
@@ -226,8 +244,8 @@ class DesktopControl extends ControlState {
     const wasConnected = this.connected;
     const { localClients } = this;
     this.localHeld = localClients > 0 && (this.localHeld || this.busy || this.state.mode !== 'agent');
-    this.connected = false;
-    this.supported = false;
+    this.heldAtDrop ||= wasConnected && this.state.mode === 'human' && !!this.state.mine;
+    Object.assign(this, { connected: false, supported: false });
     this.state = { mode: this.disconnectedMode(wasConnected), mine: this.localHeld, local: localClients > 0 };
     this.requests.failAll();
     this.publish();
@@ -295,6 +313,17 @@ class DesktopControl extends ControlState {
   }
 }
 
+/**
+ * Whether an agent, or a person somewhere else, has the page. A lapsed hold, a
+ * handoff in progress and a dropped socket are not that: nobody else is driving,
+ * so what waits on the person (their recording, their sign-in popup) carries on.
+ * Treating every non-interactive moment as "lost" is what stopped recordings by
+ * themselves and froze Google's sign-in window.
+ */
+function drivenElsewhere(state) {
+  return state.mode === 'agent' || (state.mode === 'human' && !state.mine);
+}
+
 /** The public methods, bound, as createControlState has always returned them. */
 const CONTROL_API = [
   'snapshot',
@@ -316,4 +345,4 @@ function createControlState({ send, changed }) {
   return api;
 }
 
-module.exports = { createControlState };
+module.exports = { createControlState, drivenElsewhere };

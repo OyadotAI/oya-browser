@@ -147,8 +147,10 @@ async function configureProxy(ses, proxyConfig) {
  * @param {Electron.App} app
  */
 function applyDNSLeakPrevention(app) {
-  // Disable DoH to prevent DNS bypass
-  app.commandLine.appendSwitch('disable-features', 'DnsOverHttps');
+  // Disable DoH to prevent DNS bypass. appendSwitch replaces a switch's value, and this
+  // runs after the telemetry flags: it used to wipe their whole --disable-features list.
+  const already = app.commandLine.getSwitchValue?.('disable-features') || '';
+  app.commandLine.appendSwitch('disable-features', [...already.split(',').filter(Boolean), 'DnsOverHttps'].join(','));
   // Disable async DNS resolver that might bypass proxy
   app.commandLine.appendSwitch('disable-async-dns');
 }

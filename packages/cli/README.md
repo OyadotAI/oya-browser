@@ -102,6 +102,24 @@ oya personas edit <id> --max 4 --geo US
 oya personas rm <id>
 ```
 
+### Moving logins (`oya cookies`)
+
+A persona's cookie jar is its logins. Sign in once, then carry the session to wherever it is needed:
+
+```bash
+# Save a persona's logins to a file (owner-readable only: it holds live sessions)
+oya cookies export <persona> --out logins.json
+
+# The same, shaped for Playwright's context.addCookies()
+oya cookies export <persona> --format playwright --out pw-cookies.json
+
+# Bring logins in from a file: an export, or any JSON list of cookies
+oya cookies import <persona> logins.json
+
+# Give one persona another persona's logins (each keeps its own device)
+oya cookies copy <from-persona> <to-persona>
+```
+
 ### Human-in-the-Loop Takeover
 
 When automation encounters hardware 2FA, phone biometric approvals, or complex verification:

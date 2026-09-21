@@ -8,6 +8,7 @@ import { Loader2, Copy, Trash2, Lock } from 'lucide-react';
 import Dialog, { Confirm } from '@/components/ui/dialog';
 import { Preview } from './persona-form';
 import { clone, remove, save } from './personas/drawer-actions';
+import { LoginsSection } from './personas/drawer-logins';
 import { RunningSection, SessionsSection } from './personas/drawer-overview';
 import { MfaSection, SignInsSection } from './personas/drawer-secrets';
 import SettingsSection from './personas/drawer-settings';
@@ -80,6 +81,7 @@ export default function PersonaDrawer(props: DrawerProps) {
       >
         <div className="space-y-5">
           <SessionsSection {...ctx} />
+          <LoginsSection apiKey={props.apiKey} persona={p} onChanged={props.onChanged} />
           <RunningSection {...ctx} />
           <SettingsSection {...ctx} />
           <MfaSection {...ctx} />

@@ -138,13 +138,28 @@ function jarOf(id) {
   return jars.get(id);
 }
 
+/** A cookie as the browser sent it: without the stamp this store adds. */
+const unstamped = ({ t: _t, ...cookie }) => JSON.stringify(cookie);
+
+/**
+ * Keeps a cookie, stamped with when it last really changed. A dump repeats the
+ * whole jar on every connect, so a repeat keeps its stamp: the stamp is how a
+ * browser tells a cookie another browser refreshed since it last synced from
+ * one it already has, and stale copies stopped overwriting fresh logins.
+ */
+function keep(jar, c) {
+  const key = cookieKey(c);
+  const old = jar.get(key);
+  jar.set(key, { ...c, t: old && unstamped(old) === unstamped(c) ? old.t : Date.now() });
+}
+
 /** Merge a full cookie dump into the persona's jar; expired ones remove their match. Returns the unexpired cookies. */
 export function mergeDump(id, cookies) {
   if (!id || !Array.isArray(cookies)) return [];
   const jar = jarOf(id);
   for (const c of cookies.filter(validCookie)) {
     if (expired(c)) jar.delete(cookieKey(c));
-    else jar.set(cookieKey(c), c);
+    else keep(jar, c);
   }
   changed(id);
   return getAll(id);
@@ -156,7 +171,7 @@ export function applyChange(id, change) {
   const jar = jarOf(id),
     c = change.cookie;
   if (change.removed || expired(c)) jar.delete(cookieKey(c));
-  else jar.set(cookieKey(c), c);
+  else keep(jar, c);
   changed(id);
   return change;
 }

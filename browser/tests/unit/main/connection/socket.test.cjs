@@ -76,6 +76,8 @@ describe('ControlSocket', () => {
       api_key: 'k',
       browser_id: 'b',
       browser_name: 'n',
+      // So a key's first default persona is this machine's kind of device, not a random one.
+      host_platform: { darwin: 'MacIntel', win32: 'Win32', linux: 'Linux x86_64' }[process.platform],
       persona: 'p',
       provider: 'oya-cloud',
       enrollment_token: process.env.OYA_ENROLLMENT_TOKEN,

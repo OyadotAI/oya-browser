@@ -4,7 +4,13 @@
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { clearJar, poolCommand, queryPersona } from '../../../../../src/modules/browsers/http/pool.ts';
+import {
+  clearJar,
+  exportJar,
+  importJar,
+  poolCommand,
+  queryPersona,
+} from '../../../../../src/modules/browsers/http/pool.ts';
 import { container } from '../../../../../src/app/container.ts';
 import { recent } from '../../../../../src/platform/audit.ts';
 import { disconnectBrowser } from '../../../support/fakes.ts';
@@ -84,5 +90,63 @@ describe('clearJar', () => {
     const res = new FakeResponse();
     clearJar(fakeRequest(), res);
     assert.deepEqual([res.statusCode, res.body], [500, { error: 'store offline' }]);
+  });
+});
+
+describe('importJar', () => {
+  const cookie = (name: string, extra: object = {}) => ({ name, value: 'v', domain: '.site.test', ...extra });
+
+  it('merges the cookies into the persona’s jar, says how many were kept, and audits it', () => {
+    const res = new FakeResponse();
+    importJar(
+      fakeRequest({
+        key: 'k-import',
+        body: { cookies: [cookie('sid'), { name: 'broken' }, cookie('old', { expires: 1 })] },
+      }),
+      res,
+    );
+    const persona = container.personas.defaultFor('k-import');
+    assert.deepEqual(res.body, { ok: true, persona: persona.id, imported: 1, skipped: 2, total: 1 });
+    assert.equal(recent({ action: 'cookies.import' })[0].target_id, persona.id);
+  });
+
+  it('answers 400 for a body without a cookie list, or with too many', () => {
+    const none = new FakeResponse();
+    importJar(fakeRequest({ key: 'k-import', body: {} }), none);
+    assert.equal(none.statusCode, 400);
+    const many = new FakeResponse();
+    importJar(fakeRequest({ key: 'k-import', body: { cookies: Array(20_001).fill(cookie('x')) } }), many);
+    assert.equal(many.statusCode, 400);
+  });
+
+  it('answers 404 for a persona the key does not own', () => {
+    const res = new FakeResponse();
+    importJar(fakeRequest({ key: 'k-import', query: { persona: 'p-not-mine' }, body: { cookies: [] } }), res);
+    assert.equal(res.statusCode, 404);
+  });
+});
+
+describe('exportJar', () => {
+  it('answers the jar as json by default, in Playwright’s shape when asked, and as a cookies.txt download', () => {
+    importJar(
+      fakeRequest({ key: 'k-export', body: { cookies: [{ name: 'sid', value: 'v', domain: '.site.test' }] } }),
+      new FakeResponse(),
+    );
+    const json = new FakeResponse();
+    exportJar(fakeRequest({ key: 'k-export' }), json);
+    assert.deepEqual(json.body.cookies, [{ name: 'sid', value: 'v', domain: '.site.test' }]);
+    const playwright = new FakeResponse();
+    exportJar(fakeRequest({ key: 'k-export', query: { format: 'playwright' } }), playwright);
+    assert.equal(playwright.body.cookies[0].expires, -1);
+    const text = new FakeResponse();
+    exportJar(fakeRequest({ key: 'k-export', query: { format: 'netscape' } }), text);
+    assert.match(String(text.ended), /^# Netscape HTTP Cookie File\n\.site\.test\tTRUE/);
+    assert.match(text.headers['Content-Disposition'], /attachment; filename="cookies-.*\.txt"/);
+  });
+
+  it('answers 400 for a format it does not know', () => {
+    const res = new FakeResponse();
+    exportJar(fakeRequest({ key: 'k-export', query: { format: 'yaml' } }), res);
+    assert.equal(res.statusCode, 400);
   });
 });

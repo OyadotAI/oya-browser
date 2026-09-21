@@ -61,7 +61,7 @@ function useRefresh(apiKey: string, setState: Dispatch<SetStateAction<DataState>
 /** One load: fresh data with the error cleared, or just the error. */
 const loadState = (apiKey: string): Promise<Partial<DataState>> =>
   loadControl(apiKey).then(
-    (data) => ({ ...data, error: '' }),
+    (data) => data,
     (e) => ({ error: errorMessage(e, 'Could not load control plane data') }),
   );
 

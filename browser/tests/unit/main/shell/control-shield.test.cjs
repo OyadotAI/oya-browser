@@ -56,11 +56,27 @@ describe('ControlShield', () => {
     const item = { enabled: true };
     ctx.electron.Menu.items.set('browser-reload', item);
     const lost = mock.method(ctx.recorder, 'controlLost', () => {});
-    ctx.shield.controlChanged({ interactive: false });
+    const agent = { interactive: false, mode: 'agent', mine: false };
+    ctx.shield.controlChanged(agent);
     assert.equal(popup.enabled, false);
     assert.equal(item.enabled, false);
     assert.equal(lost.mock.callCount(), 1);
-    assert.deepEqual(ctx.shell.sentOn('control-state'), [{ interactive: false }]);
+    assert.deepEqual(ctx.shell.sentOn('control-state'), [agent]);
+  });
+
+  it('leaves a sign-in popup usable when the hold lapses or the socket drops: nobody else is driving', () => {
+    const popup = Object.assign(new EventEmitter(), { setEnabled: mock.fn(), isDestroyed: () => false });
+    ctx.shield.adoptPopup(popup);
+    for (const state of [
+      { mode: 'paused', mine: false },
+      { mode: 'disconnected' },
+      { mode: 'human', mine: true, busy: true },
+    ])
+      ctx.shield.controlChanged({ interactive: false, ...state });
+    assert.deepEqual(
+      popup.setEnabled.mock.calls.map((c) => c.arguments[0]),
+      [true, true, true, true],
+    );
   });
 
   it('forgets a popup once it closes', () => {

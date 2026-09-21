@@ -68,7 +68,11 @@ class LoginState {
   async installRestore(page) {
     if (page.script) await page.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: page.script });
     const pending = Object.fromEntries(Object.entries(this.origins).filter(([origin]) => !this.visited.has(origin)));
-    const source = `(() => { try { const entries = ${JSON.stringify(pending)}[location.origin]; if (entries) for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value); } catch {} })()`;
+    // Into an origin with no localStorage only. A browser that already holds values for the
+    // origin holds its own, and they may be newer (a token refreshed while the socket was down):
+    // writing the saved copy over them on the first visit of every run logged people out.
+    // ponytail: so a token another browser refreshed never reaches one that has its own; stamp origins like cookies if a site needs that.
+    const source = `(() => { try { const entries = ${JSON.stringify(pending)}[location.origin]; if (entries && !localStorage.length) for (const [key, value] of Object.entries(entries)) localStorage.setItem(key, value); } catch {} })()`;
     const result = await page.send('Page.addScriptToEvaluateOnNewDocument', { source });
     page.script = result.identifier;
   }

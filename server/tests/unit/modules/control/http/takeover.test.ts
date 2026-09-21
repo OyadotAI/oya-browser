@@ -36,6 +36,13 @@ describe('transferControl', () => {
     assert.deepEqual([state.mode, state.holder], ['human', hash('oya_alice')]);
   });
 
+  it('lets a member renew their hold after their console credential was renewed', async () => {
+    const principal = { project: 'p1', memberUser: 'u1' };
+    await transferControl('key-a', { ...request('acquire', 'oya_first'), principal });
+    const state = await transferControl('key-a', { ...request('renew', 'oya_renewed'), principal });
+    assert.equal(state.mode, 'human');
+  });
+
   it('passes force through', async () => {
     await transferControl('key-a', request('acquire'));
     await assert.rejects(transferControl('key-a', request('acquire', 'oya_bob')), { code: 'control_busy' });
@@ -46,6 +53,12 @@ describe('transferControl', () => {
   it('refuses other actions at once while commands are in flight', async () => {
     registry.get(id).pending = 1;
     await assert.rejects(transferControl('key-a', request('request')), { code: 'commands_pending' });
+  });
+
+  it('renews a hold while the holder’s own commands are in flight', async () => {
+    await transferControl('key-a', request('acquire'));
+    registry.get(id).pending = 1;
+    assert.equal((await transferControl('key-a', request('renew'))).mode, 'human');
   });
 
   it('waits for in-flight commands to settle before acquiring', async () => {

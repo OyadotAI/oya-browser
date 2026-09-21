@@ -101,9 +101,9 @@ function replaceSocket(browserId: string, existing) {
  * The persona the browser runs as, with its concurrency slot taken. Resolved
  * before registering, so a capped persona is refused before the browser appears.
  */
-export function takePersona(apiKey: string, browserId: string, requested?: string) {
+export function takePersona(apiKey: string, browserId: string, requested?: string, hostPlatform?: string) {
   try {
-    const persona = container.personas.resolve(apiKey, requested);
+    const persona = container.personas.resolve(apiKey, requested, { platform: hostPlatform });
     return container.personas.acquire(persona, browserId);
   } catch (err) {
     const outcome = err.status === Status.TOO_MANY_REQUESTS ? 'persona_capped' : 'persona_unknown';

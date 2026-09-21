@@ -32,7 +32,10 @@ function gather() {
       hardwareConcurrency: n.hardwareConcurrency,
       deviceMemory: n.deviceMemory || 8,
       maxTouchPoints: n.maxTouchPoints || 0,
-      languages: [...n.languages],
+      languages:
+        n.languages.length === 1 && n.language.includes('-')
+          ? [n.language, n.language.split('-')[0]]
+          : [...n.languages],
       vendor: n.vendor,
     },
     screen: {
@@ -44,14 +47,17 @@ function gather() {
       pixelDepth: s.pixelDepth,
       devicePixelRatio: window.devicePixelRatio,
     },
-    webgl: gl
-      ? {
-          vendor: glp(gl.VENDOR),
-          renderer: glp(gl.RENDERER),
-          unmaskedVendor: dbg ? glp(dbg.UNMASKED_VENDOR_WEBGL) : '',
-          unmaskedRenderer: dbg ? glp(dbg.UNMASKED_RENDERER_WEBGL) : '',
-        }
-      : {},
+    // webglChrome profiles keep what Chrome answers UNMASKED_* with in vendor/renderer. The masked
+    // pair ("WebKit", "WebKit WebGL") was stored here once, and pages saw that as the GPU.
+    webgl:
+      gl && dbg
+        ? {
+            vendor: glp(dbg.UNMASKED_VENDOR_WEBGL),
+            renderer: glp(dbg.UNMASKED_RENDERER_WEBGL),
+            unmaskedVendor: glp(dbg.UNMASKED_VENDOR_WEBGL),
+            unmaskedRenderer: glp(dbg.UNMASKED_RENDERER_WEBGL),
+          }
+        : {},
     // Null noise seeds tell the injection to leave real rendering untouched.
     canvas: { noiseSeed: null },
     audio: { noiseSeed: null },

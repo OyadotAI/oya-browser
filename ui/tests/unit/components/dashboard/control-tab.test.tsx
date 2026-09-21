@@ -136,6 +136,6 @@ describe('ControlTab', () => {
   it('shows a failed load as an alert', async () => {
     vi.mocked(api).mockRejectedValueOnce(new Error('offline'));
     await setup();
-    expect(screen.getByRole('alert').textContent).toBe('offline');
+    expect(screen.getByRole('alert').textContent).toBe('Could not load the fleet: offline');
   });
 });

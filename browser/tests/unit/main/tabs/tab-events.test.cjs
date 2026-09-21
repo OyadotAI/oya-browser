@@ -99,6 +99,25 @@ describe('tab events', () => {
     assert.deepEqual(adopt.mock.calls[0].arguments, [{ id: 'popup' }]);
   });
 
+  it('joins a sign-in popup to a recording in progress', () => {
+    mock.method(ctx.protection, 'protectPopup', () => {});
+    const join = mock.method(ctx.recorder, 'joinIfRecording', async () => {});
+    const popup = { webContents: tab.view.webContents, on() {} };
+    tab.view.webContents.emit('did-create-window', popup);
+    assert.equal(join.mock.calls.at(-1).arguments[0], ctx.tabs.list.at(-1).view);
+    assert.equal(ctx.tabs.list.at(-1).window, popup);
+  });
+
+  it('arms a page again after its renderer died, on the reload that recovers it', async () => {
+    await tab.setup;
+    const forget = mock.method(ctx.recorder.channels, 'forget', () => {});
+    const join = mock.method(ctx.recorder, 'joinIfRecording', async () => {});
+    tab.view.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+    assert.deepEqual(forget.mock.calls[0].arguments, [tab.view]);
+    tab.view.webContents.emit('did-finish-load');
+    assert.deepEqual(join.mock.calls.at(-1).arguments, [tab.view]);
+  });
+
   it('keeps a window the page named, because the page keeps using what it opened', () => {
     const before = ctx.tabs.list.length;
     const decision = tab.view.webContents.openHandler({

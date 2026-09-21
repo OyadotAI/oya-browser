@@ -3,7 +3,7 @@
  * saving it to the server on demand.
  */
 /* global oyaBrowser, Dom, RendererConstants, ConnectionStatus */
-/* exported ProfileSave */
+/* exported ProfileSave, ProfileDevice */
 
 /** Saving the browser profile. */
 const ProfileSave = {
@@ -54,6 +54,26 @@ const ProfileSave = {
   },
 };
 
+/** The device this browser runs as: its persona's, which sites see instead of this computer's. */
+const ProfileDevice = {
+  /** What people call each platform. */
+  platforms: { Win32: 'Windows', MacIntel: 'Mac', 'Linux x86_64': 'Linux' },
+
+  /** Shows the persona's device, or that there is none yet. */
+  render(device) {
+    const label = Dom.byId('profile-device');
+    if (!device) return void (label.textContent = 'This computer, until you connect');
+    const known = Object.hasOwn(ProfileDevice.platforms, device.platform || '');
+    const platform = known ? ProfileDevice.platforms[device.platform] : device.platform;
+    label.textContent = [platform, device.timezone, device.locale, device.screen].filter(Boolean).join(' · ');
+  },
+};
+
+oyaBrowser
+  .getFingerprint()
+  .then(ProfileDevice.render)
+  .catch(() => ProfileDevice.render(null));
+oyaBrowser.onFingerprintChanged(ProfileDevice.render);
 oyaBrowser.onWsStatus(ProfileSave.onStatus);
 Dom.byId('save-profile').addEventListener('click', ProfileSave.save);
 Dom.byId('sign-out').addEventListener('click', () => oyaBrowser.signOut());
@@ -61,4 +81,9 @@ oyaBrowser.onProfileSaved(ProfileSave.saved);
 
 // ── Init ──
 oyaBrowser.getConfig().then(ConnectionStatus.loadConfig);
-oyaBrowser.getStatus().then(ConnectionStatus.loadStatus);
+// The app may have connected before this page was listening, and ws-status is not sent again:
+// the status at start goes to the profile line as well as the pill.
+oyaBrowser.getStatus().then((status) => {
+  ConnectionStatus.loadStatus(status);
+  ProfileSave.onStatus(status);
+});

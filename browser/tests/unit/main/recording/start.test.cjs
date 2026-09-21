@@ -37,11 +37,20 @@ describe('startRecording', () => {
     assert.equal(result.recording, true);
   });
 
-  it('still stops and reports a failure on a live tab', async () => {
+  it('stops and reports a failure on the tab the person is looking at', async () => {
     ctx.recorder.channels.armRecordingView = async (view) => {
-      if (view === closing) throw new Error('page refused');
+      if (view === live) throw new Error('page refused');
     };
     await assert.rejects(ctx.recorder.startRecording(), /page refused/);
     assert.equal(ctx.recorder.recording, false);
+  });
+
+  it('keeps recording when a background tab cannot be armed', async () => {
+    ctx.recorder.channels.armRecordingView = async (view) => {
+      if (view === closing) throw new Error('page refused');
+    };
+    const logged = mock.method(console, 'error', () => {});
+    assert.equal((await ctx.recorder.startRecording()).recording, true);
+    assert.match(logged.mock.calls[0].arguments.join(' '), /page refused/);
   });
 });

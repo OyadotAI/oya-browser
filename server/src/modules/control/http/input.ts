@@ -1,5 +1,6 @@
 /** POST /control/sessions/:id/input: a person's input, sent to the browser under their takeover. */
-import { hash, fault } from '../service.ts';
+import { fault } from '../service.ts';
+import { holder as holderOf } from './guards.ts';
 import { sendCommand } from '../../browsers/socket.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
 import { Status } from '../../../platform/http-status.ts';
@@ -31,7 +32,7 @@ export async function humanInput(req) {
   if (!HUMAN_INPUTS.includes(req.body?.action))
     throw fault('invalid_action', 'Unsupported human input', Status.BAD_REQUEST);
   const params = req.body.params || {};
-  const result = await sendCommand(req.params.id, req.body.action, params, undefined, hash(req.authToken));
+  const result = await sendCommand(req.params.id, req.body.action, params, undefined, holderOf(req));
   // A recording in progress keeps the navigations the person asked for in the live
   // view; what they click and type is seen in the page itself.
   if (result?.ok !== false) flow.noteCommand(req.params.id, req.body.action, req.body.params || {});

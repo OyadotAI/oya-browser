@@ -120,7 +120,7 @@ export class BrowserConnection implements Connection {
     try {
       Object.assign(this, await admit(msg));
       this.authenticated = true;
-      this.persona = takePersona(this.apiKey, this.browserId, msg.persona);
+      this.persona = takePersona(this.apiKey, this.browserId, msg.persona, msg.host_platform);
       return true;
     } catch (err) {
       return this.reject(err);

@@ -16,11 +16,12 @@ describe('server messages', () => {
     ctx.persona = {
       active: null,
       ensureLoginState: () => order.push('login'),
-      applyServerFingerprint: async (fp, cookies) => order.push(['fingerprint', fp.id, cookies.length]),
+      applyServerFingerprint: async (fp, cookies, now) => order.push(['fingerprint', fp.id, cookies.length, now]),
     };
     ctx.cookies = {
+      flushCookieChanges: () => order.push('flush'),
       dumpCookies: async () => order.push('dump'),
-      applyCookieSync: async (c) => order.push(['sync', c]),
+      applyCookieSync: async (c, clock) => order.push(['sync', c, clock]),
       answerPull: (id) => order.push(['pulled', id]),
     };
     ctx.tabs = { enterBrowsingMode: (url) => order.push(['browse', url]) };
@@ -35,8 +36,10 @@ describe('server messages', () => {
       fingerprint: { id: 'p' },
       control: { mode: 'agent' },
       persona: { name: 'Work' },
+      now: 9000,
     });
-    assert.deepEqual(order, ['login', ['fingerprint', 'p', 0], ['browse', 'https://google.com'], 'dump']);
+    const browse = ['browse', 'https://google.com'];
+    assert.deepEqual(order, ['login', ['fingerprint', 'p', 0, 9000], browse, 'flush', 'dump']);
     assert.equal(ctx.socket.browserId, 'srv');
     assert.equal(ctx.socket.ready, true);
     assert.equal(ctx.config.values.profileName, 'Work');
@@ -52,9 +55,9 @@ describe('server messages', () => {
   });
 
   it('applies a cookie sync and answers the pull it was for', async () => {
-    await handleServerMessage(ctx, { type: 'cookie_sync', cookies: [], pullId: 'p1' });
+    await handleServerMessage(ctx, { type: 'cookie_sync', cookies: [], pullId: 'p1', now: 9000 });
     assert.deepEqual(order, [
-      ['sync', []],
+      ['sync', [], { now: 9000, pullId: 'p1' }],
       ['pulled', 'p1'],
     ]);
   });

@@ -3,7 +3,8 @@
  * flow the person demonstrates. It runs under the same takeover as their clicks,
  * so the poll is not an agent command competing with them for the browser.
  */
-import { control, hash, fault } from '../service.ts';
+import { control, fault } from '../service.ts';
+import { holder as holderOf } from './guards.ts';
 import { sendCommand } from '../../browsers/socket.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
 import { Status } from '../../../platform/http-status.ts';
@@ -32,7 +33,7 @@ const MODES: Record<string, (r: Recording) => Promise<unknown>> = {
 
 /** Runs the requested mode and returns what the recorder reports. */
 export async function recordFlow(key, req) {
-  const holder = hash(req.authToken),
+  const holder = holderOf(req),
     id = req.params.id;
   const dispatch = (action, params) => sendCommand(id, action, params, undefined, holder);
   const mode = req.body?.mode;

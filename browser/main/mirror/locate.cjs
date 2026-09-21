@@ -57,20 +57,30 @@ function describeSource(id, name, exe, userDataDir) {
   return { id, name, kind: 'chromium', exe, userDataDir, profiles: profilesOf(userDataDir) };
 }
 
-/** The macOS source browser: Firefox when it is the default, else the https default, else the first installed. */
-function macSource() {
+/** Where macOS apps keep their data. */
+const macSupport = () => path.join(os.homedir(), 'Library', 'Application Support');
+
+/** Every supported browser with data on this Mac, as `{ id, name }`, the https default first. */
+function macSources() {
   const bundle = macDefaultBundleId();
-  if (bundle === FIREFOX_BUNDLE) return firefoxSource();
-  const support = path.join(os.homedir(), 'Library', 'Application Support');
-  const chosen = MAC_BROWSERS[bundle];
-  const spec = chosen && fs.existsSync(path.join(support, chosen.data)) ? chosen : firstInstalledMac(support);
-  if (!spec) return null;
-  return describeSource(macId(spec), spec.name, macExe(spec.app), path.join(support, spec.data));
+  const chromium = Object.entries(MAC_BROWSERS)
+    .filter(([, spec]) => fs.existsSync(path.join(macSupport(), spec.data)))
+    .map(([bundleId, spec]) => ({ id: macId(spec), name: spec.name, isDefault: bundleId === bundle }));
+  const firefox = firefoxSource() ? [{ id: 'firefox', name: 'Firefox', isDefault: bundle === FIREFOX_BUNDLE }] : [];
+  return defaultFirst([...chromium, ...firefox]);
 }
 
-/** The first supported browser with a user-data directory on disk, or null. */
-function firstInstalledMac(support) {
-  return Object.values(MAC_BROWSERS).find((b) => fs.existsSync(path.join(support, b.data))) || null;
+/** The macOS browser named `id`, ready to capture; null when it is not installed. */
+function macSource(id) {
+  if (id === 'firefox') return firefoxSource();
+  const spec = Object.values(MAC_BROWSERS).find((b) => macId(b) === id);
+  if (!spec || !fs.existsSync(path.join(macSupport(), spec.data))) return null;
+  return describeSource(id, spec.name, macExe(spec.app), path.join(macSupport(), spec.data));
+}
+
+/** The list with the person's default browser first, the rest as they were. */
+function defaultFirst(sources) {
+  return [...sources.filter((s) => s.isDefault), ...sources.filter((s) => !s.isDefault)];
 }
 
 /** The launcher binary inside a macOS app bundle. */
@@ -83,15 +93,24 @@ function macId(spec) {
   return spec.name.toLowerCase();
 }
 
-/** The Windows source browser: the https default when supported, else the first installed one. */
-function winSource() {
-  const local = process.env.LOCALAPPDATA;
-  if (!local) return null;
+/** Every supported browser with data on this Windows machine, as `{ id, name }`, the https default first. */
+function winSources() {
+  const local = process.env.LOCALAPPDATA || '';
   const key = winDefaultKey();
-  if (key === 'firefox') return firefoxSource();
-  const spec = WIN_BROWSERS[key] || firstInstalledWin(local);
-  if (!spec) return null;
-  return describeSource(winId(spec), spec.name, path.join(local, spec.exe), path.join(local, spec.data));
+  const chromium = Object.entries(WIN_BROWSERS)
+    .filter(([, spec]) => local && fs.existsSync(path.join(local, spec.data)))
+    .map(([family, spec]) => ({ id: winId(spec), name: spec.name, isDefault: family === key }));
+  const firefox = firefoxSource() ? [{ id: 'firefox', name: 'Firefox', isDefault: key === 'firefox' }] : [];
+  return defaultFirst([...chromium, ...firefox]);
+}
+
+/** The Windows browser named `id`, ready to capture; null when it is not installed. */
+function winSource(id) {
+  if (id === 'firefox') return firefoxSource();
+  const local = process.env.LOCALAPPDATA || '';
+  const spec = Object.values(WIN_BROWSERS).find((b) => winId(b) === id);
+  if (!spec || !local || !fs.existsSync(path.join(local, spec.data))) return null;
+  return describeSource(id, spec.name, path.join(local, spec.exe), path.join(local, spec.data));
 }
 
 /** The registry key holding the user's chosen https handler. */
@@ -107,11 +126,6 @@ function winDefaultKey() {
   } catch {
     return null;
   }
-}
-
-/** The first supported Windows browser with a user-data directory on disk, or null. */
-function firstInstalledWin(local) {
-  return Object.values(WIN_BROWSERS).find((b) => fs.existsSync(path.join(local, b.data))) || null;
 }
 
 /** A stable source key from a Windows browser spec. */
@@ -138,13 +152,18 @@ function readInfoCache(userDataDir) {
   }
 }
 
-/** The OS strategy: the user's real browser and its profiles, or null on an unsupported platform. */
-const SOURCES = { darwin: macSource, win32: winSource };
+/** Per OS: how to list the installed browsers, and how to open one for capture. */
+const SOURCES = { darwin: { list: macSources, open: macSource }, win32: { list: winSources, open: winSource } };
 
-/** The user's default browser to mirror, or null when none is supported or found. */
-function sourceBrowser() {
-  const strategy = SOURCES[process.platform];
-  return strategy ? strategy() : null;
+/** The browsers an import can read on this machine, the person's default first; empty on an unsupported platform. */
+function installedSources() {
+  return Object.hasOwn(SOURCES, process.platform) ? SOURCES[process.platform].list() : [];
 }
 
-module.exports = { sourceBrowser, bundleForHttps, profilesOf };
+/** The browser to mirror: the one named `id`, else the person's default (the first listed); null when there is none. */
+function sourceBrowser(id) {
+  const chosen = id || installedSources()[0]?.id;
+  return chosen ? SOURCES[process.platform].open(chosen) : null;
+}
+
+module.exports = { sourceBrowser, installedSources, defaultFirst, bundleForHttps, profilesOf };

@@ -17,3 +17,6 @@ export const DISPLAY_NAME_MAX_LENGTH = 100;
 export const PROXY_TABLE_COLUMNS = 6;
 /** Profiles a new proxy serves unless changed: one, for a sticky session. */
 export const DEFAULT_MAX_PROFILES = '1';
+
+/** Spaces a saved cookie file is indented by, so a person can read it. */
+export const JSON_INDENT = 2;

@@ -34,7 +34,7 @@ describe('followRun', () => {
     apiMock.mockResolvedValueOnce(run('running')).mockResolvedValueOnce(run('succeeded'));
     const setRun = vi.fn();
     const onFinished = vi.fn();
-    const stop = followRun('k', 'r1', setRun, onFinished);
+    const stop = followRun('k', 'r1', { setRun, onFinished });
     await vi.advanceTimersByTimeAsync(RUN_POLL_MS);
     expect(onFinished).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(RUN_POLL_MS);
@@ -47,9 +47,32 @@ describe('followRun', () => {
   it('keeps following through a failed poll', async () => {
     apiMock.mockRejectedValueOnce(new Error('blip')).mockResolvedValueOnce(run('running'));
     const setRun = vi.fn();
-    const stop = followRun('k', 'r1', setRun, vi.fn());
+    const stop = followRun('k', 'r1', { setRun, onFinished: vi.fn() });
     await vi.advanceTimersByTimeAsync(RUN_POLL_MS * 2);
     expect(setRun).toHaveBeenCalledTimes(1);
+    stop();
+  });
+});
+
+describe('followRun losing contact', () => {
+  beforeEach(() => {
+    apiMock.mockReset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('says so once when several polls in a row fail, instead of looking stuck, and again only after it recovers', async () => {
+    apiMock.mockRejectedValue(new Error('offline'));
+    const trouble = vi.fn();
+    const stop = followRun('k', 'r1', { setRun: vi.fn(), onFinished: vi.fn(), onTrouble: trouble });
+    await vi.advanceTimersByTimeAsync(RUN_POLL_MS * 2);
+    expect(trouble).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(RUN_POLL_MS * 4);
+    expect(trouble).toHaveBeenCalledTimes(1);
+    expect(trouble).toHaveBeenCalledWith('Lost contact with the run (offline). Still trying.');
+    apiMock.mockResolvedValueOnce(run('running')).mockRejectedValue(new Error('offline'));
+    await vi.advanceTimersByTimeAsync(RUN_POLL_MS * 4);
+    expect(trouble).toHaveBeenCalledTimes(2);
     stop();
   });
 });

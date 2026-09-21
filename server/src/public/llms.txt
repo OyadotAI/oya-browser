@@ -241,7 +241,8 @@ different API keys are fully isolated from each other.
 
     GET  /pool                      Pool status (size + browser list)
     POST /pool/command              Round-robin command dispatch
-    GET  /pool/cookies              View shared cookie jar
+    GET  /pool/cookies              Export a persona's cookie jar (?persona=, ?format=json|playwright|netscape)
+    PUT  /pool/cookies              Import { cookies: [...] } into a persona's jar (?persona=)
     DELETE /pool/cookies            Clear shared cookie jar
     POST /fleet/provision?count=N   Batch-generate N API keys (admin only)
 
@@ -278,7 +279,8 @@ Interactive API testing (Swagger UI): GET /swagger
     POST /mcp/pool                  Pool MCP endpoint (round-robin)
     GET  /pool                      Pool status
     POST /pool/command              Pool round-robin command
-    GET  /pool/cookies              Per-key cookie jar (admin sees all)
+    GET  /pool/cookies              Export a persona's cookie jar (?persona=, ?format=)
+    PUT  /pool/cookies              Import cookies into a persona's jar
     POST /fleet/provision?count=N   Batch-generate API keys (admin)
     GET  /config                    Get server settings (admin)
     POST /config                    Update server settings (admin)

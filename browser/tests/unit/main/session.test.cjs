@@ -18,8 +18,15 @@ function fakeSession(ua = ELECTRON_UA) {
     getUserAgent() {
       return this.ua;
     },
-    setUserAgent(value) {
+    setUserAgent(value, languages) {
       this.ua = value;
+      this.languages = languages;
+    },
+    setPermissionRequestHandler(fn) {
+      this.permissionRequest = fn;
+    },
+    setPermissionCheckHandler(fn) {
+      this.permissionCheck = fn;
     },
     async setProxy(value) {
       this.proxy = value;
@@ -28,6 +35,7 @@ function fakeSession(ua = ELECTRON_UA) {
       onBeforeSendHeaders(fn) {
         this.rewrite = fn;
       },
+      onHeadersReceived() {},
     },
   };
 }
@@ -35,7 +43,8 @@ function fakeSession(ua = ELECTRON_UA) {
 /** The headers the session's rewriter sends for `headers`. */
 function rewritten(ses, headers) {
   let out;
-  ses.webRequest.rewrite({ requestHeaders: headers }, ({ requestHeaders }) => (out = requestHeaders));
+  const details = { url: 'https://site.test/', resourceType: 'mainFrame', requestHeaders: headers };
+  ses.webRequest.rewrite(details, ({ requestHeaders }) => (out = requestHeaders));
   return out;
 }
 
@@ -48,47 +57,27 @@ describe('configureSession', () => {
   });
   after(() => restore());
 
-  it('strips the Electron and app tokens when the persona names no platform', async () => {
+  it('presents Chrome with no Electron or app token when there is no persona', async () => {
     const ses = fakeSession();
     await configureSession(ses, null);
     assert.ok(!/Electron|oya-browser/i.test(ses.ua));
-    assert.match(ses.ua, /Chrome\/134\.0\.6998\.44/);
+    assert.match(ses.ua, /Chrome\/134\.0\.0\.0 Safari/);
   });
 
-  it('rewrites the OS in the user agent to the persona platform', async () => {
+  it('presents the persona platform in the user agent and in the client hints it sends', async () => {
     const ses = fakeSession();
     await configureSession(ses, { navigator: { platform: 'Win32' } });
-    assert.equal(
-      ses.ua,
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.44 Safari/537.36',
-    );
+    assert.match(ses.ua, /\(Windows NT 10\.0; Win64; x64\).*Chrome\/134\.0\.0\.0/);
+    const headers = rewritten(ses, { Accept: '*/*' });
+    assert.equal(headers['sec-ch-ua-platform'], '"Windows"');
+    assert.match(headers['sec-ch-ua'], /"Google Chrome";v="134"/);
   });
 
-  it('rewrites the client hints to Chrome on the persona platform, whatever their case', async () => {
+  it("sends the persona's languages with the session, and stops pages being granted the camera unasked", async () => {
     const ses = fakeSession();
-    await configureSession(ses, { navigator: { platform: 'Linux x86_64' } });
-    const headers = rewritten(ses, {
-      'Sec-CH-UA': '"Electron"',
-      'sec-ch-ua-full-version-list': 'x',
-      'sec-ch-ua-platform': '"macOS"',
-      'sec-ch-ua-mobile': '?1',
-      Accept: '*/*',
-    });
-    assert.deepEqual(headers, {
-      'Sec-CH-UA': '"Chromium";v="134", "Google Chrome";v="134", "Not:A-Brand";v="24"',
-      'sec-ch-ua-full-version-list':
-        '"Chromium";v="134.0.6998.44", "Google Chrome";v="134.0.6998.44", "Not:A-Brand";v="24.0.0.0"',
-      'sec-ch-ua-platform': '"Linux"',
-      'sec-ch-ua-mobile': '?0',
-      Accept: '*/*',
-    });
-  });
-
-  it('falls back to a known Chrome version when the user agent names none', async () => {
-    const ses = fakeSession('Mozilla/5.0 Electron/35.1.2');
-    await configureSession(ses, { navigator: { platform: 'MacIntel' } });
-    assert.match(ses.ua, /Chrome\/134\.0\.0\.0/);
-    assert.equal(rewritten(ses, { 'sec-ch-ua-platform': '' })['sec-ch-ua-platform'], '"macOS"');
+    await configureSession(ses, { navigator: { platform: 'Win32', languages: ['fr-FR', 'fr'] } });
+    assert.equal(ses.languages, 'fr-FR,fr');
+    assert.equal(ses.permissionCheck(null, 'media'), false);
   });
 
   it('applies the persona proxy, or goes direct without one', async () => {

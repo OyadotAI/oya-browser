@@ -31,6 +31,8 @@ const DISABLED_FEATURES = [
   'SpareRendererForSitePerProcess',
   'OptimizationHints',
   'Translate',
+  // Chrome ships without it now; Electron still exposes window.sharedStorage, which tells the two apart.
+  'SharedStorageAPI',
 ];
 
 /** Switches that stop background traffic, in the order they are applied. */

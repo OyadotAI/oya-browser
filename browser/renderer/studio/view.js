@@ -70,14 +70,30 @@ const StudioView = {
 
   /** Step count, the storage banner and the record button. */
   header(d, m) {
-    Dom.byId('record-count').textContent = Studio.plural(d.steps.length, 'step');
-    Dom.byId('record-count').title = `Up to ${RendererConstants.MAX_STEPS} steps`;
+    StudioView.stepCount(d.steps.length, m.recording);
     Dom.byId('draft-status').hidden = !Studio.state.storageError;
     Dom.byId('draft-status').textContent = Studio.state.storageError || '';
     Dom.byId('record-toggle-label').textContent = TOGGLE_LABEL[m.stage];
     Dom.byId('record-toggle').classList.toggle('recording', m.recording);
     StudioView.toolbarRecord(m.recording);
     StudioView.expandLabel();
+  },
+
+  /** The step count, and the limit note beside it. */
+  stepCount(count, recording) {
+    Dom.byId('record-count').textContent = Studio.plural(count, 'step');
+    Dom.byId('record-count').title = `Up to ${RendererConstants.MAX_STEPS} steps`;
+    StudioView.stepLimit(count, recording);
+  },
+
+  /** Near the step limit a recording says so; at it, why it stopped: it used to stop without a word. */
+  stepLimit(count, recording) {
+    const { MAX_STEPS, STEPS_WARNING } = RendererConstants;
+    const note = Dom.byId('record-limit');
+    const near = `${count} of ${MAX_STEPS} steps. Recording stops at ${MAX_STEPS}: finish this part, save it, and record the rest as a second workflow.`;
+    const reached = `Recording stopped at the ${MAX_STEPS}-step limit. Save this workflow, then record the rest as a second one.`;
+    note.hidden = count < STEPS_WARNING || (count < MAX_STEPS && !recording);
+    note.textContent = count >= MAX_STEPS ? reached : near;
   },
 
   /** The Oya Agent button shows a recording dot while a workflow is recorded. */

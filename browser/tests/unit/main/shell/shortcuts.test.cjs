@@ -18,8 +18,16 @@ describe('shortcutFor', () => {
   it('maps the command-key shortcuts', () => {
     assert.equal(shortcutFor(key('L')), 'address');
     assert.equal(shortcutFor(key('k')), 'commands');
-    assert.equal(shortcutFor(key('r', { shift: true })), 'record');
+    assert.equal(shortcutFor(key('®', { alt: true, code: 'KeyR' })), 'record');
     assert.equal(shortcutFor(key('}', { shift: true, code: 'BracketRight' })), 'next-tab');
+  });
+
+  it("reloads on Chrome's hard-reload keys instead of toggling the recording", () => {
+    assert.equal(shortcutFor(key('r', { shift: true })), 'reload');
+  });
+
+  it('ignores a held key repeating, so one press never starts and stops a recording', () => {
+    assert.equal(shortcutFor(key('®', { alt: true, code: 'KeyR', isAutoRepeat: true })), undefined);
   });
 
   it('ignores key-up, alt, a missing modifier and unknown keys', () => {

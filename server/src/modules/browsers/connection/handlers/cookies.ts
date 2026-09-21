@@ -40,7 +40,7 @@ export const cookiePull: Handler = (conn, msg) => {
   const cookies = getForDomains(conn.persona.id, msg.domains || []);
   metrics.cookiePulls.inc({});
   usage.record(conn.apiKey, 'cookie_pulls');
-  conn.send({ type: 'cookie_sync', cookies, pullId: msg.pullId });
+  conn.send({ type: 'cookie_sync', cookies, pullId: msg.pullId, now: Date.now() });
 };
 
 /** localStorage changes for the persona's signed-in origins. */

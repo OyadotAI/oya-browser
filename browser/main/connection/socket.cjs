@@ -54,10 +54,19 @@ function parseServerMessage(raw) {
   }
 }
 
-/** Who this browser is and what it offers. */
+/** This machine's platform as navigator.platform spells it. */
+const HOST_PLATFORMS = { darwin: 'MacIntel', win32: 'Win32', linux: 'Linux x86_64' };
+
+/**
+ * Who this browser is and what it offers. `host_platform` lets the server give a
+ * key's first default persona this machine's kind of device: a random one made
+ * a Mac present as Linux, which sites read as an inconsistent fingerprint.
+ */
 function authMessage(config, browserId, cdpPort) {
   const provider = config.provider || (process.env.OYA_DOCKER ? 'oya-selfhosted' : 'oya-desktop');
-  const identity = { type: 'auth', api_key: config.apiKey, browser_id: browserId, browser_name: config.browserName };
+  const host_platform = Object.hasOwn(HOST_PLATFORMS, process.platform) ? HOST_PLATFORMS[process.platform] : undefined;
+  const who = { api_key: config.apiKey, browser_id: browserId, browser_name: config.browserName, host_platform };
+  const identity = { type: 'auth', ...who };
   // The server may relay CDP to our front door over this socket.
   const offer = { provider, enrollment_token: process.env.OYA_ENROLLMENT_TOKEN, cdp: !!cdpPort };
   return { ...identity, persona: config.persona, ...offer };
@@ -141,9 +150,13 @@ class ControlSocket {
     const msg = parseServerMessage(raw);
     if (msg === UNPARSEABLE) return queue;
     logIncoming(this.ctx.shell, msg);
-    return queue
-      .then(() => handleServerMessage(this.ctx, msg))
-      .catch(() => socket.close(CloseCode.REJECTED, 'Session setup failed'));
+    return queue.then(() => handleServerMessage(this.ctx, msg)).catch((err) => this.setupFailed(socket, msg, err));
+  }
+
+  /** A message could not be handled: say which and why (it used to end the session without a word), then close. */
+  setupFailed(socket, msg, err) {
+    console.error(`[oya] Could not handle "${msg.type}" from the server:`, err?.stack || err);
+    socket.close(CloseCode.REJECTED, 'Session setup failed');
   }
 
   /** The auth message. */

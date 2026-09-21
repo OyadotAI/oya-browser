@@ -7,6 +7,9 @@ const { buildInjectionScript } = require('../../anonymity/inject');
 const { createPersonaApplier } = require('../../anonymity/apply');
 const { CDP_VERSION, cdpAttach, cdp } = require('../cdp.cjs');
 const { attachDialogWatcher } = require('../dialogs.cjs');
+const { personaIdentity } = require('../identity.cjs');
+const { normalizeProxy } = require('../../anonymity/proxy');
+const governance = require('../../governance');
 
 /**
  * A silent failure here means a tab that loads with no fingerprint and no
@@ -21,15 +24,49 @@ const popupProtectionFailed = (what, e) => {
   console.error(`[anonymity] popup ${what} failed, popup is NOT protected:`, e?.message || e);
 };
 
+/** Electron has no passkey dialog and no permission prompt: the injection answers both as Chrome would (stealth.js). */
+const DESKTOP_INJECTION = { noPasskeyDialog: true, noPermissionPrompt: true };
+/** How the persona is applied in the desktop app: the window owns the screen, and the injection is the desktop's. */
+const DESKTOP_APPLIER = { screen: false, injection: DESKTOP_INJECTION };
+
+/**
+ * The persona as this exit should present it. A persona with no proxy leaves by
+ * this machine's own connection, so it keeps this machine's timezone: sites
+ * compare the timezone with where the IP is, and a persona zone over a home IP
+ * reads as "timezone spoofed" (pixelscan and iphey both said so). The zone
+ * follows the exit, as a laptop's does when it travels; the device stays the
+ * persona's.
+ */
+function atThisExit(profile) {
+  const proxy = normalizeProxy(governance.configuration?.proxy || profile.proxy);
+  if (proxy?.host) return profile;
+  return { ...profile, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+}
+
+/**
+ * The persona as a person's own computer should show it: its own screen (the window
+ * is really on it, and a size spoofed in JavaScript alone disagrees with matchMedia
+ * and the viewport, which iphey reads as an inconsistent fingerprint), and no canvas noise.
+ * The GPU here is real, so real rendering is the consistent answer, and any pixel
+ * noise can be caught by reading one canvas two ways (pixelscan: "Masking
+ * detected"; without it, "consistent"). A cloud or Docker image keeps the noise:
+ * identical machines would otherwise all paint one known datacenter hash.
+ */
+function onThisMachine(profile, config) {
+  if (config?.provider || process.env.OYA_DOCKER) return profile;
+  return { ...profile, screen: null, canvas: { ...profile.canvas, noiseSeed: null } };
+}
+
 /** Subscribes `fn` to one CDP event on a debugger. */
 const onDebuggerEvent = (dbg) => (method, fn) =>
   dbg.on('message', (_event, event, params) => {
     if (event === method) fn(params);
   });
 
-/** No persona yet: the stealth injection alone. */
-function injectStealthOnly(dbg, fail) {
-  const source = buildInjectionScript(null);
+/** No persona yet: Chrome's identity in place of Electron's, and the stealth injection. */
+async function injectStealthOnly(dbg, userAgent, fail) {
+  await dbg.sendCommand('Emulation.setUserAgentOverride', userAgent).catch((e) => fail('user agent override', e));
+  const source = buildInjectionScript(null, DESKTOP_INJECTION);
   return dbg
     .sendCommand('Page.addScriptToEvaluateOnNewDocument', { source })
     .catch((e) => fail('stealth injection', e));
@@ -54,13 +91,17 @@ class Protection {
   /**
    * The persona on one webContents, applied as the server's CDP driver applies
    * it (anonymity/apply.js): emulation, the injection, and the tab's workers and
-   * cross-site iframes. The screen stays the window's own; the session already
-   * carries the UA, workers included.
+   * cross-site iframes. The screen stays the window's own. The user agent is
+   * overridden here as well as on the session, because only the override
+   * reaches navigator.userAgentData, which the session's string cannot.
    */
   applyPersona(dbg, fail) {
-    const profile = this.ctx.persona.active;
-    if (!profile) return injectStealthOnly(dbg, fail);
-    return createPersonaApplier({ ...personaPort(dbg), profile, screen: false, onError: fail }).page();
+    const active = this.ctx.persona.active;
+    const userAgent = personaIdentity(active).override;
+    if (!active) return injectStealthOnly(dbg, userAgent, fail);
+    const profile = onThisMachine(atThisExit(active), this.ctx.config?.values);
+    const applier = { ...personaPort(dbg), ...DESKTOP_APPLIER, profile, userAgent, onError: fail };
+    return createPersonaApplier(applier).page();
   }
 
   /** Protects a tab's page, once per view; failures are logged loudly, never thrown. */

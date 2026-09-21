@@ -51,6 +51,26 @@ describe('useControl', () => {
     expect(result.current.routing?.strategy).toBe('priority');
   });
 
+  it('shows what did load when one feed fails, and names the one that did not', async () => {
+    vi.mocked(api).mockImplementation((async (path: string) => {
+      if (path === '/gateway/recordings') throw new Error('storage offline');
+      return answer(path);
+    }) as typeof api);
+    const { result } = renderHook(() => useControl('k'));
+    await settle();
+    expect(result.current.sessions).toEqual([{ id: 's1' }]);
+    expect(result.current.routing?.strategy).toBe('priority');
+    expect(result.current.recordings).toEqual([]);
+    expect(result.current.error).toBe('Could not load recordings: storage offline');
+  });
+
+  it('reports the failure when nothing could be loaded', async () => {
+    vi.mocked(api).mockRejectedValue(new Error('server down'));
+    const { result } = renderHook(() => useControl('k'));
+    await settle();
+    expect(result.current.error).toBe('server down');
+  });
+
   it('polls again every interval', async () => {
     renderHook(() => useControl('k'));
     await settle();
@@ -72,12 +92,13 @@ describe('useControl', () => {
     expect(vi.mocked(api).mock.calls.length).toBe(Object.keys(ANSWERS).length);
   });
 
-  it('reports a failed load and keeps the last data', async () => {
+  it('keeps what a feed last showed when its refresh fails, and says which feed it was', async () => {
     const { result } = renderHook(() => useControl('k'));
     await settle();
     vi.mocked(api).mockRejectedValueOnce(new Error('down'));
     await act(() => result.current.refresh());
-    expect(result.current.error).toBe('down');
+    expect(result.current.error).toBe('Could not load the fleet: down');
+    expect(result.current.routing?.strategy).toBe('priority');
     expect(result.current.sessions).toEqual([{ id: 's1' }]);
   });
 

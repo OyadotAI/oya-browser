@@ -45,6 +45,27 @@ describe('LoginState', () => {
     assert.deepEqual(restored(page), { 'https://a.test': { token: '1' } });
   });
 
+  it("restores into an origin with no localStorage only: a browser's own, newer values are never overwritten", async () => {
+    const state = new LoginState({ 'https://a.test': { token: 'saved on the server' } });
+    const page = fakePage();
+    await state.attach(page.send, page.on);
+    const source = page.sent.find((c) => c.method === 'Page.addScriptToEvaluateOnNewDocument').params.source;
+    /** Runs the restore script in an origin holding `items`, and returns what it holds afterwards. */
+    const restoredOver = (items) => {
+      const held = new Map(Object.entries(items));
+      const localStorage = {
+        setItem: (k, v) => held.set(k, v),
+        get length() {
+          return held.size;
+        },
+      };
+      new Function('location', 'localStorage', `return ${source}`)({ origin: 'https://a.test' }, localStorage);
+      return Object.fromEntries(held);
+    };
+    assert.deepEqual(restoredOver({}), { token: 'saved on the server' });
+    assert.deepEqual(restoredOver({ token: 'refreshed here since' }), { token: 'refreshed here since' });
+  });
+
   it('stops restoring an origin once it has been visited, on every page', async () => {
     const state = new LoginState({ 'https://a.test': { t: '1' }, 'https://b.test': { t: '2' } });
     const one = fakePage();

@@ -72,3 +72,30 @@ describe('firefoxProfile', () => {
     assert.equal(firefoxProfile(dir), path.join(dir, 'Profiles/only.default'));
   });
 });
+
+describe('readFirefoxCookies', () => {
+  const { execFileSync } = require('node:child_process');
+  const { readFirefoxCookies } = require('../../../../main/mirror/firefox.cjs');
+  const SCHEMA =
+    'CREATE TABLE moz_cookies (name TEXT, value TEXT, host TEXT, path TEXT, expiry INTEGER, isSecure INTEGER, isHttpOnly INTEGER, sameSite INTEGER);';
+  /** One cookie row. */
+  const insert = (name) => `INSERT INTO moz_cookies VALUES ('${name}', 'v', '.site.test', '/', 0, 1, 1, 1);`;
+
+  it('reads the newest logins too: those a running Firefox still holds in its write-ahead log', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-ff-wal-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const [live, db] = ['live.sqlite', 'cookies.sqlite'].map((name) => path.join(dir, name));
+    // The files are copied while the connection is still open, as they are under a running
+    // Firefox: the second row is then only in the -wal file. Closing would fold it into the database.
+    const sql = `PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; ${SCHEMA} ${insert('old')} PRAGMA wal_checkpoint(TRUNCATE); ${insert('fresh-login')}`;
+    try {
+      execFileSync('sqlite3', [live, sql, `.shell cp ${live} ${db}`, `.shell cp ${live}-wal ${db}-wal`], {
+        stdio: 'ignore',
+      });
+    } catch {
+      return t.skip('no sqlite3 on this machine');
+    }
+    const names = readFirefoxCookies(dir).map((c) => c.name);
+    assert.deepEqual(names.sort(), ['fresh-login', 'old']);
+  });
+});

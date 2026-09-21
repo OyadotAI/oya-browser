@@ -96,4 +96,11 @@ describe('proxy', () => {
     proxy.applyDNSLeakPrevention({ commandLine: { appendSwitch: (...a) => switches.push(a) } });
     assert.deepEqual(switches, [['disable-features', 'DnsOverHttps'], ['disable-async-dns']]);
   });
+
+  it('adds to the features already switched off instead of replacing them', () => {
+    const values = { 'disable-features': 'SafeBrowsing,Translate' };
+    const commandLine = { getSwitchValue: (name) => values[name] || '', appendSwitch: (name, v) => (values[name] = v) };
+    proxy.applyDNSLeakPrevention({ commandLine });
+    assert.equal(values['disable-features'], 'SafeBrowsing,Translate,DnsOverHttps');
+  });
 });

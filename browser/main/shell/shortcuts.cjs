@@ -7,7 +7,13 @@ const { HOME_URL } = require('../tabs/constants.cjs');
 /** Cmd/Ctrl + key → shell command. */
 const COMMANDS = { l: 'address', k: 'commands', t: 'new-tab', w: 'close-tab' };
 /** Cmd/Ctrl + Shift + key → shell command. */
-const SHIFT_COMMANDS = { r: 'record', d: 'tools', ']': 'next-tab', '[': 'previous-tab' };
+const SHIFT_COMMANDS = { r: 'reload', d: 'tools', ']': 'next-tab', '[': 'previous-tab' };
+/**
+ * Cmd/Ctrl + Alt + physical key → shell command. Record lives here because
+ * Cmd/Ctrl+Shift+R is Chrome's hard reload: people pressed it out of habit and
+ * ended their recording. By code, since Alt changes the character on a Mac.
+ */
+const ALT_COMMANDS = { KeyR: 'record' };
 /** Bracket keys by physical code, so they work on every keyboard layout. */
 const BRACKETS = { BracketRight: ']', BracketLeft: '[' };
 
@@ -18,6 +24,7 @@ const LOCAL_COMMANDS = {
     ctx.tabs.createTab(HOME_URL, true);
     ctx.recorder.recordNavigation(HOME_URL);
   },
+  reload: (ctx) => ctx.control.snapshot().interactive && ctx.tabs.reloadActivePage(),
   'close-tab': (ctx) => ctx.control.snapshot().interactive && ctx.tabs.closeTab(ctx.tabs.activeTabId),
   'next-tab': (ctx) => ctx.tabs.cycleTab(1),
   'previous-tab': (ctx) => ctx.tabs.cycleTab(ctx.tabs.list.length - 1),
@@ -26,7 +33,8 @@ const LOCAL_COMMANDS = {
 /** The shell command an input event asks for, if any. */
 function shortcutFor(input) {
   const modifier = process.platform === 'darwin' ? input.meta : input.control;
-  if (input.type !== 'keyDown' || !modifier || input.alt) return undefined;
+  if (input.type !== 'keyDown' || !modifier || input.isAutoRepeat) return undefined;
+  if (input.alt) return Object.hasOwn(ALT_COMMANDS, input.code) ? ALT_COMMANDS[input.code] : undefined;
   const key = Object.hasOwn(BRACKETS, input.code) ? BRACKETS[input.code] : input.key.toLowerCase();
   const table = input.shift ? SHIFT_COMMANDS : COMMANDS;
   return Object.hasOwn(table, key) ? table[key] : undefined;

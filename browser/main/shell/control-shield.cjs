@@ -7,6 +7,7 @@
  */
 const path = require('path');
 const { TRANSPARENT, HUMAN_MENU_ITEMS, MAX_ANALYSIS_BOXES } = require('./constants.cjs');
+const { drivenElsewhere } = require('../../control-state.cjs');
 
 /** Measures the visible elements an analysis found, by their selectors, in the isolated world; it only reads. */
 function analysisBoxesJs(elements) {
@@ -50,7 +51,7 @@ class ControlShield {
     this.ctx.shell.send('control-state', state);
     this.ctx.recorder.controlLost(state);
     this.enableMenus(state.interactive);
-    for (const popup of this.popups) if (!popup.isDestroyed()) popup.setEnabled(state.interactive);
+    for (const popup of this.popups) if (!popup.isDestroyed()) popup.setEnabled(!drivenElsewhere(state));
     if (this.ctx.shell.alive()) this.sync();
   }
 
@@ -62,10 +63,10 @@ class ControlShield {
     }
   }
 
-  /** A new sign-in popup: disabled unless a person has control, forgotten once closed. */
+  /** A new sign-in popup: disabled only while someone else drives, forgotten once closed. */
   adoptPopup(childWindow) {
     this.popups.add(childWindow);
-    childWindow.setEnabled(this.ctx.control.snapshot().interactive);
+    childWindow.setEnabled(!drivenElsewhere(this.ctx.control.snapshot()));
     childWindow.once('closed', () => this.popups.delete(childWindow));
   }
 

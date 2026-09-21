@@ -70,6 +70,8 @@ main/
   input.cjs             facade over input/: human-like keyboard and mouse over CDP
   cdp.cjs, world.cjs, dialogs.cjs   CDP on a view, the analyzer's isolated world, native JS dialogs
   cookie-sync.cjs, session.cjs      the cookie pool sync, and the Electron session's UA, hints and proxy
+  identity.cjs, client-hints.cjs    the browser a persona says it is: one source for the UA, the page override and the hint headers Electron never sends
+  permissions.cjs                   what a page gets unasked: Chrome's defaults, not Electron's grant-everything
   cdp-relay.cjs, stream.cjs         CDP relayed over the control socket, and the live view
   pairing.cjs, auth-popup.cjs, updater.cjs
   constants.cjs         numbers for the top-level main/*.cjs files (each folder has its own)
@@ -174,14 +176,16 @@ one global object (`Dom`, `ShellState`, `Chat`, `StudioView`, `ControlBar`,
 
 ## Tests
 
-| Command                                   | Runs                                                            |
-| :---------------------------------------- | :-------------------------------------------------------------- |
-| `npm test`                                | unit, then the node-only integration suites                     |
-| `npm run test:unit`                       | `tests/unit/**/*.test.{js,cjs,mjs}`                             |
-| `npm run test:integration`                | regressions, control state, release guard, workflow model       |
-| `npm run test:coverage`                   | unit tests with a coverage report                               |
-| `npm run test:shell`, `test:control`      | the shell and the control handoff in real Electron (Playwright) |
-| `npm run test:recording`, `test:workflow` | recording and workflow validation in real Electron              |
+| Command                                   | Runs                                                                      |
+| :---------------------------------------- | :------------------------------------------------------------------------ |
+| `npm test`                                | unit, then the node-only integration suites                               |
+| `npm run test:unit`                       | `tests/unit/**/*.test.{js,cjs,mjs}`                                       |
+| `npm run test:integration`                | regressions, control state, release guard, workflow model                 |
+| `npm run test:coverage`                   | unit tests with a coverage report                                         |
+| `npm run test:shell`, `test:control`      | the shell and the control handoff in real Electron (Playwright)           |
+| `npm run test:recording`, `test:workflow` | recording and workflow validation in real Electron                        |
+| `npm run test:identity`                   | page identity vs request headers, passkeys, permissions, in real Electron |
+| `npm run test:sync`                       | a login survives a server outage: real app and real local server          |
 
 Unit tests use `node:test` with `node:assert/strict`. They fake the Electron
 seams and use `mock.timers` for anything time-based. They never touch the

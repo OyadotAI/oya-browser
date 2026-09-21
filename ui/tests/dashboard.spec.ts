@@ -602,8 +602,14 @@ test('provider errors remain visible across refresh and cancel clears the creden
 test('opening a stream in a tab renders live frames and accepts browser input', async ({ page }, testInfo) => {
   const commands = await dashboard(page);
   await page.getByText('QA browser', { exact: true }).click();
-  const stream = page.getByRole('link', { name: 'Stream', exact: true });
-  await expect(stream).toHaveAttribute('href', '/live/qa-browser');
+  // Stream is a button now: a new tab does not inherit this tab's credential, so it mints a
+  // token scoped to the one browser and carries it in the link's fragment.
+  await page
+    .context()
+    .route('**/api/control/sessions/qa-browser/share', (route) =>
+      route.fulfill({ json: { token: 'oya_scoped-stream-token' } }),
+    );
+  const stream = page.getByRole('button', { name: 'Stream', exact: true });
   const popupPromise = page.waitForEvent('popup');
   await stream.click();
   const viewer = await popupPromise;

@@ -6,7 +6,7 @@
 const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { createCookieSync } = require('../../../main/cookie-sync.cjs');
+const { createCookieSync, cookieSyncMark } = require('../../../main/cookie-sync.cjs');
 const { flush } = require('../support/fakes.cjs');
 const {
   COOKIE_PULL_TTL_MS,
@@ -28,10 +28,12 @@ function fakeCookies(jar = []) {
 }
 
 /** A sync over a fake session, with the socket up unless told otherwise. */
-function syncWith({ jar, link = { open: true, ready: true }, sendResult = true } = {}) {
+function syncWith({ jar, link = { open: true, ready: true }, sendResult = true, syncedAt = 0 } = {}) {
   const sent = [];
   const cookies = fakeCookies(jar);
+  const mark = { value: syncedAt, get: () => mark.value, set: (n) => (mark.value = n) };
   const sync = createCookieSync({
+    mark,
     session: () => ({ cookies }),
     send: (message) => {
       sent.push(message);
@@ -40,11 +42,25 @@ function syncWith({ jar, link = { open: true, ready: true }, sendResult = true }
     open: () => link.open,
     ready: () => link.ready,
   });
-  return { sync, sent, cookies, link };
+  return { sync, sent, cookies, link, mark };
 }
 
 /** A cookie as Electron reports it. */
 const cookie = (name, extra = {}) => ({ name, value: 'v', domain: '.x.test', path: '/', secure: true, ...extra });
+
+describe('cookieSyncMark', () => {
+  it("keeps each persona's mark in the app config, so it outlives a restart", () => {
+    const ctx = { config: { values: {}, save: mock.fn() }, persona: { active: { id: 'p-1' } } };
+    const mark = cookieSyncMark(ctx);
+    assert.equal(mark.get(), 0);
+    mark.set(9000);
+    ctx.persona.active = { id: 'p-2' };
+    assert.equal(mark.get(), 0, 'another persona has synced nothing yet');
+    ctx.persona.active = { id: 'p-1' };
+    assert.equal(mark.get(), 9000);
+    assert.equal(ctx.config.save.mock.callCount(), 1);
+  });
+});
 
 describe('createCookieSync', () => {
   beforeEach(() => {
@@ -230,15 +246,102 @@ describe('createCookieSync', () => {
     assert.equal(sent.length, 0);
   });
 
-  it('drops a batch that comes due while disconnected', () => {
+  it('keeps a batch that comes due while disconnected, and sends it once back online', () => {
     const { sync, sent, cookies, link } = syncWith();
     sync.startCookieChangeListener();
     cookies.emit('changed', {}, cookie('a'), 'explicit', false);
     link.open = false;
     mock.timers.tick(COOKIE_FLUSH_MS);
+    assert.equal(sent.length, 0);
     link.open = true;
     sync.flushCookieChanges();
-    assert.equal(sent.length, 0);
+    assert.deepEqual(
+      sent[0].changes.map((c) => c.cookie.name),
+      ['a'],
+    );
+  });
+
+  it('forwards a cookie a site sets, whatever this Electron calls that: "explicit" before 36, "inserted" since', () => {
+    const { sync, sent, cookies } = syncWith();
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('old-name'), 'explicit', false);
+    cookies.emit('changed', {}, cookie('new-name'), 'inserted', false);
+    cookies.emit('changed', {}, cookie('same-value-new-expiry'), 'inserted-no-value-change-overwrite', false);
+    cookies.emit('changed', {}, cookie('untouched'), 'inserted-no-change-overwrite', false);
+    mock.timers.tick(COOKIE_FLUSH_MS);
+    assert.deepEqual(
+      sent[0].changes.map((c) => c.cookie.name),
+      ['old-name', 'new-name', 'same-value-new-expiry'],
+    );
+  });
+
+  it('tells the server when a site deletes a cookie by expiring it, as a logout does', () => {
+    const { sync, sent, cookies } = syncWith();
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('sid'), 'expired-overwrite', true);
+    mock.timers.tick(COOKIE_FLUSH_MS);
+    assert.deepEqual(
+      sent[0].changes.map((c) => [c.cookie.name, c.removed]),
+      [['sid', true]],
+    );
+  });
+
+  it("keeps a fresh login over the server's older copy of the same cookie when it reconnects", async () => {
+    const { sync, cookies } = syncWith({ jar: [cookie('sid', { value: 'fresh login' })], syncedAt: 5000 });
+    await sync.applyCookieSync([cookie('sid', { value: 'stale', t: 4000 }), cookie('other', { t: 4000 })], {
+      now: 9000,
+    });
+    assert.deepEqual(
+      cookies.written.map((c) => c.name),
+      ['other'],
+      'a cookie this jar lacks is filled in; one it has is left alone unless the server changed it since',
+    );
+  });
+
+  it('takes a cookie another browser refreshed since this one last synced', async () => {
+    const { sync, cookies, mark } = syncWith({ jar: [cookie('sid', { value: 'old' })], syncedAt: 5000 });
+    await sync.applyCookieSync([cookie('sid', { value: 'refreshed elsewhere', t: 7000 })], { now: 9000 });
+    assert.deepEqual(
+      cookies.written.map((c) => c.value),
+      ['refreshed elsewhere'],
+    );
+    assert.equal(mark.value, 9000, 'and is now in step with the server as of its clock');
+  });
+
+  it('never lets the server overwrite a local change it has not been sent yet', async () => {
+    const { sync, cookies, link } = syncWith({ jar: [cookie('sid')], syncedAt: 5000 });
+    sync.startCookieChangeListener();
+    link.open = false;
+    cookies.emit('changed', {}, cookie('sid', { value: 'logged in offline' }), 'explicit', false);
+    await sync.applyCookieSync([cookie('sid', { value: 'server copy', t: 8000 })], { now: 9000 });
+    assert.equal(cookies.written.length, 0);
+  });
+
+  it('sends its pending changes before it pulls, so the answer cannot be older than this jar', () => {
+    const { sync, sent, cookies } = syncWith();
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('sid'), 'explicit', false);
+    sync.pullCookiesFor('https://mail.x.test/');
+    assert.deepEqual(
+      sent.map((m) => m.type),
+      ['cookie_changed', 'cookie_pull'],
+    );
+  });
+
+  it("judges a pull's answer by when that host was last pulled, without moving the connect mark", async () => {
+    const { sync, cookies, mark, sent } = syncWith({ jar: [cookie('sid')], syncedAt: 5000 });
+    sync.pullCookiesFor('https://a.x.test/');
+    await sync.applyCookieSync([cookie('sid', { value: 'newer', t: 6000 })], { now: 7000, pullId: sent[0].pullId });
+    sync.pullCookiesFor('https://a.x.test/', { force: true });
+    await sync.applyCookieSync([cookie('sid', { value: 'same as before', t: 6000 })], {
+      now: 8000,
+      pullId: sent[1].pullId,
+    });
+    assert.deepEqual(
+      cookies.written.map((c) => c.value),
+      ['newer'],
+    );
+    assert.equal(mark.value, 5000);
   });
 
   it('listens to one cookie store at a time', () => {

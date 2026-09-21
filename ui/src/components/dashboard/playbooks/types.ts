@@ -121,6 +121,8 @@ export interface RecordState {
   steps: RecordedStep[];
   /** Variables that hold passwords, saved masked. */
   secrets: string[];
+  /** Whole minutes before the server stops the recording on its own. */
+  minutesLeft?: number;
 }
 
 /** Which recording request is in flight, if any. */

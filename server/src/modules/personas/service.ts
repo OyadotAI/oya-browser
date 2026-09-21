@@ -3,7 +3,13 @@
  * persona is and why its device never changes.
  */
 import { createHash } from 'crypto';
-import { getFingerprintForPersona, previewProfile, defaultPersonaSeed, newPersonaSeed } from './fingerprint.ts';
+import {
+  PLATFORMS,
+  getFingerprintForPersona,
+  previewProfile,
+  defaultPersonaSeed,
+  newPersonaSeed,
+} from './fingerprint.ts';
 import { seedFromString } from './prng.ts';
 import {
   shape,
@@ -128,10 +134,29 @@ const copyOf = (src: Persona, name?: string): CreatePersona => ({
 /** Who a new persona is: its id, seed and owning key's fingerprint. */
 type PersonaIds = Pick<Persona, 'id' | 'seed' | 'owner'>;
 
+/** What the first browser to connect says about itself, used once, when a key's default persona is made. */
+export interface FirstBrowser {
+  /** Its platform as navigator.platform spells it. */
+  platform?: string;
+}
+
+/**
+ * The device choice a default persona is born with: the platform of the browser
+ * it is made for, when that is one we offer. A Mac desktop given a random Linux
+ * device draws Mac fonts and a Mac GPU under a Linux name, which detectors read
+ * as an inconsistent fingerprint. Chosen here, at creation, and never after.
+ */
+function firstBrowserPrefs(first?: FirstBrowser) {
+  return first?.platform && PLATFORMS.includes(first.platform)
+    ? markChecked({ platform: first.platform }, true)
+    : undefined;
+}
+
 /** A key's default persona record, uncapped unless the deployment says otherwise. */
-function defaultPersona(ids: PersonaIds) {
+function defaultPersona(ids: PersonaIds, first?: FirstBrowser) {
   return shape({
     ...ids,
+    prefs: firstBrowserPrefs(first),
     name: 'Default',
     isDefault: true,
     maxConcurrent: DEFAULT_PERSONA_MAX_CONCURRENT,
@@ -179,11 +204,11 @@ export class PersonaService {
    * The key's default persona, created on first use. Its seed reproduces the
    * pre-persona fingerprint for that key exactly.
    */
-  defaultFor(apiKey: string) {
+  defaultFor(apiKey: string, first?: FirstBrowser) {
     const { id, seed } = defaultPersonaSeed(apiKey);
     const existing = this.store.get(id);
     if (existing) return existing;
-    const p = defaultPersona({ id, seed, owner: this.deps.ownerOf(apiKey) });
+    const p = defaultPersona({ id, seed, owner: this.deps.ownerOf(apiKey) }, first);
     this.store.put(p);
     return p;
   }
@@ -260,9 +285,9 @@ export class PersonaService {
     this.slots.delete(id);
   }
 
-  /** Resolve what a browser should run as. Unknown or unowned ids are refused. */
-  resolve(apiKey: string, personaId?: string | null) {
-    if (!personaId || personaId === 'default') return this.defaultFor(apiKey);
+  /** Resolve what a browser should run as. Unknown or unowned ids are refused. `first` describes the browser asking, for a default persona made now. */
+  resolve(apiKey: string, personaId?: string | null, first?: FirstBrowser) {
+    if (!personaId || personaId === 'default') return this.defaultFor(apiKey, first);
     if (personaId === 'auto') return this.leastUsed(apiKey);
     const p = this.get(apiKey, personaId);
     if (!p) throw new HttpError(Status.NOT_FOUND, `No such persona: ${personaId}`);

@@ -5,13 +5,8 @@
 import { Router } from 'express';
 import { authMiddleware } from '../auth/service.ts';
 import { poolStats } from './pool.ts';
-import { getAll as getAllCookies } from '../personas/cookies.ts';
-import { container } from '../../app/container.ts';
 import { getKey } from '../../app/http.ts';
-import { poolCommand, clearJar, queryPersona } from './http/pool.ts';
-
-/** Not yet layered: reads the persona service from the composition root. */
-const { personas } = container;
+import { poolCommand, clearJar, exportJar, importJar } from './http/pool.ts';
 
 /** Pool routes: status, round-robin commands and persona cookie jars. */
 export const router = Router({ caseSensitive: true });
@@ -28,14 +23,19 @@ router.get('/pool', authMiddleware, (req, res) => {
 router.post('/pool/command', authMiddleware, poolCommand);
 
 /**
- * GET /pool/cookies, the cookie jar of the caller's persona (?persona=, else the default).
+ * GET /pool/cookies, the cookie jar of the caller's persona (?persona=, else the default),
+ * in ?format=json (default), playwright or netscape.
  * Cookies live with the persona, not the key, the jar and the fingerprint
  * have to move together or a returning session looks like a new device.
  */
-router.get('/pool/cookies', authMiddleware, (req, res) => {
-  const persona = personas.resolve(getKey(req), queryPersona(req));
-  res.json({ persona: persona.id, cookies: getAllCookies(persona.id) });
-});
+router.get('/pool/cookies', authMiddleware, exportJar);
+
+/**
+ * PUT /pool/cookies, merge `{ cookies: [...] }` into one of the caller's persona jars
+ * (?persona=, else the default); audited. How logins exported from another browser,
+ * or from another persona, are brought in.
+ */
+router.put('/pool/cookies', authMiddleware, importJar);
 
 /** DELETE /pool/cookies, clear one of the caller's persona jars (?persona=, else the default); audited. */
 router.delete('/pool/cookies', authMiddleware, clearJar);

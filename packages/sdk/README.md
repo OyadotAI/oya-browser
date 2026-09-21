@@ -468,6 +468,10 @@ const oya = new Oya({
 | `remove(id)`                                        | Delete persona and associated cookie jar                          |
 | `setMfa(id, config)`                                | Store TOTP secret (sealed at rest with AES-256-GCM)               |
 | `clearMfa(id)`                                      | Remove MFA secret from persona                                    |
+| `cookies(id, format?)` | Export the persona's logins; `'playwright'` fits `addCookies()` |
+| `importCookies(id, cookies)` | Merge cookies into the jar (from a file, a script, anywhere) |
+| `copyCookies(from, to)` | Copy one persona's logins into another |
+| `clearCookies(id)` | Forget every cookie: signs the persona out everywhere |
 
 ### Proxies (`oya.proxies`)
 

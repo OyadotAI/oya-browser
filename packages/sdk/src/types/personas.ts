@@ -212,3 +212,30 @@ export interface SiteCredentials {
   /** The password; stored sealed and never returned. */
   password: string;
 }
+
+/** A cookie in a persona's jar. */
+export interface Cookie {
+  /** The cookie's name. */
+  name: string;
+  /** Its value: a session, so treat it as a secret. */
+  value: string;
+  /** The domain it is sent to; a leading dot includes subdomains. */
+  domain: string;
+  /** The path it is sent to. `/` when omitted. */
+  path?: string;
+  /** Sent over HTTPS only. */
+  secure?: boolean;
+  /** Hidden from page scripts. */
+  httpOnly?: boolean;
+  /** `Strict`, `Lax` or `None` (Playwright), or `strict`, `lax`, `no_restriction` (Chrome extensions). */
+  sameSite?: string;
+  /** When it expires, in seconds since the epoch. A session cookie has none. */
+  expirationDate?: number;
+  /** The same, as Playwright and Puppeteer spell it; `-1` for a session cookie. */
+  expires?: number;
+  /** Whether it is sent to this exact host only. */
+  hostOnly?: boolean;
+}
+
+/** The formats a jar is exported in: as stored, or ready for Playwright's `context.addCookies()`. */
+export type CookieFormat = 'json' | 'playwright';

@@ -38,6 +38,11 @@ function signOut(ctx) {
   ctx.tabs.leaveBrowsingMode();
 }
 
+/** `sourceId` when it names a browser the import lists; undefined (the default browser) otherwise. */
+function listedSource(ctx, sourceId) {
+  return ctx.mirror.sources().some((source) => source.id === sourceId) ? sourceId : undefined;
+}
+
 /** Channel → handler. */
 const SESSION_HANDLERS = {
   'get-control-state': (ctx) => ctx.control.snapshot(),
@@ -64,6 +69,7 @@ const SESSION_HANDLERS = {
   'get-status': (ctx) => ({
     connected: ctx.socket.ready,
     browserId: ctx.socket.browserId,
+    profileName: ctx.config.values.profileName,
     url: ctx.tabs.getActiveView()?.webContents.getURL() || '',
     // The renderer asks for this after it loads. `mode-changed` is sent once, and
     // a shell that was still loading when the server accepted the browser would
@@ -71,7 +77,9 @@ const SESSION_HANDLERS = {
     browsing: !!ctx.shell.browsingMode,
   }),
   'save-profile': saveProfile,
-  'reimport-browser': (ctx) => ctx.mirror.reimport(),
+  'import-sources': (ctx) => ctx.mirror.sources(),
+  // The id comes from the shell page: only a listed browser is ever opened.
+  'reimport-browser': (ctx, _e, sourceId) => ctx.mirror.reimport(listedSource(ctx, sourceId)),
   'sign-out': signOut,
   'get-fingerprint': (ctx) => ctx.persona.summary(),
 };

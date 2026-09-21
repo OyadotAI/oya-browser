@@ -79,6 +79,7 @@ describe('authenticate', () => {
       project: projectId(A),
       credentialId: c.id,
       sessionId: null,
+      memberUser: null,
     });
   });
 

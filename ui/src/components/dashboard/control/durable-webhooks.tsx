@@ -22,6 +22,9 @@ export default function DurableWebhooks({ d, webhooks, deliveries }: Props) {
   return (
     <section className="space-y-3">
       <h3 className="text-sm font-medium">Event delivery</h3>
+      <p className="text-xs text-text-muted">
+        Every endpoint that receives this project&apos;s events, including the one set under Settings, Webhooks.
+      </p>
       <WebhookForm d={d} />
       {webhooks.map((h) => (
         <div key={h.id} className="flex justify-between gap-3 text-xs">

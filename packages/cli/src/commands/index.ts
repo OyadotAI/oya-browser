@@ -8,6 +8,7 @@ import { cmdLogin } from './login.ts';
 import { cmdInit } from './init.ts';
 import { cmdAsk, cmdGoto, cmdLs, cmdOpen, cmdRm, cmdStart, cmdStatus } from './browsers.ts';
 import { cmdPersonas } from './personas.ts';
+import { cmdCookies } from './cookies.ts';
 import { cmdConfig, cmdUsage, cmdWhoami } from './settings.ts';
 import { cmdStealthTest } from './stealth.ts';
 import { isControlCommand, runControl } from './control.ts';
@@ -33,6 +34,7 @@ export const COMMANDS: Record<string, Command> = {
   rm: cmdRm,
   stop: cmdRm,
   personas: cmdPersonas,
+  cookies: cmdCookies,
   open: (_args, flags) => cmdOpen(flags),
   config: cmdConfig,
   usage: (_args, flags) => cmdUsage(flags),

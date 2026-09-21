@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyConfig } from '@/components/dashboard/config';
 import type { BrowserRow, Fleet, Persona } from '@/components/dashboard/types';
-import { loadBrowsers, loadFleet, loadKeyConfig, loadPersonas, type Liveness } from './feeds';
+import { loadBrowsers, loadFleet, loadKeyConfig, loadPersonas, type Liveness, type LoadStatus } from './feeds';
 import type { Rate, RateSample } from './rate';
 
 /** The refs every feed checks; stable for the page's life. */
@@ -39,9 +39,10 @@ export function useFleet(apiKey: string, live: Liveness) {
 /** The personas. */
 export function usePersonas(apiKey: string, live: Liveness) {
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const fetchPersonas = useCallback(() => loadPersonas(apiKey, live, setPersonas), [apiKey, live]);
-  const resetPersonas = useCallback(() => setPersonas([]), []);
-  return { personas, fetchPersonas, resetPersonas };
+  const [personasStatus, setStatus] = useState<LoadStatus>('loading');
+  const fetchPersonas = useCallback(() => loadPersonas(apiKey, live, { set: setPersonas, setStatus }), [apiKey, live]);
+  const resetPersonas = useCallback(() => (setPersonas([]), setStatus('loading')), []);
+  return { personas, personasStatus, fetchPersonas, resetPersonas };
 }
 
 /** Where the config feed writes; stable while `setOnboarding` is. */

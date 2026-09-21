@@ -114,5 +114,21 @@ describe('FleetTable', () => {
     await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByTitle('alpha') });
     await userEvent.click(screen.getByRole('menuitem', { name: /Open live stream/ }));
     await vi.waitFor(() => expect(tab.close).toHaveBeenCalled());
+    expect(toast).toHaveBeenCalledWith('Could not open the live stream: denied', 'error');
+  });
+
+  it('confirms a copy, and says so when the clipboard refuses', async () => {
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('blocked'));
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    setup();
+    for (const outcome of [
+      ['Browser id copied', 'success'],
+      ['Could not copy: blocked', 'error'],
+    ]) {
+      await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByTitle('alpha') });
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Copy browser id' }));
+      await vi.waitFor(() => expect(toast).toHaveBeenCalledWith(...outcome));
+    }
+    expect(writeText).toHaveBeenCalledWith('b-1');
   });
 });

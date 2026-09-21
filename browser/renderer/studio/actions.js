@@ -3,7 +3,7 @@
  * the edits sent to the workspace. Every action clears and reports in the
  * message slot under its own control. Also loads the workspace at start.
  */
-/* global oyaBrowser, Dom, ShellState, RendererConstants, Studio, StudioView, DevPanel */
+/* global oyaBrowser, Dom, ShellState, RendererConstants, Studio, StudioView, DevPanel, CommandPalette */
 /* exported StudioActions */
 
 /** Studio actions. */
@@ -146,14 +146,17 @@ const StudioActions = {
     if (next?.supportSaved) Studio.say('Diagnostics saved.', false, 'code-result');
   },
 
-  /** ⌘/Ctrl Shift R: open the studio, then start or stop recording, when the record button could. */
+  /** ⌘/Ctrl Alt R: open the studio, then start or stop recording, when the record button could. */
   async recordButton() {
     const toggle = Dom.byId('record-toggle');
     if (toggle.disabled || toggle.hasAttribute('data-control-blocked')) return;
     if (!ShellState.devOpen) await oyaBrowser.toggleDevPanel();
     DevPanel.show('record');
     Studio.selectTab('steps');
-    await StudioActions.toggleRecording();
+    // Pressed, not called: the press goes through the control guard, which takes control
+    // first while an agent drives. Calling the action skipped it and the shortcut only
+    // answered "Take control before interacting with this page".
+    toggle.click();
   },
 
   /** Whether the panel is at (or past) its expanded width. */
@@ -192,6 +195,8 @@ const StudioActions = {
 };
 
 Dom.byId('record-toggle').addEventListener('click', StudioActions.toggleRecording);
+// It moved off ⌘⇧R (Chrome's hard reload), so it is no longer the one people guess: say it on the button.
+Dom.byId('record-toggle').title = `Start or stop recording (${CommandPalette.recordShortcut})`;
 Dom.byId('run-history').addEventListener(
   'change',
   (e) => e.target.value && Studio.command({ type: 'open-run', id: e.target.value }),
