@@ -33,4 +33,4 @@ patches:
           - name: server
             env:
             - name: OYA_PUBLIC_WS_URL
-              value: wss://dev-browser.getoya.ai/ws
+              value: wss://dev.oyabrowser.com/ws

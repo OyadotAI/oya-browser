@@ -6,7 +6,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 for environment, host in [
-    ("dev", "dev-browser.getoya.ai"),
+    ("dev", "dev.oyabrowser.com"),
     ("prod", "oyabrowser.com"),
 ]:
     rendered = subprocess.check_output(

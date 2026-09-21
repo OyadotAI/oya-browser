@@ -98,7 +98,8 @@ const LEGACY_HOSTS: Record<string, string> = {
   'browser.getoya.ai': 'oyabrowser.com',
   'browser.oya.ai': 'oyabrowser.com',
   'www.oyabrowser.com': 'oyabrowser.com',
-  'dev-browser.oya.ai': 'dev-browser.getoya.ai',
+  'dev-browser.getoya.ai': 'dev.oyabrowser.com',
+  'dev-browser.oya.ai': 'dev.oyabrowser.com',
 };
 const REDIRECT_EXEMPT = ['/ws', '/mcp', '/api', '/downloads'];
 

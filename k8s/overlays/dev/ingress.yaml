@@ -28,11 +28,23 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
+    - dev.oyabrowser.com
+    # Legacy hosts, kept so TLS terminates before the server's 308 redirect
     - dev-browser.getoya.ai
-    # Legacy host, kept so TLS terminates before the server's 308 redirect
     - dev-browser.oya.ai
     secretName: oya-browser-dev-cert
   rules:
+  - host: dev.oyabrowser.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: server
+            port:
+              number: 3100
+  # Legacy hosts, redirect to dev.oyabrowser.com (see server/src/index.ts)
   - host: dev-browser.getoya.ai
     http:
       paths:
@@ -43,7 +55,6 @@ spec:
             name: server
             port:
               number: 3100
-  # Legacy host, redirects to dev-browser.getoya.ai (see server/src/index.ts)
   - host: dev-browser.oya.ai
     http:
       paths:
