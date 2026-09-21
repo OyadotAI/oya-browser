@@ -112,6 +112,14 @@ describe('startBrowser', () => {
     disconnectBrowser('desktop-1');
   });
 
+  it('asks for a wsUrl when the caller names cdp, even with a browser connected', async () => {
+    connectBrowser('desktop-1', KEY);
+    const res = await start({ provider: 'cdp' });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.error, /wsUrl/);
+    disconnectBrowser('desktop-1');
+  });
+
   it('never hands over another key’s browser', async () => {
     connectBrowser('someone-elses', 'other-key');
     const res = await start({});

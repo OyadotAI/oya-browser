@@ -4,11 +4,10 @@ Thanks for looking. Bug reports, fixes and new backends are all welcome.
 
 ## Before you start
 
-- **Security problems** go through GitHub's private advisory form —
-  [Report a vulnerability](https://github.com/OyadotAI/oya-browser/security/advisories/new) —
-  never a public issue.
-- **Large changes** — a new provider, a new storage backend, a change to the
-  persona model — open an issue first so we can agree on the shape.
+- **Security problems** go through GitHub's private advisory form
+  ([Report a vulnerability](https://github.com/OyadotAI/oya-browser/security/advisories/new)), never a public issue.
+- **Large changes** (a new provider, a new storage backend, a change to the
+  persona model): open an issue first so we can agree on the shape.
 - **Licensing.** The SDK (`packages/sdk`) and CLI (`packages/cli`) are MIT.
   Everything else is under the [Sustainable Use License](LICENSE.md). By
   opening a pull request you agree your contribution is licensed the same way
@@ -28,7 +27,7 @@ npm test               # server suite + CLI suite, no credentials needed
 The test suite is hermetic: it runs with no database, no cloud keys and no
 network: `server/tests/support/hermetic.js` keeps `.env` from loading and points
 state at a scratch directory. If a test of yours needs a service, fake the seam
-(`server/tests/unit/support/fakes.ts`) — `server/tests/integration/providers.test.js`
+(`server/tests/unit/support/fakes.ts`); `server/tests/integration/providers.test.js`
 shows mocking `fetch`.
 
 Some tracked tests are deliberately *not* reachable from `npm test`, because
@@ -68,7 +67,7 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) and the one for the part you touch;
   logic in hooks); classes at most 200. Long code is steps that want names.
 - **Clear structure.** One job per file; modules used through their facade;
   strategies, command maps, repositories and a composition root where they fit
-  the problem — see how `server/src/modules/browsers/connection/` is built.
+  the problem. See how `server/src/modules/browsers/connection/` is built.
 - **No magic numbers.** Named constants in the folder's `constants.ts`; HTTP
   statuses from `Status`; env-tunable values read once with a named default.
 - **Documented.** Every file, function, class, field and route has a doc
@@ -89,19 +88,19 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) and the one for the part you touch;
    check and `npm test` all green, and coverage no lower than before.
 3. One logical change per PR, with a description of what breaks without it.
 4. If you touched anything under `server/src/modules/control/`, say in the PR how you
-   tested tenant isolation — that is the boundary most likely to regress.
+   tested tenant isolation: that is the boundary most likely to regress.
 
 ## Project layout
 
 | Path | What lives there |
 |:---|:---|
 | `server/` | Control plane: REST + MCP + WebSocket gateway, admission, personas, challenges |
-| `server/src/modules/` | One folder per domain — browsers, personas, gateway, control, playbooks… |
+| `server/src/modules/` | One folder per domain: browsers, personas, gateway, control, playbooks… |
 | `server/src/modules/control/` | Durable control plane: store, cluster, fleet drivers (docker, k8s) |
 | `browser/` | Electron desktop app and the containerized browser runtime |
 | `ui/` | Next.js console, live viewer and docs |
-| `packages/sdk` | `@oya-ai/browser` — TypeScript SDK (MIT) |
-| `packages/cli` | `@oya-ai/cli` — fleet CLI and the install wizard (MIT) |
+| `packages/sdk` | `@oya-ai/browser`, TypeScript SDK (MIT) |
+| `packages/cli` | `@oya-ai/cli`, fleet CLI and the install wizard (MIT) |
 | `examples/` | One runnable script per capability |
 | `k8s/`, `docker-compose.yml` | Deployment manifests |
 | `tooling/eslint/` | The lint rules every part shares |
