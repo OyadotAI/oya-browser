@@ -44,6 +44,8 @@ class ConfigStore {
       this.values = { ...this.defaults, ...JSON.parse(fs.readFileSync(this.file, 'utf8')) };
     } catch {}
     for (const [name, apply] of Object.entries(ENV_OVERRIDES)) if (this.env[name]) apply(this.values, this.env[name]);
+    // A person who logged out stays out, whatever key the environment carries.
+    if (this.values.signedOut) this.values.apiKey = '';
     return this.values;
   }
 

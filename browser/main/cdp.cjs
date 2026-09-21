@@ -1,16 +1,22 @@
 /** Chrome DevTools Protocol on an Electron view's own debugger. */
 
+const { DEBUGGER_MAX_LISTENERS } = require('./constants.cjs');
+
 const CDP_VERSION = '1.3';
 
-/** The view's debugger, attached; null once the view is gone. An attach that fails is left for the command to report. */
+/** Attaches a debugger; an attach that fails is left for the command to report. */
+function attachQuietly(dbg) {
+  try {
+    dbg.attach(CDP_VERSION);
+  } catch {}
+}
+
+/** The view's debugger, attached; null once the view is gone. */
 function cdpAttach(view) {
   if (!view || view.webContents.isDestroyed()) return null;
   const dbg = view.webContents.debugger;
-  if (!dbg.isAttached()) {
-    try {
-      dbg.attach(CDP_VERSION);
-    } catch {}
-  }
+  dbg.setMaxListeners?.(DEBUGGER_MAX_LISTENERS);
+  if (!dbg.isAttached()) attachQuietly(dbg);
   return dbg;
 }
 

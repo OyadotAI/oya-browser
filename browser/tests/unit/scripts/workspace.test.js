@@ -82,6 +82,24 @@ describe('Workspace', () => {
     assert.equal(ws.draft.name, 'Saved');
   });
 
+  it('does not strand an empty draft in the library when a new one starts', () => {
+    const { ws } = workspaceWith();
+    ws.persist();
+    const empty = ws.draft.id;
+    ws.edit({ type: 'new' });
+    assert.equal(
+      ws.store.list().some((d) => d.id === empty),
+      false,
+    );
+    ws.capture(STEPS, [], false);
+    const kept = ws.draft.id;
+    ws.edit({ type: 'new' });
+    assert.equal(
+      ws.store.list().some((d) => d.id === kept),
+      true,
+    );
+  });
+
   it('refuses edits while recording', () => {
     const { ws } = workspaceWith();
     ws.capture(STEPS, [], true);

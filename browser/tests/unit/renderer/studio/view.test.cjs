@@ -27,6 +27,71 @@ describe('the workflow studio', () => {
     assert.equal($('record-save').disabled, false);
   });
 
+  it('names a step by its label on the page, not the CSS id replay tries first', async () => {
+    const steps = [
+      {
+        id: 'e',
+        action: 'fill',
+        candidates: [
+          { kind: 'css', value: '[id="email"]' },
+          { kind: 'label', value: 'Email' },
+        ],
+      },
+      { id: 'g', action: 'click', candidates: [{ kind: 'css', value: '#go' }] },
+    ];
+    const { $ } = await studioApp({ steps });
+    const values = [...$('record-steps').querySelectorAll('.step-value')].map((el) => el.textContent);
+    assert.deepEqual(values, ['Email', '#go']);
+  });
+
+  it('lists the draft being edited even before it is stored, so the picker is never blank', async () => {
+    const { $ } = await studioApp({ steps: [] });
+    const options = [...$('draft-library').querySelectorAll('option')].map((o) => o.textContent);
+    assert.ok(options.length >= 1);
+    assert.equal(options[0], 'Untitled workflow');
+  });
+
+  it('follows the newest step while recording, and leaves the scroll alone otherwise', async () => {
+    const { ws, push, $ } = await studioApp();
+    const list = $('record-steps');
+    list.scrollHeight = 900;
+    list.scrollTop = 40;
+    ws.capture(
+      [...ws.draft.steps, { id: 'c', action: 'click', candidates: [{ kind: 'text', value: 'Next' }] }],
+      [],
+      true,
+    );
+    await push();
+    assert.equal(list.scrollTop, 900);
+    assert.equal(list.querySelector('.studio-step.selected .step-value').textContent, 'Next');
+    list.scrollTop = 40;
+    ws.capture(ws.draft.steps, [], false);
+    await push();
+    assert.equal(list.scrollTop, 40);
+  });
+
+  it('hides empty drafts left behind in the library, but never the one being edited', async () => {
+    const { ws, push, $ } = await studioApp();
+    ws.store.save({ id: 'stray', name: 'Untitled workflow', updatedAt: 1, steps: [] });
+    ws.edit({ type: 'metadata', name: 'mine' });
+    await push();
+    const options = [...$('draft-library').querySelectorAll('option')].map((o) => o.value);
+    assert.equal(options.includes('stray'), false);
+    assert.equal(options.includes(ws.draft.id), true);
+  });
+
+  it('asks for a name only for a playbook not yet in Oya, and for saving changes after', async () => {
+    let stop;
+    const { ws, push, $, settle } = await studioApp({ answers: { stopRecording: () => stop() } });
+    Object.assign(ws.draft, { publishedAt: 1, publishedRevision: ws.draft.revision });
+    ws.capture(ws.draft.steps, [], true);
+    await push();
+    stop = () => ws.capture(ws.draft.steps, [], false);
+    $('record-toggle').click();
+    await settle();
+    assert.match($('record-finish-copy').textContent, /Save the changes to update it in Oya/);
+  });
+
   it('counts steps in words, with one step singular', async () => {
     const { $ } = await studioApp({ steps: STEPS.slice(0, 1) });
     assert.equal($('record-count').textContent, '1 step');

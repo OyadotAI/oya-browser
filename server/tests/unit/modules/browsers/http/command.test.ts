@@ -111,6 +111,21 @@ describe('chat', () => {
     assert.equal(res.statusCode, 400);
   });
 
+  it('says a run that never acted on a page cannot be saved as a playbook', async () => {
+    const answer = { choices: [{ message: { role: 'assistant', content: 'The title is Northwind.' } }] };
+    mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(answer), { status: 200 }));
+    const saved = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const body = JSON.parse((await talk({ messages: [{ role: 'user', content: 'what is the title?' }] })).ended);
+      assert.equal(body.text, 'The title is Northwind.');
+      assert.equal(body.replayable, false);
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = saved;
+    }
+  });
+
   it('commits to 200 and reports a failed chat in the body', async () => {
     mock.method(globalThis, 'fetch', async () => {
       throw new Error('network is off in tests');

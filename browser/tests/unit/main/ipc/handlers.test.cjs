@@ -28,9 +28,29 @@ describe('IPC handlers', () => {
   });
 
   it('opens only the console of a ws or wss server, never another scheme', async () => {
-    assert.equal(await call('open-console', 'wss://oyabrowser.com/ws'), 'https://oyabrowser.com/dashboard');
+    assert.equal(
+      await call('open-console', 'wss://oyabrowser.com/ws'),
+      'https://oyabrowser.com/dashboard?connect=desktop',
+    );
     assert.equal(await call('open-console', 'file:///etc/passwd'), null);
-    assert.deepEqual(ctx.electron.shell.opened, ['https://oyabrowser.com/dashboard']);
+    assert.deepEqual(ctx.electron.shell.opened, ['https://oyabrowser.com/dashboard?connect=desktop']);
+  });
+
+  it('logs out by forgetting the key and returning to the welcome screen, keeping the server and name', async () => {
+    let left = false;
+    ctx.tabs = { leaveBrowsingMode: () => (left = true) };
+    ctx.config.values = { serverUrl: 'wss://s/ws', apiKey: 'k', browserName: 'Desk' };
+    ctx.socket.browserId = 'b1';
+    await call('sign-out');
+    assert.deepEqual(ctx.config.values, { serverUrl: 'wss://s/ws', apiKey: '', browserName: 'Desk', signedOut: true });
+    assert.equal(ctx.socket.browserId, null);
+    assert.ok(left);
+  });
+
+  it('signing in again clears the logged-out mark', async () => {
+    ctx.config.values = { signedOut: true };
+    await call('save-config', { serverUrl: 'wss://s/ws', apiKey: 'k2' });
+    assert.equal(ctx.config.values.signedOut, false);
   });
 
   it('refuses page actions while an agent has control', async () => {
@@ -152,6 +172,44 @@ describe('IPC handlers', () => {
     assert.deepEqual(await call('send-chat', []), { error: 'Server returned 502: <html>' });
     ctx.socket.ready = false;
     assert.deepEqual(await call('send-chat', []), { error: 'Not connected to server' });
+    fetch.mock.restore();
+  });
+
+  it('lends control to the agent for an Ask, and gives it back to the person after', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const order = [];
+    ctx.control.change = async (action) => order.push(action);
+    const fetch = mock.method(globalThis, 'fetch', async () => {
+      order.push('ask');
+      return { status: 200, text: async () => '{"text":"done"}' };
+    });
+    assert.deepEqual(await call('send-chat', [{ role: 'user' }]), { text: 'done' });
+    assert.deepEqual(order, ['return', 'ask', 'acquire']);
+    fetch.mock.restore();
+  });
+
+  it('leaves control alone when the agent already has it, and resumes paused automation', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ status: 200, text: async () => '{}' }));
+    ctx.control.state = { mode: 'agent', mine: false };
+    await call('send-chat', []);
+    assert.deepEqual(ctx.control.changes, []);
+    ctx.control.state = { mode: 'paused' };
+    await call('send-chat', []);
+    assert.deepEqual(ctx.control.changes, ['return']);
+    fetch.mock.restore();
+  });
+
+  it('does not ask when the browser cannot be handed to the agent', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ status: 200, text: async () => '{}' }));
+    ctx.control.change = async () => {
+      throw new Error('Another operator has control');
+    };
+    assert.deepEqual(await call('send-chat', []), {
+      error: 'Could not hand the browser to the agent: Another operator has control',
+    });
+    assert.equal(fetch.mock.callCount(), 0);
     fetch.mock.restore();
   });
 

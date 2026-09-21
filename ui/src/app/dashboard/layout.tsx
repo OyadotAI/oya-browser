@@ -10,6 +10,7 @@ import { Loader2 } from 'lucide-react';
 import { useAuth } from '@/components/auth-provider';
 import { ToastProvider } from '@/components/dashboard/toast';
 import { apiUrl, authHeaders, consoleCredential } from '@/lib/api';
+import { rememberDesktopConnect } from '@/components/dashboard/hooks/use-connect-desktop';
 
 /**
  * An API key is enough to be here.
@@ -24,6 +25,9 @@ export default function DashboardLayout({ children }: PropsWithChildren) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [keyOk, setKeyOk] = useState<boolean | null>(null);
+
+  // Before the /login redirect below drops the query string.
+  useEffect(rememberDesktopConnect, []);
 
   // Re-checked whenever the session changes, not just on mount. Logging out
   // clears the stored key, but a keyOk left over from mount kept `allowed`

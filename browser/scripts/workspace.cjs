@@ -20,7 +20,7 @@ const SESSION = {
     ws.run = ws.runStore.load(command.id).run;
     return ws.publish();
   },
-  new: (ws) => ws.reset(normalizeDraft()).persist(),
+  new: (ws) => ws.leaveEmpty().reset(normalizeDraft()).persist(),
   open: (ws, command) => ws.reset(ws.store.load(command.id)).publish(),
 };
 
@@ -114,6 +114,13 @@ class Workspace {
   }
 
   /** Switches to `draft` with a clean history and no run shown. */
+  /** Forgets the current draft when it has no steps, so leaving it never strands an empty entry in the library. */
+  leaveEmpty() {
+    if (!this.draft.steps.length) this.store.remove(this.draft.id);
+    return this;
+  }
+
+  /** Makes `draft` current with a clean history. */
   reset(draft) {
     Object.assign(this, { draft, history: [], future: [], run: null });
     return this;

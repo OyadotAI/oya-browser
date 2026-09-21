@@ -1527,6 +1527,10 @@
                         }
                       },
                       "description": "Tools the LLM called during execution"
+                    },
+                    "replayable": {
+                      "type": "boolean",
+                      "description": "Whether the run acted on a page and can be saved as a playbook (POST /api/browsers/{browserId}/playbooks)"
                     }
                   }
                 }

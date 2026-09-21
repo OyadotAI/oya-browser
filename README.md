@@ -93,10 +93,10 @@ page says so](docs/stealth.md)), but you can run the harness yourself and see wh
 ## Self-host
 
 ```bash
-npx @oya-ai/cli install
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
 ```
 
-Six questions, then it clones, writes the config, builds and waits for `/readyz`.
+It checks for git, Docker and Node 20+, asks six questions, then clones, writes the config, builds and waits for `/readyz`.
 SQLite, Postgres or Supabase; browsers on Docker, Kubernetes or your own machines.
 
 ## Give it to your agent

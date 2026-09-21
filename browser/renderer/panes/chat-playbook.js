@@ -8,29 +8,46 @@
 
 /**
  * Tools the server records as replayable steps (server/src/modules/agent/recorder.ts,
- * RECORDED). A run that used none of them has nothing to replay.
+ * RECORDED; a unit test keeps the two lists equal).
  */
 const REPLAYABLE_TOOLS = new Set([
   'navigate',
   'click',
+  'double_click',
+  'click_coordinates',
   'type',
+  'keyboard_type',
   'select_option',
   'upload_file',
   'press_key',
   'scroll',
   'wait',
   'handle_dialog',
+  'open_tab',
+  'switch_tab',
+  'close_tab',
 ]);
+
+/**
+ * Whether a run did something a playbook can replay. Navigating alone is not
+ * enough, the server refuses it: a run that only visited and read pages would
+ * replay as page loads that produce nothing, since reading needs the model.
+ */
+const replayable = (toolCalls) => toolCalls.some((c) => c.name !== 'navigate' && REPLAYABLE_TOOLS.has(c.name));
 
 /** A playbook name the server accepts. */
 const PLAYBOOK_NAME = /^[\w-]{1,64}$/;
 
 /** The save-as-playbook offer. */
 const ChatPlaybook = {
-  /** Adds the offer under `message` when the run's tool calls can be replayed. */
-  offer(message, prompt, toolCalls) {
+  /**
+   * Adds the offer under `message` when the run can be replayed. `canSave` is the
+   * server's answer, from the steps it actually recorded (a refused call records
+   * none); a server too old to say leaves the tool calls to decide.
+   */
+  offer(message, prompt, toolCalls, canSave = replayable(toolCalls)) {
     ChatPlaybook.withdraw();
-    if (!toolCalls.some((call) => REPLAYABLE_TOOLS.has(call.name))) return;
+    if (!canSave) return;
     const box = Dom.node('div', null, 'chat-save');
     box.dataset.name = ChatPlaybook.suggestName(prompt);
     message.appendChild(box);

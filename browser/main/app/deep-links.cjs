@@ -51,7 +51,7 @@ class DeepLinks {
     // to a new session on any key/server change; an unchanged target keeps its id.
     if (config.apiKey !== apiKey || config.serverUrl !== serverUrl) this.ctx.socket.browserId = null;
     this.ctx.socket.disconnect();
-    Object.assign(config, { serverUrl, apiKey, persona });
+    Object.assign(config, { serverUrl, apiKey, persona, signedOut: false });
     this.ctx.config.save();
   }
 

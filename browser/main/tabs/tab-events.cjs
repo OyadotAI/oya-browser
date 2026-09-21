@@ -104,8 +104,19 @@ function wireTabPage(ctx, tab, tabReady) {
   contents.on('did-navigate-in-page', updateUrl);
   // New tabs join an active recording before the user can interact with them.
   tabReady.then(() => ctx.recorder.joinIfRecording(tab.view)).catch((err) => console.error('[recording]', err));
-  contents.on('page-title-updated', (_e, title) => ctx.tabs.titleChanged(tab, title));
+  wireTabTitle(ctx, tab);
   if (ctx.observer) watchContents(ctx.observer, contents);
+}
+
+/**
+ * The tab's title. A page with no <title> (about:blank) never fires
+ * page-title-updated, and the tab kept the previous page's name; reading it
+ * again on every load fixes that, since getTitle() falls back to the address.
+ */
+function wireTabTitle(ctx, tab) {
+  const contents = tab.view.webContents;
+  contents.on('page-title-updated', (_e, title) => ctx.tabs.titleChanged(tab, title));
+  contents.on('did-finish-load', () => ctx.tabs.titleChanged(tab, contents.getTitle()));
 }
 
 /** Loads the analyzer, and lightens view-source pages. */

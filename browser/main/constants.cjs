@@ -48,6 +48,14 @@ const GREASE_BRAND_FULL_VERSION = '24.0.0.0';
 /** Random bytes in an isolated world's per-document tag attribute. */
 const WORLD_ATTR_BYTES = 4;
 
+/**
+ * Listeners one tab's debugger may carry before Node warns. A tab keeps about 8
+ * at rest (persona, workers, dialogs, login state) and 12 while recording, all
+ * removed when their owner stops; the default warning at 10 cried leak at every
+ * recording. Measured flat across record/stop cycles; a real leak still trips 50.
+ */
+const DEBUGGER_MAX_LISTENERS = 50;
+
 module.exports = {
   MAX_CDP_PAYLOAD,
   COOKIE_PULL_TTL_MS,
@@ -66,4 +74,5 @@ module.exports = {
   GREASE_BRAND_VERSION,
   GREASE_BRAND_FULL_VERSION,
   WORLD_ATTR_BYTES,
+  DEBUGGER_MAX_LISTENERS,
 };

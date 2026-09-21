@@ -114,6 +114,14 @@ export function lastRun(browserId) {
   return runs.get(browserId) || null;
 }
 
+/**
+ * Whether a run did something a playbook can replay. Navigating alone is not
+ * enough: a run that only visited and read pages replays as page loads that
+ * produce nothing, since reading needs the model. Refused calls never become
+ * steps, so this is what actually happened, not what was attempted.
+ */
+export const hasReplayableSteps = (run) => !!run?.steps.some((s) => s.action !== 'navigate');
+
 /** An element from the browser's latest analysis, by the id the model gave. */
 export function elementOf(browserId, elementId) {
   return runs.get(browserId)?.elements.find((e) => e.id === Number(elementId));

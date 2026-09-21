@@ -39,7 +39,13 @@ describe('Recorder', () => {
   });
   afterEach(() => mock.timers.reset());
 
+  it('reuses an empty draft rather than leaving it behind', async () => {
+    await ctx.recorder.startRecording();
+    assert.deepEqual(ctx.workspace.edits, []);
+  });
+
   it('starts where the person is, on a fresh draft', async () => {
+    ctx.workspace.draft = { steps: [{ id: 'old', action: 'click' }], secrets: [] };
     const result = await ctx.recorder.startRecording();
     assert.equal(result.recording, true);
     assert.deepEqual(ctx.workspace.edits, [{ type: 'new' }]);
@@ -62,6 +68,38 @@ describe('Recorder', () => {
     assert.deepEqual(
       ctx.recorder.recordedSteps.map((s) => s.url),
       ['https://start.test/', 'https://elsewhere.test/'],
+    );
+  });
+
+  it('adds nothing when the same draft resumes on the page it paused on', async () => {
+    ctx.workspace.draft = { id: 'a', steps: [], secrets: [] };
+    await ctx.recorder.startRecording();
+    await ctx.recorder.stopRecording();
+    ctx.workspace.draft = { id: 'a', steps: structuredClone(ctx.recorder.recordedSteps), secrets: [] };
+    await ctx.recorder.startRecording(true);
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.url),
+      ['https://start.test/'],
+    );
+  });
+
+  it('records the page when a different draft resumes, since where it stopped is unknown', async () => {
+    ctx.workspace.draft = { id: 'b', steps: [], secrets: [] };
+    await ctx.recorder.startRecording();
+    await ctx.recorder.stopRecording();
+    const other = [
+      { id: 'n', action: 'navigate', url: 'https://sign-in.test/', tab: 'main' },
+      { id: 'c', action: 'click', tab: 'main' },
+    ];
+    ctx.workspace.draft = { id: 'a', steps: other, secrets: [] };
+    await ctx.recorder.startRecording(true);
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => [s.action, s.url]),
+      [
+        ['navigate', 'https://sign-in.test/'],
+        ['click', undefined],
+        ['navigate', 'https://start.test/'],
+      ],
     );
   });
 
@@ -138,7 +176,26 @@ describe('Recorder', () => {
     ctx.recorder.recordNavigation('about:blank');
     assert.deepEqual(
       ctx.recorder.recordedSteps.map((s) => s.url),
-      ['https://start.test/', 'https://b.test/'],
+      ['https://b.test/'],
+    );
+  });
+
+  it('drops the starting page when the first thing the person does is go elsewhere', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.recordNavigation('https://b.test/');
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => [s.action, s.url, !!s.start]),
+      [['navigate', 'https://b.test/', false]],
+    );
+  });
+
+  it('keeps the starting page once something happened on it', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({ action: 'click', tab: 'main', t: 1 });
+    ctx.recorder.recordNavigation('https://b.test/');
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.action),
+      ['navigate', 'click', 'navigate'],
     );
   });
 
@@ -219,6 +276,7 @@ describe('Recorder', () => {
     await ctx.recorder.queueRecording(() => ctx.recorder.startRecording());
     await ctx.recorder.queueRecording(() => ctx.recorder.stopRecording());
     ctx.workspace.edits = [];
+    ctx.workspace.draft = { steps: structuredClone(ctx.recorder.recordedSteps), secrets: [] };
     await ctx.recorder.queueRecording(() => ctx.recorder.startRecording());
     assert.deepEqual(ctx.workspace.edits, [{ type: 'new' }]);
   });

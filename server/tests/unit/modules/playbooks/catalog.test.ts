@@ -48,7 +48,10 @@ describe('playbook catalog', () => {
     });
 
     it('refuses a run that only navigates, or no run at all', async () => {
-      await assert.rejects(catalog.create(KEY, 'b-1', 'x', { steps: [RUN.steps[0]] }), { status: 409 });
+      await assert.rejects(catalog.create(KEY, 'b-1', 'x', { steps: [RUN.steps[0]] }), {
+        status: 409,
+        message: /only visited pages/,
+      });
       await assert.rejects(catalog.create(KEY, 'b-never', 'x'), {
         status: 409,
         message: /run ask\(\) on this browser first/,

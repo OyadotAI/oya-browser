@@ -13,42 +13,83 @@
     <link rel="stylesheet" href="shell.css" />
   </head>
   <body class="mode-setup">
-    <!-- ── Full-page setup screen ── -->
-    <div class="setup-screen">
-      <div class="setup-card">
-        <svg class="brand-mark" viewBox="0 0 512 512" width="48" height="48" fill="none" aria-hidden="true">
+    <!-- ── Full-page welcome and sign-in screen ── -->
+    <div class="setup-screen" data-view="start">
+      <section class="welcome-stage" aria-labelledby="welcome-title">
+        <svg class="brand-mark" viewBox="0 0 512 512" width="40" height="40" fill="none" aria-hidden="true">
           <circle cx="276" cy="276" r="160" stroke="var(--logo-green)" stroke-width="80" />
           <circle cx="236" cy="236" r="160" stroke="var(--text)" stroke-width="80" />
         </svg>
         <div class="eyebrow">Oya Browser</div>
-        <h1>Your browser.<br />Your workflows.</h1>
-        <div class="sub">Connect your workspace to record workflows and put your browser to work.</div>
+        <h1 id="welcome-title">Sign in once.<br /><em>Your agents</em> take it from&nbsp;here.</h1>
+        <p class="welcome-lede">
+          A real browser that is yours. The agents you hand it to browse with your logins, and you can take the wheel
+          back at any moment.
+        </p>
+        <ol class="welcome-steps">
+          <li>
+            <span class="welcome-num">01</span><strong>Sign in</strong
+            ><span>Connect this browser to your Oya workspace.</span>
+          </li>
+          <li>
+            <span class="welcome-num">02</span><strong>Log in to your sites</strong
+            ><span>Here, as usual. Agents reuse those sessions.</span>
+          </li>
+          <li>
+            <span class="welcome-num">03</span><strong>Hand it to an agent</strong
+            ><span><em>Oya Agent</em> at the top right, or code, MCP and Playwright.</span>
+          </li>
+        </ol>
+      </section>
 
-        <div class="field">
-          <label for="cfg-server">Server address</label>
-          <input id="cfg-server" type="text" placeholder="wss://oyabrowser.com/ws" spellcheck="false" />
+      <section class="setup-card welcome-panel" aria-label="Connect this browser">
+        <div class="welcome-view" data-view="start">
+          <h2>Get started</h2>
+          <p class="sub">Sign-in opens in your web browser. There is no key to copy.</p>
+          <button class="btn-connect setup-primary" id="btn-signin">
+            Sign in with Oya<span class="welcome-arrow" aria-hidden="true">→</span>
+          </button>
+          <div class="welcome-or"><span>or</span></div>
+          <button class="btn-skip setup-secondary" id="btn-manual">Connect with an API key</button>
+          <p class="welcome-note">Self-hosting? Use your own server's address and key.</p>
         </div>
-        <div class="field">
-          <label for="cfg-key">API key</label>
-          <input id="cfg-key" type="password" placeholder="Enter API key" />
-          <div class="hint">
-            Paste the key from your workspace.
-            <button type="button" class="text-button" id="open-console">Open it to copy one</button>
+
+        <div class="welcome-view" data-view="waiting" id="setup-waiting" role="status">
+          <span class="welcome-orbit" aria-hidden="true"></span>
+          <h2>Finish in your web browser</h2>
+          <p class="sub">
+            Sign in there, then click <em>Connect</em> when this browser asks. This screen closes on its own.
+          </p>
+          <button type="button" class="text-button" id="btn-signin-again">Open the sign-in page again</button>
+          <button type="button" class="text-button" data-view-go="start">Back</button>
+        </div>
+
+        <div class="welcome-view" data-view="manual">
+          <button type="button" class="text-button welcome-back" data-view-go="start">← Back</button>
+          <h2>Connect with an API key</h2>
+          <div class="field">
+            <label for="cfg-server">Server address</label>
+            <input id="cfg-server" type="text" placeholder="wss://oyabrowser.com/ws" spellcheck="false" />
           </div>
-        </div>
-        <div class="field">
-          <label for="cfg-name">Browser name</label>
-          <input id="cfg-name" type="text" placeholder="Oya Browser" spellcheck="false" />
-          <div class="hint">How this browser shows up in the dashboard</div>
+          <div class="field">
+            <label for="cfg-key">API key</label>
+            <input id="cfg-key" type="password" placeholder="Enter API key" />
+            <div class="hint">
+              From your workspace's dashboard.
+              <button type="button" class="text-button" id="open-console">Open it</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="cfg-name">Browser name</label>
+            <input id="cfg-name" type="text" placeholder="Oya Browser" spellcheck="false" />
+            <div class="hint">How this browser shows up in the dashboard</div>
+          </div>
+          <button class="btn-connect setup-primary" id="btn-connect">Connect</button>
         </div>
 
         <div role="alert" class="setup-error" id="setup-error"></div>
-
-        <div class="setup-btns">
-          <button class="btn-skip" id="btn-skip">Browse offline</button>
-          <button class="btn-connect" id="btn-connect">Connect</button>
-        </div>
-      </div>
+        <button type="button" class="text-button welcome-skip" id="btn-skip">Just browse for now</button>
+      </section>
     </div>
 
     <nav class="tab-bar" id="tab-bar" aria-label="Browser tabs">
@@ -492,7 +533,8 @@
           </dl>
           <div class="export-actions">
             <button class="secondary-button" id="save-profile">Save profile</button
-            ><button class="secondary-button" id="connection-edit">Connection settings</button>
+            ><button class="secondary-button" id="connection-edit">Connection settings</button
+            ><button class="secondary-button" id="sign-out">Log out</button>
           </div>
           <p id="profile-save-status" role="status"></p>
         </section>

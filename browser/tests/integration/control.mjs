@@ -81,6 +81,7 @@ try {
       ),
     );
   }, fixtureUrl);
+  await page.locator('#btn-manual').click();
   await page.locator('#cfg-key').fill('test');
   await page.locator('#btn-connect').click();
   await page.getByText('Agent control', { exact: true }).waitFor();

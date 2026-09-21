@@ -22,6 +22,14 @@ async function started(url = 'https://a.test/start') {
   return run;
 }
 
+describe('hasReplayableSteps', () => {
+  it('is true only for a run that did more than navigate', () => {
+    assert.equal(recorder.hasReplayableSteps(null), false);
+    assert.equal(recorder.hasReplayableSteps({ steps: [{ action: 'navigate' }] }), false);
+    assert.equal(recorder.hasReplayableSteps({ steps: [{ action: 'navigate' }, { action: 'click' }] }), true);
+  });
+});
+
 describe('recorder', () => {
   afterEach(() => browser?.disconnect());
 

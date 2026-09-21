@@ -69,28 +69,35 @@ describe('Lifecycle', () => {
   });
 });
 
+/** A context whose boot steps record themselves in `order`, with a scratch userData directory. */
+function bootCtx(order) {
+  const ctx = mainCtx();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-boot-'));
+  Object.assign(ctx.electron.app, { getPath: () => dir, setAsDefaultProtocolClient: () => order.push('protocol') });
+  ctx.electron.Menu.setApplicationMenu = () => order.push('menu');
+  ctx.electron.safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (v) => Buffer.from(v),
+    decryptString: (b) => b.toString(),
+  };
+  ctx.config.load = () => order.push('config');
+  ctx.config.values = { apiKey: 'k' };
+  ctx.persona.loadActive = (userData) => order.push(['persona', userData]);
+  ctx.persona.setupBrowserSession = async () => order.push('session');
+  ctx.recorder.adopt = () => order.push('adopt');
+  ctx.shell.create = () => order.push('window');
+  ctx.cookies.startCookieChangeListener = () => order.push('cookies');
+  ctx.socket.connect = () => order.push('connect');
+  ctx.tabs = { enterBrowsingMode: (url) => order.push(['browse', url]) };
+  ctx.startAutoUpdate = () => order.push('update');
+  ctx.deepLinks = { drain: async () => order.push('links') };
+  return { ctx, dir, done: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
 describe('bootBrowser', () => {
   it('loads settings and persona, then the workspace, the window, cookie sync, the connection and updates, in order', async () => {
-    const ctx = mainCtx();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-boot-'));
     const order = [];
-    Object.assign(ctx.electron.app, { getPath: () => dir, setAsDefaultProtocolClient: () => order.push('protocol') });
-    ctx.electron.Menu.setApplicationMenu = () => order.push('menu');
-    ctx.electron.safeStorage = {
-      isEncryptionAvailable: () => true,
-      encryptString: (v) => Buffer.from(v),
-      decryptString: (b) => b.toString(),
-    };
-    ctx.config.load = () => order.push('config');
-    ctx.config.values = { apiKey: 'k' };
-    ctx.persona.loadActive = (userData) => order.push(['persona', userData]);
-    ctx.persona.setupBrowserSession = async () => order.push('session');
-    ctx.recorder.adopt = () => order.push('adopt');
-    ctx.shell.create = () => order.push('window');
-    ctx.cookies.startCookieChangeListener = () => order.push('cookies');
-    ctx.socket.connect = () => order.push('connect');
-    ctx.startAutoUpdate = () => order.push('update');
-    ctx.deepLinks = { drain: async () => order.push('links') };
+    const { ctx, dir, done } = bootCtx(order);
     await bootBrowser(ctx);
     assert.deepEqual(order, [
       'menu',
@@ -106,6 +113,25 @@ describe('bootBrowser', () => {
       'links',
     ]);
     assert.ok(ctx.workspace, 'the workspace exists before the window');
-    fs.rmSync(dir, { recursive: true, force: true });
+    done();
+  });
+
+  it('opens straight to the pages when this desktop has signed in before', async () => {
+    const order = [];
+    const { ctx, done } = bootCtx(order);
+    ctx.persona.loadActive = () => (ctx.persona.active = { id: 'p1' });
+    await bootBrowser(ctx);
+    assert.deepEqual(order.slice(order.indexOf('connect'), -2), ['connect', ['browse', 'https://google.com']]);
+    done();
+  });
+
+  it('shows the welcome screen without a saved key, even with a saved persona', async () => {
+    const order = [];
+    const { ctx, done } = bootCtx(order);
+    ctx.persona.loadActive = () => (ctx.persona.active = { id: 'p1' });
+    ctx.config.load = () => (ctx.config.values = { apiKey: '' });
+    await bootBrowser(ctx);
+    assert.ok(!order.some((step) => step[0] === 'browse'));
+    done();
   });
 });

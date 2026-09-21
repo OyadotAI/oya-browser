@@ -75,8 +75,10 @@ const ControlBar = {
     for (const id of PAGE_ACTIONS) {
       const element = ControlBar.el(id);
       if (!element) continue;
-      element.toggleAttribute('data-control-blocked', !interactive);
-      element.setAttribute('aria-disabled', String(!interactive));
+      // Start recording takes control itself (see guard), so it only looks blocked when it cannot.
+      const blocked = !interactive && !(id === 'record-toggle' && ControlBar.takeable());
+      element.toggleAttribute('data-control-blocked', blocked);
+      element.setAttribute('aria-disabled', String(blocked));
     }
     ControlBar.el('url-bar').readOnly = !interactive;
   },
@@ -96,12 +98,30 @@ const ControlBar = {
     ControlBar.change(current.mode === 'human' && current.mine ? 'return' : 'acquire', ControlBar.el('control-action'));
   },
 
-  /** Refuses a click on a page action while watch-only, pointing at Take control instead. */
+  /**
+   * Refuses a click on a page action while watch-only, pointing at Take control
+   * instead. Start recording is the exception: recording only works with a
+   * person's hands on the page, so pressing it takes control, then records.
+   */
   guard(event) {
     if (ControlBar.current?.interactive || !event.target.closest(GUARDED)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    const record = event.target.closest('#record-toggle');
+    if (record && ControlBar.takeable()) return void ControlBar.takeThenClick(record);
     ControlBar.el('control-action').focus();
+  },
+
+  /** Whether Take control is on offer right now. */
+  takeable() {
+    const button = ControlBar.el('control-action');
+    return !button.hidden && !button.disabled;
+  },
+
+  /** Takes control, then presses `button` once the page is interactive. */
+  async takeThenClick(button) {
+    await ControlBar.change('acquire', ControlBar.el('control-action'));
+    if (ControlBar.current?.interactive) button.click();
   },
 
   /** A new state from the main process; a real change clears the last error. */

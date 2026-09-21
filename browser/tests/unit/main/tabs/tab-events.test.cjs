@@ -134,4 +134,11 @@ describe('tab events', () => {
     assert.equal(tab.url, 'https://a.test/2#x');
     assert.equal(tab.title, 'Two');
   });
+
+  it("drops the previous page's title when the new page has none", () => {
+    tab.view.webContents.emit('page-title-updated', {}, 'Cordless drill');
+    tab.view.webContents.url = 'about:blank';
+    tab.view.webContents.emit('did-finish-load');
+    assert.equal(tab.title, 'about:blank');
+  });
 });

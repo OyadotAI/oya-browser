@@ -4,7 +4,7 @@
  */
 import workflow from '../../../../browser/scripts/workflow.cjs';
 
-import { lastRun } from '../agent/chat.ts';
+import { lastRun, hasReplayableSteps } from '../agent/chat.ts';
 import * as keyConfig from '../config/service.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
@@ -30,11 +30,19 @@ function checkName(name) {
     throw new HttpError(Status.BAD_REQUEST, 'Playbook name must be 1-64 letters, digits, _ or -');
 }
 
+/** Refuses a run with nothing to replay, saying whether there was a run at all. */
+function checkReplayable(run) {
+  if (hasReplayableSteps(run)) return;
+  const why = run
+    ? 'Nothing to replay: this run only visited pages. Playbooks replay clicks, typing and other actions.'
+    : 'Nothing to save: run ask() on this browser first.';
+  throw new HttpError(Status.CONFLICT, why);
+}
+
 /** `run` defaults to the browser's last ask(); a recording passes its own steps in. */
 export async function create(apiKey, browserId, name, run = lastRun(browserId)) {
   checkName(name);
-  if (!run?.steps.some((s) => s.action !== 'navigate'))
-    throw new HttpError(Status.CONFLICT, 'Nothing to save: run ask() on this browser first.');
+  checkReplayable(run);
   const pb = fromRun(name, run);
   await keyConfig.savePlaybook(apiKey, name, pb);
   return describe(pb);

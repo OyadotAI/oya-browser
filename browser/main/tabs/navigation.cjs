@@ -3,12 +3,24 @@
  * wait for the tab's protection, then load, unless the person typed another
  * address, closed the tab, or lost control in the meantime.
  */
-const { WEB_URL } = require('./constants.cjs');
+const { WEB_URL, SEARCH_URL } = require('./constants.cjs');
 
-/** Addresses typed without a scheme are https. */
+/** A host, with an optional port and path: has a dot, or is localhost, and no spaces. */
+const HOST = /^(localhost|[^\s/:]+\.[^\s/:]+)(:\d+)?(\/\S*)?$/i;
+/** This machine or a bare IP, which usually serves plain http. */
+const PLAIN_HTTP = /^(localhost|127\.|\d{1,3}(\.\d{1,3}){3}[:/]?|\[::1\])/i;
+
+/**
+ * What the address bar loads for what was typed, as any browser does: an http(s)
+ * address as it is, a bare host over https (http for this machine or an IP),
+ * about:blank, and anything else as a search. Other schemes (file:, javascript:)
+ * are searched, never opened: the bar must not reach local files.
+ */
 function normalizeAddress(url) {
   const trimmed = String(url).trim();
-  return WEB_URL.test(trimmed) ? trimmed : 'https://' + trimmed;
+  if (WEB_URL.test(trimmed) || trimmed.toLowerCase() === 'about:blank') return trimmed;
+  if (HOST.test(trimmed)) return (PLAIN_HTTP.test(trimmed) ? 'http://' : 'https://') + trimmed;
+  return SEARCH_URL + encodeURIComponent(trimmed);
 }
 
 /** Marks a tab as navigating; returns the request number that must still be current at the end. */

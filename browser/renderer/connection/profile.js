@@ -56,6 +56,7 @@ const ProfileSave = {
 
 oyaBrowser.onWsStatus(ProfileSave.onStatus);
 Dom.byId('save-profile').addEventListener('click', ProfileSave.save);
+Dom.byId('sign-out').addEventListener('click', () => oyaBrowser.signOut());
 oyaBrowser.onProfileSaved(ProfileSave.saved);
 
 // ── Init ──

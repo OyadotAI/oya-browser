@@ -41,7 +41,7 @@ describe('DeepLinks', () => {
     assert.equal(ctx.socket.browserId, 'b1');
     links.retarget({ apiKey: 'k2', serverUrl: 'wss://a.test/ws', persona: 'p' });
     assert.equal(ctx.socket.browserId, null);
-    assert.deepEqual(ctx.config.values, { apiKey: 'k2', serverUrl: 'wss://a.test/ws', persona: 'p' });
+    assert.deepEqual(ctx.config.values, { apiKey: 'k2', serverUrl: 'wss://a.test/ws', persona: 'p', signedOut: false });
     assert.equal(ctx.config.saves, 2);
   });
 

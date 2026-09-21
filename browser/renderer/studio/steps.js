@@ -5,6 +5,9 @@
 /* global Dom, RendererConstants, Studio, StudioView */
 /* exported StudioSteps */
 
+/** Locator kinds that read as words on the page, in the order a row prefers them. */
+const READABLE_KINDS = ['label', 'role', 'text', 'placeholder'];
+
 /** The step list. */
 const StudioSteps = {
   /** Redraws the list when the steps, selection or lock changed, keeping the scroll position. */
@@ -15,7 +18,14 @@ const StudioSteps = {
     const list = Dom.byId('record-steps');
     const scroll = list.scrollTop;
     list.replaceChildren(...(d.steps.length ? d.steps.map(StudioSteps.row) : [StudioSteps.empty()]));
-    list.scrollTop = scroll;
+    list.scrollTop = StudioSteps.grew(d, recording) ? list.scrollHeight : scroll;
+  },
+
+  /** Whether a recording just added a step: the list then follows it, as a person acts, instead of staying put. */
+  grew(d, recording) {
+    const grew = recording && d.steps.length > (StudioSteps.shown ?? d.steps.length);
+    StudioSteps.shown = d.steps.length;
+    return grew;
   },
 
   /** What an empty draft shows. */
@@ -61,9 +71,19 @@ const StudioSteps = {
   /** A row's action and target. */
   copy(step) {
     const copy = Dom.node('span', null, 'step-copy');
-    const value = step.candidates?.[0]?.value || step.url || step.key || 'Select to configure';
+    const value = StudioSteps.target(step) || step.url || step.key || 'Select to configure';
     copy.append(Dom.node('strong', Studio.name(step.action)), Dom.node('span', value, 'step-value'));
     return copy;
+  },
+
+  /**
+   * What the step aims at, in the words a person sees on the page. Replay tries
+   * the most robust locator first, often a CSS id; the row names the element by
+   * its label, role, text or placeholder when it has one.
+   */
+  target(step) {
+    const candidates = step.candidates || [];
+    return (candidates.find((c) => READABLE_KINDS.includes(c.kind)) || candidates[0])?.value;
   },
 
   /** Selects a step and redraws. */
