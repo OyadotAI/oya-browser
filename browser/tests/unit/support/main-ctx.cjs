@@ -219,6 +219,13 @@ function fakeElectron() {
       items: menuItems,
     },
     nativeTheme: Object.assign(new EventEmitter(), { shouldUseDarkColors: false }),
+    shell: {
+      opened: [],
+      /** Records the link instead of handing it to the operating system. */
+      async openExternal(url) {
+        this.opened.push(url);
+      },
+    },
     dialog: {
       answers: dialogAnswers,
       asked: [],

@@ -27,6 +27,12 @@ describe('IPC handlers', () => {
     assert.equal((await call('get-status')).browsing, false);
   });
 
+  it('opens only the console of a ws or wss server, never another scheme', async () => {
+    assert.equal(await call('open-console', 'wss://oyabrowser.com/ws'), 'https://oyabrowser.com/dashboard');
+    assert.equal(await call('open-console', 'file:///etc/passwd'), null);
+    assert.deepEqual(ctx.electron.shell.opened, ['https://oyabrowser.com/dashboard']);
+  });
+
   it('refuses page actions while an agent has control', async () => {
     ctx.shield.requireHumanControl = () => {
       throw new Error('Take control');

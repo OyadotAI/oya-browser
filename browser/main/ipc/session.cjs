@@ -1,6 +1,4 @@
 /** IPC: settings, connection status, control handoff, the saved profile and the fingerprint. */
-const { shell } = require('electron');
-
 /**
  * The workspace's own console, derived from the server address rather than
  * taken from the renderer: openExternal will hand any scheme to the operating
@@ -39,7 +37,7 @@ const SESSION_HANDLERS = {
   'get-config': (ctx) => ctx.config.values,
   'open-console': async (ctx, _event, serverUrl) => {
     const url = consoleUrl(serverUrl || ctx.config.values.serverUrl);
-    if (url) await shell.openExternal(url);
+    if (url) await ctx.electron.shell.openExternal(url);
     return url;
   },
   'save-config': (ctx, _e, newConfig) => {
