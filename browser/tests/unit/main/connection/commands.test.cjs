@@ -43,6 +43,18 @@ describe('CommandRunner', () => {
     assert.deepEqual(resultOf('c3')[0].data, { url: 'u' });
   });
 
+  it('refuses an action that is not a string before any command map can read it as one', async () => {
+    ctx.tabs.createTab('https://a.test/');
+    let reached = false;
+    ctx.actions.runPageAction = async () => (reached = true);
+    for (const action of [['evaluate_raw'], ['open_tab'], { a: 1 }, 7]) {
+      await ctx.commands.handleCommand({ id: 'n', action, params: { expression: '1' } });
+    }
+    assert.equal(reached, false);
+    assert.equal(ctx.tabs.list.length, 1);
+    assert.deepEqual(new Set(resultOf('n').map((m) => m.error)), new Set(['action must be a string']));
+  });
+
   it('turns a thrown action into an error result', async () => {
     ctx.tabs.createTab('https://a.test/');
     ctx.actions.runPageAction = async () => {

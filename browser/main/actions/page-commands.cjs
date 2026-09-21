@@ -179,7 +179,7 @@ const PAGE_COMMANDS = {
 
   /** Loads a URL in the tab the command targets, after its first load and a cookie pull. */
   async navigate(driver, id, params, view) {
-    if (!params?.url) return driver.runInjected(id, 'navigate', params, view);
+    if (!params?.url) return driver.ctx.sendResult(id, false, null, 'navigate needs a url. Send it again with "url".');
     await driver.waitForTabReady(driver.ctx.tabs().find((t) => t.view === view));
     await driver.ctx.pullCookiesFor(params.url);
     const lastErr = await loadWithRetries(view, params.url);

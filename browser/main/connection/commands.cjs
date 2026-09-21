@@ -65,6 +65,8 @@ class CommandRunner {
   async runCommand(msg) {
     const { id, action, params } = msg;
     if (!this.ctx.shell.browsingMode) return this.sendResult(id, false, null, 'Browser not ready');
+    // The command maps look an action up as a key, which would read `["evaluate_raw"]` as the string.
+    if (typeof action !== 'string') return this.sendResult(id, false, null, 'action must be a string');
     // A held dialog blocks the renderer: anything that touches the page would sit
     // there until its timeout and tell the caller nothing. Answer with the dialog
     // instead, so the next move is obvious and costs no wall clock.

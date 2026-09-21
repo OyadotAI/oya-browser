@@ -11,9 +11,15 @@ export function noTimeouts(req, res) {
   res.setTimeout(0);
 }
 
-/** Answers 400 for a missing action and 403 for a server-internal one; truthy when it answered. */
+/**
+ * Answers 400 for a missing action or one that is not a string, and 403 for a
+ * server-internal one; truthy when it answered. An action is JSON from the
+ * caller: `["evaluate_raw"]` is not in the internal set, yet the browser's
+ * command maps would read it as the string, so only a string goes further.
+ */
 export function refuseAction(res, action) {
   if (!action) return res.status(Status.BAD_REQUEST).json({ error: 'Missing action' });
+  if (typeof action !== 'string') return res.status(Status.BAD_REQUEST).json({ error: 'action must be a string' });
   if (INTERNAL_ACTIONS.has(action))
     return res.status(Status.FORBIDDEN).json({ error: `${action} is not available through this API` });
   return null;

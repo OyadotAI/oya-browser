@@ -60,6 +60,8 @@ const HALF = 2;
 const SCROLL_SETTLE_MS = 300;
 /** Default scroll for a server command, in pixels. */
 const SCROLL_AMOUNT = 500;
+/** The most one scroll command moves, in pixels: the server's cap for a recorded scroll. Past it a scroll would run for minutes. */
+const MAX_SCROLL_AMOUNT = 100_000;
 /** Default scroll for the dev panel's buttons, in pixels. */
 const DEV_SCROLL_AMOUNT = 400;
 /** Pixels per smooth-scroll increment (one wheel notch). */
@@ -96,6 +98,7 @@ module.exports = {
   SCROLL_SETTLE_MS,
   EMPTY_ANALYSIS_RETRY_MS,
   SCROLL_AMOUNT,
+  MAX_SCROLL_AMOUNT,
   DEV_SCROLL_AMOUNT,
   SCROLL_STEP_PX,
   MIN_SCROLL_STEPS,
