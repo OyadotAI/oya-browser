@@ -24,6 +24,14 @@ describe('route helpers', () => {
     }
   });
 
+  it('answers 400 for an action that is not a string, so a wrapped name cannot slip past the 403', () => {
+    for (const action of [['evaluate_raw'], { toString: 'x' }, 7, true]) {
+      const res = new FakeResponse();
+      assert.ok(refuseAction(res, action));
+      assert.deepEqual([res.statusCode, res.body], [400, { error: 'action must be a string' }]);
+    }
+  });
+
   it('lets an ordinary action through without answering', () => {
     const res = new FakeResponse();
     assert.equal(refuseAction(res, 'click'), null);

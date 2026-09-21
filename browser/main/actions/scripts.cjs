@@ -174,9 +174,13 @@ const DROPDOWN_JS = `(() => {
 /** The page's viewport size. */
 const VIEWPORT_JS = '({ w: window.innerWidth, h: window.innerHeight })';
 
-/** Analyses the page after a scroll, or reports the scroll when the analyzer is missing. */
+/**
+ * Analyses the page after a scroll, or reports the scroll when the analyzer is
+ * missing. The amount is written as a number whatever is passed in: it becomes
+ * code here.
+ */
 const scrollResultJs = (params, amount) =>
-  `(typeof analyzePage === 'function') ? analyzePage(${JSON.stringify(params?.analyze || {})}) : { ok: true, data: { direction: ${JSON.stringify(String(params?.direction || 'down'))}, amount: ${amount} } }`;
+  `(typeof analyzePage === 'function') ? analyzePage(${JSON.stringify(params?.analyze || {})}) : { ok: true, data: { direction: ${JSON.stringify(String(params?.direction || 'down'))}, amount: ${Number(amount) || 0} } }`;
 
 /** Sets a <select>'s value and fires change and input. */
 const SELECT_OPTION_JS = `(() => {
@@ -195,9 +199,19 @@ const selectOptionJs = (selector, value) => fill(SELECT_OPTION_JS, JSON.stringif
 const DEV_ANALYZE_JS =
   '(typeof analyzePage === "function") ? analyzePage({}) : { ok: false, error: "Analyzer not loaded" }';
 
+/**
+ * How long a wait lasts: the caller's timeout when it is a positive number, else
+ * the default. It is written into a script as code, so it is never the caller's
+ * own text: a string would run in the page.
+ */
+function waitMs(params) {
+  const ms = Number(params?.timeout);
+  return Number.isFinite(ms) && ms > 0 ? ms : ELEMENT_WAIT_MS;
+}
+
 /** The dev panel's wait: polls a plain CSS selector until it matches or times out. */
 const devWaitJs = (params) =>
-  `(async () => { const maxWait = ${params?.timeout || ELEMENT_WAIT_MS}; const start = Date.now(); while (Date.now() - start < maxWait) { if (document.querySelector(${JSON.stringify(params.selector)})) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`;
+  `(async () => { const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (document.querySelector(${JSON.stringify(params.selector)})) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`;
 
 /** Scripts for the actions that have no handler of their own, by action. */
 const ACTION_SCRIPTS = {
@@ -206,15 +220,18 @@ const ACTION_SCRIPTS = {
     `(typeof analyzePage === 'function') ? analyzePage(${JSON.stringify(params || {})}) : { ok: false, error: 'Analyzer not loaded' }`,
   /** Polls for an element (an analyzer id or CSS, in the page or its iframes) until it appears or the wait runs out. */
   wait: (params) =>
-    `(async () => { const present = () => ${presentJs(params?.selector)}; const maxWait = ${params?.timeout || ELEMENT_WAIT_MS}; const start = Date.now(); while (Date.now() - start < maxWait) { if (present()) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`,
+    `(async () => { const present = () => ${presentJs(params?.selector)}; const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (present()) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`,
   /** The visible elements matching a selector, in the page and its iframes. */
   read_page: (params) => readElementsJs(params?.selector, params?.limit),
 };
 
-/** The script for an action with no handler of its own; an unknown action answers with an error. */
+/**
+ * The script for an action with no handler of its own, or null for an action
+ * this browser does not know. The action's name is the caller's text, so it
+ * never becomes part of a script.
+ */
 function actionScript(action, params) {
-  if (Object.hasOwn(ACTION_SCRIPTS, action)) return ACTION_SCRIPTS[action](params);
-  return `({ ok: false, error: 'Unknown action: ${action}' })`;
+  return Object.hasOwn(ACTION_SCRIPTS, action) ? ACTION_SCRIPTS[action](params) : null;
 }
 
 module.exports = {
