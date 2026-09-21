@@ -11,9 +11,10 @@ import { registry } from '../registry.ts';
 import { browserCdpUrl } from './cdp-url.ts';
 import { started, type Start } from './start-reply.ts';
 
-/** True when the start has no CDP URL to dial and would fail for want of one. */
+/** True when the start names no provider, has no CDP URL to dial and would fail for want of one. */
 export function nothingToDial(req, key: string, wanted: string) {
-  if (wanted !== 'cdp') return false;
+  // A caller who names cdp chose it, and is told it needs a URL rather than handed some other browser.
+  if (wanted !== 'cdp' || req.body?.provider) return false;
   return !req.body?.wsUrl && !keyConfig.envFor(key).OYA_CDP_WS_URL;
 }
 

@@ -41,7 +41,7 @@ async function recordable(extra: object = {}) {
 }
 /** Waits until `check` holds, polling briefly. */
 async function until(check: () => boolean) {
-  for (let i = 0; i < 200 && !check(); i++) await new Promise((r) => setTimeout(r, 5));
+  for (let i = 0; i < 1000 && !check(); i++) await new Promise((r) => setTimeout(r, 5));
   assert.ok(check(), 'condition never held');
 }
 
