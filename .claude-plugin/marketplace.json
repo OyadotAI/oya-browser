@@ -1,0 +1,19 @@
+{
+  "name": "oya",
+  "description": "Oya's plugins for Claude Code: real Chrome browsers your agent can start, read and drive.",
+  "owner": {
+    "name": "Oya",
+    "url": "https://getoya.ai"
+  },
+  "plugins": [
+    {
+      "name": "oya-browser",
+      "source": "./",
+      "description": "Real Chrome browsers for your agent: the Oya MCP server (start_browser, analyze_page, click, type…) plus a skill that teaches the workflow.",
+      "homepage": "https://browser.getoya.ai",
+      "repository": "https://github.com/OyadotAI/oya-browser",
+      "keywords": ["browser", "automation", "mcp", "chrome", "scraping", "captcha"],
+      "category": "automation"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: oya-browser-dev-cert
+  namespace: oya-browser-dev
+spec:
+  secretName: oya-browser-dev-cert
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - dev-browser.getoya.ai
+  # Legacy host, still served (redirects to the canonical domain)
+  - dev-browser.oya.ai

@@ -1,0 +1,238 @@
+/**
+ * The hero figure: two attempts at the same portal, one blocked and one not.
+ * Everything animates in CSS so the figure costs no JavaScript, and it holds
+ * its finished state for anyone who asked for less motion.
+ */
+.figure {
+  --lane: 7s;
+  --ink: #1a261e;
+  --dim: #6b7566;
+  --line: #e5e9e1;
+  --stop: #c2410c;
+  --go: #16733b;
+  margin: 0;
+  padding: 26px 24px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfcfa, #fff);
+}
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 122px;
+  align-items: center;
+  gap: 16px;
+}
+.portal {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 16px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfa;
+  text-align: center;
+}
+.portal svg {
+  color: var(--dim);
+}
+.portal strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.portal span {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+.lane {
+  min-width: 0;
+}
+.lane + .lane {
+  margin-top: 14px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--line);
+}
+.label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.who {
+  font-weight: 600;
+  color: var(--ink);
+}
+.track {
+  position: relative;
+  height: 34px;
+}
+.rail {
+  position: absolute;
+  top: 16px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(90deg, var(--line) 0 7px, transparent 7px 13px);
+}
+.wall {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 68%;
+  width: 7px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(135deg, rgba(194, 65, 12, 0.5) 0 3px, transparent 3px 6px);
+  border-left: 2px solid rgba(194, 65, 12, 0.55);
+}
+.dot {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 4px rgba(26, 38, 30, 0.08);
+}
+.blocked .dot {
+  animation: stopped var(--lane) linear infinite;
+}
+.through .dot {
+  background: var(--go);
+  box-shadow: 0 0 0 4px rgba(22, 115, 59, 0.12);
+  animation: through var(--lane) linear infinite;
+}
+.result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.blocked .result {
+  border: 1px solid rgba(194, 65, 12, 0.3);
+  background: #fff3ed;
+  color: var(--stop);
+  animation: appear var(--lane) ease-out infinite;
+}
+.through .result {
+  border: 1px solid rgba(22, 115, 59, 0.3);
+  background: #eefbef;
+  color: var(--go);
+  animation: appear-late var(--lane) ease-out infinite;
+}
+.outcome {
+  min-height: 26px;
+  margin-top: 8px;
+}
+.target {
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  text-transform: uppercase;
+}
+.caption {
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+@keyframes stopped {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  30% {
+    left: 62%;
+    opacity: 1;
+  }
+  36% {
+    left: 64%;
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  100% {
+    left: 64%;
+    opacity: 0;
+  }
+}
+@keyframes through {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  10% {
+    left: 4%;
+    opacity: 1;
+  }
+  52% {
+    left: calc(100% - 14px);
+    opacity: 1;
+  }
+  60% {
+    left: calc(100% - 14px);
+    opacity: 0;
+  }
+  100% {
+    left: calc(100% - 14px);
+    opacity: 0;
+  }
+}
+@keyframes appear {
+  0%,
+  33% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  42%,
+  92% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes appear-late {
+  0%,
+  55% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  64%,
+  92% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    display: none;
+  }
+  .blocked .result,
+  .through .result {
+    animation: none;
+    opacity: 1;
+  }
+}

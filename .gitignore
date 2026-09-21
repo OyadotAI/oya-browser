@@ -1,0 +1,29 @@
+node_modules/
+.env
+dist/
+server/dist/
+*.log
+.DS_Store
+k8s/secrets.yaml
+k8s/ghcr.env
+server/data/
+# The directory itself stays: the Dockerfile COPYs it, and a build from a
+# fresh clone fails without it. Git cannot re-include a file under an excluded
+# directory, so this excludes the contents rather than the directory.
+server/downloads/*
+!server/downloads/.gitkeep
+.test-e2e-tmp/*
+server/ui-static/
+qa/
+# CLI link state: project ref and pooler URL, not for a public repo.
+# Unanchored so it catches server/supabase/.temp/ too — the root-anchored
+# pattern is how those got committed in the first place.
+**/supabase/.temp/
+recorded-video/
+# Written by `oya install`, which runs inside the checkout by design
+oya-install.json
+k8s/fleet/
+
+# Working notes that are ours, not a user's. This repository is public, so
+# anything written for internal use lives here and never ships.
+compliance/local/

@@ -1,0 +1,50 @@
+/**
+ * Unit tests for the page scripts: values are inserted exactly where the
+ * script text expects them, and actions without a handler map to a script.
+ */
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const s = require('../../../../main/actions/scripts.cjs');
+
+describe('page scripts', () => {
+  it('findElementJs quotes the selector as code and escapes it in the message', () => {
+    const js = s.findElementJs("a[title='x']");
+    assert.ok(js.includes('const el = f("a[title=\'x\']");'));
+    assert.ok(js.includes("error: 'Element not found: a[title=\\'x\\']'"));
+  });
+
+  it('inserted values are taken literally, replacement patterns included', () => {
+    const js = s.selectOptionJs('#s', '$& $1');
+    assert.ok(js.includes('el.value = "$& $1";'));
+    assert.ok(js.includes('const el = f("#s");'));
+  });
+
+  it('every script is valid JavaScript', () => {
+    for (const js of [
+      s.findElementJs('a'),
+      s.iframeClickJs('a'),
+      s.selectFieldJs('a'),
+      s.selectOptionJs('a', 'b'),
+      s.devSelectJs({ element_id: 3, value: 'v' }),
+      s.devWaitJs({ selector: 'a' }),
+      s.scrollResultJs({ direction: 'up' }, 5),
+      s.DROPDOWN_JS,
+      s.DEV_ANALYZE_JS,
+    ]) {
+      assert.doesNotThrow(() => new Function(js), js.slice(0, 60));
+    }
+  });
+
+  it('the wait script defaults its timeout', () => {
+    assert.ok(s.actionScript('wait', { selector: 'a' }).includes('const maxWait = 10000;'));
+    assert.ok(s.actionScript('wait', { selector: 'a', timeout: 5 }).includes('const maxWait = 5;'));
+  });
+
+  it('analyze passes its params to the analyzer', () => {
+    assert.ok(s.actionScript('analyze', { a: 1 }).includes('analyzePage({"a":1})'));
+  });
+
+  it('an unknown action, even a prototype name, answers with an error', () => {
+    assert.equal(s.actionScript('toString'), "({ ok: false, error: 'Unknown action: toString' })");
+  });
+});

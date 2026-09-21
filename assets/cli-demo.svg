@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" width="100%" height="100%">
+  <defs>
+    <linearGradient id="term-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#141410"/>
+      <stop offset="100%" stop-color="#0c0c0a"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="900" height="480" rx="14" fill="url(#term-bg)" stroke="rgba(255,255,255,0.12)" stroke-width="1.5"/>
+
+  <!-- Window Header -->
+  <path d="M0 0 h900 v40 h-900 z" fill="#1c1c18" rx="14"/>
+  <rect x="0" y="28" width="900" height="12" fill="#1c1c18"/>
+  <line x1="0" y1="40" x2="900" y2="40" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+
+  <!-- Traffic Lights -->
+  <circle cx="24" cy="20" r="6" fill="#ff5f56"/>
+  <circle cx="44" cy="20" r="6" fill="#ffbd2e"/>
+  <circle cx="64" cy="20" r="6" fill="#27c93f"/>
+
+  <!-- Terminal Title -->
+  <text x="450" y="25" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, monospace" font-size="12" fill="rgba(255,255,255,0.5)">oya, fleet orchestration terminal</text>
+
+  <!-- Terminal Content -->
+  <g font-family="'Cascadia Code', 'Fira Code', Menlo, Monaco, monospace" font-size="13" letter-spacing="-0.2">
+    <!-- Command 1: Start -->
+    <text x="32" y="75" fill="#39ed35">$</text>
+    <text x="48" y="75" fill="#ffffff" font-weight="600">oya start --persona auto</text>
+    <text x="32" y="100" fill="#39ed35">✅ oya-8ed39f1c</text>
+    <text x="48" y="122" fill="rgba(255,255,255,0.6)">provider: <tspan fill="#ffffff">oya-cloud</tspan>   persona: <tspan fill="#39ed35">p-us-shopper</tspan></text>
+    <text x="48" y="142" fill="rgba(255,255,255,0.6)">cdp:      <tspan fill="#6cb4ff">wss://browser.getoya.ai/connect?ticket=…</tspan></text>
+
+    <!-- Command 2: Goto -->
+    <text x="32" y="180" fill="#39ed35">$</text>
+    <text x="48" y="180" fill="#ffffff" font-weight="600">oya goto https://example.com</text>
+    <text x="32" y="205" fill="#39ed35">✅ oya-8ed39f1c → https://example.com</text>
+
+    <!-- Command 3: Ask -->
+    <text x="32" y="242" fill="#39ed35">$</text>
+    <text x="48" y="242" fill="#ffffff" font-weight="600">oya ask "What is this page for?"</text>
+    <text x="32" y="267" fill="#e2e0d8">It's a reserved domain for use in illustrative examples in</text>
+    <text x="32" y="287" fill="#e2e0d8">documents. You may use it in literature without prior</text>
+    <text x="32" y="307" fill="#e2e0d8">coordination or asking for permission.</text>
+
+    <!-- Command 4: Live Fleet Status -->
+    <text x="32" y="348" fill="#39ed35">$</text>
+    <text x="48" y="348" fill="#ffffff" font-weight="600">oya ls</text>
+    <text x="32" y="375" fill="#39ed35">●</text>
+    <text x="48" y="375" fill="rgba(255,255,255,0.85)">oya-8ed39f1c  oya-cloud      us-shopper-01   agent-prod-01     3·0   example.com</text>
+    <text x="32" y="397" fill="#39ed35">●</text>
+    <text x="48" y="397" fill="rgba(255,255,255,0.85)">oya-3b991a02  browserbase    fin-audit-us    reconciliation    14·0  app.brex.com/expenses</text>
+    <text x="32" y="419" fill="#39ed35">●</text>
+    <text x="48" y="419" fill="rgba(255,255,255,0.85)">oya-c148fa77  steel          eu-gdpr-crawl   market-intel      31·0  linkedin.com/feed</text>
+
+    <text x="32" y="450" fill="#39ed35" font-weight="600">3 running.</text>
+  </g>
+</svg>

@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: oya-browser
+
+resources:
+- ../../base
+- ingress.yaml
+- cert.yaml
+
+replicas:
+- name: browser
+  count: 2
+
+images:
+- name: ghcr.io/oyadotai/oya-browser-server
+  newTag: latest
+- name: ghcr.io/oyadotai/oya-browser
+  newTag: latest
+
+labels:
+  - pairs:
+      app.kubernetes.io/version: prod
+    includeSelectors: false
+
+# Cloud sandboxes connect back from outside the cluster.
+patches:
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: server
+    spec:
+      template:
+        spec:
+          containers:
+          - name: server
+            env:
+            - name: OYA_PUBLIC_WS_URL
+              value: wss://browser.getoya.ai/ws

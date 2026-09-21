@@ -1,0 +1,7 @@
+{
+  "name": "@oya/eslint-rules",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "The project's shared lint rules; each part imports them into its own ESLint config."
+}

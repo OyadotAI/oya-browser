@@ -1,0 +1,152 @@
+/**
+ * ControlService against a real SQLite control store: project rename and
+ * deletion, capacity and idempotent admission, human takeover gating commands,
+ * tickets and credentials across a restart, drain, governance and budget
+ * refusals, webhooks, and admission holding the cap across two connections.
+ */
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+process.env.OYA_PROFILE_SECRET = 'control-test-secret';
+const { ControlStore } = await import('../../src/modules/control/store.ts');
+const { ControlService, projectId } = await import('../../src/modules/control/service.ts');
+const dir = mkdtempSync(join(tmpdir(), 'oya-durable-'));
+const path = join(dir, 'test.sqlite');
+let store = new ControlStore({ path });
+let service = new ControlService(store);
+try {
+  const managedKey = 'project-management-test';
+  const managed = await service.project(managedKey);
+  await store.transact(async (tx) => {
+    (await tx.get('project', managed.id)).ownerUser = 'owner';
+  });
+  await assert.rejects(service.updateOwnedProject('other', managed.id, { name: 'Stolen' }), { status: 404 });
+  await assert.rejects(service.updateOwnedProject('owner', managed.id, { name: '  ' }), { status: 400 });
+  await service.updateOwnedProject('owner', managed.id, { name: '  Renamed project  ' });
+  assert.equal((await service.project(managedKey)).name, 'Renamed project');
+  assert.equal(service.projectKey(await store.get('project', managed.id)), managedKey);
+  const damaged = { ...(await store.get('project', managed.id)), key: 'invalid' };
+  assert.throws(() => service.projectKey(damaged), { code: 'project_key_unavailable', status: 503 });
+  const credential = await service.credential(managedKey, { role: 'administrator' }, 'owner');
+  const active = await service.reserve(managedKey, { provider: 'cdp', request: {} });
+  // A desktop browser that went away stays `disconnected` forever; it must not make the project undeletable.
+  const lost = await service.reserve(managedKey, { provider: 'oya-desktop', request: {} });
+  await service.update(managedKey, lost.id, { state: 'disconnected', provisioningActive: false });
+  await assert.rejects(service.updateOwnedProject('owner', managed.id, { remove: true }), {
+    code: 'project_active',
+    active: 2,
+  });
+  await service.update(managedKey, active.id, { state: 'stopped' });
+  await service.updateOwnedProject('owner', managed.id, { remove: true, stopBrowsers: true });
+  assert.equal((await store.get('session', lost.id)).state, 'stopped');
+  await assert.rejects(service.authenticate(credential.token), { code: 'project_deleted' });
+  await assert.rejects(service.project(managedKey), { code: 'project_deleted' });
+  await assert.rejects(service.credential(managedKey), { code: 'project_deleted' });
+  console.log('Project rename, key decryption, owner authorization and deletion checks passed');
+  assert.throws(() => new ControlStore({ path }), /already in use/);
+  const results = await Promise.allSettled(
+    Array.from({ length: 20 }, (_, i) => service.reserve('a', { provider: 'cdp', maxConcurrent: 1, request: { i } })),
+  );
+  assert.equal(results.filter((x) => x.status === 'fulfilled').length, 1, 'atomic admission admits one request');
+  const first = results.find((x) => x.status === 'fulfilled').value;
+  await service.update('a', first.id, { state: 'stopped' });
+  const repeated = await Promise.all(
+    Array.from({ length: 10 }, () =>
+      service.reserve('a', { provider: 'cdp', maxConcurrent: 1, request: { name: 'same' }, idempotencyKey: 'repeat' }),
+    ),
+  );
+  assert.equal(new Set(repeated.map((x) => x.id)).size, 1);
+  await assert.rejects(
+    service.reserve('a', { provider: 'cdp', request: { name: 'different' }, idempotencyKey: 'repeat' }),
+    { code: 'idempotency_conflict' },
+  );
+  const session = repeated[0];
+  await assert.rejects(service.update('b', session.id, { state: 'stopped' }), { status: 404 });
+  assert.equal((await service.read('b')).sessions.length, 0);
+  await service.update('a', session.id, { state: 'ready' });
+  const end = await service.beginCommand(session.id);
+  await assert.rejects(service.takeover('a', session.id, 'acquire', 'human'), { code: 'commands_pending' });
+  await end();
+  await service.takeover('a', session.id, 'acquire', 'human');
+  await assert.rejects(service.beginCommand(session.id), { code: 'control_paused' });
+  await (
+    await service.beginCommand(session.id, 'human')
+  )();
+  await assert.rejects(service.takeover('a', session.id, 'release', 'other'), { code: 'control_busy' });
+  await service.takeover('a', session.id, 'release', 'human');
+  await assert.rejects(service.beginCommand(session.id), { code: 'control_paused' });
+  await service.takeover('a', session.id, 'resume', 'agent');
+  await assert.rejects(service.settings('a', { rates: null }), { status: 400 });
+  await assert.rejects(service.settings('a', { policy: null }), { status: 400 });
+  await assert.rejects(store.beginCommand(session.id, null, 'stale-replica'), { code: 'control_paused' });
+  const c = await service.credential('a', { role: 'viewer' });
+  assert.equal((await service.authenticate(c.token)).role, 'viewer');
+  assert.equal((await service.read('a')).credentials[0].token, undefined);
+  const ticket = await service.ticket('a', session.id);
+  await assert.rejects(service.redeem(ticket, 'different'), { status: 401 });
+  assert.equal(await service.redeem(ticket, session.id), 'a');
+  await assert.rejects(service.redeem(ticket, session.id), { status: 401 });
+  await store.close();
+  store = new ControlStore({ path });
+  service = new ControlService(store);
+  assert.equal((await service.read('a')).sessions.find((x) => x.id === session.id).state, 'ready');
+  assert.equal((await service.authenticate(c.token)).key, 'a');
+  await service.revoke('a', c.id);
+  await assert.rejects(service.authenticate(c.token), { status: 401 });
+  await service.drain(true);
+  await assert.rejects(service.reserve('b', { provider: 'cdp' }), { code: 'draining' });
+  await service.drain(false);
+  await assert.rejects(service.reserve('b', { provider: 'steel', request: { governed: true } }), {
+    code: 'runtime_not_verified',
+  });
+  await service.settings('b', { budgetUsd: 1 });
+  await assert.rejects(service.reserve('b', { provider: 'oya-cloud', managed: true }), { code: 'unsupported_budget' });
+  await service.settings('b', { rates: { 'oya-selfhosted': 1 } });
+  assert.equal((await service.reserve('b', { provider: 'oya-selfhosted', managed: true })).runtimeRequired, true);
+  const hook = await service.webhook('a', { url: 'https://example.com/events', types: ['session.stopped'] });
+  await service.update('a', session.id, { state: 'cleanup_pending' });
+  await assert.rejects(service.update('a', session.id, { state: 'ready' }), { code: 'session_stopping' });
+  await service.update('a', session.id, { state: 'stopped' });
+  assert.equal((await service.read('a')).deliveries.filter((x) => x.hook === hook.id).length, 1);
+  await assert.rejects(service.update('a', session.id, { state: 'ready' }), { code: 'terminal_session' });
+  // The Settings endpoint: one per project, secret kept across edits, rotated on request.
+  const created = await service.webhook('c', { url: 'https://example.com/a', types: ['persona.created'] });
+  const edited = await service.webhook('c', { url: 'https://example.com/b', types: ['persona.created'] });
+  assert.ok(created.secret && !edited.secret && edited.id === created.id);
+  assert.equal((await service.read('c')).webhooks.length, 1);
+  assert.notEqual(
+    (await service.webhook('c', { url: 'https://example.com/b', types: ['persona.created'], roll: true })).secret,
+    created.secret,
+  );
+  await service.emit('c', 'session.ready');
+  await service.emit('c', 'persona.created', null, { personaId: 'p1' });
+  const config = await service.webhookConfig('c');
+  assert.equal(config.hook.url, 'https://example.com/b');
+  assert.deepEqual(
+    config.deliveries.map((d) => d.type),
+    ['persona.created'],
+  );
+  assert.notEqual((await store.get('project', projectId('a'))).key, 'a', 'canonical key encrypted at rest');
+  // Two connections to one file stand in for two replicas: admission must hold across them through row CAS and the project lock.
+  const replicas = [
+    new ControlService(new ControlStore({ path, lock: false })),
+    new ControlService(new ControlStore({ path, lock: false })),
+  ];
+  const raced = await Promise.allSettled(
+    Array.from({ length: 16 }, (_, i) => replicas[i % 2].reserve('race', { provider: 'cdp', maxConcurrent: 2 })),
+  );
+  assert.equal(
+    raced.filter((x) => x.status === 'fulfilled').length,
+    2,
+    'cross-connection admission admits exactly the cap',
+  );
+  assert.equal((await replicas[0].read('race')).sessions.length, 2);
+  for (const r of replicas) await r.store.close();
+  console.log(
+    'Durable control contracts passed: admission races, idempotency, isolation, restart, takeover, tickets, revocation, budgets, outbox, lifecycle.',
+  );
+} finally {
+  await store.close();
+  rmSync(dir, { recursive: true, force: true });
+}

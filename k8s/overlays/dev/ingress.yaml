@@ -1,0 +1,56 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oya-browser
+  namespace: oya-browser-dev
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "oya-browser-route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "10800"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    # CORS, `*` is
+    # correct for a bearer-token API: a third-party page can send a request but
+    # has no way to obtain the Authorization header, so there is no ambient
+    # authority to abuse. allow-credentials is NOT set, deliberately, nothing
+    # here authenticates with cookies, and `*` plus credentials is invalid per
+    # the Fetch spec, which is how "just reflect the Origin" gets introduced
+    # later as a fix.
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET,POST,PUT,DELETE,OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type,Authorization"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - dev-browser.getoya.ai
+    # Legacy host, kept so TLS terminates before the server's 308 redirect
+    - dev-browser.oya.ai
+    secretName: oya-browser-dev-cert
+  rules:
+  - host: dev-browser.getoya.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: server
+            port:
+              number: 3100
+  # Legacy host, redirects to dev-browser.getoya.ai (see server/src/index.ts)
+  - host: dev-browser.oya.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: server
+            port:
+              number: 3100

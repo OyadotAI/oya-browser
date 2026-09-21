@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="100%" height="100%">
+  <defs>
+    <linearGradient id="layer-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1c1c18"/>
+      <stop offset="100%" stop-color="#141410"/>
+    </linearGradient>
+    <linearGradient id="oya-layer-bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#242420"/>
+      <stop offset="100%" stop-color="#181814"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#39ed35"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1000" height="560" rx="14" fill="#0c0c0a" stroke="rgba(255,255,255,0.1)" stroke-width="1.5"/>
+
+  <!-- TOP LAYER: AGENTS & INTERFACES -->
+  <g transform="translate(50, 30)">
+    <rect width="900" height="85" rx="10" fill="url(#layer-bg)" stroke="rgba(255,255,255,0.12)" stroke-width="1"/>
+    <text x="450" y="28" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="12" font-weight="700" fill="#a8a89e" letter-spacing="1.5">CLIENT PROTOCOLS &amp; AGENT FRAMEWORKS</text>
+    
+    <g transform="translate(450, 56)">
+      <!-- Framework pills -->
+      <g transform="translate(-320, 0)">
+        <rect x="-65" y="-14" width="130" height="28" rx="6" fill="#242420" stroke="rgba(255,255,255,0.08)"/>
+        <text x="0" y="4" text-anchor="middle" font-family="monospace" font-size="12" fill="#ffffff">Claude Code</text>
+      </g>
+      <g transform="translate(-160, 0)">
+        <rect x="-60" y="-14" width="120" height="28" rx="6" fill="#242420" stroke="rgba(255,255,255,0.08)"/>
+        <text x="0" y="4" text-anchor="middle" font-family="monospace" font-size="12" fill="#ffffff">Playwright</text>
+      </g>
+      <g transform="translate(0, 0)">
+        <rect x="-60" y="-14" width="120" height="28" rx="6" fill="#242420" stroke="rgba(255,255,255,0.08)"/>
+        <text x="0" y="4" text-anchor="middle" font-family="monospace" font-size="12" fill="#ffffff">Stagehand</text>
+      </g>
+      <g transform="translate(160, 0)">
+        <rect x="-60" y="-14" width="120" height="28" rx="6" fill="#242420" stroke="rgba(255,255,255,0.08)"/>
+        <text x="0" y="4" text-anchor="middle" font-family="monospace" font-size="12" fill="#ffffff">browser-use</text>
+      </g>
+      <g transform="translate(320, 0)">
+        <rect x="-65" y="-14" width="130" height="28" rx="6" fill="#242420" stroke="rgba(255,255,255,0.08)"/>
+        <text x="0" y="4" text-anchor="middle" font-family="monospace" font-size="12" fill="#ffffff">TypeScript SDK</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Connection Down Arrow -->
+  <line x1="500" y1="115" x2="500" y2="152" stroke="#39ed35" stroke-width="2" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+  <rect x="420" y="125" width="160" height="18" rx="4" fill="#141410" stroke="rgba(57,237,53,0.3)" stroke-width="1"/>
+  <text x="500" y="138" text-anchor="middle" font-family="monospace" font-size="10" fill="#39ed35">CDP / MCP / REST / CLI</text>
+
+  <!-- MIDDLE LAYER: OYA BROWSER CONTROL PLANE -->
+  <g transform="translate(50, 160)">
+    <rect width="900" height="235" rx="12" fill="url(#oya-layer-bg)" stroke="rgba(57,237,53,0.3)" stroke-width="1.5"/>
+    
+    <!-- Header -->
+    <rect x="0" y="0" width="900" height="38" rx="12" fill="#1c1c18"/>
+    <rect x="0" y="26" width="900" height="12" fill="#1c1c18"/>
+    <circle cx="24" cy="19" r="5" fill="#39ed35"/>
+    <text x="38" y="23" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="700" fill="#ffffff" letter-spacing="0.5">OYA BROWSER CONTROL PLANE</text>
+    <text x="876" y="23" text-anchor="end" font-family="monospace" font-size="11" fill="rgba(255,255,255,0.4)">RUNTIME &amp; GOVERNANCE CORE</text>
+    <line x1="0" y1="38" x2="900" y2="38" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+
+    <!-- 4 Core Sub-Systems -->
+    <!-- 1. Unified Gateway Router -->
+    <g transform="translate(25, 55)">
+      <rect width="200" height="155" rx="8" fill="#141410" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <text x="18" y="28" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#39ed35">Unified Gateway</text>
+      <text x="18" y="55" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Dynamic Provider Route</text>
+      <text x="18" y="78" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Admission Failover</text>
+      <text x="18" y="101" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• CDP Multiplexing</text>
+      <text x="18" y="124" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Zero-Rewrite Switch</text>
+    </g>
+
+    <!-- 2. Deterministic Personas -->
+    <g transform="translate(245, 55)">
+      <rect width="200" height="155" rx="8" fill="#141410" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <text x="18" y="28" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#39ed35">Persona Identities</text>
+      <text x="18" y="55" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Seeded Hardware FP</text>
+      <text x="18" y="78" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Pinned Resident IP</text>
+      <text x="18" y="101" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Persistent Cookie Jar</text>
+      <text x="18" y="124" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Concurrency Caps</text>
+    </g>
+
+    <!-- 3. Challenge Engine -->
+    <g transform="translate(465, 55)">
+      <rect width="200" height="155" rx="8" fill="#141410" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <text x="18" y="28" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#39ed35">Challenge Engine</text>
+      <text x="18" y="55" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Provider Solvers</text>
+      <text x="18" y="78" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• CapSolver / 2Captcha</text>
+      <text x="18" y="101" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Sealed TOTP &amp; SMS</text>
+      <text x="18" y="124" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Desktop Auth Pairing</text>
+    </g>
+
+    <!-- 4. Fleet Observability -->
+    <g transform="translate(685, 55)">
+      <rect width="190" height="155" rx="8" fill="#141410" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+      <text x="18" y="28" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#39ed35">Fleet Observability</text>
+      <text x="18" y="55" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Sub-Second Live View</text>
+      <text x="18" y="78" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Real-time Takeover</text>
+      <text x="18" y="101" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Prometheus Metrics</text>
+      <text x="18" y="124" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#e2e0d8">• Append-Only Audit</text>
+    </g>
+  </g>
+
+  <!-- Multiple Outbound Down Arrows -->
+  <line x1="200" y1="395" x2="200" y2="435" stroke="#39ed35" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="350" y1="395" x2="350" y2="435" stroke="#39ed35" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="500" y1="395" x2="500" y2="435" stroke="#39ed35" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="650" y1="395" x2="650" y2="435" stroke="#39ed35" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="800" y1="395" x2="800" y2="435" stroke="#39ed35" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- BOTTOM LAYER: EXECUTION TARGETS -->
+  <g transform="translate(50, 445)">
+    <g transform="translate(0, 0)">
+      <rect width="165" height="75" rx="8" fill="url(#layer-bg)" stroke="rgba(255,255,255,0.12)"/>
+      <text x="82" y="32" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#ffffff">Oya Cloud</text>
+      <text x="82" y="52" text-anchor="middle" font-family="monospace" font-size="10" fill="#a8a89e">Oya Cloud / K8s</text>
+    </g>
+    <g transform="translate(183, 0)">
+      <rect width="165" height="75" rx="8" fill="url(#layer-bg)" stroke="rgba(255,255,255,0.12)"/>
+      <text x="82" y="32" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#ffffff">Browserbase</text>
+      <text x="82" y="52" text-anchor="middle" font-family="monospace" font-size="10" fill="#a8a89e">Managed CDP API</text>
+    </g>
+    <g transform="translate(366, 0)">
+      <rect width="165" height="75" rx="8" fill="url(#layer-bg)" stroke="rgba(255,255,255,0.12)"/>
+      <text x="82" y="32" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#ffffff">Steel.dev</text>
+      <text x="82" y="52" text-anchor="middle" font-family="monospace" font-size="10" fill="#a8a89e">Puppeteer &amp; CDP</text>
+    </g>
+    <g transform="translate(549, 0)">
+      <rect width="165" height="75" rx="8" fill="url(#layer-bg)" stroke="rgba(255,255,255,0.12)"/>
+      <text x="82" y="32" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#ffffff">Anchor Browser</text>
+      <text x="82" y="52" text-anchor="middle" font-family="monospace" font-size="10" fill="#a8a89e">Stealth CDP</text>
+    </g>
+    <g transform="translate(732, 0)">
+      <rect width="168" height="75" rx="8" fill="url(#layer-bg)" stroke="rgba(255,255,255,0.12)"/>
+      <text x="84" y="32" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#ffffff">Browser Use / Self</text>
+      <text x="84" y="52" text-anchor="middle" font-family="monospace" font-size="10" fill="#a8a89e">Private Chrome Fleet</text>
+    </g>
+  </g>
+</svg>
