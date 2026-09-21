@@ -40,7 +40,7 @@ Every script needs `OYA_API_KEY`, and runs from this `examples/` folder. The mul
 
 ### Prerequisites
 - Node.js **20.6+** (native `--env-file` support)
-- An Oya API key from [browser.getoya.ai](https://browser.getoya.ai) or your local self-hosted instance (`http://localhost:3100`)
+- An Oya API key from [oyabrowser.com](https://oyabrowser.com) or your local self-hosted instance (`http://localhost:3100`)
 
 ### Installation
 

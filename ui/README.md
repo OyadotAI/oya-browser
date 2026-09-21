@@ -98,7 +98,7 @@ npm run test:ui
 | Variable | Default | Description |
 |:---|:---|:---|
 | `NEXT_PUBLIC_API_URL` | `/api` | Base HTTP endpoint for the Oya control plane backend |
-| `NEXT_PUBLIC_SITE_URL` | `https://browser.getoya.ai` | Canonical site URL for metadata, sitemap and links |
+| `NEXT_PUBLIC_SITE_URL` | `https://oyabrowser.com` | Canonical site URL for metadata, sitemap and links |
 
 ---
 

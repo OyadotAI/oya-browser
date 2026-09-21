@@ -41,7 +41,7 @@ const DOWNLOAD_ROWS_1: ReactNode[][] = [
 
 /** Rows of a table in the Connect section. */
 const CONNECT_ROWS_1: ReactNode[][] = [
-  ['Server URL', <InlineCode key="url">wss://browser.getoya.ai/ws</InlineCode>],
+  ['Server URL', <InlineCode key="url">wss://oyabrowser.com/ws</InlineCode>],
   ['API Key', 'The key you generated in the dashboard'],
   ['Browser Name', 'Optional, how it shows in the dashboard'],
 ];

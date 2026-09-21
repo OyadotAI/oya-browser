@@ -123,7 +123,7 @@ function RoutingFailover() {
       </p>
       <CodeBlock>{`// Point any CDP client at the Oya Control Plane gateway:
 const browser = await chromium.connectOverCDP(
-  "wss://browser.getoya.ai/connect?token=YOUR_OYA_KEY"
+  "wss://oyabrowser.com/connect?token=YOUR_OYA_KEY"
 );
 
 // Oya selects the highest-priority available provider.

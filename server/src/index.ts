@@ -89,21 +89,25 @@ egressServer?.listen(Number(process.env.OYA_EGRESS_PORT), process.env.OYA_EGRESS
 
 app.use(cors());
 
-// ── Legacy domain redirect: *.oya.ai → *.getoya.ai ──
+// ── Legacy domain redirect: old hosts → canonical host ──
 // The old hosts still resolve and terminate TLS at the ingress; anything
 // human-facing gets pushed to the canonical domain. /ws, /mcp, /api and
 // /downloads pass through untouched so already-installed browsers and MCP
 // clients configured against the old host keep working.
-const LEGACY_HOST = /^([a-z0-9-]+)\.oya\.ai$/i;
+const LEGACY_HOSTS: Record<string, string> = {
+  'browser.getoya.ai': 'oyabrowser.com',
+  'browser.oya.ai': 'oyabrowser.com',
+  'www.oyabrowser.com': 'oyabrowser.com',
+  'dev-browser.oya.ai': 'dev-browser.getoya.ai',
+};
 const REDIRECT_EXEMPT = ['/ws', '/mcp', '/api', '/downloads'];
 
 app.use((req, res, next) => {
-  const host = (req.headers.host || '').split(':')[0];
-  const legacy = LEGACY_HOST.exec(host);
-  if (!legacy) return next();
+  const host = (req.headers.host || '').split(':')[0].toLowerCase();
+  if (!Object.hasOwn(LEGACY_HOSTS, host)) return next();
   if (REDIRECT_EXEMPT.some((p) => req.path === p || req.path.startsWith(p + '/'))) return next();
   // 308 rather than 301, preserves method and body for non-GET requests
-  res.redirect(Status.PERMANENT_REDIRECT, `https://${legacy[1]}.getoya.ai${req.originalUrl}`);
+  res.redirect(Status.PERMANENT_REDIRECT, `https://${LEGACY_HOSTS[host]}${req.originalUrl}`);
 });
 
 const publicDir = PUBLIC_DIR;

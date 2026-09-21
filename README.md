@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/npm/v/@oya-ai/browser?color=39ed35&label=@oya-ai/browser&logo=npm" alt="npm: @oya-ai/browser"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable_Use_%2B_MIT_SDK-157a13" alt="License"></a>
-  <a href="https://browser.getoya.ai"><img src="https://img.shields.io/badge/hosted-browser.getoya.ai-141410?logo=googlechrome&logoColor=39ed35" alt="Hosted"></a>
+  <a href="https://oyabrowser.com"><img src="https://img.shields.io/badge/hosted-oyabrowser.com-141410?logo=googlechrome&logoColor=39ed35" alt="Hosted"></a>
 </p>
 
 ## Start
@@ -38,9 +38,9 @@ DONE: The top 3 stories on Hacker News are:
 3. What happened to the Snowden archive
 ```
 
-Set `OYA_API_KEY` from [browser.getoya.ai](https://browser.getoya.ai). Node 20+.
+Set `OYA_API_KEY` from [oyabrowser.com](https://oyabrowser.com). Node 20+.
 
-No provider set up yet? Open the [desktop browser](https://browser.getoya.ai) on the same
+No provider set up yet? Open the [desktop browser](https://oyabrowser.com) on the same
 key and `start()` hands that one over, so those five lines work with nothing else
 configured. `npx @oya-ai/cli init` picks where browsers run when you want it to start them.
 
@@ -64,7 +64,7 @@ you can read and keep.
 ## Sign in once
 
 Scripted logins break on Google SSO, Okta, passkeys and Cloudflare. Don't script them. Sign in
-by hand once in the [desktop app](https://browser.getoya.ai), and every browser you start on that
+by hand once in the [desktop app](https://oyabrowser.com), and every browser you start on that
 persona is already signed in: the session travels as cookies **and localStorage**, sealed at
 rest, because half the portals worth automating keep you signed in with neither one alone.
 
@@ -102,12 +102,12 @@ SQLite, Postgres or Supabase; browsers on Docker, Kubernetes or your own machine
 ## Give it to your agent
 
 ```bash
-claude mcp add --transport http oya https://browser.getoya.ai/mcp/pool \
+claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
   --header "Authorization: Bearer $OYA_API_KEY"
 ```
 
 Then just ask: *"Start a browser, open Hacker News and summarise the top 3 stories."*
-Also [Cursor, Claude Desktop and any agent that reads skills](https://browser.getoya.ai/docs).
+Also [Cursor, Claude Desktop and any agent that reads skills](https://oyabrowser.com/docs).
 
 <p align="center">
   <img src="assets/oya-demo.gif" alt="The Oya browser: a task asked in plain language, answered, and kept as a playbook" width="100%">
@@ -122,7 +122,7 @@ Also [Cursor, Claude Desktop and any agent that reads skills](https://browser.ge
 | **It proves what it did** | A hash-chained audit trail the database won't let you rewrite, host allow-listing, [regenerable evidence](compliance/EVIDENCE.md) |
 | **It isn't one vendor** | Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome ([why](docs/why-oya.md)) |
 | **It keeps your tools** | Every browser has a `cdpUrl`, so Playwright and Puppeteer connect unchanged |
-| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [examples](examples) · [browser.getoya.ai/docs](https://browser.getoya.ai/docs) |
+| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) |
 
 ## Packages
 

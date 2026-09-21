@@ -7,7 +7,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 for environment, host in [
     ("dev", "dev-browser.getoya.ai"),
-    ("prod", "browser.getoya.ai"),
+    ("prod", "oyabrowser.com"),
 ]:
     rendered = subprocess.check_output(
         ["kubectl", "kustomize", str(ROOT / "k8s/overlays" / environment)], text=True

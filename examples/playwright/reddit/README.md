@@ -91,7 +91,7 @@ You'll see something like:
 
 | Variable | Default | What it does |
 |:---|:---|:---|
-| `OYA_API_KEY` | required | Your key from [browser.getoya.ai](https://browser.getoya.ai) |
+| `OYA_API_KEY` | required | Your key from [oyabrowser.com](https://oyabrowser.com) |
 | `OYA_PERSONA` | `default` | The profile to run as. Pin the proxy to this one. |
 | `OYA_BROWSER_ID` | unset | Attach to one running browser instead of starting 10. See below. |
 | `OYA_BASE_URL` | hosted service | Your server, if self-hosted |

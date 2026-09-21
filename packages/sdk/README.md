@@ -28,11 +28,11 @@ await browser.goto('https://news.ycombinator.com');
 console.log(await browser.ask('What are the top 3 stories?'));
 ```
 
-Two things to have first: an API key from [browser.getoya.ai](https://browser.getoya.ai)
+Two things to have first: an API key from [oyabrowser.com](https://oyabrowser.com)
 (or your own deployment) in `OYA_API_KEY`, and a browser to drive.
 
 **The fastest browser to have is one you already have.** Open the
-[Oya desktop browser](https://browser.getoya.ai) and sign in with the same key: `start()`
+[Oya desktop browser](https://oyabrowser.com) and sign in with the same key: `start()`
 hands over the browser that is already connected when no provider is configured, so the
 five lines above work with nothing else set up. `stop()` leaves a browser you borrowed
 alone, because you did not start it.
@@ -386,7 +386,7 @@ import { Oya } from '@oya-ai/browser';
 
 const oya = new Oya({
   apiKey: 'oya_...', // default: process.env.OYA_API_KEY
-  baseUrl: 'https://browser.getoya.ai', // default: OYA_BASE_URL, then the hosted service
+  baseUrl: 'https://oyabrowser.com', // default: OYA_BASE_URL, then the hosted service
   timeoutMs: 60_000, // per request
   // fetch: customFetch,                // any fetch-compatible implementation
 });

@@ -14,7 +14,7 @@ function McpSetup() {
       <p className="mb-3 text-[15px] leading-relaxed">
         One endpoint for everything you have. It starts browsers itself, so there is no id to look up first:
       </p>
-      <CodeBlock>{'https://browser.getoya.ai/mcp/pool'}</CodeBlock>
+      <CodeBlock>{'https://oyabrowser.com/mcp/pool'}</CodeBlock>
       <p className="mb-3 text-[15px] leading-relaxed">
         Seventeen tools: fourteen that act on a page, round-robined across your browsers, plus{' '}
         <InlineCode>start_browser</InlineCode>, <InlineCode>stop_browser</InlineCode> and{' '}
@@ -32,7 +32,7 @@ function McpSetup() {
       <CodeBlock>{`{
   "mcpServers": {
     "oya-browser": {
-      "url": "https://browser.getoya.ai/mcp/pool",
+      "url": "https://oyabrowser.com/mcp/pool",
       "transport": "streamable-http",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
@@ -59,7 +59,7 @@ function McpSetupPart2() {
       <CodeBlock>{`{
   "mcpServers": {
     "oya-browser": {
-      "url": "https://browser.getoya.ai/mcp/pool",
+      "url": "https://oyabrowser.com/mcp/pool",
       "transport": "streamable-http",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"

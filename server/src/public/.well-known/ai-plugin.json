@@ -11,9 +11,9 @@
   },
   "api": {
     "type": "openapi",
-    "url": "https://browser.getoya.ai/openapi.json"
+    "url": "https://oyabrowser.com/openapi.json"
   },
-  "logo_url": "https://browser.getoya.ai/icon.png",
+  "logo_url": "https://oyabrowser.com/icon.png",
   "contact_email": "support@oya.ai",
   "legal_info_url": "https://oya.ai/legal"
 }

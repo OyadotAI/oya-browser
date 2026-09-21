@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://browser.getoya.ai",
+      "url": "https://oyabrowser.com",
       "description": "Production"
     },
     {

@@ -1,18 +1,18 @@
 {
   "name": "oya-browser",
-  "description": "Real Chrome browsers for your agent: the Oya MCP server (start_browser, analyze_page, click, type…) plus a skill that teaches the workflow. Set OYA_API_KEY from browser.getoya.ai first.",
+  "description": "Real Chrome browsers for your agent: the Oya MCP server (start_browser, analyze_page, click, type…) plus a skill that teaches the workflow. Set OYA_API_KEY from oyabrowser.com first.",
   "version": "1.0.103",
   "author": {
     "name": "Oya",
     "url": "https://getoya.ai"
   },
-  "homepage": "https://browser.getoya.ai",
+  "homepage": "https://oyabrowser.com",
   "repository": "https://github.com/OyadotAI/oya-browser",
   "keywords": ["browser", "automation", "mcp", "chrome", "scraping", "captcha"],
   "mcpServers": {
     "oya": {
       "type": "http",
-      "url": "https://browser.getoya.ai/mcp/pool",
+      "url": "https://oyabrowser.com/mcp/pool",
       "headers": {
         "Authorization": "Bearer ${OYA_API_KEY}"
       }

@@ -7,16 +7,16 @@
     "url": "https://github.com/OyadotAI/oya-browser",
     "source": "github"
   },
-  "websiteUrl": "https://browser.getoya.ai",
+  "websiteUrl": "https://oyabrowser.com",
   "version": "1.0.103",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://browser.getoya.ai/mcp/pool",
+      "url": "https://oyabrowser.com/mcp/pool",
       "headers": [
         {
           "name": "Authorization",
-          "description": "Your Oya API key from browser.getoya.ai, sent as a bearer token",
+          "description": "Your Oya API key from oyabrowser.com, sent as a bearer token",
           "value": "Bearer {api_key}",
           "isRequired": true,
           "isSecret": true,

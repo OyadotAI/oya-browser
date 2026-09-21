@@ -144,7 +144,7 @@
     ],
     "publish": {
       "provider": "generic",
-      "url": "https://browser.getoya.ai/downloads",
+      "url": "https://oyabrowser.com/downloads",
       "channel": "latest"
     }
   }

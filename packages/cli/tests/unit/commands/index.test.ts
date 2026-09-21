@@ -33,6 +33,6 @@ describe('dispatch', () => {
 
   it('whoami reports whether a key is saved, never the key', async () => {
     const { out } = await captured(() => dispatch('whoami', [], {}));
-    assert.deepEqual(JSON.parse(out), { apiKey: 'none', baseUrl: 'https://browser.getoya.ai' });
+    assert.deepEqual(JSON.parse(out), { apiKey: 'none', baseUrl: 'https://oyabrowser.com' });
   });
 });

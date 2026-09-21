@@ -4,7 +4,7 @@
  */
 
 /** The hosted control plane, used when neither `baseUrl` nor OYA_BASE_URL is set. */
-export const DEFAULT_BASE_URL = 'https://browser.getoya.ai';
+export const DEFAULT_BASE_URL = 'https://oyabrowser.com';
 
 /** Per-request timeout when the caller does not pass `timeoutMs`. */
 export const DEFAULT_TIMEOUT_MS = 60_000;

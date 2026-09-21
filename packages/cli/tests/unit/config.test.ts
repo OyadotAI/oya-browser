@@ -37,6 +37,6 @@ describe('config', () => {
 
   it('falls back to the hosted control plane', () => {
     writeFileSync(configPath, '{}');
-    assert.deepEqual(resolved(), { apiKey: '', baseUrl: 'https://browser.getoya.ai' });
+    assert.deepEqual(resolved(), { apiKey: '', baseUrl: 'https://oyabrowser.com' });
   });
 });

@@ -12,7 +12,7 @@ const PRIVATE_FILE_MODE = 0o600;
 /** Spaces per indent level in JSON written for people to read. */
 const JSON_INDENT = 2;
 /** Where a fresh install looks for its workspace. A self-hoster edits the field. */
-const DEFAULT_SERVER_URL = 'wss://browser.getoya.ai/ws';
+const DEFAULT_SERVER_URL = 'wss://oyabrowser.com/ws';
 /** Decimal places a fingerprint's noise seeds are shown with. */
 const NOISE_SEED_DIGITS = 6;
 /** The scheme one-click sign-in links use. */

@@ -28,7 +28,7 @@
     <text x="48" y="75" fill="#ffffff" font-weight="600">oya start --persona auto</text>
     <text x="32" y="100" fill="#39ed35">✅ oya-8ed39f1c</text>
     <text x="48" y="122" fill="rgba(255,255,255,0.6)">provider: <tspan fill="#ffffff">oya-cloud</tspan>   persona: <tspan fill="#39ed35">p-us-shopper</tspan></text>
-    <text x="48" y="142" fill="rgba(255,255,255,0.6)">cdp:      <tspan fill="#6cb4ff">wss://browser.getoya.ai/connect?ticket=…</tspan></text>
+    <text x="48" y="142" fill="rgba(255,255,255,0.6)">cdp:      <tspan fill="#6cb4ff">wss://oyabrowser.com/connect?ticket=…</tspan></text>
 
     <!-- Command 2: Goto -->
     <text x="32" y="180" fill="#39ed35">$</text>
