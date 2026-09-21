@@ -46,6 +46,7 @@ const toRow = (p: Persona) => ({
   seed: p.seed,
   prefs: p.prefs,
   proxy: p.proxy,
+  device: p.device,
   ...usageRow(p),
 });
 

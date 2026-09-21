@@ -9,7 +9,13 @@ const { PRIVATE_FILE_MODE, JSON_INDENT, DEFAULT_SERVER_URL } = require('./consta
 
 /** What a fresh install starts from; the saved file and the environment override it. */
 function configDefaults(platform) {
-  return { serverUrl: DEFAULT_SERVER_URL, apiKey: '', browserName: `Oya Browser ${platform}`, activeProfileId: null };
+  return {
+    serverUrl: DEFAULT_SERVER_URL,
+    apiKey: '',
+    browserName: `Oya Browser ${platform}`,
+    activeProfileId: null,
+    mirroredFrom: '',
+  };
 }
 
 /** Environment variable → config field, applied over the saved file. */

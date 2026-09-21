@@ -21,6 +21,7 @@ describe('shape', () => {
     assert.equal('secret' in p, false);
     assert.deepEqual(Object.keys(p).sort(), [
       'createdAt',
+      'device',
       'id',
       'isDefault',
       'lastUsedAt',

@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
   openConsole: (serverUrl) => ipcRenderer.invoke('open-console', serverUrl),
   signOut: () => ipcRenderer.invoke('sign-out'),
+  reimportBrowser: () => ipcRenderer.invoke('reimport-browser'),
+  onMirrorStatus: (cb) => ipcRenderer.on('mirror-status', (_event, status) => cb(status)),
   getStatus: () => ipcRenderer.invoke('get-status'),
   getControlState: () => ipcRenderer.invoke('get-control-state'),
   changeControl: (action) => ipcRenderer.invoke('change-control', action),

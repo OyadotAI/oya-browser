@@ -4,6 +4,7 @@
  */
 import { ping, pong, frame, cmdResult, proxyBytes, cdpRelay } from './liveness.ts';
 import { cookieDump, cookieChanged, cookiePull, storageChanged, profileFlush } from './cookies.ts';
+import { mirrorPersona } from './mirror.ts';
 import { desktopControlMessage } from './desktop-control.ts';
 import type { Handler } from './types.ts';
 
@@ -24,5 +25,6 @@ export const HANDLERS: Record<string, Handler> = {
   cookie_pull: cookiePull,
   storage_changed: storageChanged,
   profile_flush: profileFlush,
+  mirror_persona: mirrorPersona,
   desktop_control: desktopControlMessage,
 };

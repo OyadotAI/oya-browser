@@ -21,6 +21,7 @@ describe('ConfigStore', () => {
       apiKey: '',
       browserName: 'Oya Browser linux',
       activeProfileId: null,
+      mirroredFrom: '',
     });
   });
 

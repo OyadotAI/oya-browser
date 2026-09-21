@@ -511,3 +511,61 @@ describe('PersonaService persistence', () => {
     assert.equal(service.activeCount(p.id), 0);
   });
 });
+
+describe('PersonaService.mirror', () => {
+  const device = {
+    navigator: { platform: 'MacIntel' },
+    screen: { width: 1440, height: 900 },
+    chromeVersion: '128.0.0.0',
+  };
+
+  it('creates a persona owned by the key that runs as the captured device', () => {
+    const { service } = personaService();
+    const p = service.mirror('key-a', { source: 'chrome', profile: 'Default', name: 'Chrome — You', device });
+    assert.match(p.id, /^m-[0-9a-f]{16}$/);
+    assert.deepEqual([p.owner, p.name, p.device.chromeVersion], ['owner:key-a', 'Chrome — You', '128.0.0.0']);
+  });
+
+  it('is idempotent per source and profile, and keeps the first captured device', () => {
+    const { service } = personaService();
+    const a = service.mirror('key-a', { source: 'chrome', profile: 'Default', device });
+    const b = service.mirror('key-a', {
+      source: 'chrome',
+      profile: 'Default',
+      device: { ...device, chromeVersion: '999' },
+    });
+    assert.equal(a, b);
+    assert.equal(b.device.chromeVersion, '128.0.0.0');
+  });
+
+  it('gives different profiles and different owners different personas', () => {
+    const { service } = personaService();
+    const a = service.mirror('key-a', { source: 'chrome', profile: 'Default', device });
+    const b = service.mirror('key-a', { source: 'chrome', profile: 'Profile 1', device });
+    const c = service.mirror('key-b', { source: 'chrome', profile: 'Default', device });
+    assert.equal(new Set([a.id, b.id, c.id]).size, 3);
+  });
+});
+
+describe('PersonaService.fingerprintFor', () => {
+  it('returns the captured device for a mirrored persona, under the persona id', () => {
+    const { service } = personaService();
+    const device = {
+      navigator: { platform: 'MacIntel' },
+      screen: { width: 1440 },
+      webgl: { unmaskedRenderer: 'Apple M2' },
+    };
+    const p = service.mirror('key-a', { source: 'chrome', profile: 'Default', device });
+    const fp = service.fingerprintFor(p);
+    assert.deepEqual([fp.id, fp.webgl.unmaskedRenderer], [p.id, 'Apple M2']);
+  });
+
+  it('generates a profile for a persona that mirrors nothing', () => {
+    const { service } = personaService();
+    const p = service.defaultFor('key-a');
+    assert.deepEqual(
+      service.fingerprintFor(p),
+      generateProfile({ id: p.id, seed: p.seed, prefs: p.prefs, proxy: p.proxy }),
+    );
+  });
+});

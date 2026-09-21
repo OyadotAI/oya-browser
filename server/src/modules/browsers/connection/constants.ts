@@ -44,6 +44,10 @@ export const MAX_BROWSERS_PER_KEY = Number(process.env.OYA_QUOTA_MAX_BROWSERS) |
 export const MAX_LOCAL_COMMANDS = 1024;
 /** Cookie changes accepted per message. */
 export const MAX_COOKIE_CHANGES = 500;
+/** Real browser profiles accepted in one mirror import; more than this is a misbehaving desktop. */
+export const MAX_MIRROR_PROFILES = 50;
+/** Cookies accepted per mirrored profile; bounds a bad or hostile payload. */
+export const MAX_MIRROR_COOKIES = 20_000;
 /** Residential bytes accepted per report (16 GiB); bounds a bad count. */
 export const MAX_PROXY_BYTES = 17_179_869_184;
 /** Longest desktop_control request id accepted. */

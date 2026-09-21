@@ -219,6 +219,9 @@ function buildFingerprintBody(profile) {
   const _origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
 
   const _noiseImageData = (img, sx, sy) => {
+    // A mirrored real device has no noise seed: leave its rendering untouched,
+    // so the desktop paints canvas exactly as the real machine does.
+    if (__fp.canvas.noiseSeed == null) return img;
     const d = img.data, w = img.width;
     if (d.length < 4 * 256) return img;
     for (let row = 0; row < img.height; row++) {

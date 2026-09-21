@@ -16,9 +16,15 @@ async function acceptAuth(ctx, msg) {
   if (msg.fingerprint) await ctx.persona.applyServerFingerprint(msg.fingerprint, msg.cookies || []);
   goOnline(ctx, msg);
   if (!ctx.shell.browsingMode) ctx.tabs.enterBrowsingMode(governance.configuration ? 'about:blank' : HOME_URL);
-  // Send our cookies to the server for pool sync
+  await shareProfile(ctx);
+}
+
+/** Sends our cookies to the pool, then, on first sign-in only, mirrors the user's real browser. */
+async function shareProfile(ctx) {
   await ctx.cookies.dumpCookies();
   ctx.socket.send({ type: 'profile_flush' });
+  // A no-op once done; it reconnects as the mirrored persona itself.
+  void ctx.mirror.maybeRun();
 }
 
 /** Marks the socket ready, takes the control state, and starts the heartbeat. */
@@ -55,6 +61,8 @@ const SERVER_MESSAGES = {
     await ctx.cookies.applyCookieSync(msg.cookies);
     ctx.cookies.answerPull(msg.pullId);
   },
+  mirror_ok: (ctx, msg) => ctx.mirror.onOk(msg),
+  mirror_failed: (ctx, msg) => ctx.mirror.onFailed(msg),
   ping: (ctx) => {
     ctx.socket.heard();
     ctx.socket.send({ type: 'pong' });

@@ -26,6 +26,7 @@ const { createUpdater } = require('./main/updater.cjs');
 const { createPageActions } = require('./main/page-actions.cjs');
 const { createStream } = require('./main/stream.cjs');
 const { createCdpRelay } = require('./main/cdp-relay.cjs');
+const { createMirror } = require('./main/mirror/index.cjs');
 const { ConfigStore } = require('./main/app/config-store.cjs');
 const { Persona } = require('./main/app/persona.cjs');
 const { DeepLinks } = require('./main/app/deep-links.cjs');
@@ -128,6 +129,7 @@ ctx.cookies = createCookieSync({
   ready: () => ctx.socket.ready,
 });
 ctx.relay = createCdpRelay({ port: CDP_PORT, token: CDP_RELAY_TOKEN, send: (payload) => ctx.socket.send(payload) });
+ctx.mirror = createMirror(ctx);
 ctx.stream = createStream({
   activeView: () => ctx.tabs.getActiveView(),
   socket: () => ctx.socket.ws,
