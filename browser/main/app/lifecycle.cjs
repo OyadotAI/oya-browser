@@ -6,6 +6,8 @@ const path = require('path');
 const { Workspace } = require('../../scripts/workspace.cjs');
 const { DraftStore } = require('../../scripts/draft-store.cjs');
 const { installApplicationMenu } = require('../shell/menu.cjs');
+const governance = require('../../governance');
+const { HOME_URL } = require('../tabs/constants.cjs');
 
 /**
  * Registering in dev needs the interpreter and script path, or the OS
@@ -95,7 +97,20 @@ function bootServices(ctx) {
   if (ctx.cdpPort) require('../../cdp-front-door').start(frontDoorOptions(ctx));
   ctx.cookies.startCookieChangeListener();
   if (ctx.config.values.apiKey || process.env.OYA_AUTO_CONNECT === 'true') ctx.socket.connect();
+  resumeSignedIn(ctx);
   ctx.startAutoUpdate();
+}
+
+/**
+ * A desktop that has signed in before opens straight to its pages and connects
+ * in the background, instead of showing the welcome screen on every launch.
+ * The saved persona is already loaded, so the first tab runs as it. A governed
+ * browser, or one that has never been accepted (a fresh cloud sandbox), still
+ * waits for the server: it must not load a page before its rules or persona.
+ */
+function resumeSignedIn(ctx) {
+  if (!ctx.config.values.apiKey || !ctx.persona.active || governance.configuration) return;
+  ctx.tabs.enterBrowsingMode(HOME_URL);
 }
 
 /** Everything that runs once Electron is ready, in order. */

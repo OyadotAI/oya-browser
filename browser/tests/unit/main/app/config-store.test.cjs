@@ -38,6 +38,11 @@ describe('ConfigStore', () => {
     assert.deepEqual([values.serverUrl, values.persona, values.provider], ['wss://s.test/ws', 'p', 'oya-cloud']);
   });
 
+  it('stays logged out after a log out, whatever key the environment carries', () => {
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ apiKey: '', signedOut: true }));
+    assert.equal(new ConfigStore({ dir: () => dir, env: { OYA_API_KEY: 'env-key' } }).load().apiKey, '');
+  });
+
   it('ignores a broken file', () => {
     fs.writeFileSync(path.join(dir, 'config.json'), '{nope');
     assert.equal(new ConfigStore({ dir: () => dir, env: {} }).load().apiKey, '');

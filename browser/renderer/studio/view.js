@@ -138,9 +138,10 @@ const StudioView = {
     if (Studio.state.storageError) return 'This workflow is only in memory. Save or export it before closing Oya.';
     if (Studio.state.saved) return 'Your local draft is kept too. Edits need saving again.';
     const steps = Studio.plural(d.steps.length, 'step');
-    return Studio.justFinished
-      ? `${steps} saved on this device. Name it to reuse it in Oya.`
-      : `${steps} on this device.`;
+    if (!Studio.justFinished) return `${steps} on this device.`;
+    // A playbook already in Oya has its name; it only needs the changes saved.
+    const next = d.publishedAt ? 'Save the changes to update it in Oya.' : 'Name it to reuse it in Oya.';
+    return `${steps} saved on this device. ${next}`;
   },
 
   /** The save button's label. */
@@ -160,7 +161,7 @@ const StudioView = {
 
   /** The saved-drafts list; the name and description. */
   library(d) {
-    StudioView.drafts(Studio.state.library);
+    StudioView.drafts(StudioView.withCurrent(Studio.state.library, d));
     Dom.byId('draft-library').value = d.id;
     StudioView.fields(d);
   },
@@ -170,6 +171,16 @@ const StudioView = {
     const [name, desc] = [Dom.byId('record-name'), Dom.byId('record-desc')];
     if (document.activeElement !== name) name.value = d.name === 'Untitled workflow' ? '' : d.name;
     if (document.activeElement !== desc) desc.value = d.description;
+  },
+
+  /**
+   * The library as the picker shows it: the draft being edited always (first when
+   * it is not stored yet, so the list is never blank), and no other empty drafts,
+   * which older versions left behind as extra "Untitled workflow" entries.
+   */
+  withCurrent(library, d) {
+    const shown = library.filter((item) => item.id === d.id || item.steps || item.error);
+    return shown.some((item) => item.id === d.id) ? shown : [{ id: d.id, name: d.name }, ...shown];
   },
 
   /** The saved-drafts list; unreadable drafts are shown but cannot be opened. */
@@ -190,7 +201,9 @@ const StudioView = {
 
   /** Steps, the selected step's editor, variables, code and the run. */
   body(d, m) {
-    if (!d.steps.some((s) => s.id === Studio.selected)) Studio.selected = d.steps[0]?.id;
+    // While recording, the newest step is the one in focus; otherwise keep the person's pick.
+    if (m.recording) Studio.selected = d.steps.at(-1)?.id;
+    else if (!d.steps.some((s) => s.id === Studio.selected)) Studio.selected = d.steps[0]?.id;
     StudioSteps.render(d, m.recording, m.running);
     const selected = d.steps.find((s) => s.id === Studio.selected);
     StepEditor.render(m.recording ? undefined : selected, m.locked);

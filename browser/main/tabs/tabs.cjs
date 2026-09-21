@@ -5,7 +5,7 @@
  */
 const { wireTab } = require('./tab-events.cjs');
 const { navigateActive, normalizeAddress } = require('./navigation.cjs');
-const { HOME_URL, PAGE_BACKGROUND } = require('./constants.cjs');
+const { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } = require('./constants.cjs');
 const popups = require('./popup-tabs.cjs');
 
 /** What the tab strip shows for one tab. */
@@ -40,6 +40,23 @@ function destroyTabView(view) {
   try {
     if (!view.webContents.isDestroyed()) view.webContents.destroy();
   } catch {}
+}
+
+/** Closes every tab, then shows the welcome screen; nothing is reopened. */
+function leaveBrowsing(tabs) {
+  if (!tabs.ctx.shell.browsingMode) return;
+  while (tabs.list.length) tabs.closeTab(tabs.list[0].id, { keepOne: false });
+  tabs.ctx.shell.browsingMode = false;
+  tabs.ctx.shell.send('mode-changed', 'setup');
+}
+
+/**
+ * A first page that failed to load. One the person replaced by going somewhere
+ * else first (ERR_ABORTED) is not a failure, and logging it cried wolf.
+ */
+function reportFirstLoad(e) {
+  if (e.errno === ERR_ABORTED || e.code === 'ERR_ABORTED') return;
+  console.error('[tab] Could not open page:', e.message);
 }
 
 /** The open tabs and which one is showing. */
@@ -101,7 +118,7 @@ class TabManager {
     tab.setup = tabReady;
     const load = () => (url && !tab.navigationRequest ? tab.view.webContents.loadURL(url, loadOptions) : undefined);
     tab.ready = Promise.resolve(tabReady).then(load);
-    tab.ready.catch((e) => console.error('[tab] Could not open page:', e.message));
+    tab.ready.catch(reportFirstLoad);
   }
 
   /** Shows a tab. A popup has a window of its own, so it is raised rather than mounted. */
@@ -196,6 +213,11 @@ class TabManager {
     this.ctx.shell.browsingMode = true;
     this.createTab(url || HOME_URL, true);
     this.ctx.shell.send('mode-changed', 'browsing');
+  }
+
+  /** Back to the welcome screen (log out): every tab closes and the shell shows setup. */
+  leaveBrowsingMode() {
+    leaveBrowsing(this);
   }
 
   /**

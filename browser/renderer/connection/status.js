@@ -2,7 +2,7 @@
  * Connection status: the toolbar pill, the switch between setup and browsing
  * modes, and the saved settings and status loaded at start.
  */
-/* global oyaBrowser, Dom, ShellState, Reconnect */
+/* global oyaBrowser, Dom, ShellState, Reconnect, Setup, ShellDialog */
 /* exported ConnectionStatus */
 
 /** The connection pill and mode. */
@@ -46,4 +46,9 @@ oyaBrowser.onWsStatus(ConnectionStatus.onStatus);
 // Main process tells us to switch modes
 oyaBrowser.onModeChanged((mode) => {
   document.body.className = mode === 'browsing' ? 'mode-browsing' : 'mode-setup';
+  if (mode === 'browsing') return;
+  // Logged out: back to the start, with nothing of the old key left in the form.
+  Dom.byId('cfg-key').value = '';
+  ShellDialog.close();
+  Setup.show('start');
 });

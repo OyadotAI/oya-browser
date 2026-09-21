@@ -24,8 +24,31 @@ async function askServer(ctx, route, payload) {
   }
 }
 
-/** Sends the chat to the server's agent for this browser; answers its reply or `{ error }`. */
-const sendChat = (ctx, _e, messages) => askServer(ctx, 'chat', { messages });
+/**
+ * Asking this browser's agent to do something is handing it the wheel. While a
+ * person held control, or automation sat paused, every command the agent sent was
+ * refused ("paused for human takeover") and the run spun until it gave up. So the
+ * agent gets control for the run, and a person who held it gets it back after.
+ * Answers whether to take it back.
+ */
+async function lendToAgent(ctx) {
+  const state = ctx.control.snapshot();
+  const mine = state.mode === 'human' && state.mine;
+  if (mine || state.mode === 'paused') await ctx.control.change('return');
+  return mine;
+}
+
+/** Sends the chat to the server's agent for this browser, with control lent to it; answers its reply or `{ error }`. */
+async function sendChat(ctx, _e, messages) {
+  if (!canCallServer(ctx)) return { error: 'Not connected to server' };
+  const takeBack = await lendToAgent(ctx).catch((e) => e);
+  if (takeBack instanceof Error) return { error: `Could not hand the browser to the agent: ${takeBack.message}` };
+  try {
+    return await askServer(ctx, 'chat', { messages });
+  } finally {
+    if (takeBack) await ctx.control.change('acquire').catch(() => {});
+  }
+}
 
 /**
  * Saves the agent's latest run on this browser as a playbook named `name`. The

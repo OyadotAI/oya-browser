@@ -5,16 +5,13 @@ multi-replica, governance, session lifecycle, roles and recovery, see
 [control-plane.md](control-plane.md).
 
 ```bash
-git clone https://github.com/OyadotAI/oya-browser.git
-cd oya-browser
-make wizard
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
 ```
 
-```bash
-git clone https://github.com/OyadotAI/oya-browser.git
-cd oya-browser
-make wizard
-```
+It needs git, Docker (running) and Node 20+, and tells you which one is missing. It
+clones the repo into `~/oya-browser` (set `OYA_DIR` to change that, rerun it to update)
+and starts the wizard there. Arguments pass through: `... | sh -s -- --dry-run`.
+From a checkout you already have, `make wizard` does the same.
 
 Six questions, then it writes the config, builds the images, brings the stack up and
 waits for `/readyz` before telling you it worked. It ends by printing an API key.
@@ -32,7 +29,7 @@ waits for `/readyz` before telling you it worked. It ends by printing an API key
 ✔ http://localhost:3100 is up.
 ```
 
-`make wizard ARGS="--dry-run"` shows the plan and writes nothing. Every answer is saved
+`--dry-run` shows the plan and writes nothing. Every answer is saved
 to `oya-install.json`, no secrets, so `make wizard ARGS="--config oya-install.json"`
 reproduces the same deployment without prompting, which is the CI path. Credentials come
 from the environment there.

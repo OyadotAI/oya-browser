@@ -256,6 +256,9 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     // get their manifest, rather than being cut off mid-write.
     await Promise.allSettled([...gatewaySessions.values()].map((s) => s.destroy('server shutting down')));
     await Promise.allSettled([drainAudit(), drainLogins(), usage.drain(), personas.drain(), keyConfig.drain()]);
+    // Last, once nothing writes to it: releases the SQLite writer lock, which otherwise
+    // kept a restarted server refusing to start until the lock went stale.
+    await Promise.resolve(control().store.close?.()).catch(() => {});
     process.exit(process.exitCode || 0);
   });
 }

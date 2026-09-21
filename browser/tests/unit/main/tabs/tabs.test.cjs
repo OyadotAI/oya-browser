@@ -149,6 +149,16 @@ describe('TabManager', () => {
     assert.deepEqual(ctx.shell.sentOn('mode-changed'), ['browsing']);
   });
 
+  it('leaves browsing mode with every tab closed and none reopened', () => {
+    ctx.shell.browsingMode = false;
+    ctx.tabs.enterBrowsingMode();
+    ctx.tabs.createTab('https://x.test/', true);
+    ctx.tabs.leaveBrowsingMode();
+    assert.equal(ctx.tabs.list.length, 0);
+    assert.equal(ctx.shell.browsingMode, false);
+    assert.deepEqual(ctx.shell.sentOn('mode-changed'), ['browsing', 'setup']);
+  });
+
   it('opens automation tabs through browsing mode so they are laid out', () => {
     ctx.shell.browsingMode = false;
     const first = ctx.tabs.openForAutomation('https://a.test/');

@@ -57,11 +57,21 @@ function sortFrom(steps, from) {
 
 /** Where the pause left each tab, so a resume elsewhere records the move. */
 function rememberPausedPages(recorder) {
+  recorder.pausedDraft = recorder.ctx.workspace?.draft.id;
   for (const tab of recorder.ctx.tabs.list) {
     try {
       recorder.pausedUrls.set(tab.id, tab.view.webContents.getURL());
     } catch {}
   }
+}
+
+/**
+ * The start step exists so a replay begins where the person began. When the
+ * first thing they do is go somewhere else, nothing happened on that page, and
+ * keeping it sends every replay on a detour through it first.
+ */
+function dropUnusedStart(steps) {
+  if (steps.length === 1 && steps[0].start) steps.pop();
 }
 
 /** The recording in progress (or paused) and its steps. */
@@ -158,6 +168,7 @@ class Recorder {
     const last = this.recordedSteps[this.recordedSteps.length - 1];
     const sameTab = () => last.tab === this.names.recordingTab(this.ctx.tabs.activeTabId);
     if (last && last.action === 'navigate' && last.url === url && sameTab()) return;
+    dropUnusedStart(this.recordedSteps);
     this.pushRecordedStep({ action: 'navigate', url });
   }
 

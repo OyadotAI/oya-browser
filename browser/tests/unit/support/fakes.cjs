@@ -90,6 +90,11 @@ class FakeWebContents extends EventEmitter {
     return this.url;
   }
 
+  /** As Electron's: the page's title, or its address when it has none. */
+  getTitle() {
+    return this.title || this.url;
+  }
+
   /** As Electron's. */
   isDestroyed() {
     return this.destroyed;

@@ -177,17 +177,17 @@ const Chat = {
     try {
       const data = await oyaBrowser.sendChat(Chat.history.map((m) => ({ role: m.role, content: m.content })));
       if (data.error) Chat.sayError(data.error);
-      else Chat.reply(data.text || '(no response)', data.toolCalls || []);
+      else Chat.reply(data.text || '(no response)', data.toolCalls || [], data.replayable);
     } catch (e) {
       Chat.sayError(e.message);
     }
   },
 
-  /** Shows the agent's answer, offering to save the run as a playbook. */
-  reply(text, toolCalls) {
+  /** Shows the agent's answer, offering to save the run as a playbook when the server says it can be. */
+  reply(text, toolCalls, replayable) {
     const node = Chat.say({ role: 'assistant', content: text, toolCalls });
     const prompt = Chat.history.findLast((m) => m.role === 'user')?.content || '';
-    ChatPlaybook.offer(node, prompt, toolCalls);
+    ChatPlaybook.offer(node, prompt, toolCalls, replayable);
   },
 
   /** Shows an error as the assistant's reply. */

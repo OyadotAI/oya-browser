@@ -71,6 +71,7 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.waitForFunction(() => typeof window.shellIcon === 'function');
+  await page.locator('#btn-manual').click();
   // CDP clicks bypass native draggable regions: check those separately so a
   // passing automation test cannot conceal a shell that swallows human clicks.
   for (const selector of [
@@ -81,6 +82,7 @@ try {
     '#cfg-key',
     '#cfg-name',
     '#btn-connect',
+    '#btn-signin',
   ]) {
     assert.equal(
       await page.locator(selector).evaluate((el) => getComputedStyle(el).getPropertyValue('-webkit-app-region')),

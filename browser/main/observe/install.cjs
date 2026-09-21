@@ -15,10 +15,14 @@ function watchSession(observer, session) {
   );
 }
 
-/** Watches one tab's console. */
+/**
+ * Watches one tab's console. Electron passes the details on the event (the
+ * positional arguments are deprecated); its level is a name, which the
+ * observer keeps as is.
+ */
 function watchContents(observer, contents) {
-  contents.on('console-message', (_event, level, message, line, sourceId) =>
-    observer.addConsole({ level, message, line, sourceId }),
+  contents.on('console-message', ({ level, message, lineNumber, sourceId }) =>
+    observer.addConsole({ level, message, line: lineNumber, sourceId }),
   );
 }
 

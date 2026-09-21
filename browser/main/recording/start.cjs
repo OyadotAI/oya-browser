@@ -10,7 +10,10 @@ async function startRecording(recorder, resume, origin) {
   if (recorder.recording) return { recording: true, steps: recorder.recordedSteps };
   const workspace = recorder.ctx.workspace;
   if (workspace?.busy()) throw new Error('Stop validation before recording');
-  if (!resume && workspace) workspace.edit({ type: 'new' });
+  // A fresh recording gets a fresh draft, unless the current one is still empty
+  // (just made with "New workflow"): a second one left the empty draft behind in
+  // the library as another "Untitled workflow".
+  if (!resume && workspace?.draft.steps.length) workspace.edit({ type: 'new' });
   resetRecording(recorder, resume, origin, workspace);
   markRecordingStart(recorder, resume);
   return goLiveRecording(recorder);
@@ -45,13 +48,24 @@ function nameRecordingTabs(recorder, resume) {
  * there, or every step after the resume runs against the page the pause left behind.
  */
 function markRecordingStart(recorder, resume) {
-  const { pausedUrls } = recorder;
-  const activeTabId = recorder.ctx.tabs.activeTabId;
   const url = recorder.ctx.tabs.getActiveView()?.webContents.getURL();
   if (!WEB_URL.test(url || '')) return;
   if (!resume) recorder.pushRecordedStep({ action: 'navigate', url, start: true });
-  else if (pausedUrls.has(activeTabId) && pausedUrls.get(activeTabId) !== url)
-    recorder.pushRecordedStep({ action: 'navigate', url });
+  else if (resumedElsewhere(recorder, url)) recorder.pushRecordedStep({ action: 'navigate', url });
+}
+
+/**
+ * Whether a resumed draft picks up on a page other than where it stopped. The pages
+ * remembered at the last pause belong to the draft recorded then; for any other
+ * draft (opened from the library, or after a restart) where it stopped is unknown,
+ * so the page is recorded, unless the draft already ends by going there.
+ */
+function resumedElsewhere(recorder, url) {
+  const tabId = recorder.ctx.tabs.activeTabId;
+  const known = recorder.pausedDraft === recorder.ctx.workspace?.draft.id && recorder.pausedUrls.has(tabId);
+  if (known) return recorder.pausedUrls.get(tabId) !== url;
+  const last = recorder.recordedSteps.at(-1);
+  return !(last?.action === 'navigate' && last.url === url);
 }
 
 /** Arms every tab, then keeps the shell's step list fresh. */

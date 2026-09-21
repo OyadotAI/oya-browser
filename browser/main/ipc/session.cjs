@@ -8,7 +8,7 @@ function consoleUrl(serverUrl) {
   try {
     const url = new URL(serverUrl);
     if (!['ws:', 'wss:'].includes(url.protocol)) return null;
-    return `${url.protocol === 'wss:' ? 'https:' : 'http:'}//${url.host}/dashboard`;
+    return `${url.protocol === 'wss:' ? 'https:' : 'http:'}//${url.host}/dashboard?connect=desktop`;
   } catch {
     return null;
   }
@@ -22,6 +22,20 @@ async function saveProfile(ctx) {
   await ctx.persona.session().cookies.flushStore();
   ctx.persona.session().flushStorageData();
   ctx.socket.send({ type: 'profile_flush' });
+}
+
+/**
+ * Logs out of Oya: forgets the key and goes back to the welcome screen. The
+ * server address, browser name and the sites this browser is logged in to stay.
+ * `signedOut` keeps an OYA_API_KEY in the environment from signing it back in
+ * on the next launch; signing in again clears it.
+ */
+function signOut(ctx) {
+  ctx.socket.disconnect();
+  ctx.socket.browserId = null;
+  ctx.config.merge({ apiKey: '', signedOut: true });
+  ctx.config.save();
+  ctx.tabs.leaveBrowsingMode();
 }
 
 /** Channel → handler. */
@@ -41,7 +55,7 @@ const SESSION_HANDLERS = {
     return url;
   },
   'save-config': (ctx, _e, newConfig) => {
-    ctx.config.merge(newConfig);
+    ctx.config.merge({ ...newConfig, signedOut: false });
     ctx.config.save();
     ctx.socket.disconnect();
     ctx.socket.connect();
@@ -57,6 +71,7 @@ const SESSION_HANDLERS = {
     browsing: !!ctx.shell.browsingMode,
   }),
   'save-profile': saveProfile,
+  'sign-out': signOut,
   'get-fingerprint': (ctx) => ctx.persona.summary(),
 };
 

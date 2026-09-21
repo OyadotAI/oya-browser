@@ -10,11 +10,13 @@ import Onboarding from '@/components/dashboard/onboarding';
 import { ConsoleBody } from './_console/console-body';
 import { ConsoleDialogs } from './_console/console-dialogs';
 import { useConsole } from './_console/use-console';
+import { useConnectDesktop } from '@/components/dashboard/hooks/use-connect-desktop';
 
 /** The console page. */
 export default function DashboardPage() {
   const c = useConsole();
   const { view, patch, apiKey, config } = c;
+  useConnectDesktop(apiKey);
   const onboarding = view.showOnboarding && config && apiKey;
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg">

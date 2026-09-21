@@ -7,6 +7,8 @@
 const HOME_URL = 'https://google.com';
 /** A web address, as opposed to about:, file: or view-source:. */
 const WEB_URL = /^https?:\/\//i;
+/** Where the address bar sends text that is not an address, like any browser's. */
+const SEARCH_URL = 'https://www.google.com/search?q=';
 
 /**
  * A CDP command that never answers must not strand the tab that is waiting on
@@ -24,4 +26,4 @@ const AUTH_POPUP_SIZE = { width: 500, height: 700 };
 /** White, under every page that sets no background of its own. */
 const PAGE_BACKGROUND = '#ffffff';
 
-module.exports = { HOME_URL, WEB_URL, CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE, PAGE_BACKGROUND };
+module.exports = { HOME_URL, WEB_URL, SEARCH_URL, CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE, PAGE_BACKGROUND };

@@ -3,7 +3,7 @@
  * the browser tools.
  */
 import { sendCommand } from '../socket.ts';
-import { runChat } from '../../agent/chat.ts';
+import { runChat, lastRun, hasReplayableSteps } from '../../agent/chat.ts';
 import * as usage from '../../../platform/usage.ts';
 import { Status } from '../../../platform/http-status.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
@@ -56,11 +56,11 @@ export async function chat(req, res) {
   await longJson(res, () => converse(req, messages, data, secrets));
 }
 
-/** Runs the chat, collecting the tool calls it made. */
+/** Runs the chat, collecting the tool calls it made, and whether the run can be saved as a playbook. */
 async function converse(req, messages, data, secrets) {
   const toolCalls = [];
   const onToolCall = ({ name, args }) => toolCalls.push({ name, args });
   const options = { apiKey: getKey(req), data, secrets, onToolCall, onText: () => {} };
   const result = await runChat(req.params.browserId, messages, options);
-  return { text: result.text, toolCalls };
+  return { text: result.text, toolCalls, replayable: hasReplayableSteps(lastRun(req.params.browserId)) };
 }

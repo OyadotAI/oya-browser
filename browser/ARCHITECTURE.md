@@ -162,8 +162,15 @@ one global object (`Dom`, `ShellState`, `Chat`, `StudioView`, `ControlBar`,
 - **"Save as playbook" in Ask saves the server's copy of the run.** The server
   keeps each browser's latest agent run (`server/src/modules/agent/recorder.ts`),
   so the renderer sends only a name and offers the button on the newest reply
-  alone. `REPLAYABLE_TOOLS` in `renderer/panes/chat-playbook.js` mirrors the
-  server's `RECORDED` list; change them together.
+  alone, when the server's `replayable` says the run acted on a page.
+  `REPLAYABLE_TOOLS` in `renderer/panes/chat-playbook.js` mirrors the server's
+  `RECORDED` list (the fallback for an older server); a unit test keeps them equal.
+- **Ask lends control to the agent.** `send-chat` (`main/ipc/dev.cjs`) returns
+  control to the agent for the run and takes it back after if a person held it;
+  otherwise every agent command is refused as a human takeover.
+- **Start recording takes control.** Under agent control the guard in
+  `renderer/control.js` refuses page actions, except Start recording, which
+  acquires control first: recording needs a person's hands on the page.
 
 ## Tests
 

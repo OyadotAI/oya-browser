@@ -1,6 +1,8 @@
 /**
- * The first-run setup screen: server address, API key and browser name, then
- * Connect (or Browse offline).
+ * The first-run welcome screen: what the browser is for, and one panel that
+ * switches between three views: start (one-click "Sign in with Oya", which the
+ * dashboard answers with a pairing link), waiting (for that sign-in to finish)
+ * and manual (server address, API key and browser name, for self-hosters).
  */
 /* global oyaBrowser, Dom, ShellState, RendererConstants */
 /* exported Setup */
@@ -9,6 +11,14 @@
 const Setup = {
   /** A usable server address: ws:// or wss:// and no spaces. */
   SERVER_URL: /^wss?:\/\/[^\s]+$/,
+
+  /** Shows one of the panel's views: 'start', 'waiting' or 'manual'. */
+  show(view) {
+    Setup.error('');
+    document.querySelector('.setup-screen').dataset.view = view;
+    const panel = document.querySelector(`.welcome-view[data-view="${view}"]`);
+    (panel.querySelector('input') || panel.querySelector('button')).focus();
+  },
 
   /** Shows `text` under the form ('' clears it). */
   error(text) {
@@ -47,6 +57,14 @@ const Setup = {
     Setup.busy(false);
   },
 
+  /** Opens the dashboard, which sends back a pairing link once the person is signed in. */
+  async signIn() {
+    Setup.error('');
+    const url = await oyaBrowser.openConsole(Dom.byId('cfg-server').value);
+    if (!url) return Setup.error('The server address is not valid. Fix it under "Connect with an API key".');
+    Setup.show('waiting');
+  },
+
   /** No connection yet after the wait. */
   timedOut() {
     Setup.busy(false);
@@ -56,11 +74,17 @@ const Setup = {
 
 Dom.byId('open-console').addEventListener('click', () => oyaBrowser.openConsole(Dom.byId('cfg-server').value));
 Dom.byId('btn-connect').addEventListener('click', Setup.connect);
+Dom.byId('btn-signin').addEventListener('click', Setup.signIn);
+Dom.byId('btn-signin-again').addEventListener('click', Setup.signIn);
+Dom.byId('btn-manual').addEventListener('click', () => Setup.show('manual'));
+document.querySelectorAll('[data-view-go]').forEach((btn) => {
+  btn.addEventListener('click', () => Setup.show(btn.dataset.viewGo));
+});
 Dom.byId('btn-skip').addEventListener('click', () => {
   oyaBrowser.enterBrowsing();
 });
 // Enter in setup fields triggers connect
-document.querySelectorAll('.setup-card input').forEach((input) => {
+document.querySelectorAll('.welcome-panel input').forEach((input) => {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') Dom.byId('btn-connect').click();
   });
