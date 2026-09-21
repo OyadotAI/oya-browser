@@ -19,7 +19,7 @@ run is configuration rather than a rewrite.
 
 AI tools (Claude Code, Claude Desktop, Cursor, Windsurf, any MCP client) connect
 over MCP. Scripts use REST, a JavaScript SDK, or the CLI. The server is hosted at
-browser.getoya.ai; each user creates an API key from the dashboard.
+oyabrowser.com; each user creates an API key from the dashboard.
 
 Architecture:
 - Browser (cloud sandbox, provider, or desktop app) → WebSocket → Oya Server
@@ -48,10 +48,10 @@ already signed in, including flows that use passkeys and WebAuthn.
 
 ## Quickstart
 
-1. Go to https://browser.getoya.ai/dashboard and click Generate to create an API key
-2. Download Oya Browser: macOS .dmg, Windows .exe, or Linux .AppImage, https://browser.getoya.ai/docs#download
+1. Go to https://oyabrowser.com/dashboard and click Generate to create an API key
+2. Download Oya Browser: macOS .dmg, Windows .exe, or Linux .AppImage, https://oyabrowser.com/docs#download
 3. macOS builds are signed and notarized, so they open normally. To run a second instance: `open -n "/Applications/Oya Browser.app" --args --user-data-dir=/tmp/oya-2`
-4. Open the app, enter `wss://browser.getoya.ai/ws` as server URL and paste your API key
+4. Open the app, enter `wss://oyabrowser.com/ws` as server URL and paste your API key
 5. Your browser appears in the dashboard, connect AI tools via MCP
 
 For a cloud browser instead of the desktop app, `POST /api/browsers/start` and
@@ -62,11 +62,11 @@ skip steps 2-4 entirely.
 Start here: one endpoint for everything on your key. It can start its own
 browsers (start_browser), so an agent needs nothing else running first.
 
-    https://browser.getoya.ai/mcp/pool
+    https://oyabrowser.com/mcp/pool
 
 Claude Code:
 
-    claude mcp add --transport http oya https://browser.getoya.ai/mcp/pool \
+    claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
       --header "Authorization: Bearer $OYA_API_KEY"
 
 Cursor / Windsurf / Claude Desktop:
@@ -74,7 +74,7 @@ Cursor / Windsurf / Claude Desktop:
     {
       "mcpServers": {
         "oya": {
-          "url": "https://browser.getoya.ai/mcp/pool",
+          "url": "https://oyabrowser.com/mcp/pool",
           "headers": { "Authorization": "Bearer YOUR_API_KEY" }
         }
       }
@@ -86,14 +86,14 @@ alone, for any agent that reads skills: `npx skills add OyadotAI/oya-browser`.
 
 Each connected browser also has its own endpoint:
 
-    https://browser.getoya.ai/mcp/{BROWSER_ID}
+    https://oyabrowser.com/mcp/{BROWSER_ID}
 
 MCP config for one browser:
 
     {
       "mcpServers": {
         "oya-browser": {
-          "url": "https://browser.getoya.ai/mcp/BROWSER_ID",
+          "url": "https://oyabrowser.com/mcp/BROWSER_ID",
           "transport": "streamable-http",
           "headers": {
             "Authorization": "Bearer YOUR_API_KEY"
@@ -250,7 +250,7 @@ different API keys are fully isolated from each other.
     {
       "mcpServers": {
         "oya-pool": {
-          "url": "https://browser.getoya.ai/mcp/pool",
+          "url": "https://oyabrowser.com/mcp/pool",
           "transport": "streamable-http",
           "headers": {
             "Authorization": "Bearer YOUR_API_KEY"
@@ -323,7 +323,7 @@ Examples:
 
 ## WebSocket Protocol
 
-Browsers connect via WebSocket at wss://browser.getoya.ai/ws
+Browsers connect via WebSocket at wss://oyabrowser.com/ws
 
 Auth: { "type": "auth", "api_key": "...", "browser_id": "...", "browser_name": "..." }
 Response: { "type": "auth_ok", "browser_id": "..." }
@@ -340,11 +340,11 @@ Each API key only sees browsers connected with that key. Users cannot see or con
 
 ## Machine-readable
 
-- OpenAPI 3.0 spec: https://browser.getoya.ai/openapi.json
-- This file: https://browser.getoya.ai/llms.txt (also /llms-full.txt, /docs.txt)
-- Agent card: https://browser.getoya.ai/.well-known/agent.json
-- Sitemap: https://browser.getoya.ai/sitemap.xml
-- Human docs: https://browser.getoya.ai/docs
+- OpenAPI 3.0 spec: https://oyabrowser.com/openapi.json
+- This file: https://oyabrowser.com/llms.txt (also /llms-full.txt, /docs.txt)
+- Agent card: https://oyabrowser.com/.well-known/agent.json
+- Sitemap: https://oyabrowser.com/sitemap.xml
+- Human docs: https://oyabrowser.com/docs
 
 ## Limits, stated plainly
 

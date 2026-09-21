@@ -17,7 +17,7 @@ describe('ConfigStore', () => {
   it('starts from the defaults when nothing is saved', () => {
     const store = new ConfigStore({ dir: () => dir, env: {}, platform: 'linux' });
     assert.deepEqual(store.load(), {
-      serverUrl: 'wss://browser.getoya.ai/ws',
+      serverUrl: 'wss://oyabrowser.com/ws',
       apiKey: '',
       browserName: 'Oya Browser linux',
       activeProfileId: null,

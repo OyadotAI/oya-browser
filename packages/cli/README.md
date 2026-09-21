@@ -165,7 +165,7 @@ In automated pipelines (GitHub Actions, GitLab CI, Docker), use flags or environ
 
 ```bash
 export OYA_API_KEY="oya_live_..."
-export OYA_BASE_URL="https://browser.getoya.ai"
+export OYA_BASE_URL="https://oyabrowser.com"
 
 # Non-interactive launch with JSON output
 oya start --provider browserbase --persona auto --json

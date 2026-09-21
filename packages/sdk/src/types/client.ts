@@ -6,7 +6,7 @@
 export interface OyaOptions {
   /** Defaults to OYA_API_KEY. */
   apiKey?: string;
-  /** Defaults to OYA_BASE_URL, then https://browser.getoya.ai. */
+  /** Defaults to OYA_BASE_URL, then https://oyabrowser.com. */
   baseUrl?: string;
   /** Per-request timeout. Navigation gets its own, longer budget. */
   timeoutMs?: number;

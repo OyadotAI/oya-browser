@@ -6,7 +6,7 @@
  * var lets a self-hosted deployment point them all at its own domain.
  */
 /** The canonical origin, without a trailing slash. */
-export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://browser.getoya.ai').replace(/\/$/, '');
+export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://oyabrowser.com').replace(/\/$/, '');
 
 /** The product name shown in titles and structured data. */
 export const SITE_NAME = 'Oya Browser';

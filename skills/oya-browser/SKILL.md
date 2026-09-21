@@ -9,11 +9,11 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-1. The user needs an API key from https://browser.getoya.ai (Dashboard → API keys). Ask for it; never invent one.
+1. The user needs an API key from https://oyabrowser.com (Dashboard → API keys). Ask for it; never invent one.
 2. `export OYA_API_KEY=...`; the CLI and SDK read it.
 3. Use whichever interface you have:
    - **MCP tools** (best inside an agent). If they are missing, the user can add them:
-     `claude mcp add --transport http oya https://browser.getoya.ai/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`
+     `claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`
    - **CLI**: `npm install -g @oya-ai/cli`
    - **SDK**, in code: `npm install @oya-ai/browser`
 
@@ -111,4 +111,4 @@ Off-screen elements need a `scroll` first. While a modal is open, the analysis i
 5. "Every persona is at its concurrency cap" (429): stop a browser or ask the user to raise the cap. Don't retry in a loop.
 6. "Element not found": the ids are stale, analyze again. A page that won't load: retry `navigate` once, then `wait` for a selector or take a screenshot.
 
-Docs: https://browser.getoya.ai/docs · For agents: https://browser.getoya.ai/llms.txt
+Docs: https://oyabrowser.com/docs · For agents: https://oyabrowser.com/llms.txt

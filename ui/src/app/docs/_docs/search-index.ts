@@ -47,7 +47,7 @@ const ITEMS: [string, string, string][] = [
   ['Quickstart', 'quickstart', 'H2'],
   ['Open the API key menu in the dashboard to create an API key', 'quickstart', 'LI'],
   ['Download Oya Browser for your OS', 'quickstart', 'LI'],
-  ['Open the app, enter wss://browser.getoya.ai/ws as server URL and paste your API key', 'quickstart', 'LI'],
+  ['Open the app, enter wss://oyabrowser.com/ws as server URL and paste your API key', 'quickstart', 'LI'],
   ['Your browser appears in the dashboard: you can now send commands or connect AI tools', 'quickstart', 'LI'],
   ['Create API Key', 'create-key', 'H2'],
   ['Open the API key menu in the dashboard to create or choose your key.', 'create-key', 'P'],
@@ -118,7 +118,7 @@ const ITEMS: [string, string, string][] = [
   ['Page Analysis Actions', 'command-api', 'H3'],
   ['Interaction Actions', 'command-api', 'H3'],
   ['WebSocket Protocol', 'websocket', 'H2'],
-  ['Browsers connect via WebSocket at wss://browser.getoya.ai/ws.', 'websocket', 'P'],
+  ['Browsers connect via WebSocket at wss://oyabrowser.com/ws.', 'websocket', 'P'],
 ];
 
 /** The index, without entries too short to be worth matching. */
