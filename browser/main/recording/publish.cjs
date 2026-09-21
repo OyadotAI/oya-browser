@@ -20,14 +20,15 @@ function recorded({ recordedSteps, recordedSecrets }) {
 /** Marks the draft published, if it is still the revision that was sent. */
 function markPublished(workspace, sent) {
   if (workspace?.draft.id !== sent.id || workspace.draft.revision !== sent.revision) return;
-  workspace.draft.publishedAt = Date.now();
+  Object.assign(workspace.draft, { publishedAt: Date.now(), publishedRevision: sent.revision });
   workspace.persist();
 }
 
-/** The server's answer; a success marks the draft published. */
+/** The server's answer; a success marks the draft published, and a refusal is always an error. */
 async function readPlaybookAnswer(ctx, res, sent) {
-  const body = await res.json().catch(() => ({ error: `Server returned ${res.status}` }));
-  if (res.ok) markPublished(ctx.workspace, sent);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) return { error: body.error || `Server returned ${res.status}` };
+  markPublished(ctx.workspace, sent);
   return body;
 }
 

@@ -148,7 +148,10 @@ class Element extends Node {
     /** Listeners by type: [{ fn, capture, once }]. */
     this.listeners = {};
     /** Inline style, with setProperty for custom properties. */
-    this.style = { setProperty: (name, value) => (this.style[name] = value) };
+    this.style = {
+      setProperty: (name, value) => (this.style[name] = value),
+      getPropertyValue: (name) => this.style[name] ?? '',
+    };
     /** As the DOM's; a test may set it. */
     Object.assign(this, { scrollTop: 0, scrollLeft: 0, scrollHeight: 0, clientHeight: 0, clientWidth: 0 });
     Object.assign(this, { offsetLeft: 0, offsetWidth: 0, width: 0 });

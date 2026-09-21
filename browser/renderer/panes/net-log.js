@@ -1,6 +1,7 @@
 /**
  * The Activity pane: every message between this browser and the server, with
- * direction and type filters.
+ * direction and type filters. One listener serves every row, and selecting
+ * text in an open row leaves it open.
  */
 /* global oyaBrowser, Dom, RendererConstants */
 /* exported NetLog */
@@ -19,6 +20,15 @@ const NetLog = {
     result: (entry) => entry.type.startsWith('result:'),
   },
 
+  /** How each direction reads. */
+  DIRECTIONS: { in: 'From server', out: 'To server' },
+
+  /** Opens or closes the row that was clicked, unless the click ended a text selection. */
+  toggleRow(event) {
+    const row = event.target.closest('.dev-entry');
+    if (row && !String(window.getSelection?.() || '')) row.classList.toggle('expanded');
+  },
+
   /** Whether the active filter shows `entry` (an unknown filter shows everything). */
   shows(entry) {
     return !Object.hasOwn(NetLog.FILTERS, NetLog.filter) || NetLog.FILTERS[NetLog.filter](entry);
@@ -35,14 +45,13 @@ const NetLog = {
     );
   },
 
-  /** One log row; a click expands its body. */
+  /** One log row. */
   createLogEntry(entry) {
     const div = document.createElement('div');
     div.className = 'dev-entry';
     div.dataset.dir = entry.dir;
     div.dataset.type = entry.type;
     div.innerHTML = NetLog.entryHtml(entry);
-    div.addEventListener('click', () => div.classList.toggle('expanded'));
     return div;
   },
 
@@ -50,22 +59,28 @@ const NetLog = {
   entryHtml(entry) {
     return `<div class="head">
         <span class="ts">${NetLog.fmtTime(entry.ts)}</span>
-        <span class="dir ${entry.dir}">${entry.dir === 'in' ? '▼ IN' : '▲ OUT'}</span>
+        <span class="dir ${entry.dir === 'in' ? 'in' : 'out'}">${NetLog.DIRECTIONS[entry.dir] || NetLog.DIRECTIONS.out}</span>
         <span class="msg-type">${Dom.esc(entry.type)}</span>
       </div>
       <div class="body">${Dom.esc(entry.data || '')}</div>`;
   },
 
   /** Adds an entry, following the bottom when already there, and trims the oldest. */
-  add(entry) {
+  add(raw) {
+    const entry = { ...raw, type: String(raw?.type || 'message') };
     const netLog = Dom.byId('net-log');
     const netEntry = NetLog.createLogEntry(entry);
+    Dom.byId('net-empty').hidden = true;
     netEntry.style.display = NetLog.shows(entry) ? '' : 'none';
     netLog.appendChild(netEntry);
-    if (netLog.scrollHeight - netLog.scrollTop - netLog.clientHeight < RendererConstants.NET_LOG_STICK_PX) {
-      netLog.scrollTop = netLog.scrollHeight;
-    }
+    NetLog.follow(netLog);
     while (netLog.children.length > RendererConstants.NET_LOG_LIMIT) netLog.removeChild(netLog.firstChild);
+  },
+
+  /** Keeps the newest row in view when the log was already scrolled to the bottom. */
+  follow(netLog) {
+    const fromBottom = netLog.scrollHeight - netLog.scrollTop - netLog.clientHeight;
+    if (fromBottom < RendererConstants.NET_LOG_STICK_PX) netLog.scrollTop = netLog.scrollHeight;
   },
 
   /** Switches the filter and re-filters what is already shown. */
@@ -80,10 +95,12 @@ const NetLog = {
   /** Empties the log. */
   clear() {
     Dom.byId('net-log').innerHTML = '';
+    Dom.byId('net-empty').hidden = false;
   },
 };
 
 oyaBrowser.onDevLog(NetLog.add);
+Dom.byId('net-log').addEventListener('click', NetLog.toggleRow);
 document.querySelectorAll('.net-filter').forEach((btn) => {
   btn.addEventListener('click', () => NetLog.setFilter(btn.dataset.filter));
 });

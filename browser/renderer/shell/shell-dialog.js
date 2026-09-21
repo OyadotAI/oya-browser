@@ -20,6 +20,8 @@ const ShellDialog = {
   /** Opens the dialog on the profile page, or on the command palette. */
   async open(profile = false) {
     const overlay = Dom.byId('shell-overlay');
+    // A pairing link or a reconnect can change the server after start, so read it afresh.
+    if (profile) ShellDialog.loadConfig(await oyaBrowser.getConfig());
     await oyaBrowser.showOverlay('shell');
     overlay.hidden = false;
     ShellDialog.showPage(overlay, profile);

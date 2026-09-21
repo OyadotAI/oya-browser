@@ -76,7 +76,8 @@ const FIND_ELEMENT_JS = `(() => {
   } finally { window.__oyaInternalCall = false; }
 })()`;
 /** Fills FIND_ELEMENT_JS for one call. */
-const findElementJs = (selector) => fill(FIND_ELEMENT_JS, JSON.stringify(selector), selector.replace(/'/g, "\\'"));
+const findElementJs = (selector) =>
+  fill(FIND_ELEMENT_JS, JSON.stringify(selector), JSON.stringify(selector).slice(1, -1).replace(/'/g, "\\'"));
 
 /** Replays a full pointer and mouse click sequence on an element inside an iframe, where CDP mouse events may not reach framework handlers. */
 const IFRAME_CLICK_JS = `(() => {
@@ -198,18 +199,6 @@ const DEV_ANALYZE_JS =
 const devWaitJs = (params) =>
   `(async () => { const maxWait = ${params?.timeout || ELEMENT_WAIT_MS}; const start = Date.now(); while (Date.now() - start < maxWait) { if (document.querySelector(${JSON.stringify(params.selector)})) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`;
 
-/** The dev panel's select, by analyzer element id. */
-const DEV_SELECT_JS = `(() => {
-            const el = document.querySelector('[data-ac-id=' + ${HOLE} + ']');
-            if (!el || el.tagName !== 'SELECT') return { ok: false, error: 'Select element not found' };
-            el.value = ${HOLE};
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return { ok: true, data: { selected: el.value } };
-          })()`;
-/** Fills DEV_SELECT_JS for one call. */
-const devSelectJs = (params) =>
-  fill(DEV_SELECT_JS, JSON.stringify(JSON.stringify(String(params.element_id))), JSON.stringify(params.value));
-
 /** Scripts for the actions that have no handler of their own, by action. */
 const ACTION_SCRIPTS = {
   /** The analyzer's read of the page. */
@@ -242,6 +231,5 @@ module.exports = {
   selectOptionJs,
   DEV_ANALYZE_JS,
   devWaitJs,
-  devSelectJs,
   actionScript,
 };

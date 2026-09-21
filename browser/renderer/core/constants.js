@@ -38,6 +38,8 @@ const RendererConstants = Object.freeze({
   /** Characters of an analysis, and of any other action result, shown. */
   ANALYZE_PREVIEW: 5000,
   RESULT_PREVIEW: 3000,
+  /** Elements of an analyzed page listed in the Actions pane to pick from. */
+  ACTION_ELEMENTS_SHOWN: 60,
   /** The most steps a draft may have (shown as "n / 500"). */
   MAX_STEPS: 500,
   /** The run timeline shows this many latest events. */
@@ -50,4 +52,12 @@ const RendererConstants = Object.freeze({
   JSON_INDENT: 2,
   /** Milliseconds in a second, for elapsed counts shown to people. */
   MS_PER_SECOND: 1000,
+  /** The control shield's scan runs at least this long, so a quick analysis still reads as one. */
+  SHIELD_MIN_SCAN_MS: 1000,
+  /** How long the outlines of what an analysis found stay up. */
+  SHIELD_HOLD_MS: 2600,
+  /** How long the outlines take to fade away. */
+  SHIELD_FADE_MS: 600,
+  /** How long the reveal's wash of light takes to cross the page; each outline lights up as it passes. */
+  SHIELD_REVEAL_MS: 1100,
 });

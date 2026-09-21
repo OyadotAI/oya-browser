@@ -1,10 +1,27 @@
 /**
  * Who may touch the page. While an agent has control, a transparent view (the
  * control shield) sits over the active tab and swallows human input, sign-in
- * popups are disabled, and the page menu items go grey.
+ * popups are disabled, and the page menu items go grey. The shield also shows
+ * the agent reading the page: a scan and outlines of what it found, drawn over
+ * the page rather than into it, so the site never sees them.
  */
 const path = require('path');
-const { TRANSPARENT, HUMAN_MENU_ITEMS } = require('./constants.cjs');
+const { TRANSPARENT, HUMAN_MENU_ITEMS, MAX_ANALYSIS_BOXES } = require('./constants.cjs');
+
+/** Measures the visible elements an analysis found, by their selectors, in the isolated world; it only reads. */
+function analysisBoxesJs(elements) {
+  const wanted = elements.filter((e) => e.visible).slice(0, MAX_ANALYSIS_BOXES);
+  return `(${JSON.stringify(wanted.map((e) => [e.id, e.type, e.selector]))}).map(([id, type, selector]) => {
+    const r = document.querySelector(selector)?.getBoundingClientRect();
+    return r && r.width && r.height ? { id, type, x: r.left, y: r.top, w: r.width, h: r.height } : null;
+  }).filter(Boolean)`;
+}
+
+/** Whether an agent holds the page: anything that re-analyzes it would renumber the agent's element ids. */
+const agentDriving = (ctx) => !ctx.control.snapshot().interactive;
+
+/** What a read of the page answers while an agent holds it. */
+const AGENT_HOLDS_PAGE = 'The agent is using this page. Take control to read it.';
 
 /** The shield view and the popups it disables. */
 class ControlShield {
@@ -78,6 +95,30 @@ class ControlShield {
     if (view) this.cover(win, view);
   }
 
+  /** An agent began reading the page: the shield starts its scan. */
+  analysisStarted(view) {
+    this.tell(view, { phase: 'scan' });
+  }
+
+  /** The analysis is back: outline what it found. A failed measurement outlines nothing. */
+  async analysisFinished(view, raw) {
+    if (!this.showing(view)) return;
+    const js = analysisBoxesJs(raw?.data?.elements || []);
+    const boxes = await this.ctx.world.worldEval(view, js).catch(() => []);
+    this.tell(view, { phase: 'found', boxes: boxes || [] });
+  }
+
+  /** Whether the shield is over `view` right now. */
+  showing(view) {
+    return !!this.view && this.shouldCover() && this.ctx.tabs.getActiveView() === view;
+  }
+
+  /** Hands the shield page one update, when it is over `view`. */
+  tell(view, update) {
+    if (!this.showing(view)) return;
+    this.view.webContents.executeJavaScript(`window.oyaShield?.(${JSON.stringify(update)})`).catch(() => {});
+  }
+
   /** Takes the shield off the window. */
   uncover(win) {
     if (this.view) win.removeBrowserView(this.view);
@@ -92,4 +133,4 @@ class ControlShield {
   }
 }
 
-module.exports = { ControlShield };
+module.exports = { ControlShield, agentDriving, AGENT_HOLDS_PAGE };

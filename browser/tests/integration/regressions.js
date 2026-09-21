@@ -33,6 +33,21 @@ for (const call of bulk) {
 has(/(?:function |^\s+)closeTab\(id, \{ keepOne = true \} = \{\}\) \{/m, 'closeTab lost its keepOne parameter');
 has(/if \(keepOne\) (?:this\.)?createTab\(/, 'closeTab recreates unconditionally, bulk close loops forever');
 
+// The page actions render an analysis in the saved page format, and navigate the
+// way the address bar does; both need the context main.js hands them.
+{
+  const actions =
+    fs.readFileSync(path.join(root, 'main.js'), 'utf8').match(/createPageActions\(\{[\s\S]*?\n\}\);/)?.[0] || '';
+  assert.ok(
+    /\bconfig: ctx\.config\b/.test(actions),
+    'page actions lost the saved settings: analyze ignores the page format',
+  );
+  assert.ok(
+    /\bnavigate: \(url\) => ctx\.tabs\.navigateActive\(url\)/.test(actions),
+    'dev navigate bypasses the address bar',
+  );
+}
+
 // The other half of the sign-in freeze: the jar must not go in one await at a time.
 assert.ok(!/for \(const c of cookies\) \{/.test(src), 'applyCookieSync is back to a sequential await per cookie');
 

@@ -5,16 +5,35 @@
  */
 const { cdp, cdpEval } = require('../cdp.cjs');
 const { sleep, cdpPressKey, cdpTypeText, cdpClearField, cdpMouseMove, cdpClick, cdpScroll } = require('../input.cjs');
-const { answerDialog } = require('../dialogs.cjs');
-const { VIEWPORT_JS, DEV_ANALYZE_JS, devWaitJs, devSelectJs } = require('./scripts.cjs');
+const { VIEWPORT_JS, DEV_ANALYZE_JS, devWaitJs } = require('./scripts.cjs');
+const { HOME_URL } = require('../tabs/constants.cjs');
 const { renderedAnalysis } = require('../page-format.cjs');
 const c = require('./constants.cjs');
 
-/** Actions that run without human control: they only read the page or the tab list. */
-const UNGUARDED_DEV_COMMANDS = ['analyze', 'screenshot', 'list-tabs'];
+/**
+ * Actions that run without human control: they only look. Analyze is not one:
+ * it renumbers the page's element ids, which would break the agent's next click.
+ */
+const UNGUARDED_DEV_COMMANDS = ['screenshot', 'list-tabs'];
 
 /** The analyzer's selector for an element id. */
 const byAcId = (elementId) => `[data-ac-id="${elementId}"]`;
+
+/** Why `params` has no usable element number, or null when it has one. */
+function elementIdProblem(params) {
+  if (!params?.element_id) return 'element_id required';
+  return /^\d+$/.test(String(params.element_id)) ? null : 'element_id must be a number';
+}
+
+/** Whether `value` is a real number: an empty field is not 0. */
+const isCoordinate = (value) => value !== '' && value !== null && Number.isFinite(Number(value));
+
+/** Clicks into the field at `point`, then empties it. */
+async function focusAndClear(view, point) {
+  await cdpClick(view, point.x, point.y);
+  await sleep(c.DEV_FOCUS_MS);
+  await cdpClearField(view);
+}
 
 /** One wheel event of `delta` at the viewport's centre. */
 async function devScroll(view, delta) {
@@ -31,26 +50,10 @@ const DEV_COMMANDS = {
     return renderedAnalysis(driver.ctx, await driver.ctx.worldEval(view, DEV_ANALYZE_JS));
   },
 
-  /**
-   * Server-internal: the channel CAPTCHA and MFA handling use. It runs in
-   * the PAGE's world, not the analyzer's isolated one, clearing a captcha
-   * means calling back into the page's own globals
-   * (`___grecaptcha_cfg.clients[…].callback` is a function the page
-   * defined), which an isolated world cannot see. Not a public command.
-   */
-  async evaluate_raw(driver, view, params) {
-    return { ok: true, data: { result: await cdpEval(view, String(params?.expression || '')) } };
-  },
-
   /** A PNG of the active tab. */
   async screenshot(driver, view) {
     const r = await cdp(view, 'Page.captureScreenshot', { format: 'png' });
     return { ok: true, data: { screenshot: 'data:image/png;base64,' + r.data } };
-  },
-
-  /** Answers the open JavaScript dialog. */
-  async handle_dialog(driver, view, params) {
-    return await answerDialog(params?.accept, params?.prompt_text ?? params?.promptText);
   },
 
   /** Scrolls down by `amount` pixels. */
@@ -65,20 +68,17 @@ const DEV_COMMANDS = {
     return { ok: true };
   },
 
-  /** Loads a URL, adding https:// when the scheme is missing. */
+  /** Goes to an address the way the address bar does (its search, cookies and recording included). */
   async navigate(driver, view, params) {
     if (!params?.url) return { ok: false, error: 'URL required' };
-    let url = params.url;
-    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-    await driver.ctx.pullCookiesFor(url);
-    await view.webContents.loadURL(url);
-    await driver.ctx.injectScripts(view);
+    await driver.ctx.navigate(params.url);
     return { ok: true, data: { url: view.webContents.getURL(), title: view.webContents.getTitle() } };
   },
 
   /** Clicks an element by id with the CDP mouse. */
   async click(driver, view, params) {
-    if (!params?.element_id) return { ok: false, error: 'element_id required' };
+    const problem = elementIdProblem(params);
+    if (problem) return { ok: false, error: problem };
     const info = await driver.locate(view, byAcId(params.element_id));
     if (!info?.ok) return { ok: false, error: info?.error || 'Element not found' };
     await cdpClick(view, info.data.x, info.data.y);
@@ -88,12 +88,11 @@ const DEV_COMMANDS = {
 
   /** Clicks a field by id, clears it and types into it. */
   async type(driver, view, params) {
-    if (!params?.element_id || !params?.text) return { ok: false, error: 'element_id and text required' };
+    const problem = params?.text ? elementIdProblem(params) : 'element_id and text required';
+    if (problem) return { ok: false, error: problem };
     const info = await driver.locate(view, byAcId(params.element_id));
     if (!info?.ok) return { ok: false, error: info?.error || 'Element not found' };
-    await cdpClick(view, info.data.x, info.data.y);
-    await sleep(c.DEV_FOCUS_MS);
-    await cdpClearField(view);
+    await focusAndClear(view, info.data);
     await cdpTypeText(view, params.text);
     return { ok: true, data: { typed: true } };
   },
@@ -107,7 +106,8 @@ const DEV_COMMANDS = {
 
   /** Moves the mouse onto an element by id. */
   async hover(driver, view, params) {
-    if (!params?.element_id) return { ok: false, error: 'element_id required' };
+    const problem = elementIdProblem(params);
+    if (problem) return { ok: false, error: problem };
     const info = await driver.locate(view, byAcId(params.element_id));
     if (!info?.ok) return { ok: false, error: info?.error || 'Element not found' };
     await cdpMouseMove(view, Math.round(info.data.x), Math.round(info.data.y));
@@ -116,9 +116,10 @@ const DEV_COMMANDS = {
 
   /** A CDP click at page coordinates. */
   async 'click-coords'(driver, view, params) {
-    if (params?.x == null || params?.y == null) return { ok: false, error: 'x and y required' };
-    await cdpClick(view, params.x, params.y);
-    return { ok: true, data: { clicked: true, x: params.x, y: params.y } };
+    if (!isCoordinate(params?.x) || !isCoordinate(params?.y)) return { ok: false, error: 'x and y required' };
+    const [x, y] = [Number(params.x), Number(params.y)];
+    await cdpClick(view, x, y);
+    return { ok: true, data: { clicked: true, x, y } };
   },
 
   /** Waits for a CSS selector to match. */
@@ -139,23 +140,10 @@ const DEV_COMMANDS = {
     };
   },
 
-  /** Opens a tab. */
+  /** Opens a tab on the home page, like the new tab button. */
   async 'new-tab'(driver, view, params) {
-    const tabId = driver.ctx.createTab(params?.url || 'about:blank', true);
+    const tabId = driver.ctx.createTab(params?.url || HOME_URL, true);
     return { ok: true, data: { tab_id: tabId } };
-  },
-
-  /** Closes a tab, the active one by default. */
-  async 'close-tab'(driver, view, params) {
-    driver.ctx.closeTab(params?.tab_id || driver.ctx.activeTabId());
-    return { ok: true, data: { closed: true } };
-  },
-
-  /** Sets a <select>'s value by element id. */
-  async select(driver, view, params) {
-    if (!params?.element_id || !params?.value) return { ok: false, error: 'element_id and value required' };
-    await driver.ctx.injectScripts(view);
-    return await driver.ctx.worldEval(view, devSelectJs(params), true);
   },
 };
 

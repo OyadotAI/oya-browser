@@ -374,7 +374,19 @@ function mainCtx(real = {}) {
     overlays: { names: new Set() },
     protection: { setupTabCDP: async () => {}, injectScripts: async () => {}, protectPopup() {} },
     persona: { active: null, loginState: null, partitionName: () => 'persist:oya-browser' },
-    recorder: { recording: false, recordNavigation() {}, joinIfRecording() {}, controlLost() {} },
+    recorder: {
+      recording: false,
+      recordNavigation() {},
+      joinIfRecording() {},
+      controlLost() {},
+      forgotten: [],
+      channels: {
+        /** Records the view a closed tab left. */
+        forget(view) {
+          ctx.recorder.forgotten.push(view);
+        },
+      },
+    },
     cookies: { pullCookiesFor: async () => {} },
   };
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);

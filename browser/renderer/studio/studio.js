@@ -1,7 +1,8 @@
 /**
  * The workflow studio's shared state and helpers: the last workspace
- * snapshot, the selected step and tab, and small builders for its controls.
- * The studio's views and actions live beside this file.
+ * snapshot, what the studio may do now, the selected step and tab, where
+ * messages go, and small builders for its controls. The studio's views and
+ * actions live beside this file.
  */
 /* global oyaBrowser, Dom, StudioView */
 /* exported Studio */
@@ -10,16 +11,35 @@
 const Studio = {
   /** The last workspace snapshot from the main process. */
   state: undefined,
+  /** What the studio may do now (see StudioView.mode), derived once per snapshot. */
+  mode: { locked: true, runnable: false, stage: 'empty', stored: true, recording: false, running: false },
   /** The selected step's id. */
   selected: undefined,
-  /** A recording toggle or save is in flight. */
+  /** A recording start or stop is in flight. */
   busy: false,
-  /** The studio tab in view: steps, run or inspect. */
+  /** A save to Oya is in flight. */
+  saving: false,
+  /** The recording just finished in this session, so the save card says so and comes into view. */
+  justFinished: false,
+  /** Bring the save card into view on the next render. */
+  revealFinish: false,
+  /** The last workspace command in flight: commands run one at a time, in order. */
+  queue: Promise.resolve(),
+  /** The draft on screen, so a message about another draft is cleared when it changes. */
+  shownDraft: undefined,
+  /** The studio tab in view: steps, run or code. */
   tab: 'steps',
-  /** The panel is at its expanded width. */
-  expanded: false,
   /** What each view last drew, so unchanged views are not rebuilt. */
-  signatures: { steps: '', editor: '', variables: '', library: '', runHistory: '', code: '' },
+  signatures: {
+    steps: '',
+    editor: '',
+    variables: '',
+    inputs: '',
+    library: '',
+    runHistory: '',
+    events: '',
+    code: '',
+  },
 
   /** The name people see for each action. */
   NAMES: {
@@ -39,10 +59,16 @@ const Studio = {
   },
 
   /** The studio tabs, in order. */
-  TABS: ['steps', 'run', 'inspect'],
+  TABS: ['steps', 'run', 'code'],
+
+  /** Where each message shows: under the action that caused it. */
+  SLOTS: ['record-result', 'save-result', 'code-result'],
 
   /** Run statuses during which the draft is locked. */
   ACTIVE: ['starting', 'running', 'paused', 'stopping'],
+
+  /** What a playbook may be called when it is saved to Oya. */
+  NAME_RULE: /^[\w-]{1,64}$/,
 
   /** An action's display name (the raw action when it has none). */
   name: (action) => (Object.hasOwn(Studio.NAMES, action) ? Studio.NAMES[action] : undefined) || action,
@@ -50,10 +76,25 @@ const Studio = {
   /** Whether a run is still going. */
   isActive: (run) => Studio.ACTIVE.includes(run?.status),
 
-  /** Shows a status message under the studio ('' clears it). */
-  say(message = '', error = false) {
-    Dom.byId('record-result').textContent = message;
-    Dom.byId('record-result').classList.toggle('error', error);
+  /** "1 step", "3 steps". */
+  plural: (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`,
+
+  /** Whether the name typed for the playbook can be saved to Oya. */
+  validName: () => Studio.NAME_RULE.test(Dom.byId('record-name').value.trim()),
+
+  /** An error's message without Electron's IPC wrapper. */
+  cleanError: (error) =>
+    String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''),
+
+  /** Shows a message in `slot`, under the action it is about ('' clears it). */
+  say(message = '', error = false, slot = 'record-result') {
+    Dom.byId(slot).textContent = message;
+    Dom.byId(slot).classList.toggle('error', error);
+  },
+
+  /** Clears every message. */
+  clearMessages() {
+    for (const slot of Studio.SLOTS) Studio.say('', false, slot);
   },
 
   /** A small text button. */
@@ -65,26 +106,53 @@ const Studio = {
     return el;
   },
 
-  /** A labelled input that reports changes (as a number for number inputs). */
-  field(label, value, change, type = 'text') {
+  /** A labelled input that reports changes: a number field reports a number, or nothing when emptied. */
+  field(label, value, change, type = 'text', key = label) {
     const group = Dom.node('label', null, 'studio-field');
     group.append(Dom.node('span', label));
     const input = Dom.node('input');
-    input.type = type;
-    input.value = value ?? '';
-    input.addEventListener('change', () => change(type === 'number' ? Number(input.value) : input.value));
+    Object.assign(input, { type, value: value ?? '' });
+    input.dataset.key = key;
+    input.addEventListener('change', () => change(Studio.fieldValue(input)));
     group.append(input);
     return group;
   },
 
-  /** Sends a workspace command and shows the new state, or the error without IPC noise. */
-  async command(cmd) {
+  /** A field's value: text as typed, a number field as a number or undefined when empty. */
+  fieldValue(input) {
+    if (input.type !== 'number') return input.value;
+    return input.value === '' ? undefined : Number(input.value);
+  },
+
+  /** Rebuilds `host` with `draw`, keeping focus on the same field when it was inside. */
+  keepFocus(host, draw) {
+    const active = document.activeElement;
+    const key = active?.closest?.('#' + host.id) ? active.dataset?.key : undefined;
+    draw();
+    if (key) [...host.querySelectorAll('[data-key]')].find((el) => el.dataset.key === key)?.focus();
+  },
+
+  /**
+   * Sends a workspace command after the ones before it, showing the new state,
+   * or its error in `slot`; resolves to the state or undefined. `cmd` may be a
+   * function, built when its turn comes, so an edit made before the last one's
+   * answer arrived builds on that answer instead of overwriting it.
+   */
+  command(cmd, slot = 'record-result') {
+    const sent = Studio.queue.then(() => Studio.send(cmd, slot));
+    Studio.queue = sent.catch(() => {});
+    return sent;
+  },
+
+  /** Sends one command now and shows what came back. */
+  async send(cmd, slot) {
+    Studio.say('', false, slot);
     try {
-      const next = await oyaBrowser.workspace(cmd);
+      const next = await oyaBrowser.workspace(typeof cmd === 'function' ? cmd() : cmd);
       StudioView.render(next);
       return next;
     } catch (error) {
-      Studio.say(error.message.replace(/^Error invoking remote method '[^']+': Error: /, ''), true);
+      Studio.say(Studio.cleanError(error), true, slot);
     }
   },
 

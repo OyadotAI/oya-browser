@@ -50,6 +50,18 @@ describe('saveRecording', () => {
     assert.equal(ctx.workspace.draft.publishedAt, undefined);
   });
 
+  it('reports a refused save as an error even when the server gives no reason', async () => {
+    globalThis.fetch.mock.mockImplementation(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    assert.deepEqual(await saveRecording(ctx, 'n', 'd'), { error: 'Server returned 500' });
+    assert.equal(ctx.workspace.draft.publishedAt, undefined);
+  });
+
+  it('marks a saved draft with the revision it saved', async () => {
+    globalThis.fetch.mock.mockImplementation(async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    await saveRecording(ctx, 'n', 'd');
+    assert.equal(ctx.workspace.draft.publishedRevision, ctx.workspace.draft.revision);
+  });
+
   it('answers errors instead of throwing', async () => {
     ctx.socket.ready = false;
     assert.deepEqual(await saveRecording(ctx), { error: 'Not connected to server' });

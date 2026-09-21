@@ -134,6 +134,8 @@ ctx.stream = createStream({
   send: (payload) => ctx.socket.send(payload),
 });
 ctx.actions = createPageActions({
+  config: ctx.config,
+  navigate: (url) => ctx.tabs.navigateActive(url),
   getActiveView: () => ctx.tabs.getActiveView(),
   pullCookiesFor: (...args) => ctx.cookies.pullCookiesFor(...args),
   injectScripts: (view) => ctx.protection.injectScripts(view),
@@ -142,6 +144,8 @@ ctx.actions = createPageActions({
   createTab: (...args) => ctx.tabs.createTab(...args),
   closeTab: (...args) => ctx.tabs.closeTab(...args),
   requireHumanControl: () => ctx.shield.requireHumanControl(),
+  analysisStarted: (view) => ctx.shield.analysisStarted(view),
+  analysisFinished: (view, raw) => ctx.shield.analysisFinished(view, raw),
   tabs: () => ctx.tabs.list,
   activeTabId: () => ctx.tabs.activeTabId,
 });

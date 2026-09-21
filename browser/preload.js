@@ -26,7 +26,6 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   getUiPreferences: () => ipcRenderer.invoke('get-ui-preferences'),
   saveUiPreferences: (preferences) => ipcRenderer.invoke('save-ui-preferences', preferences),
   exportPlaywright: (payload) => ipcRenderer.invoke('export-playwright', payload),
-  confirmDiscardRecording: () => ipcRenderer.invoke('confirm-discard-recording'),
   onShellLayout: (cb) => ipcRenderer.on('shell-layout', (_e, layout) => cb(layout)),
   onShellCommand: (cb) => ipcRenderer.on('shell-command', (_e, command) => cb(command)),
   onShellAppearance: (cb) => ipcRenderer.on('shell-appearance', (_e, dark) => cb(dark)),
@@ -41,9 +40,7 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   // Recording
   startRecording: () => ipcRenderer.invoke('start-recording'),
   stopRecording: () => ipcRenderer.invoke('stop-recording'),
-  clearRecording: () => ipcRenderer.invoke('clear-recording'),
   saveRecording: (name, description) => ipcRenderer.invoke('save-recording', name, description),
-  onRecordedSteps: (cb) => ipcRenderer.on('recorded-steps', (e, state) => cb(state)),
   // Events
   onUrlChanged: (cb) => ipcRenderer.on('url-changed', (e, url) => cb(url)),
   onTitleChanged: (cb) => ipcRenderer.on('title-changed', (e, title) => cb(title)),

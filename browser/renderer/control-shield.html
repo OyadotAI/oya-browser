@@ -1,7 +1,35 @@
 <!doctype html>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'" />
 <style>
+  /* Oya's own tokens (ui/src/app/globals.css), and one light the whole show is lit by. */
+  :root {
+    --oya: #39ed35;
+    --paper: #f4f3ef;
+    --ink: #0c0c0a;
+    --light: #39ed35, #9dffa0, #f4f3ef, #1fd6a0, #6cb4ff, #39ed35;
+    /* A soft spring, sampled: it settles without a bounce you can see. */
+    --spring: linear(
+      0,
+      0.009,
+      0.035 2.1%,
+      0.141 4.4%,
+      0.723 12.9%,
+      0.938 16.7%,
+      1.017 20.4%,
+      1.043 24.5%,
+      1.035 29.4%,
+      1.007 38.6%,
+      0.997 48.3%,
+      1
+    );
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @property --angle {
+    syntax: '<angle>';
+    inherits: true;
+    initial-value: 0deg;
+  }
   html,
   body {
     margin: 0;
@@ -10,10 +38,385 @@
     background: transparent;
     cursor: default;
     user-select: none;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
+  /* Watch-only, said quietly: a hairline, nothing more. */
   body {
-    box-shadow: inset 0 0 0 2px #50856855;
+    box-shadow: inset 0 0 0 1px #39ed3526;
     box-sizing: border-box;
   }
+
+  /* ── The edge light: while the agent reads, light flows around the page ── */
+  .edge {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 700ms var(--ease);
+    animation: flow 5s linear infinite paused;
+  }
+  /* Each layer masks its light to a frame, and its wrapper blurs it: a filter runs before a mask, so the blur must sit outside. */
+  .edge b {
+    position: absolute;
+    inset: 0;
+  }
+  .edge i {
+    position: absolute;
+    inset: 0;
+    background: conic-gradient(from var(--angle), var(--light));
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+  }
+  .edge b:nth-child(1) i {
+    padding: 1.5px;
+  }
+  .edge b:nth-child(2) {
+    filter: blur(10px);
+    opacity: 0.85;
+  }
+  .edge b:nth-child(2) i {
+    padding: 6px;
+  }
+  .edge b:nth-child(3) {
+    filter: blur(34px);
+    opacity: 0.6;
+  }
+  .edge b:nth-child(3) i {
+    padding: 18px;
+  }
+  .scanning .edge,
+  .revealing .edge {
+    opacity: 1;
+    animation-play-state: running;
+  }
+  .revealing .edge {
+    animation-duration: 2.2s;
+  }
+  @keyframes flow {
+    to {
+      --angle: 1turn;
+    }
+  }
+  .tint {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    box-shadow: inset 0 0 140px #39ed351f;
+    transition: opacity 900ms var(--ease);
+  }
+  .scanning .tint {
+    opacity: 1;
+    animation: breathe 2.6s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  /* ── The reveal: a soft wash of light passes, and what it touches lights up ── */
+  .wash {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 45vh;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-45vh);
+    background: linear-gradient(180deg, transparent, #39ed3514 45%, #f4f3ef26 72%, #39ed351a 88%, transparent);
+    mix-blend-mode: plus-lighter;
+  }
+  .revealing .wash {
+    opacity: 1;
+    animation: pass var(--reveal, 1100ms) cubic-bezier(0.45, 0, 0.55, 1) forwards;
+  }
+  @keyframes pass {
+    from {
+      transform: translateY(-45vh);
+    }
+    to {
+      transform: translateY(100vh);
+    }
+  }
+  .stage {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    transition:
+      opacity var(--fade, 600ms) var(--ease),
+      filter var(--fade, 600ms) var(--ease);
+  }
+  .stage.leaving {
+    opacity: 0;
+    filter: blur(6px);
+  }
+  .box {
+    position: absolute;
+    box-sizing: border-box;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--c) 70%, transparent);
+    background: color-mix(in srgb, var(--c) 5%, transparent);
+    box-shadow:
+      inset 0 0 14px color-mix(in srgb, var(--c) 22%, transparent),
+      0 0 22px color-mix(in srgb, var(--c) 18%, transparent);
+    opacity: 0;
+    filter: blur(6px);
+    transform: scale(0.96);
+    animation: light 900ms var(--spring) var(--d) forwards;
+  }
+  @keyframes light {
+    30% {
+      opacity: 1;
+      filter: blur(0);
+      background: color-mix(in srgb, var(--c) 16%, transparent);
+    }
+    to {
+      opacity: 1;
+      filter: blur(0);
+      transform: scale(1);
+    }
+  }
+  .box::before {
+    content: attr(data-id);
+    position: absolute;
+    top: -9px;
+    left: -7px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    box-sizing: border-box;
+    border-radius: 9px;
+    background: #0c0c0ab8;
+    backdrop-filter: blur(10px) saturate(1.6);
+    border: 0.5px solid #ffffff2e;
+    color: var(--paper);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 17px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    letter-spacing: 0.02em;
+    box-shadow: 0 2px 8px #0000004d;
+    opacity: 0;
+    transform: translateY(3px);
+    animation: rise 700ms var(--spring) calc(var(--d) + 120ms) forwards;
+  }
+  @keyframes rise {
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* ── The companion: the Oya mark on a glass lens, ringed by living light ── */
+  .companion {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    pointer-events: none;
+  }
+  .bubble {
+    height: 34px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    border-radius: 17px;
+    background: #141411e0;
+    backdrop-filter: blur(30px) saturate(1.8);
+    border: 0.5px solid #ffffff2e;
+    color: var(--paper);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
+    box-shadow:
+      inset 0 0.5px 0 #ffffff26,
+      0 8px 28px #0000004d,
+      0 1px 3px #00000033;
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateX(12px) scale(0.94);
+    transform-origin: right center;
+    transition:
+      opacity 400ms var(--ease),
+      filter 400ms var(--ease),
+      transform 800ms var(--spring);
+  }
+  .companion.talking .bubble {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+  .words.enter {
+    animation: arrive 520ms var(--ease);
+  }
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      filter: blur(5px);
+      transform: translateY(3px);
+    }
+  }
+  /* Light passing through the words while the agent reads. */
+  .words.shimmer {
+    color: transparent;
+    background: linear-gradient(90deg, #f4f3efb3 0%, #f4f3efb3 38%, #ffffff 50%, #f4f3efb3 62%, #f4f3efb3 100%) 0 0 /
+      250% 100%;
+    background-clip: text;
+    animation:
+      arrive 520ms var(--ease),
+      shimmer 1.8s linear infinite;
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -150% 0;
+    }
+  }
+
+  .orb {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    transform-origin: bottom right;
+    animation: flow 9s linear infinite paused;
+    transition:
+      transform 900ms var(--spring),
+      opacity 500ms var(--ease);
+  }
+  /* Resting, it sits small and still, and covers as little of the page as it can. */
+  .companion:not(.talking) .orb {
+    transform: scale(0.78);
+    opacity: 0.9;
+  }
+  .talking .orb {
+    animation-play-state: running;
+  }
+  .scanning .orb {
+    animation-duration: 2.4s;
+  }
+  .orb .halo,
+  .orb .ring {
+    position: absolute;
+    border-radius: 50%;
+    background: conic-gradient(from var(--angle), var(--light));
+  }
+  .orb .halo {
+    inset: -6px;
+    filter: blur(14px);
+    opacity: 0;
+    transition: opacity 600ms var(--ease);
+  }
+  .scanning .orb .halo {
+    opacity: 0.75;
+  }
+  .found .orb .halo {
+    animation: flare 1.2s var(--ease);
+  }
+  @keyframes flare {
+    25% {
+      opacity: 1;
+      transform: scale(1.18);
+    }
+  }
+  .orb .ring {
+    inset: 0;
+    opacity: 0.55;
+    transition: opacity 600ms var(--ease);
+  }
+  .talking .orb .ring {
+    opacity: 1;
+  }
+  .orb .lens {
+    position: absolute;
+    inset: 2.5px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 28%, #2b2b26, #121210 55%, #0a0a08);
+    box-shadow:
+      inset 0 1px 0 #ffffff2e,
+      inset 0 -6px 12px #00000080;
+    overflow: hidden;
+  }
+  .orb .lens::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(ellipse 70% 45% at 50% 8%, #ffffff33, transparent 70%);
+  }
+  .found .orb {
+    animation-name: flow, pop;
+    animation-duration: 9s, 700ms;
+    animation-timing-function: linear, var(--spring);
+    animation-iteration-count: infinite, 1;
+  }
+  @keyframes pop {
+    35% {
+      transform: scale(1.08);
+    }
+  }
+  .mark {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .mark .back {
+    transform-origin: 47px 47px;
+    transition: transform 900ms var(--spring);
+  }
+  .scanning .mark .back {
+    animation: orbit 2.4s var(--ease) infinite;
+  }
+  @keyframes orbit {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+    }
+  }
 </style>
-<body aria-label="Page is watch-only. Use Take control in the browser toolbar to interact."></body>
+<body aria-label="Page is watch-only. Use Take control in the browser toolbar to interact.">
+  <div class="tint"></div>
+  <div class="edge">
+    <b><i></i></b><b><i></i></b><b><i></i></b>
+  </div>
+  <div class="wash"></div>
+  <div id="stage" class="stage"></div>
+  <div id="companion" class="companion" aria-hidden="true">
+    <div class="bubble"><span id="bubble-text" class="words"></span></div>
+    <div class="orb">
+      <div class="halo"></div>
+      <div class="ring"></div>
+      <div class="lens">
+        <!-- The Oya mark: the green ring behind, offset, and the white ring in front. -->
+        <svg class="mark" viewBox="0 0 100 100">
+          <g class="back">
+            <circle cx="53" cy="53" r="19" fill="none" stroke="#39ed35" stroke-width="9.5" />
+          </g>
+          <circle cx="47" cy="47" r="19" fill="none" stroke="#f4f3ef" stroke-width="9.5" />
+        </svg>
+      </div>
+    </div>
+  </div>
+  <script src="core/constants.js"></script>
+  <script src="control-shield.js"></script>
+</body>

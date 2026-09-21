@@ -54,6 +54,13 @@ describe('TabManager', () => {
     assert.equal(ctx.tabs.list[0].url, HOME_URL);
   });
 
+  it('takes a closed tab out of the recording', () => {
+    const id = ctx.tabs.createTab('https://a.test/');
+    const { view } = ctx.tabs.find(id);
+    ctx.tabs.closeTab(id);
+    assert.deepEqual(ctx.recorder.forgotten, [view]);
+  });
+
   it('lets a bulk close empty the list', () => {
     ctx.tabs.createTab('https://a.test/');
     ctx.tabs.createTab('https://b.test/');

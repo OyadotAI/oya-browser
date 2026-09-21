@@ -63,7 +63,10 @@ function pageCtx(view, { world, human = true, tabs } = {}) {
     worldEval: async (v, expr) => (calls.push(['world', expr]), typeof world === 'function' ? world(expr) : world),
     sendResult: record('result'),
     createTab: (url, activate) => (calls.push(['createTab', url, activate]), 7),
+    navigate: async (url) => calls.push(['navigate', url]),
     closeTab: record('closeTab'),
+    analysisStarted: record('analysisStarted'),
+    analysisFinished: record('analysisFinished'),
     requireHumanControl: () => {
       if (!human) throw new Error('Take control before interacting with this page');
     },

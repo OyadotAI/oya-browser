@@ -30,7 +30,7 @@ const ELEMENT_FIELDS = [
   'path',
 ];
 /** Draft fields copied through untouched when present. */
-const PASSTHROUGH = ['repairedFrom', 'publishedAt', 'run'];
+const PASSTHROUGH = ['repairedFrom', 'publishedAt', 'publishedRevision', 'run'];
 
 /** A deep copy, so a normalized draft never shares state with its input. */
 const clone = (value) => structuredClone(value);

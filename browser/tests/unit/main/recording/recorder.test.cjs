@@ -181,11 +181,10 @@ describe('Recorder', () => {
     assert.equal(ctx.recorder.recording, false);
   });
 
-  it('refreshes the shell while recording and hands changes to the workspace once', async () => {
+  it('hands a changed recording to the workspace once, and nothing when it is unchanged', async () => {
     await ctx.recorder.startRecording();
-    const before = ctx.shell.sentOn('recorded-steps').length;
     mock.timers.tick(400);
-    assert.equal(ctx.shell.sentOn('recorded-steps').length, before + 1);
+    mock.timers.tick(400);
     assert.equal(ctx.workspace.captures.length, 1);
   });
 
@@ -204,29 +203,95 @@ describe('Recorder', () => {
     assert.equal((await ctx.recorder.remote('stop')).recording, false);
   });
 
-  it('runs recording tasks one at a time, each handed the last result', async () => {
+  it('runs recording tasks one at a time, handing each nothing from the last', async () => {
     const seen = [];
     ctx.recorder.queueRecording(async () => 'first');
     const failed = ctx.recorder.queueRecording(async () => {
       throw new Error('x');
     });
     await assert.rejects(failed);
-    await ctx.recorder.queueRecording((previous) => seen.push(previous));
-    assert.deepEqual(seen, [undefined]);
     await ctx.recorder.queueRecording(async () => 'third');
-    await ctx.recorder.queueRecording((previous) => seen.push(previous));
-    assert.deepEqual(seen, [undefined, 'third']);
+    await ctx.recorder.queueRecording((...args) => seen.push(args));
+    assert.deepEqual(seen, [[]]);
   });
 
-  it('clears the steps and restarts from the current page while recording', async () => {
+  it('starts a fresh draft after an earlier stop, never resuming it by accident', async () => {
+    await ctx.recorder.queueRecording(() => ctx.recorder.startRecording());
+    await ctx.recorder.queueRecording(() => ctx.recorder.stopRecording());
+    ctx.workspace.edits = [];
+    await ctx.recorder.queueRecording(() => ctx.recorder.startRecording());
+    assert.deepEqual(ctx.workspace.edits, [{ type: 'new' }]);
+  });
+
+  it("keeps the person's step order when a resumed recording stops", async () => {
     await ctx.recorder.startRecording();
-    ctx.recorder.channels.clearAll = async () => {};
-    ctx.recorder.pushRecordedStep({ action: 'click' });
-    const result = await ctx.recorder.clear();
-    assert.deepEqual(
-      result.steps.map((s) => s.action),
-      ['navigate'],
+    ctx.recorder.adopt(
+      [
+        { id: 'late', action: 'click', t: 50, tab: 'main' },
+        { id: 'early', action: 'click', t: 10, tab: 'main' },
+      ],
+      [],
     );
+    await ctx.recorder.stopRecording();
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.id),
+      ['late', 'early'],
+    );
+  });
+
+  it('orders only the newly drained steps by time, and tolerates steps without a time', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.adopt([{ id: 'kept', action: 'click', tab: 'main' }], []);
+    ctx.recorder.channels.drain = async () => {
+      ctx.recorder.pushRecordedStep({ id: 'b', action: 'click', t: 1200 });
+      ctx.recorder.pushRecordedStep({ id: 'a', action: 'click', t: 1100 });
+    };
+    await ctx.recorder.stopRecording();
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.id),
+      ['kept', 'a', 'b'],
+    );
+  });
+
+  it('keeps recording when handing steps to the workspace throws', async () => {
+    await ctx.recorder.startRecording();
+    ctx.workspace.capture = () => {
+      throw new Error('duplicate step id');
+    };
+    ctx.recorder.recordNavigation('https://next.test/');
+    assert.doesNotThrow(() => mock.timers.tick(400));
+    assert.equal(ctx.recorder.recording, true);
+  });
+
+  it("drops a closed tab's late steps instead of inventing a tab name for them", async () => {
+    await ctx.recorder.startRecording();
+    const gone = new FakeBrowserView();
+    ctx.recorder.receive(gone, 'https://gone.test/', { steps: [{ id: 'x', action: 'click', t: 1001 }] });
+    assert.equal(
+      ctx.recorder.recordedSteps.some((s) => s.id === 'x'),
+      false,
+    );
+  });
+
+  it('names a late step by the tab its channel was made for, even once that tab closed', async () => {
+    await ctx.recorder.startRecording();
+    const gone = new FakeBrowserView();
+    ctx.recorder.receive(gone, 'https://start.test/', { steps: [{ id: 'y', action: 'click', t: 1001 }] }, 1);
+    assert.equal(ctx.recorder.recordedSteps.find((s) => s.id === 'y').tab, 'main');
+  });
+
+  it('does not arm a tab that opens while the recording is stopping', async () => {
+    await ctx.recorder.startRecording();
+    let release;
+    ctx.recorder.channels.stopAll = () => new Promise((resolve) => (release = resolve));
+    const armed = [];
+    ctx.recorder.channels.armRecordingView = async (v) => armed.push(v);
+    const stopped = ctx.recorder.queueRecording(() => ctx.recorder.stopRecording());
+    await flush();
+    const joined = ctx.recorder.joinIfRecording(new FakeBrowserView());
+    release();
+    await Promise.all([stopped, joined]);
+    assert.deepEqual(armed, []);
   });
 
   it('adopts a draft and does not hand it straight back', () => {

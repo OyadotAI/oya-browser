@@ -57,18 +57,36 @@ function markRecordingStart(recorder, resume) {
 /** Arms every tab, then keeps the shell's step list fresh. */
 async function goLiveRecording(recorder) {
   await armEveryTab(recorder);
-  recorder.drainTimer = setInterval(() => recorder.emitRecording(), RECORDING_REFRESH_MS);
+  recorder.drainTimer = setInterval(() => safeEmit(recorder), RECORDING_REFRESH_MS);
   recorder.emitRecording();
   return { recording: true, steps: recorder.recordedSteps };
 }
 
-/** Arms every tab; a failure stops the recording and is thrown. */
+/** A refresh that throws is logged: an exception in a timer would bring down the main process. */
+function safeEmit(recorder) {
+  try {
+    recorder.emitRecording();
+  } catch (err) {
+    console.error('[recorder] refresh failed:', err.message);
+  }
+}
+
+/** Arms every tab; a live tab's failure stops the recording and is thrown. */
 async function armEveryTab(recorder) {
   try {
-    for (const tab of recorder.ctx.tabs.list) await recorder.channels.armRecordingView(tab.view);
+    for (const tab of recorder.ctx.tabs.list) await armTab(recorder, tab.view);
   } catch (err) {
     await recorder.stopRecording();
     throw err;
+  }
+}
+
+/** Arms one tab; one that closed meanwhile is simply left out. */
+async function armTab(recorder, view) {
+  try {
+    await recorder.channels.armRecordingView(view);
+  } catch (err) {
+    if (!view.webContents.isDestroyed()) throw err;
   }
 }
 

@@ -4,11 +4,13 @@
  */
 const { renderedAnalysis } = require('../page-format.cjs');
 const { readPageSource } = require('./page-source.cjs');
+const { agentDriving, AGENT_HOLDS_PAGE } = require('../shell/control-shield.cjs');
 
 /**
  * The inspector, run in the analyzer's isolated world at the clicked point.
- * This text runs in the page, so it is kept exactly as it has always been;
- * __OYA_X__ and __OYA_Y__ are the clicked point.
+ * This text runs in the page, so it changes only on purpose; it no longer asks
+ * for in-page labels, which nothing ever cleaned up. __OYA_X__ and __OYA_Y__
+ * are the clicked point.
  */
 const INSPECT_TEMPLATE = `
             (function() {
@@ -26,7 +28,7 @@ const INSPECT_TEMPLATE = `
                 // Generate a unique temporary selector
                 const tmpId = '__oya_inspect_' + Date.now();
                 scope.setAttribute('data-oya-inspect', tmpId);
-                const result = analyzePage({ selector: '[data-oya-inspect="' + tmpId + '"]', highlight: true });
+                const result = analyzePage({ selector: '[data-oya-inspect="' + tmpId + '"]' });
                 scope.removeAttribute('data-oya-inspect');
                 return result;
               }
@@ -92,26 +94,29 @@ function showContextMenu(ctx, view, params) {
 
 /** The page's HTML and markdown, shown in the dev panel's source pane. */
 async function viewPageSource(ctx, view) {
+  ctx.layout.reveal();
   try {
     await ctx.protection.injectScripts(view);
-    const source = await readPageSource(ctx, view);
-    ctx.layout.reveal();
-    ctx.shell.send('view-source', source);
+    ctx.shell.send('view-source', await readPageSource(ctx, view));
   } catch (e) {
     ctx.shell.send('view-source', { html: '', markdown: '', error: e.message });
   }
 }
 
-/** The analyzer's view of the clicked element's section, shown in the dev panel. */
+/** The analyzer's view of the clicked element's section, shown in the dev panel; refused while an agent drives. */
 async function inspectElement(ctx, view, params) {
+  ctx.layout.reveal();
+  if (agentDriving(ctx)) return ctx.shell.send('inspect-result', { ok: false, error: AGENT_HOLDS_PAGE });
+  ctx.shell.send('inspect-result', await inspectRead(ctx, view, params));
+}
+
+/** The analyzer's read of the clicked element's section, or the error it failed with. */
+async function inspectRead(ctx, view, params) {
   try {
     await ctx.protection.injectScripts(view);
-    const result = renderedAnalysis(ctx, await ctx.world.worldEval(view, inspectScript(params), true));
-    // Open dev panel and show result in source pane
-    ctx.layout.reveal();
-    ctx.shell.send('inspect-result', result);
+    return renderedAnalysis(ctx, await ctx.world.worldEval(view, inspectScript(params), true));
   } catch (e) {
-    ctx.shell.send('inspect-result', { ok: false, error: e.message });
+    return { ok: false, error: e.message };
   }
 }
 
