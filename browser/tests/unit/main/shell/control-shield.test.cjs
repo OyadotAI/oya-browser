@@ -75,4 +75,51 @@ describe('ControlShield', () => {
     ctx.shield.keepFocusOnShell();
     assert.deepEqual(ctx.shell.window.webContents.calls, ['focus']);
   });
+
+  describe('showing an analysis', () => {
+    let told;
+    /** Puts the shield up and records what its page is told. */
+    const cover = () => {
+      ctx.control.state.interactive = false;
+      ctx.shield.sync();
+      told = [];
+      mock.method(ctx.shield.view.webContents, 'executeJavaScript', async (js) => told.push(js));
+    };
+
+    it('tells its page a scan began while it covers the page', () => {
+      cover();
+      ctx.shield.analysisStarted(page);
+      assert.deepEqual(told, ['window.oyaShield?.({"phase":"scan"})']);
+    });
+
+    it('stays quiet while a person has control, or for a tab in the background', () => {
+      cover();
+      ctx.shield.analysisStarted({});
+      ctx.control.state.interactive = true;
+      ctx.shield.analysisStarted(page);
+      assert.deepEqual(told, []);
+    });
+
+    it('outlines only the visible elements, measured by their selectors in the isolated world', async () => {
+      cover();
+      const box = { id: 1, type: 'link', x: 4, y: 8, w: 40, h: 20 };
+      let measured;
+      ctx.world = { worldEval: async (_view, js) => ((measured = js), [box]) };
+      const elements = [
+        { id: 1, type: 'link', selector: '[data-x="1"]', visible: true },
+        { id: 2, type: 'button', selector: '[data-x="2"]', visible: false },
+      ];
+      await ctx.shield.analysisFinished(page, { ok: true, data: { elements } });
+      assert.match(measured, /\[1,"link","\[data-x=\\"1\\"\]"\]/);
+      assert.doesNotMatch(measured, /data-x=\\"2/);
+      assert.deepEqual(told, [`window.oyaShield?.(${JSON.stringify({ phase: 'found', boxes: [box] })})`]);
+    });
+
+    it('outlines nothing when the page cannot be measured', async () => {
+      cover();
+      ctx.world = { worldEval: async () => Promise.reject(new Error('navigated')) };
+      await ctx.shield.analysisFinished(page, { ok: false });
+      assert.deepEqual(told, ['window.oyaShield?.({"phase":"found","boxes":[]})']);
+    });
+  });
 });

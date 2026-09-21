@@ -183,7 +183,7 @@
     const truncated = blocks.length > MAX_BLOCKS;
     if (truncated) facts.truncated = `showing ${MAX_BLOCKS} of ${blocks.length} blocks; scroll and analyze again for the rest`;
 
-    if (options.highlight !== false) addHighlights();
+    if (options.highlight === true) addHighlights();
 
     return {
       ok: true,

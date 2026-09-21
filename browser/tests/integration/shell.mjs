@@ -4,7 +4,7 @@
  * screenshots. Run: npm run test:shell. Code passed to page.evaluate runs in
  * the shell page.
  */
-/* global window, document, getComputedStyle, requestAnimationFrame, innerWidth, Chat */
+/* global window, document, getComputedStyle, requestAnimationFrame, innerWidth, Chat, NetLog */
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -100,6 +100,12 @@ try {
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
   const capture = async (name) => {
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    // Let transitions and entrances settle (never waiting on the endless ones, such as a spinner).
+    await page.evaluate(() => {
+      const settling = document.getAnimations().filter((a) => a.effect?.getTiming().iterations !== Infinity);
+      const cap = new Promise((resolve) => setTimeout(resolve, 1500));
+      return Promise.race([Promise.all(settling.map((a) => a.finished.catch(() => {}))), cap]);
+    });
     const png = await application.evaluate(async ({ BrowserWindow }) =>
       (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'),
     );
@@ -229,7 +235,7 @@ try {
   await page.waitForFunction(
     () =>
       !document.getElementById('record-toggle').disabled &&
-      document.getElementById('record-toggle').textContent.includes('Finish recording'),
+      document.getElementById('pane-record').dataset.stage === 'recording',
   );
   await application.evaluate(async ({ BrowserWindow }) => {
     const wc = BrowserWindow.getAllWindows()[0].getBrowserView().webContents;
@@ -240,11 +246,12 @@ try {
   });
   await page
     .locator('#record-count')
-    .filter({ hasText: /[2-9] \/ 500/ })
+    .filter({ hasText: /^[2-9] steps$/ })
     .waitFor();
   await capture('recording-light');
   await page.locator('#record-toggle').click();
-  await page.locator('#record-footer').waitFor({ state: 'visible' });
+  await page.locator('#record-finish').waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#record-finish-title').innerText(), 'Recording captured');
   assert(await page.locator('#record-save').isDisabled(), 'offline save is explained and disabled');
   assert(await page.locator('#record-finish').isVisible(), 'finishing recording presents the save action immediately');
   assert.match(await page.locator('#record-finish-copy').innerText(), /saved on this device/);
@@ -270,9 +277,9 @@ try {
   // Pause/resume preserves the same draft instead of replacing the recording.
   const draftBeforeResume = await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }));
   await page.locator('#record-toggle').click();
-  await page.waitForFunction(() => document.getElementById('record-toggle').textContent.includes('Finish recording'));
+  await page.waitForFunction(() => document.getElementById('pane-record').dataset.stage === 'recording');
   await page.locator('#record-toggle').click();
-  await page.waitForFunction(() => document.getElementById('record-toggle').textContent.includes('Resume recording'));
+  await page.waitForFunction(() => document.getElementById('pane-record').dataset.stage === 'captured');
   const draftAfterResume = await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }));
   assert.equal(draftAfterResume.draft.id, draftBeforeResume.draft.id);
   assert.equal(draftAfterResume.draft.steps.length, draftBeforeResume.draft.steps.length);
@@ -322,12 +329,9 @@ try {
   await capture('save-failed-light');
   assert.equal(await page.locator('.studio-step').count(), originalCount);
   await page.locator('#record-save').click();
-  await page
-    .getByText('Playbook “member-lookup” saved to Oya. Your local draft is retained.', { exact: true })
-    .waitFor();
-  await page.locator('[data-studio=inspect]').click();
+  await page.getByText('Saved “member-lookup” to Oya.', { exact: true }).waitFor();
+  await page.locator('[data-studio=code]').click();
   assert.equal(await page.locator('.studio-step').count(), originalCount, 'saved recording stays reviewable');
-  await page.locator('#record-export summary').click();
   await capture('export-light');
   const exportedPath = join(profile, 'export.js');
   await application.evaluate(({ dialog }, filePath) => {
@@ -347,7 +351,7 @@ try {
   );
   await page.locator('#record-copy').click();
   await page
-    .locator('#record-result')
+    .locator('#code-result')
     .filter({ hasText: /denied/ })
     .waitFor();
   await page.locator('#btn-commands').click();
@@ -392,6 +396,65 @@ try {
   await page.locator('.chat-save-error', { hasText: 'Not connected to server' }).waitFor();
   await page.evaluate(() => Chat.reply('Nothing to replay.', [{ name: 'analyze_page' }]));
   assert.equal(await page.locator('.chat-save').count(), 0, 'a read-only run offers no playbook');
+  // Step edits through the editor's More menu, then Undo and Redo.
+  await page.getByRole('tab', { name: 'Record', exact: true }).click();
+  await page.locator('[data-studio=steps]').click();
+  const stepsBefore = await page.locator('.studio-step').count();
+  await page.locator('.studio-step').nth(1).click();
+  const heading = () => page.locator('#step-editor h3').innerText();
+  assert.match(await heading(), /^Step 2 · /);
+  await page.locator('#step-editor .editor-more > summary').click();
+  await page.locator('#step-editor .editor-menu').getByText('Duplicate', { exact: true }).click();
+  await page.waitForFunction((n) => document.querySelectorAll('.studio-step').length === n + 1, stepsBefore);
+  await page.locator('#step-editor [aria-label="Move up"]').click();
+  await page.waitForFunction(() => document.querySelector('#step-editor h3').textContent.startsWith('Step 1 · '));
+  await page.locator('#step-undo').click();
+  await page.waitForFunction(() => document.querySelector('#step-editor h3').textContent.startsWith('Step 2 · '));
+  await page.locator('#step-redo').click();
+  await page.waitForFunction(() => document.querySelector('#step-editor h3').textContent.startsWith('Step 1 · '));
+  await page.locator('#step-editor .editor-more > summary').click();
+  await page.locator('#step-editor .editor-menu').getByText('Delete', { exact: true }).click();
+  await page.waitForFunction((n) => document.querySelectorAll('.studio-step').length === n, stepsBefore);
+  // Inspect: Activity says when it is empty, then shows a row; Source names the page; the tab remembers its view.
+  await page.locator('.dev-panel-header').getByRole('tab', { name: 'Inspect', exact: true }).click();
+  await page.locator('[data-inspect=network]').click();
+  await page.evaluate(() => NetLog.clear());
+  assert(await page.locator('#net-empty').isVisible(), 'an empty activity log says what will show up');
+  await application.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].webContents.send('dev-log', {
+      ts: Date.now(),
+      dir: 'in',
+      type: 'cmd: click',
+      data: '{}',
+    }),
+  );
+  await page.locator('#net-log .dev-entry').first().waitFor();
+  assert(!(await page.locator('#net-empty').isVisible()), 'the empty note goes once a message arrives');
+  await page.locator('[data-inspect=source]').click();
+  await page.locator('#source-refresh').click();
+  await page
+    .locator('#source-url')
+    .filter({ hasText: /^Read from http:\/\/127\.0\.0\.1/ })
+    .waitFor();
+  await page.getByRole('tab', { name: 'Record', exact: true }).click();
+  await page.locator('.dev-panel-header').getByRole('tab', { name: 'Inspect', exact: true }).click();
+  assert(
+    await page.locator('#pane-source').evaluate((el) => el.classList.contains('active')),
+    'Inspect reopens Source',
+  );
+  // Start after a save begins a fresh draft from the current page, never a resume of the saved one.
+  await page.getByRole('tab', { name: 'Record', exact: true }).click();
+  const savedDraft = (await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }))).draft.id;
+  await page.locator('#record-clear').click();
+  await page.waitForFunction(() => document.getElementById('pane-record').dataset.stage === 'empty');
+  await page.locator('#record-toggle').click();
+  await page.waitForFunction(() => document.getElementById('pane-record').dataset.stage === 'recording');
+  await page.locator('#record-toggle').click();
+  await page.waitForFunction(() => document.getElementById('pane-record').dataset.stage !== 'recording');
+  const fresh = (await page.evaluate(() => window.oyaBrowser.workspace({ type: 'get' }))).draft;
+  assert.notEqual(fresh.id, savedDraft, 'Start made a new draft');
+  assert.equal(fresh.steps[0]?.start, true, 'a fresh recording starts where the person is');
+  await page.getByRole('tab', { name: 'Ask', exact: true }).click();
   await page.evaluate(() => Chat.clear());
   await page.locator('#chat-input').fill('First line');
   await page.locator('#chat-input').press('Shift+Enter');
@@ -469,7 +532,7 @@ try {
   assert.equal(preferences.ui.theme, 'dark', 'appearance persisted without connection changes');
   assert.deepEqual(errors, [], 'no renderer errors');
   console.log(
-    `Desktop shell passed: recording/review/save/retry/export, dialogs, themes, shortcuts and four layouts. Screenshots: ${output}`,
+    `Desktop shell passed: recording/review/save/retry/export, step edits, Inspect, dialogs, themes, shortcuts and four layouts. Screenshots: ${output}`,
   );
 } finally {
   await application?.close();

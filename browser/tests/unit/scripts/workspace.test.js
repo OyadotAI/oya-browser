@@ -54,11 +54,22 @@ describe('Workspace', () => {
     assert.equal(ws.history.length, 100);
   });
 
-  it('clears the publish mark when the draft changes', () => {
+  it('is saved only while the draft is the revision that was published', () => {
     const { ws } = workspaceWith();
-    ws.draft.publishedAt = 1;
+    ws.capture(STEPS, [], false);
+    Object.assign(ws.draft, { publishedAt: 1, publishedRevision: ws.draft.revision });
+    assert.equal(ws.snapshot().saved, true);
     ws.edit({ type: 'metadata', name: 'x' });
-    assert.equal(ws.draft.publishedAt, undefined);
+    assert.equal(ws.snapshot().saved, false);
+    assert.equal(ws.draft.publishedAt, 1, 'it was saved once, and says so');
+  });
+
+  it('counts newly recorded steps as unsaved changes', () => {
+    const { ws } = workspaceWith();
+    ws.capture(STEPS, [], false);
+    Object.assign(ws.draft, { publishedAt: 1, publishedRevision: ws.draft.revision });
+    ws.capture([...STEPS, { id: 'c', action: 'click', candidates: [{ kind: 'css', value: '#more' }] }], [], false);
+    assert.equal(ws.snapshot().saved, false);
   });
 
   it('starts a new draft or opens a saved one with a clean history', () => {
@@ -123,6 +134,17 @@ describe('Workspace', () => {
     assert.ok(!ws.busy());
     assert.equal(ws.runStore.load(ws.run.id).run.status, 'succeeded');
     assert.throws(() => ws.control('stop'), /No active validation/);
+  });
+
+  it("ignores a message from an earlier run's worker", async () => {
+    const { ws } = workspaceWith();
+    ws.capture(STEPS, [], false);
+    await ws.start({});
+    const oldWorker = ws.receiveFromWorker;
+    oldWorker({ type: 'finished', status: 'stopped', assertions: 0 });
+    await ws.start({});
+    oldWorker({ type: 'finished', status: 'failed', assertions: 0 });
+    assert.equal(ws.run.status, 'running');
   });
 
   it('queues a control sent before the runner has started', async () => {

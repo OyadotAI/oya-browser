@@ -66,7 +66,9 @@ function windowGlobals(document, bridge, options) {
     oyaBrowser: bridge,
     navigator: { platform: options.platform || 'MacIntel', clipboard },
     innerWidth: options.innerWidth ?? 1280,
+    innerHeight: options.innerHeight ?? 800,
     matchMedia: () => ({ matches: !!options.dark }),
+    getSelection: () => ({ toString: () => options.selection?.() || '' }),
     requestAnimationFrame: (fn) => frames.push(fn),
     cancelAnimationFrame: () => {},
     runFrames: () => frames.splice(0).forEach((fn) => fn()),
@@ -80,11 +82,12 @@ function scriptsOf(html) {
 }
 
 /**
- * Loads the renderer in `root` (default: the real one). Returns the window,
- * document and bridge, plus helpers to query and fire events.
+ * Loads `page` (default index.html) of the renderer in `root` (default: the
+ * real one). Returns the window, document and bridge, plus helpers to query
+ * and fire events.
  */
-function loadRenderer({ root = RENDERER, answers = {}, ...options } = {}) {
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+function loadRenderer({ root = RENDERER, page = 'index.html', answers = {}, ...options } = {}) {
+  const html = fs.readFileSync(path.join(root, page), 'utf8');
   const document = documentFrom(html);
   const bridge = fakeBridge({ ...DEFAULT_ANSWERS, ...answers });
   const window = vm.createContext(windowGlobals(document, bridge, options));

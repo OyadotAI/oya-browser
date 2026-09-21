@@ -34,6 +34,9 @@ const BACKDROP_WAIT_MS = 300;
 /** Longest dev-log entry, in characters. */
 const DEV_LOG_MAX_CHARS = 8000;
 
+/** The most elements the control shield outlines after an analysis. */
+const MAX_ANALYSIS_BOXES = 150;
+
 /** Menu items that act on the page, disabled while an agent has control. */
 const HUMAN_MENU_ITEMS = ['browser-new-tab', 'browser-close-tab', 'browser-reload'];
 /** Named overlays the renderer may raise over the page. */
@@ -44,6 +47,7 @@ module.exports = {
   TRAFFIC_LIGHTS,
   SHELL_BACKGROUND,
   TRANSPARENT,
+  MAX_ANALYSIS_BOXES,
   DEFAULT_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
   MAX_PANEL_WIDTH,

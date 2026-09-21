@@ -138,10 +138,11 @@ class TabManager {
     this.afterClose(idx, wasActive, keepOne);
   }
 
-  /** Takes a tab off the window and the list, and destroys its page. */
+  /** Takes a tab off the window, the list and any recording, and destroys its page. */
   removeTab(idx) {
     const tab = this.list[idx];
     this.list.splice(idx, 1);
+    this.ctx.recorder.channels.forget(tab.view);
     if (tab.window) return popups.closeWindowTab(tab);
     try {
       this.ctx.shell.window.removeBrowserView(tab.view);

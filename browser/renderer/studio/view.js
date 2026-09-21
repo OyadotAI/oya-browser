@@ -1,32 +1,41 @@
 /**
- * The studio's main view: drafts, recording state, save and export controls,
- * the generated code and its issues. Each part redraws only when its input
- * changed.
+ * The studio's main view: the workflow header, the record and test-run
+ * controls, what blocks a run, the save card, and the body. What the studio
+ * may do is derived once per snapshot (mode) and every control's disabled
+ * state comes from one command map, so no control stays enabled for a
+ * command the main process would refuse.
  */
-/* global Dom, ShellState, RendererConstants, Studio, StudioSteps, StepEditor, StudioVariables, RunView */
+/* global Dom, ShellState, RendererConstants, Studio, StudioSteps, StepEditor, StudioVariables, RunView, StudioActions */
 /* exported StudioView */
 
-/** Text for the three stages a draft can be in: recording, has steps, empty. */
-const STAGE_TEXT = {
-  /** The panel heading. */
-  title: ['Recording your workflow.', 'Shape your workflow.', 'Make it repeatable.'],
-  /** The record button in the panel. */
-  toggle: ['Finish recording', 'Resume recording', 'Start recording'],
+/** The record button's label in each stage. */
+const TOGGLE_LABEL = {
+  empty: 'Start recording',
+  recording: 'Stop recording',
+  captured: 'Resume recording',
+  running: 'Resume recording',
 };
 
-/** What the draft status line says when storage is healthy. */
-const DRAFT_STATUS = {
-  /** While recording. */
-  recording: 'Recording · pauses safely on restart · pages and identifiable frames',
-  /** Otherwise. */
-  saved: 'Saved on this device · encrypted with your OS keychain',
+/** Each control's disabled rule, given what the studio may do now. */
+const DISABLED = {
+  'record-toggle': (m) => Studio.busy || Studio.saving || m.running,
+  'record-validate': (m) => !m.runnable,
+  'record-clear': (m) => m.locked || !m.stored,
+  'draft-library': (m) => m.locked || !m.stored,
+  'record-save': (m) => !m.runnable || !ShellState.connected || Studio.state.saved || !Studio.validName(),
+  'record-name': (m) => m.locked,
+  'record-desc': (m) => m.locked,
+  'step-undo': (m) => m.locked || !Studio.state.canUndo,
+  'step-redo': (m) => m.locked || !Studio.state.canRedo,
+  'step-add': (m) => m.locked,
+  'variable-add': (m) => m.locked,
+  'run-history': (m) => m.locked,
+  'record-copy': () => !Studio.state.code,
+  'record-download': () => !Studio.state.code,
 };
-
-/** The stage's text from a STAGE_TEXT row. */
-const byStage = (row, recording, hasSteps) => (recording ? row[0] : hasSteps ? row[1] : row[2]);
 
 /** The parts of the view, drawn in this order. */
-const VIEW_PARTS = ['header', 'controls', 'finish', 'library', 'body'];
+const VIEW_PARTS = ['header', 'controls', 'issues', 'finish', 'library', 'body'];
 
 /** The studio view. */
 const StudioView = {
@@ -34,27 +43,41 @@ const StudioView = {
   render(next) {
     if (!next?.draft) return;
     Studio.state = next;
-    const d = next.draft;
-    const flags = { recording: d.phase === 'recording', active: Studio.isActive(next.run) };
-    for (const part of VIEW_PARTS) StudioView[part](d, flags);
+    Studio.mode = StudioView.mode(next);
+    StudioView.forgetOtherDraft(next.draft.id);
+    Dom.byId('pane-record').dataset.stage = Studio.mode.stage;
+    for (const part of VIEW_PARTS) StudioView[part](next.draft, Studio.mode);
   },
 
-  /** Title, step count, save state and the record buttons. */
-  header(d, { recording, active }) {
-    const hasSteps = d.steps.length > 0;
-    Dom.byId('record-title').textContent = byStage(STAGE_TEXT.title, recording, hasSteps);
-    Dom.byId('record-count').textContent = `${d.steps.length} / ${RendererConstants.MAX_STEPS}`;
-    StudioView.draftStatus(recording);
-    Dom.byId('record-toggle').textContent = byStage(STAGE_TEXT.toggle, recording, hasSteps);
-    Dom.byId('record-toggle').disabled = Studio.busy || active;
-    StudioView.toolbarRecord(recording);
+  /** What the studio may do now. */
+  mode(s) {
+    const d = s.draft;
+    const recording = d.phase === 'recording';
+    const running = Studio.isActive(s.run);
+    const locked = recording || running || Studio.busy || Studio.saving;
+    const runnable = !locked && d.steps.some((step) => step.enabled) && !s.issues.length;
+    const stage = recording ? 'recording' : running ? 'running' : d.steps.length ? 'captured' : 'empty';
+    return { recording, running, locked, runnable, stage, stored: !s.storageError };
   },
 
-  /** Where the draft is kept, or the storage error that stops it being kept. */
-  draftStatus(recording) {
-    const { storageError } = Studio.state;
-    Dom.byId('draft-status').textContent = storageError || (recording ? DRAFT_STATUS.recording : DRAFT_STATUS.saved);
-    Dom.byId('draft-status').classList.toggle('error', !!storageError);
+  /** Another draft came on screen: its messages and the "just recorded" note belong to the old one. */
+  forgetOtherDraft(id) {
+    if (Studio.shownDraft === id) return;
+    if (Studio.shownDraft !== undefined) Studio.clearMessages();
+    Studio.shownDraft = id;
+    Studio.justFinished = false;
+  },
+
+  /** Step count, the storage banner and the record button. */
+  header(d, m) {
+    Dom.byId('record-count').textContent = Studio.plural(d.steps.length, 'step');
+    Dom.byId('record-count').title = `Up to ${RendererConstants.MAX_STEPS} steps`;
+    Dom.byId('draft-status').hidden = !Studio.state.storageError;
+    Dom.byId('draft-status').textContent = Studio.state.storageError || '';
+    Dom.byId('record-toggle-label').textContent = TOGGLE_LABEL[m.stage];
+    Dom.byId('record-toggle').classList.toggle('recording', m.recording);
+    StudioView.toolbarRecord(m.recording);
+    StudioView.expandLabel();
   },
 
   /** The Oya Agent button shows a recording dot while a workflow is recorded. */
@@ -65,64 +88,79 @@ const StudioView = {
     button.title = recording ? 'Oya Agent · recording' : 'Oya Agent (⌘/Ctrl Shift D)';
   },
 
-  /** Which controls are available while recording, validating or offline. */
-  controls(d, { recording, active }) {
-    const { state, busy } = Studio;
-    const blocked = recording || active || !d.steps.length || state.issues.length > 0;
-    Dom.byId('record-validate').disabled = blocked;
-    Dom.byId('record-clear').disabled = busy || recording || active;
-    Dom.byId('draft-library').disabled = busy || recording || active;
-    Dom.byId('record-save').disabled = busy || blocked || !ShellState.connected;
+  /** Expand or Compact, from the panel's real width (a drag or keyboard resize changes it too). */
+  expandLabel() {
+    const expanded = StudioActions.expanded();
+    const label = expanded ? 'Compact workspace' : 'Expand workspace';
+    Dom.byId('studio-expand').setAttribute('aria-label', label);
+    Dom.byId('studio-expand').title = label;
+  },
+
+  /** Every control's disabled state, from the command map; variable fields follow the lock. */
+  controls(d, m) {
+    for (const [id, disabled] of Object.entries(DISABLED)) Dom.byId(id).disabled = disabled(m);
+    Dom.byId('workflow-variables')
+      .querySelectorAll('input,button')
+      .forEach((el) => (el.disabled = m.locked));
     Dom.byId('record-save').title = StudioView.saveTitle();
-    Dom.byId('record-finish').hidden = recording || !d.steps.length;
+  },
+
+  /** What blocks a test run and has no step to point at: listed under the button it blocks. */
+  issues() {
+    const loose = Studio.state.issues.filter((issue) => !issue.stepId);
+    Dom.byId('studio-issues').replaceChildren(...loose.map((issue) => Dom.node('li', issue.message)));
   },
 
   /** The save button's tooltip: publishing needs a connection, local work does not. */
   saveTitle() {
-    return ShellState.connected
-      ? 'Save this playbook to Oya'
-      : 'Connect to a server to publish. Local drafts and export work offline.';
+    return ShellState.connected ? 'Save this playbook to Oya' : 'Connect to a server to save to Oya';
   },
 
-  /** The "recording captured" card: its copy, the save button and its hint. */
-  finish(d) {
-    const recording = d.phase === 'recording';
-    Dom.byId('record-finish-title').textContent = d.publishedAt ? 'Playbook saved to Oya' : 'Recording captured';
+  /** The save card: shown once there are steps and no recording, with its copy, button and hint. */
+  finish(d, m) {
+    const card = Dom.byId('record-finish');
+    card.hidden = m.recording || !d.steps.length;
+    Dom.byId('record-finish-title').textContent = StudioView.finishTitle();
     Dom.byId('record-finish-copy').textContent = StudioView.finishCopy(d);
-    Dom.byId('record-save').textContent = StudioView.saveLabel(d, recording);
+    Dom.byId('record-save').textContent = StudioView.saveLabel(d);
     Dom.byId('record-save-hint').textContent = StudioView.saveHint();
+    if (!card.hidden && Studio.revealFinish) StudioActions.showFinish();
   },
 
-  /** What the card says about where the recording is. */
+  /** The card's title: saved, just recorded, or ready to save. */
+  finishTitle() {
+    if (Studio.state.saved) return 'Saved to Oya';
+    return Studio.justFinished ? 'Recording captured' : 'Save to Oya';
+  },
+
+  /** What the card says about where the workflow is. */
   finishCopy(d) {
-    if (d.publishedAt) return 'Your local draft is kept too. Save again after making changes.';
-    if (Studio.state.storageError) return 'Your recording is in memory. Save or export it before closing Oya.';
-    return `${d.steps.length} steps saved on this device. Name your workflow and save a playbook to reuse it in Oya.`;
+    if (Studio.state.storageError) return 'This workflow is only in memory. Save or export it before closing Oya.';
+    if (Studio.state.saved) return 'Your local draft is kept too. Edits need saving again.';
+    const steps = Studio.plural(d.steps.length, 'step');
+    return Studio.justFinished
+      ? `${steps} saved on this device. Name it to reuse it in Oya.`
+      : `${steps} on this device.`;
   },
 
   /** The save button's label. */
-  saveLabel(d, recording) {
-    if (Studio.busy && !recording) return 'Saving…';
+  saveLabel(d) {
+    if (Studio.saving) return 'Saving…';
+    if (Studio.state.saved) return 'Saved';
     return d.publishedAt ? 'Save changes' : 'Save playbook';
   },
 
   /** What stands between this draft and saving it. */
   saveHint() {
-    if (!ShellState.connected) {
-      return 'Connect this browser to save to Oya. Your local draft and Playwright export are available now.';
-    }
-    return Studio.state.issues.length
-      ? 'Resolve the highlighted steps before saving.'
-      : 'Saves to your connected Oya workspace.';
+    if (!ShellState.connected) return 'Connect this browser to save to Oya. The draft and the code work offline.';
+    if (Studio.state.issues.length) return 'Fix the steps marked ! before saving.';
+    const name = Dom.byId('record-name').value.trim();
+    return name && !Studio.validName() ? 'Use letters, numbers, hyphens or underscores, up to 64.' : '';
   },
 
-  /** Undo, redo and add; the saved-drafts list; the name and description. */
-  library(d, { recording, active }) {
-    const { state } = Studio;
-    Dom.byId('step-undo').disabled = recording || active || !state.canUndo;
-    Dom.byId('step-redo').disabled = recording || active || !state.canRedo;
-    Dom.byId('step-add').disabled = recording || active;
-    StudioView.drafts(state.library);
+  /** The saved-drafts list; the name and description. */
+  library(d) {
+    StudioView.drafts(Studio.state.library);
     Dom.byId('draft-library').value = d.id;
     StudioView.fields(d);
   },
@@ -150,22 +188,15 @@ const StudioView = {
     return option;
   },
 
-  /** Steps, the selected step's editor, variables, code, issues and the run. */
-  body(d, { recording, active }) {
+  /** Steps, the selected step's editor, variables, code and the run. */
+  body(d, m) {
     if (!d.steps.some((s) => s.id === Studio.selected)) Studio.selected = d.steps[0]?.id;
-    StudioSteps.render(d, recording, active);
+    StudioSteps.render(d, m.recording, m.running);
     const selected = d.steps.find((s) => s.id === Studio.selected);
-    StepEditor.render(selected, Studio.busy || recording || active);
+    StepEditor.render(m.recording ? undefined : selected, m.locked);
     StudioVariables.render(d.variables);
     StudioView.code();
-    StudioView.issues();
     RunView.render();
-  },
-
-  /** The capture issues that block validating and saving. */
-  issues() {
-    const nodes = Studio.state.issues.map((issue) => Dom.node('p', issue.message, 'studio-issue'));
-    Dom.byId('inspect-issues').replaceChildren(...nodes);
   },
 
   /** The generated code, numbered, with the selected step's line highlighted. */
@@ -174,7 +205,7 @@ const StudioView = {
     const nextCodeSignature = state.code + ':' + Studio.selected;
     if (nextCodeSignature === Studio.signatures.code) return;
     Studio.signatures.code = nextCodeSignature;
-    const lines = (state.code || 'Resolve the capture issues before exporting this workflow.').split('\n');
+    const lines = (state.code || 'Fix the steps marked ! to see the code.').split('\n');
     Dom.byId('record-code').replaceChildren(...lines.map(StudioView.codeLine));
   },
 

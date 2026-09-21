@@ -3,10 +3,17 @@
  * the analyzer reads it, in the configured format (markdown unless set).
  */
 const { renderedAnalysis } = require('../page-format.cjs');
+const { agentDriving, AGENT_HOLDS_PAGE } = require('../shell/control-shield.cjs');
 
-/** The page as the analyzer reads it, rendered, with the analysis kept to render again; empty when it cannot say. */
+/**
+ * The page as the analyzer reads it, rendered, with the analysis kept to render
+ * again; empty when it cannot say. Not while an agent drives: analyzing resets
+ * the element ids the agent's next click relies on.
+ */
 async function pageRead(ctx, view) {
+  if (agentDriving(ctx)) return { markdown: '', analysis: null, notice: AGENT_HOLDS_PAGE };
   try {
+    await ctx.protection.injectScripts(view);
     const raw = await ctx.world.worldEval(view, '(typeof analyzePage === "function") ? analyzePage({}) : null');
     const result = renderedAnalysis(ctx, raw);
     if (result?.ok) return { markdown: result.data.page || result.data.markdown || '', analysis: result.data };

@@ -10,19 +10,13 @@ const path = require('node:path');
 const { once } = require('node:events');
 const { start } = require('../cdp-front-door');
 const { VALIDATION } = require('./constants.cjs');
+const { withinTime } = require('./within-time.cjs');
 
 /** The address of a validation tab named `name`. */
 const tabUrl = (name) => 'about:blank#oya-run-' + (name === 'main' ? 'main' : encodeURIComponent(name));
 
 /** Resolves after `ms`. */
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** `promise`, or a rejection with `message` once `ms` has passed: a run never waits forever to start. */
-function withinTime(promise, ms, message) {
-  let timer;
-  const expired = new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)));
-  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
-}
 
 /** Reads Chromium's ephemeral debugging port from its profile, if it has written it yet. */
 function readDebugPort(app) {
@@ -135,6 +129,7 @@ class ValidationRun {
 
   /** Relays a worker message, cleaning up once the run has finished. */
   relay(message) {
+    if (this.finished) return;
     try {
       this.event(message);
     } finally {

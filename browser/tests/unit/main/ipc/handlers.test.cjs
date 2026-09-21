@@ -124,12 +124,6 @@ describe('IPC handlers', () => {
     assert.deepEqual(await call('export-playwright', { code: '' }), { canceled: true });
   });
 
-  it('asks before discarding a recording', async () => {
-    ctx.electron.dialog.answers.messageBox.push({ response: 1 });
-    assert.equal(await call('confirm-discard-recording'), true);
-    assert.equal(await call('confirm-discard-recording'), false);
-  });
-
   it("saves the agent's last run as a playbook by name alone", async () => {
     ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
     const answer = { name: 'lookup', steps: 3 };
@@ -175,6 +169,7 @@ describe('workspace channel', () => {
     const handlers = new Map();
     registerIpc((channel, fn) => handlers.set(channel, fn), ctx);
     call = (...args) => handlers.get('workspace')({}, ...args);
+    ctx.channel = (name, ...args) => handlers.get(name)({}, ...args);
     ctx.workspace = {
       draft: { id: 'd', steps: [{ action: 'click' }], secrets: ['pw'] },
       busy: () => false,
@@ -191,7 +186,8 @@ describe('workspace channel', () => {
       adopt(steps, secrets) {
         this.adopted = [steps, secrets];
       },
-      queueRecording: (work) => work(),
+      // A queue that hands work the last task's result, as the old one did.
+      queueRecording: (work) => work({ recording: false }),
       startRecording: async (resume) => (ctx.resumed = resume),
     };
   });
@@ -220,6 +216,11 @@ describe('workspace channel', () => {
     assert.deepEqual(ctx.control.changes, ['return']);
   });
 
+  it('starts a recording afresh, never resuming whatever ran before', async () => {
+    await ctx.channel('start-recording');
+    assert.equal(ctx.resumed, undefined);
+  });
+
   it('resumes a paused recording', async () => {
     assert.equal(await call({ type: 'resume-recording' }), 'snapshot');
     assert.equal(ctx.resumed, true);
@@ -236,9 +237,17 @@ describe('workspace channel', () => {
   it('saves a diagnostics report owner-only where the person chooses', async () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'oya-support-')), 'd.json');
     ctx.workspace.support = () => ({ ok: 1 });
+    ctx.workspace.snapshot = () => ({ draft: {} });
     ctx.electron.dialog.answers.saveDialog.push({ canceled: false, filePath: file });
-    assert.equal(await call({ type: 'support' }), 'snapshot');
+    assert.deepEqual(await call({ type: 'support' }), { draft: {}, supportSaved: true });
     assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { ok: 1 });
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  });
+
+  it('says a cancelled diagnostics report was not saved', async () => {
+    ctx.workspace.support = () => ({ ok: 1 });
+    ctx.workspace.snapshot = () => ({ draft: {} });
+    ctx.electron.dialog.answers.saveDialog.push({ canceled: true });
+    assert.equal((await call({ type: 'support' })).supportSaved, false);
   });
 });

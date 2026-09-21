@@ -49,6 +49,21 @@ function disablePickerClick(steps) {
   if (last.t - prev.t < FILE_PICKER_CLICK_MS) prev.enabled = false;
 }
 
+/** Puts the steps from index `from` on in time order, leaving the ones before it where they are. */
+function sortFrom(steps, from) {
+  const fresh = steps.splice(from).sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+  steps.push(...fresh);
+}
+
+/** Where the pause left each tab, so a resume elsewhere records the move. */
+function rememberPausedPages(recorder) {
+  for (const tab of recorder.ctx.tabs.list) {
+    try {
+      recorder.pausedUrls.set(tab.id, tab.view.webContents.getURL());
+    } catch {}
+  }
+}
+
 /** The recording in progress (or paused) and its steps. */
 class Recorder {
   /** Whether a recording is running. */
@@ -83,11 +98,12 @@ class Recorder {
   }
 
   /**
-   * Runs `work` after every recording task before it. `work` receives the
-   * previous task's result, as it always has.
+   * Runs `work` after every recording task before it. `work` is handed
+   * nothing: a start once took the previous task's result as `resume`, so a
+   * Start after any stop or save quietly behaved like a Resume.
    */
   queueRecording(work) {
-    const next = this.recordingTask.then(work);
+    const next = this.recordingTask.then(() => work());
     this.recordingTask = next.catch(() => {});
     return next;
   }
@@ -104,9 +120,8 @@ class Recorder {
     this.captureSignature = this.signature();
   }
 
-  /** Tells the shell the steps, and hands a changed recording to the workspace. */
+  /** Hands a changed recording to the workspace, which tells the shell. */
   emitRecording() {
-    this.ctx.shell.send('recorded-steps', { recording: this.recording, steps: this.recordedSteps });
     const signature = this.signature();
     const workspace = this.ctx.workspace;
     if (!workspace || signature === this.captureSignature) return;
@@ -146,12 +161,17 @@ class Recorder {
     this.pushRecordedStep({ action: 'navigate', url });
   }
 
-  /** Steps a page's channel delivered; a tab's first steps start with where it was. */
-  receive(view, startingUrl, out) {
-    if (!this.recording) return;
+  /**
+   * Steps a page's channel delivered; a tab's first steps start with where it
+   * was. `tabId` is the tab the channel was made for, so a tab that closed with
+   * typing still held keeps its name; without it, a view no tab owns is dropped
+   * rather than given an invented name.
+   */
+  receive(view, startingUrl, out, tabId) {
+    const id = tabId ?? this.ctx.tabs.list.find((t) => t.view === view)?.id;
+    if (!this.recording || id === undefined) return;
     for (const name of out.secrets || []) this.recordedSecrets.add(name);
-    const owner = this.ctx.tabs.list.find((t) => t.view === view);
-    const tabName = this.names.recordingTab(owner?.id);
+    const tabName = this.names.recordingTab(id);
     // A new tab's channel is made while it is still about:blank; its first steps
     // happened on the page it is showing now.
     const start = WEB_URL.test(startingUrl || '') ? startingUrl : view.webContents?.getURL?.();
@@ -166,21 +186,25 @@ class Recorder {
     this.pushRecordedStep({ action: 'navigate', url: startingUrl, tab: tabName, t: (steps[0].t || Date.now()) - 1 });
   }
 
-  /** A new tab joins a recording in progress. */
+  /** A new tab joins a recording in progress; queued, so it never slips in while a stop is running. */
   joinIfRecording(view) {
-    if (this.recording) return this.channels.armRecordingView(view);
+    return this.queueRecording(() => this.recording && this.channels.armRecordingView(view));
   }
 
-  /** Collect what one page buffered. Steps carry their own timestamps; the merge sorts by them. */
+  /** Collect what one page buffered. */
   async drainView(view, final = false) {
-    if (!view) return;
-    await this.channels.drain(view, final);
-    this.recordedSteps.sort((a, b) => a.t - b.t);
+    if (view) await this.channels.drain(view, final);
   }
 
-  /** Collects every tab and updates the shell. */
+  /**
+   * Collects every tab and updates the shell. Only the newly drained steps are
+   * put in time order: the ones already there are in the order the person left
+   * them, and sorting those undid every move they made.
+   */
   async drainAll(final = false) {
+    const from = this.recordedSteps.length;
     for (const tab of this.ctx.tabs.list) await this.drainView(tab.view, final);
+    sortFrom(this.recordedSteps, from);
     this.emitRecording();
   }
 
@@ -193,12 +217,25 @@ class Recorder {
   async stopRecording() {
     if (!this.recording) return { recording: false, steps: this.recordedSteps };
     this.stopRefresh();
-    await this.channels.stopAll();
-    await this.drainAll(true);
-    this.recording = false;
-    this.rememberPausedPages();
-    this.emitRecording();
+    await this.collectLast();
     return { recording: false, steps: this.recordedSteps };
+  }
+
+  /** Stops every page and collects its last steps; the recording ends whatever happens. */
+  async collectLast() {
+    try {
+      await this.channels.stopAll();
+      await this.drainAll(true);
+    } finally {
+      this.settleStopped();
+    }
+  }
+
+  /** The recording is over, even when a page refused to stop: never left half torn down. */
+  settleStopped() {
+    this.recording = false;
+    rememberPausedPages(this);
+    this.emitRecording();
   }
 
   /** Stops refreshing the shell's step list. */
@@ -207,33 +244,12 @@ class Recorder {
     this.drainTimer = null;
   }
 
-  /** Where the pause left each tab, so a resume elsewhere records the move. */
-  rememberPausedPages() {
-    for (const tab of this.ctx.tabs.list) {
-      try {
-        this.pausedUrls.set(tab.id, tab.view.webContents.getURL());
-      } catch {}
-    }
-  }
-
   /** Control passed to an agent: a recording the desktop started ends here. */
   controlLost(state) {
     if (!this.recording || this.recordingOrigin !== 'desktop') return;
     if (state.interactive || this.recordingCutoff !== Infinity) return;
     this.recordingCutoff = Date.now();
     this.queueRecording(() => this.stopRecording()).catch(() => {});
-  }
-
-  /** Throws the steps away (a recording keeps running, from the current page). */
-  async clear() {
-    await this.channels.clearAll();
-    this.recordedSteps = [];
-    this.recordedSecrets = new Set();
-    this.recordedIds.clear();
-    const url = this.ctx.tabs.getActiveView()?.webContents.getURL();
-    if (this.recording && WEB_URL.test(url || '')) this.pushRecordedStep({ action: 'navigate', url, start: true });
-    this.emitRecording();
-    return { recording: this.recording, steps: this.recordedSteps };
   }
 
   /** The server's `record` command: start, stop, or just collect. */

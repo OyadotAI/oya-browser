@@ -33,6 +33,9 @@ const ShellIcons = {
     camera: 'M3 7h4l2-3h6l2 3h4v13H3ZM16 13a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z',
     down: 'M12 4v16m-6-6 6 6 6-6',
     up: 'M12 20V4m-6 6 6-6 6 6',
+    expand: 'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7',
+    more: 'M5.5 12h.5M11.75 12h.5M18 12h.5',
+    power: 'M12 3v8M6.4 6.4a8 8 0 1 0 11.2 0',
   },
 
   /** The icon each Actions button shows. */
@@ -43,6 +46,7 @@ const ShellIcons = {
     'scroll-down': 'down',
     'scroll-up': 'up',
     'list-tabs': 'panel',
+    'new-tab': 'plus',
   },
 
   /** An icon's SVG markup; an unknown name draws the code icon. */

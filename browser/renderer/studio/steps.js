@@ -9,7 +9,7 @@
 const StudioSteps = {
   /** Redraws the list when the steps, selection or lock changed, keeping the scroll position. */
   render(d, recording, active) {
-    const signature = JSON.stringify([d.steps, Studio.selected, recording, active]);
+    const signature = JSON.stringify([d.steps, Studio.selected, recording, active, Studio.state.issues]);
     if (signature === Studio.signatures.steps) return;
     Studio.signatures.steps = signature;
     const list = Dom.byId('record-steps');
@@ -21,9 +21,8 @@ const StudioSteps = {
   /** What an empty draft shows. */
   empty() {
     const empty = Dom.node('div', null, 'record-empty');
-    const hint =
-      'Record the actions you perform, pause to refine them, then validate the exact Playwright code. Hidden fields are excluded.';
-    empty.append(Dom.node('h3', 'A workflow starts with you.'), Dom.node('p', hint));
+    const hint = 'Record what you do in the page, or add steps by hand.';
+    empty.append(Dom.node('h3', 'No steps yet'), Dom.node('p', hint));
     return empty;
   },
 
@@ -34,9 +33,19 @@ const StudioSteps = {
     row.type = 'button';
     row.setAttribute('aria-pressed', selected);
     row.append(Dom.node('span', StudioSteps.number(step, index), 'step-number'), StudioSteps.copy(step));
-    if (Studio.state.issues.some((issue) => issue.stepId === step.id)) row.append(Dom.node('span', '!', 'step-issue'));
+    StudioSteps.markIssue(row, step);
     row.addEventListener('click', () => StudioSteps.select(step.id));
     return row;
+  },
+
+  /** A step that blocks a test run says why, on hover and to a screen reader. */
+  markIssue(row, step) {
+    const issue = Studio.state.issues.find((item) => item.stepId === step.id);
+    if (!issue) return;
+    const mark = Dom.node('span', '!', 'step-issue');
+    mark.title = issue.message;
+    mark.setAttribute('aria-label', 'Blocks a test run: ' + issue.message);
+    row.append(mark);
   },
 
   /** A row's classes: selected, and disabled when the step is switched off. */

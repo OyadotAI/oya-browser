@@ -68,6 +68,7 @@ class Workspace {
     const { artifact, problems } = buildArtifact(this.draft);
     const head = { draft: this.draft, ...artifact, issues: problems, library: this.store.list() };
     const undo = { storageError: this.storageError, canUndo: !!this.history.length, canRedo: !!this.future.length };
+    head.saved = !!this.draft.publishedAt && this.draft.publishedRevision === this.draft.revision;
     const runHistory = (this.runStore?.list() || []).filter((item) => !item.error);
     return { ...head, ...undo, runHistory, run: this.run, support: this.support() };
   }
@@ -140,7 +141,6 @@ class Workspace {
     const before = structuredClone(this.draft);
     const draft = structuredClone(this.draft);
     applyEdit(draft, command);
-    delete draft.publishedAt;
     this.draft = normalizeDraft({ ...draft, revision: draft.revision + 1 });
     return this.remember(before);
   }
@@ -187,7 +187,8 @@ class Workspace {
 
   /** Starts the runner, then passes on any control that arrived while it started. */
   async launch(options) {
-    this.session = await this.runner(structuredClone(this.draft), options, (message) => this.receive(message));
+    const run = this.run;
+    this.session = await this.runner(structuredClone(this.draft), options, (message) => this.receive(message, run));
     if (this.pendingControl) {
       this.session.control(this.pendingControl);
       this.pendingControl = null;
@@ -195,9 +196,9 @@ class Workspace {
     if (this.run.status === 'starting') this.run.status = 'running';
   }
 
-  /** A worker message: fold it into the run, then publish (at once when finished, else throttled). */
-  receive(message) {
-    if (!this.run) return;
+  /** A worker message for `run`: fold it in, then publish (at once when finished, else throttled). An earlier run's is ignored. */
+  receive(message, run = this.run) {
+    if (!this.run || run !== this.run) return;
     applyMessage(this, message);
     if (message.type === 'finished') this.finish();
     else this.schedule();

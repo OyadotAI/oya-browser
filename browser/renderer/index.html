@@ -158,139 +158,180 @@
         <div class="actions-scroll">
           <div class="action-label">Page</div>
           <div class="actions-grid">
-            <button class="action-btn" data-action="analyze"><span class="action-icon">&#9776;</span> Analyze</button>
-            <button class="action-btn" data-action="screenshot">
-              <span class="action-icon">&#128247;</span> Screenshot
-            </button>
-            <button class="action-btn" data-action="reload"><span class="action-icon">&#8635;</span> Reload</button>
-            <button class="action-btn" data-action="scroll-down">
-              <span class="action-icon">&#8595;</span> Scroll Down
-            </button>
-            <button class="action-btn" data-action="scroll-up">
-              <span class="action-icon">&#8593;</span> Scroll Up
-            </button>
+            <button class="action-btn" data-action="analyze"><span class="action-icon"></span>Analyze</button
+            ><button class="action-btn" data-action="screenshot"><span class="action-icon"></span>Screenshot</button
+            ><button class="action-btn" data-action="reload"><span class="action-icon"></span>Reload</button
+            ><button class="action-btn" data-action="scroll-down"><span class="action-icon"></span>Scroll down</button
+            ><button class="action-btn" data-action="scroll-up"><span class="action-icon"></span>Scroll up</button>
           </div>
 
-          <div class="action-label">Navigate</div>
+          <div class="action-label">Element</div>
           <div class="action-input-row">
-            <input class="action-field" id="action-url" type="text" placeholder="URL" spellcheck="false" />
-            <button class="action-btn action-btn-sm" data-action="navigate" data-from="action-url">Go</button>
+            <input
+              class="action-field action-field-sm"
+              id="action-click-id"
+              type="number"
+              min="1"
+              inputmode="numeric"
+              placeholder="#"
+              aria-label="Element number"
+            /><input
+              class="action-field"
+              id="action-type-text"
+              type="text"
+              placeholder="Text to type"
+              aria-label="Text to type"
+            />
           </div>
-
-          <div class="action-label">Click Element</div>
-          <div class="action-input-row">
-            <input class="action-field" id="action-click-id" type="text" placeholder="Element #" />
-            <button class="action-btn action-btn-sm" data-action="click" data-from="action-click-id">Click</button>
-          </div>
-
-          <div class="action-label">Type into Element</div>
-          <div class="action-input-row">
-            <input class="action-field action-field-sm" id="action-type-id" type="text" placeholder="#" />
-            <input class="action-field" id="action-type-text" type="text" placeholder="Text to type" />
-            <button class="action-btn action-btn-sm" data-action="type" data-from="action-type-id,action-type-text">
+          <div class="action-buttons">
+            <button class="action-btn action-btn-sm" data-action="click" data-from="action-click-id">Click</button
+            ><button class="action-btn action-btn-sm" data-action="hover" data-from="action-click-id">Hover</button
+            ><button class="action-btn action-btn-sm" data-action="type" data-from="action-click-id,action-type-text">
               Type
             </button>
           </div>
+          <p class="action-hint" id="action-elements-hint">Analyze the page to see its element numbers.</p>
+          <div class="action-elements" id="action-elements" aria-label="Elements on the page"></div>
 
-          <div class="action-label">Press Key</div>
-          <div class="action-input-row">
-            <input class="action-field" id="action-key" type="text" placeholder="Enter, Escape, Tab..." />
-            <button class="action-btn action-btn-sm" data-action="press-key" data-from="action-key">Press</button>
-          </div>
-
-          <div class="action-label">Hover Element</div>
-          <div class="action-input-row">
-            <input class="action-field" id="action-hover-id" type="text" placeholder="Element #" />
-            <button class="action-btn action-btn-sm" data-action="hover" data-from="action-hover-id">Hover</button>
-          </div>
-
-          <div class="action-label">Click Coordinates</div>
-          <div class="action-input-row">
-            <input class="action-field action-field-sm" id="action-cx" type="text" placeholder="X" />
-            <input class="action-field action-field-sm" id="action-cy" type="text" placeholder="Y" />
-            <button class="action-btn action-btn-sm" data-action="click-coords" data-from="action-cx,action-cy">
-              Click
-            </button>
-          </div>
-
-          <div class="action-label">Wait for Selector</div>
-          <div class="action-input-row">
-            <input class="action-field" id="action-wait-sel" type="text" placeholder="CSS selector" />
-            <button class="action-btn action-btn-sm" data-action="wait" data-from="action-wait-sel">Wait</button>
-          </div>
+          <details class="studio-details action-more">
+            <summary>More</summary>
+            <div class="action-input-row">
+              <input
+                class="action-field"
+                id="action-url"
+                type="text"
+                placeholder="Address"
+                aria-label="Address"
+                spellcheck="false"
+              />
+              <button class="action-btn action-btn-sm" data-action="navigate" data-from="action-url">Go</button>
+            </div>
+            <div class="action-input-row">
+              <input
+                class="action-field"
+                id="action-key"
+                type="text"
+                placeholder="Key: Enter, Escape, Tab"
+                aria-label="Key to press"
+              />
+              <button class="action-btn action-btn-sm" data-action="press-key" data-from="action-key">Press</button>
+            </div>
+            <div class="action-input-row">
+              <input
+                class="action-field"
+                id="action-wait-sel"
+                type="text"
+                placeholder="CSS selector to wait for"
+                aria-label="CSS selector to wait for"
+              />
+              <button class="action-btn action-btn-sm" data-action="wait" data-from="action-wait-sel">Wait</button>
+            </div>
+            <div class="action-input-row">
+              <input
+                class="action-field action-field-sm"
+                id="action-cx"
+                type="number"
+                placeholder="X"
+                aria-label="X position"
+              /><input
+                class="action-field action-field-sm"
+                id="action-cy"
+                type="number"
+                placeholder="Y"
+                aria-label="Y position"
+              /><button class="action-btn action-btn-sm" data-action="click-coords" data-from="action-cx,action-cy">
+                Click at
+              </button>
+            </div>
+          </details>
 
           <div class="action-label">Tabs</div>
           <div class="actions-grid">
-            <button class="action-btn" data-action="list-tabs">
-              <span class="action-icon">&#9776;</span> List Tabs
-            </button>
-            <button class="action-btn" data-action="new-tab"><span class="action-icon">+</span> New Tab</button>
+            <button class="action-btn" data-action="list-tabs"><span class="action-icon"></span>List tabs</button
+            ><button class="action-btn" data-action="new-tab"><span class="action-icon"></span>New tab</button>
           </div>
         </div>
-        <div class="action-result" id="action-result"></div>
+        <section class="action-result" id="action-result" aria-live="polite">
+          <div class="action-result-head">
+            <span id="action-result-title"></span
+            ><button class="text-button" id="action-result-copy" type="button">Copy</button>
+          </div>
+          <div class="action-result-body" id="action-result-body"></div>
+        </section>
       </div>
 
-      <!-- Network pane -->
+      <!-- Activity pane -->
       <div class="dev-pane" id="pane-network">
         <div class="net-filters">
-          <button class="net-filter active" data-filter="all">All</button>
-          <button class="net-filter" data-filter="in">&#9660; In</button>
-          <button class="net-filter" data-filter="out">&#9650; Out</button>
-          <button class="net-filter" data-filter="cmd">Commands</button>
-          <button class="net-filter" data-filter="result">Results</button>
+          <button class="net-filter active" data-filter="all">All</button
+          ><button class="net-filter" data-filter="in">From server</button
+          ><button class="net-filter" data-filter="out">To server</button
+          ><button class="net-filter" data-filter="cmd">Commands</button
+          ><button class="net-filter" data-filter="result">Results</button>
         </div>
         <div class="net-log" id="net-log"></div>
+        <p class="net-empty" id="net-empty">Messages between this browser and Oya show up here.</p>
       </div>
 
-      <section class="dev-pane" id="pane-record" aria-label="Workflow workspace">
-        <div class="record-heading">
-          <div>
-            <div class="eyebrow">Workflow studio</div>
-            <h2 id="record-title">Make it repeatable.</h2>
-          </div>
-          <span id="record-count" class="count-badge">0 steps</span>
+      <section class="dev-pane" id="pane-record" data-stage="empty" aria-label="Workflow workspace">
+        <div class="studio-header">
+          <select id="draft-library" aria-label="Workflow" disabled></select
+          ><span id="record-count" class="count-badge"></span
+          ><button
+            class="icon-button"
+            id="record-clear"
+            aria-label="New workflow"
+            title="New workflow"
+            data-icon="plus"
+          ></button
+          ><button
+            class="icon-button"
+            id="studio-expand"
+            aria-label="Expand workspace"
+            title="Expand"
+            data-icon="expand"
+          ></button>
         </div>
-        <div class="studio-library">
-          <select id="draft-library" aria-label="Saved local drafts"></select
-          ><button class="text-button" id="record-clear">New</button
-          ><button class="text-button" id="studio-expand" aria-label="Expand workspace">Expand</button>
-        </div>
-        <div class="studio-save-state" id="draft-status" role="status"></div>
+        <div class="studio-banner" id="draft-status" role="alert" hidden></div>
         <div class="record-controls">
-          <button class="primary-button" id="record-toggle">Start recording</button
-          ><button class="secondary-button" id="record-validate">Validate</button>
+          <button class="primary-button" id="record-toggle">
+            <span class="record-dot" aria-hidden="true"></span
+            ><span id="record-toggle-label">Start recording</span></button
+          ><button class="secondary-button" id="record-validate" disabled>Test run</button>
         </div>
-        <section class="record-finish" id="record-finish" hidden aria-label="Save recorded workflow">
-          <div class="finish-heading">
-            <span class="finish-check" aria-hidden="true">✓</span>
-            <div>
-              <h3 id="record-finish-title">Recording captured</h3>
-              <p id="record-finish-copy">
-                Your draft is safe on this device. Name it and save a playbook to reuse it in Oya.
-              </p>
-            </div>
-          </div>
+        <ul class="studio-issues" id="studio-issues" aria-label="What blocks a test run"></ul>
+        <p class="studio-status" id="record-result" role="status" aria-live="polite"></p>
+        <section class="record-finish" id="record-finish" hidden aria-labelledby="record-finish-title">
+          <h3 id="record-finish-title">Save to Oya</h3>
+          <p id="record-finish-copy"></p>
           <div class="finish-save">
             <label class="sr-only" for="record-name">Playbook name</label
-            ><input id="record-name" placeholder="Name this playbook" maxlength="64" spellcheck="false" /><button
+            ><input id="record-name" placeholder="playbook-name" maxlength="64" spellcheck="false" /><button
               class="primary-button"
               id="record-save"
+              disabled
             >
               Save playbook
             </button>
           </div>
+          <p class="studio-status" id="save-result" role="status" aria-live="polite"></p>
           <p class="finish-connection" id="record-save-hint"></p>
+          <details class="studio-details">
+            <summary>Description</summary>
+            <label class="sr-only" for="record-desc">Description</label
+            ><input id="record-desc" placeholder="What does this workflow do?" />
+          </details>
         </section>
         <div class="studio-tabs" role="tablist" aria-label="Workflow view">
           <button role="tab" aria-selected="true" data-studio="steps">Steps</button
           ><button role="tab" aria-selected="false" data-studio="run">Run</button
-          ><button role="tab" aria-selected="false" data-studio="inspect">Inspect</button>
+          ><button role="tab" aria-selected="false" data-studio="code">Code</button>
         </div>
         <div class="studio-scroll">
           <section id="studio-steps" role="tabpanel">
             <div class="studio-toolbar">
-              <button id="step-undo" class="text-button">Undo</button
-              ><button id="step-redo" class="text-button">Redo</button
+              <button id="step-undo" class="text-button" disabled>Undo</button
+              ><button id="step-redo" class="text-button" disabled>Redo</button
               ><select id="step-add" aria-label="Add step">
                 <option value="">+ Add step</option>
                 <option value="assert_visible">Assert visible</option>
@@ -305,94 +346,81 @@
               </select>
             </div>
             <div class="rec-steps" id="record-steps" aria-label="Recorded steps"></div>
-            <section id="step-editor" class="step-editor" hidden aria-label="Selected step editor"></section>
-            <details class="studio-details">
-              <summary>Variables &amp; inputs</summary>
+            <section id="step-editor" class="step-editor" hidden aria-label="Selected step"></section>
+            <details class="studio-details" id="variables-details">
+              <summary>Variables</summary>
               <div id="workflow-variables"></div>
               <button class="text-button" id="variable-add">+ Add variable</button>
-              <p>
-                Use {{variable_name}} in a step. Secret values are requested for each run and never saved as defaults.
+              <p class="studio-hint">
+                Use {{variable_name}} in a step. Secret values are asked for on each run and never saved.
               </p>
             </details>
-            <footer class="record-footer" id="record-footer">
-              <div class="record-fields">
-                <div class="field">
-                  <label for="record-desc">Description <span>Optional</span></label
-                  ><input id="record-desc" placeholder="What does this workflow do?" />
-                </div>
-              </div>
-              <p class="studio-hint">
-                Edits save to your local draft automatically. Save the playbook again to publish a new version.
-              </p>
-            </footer>
           </section>
           <section id="studio-run" role="tabpanel" hidden>
             <div class="run-heading">
-              <span class="eyebrow">Validation</span>
               <h3 id="run-title">Ready when you are.</h3>
-              <p id="run-summary">Run the exported Playwright module in a fresh tab with your current login.</p>
+              <p id="run-summary"></p>
             </div>
-            <div class="run-controls">
+            <div class="run-controls" id="run-controls" hidden>
               <button class="secondary-button" data-run="pause">Pause</button
               ><button class="secondary-button" data-run="resume">Continue</button
               ><button class="secondary-button" data-run="step">Step</button
               ><button class="text-button" data-run="stop">Stop</button>
             </div>
+            <div id="run-inputs"></div>
+            <div id="run-events" aria-label="Test run timeline"></div>
+            <div id="run-repairs"></div>
             <div class="studio-library">
-              <select id="run-history" aria-label="Previous validation runs">
+              <select id="run-history" aria-label="Previous test runs">
                 <option value="">Previous runs</option>
               </select>
             </div>
-            <div id="run-inputs"></div>
-            <div id="run-events" aria-label="Validation timeline"></div>
-            <div id="run-repairs"></div>
           </section>
-          <section id="studio-inspect" role="tabpanel" hidden>
-            <div class="run-heading">
-              <span class="eyebrow">Evidence &amp; code</span>
-              <h3>See what happened.</h3>
-              <p>
-                Network metadata and console severity only. Request bodies, headers, cookies, and page text are
-                excluded.
-              </p>
+          <section id="studio-code" role="tabpanel" hidden>
+            <pre class="rec-code" id="record-code" tabindex="0" aria-label="Generated Playwright code"></pre>
+            <div class="export-actions">
+              <button class="secondary-button" id="record-copy" disabled>Copy code</button
+              ><button class="secondary-button" id="record-download" disabled>Save module</button>
             </div>
-            <div id="inspect-issues"></div>
-            <details class="export-section" id="record-export">
-              <summary>Generated Playwright <span>.mjs</span></summary>
-              <pre class="rec-code" id="record-code" tabindex="0" aria-label="Generated Playwright code"></pre>
-              <div class="export-actions">
-                <button class="secondary-button" id="record-copy">Copy code</button
-                ><button class="secondary-button" id="record-download">Save module</button>
-              </div>
-            </details>
+            <p class="studio-status" id="code-result" role="status" aria-live="polite"></p>
             <details class="studio-details">
-              <summary>Diagnostic bundle preview</summary>
+              <summary>Diagnostics</summary>
+              <p class="studio-hint">
+                Network metadata and console severity only. Request bodies, headers, cookies and page text are left out.
+              </p>
               <pre id="support-preview" tabindex="0"></pre>
               <button class="secondary-button" id="support-export">Export diagnostics</button>
             </details>
           </section>
         </div>
-        <div class="record-status" id="record-result" role="status" aria-live="polite"></div>
       </section>
       <!-- Source pane -->
       <div class="dev-pane" id="pane-source">
         <div class="source-tabs">
-          <span class="source-hint">The current page, as the agent reads it</span>
           <div class="source-formats" role="radiogroup" aria-label="Page format">
             <label><input type="radio" name="source-format" value="markdown" checked />Markdown</label
             ><label><input type="radio" name="source-format" value="toon" />TOON</label
             ><label><input type="radio" name="source-format" value="jsonl" />JSONL</label>
           </div>
-          <button class="source-refresh" id="source-refresh">&#8635; Refresh</button>
+          <button class="text-button source-refresh" id="source-refresh">Refresh</button>
         </div>
+        <p class="source-url" id="source-url">The current page, as the agent reads it. Refresh to read it.</p>
         <div class="source-split">
-          <section class="source-block" aria-label="Page">
-            <h3 class="source-panel-label" id="source-page-label">Markdown</h3>
-            <div class="source-content empty" id="source-markdown">Right-click → View Page Source or click Refresh</div>
+          <section class="source-block" aria-labelledby="source-page-label">
+            <div class="source-block-head">
+              <h3 class="source-panel-label" id="source-page-label">Markdown</h3>
+              <button class="text-button" id="source-copy-page" type="button" disabled>Copy</button>
+            </div>
+            <div class="source-content empty" id="source-markdown" tabindex="0">
+              Refresh, or right-click the page and choose View Page Source.
+            </div>
           </section>
-          <section class="source-block" aria-label="HTML">
-            <h3 class="source-panel-label">HTML</h3>
-            <div class="source-content empty" id="source-html">Right-click → View Page Source or click Refresh</div>
+          <section class="source-block" aria-labelledby="source-html-label">
+            <div class="source-block-head">
+              <h3 class="source-panel-label" id="source-html-label">HTML</h3>
+              <button class="text-button" id="source-copy-html" type="button" disabled>Copy</button>
+            </div>
+            <div class="source-content empty" id="source-html" tabindex="0">No HTML yet.</div>
           </section>
         </div>
       </div>

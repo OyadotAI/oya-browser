@@ -80,10 +80,12 @@ class PageDriver {
     await PAGE_COMMANDS[action](this, id, params, view);
   }
 
-  /** An action with no handler of its own runs as an analyzer script. */
+  /** An action with no handler of its own runs as an analyzer script; an analysis is shown on the control shield. */
   async runInjected(id, action, params, view) {
     await this.ctx.injectScripts(view);
+    if (action === 'analyze') this.ctx.analysisStarted(view);
     const raw = await this.analysed(action, params, view);
+    if (action === 'analyze') this.ctx.analysisFinished(view, raw);
     const result = action === 'analyze' ? renderedAnalysis(this.ctx, raw, params) : raw;
     this.ctx.sendResult(id, result?.ok ?? true, result?.data, result?.error);
   }

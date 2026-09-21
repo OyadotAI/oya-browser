@@ -68,14 +68,13 @@ async function controlRun(ctx, command) {
   return ctx.workspace.control(command.command);
 }
 
-/** Saves a diagnostics report where the person chooses. */
+/** Saves a diagnostics report where the person chooses; the snapshot says whether it was saved. */
 async function saveSupportReport(ctx) {
   const report = ctx.workspace.support();
   const result = await ctx.electron.dialog.showSaveDialog(ctx.shell.window, SUPPORT_SAVE_OPTIONS);
-  if (!result.canceled && result.filePath) {
-    writePrivateFileSync(result.filePath, JSON.stringify(report, null, JSON_INDENT));
-  }
-  return ctx.workspace.snapshot();
+  const supportSaved = !result.canceled && !!result.filePath;
+  if (supportSaved) writePrivateFileSync(result.filePath, JSON.stringify(report, null, JSON_INDENT));
+  return { ...ctx.workspace.snapshot(), supportSaved };
 }
 
 /** An edit to the draft; the recording follows it. */

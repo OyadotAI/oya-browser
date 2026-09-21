@@ -51,6 +51,19 @@ describe('PageDriver', () => {
     assert.equal(ctx.calls.filter((c) => c[0] === 'world').length, 1);
   });
 
+  it('shows an analysis on the control shield as it starts and once it is back, and nothing else', async () => {
+    const view = pageView();
+    const raw = { ok: true, data: { elements: [{ id: 1 }], blocks: [] } };
+    const ctx = pageCtx(view, { world: raw });
+    await createPageActions(ctx).runPageAction('c1', 'analyze', {}, view);
+    await createPageActions(ctx).runPageAction('c2', 'read_page', {}, view);
+    const shown = ctx.calls.filter((c) => c[0].startsWith('analysis'));
+    assert.deepEqual(shown, [
+      ['analysisStarted', view],
+      ['analysisFinished', view, raw],
+    ]);
+  });
+
   it('an empty script result counts as success', async () => {
     const view = pageView();
     const ctx = pageCtx(view, { world: null });
@@ -137,10 +150,18 @@ describe('PageDriver', () => {
     assert.deepEqual(view.webContents.calls, []);
   });
 
-  it('reading the page needs no human control', async () => {
+  it('a screenshot or the tab list needs no human control', async () => {
     const actions = createPageActions(pageCtx(pageView(), { human: false, world: { ok: true } }));
-    assert.deepEqual(await actions.runDevAction('analyze'), { ok: true });
     assert.equal((await actions.runDevAction('screenshot')).ok, true);
+    assert.equal((await actions.runDevAction('list-tabs')).ok, true);
+  });
+
+  it("analyzing needs human control: it renumbers the agent's element ids", async () => {
+    const actions = createPageActions(pageCtx(pageView(), { human: false, world: { ok: true } }));
+    assert.deepEqual(await actions.runDevAction('analyze'), {
+      ok: false,
+      error: 'Take control before interacting with this page',
+    });
   });
 
   it('an unknown dev action, even a prototype name, is reported', async () => {
@@ -149,8 +170,11 @@ describe('PageDriver', () => {
   });
 
   it('a dev action that throws answers with its message', async () => {
-    const view = pageView({ load: async () => Promise.reject(new Error('net down')) });
-    const actions = createPageActions(pageCtx(view));
-    assert.deepEqual(await actions.runDevAction('navigate', { url: 'x.test' }), { ok: false, error: 'net down' });
+    const ctx = pageCtx(pageView());
+    ctx.navigate = async () => Promise.reject(new Error('net down'));
+    assert.deepEqual(await createPageActions(ctx).runDevAction('navigate', { url: 'x.test' }), {
+      ok: false,
+      error: 'net down',
+    });
   });
 });

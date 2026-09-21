@@ -6,6 +6,7 @@ const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { createPageActions } = require('../../../../main/page-actions.cjs');
 const c = require('../../../../main/actions/constants.cjs');
+const { HOME_URL } = require('../../../../main/tabs/constants.cjs');
 const { instantTimers, fixedRandom, pageView, pageCtx, mouseEvents } = require('../../support/page.cjs');
 
 /** Runs one dev action against a view; returns its answer and the recorders. */
@@ -30,17 +31,42 @@ describe('dev commands', () => {
       ['hover', 'element_id required'],
       ['click-coords', 'x and y required'],
       ['wait', 'selector required'],
-      ['select', 'element_id and value required'],
     ]) {
       assert.deepEqual((await dev(action, {})).answer, { ok: false, error }, action);
     }
   });
 
-  it('navigate adds https:// and reports the page', async () => {
+  it('navigate goes the address bar way and reports the page', async () => {
     const { answer, view, ctx } = await dev('navigate', { url: 'x.test' });
-    assert.deepEqual(view.webContents.calls, [['loadURL', 'https://x.test']]);
-    assert.deepEqual(ctx.calls[0], ['pull', 'https://x.test']);
+    assert.deepEqual(ctx.calls[0], ['navigate', 'x.test']);
+    assert.deepEqual(view.webContents.calls, []);
     assert.deepEqual(answer, { ok: true, data: { url: 'https://a.test/', title: 'Title' } });
+  });
+
+  it('element numbers must be whole numbers, never text that happens to hold digits', async () => {
+    for (const action of ['click', 'type', 'hover']) {
+      const { answer, ctx } = await dev(action, { element_id: 'a1b2', text: 't' });
+      assert.deepEqual(answer, { ok: false, error: 'element_id must be a number' }, action);
+      assert.equal(ctx.calls.length, 0, action);
+    }
+  });
+
+  it('coordinates must be real numbers, so an empty field never clicks the corner', async () => {
+    for (const params of [
+      { x: '', y: 5 },
+      { x: 'a', y: 5 },
+      { x: 5, y: Number.NaN },
+    ]) {
+      const { answer, view } = await dev('click-coords', params);
+      assert.deepEqual(answer, { ok: false, error: 'x and y required' });
+      assert.deepEqual(mouseEvents(view), []);
+    }
+  });
+
+  it("the panel cannot reach the server's internal commands", async () => {
+    for (const action of ['evaluate_raw', 'handle_dialog', 'close-tab', 'select']) {
+      assert.deepEqual((await dev(action, {})).answer, { ok: false, error: 'Unknown action: ' + action });
+    }
   });
 
   it('click finds the element by analyzer id', async () => {
@@ -103,26 +129,14 @@ describe('dev commands', () => {
     assert.deepEqual(answer, { ok: true });
   });
 
-  it('evaluate_raw answers the page-world value', async () => {
-    const { answer } = await dev('evaluate_raw', { expression: '1' }, { view: pageView({ evalValue: 1 }) });
-    assert.deepEqual(answer, { ok: true, data: { result: 1 } });
-  });
-
   it('screenshot answers a PNG data URL', async () => {
     assert.deepEqual((await dev('screenshot')).answer, { ok: true, data: { screenshot: 'data:image/png;base64,PNG' } });
   });
 
-  it('handle_dialog with no dialog open says so', async () => {
-    assert.deepEqual((await dev('handle_dialog', {})).answer, { ok: false, error: 'No dialog is open' });
-  });
-
-  it('wait and select answer the script result', async () => {
+  it('wait answers the script result', async () => {
     assert.deepEqual((await dev('wait', { selector: 'a' }, { world: { ok: false, error: 'Timeout' } })).answer, {
       ok: false,
       error: 'Timeout',
-    });
-    assert.deepEqual((await dev('select', { element_id: 1, value: 'v' }, { world: { ok: true } })).answer, {
-      ok: true,
     });
   });
 
@@ -138,11 +152,9 @@ describe('dev commands', () => {
     ]);
   });
 
-  it('new-tab opens about:blank by default and close-tab closes the active tab', async () => {
+  it('new-tab opens the home page, like the new tab button', async () => {
     const opened = await dev('new-tab', {});
-    assert.deepEqual(opened.ctx.calls, [['createTab', 'about:blank', true]]);
+    assert.deepEqual(opened.ctx.calls, [['createTab', HOME_URL, true]]);
     assert.deepEqual(opened.answer, { ok: true, data: { tab_id: 7 } });
-    const closed = await dev('close-tab', {});
-    assert.deepEqual(closed.ctx.calls, [['closeTab', 1]]);
   });
 });

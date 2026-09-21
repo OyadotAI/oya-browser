@@ -12,10 +12,12 @@ const Theme = {
   /** Whether the OS is in dark mode. */
   systemDark: matchMedia('(prefers-color-scheme: dark)').matches,
 
-  /** Applies the theme to the document. */
+  /** Applies the theme to the document, all at once: controls must not fade from one theme to the other. */
   apply() {
-    document.documentElement.dataset.theme =
-      Theme.theme === 'system' ? (Theme.systemDark ? 'dark' : 'light') : Theme.theme;
+    const root = document.documentElement;
+    root.dataset.themeSwitching = 'true';
+    root.dataset.theme = Theme.theme === 'system' ? (Theme.systemDark ? 'dark' : 'light') : Theme.theme;
+    requestAnimationFrame(() => requestAnimationFrame(() => delete root.dataset.themeSwitching));
   },
 
   /** The OS appearance changed. */

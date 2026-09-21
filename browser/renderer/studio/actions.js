@@ -1,66 +1,81 @@
 /**
- * What the studio's buttons do: record, validate, save to Oya, export, and
- * the edits sent to the workspace. Also loads the workspace at start.
+ * What the studio's buttons do: record, test run, save to Oya, export, and
+ * the edits sent to the workspace. Every action clears and reports in the
+ * message slot under its own control. Also loads the workspace at start.
  */
 /* global oyaBrowser, Dom, ShellState, RendererConstants, Studio, StudioView, DevPanel */
 /* exported StudioActions */
 
 /** Studio actions. */
 const StudioActions = {
-  /** Starts, resumes or finishes recording, then refreshes the workspace. */
+  /** Starts, resumes or stops recording, then refreshes the workspace. */
   async toggleRecording() {
     if (Studio.busy) return;
     await StudioActions.whileBusy(async () => {
       await StudioActions.switchRecording();
-      Studio.say();
       await Studio.command({ type: 'get' });
     });
   },
 
-  /** Runs `work` with the studio marked busy, reporting a failure and redrawing when done. */
-  async whileBusy(work) {
-    Studio.busy = true;
+  /** Runs `work` with the studio busy, reporting a failure in `slot` and redrawing when done. */
+  async whileBusy(work, slot = 'record-result', flag = 'busy') {
+    Studio[flag] = true;
+    Studio.say('', false, slot);
+    if (Studio.state) StudioView.render(Studio.state);
     await Promise.resolve()
       .then(work)
-      .catch((error) => Studio.say(error.message, true));
-    Studio.busy = false;
+      .catch((error) => Studio.say(Studio.cleanError(error), true, slot));
+    Studio[flag] = false;
     if (Studio.state) StudioView.render(Studio.state);
   },
 
-  /** Finishes a recording, resumes a draft that has steps, or starts a new one. */
+  /** Stops a recording, resumes a draft that has steps, or starts a new one. */
   async switchRecording() {
     const draft = Studio.state?.draft;
-    if (draft?.phase === 'recording') {
-      await oyaBrowser.stopRecording();
-      Studio.selectTab('steps');
-      requestAnimationFrame(StudioActions.showFinish);
-    } else if (draft?.steps.length) await Studio.command({ type: 'resume-recording' });
-    else await oyaBrowser.startRecording();
+    if (draft?.phase === 'recording') return StudioActions.stopRecording();
+    if (draft?.steps.length) {
+      const resumed = await Studio.command({ type: 'resume-recording' });
+      if (!resumed) throw new Error(Dom.byId('record-result').textContent || 'Could not resume recording');
+    } else await oyaBrowser.startRecording();
+  },
+
+  /** Stops recording; the save card comes into view once it is drawn. */
+  async stopRecording() {
+    await oyaBrowser.stopRecording();
+    Object.assign(Studio, { justFinished: true, revealFinish: true });
+    Studio.selectTab('steps');
   },
 
   /** Brings the save card into view and puts focus on the name. */
   showFinish() {
-    Dom.byId('record-finish').scrollIntoView({ block: 'nearest' });
+    Studio.revealFinish = false;
+    Dom.byId('record-finish').scrollIntoView?.({ block: 'nearest' });
     if (!Dom.byId('record-name').value) Dom.byId('record-name').focus({ preventScroll: true });
   },
 
-  /** Validates with the run inputs' values, then forgets any secrets typed. */
+  /** Starts a test run with the run inputs' values; shows the Run tab only if a run started. */
   async validate(extra = {}) {
-    Studio.selectTab('run');
-    const inputs = [...Dom.byId('run-inputs').querySelectorAll('input')];
-    const vars = Object.fromEntries(inputs.map((input) => [input.dataset.variable, input.value]));
-    await Studio.command({ type: 'validate', vars, ...extra });
+    const before = Studio.state?.run?.id;
+    const next = await Studio.command({ type: 'validate', vars: StudioActions.runInputs(), ...extra });
     Dom.byId('run-inputs')
       .querySelectorAll('input[type=password]')
       .forEach((input) => (input.value = ''));
+    if (next?.run && next.run.id !== before) Studio.selectTab('run');
   },
 
-  /** Adds a step after the selected one, then selects it. */
+  /** The run inputs' values, by variable. */
+  runInputs() {
+    const inputs = [...Dom.byId('run-inputs').querySelectorAll('input')];
+    return Object.fromEntries(inputs.map((input) => [input.dataset.variable, input.value]));
+  },
+
+  /** Adds a step after the selected one, then selects it; a refused add keeps the selection. */
   async addStep(e) {
     if (!e.target.value) return;
     const step = { action: e.target.value, candidates: [], expected: '' };
-    await Studio.command({ type: 'add', id: Studio.selected, step });
+    const next = await Studio.command({ type: 'add', id: Studio.selected, step });
     e.target.value = '';
+    if (!next) return;
     StudioActions.selectAdded();
     StudioView.render(Studio.state);
   },
@@ -74,73 +89,83 @@ const StudioActions = {
 
   /** Adds the next free input_n variable and says how to use it. */
   async addVariable() {
-    const variables = { ...Studio.state.draft.variables };
+    if (!Studio.state || Studio.mode.locked) return;
+    let name;
+    const add = (variables) => ({ ...variables, [(name = StudioActions.freeInput(variables))]: { default: '' } });
+    const next = await Studio.command(() => ({ type: 'variables', variables: add(Studio.state.draft.variables) }));
+    if (next) Studio.say(`Use {{${name}}} in a step.`);
+  },
+
+  /** The first input_n name the variables do not use. */
+  freeInput(variables) {
     let n = 1;
     while (variables['input_' + n]) n++;
-    variables['input_' + n] = { default: '' };
-    await Studio.command({ type: 'variables', variables });
-    Studio.say(
-      `Use {{input_${n}}} in a step. Rename inputs by editing the placeholder and adding its matching variable.`,
-    );
+    return 'input_' + n;
   },
 
-  /** Saves the playbook to the connected Oya workspace under a checked name. */
+  /** Saves the playbook to the connected Oya workspace. */
   async save() {
-    if (Studio.busy) return;
+    if (Studio.saving || Dom.byId('record-save').disabled) return;
     const name = Dom.byId('record-name').value.trim();
     const description = Dom.byId('record-desc').value || name;
-    await StudioActions.whileBusy(() => {
-      StudioView.render(Studio.state);
-      return StudioActions.publish(name, description);
-    });
+    await StudioActions.whileBusy(() => StudioActions.publish(name, description), 'save-result', 'saving');
   },
 
-  /** The save itself: name check, save, confirmation, refresh. */
+  /** The save itself, its confirmation, and the refreshed state. */
   async publish(name, description) {
-    if (!/^[\w-]{1,64}$/.test(name))
-      throw new Error('Use 1–64 letters, numbers, hyphens or underscores for the published name.');
     const result = await oyaBrowser.saveRecording(name, description);
-    if (result.error) throw new Error(result.error);
-    Studio.say(`Playbook “${name}” saved to Oya. Your local draft is retained.`);
-    await Studio.command({ type: 'get' });
+    if (!result || result.error) throw new Error(result?.error || 'The server did not confirm the save');
+    Studio.justFinished = false;
+    await Studio.command({ type: 'get' }, 'save-result');
+    Studio.say(`Saved “${name}” to Oya.`, false, 'save-result');
   },
 
   /** Copies the generated module. */
   async copy() {
     try {
       await navigator.clipboard.writeText(Studio.state.code);
-      Studio.say('Playwright module copied.');
+      Studio.say('Code copied.', false, 'code-result');
     } catch (error) {
-      Studio.say(error.message, true);
+      Studio.say(Studio.cleanError(error), true, 'code-result');
     }
   },
 
   /** Saves the generated module to a file. */
   async download() {
     try {
-      if (!Studio.state.code) throw new Error('Resolve the capture issues first.');
       const result = await oyaBrowser.exportPlaywright({ name: Studio.state.draft.name, code: Studio.state.code });
-      if (result.saved) Studio.say('Playwright module exported.');
+      Studio.say(result.saved ? 'Playwright module exported.' : '', false, 'code-result');
     } catch (error) {
-      Studio.say(error.message, true);
+      Studio.say(Studio.cleanError(error), true, 'code-result');
     }
   },
 
-  /** ⌘/Ctrl Shift R: open the studio, then start or pause recording. */
+  /** Saves the diagnostics report and says so. */
+  async support() {
+    const next = await Studio.command({ type: 'support' }, 'code-result');
+    if (next?.supportSaved) Studio.say('Diagnostics saved.', false, 'code-result');
+  },
+
+  /** ⌘/Ctrl Shift R: open the studio, then start or stop recording, when the record button could. */
   async recordButton() {
+    const toggle = Dom.byId('record-toggle');
+    if (toggle.disabled || toggle.hasAttribute('data-control-blocked')) return;
     if (!ShellState.devOpen) await oyaBrowser.toggleDevPanel();
     DevPanel.show('record');
     Studio.selectTab('steps');
     await StudioActions.toggleRecording();
   },
 
-  /** Expands or compacts the panel. */
+  /** Whether the panel is at (or past) its expanded width. */
+  expanded() {
+    const width = parseFloat(document.documentElement.style.getPropertyValue('--panel-width'));
+    return width >= RendererConstants.PANEL_MAX_WIDTH;
+  },
+
+  /** Expands or compacts the panel, from its real width. */
   async expand() {
-    Studio.expanded = !Studio.expanded;
-    await oyaBrowser.resizeDevPanel(
-      Studio.expanded ? RendererConstants.PANEL_MAX_WIDTH : RendererConstants.PANEL_COMPACT_WIDTH,
-    );
-    Dom.byId('studio-expand').textContent = Studio.expanded ? 'Compact' : 'Expand';
+    const next = StudioActions.expanded() ? RendererConstants.PANEL_COMPACT_WIDTH : RendererConstants.PANEL_MAX_WIDTH;
+    await oyaBrowser.resizeDevPanel(next);
   },
 
   /** Sends the name and description. */
@@ -157,7 +182,12 @@ const StudioActions = {
     if (event.key !== 'Enter' || Dom.byId('record-save').disabled) return;
     event.preventDefault();
     Dom.byId('record-name').blur();
-    Dom.byId('record-save').click();
+    StudioActions.save();
+  },
+
+  /** As the name is typed: the Save button and hint follow the naming rule. */
+  nameTyped() {
+    if (Studio.state) StudioView.render(Studio.state);
   },
 };
 
@@ -179,11 +209,13 @@ document
   .querySelectorAll('[data-run]')
   .forEach((el) => el.addEventListener('click', () => Studio.command({ type: 'control', command: el.dataset.run })));
 Dom.byId('record-name').addEventListener('keydown', StudioActions.nameKey);
+Dom.byId('record-name').addEventListener('input', StudioActions.nameTyped);
 Dom.byId('record-save').addEventListener('click', StudioActions.save);
 Dom.byId('record-copy').addEventListener('click', StudioActions.copy);
 Dom.byId('record-download').addEventListener('click', StudioActions.download);
-Dom.byId('support-export').addEventListener('click', () => Studio.command({ type: 'support' }));
+Dom.byId('support-export').addEventListener('click', StudioActions.support);
 oyaBrowser.onWorkspace(StudioView.render);
 oyaBrowser.onWsStatus(() => Studio.state && StudioView.render(Studio.state));
+oyaBrowser.onShellLayout(() => Studio.state && StudioView.expandLabel());
 Studio.command({ type: 'get' });
 Studio.selectTab('steps');

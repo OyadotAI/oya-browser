@@ -13,6 +13,12 @@ describe('page scripts', () => {
     assert.ok(js.includes("error: 'Element not found: a[title=\\'x\\']'"));
   });
 
+  it('findElementJs keeps a backslash or line break in the selector from breaking the script', () => {
+    for (const selector of ['a\\', "a\\'b", 'a\nb']) {
+      assert.doesNotThrow(() => new Function(s.findElementJs(selector)), JSON.stringify(selector));
+    }
+  });
+
   it('inserted values are taken literally, replacement patterns included', () => {
     const js = s.selectOptionJs('#s', '$& $1');
     assert.ok(js.includes('el.value = "$& $1";'));
@@ -25,7 +31,6 @@ describe('page scripts', () => {
       s.iframeClickJs('a'),
       s.selectFieldJs('a'),
       s.selectOptionJs('a', 'b'),
-      s.devSelectJs({ element_id: 3, value: 'v' }),
       s.devWaitJs({ selector: 'a' }),
       s.scrollResultJs({ direction: 'up' }, 5),
       s.DROPDOWN_JS,

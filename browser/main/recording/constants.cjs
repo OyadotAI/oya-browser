@@ -8,6 +8,8 @@ const RECORDING_REFRESH_MS = 400;
 const ANALYZER_ATTR_BYTES = 4;
 /** An upload this soon after a click in the same tab means that click opened the file picker. */
 const FILE_PICKER_CLICK_MS = 60000;
+/** How long the recorder waits for a page to answer one protocol command before giving up on it. */
+const RECORDING_CDP_MS = 5000;
 /** The playbook format the server is sent. */
 const PLAYBOOK_SCHEMA_VERSION = 2;
 
@@ -17,4 +19,5 @@ module.exports = {
   RECORDING_REFRESH_MS,
   ANALYZER_ATTR_BYTES,
   PLAYBOOK_SCHEMA_VERSION,
+  RECORDING_CDP_MS,
 };

@@ -77,6 +77,40 @@ describe('context menu', () => {
     assert.deepEqual(ctx.shell.sentOn('inspect-result'), [{ ok: true }]);
   });
 
+  it("refuses to inspect while the agent drives, leaving the agent's element ids alone", async () => {
+    let evaluated = false;
+    ctx.world.worldEval = async () => ((evaluated = true), { ok: true });
+    ctx.control.state.interactive = false;
+    let revealed = 0;
+    ctx.layout.reveal = () => revealed++;
+    menuFor(ctx, view, PARAMS)
+      .find((i) => i.label === 'Inspect Element')
+      .click();
+    await flush();
+    assert.equal(evaluated, false);
+    assert.equal(revealed, 1);
+    assert.match(ctx.shell.sentOn('inspect-result')[0].error, /Take control/);
+  });
+
+  it('inspects without leaving labels drawn on the page', () => {
+    assert.doesNotMatch(inspectScript({ x: 1, y: 2 }), /highlight: true/);
+  });
+
+  it('opens the panel even when a source read fails, so the error is seen', async () => {
+    ctx.world.worldEval = async () => {
+      throw new Error('detached');
+    };
+    let revealed = 0;
+    ctx.layout.reveal = () => revealed++;
+    for (const label of ['View Page Source', 'Inspect Element']) {
+      menuFor(ctx, view, PARAMS)
+        .find((i) => i.label === label)
+        .click();
+    }
+    await flush();
+    assert.equal(revealed, 2);
+  });
+
   it('builds the inspector with the exact coordinates', () => {
     assert.match(inspectScript({ x: 1.5, y: 2 }), /elementFromPoint\(1\.5, 2\)/);
   });
