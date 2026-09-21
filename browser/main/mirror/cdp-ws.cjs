@@ -49,12 +49,17 @@ class CdpWs {
     else p.resolve(msg.result);
   }
 
-  /** Sends one command and resolves with its result; rejects on timeout or error. */
+  /**
+   * Sends one command and resolves with its result; rejects on timeout or error.
+   * The send callback turns a socket that closed under us into a rejection
+   * rather than a throw.
+   */
   send(method, params = {}, sessionId) {
     const id = this.nextId++;
     const frame = JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) });
-    this.ws.send(frame);
-    return this.awaitReply(id);
+    const reply = this.awaitReply(id);
+    this.ws.send(frame, (err) => err && this.settle({ id, error: err }));
+    return reply;
   }
 
   /** The promise for command `id`, armed with a timeout so a stuck browser cannot hang the import. */
