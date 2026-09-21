@@ -109,6 +109,7 @@ function TabContent({ c }: Props) {
           apiKey={apiKey}
           browsers={c.browsers}
           personas={c.personas}
+          status={c.personasStatus}
           refresh={c.fetchPersonas}
           openId={view.openPersona}
           onOpen={(openPersona) => patch({ openPersona })}

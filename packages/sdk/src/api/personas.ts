@@ -5,9 +5,19 @@
  *
  * Persona ids go into paths as they are, unencoded, as they always have.
  */
-import type { Fingerprint, MfaConfig, PersonaInfo, PersonaPrefs, SiteCredentials } from '../types/index.js';
+import type {
+  Cookie,
+  CookieFormat,
+  Fingerprint,
+  MfaConfig,
+  PersonaInfo,
+  PersonaPrefs,
+  SiteCredentials,
+} from '../types/index.js';
 import type {
   CloneOptions,
+  CookieJar,
+  CookiesImported,
   CredentialsSaved,
   FingerprintPreview,
   HttpRef,
@@ -86,10 +96,39 @@ const loginCalls = (http: HttpRef) => ({
   },
 });
 
+/** The jar's path for a persona. */
+const jarPath = (id: string) => `/api/pool/cookies?persona=${encodeURIComponent(id)}`;
+
+/** Reading a jar and writing into one: what copying between personas is made of. */
+const jarCalls = (http: HttpRef) => ({
+  /** Every cookie in the jar; `format: 'playwright'` is ready for `context.addCookies()`. */
+  cookies: async (id: string, format: CookieFormat = 'json'): Promise<Cookie[]> =>
+    (await http().request<CookieJar>('GET', `${jarPath(id)}&format=${format}`)).cookies,
+  /** Merge cookies into the jar. The persona's browsers pick them up on their next visit to each site. */
+  importCookies: (id: string, list: Cookie[]): Promise<CookiesImported> =>
+    http().request<CookiesImported>('PUT', jarPath(id), { cookies: list }),
+});
+
+/**
+ * The cookie jar: the logins themselves. Sign in once, anywhere, and carry the
+ * session to wherever it is needed: another persona, a script, another browser.
+ */
+const cookieCalls = (http: HttpRef) => ({
+  ...jarCalls(http),
+  /** Copy every login of persona `from` into persona `to`, which keeps its own device. */
+  copyCookies: async (from: string, to: string): Promise<CookiesImported> =>
+    jarCalls(http).importCookies(to, await jarCalls(http).cookies(from)),
+  /** Forget every cookie in the jar: signs the persona out everywhere. */
+  clearCookies: async (id: string): Promise<void> => {
+    await http().request('DELETE', jarPath(id));
+  },
+});
+
 /** Builds `oya.personas`. */
 export const personaApi = (http: HttpRef) => ({
   ...identityCalls(http),
   ...deviceCalls(http),
   ...mfaCalls(http),
   ...loginCalls(http),
+  ...cookieCalls(http),
 });

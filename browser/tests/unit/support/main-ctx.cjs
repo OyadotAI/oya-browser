@@ -387,7 +387,7 @@ function mainCtx(real = {}) {
         },
       },
     },
-    cookies: { pullCookiesFor: async () => {} },
+    cookies: { pullCookiesFor: async () => {}, flushCookieChanges() {} },
     mirror: { maybeRun() {}, onOk() {}, onFailed() {}, reimport() {} },
   };
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);

@@ -64,13 +64,14 @@ type Runner = ReturnType<typeof useRunStart>;
 type Toast = ReturnType<typeof useToast>;
 
 /** Polls the run while it is going. */
-function useRunFollow(apiKey: string, run: RunInfo | null, setRun: (r: RunInfo) => void, onFinished: () => void) {
+function useRunFollow(apiKey: string, runner: Runner, onFinished: () => void) {
+  const { run, setRun, toast } = runner;
   const runId = run?.id;
   const ended = isEnded(run?.status);
   useEffect(() => {
     if (!runId || ended) return;
-    return followRun(apiKey, runId, setRun, onFinished);
-  }, [runId, ended, apiKey, onFinished, setRun]);
+    return followRun(apiKey, runId, { setRun, onFinished, onTrouble: (message) => toast(message, 'error') });
+  }, [runId, ended, apiKey, onFinished, setRun, toast]);
 }
 
 /** Nothing is running on this profile: start one, then replay on it once it dials in. */
@@ -98,7 +99,7 @@ export function useRunDialog(apiKey: string, playbook: PlaybookInfo, browsers: B
   const target = useRunTarget(browsers);
   const form = useRunForm(playbook);
   const runner = useRunStart(apiKey, playbook.name, form, useToast());
-  useRunFollow(apiKey, runner.run, runner.setRun, onFinished);
+  useRunFollow(apiKey, runner, onFinished);
   const startAndRun = usePendingBrowser(apiKey, target.persona, browsers, runner);
   const reply = useReply(apiKey, runner);
   return { target, form, runner, startAndRun, reply };

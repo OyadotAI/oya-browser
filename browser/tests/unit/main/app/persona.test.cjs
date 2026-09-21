@@ -44,7 +44,7 @@ describe('Persona', () => {
       dropPendingCookieChanges: () => order.push('drop'),
       forgetPulls: () => order.push('forget'),
       startCookieChangeListener: () => order.push('listen'),
-      applyCookieSync: async (c) => order.push(['cookies', c.length]),
+      applyCookieSync: async (c, clock) => order.push(['cookies', c.length, clock.now]),
     };
     ctx.persona.setupBrowserSession = async () => order.push('session');
   });
@@ -75,7 +75,7 @@ describe('Persona', () => {
   });
 
   it('switching persona drops queued cookies, empties the old jar, and reopens its pages in the new one', async () => {
-    await ctx.persona.applyServerFingerprint(PROFILE, [{}, {}]);
+    await ctx.persona.applyServerFingerprint(PROFILE, [{}, {}], 9000);
     assert.deepEqual(order, [
       'drop',
       ['close', 1, { keepOne: false }],
@@ -83,12 +83,26 @@ describe('Persona', () => {
       'forget',
       'session',
       'listen',
-      ['cookies', 2],
+      ['cookies', 2, 9000],
       ['open', 'https://a.test/'],
       ['open', 'about:blank'],
     ]);
     assert.equal(ctx.config.values.activeProfileId, 'p1');
     assert.equal(ctx.shell.sentOn('fingerprint-changed')[0].id, 'p1');
+  });
+
+  it("runs as a persona mirrored from the person's real browser, whose device has no font list and no noise", async () => {
+    const mirrored = {
+      ...PROFILE,
+      id: 'm-1',
+      fonts: undefined,
+      canvas: { noiseSeed: null },
+      audio: { noiseSeed: null },
+    };
+    await ctx.persona.applyServerFingerprint(mirrored, []);
+    const shown = ctx.shell.sentOn('fingerprint-changed').at(-1);
+    assert.deepEqual([shown.id, shown.fonts, shown.canvasNoise, shown.audioNoise], ['m-1', 0, 'real', 'real']);
+    assert.equal(ctx.persona.summary().id, 'm-1');
   });
 
   it('re-protects open tabs when the same persona is sent again', async () => {

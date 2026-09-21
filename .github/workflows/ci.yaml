@@ -55,6 +55,9 @@ jobs:
           node-version: 24
       - run: npm ci --prefix browser
       - run: xvfb-run -a npm run test:recording --prefix browser -- --no-sandbox
+      # What a page's JavaScript reads must be what the request headers say (Google's sign-in
+      # compares them), and a passkey request must not hang. Needs openssl, which the runner has.
+      - run: xvfb-run -a npm run test:identity --prefix browser -- --no-sandbox
 
   lint:
     name: Lint and format

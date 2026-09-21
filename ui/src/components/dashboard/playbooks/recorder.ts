@@ -44,27 +44,39 @@ export function useRecorderState(apiKey: string, firstBrowser: string): Recorder
   const [state, setState] = useState<RecordState | null>(null);
   const [busy, setBusy] = useState<RecordBusy>(null);
   const [held, setHeld] = useState(false);
-  const refs = useSessionRefs(apiKey, browserId);
+  const refs = useSessionRefs(useLatest(apiKey), browserId);
   return { apiKey, toast, browserId, setBrowserId, state, setState, busy, setBusy, held, setHeld, ...refs };
 }
 
-/** The dialog is going away: if it holds control, stop capture and hand it back. */
-function releaseOnExit(apiKey: string, browserId: string, mounted: RefObject<boolean>, acquired: RefObject<boolean>) {
+/** The session's refs: holds control, still open, and the start/stop counter. */
+type SessionRefs = Pick<Recorder, 'acquired' | 'mounted' | 'revision'>;
+
+/** The dialog is going away: if it holds control, stop capture and hand it back, under the credential of that moment. */
+function releaseOnExit(key: RefObject<string>, browserId: string, { mounted, acquired }: SessionRefs) {
   mounted.current = false;
-  if (acquired.current) void recordCall(apiKey, browserId, STOP_AND_RESUME).catch(() => undefined);
+  if (acquired.current) void recordCall(key.current, browserId, STOP_AND_RESUME).catch(() => undefined);
+}
+
+/** The latest credential, for a cleanup that runs long after the render that made it. */
+function useLatest(apiKey: string) {
+  const latest = useRef(apiKey);
+  useEffect(() => void (latest.current = apiKey), [apiKey]);
+  return latest;
 }
 
 /**
  * The session's refs. Stop capture and hand control back on every exit, including
  * navigation away from this tab. The server retains the final steps for recovery.
+ * The console renews its credential every 45 minutes: that is not an exit, and
+ * treating it as one stopped every long recording, so the exit reads the key from a ref.
  */
-function useSessionRefs(apiKey: string, browserId: string) {
+function useSessionRefs(key: RefObject<string>, browserId: string): SessionRefs {
   const acquired = useRef(false);
   const mounted = useRef(true);
   const revision = useRef(0);
   useEffect(() => {
     mounted.current = true;
-    return () => releaseOnExit(apiKey, browserId, mounted, acquired);
-  }, [browserId, apiKey]);
+    return () => releaseOnExit(key, browserId, { acquired, mounted, revision });
+  }, [browserId, key]);
   return { acquired, mounted, revision };
 }

@@ -2,17 +2,22 @@
 
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { MAX_STEPS, RECORD_MAX_MS, RECORD_POLL_MS } from './constants.ts';
+import { MAX_STEPS, MS_PER_MINUTE, RECORD_MAX_MS, RECORD_POLL_MS } from './constants.ts';
 
 /** Recordings by browser id. */
 const active = new Map();
 
 /** Whether the browser is recording right now. */
 export const isRecording = (browserId) => !!active.get(browserId)?.recording;
+/** Whole minutes before the recording stops on its own; the console warns when few are left instead of stopping without a word. */
+const minutesLeft = (state) =>
+  Math.max(0, Math.ceil((Date.parse(state.startedAt) + RECORD_MAX_MS - Date.now()) / MS_PER_MINUTE));
+
 /** The recording as callers see it: every step so far in time order, and the secret names. */
 const snapshot = (state) => ({
   recording: state.recording,
   startedAt: state.startedAt,
+  minutesLeft: minutesLeft(state),
   steps: [...state.client, ...state.manual].sort((a, b) => (a.t || 0) - (b.t || 0)).slice(0, MAX_STEPS),
   secrets: [...state.secrets],
 });
@@ -34,7 +39,7 @@ async function pull(state, dispatch, mode) {
   const r = await dispatch('record', { mode });
   if (!r?.ok) throw new HttpError(Status.UNPROCESSABLE, r?.error || 'The browser could not record');
   absorb(state, r.data);
-  if (mode === 'stop') state.recording = false;
+  if (mode === 'stop' || r.data?.recording === false) state.recording = false;
   return snapshot(state);
 }
 
@@ -83,13 +88,24 @@ async function begin(browserId, state, dispatch) {
   }
 }
 
-/** Polls every RECORD_POLL_MS until the recording has run RECORD_MAX_MS, then stops it. */
+/**
+ * Polls every RECORD_POLL_MS until the recording has run RECORD_MAX_MS, then stops it.
+ * A browser whose recorder stopped by itself (its step limit, the app restarting) ends
+ * the polling too: the console used to show "Recording" over steps that never moved again.
+ */
 function schedule(browserId, state, dispatch) {
   state.timer = setInterval(() => {
+    if (!state.recording) return settle(browserId, state);
     if (Date.now() - Date.parse(state.startedAt) > RECORD_MAX_MS) return void stop(browserId, dispatch).catch(() => {});
     poll(state, dispatch).catch(() => {});
   }, RECORD_POLL_MS);
   state.timer.unref?.();
+}
+
+/** A recording that is over: no more polls, and forgotten later. */
+function settle(browserId, state) {
+  clearInterval(state.timer);
+  expireLater(browserId, state);
 }
 
 /** Stop recording and return the final steps, kept for 30 minutes afterwards. Null when nothing was recorded. */
@@ -97,8 +113,7 @@ export async function stop(browserId, dispatch) {
   const state = active.get(browserId);
   if (!state) return null;
   const final = await poll(state, dispatch, 'stop');
-  clearInterval(state.timer);
-  expireLater(browserId, state);
+  settle(browserId, state);
   return final;
 }
 
@@ -111,10 +126,29 @@ function expireLater(browserId, state) {
   state.expiry.unref?.();
 }
 
+/** What is answered when nothing is, or was, recorded. */
+const NOTHING = { recording: false, steps: [], secrets: [] };
+
+/**
+ * Recordings live in this process, so a restart (every deploy) forgot them while
+ * the browser recorded on, and the console showed an empty, stopped recording.
+ * The browser's recorder hands back every step it has, so one it is still running
+ * for the server is picked up whole. A person's own desktop recording is not ours.
+ */
+async function adopt(browserId, dispatch) {
+  const r = await dispatch('record', { mode: 'drain' }).catch(() => null);
+  if (!r?.ok || !r.data?.recording || r.data.origin !== 'remote') return { ...NOTHING };
+  const state = freshState();
+  active.set(browserId, state);
+  absorb(state, r.data);
+  schedule(browserId, state, dispatch);
+  return snapshot(state);
+}
+
 /** The recording so far; with `dispatch` and still recording, polls the browser first. */
 export async function status(browserId, dispatch?) {
   const state = active.get(browserId);
-  if (!state) return { recording: false, steps: [], secrets: [] };
+  if (!state) return dispatch ? adopt(browserId, dispatch) : { ...NOTHING };
   if (dispatch && state.recording) return poll(state, dispatch);
   return snapshot(state);
 }

@@ -196,6 +196,40 @@ describe('createControlState', () => {
     await assert.rejects(ctx.control.beginLocalCommand(), /paused/);
   });
 
+  it('takes control back after a reconnect when the person held it as the socket dropped', async () => {
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+    await ctx.control.change('acquire');
+    ctx.control.disconnect();
+    ctx.snapshots.length = 0;
+    ctx.control.connect({ mode: 'agent', mine: false, revision: ctx.server.revision });
+    await flush();
+    assert.equal(ctx.control.snapshot().mode, 'human');
+    assert.equal(ctx.control.snapshot().interactive, true);
+    assert.equal(
+      ctx.snapshots.some((s) => s.mode === 'agent'),
+      false,
+    );
+  });
+
+  it('leaves control with the agent after a reconnect when the person did not hold it', async () => {
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+    ctx.control.disconnect();
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+    await flush();
+    assert.equal(ctx.control.snapshot().mode, 'agent');
+  });
+
+  it('reports the agent in control when taking it back after a reconnect fails', async () => {
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+    await ctx.control.change('acquire');
+    ctx.control.disconnect();
+    ctx.server.answer = (message) => ({ id: message.id, error: 'control_busy' });
+    ctx.control.connect({ mode: 'agent', mine: false, revision: ctx.server.revision });
+    await flush();
+    assert.equal(ctx.control.snapshot().mode, 'agent');
+    assert.equal(ctx.control.snapshot().busy, false);
+  });
+
   it('renews human control before it runs out', async () => {
     ctx.control.connect({ mode: 'human', mine: true, revision: 1, expiresAt: Date.now() + CONTROL_RENEW_BEFORE_MS });
     mock.timers.tick(CONTROL_TICK_MS);

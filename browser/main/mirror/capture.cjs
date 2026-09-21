@@ -111,16 +111,15 @@ function teardown(child, scratch) {
 }
 
 /** The whole capture: the real device once, then each profile's cookies. Null when nothing to mirror. */
-async function captureAll(ctx) {
-  const source = sourceBrowser();
+async function captureAll(ctx, sourceId) {
+  const source = sourceBrowser(sourceId);
   if (!source) return null;
   const device = await captureDevice(ctx.electron);
-  // Firefox carries its cookies already (read from SQLite); Chromium needs a
-  // launch per profile to decrypt them. Firefox keeps the Electron Chrome
-  // version, since its own Gecko version cannot be presented convincingly.
-  const profiles = source.kind === 'firefox' ? source.profiles : await captureProfiles(ctx, source);
+  // Firefox's cookies are read from SQLite; Chromium needs a launch per profile
+  // to decrypt them. The persona presents this app's own engine version either
+  // way (identity.cjs): claiming the source browser's is a detectable lie.
+  const profiles = source.kind === 'firefox' ? source.capture() : await captureProfiles(ctx, source);
   if (!profiles.length) return null;
-  if (profiles[0].chromeVersion) device.chromeVersion = profiles[0].chromeVersion;
   return { source: source.id, name: source.name, userDataDir: source.userDataDir, device, profiles };
 }
 
@@ -128,7 +127,11 @@ async function captureAll(ctx) {
 async function captureProfiles(ctx, source) {
   const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-mirror-root-'));
   const out = [];
-  for (const p of source.profiles) await pushCapture(out, scratchRoot, source, p);
+  try {
+    for (const p of source.profiles) await pushCapture(out, scratchRoot, source, p);
+  } finally {
+    fs.rmSync(scratchRoot, { recursive: true, force: true });
+  }
   return out;
 }
 

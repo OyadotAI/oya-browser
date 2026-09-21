@@ -849,7 +849,8 @@ kbd {
   font-size: 12px;
 }
 #theme-preference,
-#page-format-preference {
+#page-format-preference,
+#import-source {
   background: var(--muted-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -893,6 +894,23 @@ kbd {
 }
 #profile-section .export-actions {
   padding: 16px 0 10px;
+}
+.import-logins {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 14px;
+}
+.import-logins h4 {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+#import-source {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+}
+#import-status[data-kind='error'] {
+  color: var(--danger);
 }
 @media (max-width: 959px) {
   .dev-panel {
@@ -2272,7 +2290,8 @@ button:active:not(:disabled) {
 .studio-toolbar select,
 #command-search,
 #theme-preference,
-#page-format-preference {
+#page-format-preference,
+#import-source {
   border: 0;
   border-radius: var(--radius);
   background: var(--muted-surface);

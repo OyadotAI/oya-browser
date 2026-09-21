@@ -40,11 +40,6 @@ const UPDATE_FIRST_CHECK_MS = 10_000;
 
 /** Chrome version assumed when the session's user agent names none. */
 const FALLBACK_CHROME_VERSION = '134.0.0.0';
-/** The GREASE brand's version in Sec-CH-UA. */
-const GREASE_BRAND_VERSION = '24';
-/** The GREASE brand's full version in Sec-CH-UA-Full-Version-List. */
-const GREASE_BRAND_FULL_VERSION = '24.0.0.0';
-
 /** Random bytes in an isolated world's per-document tag attribute. */
 const WORLD_ATTR_BYTES = 4;
 
@@ -71,8 +66,6 @@ module.exports = {
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_FIRST_CHECK_MS,
   FALLBACK_CHROME_VERSION,
-  GREASE_BRAND_VERSION,
-  GREASE_BRAND_FULL_VERSION,
   WORLD_ATTR_BYTES,
   DEBUGGER_MAX_LISTENERS,
 };

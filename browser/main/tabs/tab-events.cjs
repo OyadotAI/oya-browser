@@ -24,6 +24,7 @@ const VIEW_SOURCE_LIGHT = `
 function wireTab(ctx, tab) {
   wireTabLoadState(ctx, tab);
   wireTabFailures(ctx, tab);
+  wireRendererLoss(ctx, tab);
   const tabReady = protectNewTab(ctx, tab.view);
   wireTabPage(ctx, tab, tabReady);
   wireTabWindows(ctx, tab);
@@ -47,6 +48,11 @@ function showTabError(ctx, tab, message) {
   tab.navigationPending = false;
   tab.loadError = message;
   ctx.tabs.sendTabList();
+}
+
+/** A dead renderer's recording channel died with it; forgotten, the reload's page arms a new one. */
+function wireRendererLoss(ctx, tab) {
+  tab.view.webContents.on('render-process-gone', () => ctx.recorder.channels.forget(tab.view));
 }
 
 /** A page that could not load, or a renderer that died, is shown on the tab. */
@@ -103,9 +109,14 @@ function wireTabPage(ctx, tab, tabReady) {
   contents.on('did-navigate', updateUrl);
   contents.on('did-navigate-in-page', updateUrl);
   // New tabs join an active recording before the user can interact with them.
-  tabReady.then(() => ctx.recorder.joinIfRecording(tab.view)).catch((err) => console.error('[recording]', err));
+  tabReady.then(() => joinRecording(ctx, tab.view));
   wireTabTitle(ctx, tab);
   if (ctx.observer) watchContents(ctx.observer, contents);
+}
+
+/** Joins a recording in progress; a page that refuses is logged and tried again on its next load. */
+function joinRecording(ctx, view) {
+  return Promise.resolve(ctx.recorder.joinIfRecording(view)).catch((err) => console.error('[recording]', err.message));
 }
 
 /**
@@ -122,6 +133,8 @@ function wireTabTitle(ctx, tab) {
 /** Loads the analyzer, and lightens view-source pages. */
 function pageLoaded(ctx, view) {
   ctx.protection.injectScripts(view);
+  // A tab that could not be armed, or whose renderer died, joins the recording again here.
+  joinRecording(ctx, view);
   const currentUrl = view.webContents.getURL();
   if (currentUrl.startsWith('view-source:')) {
     view.webContents.executeJavaScript(VIEW_SOURCE_LIGHT, true).catch(() => {});
@@ -155,6 +168,9 @@ function openWindow(ctx, details) {
 function adoptPopup(ctx, childWindow) {
   ctx.protection.protectPopup(childWindow);
   ctx.tabs.adoptWindow?.(childWindow);
+  // A sign-in popup is part of the task: what the person types there is recorded too.
+  const adopted = ctx.tabs.list.find((t) => t.window === childWindow);
+  if (adopted) joinRecording(ctx, adopted.view);
 }
 
 /**

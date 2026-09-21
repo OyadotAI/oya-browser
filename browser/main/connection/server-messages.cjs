@@ -13,7 +13,7 @@ async function acceptAuth(ctx, msg) {
   ctx.persona.ensureLoginState(msg);
   // Apply fingerprint from the server, the server is the single source of truth.
   // Same API key = same fingerprint on every browser, guaranteed.
-  if (msg.fingerprint) await ctx.persona.applyServerFingerprint(msg.fingerprint, msg.cookies || []);
+  if (msg.fingerprint) await ctx.persona.applyServerFingerprint(msg.fingerprint, msg.cookies || [], msg.now);
   goOnline(ctx, msg);
   if (!ctx.shell.browsingMode) ctx.tabs.enterBrowsingMode(governance.configuration ? 'about:blank' : HOME_URL);
   await shareProfile(ctx);
@@ -21,6 +21,8 @@ async function acceptAuth(ctx, msg) {
 
 /** Sends our cookies to the pool, then, on first sign-in only, mirrors the user's real browser. */
 async function shareProfile(ctx) {
+  // Changes made while the socket was down go first: a dump cannot say that a cookie was deleted.
+  ctx.cookies.flushCookieChanges();
   await ctx.cookies.dumpCookies();
   ctx.socket.send({ type: 'profile_flush' });
   // A no-op once done; it reconnects as the mirrored persona itself.
@@ -58,7 +60,7 @@ const SERVER_MESSAGES = {
   auth_ok: acceptAuth,
   profile_saved: (ctx, msg) => ctx.shell.send('profile-saved', msg),
   cookie_sync: async (ctx, msg) => {
-    await ctx.cookies.applyCookieSync(msg.cookies);
+    await ctx.cookies.applyCookieSync(msg.cookies, { now: msg.now, pullId: msg.pullId });
     ctx.cookies.answerPull(msg.pullId);
   },
   mirror_ok: (ctx, msg) => ctx.mirror.onOk(msg),

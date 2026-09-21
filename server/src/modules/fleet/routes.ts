@@ -99,8 +99,7 @@ router.get('/usage', authMiddleware, async (req, res) => {
   });
 });
 
-/** Audit trail. Admin only: it spans every tenant by construction. */
-/** This key's own audit trail. */
+/** GET /audit, this key's own audit trail: never another key's, so it needs no administrator. */
 router.get('/audit', authMiddleware, async (req, res) => {
   const result = await auditHistory({
     limit: Math.min(Number(req.query.limit) || DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT),

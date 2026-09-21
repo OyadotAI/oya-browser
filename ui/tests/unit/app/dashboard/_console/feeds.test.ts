@@ -62,10 +62,24 @@ describe('loadPersonas', () => {
   it('shows the personas, an empty list when absent, and keeps the last on failure', async () => {
     fakeFetch({ body: { personas: [{ id: 'p' }] } }, { body: {} }, { status: 500 });
     const set = vi.fn();
-    await loadPersonas('k', live(), set);
-    await loadPersonas('k', live(), set);
-    await loadPersonas('k', live(), set);
+    const sink = { set, setStatus: vi.fn() };
+    await loadPersonas('k', live(), sink);
+    await loadPersonas('k', live(), sink);
+    await loadPersonas('k', live(), sink);
     expect(set.mock.calls).toEqual([[[{ id: 'p' }]], [[]]]);
+  });
+});
+
+describe('loadPersonas status', () => {
+  it('says failed when the first load fails, and ready once a load succeeds, even if a later one fails', async () => {
+    fakeFetch({ status: 500 }, { body: { personas: [] } }, { status: 500 });
+    const status = vi.fn();
+    const sink = { set: vi.fn(), setStatus: status };
+    await loadPersonas('k', live(), sink);
+    await loadPersonas('k', live(), sink);
+    await loadPersonas('k', live(), sink);
+    const [first, second, third] = status.mock.calls.map(([next]) => next);
+    expect([first('loading'), second, third('ready')]).toEqual(['failed', 'ready', 'ready']);
   });
 });
 

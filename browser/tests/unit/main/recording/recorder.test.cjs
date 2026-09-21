@@ -247,15 +247,37 @@ describe('Recorder', () => {
 
   it('stops a desktop recording when an agent takes control', async () => {
     await ctx.recorder.startRecording();
-    ctx.recorder.controlLost({ interactive: false });
+    ctx.recorder.controlLost({ interactive: false, mode: 'agent', mine: false });
     await ctx.recorder.recordingTask;
     assert.equal(ctx.recorder.recording, false);
     assert.equal(ctx.recorder.recordingCutoff, 1000);
   });
 
+  it('stops a desktop recording when someone else takes human control', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.controlLost({ interactive: false, mode: 'human', mine: false });
+    await ctx.recorder.recordingTask;
+    assert.equal(ctx.recorder.recording, false);
+  });
+
+  for (const state of [
+    { mode: 'human', mine: true, busy: true },
+    { mode: 'paused', mine: false },
+    { mode: 'disconnected', mine: false },
+    { mode: 'offline', mine: true },
+  ]) {
+    it(`keeps a desktop recording going while control is ${state.busy ? 'busy' : state.mode}`, async () => {
+      await ctx.recorder.startRecording();
+      ctx.recorder.controlLost({ interactive: false, ...state });
+      await ctx.recorder.recordingTask;
+      assert.equal(ctx.recorder.recording, true);
+      assert.equal(ctx.recorder.recordingCutoff, Infinity);
+    });
+  }
+
   it('keeps a server-started recording going through a handoff', async () => {
     await ctx.recorder.remote('start');
-    ctx.recorder.controlLost({ interactive: false });
+    ctx.recorder.controlLost({ interactive: false, mode: 'agent', mine: false });
     assert.equal(ctx.recorder.recording, true);
     assert.equal((await ctx.recorder.remote('stop')).recording, false);
   });

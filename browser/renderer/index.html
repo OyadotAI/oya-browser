@@ -340,6 +340,7 @@
             ><span id="record-toggle-label">Start recording</span></button
           ><button class="secondary-button" id="record-validate" disabled>Test run</button>
         </div>
+        <p class="studio-status" id="record-limit" role="status" aria-live="polite" hidden></p>
         <ul class="studio-issues" id="studio-issues" aria-label="What blocks a test run"></ul>
         <p class="studio-status" id="record-result" role="status" aria-live="polite"></p>
         <section class="record-finish" id="record-finish" hidden aria-labelledby="record-finish-title">
@@ -525,6 +526,8 @@
           <dl>
             <dt>Server</dt>
             <dd><span id="profile-server"></span><button class="text-button" id="copy-server">Copy</button></dd>
+            <dt>Device</dt>
+            <dd><span id="profile-device"></span></dd>
             <dt>Browser ID</dt>
             <dd>
               <span id="profile-browser-id">Not connected</span
@@ -537,6 +540,15 @@
             ><button class="secondary-button" id="sign-out">Log out</button>
           </div>
           <p id="profile-save-status" role="status"></p>
+          <div class="import-logins">
+            <h4>Import logins</h4>
+            <p>Bring your sessions over from a browser on this computer, so you do not sign in to every site again.</p>
+            <div class="export-actions" id="import-controls">
+              <select id="import-source" aria-label="Browser to import from"></select
+              ><button class="secondary-button" id="import-logins">Import</button>
+            </div>
+            <p id="import-status" role="status"></p>
+          </div>
         </section>
         <footer>
           <label for="theme-preference">Appearance</label
@@ -569,6 +581,7 @@
     <script src="connection/status.js"></script>
     <script src="connection/reconnect.js"></script>
     <script src="connection/profile.js"></script>
+    <script src="connection/import.js"></script>
     <script src="connection/toolbar.js"></script>
     <script src="panes/net-log.js"></script>
     <script src="panes/chat-playbook.js"></script>

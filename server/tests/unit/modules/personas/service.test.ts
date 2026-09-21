@@ -28,6 +28,21 @@ describe('PersonaService default persona', () => {
     assert.deepEqual([p.name, p.isDefault, p.owner], ['Default', true, 'owner:key-a']);
   });
 
+  it('takes the platform of the first browser that connects, once: a Mac desktop is not given a Linux device', () => {
+    const { service } = personaService();
+    const created = service.resolve('key-mac', null, { platform: 'MacIntel' });
+    assert.equal(created.prefs?.platform, 'MacIntel');
+    assert.equal(service.fingerprintFor(created).navigator.platform, 'MacIntel');
+    const later = service.resolve('key-mac', null, { platform: 'Win32' });
+    assert.equal(later.prefs?.platform, 'MacIntel', 'the device is chosen at creation and never changes after');
+  });
+
+  it('ignores a platform it does not offer, and stays as it was for callers that give none', () => {
+    const { service } = personaService();
+    assert.equal(service.resolve('key-odd', null, { platform: 'BeOS' }).prefs ?? null, null);
+    assert.equal(service.defaultFor('key-none').prefs ?? null, null);
+  });
+
   it('returns the same default persona on later calls', () => {
     const { service } = personaService();
     assert.equal(service.defaultFor('key-a'), service.defaultFor('key-a'));

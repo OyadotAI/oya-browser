@@ -23,6 +23,15 @@ describe('the control guard', () => {
     assert.equal(app.bridge.called('startRecording').length, 1);
   });
 
+  it('takes control first on the record shortcut too, as pressing the button does', async () => {
+    const app = loadRenderer({ answers: { getControlState: AGENT, changeControl: { state: MINE } } });
+    await settle();
+    await app.run('StudioActions.recordButton()');
+    await settle();
+    assert.deepEqual(app.bridge.called('changeControl'), [['acquire']]);
+    assert.equal(app.bridge.called('startRecording').length, 1);
+  });
+
   it('does not record when taking control fails', async () => {
     const refused = { error: 'Another operator has control', state: AGENT };
     const app = loadRenderer({ answers: { getControlState: AGENT, changeControl: refused } });

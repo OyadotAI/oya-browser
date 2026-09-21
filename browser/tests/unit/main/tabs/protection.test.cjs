@@ -4,6 +4,7 @@
  */
 const { describe, it, beforeEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
+const { generateProfile } = require('../../../../anonymity/fingerprint');
 const { EventEmitter } = require('node:events');
 const { Protection } = require('../../../../main/tabs/protection.cjs');
 const { mainCtx, FakeBrowserView } = require('../../support/main-ctx.cjs');
@@ -16,11 +17,75 @@ describe('Protection', () => {
     ctx.world = { ensureWorld: async () => 1 };
   });
 
-  it('injects the stealth script alone before a persona arrives', async () => {
+  it("presents Chrome's identity and injects the stealth script before a persona arrives", async () => {
     const dbg = new FakeDebugger();
     await ctx.protection.applyPersona(dbg, () => {});
-    assert.equal(dbg.sent[0].method, 'Page.addScriptToEvaluateOnNewDocument');
-    assert.equal(typeof dbg.sent[0].params.source, 'string');
+    assert.deepEqual(
+      dbg.sent.map((c) => c.method),
+      ['Emulation.setUserAgentOverride', 'Page.addScriptToEvaluateOnNewDocument'],
+    );
+    const brands = dbg.sent[0].params.userAgentMetadata.brands.map((b) => b.brand);
+    assert.ok(brands.includes('Google Chrome'), 'navigator.userAgentData names Chrome, as the headers do');
+    assert.equal(typeof dbg.sent[1].params.source, 'string');
+  });
+
+  it("keeps this machine's timezone for a persona that leaves by this machine's own connection", async () => {
+    const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const elsewhere = here === 'Asia/Tokyo' ? 'Europe/Paris' : 'Asia/Tokyo';
+    ctx.persona.active = { ...generateProfile({ seed: 'tz', platform: 'MacIntel' }), timezone: elsewhere, proxy: null };
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    const zone = dbg.sent.find((c) => c.method === 'Emulation.setTimezoneOverride').params.timezoneId;
+    assert.equal(zone, here, 'a persona zone over a home IP reads as "timezone spoofed"');
+    const injected = dbg.sent.find((c) => c.method === 'Page.addScriptToEvaluateOnNewDocument').params.source;
+    assert.ok(!injected.includes(elsewhere), 'and the injection does not patch Intl to the persona zone either');
+  });
+
+  /** The canvas noise seed inside the script injected for the active persona. */
+  const injectedCanvasSeed = async () => {
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    const source = dbg.sent.find((c) => c.method === 'Page.addScriptToEvaluateOnNewDocument').params.source;
+    return JSON.parse(source.match(/"canvas":(\{[^}]*\})/)[1]).noiseSeed;
+  };
+
+  it("paints canvas as this computer really does on a person's own machine: noise reads as masking", async () => {
+    ctx.persona.active = generateProfile({ seed: 'canvas', platform: 'MacIntel' });
+    assert.equal(typeof ctx.persona.active.canvas.noiseSeed, 'number');
+    assert.equal(await injectedCanvasSeed(), null);
+  });
+
+  it("leaves the screen this computer's own: a size spoofed in JavaScript alone disagrees with the real window", async () => {
+    ctx.persona.active = generateProfile({ seed: 'screen', platform: 'MacIntel' });
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    const source = dbg.sent.find((c) => c.method === 'Page.addScriptToEvaluateOnNewDocument').params.source;
+    assert.match(source, /"screen":null/);
+  });
+
+  it('keeps the canvas noise in a cloud image, where every browser would otherwise paint the same known hash', async () => {
+    ctx.persona.active = generateProfile({ seed: 'canvas', platform: 'MacIntel' });
+    ctx.config.values.provider = 'oya-cloud';
+    assert.equal(await injectedCanvasSeed(), ctx.persona.active.canvas.noiseSeed);
+  });
+
+  it("presents the persona's timezone when it leaves through the persona's proxy", async () => {
+    const proxied = { ...generateProfile({ seed: 'tz', platform: 'MacIntel' }), timezone: 'Asia/Tokyo' };
+    ctx.persona.active = { ...proxied, proxy: { host: 'gate.test', port: 8080 } };
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    const zone = dbg.sent.find((c) => c.method === 'Emulation.setTimezoneOverride').params.timezoneId;
+    assert.equal(zone, 'Asia/Tokyo');
+  });
+
+  it("overrides the page's user agent data with the persona's, not only the session's string", async () => {
+    ctx.persona.active = generateProfile({ seed: 'ua', platform: 'Win32' });
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    const override = dbg.sent.find((c) => c.method === 'Emulation.setUserAgentOverride').params;
+    assert.equal(override.platform, 'Win32');
+    assert.equal(override.userAgentMetadata.platform, 'Windows');
+    assert.match(override.userAgent, /Windows NT 10\.0/);
   });
 
   it('reports a failed stealth injection instead of throwing', async () => {

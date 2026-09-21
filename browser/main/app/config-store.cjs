@@ -7,12 +7,15 @@ const fs = require('fs');
 const path = require('path');
 const { PRIVATE_FILE_MODE, JSON_INDENT, DEFAULT_SERVER_URL } = require('./constants.cjs');
 
+/** What people call each platform; the name a browser gets is read by people, in the dialog and in the console's fleet. */
+const PLATFORM_NAMES = { darwin: 'Mac', win32: 'Windows', linux: 'Linux' };
+
 /** What a fresh install starts from; the saved file and the environment override it. */
 function configDefaults(platform) {
   return {
     serverUrl: DEFAULT_SERVER_URL,
     apiKey: '',
-    browserName: `Oya Browser ${platform}`,
+    browserName: `Oya Browser on ${Object.hasOwn(PLATFORM_NAMES, platform) ? PLATFORM_NAMES[platform] : platform}`,
     activeProfileId: null,
     mirroredFrom: '',
   };

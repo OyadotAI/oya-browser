@@ -262,9 +262,88 @@ function buildStealthBody() {
 `;
 }
 
+/**
+ * For a runtime with no passkey dialog (the desktop app: Electron ships none).
+ * There, a WebAuthn request never settles, not even at its own timeout, and a
+ * sign-in page that starts one hangs for good: Google's stops at "Verifying
+ * it's you…". Chrome rejects with NotAllowedError when the person dismisses its
+ * dialog, and the page offers another way in; so does this, after about as long
+ * as dismissing takes. A conditional request (passkey autofill) stays pending
+ * in Chrome too, and is left alone. Page scope; assumes the mask preamble.
+ */
+function buildPasskeyBody() {
+  return `
+  // ── Passkeys: no dialog here, so answer as a dismissed one ──
+  if (window.CredentialsContainer) {
+    const _dismissed = () => new DOMException(
+      'The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.',
+      'NotAllowedError');
+    const _dismiss = (orig) => function (options) {
+      if (!options || !options.publicKey || options.mediation === 'conditional') return _apply(orig, this, arguments);
+      return new Promise((resolve, reject) => {
+        const signal = options.signal;
+        if (signal) signal.addEventListener('abort', () => reject(signal.reason));
+        setTimeout(() => reject(_dismissed()), 1200 + Math.floor(Math.random() * 1600));
+      });
+    };
+    _patch(CredentialsContainer.prototype, 'get', _dismiss);
+    _patch(CredentialsContainer.prototype, 'create', _dismiss);
+  }
+`;
+}
+
+/**
+ * For a runtime with no permission prompt (the desktop app). What Chrome would
+ * ask about is refused there natively (main/permissions.cjs), so a page reads
+ * "denied" for camera, location and the rest before anyone was asked: as odd as
+ * Electron's default of "granted" for everything. A fresh Chrome says "prompt",
+ * and "default" for notifications; so does this, until the page really asks and
+ * is refused. Runs in pages and in workers; assumes the mask preamble.
+ * ponytail: only a refused Notification.requestPermission is remembered as "denied"; other requests keep reading "prompt".
+ */
+function buildPermissionsBody() {
+  return `
+  // ── Permissions: refused natively, read as not yet asked ──
+  if (typeof PermissionStatus === 'function') {
+    const _asked = new Set();
+    const _stateGet = _getDesc(PermissionStatus.prototype, 'state').get;
+    const _fresh = (status) => {
+      const state = _apply(_stateGet, status, []);
+      return state === 'denied' && !_asked.has(status.name) ? 'prompt' : state;
+    };
+    const _state = _getDesc({ get state() { return _fresh(this); } }, 'state').get;
+    _mark(_state, 'get state');
+    try { _defProp(PermissionStatus.prototype, 'state', { get: _state, set: undefined, enumerable: true, configurable: true }); } catch {}
+    if (typeof Notification === 'function') {
+      const _permGet = _getDesc(Notification, 'permission').get;
+      const _perm = _getDesc({ get permission() {
+        const now = _apply(_permGet, Notification, []);
+        return now === 'denied' && !_asked.has('notifications') ? 'default' : now;
+      } }, 'permission').get;
+      _mark(_perm, 'get permission');
+      try { _defProp(Notification, 'permission', { get: _perm, set: undefined, enumerable: true, configurable: true }); } catch {}
+      _patch(Notification, 'requestPermission', (orig) => function requestPermission() {
+        _asked.add('notifications');
+        return _apply(orig, this, arguments);
+      });
+    }
+  }
+
+  // ── navigator.share: Chrome has it on every desktop; Electron has none ──
+  if (typeof Navigator === 'function' && !('share' in Navigator.prototype)) {
+    const _shareable = (data) => !!data && ['url', 'text', 'title', 'files'].some((k) => data[k] !== undefined);
+    _defProp(Navigator.prototype, 'canShare', { value: _nativeLike('canShare', (data) => _shareable(data), 0), writable: true, enumerable: true, configurable: true });
+    _defProp(Navigator.prototype, 'share', { value: _nativeLike('share', (data) => (_shareable(data)
+      ? Promise.reject(new DOMException('Share canceled', 'AbortError'))
+      : Promise.reject(new TypeError("Failed to execute 'share' on 'Navigator': No known share data fields supplied."))), 0),
+      writable: true, enumerable: true, configurable: true });
+  }
+`;
+}
+
 /** Stealth alone, for callers that do not need the fingerprint layer. */
 function buildStealthScript() {
   return `(function() {\n'use strict';\n${buildMaskPreamble()}\n${buildStealthBody()}\n})();`;
 }
 
-module.exports = { buildStealthScript, buildMaskPreamble, buildStealthBody };
+module.exports = { buildStealthScript, buildMaskPreamble, buildStealthBody, buildPasskeyBody, buildPermissionsBody };

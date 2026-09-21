@@ -85,22 +85,34 @@ function safeEmit(recorder) {
   }
 }
 
-/** Arms every tab; a live tab's failure stops the recording and is thrown. */
+/**
+ * Arms every tab. The tab the person is looking at has to record, so its failure
+ * stops the recording and is thrown. Any other tab that will not arm (hung, or
+ * showing an alert) is left out and said so: it joins on its next load, and one
+ * stuck background tab no longer made Start look like it stopped at once.
+ */
 async function armEveryTab(recorder) {
-  try {
-    for (const tab of recorder.ctx.tabs.list) await armTab(recorder, tab.view);
-  } catch (err) {
-    await recorder.stopRecording();
-    throw err;
+  const active = recorder.ctx.tabs.getActiveView();
+  for (const tab of recorder.ctx.tabs.list) {
+    const failure = await armTab(recorder, tab.view);
+    if (failure && tab.view === active) return abortStart(recorder, failure);
+    if (failure) console.error(`[recording] tab ${tab.id} is not recorded yet:`, failure.message);
   }
 }
 
-/** Arms one tab; one that closed meanwhile is simply left out. */
+/** Ends a recording that could not start on the active tab, and throws why. */
+async function abortStart(recorder, failure) {
+  await recorder.stopRecording();
+  throw failure;
+}
+
+/** Arms one tab and answers its failure, if any; one that closed meanwhile is simply left out. */
 async function armTab(recorder, view) {
   try {
     await recorder.channels.armRecordingView(view);
+    return null;
   } catch (err) {
-    if (!view.webContents.isDestroyed()) throw err;
+    return view.webContents.isDestroyed() ? null : err;
   }
 }
 

@@ -4,7 +4,7 @@
  */
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { admin, key, requireOwnBrowser } from '../../../../../src/modules/control/http/guards.ts';
+import { admin, holder, key, requireOwnBrowser } from '../../../../../src/modules/control/http/guards.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
 
 /** A response that records its status and JSON. */
@@ -18,6 +18,26 @@ const response = () => {
 describe('key', () => {
   it('is the project key the caller authenticated as', () => {
     assert.equal(key({ principal: { key: 'key-a' } }), 'key-a');
+  });
+});
+
+describe('holder', () => {
+  const member = (authToken) => ({ authToken, principal: { project: 'p1', memberUser: 'u1' } });
+
+  it('stays the same person when their console credential is renewed', () => {
+    assert.equal(holder(member('oya_first')), holder(member('oya_renewed')));
+  });
+
+  it('tells two members, and the same member of two projects, apart', () => {
+    const other = { authToken: 'oya_x', principal: { project: 'p1', memberUser: 'u2' } };
+    const elsewhere = { authToken: 'oya_x', principal: { project: 'p2', memberUser: 'u1' } };
+    assert.notEqual(holder(member('oya_x')), holder(other));
+    assert.notEqual(holder(member('oya_x')), holder(elsewhere));
+  });
+
+  it('is the credential itself when no member is behind it (API keys, share links)', () => {
+    assert.notEqual(holder({ authToken: 'oya_a', principal: {} }), holder({ authToken: 'oya_b', principal: {} }));
+    assert.equal(holder({ authToken: 'oya_a' }), holder({ authToken: 'oya_a', principal: {} }));
   });
 });
 

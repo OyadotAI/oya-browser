@@ -1,10 +1,22 @@
 /** Request helpers the control routes share: the caller's key, the administrator guard, browser ownership. */
-import { fault } from '../service.ts';
+import { fault, hash } from '../service.ts';
 import { registry } from '../../browsers/registry.ts';
 import { Status } from '../../../platform/http-status.ts';
 
 /** The project key the caller authenticated as. */
 export const key = (req) => req.principal.key;
+
+/**
+ * Who holds control when this caller takes it. A console credential is renewed
+ * every 45 minutes, and a holder tied to the token made the person a stranger to
+ * their own hold: renewals were refused as busy and their recording stopped. So a
+ * member is the holder, whatever credential they present; any other credential
+ * (an API key, a share link) is its own holder.
+ */
+export function holder(req) {
+  const { project, memberUser } = req.principal || {};
+  return hash(memberUser ? `member:${project}:${memberUser}` : req.authToken);
+}
 
 /** Route guard: administrators only. */
 export const admin = (req, res, next) =>

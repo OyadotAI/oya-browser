@@ -19,6 +19,9 @@ export const HELP = `oya, thousands of browsers, one API
   oya personas new [name]         --platform Win32|MacIntel|Linux --tz <zone> --locale <l> --max <n>
   oya personas edit <id>          --name <n> --max <n> --geo <cc>
   oya personas clone|rm <id>      A new device of the same kind · delete
+  oya cookies export <persona>    Logins to stdout or --out <file>; --format playwright for addCookies()
+  oya cookies import <persona> <file>   Logins from a JSON file
+  oya cookies copy <from> <to>    One persona's logins into another
   oya status [--id <id>]          Health, counters and what it has been doing
   oya open [--id <id>]            Open the live view in your browser
   oya config [key=value ...]      Show or change this key's settings

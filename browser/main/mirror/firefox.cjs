@@ -79,25 +79,45 @@ function firefoxFlags(c) {
   };
 }
 
-/** Reads the profile's cookies from a copy of its SQLite file, slimmed for the pool. */
+/**
+ * Reads the profile's cookies from a copy of its SQLite file, slimmed for the pool.
+ * The write-ahead log is copied with it: a running Firefox keeps the newest
+ * cookies (the logins of the last hours) there, and without it they were missing.
+ */
 function readFirefoxCookies(profileDir) {
   const copy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'oya-ff-')), 'cookies.sqlite');
-  copyIfPresent(path.join(profileDir, 'cookies.sqlite'), copy);
-  const opts = { encoding: 'utf8', maxBuffer: SQLITE_MAX_BUFFER };
+  for (const suffix of ['', '-wal']) copyIfPresent(path.join(profileDir, `cookies.sqlite${suffix}`), copy + suffix);
   try {
-    return JSON.parse(execFileSync('sqlite3', ['-json', copy, COOKIE_SQL], opts) || '[]').map(slimFirefox);
+    return queryCookies(copy).map(slimFirefox);
   } finally {
     fs.rmSync(path.dirname(copy), { recursive: true, force: true });
   }
 }
 
-/** Firefox as a mirror source: its one default profile, cookies already read. Null when unavailable. */
-function firefoxSource() {
-  const dir = firefoxDir();
-  const profileDir = dir && firefoxProfile(dir);
-  if (!profileDir || !fs.existsSync(path.join(profileDir, 'cookies.sqlite'))) return null;
-  const profiles = [{ profile: 'default', name: 'default', lastUsed: true, cookies: readFirefoxCookies(profileDir) }];
-  return { id: 'firefox', name: 'Firefox', kind: 'firefox', userDataDir: dir, profiles };
+/** Every row of a cookies.sqlite file, by the system's sqlite3. */
+function queryCookies(file) {
+  const opts = { encoding: 'utf8', maxBuffer: SQLITE_MAX_BUFFER };
+  return JSON.parse(execFileSync('sqlite3', ['-json', file, COOKIE_SQL], opts) || '[]');
 }
 
-module.exports = { firefoxSource, slimFirefox, firefoxProfile };
+/** The profile directory Firefox uses, when it has a cookie jar to read; else null. */
+function firefoxCookieProfile() {
+  const dir = firefoxDir();
+  const profileDir = dir && firefoxProfile(dir);
+  return profileDir && fs.existsSync(path.join(profileDir, 'cookies.sqlite')) ? profileDir : null;
+}
+
+/**
+ * Firefox as a mirror source: its one default profile. Null when unavailable.
+ * The cookies are read by `capture`, not here: finding out which browsers are
+ * installed used to read the whole jar.
+ */
+function firefoxSource() {
+  const profileDir = firefoxCookieProfile();
+  if (!profileDir) return null;
+  const profile = { profile: 'default', name: 'default', lastUsed: true };
+  const capture = () => [{ ...profile, cookies: readFirefoxCookies(profileDir) }];
+  return { id: 'firefox', name: 'Firefox', kind: 'firefox', userDataDir: firefoxDir(), profiles: [profile], capture };
+}
+
+module.exports = { firefoxSource, slimFirefox, firefoxProfile, readFirefoxCookies };

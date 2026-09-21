@@ -143,6 +143,8 @@ class Lifecycle {
   install() {
     const { app } = this.ctx.electron;
     app.on('window-all-closed', () => {
+      // A login made seconds ago is still queued: send it while the socket is up.
+      this.ctx.cookies.flushCookieChanges();
       this.ctx.socket.disconnect();
       app.quit();
     });
@@ -153,6 +155,7 @@ class Lifecycle {
   beforeQuit(event) {
     if (this.ctx.recorder.recording && !this.finishingQuit) return this.finishRecordingFirst(event);
     if (this.ctx.workspace?.busy()) interruptValidation(this.ctx.workspace);
+    this.ctx.cookies.flushCookieChanges();
     this.ctx.layout.flush();
   }
 

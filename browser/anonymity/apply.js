@@ -94,11 +94,11 @@ function onAttached(ctx, { sessionId, targetInfo, waitingForDebugger } = {}) {
 }
 
 /** What every step of one applier shares: the transport, the persona and its built sources. */
-function applierContext({ send, profile, userAgent, screen, onError }) {
+function applierContext({ send, profile, userAgent, screen, injection, onError }) {
   const report = (what) => (err) => onError(what, err);
   const ctx = { send, profile, userAgent, screen, report, covered: new Set() };
-  ctx.pageSource = buildInjectionScript(profile);
-  ctx.workerSource = buildWorkerScript(profile, { userAgent: userAgent?.userAgent || null });
+  ctx.pageSource = buildInjectionScript(profile, injection);
+  ctx.workerSource = buildWorkerScript(profile, { ...injection, userAgent: userAgent?.userAgent || null });
   return ctx;
 }
 
@@ -110,10 +110,11 @@ function applierContext({ send, profile, userAgent, screen, onError }) {
  * @param {object} o.profile - anonymity profile
  * @param {object|null} [o.userAgent] - params for Emulation/Network.setUserAgentOverride
  * @param {boolean} [o.screen] - emulate the screen (off where the host window owns it)
+ * @param {object} [o.injection] - options for the page injection (inject.js)
  * @param {Function} [o.onError] - (what, err), for failures that leave a surface unprotected
  */
-function createPersonaApplier({ send, on, profile, userAgent = null, screen = true, onError = () => {} }) {
-  const ctx = applierContext({ send, profile, userAgent, screen, onError });
+function createPersonaApplier({ send, on, profile, userAgent = null, screen = true, injection, onError = () => {} }) {
+  const ctx = applierContext({ send, profile, userAgent, screen, injection, onError });
   on('Target.attachedToTarget', (event) => onAttached(ctx, event));
   on('Target.detachedFromTarget', ({ sessionId } = {}) => ctx.covered.delete(sessionId));
   return {

@@ -21,7 +21,7 @@ const { createControlState } = require('./control-state.cjs');
 const { cdp } = require('./main/cdp.cjs');
 const { createWorld } = require('./main/world.cjs');
 const { Observer } = require('./main/observe/observer.cjs');
-const { createCookieSync } = require('./main/cookie-sync.cjs');
+const { createCookieSync, cookieSyncMark } = require('./main/cookie-sync.cjs');
 const { createUpdater } = require('./main/updater.cjs');
 const { createPageActions } = require('./main/page-actions.cjs');
 const { createStream } = require('./main/stream.cjs');
@@ -123,6 +123,7 @@ ctx.control = createControlState({
   changed: (state) => ctx.shield.controlChanged(state),
 });
 ctx.cookies = createCookieSync({
+  mark: cookieSyncMark(ctx),
   session: () => ctx.persona.session(),
   send: (payload) => ctx.socket.send(payload),
   open: () => ctx.socket.isOpen(),

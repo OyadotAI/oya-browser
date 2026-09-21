@@ -107,8 +107,13 @@ export async function authenticate(service, token) {
   const [[project], [membership], [session]] = await service.store.load(principalQueries(c));
   assertEntitled(c, project, membership);
   assertCurrent(c, session);
-  const key = service.projectKey(project.body);
-  return { key, role: c.role, project: c.project, credentialId: c.id, sessionId: c.sessionId };
+  return principalOf(service.projectKey(project.body), c);
+}
+
+/** The principal a credential resolves to; `memberUser` is who holds control when they take it (http/guards.ts). */
+function principalOf(key, c) {
+  const { role, project, id: credentialId, sessionId, memberUser } = c;
+  return { key, role, project, credentialId, sessionId, memberUser };
 }
 
 /** Revoke one of the project's credentials. */

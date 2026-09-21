@@ -27,7 +27,8 @@ export default function WebhookSection({
     <>
       <SectionHeading eyebrow="Webhooks" title="Events, pushed to you.">
         One HTTPS endpoint receives the events you choose, signed so you can verify they came from Oya. Failed
-        deliveries retry with backoff for a day.
+        deliveries retry with backoff for a day. Need more than one endpoint? Add them under Control, Operations: this
+        one is listed there too.
       </SectionHeading>
       {error && <ErrorNote>{error}</ErrorNote>}
       <WebhookFields webhook={webhook} config={config} Row={Row} />

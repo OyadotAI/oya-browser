@@ -88,8 +88,10 @@ export function SignInStep({ sites }: { /** Sites with a saved session. */ sites
         {sites.length > 0 && <Check className="ml-auto h-4 w-4 text-accent" />}
       </StepTitle>
       <p className="text-sm text-text-secondary">
-        Log in normally in Oya, including any CAPTCHA or MFA. Click{' '}
-        <strong className="font-medium text-text">Save profile</strong> in the desktop toolbar when you’re done.
+        Log in normally in Oya, including any CAPTCHA or MFA. Your sessions sync on their own. Already signed in
+        elsewhere? Click the connection pill at the top right of the desktop window and use{' '}
+        <strong className="font-medium text-text">Import logins</strong> to bring them over from Chrome, Firefox, Arc,
+        Brave or Edge.
       </p>
       <div className="mt-3 rounded-md border border-border bg-bg-sunken px-4 py-3 text-sm" role="status">
         {sites.length ? (

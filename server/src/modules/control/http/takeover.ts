@@ -1,6 +1,7 @@
 /** POST /control/sessions/:id/control: moving control of a session between the agent and a person. */
 import { setTimeout as sleep } from 'node:timers/promises';
-import { control, hash, fault } from '../service.ts';
+import { control, fault } from '../service.ts';
+import { holder as holderOf } from './guards.ts';
 import { registry } from '../../browsers/registry.ts';
 import { ACQUIRE_WAIT_MS, TRANSFER_RETRY_MS } from './constants.ts';
 
@@ -9,7 +10,7 @@ const RETRY = Symbol('retry');
 
 /** Applies the requested control action, retrying while commands are in flight; returns the new control state. */
 export async function transferControl(key, req) {
-  const holder = hash(req.authToken);
+  const holder = holderOf(req);
   // Acquisition waits up to ten seconds for in-flight commands to settle rather than failing at once.
   const deadline = Date.now() + (req.body?.action === 'acquire' ? ACQUIRE_WAIT_MS : 0);
   for (;;) {
@@ -19,9 +20,13 @@ export async function transferControl(key, req) {
   }
 }
 
-/** One try; refuses while the browser still has commands in flight. */
+/**
+ * One try; refuses while the browser still has commands in flight. A renewal
+ * moves control nowhere, and the commands in flight are the holder's own (their
+ * clicks, the recorder's poll): refusing it let a busy recording's hold lapse.
+ */
 async function attempt(key, req, holder) {
-  if (registry.get(req.params.id)?.pending)
+  if (req.body?.action !== 'renew' && registry.get(req.params.id)?.pending)
     throw fault('commands_pending', 'Wait for in-flight commands to settle before transferring control');
   return control().takeover(key, req.params.id, req.body?.action, holder, { force: req.body?.force === true });
 }

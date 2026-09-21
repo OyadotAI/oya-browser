@@ -10,6 +10,7 @@ const { RecordingChannels } = require('./channels.cjs');
 const { RecordingTabNames } = require('./tab-names.cjs');
 const { WEB_URL } = require('../tabs/constants.cjs');
 const { startRecording } = require('./start.cjs');
+const { drivenElsewhere } = require('../../control-state.cjs');
 const { MAX_RECORDED_STEPS, FILE_PICKER_CLICK_MS } = require('./constants.cjs');
 
 /** A recorded step normalized, or undefined when it is malformed: logged, never thrown, since a throw would stop the tab's later steps. */
@@ -255,10 +256,10 @@ class Recorder {
     this.drainTimer = null;
   }
 
-  /** Control passed to an agent: a recording the desktop started ends here. */
+  /** Someone else drives the page now (control-state.cjs): a recording the desktop started ends here. */
   controlLost(state) {
     if (!this.recording || this.recordingOrigin !== 'desktop') return;
-    if (state.interactive || this.recordingCutoff !== Infinity) return;
+    if (!drivenElsewhere(state) || this.recordingCutoff !== Infinity) return;
     this.recordingCutoff = Date.now();
     this.queueRecording(() => this.stopRecording()).catch(() => {});
   }
@@ -268,7 +269,8 @@ class Recorder {
     if (mode === 'start') await this.startRecording(false, 'remote');
     else if (mode === 'stop') await this.stopRecording();
     else await this.drainAll();
-    return { recording: this.recording, steps: [...this.recordedSteps], secrets: [...this.recordedSecrets] };
+    const { recording, recordingOrigin: origin } = this;
+    return { recording, origin, steps: [...this.recordedSteps], secrets: [...this.recordedSecrets] };
   }
 }
 

@@ -20,6 +20,8 @@ interface Props {
   browsers: BrowserRow[];
   /** Every profile. */
   personas: Persona[];
+  /** Whether they have loaded: an empty list means "none" only once they have. */
+  status: 'loading' | 'ready' | 'failed';
   /** Reloads the profiles. */
   refresh: () => void;
   /** The profile whose drawer is open. */
@@ -65,6 +67,28 @@ function Empty({ onCreate }: { /** Opens the new-profile form. */ onCreate: () =
   );
 }
 
+/** Shown in place of the rows while the profiles load, or when they could not be loaded. */
+function NotLoaded({
+  failed,
+  onRetry,
+}: {
+  /** The load failed. */ failed: boolean;
+  /** Loads again. */ onRetry: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-34 text-center" role="status">
+      <p className="text-[15px] font-medium text-text">
+        {failed ? 'Could not load your profiles' : 'Loading profiles…'}
+      </p>
+      {failed && (
+        <button className="btn-ghost" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** The heading with the profile count, and the Proxies and New profile buttons. */
 function Toolbar(props: {
   /** Profiles this key owns. */
@@ -103,6 +127,7 @@ export default function PersonasTab({
   apiKey,
   browsers,
   personas,
+  status,
   refresh,
   openId,
   onOpen,
@@ -125,7 +150,8 @@ export default function PersonasTab({
             ))}
           </tbody>
         </table>
-        {personas.length === 0 && <Empty onCreate={() => setCreating(true)} />}
+        {personas.length === 0 && status === 'ready' && <Empty onCreate={() => setCreating(true)} />}
+        {personas.length === 0 && status !== 'ready' && <NotLoaded failed={status === 'failed'} onRetry={refresh} />}
       </div>
       <ProxiesDialog open={proxies} onClose={() => setProxies(false)} apiKey={apiKey} onChanged={refresh} />
       <PersonaForm open={creating} onClose={() => setCreating(false)} apiKey={apiKey} onCreated={() => refresh()} />

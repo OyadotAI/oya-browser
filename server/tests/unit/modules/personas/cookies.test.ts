@@ -4,7 +4,7 @@
  * key-per-jar file. The module loads its file on import, so this file gets
  * its own data directory with a legacy file in it before importing.
  */
-import { describe, it, after } from 'node:test';
+import { describe, it, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -54,6 +54,17 @@ describe('cookie jar', () => {
     cookies.mergeDump('p-expire', [cookie('a', 'a.com')]);
     cookies.mergeDump('p-expire', [cookie('a', 'a.com', { expirationDate: 1 })]);
     assert.deepEqual(cookies.getAll('p-expire'), []);
+  });
+
+  it('stamps a cookie when it changes, and leaves the stamp alone when a dump repeats it', () => {
+    mock.timers.enable({ apis: ['Date'], now: 5000 });
+    cookies.mergeDump('p-stamp', [cookie('sid', 'a.com'), cookie('pref', 'a.com')]);
+    mock.timers.setTime(9000);
+    cookies.mergeDump('p-stamp', [cookie('sid', 'a.com', { value: 'fresh login' }), cookie('pref', 'a.com')]);
+    cookies.applyChange('p-stamp', { cookie: cookie('cart', 'a.com') });
+    const stamps = Object.fromEntries(cookies.getAll('p-stamp').map((c) => [c.name, c.t]));
+    mock.timers.reset();
+    assert.deepEqual(stamps, { sid: 9000, pref: 5000, cart: 9000 });
   });
 
   it('ignores a dump without a persona or a list', () => {

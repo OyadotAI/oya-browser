@@ -42,6 +42,8 @@ const RendererConstants = Object.freeze({
   ACTION_ELEMENTS_SHOWN: 60,
   /** The most steps a draft may have (shown as "n / 500"). */
   MAX_STEPS: 500,
+  /** Steps from which a recording warns that the limit is near. */
+  STEPS_WARNING: 450,
   /** The run timeline shows this many latest events. */
   RUN_EVENTS_SHOWN: 100,
   /** Zero-padded widths: step numbers, clock fields, milliseconds. */

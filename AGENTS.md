@@ -9,7 +9,7 @@ for the map, then the ARCHITECTURE.md of the part you are changing.
 |:---|:---|:---|:---|
 | `server/` | `npm run lint` · `npm run format:check` | `npm run typecheck` | `npm test` (unit + integration) · `npm run test:unit` · `npm run test:coverage` |
 | `ui/` | `npm run lint` · `npm run format:check` | `npm run typecheck` | `npm test` (Vitest) · `npm run test:ui` (Playwright, needs a running stack) |
-| `browser/` | `npm run lint` · `npm run format:check` | none (plain JavaScript) | `npm test` (unit + regressions) · `npm run test:shell` · `npm run test:control` (real Electron) |
+| `browser/` | `npm run lint` · `npm run format:check` | none (plain JavaScript) | `npm test` (unit + regressions) · `npm run test:shell` · `npm run test:control` · `npm run test:identity` · `npm run test:sync` (real Electron) |
 | `packages/*` | `npm run lint` (root) | `npm run build:sdk` | `npm run test:packages` (root) |
 
 Run the commands from the part's own folder. The root `npm test` runs the

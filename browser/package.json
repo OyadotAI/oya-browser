@@ -16,6 +16,8 @@
     "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs && npm run test:analyzer",
     "test:coverage": "node --test --experimental-test-coverage 'tests/unit/**/*.test.{js,cjs,mjs}'",
     "test:recording": "electron tests/integration/recording-electron.cjs",
+    "test:identity": "electron tests/integration/identity-electron.cjs",
+    "test:sync": "node tests/integration/sync-e2e.mjs",
     "test:shell": "node tests/integration/shell.mjs",
     "test:control": "node tests/integration/control.mjs",
     "test:workflow": "electron tests/integration/workflow-electron.cjs",
@@ -31,7 +33,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "electron": "^35.1.2",
+    "electron": "^44.4.3",
     "electron-builder": "^26.0.12",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",

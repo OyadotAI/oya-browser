@@ -24,13 +24,42 @@ export interface ControlData {
 /** Nothing loaded yet. */
 export const EMPTY_CONTROL: ControlData = { fleet: null, sessions: [], audit: [], recordings: [], choices: [] };
 
-/** Loads every Control view's data in parallel. */
-export async function loadControl(apiKey: string): Promise<ControlData> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const get = (path: string) => api<any>(path, { key: apiKey });
-  const [f, s, a, rec, providerOptions] = await Promise.all(CONTROL_PATHS.map(get));
-  const lists = { sessions: s.sessions || [], audit: a.events || [], recordings: rec.recordings || [] };
-  return { fleet: f, choices: providerOptions.providers || [], ...lists };
+/** A feed's answer: the fleet summary, or an object holding one list. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Answer = any;
+
+/** One poll's feeds, in CONTROL_PATHS order: what each is called when it fails, and what its answer becomes. */
+const FEEDS: Array<[string, (answer: Answer) => Partial<ControlData>]> = [
+  ['the fleet', (answer) => ({ fleet: answer })],
+  ['sessions', (answer) => ({ sessions: answer.sessions || [] })],
+  ['the audit trail', (answer) => ({ audit: answer.events || [] })],
+  ['recordings', (answer) => ({ recordings: answer.recordings || [] })],
+  ['providers', (answer) => ({ choices: answer.providers || [] })],
+];
+
+/** What one poll loaded. A feed that failed is absent, so the view keeps what it last showed. */
+export interface ControlLoad extends Partial<ControlData> {
+  /** The feeds that failed, in words, with the first failure's reason; '' when every feed answered. */
+  error: string;
+}
+
+/** "Could not load recordings and providers: reason", from the feeds that failed. */
+function partialError(failed: string[], reason: unknown): string {
+  return failed.length ? `Could not load ${failed.join(' and ')}: ${errorMessage(reason)}` : '';
+}
+
+/**
+ * Loads every Control view's data in parallel. One feed failing (recording
+ * storage offline, say) used to blank the whole tab; now the rest still shows,
+ * and the failure is named. With nothing loaded at all, it rejects as before.
+ */
+export async function loadControl(apiKey: string): Promise<ControlLoad> {
+  const settled = await Promise.allSettled(CONTROL_PATHS.map((path) => api<Answer>(path, { key: apiKey })));
+  const rejected = settled.filter((r) => r.status === 'rejected');
+  if (rejected.length === settled.length) throw rejected[0].reason;
+  const loaded = settled.map((r, i) => (r.status === 'fulfilled' ? FEEDS[i][1](r.value) : {}));
+  const failed = FEEDS.filter((_, i) => settled[i].status === 'rejected').map(([name]) => name);
+  return { ...Object.assign({}, ...loaded), error: partialError(failed, rejected[0]?.reason) };
 }
 
 /** POSTs to the gateway API; an empty body is sent as none. */

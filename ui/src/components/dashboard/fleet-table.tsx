@@ -11,6 +11,7 @@ import type { FleetFilter } from './fleet-strip';
 import Toolbar from './fleet/toolbar';
 import FleetTableView from './fleet/table-view';
 import { rowMenuItems } from './fleet/row-menu';
+import { useToast } from './toast';
 import { useRowMenu } from './fleet/use-row-menu';
 import { useFleetTable } from './fleet/use-fleet-table';
 
@@ -55,6 +56,7 @@ export interface FleetTableProps {
 export default function FleetTable(props: FleetTableProps) {
   const { rows, filter, onFilter, filterRef, checked, onStop, onStart, onCode, apiKey } = props;
   const { menu, openAt, close } = useRowMenu();
+  const notify = useToast();
   const view = useFleetTable(props);
   return (
     <div className="workspace-list flex h-full min-h-0 min-w-0 flex-col">
@@ -64,7 +66,7 @@ export default function FleetTable(props: FleetTableProps) {
       />
       <ContextMenu
         at={menu?.at ?? null}
-        items={menu ? rowMenuItems(menu.row, props) : []}
+        items={menu ? rowMenuItems(menu.row, { ...props, notify }) : []}
         onClose={close}
         label={menu ? `Actions for ${menu.row.name}` : 'Actions'}
       />

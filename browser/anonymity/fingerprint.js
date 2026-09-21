@@ -162,10 +162,27 @@ function generateProfile(options = {}) {
  * they keep doing so (profile.webglChrome unset), because a device's reported
  * GPU must not change under its cookie jar.
  */
-function buildWebGLBody() {
+/** What VENDOR and RENDERER answer in Chrome; never what the UNMASKED_* pair answers. */
+const MASKED_WEBGL = /^WebKit( WebGL)?$/;
+
+/**
+ * The strings a profile answers UNMASKED_VENDOR_WEBGL and UNMASKED_RENDERER_WEBGL
+ * with. A webglChrome profile keeps Chrome's ANGLE strings in vendor/renderer; an
+ * older one keeps bare driver strings in the unmasked pair. A device mirrored
+ * from a real browser once stored the masked "WebKit WebGL" in vendor/renderer:
+ * pages then saw that as the GPU, which no Chrome reports, so it falls back too.
+ */
+function unmaskedWebgl(profile) {
+  const gl = profile?.webgl || {};
+  const chrome = profile?.webglChrome && gl.renderer && !MASKED_WEBGL.test(gl.renderer);
+  return chrome ? { vendor: gl.vendor, renderer: gl.renderer } : { vendor: gl.unmaskedVendor, renderer: gl.unmaskedRenderer };
+}
+
+function buildWebGLBody(profile) {
+  const gl = unmaskedWebgl(profile);
   return `
-  const _glVendor = __fp.webglChrome ? __fp.webgl.vendor : __fp.webgl.unmaskedVendor;
-  const _glRenderer = __fp.webglChrome ? __fp.webgl.renderer : __fp.webgl.unmaskedRenderer;
+  const _glVendor = ${JSON.stringify(gl.vendor)};
+  const _glRenderer = ${JSON.stringify(gl.renderer)};
   const _patchWebGL = (proto) => {
     _patch(proto, 'getParameter', (orig) => function getParameter(pname) {
       if (pname === 0x9245) return _glVendor;     // UNMASKED_VENDOR_WEBGL
@@ -206,8 +223,12 @@ function buildFingerprintBody(profile) {
   // agrees with them. The avail* pair is always ours: an emulated screen has
   // no taskbar, which is its own tell. devicePixelRatio is left native, a
   // spoofed one disagrees with matchMedia('(resolution)').
-  for (const key of ['width', 'height', 'availWidth', 'availHeight', 'colorDepth', 'pixelDepth']) {
-    _ensure(Screen.prototype, screen, key, __fp.screen[key]);
+  // A profile with no screen (the desktop app) presents the machine's own: spoofed in
+  // JavaScript alone it disagrees with the real window and matchMedia.
+  if (__fp.screen) {
+    for (const key of ['width', 'height', 'availWidth', 'availHeight', 'colorDepth', 'pixelDepth']) {
+      _ensure(Screen.prototype, screen, key, __fp.screen[key]);
+    }
   }
 
   // ── Canvas fingerprint noise ──
@@ -270,7 +291,7 @@ function buildFingerprintBody(profile) {
     return _noiseImageData(_apply(orig, this, arguments), sx | 0, sy | 0);
   });
 
-  ${buildWebGLBody()}
+  ${buildWebGLBody(profile)}
 
   // Audio and client-rect noise are gone: CreepJS detects both directly
   // ("sample noise", rect mismatches), and a detected lie costs more than the
@@ -381,7 +402,7 @@ function buildWorkerBody(profile, { userAgent = null } = {}) {
       _defineGetter(_wn, 'language', __fp.navigator.languages[0]);
     }
   }
-  ${buildWebGLBody()}
+  ${buildWebGLBody(profile)}
 `;
 }
 
@@ -391,4 +412,4 @@ function buildFingerprintInjectScript(profile) {
   return `(function() {\n'use strict';\n${buildMaskPreamble()}\n${buildFingerprintBody(profile)}\n})();`;
 }
 
-module.exports = { generateProfile, buildFingerprintInjectScript, buildFingerprintBody, buildWorkerBody };
+module.exports = { generateProfile, buildFingerprintInjectScript, buildFingerprintBody, buildWorkerBody, unmaskedWebgl };

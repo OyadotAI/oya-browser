@@ -54,3 +54,5 @@ export const RUN_KEEP_MS = 3_600_000;
 export const RECORD_POLL_MS = 5000;
 /** A recording stops on its own after this long, and a stopped one is kept this long (30 minutes). */
 export const RECORD_MAX_MS = 1_800_000;
+/** Milliseconds in a minute. */
+export const MS_PER_MINUTE = 60_000;

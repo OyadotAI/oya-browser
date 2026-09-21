@@ -1,7 +1,7 @@
 /**
  * Opens a browser's live stream in a new tab from the fleet table.
  */
-import { api } from '@/lib/api-client';
+import { api, errorMessage } from '@/lib/api-client';
 
 /** What POST /control/sessions/:id/share answers. */
 export interface ShareToken {
@@ -21,13 +21,19 @@ async function streamPath(apiKey: string, id: string): Promise<string> {
  * to noopener), so carry a scoped token in the link. Open synchronously to stay
  * within the click gesture, then point the tab once the token is minted.
  */
-export async function openStream(apiKey: string, id: string) {
+export async function openStream(apiKey: string, id: string, onError: (message: string) => void = () => undefined) {
   const tab = window.open('', '_blank');
   try {
     const url = await streamPath(apiKey, id);
     if (tab) tab.location.href = url;
     else window.open(url, '_blank');
-  } catch {
-    tab?.close();
+  } catch (err) {
+    giveUp(tab, err, onError);
   }
+}
+
+/** Closes the blank tab and says why: it used to close without a word, which read as "the click did nothing". */
+function giveUp(tab: Window | null, err: unknown, onError: (message: string) => void) {
+  tab?.close();
+  onError(`Could not open the live stream: ${errorMessage(err)}`);
 }

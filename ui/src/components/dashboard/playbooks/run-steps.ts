@@ -6,7 +6,7 @@ import { errorMessage } from '@/lib/api-client';
 import type { useToast } from '../toast';
 import type { BrowserRow } from '../types';
 import { getRun, respondToRun, startBrowser, startRun, type RunRequest } from './api';
-import { CONNECT_TIMEOUT_MS, RUN_POLL_MS } from './constants';
+import { CONNECT_TIMEOUT_MS, POLL_FAILURES_BEFORE_NOTICE, RUN_POLL_MS } from './constants';
 import { isEnded } from './format';
 import type { RunInfo } from './types';
 
@@ -21,20 +21,44 @@ export interface PendingBrowser {
   until: number;
 }
 
-/** One poll of a run; a failed poll is ignored and the next one tries again. */
-async function pollRun(apiKey: string, runId: string, setRun: (r: RunInfo) => void, onFinished: () => void) {
+/** What following a run reports to. */
+interface Follow {
+  /** Shows the run's latest state. */
+  setRun: (r: RunInfo) => void;
+  /** The run ended. */
+  onFinished: () => void;
+  /** Contact with the run is lost: said once per outage, not once per poll. */
+  onTrouble: (message: string) => void;
+  /** Polls failed in a row. */
+  failures: number;
+}
+
+/** One failed poll; the third in a row is said out loud, because a run that stops updating looks stuck. */
+function pollFailed(follow: Follow, err: unknown) {
+  follow.failures++;
+  if (follow.failures === POLL_FAILURES_BEFORE_NOTICE)
+    follow.onTrouble(`Lost contact with the run (${errorMessage(err)}). Still trying.`);
+}
+
+/** One poll of a run; a failed poll is counted and the next one tries again. */
+async function pollRun(apiKey: string, runId: string, follow: Follow) {
   try {
     const next = await getRun(apiKey, runId);
-    setRun(next);
-    if (isEnded(next.status)) onFinished();
-  } catch {
-    /* keep following */
+    follow.failures = 0;
+    follow.setRun(next);
+    if (isEnded(next.status)) follow.onFinished();
+  } catch (err) {
+    pollFailed(follow, err);
   }
 }
 
-/** Polls a run until it ends; returns the stop. */
-export function followRun(apiKey: string, runId: string, setRun: (r: RunInfo) => void, onFinished: () => void) {
-  const timer = setInterval(() => void pollRun(apiKey, runId, setRun, onFinished), RUN_POLL_MS);
+/** What a caller following a run hands over; it may have nowhere to report lost contact. */
+export type RunSinks = Pick<Follow, 'setRun' | 'onFinished'> & Partial<Pick<Follow, 'onTrouble'>>;
+
+/** Polls a run until it ends; returns the stop. `sinks.onTrouble` hears when contact is lost. */
+export function followRun(apiKey: string, runId: string, sinks: RunSinks) {
+  const follow: Follow = { onTrouble: () => undefined, ...sinks, failures: 0 };
+  const timer = setInterval(() => void pollRun(apiKey, runId, follow), RUN_POLL_MS);
   return () => clearInterval(timer);
 }
 

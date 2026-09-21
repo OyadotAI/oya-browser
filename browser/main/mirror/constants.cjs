@@ -10,6 +10,8 @@ const LAUNCH_READY_TIMEOUT_MS = 20_000;
 const LAUNCH_POLL_MS = 200;
 /** Milliseconds to wait for one CDP command's reply before giving up. */
 const CDP_COMMAND_TIMEOUT_MS = 15_000;
+/** Milliseconds to wait for the server to answer an import before telling the person it did not. */
+const MIRROR_ANSWER_TIMEOUT_MS = 30_000;
 /** Origins whose localStorage the capture reads, at most; bounds a huge profile. */
 const MAX_CAPTURE_ORIGINS = 60;
 /** HTTP status the capture fulfils a page request with, so its scripts never run. */
@@ -30,8 +32,8 @@ const PROFILE_STORES = ['Local Storage', 'IndexedDB', 'Service Worker', 'WebStor
 
 /** The files the launched browser needs to open the profile, copied before launch. */
 const LAUNCH_INPUTS = ['Local State'];
-/** Per-profile files the launched browser needs; joined under the profile dir. */
-const PROFILE_INPUTS = ['Cookies', 'Network', 'Preferences', 'Login Data'];
+/** Per-profile files the launched browser needs; joined under the profile dir. Never `Login Data`: saved passwords play no part in reading cookies, so they are not copied anywhere. */
+const PROFILE_INPUTS = ['Cookies', 'Network', 'Preferences'];
 
 module.exports = {
   MS_PER_SECOND,
@@ -39,6 +41,7 @@ module.exports = {
   LAUNCH_READY_TIMEOUT_MS,
   LAUNCH_POLL_MS,
   CDP_COMMAND_TIMEOUT_MS,
+  MIRROR_ANSWER_TIMEOUT_MS,
   MAX_CAPTURE_ORIGINS,
   FULFILL_STATUS,
   HEADLESS_TOKEN,

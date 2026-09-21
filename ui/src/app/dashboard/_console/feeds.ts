@@ -85,14 +85,34 @@ interface PersonaList {
   personas: Persona[];
 }
 
+/** Whether the profiles have loaded: an empty list means "none" only once they have. */
+export type LoadStatus = 'loading' | 'ready' | 'failed';
+
+/** Where the personas feed writes: the list, and how the load went. */
+export interface PersonaSink {
+  /** The personas. */
+  set: Set<Persona[]>;
+  /** How the load went, so the tab can tell "still loading" and "could not load" from "you have none". */
+  setStatus: Set<LoadStatus>;
+}
+
+/** A failed refresh of a list that did load is not news; a first load that fails is. */
+const afterFailure = (was: LoadStatus): LoadStatus => (was === 'ready' ? 'ready' : 'failed');
+
+/** Shows a loaded list: from here on, empty means the key has none. */
+function showPersonas(sink: PersonaSink, personas: Persona[]) {
+  sink.set(personas);
+  sink.setStatus('ready');
+}
+
 /** Loads the personas; a failure keeps the last list. */
-export async function loadPersonas(apiKey: string, live: Liveness, set: Set<Persona[]>) {
+export async function loadPersonas(apiKey: string, live: Liveness, sink: PersonaSink) {
   if (!polling(apiKey, live)) return;
   try {
     const { personas } = await api<PersonaList>('/personas', { key: apiKey });
-    if (live.keyRef.current === apiKey) set(personas || []);
+    if (live.keyRef.current === apiKey) showPersonas(sink, personas || []);
   } catch {
-    /* keep last */
+    sink.setStatus(afterFailure);
   }
 }
 

@@ -25,14 +25,21 @@ function deviceSummary(profile) {
   };
 }
 
-/** Where a profile claims to be, and its noise seeds. */
+/** A noise seed as shown; a device mirrored from the real machine has none, and renders as it really does. */
+const noiseShown = (seed) => (typeof seed === 'number' ? seed.toFixed(NOISE_SEED_DIGITS) : 'real');
+
+/**
+ * Where a profile claims to be, and its noise seeds. A mirrored device carries no
+ * font list and no noise: reading them unguarded threw inside auth_ok, which closed
+ * the connection for good the moment an import succeeded.
+ */
 function localeSummary(profile) {
   return {
     timezone: profile.timezone,
     locale: profile.locale,
-    fonts: profile.fonts.available.length,
-    canvasNoise: profile.canvas.noiseSeed.toFixed(NOISE_SEED_DIGITS),
-    audioNoise: profile.audio.noiseSeed.toFixed(NOISE_SEED_DIGITS),
+    fonts: profile.fonts?.available?.length || 0,
+    canvasNoise: noiseShown(profile.canvas?.noiseSeed),
+    audioNoise: noiseShown(profile.audio?.noiseSeed),
   };
 }
 
@@ -94,14 +101,14 @@ class Persona {
    * This guarantees every browser with the same API key gets the exact same
    * fingerprint, the server is the single source of truth.
    */
-  async applyServerFingerprint(profile, cookies = []) {
+  async applyServerFingerprint(profile, cookies = [], now = undefined) {
     if (!profile?.id) return;
     // WebContents partitions are immutable. Rebuild views when the profile
     // changes so the tabs, listener and cookie exporter all use the same jar.
     const switched = this.active?.id !== profile.id;
     const reopen = switched ? this.leaveJar() : [];
     this.remember(profile);
-    await this.enterJar(cookies, reopen);
+    await this.enterJar({ cookies, now }, reopen);
     // Re-inject into all open tabs so they pick up the new fingerprint
     if (!switched) this.reprotectTabs();
     // Notify renderer so the fingerprint debug bar updates
@@ -136,10 +143,10 @@ class Persona {
   }
 
   /** Re-setup session with the new fingerprint (user-agent, proxy, headers), its cookies, and its tabs. */
-  async enterJar(cookies, reopen) {
+  async enterJar({ cookies, now }, reopen) {
     await this.setupBrowserSession();
     this.ctx.cookies.startCookieChangeListener();
-    await this.ctx.cookies.applyCookieSync(cookies);
+    await this.ctx.cookies.applyCookieSync(cookies, { now });
     for (const url of reopen) this.ctx.tabs.createTab(url);
   }
 
