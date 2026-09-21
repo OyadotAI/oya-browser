@@ -1,0 +1,216 @@
+name: Deploy Dev (dev-browser.getoya.ai)
+
+on:
+  push:
+    branches: [main]
+
+# Least privilege by default; jobs that need more say so themselves.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_SERVER: ghcr.io/oyadotai/oya-browser-server
+  IMAGE_BROWSER: ghcr.io/oyadotai/oya-browser
+  TAG: dev
+  NAMESPACE: oya-browser-dev
+
+jobs:
+  # The gate. Nothing is built or deployed unless the suite is green.
+  ci:
+    uses: ./.github/workflows/ci.yaml
+
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      browser: ${{ steps.filter.outputs.browser }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dorny/paths-filter@v3
+      id: filter
+      with:
+        filters: |
+          server:
+            - 'server/**'
+            - 'ui/**'
+            - 'browser/scripts/**'
+            - 'browser/anonymity/**'
+            - 'browser/login-state.js'
+            - 'Dockerfile'
+          browser:
+            - 'browser/**'
+          k8s:
+            - 'k8s/**'
+
+  build:
+    name: Build & push image
+    needs: [ci, changes]
+    if: needs.changes.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download browser binaries from latest release
+      run: |
+        mkdir -p server/downloads
+        LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+        echo "Downloading binaries from release $LATEST_TAG"
+        gh release download "$LATEST_TAG" --pattern '*.dmg' --dir server/downloads --clobber || true
+        gh release download "$LATEST_TAG" --pattern '*.AppImage' --dir server/downloads --clobber || true
+        ls -lh server/downloads/ || true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: ${{ env.IMAGE_SERVER }}:${{ env.TAG }}
+        platforms: linux/amd64
+        cache-from: type=gha,scope=server-dev
+        cache-to: type=gha,mode=max,scope=server-dev
+
+  build-browser:
+    name: Build & push browser image
+    needs: [ci, changes]
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/build-push-action@v6
+      with:
+        context: browser
+        push: true
+        tags: ${{ env.IMAGE_BROWSER }}:${{ env.TAG }}
+        platforms: linux/amd64
+        cache-from: type=gha,scope=browser-dev
+        cache-to: type=gha,mode=max,scope=browser-dev
+
+  deploy:
+    name: Deploy to GKE (dev)
+    # ci is named here as well as in the build jobs: a failed gate only *skips*
+    # those, and `!failure()` does not count a skipped dependency, so without it
+    # a red suite would still deploy.
+    needs: [ci, changes, build, build-browser]
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GKE_SA_KEY }}
+
+    - uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ secrets.GKE_CLUSTER }}
+        location: ${{ secrets.GKE_ZONE }}
+        project_id: ${{ secrets.GKE_PROJECT }}
+
+    - name: Create namespace
+      run: kubectl create namespace ${{ env.NAMESPACE }} 2>/dev/null || true
+
+    - name: Apply secrets
+      env:
+        # Through env, not ${{ }} in the script: expression interpolation pastes
+        # the value into the command line before the shell parses it, so a
+        # secret containing a quote or $(...) escapes and executes on the runner.
+        API_KEYS: ${{ secrets.API_KEYS }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        OYA_PROFILE_SECRET: ${{ secrets.OYA_PROFILE_SECRET }}
+        DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        DAYTONA_SNAPSHOT: ${{ secrets.DAYTONA_SNAPSHOT }}
+        DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+        DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
+        # Slack alerts. Optional: with no app configured the console still offers
+        # the bring-your-own-bot-token path, so a missing value must not fail the deploy.
+        SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+        SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+        SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+      run: |
+        : "${DAYTONA_API_KEY:?Missing DAYTONA_API_KEY deployment secret}"
+        # Without it the server generates a new key per restart and every stored project becomes unreadable.
+        : "${OYA_PROFILE_SECRET:?Missing OYA_PROFILE_SECRET deployment secret}"
+        : "${DAYTONA_SNAPSHOT:?Missing DAYTONA_SNAPSHOT deployment secret}"
+        kubectl create secret generic app-secrets \
+          --from-literal=API_KEYS="${API_KEYS}" \
+          --from-literal=SUPABASE_URL="${SUPABASE_URL}" \
+          --from-literal=SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
+          --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \
+          --from-literal=DAYTONA_API_KEY="${DAYTONA_API_KEY}" \
+          --from-literal=DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT}" \
+          --from-literal=DAYTONA_API_URL="${DAYTONA_API_URL}" \
+          --from-literal=DAYTONA_TARGET="${DAYTONA_TARGET}" \
+          --from-literal=SLACK_CLIENT_ID="${SLACK_CLIENT_ID}" \
+          --from-literal=SLACK_CLIENT_SECRET="${SLACK_CLIENT_SECRET}" \
+          --from-literal=SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET}" \
+          -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Create GHCR pull secret
+      env:
+        GHCR_PAT: ${{ secrets.GHCR_PAT }}
+      run: |
+        kubectl delete secret ghcr-oyadotai -n ${{ env.NAMESPACE }} 2>/dev/null || true
+        kubectl create secret docker-registry ghcr-oyadotai \
+          --docker-server=ghcr.io \
+          --docker-username='${{ github.repository_owner }}' \
+          --docker-password="${GHCR_PAT}" \
+          -n ${{ env.NAMESPACE }}
+
+    - name: Deploy with Kustomize
+      run: kubectl apply -k k8s/overlays/dev
+
+    - name: Rolling restart server
+      if: needs.changes.outputs.server == 'true' || needs.changes.outputs.k8s == 'true'
+      run: |
+        kubectl patch deployment server -n ${{ env.NAMESPACE }} \
+          -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"rollout\":\"$(date +%s)\"}}}}}" || true
+
+    - name: Rolling restart browser
+      if: needs.changes.outputs.browser == 'true' || needs.changes.outputs.k8s == 'true'
+      run: |
+        kubectl patch deployment browser -n ${{ env.NAMESPACE }} \
+          -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"rollout\":\"$(date +%s)\"}}}}}" || true
+
+    - name: Wait for rollout
+      # No `|| true`, a stuck rollout (ImagePullBackOff, unschedulable) must
+      # fail the job instead of reporting a green deploy that never landed.
+      run: |
+        kubectl rollout status deployment/server -n ${{ env.NAMESPACE }} --timeout=180s
+        kubectl rollout status deployment/browser -n ${{ env.NAMESPACE }} --timeout=180s
+
+    - name: Diagnose failed rollout
+      if: failure()
+      run: |
+        kubectl get pods -n ${{ env.NAMESPACE }}
+        kubectl get events -n ${{ env.NAMESPACE }} --field-selector type=Warning \
+          --sort-by=.lastTimestamp | tail -20
+
+    - name: Show status
+      if: always()
+      run: kubectl get pods,svc,ingress -n ${{ env.NAMESPACE }}

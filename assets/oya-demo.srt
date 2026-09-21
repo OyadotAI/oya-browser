@@ -1,0 +1,23 @@
+1
+00:00:01,000 --> 00:00:03,000
+Connect the browser to your workspace
+
+2
+00:00:04,000 --> 00:00:50,000
+Ask it to do the task once
+
+3
+00:00:50,000 --> 00:01:23,000
+Keep the run. It replays later with no model in the loop
+
+4
+00:01:23,000 --> 00:02:41,000
+LinkedIn, already signed in, no password typed, none in the prompt
+
+5
+00:02:41,000 --> 00:04:08,000
+Amazon, which blocks most automation, at a human pace
+
+6
+00:04:08,000 --> 00:04:22,000
+A login it completes by itself, from a sealed credential

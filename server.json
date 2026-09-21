@@ -1,0 +1,34 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.OyadotAI/oya-browser",
+  "title": "Oya Browser",
+  "description": "Real Chrome for agents: start a browser, read pages as numbered markdown, click, type, hand off.",
+  "repository": {
+    "url": "https://github.com/OyadotAI/oya-browser",
+    "source": "github"
+  },
+  "websiteUrl": "https://browser.getoya.ai",
+  "version": "1.0.103",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://browser.getoya.ai/mcp/pool",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Your Oya API key from browser.getoya.ai, sent as a bearer token",
+          "value": "Bearer {api_key}",
+          "isRequired": true,
+          "isSecret": true,
+          "variables": {
+            "api_key": {
+              "description": "Oya API key",
+              "isRequired": true,
+              "isSecret": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

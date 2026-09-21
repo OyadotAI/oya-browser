@@ -1,0 +1,428 @@
+name: Deploy Prod (browser.getoya.ai)
+
+on:
+  push:
+    tags: ['v*']
+
+# Least privilege by default; jobs that need more say so themselves.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_SERVER: ghcr.io/oyadotai/oya-browser-server
+  IMAGE_BROWSER: ghcr.io/oyadotai/oya-browser
+  NAMESPACE: oya-browser
+
+jobs:
+  # The gate. A release tag never reached the CI workflow, so until now the
+  # suite ran on pull requests and on nothing that actually shipped.
+  ci:
+    uses: ./.github/workflows/ci.yaml
+
+  build-linux:
+    name: Build Linux AppImage
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - name: Install browser dependencies
+      run: cd browser && npm ci
+
+    - name: Build Linux AppImage
+      run: cd browser && npm run dist:linux -- --x64
+
+    - name: Upload AppImage as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-appimage
+        path: browser/dist/*.AppImage
+
+    - name: Upload to GitHub release
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        # build.linux.artifactName pins this name, and latest-linux.yml refers
+        # to it, renaming the asset here would 404 every Linux update.
+        APP="browser/dist/Oya.Browser-${VERSION}-x64.AppImage"
+        if [ ! -f "$APP" ]; then
+          echo "::error::$APP missing, check build.linux.artifactName"
+          exit 1
+        fi
+        if [ ! -f browser/dist/latest-linux.yml ]; then
+          echo "::error::latest-linux.yml missing, Linux auto-update would silently stop"
+          exit 1
+        fi
+        gh release upload "${GITHUB_REF_NAME}" "$APP" browser/dist/latest-linux.yml --clobber
+        echo "Uploaded $(basename "$APP") and latest-linux.yml"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build Windows installer
+    needs: ci
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - name: Install browser dependencies
+      run: cd browser && npm ci
+
+    - name: Build NSIS installer
+      run: cd browser && npm run dist:win -- --x64
+
+    - name: Upload to GitHub release
+      shell: bash
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        EXE="browser/dist/Oya.Browser-${VERSION}-x64.exe"
+        if [ ! -f "$EXE" ]; then
+          echo "::error::$EXE missing, check build.win.artifactName"
+          exit 1
+        fi
+        # latest.yml is the Windows update feed, the same way latest-mac.yml is
+        # for macOS. NSIS updates cannot resolve without it.
+        if [ ! -f browser/dist/latest.yml ]; then
+          echo "::error::latest.yml missing, Windows auto-update would silently stop"
+          exit 1
+        fi
+        gh release upload "${GITHUB_REF_NAME}" "$EXE" browser/dist/latest.yml --clobber
+        echo "Uploaded $(basename "$EXE") and latest.yml"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-image:
+    name: Build & push Docker image
+    # Ordered after the desktop builds so their binaries are on the release to
+    # be bundled, but not gated on them: a broken AppImage used to skip this
+    # job and with it the entire prod deploy, no server update, no snapshot
+    # repoint, over a download link. The desktop job still goes red on its own.
+    needs: [ci, build-linux, build-windows]
+    # !cancelled() deliberately lets a broken desktop build through, but not a
+    # red suite, which is why ci is checked explicitly: a skipped dependency
+    # does not make !cancelled() false.
+    if: ${{ !cancelled() && needs.ci.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Wait for release publication
+      run: bash k8s/scripts/wait-release.sh "${GITHUB_REF_NAME}"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download browser binaries from release
+      run: |
+        mkdir -p server/downloads
+        # "${GITHUB_REF_NAME}", not ${{ github.ref_name }}: the expression form
+        # is pasted into the script before the shell sees it, so a tag named
+        # v1.0.0$(...) would run on the runner.
+        for pattern in '*.dmg' '*.zip' '*.exe' '*.AppImage' 'latest*.yml'; do
+          gh release download "${GITHUB_REF_NAME}" --pattern "$pattern" --dir server/downloads --clobber || true
+        done
+
+        # A release cut with `release.sh --no-desktop` ships no macOS build.
+        # /downloads is what the update feed is served from, so anything this
+        # tag did not produce is carried forward from the newest release that
+        # has it, otherwise those clients 404 forever and silently stop
+        # updating, which is the failure this pipeline has always guarded.
+        carry() {                       # $1 = glob to look for, $2 = gh pattern
+          ls server/downloads/$1 >/dev/null 2>&1 && return 0
+          for tag in $(gh release list --limit 20 --json tagName --jq '.[].tagName'); do
+            [ "$tag" = "${GITHUB_REF_NAME}" ] && continue
+            gh release download "$tag" --pattern "$2" --dir server/downloads --clobber >/dev/null 2>&1 || continue
+            if ls server/downloads/$1 >/dev/null 2>&1; then
+              echo "carried $2 forward from $tag"
+              return 0
+            fi
+          done
+          echo "::warning::no asset matching $2 in the last 20 releases"
+        }
+        carry '*-universal.dmg'  '*.dmg'
+        carry '*-universal.zip'  '*.zip'
+        carry 'latest-mac.yml'   'latest-mac.yml'
+        carry '*-x64.exe'        '*.exe'
+        carry 'latest.yml'       'latest.yml'
+        carry '*-x64.AppImage'   '*.AppImage'
+        carry 'latest-linux.yml' 'latest-linux.yml'
+
+        # build.artifactName has emitted dotted names since v1.0.50; this only
+        # still matters for assets carried over from older releases.
+        cd server/downloads
+        for f in *" "*; do [ -f "$f" ] && mv "$f" "$(echo "$f" | tr ' ' '.')" 2>/dev/null; done || true
+        ls -lh . || true
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Update download URLs in UI
+      run: |
+        # Per platform, from the file that is really in server/downloads, the
+        # three are not always the same version. A --no-desktop release carries
+        # the previous macOS build forward while CI builds Linux and Windows
+        # fresh for this tag, and a single version across all three links would
+        # then 404 two of them.
+        link() {                        # $1 = filename suffix, $2 = label
+          local file version
+          file=$(ls server/downloads/Oya.Browser-*"$1" 2>/dev/null | head -1)
+          if [ -z "$file" ]; then
+            echo "::warning::no $2 build in server/downloads; leaving its link alone"
+            return 0
+          fi
+          version=$(basename "$file" | sed -E "s/^Oya\.Browser-(.*)$(echo "$1" | sed 's/[.]/\\./g')$/\1/")
+          echo "$2 → $version"
+          for f in ui/src/lib/browser-downloads.ts; do
+            [ -f "$f" ] && sed -i "s/Oya\.Browser-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$(echo "$1" | sed 's/[.]/\\./g')/Oya.Browser-${version}$1/g" "$f"
+          done
+        }
+        link '-universal.dmg' macOS
+        link '-x64.exe'       Windows
+        link '-x64.AppImage'  Linux
+        grep -o 'Oya\.Browser-[0-9.]*-[a-zA-Z0-9.]*' ui/src/lib/browser-downloads.ts | sort -u
+
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: |
+          ${{ env.IMAGE_SERVER }}:${{ github.ref_name }}
+          ${{ env.IMAGE_SERVER }}:latest
+        platforms: linux/amd64
+        cache-from: type=gha,scope=server-prod
+        cache-to: type=gha,mode=max,scope=server-prod
+
+  build-browser:
+    name: Build & push browser image
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/build-push-action@v6
+      with:
+        context: browser
+        push: true
+        tags: |
+          ${{ env.IMAGE_BROWSER }}:${{ github.ref_name }}
+          ${{ env.IMAGE_BROWSER }}:latest
+        platforms: linux/amd64
+        cache-from: type=gha,scope=browser-prod
+        cache-to: type=gha,mode=max,scope=browser-prod
+
+  register-snapshot:
+    name: Register Daytona snapshot
+    needs: build-browser
+    runs-on: ubuntu-latest
+    # A snapshot failure must not strand the rest of the release. The deploy
+    # falls back to the previous snapshot, so cloud browsers keep working on
+    # the last good build while this job goes red.
+    continue-on-error: true
+    outputs:
+      snapshot: ${{ steps.register.outputs.snapshot }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    - name: Install server dependencies
+      run: cd server && npm ci --omit=dev
+    - name: Create snapshot from the released image
+      id: register
+      env:
+        DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+        DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        NAME="oya-browser-${VERSION}"
+        cd server
+        node publish-snapshot.js \
+          --image "${{ env.IMAGE_BROWSER }}:${GITHUB_REF_NAME}" \
+          --name "$NAME"
+        echo "snapshot=$NAME" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to GKE (prod)
+    needs: [build-image, build-browser, register-snapshot]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ secrets.GKE_SA_KEY }}
+
+    - uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ secrets.GKE_CLUSTER }}
+        location: ${{ secrets.GKE_ZONE }}
+        project_id: ${{ secrets.GKE_PROJECT }}
+
+    - name: Create namespace
+      run: kubectl create namespace ${{ env.NAMESPACE }} 2>/dev/null || true
+
+    - name: Apply secrets
+      env:
+        # Through env, not ${{ }} in the script: expression interpolation pastes
+        # the value into the command line before the shell parses it, so a
+        # secret containing a quote or $(...) escapes and executes on the runner.
+        API_KEYS: ${{ secrets.API_KEYS }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        OYA_PROFILE_SECRET: ${{ secrets.OYA_PROFILE_SECRET }}
+        DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        # This release's snapshot, or the previous one if registration failed.
+        DAYTONA_SNAPSHOT: ${{ needs['register-snapshot'].outputs.snapshot || secrets.DAYTONA_SNAPSHOT }}
+        DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+        # Slack alerts. Optional, unlike the Daytona values below: with no app
+        # configured the console still offers the bring-your-own-bot-token path,
+        # so a missing value must not fail the deploy.
+        SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+        SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+        SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+        DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
+      run: |
+        : "${DAYTONA_API_KEY:?Missing DAYTONA_API_KEY deployment secret}"
+        # Without it the server generates a new key per restart and every stored project becomes unreadable.
+        : "${OYA_PROFILE_SECRET:?Missing OYA_PROFILE_SECRET deployment secret}"
+        : "${DAYTONA_SNAPSHOT:?Missing DAYTONA_SNAPSHOT deployment secret}"
+        kubectl create secret generic app-secrets \
+          --from-literal=API_KEYS="${API_KEYS}" \
+          --from-literal=SUPABASE_URL="${SUPABASE_URL}" \
+          --from-literal=SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
+          --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \
+          --from-literal=DAYTONA_API_KEY="${DAYTONA_API_KEY}" \
+          --from-literal=DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT}" \
+          --from-literal=DAYTONA_API_URL="${DAYTONA_API_URL}" \
+          --from-literal=DAYTONA_TARGET="${DAYTONA_TARGET}" \
+          --from-literal=SLACK_CLIENT_ID="${SLACK_CLIENT_ID}" \
+          --from-literal=SLACK_CLIENT_SECRET="${SLACK_CLIENT_SECRET}" \
+          --from-literal=SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET}" \
+          -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Create GHCR pull secret
+      env:
+        GHCR_PAT: ${{ secrets.GHCR_PAT }}
+      run: |
+        kubectl delete secret ghcr-oyadotai -n ${{ env.NAMESPACE }} 2>/dev/null || true
+        kubectl create secret docker-registry ghcr-oyadotai \
+          --docker-server=ghcr.io \
+          --docker-username='${{ github.repository_owner }}' \
+          --docker-password="${GHCR_PAT}" \
+          -n ${{ env.NAMESPACE }}
+
+    - name: Pin images to this release
+      # :latest is still pushed for convenience, but a Deployment that names it
+      # re-pulls whatever latest means *now* on every restart, eviction or node
+      # drain, and `kubectl rollout undo` cannot roll back a moving tag. The
+      # immutable tag was pushed by build-image; use it.
+      run: |
+        sed -i "s|newTag: latest|newTag: ${GITHUB_REF_NAME}|g" k8s/overlays/prod/kustomization.yaml
+        grep newTag k8s/overlays/prod/kustomization.yaml
+
+    - name: Deploy with Kustomize
+      run: kubectl apply -k k8s/overlays/prod
+
+    - name: Rolling restart
+      run: |
+        kubectl patch deployment server -n ${{ env.NAMESPACE }} \
+          -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"rollout\":\"$(date +%s)\"}}}}}" || true
+        kubectl patch deployment browser -n ${{ env.NAMESPACE }} \
+          -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"rollout\":\"$(date +%s)\"}}}}}" || true
+
+    - name: Wait for rollout
+      # No `|| true`, a stuck rollout (ImagePullBackOff, unschedulable) must
+      # fail the job instead of reporting a green deploy that never landed.
+      run: |
+        kubectl rollout status deployment/server -n ${{ env.NAMESPACE }} --timeout=180s
+        kubectl rollout status deployment/browser -n ${{ env.NAMESPACE }} --timeout=180s
+
+    - name: Diagnose failed rollout
+      if: failure()
+      run: |
+        kubectl get pods -n ${{ env.NAMESPACE }}
+        kubectl get events -n ${{ env.NAMESPACE }} --field-selector type=Warning \
+          --sort-by=.lastTimestamp | tail -20
+
+    - name: Show status
+      if: always()
+      run: kubectl get pods,svc,ingress -n ${{ env.NAMESPACE }}
+
+  publish-registry:
+    name: Publish to MCP Registry
+    # After the deploy, so the listing never points at tools that are not live
+    # yet: the registry entry advertises this server to every MCP client.
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      # OIDC proves the workflow belongs to this repo, and the repo's owner is
+      # what grants the io.github.OyadotAI/* namespace. No secret to rotate.
+      id-token: write
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install mcp-publisher
+      # Pinned, not `latest`: this binary is executed in a job holding
+      # id-token: write, so whatever it is gets to mint an OIDC token for this
+      # repo and publish under io.github.OyadotAI/*. Bump MCP_PUBLISHER_VERSION
+      # deliberately.
+      env:
+        MCP_PUBLISHER_VERSION: v1.8.1
+      run: |
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+        base="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+        asset="mcp-publisher_${os}_${arch}.tar.gz"
+        curl -fsSL -o "$asset" "${base}/${asset}"
+        curl -fsSL -o checksums.txt "${base}/registry_${MCP_PUBLISHER_VERSION#v}_checksums.txt"
+        grep " ${asset}\$" checksums.txt | sha256sum -c -
+        tar xzf "$asset" mcp-publisher
+
+    - name: Publish this release
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        # The registry keys a listing by version, so it follows the tag rather
+        # than whatever server.json happened to be committed with.
+        node -e 'const f="server.json",j=require("./"+f);j.version=process.argv[1];require("fs").writeFileSync(f,JSON.stringify(j,null,2)+"\n")' "$VERSION"
+        ./mcp-publisher login github-oidc
+        set +e
+        out=$(./mcp-publisher publish 2>&1); code=$?
+        echo "$out"
+        if [ $code -ne 0 ]; then
+          # Re-running a tag must not fail the release over a listing that is
+          # already there; anything else is a real failure.
+          echo "$out" | grep -q 'duplicate version' || exit $code
+          echo "::notice::io.github.OyadotAI/oya-browser ${VERSION} was already published"
+        fi

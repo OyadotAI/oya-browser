@@ -1,0 +1,6 @@
+node_modules
+data
+downloads
+src/public
+# Its host matcher must stay byte-identical to browser/governance.js (tests/egress-rules.test.js).
+src/modules/control/egress.ts

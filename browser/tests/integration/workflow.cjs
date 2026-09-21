@@ -1,0 +1,118 @@
+/**
+ * The workflow model end to end: locator candidates, drafts, encrypted draft
+ * storage and corruption, redaction, editing, undo and redo.
+ */
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { normalizeDraft, generate, issues, candidates } = require('../../scripts/workflow.cjs');
+const { DraftStore } = require('../../scripts/draft-store.cjs');
+const { Workspace } = require('../../scripts/workspace.cjs');
+const { redact } = require('../../scripts/diagnostics.cjs');
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-workflow-unit-'));
+const safe = {
+  isEncryptionAvailable: () => true,
+  encryptString: (value) => Buffer.from(value),
+  decryptString: (value) => value.toString(),
+};
+try {
+  // A field leads with its DOM handles: the text a page hangs off an input is a hint or a
+  // title as often as a <label>, and getByLabel("Requires first letter") matches nothing.
+  assert.deepEqual(
+    candidates({ type: 'input', tag: 'input', text: 'Requires first letter', domId: 'FirstName', name: 'first' }),
+    [
+      { kind: 'css', value: '[id="FirstName"]' },
+      { kind: 'css', value: '[name="first"]' },
+      { kind: 'label', value: 'Requires first letter' },
+    ],
+  );
+  assert.equal(
+    candidates({ type: 'select', tag: 'select', text: '[Please Select One] Aetna Cigna', domId: 'plan' })[0].value,
+    '[id="plan"]',
+  );
+  assert.deepEqual(candidates({ type: 'input', tag: 'input', text: 'Member ID', testId: 'member' })[0], {
+    kind: 'testId',
+    value: 'member',
+  });
+  // A link or button is the other way round: its text is its accessible name.
+  assert.deepEqual(
+    candidates({ type: 'link', tag: 'a', role: 'link', text: 'Save and Continue', href: 'https://x.test/2' }),
+    [
+      { kind: 'role', role: 'link', value: 'Save and Continue' },
+      { kind: 'text', value: 'Save and Continue' },
+      { kind: 'css', value: 'a[href="https://x.test/2"]' },
+    ],
+  );
+
+  const store = new DraftStore(directory, safe);
+  const draft = normalizeDraft({
+    name: 'login',
+    secrets: ['password'],
+    variables: { password: { default: 'DO_NOT_STORE' }, username: { default: 'demo' } },
+    steps: [
+      { action: 'navigate', url: 'https://example.com' },
+      { action: 'type', text: '{{password}}', candidates: [{ kind: 'label', value: 'Password' }] },
+      { action: 'assert_url', expected: 'https://example.com' },
+    ],
+  });
+  assert.equal(draft.variables.password.default, undefined);
+  const artifact = generate(draft);
+  assert.ok(!artifact.code.includes('DO_NOT_STORE'));
+  assert.ok(!artifact.code.includes('.first()'));
+  assert.ok(artifact.code.includes('toHaveURL'));
+  assert.ok(artifact.code.includes('hooks.beforeStep'));
+  store.save(draft);
+  const loaded = store.load(draft.id);
+  assert.equal(loaded.updatedAt, draft.updatedAt);
+  assert.deepEqual(loaded.steps, draft.steps);
+  assert.ok(!fs.readFileSync(store.file(draft.id)).includes(Buffer.from('example.com')));
+  assert.throws(() => store.load('../secret'), /Invalid/);
+  const encrypted = fs.readFileSync(store.file(draft.id));
+  encrypted[40] ^= 1;
+  fs.writeFileSync(store.file(draft.id), encrypted);
+  assert.throws(() => store.load(draft.id));
+  store.save(draft);
+  assert.throws(
+    () => new DraftStore(path.join(directory, 'locked'), { isEncryptionAvailable: () => false }).save(draft),
+    /Secure local storage/,
+  );
+  assert.throws(() => generate({ steps: [{ action: 'execute_javascript' }] }), /Unsupported/);
+  assert.throws(() => generate({ steps: [{ action: 'click' }] }), /Pick a target/);
+  assert.throws(() => normalizeDraft({ schemaVersion: 3 }), /Unsupported/);
+  assert.throws(() => normalizeDraft({ variables: JSON.parse('{"__proto__":{}}') }), /Invalid/);
+  assert.equal(issues(normalizeDraft({ steps: [{ action: 'click', enabled: false }] })).length, 0);
+  const cleaned = redact(
+    {
+      authorization: 'Bearer abc',
+      nested: { password: 'pw' },
+      url: 'https://u:p@example.com/path?token=abc#private',
+      message: 'Bearer abc TOPSECRET',
+    },
+    ['TOPSECRET'],
+  );
+  assert.equal(cleaned.authorization, '[redacted]');
+  assert.equal(cleaned.url, 'https://example.com/path');
+  assert.ok(!JSON.stringify(cleaned).includes('TOPSECRET'));
+  const workspace = new Workspace({ store, notify() {}, runner: async () => ({ control() {} }) });
+  const id = workspace.draft.steps[1].id;
+  workspace.edit({ type: 'update', id, patch: { timeout: 2500 } });
+  assert.equal(workspace.draft.steps[1].timeout, 2500);
+  workspace.edit({ type: 'undo' });
+  assert.equal(workspace.draft.steps[1].timeout, 15000);
+  workspace.edit({ type: 'redo' });
+  assert.equal(workspace.draft.steps[1].timeout, 2500);
+  workspace.edit({ type: 'duplicate', id });
+  assert.equal(workspace.draft.steps.length, 4);
+  assert.notEqual(workspace.draft.steps[1].id, workspace.draft.steps[2].id);
+  workspace.edit({ type: 'move', id, delta: -1 });
+  assert.equal(workspace.draft.steps[0].id, id);
+  workspace.edit({ type: 'delete', id });
+  assert.equal(workspace.draft.steps.length, 3);
+  workspace.edit({ type: 'new' });
+  assert.equal(workspace.draft.steps.length, 0);
+  assert.equal(store.list().length, 2);
+  console.log('Workflow model, encrypted recovery, corruption, redaction, editing, undo/redo: passed');
+} finally {
+  fs.rmSync(directory, { recursive: true, force: true });
+}

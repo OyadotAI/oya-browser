@@ -1,0 +1,28 @@
+/**
+ * Unit tests for user accounts without Supabase configured: every account
+ * operation answers with the status that says so rather than failing oddly.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { getProfile, login, refreshSession, signup, updateProfile } from '../../../../src/modules/auth/accounts.ts';
+import { Status } from '../../../../src/platform/http-status.ts';
+
+describe('accounts without Supabase', () => {
+  it('refuses signup, login and refresh with 503', async () => {
+    const unavailable = { status: Status.UNAVAILABLE, message: 'Database not configured' };
+    await assert.rejects(signup('a@example.com', 'password1'), unavailable);
+    await assert.rejects(login('a@example.com', 'password1'), unavailable);
+    await assert.rejects(refreshSession('rt'), unavailable);
+  });
+
+  it('has no profile to read', async () => {
+    assert.equal(await getProfile('u1'), null);
+  });
+
+  it('refuses a profile change with 409', async () => {
+    await assert.rejects(updateProfile('u1', { display_name: 'Ada' }), {
+      status: Status.CONFLICT,
+      message: 'Accounts need Supabase',
+    });
+  });
+});

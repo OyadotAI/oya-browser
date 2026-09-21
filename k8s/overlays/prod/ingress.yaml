@@ -1,0 +1,65 @@
+# Ingress for Oya Browser Server
+# WebSocket: wss://browser.getoya.ai/ws
+# MCP:       https://browser.getoya.ai/mcp/:id
+# Dashboard: https://browser.getoya.ai/
+# Live view: https://browser.getoya.ai/live/:id
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oya-browser
+  namespace: oya-browser
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Long timeouts for WebSocket + MCP streaming
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Sticky sessions, browser WS must stay on same pod
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "oya-browser-route"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "10800"
+    # WebSocket support
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$remote_addr"
+    # CORS, browsers and MCP clients connect from various origins. `*` is
+    # correct for a bearer-token API: a third-party page can send a request but
+    # has no way to obtain the Authorization header, so there is no ambient
+    # authority to abuse. allow-credentials is NOT set, deliberately, nothing
+    # here authenticates with cookies, and `*` plus credentials is invalid per
+    # the Fetch spec, which is how "just reflect the Origin" gets introduced
+    # later as a fix.
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET,POST,PUT,DELETE,OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type,Authorization"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - browser.getoya.ai
+    # Legacy host, kept so TLS terminates before the server's 308 redirect
+    - browser.oya.ai
+    secretName: oya-browser-cert
+  rules:
+  - host: browser.getoya.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: server
+            port:
+              number: 3100
+  # Legacy host, server redirects browsers/docs to browser.getoya.ai,
+  # while /ws, /mcp, /api and /downloads keep serving for existing clients
+  - host: browser.oya.ai
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: server
+            port:
+              number: 3100

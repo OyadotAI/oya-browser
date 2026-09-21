@@ -1,0 +1,356 @@
+# Oya Browser
+
+> A browser control plane for AI agents. One API drives real Chrome, in the
+> cloud, on a third-party provider, or on your own machine, with identities
+> that persist across runs.
+
+## Overview
+
+Oya Browser is a control plane, not a single browser. The server owns a fleet;
+any browser in it is driven through the same API however it is hosted:
+
+- **Oya Cloud**: browsers provisioned on demand in a sandbox.
+- **Third-party providers**: Browserbase, Steel, Anchor, Browser Use.
+- **Private Chrome**: the desktop app on your own machine, with your real
+  cookies, logins and extensions.
+
+The command surface is identical across all of them, so which provider serves a
+run is configuration rather than a rewrite.
+
+AI tools (Claude Code, Claude Desktop, Cursor, Windsurf, any MCP client) connect
+over MCP. Scripts use REST, a JavaScript SDK, or the CLI. The server is hosted at
+browser.getoya.ai; each user creates an API key from the dashboard.
+
+Architecture:
+- Browser (cloud sandbox, provider, or desktop app) → WebSocket → Oya Server
+- AI tool: MCP client → Oya Server → WebSocket → Browser
+
+## Personas
+
+A persona is a fingerprint, a cookie jar and a proxy held together as one
+identity. Every browser started on a persona presents the same device, so a
+logged-in session stays valid across runs and across providers.
+
+Sites bind sessions to devices, so this is the point of the model: a cookie
+captured on one device and replayed on another is what gets a session
+invalidated. Cloning a persona reseeds the device on purpose: a clone is a new
+machine of the same kind, not a second seat on the same identity. To run several
+browsers on one identity, raise that persona's concurrency instead.
+
+Sign in once in the desktop app and remote browsers on that persona arrive
+already signed in, including flows that use passkeys and WebAuthn.
+
+## Human in the loop
+
+- Live view streams a running browser and lets a person take over mid-run.
+- CAPTCHA challenges are surfaced rather than silently failed.
+- MFA second factors can be completed without ending the run.
+
+## Quickstart
+
+1. Go to https://browser.getoya.ai/dashboard and click Generate to create an API key
+2. Download Oya Browser: macOS .dmg, Windows .exe, or Linux .AppImage, https://browser.getoya.ai/docs#download
+3. macOS builds are signed and notarized, so they open normally. To run a second instance: `open -n "/Applications/Oya Browser.app" --args --user-data-dir=/tmp/oya-2`
+4. Open the app, enter `wss://browser.getoya.ai/ws` as server URL and paste your API key
+5. Your browser appears in the dashboard, connect AI tools via MCP
+
+For a cloud browser instead of the desktop app, `POST /api/browsers/start` and
+skip steps 2-4 entirely.
+
+## MCP Endpoint
+
+Start here: one endpoint for everything on your key. It can start its own
+browsers (start_browser), so an agent needs nothing else running first.
+
+    https://browser.getoya.ai/mcp/pool
+
+Claude Code:
+
+    claude mcp add --transport http oya https://browser.getoya.ai/mcp/pool \
+      --header "Authorization: Bearer $OYA_API_KEY"
+
+Cursor / Windsurf / Claude Desktop:
+
+    {
+      "mcpServers": {
+        "oya": {
+          "url": "https://browser.getoya.ai/mcp/pool",
+          "headers": { "Authorization": "Bearer YOUR_API_KEY" }
+        }
+      }
+    }
+
+Claude Code plugin (MCP server + skill): `claude plugin marketplace add
+OyadotAI/oya-browser`, then `claude plugin install oya-browser@oya`. The skill
+alone, for any agent that reads skills: `npx skills add OyadotAI/oya-browser`.
+
+Each connected browser also has its own endpoint:
+
+    https://browser.getoya.ai/mcp/{BROWSER_ID}
+
+MCP config for one browser:
+
+    {
+      "mcpServers": {
+        "oya-browser": {
+          "url": "https://browser.getoya.ai/mcp/BROWSER_ID",
+          "transport": "streamable-http",
+          "headers": {
+            "Authorization": "Bearer YOUR_API_KEY"
+          }
+        }
+      }
+    }
+
+## MCP Tools
+
+### start_browser (pool endpoint)
+Start a browser on your key and make it the one every other tool drives.
+Parameters: persona (string, optional: an id, "auto" or "default"), provider
+(optional: oya-cloud, oya-selfhosted, browserbase, steel, anchor, browseruse),
+name (optional), url (optional: navigate here once ready). Billed until stopped.
+
+### stop_browser (pool endpoint)
+Stop a browser and release its session.
+Parameters: browser_id (string, optional; defaults to the one being driven)
+
+### analyze_page
+Analyzes the current page. Returns the full page with every interactive element numbered, written as markdown (the default), TOON or JSONL. Includes viewport size, scroll position and each element's state (off-screen, disabled, checked, a field's hint).
+
+Parameters: format (string, optional): "markdown", "toon" or "jsonl". Left out, the server's OYA_PAGE_FORMAT when it sets one, else the default picked in the Oya Browser's settings (markdown unless changed).
+
+IMPORTANT: Always call analyze_page BEFORE click or type. Element IDs only exist after analysis and reset on every call. After navigating or clicking a link that changes the page, call analyze_page again.
+
+Returns, as markdown:
+- Page metadata (url, title, viewport, scroll position) as a header
+- Full page content with element tags like [#12 link "Settings" → /settings]
+- Element index grouped by visible/off-screen
+
+Returns, as TOON (toonformat.dev), fewer tokens:
+- page: facts (url, title, viewport, scroll; panelScroll, modal, covered, truncated when they apply)
+- blocks[N]{id,region,kind,text,target,state}: one row per heading, paragraph, list item, table row, image and element, in reading order
+
+Returns, as JSONL, one JSON object per line:
+- {"page":{...facts}} first
+- then one object per block, in reading order, with id, region, kind, text, target, state (empty fields left out)
+
+### navigate
+Navigate the browser to a URL.
+Parameters: url (string, required)
+
+### click
+Click an interactive element by its ID number from analyze_page.
+Parameters: element_id (number, required)
+
+### type
+Type text into an input element. Clears existing content first, types character by character.
+Parameters: element_id (number, required), text (string, required)
+
+### press_key
+Press a keyboard key.
+Parameters: key (string, required), "Enter", "Escape", "Tab", "Backspace", "ArrowDown", "ArrowUp", or any character
+
+### screenshot
+Capture the visible tab as a base64 PNG image.
+No parameters.
+
+### scroll
+Scroll the page up or down.
+Parameters: direction ("up" or "down", required), amount (number, optional, default 500)
+
+### list_tabs
+List all open tabs with ID, title, URL, and which is active.
+No parameters.
+
+### open_tab
+Open a new browser tab.
+Parameters: url (string, optional)
+
+### switch_tab
+Switch to a different tab.
+Parameters: tab_id (number, required)
+
+### close_tab
+Close a tab. Closes active tab if no tab_id specified.
+Parameters: tab_id (number, optional)
+
+### wait
+Wait for an element matching a CSS selector to appear.
+Parameters: selector (string, required), timeout (number, optional, default 10000ms)
+
+### read_elements
+List interactive elements on the page. Lighter than analyze_page.
+Parameters: selector (string, optional), limit (number, optional, default 50)
+
+## Workflow Pattern
+
+1. analyze_page → understand the page, get element IDs
+2. Act: click(element_id), type(element_id, text), press_key("Enter"), scroll("down")
+3. If page changed → analyze_page again (old IDs are invalid)
+4. Repeat until task is done
+
+## Element Annotation Format
+
+analyze_page returns elements as tags in markdown:
+
+    [#5 button "Submit"]
+    [#9 input:email "Email" (required; hint: you@example.com)]
+    [#12 link "Settings" → /settings]
+    [#8 checkbox "Remember me" (checked)]
+
+and as rows in TOON:
+
+    5,main,button,Submit,"",""
+    12,nav,link,Settings,/settings,""
+
+Element IDs are real attributes (data-ac-id) on the DOM, click(5) resolves via querySelector('[data-ac-id="5"]').
+
+## Browser Pool (scale mode)
+
+Run hundreds or thousands of browsers as a single pool with round-robin dispatch and automatic cookie sync.
+
+### Setup
+
+Set FLEET_TOKEN env var on the server. All browsers use that token as their API key. They auto-join the pool.
+
+### Pool MCP Endpoint
+
+    POST /mcp/pool
+    Authorization: Bearer FLEET_TOKEN
+
+Seventeen tools: analyze_page, navigate, click, type, screenshot, press_key, handle_dialog,
+scroll, wait, click_coordinates, mouse_move, double_click, keyboard_type, drag, plus
+start_browser, stop_browser and pool_status.
+
+The tab tools (list_tabs, open_tab, switch_tab, close_tab) and read_elements are per-browser
+only: a pool call has no one tab to act on. Use the per-browser endpoint for those.
+
+navigate and analyze_page advance the round-robin. click/type/screenshot stay pinned to the
+last-used browser so element IDs remain valid. pool_status shows pool size and connected
+browsers.
+
+### Cookie Sync
+
+Cookies are scoped to the API key. Browsers sharing a key share cookies;
+different API keys are fully isolated from each other.
+- On connect: browser sends its cookies, receives the jar for its API key
+- On change: cookie changes are broadcast to other browsers with the same key
+- Login once with key K → every browser using K gets the session; other keys are unaffected
+
+### Pool REST API
+
+    GET  /pool                      Pool status (size + browser list)
+    POST /pool/command              Round-robin command dispatch
+    GET  /pool/cookies              View shared cookie jar
+    DELETE /pool/cookies            Clear shared cookie jar
+    POST /fleet/provision?count=N   Batch-generate N API keys (admin only)
+
+### Pool MCP Config (for AI clients)
+
+    {
+      "mcpServers": {
+        "oya-pool": {
+          "url": "https://browser.getoya.ai/mcp/pool",
+          "transport": "streamable-http",
+          "headers": {
+            "Authorization": "Bearer YOUR_API_KEY"
+          }
+        }
+      }
+    }
+
+## REST API
+
+All endpoints require Authorization: Bearer API_KEY header (except /health).
+API keys are created via the dashboard after sign-in (POST /auth/keys).
+Interactive API testing (Swagger UI): GET /swagger
+
+    GET  /health                    Server status + browser count
+    POST /auth/signup               Create user account
+    POST /auth/login                Sign in → access_token
+    POST /auth/keys                 Create API key (user JWT required)
+    GET  /browsers                  List connected browsers (scoped to your key)
+    POST /browsers/:id/command      Send command (body: { "action": "...", "params": {} })
+    POST /browsers/:id/chat         Chat with LLM (body: { "messages": [...] })
+    GET  /live/:id?ticket=...       SSE live view frame stream (single-use ticket)
+    GET  /mcp/:id                   MCP Streamable HTTP endpoint
+    POST /mcp/:id                   MCP Streamable HTTP endpoint
+    POST /mcp/pool                  Pool MCP endpoint (round-robin)
+    GET  /pool                      Pool status
+    POST /pool/command              Pool round-robin command
+    GET  /pool/cookies              Per-key cookie jar (admin sees all)
+    POST /fleet/provision?count=N   Batch-generate API keys (admin)
+    GET  /config                    Get server settings (admin)
+    POST /config                    Update server settings (admin)
+
+### Command API: POST /browsers/:id/command
+
+Each action uses only specific params. Send { "action": "...", "params": { ... } }.
+
+Navigation actions:
+  navigate   , params: url (required)             , Navigate to a URL
+  open_tab   , params: url (optional)             , Open a new tab
+  switch_tab , params: tab_id (required)          , Activate a tab by ID
+  close_tab  , params: tab_id (optional)          , Close a tab (defaults to active)
+  list_tabs  , no params                          , List all open tabs
+
+Page analysis actions:
+  analyze    , format? (markdown | toon | jsonl)   , Full page + numbered elements, as markdown (default), TOON or JSONL
+  read_page  , params: selector, limit (default 50), Lightweight element listing
+  screenshot , no params                          , Capture page as PNG
+
+Interaction actions:
+  click      , params: selector (e.g. [data-ac-id="3"])      , Click an element
+  type       , params: selector + text                       , Type into an input
+  press_key  , params: key (Enter, Tab, Escape, etc.)        , Press a keyboard key
+  scroll     , params: direction (up/down), amount (default 500), Scroll the page
+  wait       , params: selector, timeout (ms, default 10000) , Wait for element to appear
+
+Examples:
+  { "action": "navigate", "params": { "url": "https://google.com" } }
+  { "action": "analyze" }
+  { "action": "click", "params": { "selector": "[data-ac-id=\"3\"]" } }
+  { "action": "type", "params": { "selector": "[data-ac-id=\"9\"]", "text": "hello" } }
+  { "action": "press_key", "params": { "key": "Enter" } }
+  { "action": "scroll", "params": { "direction": "down", "amount": 500 } }
+  { "action": "screenshot" }
+  { "action": "list_tabs" }
+  { "action": "open_tab", "params": { "url": "https://gmail.com" } }
+  { "action": "switch_tab", "params": { "tab_id": 2 } }
+  { "action": "close_tab", "params": { "tab_id": 3 } }
+  { "action": "wait", "params": { "selector": ".results", "timeout": 10000 } }
+  { "action": "read_page", "params": { "limit": 20 } }
+
+## WebSocket Protocol
+
+Browsers connect via WebSocket at wss://browser.getoya.ai/ws
+
+Auth: { "type": "auth", "api_key": "...", "browser_id": "...", "browser_name": "..." }
+Response: { "type": "auth_ok", "browser_id": "..." }
+
+Commands (server → browser): { "type": "cmd", "id": "uuid", "action": "analyze", "params": {} }
+Results (browser → server): { "type": "cmd_result", "id": "uuid", "ok": true, "data": { ... } }
+
+Ping/pong: Both sides send { "type": "ping" } and respond with { "type": "pong" } every 15-20s.
+Live stream: { "type": "stream_start", "fps": 2 } / { "type": "frame", "data": "data:image/jpeg;base64,..." } / { "type": "stream_stop" }
+
+## Key Scoping
+
+Each API key only sees browsers connected with that key. Users cannot see or control other users' browsers. Admin keys (set via API_KEYS env var) can see all browsers.
+
+## Machine-readable
+
+- OpenAPI 3.0 spec: https://browser.getoya.ai/openapi.json
+- This file: https://browser.getoya.ai/llms.txt (also /llms-full.txt, /docs.txt)
+- Agent card: https://browser.getoya.ai/.well-known/agent.json
+- Sitemap: https://browser.getoya.ai/sitemap.xml
+- Human docs: https://browser.getoya.ai/docs
+
+## Limits, stated plainly
+
+- Stealth is a moving target. The docs publish benchmark results against
+  detectors rather than claiming undetectability.
+- A persona is only valuable while it stays stable; anything that changes the
+  device under an existing cookie jar costs you the session.
+- Provider failover covers the shared command surface, not provider-specific
+  behaviour beyond it.

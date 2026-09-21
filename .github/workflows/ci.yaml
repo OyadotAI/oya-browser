@@ -1,0 +1,106 @@
+name: CI
+
+# Called as a gate by deploy-dev (push to main) and deploy-prod (release tag),
+# so it deliberately does NOT trigger on push itself: that would run the same
+# suite twice on every main push, and the copy that gates nothing is the one
+# people learn to ignore.
+on:
+  pull_request:
+  workflow_call:
+
+# Read-only: this workflow runs code from forks. Nothing here needs a token.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix server
+      # No secrets are passed on purpose: the suite must stay hermetic. A test
+      # that only passes with a live Supabase or Daytona key fails here.
+      # npm test = SDK build, server unit + integration, CLI and package suites.
+      - run: npm test
+      # Coverage floor for the server's unit tests (lines 95%, branches and functions 90%).
+      - run: npm run test:coverage --prefix server
+      # The desktop regression suite reads source and needs no Electron binary,
+      # which is the only reason installing browser/ here is cheap.
+      - run: npm ci --prefix browser
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # The analyzer DOM checks run the injected script in a real page, so this
+      # one browser binary is the exception to "no Electron binary needed".
+      - run: npx playwright install chromium
+        working-directory: browser
+      - run: npm test --prefix browser
+
+  recording:
+    name: Electron recording
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --prefix browser
+      - run: xvfb-run -a npm run test:recording --prefix browser -- --no-sandbox
+
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # Every part imports the shared rules in tooling/eslint and the root .prettierrc.json.
+      - run: npm ci
+      - run: npm ci --prefix server
+      - run: npm ci --prefix ui
+      - run: npm ci --prefix browser
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm run lint
+      - run: npm run format:check
+
+  ui:
+    name: Console unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --prefix ui
+      - run: npm run typecheck --prefix ui
+      - run: npm test --prefix ui
+
+  typecheck:
+    name: Typecheck server, SDK and CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:sdk
+      # What npm publishes: exports resolve for ESM, CJS and bundlers, with matching types.
+      - run: npm run check --workspace=@oya-ai/browser
+      # The server runs its .ts sources directly; this is the only place their types are checked.
+      - run: npm ci --prefix server
+      - run: npm run typecheck --prefix server
