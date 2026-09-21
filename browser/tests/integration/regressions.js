@@ -61,8 +61,13 @@ const dupes = names.filter((n, i) => names.indexOf(n) !== i);
 assert.deepStrictEqual(dupes, [], `duplicate function declarations shadow each other: ${dupes}`);
 
 // Sends must go through wsSend, a raw send throws when the socket is down.
-const rawSends = (src.match(/ws\.send\(/g) || []).length;
-assert.strictEqual(rawSends, 1, 'ws.send() outside the wsSend helper, a dropped socket will throw');
+// A send with an error callback reports the drop instead, so it is allowed.
+const rawSends = (src.match(/ws\.send\((?![^;]*=>)/g) || []).length;
+assert.strictEqual(
+  rawSends,
+  1,
+  'ws.send() outside the wsSend helper and without an error callback, a dropped socket will throw',
+);
 
 // Auto-update fails silently when the release stops shipping what the feed
 // needs, no error, clients just quietly stop updating. Guard the config.
