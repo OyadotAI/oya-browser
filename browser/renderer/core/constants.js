@@ -48,6 +48,10 @@ const RendererConstants = Object.freeze({
   RUN_EVENTS_SHOWN: 100,
   /** Zero-padded widths: step numbers, clock fields, milliseconds. */
   STEP_NUMBER_DIGITS: 2,
+  /** The most characters of a URL or typed text a step row shows. */
+  ROW_TEXT_CHARS: 60,
+  /** How many levels of a long CSS path a step row shows, from the element up. */
+  SELECTOR_LEVELS_SHOWN: 2,
   CLOCK_DIGITS: 2,
   MS_DIGITS: 3,
   /** Indentation of JSON shown to people. */

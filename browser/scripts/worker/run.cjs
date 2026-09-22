@@ -11,16 +11,19 @@ const { generate } = require('../workflow.cjs');
 const { redact } = require('../diagnostics.cjs');
 const { CRYPTO } = require('../constants.cjs');
 const { attachEvidence } = require('./evidence.cjs');
-const { stepHooks, failureMessage } = require('./hooks.cjs');
+const { stepHooks } = require('./hooks.cjs');
+const { failureMessage } = require('./failure.cjs');
 
 /** Everything one run shares across its steps. */
 function runContext(options, state, tell) {
-  const { draft, vars, runTo, evidence, autoHeal = true } = options;
+  const { draft, vars, runTo, evidence, autoHeal = true, slowMo = 0 } = options;
   const secrets = Object.values(vars || {}).filter((value) => typeof value === 'string');
   const emit = (event) => tell({ type: 'event', event: { at: Date.now(), ...redact(event, secrets) } });
+  const redactMessage = (message) => redact(message, secrets);
   const maps = { done: new Set(), attempts: new Map(), repairDeadlines: new Map(), pages: new Map() };
   const progress = { revision: 0, inputIssued: false, stepStarted: 0, repairSignal: null };
-  return { draft, vars, runTo, evidence, autoHeal, state, tell, emit, ...maps, ...progress };
+  const settings = { draft, vars, runTo, evidence, autoHeal, slowMo };
+  return { ...settings, state, tell, emit, redactMessage, ...maps, ...progress };
 }
 
 /** Maps each named run tab to its page; a missing one fails the run. */
@@ -59,7 +62,8 @@ async function loadModule(run, codeFile) {
 /** The final report for a run that threw. */
 function failure(run, error) {
   const status = run.state.stopped ? 'stopped' : run.inputIssued ? 'outcome-unknown' : 'failed';
-  return { type: 'finished', status, error: failureMessage(error), stepId: run.state.current };
+  const step = run.draft.steps.find((s) => s.id === run.state.current);
+  return { type: 'finished', status, error: run.redactMessage(failureMessage(error, step)), stepId: run.state.current };
 }
 
 /** Reports success, with how many assertions ran. */

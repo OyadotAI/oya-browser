@@ -59,10 +59,25 @@ async function settleArrived(page) {
   await page.waitForLoadState('networkidle', { timeout: REPLAY.SETTLE_MS }).catch(() => {});
 }
 
-/** Matches for the step's first candidate, waiting once for it to attach when there are none. */
-async function countPrimary(run, step, primary, page) {
+/**
+ * Whether another recorded target already finds exactly one element while the
+ * first finds none. The run repairs to it at once rather than wait out the
+ * step's whole timeout for a target that was renamed.
+ */
+async function alternativeReady(run, step, find) {
+  if (!canRepair(run, step)) return false;
+  const unique = async (candidate) =>
+    (await find(candidate)
+      .count()
+      .catch(() => 0)) === 1;
+  for (const candidate of step.candidates.slice(1)) if (await unique(candidate)) return true;
+  return false;
+}
+
+/** Matches for the step's first candidate, waiting once for it to attach when there are none and no other target is ready. */
+async function countPrimary(run, step, primary, page, find) {
   let count = await countTarget(run, step, primary);
-  if (count) return count;
+  if (count || (await alternativeReady(run, step, find))) return count;
   await primary.waitFor({ state: 'attached', timeout: remaining(run, step) }).catch(() => {});
   count = await countTarget(run, step, primary);
   if (count) await settleArrived(page);
@@ -123,7 +138,7 @@ function targetError(count) {
 async function checkTarget(run, step, p) {
   const find = targeting(run, step, p);
   const primary = find(step.candidates[0]);
-  let count = await countPrimary(run, step, primary, p);
+  let count = await countPrimary(run, step, primary, p, find);
   // One match that is plainly another element (another tag, a link elsewhere) is no match.
   if (count === 1 && !(await isRecorded(primary, step.el, remaining(run, step)))) count = 0;
   run.emit(targetEvent(step.id, count, p));

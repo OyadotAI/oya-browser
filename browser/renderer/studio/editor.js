@@ -11,7 +11,18 @@
 /** The step editor. */
 const StepEditor = {
   /** Actions that act on an element, so have a target to edit. */
-  TARGETED: ['click', 'type', 'select_option', 'upload_file', 'wait', 'assert_visible', 'assert_text', 'assert_value'],
+  TARGETED: [
+    'click',
+    'double_click',
+    'hover',
+    'type',
+    'select_option',
+    'upload_file',
+    'wait',
+    'assert_visible',
+    'assert_text',
+    'assert_value',
+  ],
 
   /** Locator strategies, in the order the picker lists them, with the names people see. */
   STRATEGIES: { testId: 'Test id', role: 'Role', label: 'Label', text: 'Text', placeholder: 'Placeholder', css: 'CSS' },
@@ -23,7 +34,9 @@ const StepEditor = {
     select_option: ['option', 'Option'],
     upload_file: ['file', 'File'],
     press_key: ['key', 'Key'],
+    scroll: ['direction', 'Direction (up or down)'],
     assert_url: ['expected', 'Expected URL'],
+    assert_page: ['expected', 'Page (the query is ignored)'],
     assert_text: ['expected', 'Expected text'],
     assert_value: ['expected', 'Expected value'],
   },

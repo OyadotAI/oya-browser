@@ -338,7 +338,14 @@
           <button class="primary-button" id="record-toggle">
             <span class="record-dot" aria-hidden="true"></span
             ><span id="record-toggle-label">Start recording</span></button
-          ><button class="secondary-button" id="record-validate" disabled>Test run</button>
+          ><button class="secondary-button" id="record-validate" disabled>Test run</button
+          ><button
+            class="text-button"
+            id="record-open"
+            title="Open a workflow saved as JSON, or a Chrome Recorder recording"
+          >
+            Open JSON
+          </button>
         </div>
         <p class="studio-status" id="record-limit" role="status" aria-live="polite" hidden></p>
         <ul class="studio-issues" id="studio-issues" aria-label="What blocks a test run"></ul>
@@ -380,11 +387,19 @@
                 <option value="assert_text">Assert text</option>
                 <option value="assert_value">Assert value</option>
                 <option value="assert_url">Assert URL</option>
+                <option value="assert_page">Check page</option>
                 <option value="wait">Wait for element</option>
                 <option value="checkpoint">Human checkpoint</option>
                 <option value="navigate">Navigate</option>
+                <option value="go_back">Back</option>
+                <option value="go_forward">Forward</option>
                 <option value="click">Click</option>
+                <option value="double_click">Double-click</option>
+                <option value="hover">Hover</option>
                 <option value="type">Fill</option>
+                <option value="select_option">Select</option>
+                <option value="press_key">Press key</option>
+                <option value="scroll">Scroll</option>
               </select>
             </div>
             <div class="rec-steps" id="record-steps" aria-label="Recorded steps"></div>
@@ -409,6 +424,14 @@
               ><button class="secondary-button" data-run="step">Step</button
               ><button class="text-button" data-run="stop">Stop</button>
             </div>
+            <label class="studio-field run-speed"
+              ><span>Replay speed</span
+              ><select id="run-speed">
+                <option value="0">Normal</option>
+                <option value="1000">Slow (1 s per step)</option>
+                <option value="3000">Very slow (3 s per step)</option>
+              </select></label
+            >
             <div id="run-inputs"></div>
             <div id="run-events" aria-label="Test run timeline"></div>
             <div id="run-repairs"></div>
@@ -423,6 +446,11 @@
             <div class="export-actions">
               <button class="secondary-button" id="record-copy" disabled>Copy code</button
               ><button class="secondary-button" id="record-download" disabled>Save module</button>
+            </div>
+            <div class="export-actions">
+              <button class="secondary-button" id="record-json" disabled>Save as JSON</button
+              ><button class="secondary-button" id="record-chrome" disabled>Save for Chrome Recorder</button
+              ><button class="secondary-button" id="record-import">Open JSON</button>
             </div>
             <p class="studio-status" id="code-result" role="status" aria-live="polite"></p>
             <details class="studio-details">

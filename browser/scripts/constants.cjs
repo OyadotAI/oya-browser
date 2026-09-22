@@ -21,13 +21,26 @@ const DRAFT = {
 };
 
 /** Step timing, in milliseconds, and the default scroll distance in pixels. */
-const STEP = { MIN_TIMEOUT: 500, DEFAULT_TIMEOUT: 15000, MAX_TIMEOUT: 90000, DEFAULT_SCROLL: 500, MAX_SCROLL: 100000 };
+const STEP = {
+  MIN_TIMEOUT: 500,
+  DEFAULT_TIMEOUT: 15000,
+  MAX_TIMEOUT: 90000,
+  DEFAULT_SCROLL: 500,
+  MAX_SCROLL: 100000,
+  // How many of a step's recorded targets its generated code tries in turn.
+  MAX_FALLBACKS: 3,
+  // The pause between keys typed into a search box with suggestions, as a person types.
+  TYPE_DELAY_MS: 40,
+};
+
+/** Failure messages: the longest one a run reports. */
+const FAILURE = { MESSAGE_MAX_CHARS: 300 };
 
 /** Encrypted draft files: AES-256-GCM key, IV and tag sizes, and owner-only modes. */
 const CRYPTO = { KEY_BYTES: 32, IV_BYTES: 12, TAG_BYTES: 16, DIR_MODE: 0o700, FILE_MODE: 0o600 };
 
 /** Recording: the binding name's random bytes, how long the page has to connect, and CDP's name/value attribute pairs. */
-const RECORDING = { BINDING_BYTES: 12, READY_TIMEOUT_MS: 3000, ATTRIBUTE_STRIDE: 2 };
+const RECORDING = { BINDING_BYTES: 12, READY_TIMEOUT_MS: 3000, ATTRIBUTE_STRIDE: 2, FRAME_ATTACH_GRACE_MS: 2000 };
 
 /** Target picker: how long a person has to pick, and the highlight colour (teal). */
 const PICKER = {
@@ -50,6 +63,8 @@ const VALIDATION = {
   STOP_GRACE_MS: 5000,
   /** Longest a validation tab may take to open and report its target before the run fails. */
   TAB_OPEN_MS: 15000,
+  /** The longest pause a slowed-down run may take before each step. */
+  MAX_SLOW_MO_MS: 10000,
 };
 
 /** Replay worker: auto-heal attempts per step and the window they must finish in. */
@@ -106,6 +121,7 @@ module.exports = {
   PICKER,
   VALIDATION,
   REPLAY,
+  FAILURE,
   WORKSPACE,
   DATES,
   QUERIES,

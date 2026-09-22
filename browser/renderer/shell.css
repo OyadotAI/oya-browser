@@ -2108,7 +2108,22 @@ button:active:not(:disabled) {
   height: 13px;
   color: var(--accent);
 }
-.chat-save-button:hover {
+.chat-save-button:disabled {
+  color: var(--secondary);
+  cursor: default;
+  opacity: 0.6;
+}
+.chat-save-button:disabled svg {
+  color: inherit;
+}
+.chat-save-note {
+  display: block;
+  margin-top: 6px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.chat-save-button:not(:disabled):hover {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: var(--hover);
 }
@@ -3195,7 +3210,8 @@ body.mode-setup .setup-screen {
 #pane-record[data-stage='recording'] .studio-tabs,
 #pane-record[data-stage='recording'] #record-validate,
 #pane-record[data-stage='recording'] .studio-toolbar,
-#pane-record[data-stage='recording'] #variables-details {
+#pane-record[data-stage='recording'] #variables-details,
+#pane-record:not([data-stage='empty']) #record-open {
   display: none;
 }
 #pane-record .studio-tabs {

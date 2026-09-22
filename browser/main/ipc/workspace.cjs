@@ -5,6 +5,7 @@
 const { JSON_INDENT } = require('../app/constants.cjs');
 const { writePrivateFileSync } = require('./files.cjs');
 const { CONFIRM_BUTTON } = require('./constants.cjs');
+const { exportJson, importJson } = require('./workflow-files.cjs');
 
 /** The question asked before a workflow runs against the real site. */
 const VALIDATE_PROMPT = {
@@ -97,6 +98,8 @@ const WORKSPACE_COMMANDS = {
   validate,
   control: controlRun,
   support: saveSupportReport,
+  'export-json': exportJson,
+  'import-json': (ctx, command) => importJson(ctx, command, editDraft),
 };
 
 /** The `workspace` channel. */

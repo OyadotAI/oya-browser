@@ -1,7 +1,8 @@
 /**
  * "Save as playbook" under an agent reply. The server keeps the steps of each
- * browser's latest agent run, so only the newest reply offers to save, and only
- * when that run acted on the page.
+ * browser's latest agent run, so only the newest reply offers to save. A run that
+ * only read pages shows the offer disabled with the reason, so it never seems to
+ * come and go at random.
  */
 /* global oyaBrowser, Dom, ShellIcons, RendererConstants */
 /* exported ChatPlaybook */
@@ -41,17 +42,30 @@ const PLAYBOOK_NAME = /^[\w-]{1,64}$/;
 /** The save-as-playbook offer. */
 const ChatPlaybook = {
   /**
-   * Adds the offer under `message` when the run can be replayed. `canSave` is the
-   * server's answer, from the steps it actually recorded (a refused call records
-   * none); a server too old to say leaves the tool calls to decide.
+   * Adds the offer under `message`, enabled when the run can be replayed. `canSave`
+   * is the server's answer, from the steps it actually recorded (a refused call
+   * records none); a server too old to say leaves the tool calls to decide. The
+   * reply scrolled the list before the offer existed, so the offer scrolls itself
+   * into view.
    */
   offer(message, prompt, toolCalls, canSave = replayable(toolCalls)) {
     ChatPlaybook.withdraw();
-    if (!canSave) return;
     const box = Dom.node('div', null, 'chat-save');
     box.dataset.name = ChatPlaybook.suggestName(prompt);
     message.appendChild(box);
-    ChatPlaybook.showButton(box);
+    if (canSave) ChatPlaybook.showButton(box);
+    else ChatPlaybook.showUnavailable(box);
+    box.scrollIntoView?.({ block: 'end' });
+  },
+
+  /** The offer for a run with nothing to replay: the button, disabled, and why. */
+  showUnavailable(box) {
+    const button = ChatPlaybook.saveButton();
+    const note = Dom.node('span', 'Nothing to replay: this run only read pages.', 'chat-save-note');
+    note.id = 'chat-save-note';
+    button.disabled = true;
+    button.setAttribute('aria-describedby', note.id);
+    box.replaceChildren(button, note);
   },
 
   /** Removes the offer: a new run replaces the one the server would save. */
@@ -67,10 +81,16 @@ const ChatPlaybook = {
 
   /** The collapsed offer: one button. */
   showButton(box) {
-    const button = Dom.node('button', null, 'chat-save-button');
-    button.innerHTML = ShellIcons.icon('playbook') + '<span>Save as playbook</span>';
+    const button = ChatPlaybook.saveButton();
     button.addEventListener('click', () => ChatPlaybook.showForm(box));
     box.replaceChildren(button);
+  },
+
+  /** The "Save as playbook" button, not yet wired. */
+  saveButton() {
+    const button = Dom.node('button', null, 'chat-save-button');
+    button.innerHTML = ShellIcons.icon('playbook') + '<span>Save as playbook</span>';
+    return button;
   },
 
   /** The name field with Save and Cancel. */
@@ -78,6 +98,7 @@ const ChatPlaybook = {
     const { input, save, cancel } = ChatPlaybook.controls(box);
     const error = Dom.node('p', '', 'chat-save-error');
     box.replaceChildren(ChatPlaybook.explainer(), ChatPlaybook.row(input, save, cancel), error);
+    box.scrollIntoView?.({ block: 'end' });
     input.select();
   },
 

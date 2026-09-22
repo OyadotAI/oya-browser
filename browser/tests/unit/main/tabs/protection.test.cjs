@@ -22,11 +22,21 @@ describe('Protection', () => {
     await ctx.protection.applyPersona(dbg, () => {});
     assert.deepEqual(
       dbg.sent.map((c) => c.method),
-      ['Emulation.setUserAgentOverride', 'Page.addScriptToEvaluateOnNewDocument'],
+      ['Emulation.setUserAgentOverride', 'Page.addScriptToEvaluateOnNewDocument', 'Target.setAutoAttach'],
     );
     const brands = dbg.sent[0].params.userAgentMetadata.brands.map((b) => b.brand);
     assert.ok(brands.includes('Google Chrome'), 'navigator.userAgentData names Chrome, as the headers do');
     assert.equal(typeof dbg.sent[1].params.source, 'string');
+  });
+
+  it('attaches cross-site iframes without a persona, never pausing them, so a recording can reach them', async () => {
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    const attach = dbg.sent.find((c) => c.method === 'Target.setAutoAttach').params;
+    assert.deepEqual(
+      [attach.autoAttach, attach.waitForDebuggerOnStart, attach.flatten, attach.filter[0].type],
+      [true, false, true, 'iframe'],
+    );
   });
 
   it("keeps this machine's timezone for a persona that leaves by this machine's own connection", async () => {

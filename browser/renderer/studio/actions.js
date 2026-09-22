@@ -56,7 +56,8 @@ const StudioActions = {
   /** Starts a test run with the run inputs' values; shows the Run tab only if a run started. */
   async validate(extra = {}) {
     const before = Studio.state?.run?.id;
-    const next = await Studio.command({ type: 'validate', vars: StudioActions.runInputs(), ...extra });
+    const slowMo = Number(Dom.byId('run-speed').value) || 0;
+    const next = await Studio.command({ type: 'validate', vars: StudioActions.runInputs(), slowMo, ...extra });
     Dom.byId('run-inputs')
       .querySelectorAll('input[type=password]')
       .forEach((input) => (input.value = ''));
@@ -140,6 +141,20 @@ const StudioActions = {
     }
   },
 
+  /** Saves the workflow as JSON, Oya's own or Chrome Recorder's, and says so. */
+  async exportJson(format) {
+    const next = await Studio.command({ type: 'export-json', format }, 'code-result');
+    const saved = format === 'chrome' ? 'Saved for Chrome Recorder.' : 'Workflow saved as JSON.';
+    if (next?.exported) Studio.say(saved, false, 'code-result');
+  },
+
+  /** Opens a workflow file, from Oya or Chrome's Recorder, as a new draft on the Steps tab. */
+  async importJson() {
+    const before = Studio.state?.draft.id;
+    const next = await Studio.command({ type: 'import-json' }, 'code-result');
+    if (next && next.draft.id !== before) Studio.selectTab('steps');
+  },
+
   /** Saves the diagnostics report and says so. */
   async support() {
     const next = await Studio.command({ type: 'support' }, 'code-result');
@@ -219,6 +234,10 @@ Dom.byId('record-save').addEventListener('click', StudioActions.save);
 Dom.byId('record-copy').addEventListener('click', StudioActions.copy);
 Dom.byId('record-download').addEventListener('click', StudioActions.download);
 Dom.byId('support-export').addEventListener('click', StudioActions.support);
+Dom.byId('record-json').addEventListener('click', () => StudioActions.exportJson('oya'));
+Dom.byId('record-chrome').addEventListener('click', () => StudioActions.exportJson('chrome'));
+Dom.byId('record-import').addEventListener('click', StudioActions.importJson);
+Dom.byId('record-open').addEventListener('click', StudioActions.importJson);
 oyaBrowser.onWorkspace(StudioView.render);
 oyaBrowser.onWsStatus(() => Studio.state && StudioView.render(Studio.state));
 oyaBrowser.onShellLayout(() => Studio.state && StudioView.expandLabel());

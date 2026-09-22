@@ -152,11 +152,37 @@ const RunView = {
   repair(repair) {
     const item = Dom.node('div', null, 'repair-review');
     const review = () => Studio.command({ type: 'open', id: repair.draftId }).then(() => Studio.selectTab('steps'));
-    item.append(
-      Dom.node('strong', 'Repair draft ready'),
-      Dom.node('p', `${repair.original.kind} → ${repair.replacement.kind}. The original draft is unchanged.`),
-      Studio.button('Review repair', review),
-    );
+    const note = `${repair.original.kind} → ${repair.replacement.kind}. The target that worked in this run.`;
+    item.append(Dom.node('strong', 'Repair found'), Dom.node('p', note));
+    item.append(RunView.applyButton(repair), Studio.button('Review as a copy', review));
     return item;
+  },
+
+  /** "Apply to this workflow", enabled only when it can be. */
+  applyButton(repair) {
+    const apply = Studio.button('Apply to this workflow', () => RunView.applyRepair(repair));
+    apply.disabled = !RunView.canApply(repair);
+    return apply;
+  },
+
+  /** Whether the repair's step is in the workflow shown, with the run over and the target not yet first. */
+  canApply(repair) {
+    const run = Studio.state.run;
+    const step = Studio.state.draft.steps.find((s) => s.id === repair.stepId);
+    if (!step || Studio.isActive(run) || run?.draftId !== Studio.state.draft.id) return false;
+    return !RunView.sameTarget(step.candidates?.[0], repair.replacement);
+  },
+
+  /** Whether two targets are the same locator. */
+  sameTarget(a, b) {
+    return !!a && !!b && a.kind === b.kind && a.value === b.value && a.role === b.role;
+  },
+
+  /** Makes the target that worked the step's first, keeping the others behind it; Undo takes it back. */
+  applyRepair(repair) {
+    const step = Studio.state.draft.steps.find((s) => s.id === repair.stepId);
+    if (!step) return;
+    const rest = (step.candidates || []).filter((c) => !RunView.sameTarget(c, repair.replacement));
+    Studio.command({ type: 'update', id: step.id, patch: { candidates: [repair.replacement, ...rest] } });
   },
 };

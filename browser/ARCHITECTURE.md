@@ -55,6 +55,9 @@ main/
     recorder.cjs        Recorder: steps in, limits, stop, clear, the serialized task queue
     start.cjs           starting and resuming (the stages of a start)
     channels.cjs        one RecordingChannel per tab
+    moves.cjs           address bar, new tab, Back and Forward, after collecting the page's typing
+    outcomes.cjs        page checks: a step after each action that moved the page, and one for where it ended
+    frame-sessions.cjs  each tab's cross-site iframe sessions, so a recording can arm them
     tab-names.cjs, publish.cjs   step tab names, and saving to the server
   connection/           the control socket
     socket.cjs          ControlSocket: auth, ordered message queue, heartbeat, backoff
@@ -65,6 +68,7 @@ main/
   ipc/                  what the shell page may call
     index.cjs           facade: registers every table through handle.cjs (shell-only guard)
     navigation.cjs, session.cjs, recording.cjs, workspace.cjs, shell.cjs, dev.cjs   channel → handler tables
+    workflow-files.cjs  a workflow as JSON: saved as Oya's or Chrome Recorder's, opened from either
   page-actions.cjs      facade over actions/: the agent's page commands (createPageActions)
   actions/              PageDriver and its command maps (page, pointer, dev panel), page script text
   input.cjs             facade over input/: human-like keyboard and mouse over CDP
@@ -87,7 +91,8 @@ renderer/               the shell page (plain browser scripts, see "How the shel
 scripts/, anonymity/    page reader, workflow worker, fingerprint patches (see their headers)
 tests/
   unit/                 node:test, hermetic; mirrors the source (main/tabs/tabs.cjs → tests/unit/main/tabs/tabs.test.cjs)
-  integration/          regressions.js, control-state.cjs, release.cjs, workflow.cjs (in npm test);
+  integration/          regressions.js, control-state.cjs, release.cjs, workflow.cjs, analyzer-dom.mjs,
+                        recorder-dom.mjs (in npm test; the last two in real Chromium);
                         shell.mjs, control.mjs, recording-electron.cjs, workflow-electron.cjs (real Electron);
                         cdp-front-door.mjs (against a running container, by hand)
   support/              fakes.cjs (debugger, webContents, view, electron module), main-ctx.cjs (a fake ctx), page.cjs

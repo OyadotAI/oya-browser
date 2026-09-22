@@ -5,7 +5,19 @@
 const { RECORDING } = require('../constants.cjs');
 
 /** Attributes that identify a frame's owner element, most stable first. */
-const FRAME_KEYS = ['data-testid', 'id', 'name', 'src'];
+const FRAME_KEYS = ['data-testid', 'id', 'name', 'title', 'src'];
+
+/**
+ * A frame's address as a selector: its path, since the host and query of an
+ * embed are often made up per load (MDN's `<uuid>.mdnplay.dev/runner.html?uuid=…`).
+ */
+function srcSelector(tag, src) {
+  try {
+    const url = new URL(src);
+    if (url.pathname.length > 1) return `${tag}[src*=${JSON.stringify(url.pathname)}]`;
+  } catch {}
+  return `${tag}[src=${JSON.stringify(src)}]`;
+}
 
 /** The frame ids from the top frame down to `frameId`, or undefined when it is gone. */
 function findChain(tree, frameId, chain = []) {
@@ -27,7 +39,9 @@ async function frameSelector(send, id) {
   const attributes = attributeMap(node.attributes);
   const key = FRAME_KEYS.find((name) => attributes[name]);
   if (!key) throw new Error('Frame has no stable selector');
-  return `${node.localName || 'iframe'}[${key}=${JSON.stringify(attributes[key])}]`;
+  const tag = node.localName || 'iframe';
+  if (key === 'src') return srcSelector(tag, attributes.src);
+  return `${tag}[${key}=${JSON.stringify(attributes[key])}]`;
 }
 
 /** The selectors from the top frame (`topFrameId`) down to `frameId`; [] for the top frame itself. */
@@ -41,4 +55,4 @@ async function framePath(send, topFrameId, frameId) {
   return selectors;
 }
 
-module.exports = { framePath };
+module.exports = { framePath, frameSelector };

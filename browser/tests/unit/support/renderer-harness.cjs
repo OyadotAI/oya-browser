@@ -72,7 +72,7 @@ function windowGlobals(document, bridge, options) {
     requestAnimationFrame: (fn) => frames.push(fn),
     cancelAnimationFrame: () => {},
     runFrames: () => frames.splice(0).forEach((fn) => fn()),
-    ...{ setTimeout, clearTimeout, setInterval, clearInterval, console, Event },
+    ...{ setTimeout, clearTimeout, setInterval, clearInterval, console, Event, URL },
   };
 }
 

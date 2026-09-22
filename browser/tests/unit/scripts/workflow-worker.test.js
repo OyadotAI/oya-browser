@@ -100,6 +100,28 @@ describe('workflow worker', () => {
     assert.equal(page().graces?.length, 2, 'after each of the two clicks, and not before the first step');
   });
 
+  it('pauses before each step for as long as a slowed-down run asks', async () => {
+    load();
+    await run(
+      [
+        { id: 'a', action: 'press_key', key: 'A' },
+        { id: 'b', action: 'press_key', key: 'B' },
+      ],
+      { slowMo: 1000 },
+    );
+    assert.deepEqual(
+      page().graces.filter((ms) => ms === 1000),
+      [1000, 1000],
+    );
+  });
+
+  it('reports why a step failed, and which target it tried', async () => {
+    load({ counts: { 'css:#gone': 0 } });
+    const steps = [{ id: 'a', action: 'click', candidates: [{ kind: 'css', value: '#gone' }] }];
+    const finished = await run(steps, { autoHeal: false });
+    assert.match(finished.error, /Target not found.*css "#gone"/s);
+  });
+
   it('counts and acts on visible matches only: a collapsed menu repeats link names', async () => {
     load();
     await run([{ id: 'b', action: 'click', candidates: [{ kind: 'css', value: '#go' }] }]);

@@ -9,7 +9,18 @@ const { LOCATOR_KINDS, candidates } = require('./locators.cjs');
 const { RESERVED, VARIABLE_NAME, isVariableName } = require('./rules.cjs');
 
 /** Step fields that are free text. */
-const STRING_FIELDS = ['action', 'url', 'text', 'option', 'file', 'key', 'direction', 'expected', 'captureIssue'];
+const STRING_FIELDS = [
+  'action',
+  'url',
+  'text',
+  'option',
+  'file',
+  'key',
+  'direction',
+  'expected',
+  'params',
+  'captureIssue',
+];
 /** Recorded element fields kept for later repair. */
 const ELEMENT_FIELDS = [
   'type',
@@ -28,6 +39,9 @@ const ELEMENT_FIELDS = [
   'repeats',
   'scoped',
   'path',
+  'host',
+  'testIdRepeats',
+  'hrefRepeats',
 ];
 /** Draft fields copied through untouched when present. */
 const PASSTHROUGH = ['repairedFrom', 'publishedAt', 'publishedRevision', 'run'];

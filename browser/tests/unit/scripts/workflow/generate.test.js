@@ -106,4 +106,78 @@ describe('generate', () => {
     const draft = { id: 'd', steps: [step('a', { action: 'assert_url', expected: 'https://x' })] };
     assert.equal(generate(draft).code, generate(draft).code);
   });
+
+  it('writes the double-click, hover, back and forward a recording can hold', async () => {
+    const target = [{ kind: 'css', value: '#a' }];
+    const { code } = generate({
+      steps: [
+        step('a', { action: 'hover', candidates: target }),
+        step('b', { action: 'double_click', candidates: target }),
+        step('c', { action: 'go_back' }),
+        step('d', { action: 'go_forward' }),
+      ],
+    });
+    const page = fakeBrowser(['about:blank']).pages[0];
+    await (
+      await load(code)
+    )(page, {}, { expect: () => ({}) });
+    assert.deepEqual(page.log, [['hover', 'css:#a'], ['dblclick', 'css:#a'], ['back'], ['forward']]);
+  });
+
+  it('checks a page by its origin, path and route, whatever its query', async () => {
+    const { code } = generate({
+      steps: [step('a', { action: 'assert_page', expected: 'https://x.test/b?s=1#/active' })],
+    });
+    let matches;
+    const expect = () => ({ toHaveURL: async (predicate) => (matches = predicate) });
+    await (
+      await load(code)
+    )(fakeBrowser(['about:blank']).pages[0], {}, { expect });
+    assert.equal(matches(new URL('https://x.test/b?s=2#/active')), true);
+    assert.equal(matches(new URL('https://x.test/b#/done')), false);
+    assert.equal(matches(new URL('https://x.test/login?s=1#/active')), false);
+  });
+
+  it('acts on the first recorded target that finds exactly one element', async () => {
+    const candidates = [
+      { kind: 'testId', value: 'row' },
+      { kind: 'css', value: '#two' },
+      { kind: 'css', value: '#three' },
+    ];
+    const { code } = generate({ steps: [step('a', { action: 'click', candidates })] });
+    const page = fakeBrowser(['about:blank']).pages[0];
+    page.counts = { 'testId:row': 3, 'css:#two': 1 };
+    await (
+      await load(code)
+    )(page, {}, { expect: () => ({}) });
+    assert.deepEqual(page.log, [['click', 'css:#two']]);
+  });
+
+  it('holds a page check to the query parameters it names, and reads past a /ref= path segment', async () => {
+    const expected = 'https://x.test/s/ref=sr_1_1?k=cable&s=price';
+    const { code } = generate({ steps: [step('a', { action: 'assert_page', expected, params: 's' })] });
+    let matches;
+    const expect = () => ({ toHaveURL: async (predicate) => (matches = predicate) });
+    await (
+      await load(code)
+    )(fakeBrowser(['about:blank']).pages[0], {}, { expect });
+    assert.equal(matches(new URL('https://x.test/s/ref=sr_1_3?k=other&s=price')), true);
+    assert.equal(matches(new URL('https://x.test/s?k=cable&s=relevance')), false);
+  });
+
+  it('types into a search box with suggestions key by key, since a fill never opens them', async () => {
+    const candidates = [{ kind: 'role', role: 'combobox', value: 'Destination' }];
+    const { code } = generate({ steps: [step('a', { action: 'type', text: 'Lisbon', candidates })] });
+    const page = fakeBrowser(['about:blank']).pages[0];
+    await (
+      await load(code)
+    )(page, {}, { expect: () => ({}) });
+    assert.deepEqual(
+      page.log.map((entry) => [entry[0], entry[2]]),
+      [
+        ['fill', ''],
+        ['keys', 'Lisbon'],
+      ],
+    );
+  });
 });

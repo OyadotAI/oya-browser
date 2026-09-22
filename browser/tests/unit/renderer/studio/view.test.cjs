@@ -44,6 +44,46 @@ describe('the workflow studio', () => {
     assert.deepEqual(values, ['Email', '#go']);
   });
 
+  it('shows what a step types, picks or expects next to its target, and a secret only as a secret', async () => {
+    const steps = [
+      { id: 't', action: 'type', text: 'ann', candidates: [{ kind: 'label', value: 'Name' }] },
+      { id: 'p', action: 'type', text: '{{password}}', candidates: [{ kind: 'label', value: 'Password' }] },
+      { id: 's', action: 'select_option', option: 'Canada', candidates: [{ kind: 'label', value: 'Country' }] },
+      { id: 'c', action: 'assert_page', expected: 'https://x.test/done?session=abc&s=price', params: 's' },
+      { id: 'b', action: 'go_back' },
+    ];
+    const { ws, push, $ } = await studioApp({ steps });
+    ws.edit({ type: 'variables', variables: { password: { secret: true } } });
+    await push();
+    const values = [...$('record-steps').querySelectorAll('.step-value')].map((el) => el.textContent);
+    assert.deepEqual(values, [
+      'Name · “ann”',
+      'Password · secret {{password}}',
+      'Country · “Canada”',
+      'x.test/done (s=price)',
+      'to the previous page',
+    ]);
+  });
+
+  it('names a step with no words on the page by what was recorded about it, else a short selector', async () => {
+    const steps = [
+      {
+        id: 'a',
+        action: 'click',
+        el: { type: 'checkbox', name: 'terms' },
+        candidates: [{ kind: 'css', value: '[name="terms"]' }],
+      },
+      {
+        id: 'b',
+        action: 'click',
+        candidates: [{ kind: 'css', value: 'body > div > ul > li:nth-of-type(2) > [id="x"]' }],
+      },
+    ];
+    const { $ } = await studioApp({ steps });
+    const values = [...$('record-steps').querySelectorAll('.step-value')].map((el) => el.textContent);
+    assert.deepEqual(values, ['terms checkbox', '… > li:nth-of-type(2) > #x']);
+  });
+
   it('lists the draft being edited even before it is stored, so the picker is never blank', async () => {
     const { $ } = await studioApp({ steps: [] });
     const options = [...$('draft-library').querySelectorAll('option')].map((o) => o.textContent);

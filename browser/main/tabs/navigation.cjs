@@ -63,8 +63,8 @@ async function navigateActive(ctx, url) {
   const tab = ctx.tabs.list.find((t) => t.view === view);
   const request = beginNavigation(ctx, tab);
   url = normalizeAddress(url);
-  ctx.recorder.recordNavigation(url);
-  await Promise.all([ctx.cookies.pullCookiesFor(url), tab.setup]);
+  // The recording collects the page's typing before the load below replaces the page.
+  await Promise.all([ctx.recorder.recordNavigation(url), ctx.cookies.pullCookiesFor(url), tab.setup]);
   finishNavigation(ctx, tab, url, request);
 }
 

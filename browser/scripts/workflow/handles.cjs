@@ -15,11 +15,13 @@
 /**
  * Ids a framework makes up per render, which look like handles and are not:
  * Wikipedia's Parsoid numbers every node `mwAQ`, `mwCg`; React's useId gives
- * `:r3:`; Ember, ExtJS and Radix have their own. A recording that aims at one
- * finds a different element, or none, the next time the page renders.
+ * `:r3:` (18) and `_r_3e_` (19); Amazon counts `a-autoid-83`; Ember, ExtJS,
+ * Radix, Headless UI, MUI and the select libraries have their own. A recording
+ * that aims at one finds a different element, or none, the next time the page
+ * renders. scripts/analyzer.js holds the same pattern; a test keeps them equal.
  */
 const GENERATED_ID =
-  /^(mw[\w-]{1,4}|:r[0-9a-z]+:|ember\d+|ext-gen\d+|radix-[\w:-]+|[a-f0-9]{8}-[a-f0-9]{4}-)|[0-9]{6,}/i;
+  /^(mw[\w-]{1,4}|:r[0-9a-z]+:|_r_[0-9a-z]+_|a-(autoid|popover)-\d+|ember\d+|ext-gen\d+|radix-[\w:-]+|headlessui-[\w-]+|mui-\d+|react-select-\d+|downshift-\d+|[a-f0-9]{8}-[a-f0-9]{4}-)|[0-9]{6,}/i;
 
 /** Whether this id will still name the same element after a re-render. */
 function stableId(domId) {
@@ -51,7 +53,7 @@ function withoutLiveCount(name) {
  * volatile ones and keeping the rest is what makes a link comparable at all.
  */
 const VOLATILE_PARAMS =
-  /^(utm_[a-z]+|qid|xpid|_gl|_ga|gclid|fbclid|msclkid|igshid|ved|ei|sa|usg|sid|sessionid|sessid|nonce|csrf|csrftoken|requestid|rid|reqid|ts|timestamp|trk|trackingid|rdt|si|correlationid)$/i;
+  /^(utm_[a-z]+|qid|xpid|crid|sprefix|ref|ref_|ref_src|_encoding|refid|pd_rd_\w+|pf_rd_\w+|content-id|dib|dib_tag|_gl|_ga|gclid|fbclid|msclkid|igshid|ved|ei|sa|usg|sid|sessionid|sessid|nonce|csrf|csrftoken|requestid|rid|reqid|ts|timestamp|trk|trackingid|rdt|si|correlationid)$/i;
 
 /** A link's target as the page wrote it, which is what a CSS locator matches. */
 const rawTargetOf = (el) => el.rawHref ?? el.href;
@@ -204,6 +206,7 @@ module.exports = {
   stableTarget,
   rawTargetOf,
   volatileTarget,
+  VOLATILE_PARAMS,
   GENERATED_ID,
   LIVE_COUNT,
 };
