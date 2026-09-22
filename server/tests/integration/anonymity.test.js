@@ -86,6 +86,16 @@ try {
     return res.result?.value;
   };
 
+  /** Waits for a data: page to finish loading; a fixed sleep raced slow CI runners. */
+  const loaded = async (selector) => {
+    const deadline = Date.now() + 10000;
+    const ready = `location.protocol === 'data:' && document.readyState === 'complete' && !!document.querySelector('${selector}')`;
+    while (!(await evaluate(ready).catch(() => false))) {
+      if (Date.now() > deadline) throw new Error(`page with ${selector} did not load`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+
   console.log('\n1️⃣  toString masking, without this every patch below is readable...');
   assert(
     await evaluate(`Function.prototype.toString.toString().includes('[native code]')`),
@@ -162,7 +172,7 @@ try {
     },
     sessionId,
   );
-  await new Promise((r) => setTimeout(r, 400));
+  await loaded('#c');
 
   assert(
     await evaluate(`(() => {
@@ -212,7 +222,7 @@ try {
     { url: 'data:text/html,<button>Press me</button><input placeholder=name>' },
     sessionId,
   );
-  await new Promise((r) => setTimeout(r, 400));
+  await loaded('input');
   const { frameTree } = await conn.send('Page.getFrameTree', {}, sessionId);
   const { executionContextId } = await conn.send(
     'Page.createIsolatedWorld',
