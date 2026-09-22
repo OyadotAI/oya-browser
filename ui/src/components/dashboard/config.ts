@@ -96,7 +96,7 @@ export const saveConfig = (apiKey: string, values: Record<string, string>) =>
 
 /** The LLMs the settings dialog offers, with a default model and a hint of the key's shape. */
 export const LLM_PRESETS: LlmPreset[] = [
-  { id: 'anthropic', label: 'Claude', model: 'claude-sonnet-5', hint: 'sk-ant-...' },
+  { id: 'anthropic', label: 'Claude', model: 'claude-opus-5', hint: 'sk-ant-...' },
   { id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini', hint: 'sk-...' },
   { id: 'gemini', label: 'Gemini', model: 'gemini-3.8-flash', hint: 'AIza...' },
   { id: 'vertex', label: 'Gemini Enterprise', model: 'gemini-2.5-flash', hint: 'AIza... (express mode)' },

@@ -23,7 +23,7 @@ function withoutElectron(load) {
 }
 
 /** Actions only the server sends: done by the app, never announced. */
-const INTERNAL = new Set(['evaluate_raw', 'record']);
+const INTERNAL = new Set(['evaluate_raw', 'record', 'run_script']);
 
 describe('OYA_ACTIONS', () => {
   it('equals the actions the command maps answer, plus handle_dialog, without the internal ones', () => {

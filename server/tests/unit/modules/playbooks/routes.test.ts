@@ -144,7 +144,8 @@ describe('playbook routes', () => {
         steps: [{ action: 'teleport' }],
         defaults: {},
       });
-      mock.method(globalThis, 'fetch', async () => new Response('down', { status: 500 }));
+      // 400, not 500: a 500 is retried with backoff, and this test is about the handover, not the retries.
+      mock.method(globalThis, 'fetch', async () => new Response('down', { status: 400 }));
       mock.method(console, 'error', () => {});
       process.env.OPENAI_API_KEY = 'sk-host';
       const { body } = await as('POST', `/browsers/${BROWSER}/runs`, { playbook: 'broken' });

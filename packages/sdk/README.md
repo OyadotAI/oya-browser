@@ -166,6 +166,21 @@ await browser.ask('Attach my resume to the application and submit it', {
 
 A string argument is a path on disk (Node only); a `Blob`, a `File`, or a `Uint8Array` works anywhere. `name` sets the filename the site sees and `type` overrides the MIME guessed from the extension. The ceiling is 10MB per file, and the bytes travel inline with the run. Nothing is stored server-side after it ends.
 
+### Data instead of a sentence
+
+`extract()` runs the same agent and answers in the shape you ask for, so you do not
+parse prose:
+
+```ts
+const { title, price } = await browser.extract('What is the product on this page?', {
+  type: 'object',
+  properties: { title: { type: 'string' }, price: { type: 'string' } },
+  required: ['title', 'price'],
+});
+```
+
+It throws when the agent reports it could not do the task.
+
 Files work in `data` for `ask()`, `submit()`, and `play()`; `secrets` rejects them, because a file is never typed through a placeholder. A run recorded with `toPlaybook()` keeps the upload as a variable, so the replay takes a different file:
 
 ```js
@@ -422,34 +437,35 @@ const oya = new Oya({
 
 ### Browser Instance Methods (`browser.*`)
 
-| Method                              | Returns                                      | Description                                              |
-| :---------------------------------- | :------------------------------------------- | :------------------------------------------------------- |
-| `goto(url)`                         | `Promise<void>`                              | Navigate to URL (with optional auto-CAPTCHA)             |
-| `ask(prompt, { data?, secrets? }?)` | `Promise<string>`                            | Natural-language AI driving using key's configured model |
-| `analyze()`                         | `Promise<Analysis>`                          | Returns markdown representation and numbered elements    |
-| `elements()`                        | `Promise<Element[]>`                         | Returns only visible interactable elements               |
-| `click(elementId)`                  | `Promise<void>`                              | Click element by numeric ID from `analyze()`             |
-| `type(elementId, text)`             | `Promise<{ suggestions_visible?: boolean }>` | Type text into specified element                         |
-| `pressKey(key)`                     | `Promise<void>`                              | Dispatch keyboard key event (e.g. `'Enter'`)             |
-| `scroll(dir, amount?, at?)`         | `Promise<void>`                              | Scroll `'up' \| 'down' \| 'top' \| 'bottom'`             |
-| `waitFor(selector, timeout?)`       | `Promise<void>`                              | Wait for DOM selector                                    |
-| `screenshot()`                      | `Promise<string>`                            | Capture page as base64 image data URL                    |
-| `url()`                             | `Promise<string>`                            | Current active tab URL                                   |
-| `tabs()`                            | `Promise<Tab[]>`                             | List open tabs                                           |
-| `openTab(url?)`                     | `Promise<string>`                            | Open a new tab                                           |
-| `switchTab(tabId)`                  | `Promise<void>`                              | Switch active tab                                        |
-| `closeTab(tabId)`                   | `Promise<void>`                              | Close target tab                                         |
-| `solveCaptcha()`                    | `Promise<CaptchaResult>`                     | Detect and solve on-screen CAPTCHA                       |
-| `completeMfa()`                     | `Promise<MfaResult>`                         | Resolve TOTP/SMS MFA or return `liveViewUrl`             |
-| `liveViewUrl()`                     | `string`                                     | Dashboard link for this browser                          |
-| `liveStreamUrl()`                   | `Promise<string>`                            | SSE frame stream URL with a single-use ticket            |
-| `shareUrl(options?)`                | `Promise<{ url, id, expiresAt }>`            | Expiring browser share link; optional control access     |
-| `revokeShare(id)`                   | `Promise<void>`                              | Revoke a share link                                      |
-| `submit(task, options?)`            | `Promise<Run>`                               | Background prompt or playbook with callbacks             |
-| `toPlaybook(name)`                  | `Promise<Playbook>`                          | Save the latest agent flow and export Playwright code    |
-| `play(name, data?, { autoHeal? }?)` | `Promise<PlayResult>`                        | Replay a saved flow                                      |
-| `status()`                          | `Promise<BrowserDetail>`                     | Instance metrics, health, and recent activity log        |
-| `stop()`                            | `Promise<StopResult>`                        | Tear down sandbox and release CDP session                |
+| Method                                          | Returns                                      | Description                                              |
+| :---------------------------------------------- | :------------------------------------------- | :------------------------------------------------------- |
+| `goto(url)`                                     | `Promise<void>`                              | Navigate to URL (with optional auto-CAPTCHA)             |
+| `ask(prompt, { data?, secrets? }?)`             | `Promise<string>`                            | Natural-language AI driving using key's configured model |
+| `extract(prompt, schema, { data?, secrets? }?)` | `Promise<T>`                                 | The same, answered as data in the shape of a JSON schema |
+| `analyze()`                                     | `Promise<Analysis>`                          | Returns markdown representation and numbered elements    |
+| `elements()`                                    | `Promise<Element[]>`                         | Returns only visible interactable elements               |
+| `click(elementId)`                              | `Promise<void>`                              | Click element by numeric ID from `analyze()`             |
+| `type(elementId, text)`                         | `Promise<{ suggestions_visible?: boolean }>` | Type text into specified element                         |
+| `pressKey(key)`                                 | `Promise<void>`                              | Dispatch keyboard key event (e.g. `'Enter'`)             |
+| `scroll(dir, amount?, at?)`                     | `Promise<void>`                              | Scroll `'up' \| 'down' \| 'top' \| 'bottom'`             |
+| `waitFor(selector, timeout?)`                   | `Promise<void>`                              | Wait for DOM selector                                    |
+| `screenshot()`                                  | `Promise<string>`                            | Capture page as base64 image data URL                    |
+| `url()`                                         | `Promise<string>`                            | Current active tab URL                                   |
+| `tabs()`                                        | `Promise<Tab[]>`                             | List open tabs                                           |
+| `openTab(url?)`                                 | `Promise<string>`                            | Open a new tab                                           |
+| `switchTab(tabId)`                              | `Promise<void>`                              | Switch active tab                                        |
+| `closeTab(tabId)`                               | `Promise<void>`                              | Close target tab                                         |
+| `solveCaptcha()`                                | `Promise<CaptchaResult>`                     | Detect and solve on-screen CAPTCHA                       |
+| `completeMfa()`                                 | `Promise<MfaResult>`                         | Resolve TOTP/SMS MFA or return `liveViewUrl`             |
+| `liveViewUrl()`                                 | `string`                                     | Dashboard link for this browser                          |
+| `liveStreamUrl()`                               | `Promise<string>`                            | SSE frame stream URL with a single-use ticket            |
+| `shareUrl(options?)`                            | `Promise<{ url, id, expiresAt }>`            | Expiring browser share link; optional control access     |
+| `revokeShare(id)`                               | `Promise<void>`                              | Revoke a share link                                      |
+| `submit(task, options?)`                        | `Promise<Run>`                               | Background prompt or playbook with callbacks             |
+| `toPlaybook(name)`                              | `Promise<Playbook>`                          | Save the latest agent flow and export Playwright code    |
+| `play(name, data?, { autoHeal? }?)`             | `Promise<PlayResult>`                        | Replay a saved flow                                      |
+| `status()`                                      | `Promise<BrowserDetail>`                     | Instance metrics, health, and recent activity log        |
+| `stop()`                                        | `Promise<StopResult>`                        | Tear down sandbox and release CDP session                |
 
 ### Profile and persona management (`oya.profiles`, `oya.personas`)
 

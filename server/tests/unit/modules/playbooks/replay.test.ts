@@ -83,6 +83,25 @@ describe('play', () => {
     assert.equal(commands()[0].timeout, NAVIGATE_TIMEOUT_MS);
   });
 
+  it('replays a hover on the recorded element and history moves as the browser’s own', async () => {
+    const steps = [
+      { action: 'hover', el: { text: 'Go', type: 'button' } },
+      { action: 'go_back' },
+      { action: 'go_forward' },
+      { action: 'reload' },
+    ];
+    await play(KEY, BROWSER, pb(steps));
+    assert.deepEqual(
+      commands().map((c) => [c.action, c.params]),
+      [
+        ['hover', { selector: '[data-ac-id="2"]' }],
+        ['back', {}],
+        ['forward', {}],
+        ['reload', {}],
+      ],
+    );
+  });
+
   it('runs the checkpoint after navigations, clicks and key presses only', async () => {
     const checkpoint = mock.fn();
     const steps = [

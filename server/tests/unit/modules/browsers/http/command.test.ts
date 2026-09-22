@@ -59,6 +59,13 @@ describe('runCommand', () => {
     assert.equal(driver.sent.length, 0);
   });
 
+  it('refuses a script sent straight to the command route, which no read-only check would see', async () => {
+    const driver = driveBrowser(B, () => ({ ok: true }));
+    const res = await run({ action: 'run_script', params: { script: 'return document.cookie' } });
+    assert.equal(res.statusCode, 403);
+    assert.equal(driver.sent.length, 0);
+  });
+
   it('answers a thrown error with its status and code', async () => {
     driveBrowser(B, () => {
       throw new HttpError(409, 'Human has control', { code: 'control_held' });
@@ -131,6 +138,28 @@ describe('chat', () => {
     const res = await talk({ messages: [], data: { 'bad name': 'x' } });
     assert.equal(res.statusCode, 400);
     assert.match(res.body.error, /^data must map names/);
+  });
+
+  it('refuses a schema that is not a JSON object', async () => {
+    for (const schema of ['object', [1], null]) {
+      const res = await talk({ messages: [], schema });
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body.error, /^schema must be a JSON schema object/);
+    }
+  });
+
+  it('answers the data a run given a schema returned, beside its text', async () => {
+    const call = { id: 'c1', type: 'function', function: { name: 'return_data', arguments: '{"data":{"n":3}}' } };
+    const answer = { choices: [{ message: { role: 'assistant', content: null, tool_calls: [call] } }] };
+    mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(answer), { status: 200 }));
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const schema = { type: 'object', properties: { n: { type: 'number' } } };
+      const body = JSON.parse((await talk({ messages: [{ role: 'user', content: 'count' }], schema })).ended);
+      assert.deepEqual([body.data, body.failed], [{ n: 3 }, false]);
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
   });
 
   it('refuses a file passed as a secret', async () => {

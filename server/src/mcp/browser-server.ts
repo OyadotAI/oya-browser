@@ -18,7 +18,7 @@ function createMcpServer(browserId) {
   const browser = registry.get(browserId);
   const serverName = browser ? `Oya Browser, ${browser.name}` : `Oya Browser, ${browserId}`;
   const server = new McpServer({ name: serverName, version: MCP_VERSION });
-  registerBrowserTools(server, { pick: () => browserId });
+  registerBrowserTools(server, { pick: () => browserId, oneBrowser: true });
   const description = 'Current URL and page title of the connected browser';
   server.resource('current-page', CURRENT_PAGE, { description }, async () => currentPage(browserId));
   return server;

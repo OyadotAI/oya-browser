@@ -257,7 +257,9 @@ try {
   const { readFileSync } = await import('fs');
   const read = (f) => readFileSync(new URL(f, import.meta.url), 'utf8');
   assert(
-    /redirect:\s*'error'/.test(read('../../src/platform/llm.ts')),
+    ['../../src/platform/llm/transport.ts', '../../src/platform/llm/anthropic.ts'].every((f) =>
+      /redirect:\s*'error'/.test(read(f)),
+    ),
     'the chat fetch refuses redirects (no 30x bypass)',
   );
   // The guard is only worth anything while every LLM request goes through llm.js; a

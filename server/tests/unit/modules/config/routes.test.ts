@@ -10,6 +10,7 @@ ownDataDir();
 const { router } = await import('../../../../src/modules/config/routes.ts');
 const { runtimeConfig } = await import('../../../../src/platform/runtime-config.ts');
 const { allowKey, callRoute } = await import('../../support/agent.ts');
+const keyConfig = await import('../../../../src/modules/config/service.ts');
 
 const KEY = 'config-routes-key';
 const OPERATOR = 'config-operator-token';
@@ -40,6 +41,14 @@ describe('config routes', () => {
     assert.equal(res.body.openai_api_key, '••••9999');
     const read = await callRoute(router, { url: '/config', key: KEY });
     assert.equal(read.body.chat_model, 'm1');
+  });
+
+  it('shows the notes the agent kept for a site, and forgets one when told to', async () => {
+    await keyConfig.saveSiteNotes(KEY, 'shop.test', ['exports live under Account']);
+    const read = await callRoute(router, { url: '/config/site-notes', key: KEY });
+    assert.deepEqual(read.body.notes, { 'shop.test': ['exports live under Account'] });
+    const gone = await callRoute(router, { method: 'DELETE', url: '/config/site-notes/shop.test', key: KEY });
+    assert.deepEqual(gone.body, { ok: true, notes: {} });
   });
 
   it('answers an invalid setting with 400', async () => {

@@ -167,7 +167,7 @@ describe('key settings', () => {
         own: true,
         openaiKey: 'sk-ant',
         baseUrl: 'https://api.anthropic.com/v1',
-        model: 'claude-sonnet-5',
+        model: 'claude-opus-5',
       });
     });
 

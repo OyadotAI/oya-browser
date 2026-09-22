@@ -29,6 +29,21 @@ const POOL_TOOLS = [
   'double_click',
   'keyboard_type',
   'drag',
+  // Through the agent's own tool code (agent-tools.ts); each acts on the browser the last call used.
+  'select_option',
+  'run_script',
+  'wait_for',
+  'find',
+  'hover',
+  'go_back',
+  'go_forward',
+  'reload',
+  'solve_captcha',
+  'sign_in',
+  'complete_mfa',
+  'list_playbooks',
+  'run_playbook',
+  'run_task',
 ];
 
 /** Every tool the pool endpoint serves: the per-browser subset plus its own three. */

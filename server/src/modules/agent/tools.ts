@@ -1,6 +1,69 @@
 /**
  * Browser tool definitions for the chat LLM, maps to MCP tools / sendCommand.
  */
+import { RUN_SCRIPT_OUTPUT_CHARS, WAIT_FOR_DEFAULT_MS, WAIT_FOR_MAX_MS } from './constants.ts';
+
+/** A tool with no arguments. */
+export const bare = (name: string, description: string) => ({
+  type: 'function',
+  function: { name, description, parameters: { type: 'object', properties: {}, additionalProperties: false } },
+});
+
+/** A tool that takes one argument, required. */
+const single = (name: string, description: string, arg: string, schema: Record<string, any>) => ({
+  type: 'function',
+  function: {
+    name,
+    description,
+    parameters: { type: 'object', properties: { [arg]: schema }, required: [arg], additionalProperties: false },
+  },
+});
+
+/** The page tools of page-tool-handlers.ts: reading with code, waiting, finding, hovering and history. */
+const PAGE_TOOLS = [
+  single(
+    'run_script',
+    `Run JavaScript that READS the page and returns data, for what analyze_page does not show well: every row of a long table, attributes, counts, text across many elements. The body of an async function: \`return\` the value (JSON-serialisable, cut at ${RUN_SCRIPT_OUTPUT_CHARS} chars). It runs where the page cannot see it and must not change anything: no clicks, typing, requests or navigation; act with the element tools, which replay. Example: return [...document.querySelectorAll('table tr')].map(r => r.innerText);`,
+    'script',
+    { type: 'string', description: 'The function body; `return` what you want to read' },
+  ),
+  {
+    type: 'function',
+    function: {
+      name: 'wait_for',
+      description:
+        'Wait until the page is ready: some text shows, the url contains something, and/or the network has gone quiet. With no text or url it waits for the network to settle. Use it after an action that loads results in the background, rather than analyzing again and again.',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'Text that must appear on the page' },
+          url: { type: 'string', description: 'Part of the url the page must reach' },
+          network_idle: { type: 'boolean', description: 'Also wait for no new requests for a moment' },
+          timeout: {
+            type: 'number',
+            description: `Max wait in ms (default ${WAIT_FOR_DEFAULT_MS}, at most ${WAIT_FOR_MAX_MS})`,
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  single(
+    'find',
+    'Find the elements that match a description ("search box", "add to cart", "next page"), best first, with ids click and type accept. Much shorter than analyze_page when you know what you are looking for.',
+    'query',
+    { type: 'string', description: 'The words the element is known by' },
+  ),
+  single(
+    'hover',
+    'Move the mouse onto an element, for menus, tooltips and previews that open on hover. Tells you what appeared.',
+    'element_id',
+    { type: 'number', description: 'Element ID from analyze_page' },
+  ),
+  bare('go_back', "Go back one page in the tab's history, like the browser's back button, and wait for it to load."),
+  bare('go_forward', "Go forward one page in the tab's history and wait for it to load."),
+  bare('reload', 'Reload the page and wait for it to load. For a page stuck loading or showing stale data.'),
+];
 
 /** OpenAI-style function tool schemas offered to the chat model. */
 export const BROWSER_TOOLS = [
@@ -16,6 +79,11 @@ Pass content false while you are working the page rather than reading it: you ge
           content: {
             type: 'boolean',
             description: "Include the page's words (default true). False returns only the elements to act on.",
+          },
+          selector: {
+            type: 'string',
+            description:
+              'CSS selector of one part of the page (a dialog, a results table) to analyze alone, for a long page where only that part matters.',
           },
         },
         additionalProperties: false,
@@ -370,4 +438,29 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
       },
     },
   },
+  ...PAGE_TOOLS,
 ];
+
+/**
+ * The browser command a tool needs, for the tools not every browser does: a CDP
+ * browser has no console or network log, and an older desktop app no scripts or
+ * history moves. Offering a tool the browser refuses only costs the model a turn.
+ */
+const NEEDS: Record<string, string> = {
+  read_console: 'read_console',
+  read_network: 'read_network',
+  // run_script is server-internal, so no browser announces it; the app that first
+  // ran scripts is the one that first did history moves, so reload stands for both.
+  run_script: 'reload',
+  wait_for: 'reload',
+  hover: 'hover',
+  go_back: 'back',
+  go_forward: 'forward',
+  reload: 'reload',
+};
+
+/** The browser tools a browser that does `actions` can run; all of them when its actions are not known. */
+export const toolsOn = (actions: readonly string[] | null) =>
+  actions
+    ? BROWSER_TOOLS.filter((t) => !Object.hasOwn(NEEDS, t.function.name) || actions.includes(NEEDS[t.function.name]))
+    : BROWSER_TOOLS;

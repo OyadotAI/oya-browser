@@ -62,7 +62,7 @@ describe('the action vocabulary', () => {
 
   it('says where an action is supported', () => {
     assert.deepEqual(supportedOn('read_console'), ['oya']);
-    assert.deepEqual(supportedOn('back'), ['cdp']);
+    assert.deepEqual(supportedOn('cookies'), ['cdp']);
     assert.deepEqual(supportedOn('click'), ['oya', 'cdp']);
   });
 

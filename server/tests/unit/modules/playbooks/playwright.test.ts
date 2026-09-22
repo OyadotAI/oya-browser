@@ -23,6 +23,19 @@ describe('renderPlaywright', () => {
       assert.equal(lineFor({ action: 'navigate', url: 'https://a.test/' }), 'await page.goto("https://a.test/");');
     });
 
+    it('hovers over the recorded element', () => {
+      assert.equal(
+        lineFor({ action: 'hover', el: { testId: 'menu' } }),
+        'await page.getByTestId("menu").first().hover();',
+      );
+    });
+
+    it('moves through history as the run did', () => {
+      assert.equal(lineFor({ action: 'go_back' }), 'await page.goBack();');
+      assert.equal(lineFor({ action: 'go_forward' }), 'await page.goForward();');
+      assert.equal(lineFor({ action: 'reload' }), 'await page.reload();');
+    });
+
     it('clicks the first element a locator finds', () => {
       assert.equal(lineFor({ action: 'click', el: { testId: 'go' } }), 'await page.getByTestId("go").first().click();');
     });

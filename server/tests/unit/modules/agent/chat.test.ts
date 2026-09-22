@@ -51,11 +51,12 @@ describe('runChat', () => {
   it('lets a key with its own credential past the budget, using its own endpoint', async () => {
     usage.record('own-key', 'chat_input_tokens', QUOTAS.chatTokensPerHour);
     await keyConfig.set('own-key', { openai_api_key: 'sk-own', llm_provider: 'anthropic' });
-    const llm = stubLlm([textReply('DONE')]);
+    const claudeReply = { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'DONE' }], usage: {} };
+    const llm = stubLlm([claudeReply]);
     const result = await runChat(BROWSER, [{ role: 'user', content: 'x' }], { apiKey: 'own-key' });
     assert.equal(result.text, 'DONE');
-    assert.equal(llm.urls[0], 'https://api.anthropic.com/v1/chat/completions');
-    assert.equal(llm.requests[0].model, 'claude-sonnet-5');
+    assert.match(llm.urls[0], /^https:\/\/api\.anthropic\.com\/v1\/messages/);
+    assert.equal(llm.requests[0].model, 'claude-opus-5');
   });
 
   it('tells the model its data and files, and names secrets without their values', async () => {

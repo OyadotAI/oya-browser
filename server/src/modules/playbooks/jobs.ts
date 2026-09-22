@@ -4,7 +4,7 @@
  */
 import { runChat } from '../agent/chat.ts';
 import { play } from './service.ts';
-import { checkpointFor } from './checkpoint.ts';
+import { checkpointFor, challengesFor } from './checkpoint.ts';
 
 /** What a run was submitted with. */
 export interface Job {
@@ -39,11 +39,11 @@ function replayJob({ key, browserId, pb, data, secrets, autoHeal }: Job, checkpo
 
 /** Hands the prompt to the agent; a run that hit its limit or said FAILED fails. */
 async function runPrompt({ key, browserId, prompt, data, secrets }: Job, checkpoint, requestHuman) {
-  const options = { apiKey: key, data, secrets, checkpoint, requestHuman };
+  const options = { apiKey: key, data, secrets, checkpoint, requestHuman, challenges: challengesFor(key, browserId) };
   const result = await runChat(browserId, [{ role: 'user', content: prompt }], options);
   if (result.limited) throw new Error('The agent hit its step limit without finishing');
   // Anywhere in the reply, not just the first line: a model that narrates before
   // its verdict still failed, and a "succeeded" run saves the broken steps as a playbook.
-  if (/(^|\n)\s*FAILED:/i.test(result.text)) throw new Error(result.text.trim());
+  if (result.failed) throw new Error(result.text.trim());
   return { text: result.text };
 }

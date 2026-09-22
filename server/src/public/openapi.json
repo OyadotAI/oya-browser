@@ -1645,6 +1645,18 @@
                       }
                     },
                     "description": "OpenAI-format chat messages"
+                  },
+                  "data": {
+                    "type": "object",
+                    "description": "Task values the agent may read, referred to as {{name}} in the prompt; a value may be a file() to upload"
+                  },
+                  "secrets": {
+                    "type": "object",
+                    "description": "Task values the agent never sees; typed through {{name}} placeholders"
+                  },
+                  "schema": {
+                    "type": "object",
+                    "description": "A JSON schema for the answer. The agent then finishes by returning data in this shape, answered as `data`"
                   }
                 }
               }
@@ -1674,6 +1686,13 @@
                     "replayable": {
                       "type": "boolean",
                       "description": "Whether the run acted on a page and can be saved as a playbook (POST /api/browsers/{browserId}/playbooks)"
+                    },
+                    "failed": {
+                      "type": "boolean",
+                      "description": "Whether the agent reports it could not do the task (its reply starts with FAILED:, or it ran out of steps)"
+                    },
+                    "data": {
+                      "description": "The answer in the shape of the request's schema, when one was given and the agent returned it"
                     }
                   }
                 }
@@ -2138,6 +2157,62 @@
                   "type": "object",
                   "properties": {
                     "ok": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config/site-notes": {
+      "get": {
+        "summary": "What the agent remembered about each site",
+        "description": "Notes the agent chose to keep for this key while working a site (where a report lives, a form quirk). It writes them from what it read on a page, so they are readable here and can be deleted.",
+        "operationId": "listSiteNotes",
+        "responses": {
+          "200": {
+            "description": "Notes by host",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "notes": {
+                      "type": "object",
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/config/site-notes/{host}": {
+      "delete": {
+        "summary": "Forget the notes kept for one site",
+        "operationId": "forgetSiteNotes",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "The site's host, as GET /config/site-notes lists it"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The notes that remain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "notes": { "type": "object" }
                   }
                 }
               }

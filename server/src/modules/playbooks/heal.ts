@@ -4,6 +4,7 @@
  */
 import { runChat, lastRun } from '../agent/chat.ts';
 import * as keyConfig from '../config/service.ts';
+import { challengesFor } from './checkpoint.ts';
 
 /** The entries of `values` whose key passes `keep`. */
 const pick = (values, keep) => Object.fromEntries(Object.entries(values).filter(([k]) => keep(k)));
@@ -34,18 +35,23 @@ function healTask(pb, i, total, err) {
   return `${pb.prompt}\n\nA recorded playbook already did ${i} of ${total} steps of this task, then failed (${err.message}). Look at the page and finish the task from where it is.`;
 }
 
-/** Runs the agent on the task; throws when it did not finish. */
-async function finishWithAgent(apiKey, browserId, pb, task, values, hooks) {
+/** The playbook's values split into what the agent may read and its secrets. */
+function taskData(pb, values) {
   const hidden = new Set(pb.secrets || []);
   // Button and link labels are how the flow was clicked, not what it was about. Handing
   // them over as data makes redact() rewrite "Sign in" to {{signIn}} in the page the
   // agent is reading, which is the opposite of help.
   const ignored = new Set([...hidden, ...(pb.labels || [])]);
-  const data = pick(values, (k) => !ignored.has(k));
-  const secrets = pick(values, (k) => hidden.has(k));
-  const result = await runChat(browserId, [{ role: 'user', content: task }], { apiKey, data, secrets, ...hooks });
+  return { data: pick(values, (k) => !ignored.has(k)), secrets: pick(values, (k) => hidden.has(k)) };
+}
+
+/** Runs the agent on the task; throws when it did not finish. */
+async function finishWithAgent(apiKey, browserId, pb, task, values, hooks) {
+  const challenges = challengesFor(apiKey, browserId);
+  const options = { apiKey, ...taskData(pb, values), challenges, ...hooks };
+  const result = await runChat(browserId, [{ role: 'user', content: task }], options);
   if (result.limited) throw new Error('the agent hit its step limit');
-  if (/(^|\n)\s*FAILED:/i.test(result.text)) throw new Error(result.text.trim());
+  if (result.failed) throw new Error(result.text.trim());
   return result;
 }
 

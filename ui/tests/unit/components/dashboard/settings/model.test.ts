@@ -36,7 +36,7 @@ describe('draft rules', () => {
     expect(next).toEqual({
       captcha_solver: 'c',
       llm_provider: 'anthropic',
-      chat_model: 'claude-sonnet-5',
+      chat_model: 'claude-opus-5',
       openai_base_url: '',
     });
   });

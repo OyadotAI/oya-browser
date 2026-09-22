@@ -1,7 +1,7 @@
 {
   "name": "oya-browser-server",
   "version": "1.0.0",
-  "description": "Oya Browser \u2014 MCP server for browser control",
+  "description": "Oya Browser — MCP server for browser control",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
@@ -18,6 +18,7 @@
     "stealth": "node tests/integration/stealth.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.127.0",
     "@daytona/sdk": "0.211.2",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@supabase/supabase-js": "^2.99.3",

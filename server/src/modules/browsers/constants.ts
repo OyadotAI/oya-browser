@@ -39,3 +39,5 @@ export const PROVISION_IN_FLIGHT = 10;
 export const DEFAULT_PORT = 3100;
 /** Cookies accepted by one PUT /pool/cookies; a whole browser profile fits, a runaway upload does not. */
 export const MAX_IMPORT_COOKIES = 20_000;
+/** The largest JSON schema a chat may ask its answer in, in characters of JSON. */
+export const MAX_SCHEMA_CHARS = 20_000;

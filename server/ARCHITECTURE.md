@@ -24,15 +24,19 @@ src/
     http-status.ts     Status: HTTP codes by name
     paths.ts           where data, the browser scripts and the console live on disk
     db.ts, metrics.ts, audit.ts, usage.ts, limits.ts, llm.ts, secrets.ts, net-guard.ts, runtime-config.ts
+    llm/               one provider per API (anthropic, gemini, openai) behind llm.ts, with
+                       their shared transport (retries, timeout, one error shape)
   drivers/             how browsers are reached: cdp.ts (CDP driver), providers.ts (vendors), sandbox.ts (Oya Cloud)
-  mcp/                 the per-browser and pool MCP servers (facade: server.ts)
+  mcp/                 the per-browser and pool MCP servers (facade: server.ts); the browser
+                       tools, and the agent's own tools re-served (agent-tools.ts)
   modules/             one folder per domain
     browsers/          connected browsers: control sockets, commands, lifecycle, routes
     personas/          identities: fingerprint + cookie jar + proxy
     gateway/           the CDP gateway: sessions, provider routing, recordings, profiles
     control/           the durable control plane: sessions, projects, members, workers, cluster
     playbooks/         recorded and replayed workflows, runs, Playwright export
-    agent/             the LLM agent that drives a browser (chat, tools)
+    agent/             the LLM agent that drives a browser (chat, tools, guards, verifier,
+                       page tools, per-site notes)
     challenges/        CAPTCHA, site login, MFA
     auth/              accounts, API keys, the auth middleware
     proxies/           the proxy pool and assignment
@@ -73,7 +77,8 @@ The other patterns in use:
   start and stop (`browsers/lifecycle/`) are sequences of named steps.
 - **Command maps:**
   - CDP actions (`drivers/cdp/handlers/`)
-  - agent tools (`agent/tool-handlers.ts`)
+  - agent tools (`agent/tool-handlers.ts`, `agent/page-tool-handlers.ts`), which the MCP
+    servers re-serve from the same definitions (`mcp/agent-tools.ts`)
   - playbook replay and Playwright lines (`playbooks/replay.ts`, `playwright.ts`)
   - routing strategies (`gateway/strategies.ts`)
 

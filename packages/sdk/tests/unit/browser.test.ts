@@ -167,6 +167,20 @@ describe('Browser agent calls', () => {
     await assert.rejects(b.ask('go'), { status: 429, message: 'quota' });
   });
 
+  it('extract sends the schema and returns the data in its shape', async () => {
+    const schema = { type: 'object', properties: { price: { type: 'string' } } };
+    const { b, calls } = await browser({
+      'POST /api/browsers/b1/chat': { body: { text: 'DONE: {}', data: { price: '$5' } } },
+    });
+    assert.deepEqual(await b.extract('price?', schema, { data: { q: 'x' } }), { price: '$5' });
+    assert.deepEqual(calls[0].body, { messages: [{ role: 'user', content: 'price?' }], data: { q: 'x' }, schema });
+  });
+
+  it('extract throws with the report when the agent could not get the data', async () => {
+    const { b } = await browser({ 'POST /api/browsers/b1/chat': { body: { text: 'FAILED: no price', failed: true } } });
+    await assert.rejects(b.extract('price?', {}), { status: 422, message: 'FAILED: no price' });
+  });
+
   it('play sends variables with autoHeal on by default, and defaults a failure to 500', async () => {
     const { b, calls } = await browser({
       'POST /api/browsers/b1/playbooks/my%20flow/play': [

@@ -66,4 +66,20 @@ function readElementsJs(selector, limit) {
   return `(${READ_ELEMENTS})(${JSON.stringify(String(selector || INTERACTIVE))}, ${max})`;
 }
 
-module.exports = { presentJs, readElementsJs, INTERACTIVE };
+/**
+ * An expression that runs the agent's script as the body of an async function, in
+ * the analyzer's isolated world (the page cannot see it), and answers its return
+ * value made plain JSON, or `{ error }` when it throws. The size is capped by the caller.
+ */
+function runScriptJs(script) {
+  return `(async () => {
+    try {
+      const value = await (async () => { ${String(script || '')}\n })();
+      return { value: JSON.parse(JSON.stringify(value ?? null)) };
+    } catch (e) {
+      return { error: String(e && e.message || e) };
+    }
+  })()`;
+}
+
+module.exports = { presentJs, readElementsJs, runScriptJs, INTERACTIVE };

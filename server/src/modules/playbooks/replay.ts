@@ -27,7 +27,17 @@ const { contradicts, volatileTarget } = workflow as any;
 type Replayer = (browserId: string, step: any, values: any, defaults: any) => Promise<any>;
 
 /** Steps after which the page may have changed, so the checkpoint runs. */
-const PAGE_CHANGING = new Set(['navigate', 'click', 'double_click', 'click_coordinates', 'press_key', 'switch_tab']);
+const PAGE_CHANGING = new Set([
+  'navigate',
+  'click',
+  'double_click',
+  'click_coordinates',
+  'press_key',
+  'switch_tab',
+  'go_back',
+  'go_forward',
+  'reload',
+]);
 /** Resolves after `ms`. */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -259,6 +269,12 @@ async function replayCloseTab(browserId, step) {
   return tab ? command(browserId, 'close_tab', { tab_id: tab.id }) : { skipped: 'that tab is already gone' };
 }
 
+/** Hovers over the recorded element, for a menu that opens on hover. */
+async function replayHover(browserId, step, values) {
+  const el = await find(browserId, withValues(step.el, values));
+  return command(browserId, 'hover', { selector: `[data-ac-id="${el.id}"]` });
+}
+
 /** Double-clicks the recorded element, or the recorded point when no element was named. */
 async function replayDoubleClick(browserId, step, values) {
   if (!step.el) return command(browserId, 'double_click', { x: step.x, y: step.y });
@@ -298,6 +314,10 @@ const REPLAYERS: Record<string, Replayer> = {
   close_tab: replayCloseTab,
   double_click: replayDoubleClick,
   click_coordinates: replayClickCoordinates,
+  hover: replayHover,
+  go_back: (browserId) => command(browserId, 'back', {}, NAVIGATE_TIMEOUT_MS),
+  go_forward: (browserId) => command(browserId, 'forward', {}, NAVIGATE_TIMEOUT_MS),
+  reload: (browserId) => command(browserId, 'reload', {}, NAVIGATE_TIMEOUT_MS),
 };
 
 /** Replay one recorded step, filling its placeholders from `values`. */

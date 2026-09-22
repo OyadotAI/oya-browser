@@ -16,7 +16,7 @@ describe('OyaDriver', () => {
       'wait',
     ]);
     const fallback = new OyaDriver({ ws: new FakeSocket() }, 'b-oya').actions();
-    assert.ok(fallback.includes('workflow') && !fallback.includes('back'));
+    assert.ok(fallback.includes('workflow') && !fallback.includes('cookies'));
   });
 
   it('is a heartbeat client that is alive for as long as it is registered', () => {

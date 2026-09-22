@@ -57,11 +57,11 @@ describe('chatCompletion', () => {
   });
 
   it('throws only the status on a failed call, never the provider’s body', async () => {
-    answer({ error: 'internal secret detail' }, 500);
+    answer({ error: 'internal secret detail' }, 400);
     const logged = mock.method(console, 'error', () => {});
     await assert.rejects(
       chatCompletion({ baseUrl: 'https://api.test', apiKey: 'k', model: 'm', messages: [] }),
-      (err: Error) => err.message === 'LLM endpoint returned 500',
+      (err: Error) => err.message === 'LLM endpoint returned 400',
     );
     assert.equal(logged.mock.callCount(), 1);
   });

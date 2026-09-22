@@ -182,6 +182,46 @@ Parameters: selector (string, required), timeout (number, optional, default 1000
 List interactive elements on the page. Lighter than analyze_page.
 Parameters: selector (string, optional), limit (number, optional, default 50)
 
+### select_option
+Choose an option of a native select by its text.
+Parameters: element_id (number, required), option (string, required)
+
+### find
+The elements that match a description ("search box", "add to cart"), best first, with ids for click and type.
+Parameters: query (string, required)
+
+### run_script
+Run JavaScript that reads the page and returns JSON-serialisable data (the body of an async function; `return` the value). It runs in an isolated world the page cannot see, and may not click, type, send requests or navigate.
+Parameters: script (string, required)
+
+### wait_for
+Wait until some text shows, the url contains something, and/or the network goes quiet (the default with no text or url).
+Parameters: text (string, optional), url (string, optional), network_idle (boolean, optional), timeout (number, optional, at most 20000ms)
+
+### hover
+Move the mouse onto an element, for menus and tooltips that open on hover.
+Parameters: element_id (number, required)
+
+### go_back / go_forward / reload
+Move through the tab's history, or reload, and wait for the page.
+Parameters: none
+
+### read_console / read_network
+What the page logged, and the requests it made (Oya browsers only; per-browser endpoint).
+Parameters: level / failed_only, pattern, limit (all optional)
+
+### solve_captcha / sign_in / complete_mfa
+Clear a CAPTCHA with the configured solver, sign in with the persona's stored credentials for the site, or enter a one-time code from the persona's factors. Credentials and codes never reach the caller.
+Parameters: none
+
+### list_playbooks / run_playbook
+The playbooks saved on this key, and replaying one with its variables (a broken step is finished by the agent).
+Parameters: run_playbook takes name (string, required), variables (object, optional)
+
+### run_task
+Hand a whole task to Oya's own agent on the browser and get its report back (DONE: or FAILED:). Uses the key's configured model.
+Parameters: task (string, required), data (object, optional)
+
 ## Workflow Pattern
 
 1. analyze_page → understand the page, get element IDs
@@ -218,12 +258,15 @@ Set FLEET_TOKEN env var on the server. All browsers use that token as their API 
     POST /mcp/pool
     Authorization: Bearer FLEET_TOKEN
 
-Seventeen tools: analyze_page, navigate, click, type, screenshot, press_key, handle_dialog,
-scroll, wait, click_coordinates, mouse_move, double_click, keyboard_type, drag, plus
+Thirty-one tools: analyze_page, navigate, click, type, screenshot, press_key, handle_dialog,
+scroll, wait, click_coordinates, mouse_move, double_click, keyboard_type, drag,
+select_option, run_script, wait_for, find, hover, go_back, go_forward, reload,
+solve_captcha, sign_in, complete_mfa, list_playbooks, run_playbook, run_task, plus
 start_browser, stop_browser and pool_status.
 
-The tab tools (list_tabs, open_tab, switch_tab, close_tab) and read_elements are per-browser
-only: a pool call has no one tab to act on. Use the per-browser endpoint for those.
+The tab tools (list_tabs, open_tab, switch_tab, close_tab), read_elements and the console and
+network logs (read_console, read_network) are per-browser only: a pool call has no one tab to
+act on. Use the per-browser endpoint for those.
 
 navigate and analyze_page advance the round-robin. click/type/screenshot stay pinned to the
 last-used browser so element IDs remain valid. pool_status shows pool size and connected

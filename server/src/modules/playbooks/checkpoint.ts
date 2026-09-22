@@ -20,8 +20,8 @@ interface RunContext {
   apiKey: string;
   /** The browser the run drives. */
   browserId: string;
-  /** Parks the run on a person until they respond. */
-  requestHuman: (attention: object) => Promise<any>;
+  /** Parks the run on a person until they respond; absent for the agent's own tries. */
+  requestHuman?: (attention: object) => Promise<any>;
   /** Where a person finishes a challenge by hand. */
   liveViewUrl: string;
   /** Runs an expression in the browser's page. */
@@ -40,27 +40,62 @@ interface PageContext {
   domain: string;
 }
 
+/** What every step of one run shares, before a person is involved. */
+function runContext(apiKey, browserId, requestHuman?): RunContext {
+  const liveViewUrl = `/dashboard/?browser=${encodeURIComponent(browserId)}`;
+  const evaluate = (expr) => evaluateIn(browserId, expr);
+  // Resolved once for the run, not per step: it decrypts this key's settings,
+  // and the key cannot change underneath a run that is already going.
+  const llm = keyConfig.resolve(apiKey);
+  return { apiKey, browserId, requestHuman, liveViewUrl, evaluate, llm };
+}
+
+/** Who the page is signed in as, and where it is. */
+function pageOf(run: RunContext): PageContext {
+  const browser = registry.get(run.browserId);
+  const personaId = browser?.persona?.id || personas.defaultFor(run.apiKey).id;
+  return { browser, personaId, domain: credentials.domainOf(browser?.currentUrl || '') };
+}
+
 /**
  * Between page-changing steps of a run: clear a CAPTCHA, sign in, or answer an
  * MFA prompt, or park the run on a person.
  * ponytail: three detection evals per page-changing step.
  */
 export function checkpointFor(apiKey, browserId, requestHuman) {
-  const liveViewUrl = `/dashboard/?browser=${encodeURIComponent(browserId)}`;
-  const evaluate = (expr) => evaluateIn(browserId, expr);
-  // Resolved once for the run, not per step: it decrypts this key's settings,
-  // and the key cannot change underneath a run that is already going.
-  const llm = keyConfig.resolve(apiKey);
-  const run: RunContext = { apiKey, browserId, requestHuman, liveViewUrl, evaluate, llm };
+  const run = runContext(apiKey, browserId, requestHuman);
   return () => checkpoint(run);
+}
+
+/**
+ * The same three challenges, each tried without a person, for the agent to call
+ * as tools: it decides what to do with a challenge that could not be cleared.
+ */
+export function challengesFor(apiKey, browserId) {
+  const run = runContext(apiKey, browserId);
+  return {
+    captcha: () => tryCaptcha(run, pageOf(run)),
+    signIn: () => trySignIn(run, pageOf(run)),
+    mfa: (login?) => tryMfa(run, pageOf(run), login),
+    liveViewUrl: run.liveViewUrl,
+  };
+}
+
+/**
+ * A checkpoint with no person to hand to (a chat): each challenge is tried, and one
+ * that could not be cleared is left for the agent, which sees it and can ask.
+ */
+export function quietCheckpointFor(apiKey, browserId) {
+  const tries = challengesFor(apiKey, browserId);
+  return async () => {
+    await tries.captcha();
+    await tries.mfa(await tries.signIn());
+  };
 }
 
 /** One checkpoint: CAPTCHA, then sign-in, then MFA. */
 async function checkpoint(run: RunContext) {
-  const browser = registry.get(run.browserId);
-  const personaId = browser?.persona?.id || personas.defaultFor(run.apiKey).id;
-  const domain = credentials.domainOf(browser?.currentUrl || '');
-  const page: PageContext = { browser, personaId, domain };
+  const page = pageOf(run);
   await clearCaptcha(run, page);
   // Credentials before the code: the code prompt only exists once the site has
   // accepted a password, and a login page can carry a CAPTCHA of its own,
@@ -69,21 +104,32 @@ async function checkpoint(run: RunContext) {
   await completeMfa(run, page, login);
 }
 
-/** Solves a CAPTCHA on the page, or hands it to a person. */
-async function clearCaptcha(run: RunContext, { browser }: PageContext) {
+/** A CAPTCHA on the page solved by the solver or the provider; null when detection failed. */
+function tryCaptcha(run: RunContext, { browser }: PageContext) {
   const options = { providerSolves: NATIVE_CAPTCHA.includes(browser?.provider), env: keyConfig.envFor(run.apiKey) };
-  const c = await captcha.handle(run.evaluate, options).catch(() => null);
+  return captcha.handle(run.evaluate, options).catch(() => null);
+}
+
+/** Solves a CAPTCHA on the page, or hands it to a person. */
+async function clearCaptcha(run: RunContext, page: PageContext) {
+  const c = await tryCaptcha(run, page);
   if (c?.present && !c.solved && !c.invisible && c.method !== 'provider') {
     const message = c.error || 'A CAPTCHA needs solving. Solve it in the live view, then respond.';
     await run.requestHuman({ reason: 'captcha', message, liveViewUrl: run.liveViewUrl });
   }
 }
 
-/** Completes a sign-in form with the persona's credentials, or hands it to a person. */
-async function signIn(run: RunContext, page: PageContext) {
+/** A sign-in form completed with the persona's credentials, its outcome recorded; null when detection failed. */
+async function trySignIn(run: RunContext, page: PageContext) {
   const where = { domain: page.domain, browserId: run.browserId, liveViewUrl: run.liveViewUrl };
   const l = await siteLogin.complete(run.evaluate, page.personaId, where).catch(() => null);
   if (l?.present) announceLogin(run, page, l);
+  return l;
+}
+
+/** Completes a sign-in form with the persona's credentials, or hands it to a person. */
+async function signIn(run: RunContext, page: PageContext) {
+  const l = await trySignIn(run, page);
   if (l?.present && !l.completed) {
     const message = l.error || 'A sign-in needs completing in the live view.';
     await run.requestHuman({ reason: 'login', message, liveViewUrl: run.liveViewUrl });
@@ -97,8 +143,8 @@ function announceLogin(run: RunContext, { personaId, domain }: PageContext, l) {
   announce(run.apiKey, type, run.browserId, { personaId, domain, method: l.method ?? null });
 }
 
-/** Answers an MFA prompt from the persona's mailbox, or asks a person for the code. */
-async function completeMfa(run: RunContext, { personaId, domain }: PageContext, l) {
+/** An MFA prompt answered from the persona's factors (TOTP, mailbox, SMS), its outcome recorded; null when detection failed. */
+async function tryMfa(run: RunContext, { personaId, domain }: PageContext, l?) {
   // `since` is the moment this login asked for a code, so a code sitting in
   // the mailbox from the previous run is not mistaken for this one's.
   const since = l?.submittedAt || l?.requestedAt || 0;
@@ -110,6 +156,12 @@ async function completeMfa(run: RunContext, { personaId, domain }: PageContext, 
   // Provider and outcome only: the code itself never leaves this process.
   if (m?.present && m.completed)
     announce(run.apiKey, 'mfa.completed', run.browserId, { personaId, domain, method: m.method ?? null });
+  return m;
+}
+
+/** Answers an MFA prompt from the persona's mailbox, or asks a person for the code. */
+async function completeMfa(run: RunContext, page: PageContext, l) {
+  const m = await tryMfa(run, page, l);
   if (m?.present && !m.completed) await askForCode(run, m);
 }
 

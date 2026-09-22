@@ -31,6 +31,11 @@ const STEP_NAMES = {
   keyboard_type: 'Typing',
   mouse_move: 'Moving the mouse',
   drag: 'Dragging',
+  hover: 'Hovering',
+  back: 'Going back',
+  forward: 'Going forward',
+  reload: 'Reloading the page',
+  run_script: 'Reading the page',
 };
 
 /** The parameter that says what an action acted on, for actions where it reads well. */

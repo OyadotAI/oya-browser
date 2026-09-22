@@ -70,7 +70,7 @@ describe('browserDetail', () => {
       });
       const res = await detail('key-cloud');
       assert.equal(res.statusCode, 200);
-      assert.ok(res.body.actions.includes('workflow') && !res.body.actions.includes('back'));
+      assert.ok(res.body.actions.includes('workflow') && !res.body.actions.includes('cookies'));
     } finally {
       for (const [name, value] of Object.entries(saved)) restoreEnv(name, value);
     }

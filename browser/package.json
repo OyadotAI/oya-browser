@@ -20,6 +20,7 @@
     "test:sync": "node tests/integration/sync-e2e.mjs",
     "test:shell": "node tests/integration/shell.mjs",
     "test:control": "node tests/integration/control.mjs",
+    "test:agent": "node tests/integration/agent-commands.mjs",
     "test:workflow": "electron tests/integration/workflow-electron.cjs",
     "lint": "eslint .",
     "format": "prettier --write .",
