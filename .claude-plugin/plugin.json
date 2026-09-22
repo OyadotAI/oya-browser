@@ -1,7 +1,7 @@
 {
   "name": "oya-browser",
   "description": "Real Chrome browsers for your agent: the Oya MCP server (start_browser, analyze_page, click, type…) plus a skill that teaches the workflow. Set OYA_API_KEY from oyabrowser.com first.",
-  "version": "1.0.110",
+  "version": "1.0.111",
   "author": {
     "name": "Oya",
     "url": "https://getoya.ai"
