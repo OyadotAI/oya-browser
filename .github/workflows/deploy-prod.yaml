@@ -311,6 +311,13 @@ jobs:
         SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
         SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
         SLACK_SIGNING_SECRET: ${{ secrets.SLACK_SIGNING_SECRET }}
+        # Product analytics and ops messages. Optional: each is a no-op when unset.
+        POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+        POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+        SLACK_OPS_WEBHOOK_SIGNUPS: ${{ secrets.SLACK_OPS_WEBHOOK_SIGNUPS }}
+        SLACK_OPS_WEBHOOK_EVENTS: ${{ secrets.SLACK_OPS_WEBHOOK_EVENTS }}
+        # Residential exit for cloud personas without their own proxy. Optional.
+        OYA_RESIDENTIAL_PROXY_URL: ${{ secrets.OYA_RESIDENTIAL_PROXY_URL }}
         DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
       run: |
         : "${DAYTONA_API_KEY:?Missing DAYTONA_API_KEY deployment secret}"
@@ -329,6 +336,11 @@ jobs:
           --from-literal=SLACK_CLIENT_ID="${SLACK_CLIENT_ID}" \
           --from-literal=SLACK_CLIENT_SECRET="${SLACK_CLIENT_SECRET}" \
           --from-literal=SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET}" \
+          --from-literal=POSTHOG_KEY="${POSTHOG_KEY}" \
+          --from-literal=POSTHOG_HOST="${POSTHOG_HOST}" \
+          --from-literal=SLACK_OPS_WEBHOOK_SIGNUPS="${SLACK_OPS_WEBHOOK_SIGNUPS}" \
+          --from-literal=SLACK_OPS_WEBHOOK_EVENTS="${SLACK_OPS_WEBHOOK_EVENTS}" \
+          --from-literal=OYA_RESIDENTIAL_PROXY_URL="${OYA_RESIDENTIAL_PROXY_URL}" \
           -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Create GHCR pull secret

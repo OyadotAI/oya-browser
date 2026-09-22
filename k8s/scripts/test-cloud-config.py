@@ -36,7 +36,10 @@ for environment, host in [
     # is how Slack OAuth shipped dark: the console fell back to asking for a bot
     # token by hand because the server saw no client id. Unlike Daytona these
     # stay optional, a deployment with no Slack app is a supported one.
-    for name in ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET"]:
+    # Analytics and ops webhooks are no-ops when unset, so they ship dark the same way.
+    for name in ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET",
+                 "POSTHOG_KEY", "POSTHOG_HOST", "SLACK_OPS_WEBHOOK_SIGNUPS", "SLACK_OPS_WEBHOOK_EVENTS",
+                 "OYA_RESIDENTIAL_PROXY_URL"]:
         assert "secrets." + name in (step.get("env", {}).get(name) or ""), f"{environment}: {name} not sourced"
         assert f'--from-literal={name}="${{{name}' in step["run"], f"{environment}: {name} not passed to pod secret"
 
