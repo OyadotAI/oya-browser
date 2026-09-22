@@ -268,6 +268,10 @@
   .box.gone {
     opacity: 0;
   }
+  /* Its number would land on another's: the outline stays, the number does not. */
+  .box.quiet b {
+    display: none;
+  }
 
   /* The hairline and a glassy tint, inside the element's edge. */
   .box::before {
@@ -283,7 +287,9 @@
     box-shadow:
       inset 0 0 0 1px color-mix(in srgb, var(--c) 60%, transparent),
       inset 0 1px 0 #ffffff26;
-    animation: show 500ms var(--ease) 160ms backwards;
+    /* Its resting look is dim, so nothing keeps animating once it has settled: the lock plays bright, then ends. */
+    opacity: 0.4;
+    animation: show 2000ms var(--ease) 160ms backwards;
   }
   /* The brackets: a 2px frame masked to its four corners, arriving from --sx/--sy (8px out) and locking on. */
   .box::after {
@@ -360,9 +366,14 @@
       transform: scale(var(--rx), var(--ry));
     }
   }
+  /* Lights up as the brackets lock, holds, then dims to rest, so the page stays readable under a hundred of them. */
   @keyframes show {
     from {
       opacity: 0;
+    }
+    12%,
+    55% {
+      opacity: 1;
     }
   }
   /* The shine: a band of light crossing the element once, clipped to it. */
@@ -418,6 +429,26 @@
     text-align: center;
     letter-spacing: 0.02em;
     animation: tag 520ms var(--spring) 220ms backwards;
+  }
+  /* On a busy page the numbers show as each outline locks on, then step back, leaving the brackets. */
+  .stage.busy .box b {
+    opacity: 0;
+    animation: flash-tag 2000ms var(--ease) 220ms backwards;
+  }
+  @keyframes flash-tag {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    18%,
+    80% {
+      opacity: 1;
+      transform: none;
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.8);
+    }
   }
   @keyframes tag {
     from {

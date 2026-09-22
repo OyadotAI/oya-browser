@@ -49,6 +49,8 @@ const Show = {
   generation: 0,
   /** Where the found elements sit now: the result, then each move the main process measures after it. */
   latest: [],
+  /** Where this show's number badges sit, so a badge that would land on another stays hidden. */
+  tags: [],
 
   /** One update from the main process: `{ phase: 'scan' }`, `{ phase: 'found', boxes }` or `{ phase: 'move', boxes }`. */
   update(update) {
@@ -91,18 +93,19 @@ const Show = {
 
   /** The beam passes down the page, locking on to each element as it reaches it, and Oya counts them. */
   found(boxes) {
-    Show.scanStart = 0;
     Show.clear();
     Show.reveal();
-    const ordered = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x);
-    const every = Math.max(1, Math.ceil(ordered.length / RendererConstants.SHIELD_SPARKS_MAX));
-    Companion.say('found', ordered.length ? Show.counted(0) : 'Nothing to interact with here');
-    ordered.forEach((box, i) => Show.later(Show.beamReaches(box.y), () => Show.lock(box, i + 1, i % every === 0)));
+    const shown = Show.plan(boxes);
+    const every = Math.max(1, Math.ceil(shown.length / RendererConstants.SHIELD_SPARKS_MAX));
+    const counted = (i) => Show.counted(Math.round(((i + 1) * boxes.length) / shown.length));
+    Companion.say('found', shown.length ? Show.counted(0) : 'Nothing to interact with here');
+    shown.forEach((box, i) => Show.later(Show.beamReaches(box.y), () => Show.lock(box, counted(i), i % every === 0)));
     Show.later(RendererConstants.SHIELD_REVEAL_MS + RendererConstants.SHIELD_HOLD_MS, Show.fade);
   },
 
   /** Turns the edge light into the reveal: the wash passes once, then the light lets go. */
   reveal() {
+    Show.scanStart = 0;
     const body = document.body;
     body.style.setProperty('--reveal', `${RendererConstants.SHIELD_REVEAL_MS}ms`);
     // Set now, while the stage is empty: setting it as the fade begins would restyle every outline at once.
@@ -121,10 +124,12 @@ const Show = {
    * The beam reached one element: its outline locks on where the element is now, Oya's
    * count goes up, and, for one in every few, a spark flies to the orb.
    */
-  lock(box, count, sparks) {
+  lock(box, words, sparks) {
     const now = Show.latest.find((b) => b.id === box.id) || box;
-    document.getElementById('stage').append(Show.box(now));
-    Companion.count(Show.counted(count));
+    const el = Show.box(now);
+    el.classList.toggle('quiet', !Show.roomForTag(now));
+    document.getElementById('stage').append(el);
+    Companion.count(words);
     const orb = sparks && Show.orbCentre();
     if (orb) document.getElementById('sparks').append(Show.spark(now, orb));
   },
@@ -138,6 +143,50 @@ const Show = {
     Show.place(el, box);
     el.style.setProperty('--c', TYPE_COLORS[box.type] || TYPE_COLORS.button);
     return el;
+  },
+
+  /** The outlines this show draws, top to bottom; a page with many of them is marked busy. */
+  plan(boxes) {
+    const shown = Show.declutter(boxes).sort((a, b) => a.y - b.y || a.x - b.x);
+    document.getElementById('stage').classList.toggle('busy', shown.length > RendererConstants.SHIELD_BUSY_COUNT);
+    return shown;
+  },
+
+  /**
+   * Keeps what a person can read on a busy page. Page-sized boxes go, and so does any
+   * box that wraps, or mostly repeats, a smaller one already kept: a card around its
+   * links, a list around its items. Smallest first, so the innermost controls stay.
+   */
+  declutter(boxes) {
+    const page = (window.innerWidth || 0) * (window.innerHeight || 0);
+    const kept = [];
+    for (const box of [...boxes].sort((a, b) => Show.area(a) - Show.area(b))) {
+      if (page && Show.area(box) > page * RendererConstants.SHIELD_MAX_BOX_SHARE) continue;
+      const wraps = (k) => Show.overlap(box, k) >= Show.area(k) * RendererConstants.SHIELD_WRAP_SHARE;
+      if (!kept.some(wraps)) kept.push(box);
+    }
+    return kept;
+  },
+
+  /** A box's area. */
+  area(box) {
+    return box.w * box.h;
+  },
+
+  /** The area two boxes share. */
+  overlap(a, b) {
+    const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return Math.max(0, w) * Math.max(0, h);
+  },
+
+  /** Whether this box's number badge fits without landing on one already shown; if so, it is claimed. */
+  roomForTag(box) {
+    const { SHIELD_TAG_PX: size, SHIELD_TAG_OFFSET_PX: offset, SHIELD_TAG_DIGIT_PX: digit } = RendererConstants;
+    const tag = { x: box.x - offset, y: box.y - offset, w: size + digit * (String(box.id).length - 1), h: size };
+    if (Show.tags.some((t) => Show.overlap(tag, t) > 0)) return false;
+    Show.tags.push(tag);
+    return true;
   },
 
   /** An outline's number, pinned to its corner. */
@@ -212,6 +261,7 @@ const Show = {
     const stage = document.getElementById('stage');
     stage.replaceChildren();
     stage.classList.remove('leaving');
+    Show.tags = [];
     document.getElementById('sparks').replaceChildren();
   },
 };
