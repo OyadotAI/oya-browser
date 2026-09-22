@@ -81,6 +81,11 @@ class FakePageContents extends FakeWebContents {
     return false;
   }
 
+  /** As Electron's: 1 unless a test sets `zoomFactor`. */
+  getZoomFactor() {
+    return this.zoomFactor ?? 1;
+  }
+
   /** As Electron's. */
   loadFile(file) {
     this.loaded.push(file);

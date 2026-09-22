@@ -32,7 +32,8 @@ async function analyzePage(browserId, args: Record<string, any> = {}) {
 /** Goes to a URL, waiting as long as a slow site needs. */
 async function navigate(browserId, args) {
   const r = await sendCommand(browserId, 'navigate', { url: args.url }, NAVIGATE_TIMEOUT_MS);
-  return r.ok ? `Navigated to ${args.url}` : `Error: ${r.error}`;
+  if (!r.ok) return `Error: ${r.error}`;
+  return withControls(browserId, `Navigated to ${args.url}`, true);
 }
 
 /** Clicks an element by id. */
@@ -174,7 +175,8 @@ async function openTab(browserId, args) {
 /** Makes another tab the active one. */
 async function switchTab(browserId, args) {
   const r = await sendCommand(browserId, 'switch_tab', { tab_id: args.tab_id });
-  return r.ok ? `Switched to tab ${args.tab_id}` : `Error: ${r.error}`;
+  if (!r.ok) return `Error: ${r.error}`;
+  return withControls(browserId, `Switched to tab ${args.tab_id}`, true);
 }
 
 /** Clicks at page coordinates. */

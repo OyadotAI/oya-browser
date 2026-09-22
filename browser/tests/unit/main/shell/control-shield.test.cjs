@@ -2,11 +2,12 @@
  * Unit tests for ControlShield: the transparent shield over the page while an
  * agent drives, popups and menu items fenced, and the human-control guard.
  */
-const { describe, it, beforeEach, mock } = require('node:test');
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { ControlShield } = require('../../../../main/shell/control-shield.cjs');
 const { mainCtx, FakeBrowserView } = require('../../support/main-ctx.cjs');
+const { SHIELD_TRACK_MS, SHIELD_TRACK_FOR_MS } = require('../../../../main/shell/constants.cjs');
 
 describe('ControlShield', () => {
   let ctx, page;
@@ -129,6 +130,77 @@ describe('ControlShield', () => {
       assert.match(measured, /\[1,"link","\[data-x=\\"1\\"\]"\]/);
       assert.doesNotMatch(measured, /data-x=\\"2/);
       assert.deepEqual(told, [`window.oyaShield?.(${JSON.stringify({ phase: 'found', boxes: [box] })})`]);
+    });
+
+    it('scales outlines by the page zoom, since the shield itself is not zoomed', async () => {
+      cover();
+      page.webContents.zoomFactor = 1.25;
+      ctx.world = { worldEval: async () => [{ id: 1, type: 'link', x: 8, y: 16, w: 40, h: 20 }] };
+      await ctx.shield.analysisFinished(page, { data: { elements: [] } });
+      ctx.shield.stopTracking();
+      assert.deepEqual(told, [
+        `window.oyaShield?.(${JSON.stringify({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 10, y: 20, w: 50, h: 25 }] })})`,
+      ]);
+    });
+
+    describe('following the outlines', () => {
+      beforeEach(() => mock.timers.enable({ apis: ['setTimeout', 'Date'] }));
+      afterEach(() => mock.timers.reset());
+
+      /** Lets the next re-measure run and its answer arrive. */
+      const step = async () => {
+        mock.timers.tick(SHIELD_TRACK_MS);
+        await new Promise((resolve) => setImmediate(resolve));
+      };
+      /** Finds one element whose y each measurement reads from `where`. */
+      const found = async (where) => {
+        cover();
+        ctx.world = { worldEval: async () => [{ id: 1, type: 'link', x: 0, y: where.y, w: 5, h: 5 }] };
+        await ctx.shield.analysisFinished(page, { data: { elements: [] } });
+      };
+      /** The phases told so far. */
+      const phases = () => told.map((js) => JSON.parse(js.slice('window.oyaShield?.('.length, -1)).phase);
+
+      it('re-measures and tells the page where the elements moved', async () => {
+        const where = { y: 40 };
+        await found(where);
+        where.y = 10;
+        await step();
+        assert.deepEqual(phases(), ['found', 'move']);
+        assert.match(told[1], /"y":10/);
+      });
+
+      it('stops on a new scan, and when the shield comes off', async () => {
+        await found({ y: 0 });
+        ctx.shield.analysisStarted(page);
+        await step();
+        assert.deepEqual(phases(), ['found', 'scan']);
+        await found({ y: 0 });
+        ctx.control.state.interactive = true;
+        ctx.shield.sync();
+        await step();
+        assert.deepEqual(phases(), ['found']);
+      });
+
+      it('stops once the show is over', async () => {
+        await found({ y: 0 });
+        mock.timers.tick(SHIELD_TRACK_FOR_MS);
+        await step();
+        const before = told.length;
+        await step();
+        await step();
+        assert.equal(told.length, before);
+      });
+
+      it('skips a re-measure the page could not answer, and keeps following', async () => {
+        await found({ y: 0 });
+        ctx.world = { worldEval: async () => Promise.reject(new Error('navigated')) };
+        await step();
+        assert.deepEqual(phases(), ['found']);
+        ctx.world = { worldEval: async () => [] };
+        await step();
+        assert.deepEqual(phases(), ['found', 'move']);
+      });
     });
 
     it('outlines nothing when the page cannot be measured', async () => {

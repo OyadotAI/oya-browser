@@ -55,7 +55,6 @@
     pointer-events: none;
     opacity: 0;
     transition: opacity 700ms var(--ease);
-    animation: flow 5s linear infinite paused;
   }
   /* Each layer masks its light to a frame, and its wrapper blurs it: a filter runs before a mask, so the blur must sit outside. */
   .edge b {
@@ -65,10 +64,23 @@
   .edge i {
     position: absolute;
     inset: 0;
-    background: conic-gradient(from var(--angle), var(--light));
+    overflow: hidden;
     mask:
       linear-gradient(#000 0 0) content-box exclude,
       linear-gradient(#000 0 0);
+  }
+  /* The light itself: a square of colour wide enough to cover the page at any angle, turned on the compositor, so no frame repaints it. */
+  .edge i::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(100vw + 100vh);
+    aspect-ratio: 1;
+    background: conic-gradient(var(--light));
+    transform: translate(-50%, -50%);
+    will-change: transform;
+    animation: spin 5s linear infinite paused;
   }
   .edge b:nth-child(1) i {
     padding: 1.5px;
@@ -90,10 +102,15 @@
   .scanning .edge,
   .revealing .edge {
     opacity: 1;
+  }
+  .scanning .edge i::before,
+  .revealing .edge i::before {
     animation-play-state: running;
   }
-  .revealing .edge {
-    animation-duration: 2.2s;
+  @keyframes spin {
+    to {
+      transform: translate(-50%, -50%) rotate(1turn);
+    }
   }
   @keyframes flow {
     to {
@@ -118,98 +135,348 @@
     }
   }
 
-  /* ── The reveal: a soft wash of light passes, and what it touches lights up ── */
-  .wash {
+  /*
+   * ── The beam: a laser line with a holographic dot grid in its wake ──
+   * The line sits at the bottom of its band. The band moves down the page while its grid
+   * moves up by exactly as much, so the dots hold still on the page and the band only
+   * uncovers them. Both are transforms, so the compositor runs it without a repaint.
+   */
+  .beam {
     position: fixed;
     left: 0;
     right: 0;
     top: 0;
-    height: 45vh;
+    height: 34vh;
+    overflow: hidden;
     pointer-events: none;
     opacity: 0;
-    transform: translateY(-45vh);
-    background: linear-gradient(180deg, transparent, #39ed3514 45%, #f4f3ef26 72%, #39ed351a 88%, transparent);
-    mix-blend-mode: plus-lighter;
+    transform: translateY(-34vh);
+    will-change: transform, opacity;
+    mask: linear-gradient(180deg, transparent, #000 85%);
+    transition: opacity 500ms var(--ease);
   }
-  .revealing .wash {
+  .beam::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, transparent 20%, #39ed350f 70%, #39ed3526);
+  }
+  /* The line: a bright core in a green glow. */
+  .beam::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #9dffa0 18%, #ffffff 50%, #9dffa0 82%, transparent);
+    box-shadow:
+      0 0 12px 2px #39ed3599,
+      0 0 42px 8px #39ed3540;
+  }
+  .beam i {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 100vh;
+    background: radial-gradient(circle, #39ed3573 0.9px, transparent 1.4px) 0 0 / 14px 14px;
+    will-change: transform;
+  }
+  .scanning .beam.loop {
     opacity: 1;
-    animation: pass var(--reveal, 1100ms) cubic-bezier(0.45, 0, 0.55, 1) forwards;
   }
-  @keyframes pass {
+  .beam.loop,
+  .beam.loop i {
+    animation: 1.9s cubic-bezier(0.45, 0, 0.55, 1) infinite paused;
+  }
+  .beam.loop {
+    animation-name: sweep;
+  }
+  .beam.loop i {
+    animation-name: hold;
+  }
+  .scanning .beam.loop,
+  .scanning .beam.loop i {
+    animation-play-state: running;
+  }
+  /* The reveal's single pass runs at an even pace, so the line reaches each element when that element lights up. */
+  .revealing .beam.pass {
+    opacity: 1;
+  }
+  .revealing .beam.pass,
+  .revealing .beam.pass i {
+    animation: sweep var(--reveal, 1100ms) linear forwards;
+  }
+  .revealing .beam.pass i {
+    animation-name: hold;
+  }
+  @keyframes sweep {
     from {
-      transform: translateY(-45vh);
+      transform: translateY(-34vh);
     }
     to {
-      transform: translateY(100vh);
+      transform: translateY(66vh);
     }
   }
+  @keyframes hold {
+    from {
+      transform: translateY(34vh);
+    }
+    to {
+      transform: translateY(-66vh);
+    }
+  }
+
   .stage {
     position: fixed;
     inset: 0;
     pointer-events: none;
-    transition:
-      opacity var(--fade, 600ms) var(--ease),
-      filter var(--fade, 600ms) var(--ease);
+    contain: strict;
+    transition: opacity var(--fade, 600ms) var(--ease);
   }
   .stage.leaving {
     opacity: 0;
-    filter: blur(6px);
   }
+  /*
+   * An outline sits exactly on its element: placed by transform, so following the page
+   * is a compositor move, and it never ends up past the element's edges. Only opacity and
+   * transform ever animate, and each outline is added only when the beam reaches it, so
+   * the GPU takes on a few at a time rather than a hundred at once.
+   * When the beam reaches it: brackets lock on from just outside, a shine crosses it,
+   * the hairline settles and its number pops up.
+   */
   .box {
+    --lock: cubic-bezier(0.16, 1, 0.3, 1);
+    --k: min(11px, 34%);
+    /* A frame masked to its four corners: the brackets, and their colour-split ghosts. */
+    --corners:
+      linear-gradient(#000 0 0) left top / var(--k) var(--k) no-repeat,
+      linear-gradient(#000 0 0) right top / var(--k) var(--k) no-repeat,
+      linear-gradient(#000 0 0) left bottom / var(--k) var(--k) no-repeat,
+      linear-gradient(#000 0 0) right bottom / var(--k) var(--k) no-repeat;
     position: absolute;
+    left: 0;
+    top: 0;
     box-sizing: border-box;
-    border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--c) 70%, transparent);
-    background: color-mix(in srgb, var(--c) 5%, transparent);
-    box-shadow:
-      inset 0 0 14px color-mix(in srgb, var(--c) 22%, transparent),
-      0 0 22px color-mix(in srgb, var(--c) 18%, transparent);
-    opacity: 0;
-    filter: blur(6px);
-    transform: scale(0.96);
-    animation: light 900ms var(--spring) var(--d) forwards;
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      width 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      height 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 280ms var(--ease);
   }
-  @keyframes light {
-    30% {
+  .box.gone {
+    opacity: 0;
+  }
+
+  /* The hairline and a glassy tint, inside the element's edge. */
+  .box::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--c) 12%, transparent),
+      color-mix(in srgb, var(--c) 4%, transparent)
+    );
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--c) 60%, transparent),
+      inset 0 1px 0 #ffffff26;
+    animation: show 500ms var(--ease) 160ms backwards;
+  }
+  /* The brackets: a 2px frame masked to its four corners, arriving from --sx/--sy (8px out) and locking on. */
+  .box::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--c);
+    border-radius: 6px;
+    mask: var(--corners);
+    transition:
+      transform var(--fade, 600ms) var(--ease),
+      opacity var(--fade, 600ms) var(--ease);
+    animation: lock 620ms var(--lock) backwards;
+  }
+  @keyframes lock {
+    from {
+      opacity: 0;
+      transform: scale(var(--sx), var(--sy));
+    }
+    35% {
       opacity: 1;
-      filter: blur(0);
-      background: color-mix(in srgb, var(--c) 16%, transparent);
+    }
+  }
+  /* On the way out the brackets let go: they drift back outward as they fade. */
+  .stage.leaving .box::after {
+    opacity: 0;
+    transform: scale(var(--sx), var(--sy));
+  }
+  /* The colour split: a cyan and a magenta copy of the brackets, off to either side, converging into the real ones. */
+  .box s::before,
+  .box s::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid #00e5ff;
+    border-radius: 6px;
+    mask: var(--corners);
+    opacity: 0;
+    animation: split 560ms var(--lock) backwards;
+  }
+  .box s::before {
+    --gx: -5px;
+  }
+  .box s::after {
+    --gx: 5px;
+    border-color: #ff3dcf;
+  }
+  @keyframes split {
+    from {
+      opacity: 0;
+      transform: translateX(var(--gx)) scale(var(--sx), var(--sy));
+    }
+    1% {
+      opacity: 0.9;
+    }
+  }
+  /* The ripple: a ring of light that leaves the element as the brackets lock. */
+  .box u {
+    position: absolute;
+    inset: 0;
+    border-radius: 8px;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--c) 75%, transparent),
+      0 0 14px color-mix(in srgb, var(--c) 45%, transparent);
+    opacity: 0;
+    animation: ripple 760ms cubic-bezier(0.2, 0.7, 0.2, 1) 200ms;
+  }
+  @keyframes ripple {
+    12% {
+      opacity: 0.9;
     }
     to {
-      opacity: 1;
-      filter: blur(0);
-      transform: scale(1);
+      opacity: 0;
+      transform: scale(var(--rx), var(--ry));
     }
   }
-  .box::before {
-    content: attr(data-id);
+  @keyframes show {
+    from {
+      opacity: 0;
+    }
+  }
+  /* The shine: a band of light crossing the element once, clipped to it. */
+  .box i {
     position: absolute;
-    top: -9px;
+    inset: 0;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .box i::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 60%;
+    background: linear-gradient(100deg, transparent, color-mix(in srgb, var(--c) 30%, #ffffff66), transparent);
+    opacity: 0;
+    transform: translateX(-110%) skewX(-18deg);
+    animation: shine 800ms cubic-bezier(0.4, 0, 0.2, 1) 60ms;
+  }
+  @keyframes shine {
+    15%,
+    70% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+      transform: translateX(260%) skewX(-18deg);
+    }
+  }
+  /* Its number, pinned to the top-left corner. */
+  .box b {
+    position: absolute;
+    z-index: 1;
+    top: -7px;
     left: -7px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 6px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 5px;
     box-sizing: border-box;
-    border-radius: 9px;
-    background: #0c0c0ab8;
-    backdrop-filter: blur(10px) saturate(1.6);
-    border: 0.5px solid #ffffff2e;
+    border-radius: 8px;
+    background: #0c0c0ae6;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--c) 70%, transparent),
+      0 0 10px color-mix(in srgb, var(--c) 45%, transparent),
+      0 2px 6px #0000004d;
     color: var(--paper);
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 600;
-    line-height: 17px;
+    line-height: 16px;
     font-variant-numeric: tabular-nums;
     text-align: center;
     letter-spacing: 0.02em;
-    box-shadow: 0 2px 8px #0000004d;
-    opacity: 0;
-    transform: translateY(3px);
-    animation: rise 700ms var(--spring) calc(var(--d) + 120ms) forwards;
+    animation: tag 520ms var(--spring) 220ms backwards;
   }
-  @keyframes rise {
+  @keyframes tag {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+  }
+
+  /*
+   * ── The sparks: found elements send light curving into the orb ──
+   * The spark moves across on an ease-in while its dot moves down on an ease-out, and
+   * the two together bend its path into an arc.
+   */
+  .sparks {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    contain: strict;
+  }
+  .spark {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform: translate(var(--fx), var(--fy));
+    animation: spark-x var(--fly, 900ms) cubic-bezier(0.55, 0, 0.9, 0.4) var(--d) both;
+  }
+  .spark i {
+    position: absolute;
+    left: -3px;
+    top: -3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow:
+      0 0 6px 2px var(--c),
+      0 0 18px 4px color-mix(in srgb, var(--c) 55%, transparent);
+    animation: spark-y var(--fly, 900ms) cubic-bezier(0.1, 0.6, 0.4, 1) var(--d) both;
+  }
+  @keyframes spark-x {
     to {
+      transform: translate(calc(var(--fx) + var(--dx)), var(--fy));
+    }
+  }
+  @keyframes spark-y {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    12% {
       opacity: 1;
-      transform: none;
+      transform: scale(1.3);
+    }
+    88% {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+      transform: translateY(var(--dy)) scale(0.5);
     }
   }
 
@@ -321,12 +588,15 @@
     opacity: 0.75;
   }
   .found .orb .halo {
-    animation: flare 1.2s var(--ease);
+    animation: charge 2.6s var(--ease);
   }
-  @keyframes flare {
-    25% {
+  @keyframes charge {
+    20% {
+      opacity: 0.55;
+    }
+    70% {
       opacity: 1;
-      transform: scale(1.18);
+      transform: scale(1.3);
     }
   }
   .orb .ring {
@@ -359,6 +629,7 @@
     animation-duration: 9s, 700ms;
     animation-timing-function: linear, var(--spring);
     animation-iteration-count: infinite, 1;
+    animation-delay: 0s, 1.5s;
   }
   @keyframes pop {
     35% {
@@ -399,8 +670,10 @@
   <div class="edge">
     <b><i></i></b><b><i></i></b><b><i></i></b>
   </div>
-  <div class="wash"></div>
+  <div class="beam loop"><i></i></div>
+  <div class="beam pass"><i></i></div>
   <div id="stage" class="stage"></div>
+  <div id="sparks" class="sparks"></div>
   <div id="companion" class="companion" aria-hidden="true">
     <div class="bubble"><span id="bubble-text" class="words"></span></div>
     <div class="orb">

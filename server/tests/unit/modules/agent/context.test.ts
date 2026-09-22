@@ -25,17 +25,14 @@ const HEAD = [
 ];
 
 describe('condenseOldPages', () => {
-  it('keeps the last pages whole and leaves a note where the older ones were', () => {
+  it('keeps the newest page whole and leaves a note where the older ones were', () => {
     const messages = [...HEAD, ...toolTurn('a', 1, PAGE), ...toolTurn('b', 1, PAGE), ...toolTurn('c', 1, PAGE)];
     condenseOldPages(messages);
-    const [oldest, ...kept] = messages.filter((m) => m.role === 'tool');
+    const [oldest, older, newest] = messages.filter((m) => m.role === 'tool');
     assert.match(oldest.content, /earlier page read of https:\/\/a\.test\/page, 42 elements dropped/);
     assert.match(oldest.content, /analyze_page again/);
-    assert.deepEqual(
-      kept.map((m) => m.content),
-      [PAGE, PAGE],
-      'the last two pages stay whole',
-    );
+    assert.match(older.content, /earlier page read/, 'only the newest page is worth its weight: older ids are dead');
+    assert.equal(newest.content, PAGE);
   });
 
   it('keeps only what it is asked to keep', () => {
@@ -126,6 +123,15 @@ describe('trimContext', () => {
   });
 
   it('keeps a record in the task of each step it drops, so the model knows what it already did', () => {
+    // read_console is never condensed as a page, so these results can only go by being dropped.
+    const logTurn = (tag) => [
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: tag, function: { name: 'read_console', arguments: '{}' } }],
+      },
+      { role: 'tool', tool_call_id: tag, content: BIG },
+    ];
     const turn = [
       {
         role: 'assistant',
@@ -134,7 +140,7 @@ describe('trimContext', () => {
       },
       { role: 'tool', tool_call_id: 'k', content: BIG },
     ];
-    const messages = [...structuredClone(HEAD), ...turn, ...toolTurn('b'), ...toolTurn('c')];
+    const messages = [...structuredClone(HEAD), ...turn, ...logTurn('b'), ...logTurn('c')];
     trimContext(messages);
     assert.match(messages[1].content, /Earlier steps of this run[\s\S]*click \{"element_id":4\}/);
   });

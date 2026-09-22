@@ -62,7 +62,8 @@ describe('agentLoop', () => {
     ]);
     const messages = start();
     await agentLoop(ctx(), messages);
-    assert.deepEqual(browser.actions(), ['navigate', 'press_key']);
+    // navigate answers with the page it landed on, so it analyses once itself.
+    assert.deepEqual(browser.actions(), ['navigate', 'analyze', 'press_key']);
     const second = llm.requests[1].messages;
     assert.equal(second[2].role, 'assistant');
     assert.deepEqual(

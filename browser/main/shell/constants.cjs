@@ -36,6 +36,10 @@ const DEV_LOG_MAX_CHARS = 8000;
 
 /** The most elements the control shield outlines after an analysis. */
 const MAX_ANALYSIS_BOXES = 150;
+/** How often the control shield re-measures its outlines, so they follow the page as it scrolls and reflows. */
+const SHIELD_TRACK_MS = 100;
+/** How long outlines are followed: the renderer's scan minimum, reveal, hold and fade (renderer/core/constants.js), summed. */
+const SHIELD_TRACK_FOR_MS = 5300;
 
 /** Menu items that act on the page, disabled while an agent has control. */
 const HUMAN_MENU_ITEMS = ['browser-new-tab', 'browser-close-tab', 'browser-reload'];
@@ -48,6 +52,8 @@ module.exports = {
   SHELL_BACKGROUND,
   TRANSPARENT,
   MAX_ANALYSIS_BOXES,
+  SHIELD_TRACK_MS,
+  SHIELD_TRACK_FOR_MS,
   DEFAULT_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
   MAX_PANEL_WIDTH,

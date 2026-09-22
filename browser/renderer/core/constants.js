@@ -66,4 +66,14 @@ const RendererConstants = Object.freeze({
   SHIELD_FADE_MS: 600,
   /** How long the reveal's wash of light takes to cross the page; each outline lights up as it passes. */
   SHIELD_REVEAL_MS: 1100,
+  /** How much wider and taller than its element an outline's brackets start, in pixels (half on each side), before they lock on. */
+  SHIELD_LOCK_REACH_PX: 16,
+  /** How much wider and taller than its element the ripple grows as it leaves, in pixels. */
+  SHIELD_RIPPLE_REACH_PX: 28,
+  /** The most sparks that fly into the orb; past this, every few elements send one. */
+  SHIELD_SPARKS_MAX: 36,
+  /** How long after the beam reaches an element its spark leaves, so the brackets lock first. */
+  SHIELD_SPARK_LAG_MS: 260,
+  /** Half, for the middle of a box. */
+  SHIELD_HALF: 0.5,
 });

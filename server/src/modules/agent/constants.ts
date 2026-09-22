@@ -25,7 +25,7 @@ export const READ_ELEMENTS_LIMIT = 50;
  */
 export const PAGE_FORMAT: string | undefined = process.env.OYA_PAGE_FORMAT || undefined;
 /** An analysis longer than this is cut, so one page cannot fill the context window. */
-export const MAX_ANALYSIS_CHARS = 30_000;
+export const MAX_ANALYSIS_CHARS = 20_000;
 /** Conversation size (~4 chars per token) past which old tool results are dropped. */
 export const MAX_CONTEXT_CHARS = 400_000;
 /**
@@ -34,7 +34,7 @@ export const MAX_CONTEXT_CHARS = 400_000;
  * every turn. Keeping the last two costs little and saves the agent from
  * reading a page again only to compare it with the one before.
  */
-export const PAGES_KEPT_IN_FULL = 2;
+export const PAGES_KEPT_IN_FULL = 1;
 /** A page read is at least this long: shorter tool results are answers, not pages. */
 export const PAGE_RESULT_CHARS = 2_000;
 /** What a screenshot turn counts for in the context budget: an image costs about as much as this much text. */
