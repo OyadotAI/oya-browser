@@ -21,6 +21,11 @@ const SESSION = {
     return ws.publish();
   },
   new: (ws) => ws.leaveEmpty().reset(normalizeDraft()).persist(),
+  // A file's workflow as a new draft: its own identity, never published, never mid-recording.
+  import: (ws, command) => {
+    const { name, description, steps, variables, secrets } = command.draft || {};
+    return ws.leaveEmpty().reset(normalizeDraft({ name, description, steps, variables, secrets })).persist();
+  },
   open: (ws, command) => ws.reset(ws.store.load(command.id)).publish(),
 };
 

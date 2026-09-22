@@ -6,13 +6,14 @@ const crypto = require('crypto');
 const { RecordingChannel } = require('../../scripts/recording.cjs');
 const { cdpAttach, cdp } = require('../cdp.cjs');
 const { withinTime } = require('../../scripts/within-time.cjs');
+const { framePorts } = require('./frame-sessions.cjs');
 const { ANALYZER_ATTR_BYTES, RECORDING_CDP_MS } = require('./constants.cjs');
 
-/** Subscribes to one CDP event on a view; returns the unsubscribe. */
+/** Subscribes to one CDP event of the view's own page, not its iframes' sessions; returns the unsubscribe. */
 function listenOnView(view, method, fn) {
   const dbg = cdpAttach(view);
-  const listener = (_event, name, params) => {
-    if (name === method) fn(params);
+  const listener = (_event, name, params, sessionId) => {
+    if (name === method && !sessionId) fn(params);
   };
   dbg.on('message', listener);
   return () => dbg.off('message', listener);
@@ -70,9 +71,8 @@ class RecordingChannels {
     return {
       send: (method, params) => withinTime(cdp(view, method, params), RECORDING_CDP_MS, 'The page did not answer'),
       on: (method, fn) => listenOnView(view, method, fn),
-      disableRuntimeOnStop: true,
-      worldName: this.ctx.isolatedWorld,
-      analyzer: this.analyzer(),
+      ...{ disableRuntimeOnStop: true, frames: framePorts(view) },
+      ...{ worldName: this.ctx.isolatedWorld, analyzer: this.analyzer() },
       receive: (out) => this.ctx.recorder.receive(view, startingUrl, out, tabId),
     };
   }

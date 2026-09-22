@@ -190,4 +190,33 @@ describe('handles that only look stable', () => {
     assert.equal(withoutLiveCount('Inbox (12)'), 'Inbox');
     assert.equal(withoutLiveCount('Page 2'), 'Page 2');
   });
+
+  it('scopes an id or name inside a shadow root under its host', () => {
+    const found = candidates({ type: 'input', domId: 'input', name: 'q', host: 'body > x-field:nth-of-type(2)' });
+    assert.deepEqual(
+      found.map((c) => c.value),
+      ['body > x-field:nth-of-type(2) [id="input"]', 'body > x-field:nth-of-type(2) [name="q"]'],
+    );
+  });
+
+  it('tries a test id every row repeats only after the position that names this one', () => {
+    const found = candidates({
+      type: 'checkbox',
+      testId: 'row-toggle',
+      testIdRepeats: 'true',
+      path: 'li:nth-of-type(2) > input',
+    });
+    assert.deepEqual(
+      found.map((c) => c.kind),
+      ['css', 'testId'],
+    );
+  });
+
+  it('finds a link with per-visit tokens by its target up to the first token, not by its bare path', () => {
+    const found = candidates({ type: 'link', tag: 'a', rawHref: '/s?k=cable&rh=p_123&qid=1790&ref=sr' });
+    assert.deepEqual(
+      found.map((c) => c.value),
+      ['a[href^="/s?k=cable&rh=p_123"]', 'a[href^="/s"]'],
+    );
+  });
 });

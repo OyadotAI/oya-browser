@@ -4,15 +4,10 @@
  */
 const { checkTarget } = require('./target.cjs');
 const { REPLAY } = require('../constants.cjs');
+const { failureMessage } = require('./failure.cjs');
 
 /** Actions that change the website once dispatched: a failure after them has an unknown outcome. */
-const INPUT_ACTIONS = ['click', 'press_key', 'upload_file', 'select_option'];
-
-/** What a failed step tells the person (the details stay in the worker). */
-const STEP_FAILED = 'The step did not complete. Check the matching target, timeout, and expected result.';
-
-/** The failure message a person sees for `error`. */
-const failureMessage = (error) => (error.message === 'Run stopped' ? 'Run stopped' : STEP_FAILED);
+const INPUT_ACTIONS = ['click', 'double_click', 'press_key', 'upload_file', 'select_option', 'go_back', 'go_forward'];
 
 /** Waits while paused (a breakpoint pauses unless the run itself just paused), then refuses if stopped. */
 async function holdIfPaused(run, step) {
@@ -44,6 +39,8 @@ async function settle(run, p) {
   // What an input triggers (a grid's sort reload) starts a moment later, while the network still looks quiet.
   if (run.inputIssued) await p.waitForTimeout(REPLAY.SETTLE_GRACE_MS);
   await p.waitForLoadState('networkidle', { timeout: REPLAY.SETTLE_MS }).catch(() => {});
+  // A run slowed down to watch: the pause the person chose, before each step.
+  if (run.slowMo) await p.waitForTimeout(run.slowMo);
 }
 
 /** Before a step: pause if asked, report it running, let the page settle, check its target, note whether it sends input. */
@@ -82,7 +79,8 @@ async function failedStep(run, id, error) {
   if (run.repairSignal) return;
   const status = run.inputIssued ? 'outcome-unknown' : 'failed';
   const duration = Date.now() - run.stepStarted;
-  run.emit({ kind: 'step', stepId: id, status, duration, message: failureMessage(error) });
+  const step = run.draft.steps.find((s) => s.id === id);
+  run.emit({ kind: 'step', stepId: id, status, duration, message: failureMessage(error, step) });
 }
 
 /** The hooks object the generated module receives for this run. */

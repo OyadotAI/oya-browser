@@ -4,7 +4,8 @@
  * desktop app and the server both use it through this file.
  *
  * Behind it, one job per file in workflow/: rules (actions and names),
- * locators, normalize, issues and generate.
+ * locators, normalize, issues, generate, and chrome-recorder (Chrome
+ * DevTools Recorder's JSON, both ways).
  */
 const { ACTIONS, TARGETED } = require('./workflow/rules.cjs');
 const { candidates, locatorCode } = require('./workflow/locators.cjs');
@@ -22,6 +23,7 @@ const {
 const { normalizeStep, normalizeDraft } = require('./workflow/normalize.cjs');
 const { issues, variableNames } = require('./workflow/issues.cjs');
 const { generate } = require('./workflow/generate.cjs');
+const { isChromeRecording, fromChromeRecording, toChromeRecording } = require('./workflow/chrome-recorder.cjs');
 
 module.exports = {
   ACTIONS,
@@ -42,4 +44,7 @@ module.exports = {
   variableNames,
   locatorCode,
   generate,
+  isChromeRecording,
+  fromChromeRecording,
+  toChromeRecording,
 };

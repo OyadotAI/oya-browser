@@ -22,6 +22,8 @@ const HELPERS = [
   "  const pages = hooks.pages || new Map([['main', page]]); let p = page;",
   // The role-name rule of workflow/locators.cjs roleName: exact, give or take icons around it.
   "  const named = x => new RegExp('^\\\\W*' + String(x).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&') + '\\\\W*$');",
+  // A step's recorded targets in order: the first that finds exactly one element, else the first.
+  '  const first = async (...found) => { for (const l of found) if (await l.count() === 1) return l; return found[0]; };',
 ];
 
 /** The module's opening: header, variable defaults and the missing-variable check, helpers. */
@@ -38,8 +40,16 @@ function preamble(draft, defaults) {
 /** Code for each action, given the step's locator, timeout option and value expressions. */
 const ACTION_CODE = {
   navigate: (s) => `await p.goto(${s.val('url')}, ${s.timeout});`,
+  go_back: (s) => `await p.goBack(${s.timeout});`,
+  go_forward: (s) => `await p.goForward(${s.timeout});`,
   click: (s) => `await ${s.locator}.click(${s.timeout});`,
-  type: (s) => `await ${s.locator}.fill(${s.val('text')}, ${s.timeout});`,
+  double_click: (s) => `await ${s.locator}.dblclick(${s.timeout});`,
+  hover: (s) => `await ${s.locator}.hover(${s.timeout});`,
+  // A typeahead opens its suggestions on keystrokes, which a fill does not send: a combobox is typed into key by key.
+  type: (s) =>
+    comboboxOf(s.step)
+      ? `await ${s.locator}.fill('', ${s.timeout}); await ${s.locator}.pressSequentially(${s.val('text')}, {delay: ${STEP.TYPE_DELAY_MS}, ...${s.timeout}});`
+      : `await ${s.locator}.fill(${s.val('text')}, ${s.timeout});`,
   select_option: (s) => `await ${s.locator}.selectOption({label:${s.val('option')}}, ${s.timeout});`,
   upload_file: (s) => `await ${s.locator}.setInputFiles(${s.val('file')}, ${s.timeout});`,
   press_key: (s) => `await p.keyboard.press(${s.val('key')});`,
@@ -50,18 +60,45 @@ const ACTION_CODE = {
   assert_text: (s) => `await expect(${s.locator}).toHaveText(${s.val('expected')}, ${s.timeout});`,
   assert_value: (s) => `await expect(${s.locator}).toHaveValue(${s.val('expected')}, ${s.timeout});`,
   assert_url: (s) => `await expect(p).toHaveURL(${s.val('expected')}, ${s.timeout});`,
+  // The page the recording reached, by its address without the query: a session
+  // token or a tracking tag there changes every visit, as does Amazon's `/ref=`
+  // path segment. A route in the fragment (`#/active`) is part of the page, any
+  // other fragment is not. The query parameters a filter or sort set are named.
+  assert_page: (s) =>
+    `{ const e = new URL(${s.val('expected')}); const path = x => x.pathname.replace(/\\/ref=[^/]*/g, ''); await expect(p).toHaveURL(u => u.origin === e.origin && path(u) === path(e) && (!e.hash.startsWith('#/') || u.hash === e.hash)${paramsCheck(s.step)}, ${s.timeout}); }`,
   checkpoint: () =>
     "if (!hooks.checkpoint) throw new Error('This workflow requires a human checkpoint'); await hooks.checkpoint(p);",
 };
+
+/**
+ * The step's locator code: its first target, or, when it has others, the first
+ * of its first few targets that finds exactly one element. A module run on its
+ * own then survives a page that renamed one handle, as a validation run does
+ * by repairing the step.
+ */
+function locatorFor(step, owner) {
+  const code = (c) => locatorCode(c, owner, `value(${JSON.stringify(c.value)})`) + visibleOnly(step.action);
+  const found = step.candidates.slice(0, STEP.MAX_FALLBACKS).map(code);
+  if (found.length <= 1) return found[0] ?? null;
+  return `(await first(${found.join(', ')}))`;
+}
+
+/** Whether a step types into a combobox: a search box with suggestions. */
+const comboboxOf = (step) => step.el?.role === 'combobox' || step.candidates.some((c) => c.role === 'combobox');
+
+/** The check that a page's named query parameters (a filter, a sort) are as recorded, or nothing. */
+function paramsCheck(step) {
+  const names = String(step.params || '')
+    .split(',')
+    .filter(Boolean);
+  return names.length ? ` && ${JSON.stringify(names)}.every(k => u.searchParams.get(k) === e.searchParams.get(k))` : '';
+}
 
 /** What an action's code is built from: the locator through the step's frames, and value expressions. */
 function actionContext(step) {
   let owner = 'p';
   for (const frame of step.frames) owner += `.frameLocator(${JSON.stringify(frame)})`;
-  const first = step.candidates[0];
-  const locator = first
-    ? locatorCode(first, owner, `value(${JSON.stringify(first.value)})`) + visibleOnly(step.action)
-    : null;
+  const locator = locatorFor(step, owner);
   const val = (key) => `value(${JSON.stringify(step[key] ?? '')})`;
   return { step, locator, val, timeout: `{timeout:${step.timeout}}` };
 }

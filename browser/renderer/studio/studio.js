@@ -44,8 +44,12 @@ const Studio = {
   /** The name people see for each action. */
   NAMES: {
     navigate: 'Navigate',
+    go_back: 'Back',
+    go_forward: 'Forward',
     type: 'Fill',
     click: 'Click',
+    double_click: 'Double-click',
+    hover: 'Hover',
     select_option: 'Select',
     press_key: 'Press key',
     scroll: 'Scroll',
@@ -55,6 +59,10 @@ const Studio = {
     assert_text: 'Assert text',
     assert_value: 'Assert value',
     assert_url: 'Assert URL',
+    assert_page: 'Check page',
+    unsupported_frame: 'Not recorded: embedded frame',
+    unsupported_drop: 'Not recorded: drag and drop',
+    unsupported_click: 'Not recorded: canvas click',
     checkpoint: 'Human checkpoint',
   },
 

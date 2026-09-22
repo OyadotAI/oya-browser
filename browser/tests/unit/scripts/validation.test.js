@@ -77,9 +77,22 @@ describe('validate', () => {
       options,
       event: (e) => side.events.push(e),
       ...{ app: side.app, utilityProcess: side.utilityProcess, control: side.control },
-      ...{ tabs: () => side.tabs, createTab: side.createTab, closeTab: () => {}, cdpPort: side.cdpPort },
+      ...{ tabs: () => side.tabs, createTab: side.createTab, cdpPort: side.cdpPort, leftOpen: side.leftOpen },
+      closeTab: side.closeTab || (() => {}),
     });
   }
+
+  it('leaves a run’s tabs open to show where it ended, and closes them, and what they opened, when the next run starts', async () => {
+    const side = fakeBrowserSide(tmp);
+    side.leftOpen = new Set();
+    const closed = [];
+    side.closeTab = (id) => closed.push(id);
+    (await start(side)).dispose();
+    assert.deepEqual(closed, []);
+    side.tabs.push({ id: 9, openerId: 1, view: new FakeView({ url: 'https://popup.test' }) });
+    await start(side);
+    assert.deepEqual(closed, [1, 9]);
+  });
 
   it('opens a tab per named tab, starts the front door and the worker, and tells it to start', async () => {
     const side = fakeBrowserSide(tmp);

@@ -670,6 +670,8 @@
     // Native HTML interactive tags
     if (tag === 'A') return 'link';
     if (tag === 'BUTTON') return 'button';
+    // A <details> disclosure opens from its <summary>: a button in all but name.
+    if (tag === 'SUMMARY') return 'button';
     if (tag === 'SELECT') return 'select';
     if (tag === 'TEXTAREA') return 'textarea';
 
@@ -780,6 +782,15 @@
     if (ariaLabel) el.ariaLabel = ariaLabel;
     const testId = node.getAttribute('data-testid');
     if (testId) el.testId = testId;
+    // A test id the page gives every row ("todo-item-toggle") finds all of them, not this one.
+    if (testId && node.getRootNode().querySelectorAll?.(`[data-testid="${CSS.escape(testId)}"]`).length > 1)
+      el.testIdRepeats = 'true';
+    // A link the page repeats (a name linked in the lead, the body and the infobox) is not found by its target alone.
+    if (rawHref && node.getRootNode().querySelectorAll?.(`a[href="${CSS.escape(rawHref)}"]`).length > 1)
+      el.hrefRepeats = 'true';
+    // Inside a component's shadow root an id or name is only unique within that component.
+    const host = node.getRootNode().host;
+    if (host) el.host = cssPath(host);
     // Always, as the last resort: a name the page repeats (a column header in a
     // sticky copy, "Cancel" in every dialog) leaves replay nothing unique without it.
     el.path = cssPath(node);
@@ -830,7 +841,7 @@
   function anchorOf(node) {
     for (const attr of ANCHOR_ATTRS) {
       const value = node.getAttribute(attr);
-      if (!value) continue;
+      if (!value || (attr === 'id' && GENERATED_ID.test(value))) continue;
       const selector = `[${attr}=${JSON.stringify(value)}]`;
       if (document.querySelectorAll(selector).length === 1) return selector;
     }
@@ -853,6 +864,8 @@
     const own = (n) => norm(n) === text && ![...n.children].some((c) => norm(c) === text);
     const matches = (root) => [...root.getElementsByTagName('*')].filter(own).length;
     if (matches(document) <= 1) return {};
+    // :text-is matches the element's whole text: a contents link that also holds its number never matches its name.
+    if (norm(node) !== text) return { repeats: true };
     for (let a = node.parentElement, i = 0; a && a !== document.body && i < SCOPE_WALK; a = a.parentElement, i++) {
       const anchor = anchorOf(a);
       if (anchor && matches(a) === 1)
@@ -862,19 +875,47 @@
   }
 
   /**
+   * Ids a framework makes up per render: never an anchor for a path or a scope.
+   * The same pattern as scripts/workflow/handles.cjs GENERATED_ID (a test keeps them equal).
+   */
+  const GENERATED_ID =
+    /^(mw[\w-]{1,4}|:r[0-9a-z]+:|_r_[0-9a-z]+_|a-(autoid|popover)-\d+|ember\d+|ext-gen\d+|radix-[\w:-]+|headlessui-[\w-]+|mui-\d+|react-select-\d+|downshift-\d+|[a-f0-9]{8}-[a-f0-9]{4}-)|[0-9]{6,}/i;
+
+  /**
    * A CSS path to the element by position, from its nearest ancestor whose id is
    * unique on the page (a sticky header's clone repeats ids, so those are passed over).
+   * Inside a shadow root the path starts at its host's own path: Playwright's CSS
+   * crosses into open shadow roots on a descendant combinator, and an id there is
+   * unique only within its component.
    */
   function cssPath(node) {
-    const parts = [];
     const root = node.getRootNode();
-    const uniqueId = (n) => n.id && root.querySelectorAll?.(`[id="${CSS.escape(n.id)}"]`).length === 1;
+    const inner = pathWithin(node, root);
+    return root.host ? cssPath(root.host) + ' ' + inner : inner;
+  }
+
+  /** The position path from the top of `root` (the document, or a shadow root) down to `node`. */
+  function pathWithin(node, root) {
+    const parts = [];
+    const uniqueId = (n) =>
+      n.id && !GENERATED_ID.test(n.id) && root.querySelectorAll?.(`[id="${CSS.escape(n.id)}"]`).length === 1;
     for (let n = node; n && n.nodeType === Node.ELEMENT_NODE && n !== document.body; n = n.parentElement) {
       if (uniqueId(n)) return [`[id="${CSS.escape(n.id)}"]`, ...parts].join(' > ');
-      const same = [...(n.parentElement?.children || [])].filter((c) => c.tagName === n.tagName);
-      parts.unshift(same.length > 1 ? `${n.localName}:nth-of-type(${same.indexOf(n) + 1})` : n.localName);
+      const same = [...(n.parentElement || root).children].filter((c) => c.tagName === n.tagName);
+      const tag = root.host ? classed(n) : n.localName;
+      parts.unshift(same.length > 1 ? `${tag}:nth-of-type(${same.indexOf(n) + 1})` : tag);
     }
-    return ['body', ...parts].join(' > ');
+    return root.host ? parts.join(' > ') : ['body', ...parts].join(' > ');
+  }
+
+  /**
+   * An element's tag with its first class. Inside a shadow root the path hangs off
+   * the host by a descendant combinator, so `div > div` can start at any depth; a
+   * class (CodeMirror's `div.cm-line`) pins it. A class that looks generated is skipped.
+   */
+  function classed(node) {
+    const first = [...node.classList].find((c) => /^[A-Za-z][\w-]{0,40}$/.test(c) && !/\d{3,}|^css-|^sc-/.test(c));
+    return first ? `${node.localName}.${CSS.escape(first)}` : node.localName;
   }
 
   /** Tags an interactive element with its id and records what the agent and the recorder know about it. */
@@ -1554,8 +1595,8 @@
   // recording replays and exports to Playwright through the code that already exists.
   // The loader substitutes the flag, so a recording started on the previous page keeps
   // running in the document that replaces it.
-  // ponytail: same-origin frames only. A cross-site iframe is a separate target the
-  // recording channel does not attach to, so a flow inside one records nothing.
+  // A cross-site iframe is a separate target: the recording channel arms this same
+  // recorder there through the iframe's own session (scripts/recording/remote-frames.cjs).
   const RECORD_ON = '__OYA_RECORD__' === 'true';
 
   const RECORD_KEYS = new Set(['Enter', 'Tab', 'Escape']);
@@ -1580,6 +1621,13 @@
   const PRESS_SLOP_PX = 10;
 
   const TEXTUAL = new Set(['input', 'textarea', 'editable']);
+  // Wheel turns closer together than this are one scroll, and less than this far is not one.
+  const SCROLL_SETTLE_MS = 400;
+  const SCROLL_MIN_PX = 100;
+  // How long a pointer resting on a menu trigger still explains a click in the menu it opened.
+  const HOVER_MEMORY_MS = 10000;
+  // Menus inside menus: at most this many hovers lead to one click.
+  const HOVER_DEPTH = 3;
   const SECRET_AUTOCOMPLETE = /current-password|new-password|one-time-code/i;
   const MAX_RECORDED = 500;
 
@@ -1748,24 +1796,53 @@
     pushStep({ action: 'type', el, t, text: value !== '' && isSecretField(node) ? secretPlaceholder(node) : value });
   }
 
+  /** A field the person types into: a file input is chosen, not typed, and its upload is the step. */
+  const typedInto = (hit) => hit && TEXTUAL.has(hit.type) && hit.node.type !== 'file';
+
+  /**
+   * The recorded element. A select or a rich-text field with no label of its own
+   * would be named by what it contains, its option list or the text being typed,
+   * and an element with no text by its test id; no replay finds it by those, so
+   * that name is left out.
+   */
+  function recordedEl(node, type) {
+    const el = stableOf(node, type);
+    // Spacing aside: a code editor's name joins its tokens with spaces its text does not have.
+    const squeeze = (text) => String(text || '').replace(/\s+/g, '');
+    const ownText = el.text && squeeze(node.textContent).includes(squeeze(el.text));
+    // Anything inside a rich-text or code editor counts: CodeMirror's click lands on a line, not the editor.
+    if ((type === 'select' || type === 'editable' || node.isContentEditable) && ownText) forgetName(el);
+    // A name made up from the test id is on no page: its test id already finds it.
+    if (el.testId && el.text === el.testId.replace(/[-_]/g, ' ')) forgetName(el);
+    return el;
+  }
+
+  /** Drops a name no replay can find the element by, with the forms of it worked out from it. */
+  function forgetName(el) {
+    el.text = '';
+    delete el.stableText;
+    delete el.scoped;
+    delete el.repeats;
+  }
+
   function onRecordFocus(e) {
     if (!recording) return;
     const hit = recordTarget(e);
-    if (!hit || !TEXTUAL.has(hit.type)) return;
+    if (!typedInto(hit)) return;
     if (typing && typing.node !== hit.node) flushTyping();
-    focused = { node: hit.node, el: stableOf(hit.node, hit.type) };
+    focused = { node: hit.node, el: recordedEl(hit.node, hit.type) };
   }
 
   function onRecordInput(e) {
     if (!recording) return;
     const hit = recordTarget(e);
-    if (!hit || !TEXTUAL.has(hit.type)) return;
+    if (!typedInto(hit)) return;
     if (typing && typing.node !== hit.node) flushTyping();
     const raw = hit.type === 'editable' ? hit.node.innerText || '' : hit.node.value || '';
     const el =
       (typing && typing.node === hit.node && typing.el) ||
       (focused && focused.node === hit.node && focused.el) ||
-      stableOf(hit.node, hit.type);
+      recordedEl(hit.node, hit.type);
     typing = { node: hit.node, el, value: String(raw).slice(0, 2000), t: Date.now() };
   }
 
@@ -1779,7 +1856,7 @@
   function onRecordPointerDown(e) {
     if (!recording || e.button !== 0) return;
     const hit = recordTarget(e);
-    pressed = hit ? { hit, el: stableOf(hit.node, hit.type), x: e.clientX, y: e.clientY, clicked: false } : null;
+    pressed = hit ? { hit, el: recordedEl(hit.node, hit.type), x: e.clientX, y: e.clientY, clicked: false } : null;
   }
 
   /** A press that no click follows (its element was removed first) is recorded as the click. */
@@ -1835,7 +1912,169 @@
     // so omit the synthesized click instead of replaying the submit twice.
     if (detail === 0 && lastKey && ['Enter', ' '].includes(lastKey.key) && Date.now() - lastKey.t < 1000) return;
     lastKey = null;
-    pushStep({ action: 'click', el: el || stableOf(hit.node, hit.type) });
+    flushWheel();
+    for (const host of hoversFor(hit.node)) pushStep({ action: 'hover', el: hoverEl(host, hit.node) });
+    noteClickedTrigger(hit.node);
+    pushStep({ action: 'click', el: el || recordedEl(hit.node, hit.type) });
+  }
+
+  /** The element under a trusted event, as a button, when it is showing. */
+  function plainTarget(e) {
+    const start = e.composedPath?.()[0] || e.target;
+    return e.isTrusted && recordVisible(start) ? { node: start, type: 'button' } : null;
+  }
+
+  /** A double-click; its two clicks are already steps, and the recorder folds them into it. */
+  function onRecordDoubleClick(e) {
+    if (!recording) return;
+    // Text nothing marks as interactive still counts: double-clicking a to-do's label edits it.
+    const hit = recordTarget(e) || plainTarget(e);
+    // Double-clicking a word in a field selects it: that is not a step.
+    if (!hit || TEXTUAL.has(hit.type) || hit.node.tagName === 'SELECT') return;
+    flushTyping();
+    pushStep({ action: 'double_click', el: recordedEl(hit.node, hit.type) });
+  }
+
+  // ─── Hover: what the pointer had to rest on for the clicked element to show ───
+  //
+  // ponytail: two signals, a CSS rule that reveals the element under a :hover, and
+  // an ARIA menu trigger the pointer rested on that is still open. A menu a script
+  // opens on hover with neither goes unrecorded; the step's replay then fails on a
+  // hidden target, and a Hover step added by hand fixes it.
+
+  let clickedTriggers = new WeakSet(); // menu triggers a click opened, which need no hover however many clicks follow
+  let restedOn = null; // { node, t }, the last menu trigger the pointer entered
+  let hoverRules = null; // { count, rules: [{ host, revealed }] } from the stylesheets
+
+  /** A click on (or inside, or around) the menu trigger the pointer rests on opened that menu itself. */
+  function noteClickedTrigger(node) {
+    const trigger = restedOn?.node;
+    if (trigger && (trigger.contains(node) || node.contains(trigger))) clickedTriggers.add(trigger);
+  }
+
+  /** Remembers the menu trigger the pointer just entered. */
+  function onRecordPointerOver(e) {
+    if (!recording || !e.isTrusted) return;
+    const start = e.composedPath?.()[0] || e.target;
+    const trigger = start?.closest?.('[aria-haspopup]:not([aria-haspopup="false"]), [aria-expanded]');
+    if (trigger) restedOn = { node: trigger, t: Date.now() };
+  }
+
+  /** Every style rule in the page's readable stylesheets, @media and @supports blocks included. */
+  function styleRules(list, out = []) {
+    for (const rule of list) {
+      // A style rule has a (usually empty) cssRules of its own since CSS nesting: it is both.
+      if (rule.selectorText?.includes(':hover')) out.push(rule);
+      if (rule.cssRules?.length) styleRules(rule.cssRules, out);
+    }
+    return out;
+  }
+
+  /** The :hover rules that show or hide something, as `{ host, revealed }` selector pairs; a cross-site sheet is unreadable and skipped. */
+  function revealingRules() {
+    const sheets = [...document.styleSheets];
+    if (hoverRules?.count === sheets.length) return hoverRules.rules;
+    const rules = [];
+    for (const sheet of sheets) {
+      let list;
+      try {
+        list = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      for (const rule of styleRules(list || [])) rules.push(...revealsOf(rule));
+    }
+    hoverRules = { count: sheets.length, rules };
+    return rules;
+  }
+
+  /** Each selector of a rule that changes what is shown under a hovered ancestor. */
+  function revealsOf(rule) {
+    const s = rule.style;
+    if (!s.display && !s.visibility && !s.opacity && !s.pointerEvents) return [];
+    return rule.selectorText.split(',').flatMap((selector) => {
+      const at = selector.lastIndexOf(':hover');
+      const rest = selector.slice(at + ':hover'.length).trim();
+      if (!rest) return [];
+      const plain = (text) => text.replace(/:hover/g, '').trim();
+      return [{ host: plain(selector.slice(0, at)) || '*', revealed: plain(selector) }];
+    });
+  }
+
+  /** A selector test that never throws on syntax the engine does not know. */
+  const safely = (fn) => {
+    try {
+      return fn();
+    } catch {
+      return null;
+    }
+  };
+
+  /** The ancestor a CSS :hover rule needs hovered for `node` to show, or null. */
+  function cssHoverHost(node) {
+    for (const { host, revealed } of revealingRules()) {
+      const shown = safely(() => node.closest(revealed));
+      const owner = shown && safely(() => shown.parentElement?.closest(host));
+      if (owner && owner !== node && owner.contains(shown)) return owner;
+    }
+    return null;
+  }
+
+  /** The open menu trigger the pointer rested on before a click elsewhere, or null. */
+  function menuHoverHost(node) {
+    const rested = restedOn;
+    if (!rested || Date.now() - rested.t > HOVER_MEMORY_MS || !rested.node.isConnected) return null;
+    // A menu the person opened by clicking its trigger needs no hover.
+    if (clickedTriggers.has(rested.node) || rested.node.contains(node)) return null;
+    return rested.node.getAttribute('aria-expanded') === 'true' ? rested.node : null;
+  }
+
+  /**
+   * The element to hover, as recorded. A card that reveals what was clicked has that
+   * in its text, and the text is gone again once the pointer leaves: it is found by
+   * its place instead. A menu trigger outside what it opens keeps its own name.
+   */
+  function hoverEl(host, clicked) {
+    if (!host.contains(clicked)) return stableOf(host, 'button');
+    const el = stableOf(host, 'button', '');
+    delete el.stableText;
+    return el;
+  }
+
+  /** The elements to hover, outermost first, for `node` to be showing. */
+  function hoversFor(node) {
+    const hosts = [];
+    let host = cssHoverHost(node) || menuHoverHost(node);
+    while (host && hosts.length < HOVER_DEPTH && !hosts.includes(host)) {
+      hosts.unshift(host);
+      host = cssHoverHost(host);
+    }
+    return hosts;
+  }
+
+  // ─── Scroll: wheel turns, folded into one step per gesture ───
+
+  let wheel = null; // { dy, t, timer }, the scroll in progress
+
+  function onRecordWheel(e) {
+    if (!recording || !e.isTrusted) return;
+    const lines = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? innerHeight : 1;
+    wheel ||= { dy: 0, t: Date.now() };
+    wheel.dy += e.deltaY * lines;
+    clearTimeout(wheel.timer);
+    wheel.timer = setTimeout(flushWheel, SCROLL_SETTLE_MS);
+  }
+
+  /** The scroll in progress as a step, when it went far enough to matter. */
+  function flushWheel() {
+    const done = wheel;
+    wheel = null;
+    if (!done) return;
+    clearTimeout(done.timer);
+    if (Math.abs(done.dy) < SCROLL_MIN_PX) return;
+    flushTyping();
+    const direction = done.dy < 0 ? 'up' : 'down';
+    pushStep({ action: 'scroll', direction, amount: Math.round(Math.abs(done.dy)), t: done.t });
   }
 
   function onRecordChange(e) {
@@ -1851,7 +2090,7 @@
       if (opt)
         pushStep({
           action: 'select_option',
-          el: stableOf(hit.node, hit.type),
+          el: recordedEl(hit.node, hit.type),
           option: String(opt.label || opt.textContent || '').trim(),
         });
     } else if (TEXTUAL.has(hit.type)) {
@@ -1879,6 +2118,8 @@
     const target = e.composedPath?.()[0] || e.target;
     const nav = NAV_KEYS.has(e.key);
     if (!RECORD_KEYS.has(e.key) && !(nav && navKeyCounts(e, target))) return;
+    // Tab with nothing focused only starts moving through the page: nothing to replay.
+    if (e.key === 'Tab' && (target === document.body || target === document.documentElement)) return;
     if (!recordVisible(target)) return;
     flushTyping(); // the value is the step; the key is what submits it
     lastKey = { key: e.key, t: Date.now() };
@@ -1914,6 +2155,9 @@
   document.addEventListener('input', onRecordInput, true);
   document.addEventListener('change', onRecordChange, true);
   document.addEventListener('click', onRecordClick, true);
+  document.addEventListener('dblclick', onRecordDoubleClick, true);
+  document.addEventListener('pointerover', onRecordPointerOver, true);
+  document.addEventListener('wheel', onRecordWheel, { capture: true, passive: true });
   document.addEventListener('pointerdown', onRecordPointerDown, true);
   document.addEventListener('pointerup', onRecordPointerUp, true);
   document.addEventListener('keydown', onRecordKey, true);
@@ -1928,6 +2172,9 @@
       focused = null;
       lastKey = null;
       pressed = null;
+      wheel = null;
+      restedOn = null;
+      clickedTriggers = new WeakSet();
     }
     recording = true;
     return true;
@@ -1939,8 +2186,12 @@
     focused = null;
     lastKey = null;
     pressed = null;
+    wheel = null;
+    restedOn = null;
+    clickedTriggers = new WeakSet();
   };
   window.__acRecordStop = function () {
+    flushWheel();
     flushTyping();
     recording = false;
     return true;
@@ -1948,7 +2199,10 @@
 
   /** Steps since the last call, and every secret name seen. Clears the step buffer. */
   window.__acRecordDrain = function (final) {
-    if (final) flushTyping();
+    if (final) {
+      flushWheel();
+      flushTyping();
+    }
     const steps = recorded;
     recorded = [];
     return { steps, secrets: [...recordedSecrets] };

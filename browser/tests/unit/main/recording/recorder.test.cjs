@@ -171,9 +171,9 @@ describe('Recorder', () => {
 
   it('records only typed web addresses, once', async () => {
     await ctx.recorder.startRecording();
-    ctx.recorder.recordNavigation('https://b.test/');
-    ctx.recorder.recordNavigation('https://b.test/');
-    ctx.recorder.recordNavigation('about:blank');
+    await ctx.recorder.recordNavigation('https://b.test/');
+    await ctx.recorder.recordNavigation('https://b.test/');
+    await ctx.recorder.recordNavigation('about:blank');
     assert.deepEqual(
       ctx.recorder.recordedSteps.map((s) => s.url),
       ['https://b.test/'],
@@ -182,17 +182,72 @@ describe('Recorder', () => {
 
   it('drops the starting page when the first thing the person does is go elsewhere', async () => {
     await ctx.recorder.startRecording();
-    ctx.recorder.recordNavigation('https://b.test/');
+    await ctx.recorder.recordNavigation('https://b.test/');
     assert.deepEqual(
       ctx.recorder.recordedSteps.map((s) => [s.action, s.url, !!s.start]),
       [['navigate', 'https://b.test/', false]],
     );
   });
 
+  it('collects the typing on the page before recording where the address bar went', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.drainAll = async () => ctx.recorder.pushRecordedStep({ action: 'type', text: 'abc', t: 5 });
+    await ctx.recorder.recordNavigation('https://b.test/');
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.action),
+      ['navigate', 'type', 'navigate'],
+    );
+  });
+
+  it('records Back and Forward after the typing on the page they leave', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.drainAll = async () => ctx.recorder.pushRecordedStep({ action: 'type', text: 'abc', t: 5 });
+    await ctx.recorder.recordHistory('go_back');
+    await ctx.recorder.recordHistory('go_forward');
+    assert.deepEqual(ctx.recorder.recordedSteps.map((s) => s.action).slice(1), [
+      'type',
+      'go_back',
+      'type',
+      'go_forward',
+    ]);
+  });
+
+  it('keeps what it could not record, turned off with its note, so it never blocks a run', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({
+      action: 'unsupported_frame',
+      captureIssue: 'An embedded frame could not be recorded.',
+    });
+    const step = ctx.recorder.recordedSteps.at(-1);
+    assert.deepEqual([step.enabled, step.captureIssue], [false, 'An embedded frame could not be recorded.']);
+  });
+
+  it('folds a double-click and its own two clicks into one step', async () => {
+    await ctx.recorder.startRecording();
+    const el = { text: 'Double me', role: 'button', type: 'button' };
+    ctx.recorder.pushRecordedStep({ action: 'click', el, t: 1000 });
+    ctx.recorder.pushRecordedStep({ action: 'click', el, t: 1100 });
+    ctx.recorder.pushRecordedStep({ action: 'double_click', el, t: 1150 });
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.action),
+      ['navigate', 'double_click'],
+    );
+  });
+
+  it('keeps a click on something else before a double-click', async () => {
+    await ctx.recorder.startRecording();
+    ctx.recorder.pushRecordedStep({ action: 'click', el: { text: 'Other', role: 'button' }, t: 1000 });
+    ctx.recorder.pushRecordedStep({ action: 'double_click', el: { text: 'Double me', role: 'button' }, t: 1100 });
+    assert.deepEqual(
+      ctx.recorder.recordedSteps.map((s) => s.action),
+      ['navigate', 'click', 'double_click'],
+    );
+  });
+
   it('keeps the starting page once something happened on it', async () => {
     await ctx.recorder.startRecording();
     ctx.recorder.pushRecordedStep({ action: 'click', tab: 'main', t: 1 });
-    ctx.recorder.recordNavigation('https://b.test/');
+    await ctx.recorder.recordNavigation('https://b.test/');
     assert.deepEqual(
       ctx.recorder.recordedSteps.map((s) => s.action),
       ['navigate', 'click', 'navigate'],

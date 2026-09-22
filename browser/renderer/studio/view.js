@@ -32,6 +32,10 @@ const DISABLED = {
   'run-history': (m) => m.locked,
   'record-copy': () => !Studio.state.code,
   'record-download': () => !Studio.state.code,
+  'record-json': () => !Studio.state.draft.steps.length,
+  'record-chrome': () => !Studio.state.draft.steps.length,
+  'record-import': (m) => m.locked,
+  'record-open': (m) => m.locked,
 };
 
 /** The parts of the view, drawn in this order. */

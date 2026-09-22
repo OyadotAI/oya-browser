@@ -70,6 +70,21 @@ describe('IPC handlers', () => {
     assert.equal(entered, 'a.test');
   });
 
+  it('records Back and Forward before going, and records nothing when there is nowhere to go', async () => {
+    const order = [];
+    const history = { canGoBack: () => true, canGoForward: () => false };
+    const contents = {
+      navigationHistory: history,
+      goBack: () => order.push('back'),
+      goForward: () => order.push('fwd'),
+    };
+    ctx.tabs = { getActiveView: () => ({ webContents: contents }) };
+    ctx.recorder.recordHistory = async (action) => order.push(action);
+    await call('go-back');
+    await call('go-forward');
+    assert.deepEqual(order, ['go_back', 'back']);
+  });
+
   it('opens a new tab on the home page and records it', () => {
     const recorded = [];
     ctx.tabs = { createTab: () => 5 };

@@ -46,6 +46,8 @@ function validationHooks(ctx) {
     tabs: () => ctx.tabs.list,
     createTab: (url) => ctx.tabs.openForAutomation(url),
     closeTab: (id, options) => ctx.tabs.closeTab(id, options),
+    // The last run's tabs stay open to show where it ended, until the next run starts.
+    leftOpen: (ctx.validationTabs ??= new Set()),
     cdpPort: ctx.cdpPort ? ctx.cdpPort + 1 : 0,
   };
 }

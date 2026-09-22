@@ -145,4 +145,26 @@ describe('missingIdentity', () => {
   it('allows a position when position was all the recording had', () => {
     assert.equal(missingIdentity({ tag: 'div', path: 'p > div' }, { tag: 'div', path: 'p > div' }), false);
   });
+
+  it('treats the ids React 18 and 19, Amazon and the common widget libraries make up as unstable', () => {
+    const { stableId } = require('../../../../scripts/workflow/handles.cjs');
+    for (const id of [
+      ':R56ddmcp:',
+      '_r_3e_',
+      'a-autoid-83-announce',
+      'a-popover-4',
+      'headlessui-menu-button-3',
+      'mui-12',
+    ])
+      assert.equal(stableId(id), false, id);
+    for (const id of ['search', 'section-2', 'twotabsearchtextbox']) assert.equal(stableId(id), true, id);
+  });
+
+  it('keeps the page script’s generated-id pattern the same as this one', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const pattern = (file) =>
+      /GENERATED_ID =\s*(\/.*\/i);/.exec(fs.readFileSync(path.join(__dirname, file), 'utf8'))[1];
+    assert.equal(pattern('../../../../scripts/analyzer.js'), pattern('../../../../scripts/workflow/handles.cjs'));
+  });
 });

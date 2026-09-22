@@ -397,7 +397,11 @@ try {
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.locator('.chat-save-error', { hasText: 'Not connected to server' }).waitFor();
   await page.evaluate(() => Chat.reply('Nothing to replay.', [{ name: 'analyze_page' }]));
-  assert.equal(await page.locator('.chat-save').count(), 0, 'a read-only run offers no playbook');
+  const readOnly = page.getByRole('button', { name: 'Save as playbook', exact: true });
+  assert.equal(await readOnly.isDisabled(), true, 'a read-only run shows the offer disabled');
+  await page.locator('.chat-save-note', { hasText: 'only read pages' }).waitFor();
+  assert.equal(await page.locator('.chat-save').count(), 1, 'only the latest reply offers to save');
+  await capture('ask-save-unavailable');
   // Step edits through the editor's More menu, then Undo and Redo.
   await page.getByRole('tab', { name: 'Record', exact: true }).click();
   await page.locator('[data-studio=steps]').click();

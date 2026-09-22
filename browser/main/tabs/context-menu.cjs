@@ -50,12 +50,18 @@ function linkItems(ctx, params) {
   ];
 }
 
+/** Goes back or forward once a recording in progress has the step. */
+const goInHistory = (ctx, view, action) => () =>
+  ctx.recorder
+    .recordHistory(action)
+    .finally(() => (action === 'go_back' ? view.webContents.goBack() : view.webContents.goForward()));
+
 /** Back, Forward, Reload. */
-function navigationItems(view) {
+function navigationItems(ctx, view) {
   const history = view.webContents.navigationHistory;
   return [
-    { label: 'Back', enabled: history.canGoBack(), click: () => view.webContents.goBack() },
-    { label: 'Forward', enabled: history.canGoForward(), click: () => view.webContents.goForward() },
+    { label: 'Back', enabled: history.canGoBack(), click: goInHistory(ctx, view, 'go_back') },
+    { label: 'Forward', enabled: history.canGoForward(), click: goInHistory(ctx, view, 'go_forward') },
     { label: 'Reload', click: () => view.webContents.reload() },
     { type: 'separator' },
   ];
@@ -84,7 +90,7 @@ function toolItems(ctx, view, params) {
 function showContextMenu(ctx, view, params) {
   const template = [
     ...linkItems(ctx, params),
-    ...navigationItems(view),
+    ...navigationItems(ctx, view),
     ...editItems(params),
     ...toolItems(ctx, view, params),
   ];

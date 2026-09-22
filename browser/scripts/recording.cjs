@@ -11,6 +11,7 @@ const { randomBytes } = require('node:crypto');
 const { RECORDING } = require('./constants.cjs');
 const { recorderSource, STOP_EXPRESSION } = require('./recording/source.cjs');
 const { framePath } = require('./recording/frames.cjs');
+const { RemoteFrames } = require('./recording/remote-frames.cjs');
 
 /** Marks a binding payload that was not JSON. */
 const NOT_JSON = Symbol('not JSON');
@@ -64,9 +65,13 @@ function deliveryFailed(err) {
  * return a different context from the same-named new-document script's world;
  * keep the actual recorder contexts instead of using the analyzer's evaluator. */
 class RecordingChannel {
-  /** `receive` gets each batch of steps; `disableRuntimeOnStop` turns Runtime off on stop (when nothing else uses it). */
-  constructor({ send, on, worldName, analyzer, receive, disableRuntimeOnStop = false }) {
+  /**
+   * `receive` gets each batch of steps; `disableRuntimeOnStop` turns Runtime off on stop (when nothing else uses it);
+   * `frames`, when the transport can reach child sessions, arms cross-site iframes too (recording/remote-frames.cjs).
+   */
+  constructor({ send, on, worldName, analyzer, receive, disableRuntimeOnStop = false, frames = null }) {
     Object.assign(this, { send, on, analyzer, receive, disableRuntimeOnStop });
+    this.remote = new RemoteFrames(this, frames, (port) => childChannel(port, worldName, analyzer));
     this.binding = 'r' + randomBytes(RECORDING.BINDING_BYTES).toString('hex');
     this.worldName = worldName + '-' + this.binding;
     this.contexts = new Set();
@@ -94,6 +99,7 @@ class RecordingChannel {
       await this.stop().catch(() => {});
       throw err;
     });
+    await this.remote.armAll();
   }
 
   /** The steps of start(): binding, recorder in every world, then the handshake. */
@@ -173,7 +179,9 @@ class RecordingChannel {
       this.track(world.executionContextId, frameId);
       await this.evaluate(world.executionContextId, source);
     } catch {
-      this.receive({ steps: [{ ...UNSUPPORTED_FRAME }] });
+      // A cross-site iframe is armed through its own session (remote-frames.cjs), not here;
+      // it is flagged only if that session never comes.
+      this.remote.flagUnlessArmed(frameId, () => this.receive({ steps: [{ ...UNSUPPORTED_FRAME }] }));
     }
   }
 
@@ -224,19 +232,22 @@ class RecordingChannel {
     }
   }
 
-  /** Collects the steps recorded so far (`final` flushes a pending input too). */
-  drain(final = false) {
-    return this.visit(`window.__acRecordDrain?.(${!!final})`);
+  /** Collects the steps recorded so far (`final` flushes a pending input too), cross-site iframes included. */
+  async drain(final = false) {
+    await this.visit(`window.__acRecordDrain?.(${!!final})`);
+    await this.remote.each((child) => child.drain(final));
   }
 
   /** Discards what the recorders hold. */
-  clear() {
-    return this.visit('window.__acRecordClear?.(); undefined');
+  async clear() {
+    await this.visit('window.__acRecordClear?.(); undefined');
+    await this.remote.each((child) => child.clear());
   }
 
   /** Stops recording everywhere and releases the binding, listeners and Runtime. */
   async stop() {
     try {
+      await this.remote.stop();
       if (this.script) await this.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: this.script });
       await this.visit(STOP_EXPRESSION);
     } finally {
@@ -245,22 +256,32 @@ class RecordingChannel {
   }
 
   /** The cleanup stop() always runs, whatever the page did. */
-  async teardown() {
-    await this.send('Runtime.removeBinding', { name: this.binding }).catch(() => {});
-    for (const off of this.listeners) off();
-    this.listeners = [];
-    await this.delivery;
-    this.forget();
-    if (this.runtimeStarted && this.disableRuntimeOnStop) await this.send('Runtime.disable').catch(() => {});
-    this.runtimeStarted = false;
+  teardown() {
+    return teardown(this);
   }
+}
 
-  /** Forgets every context and the new-document script. */
-  forget() {
-    this.contexts.clear();
-    this.contextFrames.clear();
-    this.script = null;
-  }
+/** A recording channel for one cross-site iframe's session, with the page's world and analyzer. */
+function childChannel(port, worldName, analyzer) {
+  return new RecordingChannel({ ...port, worldName, analyzer, disableRuntimeOnStop: true });
+}
+
+/** Releases the binding and listeners, forgets every context and the new-document script, and turns Runtime off if it may. */
+async function teardown(channel) {
+  await channel.send('Runtime.removeBinding', { name: channel.binding }).catch(() => {});
+  for (const off of channel.listeners) off();
+  channel.listeners = [];
+  await channel.delivery;
+  forget(channel);
+  if (channel.runtimeStarted && channel.disableRuntimeOnStop) await channel.send('Runtime.disable').catch(() => {});
+  channel.runtimeStarted = false;
+}
+
+/** Forgets every context and the new-document script. */
+function forget(channel) {
+  channel.contexts.clear();
+  channel.contextFrames.clear();
+  channel.script = null;
 }
 
 module.exports = { RecordingChannel };

@@ -11,7 +11,9 @@ const { RecordingTabNames } = require('./tab-names.cjs');
 const { WEB_URL } = require('../tabs/constants.cjs');
 const { startRecording } = require('./start.cjs');
 const { drivenElsewhere } = require('../../control-state.cjs');
-const { MAX_RECORDED_STEPS, FILE_PICKER_CLICK_MS } = require('./constants.cjs');
+const { MAX_RECORDED_STEPS, FILE_PICKER_CLICK_MS, DOUBLE_CLICK_MS } = require('./constants.cjs');
+const { finalPageCheck } = require('./outcomes.cjs');
+const { recordNavigation, recordHistory } = require('./moves.cjs');
 
 /** A recorded step normalized, or undefined when it is malformed: logged, never thrown, since a throw would stop the tab's later steps. */
 function safeStep(raw) {
@@ -29,6 +31,8 @@ function safeStep(raw) {
  * to pick a target or delete.
  */
 function parkUntargeted(step) {
+  // What could not be recorded (an unreachable frame, a drop) is kept, off, with its note: it never blocks a run.
+  if (step.action.startsWith('unsupported_')) return { ...step, enabled: false };
   if (!TARGETED.includes(step.action) || step.candidates.length) return step;
   return {
     ...step,
@@ -50,6 +54,20 @@ function disablePickerClick(steps) {
   if (last.t - prev.t < FILE_PICKER_CLICK_MS) prev.enabled = false;
 }
 
+/**
+ * A double-click reaches the page as two clicks and then the double-click.
+ * Replayed, the two clicks would make it four, so they are dropped for it.
+ */
+function dropDoubleClickParts(steps, double) {
+  const target = JSON.stringify(double.candidates);
+  const part = (s) =>
+    s?.action === 'click' &&
+    s.tab === double.tab &&
+    (double.t ?? 0) - (s.t ?? 0) < DOUBLE_CLICK_MS &&
+    JSON.stringify(s.candidates) === target;
+  while (part(steps.at(-1))) steps.pop();
+}
+
 /** Puts the steps from index `from` on in time order, leaving the ones before it where they are. */
 function sortFrom(steps, from) {
   const fresh = steps.splice(from).sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
@@ -66,13 +84,11 @@ function rememberPausedPages(recorder) {
   }
 }
 
-/**
- * The start step exists so a replay begins where the person began. When the
- * first thing they do is go somewhere else, nothing happened on that page, and
- * keeping it sends every replay on a detour through it first.
- */
-function dropUnusedStart(steps) {
-  if (steps.length === 1 && steps[0].start) steps.pop();
+/** Adds a normalized step: a double-click replaces its own two clicks, and an upload turns off the click that opened its picker. */
+function appendStep(steps, step) {
+  if (step.action === 'double_click') dropDoubleClickParts(steps, step);
+  steps.push(step);
+  disablePickerClick(steps);
 }
 
 /** The recording in progress (or paused) and its steps. */
@@ -91,6 +107,8 @@ class Recorder {
   recordedIds = new Set();
   /** tab id -> the page recording was paused on */
   pausedUrls = new Map();
+  /** tab id -> the page it is on now, to see a person's action move it (outcomes.cjs). */
+  pageUrls = new Map();
   /** Refreshes the shell's step list while recording. */
   drainTimer = null;
   /** Serializes start, stop, clear and save. */
@@ -147,9 +165,7 @@ class Recorder {
     if (step.id && this.recordedIds.has(step.id)) return;
     if (step.id) this.recordedIds.add(step.id);
     const normalized = safeStep({ t: Date.now(), tab: this.names.recordingTab(this.ctx.tabs.activeTabId), ...step });
-    if (!normalized) return;
-    this.recordedSteps.push(normalized);
-    disablePickerClick(this.recordedSteps);
+    if (normalized) appendStep(this.recordedSteps, normalized);
   }
 
   /** Marks the last step and stops. */
@@ -159,18 +175,14 @@ class Recorder {
     this.queueRecording(() => this.stopRecording());
   }
 
-  /**
-   * Only a URL the person asked for, the address bar, a new tab. Where a click or a
-   * form submission lands is already the click's step, and a goto over it replays past
-   * whatever that click set up (and pins a one-off session URL into the playbook).
-   */
+  /** The address bar or a new tab (moves.cjs). */
   recordNavigation(url) {
-    if (!this.recording || !WEB_URL.test(url || '')) return;
-    const last = this.recordedSteps[this.recordedSteps.length - 1];
-    const sameTab = () => last.tab === this.names.recordingTab(this.ctx.tabs.activeTabId);
-    if (last && last.action === 'navigate' && last.url === url && sameTab()) return;
-    dropUnusedStart(this.recordedSteps);
-    this.pushRecordedStep({ action: 'navigate', url });
+    return recordNavigation(this, url);
+  }
+
+  /** Back or forward in the tab's history (moves.cjs). */
+  recordHistory(action) {
+    return recordHistory(this, action);
   }
 
   /**
@@ -238,6 +250,7 @@ class Recorder {
     try {
       await this.channels.stopAll();
       await this.drainAll(true);
+      finalPageCheck(this);
     } finally {
       this.settleStopped();
     }

@@ -4,7 +4,7 @@
  */
 
 /** Every locator kind a step may use. */
-const { stableId, withoutLiveCount } = require('./handles.cjs');
+const { stableId, withoutLiveCount, volatileTarget, VOLATILE_PARAMS } = require('./handles.cjs');
 
 const LOCATOR_KINDS = ['testId', 'role', 'label', 'text', 'placeholder', 'css'];
 
@@ -29,18 +29,53 @@ function hrefCandidates(el) {
   if (!href || /^(#|javascript:)/i.test(href)) return [];
   const base = href.split(/[?#]/)[0];
   const exact = { kind: 'css', value: `a[href=${JSON.stringify(href)}]` };
+  if (!base || base === href) return [exact];
   // The same page with another query (a filter, a tracking tag) is still the link.
-  return base && base !== href ? [exact, { kind: 'css', value: `a[href^=${JSON.stringify(base)}]` }] : [exact];
+  const prefix = { kind: 'css', value: `a[href^=${JSON.stringify(base)}]` };
+  return volatileTarget(href) ? volatileHrefCandidates(href, base, prefix) : [exact, prefix];
 }
 
-/** CSS locators from the element's group and value, id, name and link target. */
+/** A link whose query carries per-visit tokens (a session, a request id): what comes before them, then its path. */
+function volatileHrefCandidates(href, base, prefix) {
+  const stable = stablePrefix(href);
+  return stable === base ? [prefix] : [{ kind: 'css', value: `a[href^=${JSON.stringify(stable)}]` }, prefix];
+}
+
+/**
+ * The link's target up to its first per-visit parameter: all of it that the next
+ * visit writes the same. Amazon's brand filter is `/s?k=cable&rh=…&qid=…`; up to
+ * `qid` it names this brand, while `/s` alone names every search link on the page.
+ */
+function stablePrefix(href) {
+  const [path, query = ''] = href.split('#')[0].split(/\?(.*)/s);
+  const kept = [];
+  for (const pair of query.split('&').filter(Boolean)) {
+    if (VOLATILE_PARAMS.test(decodeURIComponent(pair.split('=')[0]))) break;
+    kept.push(pair);
+  }
+  return path + (kept.length ? '?' + kept.join('&') : '');
+}
+
+/**
+ * CSS locators from the element's group and value, id, name and link target.
+ * Inside a component's shadow root those are unique only within it, so each is
+ * scoped under the component's host.
+ */
 function attributeCandidates(el) {
+  const within = el.host ? `${el.host} ` : '';
+  return plainAttributeCandidates(el).map((c) => ({ ...c, value: within + c.value }));
+}
+
+/** The attribute locators as if the element were in the page itself. */
+function plainAttributeCandidates(el) {
   const out = [];
   // A checkbox or radio by its group and value: stable where the page makes up its id.
   if (el.name && el.choice)
     out.push({ kind: 'css', value: `input[name=${JSON.stringify(el.name)}][value=${JSON.stringify(el.choice)}]` });
   if (stableId(el.domId)) out.push({ kind: 'css', value: `[id=${JSON.stringify(el.domId)}]` });
   if (el.name) out.push({ kind: 'css', value: `[name=${JSON.stringify(el.name)}]` });
+  // A target the page repeats is tried only after the element's position (see candidates).
+  if (el.hrefRepeats) return out;
   // A link's target outlives any id a renderer invents for it, so it comes before
   // a generated id rather than after every attribute. The generated id itself is
   // reported by `generatedId` so it can be ordered behind the element's position:
@@ -72,15 +107,26 @@ function nameCandidates(el) {
 function candidates(el = {}) {
   const byAttribute = attributeCandidates(el);
   const field = FIELD.has(el.type);
-  const byTestId = el.testId ? [{ kind: 'testId', value: el.testId }] : [];
+  const byTestId = el.testIdRepeats ? [] : testIdOf(el);
   // A repeated name scoped to the container where it is unique (recorded only when the name repeats).
   const byScope = el.scoped ? [{ kind: 'css', value: el.scoped }] : [];
   // A name with a live count, or one the page repeats, will not find it alone: its handles lead.
   const handlesFirst = uniqueFirst(el, field, byScope);
   const byName = handlesFirst || [...nameCandidates(el), ...byScope];
   const ordered = field || handlesFirst ? [...byAttribute, ...byName] : [...byName, ...byAttribute];
-  return withPath([...byTestId, ...ordered], el.path, el);
+  return [...withPath([...byTestId, ...ordered], el.path, el), ...repeatedHandles(el)];
 }
+
+/**
+ * A test id or link target the page repeats (every row's toggle, a name linked
+ * three times): tried only after everything that names this one element.
+ */
+function repeatedHandles(el) {
+  return [...(el.testIdRepeats ? testIdOf(el) : []), ...(el.hrefRepeats ? hrefCandidates(el) : [])];
+}
+
+/** The element's test id as a locator, when it has one. */
+const testIdOf = (el) => (el.testId ? [{ kind: 'testId', value: el.testId }] : []);
 
 /**
  * When the name will not find the element alone, what follows its handles: the

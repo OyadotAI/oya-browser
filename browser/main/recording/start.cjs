@@ -4,6 +4,7 @@
  */
 const { WEB_URL } = require('../tabs/constants.cjs');
 const { RECORDING_REFRESH_MS } = require('./constants.cjs');
+const { rememberPages } = require('./outcomes.cjs');
 
 /** Starts, or resumes, recording on every tab. */
 async function startRecording(recorder, resume, origin) {
@@ -28,6 +29,7 @@ function resetRecording(recorder, resume, origin, workspace) {
   recorder.recordedSteps = draft ? structuredClone(draft.steps) : [];
   recorder.recordedSecrets = new Set(draft ? draft.secrets : []);
   nameRecordingTabs(recorder, resume);
+  rememberPages(recorder);
 }
 
 /** Re-takes step ids and names the active tab. */

@@ -76,4 +76,45 @@ describe('the Run tab', () => {
     await push();
     assert.equal($('run-history').disabled, true);
   });
+
+  it('applies a repair the run found to the workflow, making the target that worked the first', async () => {
+    const { ws, push, $, settle } = await studioApp();
+    await ws.start({});
+    const replacement = { kind: 'text', value: 'Go' };
+    ws.receiveFromWorker({
+      type: 'repair',
+      stepId: 'b',
+      original: { kind: 'css', value: '#go' },
+      replacement,
+      draft: ws.draft,
+    });
+    ws.receiveFromWorker({ type: 'finished', status: 'succeeded', assertions: 0 });
+    await push();
+    const apply = [...$('run-repairs').querySelectorAll('button')].find(
+      (b) => b.textContent === 'Apply to this workflow',
+    );
+    assert.equal(apply.disabled, false);
+    apply.click();
+    await settle();
+    const step = ws.draft.steps.find((s) => s.id === 'b');
+    assert.equal(JSON.stringify(step.candidates), JSON.stringify([replacement, { kind: 'css', value: '#go' }]));
+  });
+
+  it('offers no repair to apply while the run is still going', async () => {
+    const { ws, push, $ } = await studioApp();
+    await ws.start({});
+    const replacement = { kind: 'text', value: 'Go' };
+    ws.receiveFromWorker({
+      type: 'repair',
+      stepId: 'b',
+      original: { kind: 'css', value: '#go' },
+      replacement,
+      draft: ws.draft,
+    });
+    await push();
+    const apply = [...$('run-repairs').querySelectorAll('button')].find(
+      (b) => b.textContent === 'Apply to this workflow',
+    );
+    assert.equal(apply.disabled, true);
+  });
 });

@@ -4,6 +4,18 @@ const { HOME_URL } = require('../tabs/constants.cjs');
 /** Throws unless a person holds control. */
 const requireHuman = (ctx) => ctx.shield.requireHumanControl();
 
+/** Back or forward in the active tab, recorded as a step when a recording is running. */
+async function goInHistory(ctx, action) {
+  requireHuman(ctx);
+  const contents = ctx.tabs.getActiveView()?.webContents;
+  const back = action === 'go_back';
+  const history = contents?.navigationHistory;
+  if (!contents || (history && !(back ? history.canGoBack() : history.canGoForward()))) return;
+  await ctx.recorder.recordHistory(action);
+  if (back) contents.goBack();
+  else contents.goForward();
+}
+
 /** Channel → handler. */
 const NAVIGATION_HANDLERS = {
   navigate: async (ctx, _e, url) => {
@@ -11,14 +23,8 @@ const NAVIGATION_HANDLERS = {
     if (!ctx.shell.browsingMode) return void ctx.tabs.enterBrowsingMode(url);
     await ctx.tabs.navigateActive(url);
   },
-  'go-back': (ctx) => {
-    requireHuman(ctx);
-    ctx.tabs.getActiveView()?.webContents.goBack();
-  },
-  'go-forward': (ctx) => {
-    requireHuman(ctx);
-    ctx.tabs.getActiveView()?.webContents.goForward();
-  },
+  'go-back': (ctx) => goInHistory(ctx, 'go_back'),
+  'go-forward': (ctx) => goInHistory(ctx, 'go_forward'),
   reload: (ctx) => ctx.tabs.reloadActivePage(),
   'enter-browsing': (ctx) => ctx.tabs.enterBrowsingMode(HOME_URL),
   'new-tab': (ctx, _e, url) => {

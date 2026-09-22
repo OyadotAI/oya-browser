@@ -54,10 +54,23 @@ class ValidationRun {
     fs.rmSync(this.directory, { recursive: true, force: true });
   }
 
+  /**
+   * Closes the tabs the last run left open to show where it ended, and the tabs
+   * their pages opened, so each run does not add another tab.
+   */
+  closeLeftOpen() {
+    const left = this.leftOpen;
+    if (!left?.size) return;
+    const stale = this.tabs().filter((t) => left.has(t.id) || left.has(t.openerId));
+    left.clear();
+    for (const tab of stale) this.closeTab(tab.id);
+  }
+
   /** Opens a tab for this run and returns it. */
   addTab(url) {
     const id = this.createTab(url);
     this.runTabs.add(id);
+    this.leftOpen?.add(id);
     return this.tabs().find((t) => t.id === id);
   }
 
@@ -164,6 +177,7 @@ class ValidationRun {
       ...{ token: this.token, targetId: tab.targetId, pageUrls, vars: options.vars || {}, directory: this.directory },
       ...{ command: options.command, runTo: options.runTo, evidence: !!options.evidence },
       autoHeal: options.autoHeal !== false,
+      slowMo: Math.min(Math.max(Number(options.slowMo) || 0, 0), VALIDATION.MAX_SLOW_MO_MS),
     });
   }
 
@@ -186,6 +200,7 @@ class ValidationRun {
 
   /** Every step of starting the run, in order. */
   async begin() {
+    this.closeLeftOpen();
     const { tab, pageUrls } = await this.prepareTabs();
     await this.startFrontDoor(await this.debugPort());
     this.forkWorker();

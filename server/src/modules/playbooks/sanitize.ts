@@ -30,6 +30,9 @@ const EL_FIELDS = [
   'stableText',
   'scoped',
   'repeats',
+  'host',
+  'testIdRepeats',
+  'hrefRepeats',
 ];
 /** Step fields kept from a recorded step. */
 const STEP_FIELDS = ['url', 'text', 'option', 'file', 'key', 'direction'];

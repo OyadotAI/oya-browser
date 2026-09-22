@@ -7,6 +7,8 @@ const { isAuthPopup, opensNamedWindow } = require('../auth-popup.cjs');
 const { watchContents } = require('../observe/install.cjs');
 const { showContextMenu } = require('./context-menu.cjs');
 const { showUnprotected } = require('./load.cjs');
+const { trackFrameSessions } = require('../recording/frame-sessions.cjs');
+const { pageReached } = require('../recording/outcomes.cjs');
 const { CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE, LOCAL_FILE } = require('./constants.cjs');
 
 /**
@@ -23,6 +25,7 @@ const VIEW_SOURCE_LIGHT = `
 
 /** Wires every listener on a new tab; returns the promise that settles once it is protected (or given up on). */
 function wireTab(ctx, tab) {
+  wireRecording(ctx, tab);
   wireTabLoadState(ctx, tab);
   wireTabFailures(ctx, tab);
   wireRendererLoss(ctx, tab);
@@ -125,6 +128,18 @@ function wireTabPage(ctx, tab, tabReady) {
   if (ctx.observer) watchContents(ctx.observer, contents);
 }
 
+/**
+ * What a recording needs from the tab: its cross-site iframes, tracked before
+ * protection attaches to them so a later recording finds them, and a page check
+ * when a person's action moves the page (recording/outcomes.cjs).
+ */
+function wireRecording(ctx, tab) {
+  trackFrameSessions(tab.view);
+  const contents = tab.view.webContents;
+  contents.on('did-navigate', (_e, u) => pageReached(ctx.recorder, tab.id, u));
+  contents.on('did-navigate-in-page', (_e, u, isMainFrame) => isMainFrame && pageReached(ctx.recorder, tab.id, u));
+}
+
 /** Joins a recording in progress; a page that refuses is logged and tried again on its next load. */
 function joinRecording(ctx, view) {
   return Promise.resolve(ctx.recorder.joinIfRecording(view)).catch((err) => console.error('[recording]', err.message));
@@ -155,7 +170,7 @@ function pageLoaded(ctx, view) {
 /** Windows the page opens, sign-in popups it is allowed, and its context menu. */
 function wireTabWindows(ctx, tab) {
   const contents = tab.view.webContents;
-  contents.setWindowOpenHandler((details) => openWindow(ctx, details));
+  contents.setWindowOpenHandler((details) => openWindow(ctx, details, tab));
   contents.on('did-create-window', (childWindow) => adoptPopup(ctx, childWindow));
   contents.on('context-menu', (_e, params) => showContextMenu(ctx, tab.view, params));
 }
@@ -166,14 +181,21 @@ function wireTabWindows(ctx, tab) {
  * page holds on to what `window.open` gave it. Those are then adopted as tabs
  * (adoptPopup) so an agent can still list, switch to and drive them.
  */
-function openWindow(ctx, details) {
+function openWindow(ctx, details, opener) {
   const webPreferences = { partition: ctx.persona.partitionName() };
   if (isAuthPopup(details.url, details.features))
     return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
   if (opensNamedWindow(details.frameName)) return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
   // A page cannot load a file: address itself, but a tab the app opens for it could: the page must not get one that way.
-  if (!LOCAL_FILE.test(details.url)) ctx.tabs.createTab(details.url, true, loadOptionsFor(details));
+  if (!LOCAL_FILE.test(details.url))
+    markOpener(ctx, ctx.tabs.createTab(details.url, true, loadOptionsFor(details)), opener);
   return { action: 'deny' };
+}
+
+/** Notes which tab opened a tab, so what a test run's tabs open closes with them. */
+function markOpener(ctx, id, opener) {
+  const tab = ctx.tabs.list.find((t) => t.id === id);
+  if (tab && opener) tab.openerId = opener.id;
 }
 
 /** Protects a window the page opened, and puts it on the tab list so it can be driven. */

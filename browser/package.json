@@ -13,7 +13,7 @@
     "dist:linux": "electron-builder --linux --publish never",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node --test 'tests/unit/**/*.test.{js,cjs,mjs}'",
-    "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs && npm run test:analyzer",
+    "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs && npm run test:analyzer && npm run test:recorder",
     "test:coverage": "node --test --experimental-test-coverage 'tests/unit/**/*.test.{js,cjs,mjs}'",
     "test:recording": "electron tests/integration/recording-electron.cjs",
     "test:identity": "electron tests/integration/identity-electron.cjs",
@@ -24,7 +24,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:analyzer": "node tests/integration/analyzer-dom.mjs"
+    "test:analyzer": "node tests/integration/analyzer-dom.mjs",
+    "test:recorder": "node tests/integration/recorder-dom.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",

@@ -50,6 +50,21 @@ class FakeLocator {
   async fill(value) {
     this.page.act('fill', this.desc, value);
   }
+
+  /** Records typing key by key. */
+  async pressSequentially(text) {
+    this.page.act('keys', this.desc, text);
+  }
+
+  /** Records a double-click. */
+  async dblclick() {
+    this.page.act('dblclick', this.desc);
+  }
+
+  /** Records a hover. */
+  async hover() {
+    this.page.act('hover', this.desc);
+  }
 }
 
 /** Anything locators can be made from: a page or a frame. */
@@ -158,6 +173,16 @@ class FakePage extends EventEmitter {
   /** As Playwright's. */
   async goto(url) {
     this.log.push(['goto', url]);
+  }
+
+  /** As Playwright's. */
+  async goBack() {
+    this.log.push(['back']);
+  }
+
+  /** As Playwright's. */
+  async goForward() {
+    this.log.push(['forward']);
   }
 }
 for (const name of [
