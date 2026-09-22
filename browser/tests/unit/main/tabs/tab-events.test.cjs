@@ -8,6 +8,7 @@ const { TabManager } = require('../../../../main/tabs/tabs.cjs');
 const { VIEW_SOURCE_LIGHT } = require('../../../../main/tabs/tab-events.cjs');
 const { mainCtx } = require('../../support/main-ctx.cjs');
 const { flush } = require('../../support/fakes.cjs');
+const { TAB_UNPROTECTED_DESKTOP } = require('../../../../main/tabs/constants.cjs');
 
 describe('tab events', () => {
   let ctx, tab;
@@ -17,6 +18,60 @@ describe('tab events', () => {
     tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
   });
   afterEach(() => mock.timers.reset());
+
+  /** A tab whose setup answers each of `answers` in turn. */
+  function tabWith(answers) {
+    const reset = mock.method(ctx.protection, 'resetTabCDP', () => {});
+    ctx.protection.setupTabCDP = async () => answers.shift();
+    return { reset, opened: ctx.tabs.find(ctx.tabs.createTab('https://b.test/')) };
+  }
+
+  it('refuses to load a page in a tab whose protection fails twice, and says why on the tab', async () => {
+    mock.method(console, 'error', () => {});
+    const { reset, opened } = tabWith([false, false]);
+    await opened.ready.catch(() => {});
+    assert.deepEqual(opened.view.webContents.loaded, ['about:blank']);
+    assert.equal(opened.protection, 'failed');
+    assert.equal(opened.loadError, TAB_UNPROTECTED_DESKTOP);
+    assert.equal(reset.mock.callCount(), 2);
+  });
+
+  it('keeps saying the tab is not protected when a load starts in it', async () => {
+    mock.method(console, 'error', () => {});
+    const { opened } = tabWith([false, false]);
+    await opened.ready.catch(() => {});
+    opened.view.webContents.emit('did-start-loading');
+    assert.equal(opened.loadError, TAB_UNPROTECTED_DESKTOP);
+    ctx.tabs.reloadTab(opened);
+    assert.equal(opened.loadError, TAB_UNPROTECTED_DESKTOP, 'Reload wiped the reason');
+  });
+
+  it('loads the page once when the first attempt fails and the second succeeds', async () => {
+    const errors = mock.method(console, 'error', () => {});
+    const { reset, opened } = tabWith([false, true]);
+    await opened.ready;
+    assert.deepEqual(opened.view.webContents.loaded, ['about:blank', 'https://b.test/']);
+    assert.equal(opened.protection, 'protected');
+    assert.equal(reset.mock.callCount(), 1);
+    assert.equal(errors.mock.callCount(), 1);
+  });
+
+  it('loads a healthy tab with no retry and no warning', async () => {
+    const errors = mock.method(console, 'error', () => {});
+    const { reset, opened } = tabWith([true]);
+    await opened.ready;
+    assert.deepEqual(opened.view.webContents.loaded, ['about:blank', 'https://b.test/']);
+    assert.deepEqual([reset.mock.callCount(), errors.mock.callCount()], [0, 0]);
+  });
+
+  it('does not join a recording in a tab that was never protected', async () => {
+    mock.method(console, 'error', () => {});
+    const joined = mock.method(ctx.recorder, 'joinIfRecording', () => {});
+    const { opened } = tabWith([false, false]);
+    await opened.ready.catch(() => {});
+    await flush();
+    assert.equal(joined.mock.calls.filter((c) => c.arguments[0] === opened.view).length, 0);
+  });
 
   it('shows a main-frame load failure on the tab', () => {
     tab.navigationPending = true;
@@ -58,6 +113,14 @@ describe('tab events', () => {
       height: 700,
       webPreferences: { partition: 'persist:oya-browser' },
     });
+  });
+
+  it('never opens a file: address a page asked for in a new tab: the app, unlike the page, would be allowed to read it', () => {
+    const handler = tab.view.webContents.openHandler;
+    for (const url of ['file:///etc/passwd', ' FILE:///etc/passwd', 'view-source:file:///etc/passwd']) {
+      assert.deepEqual(handler({ url, features: '' }), { action: 'deny' }, url);
+    }
+    assert.equal(ctx.tabs.list.length, 1);
   });
 
   it('opens a form posted into a new window with its body and referrer, not a bare GET', async () => {

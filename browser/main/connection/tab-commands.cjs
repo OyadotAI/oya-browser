@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const { normalizeDraft } = require('../../scripts/workflow.cjs');
 const { sleep } = require('../input.cjs');
 const { WORKFLOW_LIMIT_MS, WORKFLOW_POLL_MS } = require('./constants.cjs');
+const { isWebAddress, NOT_A_WEB_ADDRESS } = require('../tabs/navigation.cjs');
+const { whenProtected } = require('../tabs/load.cjs');
 
 /** Loads the server's draft into the workspace as the one to play. */
 function loadWorkflowDraft(ctx, params) {
@@ -52,12 +54,16 @@ async function playWorkflow(runner, id, params) {
   runner.sendResult(id, true, { id: run.id, status: run.status, assertions: run.assertions || 0, error: run.error });
 }
 
-/** Opens a tab and answers once it is ready. */
+/** Opens a tab on a web address and answers once it is ready; any other address is the caller's way into this machine, and a tab that could not be protected is refused. */
 async function openTab(runner, id, params) {
   const { tabs, actions } = runner.ctx;
-  const tabId = tabs.createTab(params?.url || 'about:blank', true);
-  await actions.waitForTabReady(tabs.list.find((t) => t.id === tabId));
-  runner.sendResult(id, true, { tab_id: tabId, url: params?.url || 'about:blank' });
+  const url = params?.url || 'about:blank';
+  if (!isWebAddress(url)) return runner.sendResult(id, false, null, NOT_A_WEB_ADDRESS);
+  const tabId = tabs.createTab(url, true);
+  const tab = tabs.list.find((t) => t.id === tabId);
+  await whenProtected(tab);
+  await actions.waitForTabReady(tab);
+  runner.sendResult(id, true, { tab_id: tabId, url });
 }
 
 /** Command → handler, for commands that do not need the active page. */

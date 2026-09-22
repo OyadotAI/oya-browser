@@ -214,6 +214,7 @@ export const metrics = {
 
   // Streaming
   frames: counter('oya_frames_total', 'Frames received from browsers'),
+  analyticsDropped: counter('oya_analytics_dropped_total', 'Analytics events dropped, by reason'),
   streamViewers: gauge('oya_stream_viewers', 'Active live-view subscribers'),
 
   // Provisioning

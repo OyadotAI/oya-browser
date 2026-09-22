@@ -12,6 +12,8 @@
  *
  * This file is the facade; the work is split by concern under cdp/.
  */
-export { CDPConnection } from './cdp/connection.ts';
+export { CDPConnection, CdpConnectionError } from './cdp/connection.ts';
 export { CDPDriver } from './cdp/driver.ts';
 export { CDP_CAPABILITIES } from './cdp/actions.ts';
+export { dial, opened, dialWithTimeout, endpointAt } from './cdp/dial.ts';
+export { MAX_PAYLOAD_BYTES, UPSTREAM_CONNECT_MS } from './cdp/constants.ts';

@@ -42,38 +42,91 @@
   // sticky header, not an overlay: clicks scroll their target clear of it.
   const HEADER_MAX_SHARE = 0.25;
 
-
-
   const COLORS = {
-    link: '#22c55e', button: '#3b82f6', input: '#a855f7',
-    select: '#f59e0b', textarea: '#06b6d4', editable: '#ec4899',
+    link: '#22c55e',
+    button: '#3b82f6',
+    input: '#a855f7',
+    select: '#f59e0b',
+    textarea: '#06b6d4',
+    editable: '#ec4899',
   };
 
   const SKIP_TAGS = new Set([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'PATH', 'LINK', 'META',
-    'HEAD', 'OBJECT', 'EMBED', 'CANVAS', 'MAP', 'TEMPLATE',
+    'SCRIPT',
+    'STYLE',
+    'NOSCRIPT',
+    'SVG',
+    'PATH',
+    'LINK',
+    'META',
+    'HEAD',
+    'OBJECT',
+    'EMBED',
+    'CANVAS',
+    'MAP',
+    'TEMPLATE',
     'PICTURE', // skip <picture>, the <img> inside will be caught
   ]);
 
-  const LANDMARK_TAGS = { HEADER: 'header', FOOTER: 'footer', NAV: 'nav', MAIN: 'main', ASIDE: 'aside', FORM: 'form', SECTION: 'section', ARTICLE: 'article' };
+  const LANDMARK_TAGS = {
+    HEADER: 'header',
+    FOOTER: 'footer',
+    NAV: 'nav',
+    MAIN: 'main',
+    ASIDE: 'aside',
+    FORM: 'form',
+    SECTION: 'section',
+    ARTICLE: 'article',
+  };
 
   const INTERACTIVE_ROLES = new Set([
-    'button', 'link', 'textbox', 'combobox', 'tab', 'menuitem',
-    'menuitemcheckbox', 'menuitemradio', 'option', 'checkbox', 'radio',
-    'switch', 'slider', 'spinbutton', 'searchbox', 'gridcell', 'treeitem',
+    'button',
+    'link',
+    'textbox',
+    'combobox',
+    'tab',
+    'menuitem',
+    'menuitemcheckbox',
+    'menuitemradio',
+    'option',
+    'checkbox',
+    'radio',
+    'switch',
+    'slider',
+    'spinbutton',
+    'searchbox',
+    'gridcell',
+    'treeitem',
   ]);
 
   const INTERACTIVE_CHILD_SELECTOR = [
-    'a[href]', 'button', 'input:not([type="hidden"])', 'select', 'textarea',
-    'summary', '[role="button"]', '[role="link"]', '[role="textbox"]',
-    '[role="checkbox"]', '[role="radio"]', '[role="switch"]', '[role="tab"]',
-    '[role="menuitem"]', '[role="combobox"]', '[role="option"]', '[role="treeitem"]',
-    '[onclick]', '[ng-click]', '[data-action]', '[jsaction]',
-    '[data-control-name]', '[data-click]',
+    'a[href]',
+    'button',
+    'input:not([type="hidden"])',
+    'select',
+    'textarea',
+    'summary',
+    '[role="button"]',
+    '[role="link"]',
+    '[role="textbox"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="switch"]',
+    '[role="tab"]',
+    '[role="menuitem"]',
+    '[role="combobox"]',
+    '[role="option"]',
+    '[role="treeitem"]',
+    '[onclick]',
+    '[ng-click]',
+    '[data-action]',
+    '[jsaction]',
+    '[data-control-name]',
+    '[data-click]',
     // Site-specific
-    '[data-testid]',                  // X/Twitter
-    '[data-click-id]',                // Reddit
-    '[data-tracking-control-name]',   // LinkedIn
+    '[data-testid]', // X/Twitter
+    '[data-click-id]', // Reddit
+    '[data-tracking-control-name]', // LinkedIn
   ].join(', ');
 
   let elementCounter = 0;
@@ -104,9 +157,9 @@
       // Also catches LinkedIn overlays, Amazon popups, Reddit lightboxes.
       const modals = document.querySelectorAll(
         '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], dialog[open], ' +
-        '[role="dialog"]:not([aria-modal="false"]), ' +  // Some sites omit aria-modal
-        '.artdeco-modal__content, ' +                     // LinkedIn modals
-        '[data-testid="sheetDialog"]'                     // X/Twitter sheets
+          '[role="dialog"]:not([aria-modal="false"]), ' + // Some sites omit aria-modal
+          '.artdeco-modal__content, ' + // LinkedIn modals
+          '[data-testid="sheetDialog"]', // X/Twitter sheets
       );
       for (let i = modals.length - 1; i >= 0; i--) {
         const m = modals[i];
@@ -124,8 +177,10 @@
 
     if (!root) return { ok: false, error: `Root not found: ${options.selector}` };
 
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const scrollX = window.scrollX, scrollY = window.scrollY;
+    const vw = window.innerWidth,
+      vh = window.innerHeight;
+    const scrollX = window.scrollX,
+      scrollY = window.scrollY;
     const pageH = document.documentElement.scrollHeight;
     const scrollPct = pageH > vh ? Math.round((scrollY / (pageH - vh)) * 100) : 0;
 
@@ -147,8 +202,10 @@
       if (dom) {
         const rect = dom.getBoundingClientRect();
         const off = getIframeOffset(dom);
-        const top = rect.top + off.y, bottom = rect.bottom + off.y;
-        const left = rect.left + off.x, right = rect.right + off.x;
+        const top = rect.top + off.y,
+          bottom = rect.bottom + off.y;
+        const left = rect.left + off.x,
+          right = rect.right + off.x;
         el.visible = bottom > 0 && top < vh && right > 0 && left < vw && rect.width > 0 && rect.height > 0;
         if (el.visible && !off.x && !off.y && isCovered(dom, rect)) {
           el.covered = true;
@@ -164,42 +221,54 @@
       if (aid) focusedId = parseInt(aid, 10);
     }
 
-    const visibleCount = elementMap.filter(e => e.visible).length;
-    const coveredCount = elementMap.filter(e => e.covered).length;
+    const visibleCount = elementMap.filter((e) => e.visible).length;
+    const coveredCount = elementMap.filter((e) => e.covered).length;
     // Element rows' state, now that where each element is (on screen, covered) is known.
-    for (const row of blocks) if (row.entry) { row.state = stateWords(row.entry); delete row.entry; }
+    for (const row of blocks)
+      if (row.entry) {
+        row.state = stateWords(row.entry);
+        delete row.entry;
+      }
     const panel = scrollPanel(vw, vh);
     const facts = {
       url: location.href,
       title: document.title,
       viewport: `${vw}x${vh}`,
       scroll: `${scrollPct}% (${scrollY}px of ${pageH}px)`,
-      panelScroll: panel ? `${Math.round((panel.scrollTop / (panel.scrollHeight - panel.clientHeight)) * 100)}% (${Math.round(panel.scrollTop)}px of ${panel.scrollHeight}px); the content scrolls inside a panel` : '',
+      panelScroll: panel
+        ? `${Math.round((panel.scrollTop / (panel.scrollHeight - panel.clientHeight)) * 100)}% (${Math.round(panel.scrollTop)}px of ${panel.scrollHeight}px); the content scrolls inside a panel`
+        : '',
       elements: `${elementMap.length} total, ${visibleCount} visible`,
-      modal: activeModal ? `${activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed'} (only this dialog was read)` : '',
-      covered: coveredCount ? `${coveredCount} visible elements are behind something drawn over them (close it first)` : '',
+      modal: activeModal
+        ? `${activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed'} (only this dialog was read)`
+        : '',
+      covered: coveredCount
+        ? `${coveredCount} visible elements are behind something drawn over them (close it first)`
+        : '',
       focused: focusedId || '',
     };
     const truncated = blocks.length > MAX_BLOCKS;
-    if (truncated) facts.truncated = `showing ${MAX_BLOCKS} of ${blocks.length} blocks; scroll and analyze again for the rest`;
+    if (truncated)
+      facts.truncated = `showing ${MAX_BLOCKS} of ${blocks.length} blocks; scroll and analyze again for the rest`;
 
     if (options.highlight === true) addHighlights();
 
     return {
       ok: true,
       data: {
-        url: location.href, title: document.title,
+        url: location.href,
+        title: document.title,
         viewport: { width: vw, height: vh },
         scroll: { x: scrollX, y: scrollY, percent: scrollPct, pageHeight: pageH },
         focusedElement: focusedId,
-        modal: activeModal ? (activeModal.getAttribute('aria-label') || true) : null,
+        modal: activeModal ? activeModal.getAttribute('aria-label') || true : null,
         truncated,
         facts,
         blocks: blocks.slice(0, MAX_BLOCKS),
         elements: elementMap,
       },
     };
-  };
+  }
 
   /**
    * Whether something else is drawn over the element's centre, such as a cookie
@@ -235,7 +304,8 @@
     }
     const x = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
     const y = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
-    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= window.innerHeight || rect.left >= window.innerWidth) return false;
+    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= window.innerHeight || rect.left >= window.innerWidth)
+      return false;
     const hit = document.elementFromPoint(x, y);
     return !!hit && (m.contains(hit) || hit.contains(m));
   }
@@ -243,7 +313,9 @@
   /** Whether an open dialog blocks the rest of the page, so reading only it is right. */
   function isModal(m, rect) {
     if (m.matches(MODAL_SELECTOR)) return true;
-    try { if (m.matches(':modal')) return true; } catch {}
+    try {
+      if (m.matches(':modal')) return true;
+    } catch {}
     return rect.width * rect.height >= window.innerWidth * window.innerHeight * MODAL_MIN_SHARE;
   }
 
@@ -253,14 +325,18 @@
    * 0% and the agent thinks it has seen everything.
    */
   function scrollPanel(vw, vh) {
-    let best = null, bestArea = vw * vh * PANEL_MIN_SHARE;
+    let best = null,
+      bestArea = vw * vh * PANEL_MIN_SHARE;
     for (const el of document.querySelectorAll('*')) {
       if (el === document.documentElement || el === document.body) continue;
       if (el.scrollHeight - el.clientHeight < PANEL_MIN_OVERFLOW_PX) continue;
       const area = el.clientWidth * el.clientHeight;
       if (area < bestArea) continue;
       const overflow = window.getComputedStyle(el).overflowY;
-      if (overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') { best = el; bestArea = area; }
+      if (overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay') {
+        best = el;
+        bestArea = area;
+      }
     }
     return best;
   }
@@ -283,15 +359,16 @@
   // Query parameters that only track the click: noise in a link's target.
   const TRACKING_PARAM = /^(utm_\w+|trk\w*|ref|ref_src|fbclid|gclid|mc_cid|mc_eid|_ga|igshid|si)$/i;
 
-  let blocks = [];   // rows so far, in reading order
-  let buffer = '';   // inline text not yet in a row
+  let blocks = []; // rows so far, in reading order
+  let buffer = ''; // inline text not yet in a row
 
   /** Ends the text gathered so far as one row of the context's kind (dropped where the context is muted). */
   function flush(ctx) {
     const text = buffer.replace(/\s+/g, ' ').trim();
     buffer = '';
     // Punctuation left between inline links ("," ", and") says nothing on its own.
-    if (text && !ctx.mute && /[\p{L}\p{N}]/u.test(text)) blocks.push({ region: ctx.region, kind: ctx.kind || 'text', text });
+    if (text && !ctx.mute && /[\p{L}\p{N}]/u.test(text))
+      blocks.push({ region: ctx.region, kind: ctx.kind || 'text', text });
   }
 
   /** Whether an element is left out: not content, hidden, the analyzer's own overlay, or aria-hidden and unseen. */
@@ -302,7 +379,11 @@
     if (node.getAttribute('aria-hidden') !== 'true') return false;
     const r = node.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return true;
-    try { return window.getComputedStyle(node).opacity === '0'; } catch { return false; }
+    try {
+      return window.getComputedStyle(node).opacity === '0';
+    } catch {
+      return false;
+    }
   }
 
   /** A node's children, its open shadow root's instead when it has one. */
@@ -321,7 +402,10 @@
 
   /** Walks one node, adding its rows. */
   function walk(node, ctx) {
-    if (node.nodeType === Node.TEXT_NODE) { buffer += node.textContent; return; }
+    if (node.nodeType === Node.TEXT_NODE) {
+      buffer += node.textContent;
+      return;
+    }
     if (node.nodeType !== Node.ELEMENT_NODE || skipped(node)) return;
     const tag = node.tagName;
     const type = getInteractiveType(node);
@@ -336,7 +420,9 @@
   function walkBlock(node, inner, ctx) {
     const kind = HEADINGS[node.tagName] || TEXT_KINDS[node.tagName];
     let display = '';
-    try { display = window.getComputedStyle(node).display; } catch {}
+    try {
+      display = window.getComputedStyle(node).display;
+    } catch {}
     const block = !!kind || inner !== ctx || BLOCK_DISPLAY.test(display);
     const spaced = SPACED_DISPLAY.test(display);
     if (block) flush(ctx);
@@ -360,15 +446,24 @@
     IMG: (node, ctx) => {
       // An image with no alt says nothing, and pages are full of them.
       const alt = (node.getAttribute('alt') || '').trim();
-      if (alt) { flush(ctx); blocks.push({ region: ctx.region, kind: 'image', text: alt }); }
+      if (alt) {
+        flush(ctx);
+        blocks.push({ region: ctx.region, kind: 'image', text: alt });
+      }
       return true;
     },
     TABLE: (node, ctx) => !isHackerNews() && !isLayoutTable(node) && !isPickerGrid(node) && tableBlocks(node, ctx),
     DETAILS: (node, ctx) => detailsBlocks(node, ctx),
     SUMMARY: () => true,
     LABEL: (node, ctx) => labelBlocks(node, ctx),
-    BR: () => { buffer += ' '; return true; },
-    HR: (node, ctx) => { flush(ctx); return true; },
+    BR: () => {
+      buffer += ' ';
+      return true;
+    },
+    HR: (node, ctx) => {
+      flush(ctx);
+      return true;
+    },
     TIME: (node) => {
       buffer += ' ' + (node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim()) + ' ';
       return true;
@@ -383,7 +478,9 @@
   function walkFrame(node, ctx) {
     flush(ctx);
     let doc = null;
-    try { doc = node.contentDocument; } catch {}
+    try {
+      doc = node.contentDocument;
+    } catch {}
     if (doc?.body) {
       const inner = { ...ctx, region: 'iframe' };
       for (const c of doc.body.childNodes) walk(c, inner);
@@ -397,7 +494,9 @@
   /** A data table: a row per table row, cells separated by " | "; hidden rows and cells (a small-screen column) left out. */
   function tableBlocks(el, ctx) {
     flush(ctx);
-    for (const tr of el.querySelectorAll(':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr')) {
+    for (const tr of el.querySelectorAll(
+      ':scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr',
+    )) {
       if (isHardHidden(tr)) continue;
       const cells = [...tr.querySelectorAll(':scope > th, :scope > td')].filter((c) => !isHardHidden(c));
       const row = { ...ctx, kind: cells.every((c) => c.tagName === 'TH') ? 'header' : 'row' };
@@ -446,7 +545,14 @@
     flush(ctx);
     const entry = registerElement(node, type);
     if (state) entry.state = [entry.state, state].filter(Boolean).join(' ');
-    blocks.push({ id: entry.id, region: ctx.region, kind: elementKind(node, type), text: elementText(node, entry), target: elementTarget(node, type), entry });
+    blocks.push({
+      id: entry.id,
+      region: ctx.region,
+      kind: elementKind(node, type),
+      text: elementText(node, entry),
+      target: elementTarget(node, type),
+      entry,
+    });
     if (type !== 'editable' && !isLeafField(node.tagName)) cardText(node, entry, ctx);
   }
 
@@ -462,7 +568,10 @@
       if (user) return `reply to ${user}`;
     }
     if (/^\d+\s*comment/.test(label)) {
-      const title = node.closest('tr')?.previousElementSibling?.querySelector('.titleline a')?.textContent?.slice(0, 40);
+      const title = node
+        .closest('tr')
+        ?.previousElementSibling?.querySelector('.titleline a')
+        ?.textContent?.slice(0, 40);
       if (title) return `${label} on "${title}"`;
     }
     return label;
@@ -474,31 +583,44 @@
       try {
         const u = new URL(node.href || '', location.origin);
         for (const key of [...u.searchParams.keys()]) if (TRACKING_PARAM.test(key)) u.searchParams.delete(key);
-        return (u.hostname === location.hostname ? u.pathname + u.search : u.hostname + u.pathname + u.search).slice(0, 80);
-      } catch { return ''; }
+        return (u.hostname === location.hostname ? u.pathname + u.search : u.hostname + u.pathname + u.search).slice(
+          0,
+          80,
+        );
+      } catch {
+        return '';
+      }
     }
     if (type === 'select') return node.options?.[node.selectedIndex]?.text?.trim() || '';
     if (type === 'editable') {
       const val = node.innerText?.replace(/\s+/g, ' ').trim() || '';
       return val.length > 200 ? val.slice(0, 197) + '...' : val;
     }
-    if (type !== 'input' && type !== 'textarea' || !node.value) return '';
+    if ((type !== 'input' && type !== 'textarea') || !node.value) return '';
     return node.type === 'password' ? '••••' : String(node.value).slice(0, 80);
   }
 
   /** A clickable card (a link around a product's title, price and rating): the text its name could not hold. */
   function cardText(node, entry, ctx) {
     const label = entry.text || '';
-    const lines = (node.innerText || '').split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const lines = (node.innerText || '')
+      .split('\n')
+      .map((l) => l.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
     const full = lines.join(' ');
     if (full.length <= label.length || label.includes(full)) return;
-    blocks.push({ region: ctx.region, kind: 'text', text: full.slice(0, MAX_WRAPPED_TEXT) + (full.length > MAX_WRAPPED_TEXT ? '…' : '') });
+    blocks.push({
+      region: ctx.region,
+      kind: 'text',
+      text: full.slice(0, MAX_WRAPPED_TEXT) + (full.length > MAX_WRAPPED_TEXT ? '…' : ''),
+    });
   }
 
   /** An element row's state words: what the page says about it now, its expected format, and where it is. */
   function stateWords(entry) {
     const words = [];
-    if (entry.checked !== undefined && ['checkbox', 'radio'].includes(entry.type)) words.push(entry.checked ? 'checked' : 'unchecked');
+    if (entry.checked !== undefined && ['checkbox', 'radio'].includes(entry.type))
+      words.push(entry.checked ? 'checked' : 'unchecked');
     if (entry.choiceOf) words.push(entry.choiceOf);
     if (entry.disabled) words.push('disabled');
     if (entry.required) words.push('required');
@@ -519,7 +641,7 @@
     if (node.hasAttribute('ng-click')) return true;
     if (node.hasAttribute('data-action')) return true;
     if (node.hasAttribute('jsaction')) return true;
-    if (node.hasAttribute('data-control-name')) return true;  // LinkedIn
+    if (node.hasAttribute('data-control-name')) return true; // LinkedIn
     if (node.hasAttribute('data-click')) return true;
     // LinkedIn: ember-style actions, feed controls
     if (node.hasAttribute('data-urn')) return true;
@@ -531,8 +653,8 @@
     }
     // Reddit: custom interactive elements
     if (node.tagName === 'SHREDDIT-POST' || node.tagName === 'FACEPLATE-TRACKER') return true;
-    if (node.hasAttribute('data-click-id')) return true;  // Reddit
-    if (node.hasAttribute('data-faceplate-tracking-context')) return true;  // Reddit
+    if (node.hasAttribute('data-click-id')) return true; // Reddit
+    if (node.hasAttribute('data-faceplate-tracking-context')) return true; // Reddit
     // Amazon: interactive product elements
     if (node.hasAttribute('data-action')) return true;
     if (node.hasAttribute('data-cel-widget')) return true;
@@ -588,7 +710,9 @@
     // Tabindex: only interactive if also has cursor:pointer
     const tabindex = node.getAttribute('tabindex');
     if (tabindex !== null && tabindex !== '-1') {
-      try { if (window.getComputedStyle(node).cursor === 'pointer') return 'button'; } catch {}
+      try {
+        if (window.getComputedStyle(node).cursor === 'pointer') return 'button';
+      } catch {}
     }
 
     // cursor:pointer fallback, tighter constraints
@@ -605,8 +729,13 @@
     const cls = node.className || '';
     if (typeof cls === 'string') {
       // LinkedIn feed items and actions
-      if (cls.includes('feed-shared-social-action') || cls.includes('artdeco-button') ||
-          cls.includes('social-actions-button') || cls.includes('msg-conversation-card')) return 'button';
+      if (
+        cls.includes('feed-shared-social-action') ||
+        cls.includes('artdeco-button') ||
+        cls.includes('social-actions-button') ||
+        cls.includes('msg-conversation-card')
+      )
+        return 'button';
       // Reddit: vote buttons, expand/collapse
       if (cls.includes('voteButton') || cls.includes('_1rZYMD_4xY3gRcSS3p8ODO')) return 'button';
       // Amazon: add-to-cart, buy-now area elements
@@ -620,8 +749,7 @@
   }
 
   function hasInteractiveChild(node) {
-    for (const c of node.querySelectorAll(INTERACTIVE_CHILD_SELECTOR))
-      if (!isHardHidden(c)) return true;
+    for (const c of node.querySelectorAll(INTERACTIVE_CHILD_SELECTOR)) if (!isHardHidden(c)) return true;
     return false;
   }
 
@@ -634,7 +762,8 @@
    */
   function stableOf(node, type, text = getLabel(node, type)) {
     const el = { type, tag: node.tagName.toLowerCase(), text };
-    const role = node.getAttribute('role') || (node.tagName === 'BUTTON' ? 'button' : node.tagName === 'A' ? 'link' : undefined);
+    const role =
+      node.getAttribute('role') || (node.tagName === 'BUTTON' ? 'button' : node.tagName === 'A' ? 'link' : undefined);
     if (role) el.role = role;
     if (node.href) el.href = node.href;
     // The attribute as written: a CSS locator matches it, not the resolved URL.
@@ -645,7 +774,8 @@
     if (node.name) el.name = node.name;
     // Which box in a group: grids give each row's checkbox a fresh id per render,
     // but its value (the row's record id) stays.
-    if ((node.type === 'checkbox' || node.type === 'radio') && node.getAttribute('value')) el.choice = node.getAttribute('value');
+    if ((node.type === 'checkbox' || node.type === 'radio') && node.getAttribute('value'))
+      el.choice = node.getAttribute('value');
     const ariaLabel = node.getAttribute('aria-label');
     if (ariaLabel) el.ariaLabel = ariaLabel;
     const testId = node.getAttribute('data-testid');
@@ -725,7 +855,8 @@
     if (matches(document) <= 1) return {};
     for (let a = node.parentElement, i = 0; a && a !== document.body && i < SCOPE_WALK; a = a.parentElement, i++) {
       const anchor = anchorOf(a);
-      if (anchor && matches(a) === 1) return { repeats: true, selector: `${anchor} ${tag}:text-is(${JSON.stringify(text)})` };
+      if (anchor && matches(a) === 1)
+        return { repeats: true, selector: `${anchor} ${tag}:text-is(${JSON.stringify(text)})` };
     }
     return { repeats: true };
   }
@@ -740,7 +871,7 @@
     const uniqueId = (n) => n.id && root.querySelectorAll?.(`[id="${CSS.escape(n.id)}"]`).length === 1;
     for (let n = node; n && n.nodeType === Node.ELEMENT_NODE && n !== document.body; n = n.parentElement) {
       if (uniqueId(n)) return [`[id="${CSS.escape(n.id)}"]`, ...parts].join(' > ');
-      const same = [...(n.parentElement?.children || [])].filter(c => c.tagName === n.tagName);
+      const same = [...(n.parentElement?.children || [])].filter((c) => c.tagName === n.tagName);
       parts.unshift(same.length > 1 ? `${n.localName}:nth-of-type(${same.indexOf(n) + 1})` : n.localName);
     }
     return ['body', ...parts].join(' > ');
@@ -765,7 +896,9 @@
     const state = ariaState(node);
     if (state) entry.state = state;
     const form = node.closest('form');
-    if (form) entry.formName = form.getAttribute('aria-label') || form.getAttribute('name') || form.getAttribute('action') || '';
+    if (form)
+      entry.formName =
+        form.getAttribute('aria-label') || form.getAttribute('name') || form.getAttribute('action') || '';
     elementMap.push(entry);
     return entry;
   }
@@ -832,9 +965,17 @@
   function fieldError(node) {
     const doc = node.ownerDocument || document;
     const ids = (node.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
-    const described = ids.map(i => doc.getElementById(i)).filter(e => e && !isHardHidden(e)).map(e => e.textContent).join(' ');
+    const described = ids
+      .map((i) => doc.getElementById(i))
+      .filter((e) => e && !isHardHidden(e))
+      .map((e) => e.textContent)
+      .join(' ');
     const group = node.closest('.form-group, [class*="form-field"], [class*="FormField"], fieldset');
-    const shown = group && [...group.querySelectorAll('[role="alert"], .help-block, .invalid-feedback, .error-message, [class*="error"]')].find(e => e !== node && !e.contains(node) && !isHardHidden(e) && e.textContent.trim());
+    const shown =
+      group &&
+      [
+        ...group.querySelectorAll('[role="alert"], .help-block, .invalid-feedback, .error-message, [class*="error"]'),
+      ].find((e) => e !== node && !e.contains(node) && !isHardHidden(e) && e.textContent.trim());
     return (described.trim() || shown?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
   }
 
@@ -846,7 +987,8 @@
     if (node.readOnly) facts.readOnly = true;
     const error = fieldError(node);
     if (error) facts.error = error;
-    if (error || node.getAttribute('aria-invalid') === 'true' || (node.value && node.validity && !node.validity.valid)) facts.invalid = true;
+    if (error || node.getAttribute('aria-invalid') === 'true' || (node.value && node.validity && !node.validity.valid))
+      facts.invalid = true;
     const options = optionPreview(node);
     if (options) facts.options = options.slice(2);
     return facts;
@@ -874,9 +1016,12 @@
 
   /** The first few options of a select, so the agent can pick one without opening it. */
   function optionPreview(node) {
-    const texts = [...(node.options || [])].map(o => o.text.trim()).filter(Boolean);
+    const texts = [...(node.options || [])].map((o) => o.text.trim()).filter(Boolean);
     if (!texts.length) return '';
-    const shown = texts.slice(0, 8).map(t => t.slice(0, 30)).join(' | ');
+    const shown = texts
+      .slice(0, 8)
+      .map((t) => t.slice(0, 30))
+      .join(' | ');
     return `: ${shown}${texts.length > 8 ? ' | …' : ''}`;
   }
 
@@ -886,7 +1031,10 @@
     // aria-labelledby
     const labelledBy = node.getAttribute('aria-labelledby');
     if (labelledBy) {
-      const parts = labelledBy.split(/\s+/).map(id => (node.ownerDocument || document).getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim()).filter(Boolean);
+      const parts = labelledBy
+        .split(/\s+/)
+        .map((id) => (node.ownerDocument || document).getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
       if (parts.length) return parts.join(' ').slice(0, 80);
     }
     if (node.id && ['input', 'checkbox', 'radio', 'select', 'textarea'].includes(type)) {
@@ -908,7 +1056,8 @@
     const controlName = node.getAttribute('data-control-name');
     if (controlName && !node.textContent?.trim()) return controlName.replace(/[_-]/g, ' ').slice(0, 80);
     const direct = [];
-    for (const c of node.childNodes) if (c.nodeType === Node.TEXT_NODE && c.textContent.trim()) direct.push(c.textContent.trim());
+    for (const c of node.childNodes)
+      if (c.nodeType === Node.TEXT_NODE && c.textContent.trim()) direct.push(c.textContent.trim());
     // A name broken up by styling is still one name: a search list marks the part
     // that matched, so "<b>PAYER</b> - CA" must not read as "- CA".
     if (direct.length && inlineOnly(node) && shownText(node)) return shownText(node).slice(0, 80);
@@ -926,9 +1075,25 @@
   }
 
   /** Tags that only style the text they wrap, so a name split across them is still one name. */
-  const INLINE_NAME_TAGS = new Set(
-    ['MARK', 'STRONG', 'B', 'EM', 'I', 'SPAN', 'SMALL', 'U', 'SUP', 'SUB', 'CODE', 'ABBR', 'FONT', 'BDI', 'S', 'INS', 'DEL'],
-  );
+  const INLINE_NAME_TAGS = new Set([
+    'MARK',
+    'STRONG',
+    'B',
+    'EM',
+    'I',
+    'SPAN',
+    'SMALL',
+    'U',
+    'SUP',
+    'SUB',
+    'CODE',
+    'ABBR',
+    'FONT',
+    'BDI',
+    'S',
+    'INS',
+    'DEL',
+  ]);
 
   /** Whether an element's children only style its text, so its whole text reads as its name. */
   const inlineOnly = (node) => [...node.children].every((c) => INLINE_NAME_TAGS.has(c.tagName));
@@ -982,8 +1147,11 @@
    * to the ordinary walk, where each day registers as an element to click.
    */
   function isPickerGrid(table) {
-    return !!table.closest('[class*="datepicker"], [class*="date-picker"], [class*="calendar"], [role="dialog"][class*="picker"]')
-      && !!table.querySelector('td[class*="day"], td[class*="date"]');
+    return (
+      !!table.closest(
+        '[class*="datepicker"], [class*="date-picker"], [class*="calendar"], [role="dialog"][class*="picker"]',
+      ) && !!table.querySelector('td[class*="day"], td[class*="date"]')
+    );
   }
 
   /**
@@ -995,7 +1163,9 @@
     if (!/^\d{1,2}$/.test((node.textContent || '').trim())) return false;
     const cls = typeof node.className === 'string' ? node.className : '';
     if (!/(^|\s)(day|date)(\s|$)|-day(\s|$)|-date(\s|$)/.test(cls)) return false;
-    return !!node.closest('[class*="datepicker"], [class*="date-picker"], [class*="calendar"], [role="dialog"][class*="picker"]');
+    return !!node.closest(
+      '[class*="datepicker"], [class*="date-picker"], [class*="calendar"], [role="dialog"][class*="picker"]',
+    );
   }
 
   /** Detect layout tables (no <th>, used for positioning not data). */
@@ -1019,7 +1189,18 @@
 
   function landmarkFromRole(node) {
     const r = node.getAttribute('role');
-    return r ? ({ banner: 'header', navigation: 'nav', main: 'main', complementary: 'aside', contentinfo: 'footer', form: 'form', region: 'section', search: 'search' })[r] || null : null;
+    return r
+      ? {
+          banner: 'header',
+          navigation: 'nav',
+          main: 'main',
+          complementary: 'aside',
+          contentinfo: 'footer',
+          form: 'form',
+          region: 'section',
+          search: 'search',
+        }[r] || null
+      : null;
   }
 
   function isHardHidden(node) {
@@ -1032,7 +1213,9 @@
         if (r.right < -100 || r.bottom < -100 || r.left > window.innerWidth + 100) return true;
       }
       return false;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   /** Return {x, y} offset if element lives inside a same-origin iframe. */
@@ -1054,11 +1237,17 @@
     const el = root.querySelector(selector);
     if (el) return el;
     for (const h of root.querySelectorAll('*')) {
-      if (h.shadowRoot) { const f = queryShadow(selector, h.shadowRoot); if (f) return f; }
+      if (h.shadowRoot) {
+        const f = queryShadow(selector, h.shadowRoot);
+        if (f) return f;
+      }
       if (h.tagName === 'IFRAME') {
         try {
           const iframeDoc = h.contentDocument;
-          if (iframeDoc) { const f = queryShadow(selector, iframeDoc); if (f) return f; }
+          if (iframeDoc) {
+            const f = queryShadow(selector, iframeDoc);
+            if (f) return f;
+          }
         } catch {}
       }
     }
@@ -1074,9 +1263,7 @@
   window.__acFindElement = function (selector) {
     // Accepts a number, or any selector carrying one, the attribute name is
     // per-document now, so the id identifies the element, not the name.
-    const match = typeof selector === 'number'
-      ? [null, String(selector)]
-      : String(selector).match(/(\d+)/);
+    const match = typeof selector === 'number' ? [null, String(selector)] : String(selector).match(/(\d+)/);
     if (!match) return null;
 
     const id = parseInt(match[1], 10);
@@ -1087,11 +1274,17 @@
 
     // 2. DOM query by data-ac-id (may have been re-attached by observer)
     const byAttr = document.querySelector(`[${ATTR}="${id}"]`);
-    if (byAttr) { elementRefs.set(id, byAttr); return byAttr; }
+    if (byAttr) {
+      elementRefs.set(id, byAttr);
+      return byAttr;
+    }
 
     // 3. Shadow DOM + iframe search by data-ac-id
     const byShadow = queryShadow(`[${ATTR}="${id}"]`);
-    if (byShadow) { elementRefs.set(id, byShadow); return byShadow; }
+    if (byShadow) {
+      elementRefs.set(id, byShadow);
+      return byShadow;
+    }
 
     // 4. Recovery: find replacement element by stored metadata
     const replacement = findReplacementElement(id);
@@ -1102,7 +1295,7 @@
     }
 
     // 5. Last resort: try by DOM id from metadata
-    const entry = elementMap.find(e => e.id === id);
+    const entry = elementMap.find((e) => e.id === id);
     if (entry?.domId) {
       const byDomId = document.getElementById(entry.domId);
       if (byDomId) {
@@ -1122,7 +1315,12 @@
 
   function addHighlights() {
     let style = document.getElementById('ac-highlight-style');
-    if (!style) { style = document.createElement('style'); style.id = 'ac-highlight-style'; style.textContent = HIGHLIGHT_CSS + LABEL_CSS; document.head.appendChild(style); }
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'ac-highlight-style';
+      style.textContent = HIGHLIGHT_CSS + LABEL_CSS;
+      document.head.appendChild(style);
+    }
     // Inject highlight styles into same-origin iframes
     for (const iframe of document.querySelectorAll('iframe')) {
       try {
@@ -1139,9 +1337,11 @@
     if (c) c.remove();
     c = document.createElement('div');
     c.id = 'ac-labels';
-    c.style.cssText = 'position:absolute;top:0;left:0;width:0;height:0;overflow:visible;z-index:2147483646;pointer-events:none';
+    c.style.cssText =
+      'position:absolute;top:0;left:0;width:0;height:0;overflow:visible;z-index:2147483646;pointer-events:none';
     document.body.appendChild(c);
-    const sx = window.scrollX, sy = window.scrollY;
+    const sx = window.scrollX,
+      sy = window.scrollY;
     for (const el of elementMap) {
       const dom = queryShadow(el.selector);
       if (!dom) continue;
@@ -1163,17 +1363,25 @@
   // ─── Cleanup ───
 
   function cleanup() {
-    const c = document.getElementById('ac-labels'); if (c) c.remove();
-    const s = document.getElementById('ac-highlight-style'); if (s) s.remove();
-    document.querySelectorAll(`[${ATTR}]`).forEach(el => { el.removeAttribute(ATTR); el.style.removeProperty('--ac-hl-color'); });
+    const c = document.getElementById('ac-labels');
+    if (c) c.remove();
+    const s = document.getElementById('ac-highlight-style');
+    if (s) s.remove();
+    document.querySelectorAll(`[${ATTR}]`).forEach((el) => {
+      el.removeAttribute(ATTR);
+      el.style.removeProperty('--ac-hl-color');
+    });
     // Clean up inside same-origin iframes
-    document.querySelectorAll('iframe').forEach(iframe => {
+    document.querySelectorAll('iframe').forEach((iframe) => {
       try {
         const iframeDoc = iframe.contentDocument;
         if (!iframeDoc) return;
         const iframeStyle = iframeDoc.getElementById('ac-highlight-style');
         if (iframeStyle) iframeStyle.remove();
-        iframeDoc.querySelectorAll(`[${ATTR}]`).forEach(el => { el.removeAttribute(ATTR); el.style.removeProperty('--ac-hl-color'); });
+        iframeDoc.querySelectorAll(`[${ATTR}]`).forEach((el) => {
+          el.removeAttribute(ATTR);
+          el.style.removeProperty('--ac-hl-color');
+        });
       } catch {}
     });
   }
@@ -1192,8 +1400,10 @@
     if (!elementMap.length) return; // no analysis has run yet
 
     const labelContainer = document.getElementById('ac-labels');
-    const sx = window.scrollX, sy = window.scrollY;
-    const vw = window.innerWidth, vh = window.innerHeight;
+    const sx = window.scrollX,
+      sy = window.scrollY;
+    const vw = window.innerWidth,
+      vh = window.innerHeight;
 
     for (const node of pendingNodes) {
       if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -1220,8 +1430,10 @@
               if (el.id) entry.domId = el.id;
               const rect = el.getBoundingClientRect();
               const off = getIframeOffset(el);
-              const top = rect.top + off.y, bottom = rect.bottom + off.y;
-              const left = rect.left + off.x, right = rect.right + off.x;
+              const top = rect.top + off.y,
+                bottom = rect.bottom + off.y;
+              const left = rect.left + off.x,
+                right = rect.right + off.x;
               entry.visible = bottom > 0 && top < vh && right > 0 && left < vw && rect.width > 0 && rect.height > 0;
               elementMap.push(entry);
 
@@ -1250,7 +1462,7 @@
 
   /** Find a replacement element in the DOM matching stored metadata. */
   function findReplacementElement(id) {
-    const entry = elementMap.find(e => e.id === id);
+    const entry = elementMap.find((e) => e.id === id);
     if (!entry) return null;
 
     // 1. By DOM id
@@ -1292,7 +1504,10 @@
 
     // Check if data-ac-id already exists in DOM (was re-rendered with it)
     const existing = document.querySelector(`[${ATTR}="${id}"]`);
-    if (existing) { elementRefs.set(id, existing); return; }
+    if (existing) {
+      elementRefs.set(id, existing);
+      return;
+    }
 
     // Find replacement
     const replacement = findReplacementElement(id);
@@ -1346,7 +1561,17 @@
   const RECORD_KEYS = new Set(['Enter', 'Tab', 'Escape']);
   // Keys that move through listboxes, menus, tabs and date pickers. Recorded only
   // inside such a widget: in text they move the caret, on the page they scroll.
-  const NAV_KEYS = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
+  const NAV_KEYS = new Set([
+    ' ',
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'Home',
+    'End',
+    'PageUp',
+    'PageDown',
+  ]);
   // How far up from the event target the recorder looks for what was clicked.
   const RECORD_WALK = 10;
   // A press whose element is gone before its click (menus and options that act on
@@ -1364,8 +1589,8 @@
   let lastKey = null;
   const documentId = Math.random().toString(36).slice(2);
   const recordedSecrets = new Set();
-  let typing = null;   // { node, el, value }, the field being typed into
-  let focused = null;  // { node, el }, captured before typing, so a label is never the typed text
+  let typing = null; // { node, el, value }, the field being typed into
+  let focused = null; // { node, el }, captured before typing, so a label is never the typed text
 
   // Check at event time, not when flushing: a real edit may hide/remove its field.
   // Do not require viewport intersection: keyboard users can focus scrolled content.
@@ -1377,11 +1602,16 @@
     if (node.tagName === 'INPUT' && node.type === 'hidden') return false;
     for (let el = node; el; el = el.parentElement || el.getRootNode()?.host) {
       const style = getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden'
-        || style.visibility === 'collapse' || (style.opacity === '0' && !transparentOk)
-        || style.contentVisibility === 'hidden') return false;
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        (style.opacity === '0' && !transparentOk) ||
+        style.contentVisibility === 'hidden'
+      )
+        return false;
     }
-    return [...node.getClientRects()].some(r => r.width > 0 && r.height > 0);
+    return [...node.getClientRects()].some((r) => r.width > 0 && r.height > 0);
   }
 
   /** The element above `node`, crossing out of a shadow root to its host. */
@@ -1397,7 +1627,11 @@
    * role that a replay finds once.
    */
   function semanticTarget(start) {
-    for (let node = start, i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK; i++, node = parentOf(node)) {
+    for (
+      let node = start, i = 0;
+      node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK;
+      i++, node = parentOf(node)
+    ) {
       if (!node.matches(SEMANTIC)) continue;
       if (node.hasAttribute('role') && !INTERACTIVE_ROLES.has(node.getAttribute('role'))) continue;
       const type = getInteractiveType(node);
@@ -1411,7 +1645,7 @@
    * slider), so what the person clicked, and what a replay can click, is the label.
    */
   function coveredToggleLabel(node, type) {
-    if (type !== 'checkbox' && type !== 'radio' || node.tagName !== 'INPUT') return null;
+    if ((type !== 'checkbox' && type !== 'radio') || node.tagName !== 'INPUT') return null;
     const label = node.labels?.[0];
     if (!label || !recordVisible(label, true)) return null;
     const r = node.getBoundingClientRect();
@@ -1428,11 +1662,15 @@
     if (!recordVisible(start, choice)) return null;
     const semantic = semanticTarget(start);
     if (semantic && !(event.type === 'click' && hiddenControlLabel(start, semantic.node))) return semantic;
-    for (let node = start, i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK; i++, node = parentOf(node)) {
+    for (
+      let node = start, i = 0;
+      node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK;
+      i++, node = parentOf(node)
+    ) {
       // Styled checkboxes often hide their native input. Replay the visible label;
       // the browser-forwarded click on its hidden control is excluded above.
-      if (event.type === 'click' && node.tagName === 'LABEL' && node.control
-        && !recordVisible(node.control)) return { node, type: 'button' };
+      if (event.type === 'click' && node.tagName === 'LABEL' && node.control && !recordVisible(node.control))
+        return { node, type: 'button' };
       const type = getInteractiveType(node);
       if (type) return { node, type };
     }
@@ -1446,7 +1684,11 @@
    */
   function pointerTarget(start) {
     let found = null;
-    for (let node = start, i = 0; node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK; i++, node = parentOf(node)) {
+    for (
+      let node = start, i = 0;
+      node && node.nodeType === Node.ELEMENT_NODE && i < RECORD_WALK;
+      i++, node = parentOf(node)
+    ) {
       if (getComputedStyle(node).cursor === 'pointer') found = node;
       else if (found) break;
     }
@@ -1467,27 +1709,33 @@
     return event.isTrusted && node?.tagName === 'INPUT' && node.type === 'file' ? { node, type: 'input' } : null;
   }
 
-  const isSecretField = (node) => String(node.type || '').toLowerCase() === 'password'
-    || SECRET_AUTOCOMPLETE.test(node.getAttribute('autocomplete') || '')
-    || /password|passwd|secret|token|otp|verification.?code|security.?code/i.test([node.name, node.id, node.getAttribute('aria-label')].join(' '));
+  const isSecretField = (node) =>
+    String(node.type || '').toLowerCase() === 'password' ||
+    SECRET_AUTOCOMPLETE.test(node.getAttribute('autocomplete') || '') ||
+    /password|passwd|secret|token|otp|verification.?code|security.?code/i.test(
+      [node.name, node.id, node.getAttribute('aria-label')].join(' '),
+    );
 
   /** A password never leaves the page: the step keeps a placeholder, the name is flagged. */
   function secretPlaceholder(node) {
     const raw = node.getAttribute('name') || node.id || '';
-    const name = /^[A-Za-z_]\w{0,39}$/.test(raw) && !['__proto__', 'constructor', 'prototype'].includes(raw) ? raw : 'password';
+    const name =
+      /^[A-Za-z_]\w{0,39}$/.test(raw) && !['__proto__', 'constructor', 'prototype'].includes(raw) ? raw : 'password';
     recordedSecrets.add(name);
     return '{{' + name + '}}';
   }
 
   function pushStep(step) {
     if (!recording || recorded.length >= MAX_RECORDED) return;
-    const entry = { ...step, t: step.t || Date.now(), id: documentId + ':' + (++sequence) };
+    const entry = { ...step, t: step.t || Date.now(), id: documentId + ':' + ++sequence };
     recorded.push(entry);
     if (window.__acRecordSink) {
       try {
         window.__acRecordSink({ steps: [entry], secrets: [...recordedSecrets] });
         recorded.pop();
-      } catch { /* retain for the next drain */ }
+      } catch {
+        /* retain for the next drain */
+      }
     }
   }
 
@@ -1513,14 +1761,15 @@
     const hit = recordTarget(e);
     if (!hit || !TEXTUAL.has(hit.type)) return;
     if (typing && typing.node !== hit.node) flushTyping();
-    const raw = hit.type === 'editable' ? (hit.node.innerText || '') : (hit.node.value || '');
-    const el = (typing && typing.node === hit.node && typing.el)
-      || (focused && focused.node === hit.node && focused.el)
-      || stableOf(hit.node, hit.type);
+    const raw = hit.type === 'editable' ? hit.node.innerText || '' : hit.node.value || '';
+    const el =
+      (typing && typing.node === hit.node && typing.el) ||
+      (focused && focused.node === hit.node && focused.el) ||
+      stableOf(hit.node, hit.type);
     typing = { node: hit.node, el, value: String(raw).slice(0, 2000), t: Date.now() };
   }
 
-  let pressed = null;      // { hit, el, x, y, clicked }, the element under the last pointerdown
+  let pressed = null; // { hit, el, x, y, clicked }, the element under the last pointerdown
 
   /**
    * Menus, selects and options often act on pointerdown and remove themselves
@@ -1551,7 +1800,8 @@
     pressed = null;
     if (!press) return hit && { hit, el: null };
     press.clicked = true;
-    const lost = !press.hit.node.isConnected || !hit || (hit.node !== press.hit.node && hit.node.contains(press.hit.node));
+    const lost =
+      !press.hit.node.isConnected || !hit || (hit.node !== press.hit.node && hit.node.contains(press.hit.node));
     return lost ? { hit: press.hit, el: press.el } : { hit, el: null };
   }
 
@@ -1561,9 +1811,11 @@
    * both would toggle it twice on replay.
    */
   function labelOfVisibleToggle(e) {
-    const label = (e.composedPath?.() || []).find(n => n.tagName === 'LABEL');
+    const label = (e.composedPath?.() || []).find((n) => n.tagName === 'LABEL');
     const control = label?.control;
-    return !!control && control !== e.target && ['checkbox', 'radio'].includes(control.type) && recordVisible(control, true);
+    return (
+      !!control && control !== e.target && ['checkbox', 'radio'].includes(control.type) && recordVisible(control, true)
+    );
   }
 
   function onRecordClick(e) {
@@ -1590,20 +1842,28 @@
     if (!recording) return;
     const hit = fileTarget(e) || recordTarget(e);
     if (!hit) return;
-    if (hit.node.type === 'file') { flushTyping(); pushStep({ action: 'upload_file', el: stableOf(hit.node, hit.type), file: '{{upload_file}}' }); }
-    else if (hit.type === 'select') {
+    if (hit.node.type === 'file') {
+      flushTyping();
+      pushStep({ action: 'upload_file', el: stableOf(hit.node, hit.type), file: '{{upload_file}}' });
+    } else if (hit.type === 'select') {
       flushTyping();
       const opt = hit.node.selectedOptions && hit.node.selectedOptions[0];
-      if (opt) pushStep({ action: 'select_option', el: stableOf(hit.node, hit.type), option: String(opt.label || opt.textContent || '').trim() });
+      if (opt)
+        pushStep({
+          action: 'select_option',
+          el: stableOf(hit.node, hit.type),
+          option: String(opt.label || opt.textContent || '').trim(),
+        });
     } else if (TEXTUAL.has(hit.type)) {
       flushTyping();
     }
   }
 
   // Widgets whose keyboard use is part of the task: a key there picks or moves something.
-  const KEY_WIDGETS = '[role="listbox"], [role="option"], [role="menu"], [role="menubar"], [role="menuitem"], '
-    + '[role="grid"], [role="gridcell"], [role="tree"], [role="treeitem"], [role="tablist"], [role="tab"], '
-    + '[role="radiogroup"], [role="slider"], [role="spinbutton"], [role="combobox"], input[type="radio"], input[type="range"]';
+  const KEY_WIDGETS =
+    '[role="listbox"], [role="option"], [role="menu"], [role="menubar"], [role="menuitem"], ' +
+    '[role="grid"], [role="gridcell"], [role="tree"], [role="treeitem"], [role="tablist"], [role="tab"], ' +
+    '[role="radiogroup"], [role="slider"], [role="spinbutton"], [role="combobox"], input[type="radio"], input[type="range"]';
 
   /** Whether a navigation key does something of its own here, rather than move the caret, scroll, or activate a click. */
   function navKeyCounts(e, target) {
@@ -1620,10 +1880,12 @@
     const nav = NAV_KEYS.has(e.key);
     if (!RECORD_KEYS.has(e.key) && !(nav && navKeyCounts(e, target))) return;
     if (!recordVisible(target)) return;
-    flushTyping();  // the value is the step; the key is what submits it
+    flushTyping(); // the value is the step; the key is what submits it
     lastKey = { key: e.key, t: Date.now() };
     const name = e.key === ' ' ? 'Space' : e.key;
-    const key = [e.ctrlKey && 'Control', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', name].filter(Boolean).join('+');
+    const key = [e.ctrlKey && 'Control', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', name]
+      .filter(Boolean)
+      .join('+');
     pushStep({ action: 'press_key', key });
   }
 
@@ -1635,10 +1897,19 @@
   function onUnsupportedInteraction(event) {
     if (!recording || !event.isTrusted || !recordVisible(event.composedPath?.()[0] || event.target)) return;
     flushTyping();
-    pushStep({ action: 'unsupported_' + event.type, captureIssue: 'This ' + event.type + ' interaction needs a manual step before replay.' });
+    pushStep({
+      action: 'unsupported_' + event.type,
+      captureIssue: 'This ' + event.type + ' interaction needs a manual step before replay.',
+    });
   }
   document.addEventListener('drop', onUnsupportedInteraction, true);
-  document.addEventListener('click', event => { if (event.target?.tagName === 'CANVAS') onUnsupportedInteraction(event); }, true);
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (event.target?.tagName === 'CANVAS') onUnsupportedInteraction(event);
+    },
+    true,
+  );
   document.addEventListener('focusin', onRecordFocus, true);
   document.addEventListener('input', onRecordInput, true);
   document.addEventListener('change', onRecordChange, true);
@@ -1650,13 +1921,30 @@
   window.addEventListener('pagehide', flushTyping, true);
 
   window.__acRecordStart = function () {
-    if (!recording) { recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null; pressed = null; }
-    recording = true; return true;
+    if (!recording) {
+      recorded = [];
+      recordedSecrets.clear();
+      typing = null;
+      focused = null;
+      lastKey = null;
+      pressed = null;
+    }
+    recording = true;
+    return true;
   };
   window.__acRecordClear = function () {
-    recorded = []; recordedSecrets.clear(); typing = null; focused = null; lastKey = null; pressed = null;
+    recorded = [];
+    recordedSecrets.clear();
+    typing = null;
+    focused = null;
+    lastKey = null;
+    pressed = null;
   };
-  window.__acRecordStop = function () { flushTyping(); recording = false; return true; };
+  window.__acRecordStop = function () {
+    flushTyping();
+    recording = false;
+    return true;
+  };
 
   /** Steps since the last call, and every secret name seen. Clears the step buffer. */
   window.__acRecordDrain = function (final) {

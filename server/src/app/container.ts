@@ -9,6 +9,9 @@
  */
 import { db } from '../platform/db.ts';
 import { metrics } from '../platform/metrics.ts';
+import { setUnexpectedReporter, type Asked } from '../platform/errors.ts';
+import { BEARER_PREFIX_LENGTH } from '../platform/constants.ts';
+import { track } from '../modules/telemetry/index.ts';
 import { fingerprint as ownerOf } from '../platform/audit.ts';
 import { dataPath } from '../platform/paths.ts';
 import * as proxies from '../modules/proxies/service.ts';
@@ -34,10 +37,17 @@ function personaService() {
   return new PersonaService({ repository: personaRepository(), ownerOf, proxies, mfa, credentials, logins, metrics });
 }
 
+/** Reports an unexpected failure as a product event, so a 500 shows up where the owner looks. */
+function reportUnexpected(ref: string, req: Asked) {
+  const key = String(req.headers?.authorization || '').slice(BEARER_PREFIX_LENGTH) || null;
+  track.serverError(key, { ref, method: req.method || '', route: req.route?.path ?? 'middleware' });
+}
+
 /** Build every service once, wired to its dependencies. */
 export function createContainer() {
   const personas = personaService();
   personas.startAutosave();
+  setUnexpectedReporter(reportUnexpected);
   return { personas };
 }
 

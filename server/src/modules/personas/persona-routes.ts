@@ -7,6 +7,7 @@
  * new fingerprint.
  */
 import type { Request, Response, Router } from 'express';
+import { track } from '../telemetry/index.ts';
 import { authMiddleware } from '../auth/service.ts';
 import type { PersonaService } from './service.ts';
 import { describeProfile, type Persona } from './model.ts';
@@ -68,6 +69,7 @@ const createPersona = (personas: PersonaService) => (req: Request, res: Response
   const { name, proxy, maxConcurrent, prefs } = req.body ?? {};
   const created = personas.create(getKey(req), { name, proxy, maxConcurrent, prefs });
   auditPersona(req, 'persona.create', created.id, { meta: { name: created.name, prefs: created.prefs } });
+  track.personaCreated(getKey(req), { has_proxy: !!created.proxy });
   announceCreated(req, created);
   res.status(Status.CREATED).json(personas.describe(created));
 };

@@ -3,8 +3,10 @@
  * with its cookie jar and proxy, plus the second factors and site logins
  * stored for them. Built from one group per topic.
  *
- * Persona ids go into paths as they are, unencoded, as they always have.
+ * Every persona id goes into a path through `segment`, which encodes it and
+ * refuses one that would change the path, before any request.
  */
+import { segment } from '../client.js';
 import type {
   Cookie,
   CookieFormat,
@@ -35,19 +37,19 @@ const identityCalls = (http: HttpRef) => ({
   /** Every persona on this key. */
   list: async (): Promise<PersonaInfo[]> => (await http().request<PersonaList>('GET', '/api/personas')).personas,
   /** One persona. */
-  get: (id: string): Promise<PersonaInfo> => http().request<PersonaInfo>('GET', `/api/personas/${id}`),
+  get: async (id: string): Promise<PersonaInfo> => http().request<PersonaInfo>('GET', `/api/personas/${segment(id)}`),
   /**
    * Create an identity. The device, platform, timezone, locale, is chosen
    * here and fixed for its life; `preview()` shows what a choice produces.
    */
-  create: (options: PersonaCreate = {}): Promise<PersonaInfo> =>
+  create: async (options: PersonaCreate = {}): Promise<PersonaInfo> =>
     http().request<PersonaInfo>('POST', '/api/personas', options),
   /** Name, concurrency cap and proxy hint. Never the device, clone for that. */
-  update: (id: string, changes: PersonaUpdate): Promise<PersonaInfo> =>
-    http().request<PersonaInfo>('PUT', `/api/personas/${id}`, changes),
+  update: async (id: string, changes: PersonaUpdate): Promise<PersonaInfo> =>
+    http().request<PersonaInfo>('PUT', `/api/personas/${segment(id)}`, changes),
   /** A new persona of the same kind of device: same choices, fresh identity, empty jar. */
-  clone: (id: string, options: CloneOptions = {}): Promise<PersonaInfo> =>
-    http().request<PersonaInfo>('POST', `/api/personas/${id}/clone`, options),
+  clone: async (id: string, options: CloneOptions = {}): Promise<PersonaInfo> =>
+    http().request<PersonaInfo>('POST', `/api/personas/${segment(id)}/clone`, options),
 });
 
 /** Device choices, proxy pinning and removal. */
@@ -56,24 +58,27 @@ const deviceCalls = (http: HttpRef) => ({
   preview: async (prefs: PersonaPrefs = {}): Promise<Fingerprint> =>
     (await http().request<FingerprintPreview>('POST', '/api/personas/preview', { prefs })).fingerprint,
   /** Platforms, and the timezones and locales each may coherently claim. */
-  options: (): Promise<PersonaOptions> => http().request('GET', '/api/personas/options'),
+  options: async (): Promise<PersonaOptions> => http().request('GET', '/api/personas/options'),
   /** Pin the persona to one of your proxies, or `null` to let assignment happen at connect. */
-  pinProxy: (id: string, proxyId: string | null) =>
-    http().request<ProxyPin>('PUT', `/api/personas/${id}/proxy`, { proxyId }),
+  pinProxy: async (id: string, proxyId: string | null) =>
+    http().request<ProxyPin>('PUT', `/api/personas/${segment(id)}/proxy`, { proxyId }),
   /** Delete a persona. */
   remove: async (id: string): Promise<void> => {
-    await http().request('DELETE', `/api/personas/${id}`);
+    await http().request('DELETE', `/api/personas/${segment(id)}`);
   },
 });
 
 /** Second factors. */
 const mfaCalls = (http: HttpRef) => ({
   /** Store the second factor for this identity. Sealed at rest, never read back. */
-  setMfa: (id: string, config: MfaConfig): Promise<MfaSaved> =>
-    http().request('PUT', `/api/personas/${id}/mfa`, config),
+  setMfa: async (id: string, config: MfaConfig): Promise<MfaSaved> =>
+    http().request('PUT', `/api/personas/${segment(id)}/mfa`, config),
   /** Remove the persona-wide factor, or the one filed against `domain`. */
   clearMfa: async (id: string, domain?: string): Promise<void> => {
-    await http().request('DELETE', `/api/personas/${id}/mfa${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`);
+    await http().request(
+      'DELETE',
+      `/api/personas/${segment(id)}/mfa${domain ? `?domain=${encodeURIComponent(domain)}` : ''}`,
+    );
   },
 });
 
@@ -86,26 +91,27 @@ const loginCalls = (http: HttpRef) => ({
    * better path. This is for portals that expire a session server-side
    * between runs, where an unattended run has nothing else to recover with.
    */
-  setCredentials: (id: string, config: SiteCredentials): Promise<CredentialsSaved> =>
-    http().request('PUT', `/api/personas/${id}/credentials`, config),
+  setCredentials: async (id: string, config: SiteCredentials): Promise<CredentialsSaved> =>
+    http().request('PUT', `/api/personas/${segment(id)}/credentials`, config),
   /** Which sites this identity can sign in to. Usernames only. */
-  credentials: (id: string): Promise<SiteLogins> => http().request('GET', `/api/personas/${id}/credentials`),
+  credentials: async (id: string): Promise<SiteLogins> =>
+    http().request('GET', `/api/personas/${segment(id)}/credentials`),
   /** Remove the login stored for one site. */
   clearCredentials: async (id: string, domain: string): Promise<void> => {
-    await http().request('DELETE', `/api/personas/${id}/credentials?domain=${encodeURIComponent(domain)}`);
+    await http().request('DELETE', `/api/personas/${segment(id)}/credentials?domain=${encodeURIComponent(domain)}`);
   },
 });
 
 /** The jar's path for a persona. */
-const jarPath = (id: string) => `/api/pool/cookies?persona=${encodeURIComponent(id)}`;
+const jarPath = (id: string) => `/api/pool/cookies?persona=${segment(id)}`;
 
 /** Reading a jar and writing into one: what copying between personas is made of. */
 const jarCalls = (http: HttpRef) => ({
   /** Every cookie in the jar; `format: 'playwright'` is ready for `context.addCookies()`. */
   cookies: async (id: string, format: CookieFormat = 'json'): Promise<Cookie[]> =>
-    (await http().request<CookieJar>('GET', `${jarPath(id)}&format=${format}`)).cookies,
+    (await http().request<CookieJar>('GET', `${jarPath(id)}&format=${encodeURIComponent(format)}`)).cookies,
   /** Merge cookies into the jar. The persona's browsers pick them up on their next visit to each site. */
-  importCookies: (id: string, list: Cookie[]): Promise<CookiesImported> =>
+  importCookies: async (id: string, list: Cookie[]): Promise<CookiesImported> =>
     http().request<CookiesImported>('PUT', jarPath(id), { cookies: list }),
 });
 

@@ -34,11 +34,18 @@ const FRONT_DOOR_MAX_PAYLOAD = 268_435_456;
 /** JSON-RPC's generic server error, as Chromium answers a refused command. */
 const CDP_SERVER_ERROR = -32000;
 
+/** What a remote CDP caller is told when it asks to read or write this computer's files. */
+const LOCAL_FILES_UNAVAILABLE = 'Files on this computer cannot be read or written from a remote connection.';
+/** What a remote CDP caller is told when it asks for something that reaches past the page to the computer. */
+const REMOTE_UNAVAILABLE = 'This command reaches the computer, not the page, so a remote connection cannot send it.';
+/** What any CDP client is told when a command would reach Chromium around the front door and its rules. */
+const AROUND_THE_DOOR = 'This browser does not take this command: it would reach Chromium around the front door.';
+
 /** process.argv index of the first argument after `node launch.cjs`. */
 const USER_ARGS_START = 2;
 
 /** HTTP statuses the front door answers with, by name. */
-const Status = { OK: 200, FORBIDDEN: 403, METHOD_NOT_ALLOWED: 405, BAD_GATEWAY: 502 };
+const Status = { OK: 200, BAD_REQUEST: 400, FORBIDDEN: 403, METHOD_NOT_ALLOWED: 405, BAD_GATEWAY: 502 };
 
 module.exports = {
   CHROME_HEIGHT,
@@ -55,6 +62,9 @@ module.exports = {
   FRONT_DOOR_TAB_WAIT_MS,
   FRONT_DOOR_MAX_PAYLOAD,
   CDP_SERVER_ERROR,
+  LOCAL_FILES_UNAVAILABLE,
+  REMOTE_UNAVAILABLE,
+  AROUND_THE_DOOR,
   Status,
   USER_ARGS_START,
 };

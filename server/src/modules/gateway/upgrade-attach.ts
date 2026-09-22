@@ -8,21 +8,30 @@
  * enrolled with its front door on.
  */
 import { randomUUID } from 'crypto';
+import { track } from '../telemetry/index.ts';
 import { control, projectId, instanceId } from '../control/service.ts';
-import { openRelay } from '../browsers/cdp-relay.ts';
 import { registry } from '../browsers/registry.ts';
 import { metrics } from '../../platform/metrics.ts';
 import { Status } from '../../platform/http-status.ts';
 import { Session } from './session.ts';
 import { sessions } from './session-store.ts';
-import { dialWithTimeout } from './upstream.ts';
 import { accept, auditAs, refuse, type Refusal, type Upgrade } from './upgrade-context.ts';
 import { ATTACHMENT_LEASE_MS } from './constants.ts';
+
+/**
+ * An attached session lives only as long as its browser. A vendor's Chrome
+ * keeps the second socket open after the registry lets the browser go, so
+ * nothing would tell the client; ending the session here closes it with
+ * "browser stopped", which is how Playwright learns the browser is gone.
+ */
+registry.on('browser:disconnected', ({ id }) => {
+  for (const session of sessions.values()) if (session.attachedTo === id) void session.destroy('browser stopped');
+});
 
 /** Why this caller may not attach to the browser, or null when it may. */
 function attachRefusal(target, token): Refusal | null {
   if (!target || target.apiKey !== token) return ['unknown_browser', Status.NOT_FOUND, 'Not Found'];
-  if (!target.driver?.wsUrl && !target.cdp) return ['not_attachable', Status.CONFLICT, 'Not Attachable'];
+  if (!target.driver.cdpEndpoint()) return ['not_attachable', Status.CONFLICT, 'Not Attachable'];
   return null;
 }
 
@@ -41,19 +50,13 @@ export async function attachToFleet(ctx: Upgrade) {
 /** The browser's CDP socket, or its relay; null after answering 502. */
 async function connectTo(ctx: Upgrade, target, attachId) {
   try {
-    return { upstream: await openUpstream(target, attachId) };
+    return { upstream: await target.driver.cdpEndpoint().open() };
   } catch (err) {
     metrics.gatewayConnects.inc({ outcome: 'attach_failed' });
     auditAttachFailure(ctx, attachId, err);
     ctx.deny(Status.BAD_GATEWAY, 'Bad Gateway');
     return null;
   }
-}
-
-/** A browser with a CDP endpoint is dialled; an Oya client is reached over its relay. */
-async function openUpstream(target, attachId) {
-  if (!target.driver?.wsUrl) return openRelay(target, attachId);
-  return dialWithTimeout(target.driver.wsUrl);
 }
 
 /** The audit record of a failed attach. */
@@ -65,7 +68,7 @@ function auditAttachFailure(ctx: Upgrade, attachId, err) {
 /** A live session on the fleet browser, recorded as an attachment. */
 async function attachedSession(ctx: Upgrade, target, attachId, upstream) {
   const session = newAttachedSession(ctx, target, upstream);
-  session.upstreamUrl = target.driver?.wsUrl || `relay:${attachId}`;
+  session.endpoint = target.driver.cdpEndpoint();
   session.attachedTo = attachId;
   await recordAttachment(session, ctx.token, attachId);
   session.authToken = ctx.authToken;
@@ -111,4 +114,5 @@ function attached(ctx: Upgrade, session, target, attachId, client) {
   metrics.gatewaySessions.set({}, sessions.size);
   const meta = { session: session.id, provider: target.provider };
   auditAs(ctx, { action: 'gateway.session.attach', targetType: 'browser', targetId: attachId, meta });
+  track.cdpAttached(ctx.token, { provider: String(target.provider || 'oya') });
 }

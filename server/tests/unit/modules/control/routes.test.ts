@@ -4,7 +4,7 @@
  * members, credentials, share links, tickets and webhooks, the event cursor,
  * and coded JSON errors. One project can never read or change another's rows.
  */
-import { describe, it, before, after, beforeEach } from 'node:test';
+import { describe, it, before, after, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownDataDir } from '../../support/data-dir.ts';
 
@@ -46,6 +46,25 @@ describe('GET /control', () => {
 
   it('refuses a caller with no credential', async () => {
     assert.equal((await callRoute(controlRouter, { url: '/' })).status, 401);
+  });
+});
+
+describe('control error handler', () => {
+  it('answers a thrown plain error as a 500 with a reference, never as control unavailable', async () => {
+    const original = control().sessions;
+    control().sessions = async () => {
+      throw new Error('SQLITE_BUSY: database is locked');
+    };
+    const logged = mock.method(console, 'error', () => {});
+    try {
+      const res = await call('GET', '/sessions');
+      assert.deepEqual([res.status, res.body.code], [500, 'internal_error']);
+      assert.ok(!res.body.error.includes('SQLITE'));
+      assert.match(res.body.ref, /^[0-9a-f]{8}$/);
+    } finally {
+      control().sessions = original;
+      logged.mock.restore();
+    }
   });
 });
 
@@ -110,7 +129,8 @@ describe('administrator routes', () => {
     assert.ok(invite.body.code);
     const members = await call('GET', '/members');
     assert.deepEqual(Object.keys(members.body).sort(), ['members', 'owner']);
-    assert.equal((await call('DELETE', '/members/nobody')).body.ok, true);
+    const gone = await call('DELETE', '/members/nobody');
+    assert.deepEqual([gone.status, gone.body.code], [404, 'not_found']);
   });
 
   it('issues and revokes credentials', async () => {

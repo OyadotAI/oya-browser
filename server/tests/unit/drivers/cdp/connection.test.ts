@@ -5,6 +5,8 @@
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { WebSocket } from 'ws';
 import { CDPConnection } from '../../../../src/drivers/cdp/connection.ts';
 
 /** A connection over a socket that records what it writes. */
@@ -18,6 +20,25 @@ function open() {
 
 /** Delivers a raw message to the connection, as the socket would. */
 const deliver = (conn: CDPConnection, message: unknown) => conn.onMessage(Buffer.from(JSON.stringify(message)));
+
+describe('CDPConnection.over', () => {
+  it('speaks CDP on a socket already open, and fails pending sends when it closes', async () => {
+    const socket: any = new EventEmitter();
+    socket.readyState = WebSocket.OPEN;
+    socket.sent = [];
+    socket.send = (data: string) => socket.sent.push(JSON.parse(data));
+    socket.close = () => {};
+    const conn = CDPConnection.over(socket);
+    const answered = conn.send('Browser.getVersion');
+    socket.emit('message', Buffer.from(JSON.stringify({ id: socket.sent[0].id, result: { product: 'X' } })));
+    assert.deepEqual(await answered, { product: 'X' });
+    const pending = conn.send('Page.navigate', { url: 'https://a.test' });
+    socket.readyState = WebSocket.CLOSED;
+    socket.emit('close');
+    await assert.rejects(pending, { message: 'CDP connection closed' });
+    await assert.rejects(conn.send('Browser.getVersion'), /closed/);
+  });
+});
 
 describe('CDPConnection', () => {
   beforeEach(() => mock.timers.enable({ apis: ['setTimeout'] }));

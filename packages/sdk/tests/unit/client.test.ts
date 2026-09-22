@@ -25,6 +25,55 @@ describe('Oya construction', () => {
     if (saved.home === undefined) delete process.env.OYA_CONFIG_HOME;
   });
 
+  it('refuses a key a header cannot carry, at construction, naming the position and never the key', () => {
+    const err = (() => {
+      try {
+        new Oya({ apiKey: 'oya_abc\u201Cdef', baseUrl: BASE, fetch: fakeFetch().fetch });
+      } catch (e) {
+        return e;
+      }
+    })();
+    assert.equal(
+      err.message,
+      'apiKey has a character HTTP headers cannot carry at position 8 (U+201C). Copy the key again.',
+    );
+    assert.deepEqual([err.status, err.body.field], [400, 'apiKey']);
+    assert.doesNotMatch(err.message, /oya_abc/);
+  });
+
+  it('refuses a control character or DEL in a key as fetch would, instead of failing every call as unreachable', () => {
+    for (const [key, at] of [
+      ['k\u0001y', 2],
+      ['ab\u007fc', 3],
+      ['  k\u001by', 4],
+    ] as const) {
+      assert.throws(() => new Oya({ apiKey: key, baseUrl: BASE, fetch: fakeFetch().fetch }), {
+        message: new RegExp(`at position ${at} `),
+      });
+    }
+  });
+
+  it('accepts a key read from a file with its trailing line break, and sends it trimmed', async () => {
+    const fake = fakeFetch({ 'GET /api/browsers': { body: [] } });
+    await new Oya({ apiKey: 'k-file\n', baseUrl: BASE, fetch: fake.fetch }).browser.list();
+    assert.equal(fake.calls[0].headers.Authorization, 'Bearer k-file');
+  });
+
+  it('refuses an address with no scheme before any call, naming where it came from and what to try', () => {
+    delete process.env.OYA_BASE_URL;
+    assert.throws(() => new Oya({ apiKey: 'k', baseUrl: 'localhost:3000', fetch: fakeFetch().fetch }), {
+      message: 'baseUrl must start with http:// or https://, not "localhost:3000". Try http://localhost:3000.',
+    });
+    assert.throws(() => new Oya({ apiKey: 'k', baseUrl: 'ftp://x', fetch: fakeFetch().fetch }), {
+      message: 'baseUrl must start with http:// or https://, not "ftp://x".',
+    });
+    new Oya({ apiKey: 'k', baseUrl: '  https://x.test ', fetch: fakeFetch().fetch });
+    process.env.OYA_BASE_URL = 'oya.example.com';
+    assert.throws(() => new Oya({ apiKey: 'k', fetch: fakeFetch().fetch }), {
+      message: 'OYA_BASE_URL must start with http:// or https://, not "oya.example.com". Try https://oya.example.com.',
+    });
+  });
+
   it('refuses to start without an API key', () => {
     delete process.env.OYA_API_KEY;
     assert.throws(() => new Oya({ fetch: fakeFetch().fetch }), /No API key/);
@@ -92,10 +141,32 @@ describe('Http.request', () => {
     await assert.rejects(oya.usage(), { message: 'GET /api/usage failed (502)', body: 'Bad gateway' });
   });
 
-  it('explains an invalid key with the URL and the shell-beats-.env hint', async () => {
+  it('explains an invalid key with the URL and where the key came from', async () => {
     const { oya } = client({ 'GET /api/usage': { status: 401, body: { error: 'Invalid API key' } } });
-    await assert.rejects(oya.usage(), (e: Error) =>
-      e.message.startsWith(`Invalid API key for ${BASE}. Check OYA_API_KEY`),
+    await assert.rejects(oya.usage(), { message: `Invalid API key for ${BASE}. The key came from the apiKey option.` });
+  });
+
+  it('says a failed connection is unreachable, with the system reason, and a time limit is a timeout', async () => {
+    const refused = Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+    const oya = new Oya({
+      apiKey: 'k',
+      baseUrl: BASE,
+      fetch: (async () => Promise.reject(refused)) as typeof globalThis.fetch,
+    });
+    await assert.rejects(oya.usage(), (e: OyaError & { body: Record<string, unknown> }) => {
+      assert.deepEqual([e.status, e.body.code, e.body.cause], [0, 'unreachable', 'ECONNREFUSED']);
+      assert.equal(e.message, `Could not reach ${BASE}. Is the server running, and is the baseUrl option right?`);
+      return true;
+    });
+    const slow = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    const late = new Oya({
+      apiKey: 'k',
+      baseUrl: BASE,
+      fetch: (async () => Promise.reject(slow)) as typeof globalThis.fetch,
+    });
+    await assert.rejects(
+      late.usage(),
+      (e: OyaError & { body: Record<string, unknown> }) => e.status === 0 && e.body.code === 'timeout',
     );
   });
 

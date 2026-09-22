@@ -4,9 +4,11 @@
 
 import { Router } from 'express';
 import { registry } from '../modules/browsers/registry.ts';
+import '../modules/browsers/live-view.ts';
 import { metrics } from '../platform/metrics.ts';
 import { Status } from '../platform/http-status.ts';
-import { STATUS_CLASS_SIZE } from './constants.ts';
+import { HttpError, sendError } from '../platform/errors.ts';
+import { API_DESCRIBED, STATUS_CLASS_SIZE } from './constants.ts';
 import * as siteLogin from '../modules/challenges/login.ts';
 import { slackRouter } from '../modules/slack/service.ts';
 import { forwardHttp } from '../modules/control/cluster.ts';
@@ -69,26 +71,6 @@ function routeLabel(req) {
     .replace(/\/[A-Za-z0-9_-]{24,}/g, '/:token');
 }
 
-// One pair of listeners for the whole process. Registering per browser would
-// leak a listener each time and trip EventEmitter's max at 11 CDP browsers.
-registry.on('stream:start', ({ id }) => {
-  const browser = registry.get(id);
-  if (!browser?.driver?.startScreencast) return; // Oya clients push frames themselves
-  browser.driver
-    .startScreencast((dataUrl) => {
-      registry.pushFrame(id, dataUrl);
-      metrics.frames.inc({ client: 'cdp' });
-    })
-    .catch(() => {});
-});
-
-registry.on('stream:stop', ({ id }) => {
-  registry
-    .get(id)
-    ?.driver?.stopScreencast?.()
-    .catch(() => {});
-});
-
 // Sign-in attempts are counted per browser so a wrong password cannot be typed
 // until the account locks. A browser that is gone cannot lock anything, and
 // keeping its tally would refuse a later browser that reused the id.
@@ -115,11 +97,26 @@ router.use(runsRoutes);
 /** The shared browser pool and its cookies. */
 router.use(poolRoutes);
 
-/** Errors become JSON; only errors carrying a status expose their message. */
+/**
+ * A path under /api that no route claims: said as a 404 in the API's own shape,
+ * not the console's HTML. Some tests mount this router at the root, and the
+ * cluster forwarder may hand on a bare path, so only a request that was really
+ * asked for under /api is answered here; anything else goes on to the next handler.
+ */
+router.use((req, res, next) => {
+  if (!underApi(req.originalUrl)) return next();
+  sendError(
+    res,
+    new HttpError(Status.NOT_FOUND, `No route for ${req.method} ${req.originalUrl}. ${API_DESCRIBED}`),
+    req,
+  );
+});
+
+/** Whether the request was for /api itself or something beneath it. */
+const underApi = (url = '') => url === '/api' || url.startsWith('/api/') || url.startsWith('/api?');
+
+/** Errors become JSON in one shape; an HttpError speaks for itself, anything else is a 500 under a reference. */
 router.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  res.status(err.status || Status.UNAVAILABLE).json({
-    error: err.status ? err.message : 'Operation could not be completed',
-    code: err.code || 'operation_failed',
-  });
+  sendError(res, err, req);
 });

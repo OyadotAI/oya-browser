@@ -56,6 +56,8 @@ export const HANDLERS: Record<string, Handler> = {
  */
 export async function dispatch(driver: CDPDriver, action, params, timeoutMs) {
   if (!driver.isAlive()) throw new Error('Browser not connected');
+  // The map below reads an action as a key, so `["evaluate_raw"]` would find the server-internal handler.
+  if (typeof action !== 'string') return { ok: false, error: 'action must be a string' };
   ({ action, params } = normalise(action, params));
   const deadline = Date.now() + timeoutMs;
   const remaining = () => Math.max(MIN_STEP_MS, deadline - Date.now());

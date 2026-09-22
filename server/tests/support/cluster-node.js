@@ -58,7 +58,7 @@ process.on('message', async (msg) => {
       name: 'Cluster fixture',
       clientType: 'cdp',
       provider: 'cdp',
-      driver: {
+      engine: {
         wsUrl: url.replace('http:', 'ws:') + '/fixture',
         send: async () => ({ ok: true, data: { owner: instanceId } }),
         close() {},

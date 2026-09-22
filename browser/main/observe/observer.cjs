@@ -14,7 +14,16 @@
  * member ids and tokens there and this buffer is read back over the API.
  */
 
-const { CONSOLE_MAX, NETWORK_MAX, TEXT_MAX, LEVELS, HTTP_ERROR_FLOOR, NO_ERROR } = require('./constants.cjs');
+const vm = require('node:vm');
+const {
+  CONSOLE_MAX,
+  NETWORK_MAX,
+  TEXT_MAX,
+  LEVELS,
+  HTTP_ERROR_FLOOR,
+  NO_ERROR,
+  PATTERN_BUDGET_MS,
+} = require('./constants.cjs');
 
 /** A url without its query, fragment or credentials; anything unparsable is dropped whole. */
 function safeUrl(raw) {
@@ -88,7 +97,11 @@ class Observer {
 
   /** Console entries, newest first, optionally only one level or matching text. */
   readConsole({ level, pattern, limit = 100 } = {}) {
-    return filtered(this.console, (e) => (!level || e.level === level) && matches(pattern, e.message), limit);
+    const hit = matcher(
+      pattern,
+      this.console.map((e) => e.message),
+    );
+    return filtered(this.console, (e, i) => (!level || e.level === level) && hit(i), limit);
   }
 
   /**
@@ -97,17 +110,41 @@ class Observer {
    */
   readNetwork({ failedOnly = false, pattern, limit = 100 } = {}) {
     const failed = (e) => Boolean(e.error) || (e.status !== null && e.status >= HTTP_ERROR_FLOOR);
-    return filtered(this.network, (e) => (!failedOnly || failed(e)) && matches(pattern, e.url), limit);
+    const hit = matcher(
+      pattern,
+      this.network.map((e) => e.url),
+    );
+    return filtered(this.network, (e, i) => (!failedOnly || failed(e)) && hit(i), limit);
   }
 }
 
-/** Whether a pattern was given and matches, treated as a case-insensitive regexp. */
-function matches(pattern, text) {
-  if (!pattern) return true;
+/**
+ * Which of `texts` the pattern matches, as a case-insensitive regexp. It runs in
+ * a vm with a time budget, which is the one way to stop a regexp that backtracks
+ * forever: the pattern is the caller's, the text is the page's, and this is the
+ * main process. Throws when the pattern is invalid or runs out of time.
+ */
+function regexpHits(pattern, texts) {
+  const sandbox = { re: new RegExp(pattern, 'i'), texts };
+  return vm.runInNewContext('texts.map((text) => re.test(text))', sandbox, { timeout: PATTERN_BUDGET_MS });
+}
+
+/** What a caller is told when their pattern ran out of time: a quiet "nothing matched" would read as "nothing failed". */
+const PATTERN_TOO_SLOW = 'The pattern took too long to match. Use a simpler pattern, or plain text.';
+
+/**
+ * Answers whether entry `i` matches: every entry with no pattern, and plain
+ * text when the pattern is not a valid regexp. One that runs out of time is
+ * refused instead, because matching it as text would quietly answer the wrong question.
+ */
+function matcher(pattern, texts) {
+  if (!pattern) return () => true;
   try {
-    return new RegExp(pattern, 'i').test(text);
-  } catch {
-    return String(text).includes(pattern);
+    const hits = regexpHits(pattern, texts);
+    return (i) => hits[i];
+  } catch (err) {
+    if (err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw new Error(PATTERN_TOO_SLOW);
+    return (i) => String(texts[i]).includes(pattern);
   }
 }
 

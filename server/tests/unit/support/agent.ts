@@ -11,11 +11,17 @@ import { keyCache, keyDigest } from '../../../src/modules/auth/keys.ts';
 export type Answer = (action: string, params: any) => any;
 
 /**
- * Registers a CDP-style browser whose driver answers every command through
- * `answer` (default: `{ ok: true }`). Returns the commands it received and a
- * way to disconnect it.
+ * Registers a browser whose driver answers every command through `answer`
+ * (default: `{ ok: true }`), as a CDP browser unless `clientType` says Oya: the
+ * server checks each action against what that kind of browser does. Returns
+ * the commands it received and a way to disconnect it.
  */
-export function scriptedBrowser(browserId: string, apiKey = 'key-a', answer: Answer = () => ({ ok: true })) {
+export function scriptedBrowser(
+  browserId: string,
+  apiKey = 'key-a',
+  answer: Answer = () => ({ ok: true }),
+  clientType: 'cdp' | 'oya' = 'cdp',
+) {
   const calls: { action: string; params: any; timeout?: number }[] = [];
   const driver = {
     send: async (action, params, timeout) => {
@@ -23,7 +29,7 @@ export function scriptedBrowser(browserId: string, apiKey = 'key-a', answer: Ans
       return answer(action, params);
     },
   };
-  registry.add(browserId, { apiKey, name: 'Test', clientType: 'cdp', persona: { id: 'p-1' }, driver });
+  registry.add(browserId, { apiKey, name: 'Test', clientType, persona: { id: 'p-1' }, engine: driver });
   return { calls, disconnect: () => registry.remove(browserId), actions: () => calls.map((c) => c.action) };
 }
 

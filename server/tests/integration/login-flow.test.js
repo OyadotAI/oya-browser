@@ -129,7 +129,7 @@ try {
   const button = page.elements.find((el) => el.text === 'Press me');
   await browser.type(input.id, 'replacement');
   assert.equal(
-    await registry.get(browser.id).driver.evaluateMain("document.querySelector('input').value"),
+    await registry.get(browser.id).driver.engine.evaluateMain("document.querySelector('input').value"),
     'replacement',
   );
   await browser.click(button.id);
@@ -145,10 +145,10 @@ try {
 
   await registry
     .get(browser.id)
-    .driver.evaluateMain("localStorage.clear(); document.cookie='newSession=renewed; path=/'");
+    .driver.engine.evaluateMain("localStorage.clear(); document.cookie='newSession=renewed; path=/'");
   await new Promise((r) => setTimeout(r, 150));
   await browser.goto(`${base}/fixture`);
-  assert.equal(await registry.get(browser.id).driver.evaluateMain("localStorage.getItem('account')"), null);
+  assert.equal(await registry.get(browser.id).driver.engine.evaluateMain("localStorage.getItem('account')"), null);
   await browser.stop();
   assert(logins.getAll(profile.id).some((c) => c.name === 'newSession' && c.value === 'renewed'));
   assert.deepEqual(logins.getStorage(profile.id)[base], {});
@@ -158,11 +158,7 @@ try {
   const next = await oya.browser.start();
   await next.goto(`${base}/fixture`);
   assert.equal((await next.tabs())[0].title, 'Signed out');
-  assert(
-    (
-      await registry.get(next.id).driver.conn.send('Network.getAllCookies', {}, registry.get(next.id).driver.sessionId)
-    ).cookies.some((c) => c.name === 'newSession'),
-  );
+  assert((await registry.get(next.id).driver.cookies()).some((c) => c.name === 'newSession'));
   await next.stop();
   assert.equal(await oya.browser.stopAll(), 0);
   passed('a fresh browser restores updated state; stopping an empty fleet is harmless');

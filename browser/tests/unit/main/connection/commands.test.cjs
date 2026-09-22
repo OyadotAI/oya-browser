@@ -55,6 +55,29 @@ describe('CommandRunner', () => {
     assert.deepEqual(new Set(resultOf('n').map((m) => m.error)), new Set(['action must be a string']));
   });
 
+  it('carries our tab_unprotected code to the server, and never an Electron or Node code', async () => {
+    ctx.tabs.createTab('https://a.test/');
+    const thrown = (code) => async () => {
+      throw Object.assign(new Error('no'), { code });
+    };
+    ctx.actions.runPageAction = thrown('tab_unprotected');
+    await ctx.commands.handleCommand({ id: 'u1', action: 'navigate' });
+    ctx.actions.runPageAction = thrown('ERR_NAME_NOT_RESOLVED');
+    await ctx.commands.handleCommand({ id: 'u2', action: 'navigate' });
+    assert.equal(resultOf('u1')[0].code, 'tab_unprotected');
+    assert.equal('code' in resultOf('u2')[0], false);
+  });
+
+  it('refuses open_tab on a tab that could not be protected, with its code', async () => {
+    mock.method(console, 'error', () => {});
+    mock.method(ctx.protection, 'resetTabCDP', () => {});
+    ctx.protection.setupTabCDP = async () => false;
+    await ctx.commands.handleCommand({ id: 'o1', action: 'open_tab', params: { url: 'https://b.test/' } });
+    const [answer] = resultOf('o1');
+    assert.deepEqual([answer.ok, answer.code], [false, 'tab_unprotected']);
+    assert.match(answer.error, /could not be protected/);
+  });
+
   it('turns a thrown action into an error result', async () => {
     ctx.tabs.createTab('https://a.test/');
     ctx.actions.runPageAction = async () => {
@@ -62,6 +85,17 @@ describe('CommandRunner', () => {
     };
     await ctx.commands.handleCommand({ id: 'c4', action: 'click' });
     assert.equal(resultOf('c4')[0].error, 'boom');
+  });
+
+  it('open_tab opens only http(s) and about:blank, and makes no tab for anything else', async () => {
+    for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'view-source:https://x.test']) {
+      await ctx.commands.handleCommand({ id: 'f', action: 'open_tab', params: { url } });
+    }
+    assert.equal(ctx.tabs.list.length, 0);
+    assert.deepEqual(
+      new Set(resultOf('f').map((m) => m.error)),
+      new Set(['Only http and https addresses, or about:blank, can be opened.']),
+    );
   });
 
   it('opens, lists, switches and closes tabs', async () => {

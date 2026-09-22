@@ -99,6 +99,12 @@ Everything is optional except the secrets you want to survive a restart.
 | `OYA_MANAGED_*` | The governed runtime: network or NetworkPolicy, image, control URL, egress proxy. On Kubernetes the image must be digest-pinned; a tag can move between verification and scheduling. |
 | `OYA_CLOUD_API_KEY` / `OYA_CLOUD_SNAPSHOT` / `OYA_PUBLIC_WS_URL` | Oya Cloud sandboxes, and the public URL they dial back to. |
 | `OYA_RESIDENTIAL_PROXY_URL` | A residential vendor gateway every Oya Cloud browser uses unless its persona has its own proxy. Never sent to desktop browsers, which could extract the credentials. `{session}` and `{geo}` in the username become a sticky per-persona session and its country. Traffic is counted in the sandbox, both directions, and metered per key as `residential_proxy_bytes`. |
+| `POSTHOG_KEY` / `POSTHOG_HOST` | Product analytics. Both must be set or nothing is sent; there is no default host. The key is a PostHog project write token, which the console shows to every visitor; never a personal PostHog key. |
+| `SLACK_OPS_WEBHOOK_SIGNUPS` / `SLACK_OPS_WEBHOOK_EVENTS` | Slack incoming webhooks for one-line ops messages: signups, keys and desktop connections in the first; saved playbooks, CDP attaches and server errors in the second. Unset means no message. |
+
+## Telemetry
+
+The server sends nothing to anyone unless you set the variables below; the desktop app, CLI and SDK never send anything. With `POSTHOG_KEY` and `POSTHOG_HOST` both set, it reports product events to that PostHog: `account_signed_up`, `api_key_created`, `browser_started`, `browser_stopped`, `playbook_saved`, `playbook_replayed`, `mcp_tool_called`, `cdp_attached`, `desktop_connected`, `persona_created` and `server_error`, each with a few properties such as provider, step count, platform or the error reference, and the console reports pageviews and sign-in. With `SLACK_OPS_WEBHOOK_SIGNUPS` or `SLACK_OPS_WEBHOOK_EVENTS` set, it posts one Slack line per signup, key created, first desktop connection, playbook saved, CDP attach and server error. Visited URLs, page content, cookies, API keys, key labels, persona and playbook names never leave the server this way; the sign-up email goes to PostHog's identify call and the Slack lines, nowhere else. Sending is best effort and never delays a request. Unset the variables and it stops.
 
 Health: `/livez` is liveness, `/readyz` is readiness. `/api/health` answers `ok`
 unconditionally and is not a readiness probe.

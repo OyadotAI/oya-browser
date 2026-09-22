@@ -74,9 +74,9 @@ describe('oya.browser.start', () => {
 
 describe('oya.browser', () => {
   it('get reattaches with cdp and default persona when the record has none', async () => {
-    const { oya } = client({ 'GET /api/browsers/a%2Fb': { body: { id: 'a/b', provider: null, persona: null } } });
-    const b = await oya.browser.get('a/b');
-    assert.deepEqual([b.id, b.provider, b.persona], ['a/b', 'cdp', 'default']);
+    const { oya } = client({ 'GET /api/browsers/a%3Ab': { body: { id: 'a:b', provider: null, persona: null } } });
+    const b = await oya.browser.get('a:b');
+    assert.deepEqual([b.id, b.provider, b.persona], ['a:b', 'cdp', 'default']);
   });
 
   it('stop sends ids, stop("all") and stopAll send all', async () => {

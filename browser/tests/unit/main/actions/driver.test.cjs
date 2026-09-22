@@ -80,8 +80,8 @@ describe('PageDriver', () => {
       ctx.calls.filter((c) => c[0] === 'world' || c[0] === 'inject'),
       [],
     );
-    const [[id, ok, data, error]] = results(ctx);
-    assert.deepEqual([id, ok, data], ['c1', false, null]);
+    const [[id, ok, data, error, code]] = results(ctx);
+    assert.deepEqual([id, ok, data, code], ['c1', false, null, 'action_unsupported']);
     assert.equal(error, `This Oya Browser does not know the action "${action}". Update the app, then send it again.`);
   });
 

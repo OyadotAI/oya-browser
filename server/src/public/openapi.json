@@ -225,7 +225,7 @@
     },
     "/api/control/sessions/{id}/cancel": {
       "post": {
-        "summary": "Cancel work and retain cleanup obligation",
+        "summary": "Stop a session in any state; answers its final state",
         "operationId": "postApiControlSessionsIdCancel",
         "tags": [
           "Durable control"
@@ -1366,6 +1366,149 @@
         }
       }
     },
+    "/browsers/start": {
+      "post": {
+        "summary": "Start a browser",
+        "description": "Starts a browser as one of the caller's personas: on the key's provider, in a sandbox, or on a CDP endpoint the caller names (any Chrome with --remote-debugging-port). Answers 201 with the browser's id and its gateway CDP URL. A second start on an endpoint another browser already holds answers 409 endpoint_in_use; the body names the holder's id when it is yours.",
+        "operationId": "startBrowser",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "persona": { "type": "string", "description": "A persona id, or \"auto\" for a fresh one." },
+                  "provider": { "type": "string", "description": "cdp, oya-cloud, oya-selfhosted, or a vendor; defaults to the key's configured provider." },
+                  "wsUrl": { "type": "string", "description": "For provider cdp: the ws://, wss:// or http:// address of the debugging port." },
+                  "name": { "type": "string", "description": "A display name for the browser." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The browser is ready to drive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "provider": { "type": "string" },
+                    "persona": { "type": "string" },
+                    "status": { "type": "string" },
+                    "cdpUrl": { "type": "string", "description": "The gateway CDP URL for this browser." }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field was malformed; the body names it.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "409": {
+            "description": "Endpoint already held by a running browser (endpoint_in_use), or the session may not go on.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "429": {
+            "description": "The key or persona is at its browser quota.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "502": {
+            "description": "The provider or endpoint could not be reached.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/browsers/connect": {
+      "post": {
+        "summary": "Attach a CDP browser",
+        "description": "Attaches a browser the server dials out to, with no persona: any Chrome with --remote-debugging-port, or a vendor session. A second attach on an endpoint another browser already holds answers 409 endpoint_in_use; the body names the holder's id when it is yours.",
+        "operationId": "connectBrowser",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "wsUrl": { "type": "string", "description": "The ws://, wss:// or http:// address of the debugging port." },
+                  "provider": { "type": "string", "description": "cdp (default) or a vendor name." },
+                  "name": { "type": "string", "description": "A display name for the browser." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Attached.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "provider": { "type": "string" },
+                    "clientType": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A field was malformed; the body names it.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "409": {
+            "description": "Endpoint already held by a running browser (endpoint_in_use).",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "429": {
+            "description": "The key is at its browser quota.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          },
+          "502": {
+            "description": "Could not attach to the CDP browser.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
     "/browsers/{browserId}/command": {
       "post": {
         "summary": "Send a command to a browser",
@@ -1462,7 +1605,7 @@
             }
           },
           "500": {
-            "description": "Command failed",
+            "description": "Server fault, not the request: the body carries a ref that matches the server's log line",
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/Error" }
@@ -2080,13 +2223,30 @@
       },
       "Error": {
         "type": "object",
+        "required": ["error", "code"],
         "properties": {
-          "error": { "type": "string" }
+          "error": { "type": "string", "description": "What happened, why, and the next step. Stands alone: clients show it as is." },
+          "code": { "type": "string", "description": "A stable reason to branch on: invalid_request, not_found, internal_error, command_outcome_unknown, action_unknown, action_unsupported, action_forbidden, tab_unprotected, endpoint_in_use, provider_failed, quota_exceeded, llm_unconfigured, and others named per route." },
+          "field": { "type": "string", "description": "For invalid_request: the field that was wrong." },
+          "ref": { "type": "string", "description": "For internal_error: eight hex characters that also sit in the server's log line for this failure." },
+          "browserId": { "type": "string", "description": "For endpoint_in_use: the browser that holds the endpoint." },
+          "action": { "type": "string", "description": "For action_unknown, action_unsupported and action_forbidden: the action as sent." },
+          "clientType": { "type": "string", "description": "For action_unsupported: this browser's kind, oya or cdp." },
+          "supportedOn": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "For action_unsupported: the kinds of browser that do the action."
+          }
         }
       },
       "Browser": {
         "type": "object",
         "properties": {
+          "actions": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "On one browser's detail: the actions it does, sorted, one spelling each."
+          },
           "id": { "type": "string", "description": "Browser session ID" },
           "name": { "type": "string", "description": "Browser name (e.g. 'Chrome on macOS')" },
           "currentUrl": { "type": "string", "description": "Current page URL" },
@@ -2098,6 +2258,7 @@
         "type": "object",
         "properties": {
           "ok": { "type": "boolean", "description": "Whether the command succeeded" },
+          "code": { "type": "string", "description": "For ok:false, a stable reason: command_failed for a refusal the page answered, or one named per action." },
           "data": {
             "type": "object",
             "description": "Action-specific result data",

@@ -50,3 +50,5 @@ export const IDLE_FILL_INTERVAL_MS = 1000;
 export const IDLE_FRAME_GAP_MS = 1200;
 /** Timeout of one idle-fill screenshot. */
 export const IDLE_FILL_TIMEOUT_MS = 5000;
+/** How long dialling a browser's CDP endpoint for the gateway may take. */
+export const UPSTREAM_CONNECT_MS = 20_000;

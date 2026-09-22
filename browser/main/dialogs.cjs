@@ -11,7 +11,10 @@
  * reported back. A confirm or prompt is a decision ("delete this?"), so it is
  * held open and handed to whoever is driving.
  */
-const AUTO_ACCEPT_DIALOGS = new Set(['alert', 'beforeunload']);
+const dialogText = require('../scripts/dialog-text.cjs');
+
+/** Dialog types answered automatically; the one set the server's CDP driver uses too. */
+const AUTO_ACCEPT_DIALOGS = dialogText.AUTO_ACCEPT;
 // Answerable while a dialog is held: they never reach the blocked renderer.
 const DIALOG_SAFE_ACTIONS = new Set([
   'handle_dialog',
@@ -49,13 +52,8 @@ function dropDialogWaiter(settle) {
   dialogWaiters = dialogWaiters.filter((w) => w !== settle);
 }
 
-/** The sentence the driver reads about a dialog: answered automatically, or waiting on handle_dialog. */
-function describeDialog({ type, message, defaultPrompt } = {}, handled = false) {
-  return handled
-    ? `Dialog (${type}): "${message}", accepted automatically.`
-    : `A JavaScript ${type} dialog is open: "${message}"${defaultPrompt ? ` (default: "${defaultPrompt}")` : ''}. ` +
-        'The page is blocked until you call handle_dialog.';
-}
+/** The sentence the driver reads about a dialog: answered automatically, or waiting on handle_dialog. Shared with the server. */
+const describeDialog = dialogText.describe;
 
 /** Every dialog note since the last call, as one string, or null when there were none. */
 function takeDialogNotes() {

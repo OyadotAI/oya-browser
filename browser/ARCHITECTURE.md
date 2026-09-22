@@ -176,16 +176,17 @@ one global object (`Dom`, `ShellState`, `Chat`, `StudioView`, `ControlBar`,
 
 ## Tests
 
-| Command                                   | Runs                                                                      |
-| :---------------------------------------- | :------------------------------------------------------------------------ |
-| `npm test`                                | unit, then the node-only integration suites                               |
-| `npm run test:unit`                       | `tests/unit/**/*.test.{js,cjs,mjs}`                                       |
-| `npm run test:integration`                | regressions, control state, release guard, workflow model                 |
-| `npm run test:coverage`                   | unit tests with a coverage report                                         |
-| `npm run test:shell`, `test:control`      | the shell and the control handoff in real Electron (Playwright)           |
-| `npm run test:recording`, `test:workflow` | recording and workflow validation in real Electron                        |
-| `npm run test:identity`                   | page identity vs request headers, passkeys, permissions, in real Electron |
-| `npm run test:sync`                       | a login survives a server outage: real app and real local server          |
+| Command                                   | Runs                                                                       |
+| :---------------------------------------- | :------------------------------------------------------------------------- |
+| `npm test`                                | unit, then the node-only integration suites                                |
+| `npm run test:unit`                       | `tests/unit/**/*.test.{js,cjs,mjs}`                                        |
+| `npm run test:integration`                | regressions, control state, release guard, workflow model, `test:analyzer` |
+| `npm run test:analyzer`                   | the page analyzer against real DOM widgets (`analyzer-dom.mjs`)            |
+| `npm run test:coverage`                   | unit tests with a coverage report                                          |
+| `npm run test:shell`, `test:control`      | the shell and the control handoff in real Electron (Playwright)            |
+| `npm run test:recording`, `test:workflow` | recording and workflow validation in real Electron                         |
+| `npm run test:identity`                   | page identity vs request headers, passkeys, permissions, in real Electron  |
+| `npm run test:sync`                       | a login survives a server outage: real app and real local server           |
 
 Unit tests use `node:test` with `node:assert/strict`. They fake the Electron
 seams and use `mock.timers` for anything time-based. They never touch the

@@ -27,6 +27,17 @@ describe('dispatch', () => {
     assert.match(result.error, /^Unsupported action for a CDP browser/);
   });
 
+  it('refuses an action that is not a string, so a wrapped server-internal name cannot reach its handler', async () => {
+    const { driver, conn } = fakeDriver();
+    for (const action of [['evaluate_raw'], { a: 1 }, 7]) {
+      assert.deepEqual(await dispatch(driver, action, { expression: '1' }, 1000), {
+        ok: false,
+        error: 'action must be a string',
+      });
+    }
+    assert.equal(conn.calls.length, 0);
+  });
+
   it('refuses a browser whose connection has closed', async () => {
     const { driver, conn } = fakeDriver();
     conn.close();

@@ -116,4 +116,26 @@ function writePlan(root) {
   console.log('✔ an existing .env is preserved and its KEK reused');
 }
 
+// ── A dry run outside a checkout never clones ───────────────────────────────
+{
+  const empty = mkdtempSync(join(tmpdir(), 'oya-install-empty-'));
+  const bin = mkdtempSync(join(tmpdir(), 'oya-install-bin-'));
+  const calls = join(bin, 'git.calls');
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$@" >> "${calls}"\n`, { mode: 0o755 });
+  const planPath = writePlan(empty);
+
+  const out = execFileSync('node', [CLI, 'install', '--config', planPath, '--dry-run'], {
+    cwd: empty,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+  });
+
+  assert.equal(existsSync(calls), false, 'a dry run must not run git at all');
+  assert.equal(existsSync(join(empty, 'oya-browser')), false, 'a dry run must not create the checkout folder');
+  assert.match(out, /--dry-run: would clone .*oya-browser\.git to /, 'must say what a real run would clone, and where');
+  assert.match(out, /--dry-run: nothing was written/);
+  console.log('✔ a dry run outside a checkout clones nothing');
+}
+
 console.log('\nAll install wizard checks passed.');

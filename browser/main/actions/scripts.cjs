@@ -249,4 +249,5 @@ module.exports = {
   DEV_ANALYZE_JS,
   devWaitJs,
   actionScript,
+  ACTION_SCRIPTS,
 };

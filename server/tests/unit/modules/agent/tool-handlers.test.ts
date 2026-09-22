@@ -28,7 +28,8 @@ const lastCallOf = (action) => browser.calls.filter((c) => c.action === action).
 describe('tool handlers', () => {
   beforeEach(async () => {
     answer = () => ({ ok: true, data: {} });
-    browser = scriptedBrowser(BROWSER, 'key-a', (a, p) => answer(a, p));
+    // An Oya browser: the model is offered read_console and read_network, which only an Oya browser does.
+    browser = scriptedBrowser(BROWSER, 'key-a', (a, p) => answer(a, p), 'oya');
     await recorder.startRun(BROWSER, { steps: [], elements: [] });
   });
   afterEach(() => browser.disconnect());

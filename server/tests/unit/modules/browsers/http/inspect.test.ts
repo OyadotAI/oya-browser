@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { browserDetail, liveView } from '../../../../../src/modules/browsers/http/inspect.ts';
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
+import { restoreEnv } from '../../../support/data-dir.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../../../support/browsers.ts';
 
 const B = 'b-inspect';
@@ -49,6 +50,30 @@ describe('browserDetail', () => {
     stubControl();
     driveBrowser(B, () => ({ ok: true }));
     assert.equal((await detail('key-a', { principal: { role: 'viewer' } })).body.cdpUrl, undefined);
+  });
+
+  it('lists the Oya actions on a cloud sandbox this server does not hold, since its app has not said', async () => {
+    // A configured cloud whose listing names B for this key, as Daytona would.
+    const cloud = {
+      OYA_CLOUD_API_KEY: 'cloud-key',
+      OYA_CLOUD_SNAPSHOT: 'oya-browser:1',
+      OYA_PUBLIC_WS_URL: 'wss://o/ws',
+    };
+    const saved = Object.fromEntries(Object.keys(cloud).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, cloud);
+    try {
+      const { client } = await import('../../../../../src/drivers/sandbox/client.ts');
+      const { ownerTag } = await import('../../../../../src/drivers/sandbox/config.ts');
+      const labels = { 'oya-browser': 'true', 'oya-owner': ownerTag('key-cloud'), 'oya-browser-id': B };
+      mock.method(await client(), 'list', async function* () {
+        yield { state: 'started', labels };
+      });
+      const res = await detail('key-cloud');
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.body.actions.includes('workflow') && !res.body.actions.includes('back'));
+    } finally {
+      for (const [name, value] of Object.entries(saved)) restoreEnv(name, value);
+    }
   });
 
   it('answers 404 for another key’s browser, as for a missing one', async () => {

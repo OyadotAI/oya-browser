@@ -46,6 +46,17 @@ describe('tabs', () => {
     assert.deepEqual([driver.targetId, driver.sessionId], ['t-new', 's-t-new']);
   });
 
+  it('opens only a web address in a new tab, never a file: or javascript: one', async () => {
+    const { driver, conn } = browser();
+    for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'view-source:https://a.example/']) {
+      assert.deepEqual(await driver.dispatch('open_tab', { url }), {
+        ok: false,
+        error: 'Only http and https addresses, or about:blank, can be opened.',
+      });
+    }
+    assert.equal(conn.sent('Target.createTarget').length, 0);
+  });
+
   it('opens a blank tab when no URL is given', async () => {
     const { driver, conn } = browser();
     conn.replies['Target.createTarget'] = { targetId: 't-new' };

@@ -17,7 +17,14 @@ const NO_ERROR = 'net::OK';
 /** The first HTTP status that means the server refused the request. */
 const HTTP_ERROR_FLOOR = 400;
 
+/**
+ * How long a caller's pattern may run over one read's entries. The pattern is
+ * theirs and the text is the page's, and a regexp has no limit of its own: one
+ * that backtracks forever would hold the main process, and with it the whole app.
+ */
+const PATTERN_BUDGET_MS = 100;
+
 /** Electron's console levels, by the number it reports. */
 const LEVELS = ['debug', 'info', 'warning', 'error'];
 
-module.exports = { CONSOLE_MAX, NETWORK_MAX, TEXT_MAX, LEVELS, HTTP_ERROR_FLOOR, NO_ERROR };
+module.exports = { CONSOLE_MAX, NETWORK_MAX, TEXT_MAX, LEVELS, HTTP_ERROR_FLOOR, NO_ERROR, PATTERN_BUDGET_MS };

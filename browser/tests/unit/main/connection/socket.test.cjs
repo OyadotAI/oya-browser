@@ -5,6 +5,7 @@
  */
 const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
+const { OYA_ACTIONS } = require('../../../../main/actions/vocabulary.cjs');
 const { EventEmitter } = require('node:events');
 const { ControlSocket, reconnectDelay, randomId, authMessage } = require('../../../../main/connection/socket.cjs');
 const { mainCtx } = require('../../support/main-ctx.cjs');
@@ -82,6 +83,8 @@ describe('ControlSocket', () => {
       provider: 'oya-cloud',
       enrollment_token: process.env.OYA_ENROLLMENT_TOKEN,
       cdp: true,
+      // So the server checks each command against what this app does, and lists it on the browser.
+      actions: OYA_ACTIONS,
     });
   });
 

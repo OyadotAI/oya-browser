@@ -7,6 +7,7 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { DM_Sans, Archivo_Black } from 'next/font/google';
 import { AuthProvider } from '@/components/auth-provider';
+import { Analytics } from '@/components/analytics';
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION } from '@/lib/site';
 import './globals.css';
 
@@ -116,11 +117,23 @@ const STRUCTURED_DATA = {
   ],
 };
 
+/**
+ * Where product analytics goes, read at request time from the server's own
+ * settings, or null when the operator set none. Read here and not at build
+ * time because one image serves hosted and self-host consoles alike, and a
+ * key baked into the bundle would turn analytics on for everyone.
+ */
+function analyticsSettings() {
+  const { POSTHOG_KEY: key, POSTHOG_HOST: host } = process.env;
+  return key && host ? { key, host: host.replace(/\/+$/, '') } : null;
+}
+
 /** The document shell every page renders in. */
 export default async function RootLayout({ children }: PropsWithChildren) {
   // Set by src/proxy.ts, which also sends the Content-Security-Policy this
   // nonce belongs to. Without it these two inline scripts do not run.
   const nonce = (await headers()).get('x-nonce') ?? undefined;
+  const analytics = analyticsSettings();
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning className={`${dmSans.variable} ${archivo.variable}`}>
       <head>
@@ -137,7 +150,10 @@ export default async function RootLayout({ children }: PropsWithChildren) {
         />
       </head>
       <body className="antialiased">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          {children}
+          {analytics && <Analytics posthogKey={analytics.key} host={analytics.host} />}
+        </AuthProvider>
       </body>
     </html>
   );

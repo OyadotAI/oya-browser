@@ -1,5 +1,6 @@
 /** The project side of membership: inviting members and removing them. */
 import { randomBytes } from 'node:crypto';
+import { notFound } from '../../../platform/errors.ts';
 import { control, hash, fault, projectId } from '../service.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { INVITE_CODE_BYTES, INVITE_TTL_S, MS_PER_SECOND } from './constants.ts';
@@ -27,13 +28,19 @@ export async function removeMember(key, userId) {
   return { ok: true };
 }
 
+/** The owner stays; anyone else must be a member to be removed, so a typo is a 404 and not a quiet ok. */
+async function assertRemovable(tx, project, userId, id) {
+  if ((await tx.get('project', project))?.ownerUser === userId)
+    throw fault('owner_required', 'The project owner cannot be removed');
+  if (!(await tx.get('membership', id))) throw notFound('Member');
+}
+
 /** The removal transaction. */
 async function dropMember(tx, key, userId) {
   const project = projectId(key),
     id = `${project}:${userId}`;
-  if ((await tx.get('project', project))?.ownerUser === userId)
-    throw fault('owner_required', 'The project owner cannot be removed');
-  if (await tx.get('membership', id)) await tx.delete('membership', id);
+  await assertRemovable(tx, project, userId, id);
+  await tx.delete('membership', id);
   for (const c of await tx.list('credential', { project }))
     if (c.memberUser === userId && !c.revokedAt) c.revokedAt = Date.now();
   tx.emit(project, 'member.removed', null, { userId });

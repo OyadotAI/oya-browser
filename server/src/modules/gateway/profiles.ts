@@ -80,14 +80,12 @@ export function isLocked(owner, name) {
   return locks.has(scopeOf(owner, name));
 }
 
-/** A second CDP connection, so the client's own wire is never touched. */
-async function attach(session) {
-  const attached = await openPage(session.upstreamUrl);
-  if (!attached) return null;
-  await attached.conn.send('Network.enable', {}, attached.sessionId).catch(() => {});
-  await attached.conn.send('Runtime.enable', {}, attached.sessionId).catch(() => {});
-  return attached;
-}
+/**
+ * A second CDP connection, so the client's own wire is never touched. No
+ * domain is enabled: reading cookies and evaluating need none, and a page can
+ * notice Runtime.enable, which would point a detector at the persona.
+ */
+const attach = (session) => openPage(session.endpoint);
 
 /** Read the live browser state and persist it under this profile. */
 export async function capture(owner, name, session) {
@@ -167,9 +165,12 @@ async function replay(payload, { conn, sessionId }, session) {
  * call, it is closed when the session ends.
  */
 async function replayStorage(conn, sessionId, storage) {
+  // Best effort: the script hook below works without it on current Chromium.
   await conn.send('Page.enable', {}, sessionId).catch(() => {});
   const source = `if (location.origin === ${JSON.stringify(storage.origin)}) ${restoreStorageJS(storage)};`;
-  await conn.send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId).catch(() => {});
+  await conn
+    .send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId)
+    .catch((e) => console.error('[gateway] profile storage not registered:', e.message));
 }
 
 /** Only this owner's profiles. Names are caller-chosen and must not leak. */

@@ -4,7 +4,7 @@
  */
 import type { Oya } from '@oya-ai/browser';
 import { resolved } from '../config.ts';
-import { ask, askSecret, choose } from '../prompt.ts';
+import { InputError, answered, ask, askSecret, choose } from '../prompt.ts';
 import type { Flags } from '../args.ts';
 import { client } from '../context.ts';
 
@@ -74,9 +74,20 @@ async function askModelDetails(llm: string, updates: Updates): Promise<void> {
   if (model) updates.chat_model = model;
 }
 
+/** What an unconfigured provider needs, as the menu says it: an address for your own Chrome, a key for a vendor. */
+const needsNote = (p: ProviderInfo) =>
+  p.needs.some((f) => f.endsWith('_url')) ? 'needs its ws:// address' : 'needs an API key';
+
+/** The prompt for one field a provider needs: an address shown as typed, a key by the provider's name. */
+function fieldLabel(p: ProviderInfo, field: string): string {
+  if (field.endsWith('_url')) return 'Chrome DevTools address, such as ws://127.0.0.1:9222:';
+  if (field.endsWith('_api_key')) return `${p.label} API key:`;
+  return `${p.label} ${field.replace(/^[a-z]+_/, '').replace(/_/g, ' ')}:`;
+}
+
 /** The provider menu, noting which are configured. */
 function providerOptions(current: CurrentConfig) {
-  const note = (p: ProviderInfo) => (p.needs.length ? (p.configured ? 'configured' : 'needs an API key') : undefined);
+  const note = (p: ProviderInfo) => (p.needs.length ? (p.configured ? 'configured' : needsNote(p)) : undefined);
   return current.providers.map((p) => ({ id: p.id, label: p.label, note: note(p) }));
 }
 
@@ -85,11 +96,16 @@ async function askProvider(current: CurrentConfig, updates: Updates): Promise<st
   console.log('\n── 2. Where your browsers run ──');
   const provider = await choose('Browser provider:', providerOptions(current));
   updates.browser_provider = provider;
-  for (const field of current.providers.find((p) => p.id === provider)?.needs || []) {
-    const value = await askSecret(`${field.replace(/_/g, ' ')}:`);
-    if (value) updates[field] = value;
-  }
+  const info = current.providers.find((p) => p.id === provider);
+  for (const field of info?.needs || []) await askField(info!, field, updates);
   return provider;
+}
+
+/** Asks for one field; an address is shown as typed, a key is not. Nothing typed keeps what is there. */
+async function askField(info: ProviderInfo, field: string, updates: Updates): Promise<void> {
+  const label = fieldLabel(info, field);
+  const value = field.endsWith('_url') ? await ask(label) : await askSecret(label);
+  if (value) updates[field] = value;
 }
 
 /** The CAPTCHA menu. */
@@ -117,6 +133,17 @@ function signInHint(provider: string): void {
   console.log(`   Download the desktop browser: ${resolved().baseUrl}/downloads`);
 }
 
+/** What is said when the wizard ran with no terminal and no input: the defaults it walked past were never chosen. */
+const NO_ANSWERS =
+  'oya init had no input to read, so its defaults were never chosen. Nothing was saved. Run it in a terminal, or pipe the answers in.';
+
+/** Saves the answers against the key and marks it onboarded, unless nobody answered: closed input must not overwrite a person's settings. */
+async function saveAnswers(oya: Oya, updates: Updates): Promise<void> {
+  if (!answered()) throw new InputError(NO_ANSWERS);
+  updates.onboarded = 'true';
+  await oya.config.set(updates);
+}
+
 /** Asks every step, then saves. */
 async function interview(oya: Oya): Promise<string> {
   const current = await oya.config.get<CurrentConfig>();
@@ -124,8 +151,7 @@ async function interview(oya: Oya): Promise<string> {
   await askModel(current, updates);
   const provider = await askProvider(current, updates);
   await askCaptcha(updates);
-  updates.onboarded = 'true';
-  await oya.config.set(updates);
+  await saveAnswers(oya, updates);
   return provider;
 }
 

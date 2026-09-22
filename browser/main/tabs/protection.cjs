@@ -5,18 +5,24 @@
  */
 const { buildInjectionScript } = require('../../anonymity/inject');
 const { createPersonaApplier } = require('../../anonymity/apply');
-const { CDP_VERSION, cdpAttach, cdp } = require('../cdp.cjs');
+const { CDP_VERSION, cdpAttach } = require('../cdp.cjs');
 const { attachDialogWatcher } = require('../dialogs.cjs');
 const { personaIdentity } = require('../identity.cjs');
 const { normalizeProxy } = require('../../anonymity/proxy');
 const governance = require('../../governance');
 
 /**
- * A silent failure here means a tab that loads with no fingerprint and no
- * stealth, and at fleet scale you cannot tell which browsers are naked.
+ * A silent failure here would hide which tabs could not be protected. It is
+ * said per attempt, not as the tab's verdict: the retry may still protect it,
+ * and a tab that stays unprotected is never loaded (tab-events.cjs says so).
  */
 const tabProtectionFailed = (what, err) => {
-  console.error('[anonymity] ' + what + ' failed, this tab is NOT protected:', err?.message || err);
+  console.error('[anonymity] ' + what + ' failed, this attempt did not protect the tab:', err?.message || err);
+};
+
+/** A step that failed on a tab whose protection held: worth a line, not an alarm. */
+const tabStepFailed = (what, err) => {
+  console.error('[anonymity] ' + what + ' failed on this tab:', err?.message || err);
 };
 
 /** The same failure, for a popup. */
@@ -64,12 +70,10 @@ const onDebuggerEvent = (dbg) => (method, fn) =>
   });
 
 /** No persona yet: Chrome's identity in place of Electron's, and the stealth injection. */
-async function injectStealthOnly(dbg, userAgent, fail) {
-  await dbg.sendCommand('Emulation.setUserAgentOverride', userAgent).catch((e) => fail('user agent override', e));
+async function injectStealthOnly(port, userAgent, fail) {
+  await port.send('Emulation.setUserAgentOverride', userAgent).catch((e) => fail('user agent override', e));
   const source = buildInjectionScript(null, DESKTOP_INJECTION);
-  return dbg
-    .sendCommand('Page.addScriptToEvaluateOnNewDocument', { source })
-    .catch((e) => fail('stealth injection', e));
+  return port.send('Page.addScriptToEvaluateOnNewDocument', { source }).catch((e) => fail('stealth injection', e));
 }
 
 /** The persona applier's view of a debugger, sessions included. */
@@ -78,6 +82,46 @@ function personaPort(dbg) {
     send: (method, params, sessionId) => dbg.sendCommand(method, params, sessionId),
     on: (event, fn) => dbg.on('message', (_e, method, params, sessionId) => method === event && fn(params, sessionId)),
   };
+}
+
+/** A port for `x`: a debugger is wrapped, anything that already speaks send/on is one. */
+const portOf = (x) => (typeof x.sendCommand === 'function' ? personaPort(x) : x);
+
+/** Why a replaced attempt's commands never reach the debugger. */
+const REPLACED = 'this protection attempt was replaced by a retry';
+
+/**
+ * A debugger port for one setup attempt. A retry detaches and attaches again,
+ * and the old attempt, still running, would carry on sending on the new
+ * session: each of its steps catches its error and sends the next, the
+ * injection included. Fenced, it sends nothing and hears nothing once replaced,
+ * so a page is never injected twice.
+ */
+function fencedPort(dbg, attempt) {
+  const port = personaPort(dbg);
+  return {
+    send: (...args) => (attempt.live ? port.send(...args) : Promise.reject(new Error(REPLACED))),
+    on: (event, fn) => port.on(event, (...args) => attempt.live && fn(...args)),
+  };
+}
+
+/** A setup attempt's critical failure: it marks the attempt failed and says so, unless a retry already replaced it. */
+const criticalIn = (attempt) => (what, err) => {
+  if (!attempt.live) return;
+  attempt.failed = true;
+  tabProtectionFailed(what, err);
+};
+
+/** A view with no debugger to attach: it is not protected, and says so. */
+function notAttached() {
+  tabProtectionFailed('debugger attach', new Error('view destroyed'));
+  return false;
+}
+
+/** The analyzer's world could not be rebuilt; the next command loads it. Quiet for a tab that has gone. */
+function worldNotRebuilt(view, err) {
+  if (view.webContents.isDestroyed?.()) return;
+  console.error('[anonymity] isolated world not rebuilt, the next command loads it:', err?.message || err);
 }
 
 /** Applies the persona to tabs and popups. */
@@ -96,47 +140,77 @@ class Protection {
    * reaches navigator.userAgentData, which the session's string cannot.
    */
   applyPersona(dbg, fail) {
+    const port = portOf(dbg);
     const active = this.ctx.persona.active;
     const userAgent = personaIdentity(active).override;
-    if (!active) return injectStealthOnly(dbg, userAgent, fail);
+    if (!active) return injectStealthOnly(port, userAgent, fail);
     const profile = onThisMachine(atThisExit(active), this.ctx.config?.values);
-    const applier = { ...personaPort(dbg), ...DESKTOP_APPLIER, profile, userAgent, onError: fail };
+    const applier = { ...port, ...DESKTOP_APPLIER, profile, userAgent, onError: fail };
     return createPersonaApplier(applier).page();
   }
 
-  /** Protects a tab's page, once per view; failures are logged loudly, never thrown. */
+  /**
+   * Protects a tab's page, once per view, and answers whether it is protected.
+   * Failures are logged loudly, never thrown; a view already being set up
+   * answers what its attempt answers.
+   */
   async setupTabCDP(view) {
-    try {
-      if (!cdpAttach(view)) return tabProtectionFailed('debugger attach', new Error('view destroyed'));
-      // Main world: only what the page itself must see, as one script in one
-      // scope so the toString mask covers the fingerprint patches too. The
-      // analyzer is loaded separately into an isolated world by ensureWorld().
-      if (view.oyaConfigured) return;
-      view.oyaConfigured = true;
-      await this.protectTab(view, tabProtectionFailed);
-    } catch (e) {
-      tabProtectionFailed('CDP setup', e);
-    }
+    if (!cdpAttach(view)) return notAttached();
+    // Main world: only what the page itself must see, as one script in one
+    // scope so the toString mask covers the fingerprint patches too. The
+    // analyzer is loaded separately into an isolated world by ensureWorld().
+    // A second caller while an attempt runs (reprotecting every tab on a
+    // reconnect) waits for that attempt's answer: an early true would let the
+    // first page load before the injection landed.
+    if (view.oyaConfigured) return view.oyaSetup;
+    view.oyaConfigured = true;
+    const attempt = (view.oyaAttempt = { live: true, failed: false });
+    view.oyaSetup = this.protectTab(view, attempt)
+      .catch((e) => criticalIn(attempt)('CDP setup', e))
+      .then(() => attempt.live && !attempt.failed);
+    return view.oyaSetup;
   }
 
-  /** The persona, dialogs, login state and isolated world on one tab's debugger. */
-  async protectTab(view, fail) {
+  /**
+   * Lets go of a setup attempt so it can be tried again: the old attempt is
+   * fenced off, the recording channel it may have armed is forgotten, and the
+   * debugger is detached, which drops every script and override the session
+   * held. Listeners stay: the dialog watcher and the recorder's are needed on
+   * the next session, and removing them froze a retried tab on its first alert().
+   */
+  resetTabCDP(view) {
+    if (view.oyaAttempt) view.oyaAttempt.live = false;
+    view.oyaConfigured = false;
+    this.ctx.recorder?.channels?.forget(view);
+    try {
+      view.webContents.debugger.detach();
+    } catch {}
+  }
+
+  /** The persona, dialogs, login state and isolated world on one tab's debugger, all through one attempt's port. */
+  async protectTab(view, attempt) {
     const dbg = view.webContents.debugger;
-    await this.applyPersona(dbg, fail);
-    dbg.sendCommand('Page.enable').catch((e) => fail('Page.enable', e));
+    const port = fencedPort(dbg, attempt);
+    await this.applyPersona(port, criticalIn(attempt));
+    port.send('Page.enable').catch((e) => tabStepFailed('Page.enable', e));
     attachDialogWatcher(dbg);
     const loginState = this.ctx.persona.loginState;
-    if (loginState) await loginState.attach((method, params = {}) => cdp(view, method, params), onDebuggerEvent(dbg));
-    this.rebuildWorldOnLoad(view, fail);
+    if (loginState) await loginState.attach((method, params = {}) => port.send(method, params), port.on);
+    this.rebuildWorldOnLoad(view);
   }
 
   /**
    * A fresh document means a fresh isolated world; rebuild it eagerly so the
-   * first command after a navigation does not pay for it.
+   * first command after a navigation does not pay for it. Wired once per view,
+   * whatever number of attempts it took. The world is the analyzer's, not the
+   * tab's protection, so a failure here says only that, and nothing at all for
+   * a tab that was closed mid-load.
    */
-  rebuildWorldOnLoad(view, fail) {
+  rebuildWorldOnLoad(view) {
+    if (view.oyaWorldWired) return;
+    view.oyaWorldWired = true;
     view.webContents.on('did-finish-load', () => {
-      this.ctx.world.ensureWorld(view, { force: true }).catch((e) => fail('isolated world', e));
+      this.ctx.world.ensureWorld(view, { force: true }).catch((e) => worldNotRebuilt(view, e));
     });
   }
 

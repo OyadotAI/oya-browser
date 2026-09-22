@@ -3,19 +3,20 @@
  * plane, the browser to act on, and output as JSON or for people.
  */
 import { Oya, type Browser } from '@oya-ai/browser';
-import { resolved } from './config.ts';
+import { origin as originOf, type Origin } from './config.ts';
 import { flagStr, type Flags } from './args.ts';
+import { CliError } from './errors.ts';
 import { JSON_INDENT } from './constants.ts';
 
-/** A client for `--key`/`--url`, else the environment, else the saved config. Exits without a key. */
+/** The key and address this call uses, from `--key`/`--url`, else the environment, else the saved config. */
+export const origin = (flags: Flags): Origin =>
+  originOf({ apiKey: flagStr(flags, 'key'), baseUrl: flagStr(flags, 'url') });
+
+/** A client for this call's key and address. Throws without a key: nothing can be sent. */
 export function client(flags: Flags): Oya {
-  const saved = resolved();
-  const apiKey = flagStr(flags, 'key') || saved.apiKey;
-  const baseUrl = flagStr(flags, 'url') || saved.baseUrl;
-  if (!apiKey) {
-    console.error('No API key. Run `oya login`, or pass --key / set OYA_API_KEY.');
-    process.exit(1);
-  }
+  const { apiKey, baseUrl } = origin(flags);
+  if (!apiKey)
+    throw new CliError('No API key.', 'no_api_key', { hint: 'Run oya login, or pass --key, or set OYA_API_KEY.' });
   return new Oya({ apiKey, baseUrl });
 }
 
@@ -33,9 +34,6 @@ export async function targetBrowser(oya: Oya, flags: Flags): Promise<Browser> {
   const id = flagStr(flags, 'id');
   if (id) return oya.browser.get(id);
   const all = await oya.browser.list();
-  if (!all.length) {
-    console.error('No browsers running. Start one with `oya start`.');
-    process.exit(1);
-  }
+  if (!all.length) throw new CliError('No browsers running.', 'no_browser', { hint: 'Start one with oya start.' });
   return oya.browser.get(all[all.length - 1].id);
 }

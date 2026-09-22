@@ -6,9 +6,18 @@ import { control, hash } from '../../control/service.ts';
 import { registry } from '../registry.ts';
 import { metrics } from '../../../platform/metrics.ts';
 import * as usage from '../../../platform/usage.ts';
+import { track } from '../../telemetry/index.ts';
+import { isInternal } from '../../../drivers/vocabulary.ts';
 import * as keyConfig from '../../config/service.ts';
 import { isProvisioned } from '../../../drivers/sandbox.ts';
-import { CLAIMABLE_PROVIDERS, CLOUD_PROVIDER, DEFAULT_PROVIDER, MAX_BROWSERS_PER_KEY } from './constants.ts';
+import {
+  ACTION_NAME,
+  CLAIMABLE_PROVIDERS,
+  CLOUD_PROVIDER,
+  DEFAULT_PROVIDER,
+  MAX_ANNOUNCED_ACTIONS,
+  MAX_BROWSERS_PER_KEY,
+} from './constants.ts';
 
 /** The persona fields registration uses. */
 export interface PersonaSlot {
@@ -61,18 +70,48 @@ export async function adopt(reg: Registration, provider: string, enrollmentToken
   });
 }
 
+/** The platforms the desktop app reports; anything else is text a client made up, and reads as unknown. */
+const PLATFORMS = new Set(['MacIntel', 'Win32', 'Linux x86_64', 'Linux aarch64']);
+
+/** A desktop's platform as the event names it: one of the known values, else unknown. */
+const platformOf = (reported: unknown) => (PLATFORMS.has(String(reported)) ? String(reported) : 'unknown');
+
+/** Remembers that this key has a desktop, and counts the first time as the one worth telling the owner about. */
+async function noteDesktop(reg: Registration, msg) {
+  const first = !keyConfig.get(reg.apiKey).desktop_seen_at;
+  await keyConfig.set(reg.apiKey, { desktop_seen_at: new Date().toISOString() });
+  track.desktopConnected(reg.apiKey, { platform: platformOf(msg.host_platform), first });
+}
+
 /** Lists the browser and starts counting it. */
 export async function list(reg: Registration, provider: string, msg) {
   addToRegistry(reg, provider, msg);
-  if (provider === DEFAULT_PROVIDER) await keyConfig.set(reg.apiKey, { desktop_seen_at: new Date().toISOString() });
+  if (provider === DEFAULT_PROVIDER) await noteDesktop(reg, msg);
   metrics.wsConnections.inc({ outcome: 'ok' });
   metrics.browsersConnected.set({}, registry.browsers.size);
   usage.browserConnected(reg.apiKey, reg.browserId);
 }
 
+/**
+ * The actions a browser said it does, or null to use the Oya list: an older
+ * app sends none, and a list that is not an array of plain action names, or
+ * is too long, is a client misbehaving. Its names are only ever compared,
+ * never used as keys, so "__proto__" is as harmless here as any other name.
+ */
+function announcedActions(announced: unknown): string[] | null {
+  if (announced === undefined) return null;
+  const usable = Array.isArray(announced) && announced.length <= MAX_ANNOUNCED_ACTIONS;
+  // Internal names are dropped: only the server sends them, and the detail must not advertise what callers are refused.
+  if (usable && announced.every((a) => typeof a === 'string' && ACTION_NAME.test(a)))
+    return announced.filter((a) => !isInternal(a)).sort();
+  console.warn('[connection] a browser announced an unusable action list; using the Oya list');
+  return null;
+}
+
 /** The registry entry: what the dashboard and the command path see of the browser. */
 function addToRegistry({ apiKey, browserId, persona, ws, authToken }: Registration, provider: string, msg) {
   const name = msg.browser_name || 'Browser';
-  registry.add(browserId, { ws, apiKey, name, clientType: 'oya', persona, provider, cdp: msg.cdp === true });
+  const actions = announcedActions(msg.actions);
+  registry.add(browserId, { ws, apiKey, name, clientType: 'oya', persona, provider, cdp: msg.cdp === true, actions });
   registry.get(browserId).authToken = authToken;
 }

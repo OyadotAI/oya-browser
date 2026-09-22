@@ -10,6 +10,7 @@ import { defaultPersonaSeed } from '../../../../src/modules/personas/fingerprint
 import { generateProfile } from '../../../../src/modules/personas/profile.ts';
 import {
   DEFAULT_MAX_CONCURRENT,
+  PERSONA_CAP_MAX,
   DEFAULT_PERSONA_MAX_CONCURRENT,
   MAX_NAME_CHARS,
 } from '../../../../src/modules/personas/constants.ts';
@@ -73,11 +74,40 @@ describe('PersonaService.create', () => {
     assert.equal(service.create('key-a', { name: 'n'.repeat(500) }).name.length, MAX_NAME_CHARS);
   });
 
-  it('keeps a positive cap and treats anything else as the default', () => {
+  it('keeps a whole-number cap, and refuses one that is not, naming what the cap needs', () => {
     const { service } = personaService();
     assert.equal(service.create('k', { maxConcurrent: 4 }).maxConcurrent, 4);
-    assert.equal(service.create('k', { maxConcurrent: 0 }).maxConcurrent, DEFAULT_MAX_CONCURRENT);
-    assert.equal(service.create('k', { maxConcurrent: -3 }).maxConcurrent, DEFAULT_MAX_CONCURRENT);
+    for (const bad of [0, -3, 1.5, PERSONA_CAP_MAX + 1, 'abc']) {
+      assert.throws(
+        () => service.create('k', { maxConcurrent: bad as any }),
+        (err: any) =>
+          err.status === 400 && err.field === 'maxConcurrent' && /must be a whole number from 1 to/.test(err.message),
+        String(bad),
+      );
+    }
+  });
+
+  it('leaves the cap at its default when none is given, and lifts it when null is', () => {
+    const { service } = personaService();
+    assert.equal(service.create('k', {}).maxConcurrent, DEFAULT_MAX_CONCURRENT);
+    const p = service.create('k', { maxConcurrent: 2 });
+    assert.equal(service.update('k', p.id, { maxConcurrent: null }).maxConcurrent, Infinity);
+    assert.equal(service.update('k', p.id, {}).maxConcurrent, Infinity);
+  });
+
+  it('takes a blank cap on create as the default, the way the dashboard sends it', () => {
+    const { service } = personaService();
+    assert.equal(service.create('k', { maxConcurrent: null as any }).maxConcurrent, DEFAULT_MAX_CONCURRENT);
+  });
+
+  it('refuses a name that is not a string on create, update and clone, naming the field and the value', () => {
+    const { service } = personaService();
+    const p = service.create('k', { name: 'ok' });
+    const rule = (err: any) =>
+      err.status === 400 && err.field === 'name' && err.message === 'name must be a string, not 12345';
+    assert.throws(() => service.create('k', { name: 12345 as any }), rule);
+    assert.throws(() => service.update('k', p.id, { name: 12345 as any }), rule);
+    assert.throws(() => service.clone('k', p.id, { name: 12345 as any }), rule);
   });
 
   it('keeps only the device choices of its prefs, marked as checked under the current rule', () => {
@@ -156,24 +186,30 @@ describe('PersonaService.update', () => {
     assert.equal(p.name, p.id);
   });
 
-  it('lifts the cap for null or Infinity, and falls back to the default for anything not positive', () => {
+  it('lifts the cap for null or Infinity, and refuses a cap that is not a whole number without changing it', () => {
     const { service } = personaService();
     const p = service.create('k');
     service.update('k', p.id, { maxConcurrent: null });
     assert.equal(p.maxConcurrent, Infinity);
     service.update('k', p.id, { maxConcurrent: Infinity });
     assert.equal(p.maxConcurrent, Infinity);
-    service.update('k', p.id, { maxConcurrent: 0 });
-    assert.equal(p.maxConcurrent, DEFAULT_MAX_CONCURRENT);
+    assert.throws(
+      () => service.update('k', p.id, { maxConcurrent: 0 }),
+      (err: any) => err.status === 400,
+    );
+    assert.equal(p.maxConcurrent, Infinity, 'a refused cap leaves the old one');
   });
 
-  it("gives the default persona the deployment's cap for anything not positive", () => {
+  it("gives the default persona the deployment's cap when null lifts it, and refuses a bad number", () => {
     const { service } = personaService();
     const d = service.defaultFor('k');
     service.update('k', d.id, { maxConcurrent: 7 });
     assert.equal(d.maxConcurrent, 7);
-    service.update('k', d.id, { maxConcurrent: 0 });
-    assert.equal(d.maxConcurrent, DEFAULT_PERSONA_MAX_CONCURRENT);
+    assert.throws(
+      () => service.update('k', d.id, { maxConcurrent: 0 }),
+      (err: any) => err.status === 400,
+    );
+    assert.equal(d.maxConcurrent, 7, 'a refused cap leaves the old one');
     service.update('k', d.id, { maxConcurrent: null });
     assert.equal(d.maxConcurrent, Infinity);
   });

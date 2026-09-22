@@ -11,6 +11,7 @@ import { sessions } from './session-store.ts';
 import { CommandGate } from './session-commands.ts';
 import { teardown } from './session-teardown.ts';
 import { GRACE_MS, MAX_PENDING_TO_CLIENT, MS_PER_SECOND } from './constants.ts';
+import type { CdpEndpoint } from '../browsers/driver/index.ts';
 
 /** A gateway session: one browser, and the client (if any) driving it. */
 export class Session {
@@ -50,8 +51,8 @@ export class Session {
   startedAt = Date.now();
   /** WebSocket to the browser's CDP endpoint, or the relay to an Oya client. */
   declare upstream: any;
-  /** The browser's CDP URL, or `relay:<browserId>`; profiles and recordings open their own connection to it. */
-  declare upstreamUrl: any;
+  /** Where the browser speaks raw CDP; profiles and recordings open their own connection through it. */
+  declare endpoint: CdpEndpoint;
 
   /** A session over an already-open upstream; no client yet. */
   constructor({ id, apiKey, provider, release, upstream, profile }) {
