@@ -3,6 +3,7 @@
  * launcher gives once its browser exists.
  */
 import { audit } from '../../../platform/audit.ts';
+import { track, clientOf } from '../../telemetry/index.ts';
 import { Status } from '../../../platform/http-status.ts';
 
 /** A start in progress. */
@@ -24,6 +25,11 @@ export function started({ req, res, key, persona }: Start, body) {
   // `reused` keeps the trail honest: nothing was started, one was borrowed.
   const meta = { provider: body.provider, persona: persona.id, ...(body.reused ? { reused: true } : {}) };
   audit({ action: 'browser.start', actorKey: key, targetType: 'browser', targetId: body.id, meta, req });
+  track.browserStarted(key, {
+    provider: String(body.provider),
+    persona: !persona.isDefault,
+    via: clientOf(req.headers),
+  });
   res.status(Status.CREATED).json(body);
 }
 

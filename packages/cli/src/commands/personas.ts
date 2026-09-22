@@ -3,7 +3,8 @@
  * Subcommands dispatch through a command map; anything else lists.
  */
 import type { Oya, PersonaInfo, PersonaPrefs } from '@oya-ai/browser';
-import { flagStr, type Flags } from '../args.ts';
+import { flagCount, flagStr, type Flags } from '../args.ts';
+import { CliError, usage } from '../errors.ts';
 import { client, out } from '../context.ts';
 import { PERSONA_NAME_WIDTH } from '../constants.ts';
 
@@ -38,7 +39,7 @@ function createOptions(flags: Flags, rest: string[], prefs: PersonaPrefs) {
     name: flagStr(flags, 'name') || rest[0],
     prefs,
     proxy: flagStr(flags, 'geo') ? { geo: flagStr(flags, 'geo') } : undefined,
-    maxConcurrent: flagStr(flags, 'max') ? Number(flagStr(flags, 'max')) : undefined,
+    maxConcurrent: flagCount(flags, 'max') ?? undefined,
   };
 }
 
@@ -59,24 +60,24 @@ async function preview(oya: Oya, prefs: PersonaPrefs, flags: Flags): Promise<voi
 
 /** The changes `edit` makes: only the flags given. `--max none` removes the cap. */
 function editChanges(flags: Flags) {
-  const max = flagStr(flags, 'max');
+  const max = flagCount(flags, 'max', { allowNone: true });
   return {
     ...(flagStr(flags, 'name') ? { name: flagStr(flags, 'name') } : {}),
-    ...(max ? { maxConcurrent: max === 'none' ? null : Number(max) } : {}),
+    ...(max !== undefined ? { maxConcurrent: max } : {}),
     ...(flagStr(flags, 'geo') ? { proxy: { geo: flagStr(flags, 'geo') } } : {}),
   };
 }
 
 /** `oya personas edit <id>`. */
 const edit: Subcommand = async (oya, rest, flags) => {
-  if (!rest[0]) throw new Error('Usage: oya personas edit <id> --name <n> --max <n> --geo <cc>');
+  if (!rest[0]) throw usage('oya personas edit needs a persona id: oya personas edit <id> --name <n>.');
   const updated = await oya.personas.update(rest[0], editChanges(flags));
   out(flags, updated, () => console.log(`✅ ${updated.id}  ${updated.name}  cap ${updated.maxConcurrent ?? '∞'}`));
 };
 
 /** `oya personas clone <id>`: a new identity on the same kind of device. */
 const clone: Subcommand = async (oya, rest, flags) => {
-  if (!rest[0]) throw new Error('Usage: oya personas clone <id> [--name <n>]');
+  if (!rest[0]) throw usage('oya personas clone needs a persona id: oya personas clone <id>.');
   const c = await oya.personas.clone(rest[0], { name: flagStr(flags, 'name') });
   const fp = c.fingerprint;
   out(flags, c, () =>
@@ -84,12 +85,29 @@ const clone: Subcommand = async (oya, rest, flags) => {
   );
 };
 
-/** `oya personas rm <id>`. */
-const remove: Subcommand = async (oya, rest) => {
-  if (!rest[0]) throw new Error('Usage: oya personas rm <id>');
-  await oya.personas.remove(rest[0]);
-  console.log(`✅ removed ${rest[0]}`);
+/** `oya personas rm <id>...`: tries every id given, one line each; any that failed makes it exit 1. */
+const remove: Subcommand = async (oya, rest, flags) => {
+  if (!rest.length) throw usage('oya personas rm needs a persona id: oya personas rm <id>...');
+  const removed: string[] = [];
+  for (const id of rest) await removeOne(oya, id, flags, removed);
+  out(flags, { ok: removed.length === rest.length, id: removed }, () => {});
+  if (removed.length < rest.length) throw removalsFailed(removed.length, rest.length, !!flags.json);
 };
+
+/** Removes one persona, saying so; a refusal is printed and the others still go ahead. */
+async function removeOne(oya: Oya, id: string, flags: Flags, removed: string[]): Promise<void> {
+  try {
+    await oya.personas.remove(id);
+    removed.push(id);
+    if (!flags.json) console.log(`✅ removed ${id}`);
+  } catch (err) {
+    if (!flags.json) console.error(`✗ ${id} ${(err as Error).message}`);
+  }
+}
+
+/** Some personas were not removed; their lines are already out, so plain mode prints nothing more. */
+const removalsFailed = (removed: number, of: number, json: boolean) =>
+  new CliError(`removed ${removed} of ${of}`, 'partial_failure', { shown: !json });
 
 /** One persona's line in the listing. */
 function personaLine(p: PersonaInfo): string {
@@ -114,8 +132,8 @@ const SUBCOMMANDS: Record<string, Subcommand> = { new: create, create, edit, clo
 
 /** `oya personas [new|create|edit|clone|rm|delete]`. */
 export async function cmdPersonas(args: string[], flags: Flags): Promise<void> {
-  const oya = client(flags);
   const [sub, ...rest] = args;
-  const run = sub !== undefined && Object.hasOwn(SUBCOMMANDS, sub) ? SUBCOMMANDS[sub] : list;
-  await run(oya, rest, flags);
+  if (sub !== undefined && !Object.hasOwn(SUBCOMMANDS, sub))
+    throw usage(`Unknown personas subcommand "${sub}". Use new, edit, clone or rm.`);
+  await (sub === undefined ? list : SUBCOMMANDS[sub])(client(flags), rest, flags);
 }

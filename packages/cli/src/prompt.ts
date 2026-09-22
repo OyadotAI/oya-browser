@@ -11,6 +11,6 @@
  */
 export { style, icon } from './prompt/style.ts';
 export { banner, steps, step, note, success, warn, spinner } from './prompt/frame.ts';
-export { closePrompts } from './prompt/lines.ts';
+export { closePrompts, answered } from './prompt/lines.ts';
 export { InputError, ask, askSecret, confirm, type AskOptions } from './prompt/ask.ts';
 export { choose, type Option } from './prompt/menu.ts';

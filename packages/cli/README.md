@@ -66,19 +66,28 @@ oya rm --all
 
 ---
 
+## Scripting: `--json` and exit codes
+
+- `--json` puts exactly one JSON document on stdout. Prompts and progress go to stderr.
+- A failure prints one line on stderr (`✗ message`, then a hint), or with `--json` one object: `{"error", "code", "status"}`.
+- Exit codes: `0` done, `1` the request failed or got no answer, `2` the command could not be run as typed and nothing was sent.
+- An unknown flag is an error, not ignored. `--flag=value` works as well as `--flag value`.
+- `--debug` (or `OYA_DEBUG=1`) adds the status, the response body and the stack to a failure.
+- `oya install`, `oya init` and `oya stealth-test` are for people and refuse `--json`.
+
 ## 📖 Command Reference
 
 ### Fleet Execution & Control
 
-| Command | Flags | Description |
-|:---|:---|:---|
-| `oya start` | `[--persona <id\|auto>] [--provider <p>] [--name <n>] [--governed] [--budget-usd <n>]` | Launch browser instance and print its ID and CDP endpoint |
-| `oya goto <url>` | `[--id <id>]` | Navigate to URL (defaults to newest browser) |
-| `oya ask "<prompt>"` | `[--id <id>]` | Drive page using configured AI model |
-| `oya open` | `[--id <id>]` | Launch interactive SSE live view in system browser |
-| `oya ls` | `[--json]` | List active fleet browsers with health status |
-| `oya status` | `[--id <id>] [--json]` | Detailed metrics, error counts, and recent activity log |
-| `oya rm <id>...` | `[--all]` | Terminate target browser or entire fleet |
+| Command              | Flags                                                                                  | Description                                               |
+| :------------------- | :------------------------------------------------------------------------------------- | :-------------------------------------------------------- |
+| `oya start`          | `[--persona <id\|auto>] [--provider <p>] [--name <n>] [--governed] [--budget-usd <n>]` | Launch browser instance and print its ID and CDP endpoint |
+| `oya goto <url>`     | `[--id <id>]`                                                                          | Navigate to URL (defaults to newest browser)              |
+| `oya ask "<prompt>"` | `[--id <id>]`                                                                          | Drive page using configured AI model                      |
+| `oya open`           | `[--id <id>]`                                                                          | Launch interactive SSE live view in system browser        |
+| `oya ls`             | `[--json]`                                                                             | List active fleet browsers with health status             |
+| `oya status`         | `[--id <id>] [--json]`                                                                 | Detailed metrics, error counts, and recent activity log   |
+| `oya rm <id>...`     | `[--all]`                                                                              | Terminate target browser or entire fleet                  |
 
 ### Persona Management (Anti-Ban Identities)
 
@@ -189,12 +198,12 @@ export OYA_BASE_URL="https://oyabrowser.com"
 oya start --provider browserbase --persona auto --json
 ```
 
-| Global Flag | Description |
-|:---|:---|
-| `--key <key>` | Override API key for command |
-| `--url <url>` | Override control plane URL |
-| `--id <id>` | Target specific browser instance ID |
-| `--json` | Output pure JSON for programmatic parsing |
+| Global Flag   | Description                               |
+| :------------ | :---------------------------------------- |
+| `--key <key>` | Override API key for command              |
+| `--url <url>` | Override control plane URL                |
+| `--id <id>`   | Target specific browser instance ID       |
+| `--json`      | Output pure JSON for programmatic parsing |
 
 ---
 

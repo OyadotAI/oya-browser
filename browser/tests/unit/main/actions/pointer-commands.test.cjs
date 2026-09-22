@@ -111,6 +111,22 @@ describe('pointer commands', () => {
     assert.deepEqual(results(ctx), [['c1', true, { d: 1 }, undefined]]);
   });
 
+  it('a smooth scroll whose amount is not a number scrolls the default and never puts the text in a script', async () => {
+    const view = pageView({ evalValue: { w: 1000, h: 700 } });
+    const ctx = await run(view, 'scroll', { amount: '1}}),(globalThis.pwned=1),({a:{b:1' }, { world: { ok: true } });
+    assert.equal(mouseEvents(view).length, Math.round(c.SCROLL_AMOUNT / c.SCROLL_STEP_PX));
+    const scripts = ctx.calls.filter((call) => call[0] === 'world').map((call) => call[1]);
+    assert.ok(scripts.length > 0 && scripts.every((js) => !js.includes('pwned')));
+  });
+
+  it('a smooth scroll is capped, so a huge or infinite amount cannot keep the browser scrolling', async () => {
+    for (const amount of [Infinity, 1e12]) {
+      const view = pageView({ evalValue: { w: 1000, h: 700 } });
+      await run(view, 'scroll', { amount }, { world: { ok: true } });
+      assert.equal(mouseEvents(view).length, Math.round(c.MAX_SCROLL_AMOUNT / c.SCROLL_STEP_PX));
+    }
+  });
+
   it('a short smooth scroll still takes the minimum steps, with fallback viewport', async () => {
     const view = pageView({ evalValue: null });
     await run(view, 'scroll', { amount: 10, direction: 'up' }, { world: null });

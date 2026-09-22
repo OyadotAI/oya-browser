@@ -50,13 +50,33 @@ console.log('first page:', got);
 // The first document of a tab is the one anti-bot vendors judge.
 assert.equal(got.cores, profile.navigator.hardwareConcurrency, 'cores from persona');
 assert.deepEqual(got.languages, profile.navigator.languages, 'languages from persona');
-assert.equal(got.tz, profile.timezone, 'timezone from persona');
+// On a person's own computer with no proxy the persona keeps the machine's timezone (the
+// owner's decision: a spoofed zone over a home IP is itself a signal); the Docker image uses the persona's.
+const machineTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+assert.ok([profile.timezone, machineTz].includes(got.tz), `timezone from persona or machine (got ${got.tz})`);
 assert.ok(got.viewport[0] > 0 && got.viewport[1] > 0, 'viewport laid out');
 assert.ok(!/Electron|oya-browser|HeadlessChrome/.test(got.ua), 'clean UA');
 assert.equal(got.webdriver, false, 'no webdriver flag');
+
+// A CDP client opens web addresses only, as the address bar does: this is the person's machine.
+await assert.rejects(page.goto('file:///etc/hosts'), /Only http and https addresses/, 'file: navigation refused');
+const refusedNew = await fetch(`${base}/json/new?file:///etc/hosts`, { method: 'PUT' });
+assert.equal(refusedNew.status, 400, '/json/new refuses a file: url');
+const raw = await context.newCDPSession(page);
+await assert.rejects(
+  raw.send('Page.navigate', { url: 'file:///etc/hosts' }),
+  /Only http and https addresses/,
+  'raw Page.navigate to file: refused',
+);
+await assert.rejects(
+  raw.send('Target.exposeDevToolsProtocol', { targetId: 'x', bindingName: 'cdp' }),
+  /around the front door/,
+  'a page binding around the door refused',
+);
+assert.ok(!/etc\/hosts/.test(page.url()), 'the page never left the web');
 
 const second = await context.newPage();
 await second.close();
 assert.ok(!context.pages().includes(second), 'closeTarget works');
 await browser.close().catch(() => {});
-console.log('ok, front door hides the UI, opens protected tabs, closes them');
+console.log('ok, front door hides the UI, opens protected tabs, closes them, refuses local files');

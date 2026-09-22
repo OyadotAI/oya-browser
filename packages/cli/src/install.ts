@@ -12,7 +12,8 @@
  * This file is the facade and runs the stages in order; each stage is in install/.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
+import { readJsonFile } from './args.ts';
 import { join } from 'node:path';
 import { banner, note, steps, success, warn } from './prompt.ts';
 import { locateRepo } from './install/repo.ts';
@@ -52,9 +53,9 @@ interface Gathered extends Interview {
 }
 
 /** Finds the checkout, loads any --config plan, and asks the rest. */
-async function gather(configPath: string | null): Promise<Gathered> {
-  const root = await locateRepo();
-  const preset: Partial<Answers> = configPath ? JSON.parse(readFileSync(configPath, 'utf8')) : {};
+async function gather(configPath: string | null, dryRun: boolean): Promise<Gathered> {
+  const root = await locateRepo(dryRun);
+  const preset = (configPath ? readJsonFile(configPath) : {}) as Partial<Answers>;
   banner('Oya Browser, self-host install', root);
   if (configPath) note(`replaying ${configPath}`);
   // A replay asks nothing, so numbering the handful of surviving prompts would
@@ -91,7 +92,7 @@ async function guardKek(existing: Record<string, string>, answers: Answers, root
 
 /** Everything decided, checked and resolved, before anything is written. */
 async function plan(flags: Record<string, string | boolean>, dryRun: boolean): Promise<Plan> {
-  const interviewed = await gather(typeof flags.config === 'string' ? flags.config : null);
+  const interviewed = await gather(typeof flags.config === 'string' ? flags.config : null, dryRun);
   const { root, answers, secrets } = interviewed;
   await checkMachine(root, answers, dryRun);
   warnLocalDatabase(answers, secrets.DATABASE_URL);

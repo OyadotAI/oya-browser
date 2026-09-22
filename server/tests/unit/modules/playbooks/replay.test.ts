@@ -229,6 +229,11 @@ describe('play', () => {
   });
 
   describe('version-2 workflows', () => {
+    // A workflow runs inside the desktop app, so these drive an Oya browser.
+    beforeEach(() => {
+      browser.disconnect();
+      browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p), 'oya');
+    });
     const workflow = (steps) => ({ schemaVersion: 2, name: 'wf', steps });
     const NAV = { action: 'navigate', url: 'https://a.test/' };
 

@@ -2,11 +2,12 @@
  * What a tab listens to: its load state, its address and title, windows it
  * tries to open, and its right-click menu. Wired once, when the tab is made.
  */
-const { sleep } = require('../input.cjs');
+const { withinTime } = require('../../scripts/within-time.cjs');
 const { isAuthPopup, opensNamedWindow } = require('../auth-popup.cjs');
 const { watchContents } = require('../observe/install.cjs');
 const { showContextMenu } = require('./context-menu.cjs');
-const { CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE } = require('./constants.cjs');
+const { showUnprotected } = require('./load.cjs');
+const { CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE, LOCAL_FILE } = require('./constants.cjs');
 
 /**
  * Makes view-source pages readable (forces the light theme). This text runs
@@ -25,7 +26,7 @@ function wireTab(ctx, tab) {
   wireTabLoadState(ctx, tab);
   wireTabFailures(ctx, tab);
   wireRendererLoss(ctx, tab);
-  const tabReady = protectNewTab(ctx, tab.view);
+  const tabReady = protectNewTab(ctx, tab);
   wireTabPage(ctx, tab, tabReady);
   wireTabWindows(ctx, tab);
   return tabReady;
@@ -37,7 +38,8 @@ function wireTabLoadState(ctx, tab) {
   ctx.shortcuts.install(contents);
   contents.on('focus', () => ctx.shield.keepFocusOnShell());
   contents.on('did-start-loading', () => {
-    tab.loadError = null;
+    // A tab that could not be protected keeps saying so: nothing it starts will load.
+    if (tab.protection !== 'failed') tab.loadError = null;
     ctx.tabs.sendTabList();
   });
   contents.on('did-stop-loading', () => ctx.tabs.sendTabList());
@@ -68,37 +70,46 @@ function wireTabFailures(ctx, tab) {
 }
 
 /**
- * Attach CDP debugger and auto-inject scripts into every new document.
- * A view has no renderer until its first navigation, and CDP's Page domain
- * does not answer before there is one, so awaiting setup before loadURL was
- * a deadlock that only the timeout broke, and every tab's first page loaded
- * unprotected. about:blank starts the renderer without a network request.
- * The race does not cancel the losing sleep, so it checks whether setup
- * finished, otherwise every healthy tab reported itself unprotected.
+ * Attach CDP debugger and auto-inject scripts into every new document, then
+ * settle `tab.protection`. A view has no renderer until its first navigation,
+ * and CDP's Page domain does not answer before there is one, so setup runs
+ * after about:blank, which starts the renderer without a network request.
+ * An attempt that fails or runs out of time is reset and tried once more; a
+ * second failure leaves the tab on about:blank, closed to the web, since a
+ * page loaded with no fingerprint shows the site this machine for good.
+ * Always settles, within two attempts.
  */
-function protectNewTab(ctx, view) {
-  const setup = { done: false };
-  return Promise.race([
-    setupAfterBlank(ctx, view, setup),
-    sleep(CDP_SETUP_TIMEOUT).then(() => warnIfUnprotected(setup)),
-  ]);
+async function protectNewTab(ctx, tab) {
+  tab.protection = 'pending';
+  const blank = tab.view.webContents.loadURL('about:blank').catch(() => {});
+  if (await protectOnce(ctx, tab.view, blank)) return markProtected(tab);
+  ctx.protection.resetTabCDP(tab.view);
+  console.error('[anonymity] tab protection did not finish on the first attempt, trying once more');
+  if (await protectOnce(ctx, tab.view, blank)) return markProtected(tab);
+  failClosed(ctx, tab);
 }
 
-/** Starts the renderer on about:blank, then protects it. */
-function setupAfterBlank(ctx, view, setup) {
-  return view.webContents
-    .loadURL('about:blank')
-    .catch(() => {})
-    .then(() => ctx.protection.setupTabCDP(view))
-    .finally(() => (setup.done = true));
+/** The tab is protected: pages may load in it. */
+function markProtected(tab) {
+  tab.protection = 'protected';
 }
 
-/** The timeout won the race: say so loudly unless setup did finish after all. */
-function warnIfUnprotected(setup) {
-  if (setup.done) return;
-  console.error(
-    `[anonymity] CDP setup unfinished after ${CDP_SETUP_TIMEOUT}ms, loading anyway, this tab may be UNPROTECTED`,
+/** One bounded attempt: the blank page, then setup. True only when setup says the tab is protected. */
+const protectOnce = (ctx, view, blank) =>
+  withinTime(
+    blank.then(() => ctx.protection.setupTabCDP(view)),
+    CDP_SETUP_TIMEOUT,
+  ).then(
+    (ok) => ok === true,
+    () => false,
   );
+
+/** Both attempts failed: nothing is loaded in this tab, and the person is told why. */
+function failClosed(ctx, tab) {
+  ctx.protection.resetTabCDP(tab.view);
+  tab.protection = 'failed';
+  console.error('[anonymity] tab protection failed twice, tab not loaded');
+  showUnprotected(ctx, tab);
 }
 
 /** A finished load, the address, the title, and joining a recording in progress. */
@@ -108,8 +119,8 @@ function wireTabPage(ctx, tab, tabReady) {
   const updateUrl = (_e, u) => ctx.tabs.urlChanged(tab, u);
   contents.on('did-navigate', updateUrl);
   contents.on('did-navigate-in-page', updateUrl);
-  // New tabs join an active recording before the user can interact with them.
-  tabReady.then(() => joinRecording(ctx, tab.view));
+  // New tabs join an active recording before the user can interact with them; one never protected has nothing to record.
+  tabReady.then(() => tab.protection === 'protected' && joinRecording(ctx, tab.view));
   wireTabTitle(ctx, tab);
   if (ctx.observer) watchContents(ctx.observer, contents);
 }
@@ -160,7 +171,8 @@ function openWindow(ctx, details) {
   if (isAuthPopup(details.url, details.features))
     return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
   if (opensNamedWindow(details.frameName)) return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
-  ctx.tabs.createTab(details.url, true, loadOptionsFor(details));
+  // A page cannot load a file: address itself, but a tab the app opens for it could: the page must not get one that way.
+  if (!LOCAL_FILE.test(details.url)) ctx.tabs.createTab(details.url, true, loadOptionsFor(details));
   return { action: 'deny' };
 }
 

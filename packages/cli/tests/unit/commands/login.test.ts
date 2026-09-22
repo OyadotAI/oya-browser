@@ -24,7 +24,11 @@ describe('oya login --key --url', () => {
 
   it('refuses to save a key the control plane rejects', async () => {
     fakeFetch({ 'GET /api/config': reply(401, { error: 'no' }) });
-    await assert.rejects(cmdLogin({ key: 'bad', url: BASE }), /That key was rejected by http:\/\/oya.test \(401\)/);
+    // Through the SDK now, so the CLI's one failure path writes the line with where the key came from.
+    await assert.rejects(cmdLogin({ key: 'bad', url: BASE }), {
+      code: 'invalid_key',
+      message: `${BASE} rejected that key.`,
+    });
     assert.notEqual(load().apiKey, 'bad');
   });
 });

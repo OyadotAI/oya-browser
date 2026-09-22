@@ -2,11 +2,12 @@
  * `oya.playbooks`: playbooks saved with `browser.toPlaybook()`, and the
  * drafts healed replays leave behind.
  */
+import { segment } from '../client.js';
 import type { Playbook, PlaybookSummary } from '../types/index.js';
 import type { HttpRef, PlaybookList } from './shapes.js';
 
 /** A playbook's endpoint. */
-const playbook = (name: string) => `/api/playbooks/${encodeURIComponent(name)}`;
+const playbook = (name: string) => `/api/playbooks/${segment(name, 'name')}`;
 
 /** Builds `oya.playbooks`. */
 export const playbookApi = (http: HttpRef) => ({
@@ -17,5 +18,5 @@ export const playbookApi = (http: HttpRef) => ({
     await http().request('DELETE', playbook(name));
   },
   /** Replace a playbook with the draft a healed replay saved. Try it first with `browser.play('<name>:draft')`. */
-  promote: (name: string): Promise<Playbook> => http().request<Playbook>('POST', `${playbook(name)}/promote`, {}),
+  promote: async (name: string): Promise<Playbook> => http().request<Playbook>('POST', `${playbook(name)}/promote`, {}),
 });

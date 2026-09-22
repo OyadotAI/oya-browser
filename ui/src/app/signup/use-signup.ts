@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { event } from '@/lib/analytics';
 import {
   firstProblem,
   HOME,
@@ -41,7 +42,8 @@ function signupSubmission(f: SignupFields, auth: ReturnType<typeof useSignedInRe
   const name = f.displayName.trim() || undefined;
   return {
     problem: signupProblem(f),
-    action: () => auth.signup(f.email, f.password, name).then(() => auth.router.replace(HOME)),
+    action: () =>
+      auth.signup(f.email, f.password, name).then(() => (event('sign_up_success'), auth.router.replace(HOME))),
     fallback: 'Something went wrong. Please try again.',
   };
 }

@@ -63,7 +63,10 @@ describe('runControl', () => {
       role: 'viewer',
       label: 'ci',
     });
-    await assert.rejects(run('members', ['invite'], { role: 'root' }), /Invalid role/);
+    await assert.rejects(run('members', ['invite'], { role: 'root' }), {
+      code: 'usage',
+      message: '--role must be viewer, operator or administrator, not "root".',
+    });
   });
 
   it('runs webhook subcommands', async () => {
@@ -76,10 +79,33 @@ describe('runControl', () => {
   });
 
   it('explains a missing argument or an unknown subcommand', async () => {
-    await assert.rejects(run('cancel'), /Missing argument; run oya help/);
-    await assert.rejects(run('webhook', ['nope']), /Use webhook new, remove, or replay/);
-    await assert.rejects(run('credential', ['nope']), /Use credential new or credential revoke/);
-    await assert.rejects(run('members', ['nope']), /Use members, members invite, or members remove/);
-    await assert.rejects(run('members', ['remove']), /Missing argument/);
+    await assert.rejects(run('cancel'), { code: 'usage', message: 'oya cancel needs a session id: oya cancel <id>.' });
+    await assert.rejects(run('webhook', ['nope']), {
+      message: 'Unknown webhook subcommand "nope". Use new, remove or replay.',
+    });
+    await assert.rejects(run('credential', ['nope']), {
+      message: 'Unknown credential subcommand "nope". Use revoke or new.',
+    });
+    await assert.rejects(run('members', ['nope']), {
+      message: 'Unknown members subcommand "nope". Use remove or invite.',
+    });
+    await assert.rejects(run('members', ['remove']), { code: 'usage', message: /^oya members remove needs a user id/ });
+  });
+
+  it('recovers with a replacement on a given Chrome, and refuses --ws-url without --replace', async () => {
+    const recovered = await run('recover', ['s1'], { replace: true, 'ws-url': 'ws://127.0.0.1:9222' });
+    assert.deepEqual(recovered.calls[0][2], { replace: true, wsUrl: 'ws://127.0.0.1:9222' });
+    await assert.rejects(run('recover', ['s1'], { 'ws-url': 'ws://x' }), {
+      code: 'usage',
+      message: /only used with --replace/,
+    });
+  });
+
+  it('names the bad JSON oya project was given, and how to quote it', async () => {
+    await assert.rejects(run('project', ['{bad']), (e: { code: string; message: string }) => {
+      assert.equal(e.code, 'invalid_json');
+      assert.match(e.message, /^The settings for oya project are not valid JSON: /);
+      return true;
+    });
   });
 });

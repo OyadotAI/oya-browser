@@ -90,3 +90,6 @@ export const COLOR_DEPTH = 24;
 export const CoreCount = { FOUR: 4, SIX: 6, EIGHT: 8, TWELVE: 12, SIXTEEN: 16 } as const;
 /** navigator.deviceMemory values, in GB. */
 export const MemoryGb = { FOUR: 4, EIGHT: 8, SIXTEEN: 16 } as const;
+
+/** The largest concurrency cap a persona may be given; past it the number is a typo, not a plan. */
+export const PERSONA_CAP_MAX = 1000;

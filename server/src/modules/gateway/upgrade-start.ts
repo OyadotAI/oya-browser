@@ -4,6 +4,7 @@
  * profile and start recording before the client is let in.
  */
 import { control } from '../control/service.ts';
+import { track } from '../telemetry/index.ts';
 import { registry } from '../browsers/registry.ts';
 import { metrics } from '../../platform/metrics.ts';
 import { fingerprint } from '../../platform/audit.ts';
@@ -15,6 +16,7 @@ import * as recorder from './recorder.ts';
 import { sessions } from './session-store.ts';
 import { acquireBrowser, markReady, unlockProfile, type Start } from './upgrade-acquire.ts';
 import { Session } from './session.ts';
+import { endpointAt } from './upstream.ts';
 import { accept, auditAs, refuse, type Upgrade } from './upgrade-context.ts';
 
 /** Whether this replica or the whole control plane is draining for a restart. */
@@ -77,7 +79,7 @@ async function launch(start: Start) {
 function openSession(start: Start, acquired) {
   const session = newSession(start, acquired);
   session.authToken = start.authToken;
-  session.upstreamUrl = acquired.session.target.wsUrl;
+  session.endpoint = endpointAt(acquired.session.target.wsUrl);
   session.bindUpstream();
   sessions.set(session.id, session);
   return session;
@@ -144,4 +146,5 @@ function auditStart(start: Start, session) {
     recording: start.url.searchParams.get('record') === '1',
   };
   auditAs(start, { action: 'gateway.session.start', targetType: 'session', targetId: session.id, meta });
+  track.cdpAttached(start.token, { provider: String(session.provider) });
 }

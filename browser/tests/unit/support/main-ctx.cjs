@@ -372,7 +372,7 @@ function mainCtx(real = {}) {
     },
     layout: { layoutActiveTab() {}, reveal() {}, flush() {} },
     overlays: { names: new Set() },
-    protection: { setupTabCDP: async () => {}, injectScripts: async () => {}, protectPopup() {} },
+    protection: { setupTabCDP: async () => true, resetTabCDP() {}, injectScripts: async () => {}, protectPopup() {} },
     persona: { active: null, loginState: null, partitionName: () => 'persist:oya-browser' },
     recorder: {
       recording: false,

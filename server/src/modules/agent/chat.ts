@@ -35,6 +35,19 @@ function enforceBudget(apiKey, own) {
   );
 }
 
+/** What a key with no model is told: what to configure and the three ways to do it. */
+const noLlm = () =>
+  new HttpError(
+    Status.UNPROCESSABLE,
+    'No LLM key configured for this API key. Add one in Settings, run `oya init`, or POST /api/config.',
+    { code: 'llm_unconfigured' },
+  );
+
+/** Refuses a chat before it starts when the key has no model, so the caller gets a real status, not a 200 with an error inside. */
+export function requireLlm(apiKey) {
+  if (!keyConfig.resolve(apiKey).openaiKey) throw noLlm();
+}
+
 /**
  * The model settings for a run. Settings belong to the calling API key; a key
  * that has set none falls back to the deployment-wide values.
@@ -42,11 +55,7 @@ function enforceBudget(apiKey, own) {
 function llmFor(apiKey) {
   const { openaiKey, baseUrl, model, own } = keyConfig.resolve(apiKey);
   enforceBudget(apiKey, own);
-  if (!openaiKey) {
-    throw new Error(
-      'No LLM key configured for this API key. Add one in Settings, run `oya init`, or POST /api/config.',
-    );
-  }
+  if (!openaiKey) throw noLlm();
   return { openaiKey, baseUrl, model };
 }
 

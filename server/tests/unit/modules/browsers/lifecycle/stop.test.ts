@@ -86,11 +86,16 @@ describe('stopBrowser: a browser held here', () => {
     assert.equal(release.mock.callCount(), 1);
   });
 
+  it('stops an Oya browser that has a persona', async () => {
+    connectBrowser(B);
+    assert.equal((await stopBrowser(req(), B)).ok, true);
+  });
+
   it('saves a driven browser’s cookies into its persona before stopping', async () => {
     const driver: any = driveBrowser(B, () => ({ ok: true }));
     registry.get(B).persona = { id: 'p-stop-save' };
     const cookie = { name: 'sid', value: 'v', domain: 'example.com', path: '/' };
-    driver.conn = { send: async () => ({ cookies: [cookie] }) };
+    driver.cookies = async () => [cookie];
     assert.equal((await stopBrowser(req(), B)).ok, true);
     assert.ok(getAllCookies('p-stop-save').some((c) => c.name === 'sid'));
   });
@@ -98,7 +103,7 @@ describe('stopBrowser: a browser held here', () => {
   it('refuses to stop when the profile cannot be saved', async () => {
     const driver: any = driveBrowser(B, () => ({ ok: true }));
     registry.get(B).persona = { id: 'p-stop-fail' };
-    driver.conn = { send: async () => Promise.reject(new Error('target closed')) };
+    driver.cookies = async () => Promise.reject(new Error('target closed'));
     const result = await stopBrowser(req(), B);
     assert.deepEqual(result, { id: B, ok: false, error: 'Could not save profile before stopping: target closed' });
     assert.equal(registry.isConnected(B), true);
@@ -107,7 +112,7 @@ describe('stopBrowser: a browser held here', () => {
   it('stops anyway with force, auditing the lost profile', async () => {
     const driver: any = driveBrowser(B, () => ({ ok: true }));
     registry.get(B).persona = { id: 'p-stop-force' };
-    driver.conn = { send: async () => Promise.reject(new Error('target closed')) };
+    driver.cookies = async () => Promise.reject(new Error('target closed'));
     assert.equal((await stopBrowser(req(), B, { force: true })).ok, true);
     assert.equal(recent({ action: 'profile.capture.failed' })[0].target_id, B);
   });

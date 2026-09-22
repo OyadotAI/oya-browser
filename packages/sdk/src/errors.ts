@@ -2,6 +2,7 @@
  * OyaError: the one error type the SDK throws for a failed call, carrying the
  * HTTP status and the server's answer so a caller can branch on either.
  */
+import { Status } from './constants.js';
 
 /** A failed API call or browser command. */
 export class OyaError extends Error {
@@ -16,4 +17,22 @@ export class OyaError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+/** The body of a request refused before it was sent, in the server's own shape, so `body.field` reads the same either way. */
+export interface Refusal {
+  /** What was wrong and what it needed. */
+  error: string;
+  /** Always invalid_request: the caller's input, nothing the server said. */
+  code: 'invalid_request';
+  /** The option or argument that was wrong. */
+  field: string;
+  /** A value that would work, when there is an obvious one. */
+  suggestion?: string;
+}
+
+/** An OyaError for input refused before any request, status 400 like the server's own. */
+export function refusal(message: string, field: string, suggestion?: string): OyaError {
+  const body: Refusal = { error: message, code: 'invalid_request', field, ...(suggestion ? { suggestion } : {}) };
+  return new OyaError(message, Status.BAD_REQUEST, body);
 }

@@ -15,7 +15,7 @@ import { sealText, openText } from '../../platform/secrets.ts';
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { dirname } from 'path';
 import { dataPath } from '../../platform/paths.ts';
-import { HttpError } from '../../platform/errors.ts';
+import { HttpError, invalid } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { REGISTRABLE_LABELS } from './constants.ts';
 
@@ -49,15 +49,24 @@ restore();
  * covers `login.example.com` without filing it twice.
  */
 export function domainOf(url) {
-  let host;
+  if (typeof url !== 'string') return null;
+  const host = hostOf(url);
+  if (!host || host === 'localhost') return host || null;
+  const site = host.replace(/^www\./, '');
+  return HOST_NAME.test(site) ? site : null;
+}
+
+/** The lower-cased host of a URL or bare host, or null when it does not parse. */
+function hostOf(url) {
   try {
-    host = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname.toLowerCase();
+    return new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`).hostname.toLowerCase();
   } catch {
     return null;
   }
-  if (!host || host === 'localhost') return host || null;
-  return host.replace(/^www\./, '');
 }
+
+/** A host name as a site: labels of letters, digits and hyphens, one or more. `..`, a space and a path are not one. */
+const HOST_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
 
 /** The registrable parent of a subdomain (`login.example.com` -> `example.com`), or null. */
 const parentOf = (domain) => {
@@ -72,8 +81,9 @@ const scopeFor = (personaId, domain) => `cred:${personaId}:${domain}`;
 
 /** Seal and save a username and password for a persona's site. Returns the description, never the password. */
 export function set(personaId, domain, config) {
+  if (!domain) throw new HttpError(Status.BAD_REQUEST, 'a domain is required');
   const site = domainOf(domain);
-  if (!site) throw new HttpError(Status.BAD_REQUEST, 'a domain is required');
+  if (!site) throw invalid('domain', 'a host name such as accounts.google.com', domain);
   configs.set(keyFor(personaId, site), sealText(scopeFor(personaId, site), loginFrom(config)));
   persist();
   return describe(personaId, site);

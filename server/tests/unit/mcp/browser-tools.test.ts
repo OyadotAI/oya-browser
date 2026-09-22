@@ -5,6 +5,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerBrowserTools } from '../../../src/mcp/browser-tools.ts';
+import { canonical, supportedOn } from '../../../src/drivers/vocabulary.ts';
 import { NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from '../../../src/mcp/constants.ts';
 import { disconnectBrowser } from '../support/fakes.ts';
 import { FakeMcpServer, driveBrowser, stubControl } from '../support/browsers.ts';
@@ -35,6 +36,26 @@ describe('browser tools', () => {
     const limited = new FakeMcpServer();
     registerBrowserTools(limited as any, { pick: () => B, only: ['click'] });
     assert.deepEqual([...limited.tools.keys()], ['click']);
+  });
+
+  it('sends only actions every kind of browser does, so no tool is refused on a pool or a desktop browser', async () => {
+    const { server, driver } = tools(() => ({ ok: true, data: {} }));
+    const args = {
+      element_id: 1,
+      url: 'https://a.test',
+      selector: '#a',
+      tab_id: 1,
+      key: 'Enter',
+      text: 'x',
+      x: 1,
+      y: 2,
+    };
+    for (const name of server.tools.keys()) await server.call(name, args).catch(() => {});
+    const sent = new Set(driver.sent.map((c) => c.action));
+    for (const action of sent) {
+      assert.deepEqual(supportedOn(canonical(action)!), ['oya', 'cdp'], `${action} is not on both kinds`);
+    }
+    assert.ok(sent.size > 5, `only ${sent.size} actions reached the browser: the tools did not run`);
   });
 
   it('clicks an element by the number analyze gave it', async () => {

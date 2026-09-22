@@ -4,6 +4,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { MS_PER_SECOND } from '../../platform/constants.ts';
 import { newRecord, type BrowserSpec } from './registry/record.ts';
 import { applyActivity } from './registry/activity.ts';
 import { rowOf } from './registry/row.ts';
@@ -23,9 +24,9 @@ class ConnectionRegistry extends EventEmitter {
     this.browsers = new Map();
   }
 
-  /** Registers a browser: an inbound client (Oya) that dialled us, or an outbound driver (CDP) we dialled. */
+  /** Registers a browser: an inbound client (Oya) that dialled us, or one we dialled over CDP, which brings its engine. */
   add(browserId, spec: BrowserSpec) {
-    const record = newRecord(spec);
+    const record = newRecord(spec, browserId);
     this.browsers.set(browserId, record);
     const { clientType, provider } = record;
     this.emit('browser:connected', { id: browserId, name: spec.name, clientType, provider });
@@ -39,7 +40,9 @@ class ConnectionRegistry extends EventEmitter {
     this.browsers.delete(browserId);
     closeOutbound(browser);
     endViewers(browser);
-    this.emit('browser:disconnected', { id: browserId, name: browser.name });
+    const seconds = Math.round((Date.now() - browser.connectedAt.getTime()) / MS_PER_SECOND);
+    const { name, apiKey, provider } = browser;
+    this.emit('browser:disconnected', { id: browserId, name, apiKey, provider, seconds });
   }
 
   /** The live record for a browser, or undefined. */
@@ -62,11 +65,11 @@ class ConnectionRegistry extends EventEmitter {
     if (b) applyActivity(b, activity);
   }
 
-  /** One browser, shaped for the API, with its activity. */
+  /** One browser, shaped for the API, with the actions it does and its activity. */
   describe(browserId) {
     const b = this.browsers.get(browserId);
     if (!b) return null;
-    return { ...this.row(browserId, b), activity: b.activity };
+    return { ...this.row(browserId, b), actions: b.driver.actions(), activity: b.activity };
   }
 
   /** A browser as the API lists it: identity, health and counters, without activity. */

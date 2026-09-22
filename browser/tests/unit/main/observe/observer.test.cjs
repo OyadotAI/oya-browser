@@ -48,6 +48,22 @@ describe('readConsole', () => {
     assert.equal(o.readConsole({ pattern: 'nothing here' }).length, 0);
   });
 
+  it('a pattern that would backtrack forever is cut off and refused, so a page cannot freeze the app', () => {
+    const o = new Observer();
+    o.addConsole({ level: 1, message: 'a'.repeat(40) + '!' });
+    const started = Date.now();
+    assert.throws(() => o.readConsole({ pattern: '(a+)+$' }), {
+      message: 'The pattern took too long to match. Use a simpler pattern, or plain text.',
+    });
+    assert.ok(Date.now() - started < 2000, `took ${Date.now() - started}ms`);
+  });
+
+  it('a slow pattern is refused for requests too, never answered with a quiet "nothing matched"', () => {
+    const o = new Observer();
+    o.addRequest({ url: 'https://x.test/' + 'a'.repeat(40) + '!', statusCode: 200 });
+    assert.throws(() => o.readNetwork({ pattern: '(a+)+$' }), /took too long/);
+  });
+
   it('treats an invalid pattern as plain text rather than throwing', () => {
     const o = new Observer();
     o.addConsole({ level: 3, message: 'a(b' });

@@ -8,6 +8,21 @@ import assert from 'node:assert/strict';
 import { FALLBACK_VIEWPORT } from '../../../../src/drivers/cdp/constants.ts';
 import { SESSION, WORLD, fakeDriver } from '../../support/cdp.ts';
 
+describe('CDPDriver.cookies', () => {
+  it('reads every cookie the browser holds, in the attached session', async () => {
+    const { driver, conn } = fakeDriver();
+    conn.replies['Network.getAllCookies'] = { cookies: [{ name: 'sid', domain: 'a.example' }] };
+    assert.deepEqual(await driver.cookies(), [{ name: 'sid', domain: 'a.example' }]);
+    assert.equal(conn.sent('Network.getAllCookies')[0].sessionId, SESSION);
+  });
+
+  it('answers an empty list when the browser reports none', async () => {
+    const { driver, conn } = fakeDriver();
+    conn.replies['Network.getAllCookies'] = {};
+    assert.deepEqual(await driver.cookies(), []);
+  });
+});
+
 describe('CDPDriver.send and dialogs', () => {
   it('accepts an alert on its own and reports it with the command’s result', async () => {
     const { driver, conn } = fakeDriver();

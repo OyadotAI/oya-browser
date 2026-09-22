@@ -1,6 +1,7 @@
 /**
  * Routes that look at browsers: one browser's detail and its live view.
  */
+import { actionsFor } from '../../../drivers/vocabulary.ts';
 import { registry } from '../registry.ts';
 import { listSandboxBrowsers } from '../../../drivers/sandbox.ts';
 import { Status } from '../../../platform/http-status.ts';
@@ -20,7 +21,8 @@ export async function browserDetail(req, res) {
 /** A browser not held here may still be the key's Oya Cloud sandbox; else 404. */
 async function cloudDetail(req, res, browserId) {
   const cloud = (await listSandboxBrowsers(getKey(req))).find((row) => row.id === browserId);
-  if (cloud) return res.json({ ...cloud, activity: [] });
+  // Not held here, so its app has not said what it does: the Oya list is what it will do once started.
+  if (cloud) return res.json({ ...cloud, actions: actionsFor('oya'), activity: [] });
   return res.status(Status.NOT_FOUND).json({ error: `Browser ${browserId} not connected` });
 }
 

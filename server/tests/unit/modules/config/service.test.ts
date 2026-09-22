@@ -9,6 +9,7 @@ import { ownDataDir, restoreEnv } from '../../support/data-dir.ts';
 ownDataDir();
 const keyConfig = await import('../../../../src/modules/config/service.ts');
 const { store } = await import('../../../../src/modules/config/store.ts');
+const { CONFIG_VALUE_MAX_CHARS } = await import('../../../../src/modules/config/constants.ts');
 const { fingerprint } = await import('../../../../src/platform/audit.ts');
 const { runtimeConfig } = await import('../../../../src/platform/runtime-config.ts');
 
@@ -93,9 +94,9 @@ describe('key settings', () => {
       assert.equal(store.get(fingerprint(KEY)).chat_model, undefined);
     });
 
-    it('answers false when the update names no known field', async () => {
-      assert.equal(await keyConfig.set(KEY, { not_a_field: 'x' }), false);
+    it('answers false for an empty update and stores nothing', async () => {
       assert.equal(await keyConfig.set(KEY), false);
+      assert.equal(await keyConfig.set(KEY, {}), false);
       assert.equal(store.has(fingerprint(KEY)), false);
     });
 
@@ -116,6 +117,31 @@ describe('key settings', () => {
         status: 400,
         message: 'openai_base_url must use https',
       });
+    });
+
+    it('refuses a setting it does not know, naming it and listing the settings there are', async () => {
+      await assert.rejects(keyConfig.set(KEY, { chat_modle: 'x' }), (err: any) => {
+        assert.deepEqual([err.status, err.code, err.field], [400, 'invalid_request', 'chat_modle']);
+        assert.match(err.message, /^Unknown setting "chat_modle"\. Settings are: llm_provider, /);
+        return true;
+      });
+    });
+
+    it('refuses an object or an array as a value, naming the setting', async () => {
+      await assert.rejects(keyConfig.set(KEY, { chat_model: {} }), {
+        status: 400,
+        field: 'chat_model',
+        message: 'chat_model must be a string, not an object',
+      });
+      await assert.rejects(keyConfig.set(KEY, { chat_model: [1] }), { status: 400 });
+    });
+
+    it('refuses a value longer than a setting can be', async () => {
+      await assert.rejects(keyConfig.set(KEY, { chat_model: 'x'.repeat(CONFIG_VALUE_MAX_CHARS + 1) }), {
+        status: 400,
+        field: 'chat_model',
+      });
+      await keyConfig.set(KEY, { chat_model: 'y'.repeat(CONFIG_VALUE_MAX_CHARS) });
     });
 
     it('stores numbers as strings', async () => {

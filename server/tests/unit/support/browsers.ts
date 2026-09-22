@@ -111,7 +111,7 @@ export function driveBrowser(browserId: string, answer: (action: string, params:
     },
     isAlive: () => driver.alive,
   };
-  registry.add(browserId, { apiKey, name: 'Driven', clientType: 'cdp', provider: 'cdp', driver });
+  registry.add(browserId, { apiKey, name: 'Driven', clientType: 'cdp', provider: 'cdp', engine: driver });
   return driver;
 }
 

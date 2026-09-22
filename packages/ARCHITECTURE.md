@@ -5,7 +5,7 @@ Two published packages live here, both MIT and both built with tsup:
 | Package | Path | What it is |
 |:---|:---|:---|
 | `@oya-ai/browser` | `sdk/` | The TypeScript client for the control plane. Zero runtime dependencies; runs in Node 20+ and in browsers. |
-| `@oya-ai/cli` | `cli/` | The `oya` command: login, onboarding, browsers, personas, the control plane, and the `oya install` wizard. The SDK is bundled into its single file. |
+| `@oya-ai/cli` | `cli/` | The `oya` command: login, onboarding, browsers, personas and their cookies, the control plane, and the `oya install` wizard. The SDK is bundled into its single file. |
 
 The standards every part shares (size limits, documentation, no magic numbers)
 are in the root [ARCHITECTURE.md](../ARCHITECTURE.md). The rules are enforced
@@ -76,7 +76,7 @@ help.ts            the help text
 commands/
   index.ts         the command map: name → handler, aliases, unknown commands
   control.ts       the control-plane commands, a command map with its own subcommand maps
-  login.ts, init.ts, browsers.ts, personas.ts, settings.ts, stealth.ts
+  login.ts, init.ts, browsers.ts, personas.ts, cookies.ts, settings.ts, stealth.ts
 prompt.ts          facade over prompt/
 prompt/
   style.ts         colour and cursor control (plain off a TTY)

@@ -5,6 +5,7 @@
 import { FLAGS, captured, fakeFetch } from '../support/harness.ts';
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import type { CliError } from '../../../src/errors.ts';
 import { cmdAsk, cmdGoto, cmdLs, cmdRm, cmdStart, cmdStatus } from '../../../src/commands/browsers.ts';
 
 const BROWSER = {
@@ -64,20 +65,23 @@ describe('browser commands', () => {
     assert.match(out, /✗ click {14}Buy, gone {2}12ms/);
   });
 
-  it('rm reports each browser, including a sandbox left behind', async () => {
+  it('rm reports each browser, the refused one on stderr, and fails with a shown partial failure', async () => {
     const results = [
       { id: 'b1', ok: true, sandboxRemoved: true },
       { id: 'b2', ok: false, sandboxRemoved: false, error: 'x' },
     ];
     fakeFetch({ 'POST /api/browsers/stop': { stopped: 1, results } });
-    const { out } = await captured(() => cmdRm(['b1', 'b2'], FLAGS));
-    assert.equal(out, '✅ b1 (sandbox destroyed)\n✗ b2, sandbox NOT removed, check Oya Cloud x\nstopped 1');
+    let thrown: CliError | undefined;
+    const { out, err } = await captured(() => cmdRm(['b1', 'b2'], FLAGS).catch((e) => (thrown = e)));
+    assert.equal(out, '✅ b1 (sandbox destroyed)\nstopped 1 of 2');
+    assert.match(err, /✗ b2, sandbox NOT removed, check Oya Cloud x/);
+    assert.deepEqual([thrown?.code, thrown?.shown], ['partial_failure', true]);
   });
 
-  it('refuse to run without their arguments', async () => {
-    await assert.rejects(cmdRm([], FLAGS), /Usage: oya rm/);
-    await assert.rejects(cmdGoto([], FLAGS), /Usage: oya goto <url>/);
-    await assert.rejects(cmdAsk([], FLAGS), /Usage: oya ask/);
+  it('refuse to run without their arguments, as usage errors', async () => {
+    await assert.rejects(cmdRm([], FLAGS), { code: 'usage', message: /^oya rm needs a browser id, or --all/ });
+    await assert.rejects(cmdGoto([], FLAGS), { code: 'usage', message: /^oya goto needs an address/ });
+    await assert.rejects(cmdAsk([], FLAGS), { code: 'usage', message: /^oya ask needs a prompt/ });
   });
 
   it('ask joins its words into one prompt', async () => {

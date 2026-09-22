@@ -28,14 +28,27 @@ export function findRepoRoot(from = process.cwd()): string | null {
   return null;
 }
 
-/** The checkout: found above the working directory, or cloned where the user says. */
-export async function locateRepo(): Promise<string> {
+/** Where the checkout is cloned from. */
+const REPO_URL = 'https://github.com/OyadotAI/oya-browser.git';
+
+/**
+ * The checkout: found above the working directory, or cloned where the user
+ * says. A dry run clones nothing: it says what a real run would clone, and
+ * carries on with the folder that would hold it.
+ */
+export async function locateRepo(dryRun = false): Promise<string> {
   const found = findRepoRoot();
   if (found) return found;
   console.log('\nThis does not look like an oya-browser checkout.');
   const where = await ask('Clone it to:', join(process.cwd(), 'oya-browser'));
+  if (dryRun) return wouldClone(where);
   if (existsSync(where)) throw new Error(`${where} already exists`);
-  const repo = 'https://github.com/OyadotAI/oya-browser.git';
-  await run('git', ['clone', '--depth', '1', repo, where], { cwd: process.cwd() });
+  await run('git', ['clone', '--depth', '1', REPO_URL, where], { cwd: process.cwd() });
+  return where;
+}
+
+/** Says what a real run would clone, and answers the folder it would go to. */
+function wouldClone(where: string): string {
+  console.log(`--dry-run: would clone ${REPO_URL} to ${where}`);
   return where;
 }

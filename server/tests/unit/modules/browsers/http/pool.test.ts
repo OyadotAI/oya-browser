@@ -3,6 +3,7 @@
  * the browser that ran it, and clearing a persona's cookie jar.
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import { CdpConnectionError } from '../../../../../src/drivers/cdp.ts';
 import assert from 'node:assert/strict';
 import {
   clearJar,
@@ -48,10 +49,19 @@ describe('poolCommand', () => {
     assert.equal((await command('k-pool', { action: 'evaluate' })).statusCode, 403);
   });
 
-  it('answers 500 naming the browser when the command throws', async () => {
-    driveBrowser(B, () => Promise.reject(new Error('target crashed')), 'k-pool');
+  it('answers a page that refused the command as a failed result naming the browser', async () => {
+    driveBrowser(B, () => Promise.reject(new Error('Element not found')), 'k-pool');
     const res = await command('k-pool', { action: 'click' });
-    assert.deepEqual([res.statusCode, res.body], [500, { ok: false, error: 'target crashed', _browser: B }]);
+    assert.deepEqual(
+      [res.statusCode, res.body],
+      [200, { ok: false, error: 'Element not found', code: 'command_failed', _browser: B }],
+    );
+  });
+
+  it('answers a lost connection as 504 naming the browser, so the caller knows the outcome is unknown', async () => {
+    driveBrowser(B, () => Promise.reject(new CdpConnectionError('CDP connection closed')), 'k-pool');
+    const res = await command('k-pool', { action: 'click' });
+    assert.deepEqual([res.statusCode, res.body.code, res.body._browser], [504, 'command_outcome_unknown', B]);
   });
 });
 

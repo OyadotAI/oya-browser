@@ -18,6 +18,7 @@ const WebSocket = require('ws');
 const { FrontDoor, isUi } = require('./front-door/door.cjs');
 const { Bridge } = require('./front-door/bridge.cjs');
 const { FRONT_DOOR_MAX_PAYLOAD, Status } = require('./constants.cjs');
+const { isWebAddress, NOT_A_WEB_ADDRESS } = require('./main/tabs/navigation.cjs');
 
 /** The only endpoints a validation run may call over HTTP. */
 const RUN_ENDPOINTS = ['/json/version', '/json/protocol', '/json', '/json/list'];
@@ -62,6 +63,7 @@ async function openFromHttp(door, { req, send, rewrite }) {
   // eslint-disable-next-line no-magic-numbers -- regressions.js reads this line as written
   if (req.method !== 'PUT') return send(405, { error: '/json/new requires PUT' });
   const url = decodeURIComponent(req.url.split('?')[1] || '') || 'about:blank';
+  if (!isWebAddress(url)) return send(Status.BAD_REQUEST, { error: NOT_A_WEB_ADDRESS });
   const targetId = await door.admitted(() => door.openTab(url));
   const target = (await door.refreshHidden()).find((t) => t.id === targetId);
   return send(Status.OK, rewrite(JSON.stringify(target || { id: targetId })));

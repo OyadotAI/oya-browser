@@ -56,7 +56,7 @@ export function isRecording(sessionId) {
 export async function start(session) {
   if (active.has(session.id)) return false;
   await assertRecordable(session);
-  const attached = await openPage(session.upstreamUrl);
+  const attached = await openPage(session.endpoint);
   if (!attached) return false;
   await beginScreencast(await track(session, attached));
   metrics.recordings.inc({ event: 'start' });
@@ -83,11 +83,14 @@ async function assertRecordable(session) {
 async function track(session, { conn, sessionId }) {
   const dir = join(DIR, session.id);
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  const state = { conn, sessionId, dir, frames: [], bytes: 0, startedAt: Date.now(), ...ownership(session) };
+  const state = { conn, sessionId, dir, ...emptySpool(), ...ownership(session) };
   active.set(session.id, state);
   conn.on('Page.screencastFrame', async (params) => onFrame(state, params));
   return state;
 }
+
+/** A recording with nothing spooled yet, and no failed write to report. */
+const emptySpool = () => ({ frames: [], bytes: 0, writeFailed: false, startedAt: Date.now() });
 
 /** Who the recording belongs to and where the browser came from. */
 function ownership(session) {
@@ -97,7 +100,8 @@ function ownership(session) {
 /** One screencast frame: acknowledge it, then spool it unless the recording is full. */
 function onFrame(state, params) {
   // Ack first: Chrome stops sending until the frame is acknowledged, and a
-  // slow disk must not stall the recorded browser.
+  // slow disk must not stall the recorded browser. A failed ack means the wire
+  // is gone, and teardown closes the recording.
   state.conn.send('Page.screencastFrameAck', { sessionId: params.sessionId }, state.sessionId).catch(() => {});
   if (isFull(state)) return;
   const buf = Buffer.from(params.data, 'base64');
@@ -105,7 +109,20 @@ function onFrame(state, params) {
   state.frames.push(frameEntry(state, index, params, buf));
   state.bytes += buf.length;
   metrics.recordedFrames.inc({});
-  writeFile(join(state.dir, frameFile(index)), buf).catch(() => {});
+  spool(state, index, buf);
+}
+
+/**
+ * Writes one frame to the spool. The first failure is logged with where it
+ * was writing; later ones are silent, since a full or gone disk fails every
+ * frame after it and one line says as much as a thousand.
+ */
+function spool(state, index, buf) {
+  writeFile(join(state.dir, frameFile(index)), buf).catch((e) => {
+    if (state.writeFailed) return;
+    state.writeFailed = true;
+    console.error(`[gateway] recording frames not written to ${state.dir}:`, e.message);
+  });
 }
 
 /** The manifest's record of one frame: index, offset, viewport and size. */
@@ -133,7 +150,9 @@ export async function stop(sessionId) {
 async function endScreencast(state) {
   try {
     await state.conn.send('Page.stopScreencast', {}, state.sessionId);
-  } catch {}
+  } catch {
+    // The browser is already gone or not answering; the frames spooled so far are what is kept.
+  }
   state.conn.close();
 }
 
