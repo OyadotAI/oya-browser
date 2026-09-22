@@ -90,7 +90,8 @@ class PageDriver {
    * here: its name is the caller's text and is never evaluated in the page.
    */
   async runInjected(id, action, params, view) {
-    if (actionScript(action, params) === null) return this.ctx.sendResult(id, false, null, unknownAction(action));
+    if (actionScript(action, params) === null)
+      return this.ctx.sendResult(id, false, null, unknownAction(action), 'action_unsupported');
     await this.ctx.injectScripts(view);
     if (action === 'analyze') this.ctx.analysisStarted(view);
     const raw = await this.analysed(action, params, view);

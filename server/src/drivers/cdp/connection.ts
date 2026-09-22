@@ -5,6 +5,13 @@
 import WebSocket from 'ws';
 import { CONNECT_TIMEOUT_MS, MAX_PAYLOAD_BYTES, COMMAND_TIMEOUT_MS } from './constants.ts';
 
+/**
+ * The connection itself failed: closed, refused a write, or gave no reply in
+ * time. Distinct from an error the page answered with, because the outcome of
+ * a command sent over a lost connection is unknown, while a page's "no" is known.
+ */
+export class CdpConnectionError extends Error {}
+
 /** Minimal CDP JSON-RPC transport over the ws dependency we already have. */
 export class CDPConnection {
   /** Set once the socket closes; every later send fails fast. */
@@ -35,6 +42,18 @@ export class CDPConnection {
       this.ws = new WebSocket(this.url, { maxPayload: MAX_PAYLOAD_BYTES, handshakeTimeout: timeoutMs });
       watchSocket(this, finish);
     });
+  }
+
+  /**
+   * Speaks CDP over a socket somebody else opened: a relay carried on an Oya
+   * browser's control socket, or a socket a driver's endpoint dialled. Nothing
+   * here dials, so a caller holds one way of reaching a browser, not two.
+   */
+  static over(socket: WebSocket): CDPConnection {
+    const conn = new CDPConnection(socket.url ?? null);
+    conn.ws = socket;
+    watchTraffic(conn);
+    return conn;
   }
 
   /** Routes a reply to its pending request, or an event to its listeners. */
@@ -72,7 +91,7 @@ export class CDPConnection {
 
   /** Sends one CDP command, optionally into a flattened target session, and resolves with its result. */
   send(method, params = {}, sessionId, timeoutMs = COMMAND_TIMEOUT_MS) {
-    if (!isOpen(this)) return Promise.reject(new Error('CDP connection closed'));
+    if (!isOpen(this)) return Promise.reject(new CdpConnectionError('CDP connection closed'));
     const id = this.nextId++;
     const message = sessionId ? { id, method, params, sessionId } : { id, method, params };
     return new Promise((resolve, reject) => {
@@ -103,13 +122,16 @@ function settleOnce(resolve, reject, value, cleanup) {
   };
 }
 
-/** Wires the socket's lifecycle to the connection: open settles connect, close fails every request. */
+/** Wires the socket's lifecycle to the connection: open settles connect, an error fails it, and traffic flows. */
 function watchSocket(conn: CDPConnection, finish) {
   conn.ws.on('open', () => finish());
-  conn.ws.on('error', (e) => {
-    conn.failAll(e);
-    finish(e);
-  });
+  conn.ws.on('error', (e) => finish(e));
+  watchTraffic(conn);
+}
+
+/** Routes the socket's traffic: messages to their requests and listeners, close and error to every request. */
+function watchTraffic(conn: CDPConnection) {
+  conn.ws.on('error', (e) => conn.failAll(new CdpConnectionError(e.message)));
   conn.ws.on('close', () => markClosed(conn));
   conn.ws.on('message', (raw) => conn.onMessage(raw));
 }
@@ -117,7 +139,7 @@ function watchSocket(conn: CDPConnection, finish) {
 /** The socket closed: nothing more will be answered. */
 function markClosed(conn: CDPConnection) {
   conn.closed = true;
-  conn.failAll(new Error('CDP connection closed'));
+  conn.failAll(new CdpConnectionError('CDP connection closed'));
 }
 
 /** Whether a request can be written now. */
@@ -158,7 +180,7 @@ function emit(listeners, msg) {
 /** Gives up on a request that got no reply in time. */
 function expire(pending, id, method, reject) {
   pending.delete(id);
-  reject(new Error(`CDP ${method} timed out`));
+  reject(new CdpConnectionError(`CDP ${method} timed out`));
 }
 
 /** Writes a request; a socket that refuses it fails the request at once. */
@@ -168,6 +190,6 @@ function write(conn: CDPConnection, id, message, timer, reject) {
   } catch (e) {
     clearTimeout(timer);
     conn.pending.delete(id);
-    reject(e);
+    reject(new CdpConnectionError(e.message));
   }
 }

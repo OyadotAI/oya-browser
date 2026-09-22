@@ -7,6 +7,7 @@ const { wireTab } = require('./tab-events.cjs');
 const { navigateActive, normalizeAddress } = require('./navigation.cjs');
 const { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } = require('./constants.cjs');
 const popups = require('./popup-tabs.cjs');
+const { loadInTab, isUnprotected } = require('./load.cjs');
 
 /** What the tab strip shows for one tab. */
 function tabSummary(t, activeTabId) {
@@ -55,7 +56,7 @@ function leaveBrowsing(tabs) {
  * else first (ERR_ABORTED) is not a failure, and logging it cried wolf.
  */
 function reportFirstLoad(e) {
-  if (e.errno === ERR_ABORTED || e.code === 'ERR_ABORTED') return;
+  if (e.errno === ERR_ABORTED || e.code === 'ERR_ABORTED' || isUnprotected(e)) return;
   console.error('[tab] Could not open page:', e.message);
 }
 
@@ -116,7 +117,7 @@ class TabManager {
   /** Loads the tab's first page once it is protected, unless a navigation already took over. */
   openFirstPage(tab, tabReady, { url, loadOptions }) {
     tab.setup = tabReady;
-    const load = () => (url && !tab.navigationRequest ? tab.view.webContents.loadURL(url, loadOptions) : undefined);
+    const load = () => (url && !tab.navigationRequest ? loadInTab(tab, url, loadOptions) : undefined);
     tab.ready = Promise.resolve(tabReady).then(load);
     tab.ready.catch(reportFirstLoad);
   }
@@ -253,9 +254,9 @@ class TabManager {
     this.sendTabList();
   }
 
-  /** Reloads a tab, clearing its error. */
+  /** Reloads a tab, clearing its error; one that could not be protected keeps saying so (only about:blank reloads). */
   reloadTab(tab) {
-    tab.loadError = null;
+    if (tab.protection !== 'failed') tab.loadError = null;
     tab.view.webContents.reload();
   }
 }

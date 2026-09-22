@@ -1,37 +1,39 @@
 /**
- * Unit tests for the browsers' socket entry point: a live-view viewer arriving
- * or leaving tells an Oya browser to start or stop sending frames.
+ * Unit tests for the browsers' socket entry point: a new socket is handed to a
+ * connection, which gives it a deadline to authenticate. Live view, which used
+ * to be wired here, is pinned in live-view.test.ts.
  */
-import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import '../../../../src/modules/browsers/socket.ts';
-import { registry } from '../../../../src/modules/browsers/registry.ts';
-import { LIVE_VIEW_FPS } from '../../../../src/modules/browsers/connection/constants.ts';
-import { connectBrowser, disconnectBrowser } from '../../support/fakes.ts';
-import { FakeResponse } from '../../support/browsers.ts';
+import { EventEmitter } from 'node:events';
+import { handleConnection, sendCommand } from '../../../../src/modules/browsers/socket.ts';
+import { AUTH_DEADLINE_MS, CloseCode } from '../../../../src/modules/browsers/connection/constants.ts';
+import { FakeSocket } from '../../support/fakes.ts';
 
-const B = 'b-socket';
+/** A FakeSocket that accepts the listeners a connection subscribes. */
+class ListeningSocket extends FakeSocket {
+  /** Where the connection's listeners live. */
+  events = new EventEmitter();
 
-describe('socket: live-view control', () => {
-  afterEach(() => disconnectBrowser(B));
+  /** Subscribes, as ws.on does. */
+  on(event: string, fn: (...args: any[]) => void) {
+    this.events.on(event, fn);
+  }
+}
 
-  it('asks the browser for frames at the live-view rate when the first viewer arrives', () => {
-    const ws = connectBrowser(B);
-    registry.addViewer(B, new FakeResponse());
-    assert.deepEqual(ws.ofType('stream_start'), [{ type: 'stream_start', fps: LIVE_VIEW_FPS }]);
+describe('socket entry point', () => {
+  afterEach(() => mock.timers.reset());
+
+  it('takes over a new socket and closes it when it does not authenticate in time', () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const ws = new ListeningSocket();
+    handleConnection(ws);
+    assert.equal(ws.closed, null);
+    mock.timers.tick(AUTH_DEADLINE_MS);
+    assert.deepEqual(ws.closed, { code: CloseCode.AUTH_TIMEOUT, reason: 'Auth timeout' });
   });
 
-  it('tells the browser to stop once the last viewer leaves', () => {
-    const ws = connectBrowser(B);
-    const viewer = new FakeResponse();
-    registry.addViewer(B, viewer);
-    registry.removeViewer(B, viewer);
-    assert.equal(ws.ofType('stream_stop').length, 1);
-  });
-
-  it('shrugs off a socket that cannot be written', () => {
-    const ws = connectBrowser(B);
-    ws.failWith = new Error('closed');
-    assert.doesNotThrow(() => registry.addViewer(B, new FakeResponse()));
+  it('is where the rest of the server gets sendCommand from', () => {
+    assert.equal(typeof sendCommand, 'function');
   });
 });

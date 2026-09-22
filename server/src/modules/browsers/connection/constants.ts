@@ -54,6 +54,10 @@ export const MAX_PROXY_BYTES = 17_179_869_184;
 export const MAX_CONTROL_ID = 80;
 /** WebSocket close reasons are capped at 123 bytes; persona errors are trimmed to fit. */
 export const MAX_CLOSE_REASON = 120;
+/** Most actions a browser may announce; more is a misbehaving client, and the static list is used. */
+export const MAX_ANNOUNCED_ACTIONS = 128;
+/** An announced action name: lowercase words joined by underscores, as the vocabulary spells them. */
+export const ACTION_NAME = /^[a-z_]{1,40}$/;
 /** Trailing characters of a rejected key shown in the log. */
 export const KEY_HINT_CHARS = 4;
 /** Frames per second a browser streams to the live view. */

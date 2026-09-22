@@ -10,6 +10,7 @@ import { validCookie, expired } from '../../personas/cookie-rules.ts';
 import { MAX_IMPORT_COOKIES } from '../constants.ts';
 import { audit } from '../../../platform/audit.ts';
 import { Status } from '../../../platform/http-status.ts';
+import { HttpError, answerFor, sendError } from '../../../platform/errors.ts';
 import { getKey } from '../../../app/http.ts';
 import { resolvePersona } from '../lifecycle/persona.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
@@ -23,16 +24,21 @@ export async function poolCommand(req, res) {
   if (refuseAction(res, action)) return;
   const browserId = nextBrowser(key);
   if (!browserId) return res.status(Status.UNAVAILABLE).json({ error: 'No browsers available in pool' });
-  await dispatch(res, browserId, action, params);
+  await dispatch(req, res, browserId, action, params);
 }
 
-/** Runs the command and answers with the browser that ran it. */
-async function dispatch(res, browserId, action, params) {
+/**
+ * Runs the command and answers with the browser that ran it. A failure follows
+ * the same contract as the browser route: an HttpError answers itself with
+ * `ok: false`, anything else is a bug for the API handler.
+ */
+async function dispatch(req, res, browserId, action, params) {
   try {
     const result = await sendCommand(browserId, action, params || {});
     res.json({ ...result, _browser: browserId });
   } catch (err) {
-    res.status(Status.INTERNAL).json({ ok: false, error: err.message, _browser: browserId });
+    if (!(err instanceof HttpError)) throw err;
+    res.status(err.status).json({ ok: false, ...answerFor(err, req).body, _browser: browserId });
   }
 }
 
@@ -51,6 +57,14 @@ export function clearJar(req, res) {
   res.json({ ok: true, persona: persona.id });
 }
 
+/** A jar format nobody defined: the choices, in the API's one shape. */
+const refuseFormat = (req, res) =>
+  sendError(
+    res,
+    new HttpError(Status.BAD_REQUEST, `format must be one of: ${FORMATS.join(', ')}`, { field: 'format' }),
+    req,
+  );
+
 /**
  * Answers one of the caller's persona jars (?persona=, else the default) in ?format=:
  * json as stored, playwright for `context.addCookies`, or netscape, a cookies.txt download.
@@ -60,8 +74,7 @@ export function exportJar(req, res) {
   if (!resolved) return;
   const format = req.query.format === undefined ? 'json' : String(req.query.format);
   const jar = formatJar(format, getAllCookies(resolved.persona.id));
-  if (jar === undefined)
-    return res.status(Status.BAD_REQUEST).json({ error: `format must be one of: ${FORMATS.join(', ')}` });
+  if (jar === undefined) return refuseFormat(req, res);
   if (typeof jar === 'string') return sendCookiesTxt(res, resolved.persona.id, jar);
   res.json({ persona: resolved.persona.id, cookies: jar });
 }

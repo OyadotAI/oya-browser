@@ -9,8 +9,9 @@ import { Status } from '../../../platform/http-status.ts';
 import * as keyConfig from '../../config/service.ts';
 import { control } from '../../control/service.ts';
 import { managedConfigured } from '../../control/managed.ts';
-import { browserQuota, quotaBody } from './fleet.ts';
+import { browserQuota, quotaBody, refuseBadName } from './fleet.ts';
 import { resolvePersona } from './persona.ts';
+import { refusal } from './sessions.ts';
 import { launchCdp } from './start-cdp.ts';
 import { launchManaged, launchSandbox } from './start-oya.ts';
 import { nothingToDial, startWithConnected } from './start-connected.ts';
@@ -19,6 +20,7 @@ import type { Start } from './start-reply.ts';
 /** Starts a browser on whichever provider the request or the key's configuration names. */
 export async function startBrowser(req, res) {
   const key = getKey(req);
+  if (refuseBadName(res, req.body?.name)) return;
   const wanted = String(req.body?.provider || keyConfig.providerFor(key));
   const resolved = resolvePersona(res, key, req.body?.profile || req.body?.persona, Status.BAD_REQUEST);
   if (!resolved || overQuota(res, key)) return;
@@ -32,7 +34,7 @@ function overQuota(res, key) {
   return !quota.allowed;
 }
 
-/** Runs the launcher; any failure is audited and answered with its status, else 502. */
+/** Runs the launcher; any failure is audited and answered with its status and code, else 502. */
 async function launch(start: Start) {
   try {
     await control().assertProvisioning(start.key, start.req.controlSession.id);
@@ -40,7 +42,7 @@ async function launch(start: Start) {
   } catch (err) {
     const meta = { provider: start.wanted, error: err.message };
     audit({ action: 'browser.start', actorKey: start.key, outcome: 'error', meta, req: start.req });
-    start.res.status(err.status || Status.BAD_GATEWAY).json({ error: err.message });
+    start.res.status(err.status || Status.BAD_GATEWAY).json(refusal(err));
   }
 }
 

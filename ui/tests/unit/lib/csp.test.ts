@@ -29,6 +29,12 @@ describe('contentSecurityPolicy', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://api.example.com");
   });
 
+  it('lets the page reach PostHog only when the operator set its host', () => {
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
+    vi.stubEnv('POSTHOG_HOST', 'https://ph.example.test/');
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://ph.example.test");
+  });
+
   it('keeps the directives in their established order', () => {
     const names = contentSecurityPolicy('n', false)
       .split('; ')

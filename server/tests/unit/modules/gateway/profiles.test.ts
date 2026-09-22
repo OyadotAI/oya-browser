@@ -13,6 +13,7 @@ const dir = ownDataDir('oya-profiles-');
 const profiles = await import('../../../../src/modules/gateway/profiles.ts');
 const { fingerprint } = await import('../../../../src/platform/audit.ts');
 const { fakeCdp, pageBrowser } = await import('../../support/gateway.ts');
+const { endpointAt } = await import('../../../../src/drivers/cdp.ts');
 
 const OWNER = fingerprint('profiles-key');
 const OTHER = fingerprint('profiles-other');
@@ -77,18 +78,27 @@ describe('capture and restore', () => {
   it("saves the browser's cookies and storage, sealed, owner-only", async () => {
     const browser = await loggedIn();
     opened.push(browser);
-    assert.equal(await profiles.capture(OWNER, 'shop', { upstreamUrl: browser.url }), true);
+    assert.equal(await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) }), true);
     const raw = readFileSync(fileOf(OWNER, 'shop'));
     assert.doesNotMatch(raw.toString('latin1'), /abc|shop\.test/);
     assert.equal(statSync(fileOf(OWNER, 'shop')).mode & 0o777, 0o600);
+  });
+
+  it('enables no domain on the page it reads, which a page could notice', async () => {
+    const browser = await loggedIn();
+    opened.push(browser);
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) });
     const methods = browser.commands.map((c) => c.method);
-    assert.ok(methods.includes('Network.enable') && methods.includes('Runtime.enable'));
+    assert.deepEqual(
+      methods.filter((m) => m.endsWith('.enable')),
+      [],
+    );
   });
 
   it('captures nothing from a browser without a page', async () => {
     const browser = await fakeCdp(() => ({ targetInfos: [] }));
     opened.push(browser);
-    assert.equal(await profiles.capture(OWNER, 'shop', { upstreamUrl: browser.url }), false);
+    assert.equal(await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) }), false);
   });
 
   it('saves cookies alone when the page will not give its storage', async () => {
@@ -99,10 +109,10 @@ describe('capture and restore', () => {
       }),
     );
     opened.push(browser);
-    await profiles.capture(OWNER, 'shop', { upstreamUrl: browser.url });
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) });
     const replay = await fakeCdp(pageBrowser());
     opened.push(replay);
-    const session: any = { upstreamUrl: replay.url };
+    const session: any = { endpoint: endpointAt(replay.url) };
     assert.equal(await profiles.restore(OWNER, 'shop', session), true);
     assert.equal(session.profileConn, undefined, 'nothing to replay into a page, so the connection is closed');
   });
@@ -110,10 +120,10 @@ describe('capture and restore', () => {
   it('replays the cookies, and registers the storage for its origin, into the next browser', async () => {
     const source = await loggedIn();
     opened.push(source);
-    await profiles.capture(OWNER, 'shop', { upstreamUrl: source.url });
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(source.url) });
     const next = await fakeCdp(pageBrowser());
     opened.push(next);
-    const session: any = { upstreamUrl: next.url };
+    const session: any = { endpoint: endpointAt(next.url) };
     assert.equal(await profiles.restore(OWNER, 'shop', session), true);
     const set = next.commands.find((c) => c.method === 'Network.setCookies');
     assert.deepEqual(set.params.cookies, [COOKIE]);
@@ -126,18 +136,18 @@ describe('capture and restore', () => {
   it('restores nothing on first use of a profile', async () => {
     const next = await fakeCdp(pageBrowser());
     opened.push(next);
-    assert.equal(await profiles.restore(OWNER, 'never-saved', { upstreamUrl: next.url }), false);
+    assert.equal(await profiles.restore(OWNER, 'never-saved', { endpoint: endpointAt(next.url) }), false);
     assert.equal(next.commands.length, 0);
   });
 
   it("will not open a profile file moved onto another owner's name", async () => {
     const source = await loggedIn();
     opened.push(source);
-    await profiles.capture(OWNER, 'shop', { upstreamUrl: source.url });
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(source.url) });
     copyFileSync(fileOf(OWNER, 'shop'), fileOf(OTHER, 'shop'));
     const next = await fakeCdp(pageBrowser());
     opened.push(next);
-    await assert.rejects(profiles.restore(OTHER, 'shop', { upstreamUrl: next.url }));
+    await assert.rejects(profiles.restore(OTHER, 'shop', { endpoint: endpointAt(next.url) }));
     await profiles.remove(OTHER, 'shop');
   });
 
@@ -152,9 +162,9 @@ describe('listing and removal', () => {
   it("lists only the owner's profiles, with whether a session holds them", async () => {
     const browser = await loggedIn();
     opened.push(browser);
-    await profiles.capture(OWNER, 'shop', { upstreamUrl: browser.url });
-    await profiles.capture(OWNER, 'other', { upstreamUrl: browser.url });
-    await profiles.capture(OTHER, 'shop', { upstreamUrl: browser.url });
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) });
+    await profiles.capture(OWNER, 'other', { endpoint: endpointAt(browser.url) });
+    await profiles.capture(OTHER, 'shop', { endpoint: endpointAt(browser.url) });
     profiles.tryLock(OWNER, 'shop');
     const listed = (await profiles.list(OWNER)).sort((a, b) => a.name.localeCompare(b.name));
     assert.deepEqual(
@@ -176,7 +186,7 @@ describe('listing and removal', () => {
   it('deletes a saved profile, and says false when there was none', async () => {
     const browser = await loggedIn();
     opened.push(browser);
-    await profiles.capture(OWNER, 'other', { upstreamUrl: browser.url });
+    await profiles.capture(OWNER, 'other', { endpoint: endpointAt(browser.url) });
     assert.equal(await profiles.remove(OWNER, 'other'), true);
     assert.equal(await profiles.remove(OWNER, 'other'), false);
   });

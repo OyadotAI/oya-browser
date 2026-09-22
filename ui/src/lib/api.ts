@@ -25,6 +25,8 @@ export function authHeaders(token: string): HeadersInit {
   return {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
+    // Names the client, so a start can be counted as one a person clicked for.
+    'X-Oya-Client': 'console',
   };
 }
 

@@ -15,7 +15,7 @@ const { registry } = await import('../../src/modules/browsers/registry.ts');
 const calls = [];
 registry.add('workflow-fixture', {
   apiKey: 'fixture',
-  driver: {
+  engine: {
     send: async (action, params) => {
       calls.push({ action, params });
       return { ok: true, data: { id: 'run', status: 'succeeded', assertions: 1 } };

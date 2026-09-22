@@ -28,7 +28,7 @@ describe('TabManager', () => {
 
   it('loads about:blank first and the page only after protection is set up', async () => {
     const order = [];
-    ctx.protection.setupTabCDP = async () => order.push('protected');
+    ctx.protection.setupTabCDP = async () => (order.push('protected'), true);
     const tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
     tab.view.webContents.loadImpl = async (url) => order.push(url);
     await tab.ready;
@@ -36,15 +36,23 @@ describe('TabManager', () => {
     assert.deepEqual(order, ['protected', 'https://a.test/']);
   });
 
-  it('loads the page anyway when protection never finishes', async () => {
+  it('never loads the page when protection never finishes: two bounded attempts, then the tab stays blank', async () => {
     ctx.protection.setupTabCDP = () => new Promise(() => {});
     const errors = mock.method(console, 'error', () => {});
     const tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
+    // Two attempts, each given its full time.
     await flush();
     mock.timers.tick(10000);
-    await tab.ready;
-    assert.equal(tab.view.webContents.loaded.at(-1), 'https://a.test/');
-    assert.match(errors.mock.calls[0].arguments[0], /UNPROTECTED/);
+    await flush();
+    mock.timers.tick(10000);
+    await tab.ready.catch(() => {});
+    assert.deepEqual(tab.view.webContents.loaded, ['about:blank']);
+    assert.equal(tab.protection, 'failed');
+    const lines = errors.mock.calls.map((c) => c.arguments[0]);
+    assert.deepEqual(lines, [
+      '[anonymity] tab protection did not finish on the first attempt, trying once more',
+      '[anonymity] tab protection failed twice, tab not loaded',
+    ]);
   });
 
   it('keeps one tab open when the person closes the last', () => {

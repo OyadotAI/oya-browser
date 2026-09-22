@@ -17,4 +17,26 @@ export { sanitizeSteps, validateWorkflow } from './sanitize.ts';
 export { variablesOf, missingVariables, templateValues } from './variables.ts';
 export { renderPlaywright } from './playwright.ts';
 export { create, promote, rename, list, remove } from './catalog.ts';
-export { play } from './replay.ts';
+import { play as replay } from './replay.ts';
+import { track } from '../telemetry/index.ts';
+
+/** How a replay ended: the agent finished it (healed), a person did (handed over), the steps ran as saved (ok), or it threw. */
+export function outcomeOf(result, failed: boolean) {
+  if (failed) return 'failed';
+  if (!result?.fellBack) return 'ok';
+  return result.healed ? 'healed' : 'handed_over';
+}
+
+/** Counts how a replay went, whoever asked (a route or a job). */
+function counted(apiKey, steps: number, result?, failed = false) {
+  track.playbookReplayed(apiKey, { outcome: outcomeOf(result, failed), steps, healed: !!result?.healed });
+}
+
+/** Replays a playbook and counts the outcome, success or failure. */
+export function play(apiKey, browserId, pb, vars = {}, options = {}) {
+  const steps = pb?.steps?.length ?? 0;
+  return replay(apiKey, browserId, pb, vars, options).then(
+    (result) => (counted(apiKey, steps, result), result),
+    (err) => (counted(apiKey, steps, undefined, true), Promise.reject(err)),
+  );
+}

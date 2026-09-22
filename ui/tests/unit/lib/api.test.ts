@@ -29,8 +29,12 @@ describe('URLs and headers', () => {
     expect(apiOrigin()).toBe(window.location.origin);
   });
 
-  it('sends a bearer token as JSON', () => {
-    expect(authHeaders('t')).toEqual({ Authorization: 'Bearer t', 'Content-Type': 'application/json' });
+  it('sends a bearer token as JSON and names the console as the client', () => {
+    expect(authHeaders('t')).toEqual({
+      Authorization: 'Bearer t',
+      'Content-Type': 'application/json',
+      'X-Oya-Client': 'console',
+    });
   });
 });
 

@@ -7,6 +7,7 @@ const assert = require('node:assert/strict');
 const { TabManager } = require('../../../../main/tabs/tabs.cjs');
 const { normalizeAddress } = require('../../../../main/tabs/navigation.cjs');
 const { mainCtx } = require('../../support/main-ctx.cjs');
+const { flush } = require('../../support/fakes.cjs');
 
 describe('address-bar navigation', () => {
   let ctx, tab;
@@ -49,6 +50,8 @@ describe('address-bar navigation', () => {
     ctx.cookies.pullCookiesFor = async (url) => pulled.push(url);
     const recorded = mock.method(ctx.recorder, 'recordNavigation', () => {});
     await ctx.tabs.navigateActive('a.test/x');
+    // The load itself waits one tick on the tab's protection, which has settled.
+    await flush();
     assert.deepEqual(pulled, ['https://a.test/x']);
     assert.deepEqual(recorded.mock.calls[0].arguments, ['https://a.test/x']);
     assert.equal(tab.view.webContents.loaded.at(-1), 'https://a.test/x');

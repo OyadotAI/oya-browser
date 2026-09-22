@@ -19,6 +19,7 @@ import {
   validFile,
 } from '../../../src/app/http.ts';
 import { fingerprint } from '../../../src/platform/audit.ts';
+import { HttpError } from '../../../src/platform/errors.ts';
 import { LONG_JSON_KEEPALIVE_MS } from '../../../src/app/constants.ts';
 import { connectBrowser, disconnectBrowser } from '../support/fakes.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../support/browsers.ts';
@@ -184,7 +185,10 @@ describe('announce', () => {
 });
 
 describe('longJson', () => {
-  afterEach(() => mock.timers.reset());
+  afterEach(() => {
+    mock.timers.reset();
+    mock.restoreAll();
+  });
 
   it('commits to 200 and ends with the work’s result', async () => {
     const res = new FakeResponse();
@@ -206,19 +210,23 @@ describe('longJson', () => {
     assert.deepEqual(res.written, [' ', ' ']);
   });
 
-  it('carries a failure’s real status in the body once the 200 is out', async () => {
+  it('carries an HttpError’s real status, code and message in the body once the 200 is out', async () => {
     const res = new FakeResponse();
     await longJson(res, async () => {
-      throw Object.assign(new Error('quota'), { status: 429 });
+      throw new HttpError(429, 'quota', { code: 'rate_limited' });
     });
-    assert.deepEqual(JSON.parse(res.ended), { error: 'quota', status: 429 });
+    assert.deepEqual(JSON.parse(res.ended), { error: 'quota', code: 'rate_limited', status: 429 });
   });
 
-  it('reports 500 in the body for a failure without a status', async () => {
+  it('hides an unexpected failure behind a 500 body with a reference, the same as any route', async () => {
+    mock.method(console, 'error', () => {});
     const res = new FakeResponse();
     await longJson(res, async () => {
       throw new Error('boom');
     });
-    assert.equal(JSON.parse(res.ended).status, 500);
+    const body = JSON.parse(res.ended);
+    assert.deepEqual([body.status, body.code], [500, 'internal_error']);
+    assert.ok(!body.error.includes('boom'));
+    assert.match(body.ref, /^[0-9a-f]{8}$/);
   });
 });

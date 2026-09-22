@@ -4,10 +4,19 @@
  * takes the protected path (fingerprint, proxy, persona partition).
  */
 const { FRONT_DOOR_TAB_WAIT_MS } = require('../constants.cjs');
+const { whenProtected } = require('../main/tabs/load.cjs');
 
 /** The browser's own UI pages (the shell and the input shield): never an agent target. */
 const isUi = (info) =>
   info?.type === 'page' && /^file:.*\/renderer\/(?:index|control-shield)\.html/.test(info.url || '');
+
+/** Waits for the tab's first load, but no longer than FRONT_DOOR_TAB_WAIT_MS: one that never settles is not waited out. */
+async function untilFirstLoad(tab) {
+  let timer;
+  const waited = new Promise((r) => (timer = setTimeout(r, FRONT_DOOR_TAB_WAIT_MS)));
+  await Promise.race([tab.ready?.catch(() => {}), waited]);
+  clearTimeout(timer);
+}
 
 /** The targets behind one front door and the app hooks that open, close and admit them. */
 class FrontDoor {
@@ -64,14 +73,20 @@ class FrontDoor {
     return tab.targetId;
   }
 
-  /** Opens a tab the protected way and returns its targetId; a first load that never settles is not waited out. */
+  /**
+   * Opens a tab the protected way and returns its targetId; a first load that
+   * never settles is not waited out. One that could not be protected is
+   * closed and refused: a harness handed it, or one that found it in the
+   * target list, would drive it straight to the site.
+   */
   async openTab(url) {
     const id = this.createTab(url || 'about:blank', true);
     const tab = this.tabs().find((t) => t.id === id);
-    let timer;
-    const waited = new Promise((r) => (timer = setTimeout(r, FRONT_DOOR_TAB_WAIT_MS)));
-    await Promise.race([tab.ready?.catch(() => {}), waited]);
-    clearTimeout(timer);
+    await whenProtected(tab).catch((err) => {
+      this.closeTab(id, { keepOne: false });
+      throw err;
+    });
+    await untilFirstLoad(tab);
     return this.targetIdOf(tab);
   }
 

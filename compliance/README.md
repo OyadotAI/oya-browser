@@ -27,4 +27,6 @@ a laptop, and it cannot be confused with a claim about a live deployment.
 
 The customer's own application, the cloud underneath, and workflow content. A covered entity still
 owes its own risk analysis under §164.308(a)(1). Say so rather than implying the pack is a
-certification. It is evidence about this repository at a commit.
+certification. It is evidence about this repository at a commit. Outbound analytics is outside it
+too: PostHog and the Slack webhooks are operator-configured, off by default, and best effort; the
+audit log is the evidence, not them.

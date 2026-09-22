@@ -45,6 +45,40 @@ describe('page commands', () => {
     assert.deepEqual(results(ctx), [['c1', true, { url: 'https://a.test/', title: 'Title' }]]);
   });
 
+  it('navigate opens only http(s) and about:blank, so a command cannot read this machine or run as code', async () => {
+    for (const url of [
+      'file:///etc/passwd',
+      ' FILE:///etc/passwd',
+      'javascript:alert(1)',
+      'view-source:https://x.test',
+      'data:text/html,x',
+      'chrome://settings',
+    ]) {
+      const view = pageView();
+      const ctx = await run(view, 'navigate', { url });
+      assert.deepEqual(view.webContents.calls, [], url);
+      assert.deepEqual(
+        results(ctx),
+        [['c1', false, null, 'Only http and https addresses, or about:blank, can be opened.']],
+        url,
+      );
+    }
+  });
+
+  it('navigate in a tab that could not be protected answers tab_unprotected, loads nothing and does not retry', async () => {
+    const view = pageView();
+    const tabs = [{ id: 1, view, protection: 'failed', setup: Promise.resolve() }];
+    const failed = await createPageActions(pageCtx(view, { tabs }))
+      .runPageAction('c1', 'navigate', { url: 'https://x.test' }, view)
+      .then(
+        () => null,
+        (e) => e,
+      );
+    assert.equal(failed?.code, 'tab_unprotected');
+    assert.deepEqual(view.webContents.calls, []);
+    assert.equal(delays.filter((ms) => ms === c.NAVIGATE_RETRY_MS).length, 0);
+  });
+
   it('navigate retries a failed load, then reports the error', async () => {
     let attempts = 0;
     const view = pageView({ load: async () => Promise.reject(new Error(`fail ${++attempts}`)) });

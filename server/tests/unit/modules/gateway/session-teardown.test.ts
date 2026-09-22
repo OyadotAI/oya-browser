@@ -73,6 +73,22 @@ describe('teardown', () => {
     assert.match((console.error as any).mock.calls[0].arguments.join(' '), /cleanup pending: vendor down/);
   });
 
+  it('logs a cleanup_pending mark that failed and still hands the browser back', async () => {
+    let calls = 0;
+    mock.method(control(), 'update', async () => {
+      if (++calls === 1) throw new Error('store down');
+      return {};
+    });
+    const s = live('t-mark');
+    await teardown(s, 'done');
+    assert.equal(s.release.mock.callCount(), 1);
+    const lines = (console.error as any).mock.calls.map((c) => c.arguments.join(' '));
+    assert.ok(
+      lines.some((l) => /t-mark not marked cleanup_pending: store down/.test(l)),
+      lines.join('\n'),
+    );
+  });
+
   it('drops the attachment record of a fleet browser and books no browser seconds for it', async () => {
     const s = live('t-4', { attachedTo: 'b-fleet' });
     await control().store.transact(async (tx) => {

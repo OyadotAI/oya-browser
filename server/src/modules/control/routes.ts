@@ -10,11 +10,13 @@ import { desktopState } from './desktop.ts';
 import { assertSafeTarget } from '../../platform/net-guard.ts';
 import { registry } from '../browsers/registry.ts';
 import { Status } from '../../platform/http-status.ts';
+import { sendError } from '../../platform/errors.ts';
 import { key, admin, requireOwnBrowser, redispatchStart } from './http/guards.ts';
 import { transferControl } from './http/takeover.ts';
 import { humanInput } from './http/input.ts';
 import { recordFlow } from './http/record.ts';
 import { recover } from './http/recover.ts';
+import { cancelSession } from './http/cancel.ts';
 
 /** Mounted at /control. */
 export const controlRouter = Router();
@@ -32,10 +34,8 @@ controlRouter.get('/', async (req, res) => {
 });
 /** POST /control/sessions, start a browser, by re-dispatching to POST /browsers/start. */
 controlRouter.post('/sessions', (req, res) => redispatchStart(req, res, 'Session creation failed'));
-/** POST /control/sessions/:id/cancel, cancel a session. */
-controlRouter.post('/sessions/:id/cancel', async (req, res) =>
-  res.json(await control().cancel(key(req), req.params.id)),
-);
+/** POST /control/sessions/:id/cancel, stop a session in any state; answers its final state. */
+controlRouter.post('/sessions/:id/cancel', async (req, res) => res.json(await cancelSession(req)));
 /** GET /control/sessions, this project's sessions. */
 controlRouter.get('/sessions', async (req, res) => res.json(await control().sessions(key(req))));
 /** GET /control/sessions/:id, one session, 404 if it is not this project's. */
@@ -177,8 +177,8 @@ controlRouter.post('/deliveries/:id/replay', admin, async (req, res) => {
   });
   res.json({ ok: true });
 });
-/** Errors as JSON with a code; 503 control_unavailable when the error carries none. */
+/** Errors in the API's one shape: an HttpError speaks for itself, anything else is a 500 under a reference. */
 controlRouter.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  res.status(err.status || Status.UNAVAILABLE).json({ error: err.message, code: err.code || 'control_unavailable' });
+  sendError(res, err, req);
 });

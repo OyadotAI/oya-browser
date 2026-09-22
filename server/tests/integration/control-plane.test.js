@@ -95,7 +95,7 @@ try {
     name: 'B1',
     clientType: 'cdp',
     provider: 'cdp',
-    driver: { send: async () => ({ ok: true, data: {} }), close() {} },
+    engine: { send: async () => ({ ok: true, data: {} }), close() {} },
   });
   const codes = [];
   for (let i = 0; i < 5; i++) {
@@ -545,8 +545,8 @@ try {
       name: 'Console 1',
       clientType: 'cdp',
       provider: 'cdp',
-      driver: {
-        send: async (action) => (action === 'boom' ? { ok: false, error: 'nope' } : { ok: true, data: {} }),
+      engine: {
+        send: async (action) => (action === 'hover' ? { ok: false, error: 'nope' } : { ok: true, data: {} }),
         close() {},
       },
       release: () => {
@@ -559,15 +559,16 @@ try {
       name: 'Console 2',
       clientType: 'cdp',
       provider: 'cdp',
-      driver: {
-        send: async (action) => (action === 'boom' ? { ok: false, error: 'nope' } : { ok: true, data: {} }),
+      engine: {
+        send: async (action) => (action === 'hover' ? { ok: false, error: 'nope' } : { ok: true, data: {} }),
         close() {},
       },
     });
     const { sendCommand } = await import('../../src/modules/browsers/socket.ts');
     await sendCommand('fc-2', 'navigate', { url: 'https://example.com/a' });
     await sendCommand('fc-2', 'type', { selector: '#q', text: 'my secret password' });
-    await sendCommand('fc-2', 'boom', {});
+    // A real action the browser answers with a failure; a made-up one is refused before any browser is asked.
+    await sendCommand('fc-2', 'hover', { selector: '#missing' });
 
     const one = await call('/api/browsers/fc-2', { key: 'admin-key' });
     assert(one.status === 200, `GET /browsers/:id answers (got ${one.status})`);
@@ -576,7 +577,10 @@ try {
       `counters: ${one.body.commands} commands, ${one.body.errors} errors`,
     );
     assert(Array.isArray(one.body.activity) && one.body.activity.length === 3, 'activity holds the three commands');
-    assert(one.body.activity[0].action === 'boom' && one.body.activity[0].ok === false, 'newest first, failure marked');
+    assert(
+      one.body.activity[0].action === 'hover' && one.body.activity[0].ok === false,
+      'newest first, failure marked',
+    );
     assert(one.body.activity[2].summary === 'https://example.com/a', 'navigate summary is the url');
     assert(!JSON.stringify(one.body.activity).includes('my secret password'), 'typed text never enters the log');
     assert(one.body.health === 'ok', `health is derived (${one.body.health})`);
@@ -604,21 +608,21 @@ try {
       name: 'C3',
       clientType: 'cdp',
       provider: 'cdp',
-      driver: { send: async () => ({ ok: true }), close() {} },
+      engine: { send: async () => ({ ok: true }), close() {} },
     });
     registry.add('fc-4', {
       apiKey: 'admin-key',
       name: 'C4',
       clientType: 'cdp',
       provider: 'cdp',
-      driver: { send: async () => ({ ok: true }), close() {} },
+      engine: { send: async () => ({ ok: true }), close() {} },
     });
     registry.add('fc-5', {
       apiKey: 'tenant-key',
       name: 'C5',
       clientType: 'cdp',
       provider: 'cdp',
-      driver: { send: async () => ({ ok: true }), close() {} },
+      engine: { send: async () => ({ ok: true }), close() {} },
     });
     const bulk = await call('/api/browsers/stop', {
       method: 'POST',

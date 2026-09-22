@@ -47,6 +47,19 @@ export const BASE64_CHUNK_BYTES = 8192;
 /** Milliseconds per second, for human-readable timeouts. */
 export const MS_PER_SECOND = 1000;
 
+/** The highest code point a header value may carry (Latin-1); fetch refuses anything above. */
+export const LATIN1_MAX = 0xff;
+/** Below this, a code point is a control character, which a header value may not carry (tab aside). */
+export const SPACE = 0x20;
+/** The one control character a header value may carry. */
+export const TAB = 0x09;
+/** DEL, which a header value may not carry either. */
+export const DEL = 0x7f;
+/** Code points are shown in hexadecimal, as U+201C. */
+export const HEX = 16;
+/** A code point shown as U+ and at least four hex digits. */
+export const CODE_POINT_DIGITS = 4;
+
 /** HTTP statuses the SDK reports its own errors with, or reads from the server's, by name. */
 export const Status = {
   /** The caller passed something unusable, such as a non-numeric element id. */

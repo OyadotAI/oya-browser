@@ -133,7 +133,7 @@ Also [Cursor, Claude Desktop and any agent that reads skills](https://oyabrowser
 | [`server`](server) · [`ui`](ui) · [`browser`](browser) | Control plane, console, and the browser itself. |
 
 ```bash
-npm test                 # the whole suite
+npm test                 # server, CLI and packages; ui and browser run their own (see AGENTS.md)
 cd server && npm run stealth -- --live   # the stealth numbers, on your machine
 ```
 

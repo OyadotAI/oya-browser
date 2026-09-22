@@ -4,6 +4,7 @@
 import { INTERNAL_ACTIONS, getKey } from '../../../app/http.ts';
 import { audit } from '../../../platform/audit.ts';
 import { Status } from '../../../platform/http-status.ts';
+import { HttpError, invalid, sendError } from '../../../platform/errors.ts';
 
 /** Long-running work (a navigate can take 90s): no socket timeout for this request. */
 export function noTimeouts(req, res) {
@@ -18,12 +19,15 @@ export function noTimeouts(req, res) {
  * command maps would read it as the string, so only a string goes further.
  */
 export function refuseAction(res, action) {
-  if (!action) return res.status(Status.BAD_REQUEST).json({ error: 'Missing action' });
-  if (typeof action !== 'string') return res.status(Status.BAD_REQUEST).json({ error: 'action must be a string' });
-  if (INTERNAL_ACTIONS.has(action))
-    return res.status(Status.FORBIDDEN).json({ error: `${action} is not available through this API` });
+  if (!action) return sendError(res, new HttpError(Status.BAD_REQUEST, 'Missing action', { field: 'action' }));
+  if (typeof action !== 'string') return sendError(res, invalid('action', 'a string', action));
+  if (INTERNAL_ACTIONS.has(action)) return sendError(res, internalAction(action));
   return null;
 }
+
+/** An action only the server sends, refused to a caller in the API's one error shape. */
+const internalAction = (action: string) =>
+  new HttpError(Status.FORBIDDEN, `${action} is not available through this API`, { code: 'action_forbidden', action });
 
 /** Audits `action` on one browser by the caller; `outcome` defaults to ok. */
 export function auditBrowser(req, action: string, browserId: string, meta: object, outcome?: string) {

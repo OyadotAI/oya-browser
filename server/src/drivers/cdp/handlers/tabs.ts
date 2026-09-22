@@ -13,9 +13,17 @@ export const listTabs: Handler = async (driver) => {
   return { ok: true, data: { tabs } };
 };
 
-/** Opens a tab and attaches to it. */
+/** A tab may open an http(s) address or about:blank. A file: address would read the machine the browser runs on. */
+const isWebAddress = (url: string) => /^https?:\/\//i.test(url.trim()) || url.trim().toLowerCase() === 'about:blank';
+
+/** What a caller is told about any other address; the Oya browser answers the same words. */
+const NOT_A_WEB_ADDRESS = 'Only http and https addresses, or about:blank, can be opened.';
+
+/** Opens a tab on a web address and attaches to it. */
 export const newTab: Handler = async (driver, params) => {
-  const { targetId } = await driver.conn.send('Target.createTarget', { url: params.url || 'about:blank' });
+  const url = String(params.url || 'about:blank');
+  if (!isWebAddress(url)) return { ok: false, error: NOT_A_WEB_ADDRESS };
+  const { targetId } = await driver.conn.send('Target.createTarget', { url });
   await driver.attach(targetId);
   return { ok: true, data: { id: targetId, tab_id: targetId } };
 };

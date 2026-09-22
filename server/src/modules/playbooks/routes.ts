@@ -9,6 +9,7 @@ import { fingerprint } from '../../platform/audit.ts';
 import { enforce } from '../../platform/limits.ts';
 import { Status } from '../../platform/http-status.ts';
 import * as playbooks from './service.ts';
+import { track } from '../telemetry/index.ts';
 import * as runs from './runs.ts';
 import { saveRefusal, recordedRun, playable, runnable } from './requests.ts';
 import { runJob } from './jobs.ts';
@@ -27,7 +28,9 @@ router.post('/browsers/:browserId/playbooks', authMiddleware, enforce('chat'), r
   const error = saveRefusal(body);
   if (error) return res.status(Status.BAD_REQUEST).json({ error });
   const run = recordedRun(body);
-  res.json(await playbooks.create(getKey(req), req.params.browserId, body.name, run));
+  const saved = await playbooks.create(getKey(req), req.params.browserId, body.name, run);
+  track.playbookSaved(getKey(req), { steps: saved.steps });
+  res.json(saved);
 });
 
 /** POST /browsers/:browserId/playbooks/:name/play, replay a saved playbook with its variables, healing broken steps unless autoHeal is false. */

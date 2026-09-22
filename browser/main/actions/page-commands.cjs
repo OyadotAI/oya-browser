@@ -11,6 +11,8 @@ const s = require('./scripts.cjs');
 const c = require('./constants.cjs');
 const { POINTER_COMMANDS } = require('./pointer-commands.cjs');
 const { isDateInput, dateInputValue, unreadableDate } = require('../../scripts/date-value.cjs');
+const { isWebAddress, NOT_A_WEB_ADDRESS } = require('../tabs/navigation.cjs');
+const { loadInTab, isUnprotected } = require('../tabs/load.cjs');
 
 /** Keys that zoom, open the emoji picker, or trigger OS shortcuts. */
 const BLOCKED_KEYS = new Set([
@@ -34,20 +36,28 @@ const BLOCKED_KEYS = new Set([
   'AudioVolumeMute',
 ]);
 
-/** One load of `url`: null when it loaded, otherwise the error. */
-async function attemptLoad(view, url) {
+/** The tab showing `view`, once its first load settles (or is given up on); a view no tab owns stands alone. */
+async function readyTab(driver, view) {
+  const tab = driver.ctx.tabs().find((t) => t.view === view) ?? { view };
+  await driver.waitForTabReady(tab);
+  return tab;
+}
+
+/** One load of `url`: null when it loaded, otherwise the error. A tab that is not protected is never retried: it throws. */
+async function attemptLoad(tab, url) {
   try {
-    await view.webContents.loadURL(url);
+    await loadInTab(tab, url);
     return null;
   } catch (navErr) {
+    if (isUnprotected(navErr)) throw navErr;
     return navErr;
   }
 }
 
 /** Loads `url`, retrying real failures; resolves to the last error, or null once loaded or aborted. */
-async function loadWithRetries(view, url) {
+async function loadWithRetries(tab, url) {
   for (let attempt = 0; ; attempt++) {
-    const navErr = await attemptLoad(view, url);
+    const navErr = await attemptLoad(tab, url);
     if (!navErr || navErr.message?.includes('ERR_ABORTED')) return null;
     if (attempt === c.NAVIGATE_RETRIES) return navErr;
     await sleep(c.NAVIGATE_RETRY_MS);
@@ -177,12 +187,17 @@ async function suggestionsVisible(driver, view) {
 const PAGE_COMMANDS = {
   ...POINTER_COMMANDS,
 
-  /** Loads a URL in the tab the command targets, after its first load and a cookie pull. */
+  /**
+   * Loads a URL in the tab the command targets, after its first load and a cookie
+   * pull. Only a web address: the url is the caller's, and a file: one would hand
+   * them this machine's files through the next analyze or screenshot.
+   */
   async navigate(driver, id, params, view) {
     if (!params?.url) return driver.ctx.sendResult(id, false, null, 'navigate needs a url. Send it again with "url".');
-    await driver.waitForTabReady(driver.ctx.tabs().find((t) => t.view === view));
+    if (!isWebAddress(params.url)) return driver.ctx.sendResult(id, false, null, NOT_A_WEB_ADDRESS);
+    const tab = await readyTab(driver, view);
     await driver.ctx.pullCookiesFor(params.url);
-    const lastErr = await loadWithRetries(view, params.url);
+    const lastErr = await loadWithRetries(tab, params.url);
     if (lastErr) return driver.ctx.sendResult(id, false, null, lastErr.message);
     await driver.ctx.injectScripts(view);
     driver.ctx.sendResult(id, true, { url: view.webContents.getURL(), title: view.webContents.getTitle() });

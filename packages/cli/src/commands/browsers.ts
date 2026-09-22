@@ -3,7 +3,8 @@
  */
 import { spawn } from 'node:child_process';
 import type { BrowserInfo, BrowserDetail, StartOptions, StopResult } from '@oya-ai/browser';
-import { flagNum, flagStr, type Flags } from '../args.ts';
+import { flagNum, flagStr, parseJson, type Flags } from '../args.ts';
+import { CliError, usage } from '../errors.ts';
 import { client, out, targetBrowser } from '../context.ts';
 import { LsColumns, StatusColumns } from '../constants.ts';
 
@@ -11,7 +12,6 @@ import { LsColumns, StatusColumns } from '../constants.ts';
 function identityOptions(flags: Flags): StartOptions {
   return {
     persona: flagStr(flags, 'persona') || 'default',
-    captcha: flags.captcha === false ? 'off' : 'auto',
     provider: flagStr(flags, 'provider') as never,
     wsUrl: flagStr(flags, 'ws-url'),
     name: flagStr(flags, 'name'),
@@ -26,9 +26,13 @@ function governanceOptions(flags: Flags): StartOptions {
     budgetUsd: flagNum(flags, 'budget-usd'),
     governed: flags.governed === true,
     priority: flagStr(flags, 'priority') as StartOptions['priority'],
-    policy: flagStr(flags, 'policy') ? JSON.parse(flagStr(flags, 'policy')!) : undefined,
+    policy: flagStr(flags, 'policy') ? policyOf(flagStr(flags, 'policy')!) : undefined,
   };
 }
+
+/** A --policy value, parsed, or an invalid_json error that shows how to quote it. */
+const policyOf = (text: string) =>
+  parseJson(text, '--policy', `Quote it: --policy '{"allowedHosts":["example.com"]}'.`) as StartOptions['policy'];
 
 /** `oya start`'s flags as start options. */
 const startOptions = (flags: Flags): StartOptions => ({ ...identityOptions(flags), ...governanceOptions(flags) });
@@ -47,18 +51,19 @@ export async function cmdStart(flags: Flags): Promise<void> {
 /** `oya goto <url>`: navigate the named or newest browser. */
 export async function cmdGoto(args: string[], flags: Flags): Promise<void> {
   const url = args[0];
-  if (!url) throw new Error('Usage: oya goto <url>');
+  if (!url) throw usage('oya goto needs an address: oya goto <url>.');
   const browser = await targetBrowser(client(flags), flags);
   await browser.goto(url);
-  console.log(`✅ ${browser.id} → ${url}`);
+  out(flags, { id: browser.id, url }, () => console.log(`✅ ${browser.id} → ${url}`));
 }
 
 /** `oya ask "<prompt>"`: drive the named or newest browser in plain language. */
 export async function cmdAsk(args: string[], flags: Flags): Promise<void> {
   const prompt = args.join(' ');
-  if (!prompt) throw new Error('Usage: oya ask "find the pricing page"');
+  if (!prompt) throw usage('oya ask needs a prompt: oya ask "find the pricing page".');
   const browser = await targetBrowser(client(flags), flags);
-  console.log(await browser.ask(prompt));
+  const answer = await browser.ask(prompt);
+  out(flags, { id: browser.id, answer }, () => console.log(answer));
 }
 
 /** A health dot for `oya ls`. */
@@ -89,14 +94,25 @@ function rmLine(x: StopResult): string {
   return `${x.ok ? '✅' : '✗'} ${x.id}${note}${x.error ? ` ${x.error}` : ''}`;
 }
 
-/** `oya rm <id>… | --all`: stop browsers. */
+/** `oya rm <id>… | --all`: stop browsers. Any that could not be stopped makes it exit 1, after every line is out. */
 export async function cmdRm(args: string[], flags: Flags): Promise<void> {
   const oya = client(flags);
-  if (!flags.all && !args.length) throw new Error('Usage: oya rm <id>… | oya rm --all');
+  if (!flags.all && !args.length) throw usage('oya rm needs a browser id, or --all: oya rm <id>... | oya rm --all.');
   const r = await oya.browser.stop(flags.all ? 'all' : args);
-  for (const x of r.results) console.log(rmLine(x));
-  console.log(`stopped ${r.stopped}`);
+  out(flags, r, () => printStops(r.results));
+  const failed = r.results.filter((x) => !x.ok).length;
+  if (failed) throw stopsFailed(r.results.length - failed, r.results.length, !!flags.json);
 }
+
+/** Each stop on its own line: the ones done on stdout, the ones refused on stderr, then the count. */
+function printStops(results: StopResult[]): void {
+  for (const x of results) (x.ok ? console.log : console.error)(rmLine(x));
+  console.log(`stopped ${results.filter((x) => x.ok).length} of ${results.length}`);
+}
+
+/** A stop that left some browsers running; its lines are already out, so plain mode prints nothing more. */
+const stopsFailed = (stopped: number, of: number, json: boolean) =>
+  new CliError(`stopped ${stopped} of ${of}`, 'partial_failure', { shown: !json });
 
 /** One recent action's line in `oya status`. */
 function activityLine(a: BrowserDetail['activity'][number]): string {
@@ -137,5 +153,5 @@ export async function cmdOpen(flags: Flags): Promise<void> {
   const browser = await targetBrowser(client(flags), flags);
   const [command, args] = opener(browser.liveViewUrl());
   spawn(command, args, { detached: true, stdio: 'ignore' }).unref();
-  console.log(`Opening ${browser.id}`);
+  out(flags, { ok: true, id: browser.id }, () => console.log(`Opening the live view of ${browser.id}`));
 }

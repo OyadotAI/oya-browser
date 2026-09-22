@@ -15,7 +15,8 @@ Thanks for looking. Bug reports, fixes and new backends are all welcome.
 
 ## Setup
 
-Node 22+ and npm 10+.
+Node 22.18+ and npm 10+. The server runs its TypeScript directly, which older 22.x
+releases cannot do. `.nvmrc` pins 24, the version CI and the images run.
 
 ```bash
 git clone https://github.com/OyadotAI/oya-browser.git

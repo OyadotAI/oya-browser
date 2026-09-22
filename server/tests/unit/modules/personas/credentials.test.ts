@@ -20,6 +20,21 @@ describe('domainOf', () => {
     assert.equal(credentials.domainOf('localhost'), 'localhost');
   });
 
+  it('is null for a path or a stray character dressed as a host, so "../x y" is never stored as ".."', () => {
+    assert.equal(credentials.domainOf('../x y'), null);
+    assert.equal(credentials.domainOf('..'), null);
+  });
+
+  it('keeps a single-label host such as an intranet name, so stored credentials stay reachable', () => {
+    assert.equal(credentials.domainOf('intranet'), 'intranet');
+    assert.equal(credentials.domainOf('http://portal/login'), 'portal');
+  });
+
+  it('is null for a number or anything else that is not text', () => {
+    assert.equal(credentials.domainOf(42 as any), null);
+    assert.equal(credentials.domainOf({} as any), null);
+  });
+
   it('is null for something that is not a host', () => {
     assert.equal(credentials.domainOf('http://'), null);
     assert.equal(credentials.domainOf('a b'), null);
@@ -28,6 +43,14 @@ describe('domainOf', () => {
 
 describe('site credentials', () => {
   beforeEach(() => credentials.reset());
+
+  it('refuses a domain that is not a host name, naming the field and what it needs', () => {
+    assert.throws(() => credentials.set('p', '../x y', { username: 'u', password: 'p' }), {
+      status: 400,
+      field: 'domain',
+      message: 'domain must be a host name such as accounts.google.com, not "../x y"',
+    });
+  });
 
   it('stores a login and describes it by username only', () => {
     assert.deepEqual(credentials.set('p-1', 'https://www.example.com/login', LOGIN), {

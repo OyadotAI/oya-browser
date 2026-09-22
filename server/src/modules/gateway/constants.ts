@@ -16,10 +16,8 @@ const DEFAULT_STUCK_COMMAND_MS = 60000;
 /** OYA_STUCK_COMMAND_MS, or the default. */
 export const STUCK_COMMAND_MS = Number(process.env.OYA_STUCK_COMMAND_MS) || DEFAULT_STUCK_COMMAND_MS;
 
-/** Largest CDP message accepted either way (256 MiB): screenshots and traces are big. */
-export const MAX_PAYLOAD_BYTES = 268_435_456;
-/** How long dialling a browser's CDP endpoint may take. */
-export const UPSTREAM_CONNECT_MS = 20_000;
+/** The CDP message size cap and the dial timeout, which belong to the CDP driver that dials; re-exported so the gateway's names stay. */
+export { MAX_PAYLOAD_BYTES, UPSTREAM_CONNECT_MS } from '../../drivers/cdp.ts';
 /** Browser messages held for a disconnected client, at most. */
 export const MAX_PENDING_TO_CLIENT = 1000;
 /** Lease on an attachment record; the control worker renews it while the session lives. */

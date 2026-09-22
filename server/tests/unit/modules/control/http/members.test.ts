@@ -63,6 +63,10 @@ describe('removeMember', () => {
     assert.deepEqual((await control().events(A)).at(-1).detail, { userId: 'u-2' });
   });
 
+  it('answers 404 for a member that is not in the project, instead of a quiet ok', async () => {
+    await assert.rejects(removeMember(A, 'nope'), { status: 404, code: 'not_found', message: 'Member not found' });
+  });
+
   it('leaves the member’s access to other projects alone', async () => {
     await join(A, 'u-2');
     await join(B, 'u-2');

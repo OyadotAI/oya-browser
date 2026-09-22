@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { chat, runCommand } from '../../../../../src/modules/browsers/http/command.ts';
 import * as usage from '../../../../../src/platform/usage.ts';
 import { HttpError } from '../../../../../src/platform/errors.ts';
+import { CdpConnectionError } from '../../../../../src/drivers/cdp.ts';
 import { disconnectBrowser } from '../../../support/fakes.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../../../support/browsers.ts';
 
@@ -72,15 +73,35 @@ describe('runCommand', () => {
 
   it('answers a lost answer as 504 command_outcome_unknown', async () => {
     driveBrowser(B, () => {
-      throw new Error('Command click timed out after 30s');
+      throw new CdpConnectionError('CDP Input.dispatchMouseEvent timed out');
     });
     const res = await run({ action: 'click' });
     assert.deepEqual([res.statusCode, res.body.code], [504, 'command_outcome_unknown']);
   });
 
-  it('answers 500 for a browser that is not connected', async () => {
+  it('answers 404 for a browser that went away between the guard and the command', async () => {
     const res = await run({ action: 'click' });
-    assert.deepEqual([res.statusCode, res.body.error], [500, `Browser ${B} not connected`]);
+    assert.deepEqual([res.statusCode, res.body.code, res.body.error], [404, 'not_found', `Browser ${B} not connected`]);
+  });
+
+  it('answers an HttpError with its own status, code and fields', async () => {
+    driveBrowser(B, () => {
+      throw new HttpError(422, 'no model', { code: 'llm_unconfigured' });
+    });
+    const res = await run({ action: 'click' });
+    assert.deepEqual([res.statusCode, res.body], [422, { ok: false, error: 'no model', code: 'llm_unconfigured' }]);
+  });
+
+  it('hands an unexpected error on to the API handler instead of answering it as a command failure', async () => {
+    driveBrowser(B, () => ({ ok: true }));
+    const res = new FakeResponse();
+    res.json = () => {
+      throw new TypeError('x.slice is not a function');
+    };
+    await assert.rejects(
+      runCommand(fakeRequest({ params: { browserId: B }, body: { action: 'click' } }), res),
+      TypeError,
+    );
   });
 });
 
@@ -93,6 +114,13 @@ describe('chat', () => {
     await chat(fakeRequest({ params: { browserId: B }, body }), res);
     return res;
   }
+
+  it('answers 422 llm_unconfigured before committing to a 200 when no model is configured', async () => {
+    const res = await talk({ messages: [{ role: 'user', content: 'hi' }] });
+    assert.equal(res.statusCode, 422);
+    assert.equal(res.body.code, 'llm_unconfigured');
+    assert.match(res.body.error, /No LLM key configured/);
+  });
 
   it('requires a messages array', async () => {
     const res = await talk({ messages: 'hi' });
@@ -131,7 +159,9 @@ describe('chat', () => {
       throw new Error('network is off in tests');
     });
     mock.method(console, 'error', () => {});
+    process.env.OPENAI_API_KEY = 'sk-test';
     const res = await talk({ messages: [{ role: 'user', content: 'go' }] });
+    delete process.env.OPENAI_API_KEY;
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.ended);
     assert.ok(body.error);

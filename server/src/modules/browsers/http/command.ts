@@ -3,9 +3,10 @@
  * the browser tools.
  */
 import { sendCommand } from '../socket.ts';
-import { runChat, lastRun, hasReplayableSteps } from '../../agent/chat.ts';
+import { runChat, lastRun, hasReplayableSteps, requireLlm } from '../../agent/chat.ts';
 import * as usage from '../../../platform/usage.ts';
 import { Status } from '../../../platform/http-status.ts';
+import { HttpError, answerFor, sendError } from '../../../platform/errors.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
 import { getKey, longJson, validData } from '../../../app/http.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
@@ -34,12 +35,27 @@ async function commandResult(req, browserId, action, params) {
   return result;
 }
 
-/** A command that threw: counted as an error and answered with its status and code. */
+/**
+ * A command that threw: counted as an error. An HttpError answers itself, with
+ * `ok: false` so a command's failure reads the same whatever its status. Anything
+ * else is a bug, and goes to the API's handler for the generic 500 and its reference.
+ */
 function commandFailed(req, res, err) {
   usage.record(getKey(req), 'command_errors');
-  res
-    .status(err.status || Status.INTERNAL)
-    .json({ ok: false, error: err.message, ...(err.code ? { code: err.code } : {}) });
+  if (!(err instanceof HttpError)) throw err;
+  const { body } = answerFor(err, req);
+  res.status(err.status).json({ ok: false, ...body });
+}
+
+/** Whether the key has a model to chat with; answers the refusal itself when it does not. */
+function withLlm(req, res) {
+  try {
+    requireLlm(getKey(req));
+    return true;
+  } catch (err) {
+    sendError(res, err, req);
+    return false;
+  }
 }
 
 /** Why a chat's data or secrets were refused. */
@@ -53,6 +69,8 @@ export async function chat(req, res) {
     return res.status(Status.BAD_REQUEST).json({ error: 'messages array required' });
   if (!validData(data) || !validData(secrets, { files: false }))
     return res.status(Status.BAD_REQUEST).json({ error: BAD_DATA });
+  // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
+  if (!withLlm(req, res)) return;
   await longJson(res, () => converse(req, messages, data, secrets));
 }
 

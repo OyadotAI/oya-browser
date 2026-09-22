@@ -170,7 +170,7 @@ try {
     apiKey: 'owner-a',
     clientType: 'cdp',
     provider: 'steel',
-    driver: { close() {} },
+    engine: { close() {} },
     release: async () => {
       throw new Error('release failed');
     },

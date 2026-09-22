@@ -38,11 +38,54 @@ export function save(values: CliConfig): void {
 /** Where the config lives, for messages. */
 export const configPath = FILE;
 
-/** Flags and environment beat the saved file, so CI never needs `oya login`. */
-export function resolved(): Required<CliConfig> {
+/** Where a key came from, as messages name it. */
+export type KeySource = '--key' | 'OYA_API_KEY' | 'saved' | 'none';
+/** Where an address came from, as messages name it. */
+export type UrlSource = '--url' | 'OYA_BASE_URL' | 'saved' | 'default';
+
+/** The key and address a call uses, and where each came from, so a failure can name the one to fix. */
+export interface Origin {
+  /** The API key, or '' when there is none. */
+  apiKey: string;
+  /** Where it came from. */
+  apiKeyFrom: KeySource;
+  /** The control plane's address, without a trailing slash. */
+  baseUrl: string;
+  /** Where it came from. */
+  baseUrlFrom: UrlSource;
+  /** Whether `oya login` also saved a key, which a flag or the environment overrides. */
+  savedKey: boolean;
+}
+
+/** The first of flag, environment and saved file that has a value, with its source. */
+function first<S extends string>(
+  flag: string | undefined,
+  env: string | undefined,
+  saved: string | undefined,
+  names: [S, S, S],
+) {
+  if (flag) return { value: flag, from: names[0] };
+  if (env) return { value: env, from: names[1] };
+  return saved ? { value: saved, from: names[2] } : null;
+}
+
+/** Flags beat the environment, which beats the saved file, so CI never needs `oya login`. */
+export function origin({ apiKey, baseUrl }: CliConfig = {}): Origin {
   const saved = load();
-  return {
-    apiKey: process.env.OYA_API_KEY || saved.apiKey || '',
-    baseUrl: (process.env.OYA_BASE_URL || saved.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-  };
+  const key = first(apiKey, process.env.OYA_API_KEY, saved.apiKey, KEY_SOURCES);
+  const url = first(baseUrl, process.env.OYA_BASE_URL, saved.baseUrl, URL_SOURCES);
+  const address = (url?.value ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+  const found = { apiKey: key?.value ?? '', apiKeyFrom: key?.from ?? ('none' as const), baseUrl: address };
+  return { ...found, baseUrlFrom: url?.from ?? 'default', savedKey: !!saved.apiKey };
+}
+
+/** A key's sources, in the order they win. */
+const KEY_SOURCES: ['--key', 'OYA_API_KEY', 'saved'] = ['--key', 'OYA_API_KEY', 'saved'];
+/** An address's sources, in the order they win. */
+const URL_SOURCES: ['--url', 'OYA_BASE_URL', 'saved'] = ['--url', 'OYA_BASE_URL', 'saved'];
+
+/** The key and address from the environment, else the saved file, else the default. */
+export function resolved(): Required<CliConfig> {
+  const { apiKey, baseUrl } = origin();
+  return { apiKey, baseUrl };
 }

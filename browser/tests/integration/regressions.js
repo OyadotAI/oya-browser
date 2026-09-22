@@ -215,15 +215,27 @@ assert.ok(
 );
 assert.ok(/Promise\.race\(\[tab\.ready\.catch/.test(src), 'waitForTabReady must bound the wait');
 
-// setupTabCDP hanging must not stop the tab's first page from loading, and it
-// must run after the view has a renderer: before one, CDP's Page domain never
-// answers, so the first page loaded after the timeout with no fingerprint.
+// setupTabCDP must run after the view has a renderer (before one, CDP's Page
+// domain never answers), and each attempt must be bounded so a hung command
+// cannot strand the tab. Since move 7 a tab that is still not protected after
+// two attempts fails closed rather than loading its page unprotected.
 assert.ok(
-  /Promise\.race\(\[\s*setupAfterBlank\(ctx, view, setup\),\s*sleep\(CDP_SETUP_TIMEOUT\)/.test(src) &&
-    /function setupAfterBlank\(ctx, view, setup\) \{\s*return view\.webContents\s*\.loadURL\('about:blank'\)\s*\.catch\(\(\) => \{\}\)\s*\.then\(\(\) => [\w.]*setupTabCDP\(view\)\)/.test(
-      src,
-    ),
+  /const blank = tab\.view\.webContents\.loadURL\('about:blank'\)/.test(src) &&
+    /withinTime\(\s*blank\.then\(\(\) => ctx\.protection\.setupTabCDP\(view\)\),\s*CDP_SETUP_TIMEOUT,?\s*\)/.test(src),
   'setupTabCDP must be bounded and run after about:blank starts the renderer, otherwise every first page is unprotected',
+);
+assert.ok(
+  /function failClosed\(ctx, tab\) \{[\s\S]{0,200}tab\.protection = 'failed'/.test(src),
+  'a tab whose protection failed twice must be marked failed, so nothing loads in it',
+);
+
+// Every page a tab loads goes through loadInTab, which refuses a tab that is
+// not protected. A second loadURL of a real address would be a way around it.
+const pageLoads = src.match(/\.loadURL\((?!'about:blank')/g) || [];
+assert.strictEqual(
+  pageLoads.length,
+  1,
+  `exactly one loadURL of a real address may exist in main/ (loadInTab); found ${pageLoads.length}`,
 );
 
 // Cloud browsers stream frames through viz CopyOutputResult, which needs more
@@ -320,7 +332,7 @@ assert.strictEqual(normalizeProxy(null), null, 'no proxy stays no proxy');
 
 // Native dialogs. Page.enable is on for every tab and popup, so anything that
 // enables it without a watcher wedges that surface on the first alert().
-for (const enable of src.match(/sendCommand\('Page\.enable'\)[\s\S]{0,160}/g) || []) {
+for (const enable of src.match(/(?:sendCommand|send)\('Page\.enable'\)[\s\S]{0,160}/g) || []) {
   assert.ok(
     /attachDialogWatcher/.test(enable),
     'Page.enable without attachDialogWatcher nearby, that surface blocks forever on an alert()',

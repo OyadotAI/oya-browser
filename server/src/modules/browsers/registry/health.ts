@@ -14,15 +14,12 @@ function failing(activity) {
 /** A live browser: 'errors' when its commands are failing, else 'ok'. */
 const alive = (isFailing: boolean) => (isFailing ? 'errors' : 'ok');
 
-/** A driver that can say it is dead and does. */
-const driverDead = (driver) => typeof driver.isAlive === 'function' && !driver.isAlive();
-
 /** 'ok', 'errors', 'stale' or 'dead' for one browser record. */
 export function healthOf(b, now = Date.now()) {
   const isFailing = failing(b.activity);
-  // An outbound (CDP) browser has no heartbeat: we drive it, it does not
-  // report in. Its socket being open is the liveness signal.
-  if (b.driver) return driverDead(b.driver) ? 'dead' : alive(isFailing);
+  // A browser we drive has no heartbeat: it does not report in. Its
+  // connection being open is the liveness signal.
+  if (!b.driver.heartbeat) return b.driver.isAlive() ? alive(isFailing) : 'dead';
   const silent = now - b.lastSeen.getTime();
   if (silent > DEAD_AFTER_MS) return 'dead';
   if (silent > STALE_AFTER_MS) return 'stale';

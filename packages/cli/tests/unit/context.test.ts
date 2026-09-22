@@ -2,7 +2,7 @@
  * Unit tests for the shared command context (src/context.ts): the client's
  * key, the target browser, and JSON versus human output.
  */
-import { FLAGS, captured, fakeFetch, trapExit, Exit } from './support/harness.ts';
+import { FLAGS, captured, fakeFetch } from './support/harness.ts';
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { client, out, targetBrowser } from '../../src/context.ts';
@@ -10,15 +10,8 @@ import { client, out, targetBrowser } from '../../src/context.ts';
 describe('context', () => {
   afterEach(() => mock.restoreAll());
 
-  it('exits with a hint when there is no API key', async () => {
-    trapExit();
-    const { err } = await captured(() =>
-      assert.throws(
-        () => client({}),
-        (e: Exit) => e.code === 1,
-      ),
-    );
-    assert.match(err, /No API key. Run `oya login`/);
+  it('refuses to build a client with no API key, with the next step', () => {
+    assert.throws(() => client({}), { code: 'no_api_key', message: 'No API key.', hint: /Run oya login/ });
   });
 
   it('prints JSON with --json, and the human form otherwise', async () => {
@@ -42,10 +35,8 @@ describe('context', () => {
     );
   });
 
-  it('exits when no browser is running and none was named', async () => {
+  it('refuses when no browser is running and none was named, with the next step', async () => {
     fakeFetch({ 'GET /api/browsers': [] });
-    trapExit();
-    const { err } = await captured(() => assert.rejects(targetBrowser(client(FLAGS), FLAGS), Exit));
-    assert.match(err, /No browsers running/);
+    await assert.rejects(targetBrowser(client(FLAGS), FLAGS), { code: 'no_browser', hint: /oya start/ });
   });
 });
