@@ -10,6 +10,8 @@ const { jitter } = require('../input/timing.cjs');
 const s = require('./scripts.cjs');
 const c = require('./constants.cjs');
 const { POINTER_COMMANDS } = require('./pointer-commands.cjs');
+const { HISTORY_COMMANDS } = require('./history-commands.cjs');
+const queries = require('../../scripts/page-queries.cjs');
 const { isDateInput, dateInputValue, unreadableDate } = require('../../scripts/date-value.cjs');
 const { isWebAddress, NOT_A_WEB_ADDRESS } = require('../tabs/navigation.cjs');
 const { loadInTab, isUnprotected } = require('../tabs/load.cjs');
@@ -186,6 +188,7 @@ async function suggestionsVisible(driver, view) {
 /** The handler for each server command that has one. */
 const PAGE_COMMANDS = {
   ...POINTER_COMMANDS,
+  ...HISTORY_COMMANDS,
 
   /**
    * Loads a URL in the tab the command targets, after its first load and a cookie
@@ -268,6 +271,17 @@ const PAGE_COMMANDS = {
       true,
     );
     driver.ctx.sendResult(id, result?.ok ?? true, result?.data, result?.error);
+  },
+
+  /**
+   * The agent's script, in the analyzer's isolated world, so the page never sees
+   * it (page-queries.cjs runScriptJs). Server-internal: the agent's run_script
+   * tool refuses a script that writes, and /browsers/:id/command rejects the
+   * action, so no caller can send unchecked JavaScript this way.
+   */
+  async run_script(driver, id, params, view) {
+    await driver.ctx.injectScripts(view);
+    driver.ctx.sendResult(id, true, await driver.ctx.worldEval(view, queries.runScriptJs(params?.script), true));
   },
 
   /**

@@ -128,6 +128,10 @@ const LINES: Record<string, LineFor> = {
   wait: (step) =>
     `await page.waitForSelector(${s(step.selector)}${step.timeout ? `, { timeout: ${Number(step.timeout)} }` : ''});`,
   scroll: scrollLine,
+  hover: (step) => `await ${locator(step)}.first().hover();`,
+  go_back: () => 'await page.goBack();',
+  go_forward: () => 'await page.goForward();',
+  reload: () => 'await page.reload();',
   double_click: (step) =>
     step.el
       ? `await ${locator(step)}.first().dblclick();`

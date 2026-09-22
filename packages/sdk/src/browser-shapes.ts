@@ -120,6 +120,10 @@ export interface TicketData {
 
 /** The chat endpoint's answer. */
 export interface AgentText {
-  /** The agent's reply. */
+  /** The agent's reply: a short report whose first line starts with DONE: or FAILED:. */
   text: string;
+  /** Whether the agent reports it could not do the task (its reply starts with FAILED:, or it ran out of steps). */
+  failed?: boolean;
+  /** The answer in the shape of the schema `extract()` asked for. */
+  data?: unknown;
 }

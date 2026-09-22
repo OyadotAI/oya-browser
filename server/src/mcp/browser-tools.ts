@@ -13,6 +13,7 @@ import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
 import pageRender from '../../../browser/scripts/page-render.cjs';
 import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
 import { fail } from './replies.ts';
+import { AGENT_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';
 
 /** The keys press_key may press: navigation only, never modifiers or F-keys. */
 const KEYS = [
@@ -251,10 +252,12 @@ type Options = {
   only?: string[];
   /** Error text when pick finds no browser. */
   noBrowser?: string;
+  /** Whether pick always names the same browser (the per-browser endpoint), so tools it cannot run are left out. */
+  oneBrowser?: boolean;
 };
 
 /** Every tool the per-browser MCP endpoint serves, for the docs drift test. */
-export const BROWSER_TOOL_NAMES = Object.keys(TOOLS);
+export const BROWSER_TOOL_NAMES = [...Object.keys(TOOLS), ...AGENT_TOOL_NAMES];
 
 /**
  * Register the browser tools on `server`. `pick(advance)` names the browser a
@@ -263,16 +266,20 @@ export const BROWSER_TOOL_NAMES = Object.keys(TOOLS);
  */
 export function registerBrowserTools(
   server: McpServer,
-  { pick, tag = () => '', only = Object.keys(TOOLS), noBrowser = 'no browser is connected' }: Options,
+  { pick, tag = () => '', only = BROWSER_TOOL_NAMES, noBrowser = 'no browser is connected', oneBrowser }: Options,
 ) {
-  for (const name of only) {
+  registerAgentTools(server, only, { pick: () => pick(false), noBrowser, oneBrowser });
+  for (const name of only.filter((n) => Object.hasOwn(TOOLS, n))) {
     const tool = TOOLS[name];
     server.tool(name, tool.description, tool.schema, (args) => runTool(name, tool, args, { pick, tag, noBrowser }));
   }
 }
 
+/** Where runTool sends a call and how it labels the reply. */
+type Routing = Required<Pick<Options, 'pick' | 'tag' | 'noBrowser'>>;
+
 /** Sends the tool's command to the picked browser and turns the result into a reply. */
-async function runTool(name: string, tool: Tool, args, { pick, tag, noBrowser }: Required<Omit<Options, 'only'>>) {
+async function runTool(name: string, tool: Tool, args, { pick, tag, noBrowser }: Routing) {
   const id = pick(!!tool.advance);
   if (!id) return fail(noBrowser);
   const [action, params, timeout] = tool.command(args);

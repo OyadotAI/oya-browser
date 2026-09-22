@@ -70,7 +70,7 @@ main/
     navigation.cjs, session.cjs, recording.cjs, workspace.cjs, shell.cjs, dev.cjs   channel → handler tables
     workflow-files.cjs  a workflow as JSON: saved as Oya's or Chrome Recorder's, opened from either
   page-actions.cjs      facade over actions/: the agent's page commands (createPageActions)
-  actions/              PageDriver and its command maps (page, pointer, dev panel), page script text
+  actions/              PageDriver and its command maps (page, pointer, history, dev panel), page script text
   input.cjs             facade over input/: human-like keyboard and mouse over CDP
   cdp.cjs, world.cjs, dialogs.cjs   CDP on a view, the analyzer's isolated world, native JS dialogs
   cookie-sync.cjs, session.cjs      the cookie pool sync, and the Electron session's UA, hints and proxy

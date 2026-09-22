@@ -8,22 +8,24 @@ import { selectOptionIn, uploadFileIn } from './page-scripts.ts';
 import { dataKey } from './placeholders.ts';
 import { elementOf, rememberHandle, setElements } from './recorder.ts';
 import { analysisText, elementList } from './element-index.ts';
+import { noteAnalysis } from './changes.ts';
+import { ELEMENT_GONE, byId, withControls } from './controls.ts';
+import { PAGE_TOOL_HANDLERS } from './page-tool-handlers.ts';
 import { NAVIGATE_TIMEOUT_MS, PAGE_FORMAT } from './constants.ts';
 
 /** Runs one tool call on a browser; `files` are the task's attachable files by name. */
 export type ToolHandler = (browserId: string, args: Record<string, any>, files: Record<string, any>) => Promise<string>;
 
-/** What the model is told when an element id is not in the latest analysis. */
-const ELEMENT_GONE = 'Error: Element not found. Call analyze_page and use a current id.';
-
-/** The CSS selector for an element id from the latest analysis. */
-const byId = (elementId) => `[data-ac-id="${elementId}"]`;
-
-/** The page and its elements, capped to fit the context window; the elements alone when no content is asked for. */
+/**
+ * The page and its elements, capped to fit the context window; the elements alone
+ * when no content is asked for, and one part of the page when a selector names it.
+ */
 async function analyzePage(browserId, args: Record<string, any> = {}) {
-  const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT });
+  const scope = args.selector ? { selector: args.selector } : {};
+  const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT, ...scope });
   if (!r.ok) return `Error: ${r.error}`;
   setElements(browserId, r.data.elements);
+  noteAnalysis(browserId, r.data);
   return analysisText(r.data, { content: args.content !== false });
 }
 
@@ -33,25 +35,12 @@ async function navigate(browserId, args) {
   return r.ok ? `Navigated to ${args.url}` : `Error: ${r.error}`;
 }
 
-/**
- * The elements of the page an action left behind, added to what the action
- * says. Without it the model must call analyze_page after every click merely to
- * learn the new ids, which costs a round trip and a whole page; the elements
- * alone are short and are what it needs to act again.
- */
-async function withControls(browserId, said) {
-  const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT });
-  if (!r.ok || !r.data?.elements?.length) return said;
-  setElements(browserId, r.data.elements);
-  return `${said}\n\n${analysisText(r.data, { content: false })}`;
-}
-
 /** Clicks an element by id. */
 async function click(browserId, args) {
   const r = await sendCommand(browserId, 'click', { selector: byId(args.element_id) });
   if (!r.ok) return `Error: ${r.error}`;
   rememberHandle(browserId, args.element_id, r.data?.handle);
-  return withControls(browserId, `Clicked element ${args.element_id}`);
+  return withControls(browserId, `Clicked element ${args.element_id}`, true);
 }
 
 /** Presses one safe key. */
@@ -117,6 +106,7 @@ async function scroll(browserId, args) {
   if (!r.ok) return `Error: ${r.error}`;
   if (!r.data?.elements) return `Scrolled ${args.direction}`;
   setElements(browserId, r.data.elements);
+  noteAnalysis(browserId, r.data);
   return `Scrolled ${args.direction}.\n\n` + analysisText(r.data);
 }
 
@@ -262,4 +252,5 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   drag,
   handle_dialog: handleDialog,
   close_tab: closeTab,
+  ...PAGE_TOOL_HANDLERS,
 };

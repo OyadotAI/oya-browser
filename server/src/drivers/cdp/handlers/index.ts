@@ -8,7 +8,18 @@ import { MIN_STEP_MS } from '../constants.ts';
 import { navigate, reload, back, forward } from './navigation.ts';
 import { click, clickCoords, mouseMove, doubleClick, drag, hover, scrollUp, scrollDown } from './pointer.ts';
 import { keyboardType, type, pressKey } from './keyboard.ts';
-import { screenshot, analyze, readPage, select, wait, scrollTop, scrollBottom, evaluateRaw, cookies } from './page.ts';
+import {
+  screenshot,
+  analyze,
+  readPage,
+  select,
+  wait,
+  scrollTop,
+  scrollBottom,
+  evaluateRaw,
+  cookies,
+  runScript,
+} from './page.ts';
 import { record } from './record.ts';
 import { listTabs, newTab, switchTab, closeTab } from './tabs.ts';
 import type { CDPDriver } from '../driver.ts';
@@ -44,6 +55,7 @@ export const HANDLERS: Record<string, Handler> = {
   'switch-tab': switchTab,
   'close-tab': closeTab,
   evaluate_raw: evaluateRaw,
+  run_script: runScript,
   cookies,
 };
 

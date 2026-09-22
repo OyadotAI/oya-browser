@@ -9,6 +9,12 @@ import { SCREENSHOT_QUALITY, WAIT_TIMEOUT_MS, WAIT_POLL_MS } from '../constants.
 import type { Handler } from './types.ts';
 import pageRender from '../../../../../browser/scripts/page-render.cjs';
 
+/** The agent's script, in the analyzer's isolated world, so the page never sees it (page-queries.cjs runScriptJs). */
+export const runScript: Handler = async (driver, params) => {
+  await driver.ensureAnalyzer();
+  return { ok: true, data: await driver.evaluate(queries.runScriptJs(params.script)) };
+};
+
 /** A JPEG of the viewport, as a data URL. */
 export const screenshot: Handler = async (driver, params, remaining) => {
   const shot = { format: 'jpeg', quality: params.quality || SCREENSHOT_QUALITY };

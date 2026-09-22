@@ -213,6 +213,18 @@ export class Browser {
   }
 
   /**
+   * `ask()` for data: the agent does the task and answers in the shape of `schema`
+   * (a JSON schema), instead of in words. Throws when the agent reports it could not.
+   */
+  async extract<T = unknown>(prompt: string, schema: Record<string, unknown>, values: AskValues = {}): Promise<T> {
+    const body = { messages: [{ role: 'user', content: prompt }], ...values, schema };
+    const path = `/api/browsers/${this.id}/chat`;
+    const res = agentAnswer(await this.http.request<AgentAnswer<AgentText>>('POST', path, body, AGENT_TIMEOUT_MS));
+    if (res.failed || res.data === undefined) throw new OyaError(res.text, Status.UNPROCESSABLE, res);
+    return res.data as T;
+  }
+
+  /**
    * Save the last `ask()` on this browser as a named playbook. Every value that was
    * typed, picked or clicked becomes a variable, with what the run used kept in
    * `defaults`, so `play()` with nothing repeats the run and any one value can be

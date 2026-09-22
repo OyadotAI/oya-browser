@@ -11,6 +11,8 @@ import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { redact, isFileValue } from './placeholders.ts';
 import { startRun } from './recorder.ts';
+import { forgetPage } from './changes.ts';
+import { AGENT_VERIFY } from './constants.ts';
 import { systemPrompt } from './prompt.ts';
 import { agentLoop } from './loop.ts';
 
@@ -19,10 +21,14 @@ export { selectOptionIn, UPLOAD_FILE_JS, uploadFileIn } from './page-scripts.ts'
 export { lastRun, hasReplayableSteps } from './recorder.ts';
 export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
 export { PAGE_FORMAT } from './constants.ts';
+export { executeTool } from './executor.ts';
+export { BROWSER_TOOLS, toolsOn } from './tools.ts';
+export { CHALLENGE_TOOLS, CHALLENGE_HANDLERS } from './challenge-tools.ts';
 
 /**
  * A runaway agent loop is the most expensive thing this control plane can do
- * on someone else's behalf, so the ceiling is checked before the first call.
+ * on someone else's behalf, so the ceiling is checked before every model call,
+ * not only the first: one long run could otherwise spend far past it.
  * A key with its own LLM credential pays for its own tokens and has no ceiling.
  */
 function enforceBudget(apiKey, own) {
@@ -56,7 +62,7 @@ function llmFor(apiKey) {
   const { openaiKey, baseUrl, model, own } = keyConfig.resolve(apiKey);
   enforceBudget(apiKey, own);
   if (!openaiKey) throw noLlm();
-  return { openaiKey, baseUrl, model };
+  return { llm: { openaiKey, baseUrl, model }, budget: () => enforceBudget(apiKey, own) };
 }
 
 /**
@@ -82,9 +88,15 @@ function newRun(messages, values, secrets) {
   };
 }
 
+/** Makes `run` the browser's current one, with no memory of the page before it. */
+async function begin(browserId, run) {
+  await startRun(browserId, run);
+  forgetPage(browserId);
+}
+
 /**
  * Run the agentic loop: LLM → tool calls → execute → feed back → repeat until done.
- * Streams the final text response.
+ * Answers the final text, and whether it reports a failure.
  *
  * `data` values are typed through `{{key}}` placeholders and redacted from everything
  * the model reads. `checkpoint` runs after page-changing tools; `requestHuman`, when
@@ -92,10 +104,11 @@ function newRun(messages, values, secrets) {
  */
 export async function runChat(browserId, messages, options: any = {}) {
   const { apiKey, data = {}, secrets = {} } = options;
-  const llm = llmFor(apiKey);
+  const { llm, budget } = llmFor(apiKey);
   const { files, scalars, values } = taskValues(data, secrets);
-  await startRun(browserId, newRun(messages, values, secrets));
+  await begin(browserId, newRun(messages, values, secrets));
   const system = { role: 'system', content: systemPrompt(values, scalars, files, secrets) };
   const allMessages = [system, ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) }))];
-  return agentLoop({ ...options, browserId, llm, files, values, secrets }, allMessages);
+  const verify = options.verify ?? AGENT_VERIFY;
+  return agentLoop({ ...options, browserId, llm, budget, verify, files, values, secrets }, allMessages);
 }

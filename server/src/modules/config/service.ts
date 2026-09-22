@@ -33,6 +33,7 @@ export { saveRouting, restoreRouting } from './routing.ts';
 export { getSlack, saveSlack, clearSlack } from './slack.ts';
 export { savePlaybook, deletePlaybook, listPlaybooks, getPlaybook, cleanupPlaybooks } from './playbooks.ts';
 export { restore, drain } from './persistence.ts';
+export { getSiteNotes, saveSiteNotes, allSiteNotes, forgetSiteNotes } from './site-notes.ts';
 
 /** A secret as the dashboard sees it: a few trailing characters, or nothing. */
 const mask = (v) => (v ? '••••' + String(v).slice(-MASK_TAIL) : '');

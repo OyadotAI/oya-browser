@@ -27,6 +27,14 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 Also available: `screenshot`, `wait(selector)`, `click_coordinates(x, y)`, `mouse_move(x, y)`, `double_click`, `keyboard_type(text)`, `drag`, `pool_status`.
 
+Faster ways through a page:
+
+- `find(query)` returns just the elements matching a description ("search box", "next page") instead of the whole page.
+- `run_script(script)` reads the page with JavaScript and returns data: every row of a table, all prices in a list. It only reads; act with click and type.
+- `wait_for(text?, url?, network_idle?)` waits for results that load in the background instead of re-analyzing in a loop.
+- `select_option(element_id, option)` for native dropdowns, `hover(element_id)` for hover menus, `go_back`, `go_forward`, `reload`.
+- `list_playbooks` and `run_playbook(name, variables)` replay a saved flow without a model; `run_task(task)` hands a whole task to Oya's own agent and returns its report.
+
 **Native dialogs.** An `alert()` or `beforeunload` is answered for you and its
 text comes back on the next tool result, read it: it usually says why the last
 action did not do what you expected. A `confirm()` or `prompt()` holds the page:
@@ -95,7 +103,8 @@ Off-screen elements need a `scroll` first. While a modal is open, the analysis i
 
 ## CAPTCHA, MFA and humans
 
-- `captcha: "auto"` (SDK) solves CAPTCHAs as they appear; `browser.solveCaptcha()` solves one on demand.
+- `captcha: "auto"` (SDK) solves CAPTCHAs as they appear; `browser.solveCaptcha()` solves one on demand. Over MCP: `solve_captcha`.
+- Over MCP, `sign_in` fills a login form with the persona's stored credentials for the site and `complete_mfa` enters a one-time code; you never see either.
 - `browser.completeMfa()` enters a code when the persona has a factor sealed: a TOTP seed, or a mailbox (Gmail / Microsoft 365) the code is read from. The code is extracted from the email by the configured LLM, not a regex, so a portal rewriting its template does not break it. If it returns a `liveViewUrl`, a person has to approve (push, passkey): give the user that URL and wait.
 - **Portal sign-ins happen on their own.** When a persona has credentials stored for a site, a run that meets that site's login page fills and submits it, asks for the code if the portal has a separate request step, and carries on, with no tool call from you. A factor and a credential are filed per site, so one persona can drive several portals.
 - If the site refuses the stored password, the run stops and asks for a person. **Do not retry it and do not type a password you were not given for that site**. These portals lock accounts after a few attempts, and a locked clinical account is a support ticket, not a retry.

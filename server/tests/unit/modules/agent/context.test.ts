@@ -106,4 +106,36 @@ describe('trimContext', () => {
     trimContext(messages);
     assert.equal(messages.length, 2);
   });
+
+  it('counts a screenshot at its real weight, so a run full of them is trimmed in time', () => {
+    const shot = { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,x' } }] };
+    const turns = Array.from({ length: 80 }, (_, i) => [...toolTurn(`s${i}`, 1, 'ok'), shot]).flat();
+    const messages = [...HEAD, ...turns];
+    trimContext(messages);
+    assert.ok(messages.length < HEAD.length + turns.length, 'old turns were dropped');
+  });
+
+  it('never condenses a long network or console log as if it were a page', () => {
+    const log = [
+      { role: 'assistant', content: null, tool_calls: [{ id: 'n', function: { name: 'read_network' } }] },
+      { role: 'tool', tool_call_id: 'n', content: PAGE },
+    ];
+    const messages = [...HEAD, ...log, ...toolTurn('b', 1, PAGE), ...toolTurn('c', 1, PAGE)];
+    condenseOldPages(messages);
+    assert.equal(messages[3].content, PAGE);
+  });
+
+  it('keeps a record in the task of each step it drops, so the model knows what it already did', () => {
+    const turn = [
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'k', function: { name: 'click', arguments: '{"element_id":4}' } }],
+      },
+      { role: 'tool', tool_call_id: 'k', content: BIG },
+    ];
+    const messages = [...structuredClone(HEAD), ...turn, ...toolTurn('b'), ...toolTurn('c')];
+    trimContext(messages);
+    assert.match(messages[1].content, /Earlier steps of this run[\s\S]*click \{"element_id":4\}/);
+  });
 });

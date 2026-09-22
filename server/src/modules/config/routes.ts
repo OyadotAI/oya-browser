@@ -41,6 +41,23 @@ router.post('/config', authMiddleware, async (req, res) => {
 });
 
 /**
+ * GET /config/site-notes, what the agent chose to remember about each site for
+ * this key. The agent writes these from what it read on a page, so the owner
+ * needs to be able to see them, and a hostile page's suggestion is removable.
+ */
+router.get('/config/site-notes', authMiddleware, (req, res) => {
+  res.json({ notes: keyConfig.allSiteNotes(getKey(req)) });
+});
+
+/** DELETE /config/site-notes/:host, forgets what the agent kept about one site. */
+router.delete('/config/site-notes/:host', authMiddleware, async (req, res) => {
+  const key = getKey(req);
+  await keyConfig.forgetSiteNotes(key, req.params.host);
+  auditUpdate(req, key, { scope: 'site-notes', host: req.params.host });
+  res.json({ ok: true, notes: keyConfig.allSiteNotes(key) });
+});
+
+/**
  * POST /config/host, sets the deployment-wide default. It affects every key
  * that has not set its own, so it stays behind the operator token.
  */

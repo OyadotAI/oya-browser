@@ -122,6 +122,22 @@ export const LOOP_LAG_PERCENTILE = 99;
 
 /** Characters of a failed LLM response logged; the body is never returned to the caller. */
 export const LLM_ERROR_LOG_CHARS = 500;
+/** How long one model request may take by default: thinking models can spend minutes on a hard step. */
+export const DEFAULT_LLM_TIMEOUT_MS = 180_000;
+/** How long one model request may take before it is abandoned and, if attempts remain, retried. */
+export const LLM_TIMEOUT_MS = Number(process.env.OYA_LLM_TIMEOUT_MS) || DEFAULT_LLM_TIMEOUT_MS;
+/** Attempts per model request: a rate limit, an overload or a dropped connection is tried again. */
+export const LLM_ATTEMPTS = 4;
+/** The first retry's wait; each later one doubles, with jitter, up to LLM_RETRY_MAX_MS. */
+export const LLM_RETRY_BASE_MS = 1_000;
+/** The longest wait between two attempts, whatever the provider's retry-after says. */
+export const LLM_RETRY_MAX_MS = 30_000;
+/** Each retry waits this many times longer than the one before. */
+export const LLM_BACKOFF_FACTOR = 2;
+/** The longest reply Claude may write in one step (thinking included): a step is short, a final report is not long. */
+export const CLAUDE_MAX_TOKENS = 16_000;
+/** How hard Claude thinks per step; `high` is the API default and the sweet spot for agentic browsing. */
+export const CLAUDE_EFFORT = process.env.OYA_CLAUDE_EFFORT || 'high';
 
 // ── Network guard ──
 

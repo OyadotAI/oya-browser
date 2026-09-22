@@ -44,6 +44,9 @@ export const VOCABULARY: Record<string, Action> = {
   open_tab: { ...BOTH, cdpName: 'new-tab' },
   press_key: { ...BOTH, cdpName: 'press-key' },
   read_page: BOTH,
+  // Internal: arbitrary JavaScript in the page. The agent's run_script tool refuses anything
+  // that writes (agent/page-tool-handlers.ts); a caller sending it straight would not be checked.
+  run_script: { ...BOTH, internal: true },
   screenshot: BOTH,
   scroll: BOTH,
   select: BOTH,
@@ -53,9 +56,9 @@ export const VOCABULARY: Record<string, Action> = {
   workflow: OYA,
   read_console: OYA,
   read_network: OYA,
-  back: CDP,
-  forward: CDP,
-  reload: CDP,
+  back: BOTH,
+  forward: BOTH,
+  reload: BOTH,
   cookies: CDP,
   evaluate_raw: { ...BOTH, internal: true },
   record: { ...BOTH, internal: true },

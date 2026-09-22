@@ -37,9 +37,13 @@ const RECORDED = new Set([
   'open_tab',
   'switch_tab',
   'close_tab',
+  'hover',
+  'go_back',
+  'go_forward',
+  'reload',
 ]);
 /** Tools that aim at an element, so their step carries that element's stable handles. */
-const ELEMENT_ACTIONS = ['click', 'double_click', 'type', 'select_option', 'upload_file'];
+const ELEMENT_ACTIONS = ['click', 'double_click', 'type', 'select_option', 'upload_file', 'hover'];
 /** Tools whose step needs the tab it ended up on, since a tab id dies with the session. */
 const TAB_ACTIONS = new Set(['open_tab', 'switch_tab', 'close_tab']);
 /** Tool arguments copied into a step as given. */
@@ -158,7 +162,7 @@ export async function startRun(browserId, run) {
 }
 
 /** The element a step acts on, with visible data and secrets alike redacted: a playbook stores placeholders, never values. */
-function redactedElement(run, elementId, values) {
+function redactedElement(run, elementId, values, acted?) {
   // The browser's own reading of the element it acted on cannot be stale, so where
   // it speaks it decides, including about the handles the element does not have.
   // Letting a missing field fall through to the analysis inherited an href from a
@@ -166,7 +170,9 @@ function redactedElement(run, elementId, values) {
   // footer link that shared its id in a stale analysis, and replayed as one. The
   // analysis still contributes what the browser never reports, the type, and the
   // names it worked out for a repeated or drifting label.
-  const analyzed = run.elements.find((e) => e.id === Number(elementId));
+  // `acted` is the element as the model saw it before acting: the action re-analyzes the
+  // page, after which the same id may name a different element.
+  const analyzed = acted ?? run.elements.find((e) => e.id === Number(elementId));
   const reported = run.handles?.get(Number(elementId));
   const el = stable(reported ? { ...analyzerOnly(analyzed), ...defined(reported) } : analyzed);
   for (const k of Object.keys(el)) el[k] = redact(el[k], values);
@@ -192,9 +198,9 @@ async function tabHandle(browserId) {
 const aimable = (el) => handlesOf(el || {}).length > 0;
 
 /** What the step aims at: the element's stable handles, and the file a replay must bring. */
-function aim(step, run, name, args, values) {
+function aim(step, run, name, args, values, acted?) {
   if (ELEMENT_ACTIONS.includes(name) && args.element_id != null) {
-    const el = redactedElement(run, args.element_id, values);
+    const el = redactedElement(run, args.element_id, values, acted);
     // An element nothing can find again is not a handle. Say so on the step, so a
     // replay refuses it instead of clicking the page body and carrying on.
     if (aimable(el)) step.el = el;
@@ -219,12 +225,12 @@ function dropRedundantStart(run, name) {
 }
 
 /** Append a replayable tool call to the browser's current run, with typed values redacted to placeholders. */
-export async function recordStep(browserId, name, args, values) {
+export async function recordStep(browserId, name, args, values, acted?) {
   const run = runs.get(browserId);
   if (!run || !RECORDED.has(name)) return;
   dropRedundantStart(run, name);
   const step: any = { action: name };
-  aim(step, run, name, args, values);
+  aim(step, run, name, args, values, acted);
   if (TAB_ACTIONS.has(name)) step.tabUrl = await tabHandle(browserId);
   run.steps.push(step);
 }

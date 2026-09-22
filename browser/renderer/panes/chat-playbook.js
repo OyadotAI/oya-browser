@@ -27,6 +27,10 @@ const REPLAYABLE_TOOLS = new Set([
   'open_tab',
   'switch_tab',
   'close_tab',
+  'hover',
+  'go_back',
+  'go_forward',
+  'reload',
 ]);
 
 /**

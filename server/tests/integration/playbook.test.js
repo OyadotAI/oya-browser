@@ -441,7 +441,8 @@ registry.add('loop-browser', {
 const chat = await runChat(
   'loop-browser',
   [{ role: 'user', content: 'Register {{patient}} born {{dob}} in California, password {{password}}.' }],
-  { apiKey: 'loop-key', data: taskData, secrets },
+  // The scripted model answers the loop's turns only; the report check is covered by loop.test.ts.
+  { apiKey: 'loop-key', data: taskData, secrets, verify: false },
 );
 llm.close();
 assert.equal(chat.text, 'DONE: filled the form');

@@ -10,6 +10,8 @@ import { HttpError, answerFor, sendError } from '../../../platform/errors.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
 import { getKey, longJson, validData } from '../../../app/http.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
+import { MAX_SCHEMA_CHARS } from '../constants.ts';
+import { challengesFor, quietCheckpointFor } from '../../playbooks/checkpoint.ts';
 
 /** Runs one action on a browser; server-internal actions are refused. */
 export async function runCommand(req, res) {
@@ -61,24 +63,49 @@ function withLlm(req, res) {
 /** Why a chat's data or secrets were refused. */
 const BAD_DATA = 'data must map names to strings, numbers or a file() value; secrets takes strings and numbers only';
 
-/** LLM + MCP tools for natural-language browser control. */
-export async function chat(req, res) {
-  noTimeouts(req, res);
-  const { messages, data = {}, secrets = {} } = req.body;
-  if (!messages || !Array.isArray(messages))
-    return res.status(Status.BAD_REQUEST).json({ error: 'messages array required' });
-  if (!validData(data) || !validData(secrets, { files: false }))
-    return res.status(Status.BAD_REQUEST).json({ error: BAD_DATA });
-  // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
-  if (!withLlm(req, res)) return;
-  await longJson(res, () => converse(req, messages, data, secrets));
+/** Why a chat's schema was refused. */
+const BAD_SCHEMA = `schema must be a JSON schema object of at most ${MAX_SCHEMA_CHARS} characters`;
+
+/** Whether a schema for the answer is absent, or a JSON object of a sensible size. */
+const validSchema = (schema) =>
+  schema === undefined ||
+  (!!schema &&
+    typeof schema === 'object' &&
+    !Array.isArray(schema) &&
+    JSON.stringify(schema).length <= MAX_SCHEMA_CHARS);
+
+/** Why a chat's body cannot run, or null when it can. */
+function badChat({ messages, data = {}, secrets = {}, schema }) {
+  if (!messages || !Array.isArray(messages)) return 'messages array required';
+  if (!validData(data) || !validData(secrets, { files: false })) return BAD_DATA;
+  return validSchema(schema) ? null : BAD_SCHEMA;
 }
 
+/** LLM + MCP tools for natural-language browser control; with a schema, the answer comes back as data in that shape. */
+export async function chat(req, res) {
+  noTimeouts(req, res);
+  const bad = badChat(req.body);
+  if (bad) return res.status(Status.BAD_REQUEST).json({ error: bad });
+  // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
+  if (!withLlm(req, res)) return;
+  const { messages, data = {}, secrets = {}, schema } = req.body;
+  await longJson(res, () => converse(req, messages, { data, secrets, schema }));
+}
+
+/** The walls a chat's agent may clear itself (CAPTCHA, sign-in, MFA), and the automatic tries between steps. */
+const walls = (key, browserId) => ({
+  challenges: challengesFor(key, browserId),
+  checkpoint: quietCheckpointFor(key, browserId),
+});
+
 /** Runs the chat, collecting the tool calls it made, and whether the run can be saved as a playbook. */
-async function converse(req, messages, data, secrets) {
+async function converse(req, messages, task) {
   const toolCalls = [];
   const onToolCall = ({ name, args }) => toolCalls.push({ name, args });
-  const options = { apiKey: getKey(req), data, secrets, onToolCall, onText: () => {} };
+  const key = getKey(req);
+  const options = { apiKey: key, ...task, onToolCall, onText: () => {}, ...walls(key, req.params.browserId) };
   const result = await runChat(req.params.browserId, messages, options);
-  return { text: result.text, toolCalls, replayable: hasReplayableSteps(lastRun(req.params.browserId)) };
+  const replayable = hasReplayableSteps(lastRun(req.params.browserId));
+  const answer = { text: result.text, failed: !!result.failed, toolCalls, replayable };
+  return result.data === undefined ? answer : { ...answer, data: result.data };
 }
