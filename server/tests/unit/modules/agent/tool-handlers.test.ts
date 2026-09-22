@@ -70,9 +70,16 @@ describe('tool handlers', () => {
     });
   });
 
-  it('navigates, waiting as long as a slow site needs', async () => {
-    assert.equal(await run('navigate', { url: 'https://a.test' }), 'Navigated to https://a.test');
-    assert.deepEqual(lastCall(), {
+  it('navigates, waiting as long as a slow site needs, and answers with the page it landed on', async () => {
+    answer = (a) =>
+      a === 'analyze'
+        ? { ok: true, data: { elements: [{ id: 2, type: 'link', text: 'Next' }] } }
+        : { ok: true, data: {} };
+    const out = await run('navigate', { url: 'https://a.test' });
+    // The elements come back with the navigation, so no analyze_page call is needed to act.
+    assert.match(out, /^Navigated to https:\/\/a\.test/);
+    assert.match(out, /Next/);
+    assert.deepEqual(lastCallOf('navigate'), {
       action: 'navigate',
       params: { url: 'https://a.test' },
       timeout: NAVIGATE_TIMEOUT_MS,
@@ -124,6 +131,18 @@ describe('tool handlers', () => {
 
   it('presses a key', async () => {
     assert.equal(await run('press_key', { key: 'Enter' }), 'Pressed Enter');
+  });
+
+  it('does not resend the element index when the click left the page as it was', async () => {
+    const elements = [{ id: 1, type: 'button', text: 'Go', visible: true }];
+    answer = () => ({ ok: true, data: { elements } });
+    recorder.setElements(BROWSER, elements);
+    const out = await run('click', { element_id: 1 });
+    assert.match(out, /ids you were given still work/);
+    assert.doesNotMatch(out, /Element Index/);
+    // A page that did move brings its new ids with it.
+    answer = () => ({ ok: true, data: { elements: [{ id: 1, type: 'button', text: 'Next', visible: true }] } });
+    assert.match(await run('click', { element_id: 1 }), /Element Index/);
   });
 
   describe('select_option', () => {

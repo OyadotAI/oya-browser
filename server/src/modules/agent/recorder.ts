@@ -144,6 +144,9 @@ export function rememberHandle(browserId, elementId, handle) {
   if (run && handle) run.handles.set(Number(elementId), handle);
 }
 
+/** The elements the model was last given for this browser, or none. */
+export const elementsOf = (browserId): any[] => runs.get(browserId)?.elements || [];
+
 /** Keeps the latest analysis, so steps can name elements by their stable handles. */
 export function setElements(browserId, elements) {
   const run = runs.get(browserId);

@@ -1,7 +1,7 @@
 /**
  * The control shield's show. While an agent reads the page, light flows around
- * its edge and the Oya orb comes alive; then a soft wash passes down the page
- * and lights up what the agent found.
+ * its edge and the Oya orb comes alive; then a laser beam passes down the page
+ * and locks on to what the agent found.
  * It is drawn here, over the page, so the site never sees any of it. The main process calls `window.oyaShield(update)`.
  */
 /* global RendererConstants */
@@ -28,6 +28,11 @@ const Companion = {
     Companion.arrive(words);
   },
 
+  /** Changes the words in place, without playing their arrival again: for a count ticking up. */
+  count(text) {
+    document.getElementById('bubble-text').textContent = text;
+  },
+
   /** Plays the words' arrival again: the class comes off, a reflow forgets it, and it goes back on. */
   arrive(words) {
     words.classList.remove('enter');
@@ -40,12 +45,14 @@ const Companion = {
 const Show = {
   /** When the current scan began (ms since the epoch), or 0 when none is running. */
   scanStart: 0,
-  /** Bumped by each update, so a timer left by an older one does nothing. */
+  /** Bumped by each new scan or result, so a timer left by an older one does nothing. A move keeps the show going. */
   generation: 0,
+  /** Where the found elements sit now: the result, then each move the main process measures after it. */
+  latest: [],
 
-  /** One update from the main process: `{ phase: 'scan' }` or `{ phase: 'found', boxes }`. */
+  /** One update from the main process: `{ phase: 'scan' }`, `{ phase: 'found', boxes }` or `{ phase: 'move', boxes }`. */
   update(update) {
-    Show.generation += 1;
+    if (update?.phase !== 'move') Show.generation += 1;
     if (Object.hasOwn(PHASES, update?.phase)) PHASES[update.phase](update);
   },
 
@@ -66,16 +73,31 @@ const Show = {
 
   /** The analysis is back: let the scan finish its minimum, then outline what it found. */
   finish({ boxes }) {
+    Show.latest = boxes || [];
     const shown = Show.scanStart ? Date.now() - Show.scanStart : RendererConstants.SHIELD_MIN_SCAN_MS;
-    Show.later(RendererConstants.SHIELD_MIN_SCAN_MS - shown, () => Show.found(boxes || []));
+    Show.later(RendererConstants.SHIELD_MIN_SCAN_MS - shown, () => Show.found(Show.latest));
   },
 
-  /** A soft wash passes down the page, lighting up each element as it reaches it, and Oya says how many. */
+  /** The page moved under the outlines: each glides to where its element is now, and one whose element is gone fades. */
+  move({ boxes }) {
+    Show.latest = boxes || [];
+    const at = new Map(Show.latest.map((box) => [String(box.id), box]));
+    for (const el of document.getElementById('stage').children) {
+      const box = at.get(el.dataset.id);
+      el.classList.toggle('gone', !box);
+      if (box) Show.place(el, box);
+    }
+  },
+
+  /** The beam passes down the page, locking on to each element as it reaches it, and Oya counts them. */
   found(boxes) {
     Show.scanStart = 0;
+    Show.clear();
     Show.reveal();
-    Show.outline(boxes);
-    Companion.say('found', Show.summary(boxes.length));
+    const ordered = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x);
+    const every = Math.max(1, Math.ceil(ordered.length / RendererConstants.SHIELD_SPARKS_MAX));
+    Companion.say('found', ordered.length ? Show.counted(0) : 'Nothing to interact with here');
+    ordered.forEach((box, i) => Show.later(Show.beamReaches(box.y), () => Show.lock(box, i + 1, i % every === 0)));
     Show.later(RendererConstants.SHIELD_REVEAL_MS + RendererConstants.SHIELD_HOLD_MS, Show.fade);
   },
 
@@ -83,36 +105,90 @@ const Show = {
   reveal() {
     const body = document.body;
     body.style.setProperty('--reveal', `${RendererConstants.SHIELD_REVEAL_MS}ms`);
+    // Set now, while the stage is empty: setting it as the fade begins would restyle every outline at once.
+    body.style.setProperty('--fade', `${RendererConstants.SHIELD_FADE_MS}ms`);
     body.classList.remove('scanning');
     body.classList.add('revealing');
     Show.later(RendererConstants.SHIELD_REVEAL_MS, () => body.classList.remove('revealing'));
   },
 
-  /** What the companion says about `count` elements. */
-  summary(count) {
-    if (!count) return 'Nothing to interact with here';
+  /** What the companion says once it has counted `count` elements. */
+  counted(count) {
     return `Found ${count} element${count === 1 ? '' : 's'}`;
   },
 
-  /** Draws one outline per box, top to bottom, left to right. */
-  outline(boxes) {
-    const stage = document.getElementById('stage');
-    const ordered = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x);
-    stage.replaceChildren(...ordered.map(Show.box));
+  /**
+   * The beam reached one element: its outline locks on where the element is now, Oya's
+   * count goes up, and, for one in every few, a spark flies to the orb.
+   */
+  lock(box, count, sparks) {
+    const now = Show.latest.find((b) => b.id === box.id) || box;
+    document.getElementById('stage').append(Show.box(now));
+    Companion.count(Show.counted(count));
+    const orb = sparks && Show.orbCentre();
+    if (orb) document.getElementById('sparks').append(Show.spark(now, orb));
   },
 
-  /** One outline, coloured by its element's kind, lighting up when the wash reaches it. */
+  /** One outline with its number, coloured by its element's kind, lighting up when the wash reaches it. */
   box(box) {
     const el = document.createElement('div');
     el.className = 'box';
     el.dataset.id = String(box.id);
-    Object.assign(el.style, { left: `${box.x}px`, top: `${box.y}px`, width: `${box.w}px`, height: `${box.h}px` });
+    el.append(...['i', 's', 'u'].map((tag) => document.createElement(tag)), Show.badge(box.id));
+    Show.place(el, box);
     el.style.setProperty('--c', TYPE_COLORS[box.type] || TYPE_COLORS.button);
-    el.style.setProperty('--d', `${Math.round(Show.beamReaches(box.y))}ms`);
     return el;
   },
 
-  /** Roughly when the wash, crossing the viewport, reaches `y`. */
+  /** An outline's number, pinned to its corner. */
+  badge(id) {
+    const badge = document.createElement('b');
+    badge.textContent = String(id);
+    return badge;
+  },
+
+  /** The middle of the orb, or null before it is laid out. */
+  orbCentre() {
+    const r = document.querySelector('.orb')?.getBoundingClientRect();
+    const centre = r && Show.middle({ x: r.left, y: r.top, w: r.width, h: r.height });
+    return centre && Number.isFinite(centre.x) && Number.isFinite(centre.y) ? centre : null;
+  },
+
+  /** The middle of a box. */
+  middle(box) {
+    const half = RendererConstants.SHIELD_HALF;
+    return { x: box.x + box.w * half, y: box.y + box.h * half };
+  },
+
+  /** One spark, leaving the middle of its element just after its brackets lock on. */
+  spark(box, orb) {
+    const el = Object.assign(document.createElement('div'), { className: 'spark' });
+    el.append(document.createElement('i'));
+    const from = Show.middle(box);
+    const vars = { '--fx': from.x, '--fy': from.y, '--dx': orb.x - from.x, '--dy': orb.y - from.y };
+    for (const [name, value] of Object.entries(vars)) el.style.setProperty(name, `${Math.round(value)}px`);
+    el.style.setProperty('--c', TYPE_COLORS[box.type] || TYPE_COLORS.button);
+    el.style.setProperty('--d', `${RendererConstants.SHIELD_SPARK_LAG_MS}ms`);
+    return el;
+  },
+
+  /** Puts an outline exactly over its element, snapped to device pixels so its hairline stays crisp. */
+  place(el, box) {
+    const ratio = window.devicePixelRatio || 1;
+    const px = (v) => `${Math.round(v * ratio) / ratio}px`;
+    el.style.transform = `translate3d(${px(box.x)}, ${px(box.y)}, 0)`;
+    Object.assign(el.style, { width: px(box.w), height: px(box.h) });
+    Show.reach(el, '--sx', '--sy', RendererConstants.SHIELD_LOCK_REACH_PX, box);
+    Show.reach(el, '--rx', '--ry', RendererConstants.SHIELD_RIPPLE_REACH_PX, box);
+  },
+
+  /** Sets the scale, across and down, that makes an outline `px` wider and taller than its element. */
+  reach(el, x, y, px, box) {
+    el.style.setProperty(x, String(1 + px / Math.max(1, box.w)));
+    el.style.setProperty(y, String(1 + px / Math.max(1, box.h)));
+  },
+
+  /** When the beam, crossing the viewport at an even pace, reaches `y`. */
   beamReaches(y) {
     const share = Math.min(1, Math.max(0, y) / Math.max(1, window.innerHeight || 0));
     return share * RendererConstants.SHIELD_REVEAL_MS;
@@ -120,9 +196,7 @@ const Show = {
 
   /** Fades the outlines out, then puts the companion back to rest. */
   fade() {
-    const stage = document.getElementById('stage');
-    stage.style.setProperty('--fade', `${RendererConstants.SHIELD_FADE_MS}ms`);
-    stage.classList.add('leaving');
+    document.getElementById('stage').classList.add('leaving');
     Show.later(RendererConstants.SHIELD_FADE_MS, Show.rest);
   },
 
@@ -138,10 +212,11 @@ const Show = {
     const stage = document.getElementById('stage');
     stage.replaceChildren();
     stage.classList.remove('leaving');
+    document.getElementById('sparks').replaceChildren();
   },
 };
 
 /** The main process's updates, by phase. */
-const PHASES = { scan: Show.scan, found: Show.finish };
+const PHASES = { scan: Show.scan, found: Show.finish, move: Show.move };
 
 window.oyaShield = Show.update;

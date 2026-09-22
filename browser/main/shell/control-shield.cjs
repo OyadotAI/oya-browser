@@ -6,16 +6,47 @@
  * the page rather than into it, so the site never sees them.
  */
 const path = require('path');
-const { TRANSPARENT, HUMAN_MENU_ITEMS, MAX_ANALYSIS_BOXES } = require('./constants.cjs');
+const {
+  TRANSPARENT,
+  HUMAN_MENU_ITEMS,
+  MAX_ANALYSIS_BOXES,
+  SHIELD_TRACK_MS,
+  SHIELD_TRACK_FOR_MS,
+} = require('./constants.cjs');
 const { drivenElsewhere } = require('../../control-state.cjs');
 
-/** Measures the visible elements an analysis found, by their selectors, in the isolated world; it only reads. */
+/**
+ * Measures elements in the isolated world; it only reads. Each is found as the
+ * analyzer finds it (shadow roots and iframes included), placed through any
+ * same-origin frames, and mapped into the visual viewport so a pinch-zoom still
+ * lines up. `__WANTED__` becomes the `[id, type, selector]` list.
+ */
+const MEASURE_JS = `(() => {
+  const vv = window.visualViewport || { offsetLeft: 0, offsetTop: 0, scale: 1 };
+  const find = (id, selector) =>
+    window.__acFindElement?.(id) || window.__acQueryShadow?.(selector) || document.querySelector(selector);
+  const place = (el) => {
+    const r = el.getBoundingClientRect();
+    let x = r.left, y = r.top;
+    for (let f = el.ownerDocument.defaultView?.frameElement; f; f = f.ownerDocument.defaultView?.frameElement) {
+      const fr = f.getBoundingClientRect();
+      x += fr.left + f.clientLeft;
+      y += fr.top + f.clientTop;
+    }
+    const k = vv.scale;
+    return { x: (x - vv.offsetLeft) * k, y: (y - vv.offsetTop) * k, w: r.width * k, h: r.height * k };
+  };
+  return (__WANTED__).map(([id, type, selector]) => {
+    const el = find(id, selector);
+    const box = el && place(el);
+    return box && box.w && box.h ? { id, type, ...box } : null;
+  }).filter(Boolean);
+})()`;
+
+/** Measures the visible elements an analysis found. */
 function analysisBoxesJs(elements) {
   const wanted = elements.filter((e) => e.visible).slice(0, MAX_ANALYSIS_BOXES);
-  return `(${JSON.stringify(wanted.map((e) => [e.id, e.type, e.selector]))}).map(([id, type, selector]) => {
-    const r = document.querySelector(selector)?.getBoundingClientRect();
-    return r && r.width && r.height ? { id, type, x: r.left, y: r.top, w: r.width, h: r.height } : null;
-  }).filter(Boolean)`;
+  return MEASURE_JS.replace('__WANTED__', () => JSON.stringify(wanted.map((e) => [e.id, e.type, e.selector])));
 }
 
 /** Whether an agent holds the page: anything that re-analyzes it would renumber the agent's element ids. */
@@ -34,6 +65,8 @@ class ControlShield {
     this.view = null;
     /** Sign-in popups, enabled only while a person has control. */
     this.popups = new Set();
+    /** The outlines being followed right now (`{ timer }`), or null; a newer run replaces it. */
+    this.tracking = null;
   }
 
   /** Throws unless a person holds control; every page-touching IPC call checks this. */
@@ -96,17 +129,48 @@ class ControlShield {
     if (view) this.cover(win, view);
   }
 
-  /** An agent began reading the page: the shield starts its scan. */
+  /** An agent began reading the page: the shield starts its scan, and stops following the last outlines. */
   analysisStarted(view) {
+    this.stopTracking();
     this.tell(view, { phase: 'scan' });
   }
 
-  /** The analysis is back: outline what it found. A failed measurement outlines nothing. */
+  /** The analysis is back: outline what it found, then keep the outlines on their elements. A failed measurement outlines nothing. */
   async analysisFinished(view, raw) {
+    this.stopTracking();
     if (!this.showing(view)) return;
     const js = analysisBoxesJs(raw?.data?.elements || []);
-    const boxes = await this.ctx.world.worldEval(view, js).catch(() => []);
-    this.tell(view, { phase: 'found', boxes: boxes || [] });
+    this.tell(view, { phase: 'found', boxes: (await this.measure(view, js)) || [] });
+    this.track(view, js, Date.now() + SHIELD_TRACK_FOR_MS);
+  }
+
+  /** Where the elements sit now, in the shield's pixels (the page may be zoomed, the shield is not); null when the page cannot be read. */
+  async measure(view, js, options) {
+    const boxes = await this.ctx.world.worldEval(view, js, options).catch(() => null);
+    if (!boxes) return null;
+    const k = view.webContents.getZoomFactor() / this.view.webContents.getZoomFactor();
+    return boxes.map((b) => ({ ...b, x: b.x * k, y: b.y * k, w: b.w * k, h: b.h * k }));
+  }
+
+  /** Re-measures every SHIELD_TRACK_MS until `until`, so the outlines glide with the page as it scrolls or reflows. */
+  track(view, js, until) {
+    const run = (this.tracking = {});
+    run.timer = setTimeout(() => this.follow(run, view, js, until), SHIELD_TRACK_MS);
+  }
+
+  /** One re-measure of a tracking run; it tells the page, then schedules the next, unless the run was stopped or is over. */
+  async follow(run, view, js, until) {
+    if (this.tracking !== run || !this.showing(view) || Date.now() > until) return;
+    const boxes = await this.measure(view, js, { retry: false });
+    if (this.tracking !== run) return;
+    if (boxes) this.tell(view, { phase: 'move', boxes });
+    run.timer = setTimeout(() => this.follow(run, view, js, until), SHIELD_TRACK_MS);
+  }
+
+  /** Stops following the outlines. */
+  stopTracking() {
+    clearTimeout(this.tracking?.timer);
+    this.tracking = null;
   }
 
   /** Whether the shield is over `view` right now. */
@@ -122,6 +186,7 @@ class ControlShield {
 
   /** Takes the shield off the window. */
   uncover(win) {
+    this.stopTracking();
     if (this.view) win.removeBrowserView(this.view);
   }
 
