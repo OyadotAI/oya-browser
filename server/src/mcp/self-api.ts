@@ -18,6 +18,8 @@ const headersFor = (self: Self) => ({
   Authorization: self.authorization,
   'Content-Type': 'application/json',
   'Idempotency-Key': globalThis.crypto.randomUUID(),
+  // Names the client, so a start can be counted as one an agent asked for.
+  'X-Oya-Client': 'mcp',
 });
 
 /** POSTs `body` to the public API at `path` as the caller; throws its error message on failure. */

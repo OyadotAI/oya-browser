@@ -13,6 +13,10 @@ const { DEV_COMMANDS, UNGUARDED_DEV_COMMANDS } = require('./dev-commands.cjs');
 /** The events that end a load, successful or not. */
 const LOAD_END_EVENTS = ['did-finish-load', 'did-fail-load'];
 
+/** What a caller is told about an action this browser has no handler or script for. A newer server may know it. */
+const unknownAction = (action) =>
+  `This Oya Browser does not know the action "${action}". Update the app, then send it again.`;
+
 /** Calls `resolve` once `contents` ends a load or `ms` pass, removing its listeners either way. */
 function untilLoaded(contents, ms, resolve) {
   const done = () => {
@@ -80,8 +84,14 @@ class PageDriver {
     await PAGE_COMMANDS[action](this, id, params, view);
   }
 
-  /** An action with no handler of its own runs as an analyzer script; an analysis is shown on the control shield. */
+  /**
+   * An action with no handler of its own runs as an analyzer script; an analysis
+   * is shown on the control shield. One this browser does not know is refused
+   * here: its name is the caller's text and is never evaluated in the page.
+   */
   async runInjected(id, action, params, view) {
+    if (actionScript(action, params) === null)
+      return this.ctx.sendResult(id, false, null, unknownAction(action), 'action_unsupported');
     await this.ctx.injectScripts(view);
     if (action === 'analyze') this.ctx.analysisStarted(view);
     const raw = await this.analysed(action, params, view);

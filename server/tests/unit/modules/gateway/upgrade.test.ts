@@ -150,7 +150,7 @@ describe('a new session', () => {
     const reply = await command(ws, 1, 'Browser.getVersion');
     assert.deepEqual(reply.result, { product: 'Fake/1' });
     const [s] = [...sessions.values()];
-    assert.deepEqual([s.apiKey, s.provider, s.upstreamUrl], [key, 'loopback', browser.url]);
+    assert.deepEqual([s.apiKey, s.provider, s.endpoint.url], [key, 'loopback', browser.url]);
     assert.equal(control$.of('update')[0].args[2].state, 'ready');
     assert.equal(recent({ action: 'gateway.session.start' })[0].target_id, s.id);
   });
@@ -274,13 +274,31 @@ describe('attaching to a fleet browser', () => {
       name: 'Fleet',
       clientType: 'cdp',
       provider: 'anchor',
-      driver: { wsUrl: browser.url, close() {} },
+      engine: { wsUrl: browser.url, close() {} },
     } as any);
     const { ws } = await connect(`token=${key}&browser=b-att`);
     assert.equal((await command(ws, 3, 'Browser.getVersion')).result.product, 'Fake/1');
     const [s] = [...sessions.values()];
-    assert.deepEqual([s.attachedTo, s.provider, s.upstreamUrl], ['b-att', 'anchor', browser.url]);
+    assert.deepEqual([s.attachedTo, s.provider, s.endpoint.url], ['b-att', 'anchor', browser.url]);
     assert.equal((await control().store.get('attachment', s.id)).browserId, 'b-att');
+  });
+
+  it('ends the attached session and closes its client with 1001 when the fleet browser leaves the registry', async () => {
+    const key = newKey();
+    registry.add('b-att', {
+      apiKey: key,
+      name: 'Fleet',
+      clientType: 'cdp',
+      provider: 'anchor',
+      engine: { wsUrl: browser.url, close() {} },
+    } as any);
+    const { ws } = await connect(`token=${key}&browser=b-att`);
+    const closed = new Promise<[number, string]>((resolve) =>
+      ws.once('close', (code, reason) => resolve([code, reason.toString()])),
+    );
+    registry.remove('b-att');
+    assert.deepEqual(await closed, [1001, 'browser stopped']);
+    await until(() => sessions.size === 0);
   });
 
   it("refuses an unknown browser, or another key's, with a 404", async () => {
@@ -289,7 +307,7 @@ describe('attaching to a fleet browser', () => {
       apiKey: 'someone-else',
       name: 'Fleet',
       clientType: 'cdp',
-      driver: { wsUrl: browser.url, close() {} },
+      engine: { wsUrl: browser.url, close() {} },
     } as any);
     assert.equal((await connect(`token=${key}&browser=b-att`)).status, 404);
     assert.equal((await connect(`token=${key}&browser=b-missing`)).status, 404);
@@ -309,7 +327,7 @@ describe('attaching to a fleet browser', () => {
       apiKey: key,
       name: 'Gone',
       clientType: 'cdp',
-      driver: { wsUrl: dead.url, close() {} },
+      engine: { wsUrl: dead.url, close() {} },
     } as any);
     assert.equal((await connect(`token=${key}&browser=b-dead`)).status, 502);
   });

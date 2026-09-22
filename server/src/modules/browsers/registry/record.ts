@@ -3,16 +3,19 @@
  * said about it, plus live state and counters that start empty.
  */
 
+import type { CDPDriver } from '../../../drivers/cdp.ts';
+import { driverFor, type BrowserDriver } from '../driver/index.ts';
+
 /** What a caller says about a browser when it registers it. */
 export type BrowserSpec = {
-  /** Inbound client socket (Oya); absent for an outbound driver. */
+  /** Inbound client socket (Oya); absent for a browser this server dialled. */
   ws?: any;
   /** Key the browser belongs to. */
   apiKey: string;
   /** Display name. */
   name: string;
-  /** Outbound driver (CDP) this server dialled. */
-  driver?: any;
+  /** The CDP engine this server dialled the browser with; absent for an Oya browser. */
+  engine?: CDPDriver | null;
   /** 'oya' or 'cdp'. */
   clientType?: string;
   /** Vendor or source that supplied the browser. */
@@ -23,14 +26,16 @@ export type BrowserSpec = {
   persona?: any;
   /** An inbound Oya browser that also offers CDP through the relay. */
   cdp?: boolean;
+  /** The actions an inbound Oya browser said it does, already checked; absent from an older app. */
+  actions?: readonly string[] | null;
 };
 
-/** How the browser is reached: its socket or driver, and what kind of client it is. */
-const reach = ({ ws, cdp = false, driver = null, clientType = 'oya' }: BrowserSpec) => ({
-  ws,
-  cdp,
-  driver,
-  clientType,
+/** How the browser is reached: its driver, picked here once, its socket, and what kind of client it is. */
+const reach = (spec: BrowserSpec, browserId: string) => ({
+  ws: spec.ws,
+  cdp: spec.cdp ?? false,
+  driver: driverFor(spec, browserId) as BrowserDriver,
+  clientType: spec.clientType ?? 'oya',
 });
 
 /** Where it came from and whom it belongs to. */
@@ -63,4 +68,9 @@ const history = () => ({
 });
 
 /** A fresh record for a browser that just connected. */
-export const newRecord = (spec: BrowserSpec) => ({ ...reach(spec), ...origin(spec), ...live(), ...history() });
+export const newRecord = (spec: BrowserSpec, browserId: string) => ({
+  ...reach(spec, browserId),
+  ...origin(spec),
+  ...live(),
+  ...history(),
+});

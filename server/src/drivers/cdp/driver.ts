@@ -114,6 +114,12 @@ export class CDPDriver extends CDPDriverState {
     return dispatch(this, action, params, timeoutMs);
   }
 
+  /** Every cookie the browser holds, across all sites. */
+  async cookies(): Promise<object[]> {
+    const { cookies = [] } = await this.conn.send('Network.getAllCookies', {}, this.sessionId);
+    return cookies;
+  }
+
   /** Streams live-view frames to `onFrame`, filling idle gaps with screenshots. */
   async startScreencast(onFrame, options = {}) {
     return startScreencast(this, onFrame, options);

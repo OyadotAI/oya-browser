@@ -9,6 +9,11 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 if (!process.env.OYA_TEST_LIVE) process.env.DOTENV_CONFIG_PATH = join(tmpdir(), 'oya-test-no-env');
+// Outbound analytics and ops messages are off in tests whatever the shell holds: a test must never
+// post to a real PostHog or Slack. The suites that exercise sending set the variables themselves.
+if (!process.env.OYA_TEST_LIVE)
+  for (const name of ['POSTHOG_KEY', 'POSTHOG_HOST', 'SLACK_OPS_WEBHOOK_SIGNUPS', 'SLACK_OPS_WEBHOOK_EVENTS'])
+    delete process.env[name];
 
 /**
  * The runner's own process and every test file process get a fresh directory;

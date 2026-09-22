@@ -24,13 +24,14 @@ export async function stopBrowser(req, browserId, { sandbox, force = false }: an
   const browser = registry.get(browserId);
   if (!browser) return stopAbsent(req, key, browserId, force);
   if (!canAccess(req, browserId)) return notConnected(browserId);
-  const unsaved = browser.driver && browser.persona ? await saveProfile(key, browserId, browser, force) : null;
+  const unsaved = browser.persona ? await saveProfile(key, browserId, browser, force) : null;
   return unsaved || stopConnected(req, key, browserId, browser, sandbox);
 }
 
-/** Pulls the browser's cookies into its persona before it goes. */
+/** Pulls the browser's cookies into its persona before it goes; a browser that syncs its own jar has none to pull. */
 async function captureProfile(browser) {
-  const { cookies } = await browser.driver.conn.send('Network.getAllCookies', {}, browser.driver.sessionId);
+  const cookies = await browser.driver.cookies();
+  if (!cookies) return;
   mergeDump(browser.persona.id, cookies);
   await drainLogins();
 }

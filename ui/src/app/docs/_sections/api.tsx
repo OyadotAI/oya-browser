@@ -21,7 +21,8 @@ const REST_API_ROWS_1: ReactNode[][] = [
     <InlineCode key="ms">POST</InlineCode>,
     <InlineCode key="es">/browsers/start</InlineCode>,
     <span key="ds">
-      Start one (<InlineCode>{`{ "persona": "auto" }`}</InlineCode>), provider comes from your key
+      Start one (<InlineCode>{`{ "persona": "auto" }`}</InlineCode>), provider comes from your key; an endpoint another
+      browser holds answers 409 <InlineCode>endpoint_in_use</InlineCode>
     </span>,
   ],
   [

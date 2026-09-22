@@ -35,3 +35,6 @@ export const INVALID_KEY_CLOSE_CODE = 4003;
 
 /** rawHeaders entries per header: its name, then its value. */
 export const RAW_HEADER_STRIDE = 2;
+
+/** Where a caller who hit no route is pointed. */
+export const API_DESCRIBED = 'The API is described at /openapi.json.';

@@ -5,6 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { client, type Call } from '../support/fake-fetch.ts';
+import type { Oya, OyaError } from '../../../dist/index.js';
 
 /** Every request answers 200 with `body`. */
 const any = (body: unknown = {}) => client(new Proxy({}, { get: () => ({ body }) }));
@@ -51,5 +52,50 @@ describe('oya.config and usage', () => {
       ['POST', '/api/config', { llm_provider: 'gemini' }],
       ['GET', '/api/usage', undefined],
     ]);
+  });
+});
+
+describe('ids in a path', () => {
+  /** Every call that puts an id into a path, as `(oya, id) => call`. */
+  const byId: Record<string, (oya: Oya, id: string) => Promise<unknown>> = {
+    'personas.get': (oya, id) => oya.personas.get(id),
+    'personas.update': (oya, id) => oya.personas.update(id, {}),
+    'personas.clone': (oya, id) => oya.personas.clone(id),
+    'personas.remove': (oya, id) => oya.personas.remove(id),
+    'personas.cookies': (oya, id) => oya.personas.cookies(id),
+    'personas.credentials': (oya, id) => oya.personas.credentials(id),
+    'browser.get': (oya, id) => oya.browser.get(id),
+    'control.session': (oya, id) => oya.control.session(id),
+    'control.cancel': (oya, id) => oya.control.cancel(id),
+    'control.recover': (oya, id) => oya.control.recover(id),
+    'control.removeMember': (oya, id) => oya.control.removeMember(id),
+    'proxies.remove': (oya, id) => oya.proxies.remove(id),
+    'playbooks.remove': (oya, id) => oya.playbooks.remove(id),
+  };
+
+  it('refuses an id that is empty, not a string, or would change the path, before any request', async () => {
+    for (const [name, call] of Object.entries(byId)) {
+      for (const id of ['', '.', '..', '../config', 'a/b', 12, undefined]) {
+        const { oya, calls } = any();
+        const err = (await call(oya, id as string).catch((e) => e)) as OyaError & { body: { code: string } };
+        assert.equal(err?.status, 400, `${name}(${JSON.stringify(id)})`);
+        assert.equal(err.body.code, 'invalid_request', name);
+        assert.equal(calls.length, 0, `${name}(${JSON.stringify(id)}) sent a request`);
+      }
+    }
+  });
+
+  it('names the id and what it needed', async () => {
+    const { oya } = any();
+    await assert.rejects(oya.personas.get('../config'), {
+      message: 'id must be a single path segment (no "/" and not "." or ".."), not "../config"',
+    });
+    await assert.rejects(oya.personas.get(''), { message: 'id must be a non-empty string, not ""' });
+  });
+
+  it('encodes an ordinary id that needs it, and sends it', async () => {
+    const { oya, calls } = any();
+    await oya.personas.get('p 1?x');
+    assert.equal(calls[0].path, '/api/personas/p%201%3Fx');
   });
 });

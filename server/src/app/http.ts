@@ -8,6 +8,8 @@ import { sendCommand } from '../modules/browsers/socket.ts';
 import { fingerprint } from '../platform/audit.ts';
 import { control } from '../modules/control/service.ts';
 import { Status } from '../platform/http-status.ts';
+import { answerFor } from '../platform/errors.ts';
+import { VOCABULARY, isInternal } from '../drivers/vocabulary.ts';
 import { BEARER_PREFIX_LENGTH } from '../platform/constants.ts';
 import {
   BASE64_GROUP_BYTES,
@@ -127,10 +129,12 @@ export const announce = (key, type, sessionId, detail) =>
  * `evaluate_raw` runs arbitrary JavaScript in the page's own world, which is
  * how CAPTCHA and MFA handling reach a site's globals. Exposed here it would
  * be arbitrary code execution inside a browser holding the customer's real
- * cookies and logged-in sessions, the CDP driver already refuses it, and the
- * Oya client must not be the way around that.
+ * cookies and logged-in sessions. Neither driver refuses it by name: both run
+ * it for the server. `refuseAction` on the two command routes is the refusal,
+ * and it takes a string only, since `["evaluate_raw"]` is not in this set yet
+ * reads as the same key in a command map.
  */
-export const INTERNAL_ACTIONS = new Set(['evaluate_raw', 'evaluate', 'record']);
+export const INTERNAL_ACTIONS = new Set(Object.keys(VOCABULARY).filter(isInternal));
 
 /**
  * Agent work can outlast Node fetch's 300s headers timeout (and proxy idle
@@ -152,7 +156,8 @@ async function endWithResult(res, work) {
   try {
     res.end(JSON.stringify(await work()));
   } catch (err) {
-    // The 200 is already sent, so the real status (429 for a quota) travels in the body.
-    res.end(JSON.stringify({ error: err.message, status: err.status || Status.INTERNAL }));
+    // The 200 is already sent, so the real status (429 for a quota) travels in the body, in the API's one shape.
+    const { status, body } = answerFor(err, res.req ?? {});
+    res.end(JSON.stringify({ ...body, status }));
   }
 }

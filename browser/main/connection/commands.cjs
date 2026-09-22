@@ -13,6 +13,10 @@ const {
 } = require('../dialogs.cjs');
 const { resultSummary } = require('./result-summary.cjs');
 const { TAB_COMMANDS } = require('./tab-commands.cjs');
+const { RESULT_CODES } = require('./constants.cjs');
+
+/** The code to send with a failed result: one of ours, or none. */
+const codeOf = (err) => (RESULT_CODES.has(err?.code) ? err.code : undefined);
 
 /** Runs server commands and sends their results. */
 class CommandRunner {
@@ -55,7 +59,7 @@ class CommandRunner {
    */
   runSafely(msg) {
     const failed = (e) => {
-      this.sendResult(msg.id, false, null, e?.message || String(e));
+      this.sendResult(msg.id, false, null, e?.message || String(e), codeOf(e));
       return null;
     };
     return this.runCommand(msg).then(() => null, failed);
@@ -65,13 +69,15 @@ class CommandRunner {
   async runCommand(msg) {
     const { id, action, params } = msg;
     if (!this.ctx.shell.browsingMode) return this.sendResult(id, false, null, 'Browser not ready');
+    // The command maps look an action up as a key, which would read `["evaluate_raw"]` as the string.
+    if (typeof action !== 'string') return this.sendResult(id, false, null, 'action must be a string');
     // A held dialog blocks the renderer: anything that touches the page would sit
     // there until its timeout and tell the caller nothing. Answer with the dialog
     // instead, so the next move is obvious and costs no wall clock.
     if (this.blockedByDialog(id, action)) return;
     if (action === 'handle_dialog') return this.handleDialog(id, params);
     await this.dispatch(id, action, params).catch((err) =>
-      this.sendResult(id, false, null, err.message || String(err)),
+      this.sendResult(id, false, null, err.message || String(err), codeOf(err)),
     );
   }
 
@@ -97,8 +103,8 @@ class CommandRunner {
     await this.ctx.actions.runPageAction(id, action, params, view);
   }
 
-  /** Sends one result, with any dialog that fired during it; drops a late answer already given. */
-  sendResult(id, ok, data, error) {
+  /** Sends one result, with any dialog that fired during it, and its code when it has one of ours; drops a late answer already given. */
+  sendResult(id, ok, data, error, code) {
     if (!this.ctx.socket.isOpen()) return;
     if (this.answeredCommands.delete(id)) return;
     // Every command result passes through here, which makes it the one place a
@@ -106,7 +112,8 @@ class CommandRunner {
     const dialog = takeDialogNotes();
     if (dialog) data = { ...(data || {}), dialog };
     this.ctx.shell.devLog('out', ok ? 'result: ok' : 'result: error', resultSummary(id, ok, data, error));
-    this.ctx.socket.send({ type: 'cmd_result', id, ok, data: data || null, error: error || null });
+    const coded = RESULT_CODES.has(code) ? { code } : {};
+    this.ctx.socket.send({ type: 'cmd_result', id, ok, data: data || null, error: error || null, ...coded });
   }
 }
 

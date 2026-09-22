@@ -30,22 +30,32 @@ async function saveLeftovers(session) {
   await captureProfile(session);
 }
 
-/** Removes the attachment record so the fleet browser is no longer counted as attached. */
+/**
+ * Removes the attachment record so the fleet browser is no longer counted as
+ * attached. A failure is logged and teardown goes on: the record's lease runs
+ * out by itself, while a throw here would skip handing the browser back.
+ */
 async function dropAttachment(session) {
   if (!session.attachedTo) return;
   await control()
     .store.transact(async (tx) => {
       if (await tx.get('attachment', session.id)) await tx.delete('attachment', session.id);
     })
-    .catch(() => {});
+    .catch((e) => console.error(`[gateway] attachment ${session.id} not dropped:`, e.message));
 }
 
-/** Stops the recording, announcing it when there was one. */
+/** Stops the recording, announcing it when there was one; either failing is logged, never thrown. */
 async function finishRecording(session) {
-  if (await recorder.stop(session.id).catch(() => false))
+  if (await recorder.stop(session.id).catch((e) => logged(`recording stop for ${session.id}`, e, false)))
     void control()
       .emit(session.apiKey, 'recording.ready', session.id, {})
-      .catch(() => {});
+      .catch((e) => logged(`recording.ready for ${session.id} not announced`, e));
+}
+
+/** Logs a teardown step that failed, and answers `value` so teardown goes on. */
+function logged<T>(what: string, err, value?: T): T {
+  console.error(`[gateway] ${what}:`, err.message);
+  return value;
 }
 
 /** Saves the profile's cookies and storage, then closes the connection restore held open. */
@@ -56,12 +66,13 @@ async function captureProfile(session) {
       .catch((e) => console.error(`[gateway] profile capture failed for ${session.profile}:`, e.message));
   }
   // Held open since restore so its on-new-document hook stays registered.
+  // An already-closed socket throws on close; the session is ending regardless.
   try {
     session.profileConn?.close();
   } catch {}
 }
 
-/** Closes the client and the browser connection. */
+/** Closes the client and the browser connection. Either may already be closed, which throws and changes nothing. */
 function closeSockets(session, reason) {
   try {
     session.client?.close(CloseCode.GOING_AWAY, reason);
@@ -73,7 +84,8 @@ function closeSockets(session, reason) {
 
 /** Hands the browser back; a provider session is marked cleanup_pending until that succeeds, then stopped. */
 async function returnBrowser(session) {
-  if (!session.attachedTo) await setState(session, 'cleanup_pending').catch(() => {});
+  if (!session.attachedTo)
+    await setState(session, 'cleanup_pending').catch((e) => logged(`${session.id} not marked cleanup_pending`, e));
   try {
     await session.release?.();
     if (!session.attachedTo) await setState(session, 'stopped');

@@ -4,11 +4,25 @@
  * address, closed the tab, or lost control in the meantime.
  */
 const { WEB_URL, SEARCH_URL } = require('./constants.cjs');
+const { loadInTab, isUnprotected, showUnprotected } = require('./load.cjs');
 
 /** A host, with an optional port and path: has a dot, or is localhost, and no spaces. */
 const HOST = /^(localhost|[^\s/:]+\.[^\s/:]+)(:\d+)?(\/\S*)?$/i;
 /** This machine or a bare IP, which usually serves plain http. */
 const PLAIN_HTTP = /^(localhost|127\.|\d{1,3}(\.\d{1,3}){3}[:/]?|\[::1\])/i;
+
+/**
+ * Whether a tab may be sent here: an http(s) address or about:blank. file: reads
+ * this machine, javascript: runs as code in the page, and both the person's
+ * address bar and a caller's command go through this one rule.
+ */
+function isWebAddress(url) {
+  const trimmed = String(url).trim();
+  return WEB_URL.test(trimmed) || trimmed.toLowerCase() === 'about:blank';
+}
+
+/** What a command is told when it asks for any other address. */
+const NOT_A_WEB_ADDRESS = 'Only http and https addresses, or about:blank, can be opened.';
 
 /**
  * What the address bar loads for what was typed, as any browser does: an http(s)
@@ -18,7 +32,7 @@ const PLAIN_HTTP = /^(localhost|127\.|\d{1,3}(\.\d{1,3}){3}[:/]?|\[::1\])/i;
  */
 function normalizeAddress(url) {
   const trimmed = String(url).trim();
-  if (WEB_URL.test(trimmed) || trimmed.toLowerCase() === 'about:blank') return trimmed;
+  if (isWebAddress(trimmed)) return trimmed;
   if (HOST.test(trimmed)) return (PLAIN_HTTP.test(trimmed) ? 'http://' : 'https://') + trimmed;
   return SEARCH_URL + encodeURIComponent(trimmed);
 }
@@ -37,7 +51,8 @@ function finishNavigation(ctx, tab, url, request) {
   const view = tab.view;
   if (view.webContents.isDestroyed() || tab.navigationRequest !== request) return;
   tab.navigationPending = false;
-  if (ctx.control.snapshot().interactive) view.webContents.loadURL(url).catch(() => {});
+  if (ctx.control.snapshot().interactive)
+    loadInTab(tab, url).catch((e) => isUnprotected(e) && showUnprotected(ctx, tab));
   ctx.tabs.sendTabList();
 }
 
@@ -53,4 +68,4 @@ async function navigateActive(ctx, url) {
   finishNavigation(ctx, tab, url, request);
 }
 
-module.exports = { navigateActive, normalizeAddress };
+module.exports = { navigateActive, normalizeAddress, isWebAddress, NOT_A_WEB_ADDRESS };

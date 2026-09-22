@@ -270,6 +270,8 @@ export interface BrowserInfo {
 
 /** A browser plus what it has been doing, from `browser.status()`. */
 export interface BrowserDetail extends BrowserInfo {
+  /** The actions it does, sorted, one spelling each: an action not listed answers action_unsupported or action_unknown. */
+  actions: string[];
   /** Its most recent commands, newest first. */
   activity: Activity[];
 }

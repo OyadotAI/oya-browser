@@ -179,3 +179,23 @@ export const SCRYPT_MAXMEM = SCRYPT_MAXMEM_MIB * BYTES_PER_MIB;
 
 /** Characters of a saved API key left visible when it is shown masked. */
 export const MASKED_KEY_TAIL = 4;
+
+// ── Error answers ──
+
+/** Longest string quoted back in a "must be X, not Y" message; a longer one is called a string. */
+export const GOT_MAX_CHARS = 40;
+/** Hex characters of the reference a 500 carries, enough to find one log line among a day's. */
+export const REF_CHARS = 8;
+
+// ── Outbound analytics and ops messages ──
+
+/** Events held before a flush; past this the newest are dropped, because analytics must never grow memory. */
+export const ANALYTICS_PENDING_MAX = 1000;
+/** Events per batch POST to PostHog. */
+export const ANALYTICS_BATCH_MAX = 50;
+/** How long a batch waits for company before it is sent. */
+export const ANALYTICS_FLUSH_MS = 10_000;
+/** How long one outbound analytics or Slack call may take before it is abandoned. */
+export const OUTBOUND_TIMEOUT_MS = 5_000;
+/** Longest ops message posted to Slack; a longer one was not written by us. */
+export const MESSAGE_MAX_CHARS = 400;

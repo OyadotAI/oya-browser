@@ -19,6 +19,14 @@ const pending: string[] = [];
 let waiter: ((line: string) => void) | null = null;
 /** True once input has closed. */
 let ended = false;
+/** How many lines input really held. The empty line a closed input stands in for is not one of them. */
+let linesRead = 0;
+
+/** A line that came from input: counted, then handed on. */
+function readLine(line: string): void {
+  linesRead++;
+  deliver(line);
+}
 
 /** Hands a line to whoever waits for it, or queues it. */
 function deliver(line: string): void {
@@ -56,7 +64,7 @@ function maskEcho(line: Interface): void {
 function iface(): Interface {
   if (rl) return rl;
   rl = createInterface({ input: stdin, output: stdout, terminal: !!stdin.isTTY });
-  rl.on('line', deliver);
+  rl.on('line', readLine);
   rl.on('close', close);
   maskEcho(rl);
   return rl;
@@ -76,6 +84,15 @@ export function nextLine(): Promise<string> {
 /** Turns echo masking on or off. */
 export function setMasked(on: boolean): void {
   masked = on;
+}
+
+/**
+ * Whether anyone answered anything. Piped blank lines are answers: each accepts a
+ * default on purpose. Off a terminal with no line read, nobody answered at all,
+ * and every default a wizard then "accepted" was never agreed to.
+ */
+export function answered(): boolean {
+  return !!stdin.isTTY || linesRead > 0;
 }
 
 /** True when input has closed and nothing is left to read, so a re-prompt could never be answered. */

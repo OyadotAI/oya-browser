@@ -348,7 +348,13 @@ try {
     const { CDPDriver } = await import('../../src/drivers/cdp.ts');
     // A fleet browser, as POST /browsers/start would register it.
     const driver = await new CDPDriver({ wsUrl: chromeWs, provider: 'cdp' }).connect();
-    registry.add('fleet-1', { apiKey: 'tenant-key', name: 'Fleet 1', clientType: 'cdp', provider: 'cdp', driver });
+    registry.add('fleet-1', {
+      apiKey: 'tenant-key',
+      name: 'Fleet 1',
+      clientType: 'cdp',
+      provider: 'cdp',
+      engine: driver,
+    });
     await driver.send('navigate', { url: siteUrl + '?fleet=one' });
 
     const attached = await client('&browser=fleet-1');
@@ -424,6 +430,26 @@ try {
     await [...sessions.values()].find((x) => x.attachedTo === 'oya-2').destroy('grace expired');
     assert(told.includes('cdp_close'), 'ending the session closes the relay in the browser');
     assert(registry.isConnected('oya-2'), 'and the Oya browser stays in the fleet');
+
+    // A profile is read from an Oya browser through its relay, the way capture on an attached one does.
+    const relayEndpoint = registry.get('oya-2').driver.cdpEndpoint();
+    const relayOwner = createHash('sha256').update('relay-owner').digest('hex').slice(0, 16);
+    const captured = await profiles.capture(relayOwner, 'relayed', { endpoint: relayEndpoint });
+    assert(captured === true, 'a profile is captured from an Oya browser over its relay');
+    await profiles.remove(relayOwner, 'relayed');
+
+    // Stopping a fleet browser ends every client attached to it, so a Playwright script exits.
+    const watcher = await client('&browser=fleet-1');
+    const closedIn = await new Promise((resolve) => {
+      const began = Date.now();
+      watcher.conn.ws.once('close', (code) => resolve({ code, ms: Date.now() - began }));
+      registry.remove('fleet-1');
+      setTimeout(() => resolve(null), 2000);
+    });
+    assert(
+      closedIn?.code === 1001 && closedIn.ms < 1000,
+      `an attached client is closed with 1001 when its browser stops (got ${JSON.stringify(closedIn)})`,
+    );
     registry.remove('fleet-1');
     registry.remove('oya-1');
     registry.remove('oya-2');

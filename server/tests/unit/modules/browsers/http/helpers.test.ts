@@ -13,7 +13,10 @@ describe('route helpers', () => {
   it('answers 400 for a missing action', () => {
     const res = new FakeResponse();
     assert.ok(refuseAction(res, undefined));
-    assert.deepEqual([res.statusCode, res.body], [400, { error: 'Missing action' }]);
+    assert.deepEqual(
+      [res.statusCode, res.body],
+      [400, { field: 'action', error: 'Missing action', code: 'invalid_request' }],
+    );
   });
 
   it('answers 403 for an action only the server may send', () => {
@@ -21,6 +24,16 @@ describe('route helpers', () => {
       const res = new FakeResponse();
       assert.ok(refuseAction(res, action));
       assert.deepEqual([res.statusCode, res.body.error], [403, `${action} is not available through this API`]);
+    }
+  });
+
+  it('answers 400 for an action that is not a string, so a wrapped name cannot slip past the 403', () => {
+    for (const action of [['evaluate_raw'], { toString: 'x' }, 7, true]) {
+      const res = new FakeResponse();
+      assert.ok(refuseAction(res, action));
+      assert.equal(res.statusCode, 400);
+      assert.deepEqual([res.body.code, res.body.field], ['invalid_request', 'action']);
+      assert.match(res.body.error, /^action must be a string, not /);
     }
   });
 

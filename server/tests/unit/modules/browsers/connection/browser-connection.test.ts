@@ -15,6 +15,8 @@ import { control } from '../../../../../src/modules/control/service.ts';
 import { container } from '../../../../../src/app/container.ts';
 import { FakeSocket, disconnectBrowser } from '../../../support/fakes.ts';
 import { stubControl } from '../../../support/browsers.ts';
+import { stubFetch, json } from '../../../support/http.ts';
+import * as keyConfig from '../../../../../src/modules/config/service.ts';
 
 const B = 'b-conn';
 
@@ -86,6 +88,41 @@ describe('BrowserConnection', () => {
     assert.ok(ok.persona.id);
     const b = registry.get(B);
     assert.deepEqual([b.apiKey, b.name, b.clientType, b.ws], ['k-conn', 'Mine', 'oya', ws]);
+  });
+
+  it('tells the ops channel about a first desktop with its platform from a fixed list, never the text the client sent', async () => {
+    process.env.SLACK_OPS_WEBHOOK_SIGNUPS = 'https://hooks.example.test/signups';
+    keyConfig.reset();
+    const calls = stubFetch(() => json({}));
+    try {
+      await connect(auth({ host_platform: '<!channel> <https://evil.example|Reset your password>' }));
+      await new Promise((r) => setTimeout(r, 5));
+      const lines = calls.map((c) => JSON.parse(c.init.body).text);
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /^🖥️ Desktop connected: .* \(unknown\)$/);
+      assert.ok(!lines[0].includes('evil'));
+    } finally {
+      delete process.env.SLACK_OPS_WEBHOOK_SIGNUPS;
+    }
+  });
+
+  it('keeps the actions a browser announced, sorted, and lists them on its detail', async () => {
+    await connect(auth({ actions: ['wait', 'click', 'workflow', 'evaluate_raw', 'record'] }));
+    // The internal names are dropped: callers are refused them, so the detail must not list them.
+    assert.deepEqual(registry.describe(B).actions, ['click', 'wait', 'workflow']);
+  });
+
+  it('uses the Oya list for an app that announces none, or a list that is not plain action names', async () => {
+    const tooMany = Array.from({ length: 129 }, (_, i) => `a_${'x'.repeat(i % 30)}`);
+    for (const actions of [undefined, 'click', [1, 2], ['Click'], ['a'.repeat(41)], tooMany]) {
+      await connect(auth(actions === undefined ? {} : { actions }));
+      const listed = registry.describe(B).actions;
+      assert.ok(listed.includes('workflow') && listed.includes('navigate'), JSON.stringify(actions)?.slice(0, 40));
+      registry.get(B)?.ws?.close?.(1000, 'next');
+      disconnectBrowser(B);
+    }
+    const warned = (console.warn as any).mock.calls.filter((c) => /unusable action list/.test(c.arguments[0]));
+    assert.equal(warned.length, 5, 'one warning per unusable list, none for an app that sent nothing');
   });
 
   it('answers messages once authenticated', async () => {

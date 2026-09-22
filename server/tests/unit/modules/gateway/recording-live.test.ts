@@ -15,6 +15,7 @@ process.env.OYA_RECORD_MAX_FRAMES = '2';
 const live = await import('../../../../src/modules/gateway/recording-live.ts');
 const { control } = await import('../../../../src/modules/control/service.ts');
 const { fakeCdp, pageBrowser } = await import('../../support/gateway.ts');
+const { endpointAt } = await import('../../../../src/drivers/cdp.ts');
 
 const JPEG = Buffer.from('fake-jpeg').toString('base64');
 const opened: { close(): Promise<void> }[] = [];
@@ -31,7 +32,7 @@ async function recordable(extra: object = {}) {
     browser,
     session: {
       id: randomUUID(),
-      upstreamUrl: browser.url,
+      endpoint: endpointAt(browser.url),
       provider: 'chrome',
       owner: 'abcdef12',
       profile: null,
@@ -71,7 +72,7 @@ describe('recording-live', () => {
   it('does not start without a page', async () => {
     const browser = await fakeCdp(() => ({ targetInfos: [] }));
     opened.push(browser);
-    assert.equal(await live.start({ id: randomUUID(), upstreamUrl: browser.url }), false);
+    assert.equal(await live.start({ id: randomUUID(), endpoint: endpointAt(browser.url) }), false);
   });
 
   it('acknowledges and spools each frame, stopping at the frame cap', async () => {

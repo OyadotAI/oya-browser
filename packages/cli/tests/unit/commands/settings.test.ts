@@ -23,7 +23,10 @@ describe('oya config', () => {
 
   it('refuses a pair without a key', async () => {
     fakeFetch({});
-    await assert.rejects(cmdConfig(['=x'], FLAGS), /Expected key=value, got "=x"/);
+    await assert.rejects(cmdConfig(['=x'], FLAGS), {
+      code: 'usage',
+      message: 'oya config takes settings as key=value, not "=x".',
+    });
   });
 
   it('usage prints the usage as JSON', async () => {

@@ -15,6 +15,7 @@ import {
   getProfile,
   updateProfile,
 } from './service.ts';
+import { track } from '../telemetry/index.ts';
 import { generateKey } from './keys.ts';
 import { issueSession, readRefreshCookie, clearSessionCookies } from './session-cookie.ts';
 import { audit } from '../../platform/audit.ts';
@@ -68,7 +69,11 @@ router.post('/auth/signup', async (req, res) => {
   const { email, password, display_name } = req.body;
   const problem = signupProblem(email, password);
   if (problem) return badRequest(res, problem);
-  await guarded(res, Status.BAD_REQUEST, async () => res.json(await signup(email, password, display_name)));
+  await guarded(res, Status.BAD_REQUEST, async () => {
+    const made = await signup(email, password, display_name);
+    track.accountSignedUp(made.user);
+    res.json(made);
+  });
 });
 
 /** POST /auth/login, sign in with email and password and start a session. */
@@ -125,7 +130,9 @@ router.post('/auth/keys', userAuthMiddleware, async (req, res) => {
   await guarded(res, Status.INTERNAL, async () => {
     const key = generateKey();
     await registerApiKey(key, req.user.id, label);
-    res.json({ key, ...keyInfo(key, label || 'Default') });
+    const info = keyInfo(key, label || 'Default');
+    track.apiKeyCreated(req.user, info.project);
+    res.json({ key, ...info });
   });
 });
 

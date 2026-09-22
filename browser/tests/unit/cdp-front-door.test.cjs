@@ -8,7 +8,8 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const WebSocket = require('ws');
 const { start, localHost, isUi } = require('../../cdp-front-door.js');
-const { CDP_SERVER_ERROR } = require('../../constants.cjs');
+const { CDP_SERVER_ERROR, LOCAL_FILES_UNAVAILABLE } = require('../../constants.cjs');
+const { NOT_A_WEB_ADDRESS } = require('../../main/tabs/navigation.cjs');
 
 const UI = { id: 'ui', type: 'page', url: 'file:///app/renderer/index.html' };
 const PAGE = { id: 'page-1', type: 'page', url: 'https://a.test/' };
@@ -67,6 +68,7 @@ function chromiumReply(msg) {
     const infos = [UI, PAGE].map((t) => ({ targetId: t.id, type: t.type, url: t.url }));
     return { id: msg.id, result: { targetInfos: infos } };
   }
+  if (msg.method === 'Target.attachToBrowserTarget') return { id: msg.id, result: { sessionId: 's-browser-2' } };
   return { id: msg.id, sessionId: msg.sessionId, result: { echoed: msg.method } };
 }
 
@@ -304,6 +306,107 @@ describe('cdp front door', () => {
     try {
       const reply = await call({ id: 1, method: 'Browser.getVersion' });
       assert.deepEqual(reply.error, { code: CDP_SERVER_ERROR, message: 'Automation paused for human control' });
+    } finally {
+      sock.close();
+      door.close();
+    }
+  });
+
+  it('refuses a file: url on /json/new with 400, and opens no tab', async () => {
+    const { door, app, port } = await openDoor(chromium);
+    try {
+      const res = await request(port, '/json/new?file:///etc/hosts', { method: 'PUT' });
+      assert.deepEqual([res.status, res.body.error, app.tabs.length], [400, NOT_A_WEB_ADDRESS, 0]);
+    } finally {
+      door.close();
+    }
+  });
+
+  it('answers a file: Page.navigate on the page endpoint with a CDP error and never forwards it', async () => {
+    const { door, port } = await openDoor(chromium);
+    const { sock, call } = await harness(`ws://127.0.0.1:${port}/devtools/page/page-1`);
+    try {
+      received.length = 0;
+      const reply = await call({ id: 7, method: 'Page.navigate', params: { url: 'file:///etc/hosts' } });
+      assert.deepEqual(reply.error, { code: CDP_SERVER_ERROR, message: NOT_A_WEB_ADDRESS });
+      assert.equal(received.filter((m) => m.method === 'Page.navigate').length, 0);
+      const ok = await call({ id: 8, method: 'Page.navigate', params: { url: 'https://a.test/' } });
+      assert.equal(ok.result.echoed, 'Page.navigate');
+    } finally {
+      sock.close();
+      door.close();
+    }
+  });
+
+  it('refuses a relay an upload with a CDP error, and stubs its download setting without forwarding', async () => {
+    const { door, port } = await openDoor(chromium, { relayToken: 'relay' });
+    const { sock, call } = await harness(`ws://127.0.0.1:${port}/devtools/browser/b`, { 'x-oya-relay': 'relay' });
+    try {
+      received.length = 0;
+      const upload = await call({
+        id: 3,
+        sessionId: 's-page',
+        method: 'DOM.setFileInputFiles',
+        params: { files: ['/etc/passwd'] },
+      });
+      assert.deepEqual([upload.sessionId, upload.error.message], ['s-page', LOCAL_FILES_UNAVAILABLE]);
+      const stub = await call({
+        id: 4,
+        method: 'Browser.setDownloadBehavior',
+        params: { behavior: 'allow', downloadPath: '/tmp' },
+      });
+      assert.deepEqual(stub.result, {});
+      assert.deepEqual(
+        received.map((m) => m.method),
+        [],
+      );
+    } finally {
+      sock.close();
+      door.close();
+    }
+  });
+
+  it('gives a second browser session the browser endpoint\u2019s handling: hidden UI and tabs the app\u2019s way', async () => {
+    const { door, app, port } = await openDoor(chromium);
+    const { sock, call } = await harness(`ws://127.0.0.1:${port}/devtools/browser/b`);
+    try {
+      const { result } = await call({ id: 1, method: 'Target.attachToBrowserTarget' });
+      const sessionId = result.sessionId;
+      const listed = await call({ id: 2, sessionId, method: 'Target.getTargets' });
+      assert.deepEqual(
+        listed.result.targetInfos.map((t) => t.targetId),
+        ['page-1'],
+      );
+      const opened = await call({ id: 3, sessionId, method: 'Target.createTarget', params: { url: 'https://c.test' } });
+      assert.deepEqual(
+        [opened.sessionId, opened.result.targetId, app.tabs.length],
+        [sessionId, 'new-https://c.test', 1],
+      );
+    } finally {
+      sock.close();
+      door.close();
+    }
+  });
+
+  it('refuses a harness a new tab that could not be protected, with a CDP error', async () => {
+    const failedTab = (url) => {
+      const debuggerApi = { sendCommand: async () => ({ targetInfo: { targetId: 'new-' + url } }) };
+      const tab = {
+        id: 1,
+        protection: 'failed',
+        setup: Promise.resolve(),
+        view: { webContents: { debugger: debuggerApi } },
+      };
+      app.tabs.push(tab);
+      return tab.id;
+    };
+    const { door, app, port } = await openDoor(chromium, { createTab: (url) => failedTab(url) });
+    const { sock, call } = await harness(`ws://127.0.0.1:${port}/devtools/browser/b`);
+    try {
+      const reply = await call({ id: 9, method: 'Target.createTarget', params: { url: 'https://d.test' } });
+      assert.match(reply.error.message, /could not be protected/);
+      assert.equal(reply.result, undefined);
+      assert.deepEqual(app.closed, [[1, { keepOne: false }]], 'the refused tab was left open for a harness to find');
     } finally {
       sock.close();
       door.close();

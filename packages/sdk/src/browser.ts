@@ -4,7 +4,7 @@
  * view links have their own endpoints. The small rules the methods share
  * (element ids, aimed scrolls, agent errors) are the functions below the class.
  */
-import type { Http } from './client.js';
+import { segment, type Http } from './client.js';
 import type {
   Analysis,
   AnalyzeOptions,
@@ -230,7 +230,7 @@ export class Browser {
    * Play `'<name>:draft'` to try a draft before promoting it.
    */
   async play(name: string, data: RunData = {}, { autoHeal = true }: PlayOptions = {}): Promise<PlayResult> {
-    const path = `/api/browsers/${this.id}/playbooks/${encodeURIComponent(name)}/play`;
+    const path = `/api/browsers/${this.id}/playbooks/${segment(name, 'name')}/play`;
     return agentAnswer<PlayResult>(
       await this.http.request<AgentAnswer<PlayResult>>('POST', path, { variables: data, autoHeal }, AGENT_TIMEOUT_MS),
     );
@@ -286,7 +286,7 @@ export class Browser {
 
   /** Revoke a link from `shareUrl()` before it expires, by the id it returned. */
   async revokeShare(id: string): Promise<void> {
-    await this.http.request('DELETE', `/api/control/credentials/${encodeURIComponent(id)}`);
+    await this.http.request('DELETE', `/api/control/credentials/${segment(id)}`);
   }
 
   /** Counters, health and the last 50 things this browser did. */

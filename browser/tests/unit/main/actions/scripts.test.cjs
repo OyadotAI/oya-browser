@@ -45,11 +45,34 @@ describe('page scripts', () => {
     assert.ok(s.actionScript('wait', { selector: 'a', timeout: 5 }).includes('const maxWait = 5;'));
   });
 
+  it('a wait timeout is only ever a number, so caller text cannot become code', () => {
+    const hostile = { selector: 'a', timeout: '1;globalThis.pwned=1' };
+    for (const js of [s.actionScript('wait', hostile), s.devWaitJs(hostile)]) {
+      assert.ok(js.includes('const maxWait = 10000;'), js.slice(0, 120));
+      assert.ok(!js.includes('pwned'));
+    }
+  });
+
+  it('a wait timeout given as digits, zero, a negative or infinity is a number or the default', () => {
+    const maxWait = (timeout) => /const maxWait = ([^;]+);/.exec(s.actionScript('wait', { selector: 'a', timeout }))[1];
+    assert.deepEqual(['250', 0, -5, Infinity, null].map(maxWait), ['250', '10000', '10000', '10000', '10000']);
+  });
+
+  it('the scroll script writes its amount as a number whatever it is handed', () => {
+    const js = s.scrollResultJs({ direction: 'up' }, '1}}),(globalThis.pwned=1),({a:{b:1');
+    assert.ok(js.endsWith('amount: 0 } }'), js.slice(-60));
+    assert.ok(s.scrollResultJs({}, 250).endsWith('amount: 250 } }'));
+  });
+
   it('analyze passes its params to the analyzer', () => {
     assert.ok(s.actionScript('analyze', { a: 1 }).includes('analyzePage({"a":1})'));
   });
 
-  it('an unknown action, even a prototype name, answers with an error', () => {
-    assert.equal(s.actionScript('toString'), "({ ok: false, error: 'Unknown action: toString' })");
+  it('an unknown action, even a prototype name, has no script at all', () => {
+    assert.equal(s.actionScript('toString'), null);
+  });
+
+  it('the name of an unknown action never reaches a script, whatever it contains', () => {
+    assert.equal(s.actionScript("x'}),(globalThis.pwned=1),({a:'", {}), null);
   });
 });

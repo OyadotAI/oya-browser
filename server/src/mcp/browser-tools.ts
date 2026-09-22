@@ -4,8 +4,10 @@
  */
 
 import { z } from 'zod';
+import { track } from '../modules/telemetry/index.ts';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { sendCommand } from '../modules/browsers/socket.ts';
+import { registry } from '../modules/browsers/registry.ts';
 import { analysis, type Page } from './analysis.ts';
 import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
 import pageRender from '../../../browser/scripts/page-render.cjs';
@@ -265,15 +267,16 @@ export function registerBrowserTools(
 ) {
   for (const name of only) {
     const tool = TOOLS[name];
-    server.tool(name, tool.description, tool.schema, (args) => runTool(tool, args, { pick, tag, noBrowser }));
+    server.tool(name, tool.description, tool.schema, (args) => runTool(name, tool, args, { pick, tag, noBrowser }));
   }
 }
 
 /** Sends the tool's command to the picked browser and turns the result into a reply. */
-async function runTool(tool: Tool, args, { pick, tag, noBrowser }: Required<Omit<Options, 'only'>>) {
+async function runTool(name: string, tool: Tool, args, { pick, tag, noBrowser }: Required<Omit<Options, 'only'>>) {
   const id = pick(!!tool.advance);
   if (!id) return fail(noBrowser);
   const [action, params, timeout] = tool.command(args);
+  track.mcpToolCalled(registry.get(id)?.apiKey ?? '', { tool: name });
   const result = await sendCommand(id, action, params, timeout);
   if (!result.ok) return fail(result.error);
   return reply(tool.text(result.data, args), () => tag(id));

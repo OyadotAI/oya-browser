@@ -396,7 +396,7 @@ registry.add('loop-browser', {
   apiKey: 'loop-key',
   name: 'loop',
   clientType: 'cdp',
-  driver: {
+  engine: {
     send: async (action, params) => {
       if (action === 'list_tabs')
         return {

@@ -23,7 +23,17 @@ const API = `http://127.0.0.1:${PORT}/api`;
 const SERVER_DIR = fileURLToPath(new URL('../../../server/', import.meta.url));
 const BROWSER_DIR = fileURLToPath(new URL('../../', import.meta.url));
 /** Names the server must not inherit, so it never reaches a live service. */
-const BLANKED = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'DAYTONA_API_KEY', 'DATABASE_URL'];
+const BLANKED = [
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_ANON_KEY',
+  'DAYTONA_API_KEY',
+  'DATABASE_URL',
+  'POSTHOG_KEY',
+  'POSTHOG_HOST',
+  'SLACK_OPS_WEBHOOK_SIGNUPS',
+  'SLACK_OPS_WEBHOOK_EVENTS',
+];
 
 /** Resolves after `ms`. */
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

@@ -1,64 +1,40 @@
 /**
  * The action vocabulary a CDP browser speaks, and how the Oya client's
- * spellings map onto it.
+ * spellings map onto it; both derived from the one vocabulary (drivers/vocabulary.ts).
  */
+import { SPELLINGS, VOCABULARY } from '../vocabulary.ts';
 
-/** Actions a CDP browser supports, in both the hyphenated and the underscored spelling. */
+/** The CDP driver's own name for a canonical action. */
+const cdpNameOf = (action: string) => VOCABULARY[action].cdpName ?? action;
+
+/** The canonical actions a CDP browser does that a caller may send. */
+const cdpActions = Object.keys(VOCABULARY).filter((a) => VOCABULARY[a].cdp && !VOCABULARY[a].internal);
+
+/**
+ * Every spelling a CDP browser accepts, derived from the one vocabulary:
+ * the canonical names, this driver's own hyphenated names, and the other
+ * spellings callers send. A caller checking this set must not conclude that
+ * press_key is unsupported when only press-key is this driver's name.
+ */
 export const CDP_CAPABILITIES = new Set([
-  'handle_dialog',
-  'navigate',
-  'reload',
-  'back',
-  'forward',
-  'screenshot',
-  'analyze',
-  'read_page',
-  'record',
-  'click',
-  'click-coords',
-  'hover',
-  'type',
-  'select',
-  'wait',
-  'cookies',
-  // Both spellings, because normalise() accepts both. A caller checking this
-  // set must not conclude that press_key is unsupported when it is.
-  'press-key',
-  'press_key',
-  'click_coordinates',
-  'mouse_move',
-  'double_click',
-  'drag',
-  'keyboard_type',
-  'scroll',
-  'scroll-up',
-  'scroll-down',
-  'scroll-top',
-  'scroll-bottom',
-  'list-tabs',
-  'list_tabs',
-  'new-tab',
-  'open_tab',
-  'switch-tab',
-  'switch_tab',
-  'close-tab',
-  'close_tab',
+  ...cdpActions,
+  ...cdpActions.map(cdpNameOf),
+  ...Object.keys(SPELLINGS).filter((spelling) => cdpActions.includes(SPELLINGS[spelling])),
 ]);
 
 /**
- * One action vocabulary, two spellings. Underscored names come from the Oya
- * client and the agent tools; hyphenated ones are this driver's own.
+ * One action vocabulary, two spellings: each name callers send, mapped to the
+ * one this driver's handlers are keyed by. Scroll is left out: its direction
+ * travels in the params, and normalise() puts it into the name.
  */
-const ACTION_ALIASES = {
-  click_coordinates: 'click-coords',
-  press_key: 'press-key',
-  list_tabs: 'list-tabs',
-  open_tab: 'new-tab',
-  new_tab: 'new-tab',
-  switch_tab: 'switch-tab',
-  close_tab: 'close-tab',
-  read_elements: 'read_page',
-};
+const ACTION_ALIASES: Record<string, string> = Object.fromEntries([
+  ...Object.keys(VOCABULARY)
+    .filter((a) => VOCABULARY[a].cdpName)
+    .map((a) => [a, cdpNameOf(a)]),
+  ...Object.entries(SPELLINGS)
+    .filter(([spelling, a]) => a !== 'scroll' && spelling !== cdpNameOf(a))
+    .map(([spelling, a]) => [spelling, cdpNameOf(a)]),
+]);
 
 /** Maps an action and its params onto this driver's own vocabulary. */
 export function normalise(action, params: any = {}) {

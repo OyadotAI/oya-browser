@@ -6,6 +6,14 @@
 /** What a member or credential may do: read, operate browsers, or also administer the project. */
 export type ControlRole = 'viewer' | 'operator' | 'administrator';
 
+/** How to recover a session: in place (the default), or replaced by a fresh one. */
+export interface RecoverOptions {
+  /** Start a fresh session in its place. */
+  replace?: boolean;
+  /** cdp only: the Chrome the replacement runs on. */
+  wsUrl?: string;
+}
+
 /** What a human holding the control lease may send. Mirrors the server's allowlist. */
 export type HumanInputAction =
   | 'click'

@@ -50,8 +50,16 @@ const WORKFLOW_POLL_MS = 200;
 /** Longest a playbook save may wait for the server before the panel says so. */
 const SAVE_TIMEOUT_MS = 20000;
 
+/**
+ * Codes a command result may carry to the server, which answers with them.
+ * Only ours: an Electron ERR_* or a Node E* code on a thrown error names this
+ * machine's internals, not a reason a caller can act on.
+ */
+const RESULT_CODES = new Set(['tab_unprotected', 'action_unsupported']);
+
 module.exports = {
   CloseCode,
+  RESULT_CODES,
   PING_INTERVAL_MS,
   MAX_MISSED_PONGS,
   RECONNECT_BASE_MS,

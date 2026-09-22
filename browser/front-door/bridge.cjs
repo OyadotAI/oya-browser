@@ -6,6 +6,7 @@
  */
 const WebSocket = require('ws');
 const { FRONT_DOOR_MAX_PAYLOAD, CDP_SERVER_ERROR } = require('../constants.cjs');
+const { answerFor } = require('./guard.cjs');
 
 /** Browser-level methods a validation run may send; everything else is refused. */
 const RUN_BROWSER_METHODS = [
@@ -34,8 +35,8 @@ const BROWSER_COMMANDS = {
   /** A new tab goes through the app's createTab. */
   'Target.createTarget': (bridge, msg) => {
     bridge.door.openTab(msg.params?.url).then(
-      (targetId) => bridge.reply(msg.id, { targetId }),
-      (e) => bridge.fail(msg.id, e.message),
+      (targetId) => bridge.reply(msg.id, { targetId }, msg.sessionId),
+      (e) => bridge.fail(msg.id, e.message, msg.sessionId),
     );
     return true;
   },
@@ -44,7 +45,7 @@ const BROWSER_COMMANDS = {
     const tab = bridge.door.tabs().find((t) => t.targetId === msg.params?.targetId);
     if (!tab) return false;
     bridge.door.closeTab(tab.id, { keepOne: false });
-    bridge.reply(msg.id, { success: true });
+    bridge.reply(msg.id, { success: true }, msg.sessionId);
     return true;
   },
   /** The reply is filtered on the way back. */
@@ -52,7 +53,25 @@ const BROWSER_COMMANDS = {
     bridge.filterReplies.add(msg.id);
     return false;
   },
+  /**
+   * A second browser session (Playwright's newCDPSession opens one). Forwarded,
+   * and the session it answers with is remembered, so its commands get what
+   * the browser endpoint's own do: hidden UI, tabs the app's way.
+   */
+  'Target.attachToBrowserTarget': (bridge, msg) => {
+    bridge.browserAttaches.add(msg.id);
+    return false;
+  },
 };
+
+/** Whether a command speaks for the whole browser: on the browser endpoint itself, or a session attached to it. */
+const atBrowserLevel = (bridge, msg) => !msg.sessionId || bridge.browserSessions.has(msg.sessionId);
+
+/** Remembers the session a Target.attachToBrowserTarget reply names. */
+function noteBrowserSession(bridge, msg) {
+  if (!bridge.browserAttaches.delete(msg.id) || !msg.result?.sessionId) return;
+  bridge.browserSessions.add(msg.result.sessionId);
+}
 
 /**
  * Whether an attached target is a frame or worker of a run tab: it attaches
@@ -62,6 +81,18 @@ const BROWSER_COMMANDS = {
 function joinsRun(msg, info, hiddenSessions) {
   const underRunTab = !!msg.sessionId && !hiddenSessions.has(msg.sessionId);
   return msg.method === 'Target.attachedToTarget' && underRunTab && info.type !== 'page';
+}
+
+/**
+ * Whether the guard answered the command itself, before it takes an admission
+ * slot: refused with its reason, or answered without reaching Chromium.
+ */
+function answeredByGuard(bridge, msg) {
+  const answer = answerFor(msg, bridge.relay);
+  if (!answer) return false;
+  if (answer.error) bridge.fail(msg.id, answer.error, msg.sessionId);
+  else bridge.reply(msg.id, answer.result, msg.sessionId);
+  return true;
 }
 
 /** One harness connection and its upstream socket. */
@@ -74,6 +105,10 @@ class Bridge {
   hiddenSessions = new Set();
   /** Target.getTargets ids whose replies are filtered. */
   filterReplies = new Set();
+  /** Target.attachToBrowserTarget ids awaiting the session they open. */
+  browserAttaches = new Set();
+  /** Sessions attached to the browser itself, which speak for it as the browser endpoint does. */
+  browserSessions = new Set();
   /** Serializes admission so commands keep their order. */
   admissionQueue = Promise.resolve();
   /** Ids of commands the bridge sends itself; their replies never reach the harness. */
@@ -136,10 +171,10 @@ class Bridge {
     return this.upstream.readyState === WebSocket.OPEN ? this.upstream.send(text) : this.queued.push(text);
   }
 
-  /** Answers a command ourselves. */
-  reply(id, result) {
-    this.complete({ id });
-    this.client.send(JSON.stringify({ id, result }));
+  /** Answers a command ourselves, on the session it came on. */
+  reply(id, result, sessionId) {
+    this.complete({ id, sessionId });
+    this.client.send(JSON.stringify({ id, sessionId, result }));
   }
 
   /** Refuses a command with a CDP error. */
@@ -148,11 +183,12 @@ class Bridge {
     this.client.send(JSON.stringify({ id, sessionId, error: { code: CDP_SERVER_ERROR, message } }));
   }
 
-  /** One harness message: validated, admitted, then answered here or forwarded. */
+  /** One harness message: validated, held to the guard, admitted, then answered here or forwarded. */
   async dispatch(data) {
     const text = data.toString();
     const msg = this.accept(text);
-    if (!msg || !(await this.admit(msg, this.commandKey(msg)))) return;
+    if (!msg || answeredByGuard(this, msg)) return;
+    if (!(await this.admit(msg, this.commandKey(msg)))) return;
     const refusal = this.door.runToken && this.runRefusal(msg);
     if (refusal) return refusal();
     this.forward(msg, text);
@@ -204,7 +240,7 @@ class Bridge {
   /** Forwards a command, unless the browser endpoint answers it here. */
   forward(msg, text) {
     if (!this.isBrowser) return this.toUpstream(text);
-    const own = !msg.sessionId && Object.hasOwn(BROWSER_COMMANDS, msg.method);
+    const own = atBrowserLevel(this, msg) && Object.hasOwn(BROWSER_COMMANDS, msg.method);
     if (own && BROWSER_COMMANDS[msg.method](this, msg)) return;
     this.toUpstream(text);
   }
@@ -215,6 +251,7 @@ class Bridge {
     if (msg?.id !== undefined && this.ownIds.delete(msg.id)) return;
     if (msg?.id !== undefined) this.complete(msg);
     if (!this.isBrowser || !msg) return this.client.send(text);
+    noteBrowserSession(this, msg);
     if (msg.sessionId && this.hiddenSessions.has(msg.sessionId)) return;
     if (this.hideTarget(msg) || this.sendFilteredTargets(msg)) return;
     this.client.send(text);

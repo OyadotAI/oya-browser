@@ -22,9 +22,9 @@ import {
   type PersonaProxy,
 } from './model.ts';
 import type { PersonaRepository } from './repository.ts';
-import { HttpError } from '../../platform/errors.ts';
+import { HttpError, invalid } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { MAX_NAME_CHARS, MIRROR_ID_HEX_CHARS } from './constants.ts';
+import { MAX_NAME_CHARS, MIRROR_ID_HEX_CHARS, PERSONA_CAP_MAX } from './constants.ts';
 import { PersonaStore } from './store.ts';
 import { PersonaSlots } from './slots.ts';
 import { describePersona } from './view.ts';
@@ -110,15 +110,26 @@ const mirroredPersona = (owner: MirroredOwner, name: string, device: any): Perso
     createdAt: new Date().toISOString(),
   });
 
-/** A positive number as given, or `fallback`. */
-const positiveOr = (value: unknown, fallback: number) => (Number(value) > 0 ? Number(value) : fallback);
+/** A cap as given when it is a whole number in range; absent means `fallback`; anything else is the caller's mistake. */
+function capOr(value: unknown, fallback: number) {
+  if (value === undefined || value === null) return fallback;
+  if (Number.isInteger(value) && (value as number) >= 1 && (value as number) <= PERSONA_CAP_MAX) return value as number;
+  throw invalid('maxConcurrent', `a whole number from 1 to ${PERSONA_CAP_MAX}`, value);
+}
 
-/** The cap an update asks for: null or Infinity lifts it, anything not positive means the default. */
+/** The cap an update asks for: null or Infinity lifts it, a number is checked, absent keeps the default. */
 function capFor(p: Persona, maxConcurrent: number | null) {
   // The default persona's cap is a deployment decision, not a per-key one.
-  if (p.isDefault && maxConcurrent !== null) return positiveOr(maxConcurrent, DEFAULT_PERSONA_MAX_CONCURRENT);
+  if (p.isDefault && maxConcurrent !== null) return capOr(maxConcurrent, DEFAULT_PERSONA_MAX_CONCURRENT);
   if (maxConcurrent === null || maxConcurrent === Infinity) return Infinity;
-  return positiveOr(maxConcurrent, DEFAULT_MAX_CONCURRENT);
+  return capOr(maxConcurrent, DEFAULT_MAX_CONCURRENT);
+}
+
+/** A name as given, or the fallback when none was; anything that is not text is the caller's mistake, never coerced. */
+function nameOr(name: unknown, fallback: string) {
+  if (name === undefined || name === null || name === '') return fallback;
+  if (typeof name !== 'string') throw invalid('name', 'a string', name);
+  return name.slice(0, MAX_NAME_CHARS);
 }
 
 /** A copy's creation options: the source's device choices under the source's rule, its proxy and cap. */
@@ -168,10 +179,10 @@ function defaultPersona(ids: PersonaIds, first?: FirstBrowser) {
 function newPersona(ids: PersonaIds, { name, proxy, maxConcurrent, prefs, prefsChecked = true }: CreatePersona) {
   return shape({
     ...ids,
-    name: (name || ids.id).slice(0, MAX_NAME_CHARS),
+    name: nameOr(name, ids.id),
     prefs: markChecked(cleanPrefs(prefs), prefsChecked),
     proxy: proxy || null,
-    maxConcurrent: positiveOr(maxConcurrent, DEFAULT_MAX_CONCURRENT),
+    maxConcurrent: capOr(maxConcurrent, DEFAULT_MAX_CONCURRENT),
     createdAt: new Date().toISOString(),
   });
 }
@@ -230,7 +241,7 @@ export class PersonaService {
   update(apiKey: string, id: string, { name, maxConcurrent, proxy }: UpdatePersona = {}) {
     const p = this.get(apiKey, id);
     if (!p) return null;
-    if (name !== undefined) p.name = String(name || p.id).slice(0, MAX_NAME_CHARS);
+    if (name !== undefined) p.name = nameOr(name, p.id);
     if (maxConcurrent !== undefined) p.maxConcurrent = capFor(p, maxConcurrent);
     if (proxy !== undefined) p.proxy = proxy && typeof proxy === 'object' ? proxy : null;
     this.store.touch();

@@ -7,10 +7,9 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { router } from '../../../src/app/api.ts';
-import { registry } from '../../../src/modules/browsers/registry.ts';
 import { reset as resetMetrics, snapshot } from '../../../src/platform/metrics.ts';
 import { HttpError } from '../../../src/platform/errors.ts';
-import { connectBrowser, disconnectBrowser } from '../support/fakes.ts';
+import { disconnectBrowser } from '../support/fakes.ts';
 import { FakeResponse, driveBrowser, routeThrough, stubControl } from '../support/browsers.ts';
 
 const B = 'b-api';
@@ -57,13 +56,28 @@ describe('API error handler', () => {
     assert.deepEqual([res.statusCode, res.body], [409, { error: 'Busy', code: 'busy' }]);
   });
 
-  it('hides the message of an unexpected error behind a 503', () => {
+  it('answers an unexpected error as a 500 that hides the message, carries a reference and logs the stack', () => {
+    const logged = mock.method(console, 'error', () => {});
     const res = new FakeResponse();
-    errorHandler(new Error('db password is hunter2'), {}, res, () => {});
-    assert.deepEqual(
-      [res.statusCode, res.body],
-      [503, { error: 'Operation could not be completed', code: 'operation_failed' }],
-    );
+    errorHandler(new Error('db password is hunter2'), { method: 'GET', originalUrl: '/api/x' }, res, () => {});
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.body.code, 'internal_error');
+    assert.ok(!JSON.stringify(res.body).includes('hunter2'));
+    assert.ok(logged.mock.calls[0].arguments.join(' ').includes(`ref=${res.body.ref} GET /api/x`));
+  });
+
+  it('answers an unknown API path with a 404 that names the request and where the API is described', async () => {
+    const res = await send('GET', '/api/personaz');
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.body.code, 'not_found');
+    assert.match(res.body.error, /No route for GET \/api\/personaz\. The API is described at \/openapi\.json\./);
+  });
+
+  it('answers a bare /api and anything under it with the JSON 404, and hands on a path it was reached at from the root', async () => {
+    for (const url of ['/api', '/api/']) {
+      const res = await send('GET', url);
+      assert.deepEqual([res.statusCode, res.body.code], [404, 'not_found'], url);
+    }
   });
 
   it('hands the error on when a response is already under way', () => {
@@ -73,27 +87,5 @@ describe('API error handler', () => {
     const err = new Error('late');
     errorHandler(err, {}, res, next);
     assert.deepEqual(next.mock.calls[0].arguments, [err]);
-  });
-});
-
-describe('registry listeners', () => {
-  afterEach(() => disconnectBrowser(B));
-
-  it('starts a CDP browser’s screencast for its first viewer and pushes its frames', async () => {
-    const driver: any = driveBrowser(B, () => ({ ok: true }));
-    let onFrame;
-    driver.startScreencast = mock.fn(async (cb) => (onFrame = cb));
-    driver.stopScreencast = mock.fn(async () => {});
-    const viewer = new FakeResponse();
-    registry.addViewer(B, viewer);
-    onFrame('frame-1');
-    assert.equal(registry.get(B).lastFrame, 'frame-1');
-    registry.removeViewer(B, viewer);
-    assert.equal(driver.stopScreencast.mock.callCount(), 1);
-  });
-
-  it('leaves an Oya browser, which pushes its own frames, alone', () => {
-    connectBrowser(B);
-    assert.doesNotThrow(() => registry.addViewer(B, new FakeResponse()));
   });
 });

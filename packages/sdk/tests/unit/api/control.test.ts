@@ -17,13 +17,13 @@ describe('oya.control', () => {
     const { oya, calls } = any();
     await oya.control.overview();
     await oya.control.sessions();
-    await oya.control.session('s/1');
+    await oya.control.session('s:1');
     await oya.control.events();
     await oya.control.events(42);
     assert.deepEqual(summary(calls), [
       ['GET', '/api/control', undefined],
       ['GET', '/api/control/sessions', undefined],
-      ['GET', '/api/control/sessions/s%2F1', undefined],
+      ['GET', '/api/control/sessions/s%3A1', undefined],
       ['GET', '/api/control/events?after=0', undefined],
       ['GET', '/api/control/events?after=42', undefined],
     ]);
@@ -71,5 +71,27 @@ describe('oya.control', () => {
       ['DELETE', '/api/control/webhooks/w1', undefined],
       ['POST', '/api/control/deliveries/d1/replay', {}],
     ]);
+  });
+});
+
+describe('oya.control.recover', () => {
+  it('recovers in place, replaces with a boolean or options, and passes a cdp replacement its wsUrl', async () => {
+    const { oya, calls } = client(new Proxy({}, { get: () => ({ body: {} }) }));
+    await oya.control.recover('s1');
+    await oya.control.recover('s1', true);
+    await oya.control.recover('s1', { replace: true, wsUrl: 'ws://127.0.0.1:9222' });
+    assert.deepEqual(
+      calls.map((c) => c.body),
+      [{ replace: false }, { replace: true }, { replace: true, wsUrl: 'ws://127.0.0.1:9222' }],
+    );
+  });
+
+  it('refuses a wsUrl without replace before any request', async () => {
+    const { oya, calls } = client();
+    await assert.rejects(oya.control.recover('s1', { wsUrl: 'ws://x' }), {
+      status: 400,
+      message: /only used with replace/,
+    });
+    assert.equal(calls.length, 0);
   });
 });

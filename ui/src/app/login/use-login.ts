@@ -6,6 +6,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { event } from '@/lib/analytics';
 import { apiUrl, authHeaders, CONSOLE_KEY } from '@/lib/api';
 import { Status } from '@/lib/http-status';
 import {
@@ -59,6 +60,14 @@ function keySubmission(fields: Fields, auth: Auth): Submission {
   };
 }
 
+/** Signs in, counting the outcome either way, then goes home. */
+function signIn(auth: Auth, fields: Fields) {
+  return auth.login(fields.email, fields.password).then(
+    () => (event('sign_in_success'), auth.router.replace(HOME)),
+    (err) => (event('sign_in_failed'), Promise.reject(err)),
+  );
+}
+
 /** Signing in with an account: both fields are needed. */
 function accountSubmission(fields: Fields, auth: Auth): Submission {
   return {
@@ -66,7 +75,7 @@ function accountSubmission(fields: Fields, auth: Auth): Submission {
       [!fields.email.trim(), 'Email is required'],
       [!fields.password, 'Password is required'],
     ]),
-    action: () => auth.login(fields.email, fields.password).then(() => auth.router.replace(HOME)),
+    action: () => signIn(auth, fields),
     fallback: 'Invalid email or password',
   };
 }

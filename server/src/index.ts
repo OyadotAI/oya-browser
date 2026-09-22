@@ -5,6 +5,8 @@
 import { migrateLegacy } from './modules/control/migrate.ts';
 import { createEgressServer } from './modules/control/egress.ts';
 import { control } from './modules/control/service.ts';
+import * as analytics from './platform/analytics.ts';
+import { track } from './modules/telemetry/index.ts';
 import { forwardHttp } from './modules/control/cluster.ts';
 import { startWorkers, stopWorkers, workerHealth } from './modules/control/worker.ts';
 
@@ -56,6 +58,7 @@ import { registry } from './modules/browsers/registry.ts';
 import { pool } from './modules/gateway/routing.ts';
 import { PUBLIC_DIR, DOWNLOADS_DIR } from './platform/paths.ts';
 import { Status } from './platform/http-status.ts';
+import { answerBodyErrors } from './app/body-errors.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
 
 // Not yet layered: reads the persona service from the composition root.
@@ -149,12 +152,7 @@ app.use(
 app.use(
   '/api',
   express.json({ limit: '15mb' }),
-  (err, req, res, next) => {
-    if (err?.type !== 'entity.too.large') return next(err);
-    res
-      .status(Status.PAYLOAD_TOO_LARGE)
-      .json({ error: 'This request is over 15MB. Task files ride inline, so send fewer or smaller ones in one run.' });
-  },
+  answerBodyErrors,
   (req, res, next) => {
     req.body ??= {};
     next();
@@ -242,9 +240,21 @@ registry.on('browser:connected', ({ id, name }) => {
   console.log(`[oya] Browser connected: ${name} (${id})`);
 });
 
-registry.on('browser:disconnected', ({ id, name }) => {
+registry.on('browser:disconnected', ({ id, name, apiKey, provider, seconds }) => {
   console.log(`[oya] Browser disconnected: ${name} (${id})`);
+  if (apiKey) track.browserStopped(apiKey, { provider: provider || 'oya', seconds });
 });
+
+/** Writes out everything each store still holds; a store that fails does not stop the others. */
+const drainStores = () =>
+  Promise.allSettled([
+    drainAudit(),
+    drainLogins(),
+    usage.drain(),
+    personas.drain(),
+    keyConfig.drain(),
+    analytics.drain(),
+  ]);
 
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.once(signal, async () => {
@@ -255,7 +265,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     // End gateway sessions cleanly so profiles are captured and recordings
     // get their manifest, rather than being cut off mid-write.
     await Promise.allSettled([...gatewaySessions.values()].map((s) => s.destroy('server shutting down')));
-    await Promise.allSettled([drainAudit(), drainLogins(), usage.drain(), personas.drain(), keyConfig.drain()]);
+    await drainStores();
     // Last, once nothing writes to it: releases the SQLite writer lock, which otherwise
     // kept a restarted server refusing to start until the lock went stale.
     await Promise.resolve(control().store.close?.()).catch(() => {});

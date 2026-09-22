@@ -47,7 +47,7 @@ try {
   registry.add(id, {
     apiKey: 'owner',
     name: 'Test',
-    driver: { wsUrl: 'ws://127.0.0.1:9', send: async () => ({ ok: true }), close() {} },
+    engine: { wsUrl: 'ws://127.0.0.1:9', send: async () => ({ ok: true }), close() {} },
     provider: 'cdp',
     clientType: 'cdp',
   });
@@ -124,7 +124,7 @@ try {
   registry.add(quiet, {
     apiKey: 'owner',
     name: 'Quiet',
-    driver: { wsUrl: `ws://127.0.0.1:${silent.address().port}`, send: async () => ({ ok: true }), close() {} },
+    engine: { wsUrl: `ws://127.0.0.1:${silent.address().port}`, send: async () => ({ ok: true }), close() {} },
     provider: 'cdp',
     clientType: 'cdp',
   });

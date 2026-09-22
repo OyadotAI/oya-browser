@@ -117,7 +117,87 @@ describe('Protection', () => {
     const view = new FakeBrowserView();
     view.webContents.destroyed = true;
     await ctx.protection.setupTabCDP(view);
-    assert.match(errors.mock.calls[0].arguments[0], /debugger attach failed, this tab is NOT protected/);
+    assert.match(errors.mock.calls[0].arguments[0], /debugger attach failed, this attempt did not protect the tab/);
+  });
+
+  it('answers false when the injection is refused, and true for a tab that held', async () => {
+    mock.method(console, 'error', () => {});
+    const refused = new FakeBrowserView();
+    refused.webContents.debugger.responses['Page.addScriptToEvaluateOnNewDocument'] = new Error('gone');
+    assert.equal(await ctx.protection.setupTabCDP(refused), false);
+    assert.equal(await ctx.protection.setupTabCDP(new FakeBrowserView()), true);
+  });
+
+  it('a hung first attempt that wakes after the retry sends nothing to the new session', async () => {
+    const view = new FakeBrowserView();
+    const dbg = view.webContents.debugger;
+    let wake;
+    const hung = new Promise((resolve) => (wake = resolve));
+    let first = true;
+    dbg.responses['Emulation.setUserAgentOverride'] = () => (first ? ((first = false), hung) : {});
+    const stale = ctx.protection.setupTabCDP(view);
+    ctx.protection.resetTabCDP(view);
+    assert.equal(await ctx.protection.setupTabCDP(view), true);
+    wake({});
+    assert.equal(await stale, false);
+    const injections = dbg.methods().filter((m) => m === 'Page.addScriptToEvaluateOnNewDocument');
+    assert.equal(injections.length, 1, 'the page was injected twice');
+  });
+
+  it('a second caller while setup runs gets that attempt\u2019s own answer, not an early true', async () => {
+    mock.method(console, 'error', () => {});
+    const view = new FakeBrowserView();
+    let refuse;
+    view.webContents.debugger.responses['Page.addScriptToEvaluateOnNewDocument'] = () =>
+      new Promise((resolve) => (refuse = () => resolve(new Error('refused'))));
+    const first = ctx.protection.setupTabCDP(view);
+    const second = ctx.protection.setupTabCDP(view);
+    await new Promise((r) => setImmediate(r));
+    refuse();
+    assert.deepEqual(await Promise.all([first, second]), [false, false]);
+  });
+
+  it('keeps the dialog watcher and every other listener when a tab is reset for a retry', async () => {
+    const view = new FakeBrowserView();
+    await ctx.protection.setupTabCDP(view);
+    const dbg = view.webContents.debugger;
+    const before = dbg.listenerCount('message');
+    ctx.protection.resetTabCDP(view);
+    assert.equal(dbg.listenerCount('message'), before);
+    assert.deepEqual([view.oyaConfigured, dbg.isAttached()], [false, false]);
+  });
+
+  it('forgets the recording channel a reset tab may have armed', () => {
+    const forgot = [];
+    ctx.recorder = { channels: { forget: (v) => forgot.push(v) } };
+    const view = new FakeBrowserView();
+    ctx.protection.resetTabCDP(view);
+    assert.deepEqual(forgot, [view]);
+  });
+
+  it('an isolated-world failure never says the tab is NOT protected, and a closed tab says nothing', async () => {
+    const errors = mock.method(console, 'error', () => {});
+    mock.method(ctx.world, 'ensureWorld', async () => Promise.reject(new Error('target closed')));
+    const view = new FakeBrowserView();
+    await ctx.protection.setupTabCDP(view);
+    view.webContents.emit('did-finish-load');
+    await new Promise((r) => setImmediate(r));
+    assert.match(errors.mock.calls[0].arguments[0], /isolated world not rebuilt/);
+    assert.doesNotMatch(errors.mock.calls[0].arguments[0], /NOT protected/);
+    view.webContents.destroyed = true;
+    view.webContents.emit('did-finish-load');
+    await new Promise((r) => setImmediate(r));
+    assert.equal(errors.mock.callCount(), 1);
+  });
+
+  it('rebuilds the world once per load, however many attempts setup took', async () => {
+    const view = new FakeBrowserView();
+    const ensure = mock.method(ctx.world, 'ensureWorld', async () => 1);
+    await ctx.protection.setupTabCDP(view);
+    ctx.protection.resetTabCDP(view);
+    await ctx.protection.setupTabCDP(view);
+    view.webContents.emit('did-finish-load');
+    assert.equal(ensure.mock.callCount(), 1);
   });
 
   it('rebuilds the isolated world on every load', async () => {

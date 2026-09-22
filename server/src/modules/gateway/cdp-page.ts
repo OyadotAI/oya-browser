@@ -4,10 +4,25 @@
  * wire is never touched.
  */
 import { CDPConnection } from '../../drivers/cdp.ts';
+import type { CdpEndpoint } from '../browsers/driver/index.ts';
 
-/** Connects to `upstreamUrl` and attaches to its first page; null (connection closed) when there is no page. */
-export async function openPage(upstreamUrl) {
-  const conn: any = await new CDPConnection(upstreamUrl).connect();
+/**
+ * Opens the endpoint and attaches to its first page; null (connection closed)
+ * when there is no page. A failure after the socket opened closes it: the
+ * caller never learns of a connection it did not get back.
+ */
+export async function openPage(endpoint: CdpEndpoint) {
+  const conn: any = CDPConnection.over(await endpoint.open());
+  try {
+    return await attachFirstPage(conn);
+  } catch (err) {
+    conn.close();
+    throw err;
+  }
+}
+
+/** Attaches to the first page, or closes the connection and answers null when there is none. */
+async function attachFirstPage(conn) {
   const page = await firstPage(conn);
   if (!page) {
     conn.close();

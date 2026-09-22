@@ -67,15 +67,33 @@ describe('PageDriver', () => {
   it('an empty script result counts as success', async () => {
     const view = pageView();
     const ctx = pageCtx(view, { world: null });
-    await createPageActions(ctx).runPageAction('c1', 'bogus', {}, view);
+    await createPageActions(ctx).runPageAction('c1', 'read_page', {}, view);
     assert.deepEqual(results(ctx), [['c1', true, undefined, undefined]]);
   });
 
-  it('navigate without a url falls through to the script path', async () => {
+  it('an action this browser does not know is refused here, and nothing is evaluated in the page', async () => {
+    const view = pageView();
+    const ctx = pageCtx(view, { world: { ok: true } });
+    const action = "x'}),(globalThis.pwned=1),({a:'";
+    await createPageActions(ctx).runPageAction('c1', action, {}, view);
+    assert.deepEqual(
+      ctx.calls.filter((c) => c[0] === 'world' || c[0] === 'inject'),
+      [],
+    );
+    const [[id, ok, data, error, code]] = results(ctx);
+    assert.deepEqual([id, ok, data, code], ['c1', false, null, 'action_unsupported']);
+    assert.equal(error, `This Oya Browser does not know the action "${action}". Update the app, then send it again.`);
+  });
+
+  it('navigate without a url says what is missing, without touching the page', async () => {
     const view = pageView();
     const ctx = pageCtx(view, { world: { ok: false, error: 'x' } });
     await createPageActions(ctx).runPageAction('c1', 'navigate', {}, view);
-    assert.ok(ctx.calls.some((c) => c[0] === 'world' && c[1].includes('Unknown action: navigate')));
+    assert.deepEqual(
+      ctx.calls.filter((c) => c[0] === 'world'),
+      [],
+    );
+    assert.deepEqual(results(ctx), [['c1', false, null, 'navigate needs a url. Send it again with "url".']]);
   });
 
   it('waitForTabReady resolves for a tab with no first load', async () => {

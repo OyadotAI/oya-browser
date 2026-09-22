@@ -16,6 +16,10 @@
  * masked values; only the server resolves the plaintext.
  */
 import { managedConfigured } from '../control/managed.ts';
+import { HttpError, invalid } from '../../platform/errors.ts';
+import { CONFIG_VALUE_MAX_CHARS } from './constants.ts';
+import { GOT_MAX_CHARS } from '../../platform/constants.ts';
+import { Status } from '../../platform/http-status.ts';
 import { fingerprint as ownerOf } from '../../platform/audit.ts';
 import { sealText, openText } from '../../platform/secrets.ts';
 import { runtimeConfig } from '../../platform/runtime-config.ts';
@@ -93,6 +97,27 @@ export function get(apiKey) {
   };
 }
 
+/** Refuses an update before any of it is applied: a setting that does not exist, or a value that is not text. */
+function checkUpdates(updates: Record<string, unknown>) {
+  for (const [field, value] of Object.entries(updates)) {
+    if (!Object.hasOwn(FIELDS, field)) throw unknownSetting(field);
+    if (value !== null && typeof value === 'object') throw invalid(field, 'a string', value);
+    if (typeof value === 'string' && value.length > CONFIG_VALUE_MAX_CHARS)
+      throw invalid(field, `at most ${CONFIG_VALUE_MAX_CHARS} characters`, 'a longer string');
+  }
+}
+
+/** A setting nobody defined: named, with every setting there is, so a typo is found in one read. */
+const unknownSetting = (field: string) =>
+  new HttpError(
+    Status.BAD_REQUEST,
+    `Unknown setting "${field.slice(0, GOT_MAX_CHARS)}". Settings are: ${Object.keys(FIELDS).join(', ')}.`,
+    {
+      code: 'invalid_request',
+      field,
+    },
+  );
+
 /** Apply one field of an update to a row; false when the update leaves it alone. */
 async function apply(owner, row, [field, spec], value) {
   if (value === undefined) return false;
@@ -117,6 +142,7 @@ function commit(owner, row) {
  * placeholder never overwrites a real secret. Returns whether anything changed.
  */
 export async function set(apiKey, updates = {}) {
+  checkUpdates(updates);
   const owner = ownerOf(apiKey);
   const row = { ...(store.get(owner) || {}) };
   let changed = false;

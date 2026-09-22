@@ -8,7 +8,7 @@
  */
 export function closeOutbound(browser) {
   try {
-    browser.driver?.close();
+    browser.driver.close();
   } catch {}
   const release = browser.release;
   if (release)

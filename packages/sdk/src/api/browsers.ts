@@ -1,6 +1,7 @@
 /**
  * `oya.browser`: start, reattach to, list and stop browsers.
  */
+import { headerSafe, segment } from '../client.js';
 import { Browser } from '../browser.js';
 import { READY_TIMEOUT_MS, START_TIMEOUT_MS } from '../constants.js';
 import type { BrowserInfo, StartOptions, StartResult } from '../types/index.js';
@@ -15,9 +16,15 @@ function startBody(options: StartOptions) {
   return { profile: profile || persona, provider, wsUrl, name, queueMs, priority, budgetUsd, governed, policy };
 }
 
+/** The caller's idempotency key, refused before the call when a header could not carry it; a fresh one otherwise. */
+const idempotencyKeyOf = ({ idempotencyKey }: StartOptions) =>
+  idempotencyKey
+    ? headerSafe(idempotencyKey, 'idempotencyKey', 'Use letters, digits, "-" and "_".')
+    : globalThis.crypto.randomUUID();
+
 /** Starts a browser; a cloud one is waited for, then asked for its CDP URL. */
 async function start(http: HttpRef, wait: WaitUntilConnected, options: StartOptions): Promise<Browser> {
-  const headers = { 'Idempotency-Key': options.idempotencyKey || globalThis.crypto.randomUUID() };
+  const headers = { 'Idempotency-Key': idempotencyKeyOf(options) };
   const path = '/api/browsers/start';
   const started = await http().request<StartResult>('POST', path, startBody(options), START_TIMEOUT_MS, headers);
   // Cloud browsers dial in themselves, so 'starting' means "not yet".
@@ -30,7 +37,7 @@ async function start(http: HttpRef, wait: WaitUntilConnected, options: StartOpti
 
 /** One browser's record. */
 const fetchBrowser = (http: HttpRef, id: string) =>
-  http().request<ConnectedBrowser>('GET', `/api/browsers/${encodeURIComponent(id)}`);
+  http().request<ConnectedBrowser>('GET', `/api/browsers/${segment(id)}`);
 
 /** A Browser for one that is already running. */
 async function reattach(http: HttpRef, id: string): Promise<Browser> {
@@ -51,13 +58,13 @@ const stopBrowsers = (http: HttpRef, ids: string[] | 'all'): Promise<StopManyRes
 /** Builds `oya.browser`. */
 export const browserApi = (http: HttpRef, wait: WaitUntilConnected) => ({
   /** Start a browser and wait until it can take commands. */
-  start: (options: StartOptions = {}): Promise<Browser> => start(http, wait, options),
+  start: async (options: StartOptions = {}): Promise<Browser> => start(http, wait, options),
   /** Reattach to a browser that is already running. */
-  get: (id: string): Promise<Browser> => reattach(http, id),
+  get: async (id: string): Promise<Browser> => reattach(http, id),
   /** Every browser on this key. */
-  list: (): Promise<BrowserInfo[]> => http().request<BrowserInfo[]>('GET', '/api/browsers'),
+  list: async (): Promise<BrowserInfo[]> => http().request<BrowserInfo[]>('GET', '/api/browsers'),
   /** Stop some (`ids`) or every browser on this key. Each reports separately. */
-  stop: (ids: string[] | 'all'): Promise<StopManyResult> => stopBrowsers(http, ids),
+  stop: async (ids: string[] | 'all'): Promise<StopManyResult> => stopBrowsers(http, ids),
   /** Stop every browser on this key; returns how many stopped. */
   stopAll: async (): Promise<number> => (await stopBrowsers(http, 'all')).stopped,
 });

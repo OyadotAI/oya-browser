@@ -81,6 +81,16 @@ async function scrollOnce(driver, id, view, params) {
   driver.ctx.sendResult(id, true, { direction: params.direction, amount });
 }
 
+/**
+ * How far a smooth scroll moves: the caller's amount when it is a positive
+ * number, capped, else the default. It sets how long the scroll runs and is
+ * written into the result script, so the caller's own text never gets that far.
+ */
+function smoothAmount(params) {
+  const amount = Number(params?.amount);
+  return amount > 0 ? Math.min(amount, c.MAX_SCROLL_AMOUNT) : c.SCROLL_AMOUNT;
+}
+
 /** Smooth scroll: `delta` from the viewport's centre, broken into wheel-notch increments. */
 async function smoothScroll(view, vp, delta) {
   const cx = Math.round((vp?.w || c.FALLBACK_VIEWPORT.w) / c.HALF);
@@ -160,7 +170,7 @@ const POINTER_COMMANDS = {
     const view = driver.ctx.getActiveView();
     if (isLiveScroll(params)) return scrollOnce(driver, id, view, params);
     const vp = await viewportOf(driver, view);
-    const amount = params?.amount || c.SCROLL_AMOUNT;
+    const amount = smoothAmount(params);
     await smoothScroll(view, vp, params?.direction === 'up' ? -amount : amount);
     await sleep(c.SCROLL_SETTLE_MS);
     await sendAnalysis(driver, id, view, params, amount);
