@@ -36,17 +36,34 @@ const MEASURE_JS = `(() => {
     const k = vv.scale;
     return { x: (x - vv.offsetLeft) * k, y: (y - vv.offsetTop) * k, w: r.width * k, h: r.height * k };
   };
+  // Painted, and on top somewhere: not faded out, hidden, covered by something else, or clipped away.
+  const shows = (el) => {
+    if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
+    const r = el.getBoundingClientRect();
+    const root = el.getRootNode();
+    const lands = ([fx, fy]) => {
+      const hit = root.elementFromPoint?.(r.left + r.width * fx, r.top + r.height * fy);
+      return !!hit && (hit === el || el.contains(hit));
+    };
+    return [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]].some(lands);
+  };
   return (__WANTED__).map(([id, type, selector]) => {
     const el = find(id, selector);
-    const box = el && place(el);
-    return box && box.w && box.h ? { id, type, ...box } : null;
+    if (!el || (__STRICT__ && !shows(el))) return null;
+    const box = place(el);
+    return box.w && box.h ? { id, type, ...box } : null;
   }).filter(Boolean);
 })()`;
 
-/** Measures the visible elements an analysis found. */
-function analysisBoxesJs(elements) {
+/**
+ * Measures the visible elements an analysis found. `strict` also leaves out any the
+ * page does not actually show (faded, covered or clipped): worth it once per analysis,
+ * not on every re-measure while the outlines follow the page.
+ */
+function analysisBoxesJs(elements, strict = false) {
   const wanted = elements.filter((e) => e.visible).slice(0, MAX_ANALYSIS_BOXES);
-  return MEASURE_JS.replace('__WANTED__', () => JSON.stringify(wanted.map((e) => [e.id, e.type, e.selector])));
+  const list = JSON.stringify(wanted.map((e) => [e.id, e.type, e.selector]));
+  return MEASURE_JS.replace('__WANTED__', () => list).replace('__STRICT__', String(strict));
 }
 
 /** Whether an agent holds the page: anything that re-analyzes it would renumber the agent's element ids. */
@@ -135,13 +152,15 @@ class ControlShield {
     this.tell(view, { phase: 'scan' });
   }
 
-  /** The analysis is back: outline what it found, then keep the outlines on their elements. A failed measurement outlines nothing. */
+  /** The analysis is back: outline what it found that the page really shows, then keep the outlines on their elements. A failed measurement outlines nothing. */
   async analysisFinished(view, raw) {
     this.stopTracking();
     if (!this.showing(view)) return;
-    const js = analysisBoxesJs(raw?.data?.elements || []);
-    this.tell(view, { phase: 'found', boxes: (await this.measure(view, js)) || [] });
-    this.track(view, js, Date.now() + SHIELD_TRACK_FOR_MS);
+    const elements = raw?.data?.elements || [];
+    const boxes = (await this.measure(view, analysisBoxesJs(elements, true))) || [];
+    this.tell(view, { phase: 'found', boxes });
+    const shown = new Set(boxes.map((b) => b.id));
+    this.track(view, analysisBoxesJs(elements.filter((e) => shown.has(e.id))), Date.now() + SHIELD_TRACK_FOR_MS);
   }
 
   /** Where the elements sit now, in the shield's pixels (the page may be zoomed, the shield is not); null when the page cannot be read. */
@@ -158,12 +177,14 @@ class ControlShield {
     run.timer = setTimeout(() => this.follow(run, view, js, until), SHIELD_TRACK_MS);
   }
 
-  /** One re-measure of a tracking run; it tells the page, then schedules the next, unless the run was stopped or is over. */
+  /** One re-measure of a tracking run; it tells the page, then schedules the next, unless the run was stopped or is over. A page that cannot be read has navigated away: its outlines fade and following stops. */
   async follow(run, view, js, until) {
     if (this.tracking !== run || !this.showing(view) || Date.now() > until) return;
     const boxes = await this.measure(view, js, { retry: false });
     if (this.tracking !== run) return;
-    if (boxes) this.tell(view, { phase: 'move', boxes });
+    // The page could not be read: it has navigated, so these outlines belong to a page that is gone.
+    if (!boxes) return this.tell(view, { phase: 'move', boxes: [] });
+    this.tell(view, { phase: 'move', boxes });
     run.timer = setTimeout(() => this.follow(run, view, js, until), SHIELD_TRACK_MS);
   }
 

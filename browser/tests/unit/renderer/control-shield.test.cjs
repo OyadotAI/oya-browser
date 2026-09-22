@@ -142,6 +142,55 @@ describe('the control shield page', () => {
     });
   });
 
+  describe('on a busy page', () => {
+    /** The ids of the outlines drawn once the beam has passed. */
+    const shownIds = (found) => {
+      app.window.oyaShield({ phase: 'found', boxes: found });
+      reveal();
+      return [...boxes()].map((b) => b.dataset.id);
+    };
+
+    it('leaves out a box that wraps a smaller one, keeping the inner control', () => {
+      const card = { id: 1, type: 'link', x: 0, y: 0, w: 300, h: 200 };
+      const button = { id: 2, type: 'button', x: 20, y: 20, w: 80, h: 30 };
+      assert.deepEqual(shownIds([card, button]), ['2']);
+    });
+
+    it('leaves out a near copy of a box already outlined', () => {
+      const link = { id: 1, type: 'link', x: 10, y: 10, w: 100, h: 20 };
+      const same = { id: 2, type: 'link', x: 8, y: 9, w: 104, h: 22 };
+      assert.deepEqual(shownIds([same, link]), ['1']);
+    });
+
+    it('leaves out a page-sized container, but keeps boxes that sit side by side', () => {
+      const page = { id: 1, type: 'link', x: 0, y: 0, w: 1280, h: 800 };
+      const a = { id: 2, type: 'link', x: 0, y: 900, w: 50, h: 20 };
+      const b = { id: 3, type: 'link', x: 60, y: 900, w: 50, h: 20 };
+      assert.deepEqual(shownIds([page, a, b]), ['2', '3']);
+    });
+
+    it('marks a page with many outlines busy, so their numbers step back once locked on', () => {
+      const busy = app.run('RendererConstants.SHIELD_BUSY_COUNT');
+      const row = (n) => Array.from({ length: n }, (_, i) => ({ id: i, type: 'link', x: i * 20, y: 0, w: 10, h: 10 }));
+      shownIds(row(busy));
+      assert.ok(!app.$('stage').classList.contains('busy'));
+      shownIds(row(busy + 1));
+      assert.ok(app.$('stage').classList.contains('busy'));
+    });
+
+    it('hides a number that would land on another, and still counts every element the agent found', () => {
+      const wrapper = { id: 3, type: 'link', x: 395, y: 5, w: 70, h: 30 };
+      const one = { id: 1, type: 'link', x: 400, y: 10, w: 50, h: 20 };
+      const two = { id: 2, type: 'link', x: 405, y: 20, w: 50, h: 20 };
+      assert.deepEqual(shownIds([wrapper, one, two]), ['1', '2']);
+      assert.deepEqual(
+        [...boxes()].map((b) => b.classList.contains('quiet')),
+        [false, true],
+      );
+      assert.equal(said(), 'Found 3 elements');
+    });
+  });
+
   it('glides each outline to where its element moved, without restarting the show', () => {
     app.window.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 40, w: 50, h: 20 }] });
     reveal();

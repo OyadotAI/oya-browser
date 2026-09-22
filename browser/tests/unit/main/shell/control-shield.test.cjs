@@ -132,6 +132,27 @@ describe('ControlShield', () => {
       assert.deepEqual(told, [`window.oyaShield?.(${JSON.stringify({ phase: 'found', boxes: [box] })})`]);
     });
 
+    it('checks once that the page really shows each element, then follows only those', async () => {
+      mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+      cover();
+      const scripts = [];
+      ctx.world = {
+        worldEval: async (_view, js) => (scripts.push(js), [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }]),
+      };
+      const elements = [
+        { id: 1, type: 'link', selector: '[data-x="1"]', visible: true },
+        { id: 2, type: 'link', selector: '[data-x="2"]', visible: true },
+      ];
+      await ctx.shield.analysisFinished(page, { data: { elements } });
+      mock.timers.tick(SHIELD_TRACK_MS);
+      await new Promise((resolve) => setImmediate(resolve));
+      ctx.shield.stopTracking();
+      mock.timers.reset();
+      assert.match(scripts[0], /\(true && !shows\(el\)\)/, 'the first measure checks what the page shows');
+      assert.match(scripts[1], /\(false && !shows\(el\)\)/, 'following does not');
+      assert.doesNotMatch(scripts[1], /data-x=\\"2/, 'an element the page did not show is not followed');
+    });
+
     it('scales outlines by the page zoom, since the shield itself is not zoomed', async () => {
       cover();
       page.webContents.zoomFactor = 1.25;
@@ -192,14 +213,15 @@ describe('ControlShield', () => {
         assert.equal(told.length, before);
       });
 
-      it('skips a re-measure the page could not answer, and keeps following', async () => {
+      it('fades the outlines and stops following once the page cannot be read: it has navigated away', async () => {
         await found({ y: 0 });
-        ctx.world = { worldEval: async () => Promise.reject(new Error('navigated')) };
-        await step();
-        assert.deepEqual(phases(), ['found']);
-        ctx.world = { worldEval: async () => [] };
+        ctx.world = { worldEval: async () => Promise.reject(new Error('Cannot find context with specified id')) };
         await step();
         assert.deepEqual(phases(), ['found', 'move']);
+        assert.match(told[1], /"boxes":\[\]/);
+        ctx.world = { worldEval: async () => [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] };
+        await step();
+        assert.equal(told.length, 2, 'no more measuring of a page that is gone');
       });
     });
 

@@ -74,6 +74,18 @@ const RendererConstants = Object.freeze({
   SHIELD_SPARKS_MAX: 36,
   /** How long after the beam reaches an element its spark leaves, so the brackets lock first. */
   SHIELD_SPARK_LAG_MS: 260,
+  /** A found element covering more than this share of the page is a container, not something to outline. */
+  SHIELD_MAX_BOX_SHARE: 0.25,
+  /** Past this many outlines a page is busy: their numbers step back once they have locked on. */
+  SHIELD_BUSY_COUNT: 40,
+  /** A box covering this share of a smaller outlined box wraps or repeats it, and is left out. */
+  SHIELD_WRAP_SHARE: 0.6,
+  /** A number badge's height, and its width for one digit, in pixels (matches .box b in control-shield.html). */
+  SHIELD_TAG_PX: 16,
+  /** How far a badge sits up and left of its outline's corner, in pixels (matches .box b). */
+  SHIELD_TAG_OFFSET_PX: 7,
+  /** How much wider a badge grows for each further digit, in pixels. */
+  SHIELD_TAG_DIGIT_PX: 6,
   /** Half, for the middle of a box. */
   SHIELD_HALF: 0.5,
 });
