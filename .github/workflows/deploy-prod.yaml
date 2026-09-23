@@ -394,6 +394,45 @@ jobs:
       if: always()
       run: kubectl get pods,svc,ingress -n ${{ env.NAMESPACE }}
 
+  publish-npm:
+    name: Publish SDK and CLI to npm
+    # After the deploy, so a new SDK never calls a route the server does not
+    # have yet. npm Trusted Publishing: the OIDC token proves this workflow in
+    # this repo is publishing, so there is no npm token to leak or rotate, no
+    # login to lapse and no 2FA prompt, and each version carries provenance.
+    # Each package must list this repo and deploy-prod.yaml as its trusted
+    # publisher on npmjs.com (package settings, Trusted Publisher).
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        registry-url: https://registry.npmjs.org
+
+    - name: Install
+      # Trusted Publishing needs npm 11.5.1 or later; early Node 24 builds ship older.
+      run: |
+        npm install -g npm@^11.5.1
+        npm ci
+
+    - name: Publish this release
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        for PKG in @oya-ai/browser @oya-ai/cli; do
+          # Re-running a tag must not fail over a version that is already out.
+          if [ "$(npm view "$PKG@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "::notice::$PKG@$VERSION was already published"
+            continue
+          fi
+          npm publish --workspace="$PKG" --provenance
+        done
+
   publish-registry:
     name: Publish to MCP Registry
     # After the deploy, so the listing never points at tools that are not live

@@ -1,6 +1,7 @@
 #!/bin/bash
-# Build browser, update download links, create GitHub release, tag, push, and
-# publish the npm SDK (@oya-ai/browser) and CLI (@oya-ai/cli) at the same version.
+# Build browser, update download links, create GitHub release, tag and push.
+# Runs start to finish with no prompt. The tag's prod workflow publishes the
+# npm SDK (@oya-ai/browser) and CLI (@oya-ai/cli) at the same version.
 # Usage: ./release.sh [version] [--no-desktop]
 #   ./release.sh             , auto-increments patch (v1.0.0 → v1.0.1)
 #   ./release.sh 1.2.0       , tags as v1.2.0
@@ -81,23 +82,7 @@ fi
 log_ok "Notarization credentials valid"
 echo ""
 
-# ── Preflight: npm login ──
-
-# The npm publish runs after the build and the push, so a lapsed login would
-# otherwise surface only once everything else has shipped.
-log_info "Checking npm login"
-if ! NPM_USER=$(npm whoami 2>/dev/null); then
-  log_err "Not logged in to npm. Run: npm login"
-  exit 1
-fi
-log_ok "npm: $NPM_USER"
-echo ""
-
-read -rp "Build browser and release $TAG? [y/N] " CONFIRM
-if [[ ! "$CONFIRM" =~ ^[yY]$ ]]; then
-  echo "Aborted."
-  exit 0
-fi
+log_info "Releasing $TAG"
 
 # ── Update browser/package.json version ──
 
@@ -235,19 +220,10 @@ fi
 git push origin "$TAG"
 log_ok "Published release and pushed tag"
 
-# ── Publish SDK and CLI to npm ──
+# ── SDK and CLI ──
 #
-# npm asks for 2FA approval in the browser on each publish. A missed prompt
-# undoes nothing above, so report the retry and carry on to the snapshot step.
-
-for PKG in @oya-ai/browser @oya-ai/cli; do
-  log_info "Publishing $PKG@$VERSION"
-  if npm publish --workspace="$PKG"; then
-    log_ok "Published $PKG@$VERSION"
-  else
-    log_err "$PKG publish failed. Retry from $TAG: npm publish --workspace=$PKG"
-  fi
-done
+# The prod workflow publishes both to npm once the deploy is green (the
+# publish-npm job, npm Trusted Publishing): no login, no 2FA prompt here.
 
 # ── Point cloud browsers at this release ──
 #

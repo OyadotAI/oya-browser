@@ -75,7 +75,7 @@ deploy-dev: ## Push to main (triggers dev deploy)
 
 deploy-prod: release ## Tag and push (triggers prod deploy)
 
-release: ## Full release: build the desktop app, tag, push, publish npm SDK + CLI (V=1.2.0 to pin the version)
+release: ## Full release, no prompts: build the desktop app, tag, push; CI publishes npm SDK + CLI (V=1.2.0 to pin the version)
 	@./k8s/scripts/release.sh $(V)
 
 release-no-desktop: ## Release without rebuilding the desktop app — the last one is carried forward
