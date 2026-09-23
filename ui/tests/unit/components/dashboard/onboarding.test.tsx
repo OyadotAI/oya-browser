@@ -74,7 +74,7 @@ describe('Onboarding', () => {
 
   it('shows the desktop clip first, then the model clip once the desktop is connected', () => {
     setup();
-    expect(document.querySelector('video')?.getAttribute('src')).toBe('/oya-ask-loop.mp4');
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('/onboarding-ask-demo.mp4');
     cleanup();
     setup([{ provider: 'oya-desktop', persona: 'p0' }]);
     expect(document.querySelector('video')?.getAttribute('src')).toBe('/onboarding-ask-key.mp4');

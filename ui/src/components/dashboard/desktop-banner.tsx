@@ -5,6 +5,7 @@
 'use client';
 
 import { Download, ArrowRight, X, Loader2, MonitorSmartphone } from 'lucide-react';
+import DesktopNotOpened from './desktop-not-opened';
 import { useDesktopSignIn } from './hooks/use-desktop-sign-in';
 
 /** Whose desktop to open, and how to hide the banner. */
@@ -21,7 +22,7 @@ interface Props {
  * is the one thing a customer on this provider did not sign up for.
  */
 export default function DesktopBanner({ apiKey, onDismiss }: Props) {
-  const { busy, open } = useDesktopSignIn(apiKey);
+  const { busy, open, notOpened } = useDesktopSignIn(apiKey);
 
   return (
     <div
@@ -30,11 +31,17 @@ export default function DesktopBanner({ apiKey, onDismiss }: Props) {
     >
       <MonitorSmartphone className="h-4 w-4 shrink-0 text-accent" />
       <div className="min-w-0 flex-1 text-[13px] leading-snug">
-        <span className="font-medium text-text">Sign in once on your own machine.</span>{' '}
-        <span className="text-text-secondary">
-          Your cloud browsers run as this identity and inherit its logins, until a desktop browser has signed in, they
-          start logged out.
-        </span>
+        {notOpened ? (
+          <DesktopNotOpened className="" />
+        ) : (
+          <>
+            <span className="font-medium text-text">Sign in once on your own machine.</span>{' '}
+            <span className="text-text-secondary">
+              Your cloud browsers run as this identity and inherit its logins, until a desktop browser has signed in,
+              they start logged out.
+            </span>
+          </>
+        )}
       </div>
       <a href="/downloads" target="_blank" rel="noreferrer" className="btn-ghost h-7">
         <Download className="h-3.5 w-3.5" /> Download

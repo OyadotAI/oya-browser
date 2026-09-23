@@ -1,8 +1,8 @@
 /**
  * Unit tests for useDesktopSignIn: it asks for a pairing link for the chosen
- * profile, and a failure is toasted.
+ * profile, a failure is toasted, and a link no app answers is noticed.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 
 const toast = vi.fn();
@@ -11,6 +11,7 @@ vi.mock('@/components/dashboard/config', () => ({ desktopSignInUrl: vi.fn() }));
 
 import { desktopSignInUrl } from '@/components/dashboard/config';
 import { useDesktopSignIn } from '@/components/dashboard/hooks/use-desktop-sign-in';
+import { APP_OPEN_WAIT_MS } from '@/components/dashboard/hooks/constants';
 
 const signIn = vi.mocked(desktopSignInUrl);
 
@@ -34,5 +35,30 @@ describe('useDesktopSignIn', () => {
     await act(() => result.current.open());
     expect(toast).toHaveBeenCalledWith('Pairing is off', 'error');
     expect(result.current.busy).toBe(false);
+  });
+
+  describe('when the link opens nothing', () => {
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
+    afterEach(() => vi.useRealTimers());
+
+    it('says the desktop did not open when the page keeps focus', async () => {
+      signIn.mockResolvedValueOnce('#paired');
+      const { result } = renderHook(() => useDesktopSignIn('k'));
+      await act(() => result.current.open());
+      expect(result.current.notOpened).toBe(false);
+      act(() => vi.advanceTimersByTime(APP_OPEN_WAIT_MS));
+      expect(result.current.notOpened).toBe(true);
+    });
+
+    it('stays quiet when the app takes focus', async () => {
+      signIn.mockResolvedValueOnce('#paired');
+      const { result } = renderHook(() => useDesktopSignIn('k'));
+      await act(() => result.current.open());
+      act(() => {
+        window.dispatchEvent(new Event('blur'));
+        vi.advanceTimersByTime(APP_OPEN_WAIT_MS);
+      });
+      expect(result.current.notOpened).toBe(false);
+    });
   });
 });
