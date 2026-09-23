@@ -1,0 +1,5 @@
+# An Ingress in front of the control plane (deploy.sh --host). deploy.sh
+# patches in the host, the TLS secret or cert-manager issuer, and the class.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources: [ingress.yaml]

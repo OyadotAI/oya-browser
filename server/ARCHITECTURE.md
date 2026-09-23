@@ -26,7 +26,7 @@ src/
     db.ts, metrics.ts, audit.ts, usage.ts, limits.ts, llm.ts, secrets.ts, net-guard.ts, runtime-config.ts
     llm/               one provider per API (anthropic, gemini, openai) behind llm.ts, with
                        their shared transport (retries, timeout, one error shape)
-  drivers/             how browsers are reached: cdp.ts (CDP driver), providers.ts (vendors), sandbox.ts (Oya Cloud)
+  drivers/             how browsers are reached: cdp.ts (CDP driver), providers.ts (vendors), sandbox.ts (Oya Cloud, a facade over sandbox/workers/: daytona, docker, k8s, ecs)
   mcp/                 the per-browser and pool MCP servers (facade: server.ts); the browser
                        tools, and the agent's own tools re-served (agent-tools.ts)
   modules/             one folder per domain

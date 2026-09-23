@@ -22,7 +22,7 @@ export async function provision(req, res) {
   if (registry.draining) return res.status(Status.UNAVAILABLE).json({ error: 'Server is draining' });
   const hourly = checkHourly('sandboxesPerHour', getKey(req));
   if (!hourly.allowed) return hourlyDenied(req, res, hourly);
-  if (!sandboxConfigured()) return sandboxMissing(res);
+  if (!sandboxConfigured(getKey(req))) return sandboxMissing(res, getKey(req));
   await provisionFleet(req, res);
 }
 

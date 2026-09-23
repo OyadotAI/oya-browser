@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oya-control-plane
+  annotations:
+    # Live views and CDP connections are long-lived WebSockets (ingress-nginx).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '3600'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '3600'
+spec:
+  tls:
+    - hosts: [oya.example.com]
+      secretName: oya-tls
+  rules:
+    - host: oya.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: oya-control-plane, port: { name: http } }

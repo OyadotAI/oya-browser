@@ -1,0 +1,7 @@
+# HTTPS in front of the control plane. With a real domain in OYA_DOMAIN, Caddy
+# gets and renews a Let's Encrypt certificate (ports 80 and 443 must reach this
+# host). With the default, localhost, it uses its own local certificate.
+{$OYA_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy control-plane:3100
+}

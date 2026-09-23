@@ -48,7 +48,7 @@ router.post('/browsers/disconnect-all', authMiddleware, disconnectAll);
 
 /** GET /providers, CDP providers configured for this key, and whether Oya Cloud is available. */
 router.get('/providers', authMiddleware, (req, res) => {
-  res.json({ providers: availableProviders(keyConfig.envFor(getKey(req))), oyaCloud: sandboxConfigured() });
+  res.json({ providers: availableProviders(keyConfig.envFor(getKey(req))), oyaCloud: sandboxConfigured(getKey(req)) });
 });
 
 /**

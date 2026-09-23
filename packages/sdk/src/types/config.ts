@@ -14,6 +14,75 @@ export type LlmProvider =
    *  project-scoped `.../endpoints/openapi` endpoint to use an enterprise project. */
   | 'vertex';
 
+/**
+ * Which runtime this key's `'oya-cloud'` browsers run on. `'docker'` and `'k8s'`
+ * run on the deployment's own daemon or cluster, exactly as its operator set them up;
+ * `'daytona'` and `'ecs'` run on your own account once you set that runtime's
+ * credentials below, and on the deployment's otherwise.
+ */
+export type SandboxRuntime = 'daytona' | 'docker' | 'k8s' | 'ecs';
+
+/**
+ * How Oya signs in to your AWS account to run `'ecs'` browsers.
+ *
+ * - `iam`: an access key (optionally temporary, with its session token).
+ * - `role`: Oya assumes `roleArn` from its own AWS identity. Put Oya's AWS
+ *   account and `config.get().ecs.externalId` in the role's trust policy; the
+ *   ExternalId is Oya's, one per API key, and cannot be set.
+ * - `sso`: an IAM Identity Center access token (from `aws sso login`'s cache or
+ *   the SSO OIDC device flow) for `accountId` and `roleName`. It expires; starts
+ *   then fail with `sso_token_expired` until you set a fresh one.
+ */
+export type EcsAuth =
+  | {
+      /** An IAM access key. */
+      type: 'iam';
+      /** The access key id. */
+      accessKeyId: string;
+      /** Its secret. Read back masked. */
+      secretAccessKey: string;
+      /** For temporary credentials. Read back masked. */
+      sessionToken?: string;
+    }
+  | {
+      /** A role Oya assumes. */
+      type: 'role';
+      /** e.g. arn:aws:iam::123456789012:role/oya-browsers */
+      roleArn: string;
+    }
+  | {
+      /** IAM Identity Center. */
+      type: 'sso';
+      /** The SSO access token. Read back masked. */
+      accessToken: string;
+      /** The 12-digit account to sign in to. */
+      accountId: string;
+      /** The permission set's role name in that account. */
+      roleName: string;
+      /** The SSO portal's region, when it differs from `region`. */
+      ssoRegion?: string;
+    };
+
+/** Where `'ecs'` browsers run: one Fargate task each, of a task definition that runs the Oya browser image. */
+export interface EcsConfig {
+  /** The ECS cluster. */
+  cluster: string;
+  /** The task definition: family, family:revision or ARN. */
+  taskDefinition: string;
+  /** Subnet ids for the tasks, e.g. ['subnet-0abc']. */
+  subnets: string[];
+  /** Security group ids for the tasks. */
+  securityGroups?: string[];
+  /** Give each task a public IP; needed in a public subnet without a NAT gateway. */
+  assignPublicIp?: boolean;
+  /** The container in the task definition that runs the browser; defaults to 'browser'. */
+  container?: string;
+  /** The AWS region, e.g. 'us-east-1'. */
+  region: string;
+  /** How Oya signs in to your account. */
+  auth: EcsAuth;
+}
+
 /** Empty disables solving. */
 export type CaptchaSolver = 'capsolver' | '2captcha' | '';
 
@@ -45,6 +114,16 @@ export interface ConfigUpdate {
   browseruse_api_key?: string | null;
   /** The DevTools WebSocket URL of your own Chrome, for the 'cdp' provider. */
   cdp_ws_url?: string | null;
+  /** Which runtime `'oya-cloud'` browsers run on; unset uses the deployment's. */
+  sandbox_runtime?: SandboxRuntime | null;
+  /** Your Daytona API key, so `'daytona'` runs on your own Daytona account. */
+  daytona_api_key?: string | null;
+  /** The Daytona snapshot of the Oya browser image, in your account. */
+  daytona_snapshot?: string | null;
+  /** The Daytona region, e.g. 'us' or 'eu'. */
+  daytona_target?: string | null;
+  /** Where this key's `'ecs'` browsers run and how Oya signs in to your AWS account. */
+  ecs?: EcsConfig | null;
   /** Which CAPTCHA solving service to call. */
   captcha_solver?: CaptchaSolver | null;
   /** The solving service's API key. */
@@ -54,7 +133,17 @@ export interface ConfigUpdate {
 }
 
 /** What `config.get()` returns. Secrets read back masked, never in full. */
-export interface Config extends Omit<ConfigUpdate, 'llm_provider' | 'browser_provider' | 'captcha_solver'> {
+export interface Config extends Omit<
+  ConfigUpdate,
+  'llm_provider' | 'browser_provider' | 'captcha_solver' | 'sandbox_runtime' | 'ecs'
+> {
+  /** The configured sandbox runtime, or empty for the deployment's. */
+  sandbox_runtime?: SandboxRuntime | '';
+  /** The ECS setting with its credentials masked, and the ExternalId to trust for `auth.type: 'role'`. */
+  ecs: Partial<EcsConfig> & {
+    /** Put this in your role's trust policy as sts:ExternalId. Shown even before ECS is set. */
+    externalId: string;
+  };
   /** The configured LLM vendor, or empty for the deployment default. */
   llm_provider?: LlmProvider | '';
   /** The configured browser provider, or empty for the deployment default. */

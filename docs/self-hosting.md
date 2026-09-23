@@ -59,7 +59,7 @@ stops everything; the `oya-data` volume holds your personas and cookies, so keep
 
 | | Options |
 |:---|:---|
-| Control plane | Docker. Kubernetes and ECS are not wired into the wizard yet, [`k8s/`](../k8s) has manifests you can apply by hand. |
+| Control plane | Docker. For production on one Docker host, Amazon ECS, Kubernetes or Google Cloud, see [`deployments/`](../deployments): each has a `deploy.sh`. |
 | Database | SQLite, Supabase, or any Postgres (`DATABASE_URL`). |
 | Browsers | Docker workers, governed Docker (one container per session), a Kubernetes fleet (one pod per session), Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or your own Chrome over CDP. |
 | LLM | Anthropic, OpenAI, Gemini, Gemini Enterprise (ex-Vertex AI), any OpenAI-compatible endpoint, or a local model (Ollama, vLLM, LM Studio). |
@@ -98,11 +98,61 @@ Everything is optional except the secrets you want to survive a restart.
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `CHAT_MODEL` | The deployment-wide LLM default. Any API key that sets its own overrides it. A private or `http://` base URL works here but is rejected from the dashboard, because tenants can set that field too. |
 | `OYA_FLEET_RUNTIME` | `docker` or `k8s`, what starts a governed browser. |
 | `OYA_MANAGED_*` | The governed runtime: network or NetworkPolicy, image, control URL, egress proxy. On Kubernetes the image must be digest-pinned; a tag can move between verification and scheduling. |
-| `OYA_CLOUD_API_KEY` / `OYA_CLOUD_SNAPSHOT` / `OYA_PUBLIC_WS_URL` | Oya Cloud sandboxes, and the public URL they dial back to. |
+| `OYA_CLOUD_API_KEY` / `OYA_CLOUD_SNAPSHOT` / `OYA_PUBLIC_WS_URL` | Oya Cloud sandboxes on Daytona, and the public URL every cloud browser dials back to. |
+| `OYA_CLOUD_RUNTIME` | What runs Oya Cloud browsers: `daytona` (default), `docker`, `k8s` or `ecs`. See [Cloud browser runtimes](#cloud-browser-runtimes). |
 | `OYA_RESIDENTIAL_PROXY_URL` | A residential vendor gateway every Oya Cloud browser uses unless its persona has its own proxy. Never sent to desktop browsers, which could extract the credentials. `{session}` and `{geo}` in the username become a sticky per-persona session and its country. Traffic is counted in the sandbox, both directions, and metered per key as `residential_proxy_bytes`. |
 | `POSTHOG_KEY` / `POSTHOG_HOST` | Product analytics. Both must be set or nothing is sent; there is no default host. The key is a PostHog project write token, which the console shows to every visitor; never a personal PostHog key. |
 | `SLACK_OPS_WEBHOOK_SIGNUPS` / `SLACK_OPS_WEBHOOK_EVENTS` | Slack incoming webhooks for one-line ops messages: signups, keys, desktop downloads and desktop connections in the first; saved playbooks, CDP attaches and server errors in the second. Unset means no message. |
 | `RB2B_ID` | An RB2B account id. Loads RB2B's visitor identification on the public pages (landing, docs, sign-in, sign-up), never on the console or the live view. Unset means it never loads. |
+
+## Cloud browser runtimes
+
+Oya Cloud browsers (`provider: 'oya-cloud'`) run the image built from [`browser/Dockerfile`](../browser/Dockerfile) on one of four runtimes. Every runtime gets the same browser, labels and enrolment environment; the browser dials back to `OYA_PUBLIC_WS_URL` over the normal WebSocket, so no port is ever opened into it.
+
+| `OYA_CLOUD_RUNTIME` | Settings | Stops an abandoned browser |
+|:---|:---|:---|
+| `daytona` | `OYA_CLOUD_API_KEY`, `OYA_CLOUD_SNAPSHOT` (a snapshot of the browser image), optional `OYA_CLOUD_API_URL`, `OYA_CLOUD_TARGET` | Idle stop after `OYA_CLOUD_SANDBOX_TTL_MINUTES` (default 60), hard TTL 10 minutes later |
+| `docker` | `OYA_CLOUD_IMAGE`, optional `OYA_CLOUD_DOCKER_NETWORK`, and `OYA_CLOUD_DOCKER_PLATFORM` (e.g. `linux/amd64`) for an image with no build for the host's architecture. Uses the daemon the server's `docker` CLI reaches; pull the image first. | Hard lifetime of TTL + 10 minutes; the container is removed when it exits |
+| `k8s` | `OYA_CLOUD_IMAGE`, optional `OYA_K8S_NAMESPACE` (default `oya-browsers`) and `OYA_K8S_CONTEXT`. One pod per browser; its credentials sit in a Secret the pod owns. | `activeDeadlineSeconds` of TTL + 10 minutes |
+| `ecs` | `OYA_ECS_CLUSTER`, `OYA_ECS_TASK_DEFINITION` (whose container, `OYA_ECS_CONTAINER`, default `browser`, runs the image), `OYA_ECS_SUBNETS`, optional `OYA_ECS_SECURITY_GROUPS`, `OYA_ECS_ASSIGN_PUBLIC_IP=true`, `AWS_REGION`, and `OYA_ECS_AUTH` (below). One Fargate task per browser. | Hard lifetime of TTL + 10 minutes |
+
+Only Daytona has an idle stop; the others stop at the hard lifetime whether idle or not.
+
+**ECS authentication** (`OYA_ECS_AUTH`):
+
+| Value | Settings | Signs in with |
+|:---|:---|:---|
+| `default` (unset) | none | The AWS SDK's default chain: env keys, `AWS_PROFILE` (SSO profiles included), or an instance, task or IRSA role. |
+| `iam` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN` | An access key. |
+| `role` | `OYA_ECS_ROLE_ARN`, optional `OYA_ECS_EXTERNAL_ID` | The role, assumed from the default chain's identity and refreshed before it expires. |
+| `sso` | `OYA_ECS_SSO_PROFILE` | IAM Identity Center, through a profile in `~/.aws/config`, after `aws sso login` on the server's host. |
+
+**Per key.** A key can pick its own runtime, and for ECS its own account, through the SDK or `oya settings`:
+
+```ts
+await oya.config.set({
+  sandbox_runtime: 'ecs',
+  ecs: {
+    cluster: 'browsers',
+    taskDefinition: 'oya-browser',
+    subnets: ['subnet-0abc'],
+    securityGroups: ['sg-0abc'],
+    assignPublicIp: true,
+    region: 'us-east-1',
+    auth: { type: 'role', roleArn: 'arn:aws:iam::123456789012:role/oya-browsers' },
+  },
+});
+```
+
+`ecs.auth` is one of:
+
+- `{ type: 'iam', accessKeyId, secretAccessKey, sessionToken? }`
+- `{ type: 'role', roleArn }`. The server assumes the role from its own AWS identity. The role's trust policy must trust the server's AWS account, with `sts:ExternalId` set to `config.get().ecs.externalId`. That value is generated per API key and can't be set, so one key can't make the server assume a role another customer created. It changes if the API key changes.
+- `{ type: 'sso', accessToken, accountId, roleName, ssoRegion? }`. An IAM Identity Center access token, exchanged for that role's credentials as they expire. The token itself expires (typically 1 to 12 hours). After that, starts fail with `sso_token_expired` until a fresh token is set.
+
+A key can't name an SSO profile, because that would use this host's own SSO sessions. `config.get()` returns `ecs` with its credentials masked. Sending it back unchanged keeps the stored credentials.
+
+With `ecs.auth` set, the key's ECS browsers run on its own account, and none of the deployment's ECS or AWS settings are mixed in. A key that sets `daytona_api_key` runs on its own Daytona account in the same way. Without these, a key runs on the deployment's account, and any cluster it names is ignored. `docker` and `k8s` run on the deployment's own daemon or cluster, so a key can choose them but can never set their image, host, namespace or kubeconfig. On ECS the browser's environment, which includes the key's Oya API key, is visible to anyone in that AWS account with `ecs:DescribeTasks`, the same as a Daytona sandbox's env vars are to its account.
 
 ## Telemetry
 

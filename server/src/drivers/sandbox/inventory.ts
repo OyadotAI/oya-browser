@@ -3,8 +3,10 @@
  * independent of its WebSocket, so the inventory lives outside the command
  * registry: disconnected clients remain visible but never routable.
  */
-import { isConfigured, ownerTag, displayName } from './config.ts';
-import { client } from './client.ts';
+import { settings as settingsFor } from './config.ts';
+import { ownerTag, displayName } from './names.ts';
+import { WORKERS } from './worker.ts';
+import { sandboxEnv } from './tenancy.ts';
 import { INVENTORY_MAX_KEYS, INVENTORY_TTL_MS, INVENTORY_WAIT_MS } from '../constants.ts';
 
 /** Cached rows per owner tag, with when they were read and any refresh in flight. */
@@ -44,10 +46,11 @@ export function forgetInventory(owner) {
  * The sandbox list is cached for 5s per key and waited on for at most 3s.
  */
 export async function listSandboxBrowsers(apiKey, connected = []) {
-  if (!isConfigured() || !apiKey) return connected;
+  const settings = apiKey && settingsFor(sandboxEnv(apiKey));
+  if (!settings) return connected;
   const owner = ownerTag(apiKey);
   const entry = entryFor(owner);
-  if (Date.now() - entry.at > INVENTORY_TTL_MS && !entry.pending) entry.pending = refresh(entry, owner);
+  if (Date.now() - entry.at > INVENTORY_TTL_MS && !entry.pending) entry.pending = refresh(entry, settings, owner);
   if (entry.pending) await waitAtMost(entry.pending, INVENTORY_WAIT_MS);
   return withConnected(entry.rows, connected);
 }
@@ -63,8 +66,8 @@ function entryFor(owner) {
 }
 
 /** Re-reads the owner's sandboxes; a failure keeps the old rows and is only logged. */
-function refresh(entry, owner) {
-  return storeRows(entry, owner)
+function refresh(entry, settings, owner) {
+  return storeRows(entry, settings, owner)
     .catch((err) => {
       console.warn(`[sandbox] Inventory refresh failed: ${err.message}`);
     })
@@ -75,19 +78,15 @@ function refresh(entry, owner) {
 }
 
 /** Reads the owner's sandboxes into the entry. */
-async function storeRows(entry, owner) {
-  entry.rows = await loadRows(owner);
+async function storeRows(entry, settings, owner) {
+  entry.rows = await loadRows(settings, owner);
 }
 
-/** The owner's live browser sandboxes as disconnected rows. */
-async function loadRows(owner) {
-  const daytona = await client();
-  const rows = [];
-  for await (const sandbox of daytona.list({ labels: { 'oya-browser': 'true', 'oya-owner': owner } })) {
-    // Also verify locally: never trust an upstream filter for tenant isolation.
-    if (isOwnedBrowser(sandbox, owner)) rows.push(rowFor(sandbox));
-  }
-  return rows;
+/** The owner's live browser sandboxes on the key's runtime, as disconnected rows. */
+async function loadRows(settings, owner) {
+  const sandboxes = await WORKERS[settings.runtime].list(settings, owner);
+  // Also verify locally: never trust an upstream filter for tenant isolation.
+  return sandboxes.filter((sandbox) => isOwnedBrowser(sandbox, owner)).map(rowFor);
 }
 
 /** Whether the sandbox is a live browser sandbox of this owner, by its own labels. */

@@ -31,3 +31,13 @@ export const INVENTORY_MAX_KEYS = 500;
 export const INVENTORY_TTL_MS = 5000;
 /** How long a listing waits on a refresh before answering with what it has. */
 export const INVENTORY_WAIT_MS = 3000;
+/** Runtime clients (one per credential) kept at once; the oldest is dropped past this. */
+export const SANDBOX_CLIENT_CACHE_MAX = 100;
+/** Seconds in a minute, for runtimes that take a lifetime in seconds. */
+export const SECONDS_PER_MINUTE = 60;
+/** Most tasks ECS DescribeTasks takes in one call. */
+export const ECS_DESCRIBE_BATCH = 100;
+/** Milliseconds in a second, for CLI timeouts given in seconds. */
+export const MS_PER_SECOND = 1000;
+/** Most output read back from a docker or kubectl call (4 MiB, enough to list a busy host). */
+export const SANDBOX_CLI_MAX_OUTPUT = 4_194_304;

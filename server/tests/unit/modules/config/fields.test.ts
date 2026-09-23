@@ -17,6 +17,8 @@ describe('settings fields', () => {
       'browseruse_api_key',
       'captcha_api_key',
       'cdp_ws_url',
+      'daytona_api_key',
+      'ecs',
       'openai_api_key',
       'steel_api_key',
     ]);

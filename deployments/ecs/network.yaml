@@ -1,0 +1,118 @@
+# A production VPC for Oya on ECS, for when you do not bring your own:
+# two availability zones, public subnets for the load balancer, private
+# subnets for the control plane, the browsers and the database, and one NAT
+# gateway per zone so losing a zone never cuts the other off the internet.
+#
+# deploy.sh creates it as <stack>-network unless you pass --vpc-id.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Oya network - VPC across two zones with public and private subnets and a NAT gateway per zone.
+
+Parameters:
+  CidrBlock:
+    Type: String
+    Default: 10.40.0.0/16
+    Description: The VPC's address range. The private subnets get most of it; every browser takes one address.
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CidrBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: !Ref AWS::StackName }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway }
+
+  # /20 public subnets hold only the load balancer and NAT gateways; /18 private
+  # subnets hold the control plane, the database and one address per browser.
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref CidrBlock, 16, 12]]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-public-a' }]
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref CidrBlock, 16, 12]]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-public-b' }]
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref CidrBlock, 4, 14]]
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-private-a' }]
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [2, !Cidr [!Ref CidrBlock, 4, 14]]
+      Tags: [{ Key: Name, Value: !Sub '${AWS::StackName}-private-b' }]
+
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: { RouteTableId: !Ref PublicRoutes, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref InternetGateway }
+  PublicSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetA, RouteTableId: !Ref PublicRoutes }
+  PublicSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnetB, RouteTableId: !Ref PublicRoutes }
+
+  NatAddressA:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties: { Domain: vpc }
+  NatGatewayA:
+    Type: AWS::EC2::NatGateway
+    Properties: { SubnetId: !Ref PublicSubnetA, AllocationId: !GetAtt NatAddressA.AllocationId }
+  NatAddressB:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties: { Domain: vpc }
+  NatGatewayB:
+    Type: AWS::EC2::NatGateway
+    Properties: { SubnetId: !Ref PublicSubnetB, AllocationId: !GetAtt NatAddressB.AllocationId }
+
+  PrivateRoutesA:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  PrivateDefaultRouteA:
+    Type: AWS::EC2::Route
+    Properties: { RouteTableId: !Ref PrivateRoutesA, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref NatGatewayA }
+  PrivateSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRoutesA }
+  PrivateRoutesB:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  PrivateDefaultRouteB:
+    Type: AWS::EC2::Route
+    Properties: { RouteTableId: !Ref PrivateRoutesB, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref NatGatewayB }
+  PrivateSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRoutesB }
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+  PublicSubnetIds:
+    Value: !Join [',', [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+  PrivateSubnetIds:
+    Value: !Join [',', [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]

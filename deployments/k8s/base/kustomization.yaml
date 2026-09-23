@@ -1,0 +1,9 @@
+# The Oya control plane on Kubernetes. deploy.sh applies this through an
+# overlay that sets the namespace, the pinned images, the replica count, the
+# oya-config values and the secrets; see README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml
+  - control-plane.yaml
+  - network-policy.yaml

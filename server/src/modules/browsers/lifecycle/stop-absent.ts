@@ -15,7 +15,7 @@ export async function stopAbsent(req, key, browserId, force) {
   if (gatewaySessions.get(browserId)?.apiKey === key) return killGateway(browserId);
   const durable = await control().findSession(key, browserId);
   if (durable) return stopDurable(key, browserId, durable, force);
-  const removed = sandboxConfigured() && (await removeOrphan(req, key, browserId));
+  const removed = sandboxConfigured(key) && (await removeOrphan(req, key, browserId));
   return removed || notConnected(browserId);
 }
 

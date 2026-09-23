@@ -21,6 +21,7 @@ const ENV = { OYA_CLOUD_API_KEY: 'k', OYA_CLOUD_SNAPSHOT: 'snap', OYA_PUBLIC_WS_
 describe('settings', () => {
   it('reads a complete configuration with its defaults', () => {
     assert.deepEqual(settings(ENV), {
+      runtime: 'daytona',
       apiKey: 'k',
       snapshot: 'snap',
       wsUrl: 'wss://oya.example/ws',
@@ -78,5 +79,25 @@ describe('naming', () => {
   it('names a browser as given, or after its id', () => {
     assert.equal(displayName('Mine', 'abcdef123456'), 'Mine');
     assert.equal(displayName('', 'abcdef123456'), 'Cloud browser abcdef12');
+  });
+});
+
+describe('runtime', () => {
+  it('reads the settings of the runtime OYA_CLOUD_RUNTIME names', () => {
+    const env = { OYA_CLOUD_RUNTIME: 'docker', OYA_CLOUD_IMAGE: 'oya/browser:1', OYA_PUBLIC_WS_URL: 'wss://x' };
+    assert.deepEqual(settings(env), {
+      runtime: 'docker',
+      image: 'oya/browser:1',
+      network: null,
+      platform: null,
+      wsUrl: 'wss://x',
+      ttlMinutes: DEFAULT_SANDBOX_TTL_MINUTES,
+    });
+    assert.deepEqual(missingSettings({ OYA_CLOUD_RUNTIME: 'docker' }), ['OYA_CLOUD_IMAGE', 'OYA_PUBLIC_WS_URL']);
+  });
+
+  it('is not configured for a runtime that does not exist, and says which do', () => {
+    assert.equal(settings({ ...ENV, OYA_CLOUD_RUNTIME: 'lambda' }), null);
+    assert.match(missingSettings({ ...ENV, OYA_CLOUD_RUNTIME: 'lambda' })[0], /one of daytona, docker, k8s, ecs/);
   });
 });

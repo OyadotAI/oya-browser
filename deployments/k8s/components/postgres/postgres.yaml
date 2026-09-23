@@ -1,0 +1,62 @@
+# A single Postgres in the cluster, for trying Oya out or a small install.
+# For production use a managed database (RDS, Cloud SQL, Azure Database) and
+# pass --database-url instead: backups, failover and upgrades are then theirs.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oya-postgres
+  labels: { app: oya-postgres }
+spec:
+  serviceName: oya-postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: oya-postgres }
+  template:
+    metadata:
+      labels: { app: oya-postgres }
+    spec:
+      automountServiceAccountToken: false
+      securityContext: { fsGroup: 70 }
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports: [{ name: postgres, containerPort: 5432 }]
+          env:
+            - { name: POSTGRES_USER, value: oya }
+            - { name: POSTGRES_DB, value: oya }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: oya-secrets, key: POSTGRES_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          readinessProbe:
+            exec: { command: [pg_isready, -U, oya, -d, oya] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oya-postgres
+spec:
+  selector: { app: oya-postgres }
+  ports: [{ name: postgres, port: 5432, targetPort: postgres }]
+---
+# Only the control plane reaches the database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oya-postgres
+spec:
+  podSelector:
+    matchLabels: { app: oya-postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: oya-control-plane } } }]
+      ports: [{ protocol: TCP, port: 5432 }]

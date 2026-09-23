@@ -1,0 +1,10 @@
+# How the Google load balancer talks to the control plane: WebSockets (live
+# views, CDP) stay open up to an hour, and health is the server's /health.
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: oya-control-plane
+spec:
+  timeoutSec: 3600
+  connectionDraining: { drainingTimeoutSec: 30 }
+  healthCheck: { type: HTTP, requestPath: /health, port: 3100 }

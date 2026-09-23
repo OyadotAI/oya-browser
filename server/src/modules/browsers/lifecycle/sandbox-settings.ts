@@ -20,8 +20,8 @@ function missingMessage(missing: string[]) {
   return `Cloud browsers need ${missing.join(', ')}, which ${verb} not set.${hint}`;
 }
 
-/** Answers 409 with what is missing. */
-export function sandboxMissing(res) {
-  const missing = missingSettings();
+/** Answers 409 with what the key (or, without one, the deployment) is missing. */
+export function sandboxMissing(res, key?) {
+  const missing = missingSettings(key);
   return res.status(Status.CONFLICT).json({ error: missingMessage(missing), missing });
 }

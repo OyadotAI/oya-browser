@@ -23,7 +23,7 @@ import { Status } from '../../platform/http-status.ts';
 import { fingerprint as ownerOf } from '../../platform/audit.ts';
 import { sealText, openText } from '../../platform/secrets.ts';
 import { runtimeConfig } from '../../platform/runtime-config.ts';
-import { isConfigured as cloudConfigured } from '../../drivers/sandbox.ts';
+import { isConfigured as cloudConfigured, ecsExternalId } from '../../drivers/sandbox.ts';
 import { FIELDS, PROVIDER_CHOICES, LLM_DEFAULTS } from './fields.ts';
 import { store, state, scopeFor, flush, markChanged, changed } from './store.ts';
 import { MASK_TAIL } from './constants.ts';
@@ -59,21 +59,22 @@ function plain(apiKey) {
   return out;
 }
 
-/** A key's fields with every secret masked. */
+/** A key's fields with every secret masked; an object setting keeps its shape, only its credentials masked. */
 function masked(own) {
   const out = { ...own };
   for (const [field, spec] of Object.entries(FIELDS)) {
-    if (spec.secret) out[field] = mask(own[field]);
+    if (spec.object) out[field] = own[field] ? spec.object.view(JSON.parse(own[field]), mask) : null;
+    else if (spec.secret) out[field] = mask(own[field]);
   }
   return out;
 }
 
-/** Providers this server hosts itself, and how each says it is set up. */
-const HOSTED = { 'oya-selfhosted': managedConfigured, 'oya-cloud': cloudConfigured };
+/** Providers this server hosts itself, and how each says it is set up for a key. */
+const HOSTED = { 'oya-selfhosted': () => managedConfigured(), 'oya-cloud': (apiKey) => cloudConfigured(apiKey) };
 
-/** Whether a provider choice is usable: hosted and set up, or its credentials are present. */
-function configured(p, own) {
-  if (HOSTED[p.id]) return HOSTED[p.id]();
+/** Whether a provider choice is usable for the key: hosted and set up, or its credentials are present. */
+function configured(p, own, apiKey) {
+  if (HOSTED[p.id]) return HOSTED[p.id](apiKey);
   return p.needs.every((f) => !!own[f] || !!process.env[FIELDS[f]?.envVar]);
 }
 
@@ -88,14 +89,17 @@ const llmView = (own, llm, host) => ({
   chat_model: own.chat_model || llm.model,
 });
 
+/** The view with the ExternalId to trust beside ecs, shown whether or not ECS is set so the role can be made first. */
+const withExternalId = (view, apiKey) => ({ ...view, ecs: { ...view.ecs, externalId: ecsExternalId(apiKey) } });
+
 /** Masked view for the dashboard and `oya init`. */
 export function get(apiKey) {
   const own: any = plain(apiKey);
   const llm = resolve(apiKey);
   return {
-    ...masked(own),
+    ...withExternalId(masked(own), apiKey),
     ...llmView(own, llm, runtimeConfig.get()),
-    providers: PROVIDER_CHOICES.map((p) => ({ ...p, configured: configured(p, own) })),
+    providers: PROVIDER_CHOICES.map((p) => ({ ...p, configured: configured(p, own, apiKey) })),
   };
 }
 
@@ -103,7 +107,7 @@ export function get(apiKey) {
 function checkUpdates(updates: Record<string, unknown>) {
   for (const [field, value] of Object.entries(updates)) {
     if (!Object.hasOwn(FIELDS, field)) throw unknownSetting(field);
-    if (value !== null && typeof value === 'object') throw invalid(field, 'a string', value);
+    if (value !== null && typeof value === 'object' && !FIELDS[field].object) throw invalid(field, 'a string', value);
     if (typeof value === 'string' && value.length > CONFIG_VALUE_MAX_CHARS)
       throw invalid(field, `at most ${CONFIG_VALUE_MAX_CHARS} characters`, 'a longer string');
   }
@@ -123,13 +127,34 @@ const unknownSetting = (field: string) =>
 /** Apply one field of an update to a row; false when the update leaves it alone. */
 async function apply(owner, row, [field, spec], value) {
   if (value === undefined) return false;
-  value = value === null ? '' : String(value);
+  value = spec.object ? objectText(owner, row, field, value) : value === null ? '' : String(value);
   // Never write the masked placeholder back over a real credential.
   if (spec.secret && value.startsWith('•')) return false;
   if (spec.validate && value) value = await spec.validate(value);
   if (!value) delete row[field];
   else row[field] = spec.secret ? sealText(scopeFor(owner), value) : value;
   return true;
+}
+
+/**
+ * An object setting as the JSON stored for it, checked against the stored value
+ * (so a masked credential sent back keeps the real one); empty clears it.
+ * JSON text is accepted too, for the CLI's key=value and other string-only clients.
+ */
+function objectText(owner, row, field, value) {
+  if (value === null || value === '') return '';
+  const sent = typeof value === 'string' ? parseObject(field, value) : value;
+  const stored = reveal(owner, field, row[field]);
+  return JSON.stringify(FIELDS[field].object.validate(sent, stored ? JSON.parse(stored) : null));
+}
+
+/** JSON text as an object, or a 400 naming the setting. */
+function parseObject(field, text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw invalid(field, 'an object (or its JSON)', text);
+  }
 }
 
 /** Keep a changed row and write it out in the background. */
@@ -209,6 +234,7 @@ export function envFor(apiKey, base = process.env) {
   const env = { ...base };
   for (const [field, spec] of Object.entries(FIELDS)) {
     if (spec.envVar && own[field]) env[spec.envVar] = own[field];
+    if (spec.object && own[field]) Object.assign(env, spec.object.toEnv(JSON.parse(own[field])));
   }
   return env;
 }

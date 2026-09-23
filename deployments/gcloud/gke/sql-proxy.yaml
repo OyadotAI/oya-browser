@@ -1,0 +1,26 @@
+# The Cloud SQL Auth Proxy as a native sidecar of the control plane: it signs
+# in with the pod's Workload Identity (roles/cloudsql.client), reaches the
+# database over its private IP, and encrypts the connection. The server talks
+# to it on 127.0.0.1:5432. INSTANCE is replaced by deploy.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oya-control-plane
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.18.2
+          restartPolicy: Always
+          args: [--private-ip, --port=5432, --structured-logs, --health-check, --http-address=0.0.0.0, INSTANCE]
+          startupProbe:
+            httpGet: { path: /startup, port: 9090 }
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }

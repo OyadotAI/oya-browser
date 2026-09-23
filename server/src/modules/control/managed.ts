@@ -15,6 +15,12 @@ import * as k8s from './fleet/k8s.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 
+// The container hardening, env-file handling and kubectl runner are shared with
+// the plain cloud-browser runtimes in drivers/sandbox/backends/, so a browser
+// container is locked down, and its credentials kept off argv, the same way.
+export { HARDENING, withEnvFile } from './fleet/docker.ts';
+export { kubectl } from './fleet/kubectl.ts';
+
 /** The runtimes OYA_FLEET_RUNTIME can name. */
 const RUNTIMES = { docker, k8s };
 

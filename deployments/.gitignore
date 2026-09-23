@@ -1,0 +1,3 @@
+# Secrets written by the deploy scripts and your optional settings.
+.env
+oya.env

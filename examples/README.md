@@ -34,6 +34,16 @@ Every script needs `OYA_API_KEY`, and runs from this `examples/` folder. The mul
 |:---|:---|:---|
 | [`01-multi-vendor.ts`](multi-vendor/01-multi-vendor.ts) | Execute identical automation across **Oya Cloud, Browserbase, Steel, Anchor, and Browser Use** in parallel | `npx tsx --env-file=.env multi-vendor/01-multi-vendor.ts` |
 
+### ☁️ [`ecs/`](ecs/): Oya browsers in your own AWS account
+
+Each one sets `sandbox_runtime: 'ecs'` and a nested `ecs` setting, then starts a browser as a Fargate task in your account. They need the `ECS_*` and `AWS_*` values in [`.env.example`](.env.example), and a task definition whose `browser` container runs the Oya browser image.
+
+| File | Feature Demonstrated | Run Command |
+|:---|:---|:---|
+| [`01-iam.ts`](ecs/01-iam.ts) | Sign in with an IAM access key | `npx tsx --env-file=.env ecs/01-iam.ts` |
+| [`02-role.ts`](ecs/02-role.ts) | Oya assumes a role you trust with your own ExternalId: no long-lived keys | `npx tsx --env-file=.env ecs/02-role.ts` |
+| [`03-sso.ts`](ecs/03-sso.ts) | Sign in with an IAM Identity Center (SSO) access token | `npx tsx --env-file=.env ecs/03-sso.ts` |
+
 ---
 
 ## ⚡ Setup in 60 Seconds

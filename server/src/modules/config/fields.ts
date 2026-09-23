@@ -5,6 +5,7 @@
 import { validateBaseUrl } from '../../platform/runtime-config.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
+import { validateEcs, ecsEnv, viewEcs } from './ecs.ts';
 
 /**
  * A closed set, rejected rather than ignored. The SDK types these fields, but the CLI's
@@ -33,6 +34,19 @@ export type Field = {
   envVar?: string;
   /** Normalises or rejects a value before it is stored. */
   validate?: (value: any) => unknown;
+  /**
+   * Holds an object rather than a string, stored as JSON: checked against the
+   * stored value (so a masked credential sent back keeps the real one), spelled
+   * as environment variables for envFor(), and read back with credentials masked.
+   */
+  object?: {
+    /** Checks and normalises the object sent, given the one stored. */
+    validate: (value: unknown, previous: any) => object;
+    /** The environment variables the object stands in for. */
+    toEnv: (value: any) => Record<string, string>;
+    /** The object as get() shows it, credentials masked with `mask`. */
+    view: (value: any, mask: (v: string) => string) => object;
+  };
 };
 
 /** Every setting a key can hold through set(), and how each one is treated. */
@@ -50,6 +64,19 @@ export const FIELDS: Record<string, Field> = {
   browseruse_api_key: { secret: true, envVar: 'BROWSERUSE_API_KEY' },
   cdp_ws_url: { secret: true, envVar: 'OYA_CDP_WS_URL' },
 
+  // Which runtime this key's Oya Cloud browsers run on. Docker and Kubernetes
+  // only as the operator configured them; Daytona and ECS on the key's own
+  // account once it sets that runtime's credentials: daytona_api_key, or ecs.auth (drivers/sandbox/tenancy.ts).
+  sandbox_runtime: {
+    envVar: 'OYA_CLOUD_RUNTIME',
+    validate: oneOf(() => SANDBOX_RUNTIMES, 'sandbox_runtime'),
+  },
+  daytona_api_key: { secret: true, envVar: 'OYA_CLOUD_API_KEY' },
+  daytona_snapshot: { envVar: 'OYA_CLOUD_SNAPSHOT' },
+  daytona_target: { envVar: 'OYA_CLOUD_TARGET' },
+  // Where this key's ECS browsers run and how Oya signs in to its AWS account.
+  ecs: { secret: true, object: { validate: validateEcs, toEnv: ecsEnv, view: viewEcs } },
+
   captcha_solver: {
     envVar: 'OYA_CAPTCHA_PROVIDER',
     validate: oneOf(() => ['capsolver', '2captcha'], 'captcha_solver'),
@@ -64,6 +91,12 @@ export const FIELDS: Record<string, Field> = {
   // The version the desktop last connected with, so a new one counts as an update.
   desktop_version: {},
 };
+
+/**
+ * The runtimes sandbox_runtime can name. Kept here rather than read from the
+ * sandbox driver, which imports this module's service.
+ */
+export const SANDBOX_RUNTIMES = ['daytona', 'docker', 'k8s', 'ecs'];
 
 /** What onboarding offers, in the order it offers it. */
 export const PROVIDER_CHOICES = [

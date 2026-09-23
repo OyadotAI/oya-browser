@@ -23,6 +23,7 @@ const sandbox = await import('../../../src/drivers/sandbox.ts');
 const { client } = await import('../../../src/drivers/sandbox/client.ts');
 const { ownerTag, PREFIX } = await import('../../../src/drivers/sandbox/config.ts');
 const { control } = await import('../../../src/modules/control/service.ts');
+const { WORKERS } = await import('../../../src/drivers/sandbox/worker.ts');
 
 /** A sandbox as the SDK returns one, with the entrypoint already running unless told otherwise. */
 function fakeSandbox({ labels = {}, image = 'ok', running = true }: any = {}) {
@@ -120,6 +121,11 @@ describe('removeSandbox', () => {
     assert.equal(await sandbox.removeSandbox('b-404', 'user-key'), false);
   });
 
+  it('passes on a runtime failure other than not found', async () => {
+    mock.method(daytona, 'get', async () => Promise.reject(Object.assign(new Error('upstream down'), { status: 503 })));
+    await assert.rejects(sandbox.removeSandbox('b-1', 'user-key'), /upstream down/);
+  });
+
   it('refuses a sandbox whose labels do not name this browser', async () => {
     mock.method(daytona, 'get', async () => fakeSandbox({ labels: { 'oya-browser-id': 'b-other' } }));
     await assert.rejects(sandbox.removeSandbox('b-1', 'user-key'), { message: 'Sandbox ownership mismatch' });
@@ -186,5 +192,68 @@ describe('listSandboxBrowsers', () => {
 
   it('passes connected browsers through without a key', async () => {
     assert.deepEqual(await sandbox.listSandboxBrowsers('', [{ id: 'c' }]), [{ id: 'c' }]);
+  });
+});
+
+describe('runtime selection', () => {
+  /** A worker that records what it is asked, holding one sandbox owned by `user-key`. */
+  const fakeWorker = () => ({
+    id: 'fake',
+    ownAccount: () => false,
+    settings: () => ({}),
+    missing: () => [],
+    create: mock.fn(async () => ({ id: 'fake-1' })),
+    find: mock.fn(async (_config, name) => ({
+      labels: { 'oya-browser-id': name.slice(PREFIX.length), 'oya-owner': ownerTag('user-key') },
+      state: 'running',
+      destroy: async () => {},
+    })),
+    list: async () => [],
+  });
+  let fake;
+  beforeEach(() => {
+    fake = fakeWorker();
+    WORKERS.fake = fake;
+  });
+  after(() => delete WORKERS.fake);
+
+  it('records the runtime a sandbox was made on, for cleanup to follow later', async () => {
+    process.env.OYA_CLOUD_RUNTIME = 'fake';
+    try {
+      const update = mock.method(control(), 'update');
+      const made = await sandbox.createSandbox({ apiKey: 'user-key' });
+      assert.equal(made.runtime, 'fake');
+      const cleanup = update.mock.calls.map((call: any) => call.arguments[2].cleanup).find(Boolean);
+      assert.deepEqual(cleanup, { kind: 'sandbox', browserId: made.browserId, runtime: 'fake' });
+      assert.equal(fake.create.mock.calls[0].arguments[1].env.OYA_MAX_LIFETIME_MINUTES, '70');
+    } finally {
+      delete process.env.OYA_CLOUD_RUNTIME;
+    }
+  });
+
+  it('removes a sandbox on the runtime it was made on, not the one configured now', async () => {
+    assert.equal(await sandbox.removeSandbox('b-1', 'user-key', 'fake'), true);
+    assert.equal(fake.find.mock.callCount(), 1);
+  });
+
+  it('refuses a browser name that would forge an env-file line', async () => {
+    process.env.OYA_CLOUD_RUNTIME = 'fake';
+    try {
+      await assert.rejects(sandbox.createSandbox({ apiKey: 'user-key', name: 'a\nOYA_API_KEY=x' }), {
+        status: Status.BAD_REQUEST,
+      });
+    } finally {
+      delete process.env.OYA_CLOUD_RUNTIME;
+    }
+  });
+
+  it('answers per key whether cloud browsers are set up, and what is missing', () => {
+    assert.equal(sandbox.isConfigured('user-key'), true);
+    assert.deepEqual(sandbox.missingSettings('user-key'), []);
+    assert.equal(sandbox.isConfigured({}), false, 'an env object is still read as given');
+    assert.deepEqual(sandbox.missingSettings({ OYA_CLOUD_RUNTIME: 'docker' }), [
+      'OYA_CLOUD_IMAGE',
+      'OYA_PUBLIC_WS_URL',
+    ]);
   });
 });
