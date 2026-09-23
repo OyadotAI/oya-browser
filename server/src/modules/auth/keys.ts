@@ -90,3 +90,21 @@ export function validateApiKey(key) {
   if (!key) return false;
   return envKeys.has(key) || keyCache.has(keyDigest(key)) || isFleetToken(key);
 }
+
+// ── Agent keys no person has claimed ──
+
+/**
+ * Digests of agent keys nobody has claimed, as this process last saw them.
+ * Every API request re-reads its key's row (middleware.ts isStoredKey), so a
+ * claim on another instance is picked up on the key's next request here.
+ */
+const unclaimedAgents = new Set<string>();
+
+/** Records whether a key's row is an agent's own, unclaimed key. */
+export function noteAgentKey(digest: string, unclaimed: boolean) {
+  if (unclaimed) unclaimedAgents.add(digest);
+  else unclaimedAgents.delete(digest);
+}
+
+/** Whether `key` is an agent's key no person has claimed: it brings its own LLM and cloud browsers need a claim. */
+export const agentKeyUnclaimed = (key) => Boolean(key) && unclaimedAgents.has(keyDigest(key));

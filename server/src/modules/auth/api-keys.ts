@@ -8,7 +8,7 @@ import { control, projectId } from '../control/service.ts';
 import { db as supabase } from '../../platform/db.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { generateKey, isEnvKey, isFleetToken, keyCache, keyDigest, keyPrefix } from './keys.ts';
+import { generateKey, isEnvKey, isFleetToken, keyCache, keyDigest, keyPrefix, noteAgentKey } from './keys.ts';
 import { MAX_PROJECT_NAME } from './constants.ts';
 
 /** What a new project is called until its key's label names it. */
@@ -43,9 +43,13 @@ async function lookupOwner(key) {
   }
 }
 
-/** The api_keys row for a digest (its user_id), or null. */
+/** The api_keys row for a digest (its user_id, and agent_email for a key an agent made), or null. */
 async function ownerRow(digest) {
-  const { data, error } = await supabase.from('api_keys').select('user_id').eq('key_hash', digest).maybeSingle();
+  const { data, error } = await supabase
+    .from('api_keys')
+    .select('user_id, agent_email')
+    .eq('key_hash', digest)
+    .maybeSingle();
   if (error) throw error;
   return data;
 }
@@ -58,7 +62,7 @@ const keyRow = (key) => ({
   created_at: new Date().toISOString(),
 });
 
-/** Stores a key's digest for a user and claims its project. Re-importing a key already registered to the same user re-seals its project; a key owned by someone else is refused. */
+/** Stores a key's digest for a user and claims its project. Re-importing a key already registered to the same user re-seals its project; an agent's unclaimed key becomes this user's (resolving true); a key owned by someone else is refused. */
 export async function registerApiKey(key, userId, label) {
   const digest = keyDigest(key);
   if (supabase && userId) {
@@ -73,12 +77,53 @@ export async function registerApiKey(key, userId, label) {
 
 /** A key this user already registered: re-seal its project under this server's secret. */
 async function reimport(key, digest, userId, existing) {
-  if (existing.user_id !== userId) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
+  const adopted = isUnclaimedAgent(existing);
+  if (adopted) await adoptAgentKey(digest, userId);
+  else if (existing.user_id !== userId) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
+  await claimProject(key, userId);
+  remember(key, digest, userId);
+  return adopted;
+}
+
+/** Opens the key's project and makes it `userId`'s, re-sealed under this server's secret. */
+async function claimProject(key, userId) {
   await control().project(key);
   await control().store.transact(async (tx) => {
     claim(await tx.get('project', projectId(key)), key, userId);
   });
-  remember(key, digest, userId);
+}
+
+/** A row an agent made for itself that no person has claimed yet. */
+const isUnclaimedAgent = (row) => Boolean(row?.agent_email && !row.user_id);
+
+/**
+ * Hands an agent's key to the person claiming it. Conditional on the row still
+ * being unowned, so two people racing for one claim link cannot both win.
+ */
+async function adoptAgentKey(digest, userId) {
+  const rows = supabase.from('api_keys').update({ user_id: userId });
+  const { data, error } = await rows.eq('key_hash', digest).is('user_id', null).select('key_hash');
+  if (error) throw error;
+  if (!data?.length) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
+  noteAgentKey(digest, false);
+}
+
+/** Mints a key for an AI agent, owned by nobody until a person imports it, and opens its project. */
+export async function registerAgentKey(email: string) {
+  if (!supabase) throw new HttpError(Status.UNAVAILABLE, 'Agent signup needs Supabase');
+  const key = generateKey();
+  const { error } = await supabase.from('api_keys').insert({ ...keyRow(key), agent_email: email, label: 'Agent' });
+  if (error) throw error;
+  keyCache.add(keyDigest(key));
+  noteAgentKey(keyDigest(key), true);
+  await control().project(key);
+  return key;
+}
+
+/** Whether `key` is an agent's own key that no person has claimed: those may not run browsers this server pays for. */
+export async function isUnclaimedAgentKey(key) {
+  if (!supabase || !key || isEnvKey(key) || isFleetToken(key)) return false;
+  return isUnclaimedAgent(await ownerRow(keyDigest(key)));
 }
 
 /** Records a new key for a user. */

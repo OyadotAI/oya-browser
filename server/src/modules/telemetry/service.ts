@@ -9,7 +9,7 @@
 import * as analytics from '../../platform/analytics.ts';
 import * as slack from '../../platform/ops-slack.ts';
 import { CHANNEL, SLACK_LINES, type EventName, type EventProps, type Who } from './catalog.ts';
-import { nobody, person, whoHolds } from './who.ts';
+import { anonymous, keyLabel, nobody, person, whoHolds } from './who.ts';
 
 /** Forgets who was identified, so one test cannot leak into the next. */
 export const forgetIdentifiedForTests = () => identified.clear();
@@ -66,6 +66,13 @@ type Person = {
 export const track = {
   /** A person made an account. */
   accountSignedUp: (user: Person) => send('account_signed_up', person(user.id, user.email), {}),
+  /** An agent signed itself up; it is known by its key until a person claims it, under the email it gave. */
+  agentSignedUp: (key: string, email: string) =>
+    send('agent_signed_up', { ...anonymous(key), email, label: `${email} (${keyLabel(key)})` }, {}),
+  /** A person claimed an agent's key. */
+  agentKeyClaimed: (user: Person) => send('agent_key_claimed', person(user.id, user.email), {}),
+  /** An unclaimed agent key was refused a paid browser. */
+  agentCloudRefused: (key: string, provider: string) => send('agent_cloud_refused', anonymous(key), { provider }),
   /** A signed-in person made an API key. */
   apiKeyCreated: (user: Person, projectId: string) =>
     send('api_key_created', person(user.id, user.email), { project_id: projectId }),

@@ -55,6 +55,23 @@ export async function refreshSession(refreshToken) {
   return sessionOf(data);
 }
 
+/** The OAuth providers a person can sign in with, as Supabase names them. */
+const OAUTH_PROVIDERS = { google: 'google', github: 'github' } as const;
+
+/**
+ * Where to send a browser to sign in with `provider`, or null for one we do
+ * not offer. Supabase's implicit flow returns the session in the fragment of
+ * `redirectTo`, which the project's redirect allowlist must contain.
+ */
+export async function oauthUrl(provider, redirectTo) {
+  if (!Object.hasOwn(OAUTH_PROVIDERS, provider)) return null;
+  requireAuth();
+  const options = { redirectTo, skipBrowserRedirect: true };
+  const { data, error } = await supabaseAuth.auth.signInWithOAuth({ provider: OAUTH_PROVIDERS[provider], options });
+  if (error) throw error;
+  return data.url;
+}
+
 // ── User profile ──
 
 /** A user's profile row, or null without Supabase. */

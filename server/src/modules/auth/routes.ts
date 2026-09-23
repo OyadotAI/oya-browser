@@ -12,6 +12,8 @@ import {
   signup,
   login,
   refreshSession,
+  oauthUrl,
+  verifyCaptcha,
   getProfile,
   updateProfile,
 } from './service.ts';
@@ -54,6 +56,13 @@ function signupProblem(email, password) {
   return null;
 }
 
+/** Answers 400 when the request's Turnstile token does not pass; true when it was answered. */
+async function captchaRefused(req, res) {
+  if (await verifyCaptcha(req.body?.captcha_token)) return false;
+  badRequest(res, 'Captcha check failed, please try again');
+  return true;
+}
+
 /** What a key list shows for a key: its digest, prefix, project and label. */
 const keyInfo = (key, label) => ({
   id: keyDigest(key),
@@ -64,23 +73,48 @@ const keyInfo = (key, label) => ({
 
 // ─── User Auth ────────────────────────────────────────────────────────────────
 
-/** POST /auth/signup, create an account (email, password of 8+ characters, optional display name). */
-router.post('/auth/signup', async (req, res) => {
+/** Creates the account in the request, counts it, and answers with its new session. */
+async function signUpAndIn(req, res) {
   const { email, password, display_name } = req.body;
+  const made = await signup(email, password, display_name);
+  track.accountSignedUp(made.user);
+  issueSession(req, res, await login(email, password));
+}
+
+/**
+ * POST /auth/signup, create an account (email, password of 8+ characters,
+ * optional display name) and start its session. It signs in here rather than
+ * leaving that to a second request, which would need a second captcha.
+ */
+router.post('/auth/signup', async (req, res) => {
+  const { email, password } = req.body;
   const problem = signupProblem(email, password);
   if (problem) return badRequest(res, problem);
-  await guarded(res, Status.BAD_REQUEST, async () => {
-    const made = await signup(email, password, display_name);
-    track.accountSignedUp(made.user);
-    res.json(made);
-  });
+  if (await captchaRefused(req, res)) return;
+  await guarded(res, Status.BAD_REQUEST, () => signUpAndIn(req, res));
 });
 
 /** POST /auth/login, sign in with email and password and start a session. */
 router.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return badRequest(res, 'email and password required');
+  if (await captchaRefused(req, res)) return;
   await guarded(res, Status.UNAUTHORIZED, async () => issueSession(req, res, await login(email, password)));
+});
+
+/**
+ * GET /auth/oauth/:provider?redirect_to=…, send the browser to sign in with
+ * Google or GitHub. The session comes back to `redirect_to` (the console's
+ * /auth/callback), which hands its refresh token to POST /auth/refresh.
+ */
+router.get('/auth/oauth/:provider', async (req, res) => {
+  const redirectTo = String(req.query?.redirect_to || '');
+  if (!/^https?:\/\//.test(redirectTo)) return badRequest(res, 'redirect_to required');
+  await guarded(res, Status.UNAVAILABLE, async () => {
+    const url = await oauthUrl(req.params.provider, redirectTo);
+    if (!url) return res.status(Status.NOT_FOUND).json({ error: 'Unknown sign-in provider' });
+    res.redirect(url);
+  });
 });
 
 /** POST /auth/refresh, trade a refresh token (body or cookie) for a new session; a rejected one clears the cookies. */
@@ -141,8 +175,9 @@ router.post('/auth/keys/import', userAuthMiddleware, async (req, res) => {
   const { key, label } = req.body;
   if (!key || typeof key !== 'string' || !IMPORTABLE_KEY.test(key))
     return badRequest(res, 'key must be 32-128 characters of A-Z a-z 0-9 _ -');
-  await registerApiKey(key, req.user.id, label || 'Imported');
-  res.json({ ok: true, ...keyInfo(key, label || 'Imported') });
+  const claimedFromAgent = await registerApiKey(key, req.user.id, label || 'Imported');
+  if (claimedFromAgent) track.agentKeyClaimed(req.user);
+  res.json({ ok: true, claimed_from_agent: Boolean(claimedFromAgent), ...keyInfo(key, label || 'Imported') });
 });
 
 /**

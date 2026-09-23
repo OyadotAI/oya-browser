@@ -6,6 +6,8 @@
 import type { FormEvent } from 'react';
 import { FormError, PasswordField, SubmitButton, TextField } from '@/components/auth/fields';
 import { clearing, type FormState } from '@/components/auth/use-auth-form';
+import { Turnstile } from '@/components/auth/turnstile';
+import type { Captcha } from '@/components/auth/use-turnstile';
 import type { LoginMode, useLogin } from './use-login';
 
 /** The typed values and their setters. */
@@ -21,16 +23,17 @@ interface FormProps {
   onSubmit: (e: FormEvent) => void;
 }
 
-/** The two modes' labels. */
+/** The modes' labels. */
 const MODES: Array<[LoginMode, string]> = [
-  ['account', 'Account'],
-  ['key', 'API key'],
+  ['account', 'Human'],
+  ['key', 'Machine'],
+  ['agent', 'Agent'],
 ];
 
-/** Switches between account and API-key sign-in, clearing any error. */
+/** Switches between human, machine and agent sign-in, clearing any error. */
 export function ModeSwitch({ fields, form }: Omit<FormProps, 'onSubmit'>) {
   return (
-    <div className="mb-6 grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
+    <div className="mb-6 grid grid-cols-3 gap-1 rounded-lg border border-border p-1">
       {MODES.map(([m, label]) => (
         <button
           key={m}
@@ -69,8 +72,14 @@ export function KeyForm({ fields, form, onSubmit }: FormProps) {
   );
 }
 
-/** Sign-in with email and password. */
-export function AccountForm({ fields, form, onSubmit }: FormProps) {
+/** The account form's props: a form plus its captcha. */
+interface AccountProps extends FormProps {
+  /** The captcha, off when there is no site key. */
+  captcha: Captcha;
+}
+
+/** Sign-in with email and password, behind the captcha when it is on. */
+export function AccountForm({ fields, form, captcha, onSubmit }: AccountProps) {
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <TextField
@@ -88,6 +97,7 @@ export function AccountForm({ fields, form, onSubmit }: FormProps) {
         value={fields.password}
         onChange={clearing(form, fields.setPassword)}
       />
+      <Turnstile captcha={captcha} />
       <FormError error={form.error} />
       <SubmitButton busy={form.submitting} label="Sign in" busyLabel="Signing in..." />
     </form>

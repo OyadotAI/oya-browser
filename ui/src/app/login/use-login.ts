@@ -9,8 +9,10 @@ import { useState, type FormEvent } from 'react';
 import { event } from '@/lib/analytics';
 import { apiUrl, authHeaders, CONSOLE_KEY } from '@/lib/api';
 import { Status } from '@/lib/http-status';
+import { useTurnstile, type Captcha } from '@/components/auth/use-turnstile';
 import {
   firstProblem,
+  afterSignIn,
   HOME,
   runSubmit,
   useFormState,
@@ -18,8 +20,8 @@ import {
   type Submission,
 } from '@/components/auth/use-auth-form';
 
-/** The two ways in. */
-export type LoginMode = 'account' | 'key';
+/** The three ways in: a person's account, a machine's API key, or an agent's setup. */
+export type LoginMode = 'account' | 'key' | 'agent';
 
 /**
  * Prove the server accepts the key before storing it, so a wrong key fails
@@ -60,32 +62,39 @@ function keySubmission(fields: Fields, auth: Auth): Submission {
   };
 }
 
-/** Signs in, counting the outcome either way, then goes home. */
-function signIn(auth: Auth, fields: Fields) {
-  return auth.login(fields.email, fields.password).then(
-    () => (event('sign_in_success'), auth.router.replace(HOME)),
-    (err) => (event('sign_in_failed'), Promise.reject(err)),
+/** Signs in, counting the outcome either way, then goes home; a failure spends the captcha, so it resets. */
+function signIn(auth: Auth, fields: Fields, captcha: Captcha) {
+  return auth.login(fields.email, fields.password, captcha.token || undefined).then(
+    () => (event('sign_in_success'), auth.router.replace(afterSignIn())),
+    (err) => (event('sign_in_failed'), captcha.reset(), Promise.reject(err)),
   );
 }
 
+/** Both fields are needed, and the captcha when it is on. */
+function accountProblem(fields: Fields, captcha: Captcha) {
+  return firstProblem([
+    [!fields.email.trim(), 'Email is required'],
+    [!fields.password, 'Password is required'],
+    [captcha.missing, 'Please complete the captcha check'],
+  ]);
+}
+
 /** Signing in with an account: both fields are needed. */
-function accountSubmission(fields: Fields, auth: Auth): Submission {
+function accountSubmission(fields: Fields, auth: Auth, captcha: Captcha): Submission {
   return {
-    problem: firstProblem([
-      [!fields.email.trim(), 'Email is required'],
-      [!fields.password, 'Password is required'],
-    ]),
-    action: () => signIn(auth, fields),
+    problem: accountProblem(fields, captcha),
+    action: () => signIn(auth, fields, captcha),
     fallback: 'Invalid email or password',
   };
 }
 
 /** Everything the sign-in page renders from. */
-export function useLogin() {
+export function useLogin(siteKey = '') {
   const auth = useSignedInRedirect();
   const form = useFormState();
   const fields = useLoginFields();
+  const captcha = useTurnstile(siteKey);
   const submitKey = (e: FormEvent) => runSubmit(e, form, keySubmission(fields, auth));
-  const submitAccount = (e: FormEvent) => runSubmit(e, form, accountSubmission(fields, auth));
-  return { auth, form, fields, submitKey, submitAccount };
+  const submitAccount = (e: FormEvent) => runSubmit(e, form, accountSubmission(fields, auth, captcha));
+  return { auth, form, fields, captcha, submitKey, submitAccount };
 }

@@ -94,6 +94,7 @@ Everything is optional except the secrets you want to survive a restart.
 | `OYA_OPERATOR_TOKEN` | Bearer token for `/metrics`, fleet drain and host config. |
 | `DATABASE_URL` | Postgres. Takes precedence over Supabase. |
 | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | Supabase storage, and the only backend with email sign-in. |
+| `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | A Cloudflare Turnstile captcha on email sign-in and sign-up. The console shows the widget with the site key; the server checks each token with the secret, and lets requests through if Cloudflare cannot be reached. Unset means no captcha. Google and GitHub sign-in also need this deployment's `/auth/callback` URL in the Supabase project's redirect allowlist. |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `CHAT_MODEL` | The deployment-wide LLM default. Any API key that sets its own overrides it. A private or `http://` base URL works here but is rejected from the dashboard, because tenants can set that field too. |
 | `OYA_FLEET_RUNTIME` | `docker` or `k8s`, what starts a governed browser. |
 | `OYA_MANAGED_*` | The governed runtime: network or NetworkPolicy, image, control URL, egress proxy. On Kubernetes the image must be digest-pinned; a tag can move between verification and scheduling. |

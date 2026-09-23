@@ -142,6 +142,9 @@ jobs:
         API_KEYS: ${{ secrets.API_KEYS }}
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        # Turnstile captcha on sign-in and sign-up. Optional: off when unset.
+        TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+        TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
         OYA_PROFILE_SECRET: ${{ secrets.OYA_PROFILE_SECRET }}
         DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
         DAYTONA_SNAPSHOT: ${{ secrets.DAYTONA_SNAPSHOT }}
@@ -168,6 +171,8 @@ jobs:
           --from-literal=API_KEYS="${API_KEYS}" \
           --from-literal=SUPABASE_URL="${SUPABASE_URL}" \
           --from-literal=SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
+          --from-literal=TURNSTILE_SITE_KEY="${TURNSTILE_SITE_KEY}" \
+          --from-literal=TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY}" \
           --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \
           --from-literal=DAYTONA_API_KEY="${DAYTONA_API_KEY}" \
           --from-literal=DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT}" \

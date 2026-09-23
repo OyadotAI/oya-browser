@@ -27,6 +27,7 @@ import { isConfigured as cloudConfigured } from '../../drivers/sandbox.ts';
 import { FIELDS, PROVIDER_CHOICES, LLM_DEFAULTS } from './fields.ts';
 import { store, state, scopeFor, flush, markChanged, changed } from './store.ts';
 import { MASK_TAIL } from './constants.ts';
+import { agentKeyUnclaimed } from '../auth/service.ts';
 
 export { FIELDS, PROVIDER_CHOICES } from './fields.ts';
 export { saveRouting, restoreRouting } from './routing.ts';
@@ -183,11 +184,19 @@ const hostLlm = (own): LlmConfig => ({
   model: own.chat_model || runtimeConfig.getChatModel(),
 });
 
+/** No LLM at all: an agent's unclaimed key brings its own rather than spend the deployment's. */
+const noLlm = (own): LlmConfig => ({
+  openaiKey: '',
+  baseUrl: runtimeConfig.getOpenAIBase(),
+  model: own.chat_model || '',
+});
+
 /** Effective LLM config for a request. */
 export function resolve(apiKey): LlmConfig {
   const own: any = plain(apiKey);
   const defaults = LLM_DEFAULTS[own.llm_provider] || LLM_DEFAULTS.openai;
-  return own.openai_api_key ? ownLlm(own, defaults) : hostLlm(own);
+  if (own.openai_api_key) return ownLlm(own, defaults);
+  return agentKeyUnclaimed(apiKey) ? noLlm(own) : hostLlm(own);
 }
 
 /**

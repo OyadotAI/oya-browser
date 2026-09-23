@@ -39,7 +39,7 @@ for environment, host in [
     # Analytics and ops webhooks are no-ops when unset, so they ship dark the same way.
     for name in ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET",
                  "POSTHOG_KEY", "POSTHOG_HOST", "SLACK_OPS_WEBHOOK_SIGNUPS", "SLACK_OPS_WEBHOOK_EVENTS",
-                 "OYA_RESIDENTIAL_PROXY_URL"]:
+                 "OYA_RESIDENTIAL_PROXY_URL", "TURNSTILE_SITE_KEY", "TURNSTILE_SECRET_KEY"]:
         assert "secrets." + name in (step.get("env", {}).get(name) or ""), f"{environment}: {name} not sourced"
         assert f'--from-literal={name}="${{{name}' in step["run"], f"{environment}: {name} not passed to pod secret"
 

@@ -7,6 +7,8 @@
 import type { FormEvent } from 'react';
 import { FormError, PasswordField, SubmitButton, TextField } from '@/components/auth/fields';
 import { clearing, type FormState } from '@/components/auth/use-auth-form';
+import { Turnstile } from '@/components/auth/turnstile';
+import type { Captcha } from '@/components/auth/use-turnstile';
 import { MIN_PASSWORD_LENGTH, type SignupFields } from './use-signup';
 
 /** SignupForm's props. */
@@ -15,6 +17,8 @@ interface Props {
   fields: SignupFields;
   /** Error and busy state. */
   form: FormState;
+  /** The captcha, off when there is no site key. */
+  captcha: Captcha;
   /** Handles submit. */
   onSubmit: (e: FormEvent) => void;
 }
@@ -37,7 +41,7 @@ function LengthHint({ password }: HintProps) {
 }
 
 /** The sign-up form. */
-export function SignupForm({ fields, form, onSubmit }: Props) {
+export function SignupForm({ fields, form, captcha, onSubmit }: Props) {
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <TextField
@@ -68,6 +72,7 @@ export function SignupForm({ fields, form, onSubmit }: Props) {
         onChange={clearing(form, fields.setPassword)}
         hint={<LengthHint password={fields.password} />}
       />
+      <Turnstile captcha={captcha} />
       <FormError error={form.error} />
       <SubmitButton busy={form.submitting} label="Create account" busyLabel="Creating account..." />
     </form>

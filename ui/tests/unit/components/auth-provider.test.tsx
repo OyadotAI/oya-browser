@@ -87,11 +87,12 @@ describe('AuthProvider', () => {
     expect(localStorage.getItem('oya_refresh_token')).toBe('r');
   });
 
-  it('signs up, then signs in to the new account', async () => {
-    vi.mocked(api.login).mockResolvedValue({ access_token: 'a', user: USER });
+  it('signs up and adopts the session the server started, without a second sign-in', async () => {
+    vi.mocked(api.signup).mockResolvedValue({ access_token: 'a', user: USER });
     const { result } = setup();
-    await act(() => result.current.signup('a@b', 'pw', 'Ann'));
-    expect(api.signup).toHaveBeenCalledWith('a@b', 'pw', 'Ann');
+    await act(() => result.current.signup('a@b', 'pw', 'Ann', 'captcha'));
+    expect(api.signup).toHaveBeenCalledWith('a@b', 'pw', 'Ann', 'captcha');
+    expect(api.login).not.toHaveBeenCalled();
     expect(result.current.user).toEqual(USER);
   });
 

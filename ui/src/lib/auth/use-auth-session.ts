@@ -5,8 +5,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { logout as apiLogout, signup as apiSignup } from '../api';
-import { clearSession, refreshSession, scheduleRefresh, signIn, startRestore } from './session';
+import { logout as apiLogout } from '../api';
+import { clearSession, refreshSession, scheduleRefresh, signIn, signUp, startRestore } from './session';
 import type { AuthContextType, SessionHandle, User } from './types';
 
 /** Session state plus a stable handle over its setters and refs. */
@@ -37,22 +37,21 @@ function useRestore(handle: SessionHandle, refresh: () => Promise<string | null>
   useEffect(() => startRestore(handle, refresh, clear), [handle, refresh, clear]);
 }
 
-/** Creates the account, then signs in to it. */
-async function signUp(email: string, password: string, displayName: string | undefined, login: SignIn) {
-  await apiSignup(email, password, displayName);
-  await login(email, password);
+/** Sign-in and sign-up, bound to this session and stable for its life. */
+function useSignIns(handle: SessionHandle): Pick<AuthContextType, 'login' | 'signup'> {
+  return useMemo(
+    () => ({
+      login: (email, password, captchaToken) => signIn(handle, email, password, captchaToken),
+      signup: (email, password, displayName, captchaToken) =>
+        signUp(handle, { email, password, displayName, captchaToken }),
+    }),
+    [handle],
+  );
 }
-
-/** Signs in with email and password. */
-type SignIn = (email: string, password: string) => Promise<void>;
 
 /** Login, signup, logout and profile adoption. */
 function useAccountActions(handle: SessionHandle, clear: () => void) {
-  const login = useCallback((email: string, password: string) => signIn(handle, email, password), [handle]);
-  const signup = useCallback(
-    (email: string, password: string, displayName?: string) => signUp(email, password, displayName, login),
-    [login],
-  );
+  const { login, signup } = useSignIns(handle);
   // The cookie is httpOnly; only the server can clear it.
   const logout = useCallback(() => void (clear(), apiLogout()), [clear]);
   const applyProfile = useCallback((profile: User) => handle.setUser(profile), [handle]);

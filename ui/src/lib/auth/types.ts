@@ -27,9 +27,9 @@ export interface AuthContextType {
   /** True until the stored session has been restored or ruled out. */
   loading: boolean;
   /** Signs in with email and password. */
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, captchaToken?: string) => Promise<void>;
   /** Creates an account and signs in to it. */
-  signup: (email: string, password: string, displayName?: string) => Promise<void>;
+  signup: (email: string, password: string, displayName?: string, captchaToken?: string) => Promise<void>;
   /** Forgets the session here and on the server. */
   logout: () => void;
   /** Adopt a profile the server just returned, so the UI is not stale until reload. */

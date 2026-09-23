@@ -8,7 +8,7 @@ import { control, projectId } from '../control/service.ts';
 import { db as supabase, dbAuth as supabaseAuth } from '../../platform/db.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { isEnvKey, isFleetToken, keyCache, keyDigest } from './keys.ts';
+import { isEnvKey, isFleetToken, keyCache, keyDigest, noteAgentKey } from './keys.ts';
 import { BEARER } from './constants.ts';
 
 /** Methods that only read. */
@@ -96,8 +96,10 @@ async function scopedPrincipal(token, allowBrowser) {
 /** Whether a digest belongs to a stored key: asked of Supabase when there is one, keeping the cache in step. */
 async function isStoredKey(digest) {
   if (!supabase) return keyCache.has(digest);
-  const { data, error } = await supabase.from('api_keys').select('key_hash').eq('key_hash', digest).maybeSingle();
+  const columns = 'key_hash, user_id, agent_email';
+  const { data, error } = await supabase.from('api_keys').select(columns).eq('key_hash', digest).maybeSingle();
   if (error) throw new HttpError(Status.UNAVAILABLE, 'Credential validation unavailable');
+  noteAgentKey(digest, Boolean(data?.agent_email && !data.user_id));
   if (data) keyCache.add(digest);
   else keyCache.delete(digest);
   return !!data;

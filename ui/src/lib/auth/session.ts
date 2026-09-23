@@ -3,7 +3,7 @@
  * refresh, restore on load, and clear. The hooks in use-auth-session.ts wire
  * them to React.
  */
-import { login as apiLogin, getProfile, refreshToken as apiRefreshToken } from '../api';
+import { login as apiLogin, signup as apiSignup, getProfile, refreshToken as apiRefreshToken } from '../api';
 import { clearStoredSession, hasSessionCookie, keepRefreshToken, storedRefreshToken } from './storage';
 import { refreshDelay, tokenExpiry } from './token';
 import type { SessionHandle, User } from './types';
@@ -91,11 +91,30 @@ export function startRestore(h: SessionHandle, refresh: () => Promise<string | n
   return () => void (cancelled = true);
 }
 
-/** Signs in and starts a new session version. */
-export async function signIn(h: SessionHandle, email: string, password: string) {
-  const data = await apiLogin(email, password);
+/** Starts a new session version from a sign-in or sign-up answer. */
+function begin(h: SessionHandle, data: RefreshAnswer) {
   h.version.current++;
-  h.setToken(data.access_token);
-  if (data.refresh_token) keepRefreshToken(data.refresh_token);
-  h.setUser(data.user);
+  adopt(h, data);
+}
+
+/** Signs in and starts a new session version. */
+export async function signIn(h: SessionHandle, email: string, password: string, captchaToken?: string) {
+  begin(h, await apiLogin(email, password, captchaToken));
+}
+
+/** Creates the account; the server signs it in, so its session starts here too. */
+export async function signUp(h: SessionHandle, account: SignupRequest) {
+  begin(h, await apiSignup(account.email, account.password, account.displayName, account.captchaToken));
+}
+
+/** What a sign-up sends. */
+export interface SignupRequest {
+  /** Sign-in email. */
+  email: string;
+  /** The chosen password. */
+  password: string;
+  /** Name shown in the console, when given. */
+  displayName?: string;
+  /** The Turnstile token, when the captcha is on. */
+  captchaToken?: string;
 }

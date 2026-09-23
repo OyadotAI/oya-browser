@@ -4,7 +4,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getProfile, login, refreshSession, signup, updateProfile } from '../../../../src/modules/auth/accounts.ts';
+import {
+  getProfile,
+  login,
+  oauthUrl,
+  refreshSession,
+  signup,
+  updateProfile,
+} from '../../../../src/modules/auth/accounts.ts';
 import { Status } from '../../../../src/platform/http-status.ts';
 
 describe('accounts without Supabase', () => {
@@ -13,6 +20,11 @@ describe('accounts without Supabase', () => {
     await assert.rejects(signup('a@example.com', 'password1'), unavailable);
     await assert.rejects(login('a@example.com', 'password1'), unavailable);
     await assert.rejects(refreshSession('rt'), unavailable);
+    await assert.rejects(oauthUrl('google', 'https://oyabrowser.com/auth/callback'), unavailable);
+  });
+
+  it('has no sign-in URL for a provider it does not offer', async () => {
+    assert.equal(await oauthUrl('toString', 'https://oyabrowser.com/auth/callback'), null);
   });
 
   it('has no profile to read', async () => {

@@ -12,7 +12,18 @@
  * accounts.ts and middleware.ts.
  */
 
-export { keyDigest, knownKeys, authReady, validateApiKey, isFleetToken } from './keys.ts';
-export { getKeyOwner, registerApiKey, listApiKeys, deleteApiKey, touchApiKey, provisionKeys } from './api-keys.ts';
-export { signup, login, refreshSession, getProfile, updateProfile } from './accounts.ts';
+export { keyDigest, knownKeys, authReady, validateApiKey, isFleetToken, agentKeyUnclaimed } from './keys.ts';
+export {
+  getKeyOwner,
+  registerApiKey,
+  registerAgentKey,
+  isUnclaimedAgentKey,
+  listApiKeys,
+  deleteApiKey,
+  touchApiKey,
+  provisionKeys,
+} from './api-keys.ts';
+export { issueChallenge, spendChallenge, validEmail, clientAddress, claimUrl } from './agents.ts';
+export { signup, login, refreshSession, oauthUrl, getProfile, updateProfile } from './accounts.ts';
+export { verifyCaptcha } from './captcha.ts';
 export { userAuthMiddleware, authenticateToken, authMiddleware } from './middleware.ts';

@@ -32,6 +32,16 @@ export class FakeResponse {
     return this;
   }
 
+  /** Where a redirect pointed, once one was sent. */
+  location = '';
+
+  /** Records a 302 and finishes the response the way json() does. */
+  redirect(url: string) {
+    this.statusCode = 302;
+    this.location = url;
+    return this.json(undefined);
+  }
+
   /** Records a cleared cookie. */
   clearCookie(name: string, options: any) {
     this.cleared[name] = options;
