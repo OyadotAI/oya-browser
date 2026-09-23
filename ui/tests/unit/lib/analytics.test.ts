@@ -1,7 +1,8 @@
 /**
- * Unit tests for console analytics: nothing runs until the library is
- * initialised, it is initialised with capture switched off everywhere, and
- * events, identify and reset reach the client once it is there.
+ * Unit tests for site and console analytics: nothing runs until the library is
+ * initialised, it is initialised with automatic capture off, a tagged click
+ * says only its name and labels, and events, identify and reset reach the
+ * client once it is there.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -25,18 +26,31 @@ describe('analytics', () => {
     expect(posthog.identify).not.toHaveBeenCalled();
   });
 
-  it('initialises with autocapture, pageviews and session replay off, and only identified persons', async () => {
+  it('initialises with autocapture and session replay off, time on page on, and only identified persons', async () => {
     const analytics = await import('@/lib/analytics');
     await analytics.init({ key: 'phc_test', host: 'https://ph.example.test' });
     expect(posthog.init).toHaveBeenCalledWith('phc_test', {
       api_host: 'https://ph.example.test',
       autocapture: false,
       capture_pageview: false,
-      capture_pageleave: false,
+      capture_pageleave: true,
       disable_session_recording: true,
       disable_external_dependency_loading: true,
       person_profiles: 'identified_only',
     });
+  });
+
+  it('counts a click on a tagged element by its name and labels only, never its text', async () => {
+    const analytics = await import('@/lib/analytics');
+    await analytics.init({ key: 'phc_test', host: 'https://ph.example.test' });
+    document.body.innerHTML =
+      '<a data-track="download_clicked" data-track-label="macOS"><span id="inner">Download for sk_live_secret</span></a><p id="plain">x</p>';
+    analytics.trackedClick(document.getElementById('inner'));
+    analytics.trackedClick(document.getElementById('plain'));
+    analytics.trackedClick(null);
+    expect(posthog.capture.mock.calls).toEqual([
+      ['download_clicked', { label: 'macOS', place: '', path: window.location.pathname }],
+    ]);
   });
 
   it('forwards pageviews, events, identify and reset once initialised, and initialises only once', async () => {

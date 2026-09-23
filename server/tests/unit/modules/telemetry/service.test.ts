@@ -22,7 +22,8 @@ const KEYED: Array<() => void> = [
   () => track.playbookReplayed(KEY, { outcome: 'healed', steps: 14, healed: true }),
   () => track.mcpToolCalled(KEY, { tool: 'click' }),
   () => track.cdpAttached(KEY, { provider: 'steel' }),
-  () => track.desktopConnected(KEY, { platform: 'MacIntel', first: true }),
+  () => track.desktopConnected(KEY, { platform: 'MacIntel', first: true, version: '1.0.115' }),
+  () => track.desktopUpdated(KEY, { platform: 'MacIntel', from: '1.0.114', to: '1.0.115' }),
   () => track.personaCreated(KEY, { has_proxy: false }),
   () => track.serverError(KEY, { ref: '9f2b7c1d', method: 'POST', route: '/browsers/:id/playbooks' }),
 ];
@@ -88,8 +89,11 @@ describe('track', () => {
     const calls = stubFetch(() => json({}));
     track.accountSignedUp({ id: 'u-1', email: 'ana@example.com' });
     track.apiKeyCreated({ id: 'u-1', email: 'ana@example.com' }, '7c1e9a02-aaaa');
-    track.desktopConnected(KEY, { platform: 'MacIntel', first: true });
-    track.desktopConnected(KEY, { platform: 'MacIntel', first: false });
+    track.desktopConnected(KEY, { platform: 'MacIntel', first: true, version: '1.0.115' });
+    track.desktopConnected(KEY, { platform: 'MacIntel', first: false, version: '1.0.115' });
+    track.downloadServed('dl-1', { platform: 'mac', version: '1.0.115', file_type: 'installer', via: 'web' });
+    track.downloadServed('dl-1', { platform: 'mac', version: '1.0.116', file_type: 'update', via: 'updater' });
+    track.updateChecked('dl-1', { platform: 'mac', from_version: '1.0.115' });
     track.playbookSaved(KEY, { steps: 1 });
     track.browserStarted(KEY, { provider: 'cdp', persona: false, via: 'rest' });
     track.serverError(null, { ref: '9f2b7c1d', method: 'GET', route: 'middleware' });
@@ -107,6 +111,7 @@ describe('track', () => {
         ['signups', '🎉 New signup: ana@example.com'],
         ['signups', '🔑 API key created: ana@example.com (project 7c1e9a02)'],
         ['signups', `🖥️ Desktop connected: ${label} (MacIntel)`],
+        ['signups', '⬇️ Desktop downloaded: mac 1.0.115'],
       ].sort(),
     );
   });

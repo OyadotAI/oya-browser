@@ -9,6 +9,8 @@ export const Status = {
   CREATED: 201,
   ACCEPTED: 202,
   NO_CONTENT: 204,
+  /** A range of a file, as a resumable download asks for. */
+  PARTIAL_CONTENT: 206,
   FOUND: 302,
   PERMANENT_REDIRECT: 308,
   BAD_REQUEST: 400,

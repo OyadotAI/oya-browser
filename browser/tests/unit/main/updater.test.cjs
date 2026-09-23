@@ -106,6 +106,7 @@ describe('createUpdater', () => {
     mock.timers.tick(UPDATE_CHECK_INTERVAL_MS);
     assert.equal(updater.autoUpdater.checks, 2);
     assert.equal(updater.autoUpdater.autoDownload, true);
+    assert.deepEqual(updater.autoUpdater.requestHeaders, { 'X-Oya-Version': '1.0.0' }, 'checks say which version asks');
     assert.equal(updater.autoUpdater.autoInstallOnAppQuit, true);
   });
 

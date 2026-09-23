@@ -48,6 +48,8 @@ class Updater {
     ({ autoUpdater: this.autoUpdater } = require('electron-updater'));
     this.autoUpdater.autoDownload = true;
     this.autoUpdater.autoInstallOnAppQuit = true;
+    // The server counts update checks by the version asking; nothing else rides along.
+    this.autoUpdater.requestHeaders = { 'X-Oya-Version': app.getVersion() };
   }
 
   /** Mirrors each updater event into the toolbar state. */

@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 const { takeProxyBytes } = require('../../anonymity/proxy');
 const { handleServerMessage } = require('./server-messages.cjs');
 const constants = require('./constants.cjs');
+const { version: APP_VERSION } = require('../../package.json');
 
 const { CloseCode } = constants;
 
@@ -67,7 +68,9 @@ function authMessage(config, browserId, cdpPort) {
   const provider = config.provider || (process.env.OYA_DOCKER ? 'oya-selfhosted' : 'oya-desktop');
   const host_platform = Object.hasOwn(HOST_PLATFORMS, process.platform) ? HOST_PLATFORMS[process.platform] : undefined;
   const who = { api_key: config.apiKey, browser_id: browserId, browser_name: config.browserName, host_platform };
-  const identity = { type: 'auth', ...who };
+  // So the server can count which versions run, and see an update land.
+  const app_version = APP_VERSION;
+  const identity = { type: 'auth', ...who, app_version };
   // The server may relay CDP to our front door over this socket, and checks each command against what we do.
   const offer = { provider, enrollment_token: process.env.OYA_ENROLLMENT_TOKEN, cdp: !!cdpPort, actions: OYA_ACTIONS };
   return { ...identity, persona: config.persona, ...offer };

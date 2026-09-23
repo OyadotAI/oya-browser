@@ -21,19 +21,40 @@ import { useDocsNav } from '../_docs/nav';
 const DOWNLOAD_ROWS_1: ReactNode[][] = [
   [
     'macOS (Intel + Apple Silicon)',
-    <a key="mac" href={browserDownloads[0].href} className="text-accent hover:text-accent-hover transition-colors">
+    <a
+      key="mac"
+      data-track="download_clicked"
+      data-track-label="macOS"
+      data-track-place="docs"
+      href={browserDownloads[0].href}
+      className="text-accent hover:text-accent-hover transition-colors"
+    >
       Oya Browser.dmg
     </a>,
   ],
   [
     'Windows (x64)',
-    <a key="win" href={browserDownloads[1].href} className="text-accent hover:text-accent-hover transition-colors">
+    <a
+      key="win"
+      data-track="download_clicked"
+      data-track-label="Windows"
+      data-track-place="docs"
+      href={browserDownloads[1].href}
+      className="text-accent hover:text-accent-hover transition-colors"
+    >
       Oya Browser.exe
     </a>,
   ],
   [
     'Linux (x64)',
-    <a key="linux" href={browserDownloads[2].href} className="text-accent hover:text-accent-hover transition-colors">
+    <a
+      key="linux"
+      data-track="download_clicked"
+      data-track-label="Linux"
+      data-track-place="docs"
+      href={browserDownloads[2].href}
+      className="text-accent hover:text-accent-hover transition-colors"
+    >
       Oya Browser.AppImage
     </a>,
   ],

@@ -1,15 +1,16 @@
 /**
  * Mounts product analytics when the operator turned it on. The layout renders
  * this only when both PostHog settings are set on the server, so a console
- * with analytics off has nothing here at all. Pageviews follow the route, and
- * the signed-in person is identified when they sign in and forgotten when they
- * sign out.
+ * with analytics off has nothing here at all. Pageviews follow the route,
+ * tagged clicks count on public pages, and the signed-in person is identified
+ * when they sign in and forgotten when they sign out.
  */
 'use client';
 
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { init, pageview, identify, reset } from '@/lib/analytics';
+import { init, pageview, identify, reset, trackedClick } from '@/lib/analytics';
+import { isPublicPage } from '@/lib/public-pages';
 import { useAuth } from '@/components/auth-provider';
 
 /** What the server handed the page. */
@@ -38,6 +39,17 @@ function usePageviews(ready: boolean) {
   }, [ready, pathname]);
 }
 
+/** Counts clicks on elements a public page tagged with data-track; the console tags nothing and is never listened on. */
+function useTrackedClicks(ready: boolean) {
+  const pathname = usePathname();
+  useEffect(() => {
+    if (!ready || !isPublicPage(pathname)) return;
+    const onClick = (e: MouseEvent) => trackedClick(e.target);
+    document.addEventListener('click', onClick, { capture: true });
+    return () => document.removeEventListener('click', onClick, { capture: true });
+  }, [ready, pathname]);
+}
+
 /** Loads the library once; `ready` turns true when it can capture, so nothing fires into the void before then. */
 function useAnalyticsReady(posthogKey: string, host: string) {
   const [ready, setReady] = useState(false);
@@ -51,6 +63,7 @@ function useAnalyticsReady(posthogKey: string, host: string) {
 export function Analytics({ posthogKey, host }: Props) {
   const ready = useAnalyticsReady(posthogKey, host);
   usePageviews(ready);
+  useTrackedClicks(ready);
   useAnalyticsIdentity(ready);
   return null;
 }

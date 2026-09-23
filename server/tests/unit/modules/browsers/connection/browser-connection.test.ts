@@ -17,6 +17,7 @@ import { FakeSocket, disconnectBrowser } from '../../../support/fakes.ts';
 import { stubControl } from '../../../support/browsers.ts';
 import { stubFetch, json } from '../../../support/http.ts';
 import * as keyConfig from '../../../../../src/modules/config/service.ts';
+import { track } from '../../../../../src/modules/telemetry/service.ts';
 
 const B = 'b-conn';
 
@@ -104,6 +105,33 @@ describe('BrowserConnection', () => {
     } finally {
       delete process.env.SLACK_OPS_WEBHOOK_SIGNUPS;
     }
+  });
+
+  it('records the desktop version it connects with, and a new one as an update', async () => {
+    keyConfig.reset();
+    const connected = mock.method(track, 'desktopConnected', () => {});
+    const updated = mock.method(track, 'desktopUpdated', () => {});
+    await connect(auth({ host_platform: 'MacIntel', app_version: '1.0.114' }));
+    await connect(auth({ host_platform: 'MacIntel', app_version: '1.0.115' }));
+    assert.deepEqual(
+      connected.mock.calls.map((c) => c.arguments[1]),
+      [
+        { platform: 'MacIntel', first: true, version: '1.0.114' },
+        { platform: 'MacIntel', first: false, version: '1.0.115' },
+      ],
+    );
+    assert.deepEqual(
+      updated.mock.calls.map((c) => c.arguments[1]),
+      [{ platform: 'MacIntel', from: '1.0.114', to: '1.0.115' }],
+    );
+  });
+
+  it('calls no update for an app too old to say its version', async () => {
+    keyConfig.reset();
+    const updated = mock.method(track, 'desktopUpdated', () => {});
+    await connect(auth({ app_version: '1.0.114' }));
+    await connect(auth());
+    assert.equal(updated.mock.callCount(), 0);
   });
 
   it('keeps the actions a browser announced, sorted, and lists them on its detail', async () => {

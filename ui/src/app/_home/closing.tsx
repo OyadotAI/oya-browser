@@ -20,10 +20,10 @@ export function Closing() {
         cloud when the data says it has to stay there.
       </p>
       <div className={styles.actions}>
-        <Link href="/dashboard" className={styles.primary}>
+        <Link href="/dashboard" className={styles.primary} data-track="cta_clicked" data-track-label="closing_console">
           Open the console <ArrowUpRight size={17} aria-hidden="true" />
         </Link>
-        <a href={repository} className={styles.secondary}>
+        <a href={repository} className={styles.secondary} data-track="cta_clicked" data-track-label="closing_github">
           Read the source <ArrowRight size={15} aria-hidden="true" />
         </a>
       </div>

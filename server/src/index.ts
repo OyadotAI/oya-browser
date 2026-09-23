@@ -6,7 +6,7 @@ import { migrateLegacy } from './modules/control/migrate.ts';
 import { createEgressServer } from './modules/control/egress.ts';
 import { control } from './modules/control/service.ts';
 import * as analytics from './platform/analytics.ts';
-import { track } from './modules/telemetry/index.ts';
+import { track, trackDownloads } from './modules/telemetry/index.ts';
 import { forwardHttp } from './modules/control/cluster.ts';
 import { startWorkers, stopWorkers, workerHealth } from './modules/control/worker.ts';
 
@@ -167,7 +167,8 @@ app.get(['/health', '/metrics'], apiRouter);
 // The folder itself has no page: static would add a slash and Next.js strip it again, forever.
 // Send it to the landing page's per-platform download buttons instead.
 app.get(['/downloads', '/downloads/'], (req, res) => res.redirect(Status.FOUND, '/#download'));
-app.use('/downloads', express.static(DOWNLOADS_DIR));
+// Counted on the way out (installers, update checks, updates), then served as plain files.
+app.use('/downloads', trackDownloads, express.static(DOWNLOADS_DIR));
 
 // ── MCP endpoints (root level, clients connect directly) ──
 // A per-browser MCP request is served by the replica holding that browser.
