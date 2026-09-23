@@ -162,7 +162,7 @@ try {
   await page.locator('#url-bar').press('Enter');
   await page.locator('#navigation-progress').waitFor({ state: 'hidden' });
 
-  await page.getByRole('button', { name: 'Oya Agent', exact: true }).click();
+  // Ask is open from the moment pages show: a new person starts there.
   await page.locator('#pane-chat').waitFor({ state: 'visible' });
   await page.getByRole('tab', { name: 'Record', exact: true }).click();
   await page.locator('#pane-record').waitFor({ state: 'visible' });

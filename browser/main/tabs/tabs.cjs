@@ -208,12 +208,13 @@ class TabManager {
     this.sendTabList();
   }
 
-  /** Leaves the setup screen and starts showing pages, on `url`. */
+  /** Leaves the setup screen and starts showing pages, on `url`, with Ask open: it is where a new person starts. */
   enterBrowsingMode(url) {
     if (this.ctx.shell.browsingMode) return;
     this.ctx.shell.browsingMode = true;
     this.createTab(url || HOME_URL, true);
     this.ctx.shell.send('mode-changed', 'browsing');
+    this.ctx.layout.reveal();
   }
 
   /** Back to the welcome screen (log out): every tab closes and the shell shows setup. */

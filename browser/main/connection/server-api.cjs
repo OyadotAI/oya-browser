@@ -38,4 +38,22 @@ async function getFromApi(ctx, route) {
   return res.json();
 }
 
-module.exports = { serverHttpBase, canCallServer, postToBrowserApi, getFromApi };
+/** POSTs JSON to `/api/<route>` as this project: answers its JSON, or throws with the server's own error. */
+async function postToApi(ctx, route, payload) {
+  const config = ctx.config.values;
+  const res = await fetch(`${serverHttpBase(config.serverUrl)}/api/${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+    body: JSON.stringify(payload),
+  });
+  return readApiAnswer(res);
+}
+
+/** A response's JSON, or an error with the server's own message. */
+async function readApiAnswer(res) {
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `Server returned ${res.status}`);
+  return body;
+}
+
+module.exports = { serverHttpBase, canCallServer, postToBrowserApi, getFromApi, postToApi };

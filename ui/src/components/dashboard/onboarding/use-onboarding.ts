@@ -1,9 +1,9 @@
 /**
- * Onboarding's state: the chosen profile and provider, the credentials typed
- * for it, what the desktop has saved so far, and the pair and finish actions.
+ * Onboarding's state: whether the desktop has connected, the AI model chosen
+ * for Ask and its key, the step the preview shows, and the pair and finish actions.
  */
 import { useState } from 'react';
-import { saveConfig, type KeyConfig } from '../config';
+import { LLM_PRESETS, saveConfig, type KeyConfig } from '../config';
 import { useDesktopSignIn } from '../hooks/use-desktop-sign-in';
 import { useBusyAction } from '../hooks/use-busy-action';
 import type { BrowserRow, Persona } from '../types';
@@ -24,39 +24,50 @@ export interface OnboardingInput {
 
 /** Everything the onboarding page shows and does. */
 export function useOnboarding(input: OnboardingInput) {
-  const form = useOnboardingForm(input.config);
+  const model = useModelForm(input.config);
   const pairing = useDesktopSignIn(input.apiKey);
-  const saving = useFinish(input, form.provider, form.credentials);
-  const busy = busyWith(pairing.busy, saving.busy);
-  const pair = () => pairing.open(form.profileId);
-  return { ...form, ...derived(input, form.profileId, form.provider), busy, pair, finish: saving.finish };
+  const saving = useFinish(input, model.provider, model.key);
+  const busy = pairing.busy ? 'pair' : saving.busy ? 'save' : null;
+  const hasModel = !!input.config.effective?.hasLlmKey;
+  const desktop = desktopOf(input);
+  const preview = usePreviewStep(!!desktop);
+  return { ...model, ...preview, desktop, hasModel, busy, pair: () => pairing.open(), finish: saving.finish };
 }
 
-/** The choices: profile, provider, and credentials typed for it. */
-function useOnboardingForm(config: KeyConfig) {
-  const [profileId, setProfileId] = useState('default');
-  const [provider, setProvider] = useState(config.browser_provider || 'oya-cloud');
-  const [credentials, setCredentials] = useState<Record<string, string>>({});
-  return { profileId, setProfileId, provider, setProvider, credentials, setCredentials };
+/** A step of onboarding, by name. */
+export type Step = 'desktop' | 'model';
+
+/** The step the preview shows: the one the person points at, else the first not done. */
+function usePreviewStep(desktopDone: boolean) {
+  const [focused, setFocused] = useState<Step | null>(null);
+  const step: Step = focused ?? (desktopDone ? 'model' : 'desktop');
+  return { step, setFocused };
 }
 
-/** Which action is running, so only its button shows a spinner. */
-const busyWith = (pairing: boolean, saving: boolean) => (pairing ? 'pair' : saving ? 'save' : null);
-
-/** What follows from the choices: the profile, its desktop, its saved sites, and what the provider needs. */
-function derived({ personas, browsers, config }: OnboardingInput, profileId: string, provider: string) {
-  const profile = personas.find((p) => (profileId === 'default' ? p.isDefault : p.id === profileId));
-  const desktop = browsers.find((b) => b.provider === 'oya-desktop' && b.persona === profile?.id);
-  const chosen = config.providers.find((p) => p.id === provider);
-  return { desktop, sites: profile?.login?.sites || [], needs: chosen?.needs || [], configured: !!chosen?.configured };
+/** The AI provider Ask runs on and the key typed for it. */
+function useModelForm(config: KeyConfig) {
+  const known = LLM_PRESETS.some((p) => p.id === config.llm_provider);
+  const [provider, setProvider] = useState(known ? config.llm_provider : LLM_PRESETS[0].id);
+  const [key, setKey] = useState('');
+  return { provider, setProvider, key, setKey };
 }
 
-/** Saves the provider and its credentials, marks the key onboarded, then calls `onDone`. */
-function useFinish({ apiKey, onDone }: OnboardingInput, provider: string, credentials: Record<string, string>) {
+/** The desktop running as the default profile, once one has connected. */
+function desktopOf({ personas, browsers }: OnboardingInput) {
+  const profile = personas.find((p) => p.isDefault);
+  return browsers.find((b) => b.provider === 'oya-desktop' && b.persona === profile?.id);
+}
+
+/** A typed key as settings, on the provider's own defaults; nothing when none was typed. */
+const modelSettings = (provider: string, key: string): Record<string, string> =>
+  key.trim() ? { llm_provider: provider, openai_api_key: key.trim(), chat_model: '', openai_base_url: '' } : {};
+
+/** Saves the model key (when one was typed), marks the key onboarded, then calls `onDone`. */
+function useFinish({ apiKey, onDone }: OnboardingInput, provider: string, key: string) {
   const { busy, run } = useBusyAction();
   const finish = () =>
     run(async () => {
-      await saveConfig(apiKey, { ...credentials, browser_provider: provider, onboarded: 'true' });
+      await saveConfig(apiKey, { ...modelSettings(provider, key), onboarded: 'true' });
       onDone();
     });
   return { busy, finish };

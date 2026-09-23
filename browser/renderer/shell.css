@@ -1813,6 +1813,47 @@ button:active:not(:disabled) {
 .chat-toolbar select {
   font-weight: 500;
 }
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+}
+.chat-card[hidden] {
+  display: none;
+}
+.chat-card h2 {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.chat-card p {
+  line-height: 1.55;
+  color: var(--secondary);
+}
+.chat-card :is(select, input) {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted-surface);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.chat-card .chat-card-error {
+  color: var(--danger);
+}
+.chat-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.chat-card-actions :first-child {
+  margin-right: auto;
+}
 .chat-files {
   display: flex;
   flex-wrap: wrap;

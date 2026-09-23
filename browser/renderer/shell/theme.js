@@ -2,7 +2,7 @@
  * Appearance: system, light or dark, following the OS when set to system, and
  * the saved UI preferences (theme, platform, last pane) at start.
  */
-/* global oyaBrowser, Dom, DevPanel */
+/* global oyaBrowser, Dom */
 /* exported Theme */
 
 /** The shell's theme. */
@@ -33,14 +33,13 @@ const Theme = {
     oyaBrowser.saveUiPreferences({ theme: Theme.theme });
   },
 
-  /** Restores the saved preferences, and the pane that was open. */
+  /** Restores the saved preferences. Launch always opens on Ask. */
   restore(value) {
     Theme.theme = ['system', 'light', 'dark'].includes(value.theme) ? value.theme : 'system';
     if (typeof value.systemDark === 'boolean') Theme.systemDark = value.systemDark;
     Dom.byId('theme-preference').value = Theme.theme;
     document.documentElement.dataset.platform = value.platform;
     Theme.apply();
-    if (['record', 'chat', 'actions', 'network', 'source'].includes(value.pane)) DevPanel.show(value.pane);
   },
 };
 

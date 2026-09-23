@@ -40,6 +40,20 @@ describe('runChat', () => {
     );
   });
 
+  it('turns a provider that refuses the key or model into llm_rejected, without echoing what it said', async () => {
+    for (const status of [401, 404]) {
+      mock.method(globalThis, 'fetch', async () => new Response('secret provider text', { status }));
+      await assert.rejects(runChat(BROWSER, [{ role: 'user', content: 'x' }], { apiKey: 'bad-key' }), (err: any) => {
+        assert.equal(err.status, 422);
+        assert.equal(err.code, 'llm_rejected');
+        assert.match(err.message, new RegExp(`refused the request \\(${status}\\)`));
+        assert.doesNotMatch(err.message, /secret provider text/);
+        return true;
+      });
+      mock.restoreAll();
+    }
+  });
+
   it('refuses with 429 once the deployment’s hourly token budget is spent', async () => {
     usage.record('spent-key', 'chat_input_tokens', QUOTAS.chatTokensPerHour);
     await assert.rejects(runChat(BROWSER, [{ role: 'user', content: 'x' }], { apiKey: 'spent-key' }), {

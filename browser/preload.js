@@ -62,6 +62,8 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   devAction: (action, params) => ipcRenderer.invoke('dev-action', action, params),
   sendChat: (messages, data) => ipcRenderer.invoke('send-chat', messages, data),
   stopChat: () => ipcRenderer.invoke('stop-chat'),
+  modelStatus: () => ipcRenderer.invoke('model-status'),
+  saveModelKey: (provider, key) => ipcRenderer.invoke('save-model-key', provider, key),
   listPersonas: () => ipcRenderer.invoke('list-personas'),
   // Routines
   listRoutines: () => ipcRenderer.invoke('list-routines'),

@@ -8,7 +8,5 @@ const MAX_IMPORT_BYTES = 5_000_000;
 const CONFIRM_BUTTON = 1;
 /** Themes the shell may choose. */
 const THEMES = ['system', 'light', 'dark'];
-/** Dev-panel panes the shell may remember. */
-const PANES = ['record', 'chat', 'routines', 'actions', 'network', 'source'];
 
-module.exports = { MAX_EXPORT_CHARS, MAX_IMPORT_BYTES, CONFIRM_BUTTON, THEMES, PANES };
+module.exports = { MAX_EXPORT_CHARS, MAX_IMPORT_BYTES, CONFIRM_BUTTON, THEMES };

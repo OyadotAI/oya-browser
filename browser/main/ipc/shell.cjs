@@ -1,11 +1,11 @@
 /** IPC: overlays over the page, the dev panel, and the shell's own preferences. */
-const { THEMES, PANES } = require('./constants.cjs');
+const { THEMES } = require('./constants.cjs');
 const { FORMATS, DEFAULT_FORMAT } = require('../../scripts/page-render.cjs');
 
 /** Each preference the shell may save, and the values it accepts. */
-const PREFERENCES = { theme: THEMES, pane: PANES, pageFormat: FORMATS };
+const PREFERENCES = { theme: THEMES, pageFormat: FORMATS };
 
-/** Saves the theme, pane and page format the shell chose, ignoring anything else. */
+/** Saves the theme and page format the shell chose, ignoring anything else. */
 function saveUiPreferences(ctx, _e, preferences) {
   if (!preferences || typeof preferences !== 'object') return false;
   const ui = { ...ctx.config.values.ui };
@@ -26,7 +26,6 @@ const SHELL_HANDLERS = {
   'resize-dev-panel': (ctx, _e, width) => ctx.layout.resize(width),
   'get-ui-preferences': (ctx) => ({
     theme: 'system',
-    pane: 'chat',
     pageFormat: DEFAULT_FORMAT,
     pageFormats: FORMATS,
     ...ctx.config.values.ui,

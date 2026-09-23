@@ -1,0 +1,161 @@
+/*
+ * Onboarding as a pre-flight checklist: a rail whose green signal fills as
+ * steps complete, beside a lit monitor playing the step in view.
+ */
+
+.stage {
+  position: relative;
+  isolation: isolate;
+}
+
+/* A faint grid and a green bloom behind the whole page, so it reads as a place, not a form. */
+.stage::before {
+  content: '';
+  position: absolute;
+  inset: -40px 0 0;
+  z-index: -1;
+  background-image:
+    radial-gradient(60% 50% at 78% 30%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 70%),
+    linear-gradient(color-mix(in srgb, var(--foreground) 3%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--foreground) 3%, transparent) 1px, transparent 1px);
+  background-size:
+    auto,
+    48px 48px,
+    48px 48px;
+  mask-image: linear-gradient(to bottom, black 55%, transparent);
+  pointer-events: none;
+}
+
+/* One staggered entrance on load. */
+.rise {
+  animation: rise 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.rise:nth-child(2) {
+  animation-delay: 80ms;
+}
+.rise:nth-child(3) {
+  animation-delay: 160ms;
+}
+.rise:nth-child(4) {
+  animation-delay: 240ms;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+/* The progress ticks beside PRE-FLIGHT. */
+.tick {
+  height: 3px;
+  width: 22px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.4s;
+}
+.tickOn {
+  background: var(--primary);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 60%, transparent);
+}
+
+/* The rail: each step hangs from a node; the line below a done node carries the signal. */
+.step {
+  position: relative;
+  padding: 0 0 36px 52px;
+}
+.step:last-child {
+  padding-bottom: 0;
+}
+.step::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 38px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.step:last-child::before {
+  display: none;
+}
+.stepDone::before {
+  background: linear-gradient(var(--primary), color-mix(in srgb, var(--primary) 25%, var(--border)));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+.node {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  transition: all 0.3s;
+}
+.nodeActive {
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.nodeDone {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+/* A step waiting on the person: its dot breathes. */
+.pulse {
+  animation: breathe 1.8s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The monitor: window chrome, a lit edge and a bloom under it. */
+.monitor {
+  position: relative;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--card) 92%, black);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent),
+    0 30px 80px -30px color-mix(in srgb, var(--primary) 35%, transparent),
+    0 24px 60px -20px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.screen {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 300px;
+  background-image: radial-gradient(color-mix(in srgb, var(--foreground) 7%, transparent) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+.screen video {
+  animation: fade 0.5s ease both;
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise,
+  .pulse,
+  .screen video {
+    animation: none;
+  }
+}

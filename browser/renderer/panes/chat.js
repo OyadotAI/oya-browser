@@ -3,7 +3,7 @@
  * rendered from a small, escaped subset of Markdown: paragraphs, headings,
  * lists, code blocks, inline code, bold and italic.
  */
-/* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress, ChatFiles, ChatPersona */
+/* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress, ChatFiles, ChatPersona, ChatModel */
 /* exported Chat */
 
 /** A Markdown list item: `-`, `*`, `•` or `1.` / `1)` at the start of a line. */
@@ -18,6 +18,8 @@ const CHAT_TEXT = {
   stopped: 'Stopped.',
   /** The error the main process answers a stopped chat with. */
   stoppedError: 'Stopped',
+  /** The codes the server refuses a chat with when the project has no model key, or the provider refused it. */
+  keyCodes: ['llm_unconfigured', 'llm_rejected'],
 };
 
 /** The chat. */
@@ -170,11 +172,16 @@ const Chat = {
     input.focus();
   },
 
-  /** One turn: show the question, wait for the answer, with the input locked meanwhile. */
+  /** One turn: show the question, then wait for the answer. */
   async exchange(text) {
-    Chat.lock(true);
     ChatPlaybook.withdraw();
     Chat.say({ role: 'user', content: ChatFiles.attachTo(text) });
+    await Chat.turn();
+  },
+
+  /** Asks with the conversation as it stands, with the input locked until the answer comes. */
+  async turn() {
+    Chat.lock(true);
     Chat.showThinking();
     ChatProgress.start();
     await Chat.ask();
@@ -201,9 +208,10 @@ const Chat = {
     }
   },
 
-  /** Shows an answer: the reply, a stop, or the error. */
+  /** Shows an answer: the reply, a stop, the model card when the project has no key, or the error. */
   answer(data) {
-    if (data.error === CHAT_TEXT.stoppedError) Chat.say({ role: 'assistant', content: CHAT_TEXT.stopped });
+    if (CHAT_TEXT.keyCodes.includes(data.code)) ChatModel.needed(data.code === 'llm_rejected' && data.error);
+    else if (data.error === CHAT_TEXT.stoppedError) Chat.say({ role: 'assistant', content: CHAT_TEXT.stopped });
     else if (data.error) Chat.sayError(data.error);
     else Chat.reply(data.text || CHAT_TEXT.noResponse, data.toolCalls || [], data.replayable);
   },

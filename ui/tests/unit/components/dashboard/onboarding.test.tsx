@@ -1,28 +1,24 @@
 /**
  * Unit tests for onboarding, through what the user sees and clicks: the
- * desktop state, saved sites, the provider's credentials, saving, and copying
- * the SDK example.
+ * desktop state, choosing an AI model for Ask and saving its key, and failure.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-vi.mock('@/components/dashboard/config', () => ({ saveConfig: vi.fn(), desktopSignInUrl: vi.fn() }));
+vi.mock('@/components/dashboard/config', async (actual) => ({
+  ...(await actual<object>()),
+  saveConfig: vi.fn(),
+  desktopSignInUrl: vi.fn(),
+}));
 vi.mock('@/lib/api', () => ({ apiOrigin: () => 'https://oya.example' }));
-vi.mock('@/components/ui/syntax-code', () => ({ default: ({ code }: { code: string }) => <code>{code}</code> }));
 
 import { saveConfig, desktopSignInUrl, type KeyConfig } from '@/components/dashboard/config';
 import Onboarding from '@/components/dashboard/onboarding';
 import { ToastProvider } from '@/components/dashboard/toast';
 import type { BrowserRow, Persona } from '@/components/dashboard/types';
 
-const config = {
-  browser_provider: 'steel',
-  providers: [
-    { id: 'oya-cloud', label: 'Oya Cloud', needs: [], configured: true },
-    { id: 'steel', label: 'Steel', needs: ['steel_api_key'], configured: false },
-  ],
-} as unknown as KeyConfig;
+const noModel = { llm_provider: '', effective: { hasLlmKey: false } } as unknown as KeyConfig;
 const persona = {
   id: 'p0',
   name: 'Default',
@@ -31,14 +27,14 @@ const persona = {
 };
 
 /** Renders onboarding with the given personas and browsers. */
-function setup(personas = [persona], browsers: Partial<BrowserRow>[] = []) {
+function setup(browsers: Partial<BrowserRow>[] = [], config = noModel) {
   const onDone = vi.fn();
   render(
     <ToastProvider>
       <Onboarding
         apiKey="key-1"
         config={config}
-        personas={personas as Persona[]}
+        personas={[persona] as Persona[]}
         browsers={browsers as BrowserRow[]}
         onDone={onDone}
       />
@@ -53,61 +49,72 @@ describe('Onboarding', () => {
   });
   afterEach(cleanup);
 
-  it('offers to connect until a desktop runs as the profile', () => {
+  it('offers to connect until a desktop runs as the default profile', () => {
     setup();
     expect(screen.getByRole('button', { name: 'Connect desktop' })).toBeTruthy();
   });
 
-  it('offers to open the desktop once one runs as the profile', () => {
-    setup([persona], [{ provider: 'oya-desktop', persona: 'p0' }]);
+  it('offers to open the desktop once one is connected', () => {
+    setup([{ provider: 'oya-desktop', persona: 'p0' }]);
     expect(screen.getByRole('button', { name: 'Open desktop' })).toBeTruthy();
+    expect(screen.getByText('Connected')).toBeTruthy();
   });
 
-  it('pairs the chosen profile', async () => {
+  it('pairs the desktop through a pairing link', async () => {
     vi.mocked(desktopSignInUrl).mockResolvedValueOnce('#x');
     setup();
     await userEvent.click(screen.getByRole('button', { name: 'Connect desktop' }));
-    expect(desktopSignInUrl).toHaveBeenCalledWith('key-1', 'default');
+    expect(desktopSignInUrl).toHaveBeenCalledWith('key-1', undefined);
   });
 
-  it('counts the sites the profile has saved', () => {
+  it('says Ask needs an AI model', () => {
     setup();
-    expect(screen.getByText('Saved state for 1 site')).toBeTruthy();
+    expect(screen.getByText(/Ask needs one to think/)).toBeTruthy();
   });
 
-  it('asks for what the chosen provider needs', () => {
+  it('shows the desktop clip first, then the model clip once the desktop is connected', () => {
     setup();
-    expect(screen.getByLabelText('steel api key')).toBeTruthy();
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('/oya-ask-loop.mp4');
+    cleanup();
+    setup([{ provider: 'oya-desktop', persona: 'p0' }]);
+    expect(document.querySelector('video')?.getAttribute('src')).toBe('/onboarding-ask-key.mp4');
   });
 
-  it('saves the provider and its credentials, marks the key onboarded, then finishes', async () => {
+  it('saves the typed key on the chosen provider’s defaults, marks the key onboarded, then finishes', async () => {
     vi.mocked(saveConfig).mockResolvedValueOnce({} as KeyConfig);
     const onDone = setup();
-    await userEvent.type(screen.getByLabelText('steel api key'), 's3');
-    await userEvent.click(screen.getByRole('button', { name: /Save and open console/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Gemini' }));
+    await userEvent.type(screen.getByLabelText('API key'), ' AIza1 ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save and continue' }));
     expect(saveConfig).toHaveBeenCalledWith('key-1', {
-      steel_api_key: 's3',
-      browser_provider: 'steel',
+      llm_provider: 'gemini',
+      openai_api_key: 'AIza1',
+      chat_model: '',
+      openai_base_url: '',
       onboarded: 'true',
     });
     expect(onDone).toHaveBeenCalled();
   });
 
+  it('can be skipped without a key, leaving the model alone', async () => {
+    vi.mocked(saveConfig).mockResolvedValueOnce({} as KeyConfig);
+    setup();
+    await userEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
+    expect(saveConfig).toHaveBeenCalledWith('key-1', { onboarded: 'true' });
+  });
+
+  it('marks the model step done when the project already has one', () => {
+    setup([], { llm_provider: 'openai', effective: { hasLlmKey: true } } as unknown as KeyConfig);
+    expect(screen.getByRole('button', { name: 'OpenAI' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('Ready')).toBeTruthy();
+    expect(screen.getByPlaceholderText(/replace the saved one/)).toBeTruthy();
+  });
+
   it('stays put and toasts when saving fails', async () => {
     vi.mocked(saveConfig).mockRejectedValueOnce(new Error('Bad key'));
     const onDone = setup();
-    await userEvent.click(screen.getByRole('button', { name: /Go to console/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
     expect(await screen.findByText('Bad key')).toBeTruthy();
     expect(onDone).not.toHaveBeenCalled();
-  });
-
-  it('shows a placeholder key but copies the real one', async () => {
-    const user = userEvent.setup();
-    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
-    setup();
-    expect(screen.getByText(/<your-api-key>/)).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Copy with your key' }));
-    expect(write.mock.calls[0][0]).toContain('"key-1"');
-    expect(screen.getByRole('button', { name: 'Copied with your key' })).toBeTruthy();
   });
 });

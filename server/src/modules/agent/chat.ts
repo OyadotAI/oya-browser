@@ -8,6 +8,7 @@ import * as keyConfig from '../config/service.ts';
 import { metrics } from '../../platform/metrics.ts';
 import { checkHourly } from '../../platform/limits.ts';
 import { HttpError } from '../../platform/errors.ts';
+import { LlmError } from '../../platform/llm/index.ts';
 import { Status } from '../../platform/http-status.ts';
 import { redact, isFileValue } from './placeholders.ts';
 import { startRun } from './recorder.ts';
@@ -45,7 +46,7 @@ function enforceBudget(apiKey, own) {
 const noLlm = () =>
   new HttpError(
     Status.UNPROCESSABLE,
-    'No LLM key configured for this API key. Add one in Settings, run `oya init`, or POST /api/config.',
+    "No LLM key configured for this project. Add yours in the desktop app's Ask panel or in Settings > AI model, run `oya init`, or POST /api/config.",
     { code: 'llm_unconfigured' },
   );
 
@@ -109,6 +110,23 @@ export async function runChat(browserId, messages, options: any = {}) {
   await begin(browserId, newRun(messages, values, secrets));
   const system = { role: 'system', content: systemPrompt(values, scalars, files, secrets) };
   const allMessages = [system, ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) }))];
-  const verify = options.verify ?? AGENT_VERIFY;
-  return agentLoop({ ...options, browserId, llm, budget, verify, files, values, secrets }, allMessages);
+  const run = { ...options, browserId, llm, budget, verify: options.verify ?? AGENT_VERIFY, files, values, secrets };
+  return agentLoop(run, allMessages).catch(rejectedKey);
+}
+
+/** Provider answers that mean the key or model is wrong, not that the provider is down. */
+const KEY_PROBLEMS: number[] = [Status.BAD_REQUEST, Status.UNAUTHORIZED, Status.FORBIDDEN, Status.NOT_FOUND];
+
+/**
+ * A provider that refused the key or model becomes an error the caller can act on (Ask
+ * reopens its key card on the code), not an anonymous 500. The provider's own words stay
+ * in the log: the base URL is tenant-set, so echoing them would be a read primitive.
+ */
+function rejectedKey(err): never {
+  if (!(err instanceof LlmError) || !KEY_PROBLEMS.includes(err.status as number)) throw err;
+  throw new HttpError(
+    Status.UNPROCESSABLE,
+    `Your AI provider refused the request (${err.status}). Check the API key and model under Ask > Model.`,
+    { code: 'llm_rejected' },
+  );
 }

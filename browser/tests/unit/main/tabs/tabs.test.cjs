@@ -157,6 +157,14 @@ describe('TabManager', () => {
     assert.deepEqual(ctx.shell.sentOn('mode-changed'), ['browsing']);
   });
 
+  it('opens the Ask panel when pages first show, so a new person starts there', () => {
+    let revealed = 0;
+    ctx.layout.reveal = () => revealed++;
+    ctx.shell.browsingMode = false;
+    ctx.tabs.enterBrowsingMode();
+    assert.equal(revealed, 1);
+  });
+
   it('leaves browsing mode with every tab closed and none reopened', () => {
     ctx.shell.browsingMode = false;
     ctx.tabs.enterBrowsingMode();

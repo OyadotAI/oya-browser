@@ -23,7 +23,7 @@
   ],
   "type": "module",
   "bin": {
-    "oya": "./dist/index.js"
+    "oya": "dist/index.js"
   },
   "files": [
     "dist"

@@ -11,12 +11,21 @@ vi.mock('@/lib/api', () => ({
   apiUrl: (p: string) => p,
   authHeaders: () => ({}),
   listApiKeys: vi.fn(),
+  createApiKey: vi.fn(),
 }));
 
-import { listApiKeys } from '@/lib/api';
+import { createApiKey, listApiKeys } from '@/lib/api';
 import { RENEW_INTERVAL_MS, PROJECT_CREDENTIAL, PROJECT_ID } from '@/components/dashboard/projects/constants';
 import { call, projectIdFor } from '@/components/dashboard/projects/project-api';
-import { loadProjects, openAny, openProject, renew, watchRenewal } from '@/components/dashboard/projects/session';
+import {
+  loadProjects,
+  openAny,
+  openFirstProject,
+  openProject,
+  renew,
+  startup,
+  watchRenewal,
+} from '@/components/dashboard/projects/session';
 import type { Session } from '@/components/dashboard/projects/types';
 
 /** A session whose effects are spies. */
@@ -42,6 +51,23 @@ describe('project session', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it('a new account with no project gets one made and opened at sign-in', async () => {
+    vi.mocked(createApiKey).mockResolvedValue({ key: 'k', project: 'p1' });
+    stubFetch({ 'GET /auth/projects': [200, []], [access('p1')]: [200, { token: 'cred-p1' }] });
+    const s = fakeSession();
+    startup(s);
+    await vi.waitFor(() => expect(s.setApiKey).toHaveBeenCalledWith('cred-p1', 'p1'));
+    expect(createApiKey).toHaveBeenCalledWith('t', 'My project');
+  });
+
+  it('makes only one first project when sign-in runs twice at once', async () => {
+    vi.mocked(createApiKey).mockClear().mockResolvedValue({ key: 'k', project: 'p1' });
+    stubFetch({ 'GET /auth/projects': [200, []], [access('p1')]: [200, { token: 'c' }] });
+    const s = fakeSession();
+    await Promise.all([openFirstProject(s), openFirstProject(s)]);
+    expect(createApiKey).toHaveBeenCalledTimes(1);
   });
 
   it('opening a project stores its credential and hands it to the console', async () => {
