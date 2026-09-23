@@ -1,5 +1,5 @@
 /** IPC: the dev panel's chat, page source and quick actions. */
-const { canCallServer, postToBrowserApi } = require('../connection/server-api.cjs');
+const { canCallServer, postToBrowserApi, getFromApi, postToApi } = require('../connection/server-api.cjs');
 const { activePageSource } = require('../tabs/page-source.cjs');
 const { renderPage, FORMATS } = require('../../scripts/page-render.cjs');
 const { ERROR_PREVIEW_CHARS } = require('../connection/constants.cjs');
@@ -95,8 +95,33 @@ function renderKeptPage(_ctx, _e, analysis, format) {
   return renderPage(analysis, format);
 }
 
+/** The providers Ask can set a key for; the server fills in each one's model and address. */
+const MODEL_PROVIDERS = ['anthropic', 'openai', 'gemini'];
+
+/** Whether this browser has a project, and whether the project has a model; unsure counts as having one. */
+async function modelStatus(ctx) {
+  const signedIn = !!ctx.config.values.apiKey;
+  if (!canCallServer(ctx)) return { signedIn, hasLlmKey: true };
+  const config = await getFromApi(ctx, 'config').catch(() => null);
+  return { signedIn, hasLlmKey: !config || !!config.effective?.hasLlmKey };
+}
+
+/** Saves the project's model key from Ask, on the provider's defaults (no leftover model or address). */
+async function saveModelKey(ctx, _e, provider, key) {
+  const secret = typeof key === 'string' ? key.trim() : '';
+  if (!MODEL_PROVIDERS.includes(provider) || !secret) return { error: 'Pick a provider and paste its API key.' };
+  if (!canCallServer(ctx)) return { error: 'Not connected to server' };
+  const body = { llm_provider: provider, openai_api_key: secret, chat_model: null, openai_base_url: null };
+  return postToApi(ctx, 'config', body).then(
+    () => ({ ok: true }),
+    (e) => ({ error: e.message }),
+  );
+}
+
 /** Channel → handler. */
 const DEV_HANDLERS = {
+  'model-status': modelStatus,
+  'save-model-key': saveModelKey,
   'send-chat': sendChat,
   'stop-chat': stopChat,
   'save-chat-playbook': saveChatPlaybook,

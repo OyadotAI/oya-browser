@@ -7,13 +7,12 @@
 
 /** The workspace panel. */
 const DevPanel = {
-  /** Shows `pane`, keeps the tabs in step, and remembers the choice. */
+  /** Shows `pane` and keeps the tabs in step. */
   show(pane) {
     document.querySelectorAll('.dev-pane').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + pane));
     ShellState.activeDevPane = pane;
     if (ToolNav.INSPECT.includes(pane)) ShellState.lastInspect = pane;
     ToolNav.sync(pane);
-    oyaBrowser.saveUiPreferences({ pane });
   },
 
   /** The panel opened or closed. */

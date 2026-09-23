@@ -180,6 +180,7 @@
             disabled
           >
             <option value="default">Default profile</option></select
+          ><button class="text-button" id="chat-model-open" title="Change the AI model key Ask runs on">Model</button
           ><button
             class="icon-button"
             id="chat-clear"
@@ -188,6 +189,34 @@
             data-icon="trash"
           ></button>
         </div>
+        <div class="chat-card" id="chat-signin" hidden>
+          <h2>Sign in to use Ask</h2>
+          <p>Ask runs on your Oya project. Signing in takes one click in your web browser.</p>
+          <button type="button" class="primary-button" id="chat-signin-button">Sign in with Oya</button>
+        </div>
+        <form class="chat-card" id="chat-model" hidden>
+          <h2>Connect an AI model</h2>
+          <p>Ask runs on your own AI key. Pick a provider and paste its key. It is saved to your project.</p>
+          <select id="chat-model-provider" aria-label="AI provider">
+            <option value="anthropic">Claude</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini</option>
+          </select>
+          <input
+            type="password"
+            id="chat-model-key"
+            aria-label="API key"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="sk-ant-..."
+          />
+          <p class="chat-card-error" id="chat-model-error" role="alert" hidden></p>
+          <div class="chat-card-actions">
+            <button type="button" class="text-button" id="chat-model-get">Get a key</button>
+            <button type="button" class="text-button" id="chat-model-cancel" hidden>Cancel</button>
+            <button type="submit" class="primary-button" id="chat-model-save">Save</button>
+          </div>
+        </form>
         <div class="chat-messages" id="chat-messages">
           <div class="chat-empty">
             <span class="empty-icon" data-icon="spark"></span>
@@ -691,6 +720,7 @@
     <script src="panes/chat-files.js"></script>
     <script src="panes/chat.js"></script>
     <script src="panes/chat-persona.js"></script>
+    <script src="panes/chat-model.js"></script>
     <script src="panes/chat-progress.js"></script>
     <script src="panes/routine-runs.js"></script>
     <script src="panes/routines.js"></script>

@@ -4,7 +4,14 @@
  * and pick the project back up after a reload. Every step is a plain function
  * of the Session so the hook that owns it stays a thin wire.
  */
-import { CREDENTIAL_GONE_EVENT, PROJECT_CREDENTIAL, PROJECT_ID, RENEW_INTERVAL_MS } from './constants';
+import { createApiKey } from '@/lib/api';
+import {
+  CREDENTIAL_GONE_EVENT,
+  FIRST_PROJECT_NAME,
+  PROJECT_CREDENTIAL,
+  PROJECT_ID,
+  RENEW_INTERVAL_MS,
+} from './constants';
 import { call, isGone, listOwnedKeys, message } from './project-api';
 import type { AccessAnswer, Project, Session } from './types';
 
@@ -99,6 +106,20 @@ export async function renew(s: Session, id: string) {
   }
 }
 
+/** The first project being made, so a second startup (React's double effect) waits on it instead of making another. */
+let creatingFirst: Promise<void> | null = null;
+
+/** Makes and opens a new account's first project, so the console and the desktop link work without a trip to the switcher. */
+export function openFirstProject(s: Session) {
+  creatingFirst ||= createApiKey(s.token!, FIRST_PROJECT_NAME)
+    .then(async (data) => {
+      await loadProjects(s);
+      if (data.project) await openProject(s, data.project);
+    })
+    .finally(() => (creatingFirst = null));
+  return creatingFirst;
+}
+
 /** Reopens the stored project with a fresh credential (the stored one may have expired while the tab slept), or the first that opens. */
 function resume(s: Session, list: Project[]) {
   const id = sessionStorage.getItem(PROJECT_ID),
@@ -108,7 +129,7 @@ function resume(s: Session, list: Project[]) {
     s.setApiKey(credential, id);
     return renew(s, id);
   }
-  return openAny(s, list);
+  return list.length ? openAny(s, list) : openFirstProject(s);
 }
 
 /** On sign-in: load the projects and open one. */

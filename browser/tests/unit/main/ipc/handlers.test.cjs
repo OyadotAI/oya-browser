@@ -135,11 +135,10 @@ describe('IPC handlers', () => {
     assert.equal(answer.state.mode, 'human');
   });
 
-  it('keeps only known themes and panes', () => {
+  it('keeps only known themes, and no pane: launch always opens on Ask', () => {
     assert.equal(call('save-ui-preferences', null), false);
-    call('save-ui-preferences', { theme: 'dark', pane: 'evil', pageFormat: 'xml' });
+    call('save-ui-preferences', { theme: 'dark', pane: 'record', pageFormat: 'xml' });
     assert.deepEqual(ctx.config.values.ui, { theme: 'dark' });
-    assert.equal(call('get-ui-preferences').pane, 'chat');
   });
 
   it('saves the default page format chosen in settings, markdown until one is', () => {
@@ -214,6 +213,43 @@ describe('IPC handlers', () => {
     assert.deepEqual(await call('send-chat', []), { error: 'Server returned 502: <html>' });
     ctx.socket.ready = false;
     assert.deepEqual(await call('send-chat', []), { error: 'Not connected to server' });
+    fetch.mock.restore();
+  });
+
+  it('saves the model key from Ask on the provider defaults, and quotes the server when it refuses', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ ok: true }) }));
+    assert.deepEqual(await call('save-model-key', 'anthropic', ' sk-ant-1 '), { ok: true });
+    const [url, init] = fetch.mock.calls[0].arguments;
+    assert.equal(url, 'http://s.test/api/config');
+    assert.deepEqual(JSON.parse(init.body), {
+      llm_provider: 'anthropic',
+      openai_api_key: 'sk-ant-1',
+      chat_model: null,
+      openai_base_url: null,
+    });
+    fetch.mock.mockImplementation(async () => ({ ok: false, status: 403, json: async () => ({ error: 'No' }) }));
+    assert.deepEqual(await call('save-model-key', 'openai', 'sk-1'), { error: 'No' });
+    fetch.mock.restore();
+  });
+
+  it('refuses a model key with no key or an unknown provider, before calling the server', async () => {
+    const fetch = mock.method(globalThis, 'fetch', async () => assert.fail('no call'));
+    assert.match((await call('save-model-key', 'anthropic', '  ')).error, /paste its API key/);
+    assert.match((await call('save-model-key', 'evil', 'sk-1')).error, /Pick a provider/);
+    fetch.mock.restore();
+  });
+
+  it('tells Ask whether the project has a model, and counts an unreachable server as having one', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const answer = { effective: { hasLlmKey: false } };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => answer }));
+    assert.deepEqual(await call('model-status'), { signedIn: true, hasLlmKey: false });
+    fetch.mock.mockImplementation(async () => ({ ok: false, status: 500 }));
+    assert.deepEqual(await call('model-status'), { signedIn: true, hasLlmKey: true });
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: '' };
+    ctx.socket.ready = false;
+    assert.deepEqual(await call('model-status'), { signedIn: false, hasLlmKey: true });
     fetch.mock.restore();
   });
 

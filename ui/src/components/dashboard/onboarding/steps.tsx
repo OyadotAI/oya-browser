@@ -1,162 +1,176 @@
 /**
- * Onboarding's three steps: connect the desktop, sign in to accounts on it,
- * and choose where browsers run.
+ * Onboarding's two steps, hung on a rail: connect the desktop, and give Ask an
+ * AI model. A done step's node fills and the rail below it lights; only the
+ * next thing to do gets the bright button. Pointing at a step shows its clip.
  */
 'use client';
 
 import type { ReactNode } from 'react';
 import { ArrowRight, Check, Download, Loader2, Monitor } from 'lucide-react';
-import type { KeyConfig } from '../config';
-import type { Persona } from '../types';
-import type { useOnboarding } from './use-onboarding';
+import { LLM_PRESETS } from '../config';
+import type { Step, useOnboarding } from './use-onboarding';
+import styles from './onboarding.module.css';
 
 /** The onboarding state every step reads. */
 export type OnboardingState = ReturnType<typeof useOnboarding>;
 
-/** A numbered step heading, with anything that follows the title. */
-function StepTitle({
-  n,
-  title,
-  children,
-}: {
-  /** Step number. */ n: string;
-  /** Title. */ title: string;
-  /** After the title. */ children?: ReactNode;
-}) {
+/** The providers onboarding offers: the common three; the rest live in Settings. */
+const PROVIDERS = LLM_PRESETS.filter((p) => p.id !== 'vertex');
+
+/** What a step shows. */
+interface StepProps {
+  /** The onboarding state, for which step the preview shows. */
+  s: OnboardingState;
+  /** Which step this is. */
+  id: Step;
+  /** Its number, as shown. */
+  n: number;
+  /** Title. */
+  title: string;
+  /** One line under the title. */
+  hint: string;
+  /** Done: the node fills and `status` shows. */
+  done: boolean;
+  /** Said once done. */
+  status: string;
+  /** Said while it waits on the person. */
+  waiting: string;
+  /** The step's controls. */
+  children: ReactNode;
+}
+
+/** Done or waiting, as a small mono status with a dot. */
+function Status({ done, text }: { /** Done. */ done: boolean; /** What to say. */ text: string }) {
   return (
-    <div className="mb-3 flex items-center gap-3">
-      <span className="font-mono text-xs text-accent">{n}</span>
-      <h2 className="text-base font-semibold">{title}</h2>
-      {children}
+    <span
+      className={`inline-flex items-center gap-1.5 font-mono text-[10.5px] uppercase tracking-[0.14em] ${done ? 'text-accent' : 'text-text-muted'}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${done ? 'bg-accent' : `bg-text-muted ${styles.pulse}`}`} />
+      {text}
+    </span>
+  );
+}
+
+/** One step on the rail: its node, label, title, hint and status, then its controls. */
+function RailStep({ s, id, n, title, hint, done, status, waiting, children }: StepProps) {
+  const node = done ? styles.nodeDone : s.step === id ? styles.nodeActive : '';
+  return (
+    <li
+      className={`${styles.step} ${done ? styles.stepDone : ''}`}
+      onMouseEnter={() => s.setFocused(id)}
+      onFocus={() => s.setFocused(id)}
+    >
+      <span className={`${styles.node} ${node}`}>{done ? <Check className="h-4 w-4" strokeWidth={3} /> : n}</span>
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-text-dim">Step 0{n}</span>
+        <Status done={done} text={done ? status : waiting} />
+      </div>
+      <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-text">{title}</h2>
+      <p className="mt-1 text-[13.5px] leading-relaxed text-text-muted">{hint}</p>
+      <div className="mt-4">{children}</div>
+    </li>
+  );
+}
+
+/** Step 1: open (or download) the desktop browser, signed in to this project. */
+export function ConnectStep({ s }: { /** State. */ s: OnboardingState }) {
+  const done = !!s.desktop;
+  const hint = 'Ask lives in its side panel. One click signs it in to this project.';
+  return (
+    <RailStep
+      s={s}
+      id="desktop"
+      n={1}
+      title="Connect the desktop browser"
+      hint={hint}
+      done={done}
+      status="Connected"
+      waiting="Waiting"
+    >
+      <div className="flex flex-wrap gap-2">
+        <button className={done ? 'btn-ghost' : 'btn-primary'} onClick={s.pair} disabled={!!s.busy}>
+          {s.busy === 'pair' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Monitor className="h-4 w-4" />}
+          {done ? 'Open desktop' : 'Connect desktop'}
+        </button>
+        {!done && (
+          <a className="btn-ghost" href="/downloads" target="_blank" rel="noreferrer">
+            <Download className="h-4 w-4" />
+            Download
+          </a>
+        )}
+      </div>
+    </RailStep>
+  );
+}
+
+/** A segmented choice of AI provider. */
+function ProviderChoice({ s }: { /** State. */ s: OnboardingState }) {
+  return (
+    <div
+      role="group"
+      aria-label="AI provider"
+      className="grid grid-cols-3 rounded-lg border border-border bg-bg-sunken p-1"
+    >
+      {PROVIDERS.map((p) => (
+        <button
+          key={p.id}
+          type="button"
+          aria-pressed={s.provider === p.id}
+          onClick={() => s.setProvider(p.id)}
+          className={`rounded-md py-2 text-[13px] font-medium transition-colors ${s.provider === p.id ? 'bg-bg-elevated text-text shadow-[inset_0_0_0_1px_var(--color-border)]' : 'text-text-muted hover:text-text'}`}
+        >
+          {p.label}
+        </button>
+      ))}
     </div>
   );
 }
 
-/** Step 1: pick the profile and open (or download) the desktop browser. */
-export function ConnectStep({
-  s,
-  personas,
-}: {
-  /** State. */ s: OnboardingState;
-  /** The key's personas. */ personas: Persona[];
-}) {
+/** Step 2: the AI model Ask runs on, as a provider and its key. */
+export function ModelStep({ s }: { /** State. */ s: OnboardingState }) {
+  const preset = PROVIDERS.find((p) => p.id === s.provider);
+  const hint = 'Ask needs one to think. Your key stays in this project.';
   return (
-    <section>
-      <StepTitle n="01" title="Connect your desktop" />
-      <label htmlFor="setup-profile" className="label">
-        Save accounts to
+    <RailStep
+      s={s}
+      id="model"
+      n={2}
+      title="Connect an AI model"
+      hint={hint}
+      done={s.hasModel}
+      status="Ready"
+      waiting="Needs a key"
+    >
+      <ProviderChoice s={s} />
+      <label htmlFor="setup-model-key" className="sr-only">
+        API key
       </label>
-      <select
-        id="setup-profile"
-        className="field mb-3"
-        value={s.profileId}
-        onChange={(e) => s.setProfileId(e.target.value)}
-      >
-        <option value="default">Default profile</option>
-        {personas
-          .filter((p) => !p.isDefault)
-          .map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-      </select>
-      <div className="flex flex-wrap gap-2">
-        <button className="btn-primary" onClick={s.pair} disabled={!!s.busy}>
-          {s.busy === 'pair' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Monitor className="h-4 w-4" />}
-          {s.desktop ? 'Open desktop' : 'Connect desktop'}
-        </button>
-        <a className="btn-ghost" href="/downloads" target="_blank" rel="noreferrer">
-          <Download className="h-4 w-4" />
-          Download
-        </a>
-      </div>
-      <p className="mt-3 text-xs text-text-muted" role="status">
-        {s.desktop
-          ? 'Desktop connected. You can sign in now.'
-          : 'Already installed? Connect opens your existing Oya window.'}
-      </p>
-    </section>
+      <input
+        id="setup-model-key"
+        className="field mt-2.5 font-mono text-[13px]"
+        type="password"
+        autoComplete="off"
+        value={s.key}
+        placeholder={
+          s.hasModel ? 'Paste a new key to replace the saved one' : `${preset?.label} API key (${preset?.hint})`
+        }
+        onChange={(e) => s.setKey(e.target.value)}
+      />
+    </RailStep>
   );
 }
 
-/** Step 2: sign in on the desktop; shows which sites have saved sessions so far. */
-export function SignInStep({ sites }: { /** Sites with a saved session. */ sites: string[] }) {
+/** The finish row: the bright button only once there is a key to save or everything is ready. */
+export function Finish({ s }: { /** State. */ s: OnboardingState }) {
+  const ready = !!s.key.trim() || (!!s.desktop && s.hasModel);
   return (
-    <section className="border-t border-border pt-6">
-      <StepTitle n="02" title="Sign in to your accounts">
-        {sites.length > 0 && <Check className="ml-auto h-4 w-4 text-accent" />}
-      </StepTitle>
-      <p className="text-sm text-text-secondary">
-        Log in normally in Oya, including any CAPTCHA or MFA. Your sessions sync on their own. Already signed in
-        elsewhere? Click the connection pill at the top right of the desktop window and use{' '}
-        <strong className="font-medium text-text">Import logins</strong> to bring them over from Chrome, Firefox, Arc,
-        Brave or Edge.
-      </p>
-      <div className="mt-3 rounded-md border border-border bg-bg-sunken px-4 py-3 text-sm" role="status">
-        {sites.length ? (
-          <>
-            <span className="text-accent">
-              Saved state for {sites.length} {sites.length === 1 ? 'site' : 'sites'}
-            </span>
-            <p className="mt-1 break-words text-xs text-text-secondary">{sites.join(' · ')}</p>
-          </>
-        ) : (
-          <span className="text-text-muted">Waiting for saved account sessions…</span>
-        )}
-      </div>
-      <p className="mt-2 text-xs text-text-muted">
-        Cookies and local storage sync. A site may still ask you to verify a new session.
-      </p>
-    </section>
-  );
-}
-
-/** Step 3: choose the provider, enter what it needs, save and go. */
-export function ProviderStep({
-  s,
-  config,
-}: {
-  /** State. */ s: OnboardingState;
-  /** The key's settings. */ config: KeyConfig;
-}) {
-  return (
-    <section className="border-t border-border pt-6">
-      <StepTitle n="03" title="Choose where browsers run" />
-      <label htmlFor="setup-provider" className="sr-only">
-        Browser provider
-      </label>
-      <select id="setup-provider" className="field" value={s.provider} onChange={(e) => s.setProvider(e.target.value)}>
-        {config.providers.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.label}
-            {p.configured ? ' · ready' : ' · setup needed'}
-          </option>
-        ))}
-      </select>
-      {s.needs.map((name) => (
-        <div key={name} className="mt-3">
-          <label className="label" htmlFor={`setup-${name}`}>
-            {name.replace(/_/g, ' ')}
-          </label>
-          <input
-            id={`setup-${name}`}
-            className="field"
-            type="password"
-            autoComplete="off"
-            value={s.credentials[name] || ''}
-            placeholder={s.configured ? 'Already saved, leave blank to keep' : 'Enter credential'}
-            onChange={(e) => s.setCredentials({ ...s.credentials, [name]: e.target.value })}
-          />
-        </div>
-      ))}
-      <p className="mt-2 text-xs text-text-muted">
-        CAPTCHA solver and MFA factors are optional settings in the console.
-      </p>
-      <button className="btn-primary mt-4" onClick={s.finish} disabled={!!s.busy}>
-        {s.busy === 'save' && <Loader2 className="h-4 w-4 animate-spin" />}Save and open console{' '}
-        <ArrowRight className="h-4 w-4" />
+    <div className="mt-10 flex items-center justify-between gap-4 border-t border-border pt-6">
+      <p className="text-xs text-text-muted">You can change any of this later in Settings.</p>
+      <button className={ready ? 'btn-primary' : 'btn-ghost'} onClick={s.finish} disabled={!!s.busy}>
+        {s.busy === 'save' && <Loader2 className="h-4 w-4 animate-spin" />}
+        {s.key.trim() ? 'Save and continue' : ready ? 'Open console' : 'Skip for now'}
+        {ready && s.busy !== 'save' && <ArrowRight className="h-4 w-4" />}
       </button>
-    </section>
+    </div>
   );
 }

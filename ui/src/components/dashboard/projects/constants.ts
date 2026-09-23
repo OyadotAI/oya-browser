@@ -4,6 +4,8 @@
  */
 import type { PickerState } from './types';
 
+/** What a new account's first project, made for it at sign-in, is called. */
+export const FIRST_PROJECT_NAME = 'My project';
 /** sessionStorage key for the open project's id. */
 export const PROJECT_ID = 'oya_project_id';
 /** sessionStorage key for the open project's one-hour credential. */

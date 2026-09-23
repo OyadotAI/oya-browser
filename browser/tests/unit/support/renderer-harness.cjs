@@ -53,6 +53,7 @@ const DEFAULT_ANSWERS = {
   getControlState: { mode: 'offline', interactive: true },
   workspace: () => undefined,
   listPersonas: { personas: [], active: 'default' },
+  modelStatus: { signedIn: true, hasLlmKey: true },
   listRoutines: { routines: [], running: null },
 };
 

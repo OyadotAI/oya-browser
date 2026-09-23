@@ -158,7 +158,7 @@ function DashboardOverviewPart5() {
         Onboarding
       </h3>
       <p className="mb-3 text-[15px] leading-relaxed">
-        A key that has not been set up gets a four-step wizard. Everything it asks is stored against that key, nothing
+        A key that has not been set up gets a two-step page. Everything it asks is stored against that key, nothing
         lands in an environment variable, and nothing is inherited from an account.
       </p>
     </>
@@ -171,22 +171,16 @@ function DashboardOverviewPart6() {
     <>
       <ol className="list-decimal list-inside space-y-1.5 mb-4 text-[15px] leading-relaxed">
         <li>
-          <strong>Model</strong>: Claude or OpenAI, your key, your default model
+          <strong>Desktop</strong>: one click opens the desktop browser signed in to the project
         </li>
         <li>
-          <strong>Browsers</strong>: Oya Cloud, Oya self-hosted, Browser Use, Browserbase, Steel, Anchor, or your own
-          CDP URL
-        </li>
-        <li>
-          <strong>Challenges</strong>: a CAPTCHA solver, or none
-        </li>
-        <li>
-          <strong>Sign in</strong>: one click into the desktop browser, for Oya providers only
+          <strong>AI model</strong>: Claude, OpenAI or Gemini and your key, which Ask in the desktop needs. Ask also
+          asks for it inline if it is missing
         </li>
       </ol>
       <p className="mb-3 text-[15px] leading-relaxed">
-        The same choices are available any time from Settings, and <InlineCode>oya init</InlineCode> walks the identical
-        flow in a terminal.
+        Where browsers run, CAPTCHA solving and the model itself are all in Settings, and{' '}
+        <InlineCode>oya init</InlineCode> sets them up in a terminal.
       </p>
     </>
   );
