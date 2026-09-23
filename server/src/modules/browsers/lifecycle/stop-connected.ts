@@ -35,7 +35,7 @@ async function cancelManaged(key, browserId) {
  * so for a desktop browser it simply finds nothing. Null when not asked.
  */
 async function removeOwnSandbox(key, browserId, browser, sandbox) {
-  if (!(browser.clientType === 'oya' && (sandboxConfigured() || sandbox === true))) return null;
+  if (!(browser.clientType === 'oya' && (sandboxConfigured(key) || sandbox === true))) return null;
   try {
     return await removeSandbox(browserId, key);
   } catch (err) {

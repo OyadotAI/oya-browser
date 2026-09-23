@@ -1,0 +1,41 @@
+# Browser pods run arbitrary web pages. Nothing may connect to them, and they
+# may reach only the control plane, DNS, and the public internet: never other
+# pods, the node, private addresses or the cloud metadata endpoint.
+# Needs a network plugin that enforces NetworkPolicy (GKE Dataplane V2,
+# Calico, Cilium...).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oya-browsers
+spec:
+  podSelector:
+    matchLabels: { oya-browser: 'true' }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: oya-control-plane } } }]
+      ports: [{ protocol: TCP, port: 3100 }]
+    # Cluster DNS, including NodeLocal DNSCache (GKE's 169.254.20.10), and
+    # only on port 53: the rest of 169.254.0.0/16, the metadata server, stays blocked.
+    - to:
+        - namespaceSelector: {}
+          podSelector: { matchExpressions: [{ key: k8s-app, operator: In, values: [kube-dns, node-local-dns] }] }
+        - ipBlock: { cidr: 169.254.20.10/32 }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+---
+# The control plane: reachable from inside the cluster on 3100 (ingress
+# controller, browsers, other replicas), and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: oya-control-plane
+spec:
+  podSelector:
+    matchLabels: { app: oya-control-plane }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ protocol: TCP, port: 3100 }]

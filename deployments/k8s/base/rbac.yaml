@@ -1,0 +1,32 @@
+# The control plane's only Kubernetes access: create browser pods, and the
+# Secret holding each one's credentials, in its own namespace. It can read and
+# delete pods (to find and stop browsers) but it can never read a Secret back,
+# and it has no access outside this namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oya-control-plane
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: oya-browser-launcher
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [create, get, list, delete]
+  - apiGroups: ['']
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: oya-browser-launcher
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: oya-browser-launcher
+subjects:
+  - kind: ServiceAccount
+    name: oya-control-plane

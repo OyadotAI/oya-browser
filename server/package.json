@@ -19,6 +19,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.127.0",
+    "@aws-sdk/client-ecs": "^3.1138.0",
+    "@aws-sdk/client-sso": "^3.1138.0",
+    "@aws-sdk/credential-providers": "^3.1138.0",
     "@daytona/sdk": "0.211.2",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@supabase/supabase-js": "^2.99.3",

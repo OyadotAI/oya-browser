@@ -35,7 +35,7 @@ const sandboxSpec = ({ req, key, persona }: Start) => ({
 
 /** Oya browsers dial in on their own once the sandbox is up. */
 export async function launchSandbox(start: Start) {
-  if (!sandboxConfigured()) return sandboxMissing(start.res);
+  if (!sandboxConfigured(start.key)) return sandboxMissing(start.res, start.key);
   const created = await createSandbox(sandboxSpec(start));
   started(start, starting(start, created.browserId, { note: JOIN_NOTE }));
 }

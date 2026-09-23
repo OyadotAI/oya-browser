@@ -53,5 +53,12 @@ echo "[oya-docker] Starting Oya Browser (${SCREEN_WIDTH:-1920}x${SCREEN_HEIGHT:-
 ./node_modules/.bin/electron . --no-sandbox --disable-gpu --disable-dev-shm-usage &
 ELECTRON_PID=$!
 
+# ── Hard lifetime ──
+# Docker, Kubernetes and ECS have no idle stop of their own, so the server sets
+# OYA_MAX_LIFETIME_MINUTES and the browser stops itself then, whatever the runtime.
+if [ -n "${OYA_MAX_LIFETIME_MINUTES:-}" ]; then
+  (sleep "$((OYA_MAX_LIFETIME_MINUTES * 60))" && echo "[oya-docker] Lifetime of ${OYA_MAX_LIFETIME_MINUTES}m reached" && kill -TERM $ELECTRON_PID) &
+fi
+
 wait $ELECTRON_PID
 cleanup

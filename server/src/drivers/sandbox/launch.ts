@@ -1,17 +1,16 @@
 /**
- * Bringing one cloud browser up: reserving it in the control plane, creating
- * its sandbox, and making sure the browser inside is running.
+ * Bringing one cloud browser up, whatever runtime it runs on: reserving it in
+ * the control plane and writing the one spec every runtime receives, its name,
+ * its labels and the environment it enrols with. No runtime re-derives these.
  */
 import { randomUUID } from 'crypto';
 import { control } from '../../modules/control/service.ts';
 import { QUOTAS } from '../../platform/limits.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { PREFIX, ownerTag, displayName } from './config.ts';
-import { SANDBOX_CREATE_TIMEOUT_S, SANDBOX_TTL_GRACE_MINUTES } from '../constants.ts';
-
-/** The sandbox process session the browser entrypoint runs in. */
-const SESSION = 'oya-browser';
+import { PREFIX, ownerTag, displayName } from './names.ts';
+import { SANDBOX_TTL_GRACE_MINUTES } from '../constants.ts';
+import type { SandboxSpec } from './worker.ts';
 
 /**
  * CDP front door for Playwright and friends, reached only through the
@@ -39,24 +38,19 @@ function reservation(browserId, persona) {
   return { id: browserId, provider: 'oya-cloud', persona, ...limits, managed: true };
 }
 
-/** Creates the sandbox and sets its hard TTL. */
-export async function launch(daytona, config, browser) {
-  const sandbox = await daytona.create(sandboxSpec(config, browser), { timeout: SANDBOX_CREATE_TIMEOUT_S });
-  // Hard cap behind the idle stop, so a wedged sandbox still stops billing.
-  await sandbox.setTtl(config.ttlMinutes + SANDBOX_TTL_GRACE_MINUTES);
-  return sandbox;
+/** What every runtime is asked to create for this browser. */
+export function specFor(config, browser): SandboxSpec {
+  const lifetimeMinutes = config.ttlMinutes + SANDBOX_TTL_GRACE_MINUTES;
+  const env = { ...envFor(config, browser), OYA_MAX_LIFETIME_MINUTES: String(lifetimeMinutes) };
+  requireSingleLines(env);
+  const name = PREFIX + browser.browserId;
+  return { name, labels: labelsFor(browser), env, ttlMinutes: config.ttlMinutes, lifetimeMinutes };
 }
 
-/** What the runtime is asked to create. */
-function sandboxSpec(config, browser) {
-  return {
-    name: PREFIX + browser.browserId,
-    snapshot: config.snapshot,
-    labels: labelsFor(browser),
-    envVars: envFor(config, browser),
-    autoStopInterval: config.ttlMinutes,
-    autoDeleteInterval: 0,
-  };
+/** A newline would let a value forge an extra entry in an env file. */
+function requireSingleLines(env) {
+  if (Object.values(env).some((value) => String(value).includes('\n')))
+    throw new HttpError(Status.BAD_REQUEST, 'A cloud browser setting must not contain a newline');
 }
 
 /** Labels that find the sandbox again and prove who owns it. */
@@ -89,39 +83,4 @@ function enrolment(config, { apiKey, name, browserId }) {
     OYA_BROWSER_NAME: displayName(name, browserId),
     OYA_AUTO_CONNECT: 'true',
   };
-}
-
-/**
- * Legacy snapshots sleep; current images run the browser as their entrypoint.
- * Start it unless it is already running.
- */
-export async function startBrowser(sandbox, config) {
-  await requireBrowserImage(sandbox, config);
-  if (await entrypointRunning(sandbox)) return;
-  await sandbox.process.createSession(SESSION);
-  await sandbox.process.executeSessionCommand(SESSION, { command: 'cd /app && /docker-entrypoint.sh', runAsync: true });
-}
-
-/**
- * Check the entrypoint exists first: fired async, a snapshot that is not the
- * Oya browser image fails invisibly and the caller waits out the full enrol
- * window for a browser that was never going to arrive.
- */
-async function requireBrowserImage(sandbox, config) {
-  const probe = await sandbox.process.executeCommand('test -x /docker-entrypoint.sh && echo ok').catch(() => null);
-  if (/\bok\b/.test(probe?.result ?? probe?.output ?? '')) return;
-  await sandbox.delete().catch(() => {});
-  throw new HttpError(
-    Status.CONFLICT,
-    `OYA_CLOUD_SNAPSHOT "${config.snapshot}" has no /docker-entrypoint.sh, so it is not an Oya browser image. ` +
-      'Build one from browser/Dockerfile, push it, and point OYA_CLOUD_SNAPSHOT at that.',
-  );
-}
-
-/** Whether the image's own entrypoint is already running the browser. */
-async function entrypointRunning(sandbox) {
-  const entrypoint = await sandbox.process.getEntrypointSession();
-  return entrypoint.commands?.some(
-    (command) => command.command?.includes('/docker-entrypoint.sh') && command.exitCode == null,
-  );
 }

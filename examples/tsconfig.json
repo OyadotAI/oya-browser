@@ -17,6 +17,7 @@
   "include": [
     "sdk/*.ts",
     "multi-vendor/*.ts",
+    "ecs/*.ts",
     "playwright/*.ts"
   ]
 }

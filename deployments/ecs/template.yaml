@@ -1,0 +1,419 @@
+# Oya on Amazon ECS, production: the control plane as a load-balanced ECS
+# service with Postgres, launching each browser as a Fargate task in the same
+# cluster, with AWS access through IAM roles alone.
+#
+#   clients --HTTPS--> ALB --> control plane (ECS service, N replicas, task role)
+#                                  |  RunTask / StopTask
+#                                  v
+#                              browser workers (Fargate, no task role)
+#                                  |
+#                                  +--> ws://control.<stack>.internal:3100/ws (Cloud Map)
+#
+# Deploy with ./deploy.sh, which builds and pins the images and creates the
+# secrets once. See README.md.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Oya control plane on ECS with Postgres, HTTPS, and browser workers in the same cluster managed through IAM roles.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for the load balancer, in at least two zones.
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets with a NAT route for the control plane, the browsers and the database, in at least two zones.
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: ACM certificate for HTTPS on the load balancer. Empty serves plain HTTP, for trying it out only.
+  AllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Who may reach the load balancer.
+  ControlPlaneImage:
+    Type: String
+    Description: The deployment image (deployments/image), pinned by digest.
+  ControlPlaneArchitecture:
+    Type: String
+    AllowedValues: [X86_64, ARM64]
+    Default: X86_64
+  BrowserImage:
+    Type: String
+    Description: The Oya browser image (linux/amd64), pinned by digest.
+  Replicas:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    Description: Control-plane replicas, spread across zones.
+  BrowserTtlMinutes:
+    Type: Number
+    Default: 60
+    MinValue: 5
+    Description: A browser stops itself this many minutes (plus 10) after it starts.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.small
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+  DbMultiAz:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: A standby in a second zone that takes over automatically.
+  DbDeletionProtection:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+  SettingsSecretArn:
+    Type: String
+    Description: A Secrets Manager secret holding optional settings as one JSON object (deploy.sh writes it from oya.env). See ../ENVIRONMENT.md.
+  SettingsVersion:
+    Type: String
+    Default: '0'
+    Description: Changes whenever the settings do, so the control plane restarts with them.
+  ApiKeys:
+    Type: String
+    NoEcho: true
+    Description: Comma-separated API keys. deploy.sh generates one on the first deploy.
+  ProfileSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Encrypts cookies, tokens and TOTP seeds at rest. Losing it makes them unreadable.
+  ClusterSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Shared by the replicas to authenticate requests they route to each other.
+  DbPassword:
+    Type: String
+    NoEcho: true
+    AllowedPattern: '[0-9a-zA-Z]{24,}'
+    Description: The database password; letters and digits only, since it sits in a connection string.
+
+Conditions:
+  Https: !Not [!Equals [!Ref CertificateArn, '']]
+
+Resources:
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref AWS::StackName
+      CapacityProviders: [FARGATE]
+      ClusterSettings: [{ Name: containerInsights, Value: enabled }]
+
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /oya/${AWS::StackName}
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ── Secrets: injected at start, never in a task definition ──
+  Secrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${AWS::StackName}/control-plane
+      SecretString: !Sub
+        - '{"API_KEYS":"${ApiKeys}","OYA_PROFILE_SECRET":"${ProfileSecret}","OYA_CLUSTER_SECRET":"${ClusterSecret}","DATABASE_URL":"${Url}"}'
+        # TLS to RDS, verified against the RDS certificate bundle in the image.
+        - Url: !Sub 'postgres://oya:${DbPassword}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/oya?sslmode=verify-full&sslrootcert=/etc/ssl/certs/rds-global-bundle.pem'
+
+  # ── Network access ──
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Oya load balancer
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref AllowedCidr }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: !Ref AllowedCidr }
+  ControlPlaneSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Oya control plane. The load balancer, browsers and other replicas reach it on 3100.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 3100, ToPort: 3100, SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup }
+        - { IpProtocol: tcp, FromPort: 3100, ToPort: 3100, SourceSecurityGroupId: !Ref WorkerSecurityGroup }
+  ControlPlaneFromReplicas:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Replicas route requests for a browser to the replica that holds it
+      GroupId: !Ref ControlPlaneSecurityGroup
+      SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3100
+      ToPort: 3100
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Oya browser workers. No inbound; outbound to the web and the control plane.
+      VpcId: !Ref VpcId
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Oya database. Only the control plane reaches it.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup }
+
+  Namespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub ${AWS::StackName}.internal
+      Vpc: !Ref VpcId
+  ControlPlaneDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: control
+      NamespaceId: !Ref Namespace
+      DnsConfig:
+        DnsRecords: [{ Type: A, TTL: 10 }]
+      HealthCheckCustomConfig: { FailureThreshold: 1 }
+
+  # ── Load balancer ──
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups: [!Ref LoadBalancerSecurityGroup]
+      LoadBalancerAttributes:
+        # Live views and CDP connections are long-lived WebSockets.
+        - { Key: idle_timeout.timeout_seconds, Value: '3600' }
+        - { Key: routing.http.drop_invalid_header_fields.enabled, Value: 'true' }
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Protocol: HTTP
+      Port: 3100
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: '30' }
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions: !If
+        - Https
+        - [{ Type: redirect, RedirectConfig: { Protocol: HTTPS, Port: '443', StatusCode: HTTP_301 } }]
+        - [{ Type: forward, TargetGroupArn: !Ref TargetGroup }]
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: Https
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTPS
+      Port: 443
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates: [{ CertificateArn: !Ref CertificateArn }]
+      DefaultActions: [{ Type: forward, TargetGroupArn: !Ref TargetGroup }]
+
+  # ── Database ──
+  DatabaseSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Oya database
+      SubnetIds: !Ref PrivateSubnetIds
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: '16'
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: !Ref DbMultiAz
+      DBName: oya
+      MasterUsername: oya
+      MasterUserPassword: !Ref DbPassword
+      DBSubnetGroupName: !Ref DatabaseSubnets
+      VPCSecurityGroups: [!Ref DatabaseSecurityGroup]
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      CopyTagsToSnapshot: true
+      AutoMinorVersionUpgrade: true
+      DeletionProtection: !Ref DbDeletionProtection
+
+  # ── Roles ──
+  # The control plane's task role: its only AWS credential. It may start only
+  # the worker task definition, only in this cluster, and pass only the
+  # worker's execution role.
+  ControlPlaneTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      Policies:
+        - PolicyName: launch-browser-workers
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RunOnlyTheWorkerInThisCluster
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${AWS::StackName}-worker:*
+                Condition:
+                  ArnEquals: { 'ecs:cluster': !GetAtt Cluster.Arn }
+              - Sid: ManageTasksInThisCluster
+                Effect: Allow
+                Action: [ecs:StopTask, ecs:DescribeTasks, ecs:ListTasks]
+                Resource: '*'
+                Condition:
+                  ArnEquals: { 'ecs:cluster': !GetAtt Cluster.Arn }
+              - Sid: TagWorkersAtLaunch
+                Effect: Allow
+                Action: ecs:TagResource
+                Resource: '*'
+                Condition:
+                  StringEquals: { 'ecs:CreateAction': RunTask }
+              - Sid: PassOnlyTheWorkerExecutionRole
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt WorkerExecutionRole.Arn
+                Condition:
+                  StringEquals: { 'iam:PassedToService': ecs-tasks.amazonaws.com }
+  ControlPlaneExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-control-plane-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: secretsmanager:GetSecretValue, Resource: [!Ref Secrets, !Ref SettingsSecretArn] }
+  # Workers get no task role at all: they run arbitrary web pages.
+  WorkerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # ── Task definitions ──
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-worker
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '2048'
+      Memory: '4096'
+      RuntimePlatform: { CpuArchitecture: X86_64, OperatingSystemFamily: LINUX }
+      ExecutionRoleArn: !GetAtt WorkerExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: browser
+          Image: !Ref BrowserImage
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref Logs, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: worker }
+
+  ControlPlaneTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${AWS::StackName}-control-plane
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '1024'
+      Memory: '2048'
+      RuntimePlatform: { CpuArchitecture: !Ref ControlPlaneArchitecture, OperatingSystemFamily: LINUX }
+      ExecutionRoleArn: !GetAtt ControlPlaneExecutionRole.Arn
+      TaskRoleArn: !GetAtt ControlPlaneTaskRole.Arn
+      ContainerDefinitions:
+        - Name: control-plane
+          Image: !Ref ControlPlaneImage
+          Essential: true
+          PortMappings: [{ ContainerPort: 3100, Protocol: tcp }]
+          Environment:
+            # Browsers are Fargate tasks in this cluster; OYA_ECS_AUTH is unset,
+            # so the AWS SDK signs in with this task's role.
+            - { Name: OYA_CLOUD_RUNTIME, Value: ecs }
+            - { Name: OYA_BROWSER_PROVIDER, Value: oya-cloud }
+            - { Name: OYA_ECS_CLUSTER, Value: !Ref Cluster }
+            - { Name: OYA_ECS_TASK_DEFINITION, Value: !Ref WorkerTaskDefinition }
+            - { Name: OYA_ECS_SUBNETS, Value: !Join [',', !Ref PrivateSubnetIds] }
+            - { Name: OYA_ECS_SECURITY_GROUPS, Value: !Ref WorkerSecurityGroup }
+            - { Name: AWS_REGION, Value: !Ref AWS::Region }
+            - { Name: OYA_CLOUD_SANDBOX_TTL_MINUTES, Value: !Ref BrowserTtlMinutes }
+            - { Name: OYA_SETTINGS_VERSION, Value: !Ref SettingsVersion }
+            # Where browsers enrol: the replicas' private DNS name, never the internet.
+            - { Name: OYA_PUBLIC_WS_URL, Value: !Sub 'ws://control.${AWS::StackName}.internal:3100/ws' }
+          Secrets:
+            - { Name: API_KEYS, ValueFrom: !Sub '${Secrets}:API_KEYS::' }
+            - { Name: OYA_PROFILE_SECRET, ValueFrom: !Sub '${Secrets}:OYA_PROFILE_SECRET::' }
+            - { Name: OYA_CLUSTER_SECRET, ValueFrom: !Sub '${Secrets}:OYA_CLUSTER_SECRET::' }
+            - { Name: DATABASE_URL, ValueFrom: !Sub '${Secrets}:DATABASE_URL::' }
+            # Everything optional (LLM keys, proxies, CAPTCHA, limits...), expanded by the image's entrypoint.
+            - { Name: OYA_SETTINGS_JSON, ValueFrom: !Ref SettingsSecretArn }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref Logs, awslogs-region: !Ref AWS::Region, awslogs-stream-prefix: control-plane }
+
+  ControlPlaneService:
+    Type: AWS::ECS::Service
+    DependsOn: HttpListener
+    Properties:
+      ServiceName: control-plane
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref Replicas
+      TaskDefinition: !Ref ControlPlaneTaskDefinition
+      # The first start applies the database schema before the server listens.
+      HealthCheckGracePeriodSeconds: 180
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        DeploymentCircuitBreaker: { Enable: true, Rollback: true }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref ControlPlaneSecurityGroup]
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - { ContainerName: control-plane, ContainerPort: 3100, TargetGroupArn: !Ref TargetGroup }
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ControlPlaneDiscovery.Arn
+      PropagateTags: SERVICE
+
+Outputs:
+  Url:
+    Value: !If [Https, !Sub 'https://${LoadBalancer.DNSName}', !Sub 'http://${LoadBalancer.DNSName}']
+    Description: Point your domain's CNAME at the load balancer; with HTTPS, use the certificate's name.
+  LoadBalancerDns:
+    Value: !GetAtt LoadBalancer.DNSName
+  Cluster:
+    Value: !Ref Cluster
+  SecretArn:
+    Value: !Ref Secrets
+    Description: API keys and the other control-plane secrets.
+  ControlPlaneTaskRole:
+    Value: !GetAtt ControlPlaneTaskRole.Arn
+  Database:
+    Value: !GetAtt Database.Endpoint.Address

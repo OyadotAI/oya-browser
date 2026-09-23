@@ -16,7 +16,7 @@ import { CLEANUP_BACKOFF_CAP_MS, CLEANUP_BACKOFF_MAX_EXPONENT, CloseCode } from 
 /** How each kind of cleanup descriptor releases its resource. */
 const RELEASE = {
   docker: (c, key, x) => removeManaged(c.container, key, x.id, c.daemonId, c.runtime, c.namespace),
-  sandbox: (c, key) => removeSandbox(c.browserId, key),
+  sandbox: (c, key) => removeSandbox(c.browserId, key, c.runtime),
   vendor: (c) => releasePersisted(c),
 };
 

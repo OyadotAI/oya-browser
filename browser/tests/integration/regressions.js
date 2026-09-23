@@ -247,6 +247,14 @@ assert.ok(
   'container electron must run with --disable-dev-shm-usage or streaming kills the browser',
 );
 
+// Docker, Kubernetes and ECS cloud browsers have no idle stop: the server sets
+// OYA_MAX_LIFETIME_MINUTES and the image is what ends the browser, so an
+// abandoned one stops billing. Unset (desktop, older servers) must mean no limit.
+assert.ok(
+  /if \[ -n "\$\{OYA_MAX_LIFETIME_MINUTES:-\}" \]; then\n.*kill -TERM \$ELECTRON_PID/.test(entry),
+  'the entrypoint must stop the browser at OYA_MAX_LIFETIME_MINUTES, and only when it is set',
+);
+
 // A persona switch must not send the previous persona's queued cookies over a
 // socket already authenticated as the new one, that files one identity's
 // session in another's jar, and the site then demands a fresh login.

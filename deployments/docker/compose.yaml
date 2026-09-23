@@ -1,0 +1,88 @@
+# Oya on one Docker host: the control plane, Postgres, and Caddy for HTTPS.
+# Each browser runs as its own container, started by the control plane
+# through the Docker socket on the `oya-browsers` network.
+#
+# Deploy with ./deploy.sh, which writes .env and builds OYA_IMAGE.
+name: oya
+
+services:
+  control-plane:
+    image: ${OYA_IMAGE:?build it with ./deploy.sh}
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    # Optional settings (../ENVIRONMENT.md). What `environment` sets below wins.
+    env_file:
+      - path: oya.env
+        required: false
+    environment:
+      API_KEYS: ${API_KEYS:?}
+      OYA_PROFILE_SECRET: ${OYA_PROFILE_SECRET:?}
+      DATABASE_URL: postgres://oya:${POSTGRES_PASSWORD:?}@postgres:5432/oya
+      # Browsers are containers on this host, on the network below, and
+      # enrol with the control plane by its service name.
+      OYA_CLOUD_RUNTIME: docker
+      OYA_BROWSER_PROVIDER: oya-cloud
+      OYA_CLOUD_IMAGE: ${OYA_BROWSER_IMAGE:?}
+      OYA_CLOUD_DOCKER_NETWORK: oya-browsers
+      # Set by deploy.sh when the browser image has no build for this host's
+      # architecture (it is linux/amd64): the browser then runs emulated.
+      OYA_CLOUD_DOCKER_PLATFORM: ${OYA_BROWSER_PLATFORM:-}
+      OYA_PUBLIC_WS_URL: ws://control-plane:3100/ws
+      OYA_CLOUD_SANDBOX_TTL_MINUTES: ${OYA_BROWSER_TTL_MINUTES:-60}
+    volumes:
+      # Starting browser containers needs the host's Docker. Whoever controls
+      # this container controls the host: run Oya on a host of its own.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - control-plane-data:/app/data
+    networks: [internal, browsers]
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3100/health']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: oya
+      POSTGRES_DB: oya
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U oya -d oya']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [control-plane]
+    ports: ['80:80', '443:443']
+    environment:
+      OYA_DOMAIN: ${OYA_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [internal]
+
+networks:
+  # Postgres and Caddy talk to the control plane here; browsers are never on it.
+  internal:
+  # The control plane and the browsers, which run arbitrary web pages and so
+  # can reach nothing else of Oya's. Its fixed name is what
+  # OYA_CLOUD_DOCKER_NETWORK points at.
+  browsers:
+    name: oya-browsers
+
+volumes:
+  control-plane-data:
+  postgres-data:
+  caddy-data:
+  caddy-config:

@@ -20,7 +20,7 @@ const docker = async (args) =>
   (await exec('docker', args, { timeout: CLI_TIMEOUT_MS, maxBuffer: MAX_DOCKER_OUTPUT })).stdout;
 
 /** Hardening flags for every managed container: no capabilities, no privilege gain, bounded pids, memory and /dev/shm. */
-const HARDENING = [
+export const HARDENING = [
   '--cap-drop',
   'ALL',
   '--security-opt',
@@ -108,7 +108,7 @@ export async function create({ apiKey, browserId, persona, name, policies = [] }
 }
 
 /** Credentials go to docker create through an env file, never command-line arguments; the file is removed afterwards. */
-async function withEnvFile(environment, use) {
+export async function withEnvFile(environment, use) {
   const dir = await mkdtemp(join(tmpdir(), 'oya-runtime-'));
   try {
     const file = join(dir, 'env');

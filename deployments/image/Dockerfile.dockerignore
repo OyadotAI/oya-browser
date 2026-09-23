@@ -1,0 +1,4 @@
+# The deployment image only adds these to the server image; everything else stays out of the build context.
+*
+!server/migrations
+!deployments/image/entrypoint.sh
