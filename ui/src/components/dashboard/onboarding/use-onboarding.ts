@@ -27,11 +27,11 @@ export function useOnboarding(input: OnboardingInput) {
   const model = useModelForm(input.config);
   const pairing = useDesktopSignIn(input.apiKey);
   const saving = useFinish(input, model.provider, model.key);
-  const busy = pairing.busy ? 'pair' : saving.busy ? 'save' : null;
-  const hasModel = !!input.config.effective?.hasLlmKey;
   const desktop = desktopOf(input);
-  const preview = usePreviewStep(!!desktop);
-  return { ...model, ...preview, desktop, hasModel, busy, pair: () => pairing.open(), finish: saving.finish };
+  const status = { desktop, hasModel: !!input.config.effective?.hasLlmKey, notOpened: pairing.notOpened };
+  const busy = pairing.busy ? 'pair' : saving.busy ? 'save' : null;
+  const actions = { busy, pair: () => pairing.open(), finish: saving.finish };
+  return { ...model, ...usePreviewStep(!!desktop), ...status, ...actions };
 }
 
 /** A step of onboarding, by name. */

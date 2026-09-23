@@ -9,6 +9,7 @@ import type { ReactNode } from 'react';
 import { ArrowRight, Check, Download, Loader2, Monitor } from 'lucide-react';
 import { LLM_PRESETS } from '../config';
 import type { Step, useOnboarding } from './use-onboarding';
+import DesktopNotOpened from '../desktop-not-opened';
 import styles from './onboarding.module.css';
 
 /** The onboarding state every step reads. */
@@ -99,6 +100,7 @@ export function ConnectStep({ s }: { /** State. */ s: OnboardingState }) {
           </a>
         )}
       </div>
+      {!done && s.notOpened && <DesktopNotOpened />}
     </RailStep>
   );
 }

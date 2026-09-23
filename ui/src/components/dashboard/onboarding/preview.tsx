@@ -24,8 +24,8 @@ interface Clip {
 /** Each step's clip, recorded in the desktop app. */
 const CLIPS: Record<Step, Clip> = {
   desktop: {
-    src: '/oya-ask-loop.mp4',
-    poster: '/oya-ask-poster.jpg',
+    src: '/onboarding-ask-demo.mp4',
+    poster: '/onboarding-ask-demo.jpg',
     caption: 'Ask, in the desktop browser’s side panel, doing a task on the page.',
     title: 'oya browser',
     portrait: false,
