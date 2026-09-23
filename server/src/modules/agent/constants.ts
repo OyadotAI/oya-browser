@@ -101,3 +101,6 @@ export const MAX_SITE_NOTES = 20;
 export const MAX_NOTE_CHARS = 300;
 /** How many steps before the limit the agent is told to wrap up and report what it has. */
 export const WRAP_UP_STEPS = 5;
+
+/** The report a run ends on when its caller stopped it. */
+export const STOPPED_TEXT = 'FAILED: stopped by the user.';

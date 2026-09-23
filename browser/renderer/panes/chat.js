@@ -3,7 +3,7 @@
  * rendered from a small, escaped subset of Markdown: paragraphs, headings,
  * lists, code blocks, inline code, bold and italic.
  */
-/* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress */
+/* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress, ChatFiles, ChatPersona */
 /* exported Chat */
 
 /** A Markdown list item: `-`, `*`, `•` or `1.` / `1)` at the start of a line. */
@@ -11,6 +11,14 @@ const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
 
 /** A Markdown heading line. */
 const HEADING = /^#{1,6}\s+(.+)$/;
+
+/** The words the chat shows. */
+const CHAT_TEXT = {
+  noResponse: '(no response)',
+  stopped: 'Stopped.',
+  /** The error the main process answers a stopped chat with. */
+  stoppedError: 'Stopped',
+};
 
 /** The chat. */
 const Chat = {
@@ -20,6 +28,8 @@ const Chat = {
   sending: false,
   /** The empty state as the page first drew it, restored by Clear. */
   emptyHtml: '',
+  /** Counts Clears, so an answer to a conversation already cleared is dropped. */
+  epoch: 0,
 
   /** Inline Markdown rewrites applied, in order, to escaped text. */
   INLINE: [
@@ -164,7 +174,7 @@ const Chat = {
   async exchange(text) {
     Chat.lock(true);
     ChatPlaybook.withdraw();
-    Chat.say({ role: 'user', content: text });
+    Chat.say({ role: 'user', content: ChatFiles.attachTo(text) });
     Chat.showThinking();
     ChatProgress.start();
     await Chat.ask();
@@ -172,15 +182,35 @@ const Chat = {
     Chat.lock(false);
   },
 
-  /** Asks the agent with the whole conversation and shows the answer. */
+  /** Asks the agent with the whole conversation and shows the answer, unless the chat was cleared meanwhile. */
   async ask() {
+    const epoch = Chat.epoch;
+    const data = await Chat.request();
+    if (epoch === Chat.epoch) Chat.answer(data);
+  },
+
+  /** The agent's answer to the conversation so far, with its files; a failure as `{ error }`. */
+  async request() {
     try {
-      const data = await oyaBrowser.sendChat(Chat.history.map((m) => ({ role: m.role, content: m.content })));
-      if (data.error) Chat.sayError(data.error);
-      else Chat.reply(data.text || '(no response)', data.toolCalls || [], data.replayable);
+      return await oyaBrowser.sendChat(
+        Chat.history.map((m) => ({ role: m.role, content: m.content })),
+        ChatFiles.data(),
+      );
     } catch (e) {
-      Chat.sayError(e.message);
+      return { error: e.message };
     }
+  },
+
+  /** Shows an answer: the reply, a stop, or the error. */
+  answer(data) {
+    if (data.error === CHAT_TEXT.stoppedError) Chat.say({ role: 'assistant', content: CHAT_TEXT.stopped });
+    else if (data.error) Chat.sayError(data.error);
+    else Chat.reply(data.text || CHAT_TEXT.noResponse, data.toolCalls || [], data.replayable);
+  },
+
+  /** Stops the agent's run: the main process hangs up, and the server ends the run at its next step. */
+  stop() {
+    oyaBrowser.stopChat();
   },
 
   /** Shows the agent's answer, offering to save the run as a playbook when the server says it can be. */
@@ -197,10 +227,12 @@ const Chat = {
     Chat.addChatMessage('assistant', errMsg.content);
   },
 
-  /** Marks a message as in flight (or not). */
+  /** Marks a message as in flight (or not): Stop stands in for Send, and the profile cannot change. */
   lock(on) {
     Chat.sending = on;
-    Dom.byId('chat-send').disabled = on;
+    Dom.byId('chat-send').hidden = on;
+    Dom.byId('chat-stop').hidden = !on;
+    ChatPersona.sync();
   },
 
   /** Fits the Ask box to its text, up to a limit, after which it scrolls. */
@@ -210,9 +242,13 @@ const Chat = {
     input.style.height = Math.min(input.scrollHeight, RendererConstants.CHAT_INPUT_MAX_PX) + 'px';
   },
 
-  /** Forgets the conversation and shows the empty state again. */
+  /** Forgets the conversation and its files, stopping a run still going, and shows the empty state again. */
   clear() {
+    if (Chat.sending) Chat.stop();
+    Chat.epoch++;
     Chat.history = [];
+    ChatFiles.clear();
+    ChatPlaybook.withdraw();
     Dom.byId('chat-messages').innerHTML = Chat.emptyHtml;
   },
 
@@ -226,5 +262,7 @@ const Chat = {
 
 Chat.emptyHtml = Dom.byId('chat-messages').innerHTML;
 Dom.byId('chat-send').addEventListener('click', Chat.send);
+Dom.byId('chat-stop').addEventListener('click', Chat.stop);
+Dom.byId('chat-clear').addEventListener('click', Chat.clear);
 Dom.byId('chat-input').addEventListener('keydown', Chat.keydown);
 Dom.byId('chat-input').addEventListener('input', Chat.grow);

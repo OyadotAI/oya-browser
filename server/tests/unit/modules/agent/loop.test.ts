@@ -12,7 +12,7 @@ const { agentLoop } = await import('../../../../src/modules/agent/loop.ts');
 const recorder = await import('../../../../src/modules/agent/recorder.ts');
 const usage = await import('../../../../src/platform/usage.ts');
 const { scriptedBrowser, stubLlm, toolReply, textReply } = await import('../../support/agent.ts');
-const { WRAP_UP_STEPS } = await import('../../../../src/modules/agent/constants.ts');
+const { WRAP_UP_STEPS, STOPPED_TEXT } = await import('../../../../src/modules/agent/constants.ts');
 
 const BROWSER = 'b-loop';
 const KEY = 'loop-key';
@@ -53,6 +53,13 @@ describe('agentLoop', () => {
     const llm = stubLlm([textReply('  DONE: nothing to do  ')]);
     assert.deepEqual(await agentLoop(ctx(), start()), { text: 'DONE: nothing to do', toolCalls: [], failed: false });
     assert.equal(llm.urls[0], 'https://llm.test/v1/chat/completions');
+  });
+
+  it('ends a stopped run with a failed report, before asking the model again', async () => {
+    const llm = stubLlm([textReply('DONE')]);
+    const result = await agentLoop(ctx({ signal: AbortSignal.abort() }), start());
+    assert.deepEqual(result, { text: STOPPED_TEXT, toolCalls: [], failed: true });
+    assert.equal(llm.requests.length, 0);
   });
 
   it('runs each tool call, then asks again with the call and its result', async () => {

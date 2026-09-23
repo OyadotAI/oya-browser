@@ -12,9 +12,11 @@ const { UPDATE_CHECK_INTERVAL_MS, UPDATE_FIRST_CHECK_MS } = require('./constants
 /** The auto-updater and the toolbar's view of it. */
 class Updater {
   /** `sendToRenderer` updates the toolbar. */
-  constructor(sendToRenderer) {
+  constructor(sendToRenderer, beforeInstall) {
     /** Pushes state to the shell. */
     this.sendToRenderer = sendToRenderer;
+    /** Runs before an update restart (writes the cookie jar to disk), or undefined. */
+    this.beforeInstall = beforeInstall;
     /** electron-updater's autoUpdater, once started in a packaged app. */
     this.autoUpdater = null;
     /** What the toolbar shows. */
@@ -116,15 +118,16 @@ class Updater {
   /** Restarts into a staged update; false when none is ready. */
   install() {
     if (!this.autoUpdater || this.state.state !== 'ready') return false;
-    // Nothing else gets to run after this, it relaunches the app.
-    setImmediate(() => this.autoUpdater.quitAndInstall());
+    // Nothing else gets to run after this, it relaunches the app, so the jar goes to disk first.
+    const install = () => this.autoUpdater.quitAndInstall();
+    setImmediate(() => Promise.resolve(this.beforeInstall?.()).then(install, install));
     return true;
   }
 }
 
-/** `handle` registers an IPC handler; `sendToRenderer` updates the toolbar. */
-function createUpdater({ handle, sendToRenderer }) {
-  const updater = new Updater(sendToRenderer);
+/** `handle` registers an IPC handler; `sendToRenderer` updates the toolbar; `beforeInstall` runs before an update restart. */
+function createUpdater({ handle, sendToRenderer, beforeInstall }) {
+  const updater = new Updater(sendToRenderer, beforeInstall);
   handle('check-for-updates', () => updater.checkNow());
   handle('get-update-status', () => updater.state);
   handle('install-update', () => updater.install());

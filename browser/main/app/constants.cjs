@@ -17,5 +17,18 @@ const DEFAULT_SERVER_URL = 'wss://oyabrowser.com/ws';
 const NOISE_SEED_DIGITS = 6;
 /** The scheme one-click sign-in links use. */
 const LINK_SCHEME = 'oya://';
+/**
+ * How long a signed-in launch waits for the server's cookies before opening its
+ * pages anyway (offline). Opening them sooner let a site mint a logged-out cookie
+ * that then replaced the logged-in copy the server held.
+ */
+const RESUME_OFFLINE_MS = 5000;
 
-module.exports = { PRIVATE_FILE_MODE, JSON_INDENT, DEFAULT_SERVER_URL, NOISE_SEED_DIGITS, LINK_SCHEME };
+module.exports = {
+  PRIVATE_FILE_MODE,
+  JSON_INDENT,
+  DEFAULT_SERVER_URL,
+  NOISE_SEED_DIGITS,
+  LINK_SCHEME,
+  RESUME_OFFLINE_MS,
+};

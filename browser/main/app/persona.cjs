@@ -75,6 +75,15 @@ class Persona {
     return this.ctx.electron.session.fromPartition(this.partitionName());
   }
 
+  /**
+   * Writes this jar's cookies and storage to disk now. Chromium otherwise writes
+   * on a timer, and a login made just before quit or an update restart was lost.
+   */
+  async flushJar() {
+    const session = this.session();
+    await Promise.allSettled([session.cookies.flushStore(), session.flushStorageData()]);
+  }
+
   /** Configure the persistent browser session, user-agent, cookies, privacy. */
   async setupBrowserSession() {
     await configureSession(this.session(), this.active, this.ctx.observer);

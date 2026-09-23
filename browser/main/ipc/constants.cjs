@@ -9,6 +9,6 @@ const CONFIRM_BUTTON = 1;
 /** Themes the shell may choose. */
 const THEMES = ['system', 'light', 'dark'];
 /** Dev-panel panes the shell may remember. */
-const PANES = ['record', 'chat', 'actions', 'network', 'source'];
+const PANES = ['record', 'chat', 'routines', 'actions', 'network', 'source'];
 
 module.exports = { MAX_EXPORT_CHARS, MAX_IMPORT_BYTES, CONFIRM_BUTTON, THEMES, PANES };

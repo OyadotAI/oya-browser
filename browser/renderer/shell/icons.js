@@ -36,6 +36,8 @@ const ShellIcons = {
     expand: 'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7',
     more: 'M5.5 12h.5M11.75 12h.5M18 12h.5',
     power: 'M12 3v8M6.4 6.4a8 8 0 1 0 11.2 0',
+    attach: 'm20 11-8.5 8.5a5 5 0 0 1-7-7L13 4a3.3 3.3 0 0 1 4.7 4.7L9.2 17.2a1.7 1.7 0 0 1-2.4-2.4L14.5 7',
+    trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
   },
 
   /** The icon each Actions button shows. */

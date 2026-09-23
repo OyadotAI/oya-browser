@@ -6,8 +6,7 @@ const path = require('path');
 const { Workspace } = require('../../scripts/workspace.cjs');
 const { DraftStore } = require('../../scripts/draft-store.cjs');
 const { installApplicationMenu } = require('../shell/menu.cjs');
-const governance = require('../../governance');
-const { HOME_URL } = require('../tabs/constants.cjs');
+const { resumeSignedIn } = require('./resume.cjs');
 
 /**
  * Registering in dev needs the interpreter and script path, or the OS
@@ -93,26 +92,15 @@ function bootWorkspace(ctx) {
   ctx.recorder.adopt(ctx.workspace.draft.steps, ctx.workspace.draft.secrets);
 }
 
-/** The window, the front door, cookie sync, the connection and updates. */
+/** The window, the front door, cookie sync, the connection, routines and updates. */
 function bootServices(ctx) {
   ctx.shell.create();
   if (ctx.cdpPort) require('../../cdp-front-door').start(frontDoorOptions(ctx));
   ctx.cookies.startCookieChangeListener();
   if (ctx.config.values.apiKey || process.env.OYA_AUTO_CONNECT === 'true') ctx.socket.connect();
   resumeSignedIn(ctx);
+  ctx.routines.start();
   ctx.startAutoUpdate();
-}
-
-/**
- * A desktop that has signed in before opens straight to its pages and connects
- * in the background, instead of showing the welcome screen on every launch.
- * The saved persona is already loaded, so the first tab runs as it. A governed
- * browser, or one that has never been accepted (a fresh cloud sandbox), still
- * waits for the server: it must not load a page before its rules or persona.
- */
-function resumeSignedIn(ctx) {
-  if (!ctx.config.values.apiKey || !ctx.persona.active || governance.configuration) return;
-  ctx.tabs.enterBrowsingMode(HOME_URL);
 }
 
 /** Everything that runs once Electron is ready, in order. */
@@ -131,7 +119,7 @@ function interruptValidation(workspace) {
   workspace.session?.dispose();
 }
 
-/** Quitting: a recording is finished first, a validation is marked interrupted. */
+/** Quitting: a recording is finished first, a validation is marked interrupted, the jar is written to disk. */
 class Lifecycle {
   /** `ctx` is the main-process context (see main.js). */
   constructor(ctx) {
@@ -139,6 +127,15 @@ class Lifecycle {
     this.ctx = ctx;
     /** Set once a quit has waited for a recording, so the second quit goes through. */
     this.finishingQuit = false;
+    /** Set once the jar has been written to disk for this quit, so the next quit goes through. */
+    this.jarFlushed = false;
+  }
+
+  /** Writes the jar to disk once; later calls answer at once. The updater calls it before restarting. */
+  flushJar() {
+    if (this.jarFlushed) return Promise.resolve();
+    this.jarFlushed = true;
+    return this.ctx.persona.flushJar();
   }
 
   /** Installs the quit handlers. */
@@ -159,6 +156,15 @@ class Lifecycle {
     if (this.ctx.workspace?.busy()) interruptValidation(this.ctx.workspace);
     this.ctx.cookies.flushCookieChanges();
     this.ctx.layout.flush();
+    if (!this.jarFlushed) this.holdForJar(event);
+  }
+
+  /** Holds the quit until the cookies and storage are on disk, then quits again. */
+  holdForJar(event) {
+    event.preventDefault();
+    const quit = () => this.ctx.electron.app.quit();
+    // A jar that cannot be written must not keep the app from quitting.
+    this.flushJar().then(quit, quit);
   }
 
   /** Holds the quit until the recording is stopped and saved. */

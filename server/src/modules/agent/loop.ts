@@ -15,7 +15,7 @@ import { takeScreenshot, addImageTurn } from './screenshot.ts';
 import { chatCompletion } from '../../platform/llm.ts';
 import { metrics } from '../../platform/metrics.ts';
 import * as usage from '../../platform/usage.ts';
-import { DEFAULT_MAX_ITERATIONS, AGENT_LOG, AGENT_LOG_CHARS, WRAP_UP_STEPS } from './constants.ts';
+import { DEFAULT_MAX_ITERATIONS, AGENT_LOG, AGENT_LOG_CHARS, WRAP_UP_STEPS, STOPPED_TEXT } from './constants.ts';
 import { newGuard, afterCall, afterEmpty, failed, type Guard } from './guards.ts';
 import { verify, recheck } from './verifier.ts';
 import { CHALLENGE_TOOLS, CHALLENGE_HANDLERS, type Challenges } from './challenge-tools.ts';
@@ -91,6 +91,8 @@ export type LoopContext = {
   data?: any;
   /** Sites whose kept notes this run has shown (site-notes.ts). */
   shownSites?: Set<string>;
+  /** Aborted when the caller gives up (the person pressed Stop); the run ends at the next step. */
+  signal?: AbortSignal;
 };
 
 /** Counts one direction of an iteration's tokens against the key. */
@@ -371,7 +373,7 @@ export async function agentLoop(ctx: LoopContext, allMessages): Promise<AgentRes
   ctx.guard ??= newGuard();
   for (let iterations = 0; iterations < maxIterations; iterations++) {
     wrapUp(allMessages, maxIterations - iterations, maxIterations);
-    const text = await iterate(ctx, allMessages);
+    const text = ctx.signal?.aborted ? STOPPED_TEXT : await iterate(ctx, allMessages);
     if (text) return { text, toolCalls: [], failed: failed(text), ...(ctx.data !== undefined && { data: ctx.data }) };
   }
   return { text: 'Reached iteration limit.', toolCalls: [], limited: true, failed: true };

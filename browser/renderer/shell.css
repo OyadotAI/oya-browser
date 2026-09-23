@@ -1806,6 +1806,233 @@ button:active:not(:disabled) {
   opacity: 0.8;
 }
 
+/* Ask: profile picker, Clear, attachments, Stop */
+.chat-toolbar {
+  padding-bottom: 0;
+}
+.chat-toolbar select {
+  font-weight: 500;
+}
+.chat-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 2px 2px 9px;
+  border-radius: 999px;
+  background: var(--muted-surface);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  font-size: 12px;
+}
+.chat-file-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-file-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.chat-file-remove:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.chat-files-note {
+  color: var(--danger);
+  font-size: 11.5px;
+}
+.chat-composer .chat-attach {
+  align-self: flex-end;
+  margin-left: -6px;
+}
+
+/* Routines */
+.routines-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+}
+.routines-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.routines-empty {
+  color: var(--secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.routine-row {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+.routine-row.paused {
+  opacity: 0.6;
+}
+.routine-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.routine-name {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.run-status {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--secondary);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.run-status.running {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.run-status.done {
+  background: color-mix(in srgb, #2f9e5b 14%, transparent);
+  color: #2f9e5b;
+}
+.run-status.failed {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.routine-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 0.5px solid var(--hairline);
+  list-style: none;
+}
+.routine-runs-empty {
+  color: var(--secondary);
+  font-size: 12px;
+}
+.routine-run summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+.routine-run summary::-webkit-details-marker {
+  display: none;
+}
+.routine-run summary:hover {
+  background: var(--hover);
+}
+.routine-run-when {
+  color: var(--secondary);
+}
+.routine-run-body {
+  padding: 4px 6px 10px;
+}
+.routine-run-answer {
+  margin-top: 6px;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.routine-when {
+  margin-top: 2px;
+  color: var(--secondary);
+  font-size: 11.5px;
+}
+.routine-result {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.routine-result.error {
+  color: var(--danger);
+}
+.routine-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+.routine-buttons .text-button {
+  min-height: 0;
+  padding: 0;
+  font-size: 12px;
+}
+.routine-form .studio-field {
+  margin: 8px 0;
+}
+.routine-form :is(#routine-name, #routine-prompt),
+.routine-schedule :is(select, input) {
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--muted-surface);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.routine-form :is(#routine-name, #routine-prompt) {
+  width: 100%;
+  padding: 7px 10px;
+}
+#routine-prompt {
+  resize: vertical;
+  line-height: 1.5;
+}
+.routine-schedule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+}
+.routine-schedule :is(select, input) {
+  height: 30px;
+  padding: 0 8px;
+}
+#routine-n {
+  width: 64px;
+}
+.routine-error {
+  margin: 0 0 8px;
+  color: var(--danger);
+}
+.routine-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
 /* Inspect: Actions */
 .actions-scroll {
   flex: 1;
