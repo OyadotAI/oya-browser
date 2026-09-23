@@ -8,6 +8,8 @@ import { headers } from 'next/headers';
 import { DM_Sans, Archivo_Black } from 'next/font/google';
 import { AuthProvider } from '@/components/auth-provider';
 import { Analytics } from '@/components/analytics';
+import { Rb2b } from '@/components/rb2b';
+import { validRb2bId } from '@/lib/rb2b';
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION } from '@/lib/site';
 import './globals.css';
 
@@ -128,12 +130,19 @@ function analyticsSettings() {
   return key && host ? { key, host: host.replace(/\/+$/, '') } : null;
 }
 
+/** The RB2B account to load on public pages, read at request time like PostHog's settings; null when unset or malformed. */
+function rb2bId() {
+  const id = process.env.RB2B_ID?.trim();
+  return validRb2bId(id) ? id : null;
+}
+
 /** The document shell every page renders in. */
 export default async function RootLayout({ children }: PropsWithChildren) {
   // Set by src/proxy.ts, which also sends the Content-Security-Policy this
   // nonce belongs to. Without it these two inline scripts do not run.
   const nonce = (await headers()).get('x-nonce') ?? undefined;
   const analytics = analyticsSettings();
+  const rb2b = rb2bId();
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning className={`${dmSans.variable} ${archivo.variable}`}>
       <head>
@@ -153,6 +162,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
         <AuthProvider>
           {children}
           {analytics && <Analytics posthogKey={analytics.key} host={analytics.host} />}
+          {rb2b && <Rb2b id={rb2b} />}
         </AuthProvider>
       </body>
     </html>

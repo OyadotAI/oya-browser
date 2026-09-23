@@ -35,6 +35,14 @@ describe('contentSecurityPolicy', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://ph.example.test");
   });
 
+  it('lets the page reach RB2B only when the operator set its account', () => {
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
+    vi.stubEnv('RB2B_ID', 'ABC123DEF456');
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(
+      "'self' https://app.rb2b.com https://9xgnrndqve.execute-api.us-west-2.amazonaws.com",
+    );
+  });
+
   it('keeps the directives in their established order', () => {
     const names = contentSecurityPolicy('n', false)
       .split('; ')

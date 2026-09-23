@@ -61,6 +61,8 @@ export const FIELDS: Record<string, Field> = {
   // browsers inherit that browser's logins, so until this is set the
   // dashboard tells the user to install it and sign in.
   desktop_seen_at: {},
+  // The version the desktop last connected with, so a new one counts as an update.
+  desktop_version: {},
 };
 
 /** What onboarding offers, in the order it offers it. */

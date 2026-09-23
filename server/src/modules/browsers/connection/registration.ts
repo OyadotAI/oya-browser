@@ -6,7 +6,7 @@ import { control, hash } from '../../control/service.ts';
 import { registry } from '../registry.ts';
 import { metrics } from '../../../platform/metrics.ts';
 import * as usage from '../../../platform/usage.ts';
-import { track } from '../../telemetry/index.ts';
+import { track, versionOf, UNKNOWN_VERSION } from '../../telemetry/index.ts';
 import { isInternal } from '../../../drivers/vocabulary.ts';
 import * as keyConfig from '../../config/service.ts';
 import { isProvisioned } from '../../../drivers/sandbox.ts';
@@ -76,11 +76,18 @@ const PLATFORMS = new Set(['MacIntel', 'Win32', 'Linux x86_64', 'Linux aarch64']
 /** A desktop's platform as the event names it: one of the known values, else unknown. */
 const platformOf = (reported: unknown) => (PLATFORMS.has(String(reported)) ? String(reported) : 'unknown');
 
-/** Remembers that this key has a desktop, and counts the first time as the one worth telling the owner about. */
+/**
+ * Remembers that this key has a desktop and which version it runs. The first
+ * connect is the one worth telling the owner about; one on another version
+ * than last time is an update that landed.
+ */
 async function noteDesktop(reg: Registration, msg) {
-  const first = !keyConfig.get(reg.apiKey).desktop_seen_at;
-  await keyConfig.set(reg.apiKey, { desktop_seen_at: new Date().toISOString() });
-  track.desktopConnected(reg.apiKey, { platform: platformOf(msg.host_platform), first });
+  const { desktop_seen_at: seen, desktop_version: from } = keyConfig.get(reg.apiKey);
+  const [platform, version] = [platformOf(msg.host_platform), versionOf(msg.app_version)];
+  await keyConfig.set(reg.apiKey, { desktop_seen_at: new Date().toISOString(), desktop_version: version });
+  track.desktopConnected(reg.apiKey, { platform, first: !seen, version });
+  if (from && from !== version && version !== UNKNOWN_VERSION)
+    track.desktopUpdated(reg.apiKey, { platform, from, to: version });
 }
 
 /** Lists the browser and starts counting it. */

@@ -33,7 +33,14 @@ function Downloads() {
       <p>Or sign in by hand, once</p>
       <nav aria-label="Browser downloads">
         {browserDownloads.map(({ platform, architecture, href }) => (
-          <a key={platform} href={href} download title={`${platform} · ${architecture}`}>
+          <a
+            key={platform}
+            href={href}
+            download
+            title={`${platform} · ${architecture}`}
+            data-track="download_clicked"
+            data-track-label={platform}
+          >
             <Download size={17} aria-hidden="true" /> {platform}
           </a>
         ))}
@@ -58,10 +65,10 @@ export function Hero() {
           it: your agents sign in like staff, and a run recorded once replays forever with no model in the loop.
         </p>
         <div className={styles.actions}>
-          <Link href="/dashboard" className={styles.primary}>
+          <Link href="/dashboard" className={styles.primary} data-track="cta_clicked" data-track-label="hero_start">
             Start building <ArrowUpRight size={17} aria-hidden="true" />
           </Link>
-          <Link href="/docs" className={styles.secondary}>
+          <Link href="/docs" className={styles.secondary} data-track="cta_clicked" data-track-label="hero_docs">
             Read the docs <ArrowRight size={15} aria-hidden="true" />
           </Link>
         </div>

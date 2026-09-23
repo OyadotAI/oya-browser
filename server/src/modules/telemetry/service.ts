@@ -34,6 +34,9 @@ function send<K extends EventName>(name: K, who: Who, props: EventProps[K]) {
   if (line) slack.post(CHANNEL[name], line);
 }
 
+/** Someone who fetched a file: a stable fingerprint, never a person profile, so downloads count without naming anyone. */
+const visitorWho = (visitor: string): Who => ({ id: visitor, label: '' });
+
 /** Emits an event about whoever holds `key`, now or once the owner is known; never awaited. */
 function emit<K extends EventName>(name: K, key: string | null, props: EventProps[K]) {
   if (!analytics.enabled() && !slackWanted(name)) return;
@@ -80,6 +83,14 @@ export const track = {
   cdpAttached: (key: string, props: EventProps['cdp_attached']) => emit('cdp_attached', key, props),
   /** The desktop app connected. */
   desktopConnected: (key: string, props: EventProps['desktop_connected']) => emit('desktop_connected', key, props),
+  /** A key's desktop came back on another version. */
+  desktopUpdated: (key: string, props: EventProps['desktop_updated']) => emit('desktop_updated', key, props),
+  /** A file was served from /downloads, to `visitor` (a fingerprint of who asked, not a person). */
+  downloadServed: (visitor: string, props: EventProps['download_served']) =>
+    send('download_served', visitorWho(visitor), props),
+  /** An installed app checked for an update. */
+  updateChecked: (visitor: string, props: EventProps['update_checked']) =>
+    send('update_checked', visitorWho(visitor), props),
   /** A persona was created. */
   personaCreated: (key: string, props: EventProps['persona_created']) => emit('persona_created', key, props),
   /** The server answered a 500 under a reference. */

@@ -11,7 +11,9 @@
  * `connect-src` has to be computed too: NEXT_PUBLIC_API_URL may point at a
  * different origin than the console, and hard-coding 'self' would silently
  * break every request in that topology. POSTHOG_HOST joins it only when the
- * operator set one, so a console with analytics off can reach nothing extra.
+ * operator set one, and RB2B's hosts only with RB2B_ID, so a console with
+ * analytics off can reach nothing extra. RB2B's script itself needs no entry:
+ * a script a nonced script adds is trusted under 'strict-dynamic'.
  *
  * `style-src` keeps 'unsafe-inline'. Next.js emits inline <style> for fonts and
  * critical CSS, and there is no style equivalent of the nonce plumbing above
@@ -35,11 +37,17 @@ const MIDDLE = [
 /** Directives after connect-src. */
 const CLOSING = ["frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'", "form-action 'self'"];
 
-/** Where the page may send requests: itself, the API's origin when elsewhere, and the dev bundler's socket. */
+/** Where RB2B's script reports to, observed from a real page (its script builds the API host at runtime). */
+const RB2B_HOSTS = ['https://app.rb2b.com', 'https://9xgnrndqve.execute-api.us-west-2.amazonaws.com'];
+
+/**
+ * Where the page may send requests: itself, the API's origin when elsewhere,
+ * PostHog and RB2B when the operator turned them on, and the dev bundler's socket.
+ */
 function connectSources(dev: boolean): string {
-  return ["'self'", originOf(process.env.NEXT_PUBLIC_API_URL), originOf(process.env.POSTHOG_HOST), dev ? 'ws:' : null]
-    .filter(Boolean)
-    .join(' ');
+  const api = originOf(process.env.NEXT_PUBLIC_API_URL);
+  const rb2b = process.env.RB2B_ID ? RB2B_HOSTS : [];
+  return ["'self'", api, originOf(process.env.POSTHOG_HOST), ...rb2b, dev ? 'ws:' : null].filter(Boolean).join(' ');
 }
 
 /** The origin of a URL the page may send to, or null when the setting is absent or not a URL. */

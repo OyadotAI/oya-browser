@@ -71,6 +71,35 @@ export type EventProps = {
     platform: string;
     /** Whether this key had never connected a desktop before. */
     first: boolean;
+    /** The app's version, or `unknown` for an app too old to say. */
+    version: string;
+  };
+  /** A key's desktop app came back on a different version than it last connected with: an update landed. */
+  desktop_updated: {
+    /** The desktop's platform. */
+    platform: string;
+    /** The version it last connected with. */
+    from: string;
+    /** The version it runs now. */
+    to: string;
+  };
+  /** An installer or update archive was served from /downloads. */
+  download_served: {
+    /** Which build: mac, windows, linux, or unknown. */
+    platform: string;
+    /** The release the file is from. */
+    version: string;
+    /** `installer` for a .dmg, .exe or .AppImage, `update` for the archive an app updates from. */
+    file_type: 'installer' | 'update';
+    /** `updater` when the app itself fetched it, `web` when a person did. */
+    via: 'web' | 'updater';
+  };
+  /** An installed app asked whether there is a newer release. */
+  update_checked: {
+    /** Which feed: mac, windows or linux. */
+    platform: string;
+    /** The version asking, or `unknown` for an app too old to say. */
+    from_version: string;
   };
   /** A persona was created. */
   persona_created: {
@@ -96,6 +125,7 @@ export const CHANNEL: Partial<Record<EventName, 'signups' | 'events'>> = {
   account_signed_up: 'signups',
   api_key_created: 'signups',
   desktop_connected: 'signups',
+  download_served: 'signups',
   playbook_saved: 'events',
   cdp_attached: 'events',
   server_error: 'events',
@@ -110,6 +140,9 @@ export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) 
   api_key_created: (who, p) => `🔑 API key created: ${who.label} (project ${p.project_id.slice(0, PROJECT_ID_CHARS)})`,
   // Only the first connect: a laptop waking is not news.
   desktop_connected: (who, p) => (p.first ? `🖥️ Desktop connected: ${who.label} (${p.platform})` : null),
+  // Only a person's download: the app fetching its own update is not news.
+  download_served: (_who, p) =>
+    p.via === 'web' && p.file_type === 'installer' ? `⬇️ Desktop downloaded: ${p.platform} ${p.version}` : null,
   playbook_saved: (who, p) => `💾 Playbook saved: ${who.label} (${steps(p.steps)})`,
   cdp_attached: (who, p) => `🔌 CDP attached: ${who.label} (${p.provider})`,
   server_error: (who, p) =>
