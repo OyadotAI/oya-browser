@@ -5,6 +5,7 @@
  */
 
 import * as keyConfig from '../config/service.ts';
+import { agentKeyUnclaimed } from '../auth/service.ts';
 import { metrics } from '../../platform/metrics.ts';
 import { checkHourly } from '../../platform/limits.ts';
 import { HttpError } from '../../platform/errors.ts';
@@ -50,9 +51,20 @@ const noLlm = () =>
     { code: 'llm_unconfigured' },
   );
 
+/** What an agent's own key is told: it brings its own model, and how to set one with the key it already has. */
+const bringYourOwn = () =>
+  new HttpError(
+    Status.UNPROCESSABLE,
+    'Agent keys bring their own LLM: POST /api/config {"llm_provider": "anthropic" | "openai" | "gemini", "openai_api_key": "<your provider key>"} (the field takes any provider\'s key; chat_model optional), then retry.',
+    { code: 'llm_bring_your_own' },
+  );
+
+/** The refusal for a key with no model: an agent's own key is told to bring one, anyone else where to set it. */
+const missingLlm = (apiKey) => (agentKeyUnclaimed(apiKey) ? bringYourOwn() : noLlm());
+
 /** Refuses a chat before it starts when the key has no model, so the caller gets a real status, not a 200 with an error inside. */
 export function requireLlm(apiKey) {
-  if (!keyConfig.resolve(apiKey).openaiKey) throw noLlm();
+  if (!keyConfig.resolve(apiKey).openaiKey) throw missingLlm(apiKey);
 }
 
 /**
@@ -62,7 +74,7 @@ export function requireLlm(apiKey) {
 function llmFor(apiKey) {
   const { openaiKey, baseUrl, model, own } = keyConfig.resolve(apiKey);
   enforceBudget(apiKey, own);
-  if (!openaiKey) throw noLlm();
+  if (!openaiKey) throw missingLlm(apiKey);
   return { llm: { openaiKey, baseUrl, model }, budget: () => enforceBudget(apiKey, own) };
 }
 

@@ -179,6 +179,21 @@ describe('key settings', () => {
       assert.equal(keyConfig.resolve(KEY).baseUrl, 'https://llm.example.com/v1');
     });
 
+    it("never lends the deployment's key to an agent's unclaimed key, only its own", async () => {
+      const { keyDigest, noteAgentKey } = await import('../../../../src/modules/auth/keys.ts');
+      process.env.OPENAI_API_KEY = 'sk-host';
+      noteAgentKey(keyDigest(KEY), true);
+      try {
+        assert.equal(keyConfig.resolve(KEY).openaiKey, '');
+        await keyConfig.set(KEY, { llm_provider: 'anthropic', openai_api_key: 'sk-agent' });
+        assert.equal(keyConfig.resolve(KEY).openaiKey, 'sk-agent');
+      } finally {
+        noteAgentKey(keyDigest(KEY), false);
+      }
+      await keyConfig.set(KEY, { openai_api_key: '' });
+      assert.equal(keyConfig.resolve(KEY).openaiKey, 'sk-host', 'once claimed it runs on the deployment again');
+    });
+
     it('reads a secret that no longer unseals as absent', () => {
       store.set(fingerprint(KEY), { openai_api_key: 'bm90LXNlYWxlZA==' });
       assert.equal(keyConfig.resolve(KEY).own, undefined);

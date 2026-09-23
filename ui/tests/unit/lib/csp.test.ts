@@ -54,6 +54,7 @@ describe('contentSecurityPolicy', () => {
       'img-src',
       'media-src',
       'font-src',
+      'frame-src',
       'connect-src',
       'frame-ancestors',
       'object-src',

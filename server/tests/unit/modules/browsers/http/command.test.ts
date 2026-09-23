@@ -130,6 +130,26 @@ describe('chat', () => {
     assert.match(res.body.error, /No LLM key configured/);
   });
 
+  it("tells an agent's unclaimed key to bring its own LLM, even when the deployment has one", async () => {
+    const { keyDigest, noteAgentKey } = await import('../../../../../src/modules/auth/keys.ts');
+    const agentKey = 'agent-key-'.padEnd(32, 'a');
+    const host = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-host';
+    noteAgentKey(keyDigest(agentKey), true);
+    try {
+      const req = fakeRequest({ params: { browserId: B }, body: { messages: [{ role: 'user', content: 'hi' }] } });
+      req.headers = { authorization: `Bearer ${agentKey}` };
+      const res = new FakeResponse();
+      await chat(req, res);
+      assert.deepEqual([res.statusCode, res.body.code], [422, 'llm_bring_your_own']);
+      assert.match(res.body.error, /POST \/api\/config/);
+    } finally {
+      noteAgentKey(keyDigest(agentKey), false);
+      if (host === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = host;
+    }
+  });
+
   it('requires a messages array', async () => {
     const res = await talk({ messages: 'hi' });
     assert.deepEqual([res.statusCode, res.body], [400, { error: 'messages array required' }]);

@@ -44,19 +44,24 @@ async function account<T = any>(path: string, fallback: string, init: RequestIni
 }
 
 /** Signs in with email and password; the server sets the refresh cookie. */
-export const login = (email: string, password: string) =>
+export const login = (email: string, password: string, captchaToken?: string) =>
   account('/auth/login', 'Login failed', {
     method: 'POST',
     credentials: 'include',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, captcha_token: captchaToken }),
   });
 
 /** Creates an account. */
-export const signup = (email: string, password: string, displayName?: string) =>
+export const signup = (email: string, password: string, displayName?: string, captchaToken?: string) =>
   account('/auth/signup', 'Signup failed', {
     method: 'POST',
-    body: JSON.stringify({ email, password, display_name: displayName }),
+    credentials: 'include',
+    body: JSON.stringify({ email, password, display_name: displayName, captcha_token: captchaToken }),
   });
+
+/** Where "Continue with Google/GitHub" goes; the server sends the browser on to the provider. */
+export const oauthStartUrl = (provider: 'google' | 'github', redirectTo: string) =>
+  `${apiUrl(`/auth/oauth/${provider}`)}?redirect_to=${encodeURIComponent(redirectTo)}`;
 
 /**
  * With no argument this refreshes from the httpOnly cookie the server set at

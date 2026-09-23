@@ -75,6 +75,10 @@ export const DEFAULT_PROVISION_BURST = 20;
 export const DEFAULT_CONNECT_PER_MIN = 120;
 /** Browser connections a key may open in one burst. */
 export const DEFAULT_CONNECT_BURST = 60;
+/** New agent keys one caller address may sign up for in a day. */
+export const DEFAULT_AGENT_SIGNUPS_PER_DAY = 3;
+/** Minutes in a day, for limits counted per day on a per-minute bucket. */
+export const MINUTES_PER_DAY = 1440;
 /** Browsers one key may hold at once. */
 export const DEFAULT_MAX_BROWSERS = 5000;
 /** Chat tokens one key may spend in an hour. */

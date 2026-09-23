@@ -32,6 +32,8 @@ const MIDDLE = [
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "font-src 'self' data:",
+  // The Turnstile captcha on sign-in and sign-up draws its challenge in Cloudflare's iframe.
+  'frame-src https://challenges.cloudflare.com',
 ];
 
 /** Directives after connect-src. */

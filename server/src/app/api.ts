@@ -15,6 +15,7 @@ import { forwardHttp } from '../modules/control/cluster.ts';
 import { projectAccountRouter } from '../modules/control/membership.ts';
 import { controlRouter } from '../modules/control/routes.ts';
 import { router as authRoutes } from '../modules/auth/routes.ts';
+import { router as agentSignupRoutes } from '../modules/auth/agent-routes.ts';
 import { router as fleetRoutes } from '../modules/fleet/routes.ts';
 import { router as browsersRoutes } from '../modules/browsers/routes.ts';
 import { personaRoutes } from '../modules/personas/routes.ts';
@@ -78,6 +79,8 @@ registry.on('browser:disconnected', ({ id }) => siteLogin.forget(id));
 
 /** Resources. Mounted without a prefix so req.path, which the role guards read, is unchanged. Auth: sign-in, account and API keys. */
 router.use(authRoutes);
+/** Agent self-signup: an AI agent gets its own key, no person needed. */
+router.use(agentSignupRoutes);
 /** Health, metrics, usage, audit and fleet operations. */
 router.use(fleetRoutes);
 /** Browser lifecycle, commands, live view and providers. */

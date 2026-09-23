@@ -18,6 +18,7 @@ import { browserDetail, liveView } from './http/inspect.ts';
 import { connectCdp } from './http/connect.ts';
 import { solveCaptcha, completeMfa } from './http/challenges.ts';
 import { provision, deleteSandbox } from './http/provision.ts';
+import { cloudNeedsPerson } from './http/cloud-gate.ts';
 import { runCommand, chat } from './http/command.ts';
 
 export { startBrowser } from './lifecycle/start.ts';
@@ -60,7 +61,7 @@ router.post('/browsers/connect', authMiddleware, enforce('connect'), admission('
 router.delete('/browsers/:browserId/connection', authMiddleware, detach);
 
 /** POST /browsers/start, starts a browser on whichever provider is configured. */
-router.post('/browsers/start', authMiddleware, enforce('provision'), admission(), startBrowser);
+router.post('/browsers/start', authMiddleware, enforce('provision'), cloudNeedsPerson(), admission(), startBrowser);
 
 /** POST /browsers/:browserId/captcha, detects a CAPTCHA on the page and, unless `solve` is false, solves it. */
 router.post('/browsers/:browserId/captcha', authMiddleware, enforce('command'), requireBrowser, solveCaptcha);
@@ -74,7 +75,7 @@ router.post('/browsers/:browserId/mfa', authMiddleware, enforce('command'), requ
 // caller's own key, so they join that caller's pool as ordinary browsers.
 
 /** POST /browsers/provision, launches up to 100 Oya Cloud sandbox browsers, within the hourly quota. */
-router.post('/browsers/provision', authMiddleware, enforce('provision'), provision);
+router.post('/browsers/provision', authMiddleware, enforce('provision'), cloudNeedsPerson('oya-cloud'), provision);
 
 /** DELETE /browsers/:browserId/sandbox, destroys a browser's Oya Cloud sandbox; ownership is checked by its owner label. */
 router.delete('/browsers/:browserId/sandbox', authMiddleware, deleteSandbox);

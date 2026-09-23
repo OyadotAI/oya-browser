@@ -7,9 +7,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth-provider';
+import { pendingClaim } from '@/lib/claim';
 
 /** Where a signed-in person goes. */
 export const HOME = '/dashboard';
+
+/** Where a person goes right after signing in: back to a claim they were in the middle of, else the console. */
+export const afterSignIn = () => (pendingClaim() ? '/claim' : HOME);
 
 /** A form's error and busy state. */
 export interface FormState {
@@ -79,7 +83,7 @@ export function useSignedInRedirect() {
   const auth = useAuth();
   const { loading, user } = auth;
   useEffect(() => {
-    if (!loading && user) router.replace(HOME);
+    if (!loading && user) router.replace(afterSignIn());
   }, [loading, user, router]);
   return { ...auth, router };
 }

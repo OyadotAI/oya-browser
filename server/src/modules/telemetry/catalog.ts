@@ -20,6 +20,15 @@ export type Who = {
 export type EventProps = {
   /** A person made an account. */
   account_signed_up: Record<string, never>;
+  /** An AI agent signed itself up for a key, naming the email of the person it works for. */
+  agent_signed_up: Record<string, never>;
+  /** A person claimed a key an agent had signed up for. */
+  agent_key_claimed: Record<string, never>;
+  /** An unclaimed agent key asked for a browser this server pays for, and was sent to be claimed. */
+  agent_cloud_refused: {
+    /** The provider it asked for. */
+    provider: string;
+  };
   /** A signed-in person made an API key. */
   api_key_created: {
     /** The project the key belongs to. */
@@ -123,6 +132,8 @@ export type EventName = keyof EventProps;
 /** The channel an event's Slack line goes to. */
 export const CHANNEL: Partial<Record<EventName, 'signups' | 'events'>> = {
   account_signed_up: 'signups',
+  agent_signed_up: 'signups',
+  agent_key_claimed: 'signups',
   api_key_created: 'signups',
   desktop_connected: 'signups',
   download_served: 'signups',
@@ -137,6 +148,8 @@ const steps = (n: number) => `${n} step${n === 1 ? '' : 's'}`;
 /** The Slack line for each event that has one. Every value printed comes from the typed props or `who.label`. */
 export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) => string | null } = {
   account_signed_up: (who) => `🎉 New signup: ${who.label}`,
+  agent_signed_up: (who) => `🤖 Agent signed up for: ${who.label}`,
+  agent_key_claimed: (who) => `🤝 Agent key claimed by: ${who.label}`,
   api_key_created: (who, p) => `🔑 API key created: ${who.label} (project ${p.project_id.slice(0, PROJECT_ID_CHARS)})`,
   // Only the first connect: a laptop waking is not news.
   desktop_connected: (who, p) => (p.first ? `🖥️ Desktop connected: ${who.label} (${p.platform})` : null),

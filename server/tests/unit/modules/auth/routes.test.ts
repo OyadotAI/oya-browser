@@ -44,6 +44,47 @@ describe('POST /auth/login', () => {
   });
 });
 
+describe('captcha on sign-in and sign-up', () => {
+  for (const path of ['/auth/login', '/auth/signup']) {
+    it(`${path} refuses a missing captcha before any account call`, async () => {
+      process.env.TURNSTILE_SECRET_KEY = 'test-secret';
+      try {
+        const res = await send('POST', path, { email: 'a@example.com', password: 'long-enough' });
+        assert.deepEqual(
+          [res.statusCode, res.body.error],
+          [Status.BAD_REQUEST, 'Captcha check failed, please try again'],
+        );
+      } finally {
+        delete process.env.TURNSTILE_SECRET_KEY;
+      }
+    });
+  }
+});
+
+describe('GET /auth/oauth/:provider', () => {
+  /** Sends the OAuth start with `query`. */
+  const start = (provider: string, query: any) => {
+    const req = fakeRequest({ method: 'GET', path: `/auth/oauth/${provider}` });
+    req.query = query;
+    return routeThrough(router, req);
+  };
+
+  it('requires an http(s) redirect_to', async () => {
+    const res = await start('google', { redirect_to: 'javascript:alert(1)' });
+    assert.deepEqual([res.statusCode, res.body], [Status.BAD_REQUEST, { error: 'redirect_to required' }]);
+  });
+
+  it('answers 404 for a provider we do not offer', async () => {
+    const res = await start('myspace', { redirect_to: 'https://oyabrowser.com/auth/callback' });
+    assert.deepEqual([res.statusCode, res.body], [Status.NOT_FOUND, { error: 'Unknown sign-in provider' }]);
+  });
+
+  it('answers 503 when accounts are not configured', async () => {
+    const res = await start('google', { redirect_to: 'https://oyabrowser.com/auth/callback' });
+    assert.equal(res.statusCode, Status.UNAVAILABLE);
+  });
+});
+
 describe('POST /auth/refresh', () => {
   it('requires a refresh token from the body or the cookie', async () => {
     const res = await send('POST', '/auth/refresh');
