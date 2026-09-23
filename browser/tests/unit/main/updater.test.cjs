@@ -32,7 +32,7 @@ describe('createUpdater', () => {
   let statuses;
 
   /** A packaged (or dev) app with the updater created and its IPC captured. */
-  function setUp(isPackaged) {
+  function setUp(isPackaged, beforeInstall) {
     app = { isPackaged, getVersion: () => '1.0.0' };
     notifications = [];
     /** Records each OS notification shown. */
@@ -54,6 +54,7 @@ describe('createUpdater', () => {
     return createUpdater({
       handle: (channel, fn) => (handlers[channel] = fn),
       sendToRenderer: (channel, state) => statuses.push([channel, state]),
+      beforeInstall,
     });
   }
 
@@ -136,14 +137,18 @@ describe('createUpdater', () => {
     assert.equal(notifications[0].title, 'Oya Browser 2.0.0 is available');
   });
 
-  it('installs only a downloaded update, after the handler returns', () => {
-    setUp(true).startAutoUpdate();
+  it('installs only a downloaded update, after the handler returns and the jar is on disk', async () => {
+    const order = [];
+    setUp(true, async () => order.push('flush')).startAutoUpdate();
     assert.equal(handlers['install-update'](), false);
     updater.autoUpdater.emit('update-downloaded', { version: '2.0.0' });
+    updater.autoUpdater.quitAndInstall = () => order.push('install');
     assert.equal(handlers['install-update'](), true);
-    assert.equal(updater.autoUpdater.installed, undefined);
+    assert.deepEqual(order, []);
     mock.timers.tick(0);
-    assert.equal(updater.autoUpdater.installed, true);
+    await new Promise((resolve) => process.nextTick(resolve));
+    await Promise.resolve();
+    assert.deepEqual(order, ['flush', 'install']);
   });
 
   it('shows a failed manual check as an error', async () => {

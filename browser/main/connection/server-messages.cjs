@@ -5,6 +5,7 @@
 const governance = require('../../governance');
 const { HOME_URL } = require('../tabs/constants.cjs');
 const { DEFAULT_STREAM_FPS } = require('./constants.cjs');
+const { openResumedHome } = require('../app/resume.cjs');
 
 /** The server accepted us: take the persona it sent, go online, and share our cookies. */
 async function acceptAuth(ctx, msg) {
@@ -16,6 +17,7 @@ async function acceptAuth(ctx, msg) {
   if (msg.fingerprint) await ctx.persona.applyServerFingerprint(msg.fingerprint, msg.cookies || [], msg.now);
   goOnline(ctx, msg);
   if (!ctx.shell.browsingMode) ctx.tabs.enterBrowsingMode(governance.configuration ? 'about:blank' : HOME_URL);
+  openResumedHome(ctx);
   await shareProfile(ctx);
 }
 

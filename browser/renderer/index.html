@@ -162,6 +162,7 @@
       <div class="dev-panel-header" role="tablist" aria-label="Agent tools">
         <button class="dev-tab active" data-pane="chat" role="tab" aria-selected="true">Ask</button>
         <button class="dev-tab" data-pane="record" role="tab" aria-selected="false">Record</button>
+        <button class="dev-tab" data-pane="routines" role="tab" aria-selected="false">Routines</button>
         <button class="dev-tab" data-pane="actions" role="tab" aria-selected="false" id="inspect-tab">Inspect</button>
       </div>
       <div class="inspect-nav" id="inspect-nav" hidden>
@@ -171,6 +172,22 @@
       </div>
       <!-- Chat pane -->
       <div class="dev-pane active" id="pane-chat">
+        <div class="studio-header chat-toolbar">
+          <select
+            id="chat-persona"
+            aria-label="Profile"
+            title="The profile Oya browses as. Switching reopens your tabs with that profile's cookies."
+            disabled
+          >
+            <option value="default">Default profile</option></select
+          ><button
+            class="icon-button"
+            id="chat-clear"
+            aria-label="Clear chat"
+            title="Clear chat"
+            data-icon="trash"
+          ></button>
+        </div>
         <div class="chat-messages" id="chat-messages">
           <div class="chat-empty">
             <span class="empty-icon" data-icon="spark"></span>
@@ -179,7 +196,16 @@
           </div>
         </div>
         <div class="chat-input-bar">
+          <div class="chat-files" id="chat-files" aria-label="Attached files" hidden></div>
           <div class="chat-composer">
+            <input type="file" id="chat-file-input" multiple hidden />
+            <button
+              class="icon-button chat-attach"
+              id="chat-attach"
+              aria-label="Attach files"
+              title="Attach files the agent can upload to a page"
+              data-icon="attach"
+            ></button>
             <textarea
               class="chat-input"
               id="chat-input"
@@ -188,11 +214,60 @@
               placeholder="Ask about this page or give a task…"
               spellcheck="false"
             ></textarea>
-            <button class="chat-send" id="chat-send" aria-label="Send message" data-icon="send"></button>
+            <button class="chat-send" id="chat-send" aria-label="Send message" data-icon="send"></button
+            ><button
+              class="chat-send chat-stop"
+              id="chat-stop"
+              aria-label="Stop"
+              title="Stop"
+              data-icon="stop"
+              hidden
+            ></button>
           </div>
           <p class="chat-hint">Enter to send · Shift Enter for a new line</p>
         </div>
       </div>
+
+      <!-- Routines pane -->
+      <section class="dev-pane" id="pane-routines" aria-label="Routines">
+        <div class="routines-scroll">
+          <ul class="routines-list" id="routines-list" aria-label="Saved routines"></ul>
+          <form class="routine-form" id="routine-form">
+            <div class="action-label" id="routine-form-title">New routine</div>
+            <label class="studio-field"
+              >Name<input id="routine-name" maxlength="100" placeholder="Morning inbox" spellcheck="false"
+            /></label>
+            <label class="studio-field"
+              >Prompt<textarea
+                id="routine-prompt"
+                rows="3"
+                maxlength="10000"
+                placeholder="Open Gmail and summarize unread emails from today"
+              ></textarea>
+            </label>
+            <div class="routine-schedule">
+              <select id="routine-kind" aria-label="Repeat">
+                <option value="every">Every</option>
+                <option value="daily">Daily at</option></select
+              ><input id="routine-n" type="number" min="1" max="999" value="1" aria-label="How often" /><select
+                id="routine-unit"
+                aria-label="Unit"
+              >
+                <option value="hours">hours</option>
+                <option value="minutes">minutes</option></select
+              ><input id="routine-at" type="time" value="09:00" aria-label="Time of day" hidden />
+            </div>
+            <p class="studio-status routine-error" id="routine-error" role="alert" hidden></p>
+            <div class="routine-actions">
+              <button type="submit" class="primary-button" id="routine-save">Save routine</button
+              ><button type="button" class="text-button" id="routine-cancel" hidden>Cancel</button>
+            </div>
+          </form>
+          <p class="chat-hint">
+            Routines run while Oya is open and connected. A missed run happens once on the next start.
+          </p>
+        </div>
+      </section>
 
       <!-- Actions pane -->
       <div class="dev-pane" id="pane-actions">
@@ -613,8 +688,12 @@
     <script src="connection/toolbar.js"></script>
     <script src="panes/net-log.js"></script>
     <script src="panes/chat-playbook.js"></script>
+    <script src="panes/chat-files.js"></script>
     <script src="panes/chat.js"></script>
+    <script src="panes/chat-persona.js"></script>
     <script src="panes/chat-progress.js"></script>
+    <script src="panes/routine-runs.js"></script>
+    <script src="panes/routines.js"></script>
     <script src="panes/source.js"></script>
     <script src="panes/actions.js"></script>
     <script src="panes/panel.js"></script>

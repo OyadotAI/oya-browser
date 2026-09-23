@@ -8,10 +8,12 @@ const { SESSION_HANDLERS } = require('./session.cjs');
 const { RECORDING_HANDLERS } = require('./recording.cjs');
 const { SHELL_HANDLERS } = require('./shell.cjs');
 const { DEV_HANDLERS } = require('./dev.cjs');
+const { ROUTINE_HANDLERS } = require('./routines.cjs');
 
 /** Registers every channel. */
 function registerIpc(handle, ctx) {
-  for (const table of [NAVIGATION_HANDLERS, SESSION_HANDLERS, RECORDING_HANDLERS, SHELL_HANDLERS, DEV_HANDLERS]) {
+  const tables = [NAVIGATION_HANDLERS, SESSION_HANDLERS, RECORDING_HANDLERS, SHELL_HANDLERS, DEV_HANDLERS];
+  for (const table of [...tables, ROUTINE_HANDLERS]) {
     registerHandlers(handle, ctx, table);
   }
 }

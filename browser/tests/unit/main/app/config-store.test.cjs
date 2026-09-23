@@ -44,6 +44,14 @@ describe('ConfigStore', () => {
     assert.equal(new ConfigStore({ dir: () => dir, env: { OYA_API_KEY: 'env-key' } }).load().apiKey, '');
   });
 
+  it('keeps a key and server entered in the app over the environment', () => {
+    const saved = { apiKey: 'typed', serverUrl: 'wss://mine.test/ws', keyFromApp: true };
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(saved));
+    const env = { OYA_API_KEY: 'a2a_other_product', OYA_SERVER_URL: 'wss://other.test/ws', OYA_PERSONA: 'p' };
+    const values = new ConfigStore({ dir: () => dir, env }).load();
+    assert.deepEqual([values.apiKey, values.serverUrl, values.persona], ['typed', 'wss://mine.test/ws', 'p']);
+  });
+
   it('ignores a broken file', () => {
     fs.writeFileSync(path.join(dir, 'config.json'), '{nope');
     assert.equal(new ConfigStore({ dir: () => dir, env: {} }).load().apiKey, '');

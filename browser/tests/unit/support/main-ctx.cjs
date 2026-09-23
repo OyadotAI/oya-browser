@@ -378,7 +378,19 @@ function mainCtx(real = {}) {
     layout: { layoutActiveTab() {}, reveal() {}, flush() {} },
     overlays: { names: new Set() },
     protection: { setupTabCDP: async () => true, resetTabCDP() {}, injectScripts: async () => {}, protectPopup() {} },
-    persona: { active: null, loginState: null, partitionName: () => 'persist:oya-browser' },
+    persona: {
+      active: null,
+      loginState: null,
+      partitionName: () => 'persist:oya-browser',
+      session() {
+        return ctx.electron.session.fromPartition(this.partitionName());
+      },
+      /** As the real one: the jar's cookies and storage to disk. */
+      async flushJar() {
+        const session = this.session();
+        await Promise.allSettled([session.cookies.flushStore(), session.flushStorageData()]);
+      },
+    },
     recorder: {
       recording: false,
       recordNavigation() {},
@@ -393,6 +405,7 @@ function mainCtx(real = {}) {
       },
     },
     cookies: { pullCookiesFor: async () => {}, flushCookieChanges() {} },
+    routines: { start() {} },
     mirror: { maybeRun() {}, onOk() {}, onFailed() {}, reimport() {} },
   };
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);

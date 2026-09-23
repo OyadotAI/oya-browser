@@ -14,6 +14,10 @@ const RendererConstants = Object.freeze({
   COPIED_MS: 1500,
   /** The tallest the Ask box grows before it scrolls. */
   CHAT_INPUT_MAX_PX: 160,
+  /** The most attached file data a chat may carry, in base64 characters: the server's cap, 10 MiB of file. */
+  CHAT_FILES_MAX_B64: 13_981_016,
+  /** How much of a routine's last answer its row shows before "…". */
+  ROUTINE_RESULT_SHOWN: 160,
   /** Characters of the prompt suggested as a playbook's name. */
   PLAYBOOK_NAME_SUGGESTION: 48,
   /** How often the Ask pane's step line redraws its elapsed count. */

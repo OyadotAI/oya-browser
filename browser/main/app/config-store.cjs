@@ -21,10 +21,15 @@ function configDefaults(platform) {
   };
 }
 
-/** Environment variable → config field, applied over the saved file. */
+/**
+ * Environment variable → config field, applied over the saved file. The key and
+ * server give way to ones a person entered in the app (`keyFromApp`): a shell
+ * that exports OYA_API_KEY for another Oya product replaced the key on every
+ * launch, the server refused it, and the person had to enter theirs again.
+ */
 const ENV_OVERRIDES = {
-  OYA_SERVER_URL: (config, value) => (config.serverUrl = value),
-  OYA_API_KEY: (config, value) => (config.apiKey = value.split(',')[0].trim()),
+  OYA_SERVER_URL: (config, value) => config.keyFromApp || (config.serverUrl = value),
+  OYA_API_KEY: (config, value) => config.keyFromApp || (config.apiKey = value.split(',')[0].trim()),
   OYA_BROWSER_NAME: (config, value) => (config.browserName = value),
   OYA_PERSONA: (config, value) => (config.persona = value),
   OYA_PROVIDER: (config, value) => (config.provider = value),

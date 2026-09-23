@@ -89,7 +89,15 @@ export async function chat(req, res) {
   // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
   if (!withLlm(req, res)) return;
   const { messages, data = {}, secrets = {}, schema } = req.body;
-  await longJson(res, () => converse(req, messages, { data, secrets, schema }));
+  const signal = abortOnHangUp(res);
+  await longJson(res, () => converse(req, messages, { data, secrets, schema, signal }));
+}
+
+/** A signal aborted when the caller hangs up before the answer (the desktop's Stop), so the run stops too. */
+function abortOnHangUp(res) {
+  const ac = new AbortController();
+  res.on('close', () => res.writableEnded || ac.abort());
+  return ac.signal;
 }
 
 /** The walls a chat's agent may clear itself (CAPTCHA, sign-in, MFA), and the automatic tries between steps. */

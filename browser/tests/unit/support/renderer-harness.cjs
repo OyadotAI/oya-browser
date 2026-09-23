@@ -52,6 +52,8 @@ const DEFAULT_ANSWERS = {
   getUiPreferences: { theme: 'system', platform: 'darwin' },
   getControlState: { mode: 'offline', interactive: true },
   workspace: () => undefined,
+  listPersonas: { personas: [], active: 'default' },
+  listRoutines: { routines: [], running: null },
 };
 
 /** The window's globals: timers, animation frames, media queries, navigator. */

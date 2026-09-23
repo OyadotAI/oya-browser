@@ -9,6 +9,7 @@ import { chat, runCommand } from '../../../../../src/modules/browsers/http/comma
 import * as usage from '../../../../../src/platform/usage.ts';
 import { HttpError } from '../../../../../src/platform/errors.ts';
 import { CdpConnectionError } from '../../../../../src/drivers/cdp.ts';
+import { STOPPED_TEXT } from '../../../../../src/modules/agent/constants.ts';
 import { disconnectBrowser } from '../../../support/fakes.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../../../support/browsers.ts';
 
@@ -180,6 +181,23 @@ describe('chat', () => {
     } finally {
       if (saved === undefined) delete process.env.OPENAI_API_KEY;
       else process.env.OPENAI_API_KEY = saved;
+    }
+  });
+
+  it('stops the run when the caller hangs up before the answer', async () => {
+    const res = new FakeResponse();
+    const empty = { choices: [{ message: { role: 'assistant', content: '' } }] };
+    const fetch = mock.method(globalThis, 'fetch', async () => {
+      res.emit('close');
+      return new Response(JSON.stringify(empty), { status: 200 });
+    });
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      await chat(fakeRequest({ params: { browserId: B }, body: { messages: [{ role: 'user', content: 'go' }] } }), res);
+      assert.equal(JSON.parse(res.ended).text, STOPPED_TEXT);
+      assert.equal(fetch.mock.callCount(), 1);
+    } finally {
+      delete process.env.OPENAI_API_KEY;
     }
   });
 

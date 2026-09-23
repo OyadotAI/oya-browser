@@ -38,6 +38,23 @@ const UPDATE_CHECK_INTERVAL_MS = 21_600_000;
 /** The first check waits this long, so the first window can settle. */
 const UPDATE_FIRST_CHECK_MS = 10_000;
 
+/** How often the routines scheduler looks for a routine that is due (one minute, its finest schedule). */
+const ROUTINE_TICK_MS = 60_000;
+/** Milliseconds in each unit an "every N" routine may repeat in. */
+const ROUTINE_UNIT_MS = { minutes: 60_000, hours: 3_600_000 };
+/** The largest N in "every N minutes or hours". */
+const ROUTINE_MAX_EVERY = 999;
+/** The longest routine name, in characters. */
+const ROUTINE_MAX_NAME = 100;
+/** The longest routine prompt, in characters. */
+const ROUTINE_MAX_PROMPT = 10_000;
+/** How much of a run's answer a routine's history keeps. */
+const ROUTINE_RESULT_CHARS = 4000;
+/** How many runs each routine's history keeps, newest first; older ones are dropped. */
+const ROUTINE_RUNS_KEPT = 20;
+/** How many of a run's steps (tool names) its history keeps. */
+const ROUTINE_STEPS_KEPT = 100;
+
 /** Chrome version assumed when the session's user agent names none. */
 const FALLBACK_CHROME_VERSION = '134.0.0.0';
 /** Random bytes in an isolated world's per-document tag attribute. */
@@ -65,6 +82,14 @@ module.exports = {
   PAIRING_TIMEOUT_MS,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_FIRST_CHECK_MS,
+  ROUTINE_TICK_MS,
+  ROUTINE_UNIT_MS,
+  ROUTINE_MAX_EVERY,
+  ROUTINE_MAX_NAME,
+  ROUTINE_MAX_PROMPT,
+  ROUTINE_RESULT_CHARS,
+  ROUTINE_RUNS_KEPT,
+  ROUTINE_STEPS_KEPT,
   FALLBACK_CHROME_VERSION,
   WORLD_ATTR_BYTES,
   DEBUGGER_MAX_LISTENERS,

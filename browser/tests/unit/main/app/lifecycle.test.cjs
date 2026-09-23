@@ -1,6 +1,7 @@
 /**
  * Unit tests for start-up order and quitting: a recording is saved before the
- * app quits, and a validation running at quit is marked interrupted.
+ * app quits, a validation running at quit is marked interrupted, and the
+ * cookie jar is on disk before the app goes.
  */
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -40,7 +41,27 @@ describe('Lifecycle', () => {
     await new Promise((r) => setImmediate(r));
     assert.equal(stopped, true);
     assert.equal(ctx.electron.app.quitted, true);
-    assert.equal(quit(), false, 'the second quit goes through');
+    assert.equal(quit(), true, 'the second quit waits for the jar');
+    assert.equal(quit(), false, 'the third goes through');
+  });
+
+  it('holds the quit until the cookies and storage are on disk, then quits', async () => {
+    const steps = [];
+    ctx.persona.flushJar = async () => steps.push('jar');
+    ctx.electron.app.quit = () => steps.push('quit');
+    assert.equal(quit(), true);
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(steps, ['jar', 'quit']);
+    assert.equal(quit(), false, 'the quit after the flush goes through');
+  });
+
+  it('quits even when the jar cannot be written', async () => {
+    ctx.persona.flushJar = async () => {
+      throw new Error('disk full');
+    };
+    assert.equal(quit(), true);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(ctx.electron.app.quitted, true);
   });
 
   it('marks a running validation interrupted and flushes the panel', () => {
@@ -56,7 +77,7 @@ describe('Lifecycle', () => {
       },
     };
     ctx.layout.flush = () => (flushed = true);
-    assert.equal(quit(), false);
+    quit();
     assert.equal(received[0].status, 'interrupted');
     assert.equal(ctx.workspace.session.disposed, true);
     assert.equal(flushed, true);
@@ -119,12 +140,12 @@ describe('bootBrowser', () => {
     done();
   });
 
-  it('opens straight to the pages when this desktop has signed in before', async () => {
+  it('opens straight to browsing on a blank tab when this desktop has signed in before', async () => {
     const order = [];
     const { ctx, done } = bootCtx(order);
     ctx.persona.loadActive = () => (ctx.persona.active = { id: 'p1' });
     await bootBrowser(ctx);
-    assert.deepEqual(order.slice(order.indexOf('connect'), -2), ['connect', ['browse', 'https://google.com']]);
+    assert.deepEqual(order.slice(order.indexOf('connect'), -2), ['connect', ['browse', 'about:blank']]);
     done();
   });
 

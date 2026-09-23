@@ -42,7 +42,13 @@ describe('IPC handlers', () => {
     ctx.config.values = { serverUrl: 'wss://s/ws', apiKey: 'k', browserName: 'Desk' };
     ctx.socket.browserId = 'b1';
     await call('sign-out');
-    assert.deepEqual(ctx.config.values, { serverUrl: 'wss://s/ws', apiKey: '', browserName: 'Desk', signedOut: true });
+    assert.deepEqual(ctx.config.values, {
+      serverUrl: 'wss://s/ws',
+      apiKey: '',
+      browserName: 'Desk',
+      signedOut: true,
+      keyFromApp: false,
+    });
     assert.equal(ctx.socket.browserId, null);
     assert.ok(left);
   });
@@ -97,6 +103,27 @@ describe('IPC handlers', () => {
     assert.equal(call('save-config', { apiKey: 'k2' }), true);
     assert.equal(ctx.config.values.apiKey, 'k2');
     assert.deepEqual([ctx.config.saves, ctx.socket.disconnects, ctx.socket.connects], [1, 1, 1]);
+  });
+
+  it('keeps a key entered in the app over OYA_API_KEY on later launches', () => {
+    call('save-config', { apiKey: 'k2' });
+    assert.equal(ctx.config.values.keyFromApp, true);
+    call('save-config', { persona: 'p-work' });
+    assert.equal(ctx.config.values.keyFromApp, true, 'choosing a profile keeps it');
+  });
+
+  it("starts a fresh session and the default persona on another project's key or server", () => {
+    ctx.config.values = { serverUrl: 'wss://s/ws', apiKey: 'k1', persona: 'm-old-project' };
+    ctx.socket.browserId = 'b-old';
+    call('save-config', { serverUrl: 'wss://s/ws', apiKey: 'k2' });
+    assert.deepEqual([ctx.socket.browserId, ctx.config.values.persona], [null, 'default']);
+  });
+
+  it('keeps the session and persona when the key and server stay the same', () => {
+    ctx.config.values = { serverUrl: 'wss://s/ws', apiKey: 'k1', persona: 'p-work' };
+    ctx.socket.browserId = 'b1';
+    call('save-config', { serverUrl: 'wss://s/ws', apiKey: 'k1', browserName: 'Desk' });
+    assert.deepEqual([ctx.socket.browserId, ctx.config.values.persona], ['b1', 'p-work']);
   });
 
   it('answers a failed control change with the state as it stands', async () => {
@@ -187,6 +214,70 @@ describe('IPC handlers', () => {
     assert.deepEqual(await call('send-chat', []), { error: 'Server returned 502: <html>' });
     ctx.socket.ready = false;
     assert.deepEqual(await call('send-chat', []), { error: 'Not connected to server' });
+    fetch.mock.restore();
+  });
+
+  it('sends attached files to the server as the chat data', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ status: 200, text: async () => '{}' }));
+    const data = { file1: { file: 'a.pdf', type: 'application/pdf', b64: 'YQ==' } };
+    await call('send-chat', [{ role: 'user', content: 'upload it' }], data);
+    assert.deepEqual(JSON.parse(fetch.mock.calls[0].arguments[1].body).data, data);
+    fetch.mock.restore();
+  });
+
+  it('stops the chat in flight by hanging up, and answers it as stopped', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const fetch = mock.method(globalThis, 'fetch', (_url, init) => {
+      return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+    });
+    const asking = call('send-chat', [{ role: 'user' }]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(await call('stop-chat'), true);
+    assert.deepEqual(await asking, { error: 'Stopped' });
+    assert.equal(await call('stop-chat'), false, 'nothing left to stop');
+    fetch.mock.restore();
+  });
+
+  it('refuses a second chat while one is running, so two runs never fight over a page', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    let answer;
+    const fetch = mock.method(globalThis, 'fetch', () => new Promise((resolve) => (answer = resolve)));
+    const first = call('send-chat', [{ role: 'user' }]);
+    assert.match((await call('send-chat', [{ role: 'user' }])).error, /busy/);
+    await new Promise((resolve) => setImmediate(resolve));
+    answer({ status: 200, text: async () => '{"text":"done"}' });
+    assert.deepEqual(await first, { text: 'done' });
+    assert.equal(fetch.mock.callCount(), 1);
+    fetch.mock.restore();
+  });
+
+  it("lists the project's personas for the profile picker, with the one asked for", async () => {
+    ctx.config.values = { serverUrl: 'wss://s.test/ws', apiKey: 'k', persona: 'p-2' };
+    const personas = [
+      { id: 'd', name: 'Default', isDefault: true, fingerprint: {} },
+      { id: 'p-2', name: 'Work', isDefault: false },
+    ];
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ personas }) }));
+    const answer = await call('list-personas');
+    assert.equal(fetch.mock.calls[0].arguments[0], 'https://s.test/api/personas');
+    assert.equal(fetch.mock.calls[0].arguments[1].headers.Authorization, 'Bearer k');
+    assert.deepEqual(answer, {
+      personas: [
+        { id: 'd', name: 'Default', isDefault: true },
+        { id: 'p-2', name: 'Work', isDefault: false },
+      ],
+      active: 'p-2',
+    });
+    fetch.mock.restore();
+  });
+
+  it('lists no personas while offline, and says why when the server refuses', async () => {
+    ctx.socket.ready = false;
+    assert.deepEqual(await call('list-personas'), { personas: [], active: 'default' });
+    ctx.socket.ready = true;
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 401 }));
+    await assert.rejects(call('list-personas'), /Server returned 401/);
     fetch.mock.restore();
   });
 

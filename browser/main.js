@@ -23,6 +23,7 @@ const { createWorld } = require('./main/world.cjs');
 const { Observer } = require('./main/observe/observer.cjs');
 const { createCookieSync, cookieSyncMark } = require('./main/cookie-sync.cjs');
 const { createUpdater } = require('./main/updater.cjs');
+const { Routines } = require('./main/routines.cjs');
 const { createPageActions } = require('./main/page-actions.cjs');
 const { createStream } = require('./main/stream.cjs');
 const { createCdpRelay } = require('./main/cdp-relay.cjs');
@@ -117,6 +118,7 @@ ctx.recorder = new Recorder(ctx);
 ctx.socket = new ControlSocket(ctx);
 ctx.commands = new CommandRunner(ctx);
 ctx.deepLinks = new DeepLinks(ctx);
+ctx.routines = new Routines(ctx);
 ctx.world = createWorld({ cdp, analyzerScript, worldName: ISOLATED_WORLD });
 ctx.control = createControlState({
   send: (message) => ctx.socket.send(message),
@@ -163,11 +165,13 @@ else app.on('second-instance', (_event, argv) => ctx.deepLinks.onSecondInstance(
 app.on('open-url', (event, url) => ctx.deepLinks.onOpenUrl(event, url));
 
 const handle = createHandle(ctx);
+const lifecycle = new Lifecycle(ctx);
 ctx.startAutoUpdate = createUpdater({
   handle,
   sendToRenderer: (channel, data) => ctx.shell.send(channel, data),
+  beforeInstall: () => lifecycle.flushJar(),
 }).startAutoUpdate;
 registerIpc(handle, ctx);
 
 app.whenReady().then(() => bootBrowser(ctx));
-new Lifecycle(ctx).install();
+lifecycle.install();

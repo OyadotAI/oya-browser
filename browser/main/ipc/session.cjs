@@ -1,4 +1,5 @@
 /** IPC: settings, connection status, control handoff, the saved profile and the fingerprint. */
+const { getFromApi } = require('../connection/server-api.cjs');
 /**
  * The workspace's own console, derived from the server address rather than
  * taken from the renderer: openExternal will hand any scheme to the operating
@@ -19,8 +20,7 @@ async function saveProfile(ctx) {
   if (!ctx.socket.ready || !ctx.socket.isOpen()) throw new Error('Connect the desktop before saving your profile.');
   ctx.cookies.flushCookieChanges();
   await ctx.cookies.dumpCookies();
-  await ctx.persona.session().cookies.flushStore();
-  ctx.persona.session().flushStorageData();
+  await ctx.persona.flushJar();
   ctx.socket.send({ type: 'profile_flush' });
 }
 
@@ -33,9 +33,40 @@ async function saveProfile(ctx) {
 function signOut(ctx) {
   ctx.socket.disconnect();
   ctx.socket.browserId = null;
-  ctx.config.merge({ apiKey: '', signedOut: true });
+  ctx.config.merge({ apiKey: '', signedOut: true, keyFromApp: false });
   ctx.config.save();
   ctx.tabs.leaveBrowsingMode();
+}
+
+/** The project's personas for the chat's profile picker, and the one this browser asked for. */
+async function listPersonas(ctx) {
+  const active = ctx.config.values.persona || 'default';
+  if (!ctx.socket.ready) return { personas: [], active };
+  const { personas } = await getFromApi(ctx, 'personas');
+  return { personas: personas.map(({ id, name, isDefault }) => ({ id, name, isDefault })), active };
+}
+
+/** Whether `changes` point this browser at another key or server, that is another project. */
+function movesProject(config, changes) {
+  const differs = (field) => field in changes && changes[field] !== config[field];
+  return differs('apiKey') || differs('serverUrl');
+}
+
+/**
+ * Saves the settings and reconnects. A key typed here is the person's choice,
+ * kept over OYA_API_KEY from then on. Another project's server refused the old
+ * session id and persona (a foreign id, an unknown persona) on every retry, so
+ * a move starts both fresh, as a pairing link does.
+ */
+function saveConfig(ctx, _e, changes) {
+  const moved = movesProject(ctx.config.values, changes);
+  if (moved) ctx.socket.browserId = null;
+  const chosen = 'apiKey' in changes ? { keyFromApp: true } : {};
+  ctx.config.merge({ ...(moved && { persona: 'default' }), ...changes, signedOut: false, ...chosen });
+  ctx.config.save();
+  ctx.socket.disconnect();
+  ctx.socket.connect();
+  return true;
 }
 
 /** `sourceId` when it names a browser the import lists; undefined (the default browser) otherwise. */
@@ -59,13 +90,7 @@ const SESSION_HANDLERS = {
     if (url) await ctx.electron.shell.openExternal(url);
     return url;
   },
-  'save-config': (ctx, _e, newConfig) => {
-    ctx.config.merge({ ...newConfig, signedOut: false });
-    ctx.config.save();
-    ctx.socket.disconnect();
-    ctx.socket.connect();
-    return true;
-  },
+  'save-config': saveConfig,
   'get-status': (ctx) => ({
     connected: ctx.socket.ready,
     browserId: ctx.socket.browserId,
@@ -82,6 +107,7 @@ const SESSION_HANDLERS = {
   'reimport-browser': (ctx, _e, sourceId) => ctx.mirror.reimport(listedSource(ctx, sourceId)),
   'sign-out': signOut,
   'get-fingerprint': (ctx) => ctx.persona.summary(),
+  'list-personas': listPersonas,
 };
 
 module.exports = { SESSION_HANDLERS };
