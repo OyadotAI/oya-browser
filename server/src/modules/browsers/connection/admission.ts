@@ -103,10 +103,25 @@ function replaceSocket(browserId: string, existing) {
  */
 export function takePersona(apiKey: string, browserId: string, requested?: string, hostPlatform?: string) {
   try {
-    const persona = container.personas.resolve(apiKey, requested, { platform: hostPlatform });
+    const persona = resolvePersona(apiKey, browserId, requested, hostPlatform);
     return container.personas.acquire(persona, browserId);
   } catch (err) {
     const outcome = err.status === Status.TOO_MANY_REQUESTS ? 'persona_capped' : 'persona_unknown';
     throw new Rejection(CloseCode.CONTROL_REJECTED, err.message.slice(0, MAX_CLOSE_REASON), outcome, err.message);
+  }
+}
+
+/**
+ * The requested persona, or the key's default when this server does not hold it (lost
+ * across a restart): refusing would lock the browser out, since it retries the same id forever.
+ */
+function resolvePersona(apiKey: string, browserId: string, requested?: string, hostPlatform?: string) {
+  const first = { platform: hostPlatform };
+  try {
+    return container.personas.resolve(apiKey, requested, first);
+  } catch (err) {
+    if (err.status !== Status.NOT_FOUND) throw err;
+    console.warn(`[ws] ${browserId}: unknown persona ${requested}, running as the default`);
+    return container.personas.resolve(apiKey, 'default', first);
   }
 }

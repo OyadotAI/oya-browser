@@ -213,10 +213,11 @@ describe('BrowserConnection', () => {
     assert.equal((await connect(auth())).closed.code, CloseCode.DRAINING);
   });
 
-  it('refuses a persona the key does not own', async () => {
+  it('runs an unknown or unowned persona as the key default instead of locking the browser out', async () => {
     const ws = await connect(auth({ persona: 'p-not-mine' }));
-    assert.equal(ws.closed.code, CloseCode.CONTROL_REJECTED);
-    assert.match(ws.closed.reason, /No such persona/);
+    const [ok] = ws.ofType('auth_ok');
+    assert.equal(ok.persona.id, container.personas.defaultFor('k-conn').id);
+    assert.notEqual(ok.persona.id, 'p-not-mine');
   });
 
   it('closes the socket and frees the persona when the control plane refuses the session', async () => {
