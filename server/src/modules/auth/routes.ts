@@ -13,6 +13,7 @@ import {
   login,
   refreshSession,
   oauthUrl,
+  oauthSignup,
   verifyCaptcha,
   getProfile,
   updateProfile,
@@ -77,7 +78,7 @@ const keyInfo = (key, label) => ({
 async function signUpAndIn(req, res) {
   const { email, password, display_name } = req.body;
   const made = await signup(email, password, display_name);
-  track.accountSignedUp(made.user);
+  track.accountSignedUp(made.user, 'email');
   issueSession(req, res, await login(email, password));
 }
 
@@ -121,13 +122,17 @@ router.get('/auth/oauth/:provider', async (req, res) => {
 router.post('/auth/refresh', async (req, res) => {
   const presented = req.body?.refresh_token || readRefreshCookie(req);
   if (!presented) return badRequest(res, 'refresh_token required');
-  await guarded(
-    res,
-    Status.UNAUTHORIZED,
-    async () => issueSession(req, res, await refreshSession(presented)),
-    () => clearSessionCookies(res),
-  );
+  const session = async () => refreshed(req, res, await refreshSession(presented));
+  await guarded(res, Status.UNAUTHORIZED, session, () => clearSessionCookies(res));
 });
+
+/** Starts the session, counting a Google or GitHub sign-in as a sign-up when it made the account just now. */
+function refreshed(req, res, session) {
+  // Only the OAuth callback page says `oauth`; a restore, even one sending its token in the body, does not.
+  const method = req.body?.oauth === true ? oauthSignup(session.user) : null;
+  if (method) track.accountSignedUp(session.user, method);
+  issueSession(req, res, session);
+}
 
 /** Signing out has to reach the cookie, which the page cannot clear itself. */
 router.post('/auth/logout', (req, res) => {

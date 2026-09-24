@@ -90,6 +90,8 @@ export const FIELDS: Record<string, Field> = {
   desktop_seen_at: {},
   // The version the desktop last connected with, so a new one counts as an update.
   desktop_version: {},
+  // When this key first started a browser, so the first one counts as activation.
+  first_browser_at: {},
 };
 
 /**

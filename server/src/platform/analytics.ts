@@ -52,6 +52,13 @@ function settings(): Target | null {
 /** Whether analytics is on. */
 export const enabled = () => settings() !== null;
 
+/**
+ * Every event is sent from this server, so PostHog would place it at the
+ * server's address and overwrite the person's real location with the data
+ * centre's. Their browser's own events carry the location instead.
+ */
+const NO_GEOIP = { $geoip_disable: true };
+
 /** Queues one event about `distinctId`. A fingerprint-only id gets no person profile: it is not a person. */
 export function capture(distinctId: string, event: string, properties: Record<string, unknown> = {}) {
   if (!enabled()) return;
@@ -59,7 +66,7 @@ export function capture(distinctId: string, event: string, properties: Record<st
   queue({
     event,
     distinct_id: distinctId,
-    properties: { ...properties, $process_person_profile: person },
+    properties: { ...properties, ...NO_GEOIP, $process_person_profile: person },
     timestamp: now(),
   });
 }
@@ -67,7 +74,12 @@ export function capture(distinctId: string, event: string, properties: Record<st
 /** Attaches properties such as an email to a person, once known. */
 export function identify(distinctId: string, properties: Record<string, unknown>) {
   if (!enabled()) return;
-  queue({ event: '$identify', distinct_id: distinctId, properties: { $set: properties }, timestamp: now() });
+  queue({
+    event: '$identify',
+    distinct_id: distinctId,
+    properties: { $set: properties, ...NO_GEOIP },
+    timestamp: now(),
+  });
 }
 
 /** The current time as PostHog wants it. */

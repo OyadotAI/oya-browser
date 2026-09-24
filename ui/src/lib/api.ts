@@ -67,12 +67,14 @@ export const oauthStartUrl = (provider: 'google' | 'github', redirectTo: string)
  * With no argument this refreshes from the httpOnly cookie the server set at
  * login. The explicit token is the fallback for a console served from a
  * different origin than the API, where SameSite=Lax keeps the cookie at home.
+ * `oauth` says the token just came back from Google or GitHub, so the server
+ * can count a new account made that way as a sign-up, once.
  */
-export const refreshToken = (refreshToken?: string) =>
+export const refreshToken = (refreshToken?: string, oauth = false) =>
   account('/auth/refresh', 'Refresh failed', {
     method: 'POST',
     credentials: 'include',
-    body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
+    body: JSON.stringify(refreshToken ? { refresh_token: refreshToken, ...(oauth ? { oauth: true } : {}) } : {}),
   });
 
 /** Ends the session server-side; the refresh cookie is httpOnly, so only the server can clear it. */

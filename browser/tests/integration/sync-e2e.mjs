@@ -33,6 +33,7 @@ const BLANKED = [
   'POSTHOG_HOST',
   'SLACK_OPS_WEBHOOK_SIGNUPS',
   'SLACK_OPS_WEBHOOK_EVENTS',
+  'SLACK_OPS_WEBHOOK_PRODUCT',
 ];
 
 /** Resolves after `ms`. */

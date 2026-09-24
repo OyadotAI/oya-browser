@@ -2,7 +2,6 @@
  * Every number and fixed string the auth module runs on, by name: key sizes,
  * input limits and session-cookie settings.
  */
-
 /** Random bytes in a minted API key (32 base64url characters). */
 export const KEY_BYTES = 24;
 /** Leading characters of a key kept for display. */
@@ -36,3 +35,5 @@ export const AGENT_CHALLENGE_TTL_MS = 600_000;
 export const AGENT_NONCE_MAX_CHARS = 64;
 /** Longest email accepted from an agent. */
 export const AGENT_EMAIL_MAX_CHARS = 254;
+/** How recently an account must have been made for a Google or GitHub sign-in to count as its sign-up: ten minutes. */
+export const NEW_ACCOUNT_MS = 600_000;
