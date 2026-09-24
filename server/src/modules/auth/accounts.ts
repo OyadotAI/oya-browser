@@ -1,16 +1,14 @@
 /**
- * User accounts on Supabase Auth: signing up, signing in, refreshing a
- * session, and the profile a person can see and rename.
+ * User accounts: signing up, signing in and refreshing a session on Supabase
+ * Auth, and the profile a person can see and rename, kept in storage.
  */
 
-import { db as supabase, dbAuth as supabaseAuth } from '../../platform/db.ts';
+import { dbAuth as supabaseAuth } from '../../platform/db.ts';
+import { findProfile, renameProfile } from './repository.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { MAX_DISPLAY_NAME, NEW_ACCOUNT_MS } from './constants.ts';
 import type { SignupMethod } from '../telemetry/index.ts';
-
-/** The profile columns a person sees. */
-const PROFILE_COLUMNS = 'id, email, display_name, role, created_at';
 
 /** Refuses when Supabase Auth is not configured. */
 function requireAuth() {
@@ -90,12 +88,9 @@ export function oauthSignup(user, now = Date.now()): SignupMethod | null {
 
 // ── User profile ──
 
-/** A user's profile row, or null without Supabase. */
+/** A user's profile, or null when there is none. */
 export async function getProfile(userId) {
-  if (!supabase) return null;
-  const { data, error } = await supabase.from('profiles').select(PROFILE_COLUMNS).eq('id', userId).single();
-  if (error) throw error;
-  return data;
+  return findProfile(userId);
 }
 
 /**
@@ -106,7 +101,6 @@ export async function getProfile(userId) {
  * escalation with a text input in front of it.
  */
 export async function updateProfile(userId, { display_name }) {
-  if (!supabase) throw new HttpError(Status.CONFLICT, 'Accounts need Supabase');
   const name = String(display_name ?? '')
     .trim()
     .slice(0, MAX_DISPLAY_NAME);
@@ -116,12 +110,7 @@ export async function updateProfile(userId, { display_name }) {
 
 /** Writes the new name and returns the updated profile. */
 async function saveDisplayName(userId, name) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .update({ display_name: name })
-    .eq('id', userId)
-    .select(PROFILE_COLUMNS)
-    .single();
-  if (error) throw error;
-  return data;
+  const profile = await renameProfile(userId, name);
+  if (!profile) throw new HttpError(Status.NOT_FOUND, 'Profile not found');
+  return profile;
 }

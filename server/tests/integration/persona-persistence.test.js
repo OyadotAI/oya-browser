@@ -1,16 +1,18 @@
 /**
- * Personas round-trip through the database (a stubbed Supabase REST endpoint), not
- * the file fallback: only known columns are written, and identity, ownership,
- * capacity, timestamps and device preferences come back unchanged.
+ * Personas round-trip through the Postgres driver (a stand-in for the pool),
+ * not a local file: only known columns are written, and identity,
+ * ownership, capacity, timestamps and device preferences come back unchanged.
  */
 import assert from 'node:assert/strict';
 import { mkdtemp } from 'node:fs/promises';
+import { mock } from 'node:test';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import pg from 'pg';
 
 process.env.OYA_DATA_DIR = await mkdtemp(join(tmpdir(), 'oya-persona-db-'));
-process.env.SUPABASE_URL = 'https://database.invalid';
-process.env.SUPABASE_SERVICE_KEY = 'isolated-test-key';
+process.env.OYA_STORAGE = 'postgres';
+process.env.DATABASE_URL = 'postgres://stand-in/oya';
 process.env.OYA_PROFILE_SECRET = 'b'.repeat(64);
 let stored = [];
 const columns = new Set([
@@ -20,22 +22,39 @@ const columns = new Set([
   'seed',
   'prefs',
   'proxy',
+  'device',
   'max_concurrent',
   'is_default',
   'created_at',
   'last_used_at',
   'updated_at',
 ]);
-globalThis.fetch = async (url, init) => {
-  assert.equal(new URL(url).pathname, '/rest/v1/personas');
-  if (init.method === 'POST') {
-    stored = JSON.parse(init.body);
-    for (const row of stored)
-      for (const key of Object.keys(row)) assert.ok(columns.has(key), `Unknown database column: ${key}`);
-    return new Response(null, { status: 201 });
+
+/** A bound parameter by its $n placeholder. */
+const param = (params, placeholder) => params[Number(placeholder.slice(1)) - 1];
+
+/** An upsert's rows, from its column list and its ($n, …) tuples, each replacing any stored row with its id. */
+function upsert(sql, params) {
+  const names = /\(([^)]*)\) values/.exec(sql)[1].split(', ');
+  for (const column of names) assert.ok(columns.has(column), `Unknown database column: ${column}`);
+  for (const tuple of sql.match(/\((\$\d+(?:, \$\d+)*)\)/g)) {
+    const row = Object.fromEntries(
+      tuple
+        .slice(1, -1)
+        .split(', ')
+        .map((p, i) => [names[i], param(params, p)]),
+    );
+    stored = [...stored.filter((r) => r.id !== row.id), row];
   }
-  return Response.json(stored);
-};
+  return [];
+}
+
+/** A statement on personas: an upsert records its rows, a read returns them as Postgres would. */
+const personaTable = (sql, params) => (sql.startsWith('insert') ? upsert(sql, params) : stored.map((r) => ({ ...r })));
+
+mock.method(pg.Pool.prototype, 'query', async (sql, params = []) => ({
+  rows: sql.includes('oya_browser.personas') ? personaTable(sql, params) : [],
+}));
 const { personas } = (await import('../../src/app/container.ts')).container;
 const key = 'isolated-owner';
 const defaultPersona = personas.defaultFor(key);

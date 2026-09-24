@@ -5,8 +5,8 @@
  */
 import { mkdir, readdir, copyFile, cp } from 'node:fs/promises';
 import { join } from 'node:path';
-import { knownKeys, getKeyOwner } from '../../auth/service.ts';
-import { db } from '../../../platform/db.ts';
+import { knownKeys, getKeyOwner, ownedProjects } from '../../auth/service.ts';
+import { getConnection } from '../../../platform/storage/index.ts';
 import { BACKUP_DIR_MODE } from './constants.ts';
 
 /** Entries of the data directory the backup leaves out: the control database, earlier backups, recordings. */
@@ -57,10 +57,14 @@ export async function assignOwners(service) {
   // clear; a database key is reached through the project id stored beside its
   // digest, because api_keys no longer keeps the key itself.
   for (const key of knownKeys()) mapping.push(await ownKey(service, key));
-  if (!db) return mapping;
-  const { data } = await db.from('api_keys').select('project, user_id');
-  for (const row of data || []) if (row.project && row.user_id) mapping.push(await ownProject(service, row));
+  for (const row of await ownedProjects()) mapping.push(await ownProject(service, row));
   return mapping;
+}
+
+/** The legacy browsers table's rows, or none where it never existed (it only ever did on Supabase). */
+async function legacyBrowsers() {
+  const db = getConnection();
+  return (await db.exists('browsers')) ? db.select('browsers') : [];
 }
 
 /** A legacy browser row as a disconnected session awaiting reconnect or inspection. */
@@ -83,8 +87,8 @@ async function importBrowser(service, row) {
 
 /** Import the legacy browser inventory, when there is a database; throws, leaving the migration unmarked, when it cannot be read. */
 export async function importBrowsers(service) {
-  if (!db) return;
-  const { data, error } = await db.from('browsers').select('id, api_key, name');
-  if (error) throw new Error('Could not read legacy browser inventory; migration was not marked complete');
-  for (const row of data || []) if (row.api_key && row.id) await importBrowser(service, row);
+  const rows = await legacyBrowsers().catch(() => {
+    throw new Error('Could not read legacy browser inventory; migration was not marked complete');
+  });
+  for (const row of rows) if (row.api_key && row.id) await importBrowser(service, row);
 }

@@ -5,7 +5,8 @@
 
 import { sealText } from '../../platform/secrets.ts';
 import { control, projectId } from '../control/service.ts';
-import { db as supabase } from '../../platform/db.ts';
+import type { Row } from '../../platform/storage/index.ts';
+import { findKey, insertKeys, claimAgentKey, keysOf, deleteKey, touchKey } from './repository.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { generateKey, isEnvKey, isFleetToken, keyCache, keyDigest, keyPrefix, noteAgentKey } from './keys.ts';
@@ -25,10 +26,10 @@ const ownerCache = new Map();
 export async function getKeyOwner(key) {
   if (!key || isEnvKey(key) || isFleetToken(key)) return null;
   if (ownerCache.has(key)) return ownerCache.get(key);
-  return supabase ? lookupOwner(key) : null;
+  return lookupOwner(key);
 }
 
-/** Reads a key's owner from Supabase and caches a hit; a failure is logged and means no owner. */
+/** Reads a key's owner from storage and caches a hit; a failure is logged and means no owner. */
 async function lookupOwner(key) {
   try {
     const owner = (await ownerRow(keyDigest(key)))?.user_id || null;
@@ -45,13 +46,7 @@ async function lookupOwner(key) {
 
 /** The api_keys row for a digest (its user_id, and agent_email for a key an agent made), or null. */
 async function ownerRow(digest) {
-  const { data, error } = await supabase
-    .from('api_keys')
-    .select('user_id, agent_email')
-    .eq('key_hash', digest)
-    .maybeSingle();
-  if (error) throw error;
-  return data;
+  return findKey(digest);
 }
 
 /** A key's api_keys row: digest, display prefix and project, never the key. */
@@ -65,7 +60,7 @@ const keyRow = (key) => ({
 /** Stores a key's digest for a user and claims its project. Re-importing a key already registered to the same user re-seals its project; an agent's unclaimed key becomes this user's (resolving true); a key owned by someone else is refused. */
 export async function registerApiKey(key, userId, label) {
   const digest = keyDigest(key);
-  if (supabase && userId) {
+  if (userId) {
     const existing = await ownerRow(digest);
     if (existing) return reimport(key, digest, userId, existing);
     await insertKeyRow(key, userId, label);
@@ -101,19 +96,14 @@ const isUnclaimedAgent = (row) => Boolean(row?.agent_email && !row.user_id);
  * being unowned, so two people racing for one claim link cannot both win.
  */
 async function adoptAgentKey(digest, userId) {
-  const rows = supabase.from('api_keys').update({ user_id: userId });
-  const { data, error } = await rows.eq('key_hash', digest).is('user_id', null).select('key_hash');
-  if (error) throw error;
-  if (!data?.length) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
+  if (!(await claimAgentKey(digest, userId))) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
   noteAgentKey(digest, false);
 }
 
 /** Mints a key for an AI agent, owned by nobody until a person imports it, and opens its project. */
 export async function registerAgentKey(email: string) {
-  if (!supabase) throw new HttpError(Status.UNAVAILABLE, 'Agent signup needs Supabase');
   const key = generateKey();
-  const { error } = await supabase.from('api_keys').insert({ ...keyRow(key), agent_email: email, label: 'Agent' });
-  if (error) throw error;
+  await insertKeys([{ ...keyRow(key), agent_email: email, label: 'Agent' }]);
   keyCache.add(keyDigest(key));
   noteAgentKey(keyDigest(key), true);
   await control().project(key);
@@ -122,16 +112,14 @@ export async function registerAgentKey(email: string) {
 
 /** Whether `key` is an agent's own key that no person has claimed: those may not run browsers this server pays for. */
 export async function isUnclaimedAgentKey(key) {
-  if (!supabase || !key || isEnvKey(key) || isFleetToken(key)) return false;
+  if (!key || isEnvKey(key) || isFleetToken(key)) return false;
   return isUnclaimedAgent(await ownerRow(keyDigest(key)));
 }
 
 /** Records a new key for a user. */
 async function insertKeyRow(key, userId, label) {
   const { key_hash, key_prefix, project, created_at } = keyRow(key);
-  const row = { key_hash, key_prefix, project, user_id: userId, label: label || 'Default', created_at };
-  const { error } = await supabase.from('api_keys').insert(row);
-  if (error) throw error;
+  await insertKeys([{ key_hash, key_prefix, project, user_id: userId, label: label || 'Default', created_at }]);
 }
 
 /** Caches the digest, and the owner when there is one. */
@@ -171,45 +159,27 @@ async function claimNewProject(key, userId, label) {
  * POST /auth/projects/:id/access, which mints a scoped, expiring credential.
  */
 export async function listApiKeys(userId) {
-  if (!supabase) return [];
-  const { data, error } = await supabase
-    .from('api_keys')
-    .select('key_hash, key_prefix, project, label, created_at, last_used_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data || []).map(({ key_hash, key_prefix, ...rest }) => ({ id: key_hash, prefix: key_prefix, ...rest }));
+  return (await keysOf(userId)).map(listed);
 }
+
+/** A key row as the console lists it: the digest as its id, never the key. */
+const listed = ({ key_hash, key_prefix, project, label, created_at, last_used_at }: Row) => ({
+  ...{ id: key_hash, prefix: key_prefix, project, label, created_at, last_used_at },
+});
 
 /** By digest: the server has no way to look a key up by its plaintext any more. */
 export async function deleteApiKey(id, userId) {
-  if (!supabase) throw new HttpError(Status.CONFLICT, 'Accounts need Supabase');
-  const deleted = await deleteKeyRow(id, userId);
-  if (!deleted?.length) throw new HttpError(Status.NOT_FOUND, 'Key not found');
+  if (!(await deleteKey(id, userId))) throw new HttpError(Status.NOT_FOUND, 'Key not found');
   keyCache.delete(id);
   for (const [key, owner] of ownerCache) if (owner === userId && keyDigest(key) === id) ownerCache.delete(key);
 }
 
-/** Deletes a user's key row by digest; returns the rows removed. */
-async function deleteKeyRow(id, userId) {
-  const { data, error } = await supabase
-    .from('api_keys')
-    .delete()
-    .eq('key_hash', id)
-    .eq('user_id', userId)
-    .select('key_hash');
-  if (error) throw error;
-  return data;
-}
-
 /** Records when a key was last used; failures are logged, never thrown. */
 export async function touchApiKey(key) {
-  if (supabase) {
-    try {
-      await supabase.from('api_keys').update({ last_used_at: new Date().toISOString() }).eq('key_hash', keyDigest(key));
-    } catch (e) {
-      console.error('[auth] touchApiKey failed:', e.message);
-    }
+  try {
+    await touchKey(keyDigest(key));
+  } catch (e) {
+    console.error('[auth] touchApiKey failed:', e.message);
   }
 }
 
@@ -217,19 +187,10 @@ export async function touchApiKey(key) {
 export async function provisionKeys(count) {
   const keys = [];
   for (let i = 0; i < count; i++) keys.push(generateKey());
-  if (supabase && keys.length > 0) await upsertRows(keys);
+  if (keys.length > 0) await insertKeys(keys.map(keyRow));
   for (const key of keys) {
     keyCache.add(keyDigest(key));
     await control().project(key);
   }
   return keys;
-}
-
-/** Stores the rows for freshly minted keys, upserting on the digest. */
-async function upsertRows(keys) {
-  const { error } = await supabase.from('api_keys').upsert(
-    keys.map((key) => keyRow(key)),
-    { onConflict: 'key_hash' },
-  );
-  if (error) throw error;
 }

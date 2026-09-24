@@ -14,7 +14,7 @@
 import { createServer } from 'http';
 import { spawn } from 'child_process';
 import { once } from 'events';
-import { mkdtempSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -29,6 +29,10 @@ const login = await import('../../src/modules/challenges/login.ts');
 const inbox = await import('../../src/modules/challenges/inbox.ts');
 const { CDPDriver } = await import('../../src/drivers/cdp.ts');
 const { removeScratch } = await import('../support/scratch.js');
+const { getConnection } = await import('../../src/platform/storage/index.ts');
+
+/** Every stored value of a record table, joined, to search for plaintext. */
+const stored = async (table) => (await getConnection().select(table)).map((r) => r.value).join('\n');
 
 let passed = 0,
   failed = 0;
@@ -45,11 +49,11 @@ const PERSONA = 'p-testlogin0001';
 const OTHER = 'p-testlogin0002';
 
 console.log('\n1️⃣  Credentials are sealed, scoped, and write-only...');
-credentials.set(PERSONA, 'https://www.portal.example.net/auth/Login.aspx', {
+await credentials.set(PERSONA, 'https://www.portal.example.net/auth/Login.aspx', {
   username: 'alice',
   password: 'hunter2-secret',
 });
-credentials.set(PERSONA, 'example.com', { username: 'bob', password: 'correct-horse' });
+await credentials.set(PERSONA, 'example.com', { username: 'bob', password: 'correct-horse' });
 
 const described = credentials.describe(PERSONA, 'portal.example.net');
 assert(described.configured && described.username === 'alice', 'describe() names the account bound to the site');
@@ -60,8 +64,8 @@ assert(
   'a URL files under its host without www',
 );
 
-const onDisk = readFileSync(join(process.env.OYA_DATA_DIR, 'credentials.json'), 'utf8');
-assert(!onDisk.includes('hunter2') && !onDisk.includes('correct-horse'), 'no plaintext password reaches the disk');
+const atRest = await stored('persona_credentials');
+assert(!atRest.includes('hunter2') && !atRest.includes('correct-horse'), 'no plaintext password reaches storage');
 
 assert(credentials.lookup(PERSONA, 'portal.example.net').password === 'hunter2-secret', 'the server can still open it');
 assert(
@@ -70,8 +74,8 @@ assert(
 );
 assert(credentials.lookup(OTHER, 'portal.example.net') === null, 'another persona sees nothing');
 
-credentials.restore();
-assert(credentials.lookup(PERSONA, 'portal.example.net')?.username === 'alice', 'survives a reload from disk');
+await credentials.restore();
+assert(credentials.lookup(PERSONA, 'portal.example.net')?.username === 'alice', 'survives a reload from storage');
 
 console.log('\n2️⃣  A factor per site, with the persona-wide one as fallback...');
 const SEED = 'JBSWY3DPEHPK3PXP';
@@ -87,10 +91,7 @@ assert(
   mfa.list(PERSONA).length === 1 && mfa.list(PERSONA)[0].domain === 'example.com',
   'list() shows only site factors',
 );
-assert(
-  !readFileSync(join(process.env.OYA_DATA_DIR, 'mfa.json'), 'utf8').includes('JBSW'),
-  'no plaintext seed reaches the disk',
-);
+assert(!(await stored('mfa_factors')).includes('JBSW'), 'no plaintext seed reaches storage');
 
 console.log('\n3️⃣  Mailbox parsing, no network...');
 const b64url = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
@@ -354,7 +355,7 @@ let driver;
 try {
   driver = await new CDPDriver({ wsUrl, provider: 'chrome' }).connect();
   const evaluate = (expr) => driver.evaluateMain(expr);
-  credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: 'hunter2-secret' });
+  await credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: 'hunter2-secret' });
 
   console.log('\n7️⃣  A real sign-in form is filled and submitted...');
   await driver.send('navigate', { url: siteUrl });
@@ -371,7 +372,7 @@ try {
 
   console.log('\n9️⃣  A refused password is never typed twice...');
   posts = 0;
-  credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: 'wrong-password' });
+  await credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: 'wrong-password' });
   await driver.send('navigate', { url: siteUrl });
   const bad = await login.complete(evaluate, PERSONA, { domain: '127.0.0.1', browserId: 'b2' });
   assert(!bad.completed && bad.rejected, 'the rejection is reported, not retried into');

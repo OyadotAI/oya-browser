@@ -1,4 +1,4 @@
-/** The control storage contract over Supabase RPC (server/migrations/008_durable_control.sql). */
+/** The control storage contract over Postgres functions (server/migrations/008_durable_control.sql). */
 import { Status } from '../../../platform/http-status.ts';
 import { commandsPending, controlPaused, fail } from './errors.ts';
 import { DEFAULT_EVENT_LIMIT } from './constants.ts';
@@ -14,9 +14,9 @@ function rpcFailure(error) {
   });
 }
 
-/** The same contract over Supabase RPC (server/migrations/008_durable_control.sql). */
+/** The same contract over Postgres functions (server/migrations/008_durable_control.sql). */
 export class RemoteBackend {
-  /** Client with a Supabase-style rpc(): Supabase itself or the Postgres adapter from pg-client. */
+  /** Client with an rpc(name, args): the Postgres adapter from pg-client. */
   declare client: any;
   constructor(client) {
     this.client = client;

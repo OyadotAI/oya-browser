@@ -15,6 +15,8 @@ export class PersonaStore {
   declare private readonly personas: Map<string, Persona>;
   /** Set when personas changed since the last save. */
   declare private dirty: boolean;
+  /** Ids deleted since the last save, removed from storage by the next one. */
+  declare private readonly deleted: Set<string>;
   /** The autosave interval, once started. */
   declare private timer: ReturnType<typeof setInterval> | null;
 
@@ -23,6 +25,7 @@ export class PersonaStore {
     this.repository = repository;
     this.personas = new Map();
     this.dirty = false;
+    this.deleted = new Set();
     this.timer = null;
   }
 
@@ -45,6 +48,7 @@ export class PersonaStore {
   /** Drops a persona and marks the table for saving. */
   delete(id: string) {
     this.personas.delete(id);
+    this.deleted.add(id);
     this.dirty = true;
   }
 
@@ -53,26 +57,35 @@ export class PersonaStore {
     this.dirty = true;
   }
 
-  /** Loads saved personas at startup; a failure is logged, not thrown. */
+  /**
+   * Loads saved personas at startup. A failure fails the start: running on an
+   * empty table would hand out new devices in place of the stored ones.
+   */
   async restore() {
-    try {
-      for (const p of await this.repository.loadAll()) this.personas.set(p.id, p);
-      if (this.personas.size) console.log(`[personas] restored ${this.personas.size}`);
-    } catch (e) {
-      console.error('[personas] restore failed:', (e as Error).message);
-    }
+    for (const p of await this.repository.loadAll()) this.personas.set(p.id, p);
+    if (this.personas.size) console.log(`[personas] restored ${this.personas.size}`);
   }
 
   /** Saves every persona when something changed, retrying on the next tick if the save fails. */
   async flush() {
     if (!this.dirty) return;
     this.dirty = false;
-    try {
-      await this.repository.saveAll(this.all());
-    } catch (e) {
-      this.dirty = true;
-      console.error('[personas] save failed:', (e as Error).message);
-    }
+    const deleted = [...this.deleted];
+    this.deleted.clear();
+    await this.write(deleted).catch((e) => this.requeue(deleted, e));
+  }
+
+  /** Stores every persona, then removes the deleted ones. */
+  private async write(deleted: string[]) {
+    await this.repository.saveAll(this.all());
+    await this.repository.remove(deleted);
+  }
+
+  /** Keeps a failed save for the next tick, and says so. */
+  private requeue(deleted: string[], e: Error) {
+    for (const id of deleted) this.deleted.add(id);
+    this.dirty = true;
+    console.error('[personas] save failed:', e.message);
   }
 
   /** Write changes every `everyMs`. */
@@ -90,6 +103,7 @@ export class PersonaStore {
   /** Forgets every persona without saving. */
   clear() {
     this.personas.clear();
+    this.deleted.clear();
     this.dirty = false;
   }
 }

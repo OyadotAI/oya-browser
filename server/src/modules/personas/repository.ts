@@ -1,13 +1,11 @@
 /**
- * Persona storage. Personas are the durable half of an identity; losing them
- * would orphan the cookie jars keyed by them, so a database that cannot be
- * reached falls back to a local file rather than dropping writes.
+ * Persona storage: the personas table, in whichever storage driver is
+ * configured. Personas are the durable half of an identity; losing them would
+ * orphan the cookie jars keyed by them, so a personas.json left from before
+ * storage drivers is taken in once, seeds and all, before the first read.
  */
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { getConnection, importLegacyFile, type Connection } from '../../platform/storage/index.ts';
 import { shape, type Persona } from './model.ts';
-import { JSON_INDENT } from './constants.ts';
 
 /** Where personas are kept. */
 export interface PersonaRepository {
@@ -15,18 +13,12 @@ export interface PersonaRepository {
   loadAll(): Promise<Persona[]>;
   /** Upsert all of them. */
   saveAll(personas: Persona[]): Promise<void>;
+  /** Remove these, which were deleted. Never inferred from what saveAll lacks: another replica may hold personas this one has not loaded. */
+  remove(ids: string[]): Promise<void>;
 }
 
 /** Infinity does not survive JSON; storage writes an uncapped persona as null. */
 const cap = (p: Persona) => (Number.isFinite(p.maxConcurrent) ? p.maxConcurrent : null);
-
-/** The personas file's contents. */
-const toJson = (personas: Persona[]) =>
-  JSON.stringify(
-    personas.map((p) => ({ ...p, maxConcurrent: cap(p) })),
-    null,
-    JSON_INDENT,
-  );
 
 /** A persona from a `personas` table row. */
 const fromRow = (row: any) =>
@@ -59,91 +51,28 @@ const usageRow = (p: Persona) => ({
   updated_at: new Date().toISOString(),
 });
 
-/** Personas as a JSON file, written owner-only (0600). */
-export class FilePersonaRepository implements PersonaRepository {
-  /** Path of the JSON file. */
-  declare readonly path: string;
-  constructor(path: string) {
-    this.path = path;
-  }
-
-  async loadAll() {
-    try {
-      return (JSON.parse(await readFile(this.path, 'utf8')) as unknown[]).map(shape);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw e;
-    }
-  }
-
-  async saveAll(personas: Persona[]) {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, toJson(personas), { mode: 0o600 });
-  }
-}
-
-/** Personas in the Supabase `personas` table. */
-export class SupabasePersonaRepository implements PersonaRepository {
-  /** Supabase client for the table. */
-  declare readonly db: SupabaseClient<any, any, any>;
-  constructor(db: SupabaseClient<any, any, any>) {
+/** Personas in the `personas` table. */
+export class PersonaTable implements PersonaRepository {
+  /** The legacy personas.json, imported on the first read. */
+  declare readonly legacyFile: string;
+  /** Storage, by default the configured connection. */
+  declare private readonly db: () => Connection;
+  constructor(legacyFile: string, db: () => Connection = getConnection) {
+    this.legacyFile = legacyFile;
     this.db = db;
   }
 
   async loadAll() {
-    const { data, error } = await this.db.from('personas').select('*');
-    if (error) throw new Error(error.message);
-    return (data || []).map(fromRow);
+    // Upsert without replacing: a persona already in storage wins over the stale file.
+    await importLegacyFile(this.legacyFile, (personas) => this.db().upsert('personas', personas.map(shape).map(toRow)));
+    return (await this.db().select('personas')).map(fromRow);
   }
 
   async saveAll(personas: Persona[]) {
-    const { error } = await this.db.from('personas').upsert(personas.map(toRow), { onConflict: 'id' });
-    if (error) throw new Error(error.message);
-  }
-}
-
-/** The database, and the file whenever the database fails. */
-export class FallbackPersonaRepository implements PersonaRepository {
-  /** The database repository. */
-  declare readonly primary: PersonaRepository;
-  /** The file used when the database fails. */
-  declare readonly fallback: FilePersonaRepository;
-  /** Set after the first failed write, so the fallback warning is logged once. */
-  declare private warned: boolean;
-  constructor(primary: PersonaRepository, fallback: FilePersonaRepository) {
-    this.primary = primary;
-    this.fallback = fallback;
-    this.warned = false;
+    if (personas.length) await this.db().upsert('personas', personas.map(toRow), { update: true });
   }
 
-  async loadAll() {
-    try {
-      return await this.primary.loadAll();
-    } catch (e) {
-      // A missing table or an unreachable database must not lose personas.
-      this.warn('read', e);
-      return this.fallback.loadAll();
-    }
-  }
-
-  async saveAll(personas: Persona[]) {
-    try {
-      await this.primary.saveAll(personas);
-    } catch (e) {
-      this.warnOnce(e);
-      await this.fallback.saveAll(personas);
-    }
-  }
-
-  /** Logs the first failed write only, so a down database does not flood the log. */
-  private warnOnce(e: unknown) {
-    if (this.warned) return;
-    this.warn('write', e);
-    this.warned = true;
-  }
-
-  /** Logs that a database `op` failed and the file is standing in. */
-  private warn(op: 'read' | 'write', e: unknown) {
-    console.error(`[personas] database ${op} failed (${(e as Error).message}), falling back to ${this.fallback.path}`);
+  async remove(ids: string[]) {
+    for (const id of ids) await this.db().delete('personas', { id });
   }
 }

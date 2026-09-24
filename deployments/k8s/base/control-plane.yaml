@@ -32,6 +32,9 @@ spec:
             - configMapRef: { name: oya-config }
             - secretRef: { name: oya-secrets }
           env:
+            # Every table in the DATABASE_URL Postgres from oya-secrets; replicas need it.
+            - name: OYA_STORAGE
+              value: postgres
             # Each replica announces its own address, for routing between replicas.
             - name: POD_IP
               valueFrom: { fieldRef: { fieldPath: status.podIP } }

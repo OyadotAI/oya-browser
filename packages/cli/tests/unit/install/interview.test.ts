@@ -36,4 +36,17 @@ describe('interview (replay)', () => {
     });
     assert.equal(result.migrateUrl, env.DATABASE_URL);
   });
+
+  it('takes Supabase’s Postgres connection string too, since the data lives there', async () => {
+    mock.method(process.stdout, 'write', () => true);
+    const env = {
+      SUPABASE_URL: 'https://x.supabase.co',
+      SUPABASE_SERVICE_KEY: 'sk',
+      DATABASE_URL: 'postgres://u:p@db/x',
+    };
+    Object.assign(process.env, env);
+    const result = await interview({ ...PLAN, database: 'supabase' }, true);
+    assert.equal(result.secrets.DATABASE_URL, env.DATABASE_URL);
+    assert.equal(result.migrateUrl, env.DATABASE_URL);
+  });
 });

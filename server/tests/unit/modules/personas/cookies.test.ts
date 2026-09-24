@@ -1,19 +1,22 @@
 /**
  * Unit tests for the persona login store: cookies and localStorage per
- * persona, the sealed file they are saved to, and the migration of the old
- * key-per-jar file. The module loads its file on import, so this file gets
- * its own data directory with a legacy file in it before importing.
+ * persona, the sealed rows they are saved to in the configured storage, and
+ * the one-time import of the old key-per-jar cookies.json. This file gets its
+ * own data directory with a legacy file in it, then restores from it.
  */
-import { describe, it, after, mock } from 'node:test';
+import { describe, it, after, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 const dir = ownDataDir('oya-cookies-');
+/** An expiry far in the future, in seconds, so a cookie stays live. */
 const FAR = 4_000_000_000;
+/** Where the legacy file sits. */
+const LEGACY = join(dir, 'cookies.json');
 writeFileSync(
-  join(dir, 'cookies.json'),
+  LEGACY,
   JSON.stringify({
     'legacy-api-key': [{ name: 'sid', value: 'k', domain: 'a.com', expirationDate: FAR }],
     'p-0123456789abcdef': [{ name: 'sid', value: 'p', domain: 'b.com' }],
@@ -23,8 +26,17 @@ writeFileSync(
 const cookies = await import('../../../../src/modules/personas/cookies.ts');
 const { defaultPersonaSeed } = await import('../../../../src/modules/personas/fingerprint.ts');
 const { openText } = await import('../../../../src/platform/secrets.ts');
+const { getConnection } = await import('../../../../src/platform/storage/index.ts');
+await cookies.restore();
+
+/** The table login state is kept in. */
+const TABLE = 'persona_logins';
+
+/** The stored row for one persona, or undefined. */
+const storedRow = async (id: string) => (await getConnection().select(TABLE, { id }))[0];
 
 after(() => cookies.drain());
+afterEach(() => mock.restoreAll());
 
 /** A valid cookie. */
 const cookie = (name: string, domain: string, extra: object = {}) => ({ name, value: `v-${name}`, domain, ...extra });
@@ -41,6 +53,11 @@ describe('loading the old key-per-jar file', () => {
 
   it('keeps a jar already named by a persona id', () => {
     assert.equal(cookies.getAll('p-0123456789abcdef')[0].value, 'p');
+  });
+
+  it('stores the imported jars and sets the file aside', async () => {
+    assert.ok(await storedRow('p-0123456789abcdef'));
+    assert.deepEqual([existsSync(LEGACY), existsSync(`${LEGACY}.imported`)], [false, true]);
   });
 });
 
@@ -137,14 +154,52 @@ describe('summary and clear', () => {
 });
 
 describe('saving', () => {
-  it('writes every persona sealed under its own scope, owner-only', async () => {
+  it('writes a persona sealed under its own scope, never a value in the clear', async () => {
     cookies.mergeDump('p-saved', [cookie('a', 'a.com')]);
     await cookies.drain();
-    const file = JSON.parse(readFileSync(join(dir, 'cookies.json'), 'utf8'));
-    assert.equal(file.version, 2);
-    assert.doesNotMatch(JSON.stringify(file), /v-a/);
-    const state = openText('login:p-saved', file.records['p-saved']);
-    assert.equal(state.cookies[0].value, 'v-a');
-    assert.throws(() => openText('login:p-other', file.records['p-saved']));
+    const row = await storedRow('p-saved');
+    assert.doesNotMatch(JSON.stringify(row), /v-a/);
+    assert.equal(openText('login:p-saved', row.value).cookies[0].value, 'v-a');
+    assert.throws(() => openText('login:p-other', row.value));
+  });
+
+  it('writes only the personas that changed', async () => {
+    await cookies.drain();
+    const upsert = mock.method(getConnection(), 'upsert');
+    cookies.mergeDump('p-only', [cookie('a', 'a.com')]);
+    await cookies.drain();
+    assert.deepEqual(
+      upsert.mock.calls.flatMap((c) => c.arguments[1].map((r) => r.id)),
+      ['p-only'],
+    );
+  });
+
+  it('removes a cleared persona from storage', async () => {
+    cookies.mergeDump('p-gone', [cookie('a', 'a.com')]);
+    await cookies.drain();
+    cookies.clear('p-gone');
+    await cookies.drain();
+    assert.equal(await storedRow('p-gone'), undefined);
+  });
+
+  it('keeps a change whose write failed, and writes it on the next save', async () => {
+    const upsert = mock.method(getConnection(), 'upsert', async () => Promise.reject(new Error('storage down')));
+    cookies.mergeDump('p-retry', [cookie('a', 'a.com')]);
+    await assert.rejects(cookies.drain(), /storage down/);
+    upsert.mock.restore();
+    await cookies.drain();
+    assert.ok(await storedRow('p-retry'));
+  });
+
+  it('restores stored personas, as after a restart', async () => {
+    cookies.mergeDump('p-back', [cookie('a', 'a.com')]);
+    await cookies.drain();
+    const row = await storedRow('p-back');
+    cookies.clear('p-back');
+    await cookies.drain();
+    // Put back as a previous run left it, with nothing of it in memory.
+    await getConnection().upsert(TABLE, [row]);
+    await cookies.restore();
+    assert.equal(cookies.getAll('p-back')[0].value, 'v-a');
   });
 });

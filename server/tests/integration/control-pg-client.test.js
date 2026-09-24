@@ -3,13 +3,16 @@
  * psql-stubbed test-control-postgres.js covers, but through the code path a
  * DATABASE_URL deployment actually uses.
  *
- * Requires an isolated database with the migrations applied:
+ * Requires an isolated database with the migrations applied, and OYA_TEST_LIVE=1
+ * so the hermetic preload leaves DATABASE_URL alone:
  *   DATABASE_URL=postgres://... node server/migrations/run.mjs
+ *   OYA_TEST_LIVE=1 DATABASE_URL=postgres://... node --import ./tests/support/hermetic.js tests/integration/control-pg-client.test.js
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
 process.env.OYA_PROFILE_SECRET ||= 'pg-client-contract-tests';
+process.env.OYA_STORAGE = 'postgres';
 if (!process.env.DATABASE_URL) {
   console.log('test-control-pg-client: DATABASE_URL not set, skipping.');
   process.exit(0);

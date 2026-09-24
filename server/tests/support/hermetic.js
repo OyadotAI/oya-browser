@@ -14,6 +14,10 @@ if (!process.env.OYA_TEST_LIVE) process.env.DOTENV_CONFIG_PATH = join(tmpdir(), 
 if (!process.env.OYA_TEST_LIVE)
   for (const name of ['POSTHOG_KEY', 'POSTHOG_HOST', 'SLACK_OPS_WEBHOOK_SIGNUPS', 'SLACK_OPS_WEBHOOK_EVENTS'])
     delete process.env[name];
+// Storage is the scratch directory's own SQLite file (the default driver), never a shell's database
+// or Supabase project. Suites that exercise another driver set these themselves.
+if (!process.env.OYA_TEST_LIVE)
+  for (const name of ['OYA_STORAGE', 'DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY']) delete process.env[name];
 
 /**
  * The runner's own process and every test file process get a fresh directory;

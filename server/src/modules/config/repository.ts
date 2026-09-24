@@ -1,60 +1,35 @@
 /**
- * Where key settings are kept: the key_settings table, or data/key-settings.json
- * when there is no database or it fails. Callers decide when to fall back.
+ * Where key settings are kept: the key_settings table, one row per owner and
+ * field, in whichever storage driver is configured.
  */
-import { readFile, writeFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
-import { db } from '../../platform/db.ts';
+import { getConnection, importLegacyFile, type Connection } from '../../platform/storage/index.ts';
 import { dataPath } from '../../platform/paths.ts';
-import { FILE_INDENT, FILE_MODE } from './constants.ts';
 
-/** The fallback settings file. */
-export const STORE = dataPath('key-settings.json');
-/** The settings table, one row per owner and field. */
+/** The settings file from before storage drivers, imported once on first read. */
+export const LEGACY_STORE = dataPath('key-settings.json');
+/** The settings table. */
 const TABLE = 'key_settings';
 
-/** Throws a database error as a plain Error. */
-function check({ error }) {
-  if (error) throw new Error(error.message);
-}
-
-/** A key quoted for a PostgREST `in` list. */
-const quoted = (key) => `"${String(key).replace(/["\\]/g, (c) => '\\' + c)}"`;
+/** The keys `owner` still has among `rows`. */
+const keysOf = (owner, rows) => rows.filter((r) => r.owner === owner).map((r) => r.key);
 
 /**
  * Replace the given owners' rows: upsert what they hold, then delete the keys
  * they no longer have (a cleared field). Upserting first means a failure part
  * way leaves the old rows, never none.
  */
-export async function writeDb(owners, rows, client = db) {
-  if (rows.length) {
-    const stamped = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
-    check(await client.from(TABLE).upsert(stamped, { onConflict: 'owner,key' }));
-  }
-  await Promise.all(owners.map(async (owner) => check(await staleRows(client, owner, rows))));
+export async function writeRows(owners, rows, db: Connection = getConnection()) {
+  const stamped = rows.map((r) => ({ ...r, updated_at: new Date().toISOString() }));
+  if (rows.length) await db.upsert(TABLE, stamped, { update: true });
+  await Promise.all(owners.map((owner) => db.delete(TABLE, { owner, key: { notIn: keysOf(owner, rows) } })));
 }
 
-/** Deletes one owner's rows whose keys are not among `rows`. */
-function staleRows(client, owner, rows) {
-  const keys = rows.filter((r) => r.owner === owner).map((r) => quoted(r.key));
-  const query = client.from(TABLE).delete().eq('owner', owner);
-  return keys.length ? query.not('key', 'in', `(${keys.join(',')})`) : query;
-}
+/** The legacy file's [owner, fields] entries as rows. */
+const legacyRows = (entries) =>
+  entries.flatMap(([owner, fields]) => Object.entries(fields || {}).map(([key, value]) => ({ owner, key, value })));
 
-/** Every stored row from the database. */
-export async function readDb() {
-  const { data, error } = await db.from(TABLE).select('owner, key, value');
-  check({ error });
-  return data || [];
-}
-
-/** Write every owner's fields to the fallback file. */
-export async function writeStoreFile(entries) {
-  await mkdir(dirname(STORE), { recursive: true });
-  await writeFile(STORE, JSON.stringify(entries, null, FILE_INDENT), { mode: FILE_MODE });
-}
-
-/** Every owner's fields from the fallback file. */
-export async function readStoreFile() {
-  return JSON.parse(await readFile(STORE, 'utf8'));
+/** Every stored row, after taking in the legacy file if one is still there. */
+export async function readRows(db: Connection = getConnection()) {
+  await importLegacyFile(LEGACY_STORE, (entries) => db.upsert(TABLE, legacyRows(entries)).then(() => undefined));
+  return db.select(TABLE);
 }

@@ -1,10 +1,8 @@
 /** Durable, persona-scoped login state. Cookies and localStorage share one store. */
-import { readFileSync, renameSync } from 'fs';
-import { mkdir, writeFile, rename } from 'fs/promises';
-import { dirname } from 'path';
 import { defaultPersonaSeed } from './fingerprint.ts';
 import { sealText, openText } from '../../platform/secrets.ts';
 import { dataPath } from '../../platform/paths.ts';
+import { RecordTable, importLegacyFile } from '../../platform/storage/index.ts';
 import {
   cookieKey,
   validCookie,
@@ -18,46 +16,53 @@ import {
 import { LOGIN_FILE_VERSION, LOGIN_SAVE_DELAY_MS, MAX_STORAGE_ORIGINS } from './constants.ts';
 
 /** Where login state is kept, sealed per persona. */
-const FILE = dataPath('cookies.json');
+const table = new RecordTable('persona_logins');
+/** The file it lived in before storage drivers, imported once. */
+const LEGACY_FILE = dataPath('cookies.json');
 /** persona id -> (cookie key -> cookie). */
 const jars = new Map();
 /** persona id -> localStorage by origin. */
 const origins = new Map();
 /** persona id -> ISO time its state last changed. */
 const updated = new Map();
+/** Personas whose state changed since it was last written. */
+const dirty = new Set<string>();
 /** Bumped on every change; the save catches up to it. */
 let revision = 0;
-/** The revision last written to disk. */
+/** The revision last written. */
 let savedRevision = 0;
 /** The pending save, if one is scheduled. */
 let timer = null;
 /** The write in flight, if any. */
 let writing = null;
 
-/** Mark a persona's state as changed and schedule a save half a second out; a failed save retries. */
+/** Mark a persona's state as changed and schedule a save half a second out. */
 function changed(id) {
   updated.set(id, new Date().toISOString());
-  revision++;
-  if (!timer) scheduleSave(id);
+  markDirty(id);
 }
 
-/** Saves after the batching delay; a failure marks `id` changed again so it retries. */
-function scheduleSave(id) {
+/** Queue a persona's state for the next save, without touching when it changed. */
+function markDirty(id) {
+  dirty.add(id);
+  revision++;
+  if (!timer) scheduleSave();
+}
+
+/** Saves after the batching delay; a failed save keeps its personas queued and tries again. */
+function scheduleSave() {
   timer = setTimeout(() => {
     timer = null;
-    flush().catch((e) => {
-      console.error('[profiles] Save failed:', e.message);
-      changed(id);
-    });
+    flush().catch((e) => console.error('[profiles] Save failed:', e.message));
   }, LOGIN_SAVE_DELAY_MS);
   timer.unref?.();
 }
 
-/** Serialize writers and rename atomically; never truncate a working profile. */
+/** Serialize writers; one write at a time, each covering what changed before it began. */
 async function flush() {
   if (writing) return flushAfterWrite();
   if (savedRevision === revision) return;
-  writing = writeRecords(sealAll(), revision);
+  writing = writeRecords(revision);
   try {
     await writing;
   } finally {
@@ -71,24 +76,26 @@ async function flushAfterWrite() {
   return flush();
 }
 
-/** Every persona's state, sealed under its own scope. */
-function sealAll() {
-  const records = {};
-  for (const id of new Set([...jars.keys(), ...origins.keys()])) records[id] = sealText(`login:${id}`, stateOf(id));
-  return records;
+/** Writes the changed personas' sealed state and removes cleared ones; on failure they stay queued. */
+async function writeRecords(snapshotRevision) {
+  const ids = [...dirty];
+  dirty.clear();
+  await saveIds(ids).catch((e) => {
+    for (const id of ids) markDirty(id);
+    throw e;
+  });
+  savedRevision = snapshotRevision;
+}
+
+/** Each id's state sealed under its own scope, or removed when the persona holds none any more. */
+async function saveIds(ids: string[]) {
+  const kept = ids.filter((id) => jars.has(id) || origins.has(id));
+  await table.put(kept.map((id) => [id, sealText(`login:${id}`, stateOf(id))]));
+  await table.remove(ids.filter((id) => !kept.includes(id)));
 }
 
 /** One persona's saved state: unexpired cookies, localStorage and when it changed. */
 const stateOf = (id) => ({ cookies: getAll(id), origins: getStorage(id), updatedAt: updated.get(id) || null });
-
-/** Writes the sealed records through a temp file and a rename, then records the revision saved. */
-async function writeRecords(records, snapshotRevision) {
-  await mkdir(dirname(FILE), { recursive: true, mode: 0o700 });
-  const temp = `${FILE}.${process.pid}.tmp`;
-  await writeFile(temp, JSON.stringify({ version: LOGIN_FILE_VERSION, records }), { mode: 0o600 });
-  await rename(temp, FILE);
-  savedRevision = snapshotRevision;
-}
 
 /** Write out every pending change now, e.g. before shutdown. */
 export async function drain() {
@@ -97,21 +104,26 @@ export async function drain() {
   while (savedRevision !== revision) await flush();
 }
 
-// Load before accepting browsers. Migrate owned jars; never guess an unscoped jar's owner.
-try {
-  load(JSON.parse(readFileSync(FILE, 'utf8')));
-} catch (e) {
-  if (e.code !== 'ENOENT') throw new Error(`Cannot read saved login state: ${e.message}`);
+/** Load before accepting browsers: the legacy file first if it is still there, then every stored persona. */
+export async function restore() {
+  await importLegacyFile(LEGACY_FILE, async (data) => {
+    load(data);
+    await drain();
+  });
+  for (const [id, sealed] of await table.load()) loadSealed(id, sealed);
 }
 
-/** Loads the saved file: sealed records, or a legacy dump to migrate or set aside. */
+/**
+ * Takes in the legacy file: sealed records, or the old key-per-jar dump to
+ * migrate. A bare array came from before jars had owners; never guess one, so
+ * it is only set aside.
+ */
 function load(data) {
-  if (Array.isArray(data)) {
-    renameSync(FILE, `${FILE}.legacy-${Date.now()}`);
-  } else if (data.version === LOGIN_FILE_VERSION) {
-    for (const [id, sealed] of Object.entries(data.records || {})) loadSealed(id, sealed);
-  } else {
-    loadUnscoped(data);
+  if (Array.isArray(data)) return;
+  if (data.version !== LOGIN_FILE_VERSION) return loadUnscoped(data);
+  for (const [id, sealed] of Object.entries(data.records || {})) {
+    loadSealed(id, sealed);
+    markDirty(id);
   }
 }
 

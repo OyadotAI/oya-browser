@@ -2,9 +2,8 @@
  * The in-memory settings store and its write-behind: every owner's fields,
  * sealing helpers, and a queue that writes the store out without overlapping.
  */
-import { db } from '../../platform/db.ts';
 import { sealText, openText } from '../../platform/secrets.ts';
-import { STORE, writeDb, writeStoreFile } from './repository.ts';
+import { writeRows } from './repository.ts';
 
 /** owner -> { field: value }. Secret fields hold sealed base64. */
 export const store = new Map();
@@ -63,36 +62,20 @@ export async function dropField(owner, field) {
 
 /**
  * Write the changed owners' settings to key_settings (a save touches one row set,
- * not every tenant's), or the whole store to data/key-settings.json when there
- * is no database or the write fails. A failed file write stays dirty.
+ * not every tenant's). A failed write puts those owners back, so the next flush
+ * retries them, and says so.
  */
 async function flushOnce() {
   if (!state.dirty) return;
   const { owners, rows } = pendingWrite();
   state.dirty = false;
   changed.clear();
-  if (await wroteDatabase(owners, rows)) return;
-  await writeFallback();
+  await writeRows(owners, rows).catch((e) => requeue(owners, e));
 }
 
-/** Write to the database if there is one; false means fall back to the file. */
-async function wroteDatabase(owners, rows) {
-  if (!db) return false;
-  try {
-    await writeDb(owners, rows);
-    return true;
-  } catch (e) {
-    console.error(`[key-config] database write failed (${e.message}), falling back to ${STORE}`);
-    return false;
-  }
-}
-
-/** Write the file fallback; on failure the store stays dirty for the next flush. */
-async function writeFallback() {
-  try {
-    await writeStoreFile([...store]);
-  } catch (e) {
-    state.dirty = true;
-    console.error('[key-config] file fallback failed:', e.message);
-  }
+/** Puts owners whose write failed back in the queue, and says so. */
+function requeue(owners, e) {
+  for (const owner of owners) changed.add(owner);
+  state.dirty = true;
+  console.error(`[key-config] write failed (${e.message}); the next save retries it`);
 }

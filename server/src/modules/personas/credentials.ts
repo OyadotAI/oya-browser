@@ -12,34 +12,25 @@
  */
 
 import { sealText, openText } from '../../platform/secrets.ts';
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
-import { dirname } from 'path';
 import { dataPath } from '../../platform/paths.ts';
+import { RecordTable, importLegacyFile } from '../../platform/storage/index.ts';
 import { HttpError, invalid } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { REGISTRABLE_LABELS } from './constants.ts';
 
 /** `personaId|domain` -> sealed { username, password } */
 const configs = new Map();
-/** Where the sealed credentials are kept. */
-const STORE = dataPath('credentials.json');
+/** Where the sealed records are kept. */
+const table = new RecordTable('persona_credentials');
+/** The file they lived in before storage drivers, imported once. */
+const LEGACY_FILE = dataPath('credentials.json');
 
-/** Load the sealed credentials from disk; a missing file means none yet. */
-export function restore() {
-  try {
-    for (const [id, value] of Object.entries(JSON.parse(readFileSync(STORE, 'utf8')))) configs.set(id, value);
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw new Error(`Cannot read credentials: ${e.message}`);
-  }
+/** Load the sealed records from storage, taking in the legacy file first if it is still there. */
+export async function restore() {
+  await importLegacyFile(LEGACY_FILE, (records) => table.put(Object.entries(records)));
+  configs.clear();
+  for (const [id, value] of await table.load()) configs.set(id, value);
 }
-/** Write the sealed credentials to disk, atomically. */
-function persist() {
-  mkdirSync(dirname(STORE), { recursive: true, mode: 0o700 });
-  const temp = `${STORE}.${process.pid}.tmp`;
-  writeFileSync(temp, JSON.stringify(Object.fromEntries(configs)), { mode: 0o600 });
-  renameSync(temp, STORE);
-}
-restore();
 
 /**
  * The host a credential is filed under: lowercased, no `www.`, no port.
@@ -80,12 +71,13 @@ const keyFor = (personaId, domain) => `${personaId}|${domain}`;
 const scopeFor = (personaId, domain) => `cred:${personaId}:${domain}`;
 
 /** Seal and save a username and password for a persona's site. Returns the description, never the password. */
-export function set(personaId, domain, config) {
+export async function set(personaId, domain, config) {
   if (!domain) throw new HttpError(Status.BAD_REQUEST, 'a domain is required');
   const site = domainOf(domain);
   if (!site) throw invalid('domain', 'a host name such as accounts.google.com', domain);
-  configs.set(keyFor(personaId, site), sealText(scopeFor(personaId, site), loginFrom(config)));
-  persist();
+  const sealed = sealText(scopeFor(personaId, site), loginFrom(config));
+  await table.put([[keyFor(personaId, site), sealed]]);
+  configs.set(keyFor(personaId, site), sealed);
   return describe(personaId, site);
 }
 
@@ -99,18 +91,18 @@ function loginFrom(config) {
 }
 
 /** Remove the credential filed under exactly this site. True if there was one. */
-export function clear(personaId, domain) {
-  const site = domainOf(domain);
-  const removed = configs.delete(keyFor(personaId, site));
-  if (removed) persist();
-  return removed;
+export async function clear(personaId, domain) {
+  const key = keyFor(personaId, domainOf(domain));
+  if (!configs.has(key)) return false;
+  await table.remove([key]);
+  return configs.delete(key);
 }
 
 /** Drop every credential for a persona. Called when the persona itself goes. */
-export function clearAll(personaId) {
+export async function clearAll(personaId) {
   const keys = [...configs.keys()].filter((key) => key.startsWith(`${personaId}|`));
+  await table.remove(keys);
   for (const key of keys) configs.delete(key);
-  if (keys.length) persist();
   return keys.length;
 }
 

@@ -223,3 +223,12 @@ export const OUTBOUND_TIMEOUT_MS = 5_000;
 export const MESSAGE_MAX_CHARS = 400;
 /** Characters in a multi-line product card: a handful of short lines, still bounded. */
 export const CARD_MAX_CHARS = 1500;
+
+// ── Postgres ──
+
+/** Postgres connections per process unless DATABASE_POOL_MAX says otherwise. */
+export const DEFAULT_POOL_MAX = 10;
+/** Storage is on the request path; a hung connect must not hang a request. */
+export const PG_CONNECT_TIMEOUT_MS = 10_000;
+/** Idle Postgres connections are closed after this. */
+export const PG_IDLE_TIMEOUT_MS = 30_000;

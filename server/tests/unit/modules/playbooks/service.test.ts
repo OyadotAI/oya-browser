@@ -69,9 +69,10 @@ describe('play, counted', () => {
       playbooks.play(KEY, BROWSER, { ...pb, steps: [{ action: 'teleport' }] }, {}, { autoHeal: false }),
     );
     await new Promise((r) => setTimeout(r, 5));
-    assert.deepEqual(await replayedEvents(calls), [
-      ['ok', false],
+    // Each event waits on its own owner lookup, so they may be sent in either order.
+    assert.deepEqual((await replayedEvents(calls)).sort(), [
       ['failed', false],
+      ['ok', false],
     ]);
   });
 

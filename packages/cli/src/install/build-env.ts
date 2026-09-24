@@ -129,10 +129,14 @@ const fleetTokenLines = () => [
   `# FLEET_TOKEN=${token()}`,
 ];
 
+/** The server's storage driver for each database answer: Supabase is a Postgres, used only for sign-in on top. */
+const STORAGE_FOR: Record<string, string> = { sqlite: 'sqlite', postgres: 'postgres', supabase: 'postgres' };
+
 /** Every .env value for these answers. */
 export function buildEnv(a: Answers, secrets: Secrets, existing: Env): BuiltEnv {
   const { v, apiKey } = baseSecrets(a, existing);
   Object.assign(v, secrets);
+  v.OYA_STORAGE = STORAGE_FOR[a.database] ?? 'sqlite';
   if (a.llm.provider !== 'skip') Object.assign(v, { OPENAI_BASE_URL: a.llm.baseUrl, CHAT_MODEL: a.llm.model });
   fleetSettings(v, { a, existing, wsUrl: a.publicUrl.replace(/^http/, 'ws') + '/ws' });
   optionalSettings(v, a, existing);

@@ -50,7 +50,10 @@ import {
 import * as usage from './platform/usage.ts';
 import { container } from './app/container.ts';
 import * as keyConfig from './modules/config/service.ts';
-import { drain as drainLogins } from './modules/personas/cookies.ts';
+import { drain as drainLogins, restore as restoreLogins } from './modules/personas/cookies.ts';
+import { restore as restoreCredentials } from './modules/personas/credentials.ts';
+import { restore as restoreMfa } from './modules/challenges/mfa-factors.ts';
+import { closeConnection } from './platform/storage/index.ts';
 import { handleConnection } from './modules/browsers/socket.ts';
 import { handleMcpRequest, handlePoolMcpRequest } from './mcp/server.ts';
 import { validateApiKey, authReady } from './modules/auth/service.ts';
@@ -68,7 +71,15 @@ const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), DECIMAL);
 
 // Browsers treat an invalid key as fatal. Never accept a reconnect while the
 // persisted key cache or the profile bound to it is still being restored.
-const [authLoaded] = await Promise.all([authReady, usage.restore(), personas.restore(), keyConfig.restore()]);
+const [authLoaded] = await Promise.all([
+  authReady,
+  usage.restore(),
+  personas.restore(),
+  keyConfig.restore(),
+  restoreLogins(),
+  restoreCredentials(),
+  restoreMfa(),
+]);
 if (!authLoaded) throw new Error('API keys could not be loaded; refusing to accept browser connections');
 
 keyConfig.restoreRouting(pool);
@@ -257,6 +268,16 @@ const drainStores = () =>
     analytics.drain(),
   ]);
 
+/**
+ * Last, once nothing writes to them: the control store releases the SQLite
+ * writer lock, which otherwise kept a restarted server refusing to start until
+ * the lock went stale, and storage closes its connection.
+ */
+const closeStorage = async () => {
+  await Promise.resolve(control().store.close?.()).catch(() => {});
+  await closeConnection().catch(() => {});
+};
+
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.once(signal, async () => {
     registry.draining = true;
@@ -267,9 +288,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     // get their manifest, rather than being cut off mid-write.
     await Promise.allSettled([...gatewaySessions.values()].map((s) => s.destroy('server shutting down')));
     await drainStores();
-    // Last, once nothing writes to it: releases the SQLite writer lock, which otherwise
-    // kept a restarted server refusing to start until the lock went stale.
-    await Promise.resolve(control().store.close?.()).catch(() => {});
+    await closeStorage();
     process.exit(process.exitCode || 0);
   });
 }

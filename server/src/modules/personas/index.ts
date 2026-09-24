@@ -4,10 +4,5 @@
  * service never pulls in the web layer.
  */
 export { PersonaService, type PersonaDeps, type CreatePersona, type UpdatePersona } from './service.ts';
-export {
-  type PersonaRepository,
-  FilePersonaRepository,
-  SupabasePersonaRepository,
-  FallbackPersonaRepository,
-} from './repository.ts';
+export { type PersonaRepository, PersonaTable } from './repository.ts';
 export { type Persona, type PersonaPrefs, type PersonaProxy, describeProfile } from './model.ts';

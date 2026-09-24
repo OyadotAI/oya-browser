@@ -4,7 +4,7 @@ Oya keeps project ownership, session reservations, lifecycle outcomes, control l
 
 ## Run locally
 
-Use Node 22.13 or newer. With no Supabase configuration, the server uses `OYA_DATA_DIR/control.sqlite` (default `server/data/control.sqlite`). Keep this directory on persistent storage. SQLite permits one server process; a PID lock rejects concurrent use. Do not remove a live process's lock.
+Use Node 22.13 or newer. With the default `OYA_STORAGE=sqlite`, the server keeps its tables in `OYA_DATA_DIR/storage.sqlite` and the control plane in `OYA_DATA_DIR/control.sqlite` (default `server/data/`). Keep this directory on persistent storage. SQLite permits one server process; a PID lock rejects concurrent use. Do not remove a live process's lock.
 
 Set a stable `OYA_PROFILE_SECRET` before creating data. Back up this secret separately from the database. Changing it makes encrypted profiles, queue requests, webhook secrets, and provider cleanup credentials unreadable.
 
@@ -12,8 +12,8 @@ The first startup copies legacy local data into `migration-backup-v1`, records a
 
 ## Run multiple replicas
 
-1. Apply the existing migrations, followed by `server/migrations/008_durable_control.sql`, to your Supabase Postgres database. The migration is idempotent and touches only the `oya_browser` schema. When the project's migration history belongs to another codebase, apply the file directly instead of with `db push`: `npx supabase db query --linked --file server/migrations/008_durable_control.sql`. Expose the `oya_browser` schema to PostgREST. The control RPCs are executable only by `service_role`; never give that credential to a browser or client.
-2. Configure the same `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, and `OYA_PROFILE_SECRET` on all replicas.
+1. Apply the migrations to your Postgres database with `DATABASE_URL=postgres://... node server/migrations/run.mjs` (the container does this on every start). They are idempotent and touch only the `oya_browser` schema. On Supabase, use the project's Postgres connection string; nothing goes through PostgREST.
+2. Configure `OYA_STORAGE=postgres` and the same `DATABASE_URL` and `OYA_PROFILE_SECRET` on all replicas (and `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` if people sign in with email).
 3. Set a distinct, reachable `OYA_INSTANCE_URL` on each replica (for example `http://oya-a:3100`). Set the same strong `OYA_CLUSTER_SECRET` on every replica. Optional `OYA_INSTANCE_ID` must be unique per running process.
 4. Configure your load balancer for HTTP, WebSocket upgrades, and unbuffered SSE. Route readiness checks to `/readyz`; `/livez` checks process liveness only.
 5. For shared recordings, create a **private** Supabase Storage bucket and set `OYA_RECORDING_BUCKET` on all replicas. Keep each replica's local recording spool persistent until uploads succeed.

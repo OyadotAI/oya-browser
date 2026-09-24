@@ -1,5 +1,5 @@
 /**
- * Unit tests for the control store entry point: with no Postgres or Supabase
+ * Unit tests for the control store entry point: with no Postgres
  * configured, one process-wide store on SQLite in the data directory.
  */
 import { describe, it } from 'node:test';

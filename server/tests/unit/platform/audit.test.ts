@@ -1,14 +1,16 @@
 /**
  * Unit tests for the audit log: actors are fingerprinted, long fields are cut,
  * the client address comes from the request, recent() filters newest first,
- * and without a database the trail goes to audit.log.
+ * and the trail is written to storage, keeping a failed batch for next time.
  */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { audit, drain, fingerprint, history, recent } from '../../../src/platform/audit.ts';
-import { dataPath } from '../../../src/platform/paths.ts';
-import { AUDIT_FIELD_MAX_CHARS, FINGERPRINT_HEX_CHARS } from '../../../src/platform/constants.ts';
+import { getConnection } from '../../../src/platform/storage/index.ts';
+import { AUDIT_FIELD_MAX_CHARS, FINGERPRINT_HEX_CHARS, MS_PER_SECOND } from '../../../src/platform/constants.ts';
+
+/** Stored audit rows for one action. */
+const storedRows = (action: string) => getConnection().select('audit_log', { action });
 
 describe('fingerprint', () => {
   it('is a short, stable hex digest of the key', () => {
@@ -82,20 +84,53 @@ describe('recent', () => {
 });
 
 describe('history and drain', () => {
-  it('answers history from memory when there is no database', async () => {
-    audit({ action: 'history.test' });
-    const out = await history({ action: 'history.test' });
-    assert.equal(out.source, 'memory');
-    assert.equal(out.events.length, 1);
-  });
-
-  it('appends pending events to audit.log on drain', async () => {
+  it('writes pending events to storage on drain, hash-linked', async () => {
     audit({ action: 'drain.test', targetId: 'd-1' });
     await drain();
-    const lines = readFileSync(dataPath('audit.log'), 'utf8')
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l));
-    assert.ok(lines.some((e) => e.action === 'drain.test' && e.target_id === 'd-1'));
+    const [row] = await storedRows('drain.test');
+    assert.equal(row.target_id, 'd-1');
+    assert.ok(row.hash && row.seq);
+  });
+
+  it('answers history from storage, filtered by action and actor, newest first', async () => {
+    // A second apart, so newest-first has one answer.
+    mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 0, 1) });
+    audit({ action: 'history.test', actorKey: 'k1', targetId: 'first' });
+    mock.timers.tick(MS_PER_SECOND);
+    audit({ action: 'history.test', actorKey: 'k2', targetId: 'other' });
+    mock.timers.tick(MS_PER_SECOND);
+    audit({ action: 'history.test', actorKey: 'k1', targetId: 'second' });
+    mock.timers.reset();
+    await drain();
+    const out = await history({ action: 'history.test', actor: fingerprint('k1') });
+    assert.equal(out.source, 'database');
+    assert.deepEqual(
+      out.events.map((e) => e.target_id),
+      ['second', 'first'],
+    );
+  });
+
+  it('answers history from memory, with the error, when storage cannot be read', async () => {
+    audit({ action: 'history.memory' });
+    const select = mock.method(getConnection(), 'select', async () => Promise.reject(new Error('storage down')));
+    const out = await history({ action: 'history.memory' });
+    select.mock.restore();
+    assert.deepEqual([out.source, out.error, out.events.length], ['memory', 'storage down', 1]);
+  });
+
+  it('keeps a batch storage refused for the next flush, without scheduling one itself', async () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const error = mock.method(console, 'error', () => {});
+    const upsert = mock.method(getConnection(), 'upsert', async () => Promise.reject(new Error('storage down')));
+    audit({ action: 'requeue.test' });
+    await drain();
+    mock.timers.runAll();
+    assert.equal(upsert.mock.callCount(), 1, 'a failed write does not retry on its own');
+    assert.match(error.mock.calls[0].arguments[0], /write failed \(storage down\)/);
+    upsert.mock.restore();
+    await drain();
+    assert.equal((await storedRows('requeue.test')).length, 1);
+    error.mock.restore();
+    mock.timers.reset();
   });
 });

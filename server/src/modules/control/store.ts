@@ -9,8 +9,7 @@
  *
  * This is the entry point; the backends, transaction and retry loop live in store/.
  */
-import { db } from '../../platform/db.ts';
-import { pgRemote } from './pg-client.ts';
+import { getConnection } from '../../platform/storage/index.ts';
 import { dataPath } from '../../platform/paths.ts';
 import { ControlStore } from './store/control-store.ts';
 
@@ -22,13 +21,12 @@ export { ControlStore };
 
 let singleton;
 /**
- * Three backends, one contract. DATABASE_URL wins over Supabase so a deployment
- * can move off it by setting one variable; SQLite is what is left when neither is
- * configured, and it allows exactly one writer.
+ * Two backends, one contract: Postgres when storage is Postgres, or its own
+ * SQLite file otherwise, which allows exactly one writer.
  */
 export function controlStore() {
   return (singleton ||= new ControlStore({
-    remote: pgRemote() || db,
+    remote: getConnection().controlRemote(),
     path: dataPath('control.sqlite'),
   }));
 }

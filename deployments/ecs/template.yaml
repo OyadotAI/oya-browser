@@ -356,6 +356,8 @@ Resources:
             # so the AWS SDK signs in with this task's role.
             - { Name: OYA_CLOUD_RUNTIME, Value: ecs }
             - { Name: OYA_BROWSER_PROVIDER, Value: oya-cloud }
+            # Every table in the DATABASE_URL Postgres below; replicas need it.
+            - { Name: OYA_STORAGE, Value: postgres }
             - { Name: OYA_ECS_CLUSTER, Value: !Ref Cluster }
             - { Name: OYA_ECS_TASK_DEFINITION, Value: !Ref WorkerTaskDefinition }
             - { Name: OYA_ECS_SUBNETS, Value: !Join [',', !Ref PrivateSubnetIds] }

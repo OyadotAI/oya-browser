@@ -43,10 +43,3 @@ export const BASE_BACKOFF_MS = 5;
 export const BACKOFF_GROWTH = 2;
 /** The backoff ceiling never grows past this. */
 export const MAX_BACKOFF_MS = 250;
-
-/** Postgres connections per process unless DATABASE_POOL_MAX says otherwise. */
-export const DEFAULT_POOL_MAX = 10;
-/** The control store is on the request path; a hung connect must not hang a request. */
-export const PG_CONNECT_TIMEOUT_MS = 10_000;
-/** Idle Postgres connections are closed after this. */
-export const PG_IDLE_TIMEOUT_MS = 30_000;

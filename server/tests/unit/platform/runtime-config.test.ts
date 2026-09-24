@@ -1,13 +1,33 @@
 /**
  * Unit tests for the deployment-wide runtime config: environment fallbacks,
- * the masked key, saving to data/config.json without a database, and the base
- * URL guard against server-side request forgery.
+ * the masked key, saving to the settings table, taking in the pre-storage
+ * config.json once, and the base URL guard against server-side request forgery.
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { runtimeConfig, validateBaseUrl } from '../../../src/platform/runtime-config.ts';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dataPath } from '../../../src/platform/paths.ts';
+
+// The legacy file must be in place before the module loads, since it loads at import.
+mkdirSync(dataPath(), { recursive: true });
+writeFileSync(dataPath('config.json'), JSON.stringify({ legacy_note: 'kept' }));
+// Watched so a test can tell when that load has taken the file in.
+const log = mock.method(console, 'log', () => {});
+const { runtimeConfig, validateBaseUrl } = await import('../../../src/platform/runtime-config.ts');
+const { getConnection } = await import('../../../src/platform/storage/index.ts');
+
+/** The stored value of one setting, or undefined. */
+const storedSetting = async (key: string) => (await getConnection().select('settings', { key }))[0]?.value;
+
+/** Whether the import-time load has logged taking in the legacy file. */
+const imported = () => log.mock.calls.some((c) => /imported/.test(String(c.arguments[0])));
+
+/** Lets the import-time load finish: once it logs the import, only its storage read is left, and that settles in one turn. */
+async function loaded() {
+  while (!imported()) await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  log.mock.restore();
+}
 
 /** Environment variables the config falls back to; cleared around each test. */
 const ENV = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CHAT_MODEL'];
@@ -16,6 +36,12 @@ describe('runtimeConfig', () => {
   const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
   beforeEach(() => ENV.forEach((k) => delete process.env[k]));
   afterEach(() => ENV.forEach((k) => (saved[k] === undefined ? delete process.env[k] : (process.env[k] = saved[k]))));
+
+  it('takes in the legacy config.json once and sets it aside as .imported', async () => {
+    await loaded();
+    assert.equal(await storedSetting('legacy_note'), 'kept');
+    assert.equal(existsSync(dataPath('config.json')), false);
+  });
 
   it('falls back to the environment, then to built-in defaults', () => {
     process.env.CHAT_MODEL = 'env-model';
@@ -37,10 +63,21 @@ describe('runtimeConfig', () => {
     assert.equal(runtimeConfig.getOpenAIKey(), 'sk-original9999');
   });
 
-  it('saves the settings to config.json when there is no database', async () => {
+  it('saves the settings to the settings table', async () => {
     await runtimeConfig.set({ chat_model: 'saved-model' });
     assert.equal(runtimeConfig.getChatModel(), 'saved-model');
-    assert.equal(JSON.parse(readFileSync(dataPath('config.json'), 'utf8')).chat_model, 'saved-model');
+    assert.equal(await storedSetting('chat_model'), 'saved-model');
+  });
+
+  it('logs a save that storage refuses, keeping the setting in memory', async () => {
+    const error = mock.method(console, 'error', () => {});
+    const upsert = mock.method(getConnection(), 'upsert', async () => Promise.reject(new Error('storage down')));
+    await runtimeConfig.set({ chat_model: 'unsaved-model' });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(runtimeConfig.getChatModel(), 'unsaved-model');
+    assert.match(error.mock.calls[0].arguments[1], /storage down/);
+    upsert.mock.restore();
+    error.mock.restore();
   });
 
   it('validates the base URL before saving it', async () => {

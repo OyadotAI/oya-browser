@@ -291,8 +291,8 @@ export class PersonaService {
     this.deps.logins.clear(id);
     // clearAll, not clear: a persona may hold a factor and a credential per
     // portal, and leaving those behind would outlive the identity they belong to.
-    this.deps.mfa.clearAll(id);
-    this.deps.credentials.clearAll(id);
+    const cleared = [this.deps.mfa.clearAll(id), this.deps.credentials.clearAll(id)];
+    Promise.all(cleared).catch((e) => console.error(`[personas] clearing ${id}'s secrets failed:`, e.message));
     this.slots.delete(id);
   }
 

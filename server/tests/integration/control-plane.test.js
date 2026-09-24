@@ -25,7 +25,7 @@ const { router } = await import('../../src/app/api.ts');
 const { registry } = await import('../../src/modules/browsers/registry.ts');
 const { metrics } = await import('../../src/platform/metrics.ts');
 const usage = await import('../../src/platform/usage.ts');
-const { recent } = await import('../../src/platform/audit.ts');
+const { recent, drain: drainAudit } = await import('../../src/platform/audit.ts');
 
 let passed = 0,
   failed = 0;
@@ -133,6 +133,8 @@ try {
 
   console.log('\n5️⃣  Audit trail...');
   await call('/api/pool/cookies', { method: 'DELETE', key: 'tenant-key' });
+  // History reads storage, which the audit queue reaches on its next flush.
+  await drainAudit();
   const trail = await call('/api/audit', { key: 'tenant-key' });
   assert(trail.status === 200, 'any key can read its own audit trail');
   const clear = trail.body.events.find((e) => e.action === 'cookies.clear');
