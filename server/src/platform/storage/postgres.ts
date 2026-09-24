@@ -36,12 +36,25 @@ async function getPool(connectionString: string) {
 /** Pool settings: size from DATABASE_POOL_MAX, and bounded connect and idle times. */
 function poolOptions(connectionString: string) {
   return {
-    connectionString,
+    connectionString: libpqSslModes(connectionString),
     max: Number(process.env.DATABASE_POOL_MAX || DEFAULT_POOL_MAX),
     // Storage is on the request path; a hung connect must not hang a request.
     connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
     idleTimeoutMillis: PG_IDLE_TIMEOUT_MS,
   };
+}
+
+/**
+ * The connection string with sslmode read as libpq reads it, the way psql and
+ * migrations/run.mjs already do: `require` encrypts without verifying the
+ * certificate, `verify-full` verifies it. node-postgres otherwise treats
+ * `require` as `verify-full`, which refuses a provider signing with its own CA
+ * (Supabase does) under the URL its dashboard hands out. A string that already
+ * says uselibpqcompat is left as it is.
+ */
+export function libpqSslModes(connectionString: string) {
+  if (/[?&]uselibpqcompat=/.test(connectionString)) return connectionString;
+  return `${connectionString}${connectionString.includes('?') ? '&' : '?'}uselibpqcompat=true`;
 }
 
 /** Close the pool, if one was opened. */
