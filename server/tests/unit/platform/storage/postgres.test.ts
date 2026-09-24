@@ -8,7 +8,7 @@
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { PostgresConnection, pgRemote, closePgPool } from '../../../../src/platform/storage/postgres.ts';
+import { PostgresConnection, pgRemote, closePgPool, libpqSslModes } from '../../../../src/platform/storage/postgres.ts';
 
 afterEach(async () => {
   mock.restoreAll();
@@ -128,5 +128,20 @@ describe('pgRemote', () => {
     assert.deepEqual(await pgRemote('postgres://unused/db').rpc('control_commit', {}), {
       error: { message: 'control_conflict' },
     });
+  });
+});
+
+describe('libpqSslModes', () => {
+  it('reads sslmode as libpq does, so require encrypts without refusing a provider CA', () => {
+    assert.equal(
+      libpqSslModes('postgres://h/db?sslmode=require'),
+      'postgres://h/db?sslmode=require&uselibpqcompat=true',
+    );
+    assert.equal(libpqSslModes('postgres://h/db'), 'postgres://h/db?uselibpqcompat=true');
+  });
+
+  it('leaves a string that already chose its semantics alone', () => {
+    const chosen = 'postgres://h/db?uselibpqcompat=false&sslmode=verify-full';
+    assert.equal(libpqSslModes(chosen), chosen);
   });
 });
