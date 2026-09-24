@@ -1,6 +1,6 @@
 {
   "name": "@oya-ai/browser",
-  "version": "1.0.121",
+  "version": "1.0.122",
   "description": "Rotate thousands of browsers behind one API, personas, proxies, stealth, CAPTCHA and MFA.",
   "license": "MIT",
   "homepage": "https://oyabrowser.com",
