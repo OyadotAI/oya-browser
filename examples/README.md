@@ -43,6 +43,8 @@ Each one sets `sandbox_runtime: 'ecs'` and a nested `ecs` setting, then starts a
 | [`01-iam.ts`](ecs/01-iam.ts) | Sign in with an IAM access key | `npx tsx --env-file=.env ecs/01-iam.ts` |
 | [`02-role.ts`](ecs/02-role.ts) | Oya assumes a role you trust with your own ExternalId: no long-lived keys | `npx tsx --env-file=.env ecs/02-role.ts` |
 | [`03-sso.ts`](ecs/03-sso.ts) | Sign in with an IAM Identity Center (SSO) access token | `npx tsx --env-file=.env ecs/03-sso.ts` |
+| [`04-cluster-name.ts`](ecs/04-cluster-name.ts) | Name the cluster by its name, looked up in `region` | `npx tsx --env-file=.env ecs/04-cluster-name.ts` |
+| [`05-cluster-arn.ts`](ecs/05-cluster-arn.ts) | Name the cluster by its full ARN, whose region must match `region` | `npx tsx --env-file=.env ecs/05-cluster-arn.ts` |
 
 ---
 
