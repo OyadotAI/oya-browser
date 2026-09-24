@@ -63,6 +63,12 @@ describe('account endpoints', () => {
     expect(fetchCall(fn, 1)[1].body).toBe('{"refresh_token":"r1"}');
   });
 
+  it('refresh marks a token that just came back from Google or GitHub', async () => {
+    const fn = fakeFetch({ body: {} });
+    await refreshToken('r1', true);
+    expect(fetchCall(fn, 0)[1].body).toBe('{"refresh_token":"r1","oauth":true}');
+  });
+
   it('logout never throws, even when the request fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     await expect(logout()).resolves.toBeUndefined();

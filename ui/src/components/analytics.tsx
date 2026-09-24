@@ -62,8 +62,9 @@ function useAnalyticsReady(posthogKey: string, host: string) {
 /** Renders nothing; its effects are the whole point. */
 export function Analytics({ posthogKey, host }: Props) {
   const ready = useAnalyticsReady(posthogKey, host);
+  // Identity first: effects run in order, so a signed-in person's pageview carries who they are.
+  useAnalyticsIdentity(ready);
   usePageviews(ready);
   useTrackedClicks(ready);
-  useAnalyticsIdentity(ready);
   return null;
 }

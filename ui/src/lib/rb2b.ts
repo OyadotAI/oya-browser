@@ -4,8 +4,8 @@
  * the component only on public pages (lib/public-pages.ts).
  */
 
-/** Where RB2B serves its script from. */
-const SCRIPT_HOST = 'https://ddwl4m2hdecbv.cloudfront.net';
+/** Where RB2B serves its script from, as their current snippet has it; the older CloudFront host now answers 403. */
+const SCRIPT_HOST = 'https://b2bjsstore.s3.us-west-2.amazonaws.com';
 /** What an RB2B account id looks like; anything else is not put into a script URL. */
 const ACCOUNT_ID = /^[A-Z0-9]{6,32}$/;
 

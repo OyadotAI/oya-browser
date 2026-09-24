@@ -57,7 +57,20 @@ describe('analytics', () => {
         ['$identify', 'u-1'],
       ],
     );
-    assert.deepEqual(body.batch[1].properties, { $set: { email: 'ana@example.com' } });
+    assert.deepEqual(body.batch[1].properties, { $set: { email: 'ana@example.com' }, $geoip_disable: true });
+  });
+
+  it('never geolocates an event, since the address PostHog sees is the server and not the person', async () => {
+    on();
+    const calls = stubFetch(() => json({}));
+    capture('u-1', 'browser_started', { provider: 'cdp' });
+    identify('u-1', { email: 'ana@example.com' });
+    await drain();
+    const { batch } = JSON.parse(calls[0].init.body);
+    assert.deepEqual(
+      batch.map((r) => r.properties.$geoip_disable),
+      [true, true],
+    );
   });
 
   it('marks a fingerprint-only id as no person, and leaves a person alone', async () => {

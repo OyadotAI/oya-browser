@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   getProfile,
   login,
+  oauthSignup,
   oauthUrl,
   refreshSession,
   signup,
@@ -36,5 +37,27 @@ describe('accounts without Supabase', () => {
       status: Status.CONFLICT,
       message: 'Accounts need Supabase',
     });
+  });
+});
+
+describe('oauthSignup', () => {
+  /** A Google account made `ago` milliseconds before now. */
+  const made = (provider: string, ago: number) => ({ provider, created_at: new Date(NOW - ago).toISOString() });
+  const NOW = Date.parse('2026-09-24T01:00:00Z');
+  const MINUTE = 60_000;
+
+  it('counts a Google or GitHub account made minutes ago as a sign-up by that provider', () => {
+    assert.equal(oauthSignup(made('google', MINUTE), NOW), 'google');
+    assert.equal(oauthSignup(made('github', MINUTE), NOW), 'github');
+  });
+
+  it('does not count a returning person, whose account is older', () => {
+    assert.equal(oauthSignup(made('google', 60 * MINUTE), NOW), null);
+  });
+
+  it('does not count a password account or a provider it does not offer', () => {
+    assert.equal(oauthSignup(made('email', MINUTE), NOW), null);
+    assert.equal(oauthSignup(made('toString', MINUTE), NOW), null);
+    assert.equal(oauthSignup({}, NOW), null);
   });
 });

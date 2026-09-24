@@ -15,6 +15,8 @@ export const MS_PER_MINUTE = 60_000;
 export const MS_PER_HOUR = 3_600_000;
 /** Seconds in a minute. */
 export const SECONDS_PER_MINUTE = 60;
+/** Seconds in an hour. */
+export const SECONDS_PER_HOUR = 3600;
 /** Nanoseconds in a millisecond; the event loop monitor reports nanoseconds. */
 export const NS_PER_MS = 1e6;
 /** Bytes in a mebibyte. */
@@ -219,3 +221,5 @@ export const ANALYTICS_FLUSH_MS = 10_000;
 export const OUTBOUND_TIMEOUT_MS = 5_000;
 /** Longest ops message posted to Slack; a longer one was not written by us. */
 export const MESSAGE_MAX_CHARS = 400;
+/** Characters in a multi-line product card: a handful of short lines, still bounded. */
+export const CARD_MAX_CHARS = 1500;

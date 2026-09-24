@@ -17,7 +17,7 @@ describe('loadRb2b', () => {
   it("adds RB2B's script for the account, once per page", () => {
     loadRb2b('1N5W0HJMYRO5');
     loadRb2b('1N5W0HJMYRO5');
-    expect(scripts()).toEqual(['https://ddwl4m2hdecbv.cloudfront.net/b/1N5W0HJMYRO5/1N5W0HJMYRO5.js.gz']);
+    expect(scripts()).toEqual(['https://b2bjsstore.s3.us-west-2.amazonaws.com/b/1N5W0HJMYRO5/1N5W0HJMYRO5.js.gz']);
   });
 
   it('adds nothing for an id that is not an RB2B account id', () => {

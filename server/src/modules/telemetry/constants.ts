@@ -11,6 +11,10 @@ export const WHO_CACHE_MAX = 10_000;
 export const WHO_FINGERPRINT_CHARS = 8;
 /** Characters of a project id shown in an ops line. */
 export const PROJECT_ID_CHARS = 8;
+/** Width of the rule above and below a product card, matching A2ABase's cards. */
+export const CARD_DIVIDER_CHARS = 22;
+/** Sessions shorter than this get no card: a desktop reconnecting after sleep is not a session anyone ran. */
+export const CARD_MIN_SESSION_SECONDS = 60;
 /** The clients a start may say it came from; anything else is `rest`. */
 export const CLIENTS = new Set(['mcp', 'console']);
 /** The header a client names itself in. */

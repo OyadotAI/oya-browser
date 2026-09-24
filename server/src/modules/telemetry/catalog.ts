@@ -16,10 +16,16 @@ export type Who = {
   label: string;
 };
 
+/** How an account was made. */
+export type SignupMethod = 'email' | 'google' | 'github';
+
 /** The properties of each event. */
 export type EventProps = {
   /** A person made an account. */
-  account_signed_up: Record<string, never>;
+  account_signed_up: {
+    /** How: a password, or Google or GitHub. */
+    method: SignupMethod;
+  };
   /** An AI agent signed itself up for a key, naming the email of the person it works for. */
   agent_signed_up: Record<string, never>;
   /** A person claimed a key an agent had signed up for. */
@@ -42,6 +48,8 @@ export type EventProps = {
     persona: boolean;
     /** Which client asked for it. */
     via: 'rest' | 'mcp' | 'console';
+    /** Whether this is the key's first browser ever: the activation moment. */
+    first: boolean;
   };
   /** A browser the key held is gone. */
   browser_stopped: {

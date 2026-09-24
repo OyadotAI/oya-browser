@@ -6,7 +6,8 @@
 import { db as supabase, dbAuth as supabaseAuth } from '../../platform/db.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { MAX_DISPLAY_NAME } from './constants.ts';
+import { MAX_DISPLAY_NAME, NEW_ACCOUNT_MS } from './constants.ts';
+import type { SignupMethod } from '../telemetry/index.ts';
 
 /** The profile columns a person sees. */
 const PROFILE_COLUMNS = 'id, email, display_name, role, created_at';
@@ -16,8 +17,13 @@ function requireAuth() {
   if (!supabaseAuth) throw new HttpError(Status.UNAVAILABLE, 'Database not configured');
 }
 
-/** The id and email of the user in a Supabase auth answer. */
-const userOf = (data) => ({ id: data.user.id, email: data.user.email });
+/** The id and email of the user in a Supabase auth answer, with when the account was made and how, for counting sign-ups. */
+const userOf = (data) => ({
+  id: data.user.id,
+  email: data.user.email,
+  created_at: data.user.created_at,
+  provider: data.user.app_metadata?.provider,
+});
 
 /** The user and session tokens in a Supabase auth answer. */
 const sessionOf = (data) => ({
@@ -70,6 +76,16 @@ export async function oauthUrl(provider, redirectTo) {
   const { data, error } = await supabaseAuth.auth.signInWithOAuth({ provider: OAUTH_PROVIDERS[provider], options });
   if (error) throw error;
   return data.url;
+}
+
+/**
+ * How a sign-in made the account, when it did: Supabase makes a Google or
+ * GitHub account on its first sign-in, so one made in the last few minutes is
+ * a sign-up. Null for a returning person, a password account, or another provider.
+ */
+export function oauthSignup(user, now = Date.now()): SignupMethod | null {
+  const method = Object.hasOwn(OAUTH_PROVIDERS, user?.provider) ? (user.provider as 'google' | 'github') : null;
+  return method && now - Date.parse(user.created_at) < NEW_ACCOUNT_MS ? method : null;
 }
 
 // ── User profile ──

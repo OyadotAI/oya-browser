@@ -149,6 +149,7 @@ Without these, sign-in is by API key and the console asks for one. The control p
 |:---|:---|
 | `POSTHOG_KEY`, `POSTHOG_HOST` | Product analytics; both are needed. |
 | `SLACK_OPS_WEBHOOK_SIGNUPS`, `SLACK_OPS_WEBHOOK_EVENTS` | One-line ops messages to Slack webhooks. |
+| `SLACK_OPS_WEBHOOK_PRODUCT` | A multi-line card per product event worth reading (sign-ups with their method, a key's first browser, sessions of a minute or more with their length, playbooks, desktop installs and updates, server errors). |
 | `RB2B_ID` | RB2B visitor identification on the public pages only. |
 
 ### Tuning

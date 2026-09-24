@@ -21,7 +21,7 @@ function readReturn() {
 
 /** Starts the session from `token`, then goes to the console, whose restore picks it up. */
 async function adopt(token: string) {
-  const data = await refreshToken(token);
+  const data = await refreshToken(token, true);
   if (data.refresh_token) keepRefreshToken(data.refresh_token);
   window.location.replace(afterSignIn());
 }

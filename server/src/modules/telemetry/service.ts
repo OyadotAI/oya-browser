@@ -8,7 +8,9 @@
  */
 import * as analytics from '../../platform/analytics.ts';
 import * as slack from '../../platform/ops-slack.ts';
-import { CHANNEL, SLACK_LINES, type EventName, type EventProps, type Who } from './catalog.ts';
+import { CHANNEL, SLACK_LINES, type EventName, type EventProps, type SignupMethod, type Who } from './catalog.ts';
+import { card } from './cards.ts';
+import { CARD_MAX_CHARS } from '../../platform/constants.ts';
 import { anonymous, keyLabel, nobody, person, whoHolds } from './who.ts';
 
 /** Forgets who was identified, so one test cannot leak into the next. */
@@ -25,13 +27,15 @@ function identifyOnce(who: Who) {
   analytics.identify(who.id, { email: who.email });
 }
 
-/** Sends one event about `who` to PostHog, and its Slack line when it has one. */
+/** Sends one event about `who` to PostHog, its Slack line when it has one, and its product card when it is worth one. */
 function send<K extends EventName>(name: K, who: Who, props: EventProps[K]) {
   const profile = who.email !== undefined;
   analytics.capture(who.id, name, { ...props, $process_person_profile: profile });
   identifyOnce(who);
   const line = Object.hasOwn(SLACK_LINES, name) ? SLACK_LINES[name](who, props) : null;
   if (line) slack.post(CHANNEL[name], line);
+  const text = slack.enabled('product') ? card(name, who, props) : null;
+  if (text) slack.post('product', text, CARD_MAX_CHARS);
 }
 
 /** Someone who fetched a file: a stable fingerprint, never a person profile, so downloads count without naming anyone. */
@@ -45,8 +49,9 @@ function emit<K extends EventName>(name: K, key: string | null, props: EventProp
   else send(name, who, props);
 }
 
-/** Whether the event's Slack channel is configured, so nothing is resolved for an event nobody will see. */
-const slackWanted = (name: EventName) => Object.hasOwn(CHANNEL, name) && slack.enabled(CHANNEL[name]);
+/** Whether a Slack channel will show the event, so nothing is resolved for an event nobody will see. */
+const slackWanted = (name: EventName) =>
+  slack.enabled('product') || (Object.hasOwn(CHANNEL, name) && slack.enabled(CHANNEL[name]));
 
 /** Which client a start came from, from the header it named itself in; anything else is plain REST. */
 export function clientOf(headers: Record<string, unknown> = {}): EventProps['browser_started']['via'] {
@@ -64,8 +69,9 @@ type Person = {
 
 /** The seams. Each takes what the caller already has in hand and returns at once. */
 export const track = {
-  /** A person made an account. */
-  accountSignedUp: (user: Person) => send('account_signed_up', person(user.id, user.email), {}),
+  /** A person made an account, with a password or through Google or GitHub. */
+  accountSignedUp: (user: Person, method: SignupMethod) =>
+    send('account_signed_up', person(user.id, user.email), { method }),
   /** An agent signed itself up; it is known by its key until a person claims it, under the email it gave. */
   agentSignedUp: (key: string, email: string) =>
     send('agent_signed_up', { ...anonymous(key), email, label: `${email} (${keyLabel(key)})` }, {}),

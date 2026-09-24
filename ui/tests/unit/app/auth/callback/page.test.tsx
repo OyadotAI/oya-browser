@@ -24,7 +24,7 @@ describe('OAuthCallbackPage', () => {
     vi.mocked(refreshToken).mockResolvedValue({ access_token: 'a', refresh_in_cookie: true });
     landAt('/auth/callback#access_token=a&refresh_token=rt&expires_in=3600');
     render(<OAuthCallbackPage />);
-    await waitFor(() => expect(refreshToken).toHaveBeenCalledWith('rt'));
+    await waitFor(() => expect(refreshToken).toHaveBeenCalledWith('rt', true));
     expect(window.location.hash).toBe('');
     expect(localStorage.getItem('oya_refresh_token')).toBeNull();
   });
