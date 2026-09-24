@@ -18,6 +18,14 @@ type Rb2bWindow = Window & {
   };
 };
 
+/**
+ * Today's UTC date, as a version on the script URL. RB2B lets a browser cache
+ * the script for 15 days, and the script carries the account's settings, so a
+ * change made in RB2B (a domain added, say) would otherwise miss returning
+ * visitors for two weeks; this way it reaches everyone within a day.
+ */
+const today = () => new Date().toISOString().split('T')[0];
+
 /** Whether `id` is a well-formed RB2B account id. */
 export const validRb2bId = (id: string | undefined): id is string => !!id && ACCOUNT_ID.test(id);
 
@@ -28,6 +36,6 @@ export function loadRb2b(id: string) {
   w.reb2b = { loaded: true };
   const script = document.createElement('script');
   script.async = true;
-  script.src = `${SCRIPT_HOST}/b/${id}/${id}.js.gz`;
+  script.src = `${SCRIPT_HOST}/b/${id}/${id}.js.gz?v=${today()}`;
   document.head.appendChild(script);
 }
