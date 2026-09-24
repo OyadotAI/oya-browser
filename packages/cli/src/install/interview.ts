@@ -135,10 +135,9 @@ async function pick(preset: string | undefined, heading: [string, string], quest
 async function askSupabase(s: Session): Promise<void> {
   s.secrets.SUPABASE_URL = s.replay ? process.env.SUPABASE_URL || '' : await ask('Supabase project URL:');
   s.secrets.SUPABASE_SERVICE_KEY = await secretFor(s, 'SUPABASE_SERVICE_KEY');
-  if (s.replay) return;
-  note('Migrations need the Postgres connection string, not the API URL.');
-  note('Leave it blank to apply them yourself later with `make migrate`.');
-  s.migrateUrl = await askSecret('Postgres connection string (optional):', { validate: isPostgresUrl });
+  // Supabase signs people in; the data lives in its Postgres, reached directly.
+  if (!s.replay) note("The data lives in the project's Postgres: its connection string, not the API URL.");
+  await askPostgres(s);
 }
 
 /** Postgres needs its connection string, which migrations also use. */

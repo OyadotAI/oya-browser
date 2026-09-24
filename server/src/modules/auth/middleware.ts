@@ -5,7 +5,8 @@
  */
 
 import { control, projectId } from '../control/service.ts';
-import { db as supabase, dbAuth as supabaseAuth } from '../../platform/db.ts';
+import { dbAuth as supabaseAuth } from '../../platform/db.ts';
+import { findKey } from './repository.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { isEnvKey, isFleetToken, keyCache, keyDigest, noteAgentKey } from './keys.ts';
@@ -93,16 +94,15 @@ async function scopedPrincipal(token, allowBrowser) {
   return principal || null;
 }
 
-/** Whether a digest belongs to a stored key: asked of Supabase when there is one, keeping the cache in step. */
+/** Whether a digest belongs to a stored key: asked of storage every time, keeping the cache in step. */
 async function isStoredKey(digest) {
-  if (!supabase) return keyCache.has(digest);
-  const columns = 'key_hash, user_id, agent_email';
-  const { data, error } = await supabase.from('api_keys').select(columns).eq('key_hash', digest).maybeSingle();
-  if (error) throw new HttpError(Status.UNAVAILABLE, 'Credential validation unavailable');
-  noteAgentKey(digest, Boolean(data?.agent_email && !data.user_id));
-  if (data) keyCache.add(digest);
+  const row = await findKey(digest).catch(() => {
+    throw new HttpError(Status.UNAVAILABLE, 'Credential validation unavailable');
+  });
+  noteAgentKey(digest, Boolean(row?.agent_email && !row.user_id));
+  if (row) keyCache.add(digest);
   else keyCache.delete(digest);
-  return !!data;
+  return !!row;
 }
 
 /** Authenticates the bearer token for API routes and enforces role limits: share links reach only their own browser, viewers only read, and settings writes need an administrator. */

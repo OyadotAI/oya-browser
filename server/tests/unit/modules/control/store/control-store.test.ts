@@ -95,7 +95,7 @@ describe('ControlStore over SQLite', () => {
   });
 });
 
-/** A Supabase-style client over one in-memory row, whose commit answers from `outcomes` in turn. */
+/** An rpc client over one in-memory row, whose commit answers from `outcomes` in turn. */
 function fakeRemote(outcomes: Array<'ok' | 'conflict'>) {
   const calls = [];
   return {

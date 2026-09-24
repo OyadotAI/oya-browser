@@ -10,39 +10,12 @@
  * api key instead of aggregated across the fleet.
  */
 
-import { writeFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
-import { db } from './db.ts';
+import { getConnection, USAGE_FIELDS } from './storage/index.ts';
 import { fingerprint } from './audit.ts';
-import { dataPath } from './paths.ts';
-import {
-  DB_BATCH_ROWS,
-  DEFAULT_USAGE_FLUSH_MS,
-  JSON_INDENT,
-  MS_PER_HOUR,
-  MS_PER_SECOND,
-  USAGE_ACTOR_CHARS,
-} from './constants.ts';
-
-const USAGE_PATH = dataPath('usage.json');
+import { DEFAULT_USAGE_FLUSH_MS, MS_PER_HOUR, MS_PER_SECOND, USAGE_ACTOR_CHARS } from './constants.ts';
 
 /** Every counter a key accumulates per hour; anything else passed to record() is ignored. */
-export const FIELDS = [
-  'commands',
-  'command_errors',
-  'chat_requests',
-  'chat_input_tokens',
-  'chat_output_tokens',
-  'browser_seconds',
-  'browsers_started',
-  'cookie_pulls',
-  'frames',
-  'sandboxes_created',
-  'rate_limited',
-  'quota_denied',
-  'bytes_out',
-  'residential_proxy_bytes',
-];
+export const FIELDS = USAGE_FIELDS;
 
 /** The start of d's UTC hour, as an ISO string: the bucket key. */
 const hourOf = (d = new Date()) =>
@@ -58,7 +31,6 @@ const buckets = new Map();
 /** fingerprint -> Map<browserId, connectedAtMs>, for browser_seconds. */
 const live = new Map();
 let dirty = false;
-let warnedFallback = false;
 
 /** This fingerprint's bucket for the current hour, started fresh when the hour has rolled over. */
 function bucket(id) {
@@ -143,28 +115,34 @@ export function snapshot() {
   }));
 }
 
-/** Durable history for one key. */
+/** Durable history for one key, newest hour first; the live bucket alone when storage cannot be read. */
 export async function history(apiKey, { hours = 24 } = {}) {
-  if (!db) return { source: 'memory', rows: [current(apiKey)] };
   const since = new Date(Date.now() - hours * MS_PER_HOUR).toISOString();
-  const { data, error } = await queryHistory(fingerprint(apiKey), since);
-  if (error) return { source: 'memory', rows: [current(apiKey)], error: error.message };
-  return { source: 'database', rows: data };
+  try {
+    const where = { api_key: fingerprint(apiKey), hour: { gte: since } };
+    return { source: 'database', rows: await getConnection().select('usage', where, { order: ['hour', 'desc'] }) };
+  } catch (e) {
+    return { source: 'memory', rows: [current(apiKey)], error: e.message };
+  }
 }
 
-/** This fingerprint's hourly rows since the given time, newest first. */
-function queryHistory(id, since) {
-  return db.from('usage').select('*').eq('api_key', id).gte('hour', since).order('hour', { ascending: false });
-}
-
-/** Writes every bucket to the usage table, or to usage.json when there is no database or the write fails. */
+/**
+ * Writes every bucket to the usage table. Counters live in memory and are
+ * rewritten whole each flush, so a failed write loses nothing: it stays dirty
+ * and the next flush carries it.
+ */
 async function flush() {
   settleOpenBrowsers();
   if (!dirty) return;
   dirty = false;
   const rows = usageRows();
-  if (!rows.length) return;
-  await persist(rows);
+  if (rows.length) await getConnection().upsert('usage', rows, { update: true }).catch(keepDirty);
+}
+
+/** A failed write leaves the counters for the next flush, and says so. */
+function keepDirty(e) {
+  dirty = true;
+  console.error(`[usage] write failed (${e.message}); the next flush retries it`);
 }
 
 /** One row per key bucket, stamped with the time of this flush. */
@@ -177,62 +155,15 @@ function usageRows() {
   }));
 }
 
-/** Write the rows to the database, or to the file when there is none or the write fails. */
-async function persist(rows) {
-  try {
-    if (!db) return await toFile(rows);
-    await toDb(rows);
-  } catch (e) {
-    await fallBackToFile(rows, e);
-  }
-}
-
-/** Mirror the rows to usage.json in the data directory. */
-async function toFile(rows) {
-  await mkdir(dirname(USAGE_PATH), { recursive: true });
-  await writeFile(USAGE_PATH, JSON.stringify(rows, null, JSON_INDENT));
-}
-
-/** Upsert the rows in chunks; throws on the first chunk that fails. */
-async function toDb(rows) {
-  for (let i = 0; i < rows.length; i += DB_BATCH_ROWS) {
-    const { error } = await db.from('usage').upsert(rows.slice(i, i + DB_BATCH_ROWS), { onConflict: 'api_key,hour' });
-    if (error) throw new Error(error.message);
-  }
-}
-
-/**
- * Counters live in memory and are rewritten whole each flush, so a failed
- * write is not lost data, but retrying a permanently broken table every
- * minute forever is noise. Mirror to the file and say so once.
- */
-async function fallBackToFile(rows, e) {
-  if (!warnedFallback) {
-    console.error(`[usage] database write failed (${e.message}), falling back to ${USAGE_PATH}`);
-    warnedFallback = true;
-  }
-  await toFile(rows).catch((fileErr) => console.error('[usage] file fallback failed:', fileErr.message));
-}
-
 /**
  * Reload the current hour so a restart mid-hour continues the bucket instead
  * of resetting it, which would otherwise let a quota be evaded by a restart.
  */
 export async function restore() {
-  if (!db) return;
-  try {
-    await loadCurrentHour();
-  } catch (e) {
-    console.error('[usage] restore failed:', e.message);
-  }
-}
-
-/** Load every key's bucket for the current hour from the usage table. */
-async function loadCurrentHour() {
-  const { data, error } = await db.from('usage').select('*').eq('hour', hourOf());
-  if (error || !data) return;
-  for (const row of data) buckets.set(row.api_key, { hour: row.hour, counters: countersFrom(row) });
-  if (data.length) console.log(`[usage] restored ${data.length} key buckets for the current hour`);
+  const rows = await getConnection().select('usage', { hour: hourOf() });
+  // hourOf(), not row.hour: the bucket compares by string, whatever format storage hands back.
+  for (const row of rows) buckets.set(row.api_key, { hour: hourOf(), counters: countersFrom(row) });
+  if (rows.length) console.log(`[usage] restored ${rows.length} key buckets for the current hour`);
 }
 
 /** A stored row's counters, with anything missing or non-numeric as zero. */

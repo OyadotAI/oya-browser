@@ -1,10 +1,10 @@
 /**
  * Which API keys exist: env admin keys, the fleet token, and the digests of
- * stored keys, cached in memory from Supabase on startup.
+ * stored keys, cached in memory from storage on startup.
  */
 
 import { createHash, randomBytes } from 'crypto';
-import { db as supabase } from '../../platform/db.ts';
+import { keyDigests } from './repository.ts';
 import { KEY_BYTES, KEY_PREFIX_CHARS } from './constants.ts';
 
 // ── Env-configured admin keys ──
@@ -56,16 +56,16 @@ export function isFleetToken(key) {
   return fleetToken !== null && key === fleetToken;
 }
 
-// ── In-memory cache of key digests (loaded from Supabase on startup) ──
+// ── In-memory cache of key digests (loaded from storage on startup) ──
 
 /** sha256 hex digests, never keys. */
 export const keyCache = new Set();
-/** Whether the cache has been filled from Supabase. */
+/** Whether the cache has been filled from storage. */
 let loaded = false;
 
 /** Loads every stored key digest into the cache once; a failure is logged and retried on the next call. */
 async function loadKeys() {
-  if (!supabase || loaded) return;
+  if (loaded) return;
   try {
     await fillCache();
   } catch (e) {
@@ -75,15 +75,14 @@ async function loadKeys() {
 
 /** Reads every stored digest into the cache and marks it loaded. */
 async function fillCache() {
-  const { data, error } = await supabase.from('api_keys').select('key_hash');
-  if (error) throw error;
-  for (const row of data) keyCache.add(row.key_hash);
+  const digests = await keyDigests();
+  for (const digest of digests) keyCache.add(digest);
   loaded = true;
-  console.log(`[auth] Loaded ${data.length} API key digests from Supabase`);
+  console.log(`[auth] Loaded ${digests.length} API key digests`);
 }
 
 /** Readiness is shared with server startup; an empty cache is not an invalid key. */
-export const authReady = loadKeys().then(() => !supabase || loaded);
+export const authReady = loadKeys().then(() => loaded);
 
 /** Whether a key is an env key, a known stored key or the fleet token. */
 export function validateApiKey(key) {

@@ -18,6 +18,7 @@ services:
     environment:
       API_KEYS: ${API_KEYS:?}
       OYA_PROFILE_SECRET: ${OYA_PROFILE_SECRET:?}
+      OYA_STORAGE: postgres
       DATABASE_URL: postgres://oya:${POSTGRES_PASSWORD:?}@postgres:5432/oya
       # Browsers are containers on this host, on the network below, and
       # enrol with the control plane by its service name.

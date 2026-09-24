@@ -1,17 +1,24 @@
 /**
  * Unit tests for the MFA factor store: validation of each factor kind, the
- * site factor over the persona-wide one, never revealing a secret, and sealed
- * persistence in the data directory.
+ * site factor over the persona-wide one, never revealing a secret, sealed
+ * persistence in the configured storage, and the one-time import of a legacy
+ * mfa.json.
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Status } from '../../../../src/platform/http-status.ts';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 const dir = ownDataDir('oya-mfa-factors-');
 const factors = await import('../../../../src/modules/challenges/mfa-factors.ts');
+const { getConnection } = await import('../../../../src/platform/storage/index.ts');
+
+/** The table factors are kept in. */
+const TABLE = 'mfa_factors';
+/** Where a legacy mfa.json would sit. */
+const LEGACY = join(dir, 'mfa.json');
 
 /** A valid TOTP secret. */
 const SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
@@ -19,7 +26,11 @@ const SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
 const RELAY = 'https://93.184.216.34/sms';
 
 describe('MFA factors', () => {
-  beforeEach(() => factors.reset());
+  beforeEach(async () => {
+    factors.reset();
+    await getConnection().delete(TABLE, {});
+  });
+  afterEach(() => mock.restoreAll());
 
   it('refuses a factor kind it does not know', async () => {
     await assert.rejects(factors.set('p1', { type: 'push' }), {
@@ -88,10 +99,10 @@ describe('MFA factors', () => {
   it('clears one site’s factor, or the persona-wide one, reporting whether there was one', async () => {
     await factors.set('p1', { type: 'totp', secret: SECRET });
     await factors.set('p1', { type: 'totp', secret: SECRET }, 'site.example');
-    assert.equal(factors.clear('p1', 'site.example'), true);
-    assert.equal(factors.clear('p1', 'site.example'), false);
+    assert.equal(await factors.clear('p1', 'site.example'), true);
+    assert.equal(await factors.clear('p1', 'site.example'), false);
     assert.equal(factors.describe('p1', 'site.example').domain, undefined);
-    assert.equal(factors.clear('p1'), true);
+    assert.equal(await factors.clear('p1'), true);
     assert.equal(factors.describe('p1').configured, false);
   });
 
@@ -99,21 +110,52 @@ describe('MFA factors', () => {
     await factors.set('p1', { type: 'totp', secret: SECRET });
     await factors.set('p1', { type: 'totp', secret: SECRET }, 'a.example');
     await factors.set('p11', { type: 'totp', secret: SECRET });
-    assert.equal(factors.clearAll('p1'), 2);
-    assert.equal(factors.clearAll('p1'), 0);
+    assert.equal(await factors.clearAll('p1'), 2);
+    assert.equal(await factors.clearAll('p1'), 0);
     assert.equal(factors.describe('p11').configured, true);
   });
 
-  it('persists factors sealed, and restores them from disk', async () => {
+  it('stores factors sealed, never the secret in the clear', async () => {
     await factors.set('p1', { type: 'totp', secret: SECRET });
-    assert.ok(!readFileSync(join(dir, 'mfa.json'), 'utf8').includes(SECRET), 'the secret is not stored in the clear');
+    const rows = await getConnection().select(TABLE);
+    assert.equal(rows.length, 1);
+    assert.ok(!JSON.stringify(rows).includes(SECRET), 'the secret is not stored in the clear');
+  });
+
+  it('restores stored factors after a restart', async () => {
+    await factors.set('p1', { type: 'totp', secret: SECRET });
     factors.reset();
-    factors.restore();
+    await factors.restore();
     assert.equal(factors.load('p1').secret, SECRET);
   });
 
-  it('refuses to start from a store it cannot read', () => {
-    writeFileSync(join(dir, 'mfa.json'), '{not json');
-    assert.throws(() => factors.restore(), /Cannot read MFA settings/);
+  it('forgets a cleared factor across a restart', async () => {
+    await factors.set('p1', { type: 'totp', secret: SECRET });
+    await factors.clearAll('p1');
+    factors.reset();
+    await factors.restore();
+    assert.equal(factors.load('p1'), null);
+  });
+
+  it('holds nothing new when the write fails, so memory matches storage', async () => {
+    mock.method(getConnection(), 'upsert', async () => Promise.reject(new Error('storage down')));
+    await assert.rejects(factors.set('p1', { type: 'totp', secret: SECRET }), /storage down/);
+    assert.equal(factors.load('p1'), null);
+  });
+
+  it('takes in a legacy mfa.json once and sets the file aside', async () => {
+    await factors.set('p1', { type: 'totp', secret: SECRET });
+    const [row] = await getConnection().select(TABLE);
+    await getConnection().delete(TABLE, {});
+    writeFileSync(LEGACY, JSON.stringify({ [row.id]: row.value }));
+    factors.reset();
+    await factors.restore();
+    assert.equal(factors.load('p1').secret, SECRET);
+    assert.deepEqual([existsSync(LEGACY), existsSync(`${LEGACY}.imported`)], [false, true]);
+  });
+
+  it('refuses to start from a legacy file it cannot read', async () => {
+    writeFileSync(LEGACY, '{not json');
+    await assert.rejects(factors.restore(), SyntaxError);
   });
 });

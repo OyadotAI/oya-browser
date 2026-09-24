@@ -1,6 +1,6 @@
 /**
  * A data directory of the test file's own. Modules that keep state on disk
- * (sealed MFA factors, credentials, the control store) pick their paths when
+ * (storage, the control store) pick their paths when
  * they load, so a test file calls ownDataDir() first and then imports them
  * dynamically: it never shares a file with another suite running in parallel.
  */
@@ -16,7 +16,9 @@ export function ownDataDir(prefix = 'oya-unit-') {
   process.env.OYA_DATA_DIR = dir;
   // A set secret means nothing generates (and warns about) a .secret file.
   process.env.OYA_PROFILE_SECRET ||= 'unit-test-secret';
-  after(() => {
+  after(async () => {
+    // Storage holds its file open in this directory; close it before the directory goes.
+    await (await import('../../../src/platform/storage/index.ts')).closeConnection();
     restoreEnv('OYA_DATA_DIR', saved.dir);
     restoreEnv('OYA_PROFILE_SECRET', saved.secret);
     rmSync(dir, { recursive: true, force: true });

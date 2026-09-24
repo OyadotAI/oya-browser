@@ -35,7 +35,7 @@ const SECTIONS: Array<[string, string[]]> = [
   ['Tenant keys, each is an identity; add more from the dashboard', ['API_KEYS']],
   ['Host operations: /metrics, drain, fleet provision', ['OYA_OPERATOR_TOKEN', 'OYA_METRICS_TOKEN']],
   ['Credentials at rest. Lose this and every stored cookie, proxy and TOTP seed is unreadable', ['OYA_PROFILE_SECRET']],
-  ['Database', ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'DATABASE_URL', 'OYA_RECORDING_BUCKET']],
+  ['Database', ['OYA_STORAGE', 'DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'OYA_RECORDING_BUCKET']],
   [
     'Agent LLM. A private or http base URL is operator-only: the dashboard and\n# POST /config/host reject one, on purpose, tenants can set that field too',
     ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CHAT_MODEL'],

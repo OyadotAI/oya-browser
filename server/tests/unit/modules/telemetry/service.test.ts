@@ -12,7 +12,7 @@ import { forgetAllForTests, keyLabel } from '../../../../src/modules/telemetry/w
 import { drain, resetForTests } from '../../../../src/platform/analytics.ts';
 import { stubFetch, json } from '../../support/http.ts';
 
-/** A key long enough to look like one; no owner is known for it here (no Supabase in tests). */
+/** A key long enough to look like one; no owner is known for it here (no database in tests). */
 const KEY = 'oya_k_0123456789abcdef0123456789abcdef';
 /** Every seam that takes a key, driven with realistic props. */
 const KEYED: Array<() => void> = [

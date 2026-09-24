@@ -9,7 +9,7 @@ import { ownDataDir } from '../../support/data-dir.ts';
 ownDataDir();
 const { router } = await import('../../../../src/modules/fleet/routes.ts');
 const { registry } = await import('../../../../src/modules/browsers/registry.ts');
-const { audit, fingerprint } = await import('../../../../src/platform/audit.ts');
+const { audit, drain: drainAudit, fingerprint } = await import('../../../../src/platform/audit.ts');
 const { MAX_AUDIT_LIMIT } = await import('../../../../src/modules/fleet/constants.ts');
 const { allowKey, callRoute } = await import('../../support/agent.ts');
 const { connectBrowser, disconnectBrowser } = await import('../../support/fakes.ts');
@@ -86,6 +86,8 @@ describe('fleet routes', () => {
   it('returns only the caller’s own audit trail', async () => {
     audit({ action: 'test.mine', actorKey: KEY });
     audit({ action: 'test.theirs', actorKey: 'someone-else' });
+    // The route reads the stored trail, which the queue reaches on a flush.
+    await drainAudit();
     const res = await as('GET', `/audit?limit=${MAX_AUDIT_LIMIT * 10}`);
     const actions = res.body.events.map((e) => e.action);
     assert.ok(actions.includes('test.mine'));

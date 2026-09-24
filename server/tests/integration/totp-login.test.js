@@ -17,7 +17,7 @@ import { createServer } from 'http';
 import { spawn } from 'child_process';
 import { once } from 'events';
 import { createHmac } from 'crypto';
-import { mkdtempSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -30,6 +30,7 @@ const mfa = await import('../../src/modules/challenges/mfa.ts');
 const login = await import('../../src/modules/challenges/login.ts');
 const { CDPDriver } = await import('../../src/drivers/cdp.ts');
 const { removeScratch } = await import('../support/scratch.js');
+const { getConnection } = await import('../../src/platform/storage/index.ts');
 
 let passed = 0,
   failed = 0;
@@ -106,11 +107,11 @@ await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
 
 console.log('\n1️⃣  The factor and the login are stored sealed...');
-credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: PASSWORD });
+await credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: PASSWORD });
 await mfa.set(PERSONA, { type: 'totp', secret: SEED }, '127.0.0.1');
 assert(mfa.describe(PERSONA, '127.0.0.1').type === 'totp', 'the site factor reports its type');
 assert(
-  !readFileSync(join(process.env.OYA_DATA_DIR, 'mfa.json'), 'utf8').includes('JBSW'),
+  !(await getConnection().select('mfa_factors')).some((r) => r.value.includes('JBSW')),
   'and the seed is nowhere in mfa.json as plaintext',
 );
 

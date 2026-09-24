@@ -6,6 +6,7 @@
 import { mock } from 'node:test';
 import { registry } from '../../../src/modules/browsers/registry.ts';
 import { keyCache, keyDigest } from '../../../src/modules/auth/keys.ts';
+import { getConnection } from '../../../src/platform/storage/index.ts';
 
 /** How a scripted browser answers one command. */
 export type Answer = (action: string, params: any) => any;
@@ -74,10 +75,19 @@ export function stubLlm(replies: any[]) {
   return { requests, urls };
 }
 
-/** Lets `apiKey` through authMiddleware as a stored key, for the duration of a test. */
+/**
+ * Lets `apiKey` through authMiddleware as a stored key, for the duration of a
+ * test. The tests' storage is SQLite, which writes before the call returns, so
+ * the key is stored by the first request.
+ */
 export function allowKey(apiKey: string) {
-  keyCache.add(keyDigest(apiKey));
-  return () => keyCache.delete(keyDigest(apiKey));
+  const digest = keyDigest(apiKey);
+  keyCache.add(digest);
+  void getConnection().upsert('api_keys', [{ key_hash: digest }]);
+  return () => {
+    keyCache.delete(digest);
+    void getConnection().delete('api_keys', { key_hash: digest });
+  };
 }
 
 /** A request as a test describes it. */

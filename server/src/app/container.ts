@@ -7,7 +7,6 @@
  * transpiler, and the server runs its TypeScript as-is. The types check the
  * wiring instead.
  */
-import { db } from '../platform/db.ts';
 import { metrics } from '../platform/metrics.ts';
 import { setUnexpectedReporter, type Asked } from '../platform/errors.ts';
 import { BEARER_PREFIX_LENGTH } from '../platform/constants.ts';
@@ -18,18 +17,11 @@ import * as proxies from '../modules/proxies/service.ts';
 import * as mfa from '../modules/challenges/mfa.ts';
 import * as credentials from '../modules/personas/credentials.ts';
 import * as logins from '../modules/personas/cookies.ts';
-import {
-  PersonaService,
-  FilePersonaRepository,
-  SupabasePersonaRepository,
-  FallbackPersonaRepository,
-  type PersonaRepository,
-} from '../modules/personas/index.ts';
+import { PersonaService, PersonaTable, type PersonaRepository } from '../modules/personas/index.ts';
 
-/** Supabase-backed personas with a local file fallback when a database is configured; the file alone otherwise. */
+/** Personas in the configured storage, taking in a personas.json left from before storage drivers. */
 function personaRepository(): PersonaRepository {
-  const file = new FilePersonaRepository(dataPath('personas.json'));
-  return db ? new FallbackPersonaRepository(new SupabasePersonaRepository(db), file) : file;
+  return new PersonaTable(dataPath('personas.json'));
 }
 
 /** The persona service, wired to its repository and the modules it calls. */

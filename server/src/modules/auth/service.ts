@@ -26,4 +26,5 @@ export {
 export { issueChallenge, spendChallenge, validEmail, clientAddress, claimUrl } from './agents.ts';
 export { signup, login, refreshSession, oauthUrl, oauthSignup, getProfile, updateProfile } from './accounts.ts';
 export { verifyCaptcha } from './captcha.ts';
+export { ownedProjects } from './repository.ts';
 export { userAuthMiddleware, authenticateToken, authMiddleware } from './middleware.ts';

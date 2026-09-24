@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -89,7 +89,8 @@ try {
     wsUrl: 'ws://127.0.0.1:9222/cdp?token=private-route-secret',
   });
   await config.drain();
-  const disk = await readFile(join(data, 'key-settings.json'), 'utf8');
+  const { getConnection } = await import('../../src/platform/storage/index.ts');
+  const disk = JSON.stringify(await getConnection().select('key_settings'));
   assert(!disk.includes('private-route-secret') && !disk.includes('credential-a'), 'secrets encrypted at rest');
   config.reset();
   await config.restore();

@@ -1,109 +1,43 @@
 /**
- * Deployment-wide configuration, persisted to DB, editable by the operator.
+ * Deployment-wide configuration, persisted to storage, editable by the operator.
  *
  * This is the fallback layer only. Per-tenant settings live in key-config.js,
  * keyed by the API key, because the API key is the identity for everything
  * else in this control plane. Resolution is key -> here -> environment.
- *
- * Fallback: local file (data/config.json) when Supabase is not configured.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
-import { db } from './db.ts';
+import { getConnection, importLegacyFile } from './storage/index.ts';
 import { assertSafeTarget } from './net-guard.ts';
 import { dataPath } from './paths.ts';
 import { HttpError } from './errors.ts';
 import { Status } from './http-status.ts';
-import { JSON_INDENT, MASKED_KEY_TAIL } from './constants.ts';
+import { MASKED_KEY_TAIL } from './constants.ts';
 
-// OYA_DATA_DIR lets tests point at a scratch directory instead of writing
-// through to the deployment's real state.
+/** The settings file from before storage drivers, imported once. */
 const CONFIG_PATH = dataPath('config.json');
 
-let config: Record<string, any> = {};
+const config: Record<string, any> = {};
 
-// ── Load on startup ──
+/** Settings as settings-table rows. */
+const rowsOf = (settings: Record<string, any>) =>
+  Object.entries(settings).map(([key, value]) => ({ key, value: String(value), updated_at: new Date().toISOString() }));
 
-/** Read the settings table into memory; false when there is no DB or the read fails. */
-async function loadFromDb() {
-  if (!db) return false;
-  try {
-    return await readSettings();
-  } catch (e) {
-    console.error('[config] Failed to load from Supabase:', e.message);
-    return false;
-  }
+/** Read the settings table into memory, taking in the legacy config.json once. */
+async function load() {
+  const db = getConnection();
+  await importLegacyFile(CONFIG_PATH, (legacy) => db.upsert('settings', rowsOf(legacy)));
+  // A setting changed while this read was in flight is newer than the stored one: keep it.
+  for (const row of await db.select('settings')) if (!Object.hasOwn(config, row.key)) config[row.key] = row.value;
 }
 
-/** Copy every row of the settings table into memory; throws when the read fails. */
-async function readSettings() {
-  const { data, error } = await db.from('settings').select('key, value');
-  if (error) throw error;
-  for (const row of data) {
-    config[row.key] = row.value;
-  }
-  console.log(`[config] Loaded ${data.length} settings from Supabase`);
-  return true;
-}
+// A failed read is logged; the environment still answers every setting.
+load().catch((e) => console.error('[config] load failed:', e.message));
 
-/** Read data/config.json into memory; a missing or bad file leaves the config empty. */
-function loadFromFile() {
-  try {
-    config = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
-    console.log('[config] Loaded settings from file');
-  } catch {}
-}
-
-// Init: try DB first, fall back to file
-loadFromDb()
-  .then((ok) => {
-    if (!ok) loadFromFile();
-  })
-  .catch((e) => {
-    console.error('[config] Failed to load from DB:', e.message);
-    loadFromFile();
-  });
-
-// ── Persistence ──
-
-/** Upsert every setting into the settings table; failures are logged, not thrown. */
-async function saveToDb() {
-  if (!db) return;
-  try {
-    await upsertSettings();
-  } catch (e) {
-    console.error('[config] Failed to save to Supabase:', e.message);
-  }
-}
-
-/** Upsert every setting as a row keyed by name; throws when the write fails. */
-async function upsertSettings() {
-  const rows = Object.entries(config).map(([key, value]) => ({
-    key,
-    value: String(value),
-    updated_at: new Date().toISOString(),
-  }));
-  if (rows.length === 0) return;
-  const { error } = await db.from('settings').upsert(rows, { onConflict: 'key' });
-  if (error) throw error;
-}
-
-/** Write the settings to data/config.json, best effort. */
-function saveToFile() {
-  try {
-    mkdirSync(dirname(CONFIG_PATH), { recursive: true });
-    writeFileSync(CONFIG_PATH, JSON.stringify(config, null, JSON_INDENT));
-  } catch {}
-}
-
-/** Persist to the DB when there is one, otherwise to the file. */
+/** Write every setting to the settings table; a failure is logged, and the next change writes them all again. */
 function save() {
-  if (db) {
-    saveToDb().catch((e) => console.error('[config] save error:', e.message));
-  } else {
-    saveToFile();
-  }
+  getConnection()
+    .upsert('settings', rowsOf(config), { update: true })
+    .catch((e) => console.error('[config] save failed:', e.message));
 }
 
 // ── Public API (unchanged signatures) ──

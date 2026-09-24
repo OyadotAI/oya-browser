@@ -35,6 +35,11 @@ describe('buildEnv', () => {
     assert.equal(values.API_KEYS, apiKey);
   });
 
+  it('picks the server storage driver from the database answer; Supabase is its Postgres', () => {
+    const storage = (database: string) => buildEnv({ ...BASE, database }, {}, {}).values.OYA_STORAGE;
+    assert.deepEqual(['sqlite', 'postgres', 'supabase'].map(storage), ['sqlite', 'postgres', 'postgres']);
+  });
+
   it('sets PORT only outside Docker, from the public URL or 3100', () => {
     assert.equal(buildEnv(BASE, {}, {}).values.PORT, undefined);
     assert.equal(buildEnv({ ...BASE, host: 'local', publicUrl: 'http://h:8080' }, {}, {}).values.PORT, '8080');

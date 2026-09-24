@@ -7,11 +7,10 @@
  * returned by the API, only whether one is configured.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
-import { dirname } from 'path';
 import { sealText, openText } from '../../platform/secrets.ts';
 import { assertSafeTarget } from '../../platform/net-guard.ts';
 import { dataPath } from '../../platform/paths.ts';
+import { RecordTable, importLegacyFile } from '../../platform/storage/index.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { totp } from './totp.ts';
@@ -24,29 +23,17 @@ import { totp } from './totp.ts';
  * mfa.json written before this keying was introduced still is).
  */
 const configs = new Map();
-/** Where the sealed factors live. */
-const STORE = dataPath('mfa.json');
-/** Owner-only directory, for the folder holding the store. */
-const DIR_MODE = 0o700;
-/** Owner-only file. */
-const FILE_MODE = 0o600;
+/** Where the sealed records are kept. */
+const table = new RecordTable('mfa_factors');
+/** The file they lived in before storage drivers, imported once. */
+const LEGACY_FILE = dataPath('mfa.json');
 
-/** Load the stored factors from disk; a missing file means none. */
-export function restore() {
-  try {
-    for (const [id, value] of Object.entries(JSON.parse(readFileSync(STORE, 'utf8')))) configs.set(id, value);
-  } catch (e) {
-    if (e.code !== 'ENOENT') throw new Error(`Cannot read MFA settings: ${e.message}`);
-  }
+/** Load the sealed records from storage, taking in the legacy file first if it is still there. */
+export async function restore() {
+  await importLegacyFile(LEGACY_FILE, (records) => table.put(Object.entries(records)));
+  configs.clear();
+  for (const [id, value] of await table.load()) configs.set(id, value);
 }
-/** Write the factors to disk atomically (temp file, then rename), owner-only. */
-function persist() {
-  mkdirSync(dirname(STORE), { recursive: true, mode: DIR_MODE });
-  const temp = `${STORE}.${process.pid}.tmp`;
-  writeFileSync(temp, JSON.stringify(Object.fromEntries(configs)), { mode: FILE_MODE });
-  renameSync(temp, STORE);
-}
-restore();
 
 /** The store key for a persona's factor on one site, or its persona-wide factor. */
 const keyFor = (personaId, domain) => (domain ? `${personaId}|${domain}` : String(personaId));
@@ -100,24 +87,30 @@ export async function set(personaId, config, domain = null) {
   if (!TYPES.includes(type)) throw new HttpError(Status.BAD_REQUEST, `mfa type must be one of ${TYPES.join(', ')}`);
   const pending = CHECKS[type](config);
   if (pending) await pending; // only the relay check waits, as before
-  const key = keyFor(personaId, domain);
-  configs.set(key, sealText(scopeFor(key), config));
-  persist();
+  await store(keyFor(personaId, domain), config);
   return describe(personaId, domain);
 }
 
+/** Seals a factor under its key and writes it through, then holds it in memory. */
+async function store(key, config) {
+  const sealed = sealText(scopeFor(key), config);
+  await table.put([[key, sealed]]);
+  configs.set(key, sealed);
+}
+
 /** Remove one factor: the site's, or the persona-wide one when `domain` is omitted. */
-export function clear(personaId, domain = null) {
-  const removed = configs.delete(keyFor(personaId, domain));
-  if (removed) persist();
-  return removed;
+export async function clear(personaId, domain = null) {
+  const key = keyFor(personaId, domain);
+  if (!configs.has(key)) return false;
+  await table.remove([key]);
+  return configs.delete(key);
 }
 
 /** Drop every factor for a persona, site-specific ones included. */
-export function clearAll(personaId) {
+export async function clearAll(personaId) {
   const owned = [...configs.keys()].filter((key) => key === personaId || key.startsWith(`${personaId}|`));
+  await table.remove(owned);
   for (const key of owned) configs.delete(key);
-  if (owned.length) persist();
   return owned.length;
 }
 

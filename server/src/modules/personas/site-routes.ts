@@ -64,11 +64,11 @@ const listMfa = (personas: PersonaService) => (req: Request, res: Response) => {
 };
 
 /** Clears a second factor, for one site or persona-wide. */
-const clearMfa = (personas: PersonaService) => (req: Request, res: Response) => {
+const clearMfa = (personas: PersonaService) => async (req: Request, res: Response) => {
   const p = ownedPersona(personas, req, res);
   if (!p) return;
   const site = req.query.domain ? credentials.domainOf(String(req.query.domain)) : null;
-  mfa.clear(p.id, site);
+  await mfa.clear(p.id, site);
   auditPersona(req, 'mfa.clear', p.id, { meta: { domain: site } });
   res.json({ ok: true });
 };
@@ -80,11 +80,11 @@ const listCredentials = (personas: PersonaService) => (req: Request, res: Respon
 };
 
 /** Seals a site login. */
-const setCredentials = (personas: PersonaService) => (req: Request, res: Response) => {
+const setCredentials = (personas: PersonaService) => async (req: Request, res: Response) => {
   const p = ownedPersona(personas, req, res);
   if (!p) return;
   const { domain, username, password } = req.body || {};
-  const described = credentials.set(p.id, domain, { username, password });
+  const described = await credentials.set(p.id, domain, { username, password });
   // The domain and username are the whole audit value here: knowing which
   // account was bound to which portal, and never the secret itself.
   auditPersona(req, 'credentials.configure', p.id, {
@@ -94,12 +94,12 @@ const setCredentials = (personas: PersonaService) => (req: Request, res: Respons
 };
 
 /** Forgets the login for the `?domain=` site. */
-const clearCredentials = (personas: PersonaService) => (req: Request, res: Response) => {
+const clearCredentials = (personas: PersonaService) => async (req: Request, res: Response) => {
   const p = ownedPersona(personas, req, res);
   if (!p) return;
   const site = credentials.domainOf(String(req.query.domain || ''));
   if (!site) return res.status(Status.BAD_REQUEST).json({ error: 'a domain query parameter is required' });
-  const removed = credentials.clear(p.id, site);
+  const removed = await credentials.clear(p.id, site);
   auditPersona(req, 'credentials.clear', p.id, { meta: { domain: site }, outcome: removed ? 'ok' : 'error' });
   res.json({ ok: removed });
 };

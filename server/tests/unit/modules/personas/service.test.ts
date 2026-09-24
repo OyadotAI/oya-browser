@@ -267,8 +267,9 @@ describe('PersonaService.clone', () => {
 /** A repository holding one persona made before prefs were validated. */
 function legacyRepository() {
   const repo = new MemoryPersonaRepository();
-  repo.stored = JSON.stringify([
-    {
+  repo.rows.set(
+    'p-legacy00000000',
+    JSON.stringify({
       id: 'p-legacy00000000',
       owner: 'owner:k',
       name: 'Legacy',
@@ -276,8 +277,8 @@ function legacyRepository() {
       prefs: { platform: 'Win32', timezone: 'Europe/Berlin' },
       maxConcurrent: 2,
       createdAt: '2025-01-01T00:00:00.000Z',
-    },
-  ]);
+    }),
+  );
   return repo;
 }
 
@@ -544,13 +545,11 @@ describe('PersonaService persistence', () => {
     mock.timers.reset();
   });
 
-  it('logs a failed restore rather than throwing', async () => {
-    const error = mock.method(console, 'error', () => {});
+  it('fails a restore it cannot read, so the server never starts on an empty persona table', async () => {
     const repository = new MemoryPersonaRepository();
     repository.failWith = new Error('disk gone');
     const { service } = personaService({ repository });
-    await service.restore();
-    assert.match(String(error.mock.calls[0].arguments.join(' ')), /restore failed: disk gone/);
+    await assert.rejects(service.restore(), /disk gone/);
   });
 
   it('forgets every persona and slot on reset', () => {

@@ -1,6 +1,6 @@
 /**
  * Unit tests for PersonaStore: the in-memory persona table, its dirty flag,
- * and the autosave that retries a failed write on the next tick.
+ * explicit deletion, and the autosave that retries a failed write on the next tick.
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,14 +51,37 @@ describe('PersonaStore', () => {
     assert.equal(repo.saves, 1);
   });
 
-  it('saves after a delete', async () => {
+  it('removes a deleted persona from storage on the next save', async () => {
+    const repo = new MemoryPersonaRepository();
+    const store = new PersonaStore(repo);
+    store.put(persona('a'));
+    store.put(persona('b'));
+    await store.flush();
+    store.delete('a');
+    await store.flush();
+    assert.deepEqual([...repo.rows.keys()], ['b']);
+  });
+
+  it('never removes a stored persona it did not delete, such as one another replica made', async () => {
+    const repo = new MemoryPersonaRepository();
+    await repo.saveAll([persona('elsewhere')]);
+    const store = new PersonaStore(repo);
+    store.put(persona('a'));
+    await store.flush();
+    assert.deepEqual([...repo.rows.keys()].sort(), ['a', 'elsewhere']);
+  });
+
+  it('retries a deletion whose save failed', async () => {
     const repo = new MemoryPersonaRepository();
     const store = new PersonaStore(repo);
     store.put(persona('a'));
     await store.flush();
     store.delete('a');
+    repo.failWith = new Error('database down');
     await store.flush();
-    assert.equal(repo.stored, '[]');
+    repo.failWith = null;
+    await store.flush();
+    assert.equal(repo.rows.size, 0);
   });
 
   it('keeps changes marked after a failed save, and writes them on the next try', async () => {
@@ -84,13 +107,12 @@ describe('PersonaStore', () => {
     );
   });
 
-  it('logs a failed restore and starts empty', async () => {
+  it('fails a restore it cannot read, rather than starting empty and handing out new devices', async () => {
     const repo = new MemoryPersonaRepository();
     repo.failWith = new Error('unreachable');
     const store = new PersonaStore(repo);
-    await store.restore();
+    await assert.rejects(store.restore(), /unreachable/);
     assert.deepEqual(store.all(), []);
-    assert.equal((console.error as any).mock.callCount(), 1);
   });
 
   it('writes changes every autosave interval', async () => {
@@ -123,6 +145,7 @@ describe('PersonaStore', () => {
     const repo = new MemoryPersonaRepository();
     const store = new PersonaStore(repo);
     store.put(persona('a'));
+    store.delete('a');
     store.clear();
     await store.flush();
     assert.deepEqual([store.all(), repo.saves], [[], 0]);

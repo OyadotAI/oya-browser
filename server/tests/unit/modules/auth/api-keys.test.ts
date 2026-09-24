@@ -1,7 +1,7 @@
 /**
- * Unit tests for per-user API keys without a database: registering a key
- * claims its project for the user, owners are resolved and cached, keys are
- * minted with projects, and the database-only operations answer as they must.
+ * Unit tests for per-user API keys on the tests' own storage: registering a
+ * key claims its project for the user, owners are resolved and cached, keys are
+ * minted with projects, and a user lists and deletes only their own keys.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -66,7 +66,7 @@ describe('registerApiKey', () => {
     await apiKeys.registerApiKey(key, 'user-a', 'mine');
     await assert.rejects(apiKeys.registerApiKey(key, 'user-b', 'theirs'), {
       status: Status.FORBIDDEN,
-      message: 'Key belongs to another account',
+      message: 'Key cannot be imported',
     });
     const project = await projectOf(key);
     assert.deepEqual([project.ownerUser, project.name], ['user-a', 'mine']);
@@ -97,19 +97,35 @@ describe('provisionKeys', () => {
   });
 });
 
-describe('without a database', () => {
-  it('lists no keys', async () => {
-    assert.deepEqual(await apiKeys.listApiKeys('user-a'), []);
+describe('listing and deleting keys', () => {
+  it('lists a user’s keys by digest and prefix, never the key', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-list', 'listed');
+    const [listed] = await apiKeys.listApiKeys('user-list');
+    assert.deepEqual([listed.id, listed.prefix, listed.label], [keys.keyDigest(key), key.slice(0, 8), 'listed']);
+    assert.ok(!JSON.stringify(listed).includes(key));
   });
 
-  it('refuses to delete a key with 409', async () => {
-    await assert.rejects(apiKeys.deleteApiKey('digest', 'user-a'), {
-      status: Status.CONFLICT,
-      message: 'Accounts need Supabase',
-    });
+  it('lists nothing for a user with no keys', async () => {
+    assert.deepEqual(await apiKeys.listApiKeys('user-none'), []);
   });
 
-  it('records no last use, and does not fail', async () => {
+  it('deletes a user’s own key, after which it no longer validates', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-del');
+    await apiKeys.deleteApiKey(keys.keyDigest(key), 'user-del');
+    assert.equal(keys.validateApiKey(key), false);
+    assert.deepEqual(await apiKeys.listApiKeys('user-del'), []);
+  });
+
+  it('answers 404 for another user’s key, and leaves it', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-own');
+    await assert.rejects(apiKeys.deleteApiKey(keys.keyDigest(key), 'user-other'), { status: Status.NOT_FOUND });
+    assert.equal((await apiKeys.listApiKeys('user-own')).length, 1);
+  });
+
+  it('records a last use, and does not fail for an unknown key', async () => {
     assert.equal(await apiKeys.touchApiKey('anything'), undefined);
   });
 });

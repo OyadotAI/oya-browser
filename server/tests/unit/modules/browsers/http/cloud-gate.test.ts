@@ -1,5 +1,5 @@
 /**
- * Unit tests for the cloud gate without Supabase: with no database there are
+ * Unit tests for the cloud gate without a database: with no database there are
  * no agent keys, so every key passes to the start, whichever provider it
  * asks for. (The refusal needs an agent row, and is checked against a real
  * database.)

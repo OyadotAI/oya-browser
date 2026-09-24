@@ -1,15 +1,14 @@
 -- Plain-Postgres bootstrap. Not needed on Supabase, which already provides both.
 --
--- 008_durable_control.sql grants execute to service_role and lives in the
--- oya_browser schema; on Supabase the role and the schema arrive via 001, which
--- cannot run here because it references auth.users. So create just the two
--- things 008 actually depends on.
+-- The migrations grant to service_role and live in the oya_browser schema; on
+-- Supabase the role and the schema arrive via 001, which cannot run here because
+-- it references auth.users. So create just those two things.
 --
--- 001-007 are accounts, profiles and RLS policies keyed on auth.uid(). They are
--- deliberately skipped on plain Postgres: the server connects as the owning role
--- and bypasses RLS anyway, tenant isolation is enforced in application code
--- (projectId = 'prj_' + sha256(apiKey), see server/src/control/service.js), and
--- authentication on this path is API_KEYS rather than Supabase Auth.
+-- 001, 003, 009 and 010 are accounts, profiles and RLS policies keyed on
+-- auth.uid(), and are skipped on plain Postgres (see run.mjs). Everything else,
+-- personas, settings, usage, audit and the control plane, is ordinary SQL and
+-- runs here too. The server connects as the owning role and bypasses RLS
+-- anyway; tenant isolation is enforced in application code.
 
 create schema if not exists oya_browser;
 
@@ -30,6 +29,4 @@ $$;
 
 grant usage on schema oya_browser to service_role;
 
--- api_keys is created by 001 on Supabase. On this path the control store holds
--- service credentials itself, but 008 ends with an ALTER on this table; the
--- "if exists" there makes it a no-op, so nothing more is needed.
+-- api_keys, which 001 creates on Supabase, comes from postgres/001_api_keys.sql.

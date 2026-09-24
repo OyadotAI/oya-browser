@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** The public SDK journey, against real Chrome and the real control plane. */
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -97,18 +97,21 @@ try {
   ]);
   logins.mergeStorage(profile.id, { [base]: { account: 'alice' } });
   await logins.drain();
-  const disk = readFileSync(join(scratch, 'cookies.json'), 'utf8');
-  assert(!disk.includes('alice'));
+  const { getConnection } = await import('../../src/platform/storage/index.ts');
+  /** Every stored value of a record table, joined, to search for plaintext. */
+  const stored = async (table) => (await getConnection().select(table)).map((r) => r.value).join('\n');
+  assert(!(await stored('persona_logins')).includes('alice'));
   const reloaded = await import(`../../src/modules/personas/cookies.ts?reload=${Date.now()}`);
+  await reloaded.restore();
   assert.equal(reloaded.getAll(profile.id)[0].value, 'alice');
   assert.equal(reloaded.getStorage(profile.id)[base].account, 'alice');
   assert.equal(reloaded.getAll(profiles.defaultFor('other-test').id).length, 0);
   passed('encrypted profile survives a fresh module load and stays tenant scoped');
 
   await mfa.set(profile.id, { type: 'totp', secret: 'JBSWY3DPEHPK3PXP' });
-  assert(!readFileSync(join(scratch, 'mfa.json'), 'utf8').includes('JBSW'));
+  assert(!(await stored('mfa_factors')).includes('JBSW'));
   mfa.reset();
-  mfa.restore();
+  await mfa.restore();
   assert.equal(mfa.describe(profile.id).type, 'totp');
   passed('MFA configuration survives restart without plaintext secrets');
 

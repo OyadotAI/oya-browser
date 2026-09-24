@@ -12,15 +12,10 @@
  */
 
 import { createHash } from 'crypto';
-import { appendFile, mkdir } from 'fs/promises';
-import { dirname } from 'path';
 import { link } from './audit-chain.ts';
-import { db } from './db.ts';
+import { getConnection } from './storage/index.ts';
 import { metrics } from './metrics.ts';
-import { dataPath } from './paths.ts';
-import { AUDIT_FIELD_MAX_CHARS, AUDIT_HISTORY_MAX_ROWS, DB_BATCH_ROWS, FINGERPRINT_HEX_CHARS } from './constants.ts';
-
-const AUDIT_PATH = dataPath('audit.log');
+import { AUDIT_FIELD_MAX_CHARS, AUDIT_HISTORY_MAX_ROWS, FINGERPRINT_HEX_CHARS } from './constants.ts';
 
 /** Stable, non-reversible actor id. Same shape used for sandbox owner labels. */
 export const fingerprint = (key) =>
@@ -40,55 +35,29 @@ function scheduleFlush() {
     flushTimer = null;
     flush().catch(() => {});
   }, FLUSH_DELAY);
-}
-
-/** Append events as JSON lines to audit.log in the data directory. */
-async function toFile(batch) {
-  await mkdir(dirname(AUDIT_PATH), { recursive: true });
-  await appendFile(AUDIT_PATH, batch.map((e) => JSON.stringify(e)).join('\n') + '\n');
-}
-
-let warnedFallback = false;
-
-/** Write everything pending to the database, or to the file when there is none or the write fails. */
-async function flush() {
-  if (!pending.length) return;
-  const batch = pending.splice(0, pending.length);
-  try {
-    if (!db) return await toFile(batch);
-    await toDb(batch);
-  } catch (e) {
-    await fallBackToFile(batch, e);
-  }
-}
-
-/** Insert the batch into audit_log in chunks; throws on the first chunk that fails. */
-async function toDb(batch) {
-  for (let i = 0; i < batch.length; i += DB_BATCH_ROWS) {
-    const { error } = await db.from('audit_log').insert(batch.slice(i, i + DB_BATCH_ROWS));
-    if (error) throw new Error(error.message);
-  }
+  // A pending flush must not hold the process open; shutdown drains explicitly.
+  flushTimer.unref?.();
 }
 
 /**
- * Losing an audit trail because a table is missing or the database is
- * briefly unreachable is the wrong failure. Fall back to the file rather
- * than drop, and say so once instead of on every flush.
+ * Write everything pending to storage. A failed write puts the batch back at
+ * the front of the queue, bounded like the queue itself, rather than dropping
+ * an audit trail because storage blinked; the next event's flush, or the drain
+ * at shutdown, tries it again. It never reschedules itself, so a storage that
+ * stays down cannot keep a retry loop, or the process, alive.
  */
-async function fallBackToFile(batch, e) {
-  warnFallbackOnce(e);
-  try {
-    await toFile(batch);
-  } catch (fileErr) {
-    console.error(`[audit] ${batch.length} events lost, file fallback also failed:`, fileErr.message);
-  }
+async function flush() {
+  if (!pending.length) return;
+  const batch = pending.splice(0, pending.length);
+  await getConnection()
+    .upsert('audit_log', batch)
+    .catch((e) => requeue(batch, e));
 }
 
-/** Say once, not on every flush, that the database write failed and the file is in use. */
-function warnFallbackOnce(e) {
-  if (warnedFallback) return;
-  console.error(`[audit] database write failed (${e.message}), falling back to ${AUDIT_PATH}`);
-  warnedFallback = true;
+/** Puts a batch whose write failed back at the front of the queue, and says so. */
+function requeue(batch, e) {
+  pending.unshift(...batch.slice(0, PENDING_MAX - pending.length));
+  console.error(`[audit] write failed (${e.message}); ${batch.length} events queued for the next flush`);
 }
 
 /** One auditable action, as callers pass it to audit(). */
@@ -119,7 +88,7 @@ export type AuditEvent = {
   };
 };
 
-/** Record one auditable action: kept in memory for recent() and flushed to the database, or the audit file without one. */
+/** Record one auditable action: kept in memory for recent() and flushed to storage. */
 export function audit(event: AuditEvent) {
   // Linked before anything else sees it: the row that reaches the database and
   // the row kept for recent() are the same row, and both carry the proof.
@@ -179,22 +148,22 @@ export function recent({ limit = 100, action, actor, outcome }: any = {}) {
     .reverse();
 }
 
-/** Durable history. Falls back to the in-memory ring with no database. */
+/** Durable history, newest first. Falls back to the in-memory ring when storage cannot be read. */
 export async function history({ limit = 100, action, actor, since }: any = {}) {
-  if (!db) return { source: 'memory', events: recent({ limit, action, actor }) };
-  const { data, error } = await historyQuery({ limit, action, actor, since });
-  if (error) return { source: 'memory', events: recent({ limit, action, actor }), error: error.message };
-  return { source: 'database', events: data };
+  try {
+    return { source: 'database', events: await historyRows({ limit, action, actor, since }) };
+  } catch (e) {
+    return { source: 'memory', events: recent({ limit, action, actor }), error: e.message };
+  }
 }
 
-/** Newest audit_log rows first, filtered by whichever of action, actor and since are given. */
-function historyQuery({ limit, action, actor, since }) {
-  let q = db.from('audit_log').select('*').order('ts', { ascending: false });
-  q = q.limit(Math.min(limit, AUDIT_HISTORY_MAX_ROWS));
-  if (action) q = q.eq('action', action);
-  if (actor) q = q.eq('actor', actor);
-  if (since) q = q.gte('ts', since);
-  return q;
+/** Stored audit rows filtered by whichever of action, actor and since are given, newest first by insertion (id), which ties in ts cannot reorder. */
+function historyRows({ limit, action, actor, since }) {
+  const where = Object.fromEntries(Object.entries({ action, actor, ts: since && { gte: since } }).filter(([, v]) => v));
+  return getConnection().select('audit_log', where, {
+    order: ['id', 'desc'],
+    limit: Math.min(limit, AUDIT_HISTORY_MAX_ROWS),
+  });
 }
 
 /** Flush before shutdown so the tail of the trail is not lost. */

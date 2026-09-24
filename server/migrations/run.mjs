@@ -18,12 +18,16 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const exec = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
+// Migrations only plain Postgres needs, standing in for what Supabase provides.
+const PLAIN = join(HERE, 'postgres');
+// Accounts, profiles and RLS keyed on auth.users / auth.uid(): Supabase only.
+const AUTH_ONLY = /^(001|003|009|010)_/;
 const url = process.env.DATABASE_URL || '';
 const dryRun = process.argv.includes('--dry-run');
 
@@ -53,20 +57,19 @@ async function main() {
   }
 
   // Supabase supplies auth.users and service_role; plain Postgres does not, and
-  // 001-007 are written against them. The presence of auth.users is the tell.
+  // the AUTH_ONLY files are written against them. The presence of auth.users is the tell.
   const hosted = (await query("select to_regclass('auth.users') is not null")) === 't';
   console.log(`[migrate] target: ${hosted ? 'Supabase (auth schema present)' : 'plain Postgres'}`);
 
+  const sqlIn = (dir) =>
+    readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
   const files = [];
-  if (!hosted) {
-    const bootstrap = join(HERE, 'postgres', '000_bootstrap.sql');
-    if (existsSync(bootstrap)) files.push(['postgres/000_bootstrap.sql', bootstrap]);
-  }
-  for (const name of readdirSync(HERE)
-    .filter((f) => f.endsWith('.sql'))
-    .sort()) {
-    // 001-007 are accounts and RLS keyed on auth.uid(); see postgres/000_bootstrap.sql.
-    if (!hosted && !/^008_/.test(name)) continue;
+  // What Supabase would have provided (the schema, roles, api_keys) comes first.
+  if (!hosted) for (const name of sqlIn(PLAIN)) files.push([`postgres/${name}`, join(PLAIN, name)]);
+  for (const name of sqlIn(HERE)) {
+    if (!hosted && AUTH_ONLY.test(name)) continue;
     files.push([name, join(HERE, name)]);
   }
 

@@ -22,6 +22,7 @@ Treat `oya.env` as a secret: it holds API keys. It's ignored by git. A value you
 |:---|:---|:---|
 | `API_KEYS` | all (generated on first deploy) | Comma-separated API keys the server accepts. Each key is its own tenant. `./deploy.sh keys` prints them. |
 | `OYA_PROFILE_SECRET` | all (generated once, never rotated) | Encrypts cookies, tokens, TOTP seeds and proxy credentials at rest. **If it's lost or changed, everything stored becomes unreadable.** Back it up. |
+| `OYA_STORAGE` | all (`postgres`) | Where every table lives. The templates set `postgres`; the server refuses `DATABASE_URL` without it. |
 | `DATABASE_URL` | all | Postgres connection string. The schema is applied on every start (idempotent). |
 | `OYA_CLUSTER_SECRET` | ecs, k8s, gcloud (generated) | Shared by replicas to sign requests they route to each other. |
 | `OYA_INSTANCE_URL` | ecs, k8s, gcloud (from the task or pod IP) | This replica's own address, for routing between replicas. |
@@ -133,7 +134,7 @@ Without these, sign-in is by API key and the console asks for one. The control p
 
 | Variable | Default | What it does |
 |:---|:---|:---|
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | none | A Supabase project: email, Google and GitHub sign-in, organisations. |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | none | A Supabase project for email, Google and GitHub sign-in. Sign-in only; requires `OYA_STORAGE=postgres` and `DATABASE_URL`, which holds all data. |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | none | Cloudflare Turnstile on sign-in and sign-up. |
 
 ### Slack

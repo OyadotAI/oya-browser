@@ -1,8 +1,8 @@
 /**
- * Unit tests for the agent signup routes without Supabase: a challenge is
- * handed out, a signup is refused for a missing email or an unsolved puzzle,
- * a caller address gets three signups a day, and with no database the key
- * cannot be minted.
+ * Unit tests for the agent signup routes on the tests' own storage: a
+ * challenge is handed out, a signup is refused for a missing email or an
+ * unsolved puzzle, and a caller address gets three signups a day, each minting
+ * a stored, unclaimed key.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,6 +13,8 @@ import { fakeRequest, routeThrough } from '../../support/auth.ts';
 ownDataDir('oya-agent-routes-');
 const { router } = await import('../../../../src/modules/auth/agent-routes.ts');
 const { solves } = await import('../../../../src/modules/auth/agents.ts');
+const keys = await import('../../../../src/modules/auth/keys.ts');
+const { isUnclaimedAgentKey } = await import('../../../../src/modules/auth/api-keys.ts');
 
 /** Sends one request through the agent router; a thrown HttpError rejects. */
 const send = (method: string, path: string, body: any = {}, headers: any = {}) =>
@@ -48,12 +50,13 @@ describe('agent signup', () => {
     await rejectsWith(send('POST', '/auth/agent/signup', body), Status.BAD_REQUEST);
   });
 
-  it('allows an address three signups a day, then answers 429', async () => {
+  it('allows an address three signups a day, each minting a stored unclaimed key, then answers 429', async () => {
     const headers = { 'x-forwarded-for': '198.51.100.7' };
     for (let i = 0; i < 3; i++) {
       const body = { email: 'owner@example.com', ...(await solved()) };
-      // No Supabase here, so each admitted signup stops at minting the key.
-      await rejectsWith(send('POST', '/auth/agent/signup', body, headers), Status.UNAVAILABLE);
+      const { api_key } = (await send('POST', '/auth/agent/signup', body, headers)).body;
+      assert.equal(keys.validateApiKey(api_key), true);
+      assert.equal(await isUnclaimedAgentKey(api_key), true);
     }
     const body = { email: 'owner@example.com', ...(await solved()) };
     await rejectsWith(send('POST', '/auth/agent/signup', body, headers), Status.TOO_MANY_REQUESTS);

@@ -60,7 +60,7 @@ stops everything; the `oya-data` volume holds your personas and cookies, so keep
 | | Options |
 |:---|:---|
 | Control plane | Docker. For production on one Docker host, Amazon ECS, Kubernetes or Google Cloud, see [`deployments/`](../deployments): each has a `deploy.sh`. |
-| Database | SQLite, Supabase, or any Postgres (`DATABASE_URL`). |
+| Database | `OYA_STORAGE`: SQLite (default), Postgres (`DATABASE_URL`, Supabase's included) or JSON files. |
 | Browsers | Docker workers, governed Docker (one container per session), a Kubernetes fleet (one pod per session), Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or your own Chrome over CDP. |
 | LLM | Anthropic, OpenAI, Gemini, Gemini Enterprise (ex-Vertex AI), any OpenAI-compatible endpoint, or a local model (Ollama, vLLM, LM Studio). |
 
@@ -69,18 +69,36 @@ menu never promises something that does not work.
 
 ## Databases
 
-SQLite needs no setup and is the default, but it takes a writer lock, so one replica only.
-Supabase or Postgres are what more than one replica requires. Pick Postgres in the
-wizard and it applies the schema for you; to run them by hand, or against Supabase:
+`OYA_STORAGE` picks where every table lives (personas and their cookies, credentials
+and MFA factors, API keys, settings, usage, the audit trail and the control plane):
+
+| `OYA_STORAGE` | Where | Replicas |
+|:---|:---|:---|
+| `sqlite` (default) | `storage.sqlite` and `control.sqlite` in `OYA_DATA_DIR` | one |
+| `postgres` | the `DATABASE_URL` database | many |
+| `file` | a JSON file per table in `OYA_DATA_DIR/storage`, readable by hand | one |
+
+`postgres` needs `DATABASE_URL`, and `DATABASE_URL` needs `OYA_STORAGE=postgres`: the
+server refuses to start with one and not the other, so a deployment can never write to
+local files while it thinks it is on Postgres. Supabase is only ever a Postgres here;
+point `DATABASE_URL` at its connection string. Pick Postgres in the wizard and it
+applies the schema for you; to run it by hand:
 
 ```bash
 DATABASE_URL=postgres://user:pass@host:5432/oya make migrate
 ```
 
 Migrations are tracked in `public.schema_migrations`, applied one transaction per file
-together with their own bookkeeping, and safe to re-run. On plain Postgres the
-accounts tables are skipped: there is no Supabase Auth there, so
-authentication is `API_KEYS` and the dashboard takes an API key instead of an email.
+together with their own bookkeeping, and safe to re-run. The container applies them on
+every start. On plain Postgres the accounts tables (profiles, and the policies keyed on
+Supabase Auth users) are skipped, so authentication is `API_KEYS` and the dashboard
+takes an API key instead of an email.
+
+Upgrading: data files from earlier versions (`personas.json`, `cookies.json`,
+`credentials.json`, `mfa.json`, `key-settings.json`, `config.json`) are read into the
+configured storage on first start, seeds and all, and renamed `<name>.imported`. A row
+already in storage wins over the file. **A Postgres deployment must add
+`OYA_STORAGE=postgres` before upgrading**; the templates in `deployments/` set it.
 
 ## Configuration
 
@@ -92,8 +110,9 @@ Everything is optional except the secrets you want to survive a restart.
 | `OYA_PROFILE_SECRET` | Key for encrypting cookies, tokens and TOTP seeds at rest (AES-256-GCM). Left unset, the server generates one into the data volume, so keep that volume, or every stored credential becomes unreadable. |
 | `API_KEYS` | Comma-separated tenant keys. The whole control plane works with nothing but these. |
 | `OYA_OPERATOR_TOKEN` | Bearer token for `/metrics`, fleet drain and host config. |
-| `DATABASE_URL` | Postgres. Takes precedence over Supabase. |
-| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | Supabase storage, and the only backend with email sign-in. |
+| `OYA_STORAGE` | `sqlite` (default), `postgres` or `file`: where every table is kept. See [Databases](#databases). |
+| `DATABASE_URL` | The Postgres connection string, for `OYA_STORAGE=postgres`. |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | Email, Google and GitHub sign-in through Supabase Auth. Sign-in only, and it needs `OYA_STORAGE=postgres` with `DATABASE_URL` at the project's Postgres. |
 | `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY` | A Cloudflare Turnstile captcha on email sign-in and sign-up. The console shows the widget with the site key; the server checks each token with the secret, and lets requests through if Cloudflare cannot be reached. Unset means no captcha. Google and GitHub sign-in also need this deployment's `/auth/callback` URL in the Supabase project's redirect allowlist. |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `CHAT_MODEL` | The deployment-wide LLM default. Any API key that sets its own overrides it. A private or `http://` base URL works here but is rejected from the dashboard, because tenants can set that field too. |
 | `OYA_FLEET_RUNTIME` | `docker` or `k8s`, what starts a governed browser. |

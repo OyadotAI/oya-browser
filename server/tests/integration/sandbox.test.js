@@ -360,24 +360,33 @@ try {
 
   const { writeFileSync } = await import('node:fs');
   const { spawnSync } = await import('node:child_process');
+  const { createRequire } = await import('node:module');
+  const { pathToFileURL } = await import('node:url');
+  const pgUrl = pathToFileURL(createRequire(import.meta.url).resolve('pg')).href;
   const preload = joinPath(process.env.OYA_DATA_DIR, 'delayed-database.mjs');
+  // Postgres storage whose api_keys read answers late: the server must not
+  // listen until that read has landed, or a reconnecting browser's valid key
+  // would be refused as unknown.
   writeFileSync(
     preload,
     `
     import { Server } from 'node:http';
+    import pg from ${JSON.stringify(pgUrl)};
     let keysLoaded = false;
-    globalThis.fetch = async (url) => {
-      const keys = String(url).includes('/api_keys');
-      await new Promise(resolve => setTimeout(resolve, keys ? 150 : 10));
+    const answer = (sql) => {
+      // Each control function has its own return shape, and boot calls several:
+      // control_load answers one (empty) result array per query, a commit reports {ok}.
+      const control = /^select oya_browser\\.(control_\\w+)\\(/.exec(sql)?.[1];
+      if (control === 'control_load') return [{ control_load: [[]] }];
+      if (control === 'control_commit') return [{ control_commit: { ok: true, events: [] } }];
+      if (control) return [{ [control]: [] }];
+      return /from oya_browser\\.api_keys/.test(sql) ? [{ key_hash: 'registered-browser-key-digest' }] : [];
+    };
+    pg.Pool.prototype.query = async function (sql) {
+      const keys = /^select \\* from oya_browser\\.api_keys/.test(sql);
+      await new Promise((resolve) => setTimeout(resolve, keys ? 150 : 10));
       if (keys) keysLoaded = true;
-      // Each control RPC has its own return shape, and boot calls several. An
-      // empty control_load is [[]] (one result array per query), and a commit
-      // reports {ok}. Returning [] for everything made boot throw, which only
-      // went unnoticed while an unhandled rejection during boot was swallowed.
-      if (String(url).includes('/rpc/control_load')) return Response.json([[]]);
-      if (String(url).includes('/rpc/control_commit')) return Response.json({ ok: true, events: [] });
-      if (String(url).includes('/rpc/control_')) return Response.json([]);
-      return Response.json(keys ? [{ key: 'registered-browser-key' }] : []);
+      return { rows: answer(sql) };
     };
     Server.prototype.listen = function () { process.exit(keysLoaded ? 0 : 1); };
   `,
@@ -385,8 +394,8 @@ try {
   const startup = spawnSync(process.execPath, ['--import', preload, 'src/index.ts'], {
     env: {
       ...process.env,
-      SUPABASE_URL: 'https://database.invalid',
-      SUPABASE_SERVICE_KEY: 'isolated-db-key',
+      OYA_STORAGE: 'postgres',
+      DATABASE_URL: 'postgres://stand-in/oya',
       OYA_UI_MODE: '',
       API_KEYS: '',
     },

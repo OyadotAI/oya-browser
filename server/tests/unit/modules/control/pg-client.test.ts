@@ -1,6 +1,6 @@
 /**
  * Unit tests for the Postgres RPC adapter: control functions called by name
- * with named arguments, objects sent as JSON, one value back in Supabase's
+ * with named arguments, objects sent as JSON, one value back in the
  * { data } / { error } shape. The pool's query is stubbed, so nothing connects.
  */
 import { describe, it, afterEach, mock } from 'node:test';

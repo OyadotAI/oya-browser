@@ -12,28 +12,40 @@ import {
 } from '../../../src/modules/personas/index.ts';
 import { shape } from '../../../src/modules/personas/model.ts';
 
-/** A repository holding personas as the JSON a file would, so a round trip is real. */
+/**
+ * A repository holding each persona as the JSON a row would be (uncapped as
+ * null), keyed by id, so a round trip is real. Saving upserts and never
+ * deletes; only remove() does, as with the storage-backed one.
+ */
 export class MemoryPersonaRepository implements PersonaRepository {
-  /** The stored JSON, or null before the first save. */
-  stored: string | null = null;
+  /** Stored JSON by persona id. */
+  rows = new Map<string, string>();
   /** How many times saveAll ran. */
   saves = 0;
-  /** When set, both calls reject with it. */
+  /** When set, every call rejects with it. */
   failWith: Error | null = null;
 
-  /** Every stored persona, normalised the way the file repository does. */
+  /** Every stored persona, normalised the way the storage repository does. */
   async loadAll(): Promise<Persona[]> {
     if (this.failWith) throw this.failWith;
-    return this.stored ? (JSON.parse(this.stored) as unknown[]).map(shape) : [];
+    return [...this.rows.values()].map((json) => shape(JSON.parse(json)));
   }
 
-  /** Stores the personas as JSON, with Infinity written as null. */
+  /** Upserts each persona as JSON, with Infinity written as null. */
   async saveAll(personas: Persona[]) {
     if (this.failWith) throw this.failWith;
     this.saves += 1;
-    this.stored = JSON.stringify(
-      personas.map((p) => ({ ...p, maxConcurrent: Number.isFinite(p.maxConcurrent) ? p.maxConcurrent : null })),
-    );
+    for (const p of personas)
+      this.rows.set(
+        p.id,
+        JSON.stringify({ ...p, maxConcurrent: Number.isFinite(p.maxConcurrent) ? p.maxConcurrent : null }),
+      );
+  }
+
+  /** Deletes the given ids. */
+  async remove(ids: string[]) {
+    if (this.failWith) throw this.failWith;
+    for (const id of ids) this.rows.delete(id);
   }
 }
 
@@ -43,8 +55,12 @@ export function personaDeps(overrides: Partial<PersonaDeps> = {}) {
     repository: new MemoryPersonaRepository(),
     ownerOf: (key: string) => `owner:${key}`,
     proxies: { assigned: mock.fn((_id: string): any => null), residential: mock.fn((_p: Persona): any => null) },
-    mfa: { describe: mock.fn(() => ({ configured: false })), list: mock.fn(() => []), clearAll: mock.fn() },
-    credentials: { list: mock.fn(() => []), clearAll: mock.fn() },
+    mfa: {
+      describe: mock.fn(() => ({ configured: false })),
+      list: mock.fn(() => []),
+      clearAll: mock.fn(async () => 0),
+    },
+    credentials: { list: mock.fn(() => []), clearAll: mock.fn(async () => 0) },
     logins: { summary: mock.fn(() => null), clear: mock.fn() },
     metrics: { personaCapped: { inc: mock.fn() }, personasActive: { set: mock.fn() } },
     ...overrides,

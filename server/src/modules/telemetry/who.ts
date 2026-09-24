@@ -1,5 +1,5 @@
 /**
- * Who an event is about. A key's owner lives in Supabase and is looked up
+ * Who an event is about. A key's owner lives in Postgres and is looked up
  * once an hour at most, never on the request path: the seam gets a short
  * fingerprint label at once and the owner's email catches up in the background,
  * so a request is never slowed by analytics.
@@ -75,7 +75,7 @@ export function whoHolds(key: string): Who | Promise<Who> {
   if (known !== undefined) return known ?? anonymous(key);
   // Remembered as unowned before the lookup lands, so a burst of events for a
   // cold key starts one lookup, not one per event: a replica restart must not
-  // turn a thousand reconnects into a thousand pairs of Supabase reads.
+  // turn a thousand reconnects into a thousand pairs of database reads.
   remember(fp, null);
   return lookup(key, fp).then((who) => who ?? anonymous(key));
 }
