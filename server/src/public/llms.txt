@@ -140,10 +140,13 @@ for agents that cannot run Node.
        POST https://oyabrowser.com/api/config      (Authorization: Bearer api_key)
        { "llm_provider": "anthropic", "openai_api_key": "<your Anthropic key>" }
 
-   llm_provider is one of openai, anthropic, gemini, vertex; the field is named
-   openai_api_key but takes the key for whichever provider you name. Add
+   llm_provider is one of openai, anthropic, gemini, vertex, openrouter; the
+   field is named openai_api_key but takes the key for whichever provider you
+   name. OpenRouter is one key for Claude, GPT, Gemini, Grok, DeepSeek and more:
+   its models are named vendor/model, e.g. "anthropic/claude-sonnet-5". Add
    "chat_model" to pick a model, or "openai_base_url" for any OpenAI-compatible
-   endpoint. GET /api/config shows what is set (secrets masked). Until you do,
+   endpoint. GET /api/config lists every provider and its models under
+   llm_catalog. GET /api/config shows what is set (secrets masked). Until you do,
    chat answers 422 with code "llm_bring_your_own". Driving the browser yourself
    (MCP page tools, POST /api/browsers/:id/command) needs no LLM on our side.
 

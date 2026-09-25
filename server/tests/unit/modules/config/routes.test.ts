@@ -2,7 +2,7 @@
  * Unit tests for the config routes: a key reads and writes its own settings,
  * and only the operator sets the deployment-wide default.
  */
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownDataDir } from '../../support/data-dir.ts';
 
@@ -11,6 +11,7 @@ const { router } = await import('../../../../src/modules/config/routes.ts');
 const { runtimeConfig } = await import('../../../../src/platform/runtime-config.ts');
 const { allowKey, callRoute } = await import('../../support/agent.ts');
 const keyConfig = await import('../../../../src/modules/config/service.ts');
+const { registry } = await import('../../../../src/modules/browsers/registry.ts');
 
 const KEY = 'config-routes-key';
 const OPERATOR = 'config-operator-token';
@@ -24,6 +25,16 @@ describe('config routes', () => {
   after(() => {
     forget();
     delete process.env.OYA_OPERATOR_TOKEN;
+  });
+
+  it('tells the key’s desktop apps when its model changes, and not for other settings', async () => {
+    const tell = mock.method(registry, 'tell', () => 0);
+    const post = (body) => callRoute(router, { method: 'POST', url: '/config', key: KEY, body });
+    await post({ chat_model: 'm2' });
+    assert.deepEqual(tell.mock.calls[0].arguments, [KEY, { type: 'settings_changed', scope: 'llm' }]);
+    await post({ captcha_solver: '2captcha' });
+    assert.equal(tell.mock.callCount(), 1);
+    tell.mock.restore();
   });
 
   it('refuses a caller without an API key', async () => {

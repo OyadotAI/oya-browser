@@ -18,6 +18,8 @@
     "test:recording": "electron tests/integration/recording-electron.cjs",
     "test:identity": "electron tests/integration/identity-electron.cjs",
     "test:sync": "node tests/integration/sync-e2e.mjs",
+    "test:model-sync": "node tests/integration/model-sync.mjs",
+    "test:routines-sync": "node tests/integration/routines-sync.mjs",
     "test:shell": "node tests/integration/shell.mjs",
     "test:control": "node tests/integration/control.mjs",
     "test:agent": "node tests/integration/agent-commands.mjs",

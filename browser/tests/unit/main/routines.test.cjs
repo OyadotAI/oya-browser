@@ -1,12 +1,13 @@
 /**
- * Unit tests for routines: when each schedule is due, what a saved routine may
- * hold, and that the scheduler runs one routine at a time, only while the
- * browser is free, keeping what the run answered.
+ * Unit tests for routines (main/routines.cjs): when each schedule is due, and
+ * that the app keeps the project's routines in step with the server, claims a
+ * run before running it (so two desktops never run the same one), runs one at
+ * a time while the browser is free, and records how each run ended. The
+ * server is a fake behind fetch.
  */
 const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
-const { Routines, isDue, validRoutine } = require('../../../main/routines.cjs');
-const { ROUTINE_TICK_MS, ROUTINE_RUNS_KEPT } = require('../../../main/constants.cjs');
+const { Routines, isDue } = require('../../../main/routines.cjs');
 const { mainCtx } = require('../support/main-ctx.cjs');
 
 const MINUTE = 60_000;
@@ -46,197 +47,176 @@ describe('isDue', () => {
     assert.equal(isDue({ ...missed, lastRunAt: later }, later + MINUTE), false);
   });
 
-  it('never runs a paused routine', () => {
+  it('never runs a routine that is off', () => {
     assert.equal(isDue(routine({ kind: 'every', n: 1, unit: 'minutes' }, { enabled: false }), EIGHT_AM + HOUR), false);
+  });
+
+  it('never starts a routine another browser is running', () => {
+    const running = routine({ kind: 'every', n: 1, unit: 'minutes' }, { runs: [{ id: 'x', status: 'running' }] });
+    assert.equal(isDue(running, EIGHT_AM + HOUR), false);
   });
 });
 
-describe('validRoutine', () => {
-  const ok = { name: 'Inbox', prompt: 'Check my inbox', schedule: { kind: 'daily', at: '07:30' } };
-
-  it('keeps a named prompt on an every-N or daily schedule', () => {
-    assert.equal(validRoutine(ok), true);
-    assert.equal(validRoutine({ ...ok, schedule: { kind: 'every', n: 15, unit: 'minutes' } }), true);
+/**
+ * A fake project server behind fetch: the routines it holds, the calls it got,
+ * and an answer per "METHOD path" (a function of the body, or a status to refuse with).
+ */
+function fakeServer(routines, answers = {}) {
+  const calls = [];
+  const fetch = mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    const method = init.method || 'GET';
+    const path = new URL(url).pathname.replace(/^\/api\//, '');
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push([method, path, body]);
+    const answer = answers[`${method} ${path}`];
+    if (typeof answer === 'number')
+      return { ok: false, status: answer, json: async () => ({ error: `refused ${answer}` }) };
+    const json = answer ? answer(body) : method === 'GET' ? { routines } : {};
+    return { ok: true, status: 200, json: async () => json };
   });
+  return { calls, fetch, called: (method, path) => calls.filter(([m, p]) => m === method && p === path) };
+}
 
-  it('refuses a routine without a name or a prompt', () => {
-    assert.equal(validRoutine({ ...ok, name: '  ' }), false);
-    assert.equal(validRoutine({ ...ok, prompt: '' }), false);
-    assert.equal(validRoutine(null), false);
-  });
-
-  it('refuses a schedule it cannot keep', () => {
-    for (const schedule of [
-      { kind: 'every', n: 0, unit: 'minutes' },
-      { kind: 'every', n: 1.5, unit: 'hours' },
-      { kind: 'every', n: 5, unit: 'seconds' },
-      { kind: 'daily', at: '24:00' },
-      { kind: 'daily', at: '9:00' },
-      { kind: 'cron', at: '* * * * *' },
-      { kind: 'constructor' },
-      undefined,
-    ]) {
-      assert.equal(validRoutine({ ...ok, schedule }), false, JSON.stringify(schedule));
-    }
-  });
+/** A routine as the server holds it. */
+const held = (extra = {}) => ({
+  id: 'r1',
+  name: 'Prices',
+  prompt: 'Check prices',
+  enabled: true,
+  createdAt: EIGHT_AM,
+  lastRunAt: null,
+  schedule: { kind: 'every', n: 1, unit: 'hours' },
+  runs: [],
+  ...extra,
 });
 
 describe('Routines', () => {
-  let ctx, asked, answer, routines;
-  const every = { kind: 'every', n: 1, unit: 'minutes' };
-
+  let ctx;
   beforeEach(() => {
-    mock.timers.enable({ apis: ['setInterval', 'Date'], now: EIGHT_AM });
     ctx = mainCtx();
-    ctx.config.values = {};
-    asked = [];
-    answer = async () => ({ text: 'DONE: 3 new emails' });
-    routines = new Routines(ctx, (_ctx, _e, messages) => (asked.push(messages), answer()));
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    ctx.recorder = { recording: false };
   });
-  afterEach(() => mock.timers.reset());
+  afterEach(() => mock.restoreAll());
 
-  it('saves a routine with only the fields it knows, and tells the shell', () => {
-    routines.save({ name: ' Inbox ', prompt: 'Check', schedule: { ...every, x: 1 }, evil: 1 });
-    const list = routines.list();
-    assert.deepEqual(list, [
-      { id: list[0].id, createdAt: EIGHT_AM, name: 'Inbox', prompt: 'Check', schedule: every, enabled: true },
-    ]);
-    assert.equal(ctx.config.saves, 1);
-    assert.equal(ctx.shell.sentOn('routines-changed').length, 1);
+  it('reads the project’s routines from the server and tells the pane, with when each runs next', async () => {
+    fakeServer([held()]);
+    const routines = new Routines(ctx);
+    const snapshot = await routines.refresh();
+    assert.equal(snapshot.routines[0].nextRunAt, EIGHT_AM + HOUR);
+    assert.equal(snapshot.online, true);
+    assert.equal(ctx.shell.sent.at(-1).channel, 'routines-changed');
   });
 
-  it('edits a routine in place, keeping its history', () => {
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: every }).routines;
-    routines.update(saved.id, (r) => ({ ...r, lastRunAt: 5 }));
-    const [edited] = routines.save({ id: saved.id, name: 'B', prompt: 'p', schedule: every, enabled: false }).routines;
-    assert.deepEqual([edited.id, edited.name, edited.enabled, edited.lastRunAt], [saved.id, 'B', false, 5]);
-    assert.equal(routines.list().length, 1);
+  it('hands routines kept locally before the move to the project once, then forgets them here', async () => {
+    const server = fakeServer([]);
+    ctx.config.values.routines = [held({ id: 'local' })];
+    await new Routines(ctx).refresh();
+    assert.deepEqual(server.called('POST', 'routines/import')[0][2], { routines: [held({ id: 'local' })] });
+    assert.equal(ctx.config.values.routines, undefined);
+    await new Routines(ctx).refresh();
+    assert.equal(server.called('POST', 'routines/import').length, 1);
   });
 
-  it('refuses a routine it cannot keep, saving nothing', () => {
-    assert.throws(() => routines.save({ name: 'A', prompt: '', schedule: every }), /needs a name, a prompt/);
-    assert.equal(ctx.config.saves, 0);
+  it('claims a due routine, asks the agent its prompt, and records how the run ended', async () => {
+    const server = fakeServer([held()]);
+    const run = mock.fn(async () => ({ text: 'Cheapest is $4', toolCalls: [{ name: 'navigate' }] }));
+    await new Routines(ctx, run).tick(EIGHT_AM + HOUR);
+    const [claim] = server.called('POST', 'routines/r1/claim');
+    assert.deepEqual([claim[2].lastRunAt, claim[2].browserId], [null, 'b1']);
+    assert.equal(run.mock.calls[0].arguments[2][0].content, 'Check prices');
+    const [ending] = server.calls.filter(([m, p]) => m === 'PATCH' && p.startsWith('routines/r1/runs/'));
+    assert.deepEqual(ending[2], { status: 'done', result: 'Cheapest is $4', steps: ['navigate'] });
   });
 
-  it('deletes a routine', () => {
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: every }).routines;
-    assert.deepEqual(routines.remove(saved.id).routines, []);
-  });
-
-  it('asks the agent the prompt of a routine once it is due, on the tick, and records the run', async () => {
-    answer = async () => ({ text: 'DONE: 3 new emails', toolCalls: [{ name: 'navigate' }, { name: 'click' }] });
-    routines.save({ name: 'A', prompt: 'Check my inbox', schedule: every });
-    routines.start();
-    mock.timers.tick(ROUTINE_TICK_MS);
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(asked, [[{ role: 'user', content: 'Check my inbox' }]]);
-    const [ran] = routines.list();
-    assert.equal(ran.lastRunAt, EIGHT_AM + MINUTE);
-    const [run] = ran.runs;
-    assert.deepEqual(
-      { ...run, id: 'x' },
-      {
-        id: 'x',
-        startedAt: EIGHT_AM + MINUTE,
-        finishedAt: EIGHT_AM + MINUTE,
-        status: 'done',
-        result: 'DONE: 3 new emails',
-        steps: ['navigate', 'click'],
-      },
-    );
-    assert.equal(routines.running, null);
-  });
-
-  it('shows a run as running while the agent works, and tells the shell at start and end', async () => {
-    let finish;
-    answer = () => new Promise((resolve) => (finish = resolve));
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: every }).routines;
-    const running = routines.runNow(saved.id);
-    assert.equal(routines.snapshot().running, saved.id);
-    assert.equal(routines.list()[0].runs[0].status, 'running');
-    finish({ text: 'DONE' });
-    await running;
-    assert.equal(routines.list()[0].runs[0].status, 'done');
-    assert.equal(ctx.shell.sentOn('routines-changed').length, 3, 'saved, started, finished');
+  it('lets another desktop have a run it claimed first, without running the agent', async () => {
+    fakeServer([held()], { 'POST routines/r1/claim': 409 });
+    const run = mock.fn(async () => ({ text: 'x' }));
+    await new Routines(ctx, run).tick(EIGHT_AM + HOUR);
+    assert.equal(run.mock.callCount(), 0);
   });
 
   it('records a failed run with its error, and a stopped one as stopped', async () => {
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: every }).routines;
-    answer = async () => ({ error: 'Not connected to server' });
-    await routines.runNow(saved.id);
-    answer = async () => ({ error: 'Stopped' });
-    await routines.runNow(saved.id);
-    answer = async () => ({ text: 'FAILED: no such page', failed: true });
-    await routines.runNow(saved.id);
-    const runs = routines.list()[0].runs.map((r) => [r.status, r.result]);
-    assert.deepEqual(runs, [
-      ['failed', 'FAILED: no such page'],
+    const server = fakeServer([held()]);
+    await new Routines(ctx, async () => ({ error: 'Page did not load' })).tick(EIGHT_AM + HOUR);
+    await new Routines(ctx, async () => ({ error: 'Stopped' })).tick(EIGHT_AM + HOUR);
+    const endings = server.calls.filter(([m]) => m === 'PATCH').map(([, , body]) => [body.status, body.result]);
+    assert.deepEqual(endings, [
+      ['failed', 'Error: Page did not load'],
       ['stopped', ''],
-      ['failed', 'Error: Not connected to server'],
     ]);
   });
 
-  it(`keeps the newest ${ROUTINE_RUNS_KEPT} runs of a routine`, async () => {
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: every }).routines;
-    for (let i = 0; i < ROUTINE_RUNS_KEPT + 3; i++) {
-      answer = async () => ({ text: `run ${i}` });
-      await routines.runNow(saved.id);
-    }
-    const runs = routines.list()[0].runs;
-    assert.equal(runs.length, ROUTINE_RUNS_KEPT);
-    assert.equal(runs[0].result, `run ${ROUTINE_RUNS_KEPT + 2}`);
+  it('waits while the browser is busy: offline, in an Ask, recording, or running another routine', async () => {
+    const server = fakeServer([held()]);
+    const routines = new Routines(ctx, async () => ({ text: 'x' }));
+    ctx.chatAbort = new AbortController();
+    await routines.tick(EIGHT_AM + HOUR);
+    ctx.chatAbort = null;
+    ctx.recorder.recording = true;
+    await routines.tick(EIGHT_AM + HOUR);
+    ctx.recorder.recording = false;
+    ctx.socket.ready = false;
+    await routines.tick(EIGHT_AM + HOUR);
+    assert.equal(server.called('POST', 'routines/r1/claim').length, 0);
   });
 
-  it('marks a run the app quit in the middle of as interrupted, at the next start', () => {
-    ctx.config.values.routines = [
-      {
-        ...routine(every),
-        runs: [
-          { id: 'a', status: 'running' },
-          { id: 'b', status: 'done' },
-        ],
-      },
+  it('says why Run now cannot start, and answers once a run is claimed', async () => {
+    fakeServer([held()], { 'POST routines/r1/claim': 409 });
+    const routines = new Routines(ctx, () => new Promise(() => {}));
+    await routines.refresh();
+    ctx.chatAbort = new AbortController();
+    assert.match((await routines.runNow('r1')).error, /busy with an Ask/);
+    ctx.chatAbort = null;
+    assert.equal((await routines.runNow('r1')).error, 'refused 409');
+  });
+
+  it('stops only its own run of the routine it was asked to stop', async () => {
+    fakeServer([held()]);
+    const routines = new Routines(ctx, () => new Promise(() => {}));
+    await routines.refresh();
+    await routines.runNow('r1');
+    ctx.chatAbort = new AbortController();
+    assert.equal(routines.stop('other'), false);
+    assert.equal(ctx.chatAbort.signal.aborted, false);
+    assert.equal(routines.stop('r1'), true);
+    assert.equal(ctx.chatAbort.signal.aborted, true);
+  });
+
+  it('marks its own runs a quit cut short as interrupted, and leaves another browser’s alone', async () => {
+    const runs = [
+      { id: 'mine', status: 'running', by: 'b1', startedAt: 1 },
+      { id: 'theirs', status: 'running', by: 'b2', startedAt: 1 },
     ];
-    routines.start();
-    assert.deepEqual(
-      routines.list()[0].runs.map((r) => r.status),
-      ['interrupted', 'done'],
-    );
+    const server = fakeServer([held({ runs })]);
+    await new Routines(ctx).refresh();
+    const patched = server.calls.filter(([m]) => m === 'PATCH').map(([, path, body]) => [path, body.status]);
+    assert.deepEqual(patched, [['routines/r1/runs/mine', 'interrupted']]);
   });
 
-  it('says when each routine runs next, and nothing for a paused one', () => {
-    routines.save({ name: 'A', prompt: 'p', schedule: { kind: 'every', n: 2, unit: 'hours' } });
-    routines.save({ name: 'B', prompt: 'p', schedule: every, enabled: false });
-    const [a, b] = routines.snapshot().routines;
-    assert.deepEqual([a.nextRunAt, b.nextRunAt], [EIGHT_AM + 2 * HOUR, null]);
+  it('creates, edits, turns off, clears and deletes through the server, and says why when offline', async () => {
+    const server = fakeServer([held()]);
+    const routines = new Routines(ctx);
+    const input = { name: 'A', prompt: 'B', schedule: { kind: 'daily', at: '09:00' }, enabled: true };
+    await routines.save(input);
+    await routines.save({ ...input, id: 'r1' });
+    await routines.setEnabled('r1', false);
+    await routines.clearHistory('r1');
+    await routines.remove('r1');
+    const writes = server.calls.filter(([m]) => m !== 'GET').map(([m, p]) => `${m} ${p}`);
+    assert.deepEqual(writes, [
+      'POST routines',
+      'PATCH routines/r1',
+      'PATCH routines/r1',
+      'DELETE routines/r1/runs',
+      'DELETE routines/r1',
+    ]);
+    ctx.socket.ready = false;
+    assert.match((await routines.remove('r1')).error, /Connect to Oya/);
   });
 
-  it('waits while the browser is busy: offline, in a chat, recording, or running another routine', async () => {
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: every }).routines;
-    const later = EIGHT_AM + HOUR;
-    const busy = [
-      () => (ctx.socket.ready = false),
-      () => (ctx.chatAbort = new AbortController()),
-      () => (ctx.recorder.recording = true),
-      () => (routines.running = 'other'),
-    ];
-    for (const makeBusy of busy) {
-      const undo = { ready: ctx.socket.ready, recording: ctx.recorder.recording };
-      makeBusy();
-      await routines.tick(later);
-      Object.assign(ctx.socket, { ready: undo.ready });
-      Object.assign(ctx.recorder, { recording: undo.recording });
-      ctx.chatAbort = null;
-      routines.running = null;
-    }
-    assert.deepEqual(asked, []);
-    await routines.tick(later);
-    assert.equal(asked.length, 1, `${saved.name} runs once the browser is free`);
-  });
-
-  it('runs a routine now on demand, even when it is not due', async () => {
-    const [saved] = routines.save({ name: 'A', prompt: 'p', schedule: { kind: 'daily', at: '23:00' } }).routines;
-    await routines.runNow(saved.id);
-    assert.equal(asked.length, 1);
+  it('passes on the server’s refusal of a routine', async () => {
+    fakeServer([], { 'POST routines': 400 });
+    assert.equal((await new Routines(ctx).save({ name: '' })).error, 'refused 400');
   });
 });

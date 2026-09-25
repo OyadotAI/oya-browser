@@ -14,6 +14,7 @@ vi.mock('@/lib/api-client', async (importActual) => ({
 import { api } from '@/lib/api-client';
 import SettingsDialog from '@/components/dashboard/settings-dialog';
 import { ToastProvider } from '@/components/dashboard/toast';
+import { LLM_CATALOG } from '../../support/llm-catalog';
 
 const apiMock = vi.mocked(api);
 
@@ -29,6 +30,7 @@ const CONFIG = {
   inherited: false,
   effective: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini', hasLlmKey: true },
   providers: [{ id: 'steel', label: 'Steel', needs: ['steel_api_key'], configured: true }],
+  llm_catalog: LLM_CATALOG,
 };
 
 /** Opens the dialog on `section`; returns the close spy. */

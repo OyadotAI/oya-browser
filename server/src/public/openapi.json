@@ -2110,19 +2110,98 @@
     },
     "/config": {
       "get": {
-        "summary": "Get server configuration",
+        "summary": "Get this key's settings",
+        "description": "The calling key's settings, secrets masked, with the LLM it runs on (effective) and the provider and model catalog.",
         "operationId": "getConfig",
         "responses": {
           "200": {
-            "description": "Server configuration",
+            "description": "The key's settings",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "openai_key": { "type": "string", "description": "OpenAI API key (masked)" },
-                    "openai_base": { "type": "string", "description": "OpenAI-compatible base URL" },
-                    "chat_model": { "type": "string", "description": "Chat model name" }
+                    "llm_provider": {
+                      "type": "string",
+                      "enum": [
+                        "openai",
+                        "anthropic",
+                        "gemini",
+                        "vertex",
+                        "openrouter"
+                      ],
+                      "description": "Which LLM provider this key's agent runs on; picks the default endpoint and model."
+                    },
+                    "openai_api_key": {
+                      "type": "string",
+                      "description": "The key for whichever llm_provider is set (the field name is shared). Masked on read."
+                    },
+                    "openai_base_url": {
+                      "type": "string",
+                      "description": "An OpenAI-compatible endpoint, when not the provider's own. Only honoured with this key's own openai_api_key."
+                    },
+                    "chat_model": {
+                      "type": "string",
+                      "description": "The model id, as the provider names it. Empty or null uses the provider's default."
+                    },
+                    "effective": {
+                      "type": "object",
+                      "description": "What this key runs on right now, deployment defaults included.",
+                      "properties": {
+                        "baseUrl": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "hasLlmKey": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "llm_catalog": {
+                      "type": "array",
+                      "description": "Every LLM provider and the models it offers (OpenRouter's is its live list). Clients build their provider and model pickers from this.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "hint": {
+                            "type": "string",
+                            "description": "How its key looks."
+                          },
+                          "keysUrl": {
+                            "type": "string"
+                          },
+                          "base": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string",
+                            "description": "The default model."
+                          },
+                          "models": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -2131,7 +2210,8 @@
         }
       },
       "post": {
-        "summary": "Update server configuration",
+        "summary": "Update this key's settings",
+        "description": "Sets only the fields sent; null or empty clears one. Send llm_provider and chat_model together. Connected desktop apps on the key are told to re-read their model.",
         "operationId": "setConfig",
         "requestBody": {
           "required": true,
@@ -2140,9 +2220,29 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "openai_key": { "type": "string" },
-                  "openai_base": { "type": "string" },
-                  "chat_model": { "type": "string" }
+                  "llm_provider": {
+                    "type": "string",
+                    "enum": [
+                      "openai",
+                      "anthropic",
+                      "gemini",
+                      "vertex",
+                      "openrouter"
+                    ],
+                    "description": "Which LLM provider this key's agent runs on; picks the default endpoint and model."
+                  },
+                  "openai_api_key": {
+                    "type": "string",
+                    "description": "The key for whichever llm_provider is set (the field name is shared). Masked on read."
+                  },
+                  "openai_base_url": {
+                    "type": "string",
+                    "description": "An OpenAI-compatible endpoint, when not the provider's own. Only honoured with this key's own openai_api_key."
+                  },
+                  "chat_model": {
+                    "type": "string",
+                    "description": "The model id, as the provider names it. Empty or null uses the provider's default."
+                  }
                 }
               }
             }
@@ -2150,13 +2250,15 @@
         },
         "responses": {
           "200": {
-            "description": "Config updated",
+            "description": "Saved; the body is the new settings, as GET returns them, with ok: true",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "ok": { "type": "boolean" }
+                    "ok": {
+                      "type": "boolean"
+                    }
                   }
                 }
               }

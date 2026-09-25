@@ -4,6 +4,7 @@
  */
 
 import { EventEmitter } from 'events';
+import WebSocket from 'ws';
 import { MS_PER_SECOND } from '../../platform/constants.ts';
 import { newRecord, type BrowserSpec } from './registry/record.ts';
 import { applyActivity } from './registry/activity.ts';
@@ -12,6 +13,16 @@ import { sendFrame, endViewers } from './registry/viewers.ts';
 import { closeOutbound } from './registry/teardown.ts';
 
 export { summarise } from './registry/summary.ts';
+
+/** Sends one message; a socket closing under us is not the sender's failure. */
+function sendQuietly(ws, message): boolean {
+  try {
+    ws.send(JSON.stringify(message));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Every browser this replica is connected to, with its activity; emits connect, disconnect and stream start/stop events. */
 class ConnectionRegistry extends EventEmitter {
@@ -130,6 +141,18 @@ class ConnectionRegistry extends EventEmitter {
   hasViewers(browserId) {
     const browser = this.browsers.get(browserId);
     return browser ? browser.streamViewers.size > 0 : false;
+  }
+
+  /**
+   * Sends `message` to every Oya browser on `apiKey` that this replica holds,
+   * and returns how many heard it. Browsers on other replicas re-read what they
+   * need when the person next opens it.
+   */
+  tell(apiKey, message) {
+    const open = [...this.browsers.values()].filter(
+      (b) => b.apiKey === apiKey && b.clientType === 'oya' && b.ws?.readyState === WebSocket.OPEN,
+    );
+    return open.filter((b) => sendQuietly(b.ws, message)).length;
   }
 
   /** List browsers visible to a specific API key */

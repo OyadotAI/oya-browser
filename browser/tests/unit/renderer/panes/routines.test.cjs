@@ -1,8 +1,9 @@
 /**
- * Unit tests for the Routines pane: the list shows each routine's last run,
- * next run and answer, its history opens to every run's steps and answer, the
- * form saves a new routine or edits one in place, a refusal is shown under
- * the form, and the row's buttons reach the scheduler.
+ * Unit tests for the Routines pane: each card says in one line what its
+ * routine is doing, the switch and buttons reach the main process, Run now says
+ * why it cannot start, Stop is offered only for a run on this browser, Delete
+ * asks first, history opens on the latest run, and the editor saves a new
+ * routine or an edit and keeps what was typed when the server refuses it.
  */
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -20,6 +21,7 @@ const DONE_RUN = {
   status: 'done',
   result: 'DONE: **3** new emails',
   steps: ['navigate', 'analyze_page', 'click'],
+  by: 'b1',
 };
 const INBOX = {
   id: 'r1',
@@ -28,196 +30,166 @@ const INBOX = {
   schedule: { kind: 'every', n: 2, unit: 'hours' },
   enabled: true,
   nextRunAt: Date.now() + HOUR,
-  runs: [DONE_RUN, { ...DONE_RUN, id: 'run0', status: 'failed', result: 'Error: offline', steps: [] }],
+  runs: [DONE_RUN, { ...DONE_RUN, id: 'run0', status: 'failed', result: 'Error: offline', steps: [], by: 'b2' }],
 };
 
-/** A loaded renderer whose main process holds `routines`, answering each change with `after`. */
-async function pane(routines = [], after = { routines, running: null }) {
+/** The main process's snapshot of `routines`, online and free. */
+const snapshot = (routines, extra = {}) => ({
+  routines,
+  running: null,
+  browserId: 'b1',
+  online: true,
+  busy: '',
+  ...extra,
+});
+
+/** A loaded renderer whose main process holds `state`, answering each change with `after` (or the same list). */
+async function pane(state = snapshot([]), after = state) {
   const answer = () => after;
-  const answers = { listRoutines: { routines, running: null }, saveRoutine: answer, deleteRoutine: answer };
-  const app = loadRenderer({ answers: { ...answers, runRoutineNow: answer } });
+  const names = ['saveRoutine', 'deleteRoutine', 'runRoutineNow', 'setRoutineEnabled', 'clearRoutineHistory'];
+  const answers = { listRoutines: state, stopRoutine: true, ...Object.fromEntries(names.map((n) => [n, answer])) };
+  const app = loadRenderer({ answers });
   await settle();
   return app;
 }
 
-/** The rows' text, one string each. */
-const rows = (app) =>
-  app
-    .$('routines-list')
-    .querySelectorAll('li')
-    .map((li) => li.textContent);
+/** The first card. */
+const card = (app) => app.$('routines-list').querySelector('.routine-card');
+/** A button in the first card, by its class. */
+const button = (app, cls) => card(app).querySelector(`.${cls}`);
+/** The first card's status line. */
+const status = (app) => card(app).querySelector('.routine-status').textContent;
 
 describe('the Routines pane', () => {
-  it('says what routines are for when there are none', async () => {
-    assert.match(rows(await pane())[0], /No routines yet/);
-  });
-
-  it('shows each routine with how its last run went, when it runs next, its last answer and buttons', async () => {
-    const paused = { ...INBOX, id: 'r2', name: 'Prices', schedule: { kind: 'daily', at: '07:30' }, enabled: false };
-    const app = await pane([INBOX, { ...paused, runs: [], nextRunAt: null }]);
-    const [inbox, prices] = rows(app);
-    assert.match(
-      inbox,
-      /Inbox.*Done.*Every 2 hours · Next .*DONE: \*\*3\*\* new emails.*Run now.*History \(2\).*Pause/,
-    );
-    assert.match(prices, /Prices.*Never run.*Daily at 07:30 · Paused.*History.*Resume/);
-  });
-
-  it('says a routine that is due is due now', async () => {
-    const app = await pane([{ ...INBOX, nextRunAt: Date.now() - 1 }]);
-    assert.match(rows(app)[0], /Due now/);
-  });
-
-  it("opens a routine's history: each run with its status, duration and steps, and its answer inside", async () => {
-    const app = await pane([INBOX]);
-    const button = (label) =>
-      app
-        .$('routines-list')
-        .querySelectorAll('.text-button')
-        .find((b) => b.textContent === label);
-    button('History (2)').click();
-    const runs = app.$('routines-list').querySelectorAll('.routine-run');
-    assert.equal(runs.length, 2);
-    assert.match(runs[0].querySelector('summary').textContent, /Done.*42s · 3 steps/);
-    assert.match(runs[1].querySelector('summary').textContent, /Failed/);
-    assert.equal(
-      runs[0].querySelector('.routine-run-answer strong').textContent,
-      '3',
-      'the answer is drawn as Markdown',
-    );
-    assert.deepEqual(
-      runs[0].querySelectorAll('.chat-tool-badge').map((b) => b.textContent),
-      ['navigate', 'analyze_page', 'click'],
-    );
-    button('Hide history').click();
-    assert.equal(app.$('routines-list').querySelectorAll('.routine-run').length, 0);
-  });
-
-  it('keeps a history and an opened run open when the list is redrawn', async () => {
-    const app = await pane([INBOX]);
-    app
-      .$('routines-list')
-      .querySelectorAll('.text-button')
-      .find((b) => b.textContent === 'History (2)')
-      .click();
-    const details = app.$('routines-list').querySelector('.routine-run details');
-    details.open = true;
-    app.fire(details, 'toggle');
-    app.bridge.emit('RoutinesChanged', { routines: [INBOX], running: null });
-    assert.equal(app.$('routines-list').querySelector('.routine-run details').open, true);
-  });
-
-  it('says why a run has no answer: stopped, or cut short by quitting', async () => {
-    const runs = [
-      { ...DONE_RUN, id: 'a', status: 'stopped', result: '' },
-      { ...DONE_RUN, id: 'b', status: 'interrupted', result: '', finishedAt: undefined },
-    ];
-    const app = await pane([{ ...INBOX, runs }]);
-    app
-      .$('routines-list')
-      .querySelectorAll('.text-button')
-      .find((b) => /History/.test(b.textContent))
-      .click();
-    const answers = app
-      .$('routines-list')
-      .querySelectorAll('.routine-run-answer')
-      .map((a) => a.textContent);
-    assert.deepEqual(answers, ['Stopped before it answered.', 'Oya closed before this run finished.']);
-  });
-
-  it('escapes what a run answered', async () => {
-    const app = await pane([{ ...INBOX, runs: [{ ...DONE_RUN, result: '<img src=x onerror=alert(1)>' }] }]);
-    app
-      .$('routines-list')
-      .querySelectorAll('.text-button')
-      .find((b) => /History/.test(b.textContent))
-      .click();
-    assert.equal(app.$('routines-list').querySelector('.routine-run-answer img'), null);
-  });
-
-  it('says a routine is running, and offers Stop for it', async () => {
+  it('invites a first routine on an empty project', async () => {
     const app = await pane();
-    const running = { ...INBOX, runs: [{ id: 'run2', startedAt: Date.now(), status: 'running' }, ...INBOX.runs] };
-    app.bridge.emit('RoutinesChanged', { routines: [running], running: 'r1' });
-    assert.match(rows(app)[0], /Inbox.*Running.*Stop/);
-    app.$('routines-list').querySelector('.text-button').click();
-    assert.equal(app.bridge.called('stopChat').length, 1);
+    assert.match(app.$('routines-list').textContent, /No routines yet/);
   });
 
-  it('saves a new routine from the form, then empties it', async () => {
-    const app = await pane([], { routines: [INBOX], running: null });
-    app.$('routine-name').value = 'Inbox';
-    app.$('routine-prompt').value = 'Check my inbox';
-    app.$('routine-n').value = '2';
+  it('says what a routine is doing in one line, with its last run as a pill', async () => {
+    const app = await pane(snapshot([INBOX]));
+    assert.match(status(app), /^Every 2 hours · Next /);
+    assert.match(card(app).querySelector('.run-status').textContent, /^Done · /);
+    assert.equal(button(app, 'switch').getAttribute('aria-checked'), 'true');
+  });
+
+  it('says a routine is off, due and waiting with the reason, or running here or elsewhere', async () => {
+    const due = { ...INBOX, nextRunAt: Date.now() - 1 };
+    const waiting = await pane(snapshot([due], { busy: 'Finish recording first.' }));
+    assert.equal(status(waiting), 'Every 2 hours · Waiting: Finish recording first.');
+    assert.equal(button(waiting, 'routine-action').disabled, true);
+    const off = await pane(snapshot([{ ...INBOX, enabled: false, nextRunAt: null }]));
+    assert.equal(status(off), 'Every 2 hours · Off');
+    const running = { ...INBOX, runs: [{ id: 'now', status: 'running', startedAt: Date.now(), by: 'b2' }] };
+    const elsewhere = await pane(snapshot([running]));
+    assert.equal(status(elsewhere), 'Running on another Oya browser');
+    assert.equal(button(elsewhere, 'routine-action'), null, 'no Run now while another browser runs it');
+  });
+
+  it('offers Stop only for a run on this browser, and stops that routine', async () => {
+    const running = { ...INBOX, runs: [{ id: 'now', status: 'running', startedAt: Date.now(), by: 'b1' }] };
+    const app = await pane(snapshot([running], { running: 'r1' }));
+    assert.match(status(app), /^Running on this browser · /);
+    app.fire(button(app, 'routine-action'), 'click');
+    await settle();
+    assert.deepEqual(plain(app.bridge.called('stopRoutine')), [['r1']]);
+  });
+
+  it('turns a routine off with the switch, and runs it now', async () => {
+    const app = await pane(snapshot([INBOX]));
+    app.fire(button(app, 'switch'), 'click');
+    app.fire(button(app, 'routine-action'), 'click');
+    await settle();
+    assert.deepEqual(plain(app.bridge.called('setRoutineEnabled')), [['r1', false]]);
+    assert.deepEqual(plain(app.bridge.called('runRoutineNow')), [['r1']]);
+  });
+
+  it('shows why Run now could not start under the routine', async () => {
+    const app = await pane(snapshot([INBOX]), { error: 'Another browser already ran this routine.' });
+    app.fire(button(app, 'routine-action'), 'click');
+    await settle();
+    assert.equal(card(app).querySelector('.routine-note').textContent, 'Another browser already ran this routine.');
+  });
+
+  it('opens history on the latest run, and says which runs another browser made', async () => {
+    const app = await pane(snapshot([INBOX]));
+    app.fire(button(app, 'routine-history-toggle'), 'click');
+    const runs = card(app).querySelectorAll('.routine-run details');
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0].open, true);
+    assert.match(runs[0].textContent, /3 steps/);
+    assert.match(runs[1].textContent, /another browser/);
+  });
+
+  it('asks before deleting, and deletes on Delete', async () => {
+    const app = await pane(snapshot([INBOX]), snapshot([]));
+    app.fire(button(app, 'routine-more'), 'click');
+    const items = card(app).querySelectorAll('[role="menuitem"]');
+    assert.deepEqual(
+      items.map((i) => i.textContent),
+      ['Edit', 'Clear history', 'Delete'],
+    );
+    app.fire(items[2], 'click');
+    assert.equal(app.bridge.called('deleteRoutine').length, 0);
+    app.fire(card(app).querySelector('.routine-confirm .routine-action'), 'click');
+    await settle();
+    assert.deepEqual(plain(app.bridge.called('deleteRoutine')), [['r1']]);
+    assert.match(app.$('routines-list').textContent, /No routines yet/);
+  });
+
+  it('says so when offline', async () => {
+    const app = await pane(snapshot([], { online: false }));
+    assert.equal(app.$('routines-banner').hidden, false);
+    assert.match(app.$('routines-banner').textContent, /Offline/);
+  });
+});
+
+describe('the routine editor', () => {
+  it('saves a new daily routine, on', async () => {
+    const app = await pane(snapshot([]), snapshot([INBOX]));
+    app.fire(app.$('routine-new'), 'click');
+    app.$('routine-name').value = 'Standup';
+    app.$('routine-prompt').value = 'Summarize Slack';
+    app.fire(app.$('routine-kind').querySelector('[data-kind="daily"]'), 'click', { bubbles: true });
+    app.$('routine-at').value = '08:30';
     app.fire(app.$('routine-form'), 'submit');
     await settle();
-    assert.deepEqual(plain(app.bridge.called('saveRoutine')[0][0]), {
-      name: 'Inbox',
-      prompt: 'Check my inbox',
+    const [[saved]] = plain(app.bridge.called('saveRoutine'));
+    assert.deepEqual(saved, {
+      name: 'Standup',
+      prompt: 'Summarize Slack',
       enabled: true,
-      schedule: { kind: 'every', n: 2, unit: 'hours' },
+      schedule: { kind: 'daily', at: '08:30' },
     });
-    assert.equal(app.$('routine-name').value, '');
-    assert.match(rows(app)[0], /Inbox/);
+    assert.equal(app.$('routine-form').hidden, true);
   });
 
-  it('switches the form to a time of day for a daily routine', async () => {
-    const app = await pane();
-    app.$('routine-kind').value = 'daily';
-    app.fire(app.$('routine-kind'), 'change');
-    assert.deepEqual([app.$('routine-n').hidden, app.$('routine-at').hidden], [true, false]);
-    app.$('routine-at').value = '06:45';
-    assert.deepEqual(plain(app.run('Routines.schedule()')), { kind: 'daily', at: '06:45' });
-  });
-
-  it('edits a routine in place, keeping its id and whether it is paused', async () => {
-    const app = await pane([{ ...INBOX, enabled: false }]);
-    const edit = app
-      .$('routines-list')
-      .querySelectorAll('.text-button')
-      .find((b) => b.textContent === 'Edit');
-    edit.click();
+  it('edits a routine in place, keeping its id and whether it is on', async () => {
+    const app = await pane(snapshot([{ ...INBOX, enabled: false }]));
+    app.fire(button(app, 'routine-more'), 'click');
+    app.fire(card(app).querySelector('[role="menuitem"]'), 'click');
     assert.equal(app.$('routine-name').value, 'Inbox');
     assert.equal(app.$('routine-form-title').textContent, 'Edit routine');
-    app.$('routine-name').value = 'Inbox twice';
     app.fire(app.$('routine-form'), 'submit');
     await settle();
-    const saved = plain(app.bridge.called('saveRoutine')[0][0]);
-    assert.deepEqual([saved.id, saved.name, saved.enabled], ['r1', 'Inbox twice', false]);
+    const [[saved]] = plain(app.bridge.called('saveRoutine'));
+    assert.deepEqual([saved.id, saved.enabled, saved.schedule], ['r1', false, INBOX.schedule]);
   });
 
-  it('shows why a routine was refused, keeping what was typed', async () => {
-    const app = loadRenderer({
-      answers: {
-        saveRoutine: () => {
-          throw new Error(
-            "Error invoking remote method 'save-routine': Error: A routine needs a name, a prompt and a valid schedule.",
-          );
-        },
-      },
-    });
-    await settle();
-    app.$('routine-name').value = 'Inbox';
+  it('keeps what was typed and says why when the server refuses it', async () => {
+    const app = await pane(snapshot([]), { error: '"Daily" runs at a time written HH:MM.' });
+    app.fire(app.$('routine-new'), 'click');
+    app.$('routine-name').value = 'Standup';
     app.fire(app.$('routine-form'), 'submit');
     await settle();
-    assert.equal(app.$('routine-error').hidden, false);
-    assert.equal(app.$('routine-error').textContent, 'A routine needs a name, a prompt and a valid schedule.');
-    assert.equal(app.$('routine-name').value, 'Inbox');
+    assert.equal(app.$('routine-error').textContent, '"Daily" runs at a time written HH:MM.');
+    assert.equal(app.$('routine-form').hidden, false);
+    assert.equal(app.$('routine-name').value, 'Standup');
   });
 
-  it('runs, pauses and deletes a routine from its row', async () => {
-    const app = await pane([INBOX]);
-    const button = (label) =>
-      app
-        .$('routines-list')
-        .querySelectorAll('.text-button')
-        .find((b) => b.textContent === label);
-    button('Run now').click();
-    button('Pause').click();
-    button('Delete').click();
-    await settle();
-    assert.deepEqual(app.bridge.called('runRoutineNow'), [['r1']]);
-    assert.equal(plain(app.bridge.called('saveRoutine')[0][0]).enabled, false);
-    assert.deepEqual(app.bridge.called('deleteRoutine'), [['r1']]);
+  it('shows a routine name as text, never as markup', async () => {
+    const app = await pane(snapshot([{ ...INBOX, name: '<img src=x onerror=alert(1)>' }]));
+    assert.equal(card(app).querySelectorAll('img').length, 0);
+    assert.match(card(app).textContent, /<img src=x/);
   });
 });

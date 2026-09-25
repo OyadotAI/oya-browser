@@ -6,6 +6,7 @@ import { validateBaseUrl } from '../../platform/runtime-config.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { validateEcs, ecsEnv, viewEcs } from './ecs.ts';
+import { LLM_DEFAULTS } from './llm-catalog.ts';
 
 /**
  * A closed set, rejected rather than ignored. The SDK types these fields, but the CLI's
@@ -111,16 +112,8 @@ export const PROVIDER_CHOICES = [
   { id: 'cdp', label: 'Your own Chrome (CDP)', needs: ['cdp_ws_url'] },
 ];
 
-/** Sensible defaults per LLM provider, so onboarding is key + model and nothing else. */
-export const LLM_DEFAULTS = {
-  openai: { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  // Claude's own Messages API (platform/llm/anthropic.ts): thinking, caching and parallel tool calls.
-  anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-opus-5' },
-  gemini: { base: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-3.8-flash' },
-  // Gemini Enterprise (ex-Vertex AI) in express mode: a global endpoint with no project
-  // or location, and an API key that only authenticates against native generateContent,
-  // the OpenAI-compatible .../endpoints/openapi path wants an OAuth token instead. llm.js
-  // translates for this base URL. A project-scoped enterprise endpoint still works: set
-  // openai_base_url to .../endpoints/openapi and use an access token as the key.
-  vertex: { base: 'https://aiplatform.googleapis.com/v1/publishers/google', model: 'gemini-2.5-flash' },
-};
+/** The settings that decide which model a key runs on; a change to any of them is told to the key's desktop apps. */
+export const LLM_FIELDS = ['llm_provider', 'openai_api_key', 'openai_base_url', 'chat_model'];
+
+// The LLM providers and their models live in llm-catalog.ts; re-exported for existing imports.
+export { LLM_DEFAULTS } from './llm-catalog.ts';

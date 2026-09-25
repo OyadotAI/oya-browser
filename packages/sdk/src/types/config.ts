@@ -12,7 +12,9 @@ export type LlmProvider =
   | 'gemini'
   /** Gemini Enterprise, ex-Vertex AI. Express mode by default; set `openai_base_url` to a
    *  project-scoped `.../endpoints/openapi` endpoint to use an enterprise project. */
-  | 'vertex';
+  | 'vertex'
+  /** OpenRouter: one key for many vendors' models, named vendor/model (e.g. 'anthropic/claude-sonnet-5'). */
+  | 'openrouter';
 
 /**
  * Which runtime this key's `'oya-cloud'` browsers run on. `'docker'` and `'k8s'`
@@ -173,5 +175,30 @@ export interface Config extends Omit<
     needs: string[];
     /** Whether those fields are set. */
     configured: boolean;
+  }>;
+  /** Every LLM provider and the models it offers; the console, desktop app and CLI build their pickers from this. */
+  llm_catalog: LlmCatalogEntry[];
+}
+
+/** One LLM provider in `Config.llm_catalog`. */
+export interface LlmCatalogEntry {
+  /** The `llm_provider` value. */
+  id: LlmProvider;
+  /** Its name. */
+  label: string;
+  /** How its key looks. */
+  hint: string;
+  /** Where to get a key. */
+  keysUrl: string;
+  /** Its endpoint. */
+  base: string;
+  /** The model a key runs on when it sets no `chat_model`. */
+  model: string;
+  /** The models to offer (OpenRouter's is its live list); any other id works as `chat_model` too. */
+  models: Array<{
+    /** The id the provider's API expects. */
+    id: string;
+    /** A readable name. */
+    label: string;
   }>;
 }

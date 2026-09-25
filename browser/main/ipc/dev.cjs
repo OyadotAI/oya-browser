@@ -95,28 +95,78 @@ function renderKeptPage(_ctx, _e, analysis, format) {
   return renderPage(analysis, format);
 }
 
-/** The providers Ask can set a key for; the server fills in each one's model and address. */
-const MODEL_PROVIDERS = ['anthropic', 'openai', 'gemini'];
+/**
+ * What Ask offers against a server too old to send its catalog: the providers
+ * it has always taken, each on its default model (any other is typed by hand).
+ */
+const LEGACY_CATALOG = [
+  ['anthropic', 'Claude', 'sk-ant-...', 'https://console.anthropic.com/settings/keys', 'claude-opus-5'],
+  ['openai', 'OpenAI', 'sk-...', 'https://platform.openai.com/api-keys', 'gpt-4o-mini'],
+  ['gemini', 'Gemini', 'AIza...', 'https://aistudio.google.com/apikey', 'gemini-3.8-flash'],
+].map(([id, label, hint, keysUrl, model]) => ({
+  id,
+  label,
+  hint,
+  keysUrl,
+  model,
+  models: [{ id: model, label: model }],
+}));
 
-/** Whether this browser has a project, and whether the project has a model; unsure counts as having one. */
+/** The server's provider catalog, or the legacy one from a server that has none. */
+const catalogOf = (config) => (config.llm_catalog?.length ? config.llm_catalog : LEGACY_CATALOG);
+
+/** The provider a key runs on: the one it saved, else the catalog entry whose endpoint it is using. */
+function currentProvider(config) {
+  if (config.llm_provider) return config.llm_provider;
+  return catalogOf(config).find((p) => p.base && p.base === config.effective?.baseUrl)?.id || '';
+}
+
+/** What the model card needs from the server's config. */
+function statusOf(config) {
+  const { hasLlmKey, model } = config.effective || {};
+  return { hasLlmKey: !!hasLlmKey, provider: currentProvider(config), model, catalog: catalogOf(config) };
+}
+
+/** Whether this browser has a project, and the project's model as the server has it; unsure counts as having one. */
 async function modelStatus(ctx) {
   const signedIn = !!ctx.config.values.apiKey;
   if (!canCallServer(ctx)) return { signedIn, hasLlmKey: true };
   const config = await getFromApi(ctx, 'config').catch(() => null);
-  return { signedIn, hasLlmKey: !config || !!config.effective?.hasLlmKey };
+  return config ? { signedIn, ...statusOf(config) } : { signedIn, hasLlmKey: true };
 }
 
-/** Saves the project's model key from Ask, on the provider's defaults (no leftover model or address). */
-async function saveModelKey(ctx, _e, provider, key) {
+/**
+ * The POST /config body for a choice made in Ask, or `{ error }`. The model is
+ * always sent (never nulled behind the person's back), a key only when one was
+ * typed, and the endpoint is reset only when the provider changes, so saving
+ * here never undoes a model or gateway chosen in the console.
+ */
+function modelUpdate(config, { provider, model, key } = {}) {
   const secret = typeof key === 'string' ? key.trim() : '';
-  if (!MODEL_PROVIDERS.includes(provider) || !secret) return { error: 'Pick a provider and paste its API key.' };
+  if (!catalogOf(config).some((p) => p.id === provider)) return { error: 'Pick a provider.' };
+  const changed = provider !== currentProvider(config);
+  if (!secret && (changed || !config.effective?.hasLlmKey)) return { error: 'Paste your API key for this provider.' };
+  const body = { llm_provider: provider, chat_model: (typeof model === 'string' && model.trim()) || null };
+  if (secret) body.openai_api_key = secret;
+  if (changed) body.openai_base_url = null;
+  return body;
+}
+
+/** Saves the provider, model and (when given) key chosen in Ask to the project, checked against what the server has now. */
+async function saveModelKey(ctx, _e, choice) {
   if (!canCallServer(ctx)) return { error: 'Not connected to server' };
-  const body = { llm_provider: provider, openai_api_key: secret, chat_model: null, openai_base_url: null };
-  return postToApi(ctx, 'config', body).then(
+  const config = await getFromApi(ctx, 'config').catch(() => null);
+  if (!config) return { error: 'Could not read your project settings. Try again.' };
+  const body = modelUpdate(config, choice);
+  return body.error ? body : saveConfig(ctx, body);
+}
+
+/** Posts settings, as `{ ok }` or the server's reason. */
+const saveConfig = (ctx, body) =>
+  postToApi(ctx, 'config', body).then(
     () => ({ ok: true }),
     (e) => ({ error: e.message }),
   );
-}
 
 /** Channel → handler. */
 const DEV_HANDLERS = {

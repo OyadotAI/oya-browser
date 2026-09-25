@@ -38,6 +38,7 @@ const ShellIcons = {
     power: 'M12 3v8M6.4 6.4a8 8 0 1 0 11.2 0',
     attach: 'm20 11-8.5 8.5a5 5 0 0 1-7-7L13 4a3.3 3.3 0 0 1 4.7 4.7L9.2 17.2a1.7 1.7 0 0 1-2.4-2.4L14.5 7',
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+    search: 'M17 11a6 6 0 1 1-12 0 6 6 0 0 1 12 0ZM20 20l-4.35-4.35',
   },
 
   /** The icon each Actions button shows. */

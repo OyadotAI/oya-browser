@@ -216,41 +216,93 @@ describe('IPC handlers', () => {
     fetch.mock.restore();
   });
 
-  it('saves the model key from Ask on the provider defaults, and quotes the server when it refuses', async () => {
+  /** A server config: the key runs on OpenAI's gpt-4.1 with its own key, and offers two providers. */
+  const SERVER = {
+    llm_provider: 'openai',
+    effective: { hasLlmKey: true, model: 'gpt-4.1', baseUrl: 'https://api.openai.com/v1' },
+    llm_catalog: [
+      { id: 'openai', base: 'https://api.openai.com/v1', model: 'gpt-4o-mini', models: [] },
+      { id: 'openrouter', base: 'https://openrouter.ai/api/v1', model: 'a/b', models: [] },
+    ],
+  };
+
+  /** Fakes the server: GET /config answers `config`, POST /config answers ok. Returns the fetch mock. */
+  const fakeServer = (config = SERVER) => {
     ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
-    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ ok: true }) }));
-    assert.deepEqual(await call('save-model-key', 'anthropic', ' sk-ant-1 '), { ok: true });
-    const [url, init] = fetch.mock.calls[0].arguments;
-    assert.equal(url, 'http://s.test/api/config');
-    assert.deepEqual(JSON.parse(init.body), {
-      llm_provider: 'anthropic',
-      openai_api_key: 'sk-ant-1',
-      chat_model: null,
+    return mock.method(globalThis, 'fetch', async (_url, init) => ({
+      ok: true,
+      json: async () => (init?.method === 'POST' ? { ok: true } : config),
+    }));
+  };
+
+  /** The body of the POST /config a save sent. */
+  const posted = (fetch) =>
+    JSON.parse(fetch.mock.calls.find((c) => c.arguments[1]?.method === 'POST').arguments[1].body);
+
+  it('keeps the model chosen in Ask, and needs no key while the provider stays the same', async () => {
+    const fetch = fakeServer();
+    assert.deepEqual(await call('save-model-key', { provider: 'openai', model: 'gpt-6-sol', key: '' }), { ok: true });
+    assert.deepEqual(posted(fetch), { llm_provider: 'openai', chat_model: 'gpt-6-sol' });
+    fetch.mock.restore();
+  });
+
+  it('asks for a key when the provider changes, and then resets the endpoint to the new provider', async () => {
+    const fetch = fakeServer();
+    assert.match((await call('save-model-key', { provider: 'openrouter', model: 'a/b', key: '' })).error, /API key/);
+    assert.deepEqual(await call('save-model-key', { provider: 'openrouter', model: 'a/b', key: ' sk-or-1 ' }), {
+      ok: true,
+    });
+    assert.deepEqual(posted(fetch), {
+      llm_provider: 'openrouter',
+      chat_model: 'a/b',
+      openai_api_key: 'sk-or-1',
       openai_base_url: null,
     });
-    fetch.mock.mockImplementation(async () => ({ ok: false, status: 403, json: async () => ({ error: 'No' }) }));
-    assert.deepEqual(await call('save-model-key', 'openai', 'sk-1'), { error: 'No' });
     fetch.mock.restore();
   });
 
-  it('refuses a model key with no key or an unknown provider, before calling the server', async () => {
-    const fetch = mock.method(globalThis, 'fetch', async () => assert.fail('no call'));
-    assert.match((await call('save-model-key', 'anthropic', '  ')).error, /paste its API key/);
-    assert.match((await call('save-model-key', 'evil', 'sk-1')).error, /Pick a provider/);
+  it('refuses a provider the server does not offer, and quotes the server when it refuses', async () => {
+    const fetch = fakeServer();
+    assert.match((await call('save-model-key', { provider: 'evil', model: 'x', key: 'k' })).error, /Pick a provider/);
+    fetch.mock.mockImplementation(async (_url, init) =>
+      init?.method === 'POST'
+        ? { ok: false, status: 403, json: async () => ({ error: 'No' }) }
+        : { ok: true, json: async () => SERVER },
+    );
+    assert.deepEqual(await call('save-model-key', { provider: 'openai', model: 'm', key: 'sk-1' }), { error: 'No' });
     fetch.mock.restore();
   });
 
-  it('tells Ask whether the project has a model, and counts an unreachable server as having one', async () => {
-    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
-    const answer = { effective: { hasLlmKey: false } };
-    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => answer }));
-    assert.deepEqual(await call('model-status'), { signedIn: true, hasLlmKey: false });
+  it('tells Ask the provider, model and catalog the server runs on, and counts an unreachable server as having one', async () => {
+    const fetch = fakeServer();
+    assert.deepEqual(await call('model-status'), {
+      signedIn: true,
+      hasLlmKey: true,
+      provider: 'openai',
+      model: 'gpt-4.1',
+      catalog: SERVER.llm_catalog,
+    });
     fetch.mock.mockImplementation(async () => ({ ok: false, status: 500 }));
     assert.deepEqual(await call('model-status'), { signedIn: true, hasLlmKey: true });
     ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: '' };
     ctx.socket.ready = false;
     assert.deepEqual(await call('model-status'), { signedIn: false, hasLlmKey: true });
     fetch.mock.restore();
+  });
+
+  it('names the provider from the endpoint when the key saved none, and offers the old providers to an older server', async () => {
+    const fetch = fakeServer({
+      effective: { hasLlmKey: true, model: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
+    });
+    const status = await call('model-status');
+    assert.deepEqual(
+      status.catalog.map((p) => p.id),
+      ['anthropic', 'openai', 'gemini'],
+    );
+    fetch.mock.restore();
+    const fromHost = fakeServer({ ...SERVER, llm_provider: '' });
+    assert.equal((await call('model-status')).provider, 'openai');
+    fromHost.mock.restore();
   });
 
   it('sends attached files to the server as the chat data', async () => {

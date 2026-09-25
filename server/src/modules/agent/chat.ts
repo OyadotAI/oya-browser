@@ -55,7 +55,7 @@ const noLlm = () =>
 const bringYourOwn = () =>
   new HttpError(
     Status.UNPROCESSABLE,
-    'Agent keys bring their own LLM: POST /api/config {"llm_provider": "anthropic" | "openai" | "gemini", "openai_api_key": "<your provider key>"} (the field takes any provider\'s key; chat_model optional), then retry.',
+    `Agent keys bring their own LLM: POST /api/config {"llm_provider": ${keyConfig.llmProviderList()}, "openai_api_key": "<your provider key>"} (the field takes any provider's key; chat_model optional), then retry.`,
     { code: 'llm_bring_your_own' },
   );
 

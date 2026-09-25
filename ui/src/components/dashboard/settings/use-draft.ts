@@ -12,7 +12,7 @@ export function useDraft(config: KeyConfig | null) {
   const saved = (field: string) => savedField(config, field);
   const value = (field: string) => draft[field] ?? saved(field);
   const set = (field: string, next: string) => setDraft((previous) => withField(previous, field, next, saved(field)));
-  return { draft, setDraft, saved, value, set, dirty: Object.keys(draft).length > 0 };
+  return { config, draft, setDraft, saved, value, set, dirty: Object.keys(draft).length > 0 };
 }
 
 /** The form as sections see it. */

@@ -1,6 +1,6 @@
 /**
- * Fixed choices in the settings dialog: its sections, the model presets per
- * provider, and the names of browser-provider credentials.
+ * Fixed choices in the settings dialog: its sections, how a provider is told
+ * from its endpoint, and the names of browser-provider credentials.
  */
 import { Bell, Cpu, Monitor, ShieldCheck, Webhook } from 'lucide-react';
 
@@ -16,36 +16,8 @@ export const SECTIONS = [
 /** A settings section id. */
 export type Section = (typeof SECTIONS)[number]['id'];
 
-/** One preset model in the picker. */
-export interface ModelPreset {
-  /** The id the provider's API expects. */
-  id: string;
-  /** What the picker shows. */
-  label: string;
-}
-
-/** Preset models offered for each LLM provider; anything else is a custom model id. */
-export const MODELS: Record<string, ModelPreset[]> = {
-  openai: [
-    { id: 'gpt-4o-mini', label: 'GPT-4o mini' },
-    { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
-    { id: 'gpt-4.1', label: 'GPT-4.1' },
-  ],
-  anthropic: [
-    { id: 'claude-opus-5', label: 'Claude Opus 5' },
-    { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-    { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-  ],
-  gemini: [
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
-    { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
-    { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (preview)' },
-  ],
-  vertex: [
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  ],
-};
+// The model presets come from the server's catalog (llmCatalog in ../config).
+export type { ModelPreset } from '../config';
 
 /**
  * With no provider saved, the base URL says which one the key talks to. Checked
@@ -55,6 +27,7 @@ export const PROVIDER_HOSTS: [host: string, provider: string][] = [
   ['anthropic.com', 'anthropic'],
   ['aiplatform.googleapis.com', 'vertex'],
   ['generativelanguage.googleapis.com', 'gemini'],
+  ['openrouter.ai', 'openrouter'],
 ];
 
 /** The provider assumed when nothing else says otherwise. */

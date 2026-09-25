@@ -12,6 +12,7 @@ import { Status } from '../../platform/http-status.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { track } from '../telemetry/index.ts';
 import { consoleUrl } from '../slack/service.ts';
+import { llmProviderList } from '../config/service.ts';
 import { claimUrl, clientAddress, issueChallenge, registerAgentKey, spendChallenge, validEmail } from './service.ts';
 
 /** The agent signup routes, mounted with the other auth routes. */
@@ -20,7 +21,7 @@ export const router = Router({ caseSensitive: true });
 /** How an agent key gets a model: Oya runs none for it. */
 const BRING_YOUR_OWN_LLM =
   'Oya runs no model for agent keys. For /chat, set yours once: POST /api/config ' +
-  '{"llm_provider": "anthropic" | "openai" | "gemini", "openai_api_key": "<your key>"}. ' +
+  `{"llm_provider": ${llmProviderList()}, "openai_api_key": "<your key>"}. ` +
   'Driving the browser yourself (MCP page tools, /command) needs none.';
 
 /** The favor asked once the key is claimed: relayed to the person, never done on their accounts unasked. */

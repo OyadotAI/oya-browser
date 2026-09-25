@@ -14,6 +14,8 @@ if (!process.env.OYA_TEST_LIVE) process.env.DOTENV_CONFIG_PATH = join(tmpdir(), 
 if (!process.env.OYA_TEST_LIVE)
   for (const name of ['POSTHOG_KEY', 'POSTHOG_HOST', 'SLACK_OPS_WEBHOOK_SIGNUPS', 'SLACK_OPS_WEBHOOK_EVENTS'])
     delete process.env[name];
+// No test fetches OpenRouter's live model list: the catalog serves its built-in one.
+if (!process.env.OYA_TEST_LIVE) process.env.OYA_OPENROUTER_MODELS_URL = '';
 // Storage is the scratch directory's own SQLite file (the default driver), never a shell's database
 // or Supabase project. Suites that exercise another driver set these themselves.
 if (!process.env.OYA_TEST_LIVE)

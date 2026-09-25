@@ -1,30 +1,21 @@
 /**
  * Routines: saved prompts the agent runs on a schedule, "every N minutes or
- * hours" or "daily at HH:MM", while the app is open and connected. They live in
- * config.json beside the other settings. A run is an ordinary Ask (control is
- * lent to the agent, Stop stops it), one at a time, never over a chat or a
- * recording. A run missed while the app was closed fires once, on the next tick.
- * Each routine keeps its last ROUTINE_RUNS_KEPT runs: when, how it ended, the
- * steps the agent took and what it answered.
+ * hours" or "daily at HH:MM". They belong to the project and live on the
+ * server with their history, so every desktop on the project shows the same
+ * list; this app runs them while it is open and connected. Before a run, the
+ * app claims it from the server, which gives each due run to exactly one
+ * desktop. A run is an ordinary Ask (control is lent to the agent), one at a
+ * time, never over a chat or a recording; a run missed while every desktop was
+ * closed fires once, on the next tick. Routines this app kept locally before
+ * they moved to the server are handed to the project on the first connect.
  *
- * ponytail: the history lives in config.json, capped per routine; move it to its
- * own file if routines or their answers grow past what a settings file should hold.
+ * ponytail: a run's ending that cannot reach the server (offline mid-run) is
+ * not retried; the server's lease marks it interrupted. Queue it if that matters.
  */
 const crypto = require('crypto');
 const { sendChat, STOPPED } = require('./ipc/dev.cjs');
-const {
-  ROUTINE_TICK_MS,
-  ROUTINE_UNIT_MS,
-  ROUTINE_MAX_EVERY,
-  ROUTINE_MAX_NAME,
-  ROUTINE_MAX_PROMPT,
-  ROUTINE_RESULT_CHARS,
-  ROUTINE_RUNS_KEPT,
-  ROUTINE_STEPS_KEPT,
-} = require('./constants.cjs');
-
-/** A daily time, 24-hour HH:MM. */
-const DAILY_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const { canCallServer, getFromApi, sendToApi } = require('./connection/server-api.cjs');
+const { ROUTINE_TICK_MS, ROUTINE_UNIT_MS, ROUTINE_RESULT_CHARS, ROUTINE_STEPS_KEPT } = require('./constants.cjs');
 
 /** The first moment after `since` that today's (or tomorrow's) HH:MM comes round. */
 function nextDaily(at, since) {
@@ -41,38 +32,19 @@ const NEXT_RUN = {
   daily: ({ at }, since) => nextDaily(at, since),
 };
 
-/** Schedule kind → whether a schedule from the renderer is well formed. */
-const VALID_SCHEDULE = {
-  every: ({ n, unit }) =>
-    Number.isInteger(n) && n >= 1 && n <= ROUTINE_MAX_EVERY && Object.hasOwn(ROUTINE_UNIT_MS, unit),
-  daily: ({ at }) => typeof at === 'string' && DAILY_TIME.test(at),
-};
-
-/** When `routine` is next due, counted from its last run (or its creation). */
+/** When `routine` is next due, counted from its last run (or its creation); null for a schedule this app does not know. */
 function nextRunAt(routine) {
   const { schedule } = routine;
+  if (!Object.hasOwn(NEXT_RUN, schedule?.kind)) return null;
   return NEXT_RUN[schedule.kind](schedule, routine.lastRunAt ?? routine.createdAt);
 }
 
-/** Whether `routine` should run at `now`. */
-const isDue = (routine, now) => routine.enabled && nextRunAt(routine) <= now;
+/** Whether `routine` should run at `now`: on, due, and not running anywhere. */
+const isDue = (routine, now) =>
+  routine.enabled && nextRunAt(routine) !== null && nextRunAt(routine) <= now && !runningRun(routine);
 
-/** A text of 1 to `max` characters, trimmed. */
-const boundedText = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
-
-/** Whether a routine the renderer sent is one this scheduler can keep. */
-function validRoutine(input) {
-  const schedule = input?.schedule;
-  if (!boundedText(input?.name, ROUTINE_MAX_NAME) || !boundedText(input?.prompt, ROUTINE_MAX_PROMPT)) return false;
-  return !!schedule && Object.hasOwn(VALID_SCHEDULE, schedule.kind) && VALID_SCHEDULE[schedule.kind](schedule);
-}
-
-/** Just the fields a schedule of its kind has, so nothing else from the renderer is stored. */
-function cleanSchedule(schedule) {
-  return schedule.kind === 'every'
-    ? { kind: 'every', n: schedule.n, unit: schedule.unit }
-    : { kind: 'daily', at: schedule.at };
-}
+/** The routine's run in progress, on any desktop, or undefined. */
+const runningRun = (routine) => (routine.runs || []).find((run) => run.status === 'running');
 
 /** How a run ended, from the agent's answer. */
 function statusOf(answer) {
@@ -80,124 +52,175 @@ function statusOf(answer) {
   return answer?.error || answer?.failed ? 'failed' : 'done';
 }
 
-/** A finished run's record: when it ended, how, the steps it took and what it answered. */
-function finishedRun(answer) {
+/** A finished run's ending, as the server records it: how, what it answered, and the steps it took. */
+function endingOf(answer) {
   const text = answer?.error && answer.error !== STOPPED ? `Error: ${answer.error}` : answer?.text || '';
   const steps = (answer?.toolCalls || []).map((call) => call.name).slice(0, ROUTINE_STEPS_KEPT);
-  return { finishedAt: Date.now(), status: statusOf(answer), result: text.slice(0, ROUTINE_RESULT_CHARS), steps };
+  return { status: statusOf(answer), result: text.slice(0, ROUTINE_RESULT_CHARS), steps };
 }
 
-/** `routine` with `run` first in its history, the oldest past the cap dropped. */
-const withRun = (routine, run) => ({ ...routine, runs: [run, ...(routine.runs || [])].slice(0, ROUTINE_RUNS_KEPT) });
-
-/** `routine` with its run `runId` changed by `changes`. */
-const withRunChanged = (routine, runId, changes) => ({
-  ...routine,
-  runs: (routine.runs || []).map((run) => (run.id === runId ? { ...run, ...changes } : run)),
-});
-
-/** A run the app quit in the middle of: it will never finish, so it says it was interrupted. */
-const interrupted = (routine) => ({
-  ...routine,
-  runs: (routine.runs || []).map((run) => (run.status === 'running' ? { ...run, status: 'interrupted' } : run)),
-});
-
-/** The routine to keep for a valid `input`: `old`'s id and history (or new ones), the input's settings. */
-function routineFrom(input, old) {
-  return {
-    ...(old || { id: crypto.randomUUID(), createdAt: Date.now() }),
-    name: input.name.trim(),
-    prompt: input.prompt.trim(),
-    schedule: cleanSchedule(input.schedule),
-    enabled: input.enabled !== false,
-  };
+/** What Run now and the pane say when this app cannot run a routine now, or '' when it can. */
+function busyReason(ctx, running) {
+  if (!canCallServer(ctx)) return 'Connect to Oya to run routines.';
+  if (running) return 'Another routine is running. Stop it first.';
+  if (ctx.recorder.recording) return 'Finish recording first.';
+  return ctx.chatAbort ? 'The agent is busy with an Ask. Stop it first.' : '';
 }
 
-/** The saved routines and the timer that runs them. */
+/** The project's routines, as this app last read them, and the timer that runs the due ones. */
 class Routines {
   /** `ctx` is the main-process context (see main.js); `run` asks the agent (sendChat, faked in tests). */
   constructor(ctx, run = sendChat) {
-    /** The main-process context. */
-    this.ctx = ctx;
-    /** Asks the agent: `(ctx, event, messages)` → its answer. */
-    this.run = run;
-    /** The id of the routine running now, or null. */
-    this.running = null;
+    Object.assign(this, { ctx, run });
+    /** The project's routines, as last read from the server. */
+    this.list = [];
+    /** The routine and run this app is running now, or null. */
+    this.current = null;
+    /** Why the list could not be read or changed last, or ''. */
+    this.error = '';
   }
 
-  /** The saved routines, oldest first. */
-  list() {
-    return this.ctx.config.values.routines || [];
-  }
-
-  /** The list, each with when it next runs (null when paused), and the one running, as the Routines pane shows them. */
+  /** The list with each routine's next run, and what this app is doing, as the Routines pane shows it. */
   snapshot() {
-    const routines = this.list().map((r) => ({ ...r, nextRunAt: r.enabled ? nextRunAt(r) : null }));
-    return { routines, running: this.running };
+    const routines = this.list.map((r) => ({ ...r, nextRunAt: r.enabled ? nextRunAt(r) : null }));
+    const running = this.current?.routineId || null;
+    const state = { online: canCallServer(this.ctx), error: this.error, busy: busyReason(this.ctx, running) };
+    return { routines, running, browserId: this.ctx.socket.browserId, ...state };
   }
 
-  /** Saves `routines` and tells the shell. */
-  store(routines) {
-    this.ctx.config.values.routines = routines;
-    this.ctx.config.save();
+  /** Tells the pane what changed. */
+  publish() {
     this.ctx.shell.send('routines-changed', this.snapshot());
+    return this.snapshot();
   }
 
-  /** Marks runs the last quit cut short, then checks for a due routine every tick, for as long as the app runs. */
+  /** Checks for a due routine every tick, for as long as the app runs. */
   start() {
-    if (this.list().some((r) => r.runs?.some((run) => run.status === 'running')))
-      this.store(this.list().map(interrupted));
-    setInterval(() => this.tick(), ROUTINE_TICK_MS).unref?.();
+    setInterval(() => void this.tick(), ROUTINE_TICK_MS).unref?.();
   }
 
-  /** Adds a routine, or replaces the one with its id; its run history is kept. */
+  /** Re-reads the project's routines (handing over local ones first); answers the snapshot. */
+  async refresh() {
+    if (!canCallServer(this.ctx)) return this.publish();
+    this.error = await this.load().then(
+      () => '',
+      (e) => e.message,
+    );
+    return this.publish();
+  }
+
+  /** Hands over local routines, reads the project's, and closes out runs a quit left behind. */
+  async load() {
+    await this.handOverLocal();
+    this.list = (await getFromApi(this.ctx, 'routines')).routines || [];
+    await this.markInterrupted();
+  }
+
+  /** Routines kept in config.json before they moved to the server: given to this project once, then dropped here. */
+  async handOverLocal() {
+    const local = this.ctx.config.values.routines;
+    if (!local?.length) return;
+    await sendToApi(this.ctx, 'POST', 'routines/import', { routines: local });
+    delete this.ctx.config.values.routines;
+    this.ctx.config.save();
+  }
+
+  /** Runs the server shows running on this browser that this app is not running: the app quit mid-run, so they were interrupted. */
+  async markInterrupted() {
+    const mine = (r) =>
+      (r.runs || []).filter((run) => run.status === 'running' && run.by === this.ctx.socket.browserId);
+    const orphans = this.list.flatMap((r) => mine(r).map((run) => [r.id, run.id]));
+    const stale = orphans.filter(([, runId]) => runId !== this.current?.runId);
+    for (const [id, runId] of stale) await this.end(id, runId, { status: 'interrupted' });
+    if (stale.length) this.list = (await getFromApi(this.ctx, 'routines')).routines || [];
+  }
+
+  /** Sends one change to the server and re-reads the list; answers the snapshot, or `{ error }` saying why not. */
+  async change(method, route, body) {
+    if (!canCallServer(this.ctx)) return { error: 'Connect to Oya to change routines.' };
+    try {
+      await sendToApi(this.ctx, method, route, body);
+    } catch (e) {
+      return { error: e.message };
+    }
+    return this.refresh();
+  }
+
+  /** Adds a routine, or changes the one with its id (its history is kept). */
   save(input) {
-    if (!validRoutine(input)) throw new Error('A routine needs a name, a prompt and a valid schedule.');
-    const old = this.list().find((r) => r.id === input.id);
-    const routine = routineFrom(input, old);
-    this.store(old ? this.list().map((r) => (r.id === old.id ? routine : r)) : [...this.list(), routine]);
-    return this.snapshot();
+    const { id, name, prompt, schedule, enabled } = input || {};
+    const body = { name, prompt, schedule, enabled };
+    return id
+      ? this.change('PATCH', `routines/${encodeURIComponent(id)}`, body)
+      : this.change('POST', 'routines', body);
   }
 
-  /** Forgets the routine with this id. */
+  /** Deletes a routine and its history. */
   remove(id) {
-    this.store(this.list().filter((r) => r.id !== id));
-    return this.snapshot();
+    return this.change('DELETE', `routines/${encodeURIComponent(id)}`);
   }
 
-  /** Replaces one routine with `change(routine)` and saves. */
-  update(id, change) {
-    this.store(this.list().map((r) => (r.id === id ? change(r) : r)));
+  /** Turns a routine's schedule on or off; a run in progress is not stopped (that is Stop). */
+  setEnabled(id, enabled) {
+    return this.change('PATCH', `routines/${encodeURIComponent(id)}`, { enabled: !!enabled });
   }
 
-  /** Whether a routine may start now: connected, and nothing else is driving the browser. */
-  idle() {
-    return this.ctx.socket.ready && !this.ctx.chatAbort && !this.ctx.recorder.recording && !this.running;
+  /** Clears a routine's finished runs. */
+  clearHistory(id) {
+    return this.change('DELETE', `routines/${encodeURIComponent(id)}/runs`);
   }
 
-  /** Runs the first due routine, if the browser is free. */
+  /** Stops this app's run of routine `id`, and only that; answers whether one was stopped. */
+  stop(id) {
+    if (this.current?.routineId !== id) return false;
+    this.ctx.chatAbort?.abort();
+    return true;
+  }
+
+  /** Re-reads the routines, then runs the first due one when this app is free. */
   async tick(now = Date.now()) {
-    const due = this.list().find((r) => isDue(r, now));
-    if (due) await this.runNow(due.id);
+    if (!canCallServer(this.ctx)) return;
+    await this.refresh();
+    const due = this.list.find((r) => isDue(r, now));
+    if (due && !busyReason(this.ctx, this.current)) await this.perform(due, await this.claim(due).catch(() => null));
   }
 
-  /** Runs one routine now, when the browser is free; answers the list after. */
+  /** Runs one routine now: answers at once with the snapshot, or `{ error }` saying why it cannot run. */
   async runNow(id) {
-    const routine = this.list().find((r) => r.id === id);
-    if (routine && this.idle()) await this.execute(routine);
+    const reason = busyReason(this.ctx, this.current);
+    const routine = this.list.find((r) => r.id === id);
+    if (reason || !routine) return { error: reason || 'That routine is gone.' };
+    const runId = await this.claim(routine).catch((e) => ({ error: e.message }));
+    if (runId.error) return (await this.refresh(), runId);
+    void this.perform(routine, runId);
     return this.snapshot();
   }
 
-  /** Asks the agent the routine's prompt and records the run in its history; its next run counts from this start. */
-  async execute(routine) {
-    const run = { id: crypto.randomUUID(), startedAt: Date.now(), status: 'running' };
-    this.running = routine.id;
-    this.update(routine.id, (r) => ({ ...withRun(r, run), lastRunAt: run.startedAt }));
+  /** Claims the routine's next run from the server for this browser; answers the run id, or throws (another desktop has it). */
+  async claim(routine) {
+    const runId = crypto.randomUUID();
+    const body = { lastRunAt: routine.lastRunAt ?? null, runId, browserId: this.ctx.socket.browserId };
+    await sendToApi(this.ctx, 'POST', `routines/${encodeURIComponent(routine.id)}/claim`, body);
+    return runId;
+  }
+
+  /** Asks the agent the routine's prompt as the claimed run `runId`, then records how it ended. */
+  async perform(routine, runId) {
+    if (!runId) return this.refresh();
+    this.current = { routineId: routine.id, runId };
+    await this.refresh();
     const ask = [{ role: 'user', content: routine.prompt }];
     const answer = await this.run(this.ctx, null, ask).catch((e) => ({ error: e.message }));
-    this.running = null;
-    this.update(routine.id, (r) => withRunChanged(r, run.id, finishedRun(answer)));
+    this.current = null;
+    await this.end(routine.id, runId, endingOf(answer));
+    await this.refresh();
+  }
+
+  /** Records a run's ending on the server; one that cannot be sent is left to the server's lease. */
+  end(id, runId, ending) {
+    const route = `routines/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`;
+    return sendToApi(this.ctx, 'PATCH', route, ending).catch(() => {});
   }
 }
 
-module.exports = { Routines, isDue, validRoutine };
+module.exports = { Routines, isDue, nextRunAt };

@@ -194,22 +194,72 @@
           <p>Ask runs on your Oya project. Signing in takes one click in your web browser.</p>
           <button type="button" class="primary-button" id="chat-signin-button">Sign in with Oya</button>
         </div>
-        <form class="chat-card" id="chat-model" hidden>
-          <h2>Connect an AI model</h2>
-          <p>Ask runs on your own AI key. Pick a provider and paste its key. It is saved to your project.</p>
-          <select id="chat-model-provider" aria-label="AI provider">
-            <option value="anthropic">Claude</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini</option>
-          </select>
-          <input
-            type="password"
-            id="chat-model-key"
-            aria-label="API key"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="sk-ant-..."
-          />
+        <form class="chat-card model-card" id="chat-model" hidden>
+          <div class="model-card-head">
+            <span class="tool-mark" data-icon="spark"></span>
+            <div>
+              <h2 id="chat-model-title">Connect an AI model</h2>
+              <p>Ask runs on your own key. It is saved to your project, so the console shows the same.</p>
+            </div>
+          </div>
+          <div class="model-field">
+            <span class="model-label" id="chat-model-provider-label">Provider</span>
+            <div
+              class="provider-chips"
+              id="chat-model-provider"
+              role="radiogroup"
+              aria-labelledby="chat-model-provider-label"
+            ></div>
+          </div>
+          <div class="model-field">
+            <span class="model-label" id="chat-model-model-label">Model</span>
+            <div class="model-picker" id="chat-model-picker">
+              <button
+                type="button"
+                class="model-trigger"
+                id="chat-model-model"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-labelledby="chat-model-model-label chat-model-name"
+              >
+                <span class="model-trigger-text">
+                  <span class="model-trigger-name" id="chat-model-name"></span>
+                  <span class="model-trigger-id" id="chat-model-id"></span>
+                </span>
+                <span class="model-trigger-chevron" data-icon="chevron"></span>
+              </button>
+              <div class="model-menu" id="chat-model-menu" hidden>
+                <div class="model-search">
+                  <span class="model-search-icon" data-icon="search"></span>
+                  <input
+                    type="text"
+                    id="chat-model-search"
+                    role="combobox"
+                    aria-label="Search models"
+                    aria-expanded="true"
+                    aria-controls="chat-model-list"
+                    aria-autocomplete="list"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Search or type a model id"
+                  />
+                  <span class="model-count" id="chat-model-count"></span>
+                </div>
+                <ul class="model-list" id="chat-model-list" role="listbox" aria-label="Models"></ul>
+              </div>
+            </div>
+          </div>
+          <div class="model-field">
+            <label class="model-label" for="chat-model-key">API key</label>
+            <input
+              type="password"
+              id="chat-model-key"
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="chat-model-key-help"
+            />
+            <span class="model-help" id="chat-model-key-help"></span>
+          </div>
           <p class="chat-card-error" id="chat-model-error" role="alert" hidden></p>
           <div class="chat-card-actions">
             <button type="button" class="text-button" id="chat-model-get">Get a key</button>
@@ -260,13 +310,23 @@
       <!-- Routines pane -->
       <section class="dev-pane" id="pane-routines" aria-label="Routines">
         <div class="routines-scroll">
-          <ul class="routines-list" id="routines-list" aria-label="Saved routines"></ul>
-          <form class="routine-form" id="routine-form">
-            <div class="action-label" id="routine-form-title">New routine</div>
-            <label class="studio-field"
+          <div class="routines-head">
+            <div>
+              <h2 class="routines-title">Routines</h2>
+              <p class="routines-sub">
+                Prompts the agent runs on a schedule. They belong to this project and run while an Oya app on it is
+                open.
+              </p>
+            </div>
+            <button type="button" class="primary-button routines-new" id="routine-new">New</button>
+          </div>
+          <p class="routines-banner" id="routines-banner" role="status" hidden></p>
+          <form class="routine-editor" id="routine-form" hidden>
+            <div class="routine-editor-title" id="routine-form-title">New routine</div>
+            <label class="routine-field"
               >Name<input id="routine-name" maxlength="100" placeholder="Morning inbox" spellcheck="false"
             /></label>
-            <label class="studio-field"
+            <label class="routine-field"
               >Prompt<textarea
                 id="routine-prompt"
                 rows="3"
@@ -274,27 +334,29 @@
                 placeholder="Open Gmail and summarize unread emails from today"
               ></textarea>
             </label>
-            <div class="routine-schedule">
-              <select id="routine-kind" aria-label="Repeat">
-                <option value="every">Every</option>
-                <option value="daily">Daily at</option></select
-              ><input id="routine-n" type="number" min="1" max="999" value="1" aria-label="How often" /><select
-                id="routine-unit"
-                aria-label="Unit"
-              >
-                <option value="hours">hours</option>
-                <option value="minutes">minutes</option></select
-              ><input id="routine-at" type="time" value="09:00" aria-label="Time of day" hidden />
+            <div class="routine-field">
+              <span id="routine-repeat-label">Repeat</span>
+              <div class="routine-schedule">
+                <div class="routine-kind" id="routine-kind" role="radiogroup" aria-labelledby="routine-repeat-label">
+                  <button type="button" role="radio" data-kind="every" aria-checked="true">Every</button
+                  ><button type="button" role="radio" data-kind="daily" aria-checked="false">Daily at</button>
+                </div>
+                <input id="routine-n" type="number" min="1" max="999" value="1" aria-label="How often" /><select
+                  id="routine-unit"
+                  aria-label="Unit"
+                >
+                  <option value="hours">hours</option>
+                  <option value="minutes">minutes</option></select
+                ><input id="routine-at" type="time" value="09:00" aria-label="Time of day" hidden />
+              </div>
             </div>
-            <p class="studio-status routine-error" id="routine-error" role="alert" hidden></p>
+            <p class="routine-error" id="routine-error" role="alert" hidden></p>
             <div class="routine-actions">
-              <button type="submit" class="primary-button" id="routine-save">Save routine</button
-              ><button type="button" class="text-button" id="routine-cancel" hidden>Cancel</button>
+              <button type="button" class="text-button" id="routine-cancel">Cancel</button
+              ><button type="submit" class="primary-button" id="routine-save">Save routine</button>
             </div>
           </form>
-          <p class="chat-hint">
-            Routines run while Oya is open and connected. A missed run happens once on the next start.
-          </p>
+          <ul class="routines-list" id="routines-list" aria-label="Saved routines"></ul>
         </div>
       </section>
 
@@ -720,9 +782,11 @@
     <script src="panes/chat-files.js"></script>
     <script src="panes/chat.js"></script>
     <script src="panes/chat-persona.js"></script>
+    <script src="panes/model-picker.js"></script>
     <script src="panes/chat-model.js"></script>
     <script src="panes/chat-progress.js"></script>
     <script src="panes/routine-runs.js"></script>
+    <script src="panes/routine-editor.js"></script>
     <script src="panes/routines.js"></script>
     <script src="panes/source.js"></script>
     <script src="panes/actions.js"></script>

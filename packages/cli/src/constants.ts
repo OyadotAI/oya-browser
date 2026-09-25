@@ -66,3 +66,6 @@ export const Status = {
   /** A quota or a persona concurrency cap. */
   TOO_MANY_REQUESTS: 429,
 } as const;
+
+/** How many of a provider's models `oya init` names before "…"; OpenRouter lists over a hundred. */
+export const MODELS_SHOWN = 8;

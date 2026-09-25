@@ -4,8 +4,18 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { KeyConfig } from '@/components/dashboard/config';
-import { presetModels, savedProvider, switchProvider, withField } from '@/components/dashboard/settings/model';
+import {
+  presetModels,
+  savedProvider,
+  switchProvider,
+  withField,
+  withModelPair,
+} from '@/components/dashboard/settings/model';
+import { LLM_CATALOG } from '../../../support/llm-catalog';
 import { nextTab } from '@/components/dashboard/settings/tabs';
+
+/** A config that carries the server's catalog. */
+const WITH_CATALOG = { llm_catalog: LLM_CATALOG } as KeyConfig;
 
 /** A config with only what provider inference reads. */
 const config = (llm_provider: string, baseUrl: string) => ({ llm_provider, effective: { baseUrl } }) as KeyConfig;
@@ -16,6 +26,7 @@ describe('savedProvider', () => {
     expect(savedProvider(config('', 'https://api.anthropic.com/v1'))).toBe('anthropic');
     expect(savedProvider(config('', 'https://x-aiplatform.googleapis.com'))).toBe('vertex');
     expect(savedProvider(config('', 'https://generativelanguage.googleapis.com'))).toBe('gemini');
+    expect(savedProvider(config('', 'https://openrouter.ai/api/v1'))).toBe('openrouter');
   });
   it('falls back to OpenAI-compatible', () => {
     expect(savedProvider(config('', 'https://gateway.example'))).toBe('openai');
@@ -30,6 +41,7 @@ describe('draft rules', () => {
   });
   it('switching provider picks its default model and drops the key and base URL', () => {
     const next = switchProvider(
+      WITH_CATALOG,
       { openai_api_key: 'sk', openai_base_url: 'https://g', captcha_solver: 'c' },
       'anthropic',
     );
@@ -40,7 +52,23 @@ describe('draft rules', () => {
       openai_base_url: '',
     });
   });
-  it('has no presets for an unknown provider', () => expect(presetModels('toString')).toEqual([]));
+  it('offers the models the server lists for a provider, and none for an unknown one', () => {
+    expect(presetModels(WITH_CATALOG, 'openrouter').map((m) => m.id)).toEqual([
+      'anthropic/claude-sonnet-5',
+      'x-ai/grok-4.7',
+    ]);
+    expect(presetModels(WITH_CATALOG, 'toString')).toEqual([]);
+    expect(presetModels(null, 'openai')).toEqual([]);
+  });
+  it('always saves the provider and the model together, so a stale dialog cannot split them', () => {
+    expect(withModelPair({ chat_model: 'gpt-4.1' }, { provider: 'openai', model: 'gpt-4.1' })).toEqual({
+      llm_provider: 'openai',
+      chat_model: 'gpt-4.1',
+    });
+    expect(withModelPair({ captcha_solver: 'c' }, { provider: 'openai', model: 'gpt-4.1' })).toEqual({
+      captcha_solver: 'c',
+    });
+  });
 });
 
 describe('nextTab', () => {

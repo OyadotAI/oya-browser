@@ -44,6 +44,16 @@ describe('registry: membership', () => {
     ]);
   });
 
+  it('tells only the key’s own open Oya browsers, and survives a socket that fails', () => {
+    const mine = connectBrowser(B, 'key-a');
+    const theirs = connectBrowser('b-other', 'key-b');
+    assert.equal(registry.tell('key-a', { type: 'settings_changed' }), 1);
+    assert.deepEqual(mine.sent.at(-1), { type: 'settings_changed' });
+    assert.equal(theirs.sent.length, 0);
+    mine.failWith = new Error('closed');
+    assert.equal(registry.tell('key-a', { type: 'settings_changed' }), 0);
+  });
+
   it('ignores removing a browser it does not hold', () => {
     assert.doesNotThrow(() => registry.remove('never-added'));
   });

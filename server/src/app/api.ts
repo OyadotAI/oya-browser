@@ -25,6 +25,7 @@ import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
 import { router as gatewayRoutes } from '../modules/gateway/routes.ts';
 import { router as configRoutes } from '../modules/config/routes.ts';
 import { router as runsRoutes } from '../modules/playbooks/routes.ts';
+import { router as routinesRoutes } from '../modules/routines/routes.ts';
 import { router as poolRoutes } from '../modules/browsers/pool-routes.ts';
 
 // Imported by control/routes.js, control/worker.js and the tests.
@@ -97,6 +98,8 @@ router.use(gatewayRoutes);
 router.use(configRoutes);
 /** Playbooks and runs. */
 router.use(runsRoutes);
+/** Routines: the project's scheduled prompts, which its desktop apps run. */
+router.use(routinesRoutes);
 /** The shared browser pool and its cookies. */
 router.use(poolRoutes);
 

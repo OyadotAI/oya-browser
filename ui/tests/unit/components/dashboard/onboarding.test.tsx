@@ -17,8 +17,9 @@ import { saveConfig, desktopSignInUrl, type KeyConfig } from '@/components/dashb
 import Onboarding from '@/components/dashboard/onboarding';
 import { ToastProvider } from '@/components/dashboard/toast';
 import type { BrowserRow, Persona } from '@/components/dashboard/types';
+import { LLM_CATALOG } from '../../support/llm-catalog';
 
-const noModel = { llm_provider: '', effective: { hasLlmKey: false } } as unknown as KeyConfig;
+const noModel = { llm_provider: '', effective: { hasLlmKey: false }, llm_catalog: LLM_CATALOG } as unknown as KeyConfig;
 const persona = {
   id: 'p0',
   name: 'Default',
@@ -104,10 +105,16 @@ describe('Onboarding', () => {
   });
 
   it('marks the model step done when the project already has one', () => {
-    setup([], { llm_provider: 'openai', effective: { hasLlmKey: true } } as unknown as KeyConfig);
+    setup([], { ...noModel, llm_provider: 'openai', effective: { hasLlmKey: true } } as unknown as KeyConfig);
     expect(screen.getByRole('button', { name: 'OpenAI' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText('Ready')).toBeTruthy();
     expect(screen.getByPlaceholderText(/replace the saved one/)).toBeTruthy();
+  });
+
+  it('offers OpenRouter beside the common providers, and leaves Gemini Enterprise to Settings', () => {
+    setup();
+    expect(screen.getByRole('button', { name: 'OpenRouter' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Gemini Enterprise' })).toBeNull();
   });
 
   it('stays put and toasts when saving fails', async () => {

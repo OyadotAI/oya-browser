@@ -16,8 +16,10 @@ const RendererConstants = Object.freeze({
   CHAT_INPUT_MAX_PX: 160,
   /** The most attached file data a chat may carry, in base64 characters: the server's cap, 10 MiB of file. */
   CHAT_FILES_MAX_B64: 13_981_016,
-  /** How much of a routine's last answer its row shows before "…". */
-  ROUTINE_RESULT_SHOWN: 160,
+  /** How often the Routines pane redraws its times ("Next 10:02", a run's elapsed time). */
+  ROUTINES_CLOCK_MS: 30_000,
+  /** How long a routine's note (why Run now could not start, say) stays under it. */
+  ROUTINE_NOTE_MS: 6000,
   /** Characters of the prompt suggested as a playbook's name. */
   PLAYBOOK_NAME_SUGGESTION: 48,
   /** How often the Ask pane's step line redraws its elapsed count. */
