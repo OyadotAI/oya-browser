@@ -387,6 +387,21 @@
 .mediaIntro h2 span {
   color: #c7f7a4;
 }
+.walkthrough {
+  margin-top: 40px;
+  aspect-ratio: 930 / 697;
+  max-width: 100%;
+  border: 1px solid #425741;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0c0c0a;
+}
+.walkthrough iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
 .clip {
   display: grid;
   grid-template-columns: 0.85fr 1.4fr;

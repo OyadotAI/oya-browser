@@ -1,7 +1,7 @@
 /**
  * The section that shows the product running, one clip per claim.
  */
-import { MEDIA } from './content';
+import { MEDIA, WALKTHROUGH } from './content';
 import styles from '../page.module.css';
 
 /** One claim beside a silent loop of the product doing it. */
@@ -28,7 +28,16 @@ function Clip({ item }: { /** The clip and the claim beside it. */ item: (typeof
   );
 }
 
-/** Both clips. */
+/** The walkthrough video, loaded only when it scrolls near. */
+function Walkthrough() {
+  return (
+    <div className={styles.walkthrough}>
+      <iframe src={WALKTHROUGH.src} title={WALKTHROUGH.title} loading="lazy" allowFullScreen />
+    </div>
+  );
+}
+
+/** The walkthrough, then both clips. */
 export function Media() {
   return (
     <section className={styles.media} aria-labelledby="media-title">
@@ -40,6 +49,7 @@ export function Media() {
           <span>Ask, save, replay.</span>
         </h2>
       </div>
+      <Walkthrough />
       {MEDIA.map((item) => (
         <Clip key={item.src} item={item} />
       ))}

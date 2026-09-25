@@ -61,6 +61,12 @@ export const PORTAL_TRUTHS = [
   },
 ];
 
+/** The recorded product walkthrough, played from Loom above the clips. */
+export const WALKTHROUGH = {
+  src: 'https://www.loom.com/embed/7947a9a863634f84a4be7b71933c4b7d?default_speed=true',
+  title: 'Oya Browser, faster scalable automation without CDP',
+};
+
 /** The features shown beside a clip of the product doing them. */
 export const MEDIA = [
   {
