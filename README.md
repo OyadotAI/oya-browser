@@ -38,11 +38,51 @@ DONE: The top 3 stories on Hacker News are:
 3. What happened to the Snowden archive
 ```
 
-Set `OYA_API_KEY` from [oyabrowser.com](https://oyabrowser.com). Node 20+.
+Set `OYA_API_KEY` from [oyabrowser.com](https://oyabrowser.com), or let your agent sign itself up
+([below](#for-ai-agents)). Node 20+.
 
 No provider set up yet? Open the [desktop browser](https://oyabrowser.com) on the same
 key and `start()` hands that one over, so those five lines work with nothing else
 configured. `npx @oya-ai/cli init` picks where browsers run when you want it to start them.
+
+## For AI agents
+
+Are you an AI agent (OpenClaw, Hermes, Claude Code, Codex, Cursor or any other) looking for a
+browser? Everything below works with no person at a dashboard. Full reference, written for you:
+[oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
+
+**As a skill**, for any agent that reads `SKILL.md`:
+
+```bash
+npx skills add OyadotAI/oya-browser
+```
+
+**In code** (Node 22.3+). Sign yourself up with your person's email, then use their own
+browser, already signed in to their sites:
+
+```js
+import { Oya } from "@oya-ai/browser";
+
+await Oya.signup({ email: "person@example.com" });   // your own key, saved to ~/.oya/config.json
+const browser = await new Oya().desktop.connect();   // pairs the Oya desktop app, imports their logins
+await browser.goto("https://example.com");
+const { markdown, elements } = await browser.analyze();
+```
+
+`desktop.connect()` asks your person to install the [desktop app](https://oyabrowser.com/#download)
+if it is missing, and to click Connect when it opens.
+
+**Over MCP**, for tools that cannot run code (Claude Desktop, Cursor, Windsurf and the rest):
+`https://oyabrowser.com/mcp/pool` with `Authorization: Bearer <key>`. In Claude Code:
+
+```bash
+claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
+  --header "Authorization: Bearer $OYA_API_KEY"
+```
+
+Then just ask: *"Start a browser, open Hacker News and summarise the top 3 stories."* Oya is in
+the MCP registry as `io.github.OyadotAI/oya-browser`, on [Smithery](https://smithery.ai/skills/oyaai/oya-browser)
+and on ClawHub as `oya-browser`.
 
 ## Record it once, replay it forever
 
@@ -63,10 +103,12 @@ you can read and keep.
 
 ## Sign in once
 
-Scripted logins break on Google SSO, Okta, passkeys and Cloudflare. Don't script them. Sign in
-by hand once in the [desktop app](https://oyabrowser.com), and every browser you start on that
-persona is already signed in: the session travels as cookies **and localStorage**, sealed at
-rest, because half the portals worth automating keep you signed in with neither one alone.
+Scripted logins break on Google SSO, Okta, passkeys and Cloudflare. Don't script them. Import
+the logins you already have from Chrome, Arc, Brave, Edge or Firefox when you connect the
+[desktop app](https://oyabrowser.com), or sign in by hand once in it. Every browser you start on
+that persona is then already signed in: the session travels as cookies **and localStorage**,
+sealed at rest, because half the portals worth automating keep you signed in with neither one
+alone. [Every way in and out](docs/logins.md).
 
 For the portals that end the session server-side anyway, store the login and Oya signs in itself,
 and stops rather than retrying a password the site has already refused, because that is how a
@@ -97,17 +139,10 @@ curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.s
 ```
 
 It checks for git, Docker and Node 20+, asks six questions, then clones, writes the config, builds and waits for `/readyz`.
-SQLite, Postgres or Supabase; browsers on Docker, Kubernetes or your own machines.
-
-## Give it to your agent
-
-```bash
-claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
-  --header "Authorization: Bearer $OYA_API_KEY"
-```
-
-Then just ask: *"Start a browser, open Hacker News and summarise the top 3 stories."*
-Also [Cursor, Claude Desktop and any agent that reads skills](https://oyabrowser.com/docs).
+Storage is SQLite (the default), Postgres or JSON files; browsers run on Docker, Kubernetes or your
+own machines. For production, [`deployments/`](deployments) deploys the control plane and its
+browsers to one Docker host, Amazon ECS on Fargate, any Kubernetes cluster, or GKE Autopilot, with
+one `deploy.sh` each.
 
 <p align="center">
   <img src="assets/oya-demo.gif" alt="The Oya browser: a task asked in plain language, answered, and kept as a playbook" width="100%">
@@ -119,10 +154,12 @@ Also [Cursor, Claude Desktop and any agent that reads skills](https://oyabrowser
 | | |
 |:--|:--|
 | **CAPTCHA and 2FA** | Solved where they can be, handed to a person where they can't |
+| **Record it yourself** | The desktop recorder keeps a draft you edit step by step, validate in fresh tabs and save as a playbook ([how](docs/workflow-studio.md)) |
+| **Routines** | Saved prompts the desktop agent runs every N minutes or daily at a set time, with each run's steps and answer kept |
 | **It proves what it did** | A hash-chained audit trail the database won't let you rewrite, host allow-listing, [regenerable evidence](compliance/EVIDENCE.md) |
 | **It isn't one vendor** | Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome ([why](docs/why-oya.md)) |
 | **It keeps your tools** | Every browser has a `cdpUrl`, so Playwright and Puppeteer connect unchanged |
-| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [moving logins](docs/logins.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) |
+| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [deployments](deployments) · [moving logins](docs/logins.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) · [for agents](https://oyabrowser.com/llms.txt) |
 
 ## Packages
 
@@ -131,6 +168,8 @@ Also [Cursor, Claude Desktop and any agent that reads skills](https://oyabrowser
 | [`@oya-ai/browser`](packages/sdk) | TypeScript SDK. ESM and CJS, typed, zero runtime dependencies. |
 | [`@oya-ai/cli`](packages/cli) | The fleet, the live view, the installer. |
 | [`server`](server) · [`ui`](ui) · [`browser`](browser) | Control plane, console, and the browser itself. |
+| [`skills/oya-browser`](skills/oya-browser) | The agent skill: `npx skills add OyadotAI/oya-browser`. |
+| [`deployments`](deployments) | Production deploys: Docker, ECS, Kubernetes, GKE. |
 
 ```bash
 npm test                 # server, CLI and packages; ui and browser run their own (see AGENTS.md)

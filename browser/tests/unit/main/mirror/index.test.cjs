@@ -68,6 +68,18 @@ describe('Mirror', () => {
     assert.equal(ctx.reconnects, 1);
   });
 
+  it('imports on the first sign-in after a pairing that asked for it, and only then', async () => {
+    const capture = mock.fn(async () => CAPTURED);
+    const { ctx, mirror } = mirrorWith({ capture });
+    ctx.config.values.mirroredFrom = 'chrome';
+    await mirror.maybeRun();
+    assert.equal(capture.mock.callCount(), 0, 'already imported and not asked again');
+    mirror.importOnConnect = true;
+    await mirror.maybeRun();
+    await mirror.maybeRun();
+    assert.equal(capture.mock.callCount(), 1);
+  });
+
   it('asks the person to connect first instead of importing into nothing', async () => {
     const capture = mock.fn(async () => CAPTURED);
     const { ctx, mirror } = mirrorWith({ capture, up: false });

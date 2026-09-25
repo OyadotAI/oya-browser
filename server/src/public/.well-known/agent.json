@@ -1,6 +1,6 @@
 {
   "name": "Oya Browser",
-  "description": "Drive a real Chrome browser through one API \u2014 on Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or the user's own machine with their cookies, logins and extensions. Navigate, analyze pages as markdown, TOON or JSONL, click, type, screenshot, scroll and manage tabs. Personas keep a logged-in identity stable across runs and providers.",
+  "description": "Real Chrome for AI agents, with the person's own logins. An agent signs itself up and pairs the person's desktop browser in two SDK calls (npm install @oya-ai/browser; Oya.signup({ email }); new Oya().desktop.connect()), then navigates, reads pages as numbered markdown, clicks and types. Also runs on Oya Cloud, Browserbase, Steel, Anchor or Browser Use. Start at https://oyabrowser.com/llms.txt.",
   "url": "https://oyabrowser.com",
   "version": "1.0.0",
   "capabilities": {
@@ -20,6 +20,21 @@
     "image/png"
   ],
   "skills": [
+    {
+      "id": "setup",
+      "name": "Self-setup with the SDK",
+      "description": "Get an API key with no person or dashboard (Oya.signup), and pair the person's Oya desktop app with their Chrome logins imported (oya.desktop.connect). See 'Agent quickstart' in /llms.txt.",
+      "tags": [
+        "sdk",
+        "signup",
+        "desktop",
+        "cookies",
+        "logins"
+      ],
+      "examples": [
+        "Set up Oya Browser for me and use my logged-in browser"
+      ]
+    },
     {
       "id": "browse",
       "name": "Browser Automation",
@@ -57,11 +72,14 @@
   "endpoints": {
     "mcp": "/mcp/{browserId}",
     "mcp_pool": "/mcp/pool",
-    "rest": "/browsers/{browserId}/command",
-    "rest_pool": "/pool/command",
+    "rest": "/api/browsers/{browserId}/command",
+    "rest_pool": "/api/pool/command",
     "websocket": "/ws",
     "health": "/health",
     "openapi": "/openapi.json",
-    "llms_txt": "/llms.txt"
-  }
+    "llms_txt": "/llms.txt",
+    "agent_signup": "/api/auth/agent/signup",
+    "sdk": "npm:@oya-ai/browser"
+  },
+  "documentationUrl": "https://oyabrowser.com/llms.txt"
 }

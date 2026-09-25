@@ -19,7 +19,18 @@
     "browserbase",
     "steel",
     "browser-use",
-    "mcp"
+    "mcp",
+    "ai-agent",
+    "agent-browser",
+    "browser-agent",
+    "agent-skills",
+    "claude-code",
+    "codex",
+    "openclaw",
+    "hermes-agent",
+    "computer-use",
+    "mcp-server",
+    "llms-txt"
   ],
   "type": "module",
   "bin": {

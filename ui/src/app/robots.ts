@@ -29,6 +29,10 @@ const AI_AGENTS = [
   'DuckAssistBot',
   'Meta-ExternalAgent',
   'Bytespider',
+  'Amazonbot', // Alexa and Rufus answers
+  'MistralAI-User', // fetches on a user's behalf in Le Chat
+  'Google-CloudVertexBot', // Vertex AI agents
+  'YouBot', // You.com
 ];
 
 /** Paths behind auth, not worth crawling. */

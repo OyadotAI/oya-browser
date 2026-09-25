@@ -47,6 +47,18 @@ function matchesToken(supplied, token) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/**
+ * Lets a client send the key as `X-API-Key` instead of `Authorization: Bearer`.
+ * Some MCP directories (Smithery) forward a user's key as a plain header and
+ * cannot add the Bearer prefix. Rewriting it here, once, means every route and
+ * the MCP endpoints read one header. An Authorization header always wins.
+ */
+export function apiKeyHeader(req, _res, next) {
+  const key = req.headers['x-api-key'];
+  if (typeof key === 'string' && key && !req.headers.authorization) req.headers.authorization = `Bearer ${key}`;
+  next();
+}
+
 /** Extract API key from Authorization header */
 export function getKey(req) {
   return req.headers.authorization?.slice(BEARER_PREFIX_LENGTH) || '';

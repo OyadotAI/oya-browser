@@ -23,9 +23,9 @@ function useOrigin() {
   );
 }
 
-/** What to tell an agent: it signs itself up from llms.txt, no key or person needed first. */
+/** What to tell an agent: the SDK quickstart in llms.txt, which signs it up and pairs the desktop app with the person's logins. */
 const promptFor = (origin: string) =>
-  `Sign yourself up for Oya Browser: read ${origin}/llms.txt and follow "Agent self-signup", using my email. Then connect the Oya desktop app and use it as your browser.`;
+  `Set up Oya Browser for me: read ${origin}/llms.txt and follow "Agent quickstart" with my email. Use the @oya-ai/browser SDK, not MCP, and connect my Oya desktop app so you browse with my logins.`;
 
 /** PromptBox's props. */
 interface PromptProps {
@@ -53,8 +53,8 @@ export function AgentSetup() {
       <p>Agents sign themselves up. Paste this into yours:</p>
       <PromptBox text={promptFor(origin)} />
       <p className="text-xs">
-        It gets its own key and can use the free desktop app right away. For Oya Cloud browsers it sends you a claim
-        link to open while signed in.{' '}
+        It gets its own key and pairs your Oya desktop app. Click Connect when the app asks, and keep &quot;Also import
+        my logins&quot; ticked so it is signed in where you are. For Oya Cloud browsers it sends you a claim link.{' '}
         <a href="/llms.txt" className="font-medium text-accent hover:text-accent-hover">
           What agents read
         </a>

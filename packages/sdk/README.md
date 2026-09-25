@@ -50,6 +50,18 @@ Node.js 20 or newer; the examples are ES modules. `OYA_BASE_URL` points at a sel
 control plane. On Node.js 24+, `await using browser = await oya.browser.start()` stops it
 when the scope exits, errors included.
 
+
+## For AI agents
+
+No key yet? Get your own, and use your person's own browser with their logins:
+
+```js
+await Oya.signup({ email: 'person@example.com' }); // saved to ~/.oya/config.json
+const browser = await new Oya().desktop.connect(); // pairs the Oya desktop app
+```
+
+Written for agents: [oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
+
 ## Portal automation: record once, replay with new inputs
 
 This example adapts the portal-automation project's workflow: reuse a persona, attach to an existing browser or start one, run a prompt the first time, then replay its saved playbook. The portal, workflow names, and request values below are fictional. Supply your own test portal and credentials through environment variables; adapt the task to its actual pages.

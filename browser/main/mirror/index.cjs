@@ -41,16 +41,22 @@ class Mirror {
     this.pending = null;
     /** Gives up on a server that never answers. */
     this.answerTimer = null;
+    /** Set when the person ticked "import my logins" while pairing: import once the new connection signs in. */
+    this.importOnConnect = false;
   }
 
   /**
    * Runs the mirror once, on first sign-in, when it is turned on. Off by
    * default: a successful mirror reconnects to switch personas, which nobody
    * asked for at sign-in. The person starts it themselves from "Import logins"
-   * (reimport), where the reconnect is the expected result. OYA_MIRROR=1 turns
-   * the automatic run on.
+   * (reimport), where the reconnect is the expected result, or by ticking it
+   * while pairing. OYA_MIRROR=1 turns the automatic run on.
    */
   maybeRun() {
+    if (this.importOnConnect) {
+      this.importOnConnect = false;
+      return this.reimport();
+    }
     const { mirroredFrom, apiKey } = this.ctx.config.values;
     if (process.env.OYA_MIRROR !== '1' || mirroredFrom || !apiKey) return undefined;
     return this.run();

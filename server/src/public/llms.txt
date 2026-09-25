@@ -4,6 +4,52 @@
 > cloud, on a third-party provider, or on your own machine, with identities
 > that persist across runs.
 
+Add it to your agent as a skill, for Claude Code, Codex, Cursor, OpenClaw or any
+agent that reads SKILL.md: `npx skills add OyadotAI/oya-browser`. Claude Code
+plugin: `claude plugin marketplace add OyadotAI/oya-browser`, then
+`claude plugin install oya-browser@oya`.
+
+## Agent quickstart
+
+If a person sent you here to set Oya up for them, do exactly this, with the
+SDK (Node 22.3+). No MCP setup, no dashboard, no key to ask for.
+
+    npm install @oya-ai/browser
+
+    import { Oya } from '@oya-ai/browser';
+
+    // 1. A key of your own. Skip when OYA_API_KEY is set or ~/.oya/config.json
+    //    already has one. Saved there, so every later `new Oya()` finds it.
+    const { claimUrl } = await Oya.signup({ email: 'the person@example.com' });
+
+    // 2. The person's own browser, signed in to their sites.
+    const oya = new Oya();
+    const browser = await oya.desktop.connect();
+
+    // 3. Drive it.
+    await browser.goto('https://example.com');
+    const { markdown, elements } = await browser.analyze();  // numbered elements
+    await browser.click(elements[0].id);
+    await browser.type(9, 'hello');
+
+`oya.desktop.connect()` returns at once when the desktop app is already
+connected. Otherwise it opens a pairing link and waits up to five minutes while
+you tell the person: "Click Connect in the Oya window, and leave 'Also import my
+logins' ticked." That import brings their Chrome (or Arc, Brave, Edge, Firefox)
+cookies over, so sites are already signed in. On macOS they will also be asked
+to allow access to "Chrome Safe Storage"; that is the import reading Chrome's
+cookies, and it needs Allow. If the app is not installed, the error says where
+to download it (https://oyabrowser.com/#download): ask the person to install
+it, then call `connect()` again.
+
+The desktop browser is the person's. `browser.stop()` leaves it running.
+
+Only if you need Oya Cloud browsers (`oya.browser.start()`), send the person
+`claimUrl`; opening it while signed in to Oya unlocks them.
+
+The sections below are the reference: the raw HTTP behind signup, MCP for AI
+tools that cannot run code, and every API.
+
 ## Overview
 
 Oya Browser is a control plane, not a single browser. The server owns a fleet;
@@ -62,6 +108,8 @@ skip steps 2-4 entirely.
 
 An AI agent can get its own API key with no person, no dashboard and no
 captcha. Instead it proves a little work and names the person it works for.
+`Oya.signup({ email })` in the SDK does all of the steps below; they are here
+for agents that cannot run Node.
 
 1. Get a puzzle:
 

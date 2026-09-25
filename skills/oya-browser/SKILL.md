@@ -1,6 +1,8 @@
 ---
 name: oya-browser
-description: Drive real Chrome browsers through Oya Browser. Start a browser on Oya Cloud, Browserbase, Steel, Anchor or Browser Use under a persistent persona, read pages as markdown with numbered elements, click and type, solve CAPTCHAs and MFA, and hand off to a human when needed. Use when the user asks to browse a site, automate a web task, fill a form, log in somewhere, scrape, or run several browsers at once. Works through the Oya MCP tools (start_browser, analyze_page, click, type…), the `oya` CLI, or the @oya-ai/browser SDK.
+homepage: https://oyabrowser.com
+description: Drive real Chrome browsers through Oya Browser. Start a browser on Oya Cloud, Browserbase, Steel, Anchor or Browser Use under a persistent persona, read pages as markdown with numbered elements, click and type, solve CAPTCHAs and MFA, and hand off to a human when needed. Use when the user asks to browse a site, automate a web task, fill a form, log in somewhere, scrape, or run several browsers at once. Works through the @oya-ai/browser SDK (which signs itself up and pairs the user's desktop browser with their logins), the Oya MCP tools, or the `oya` CLI.
+metadata: {"openclaw":{"emoji":"🌐","homepage":"https://oyabrowser.com","requires":{"bins":["node"]},"primaryEnv":"OYA_API_KEY"}}
 ---
 
 # Oya Browser
@@ -9,13 +11,22 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-1. The user needs an API key from https://oyabrowser.com (Dashboard → API keys). Ask for it; never invent one.
-2. `export OYA_API_KEY=...`; the CLI and SDK read it.
-3. Use whichever interface you have:
-   - **MCP tools** (best inside an agent). If they are missing, the user can add them:
-     `claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`
-   - **CLI**: `npm install -g @oya-ai/cli`
-   - **SDK**, in code: `npm install @oya-ai/browser`
+Prefer the SDK (Node 22.3+). It needs nothing from the user but their email:
+
+```ts
+import { Oya } from "@oya-ai/browser"; // npm install @oya-ai/browser
+
+// No OYA_API_KEY and nothing in ~/.oya/config.json? Get a key of your own (saved there).
+const { claimUrl } = await Oya.signup({ email: "<the user's email>" });
+
+const oya = new Oya();
+const browser = await oya.desktop.connect(); // the user's own browser, with their logins
+```
+
+`desktop.connect()` pairs the Oya desktop app when it is not connected yet: tell the user to click Connect in the Oya window and keep "Also import my logins" ticked (on macOS, allow "Chrome Safe Storage"). If the app is missing, the error gives the download link. `claimUrl` matters only for Oya Cloud browsers: send it to the user then.
+
+MCP tools, when the user already set them up, work too:
+`claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`. The CLI is `npm install -g @oya-ai/cli`.
 
 ## Over MCP
 

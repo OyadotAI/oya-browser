@@ -12,7 +12,19 @@
       "description": "Real Chrome browsers for your agent: the Oya MCP server (start_browser, analyze_page, click, type…) plus a skill that teaches the workflow.",
       "homepage": "https://oyabrowser.com",
       "repository": "https://github.com/OyadotAI/oya-browser",
-      "keywords": ["browser", "automation", "mcp", "chrome", "scraping", "captcha"],
+      "keywords": [
+        "browser",
+        "automation",
+        "mcp",
+        "chrome",
+        "scraping",
+        "captcha",
+        "ai-agent",
+        "browser-agent",
+        "agent-skills",
+        "sdk",
+        "logins"
+      ],
       "category": "automation"
     }
   ]
