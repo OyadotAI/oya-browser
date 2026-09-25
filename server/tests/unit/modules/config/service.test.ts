@@ -41,6 +41,18 @@ describe('key settings', () => {
       });
     });
 
+    it('lists every LLM provider with its models, so every client builds the same pickers', () => {
+      const catalog = keyConfig.get(KEY).llm_catalog;
+      assert.deepEqual(
+        catalog.map((p) => p.id),
+        ['openai', 'anthropic', 'gemini', 'vertex', 'openrouter'],
+      );
+      const claude = catalog.find((p) => p.id === 'anthropic');
+      assert.equal(claude.model, 'claude-opus-5');
+      assert.ok(claude.models.some((m) => m.id === 'claude-opus-5-5'));
+      assert.ok(catalog.every((p) => p.label && p.hint && p.keysUrl.startsWith('https://') && p.models.length));
+    });
+
     it('masks a secret to its last four characters', async () => {
       await keyConfig.set(KEY, { openai_api_key: 'sk-abcdef1234' });
       const view = keyConfig.get(KEY);

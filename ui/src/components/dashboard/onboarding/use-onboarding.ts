@@ -3,7 +3,7 @@
  * for Ask and its key, the step the preview shows, and the pair and finish actions.
  */
 import { useState } from 'react';
-import { LLM_PRESETS, saveConfig, type KeyConfig } from '../config';
+import { llmCatalog, saveConfig, type KeyConfig, type LlmPreset } from '../config';
 import { useDesktopSignIn } from '../hooks/use-desktop-sign-in';
 import { useBusyAction } from '../hooks/use-busy-action';
 import type { BrowserRow, Persona } from '../types';
@@ -44,12 +44,20 @@ function usePreviewStep(desktopDone: boolean) {
   return { step, setFocused };
 }
 
+/** The providers onboarding offers, in this order; Gemini Enterprise and the rest live in Settings. */
+const ONBOARDING_PROVIDERS = ['anthropic', 'openai', 'gemini', 'openrouter'];
+
+/** Onboarding's providers, as the server lists them. */
+const onboardingProviders = (config: KeyConfig): LlmPreset[] =>
+  ONBOARDING_PROVIDERS.flatMap((id) => llmCatalog(config).filter((p) => p.id === id));
+
 /** The AI provider Ask runs on and the key typed for it. */
 function useModelForm(config: KeyConfig) {
-  const known = LLM_PRESETS.some((p) => p.id === config.llm_provider);
-  const [provider, setProvider] = useState(known ? config.llm_provider : LLM_PRESETS[0].id);
+  const providers = onboardingProviders(config);
+  const known = providers.some((p) => p.id === config.llm_provider);
+  const [provider, setProvider] = useState(known ? config.llm_provider : providers[0]?.id || '');
   const [key, setKey] = useState('');
-  return { provider, setProvider, key, setKey };
+  return { providers, provider, setProvider, key, setKey };
 }
 
 /** The desktop running as the default profile, once one has connected. */

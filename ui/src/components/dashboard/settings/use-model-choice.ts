@@ -21,7 +21,7 @@ function chosen(config: KeyConfig | null, form: SettingsForm) {
 function chooseProvider(next: string, current: string, form: SettingsForm, setCustom: (on: boolean) => void) {
   if (current === next) return;
   setCustom(false);
-  form.setDraft((draft) => switchProvider(draft, next));
+  form.setDraft((draft) => switchProvider(form.config, draft, next));
 }
 
 /** "Custom model…" opens the id field; a preset is stored as the model. */
@@ -34,7 +34,7 @@ function pickModel(next: string, form: SettingsForm, setCustom: (on: boolean) =>
 export function useModelChoice(config: KeyConfig | null, form: SettingsForm) {
   const [customModel, setCustomModel] = useState(false);
   const state = chosen(config, form);
-  const models = presetModels(state.provider);
+  const models = presetModels(config, state.provider);
   const custom = customModel || !models.some((m) => m.id === state.model);
   const onProvider = (next: string) => chooseProvider(next, state.provider, form, setCustomModel);
   const onModel = (next: string) => pickModel(next, form, setCustomModel);

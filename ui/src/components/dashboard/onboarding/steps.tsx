@@ -7,16 +7,12 @@
 
 import type { ReactNode } from 'react';
 import { ArrowRight, Check, Download, Loader2, Monitor } from 'lucide-react';
-import { LLM_PRESETS } from '../config';
 import type { Step, useOnboarding } from './use-onboarding';
 import DesktopNotOpened from '../desktop-not-opened';
 import styles from './onboarding.module.css';
 
 /** The onboarding state every step reads. */
 export type OnboardingState = ReturnType<typeof useOnboarding>;
-
-/** The providers onboarding offers: the common three; the rest live in Settings. */
-const PROVIDERS = LLM_PRESETS.filter((p) => p.id !== 'vertex');
 
 /** What a step shows. */
 interface StepProps {
@@ -111,9 +107,9 @@ function ProviderChoice({ s }: { /** State. */ s: OnboardingState }) {
     <div
       role="group"
       aria-label="AI provider"
-      className="grid grid-cols-3 rounded-lg border border-border bg-bg-sunken p-1"
+      className="grid grid-cols-4 rounded-lg border border-border bg-bg-sunken p-1"
     >
-      {PROVIDERS.map((p) => (
+      {s.providers.map((p) => (
         <button
           key={p.id}
           type="button"
@@ -130,7 +126,7 @@ function ProviderChoice({ s }: { /** State. */ s: OnboardingState }) {
 
 /** Step 2: the AI model Ask runs on, as a provider and its key. */
 export function ModelStep({ s }: { /** State. */ s: OnboardingState }) {
-  const preset = PROVIDERS.find((p) => p.id === s.provider);
+  const preset = s.providers.find((p) => p.id === s.provider);
   const hint = 'Ask needs one to think. Your key stays in this project.';
   return (
     <RailStep

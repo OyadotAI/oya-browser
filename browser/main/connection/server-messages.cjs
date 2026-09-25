@@ -29,6 +29,8 @@ async function shareProfile(ctx) {
   ctx.socket.send({ type: 'profile_flush' });
   // A no-op once done; it reconnects as the mirrored persona itself.
   void ctx.mirror.maybeRun();
+  // The project's routines, read fresh on every sign-in (and handed over from config.json once).
+  void ctx.routines.refresh();
 }
 
 /** Marks the socket ready, takes the control state, and starts the heartbeat. */
@@ -61,6 +63,10 @@ const SERVER_MESSAGES = {
   },
   auth_ok: acceptAuth,
   profile_saved: (ctx, msg) => ctx.shell.send('profile-saved', msg),
+  // The project's settings changed elsewhere (the console, the CLI): the model card re-reads them.
+  settings_changed: (ctx, msg) => ctx.shell.send('settings-changed', msg),
+  // The project's routines changed (another desktop, a run starting or ending): re-read them.
+  routines_changed: (ctx) => void ctx.routines.refresh(),
   cookie_sync: async (ctx, msg) => {
     await ctx.cookies.applyCookieSync(msg.cookies, { now: msg.now, pullId: msg.pullId });
     ctx.cookies.answerPull(msg.pullId);

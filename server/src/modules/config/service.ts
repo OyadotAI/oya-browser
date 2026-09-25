@@ -25,11 +25,18 @@ import { sealText, openText } from '../../platform/secrets.ts';
 import { runtimeConfig } from '../../platform/runtime-config.ts';
 import { isConfigured as cloudConfigured, ecsExternalId } from '../../drivers/sandbox.ts';
 import { FIELDS, PROVIDER_CHOICES, LLM_DEFAULTS } from './fields.ts';
+import { llmCatalog } from './llm-catalog.ts';
 import { store, state, scopeFor, flush, markChanged, changed } from './store.ts';
 import { MASK_TAIL } from './constants.ts';
 import { agentKeyUnclaimed } from '../auth/service.ts';
 
 export { FIELDS, PROVIDER_CHOICES } from './fields.ts';
+
+/** The llm_provider values, as a message names them: "anthropic" | "openai" | .... */
+export const llmProviderList = () =>
+  Object.keys(LLM_DEFAULTS)
+    .map((p) => `"${p}"`)
+    .join(' | ');
 export { saveRouting, restoreRouting } from './routing.ts';
 export { getSlack, saveSlack, clearSlack } from './slack.ts';
 export { savePlaybook, deletePlaybook, listPlaybooks, getPlaybook, cleanupPlaybooks } from './playbooks.ts';
@@ -100,6 +107,8 @@ export function get(apiKey) {
     ...withExternalId(masked(own), apiKey),
     ...llmView(own, llm, runtimeConfig.get()),
     providers: PROVIDER_CHOICES.map((p) => ({ ...p, configured: configured(p, own, apiKey) })),
+    // Every client builds its provider and model pickers from this, so they always agree.
+    llm_catalog: llmCatalog(),
   };
 }
 

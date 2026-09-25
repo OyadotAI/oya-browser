@@ -8,6 +8,8 @@ import { runtimeConfig } from '../../platform/runtime-config.ts';
 import { audit } from '../../platform/audit.ts';
 import * as keyConfig from './service.ts';
 import { getKey, operatorOnly } from '../../app/http.ts';
+import { registry } from '../browsers/registry.ts';
+import { LLM_FIELDS } from './fields.ts';
 
 /** Config routes, mounted on the API router. */
 export const router = Router({ caseSensitive: true });
@@ -36,7 +38,11 @@ router.get('/config', authMiddleware, (req, res) => {
 router.post('/config', authMiddleware, async (req, res) => {
   const key = getKey(req);
   await keyConfig.set(key, req.body);
-  auditUpdate(req, key, { fields: Object.keys(req.body || {}) });
+  const fields = Object.keys(req.body || {});
+  auditUpdate(req, key, { fields });
+  // The desktop's model card shows what the server runs on: tell open ones to re-read it.
+  // ponytail: this replica's desktops only; the rest re-read when their card next opens. A cluster bus if that lags.
+  if (fields.some((f) => LLM_FIELDS.includes(f))) registry.tell(key, { type: 'settings_changed', scope: 'llm' });
   res.json({ ok: true, ...keyConfig.get(key) });
 });
 

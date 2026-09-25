@@ -70,6 +70,11 @@ export const TABLES: Record<string, Table> = {
   persona_credentials: { key: ['id'], columns: { id: 'text', value: 'text', updated_at: 'time' } },
   mfa_factors: { key: ['id'], columns: { id: 'text', value: 'text', updated_at: 'time' } },
   persona_logins: { key: ['id'], columns: { id: 'text', value: 'text', updated_at: 'time' } },
+  // A project's routines, sealed; version guards every write (see modules/routines/repository.ts).
+  routines: {
+    key: ['owner', 'id'],
+    columns: { owner: 'text', id: 'text', value: 'text', version: 'int', updated_at: 'time' },
+  },
   audit_log: {
     key: ['id'],
     columns: {

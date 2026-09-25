@@ -19,7 +19,8 @@ interface Preset {
 
 /** The vendors with a known endpoint. */
 const LLM_PRESETS: Record<string, Preset> = {
-  anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-sonnet-5', label: 'Anthropic (Claude)' },
+  // Same defaults as the server's catalog (server/src/modules/config/llm-catalog.ts).
+  anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-opus-5', label: 'Anthropic (Claude)' },
   openai: { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini', label: 'OpenAI' },
   gemini: {
     base: 'https://generativelanguage.googleapis.com/v1beta/openai',
@@ -32,6 +33,7 @@ const LLM_PRESETS: Record<string, Preset> = {
     model: 'gemini-2.5-flash',
     label: 'Gemini Enterprise (Vertex AI)',
   },
+  openrouter: { base: 'https://openrouter.ai/api/v1', model: 'anthropic/claude-sonnet-5', label: 'OpenRouter' },
 };
 
 /** The LLM menu. */
@@ -40,7 +42,8 @@ const LLM_OPTIONS: Option[] = [
   { id: 'openai', label: 'OpenAI' },
   { id: 'gemini', label: 'Gemini (Google)' },
   { id: 'vertex', label: 'Gemini Enterprise (Vertex AI)', note: 'express-mode API key' },
-  { id: 'compatible', label: 'An OpenAI-compatible endpoint', note: 'OpenRouter, Together, Groq, Azure' },
+  { id: 'openrouter', label: 'OpenRouter', note: 'one key for Claude, GPT, Gemini, Grok, DeepSeek and more' },
+  { id: 'compatible', label: 'An OpenAI-compatible endpoint', note: 'Together, Groq, Azure' },
   { id: 'local', label: 'A local model', note: 'Ollama, vLLM, LM Studio' },
   { id: 'skip', label: 'Skip', note: 'no agent control; add it later with `oya config`' },
 ];

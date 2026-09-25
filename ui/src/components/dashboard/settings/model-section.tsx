@@ -4,7 +4,7 @@
 'use client';
 
 import { Check } from 'lucide-react';
-import { LLM_PRESETS, type KeyConfig } from '../config';
+import { llmCatalog, type KeyConfig } from '../config';
 import { CUSTOM_MODEL, SAVED_PLACEHOLDER } from './constants';
 import { Row, Secret, Select } from './fields';
 import { SectionHeading } from './heading';
@@ -21,11 +21,11 @@ interface Props {
   choice: ModelChoice;
 }
 
-/** One button per provider preset; the chosen one is ticked. */
-function ProviderPicker({ choice }: { /** Provider state. */ choice: ModelChoice }) {
+/** One button per provider the server offers; the chosen one is ticked. */
+function ProviderPicker({ config, choice }: Omit<Props, 'form'>) {
   return (
     <div role="group" aria-label="AI provider" className="grid grid-cols-3 gap-2">
-      {LLM_PRESETS.map((p) => {
+      {llmCatalog(config).map((p) => {
         const on = choice.provider === p.id;
         const tone = on
           ? 'border-accent/50 bg-accent/[0.06] text-text'
@@ -74,7 +74,7 @@ function ModelPicker({ form, choice }: Omit<Props, 'config'>) {
 
 /** The API key for the chosen provider. A switched provider needs a new one. */
 function ModelKey({ config, form, choice }: Props) {
-  const preset = LLM_PRESETS.find((p) => p.id === choice.provider);
+  const preset = llmCatalog(config).find((p) => p.id === choice.provider);
   const kept = !choice.providerChanged && config.openai_api_key;
   return (
     <Row
@@ -132,7 +132,7 @@ export default function ModelSection(props: Props) {
       </SectionHeading>
       <div className="space-y-5">
         <Row label="Provider" hint="Connect your AI account.">
-          <ProviderPicker choice={props.choice} />
+          <ProviderPicker config={props.config} choice={props.choice} />
         </Row>
         <ModelPicker form={props.form} choice={props.choice} />
         <ModelKey {...props} />

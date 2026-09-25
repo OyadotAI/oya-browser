@@ -46,4 +46,17 @@ describe('settings fields', () => {
   it('gives every LLM provider a base URL and a model', () => {
     for (const d of Object.values(LLM_DEFAULTS)) assert.match(d.base, /^https:\/\//) && assert.ok(d.model);
   });
+
+  it('offers every provider’s default model in its own picker, so a picker can always show what runs', () => {
+    for (const [id, d] of Object.entries(LLM_DEFAULTS))
+      assert.ok(
+        d.models.some((m) => m.id === d.model),
+        `${id} lists ${d.model}`,
+      );
+  });
+
+  it('accepts OpenRouter, on its OpenAI-compatible endpoint', () => {
+    assert.equal(FIELDS.llm_provider.validate('openrouter'), 'openrouter');
+    assert.equal(LLM_DEFAULTS.openrouter.base, 'https://openrouter.ai/api/v1');
+  });
 });

@@ -15,6 +15,8 @@ export interface KeyConfig {
   openai_base_url: string;
   /** The model the agent chats with. */
   chat_model: string;
+  /** Every LLM provider and its models, for the pickers. */
+  llm_catalog: LlmPreset[];
   /** Where new browsers start by default. */
   browser_provider: string;
   /** Anchor credential. */
@@ -69,7 +71,15 @@ export interface ProviderStatus {
   configured: boolean;
 }
 
-/** One LLM choice in the settings dialog. */
+/** One model a picker offers. */
+export interface ModelPreset {
+  /** The id the provider's API expects. */
+  id: string;
+  /** What the picker shows. */
+  label: string;
+}
+
+/** One LLM provider, as the server's catalog (GET /config llm_catalog) describes it. */
 export interface LlmPreset {
   /** Provider id. */
   id: string;
@@ -79,6 +89,12 @@ export interface LlmPreset {
   model: string;
   /** What its key looks like. */
   hint: string;
+  /** Where to get a key. */
+  keysUrl: string;
+  /** Its endpoint. */
+  base: string;
+  /** The models its picker offers; anything else is a custom model id. */
+  models: ModelPreset[];
 }
 
 /** What POST /pairing returns. */
@@ -94,13 +110,11 @@ export const loadConfig = (apiKey: string) => api<KeyConfig>('/config', { key: a
 export const saveConfig = (apiKey: string, values: Record<string, string>) =>
   api<KeyConfig>('/config', { key: apiKey, method: 'POST', body: values });
 
-/** The LLMs the settings dialog offers, with a default model and a hint of the key's shape. */
-export const LLM_PRESETS: LlmPreset[] = [
-  { id: 'anthropic', label: 'Claude', model: 'claude-opus-5', hint: 'sk-ant-...' },
-  { id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini', hint: 'sk-...' },
-  { id: 'gemini', label: 'Gemini', model: 'gemini-3.8-flash', hint: 'AIza...' },
-  { id: 'vertex', label: 'Gemini Enterprise', model: 'gemini-2.5-flash', hint: 'AIza... (express mode)' },
-];
+/**
+ * The LLM providers and their models, as the server lists them. The server is
+ * the one source, so the console, the desktop app and the CLI offer the same.
+ */
+export const llmCatalog = (config: KeyConfig | null): LlmPreset[] => config?.llm_catalog ?? [];
 
 /** Whether a provider runs on our own infrastructure, and so can reuse desktop cookies. */
 export const isOyaProvider = (id: string) => id === 'oya-cloud' || id === 'oya-selfhosted';

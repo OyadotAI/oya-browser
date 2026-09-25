@@ -7,6 +7,7 @@ import { resolved } from '../config.ts';
 import { InputError, answered, ask, askSecret, choose } from '../prompt.ts';
 import type { Flags } from '../args.ts';
 import { client } from '../context.ts';
+import { MODELS_SHOWN } from '../constants.ts';
 
 /** A browser provider as `config.get()` lists it. */
 interface ProviderInfo {
@@ -20,6 +21,21 @@ interface ProviderInfo {
   needs: string[];
 }
 
+/** One LLM provider as the server's catalog (GET /config llm_catalog) lists it. */
+interface LlmChoice {
+  /** The llm_provider value. */
+  id: string;
+  /** Its name. */
+  label: string;
+  /** The model a key runs on when it names none. */
+  model: string;
+  /** The models it offers. */
+  models?: {
+    /** The model id. */
+    id: string;
+  }[];
+}
+
 /** The parts of the current config onboarding reads. */
 interface CurrentConfig {
   /** Every browser provider. */
@@ -28,50 +44,65 @@ interface CurrentConfig {
   has_openai_key: boolean;
   /** The configured model. */
   chat_model: string;
+  /** The LLM provider saved, if any. */
+  llm_provider?: string;
+  /** Every LLM provider and its models; missing from servers older than the catalog. */
+  llm_catalog?: LlmChoice[];
 }
 
 /** Settings to save, by config field. */
 type Updates = Record<string, unknown>;
 
-/** An LLM's display name and default model. */
-interface Preset {
-  /** Display name. */
-  name: string;
-  /** Default model. */
-  model: string;
-}
+/** What `oya init` offers a server too old to send its catalog. */
+const LEGACY_CATALOG: LlmChoice[] = [
+  { id: 'anthropic', label: 'Claude (Anthropic)', model: 'claude-opus-5' },
+  { id: 'openai', label: 'OpenAI', model: 'gpt-4o-mini' },
+  { id: 'gemini', label: 'Gemini (Google)', model: 'gemini-3.8-flash' },
+  { id: 'vertex', label: 'Gemini Enterprise (Vertex AI)', model: 'gemini-2.5-flash' },
+];
 
-/** Each LLM's name and default model. */
-const PRESETS: Record<string, Preset> = {
-  anthropic: { name: 'Anthropic', model: 'claude-sonnet-5' },
-  openai: { name: 'OpenAI', model: 'gpt-4o-mini' },
-  gemini: { name: 'Gemini', model: 'gemini-3.8-flash' },
-  vertex: { name: 'Gemini Enterprise', model: 'gemini-2.5-flash' },
-};
+/** The LLM providers to offer: the server's, the same list the console and desktop app show. */
+const catalogOf = (current: CurrentConfig) => (current.llm_catalog?.length ? current.llm_catalog : LEGACY_CATALOG);
 
 /** The LLM menu; the skip note depends on whether a key is already configured. */
 const modelOptions = (current: CurrentConfig) => [
-  { id: 'anthropic', label: 'Claude (Anthropic)' },
-  { id: 'openai', label: 'OpenAI' },
-  { id: 'gemini', label: 'Gemini (Google)' },
-  { id: 'vertex', label: 'Gemini Enterprise (Vertex AI)' },
+  ...catalogOf(current).map((p) => ({ id: p.id, label: p.label })),
   { id: 'skip', label: 'Skip', note: current.has_openai_key ? 'keep what is configured' : 'no agent control' },
 ];
+
+/**
+ * The settings for an LLM choice. The model is always sent, null for the
+ * provider's default, so a previous provider's model is never left behind;
+ * a changed provider also drops the previous endpoint.
+ */
+export function llmUpdates(current: CurrentConfig, provider: string, key: string, model: string): Updates {
+  const updates: Updates = { llm_provider: provider, chat_model: model || null };
+  if (key) updates.openai_api_key = key;
+  if (provider !== current.llm_provider) updates.openai_base_url = null;
+  return updates;
+}
+
+/** Names the first few models the provider offers, so a model id need not be looked up. */
+function showModels(choice: LlmChoice): void {
+  const ids = (choice.models || []).map((m) => m.id);
+  const more = ids.length > MODELS_SHOWN ? ', …' : '';
+  if (ids.length) console.log(`   Models: ${ids.slice(0, MODELS_SHOWN).join(', ')}${more}`);
+}
 
 /** Step 1: the LLM, its key and model. */
 async function askModel(current: CurrentConfig, updates: Updates): Promise<void> {
   console.log('\n── 1. Your model ──');
   const llm = await choose('Which LLM should agents use?', modelOptions(current));
-  if (llm !== 'skip') await askModelDetails(llm, updates);
+  const choice = catalogOf(current).find((p) => p.id === llm);
+  if (choice) Object.assign(updates, await askModelDetails(current, choice));
 }
 
-/** The key and model for the chosen LLM. */
-async function askModelDetails(llm: string, updates: Updates): Promise<void> {
-  updates.llm_provider = llm;
-  const key = await askSecret(`${PRESETS[llm].name} API key:`);
-  if (key) updates.openai_api_key = key;
-  const model = await ask('Default model:', PRESETS[llm].model);
-  if (model) updates.chat_model = model;
+/** The key and model for the chosen LLM, as settings. */
+async function askModelDetails(current: CurrentConfig, choice: LlmChoice): Promise<Updates> {
+  const key = await askSecret(`${choice.label} API key:`);
+  showModels(choice);
+  const model = await ask('Default model:', choice.model);
+  return llmUpdates(current, choice.id, key, model);
 }
 
 /** What an unconfigured provider needs, as the menu says it: an address for your own Chrome, a key for a vendor. */

@@ -405,7 +405,7 @@ function mainCtx(real = {}) {
       },
     },
     cookies: { pullCookiesFor: async () => {}, flushCookieChanges() {} },
-    routines: { start() {} },
+    routines: { start() {}, refresh() {} },
     mirror: { maybeRun() {}, onOk() {}, onFailed() {}, reimport() {} },
   };
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);

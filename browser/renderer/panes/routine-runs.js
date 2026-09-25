@@ -1,8 +1,10 @@
 /**
  * A routine's run history in the Routines pane: each run with when it started,
- * how long it took, how it ended and how many steps it took; opening one shows
- * the steps and the agent's full answer, drawn like an Ask reply. Which runs
- * are open survives the list being redrawn on every change.
+ * how long it took, how it ended, how many steps it took, and whether another
+ * Oya browser on the project ran it; opening one shows the steps and the
+ * agent's full answer, drawn like an Ask reply. Which runs are open survives
+ * the list being redrawn on every change. Also the pill a card shows for its
+ * last run.
  */
 /* global Dom, Chat */
 /* exported RoutineRuns */
@@ -16,11 +18,12 @@ const ROUTINE_RUNS_TEXT = {
   noAnswer: {
     running: 'Working on it…',
     stopped: 'Stopped before it answered.',
-    interrupted: 'Oya closed before this run finished.',
+    interrupted: 'The browser running it closed before it finished.',
     done: 'No answer.',
     failed: 'No answer.',
   },
   steps: (n) => `${n} ${n === 1 ? 'step' : 'steps'}`,
+  elsewhere: 'another browser',
 };
 
 /** Seconds in a minute, for durations. */
@@ -57,21 +60,29 @@ const RoutineRuns = {
     return minutes ? `${minutes}m ${seconds % SECONDS_PER_MINUTE}s` : `${seconds}s`;
   },
 
-  /** The list of runs, newest first. */
-  list(runs = []) {
+  /** A card's pill for its last run: how it ended and when, "Running", or "Never run". */
+  last(routine) {
+    const run = routine.runs?.[0];
+    const pill = RoutineRuns.badge(run?.status);
+    if (run && run.status !== 'running') pill.textContent += ` · ${RoutineRuns.when(run.finishedAt || run.startedAt)}`;
+    return pill;
+  },
+
+  /** The list of runs, newest first; `browserId` is this browser, so runs by another say so. */
+  list(runs = [], browserId) {
     const ul = Dom.node('ul', null, 'routine-runs');
     if (!runs.length) ul.append(Dom.node('li', ROUTINE_RUNS_TEXT.none, 'routine-runs-empty'));
-    for (const run of runs) ul.append(RoutineRuns.item(run));
+    for (const run of runs) ul.append(RoutineRuns.item(run, browserId));
     return ul;
   },
 
   /** One run: its summary line, opening to its steps and answer. */
-  item(run) {
+  item(run, browserId) {
     const li = Dom.node('li', null, 'routine-run');
     const details = Dom.node('details');
     details.open = RoutineRuns.open.has(run.id);
     details.addEventListener('toggle', () => RoutineRuns.remember(run.id, details.open));
-    details.append(RoutineRuns.summary(run), RoutineRuns.body(run));
+    details.append(RoutineRuns.summary(run, run.by && run.by !== browserId), RoutineRuns.body(run));
     li.append(details);
     return li;
   },
@@ -82,15 +93,14 @@ const RoutineRuns = {
     else RoutineRuns.open.delete(id);
   },
 
-  /** "9:00 AM · 42s · 5 steps", with the status badge. */
-  summary(run) {
+  /** "9:00 AM · 42s · 5 steps", with the status badge, and "another browser" when one ran it. */
+  summary(run, elsewhere) {
     const summary = Dom.node('summary');
     const parts = [RoutineRuns.when(run.startedAt), RoutineRuns.duration(run)];
     if (run.steps?.length) parts.push(ROUTINE_RUNS_TEXT.steps(run.steps.length));
-    summary.append(
-      RoutineRuns.badge(run.status),
-      Dom.node('span', parts.filter(Boolean).join(' · '), 'routine-run-when'),
-    );
+    if (elsewhere) parts.push(ROUTINE_RUNS_TEXT.elsewhere);
+    const when = Dom.node('span', parts.filter(Boolean).join(' · '), 'routine-run-when');
+    summary.append(RoutineRuns.badge(run.status), when);
     return summary;
   },
 

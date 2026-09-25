@@ -12,6 +12,7 @@ describe('providerFor', () => {
     assert.equal(providerFor('https://aiplatform.googleapis.com/v1/publishers/google').name, 'gemini');
     assert.equal(providerFor('https://generativelanguage.googleapis.com/v1beta/openai').name, 'openai');
     assert.equal(providerFor('https://api.openai.com/v1').name, 'openai');
+    assert.equal(providerFor('https://openrouter.ai/api/v1').name, 'openai');
   });
 });
 

@@ -10,6 +10,7 @@ import { withBusy } from './busy';
 import { useDraft, type SettingsForm } from './use-draft';
 import { useKeyConfig } from './use-key-config';
 import { useModelChoice, type ModelChoice } from './use-model-choice';
+import { withModelPair } from './model';
 
 /** Saving is refused until something changed, a switched provider has a key, and a model is named. */
 function blocked(form: SettingsForm, choice: ModelChoice) {
@@ -38,7 +39,7 @@ export function useSettingsEditor(apiKey: string, onClose: () => void) {
   const load = useKeyConfig(apiKey);
   const form = useDraft(load.config);
   const choice = useModelChoice(load.config, form);
-  const { saving, save } = useSave(apiKey, form.draft, load.setError, onClose);
+  const { saving, save } = useSave(apiKey, withModelPair(form.draft, choice), load.setError, onClose);
   const canSave = !!load.config && !blocked(form, choice) && !saving;
   const guardedSave = () => void (!blocked(form, choice) && !saving && save());
   const close = () => void (!saving && onClose());
