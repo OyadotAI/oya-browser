@@ -43,6 +43,12 @@ describe('contentSecurityPolicy', () => {
     );
   });
 
+  it('lets only the captcha and the walkthrough video draw frames', () => {
+    expect(directives(contentSecurityPolicy('n', false))['frame-src']).toBe(
+      'https://challenges.cloudflare.com https://www.loom.com',
+    );
+  });
+
   it('keeps the directives in their established order', () => {
     const names = contentSecurityPolicy('n', false)
       .split('; ')
