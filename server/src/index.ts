@@ -62,6 +62,7 @@ import { pool } from './modules/gateway/routing.ts';
 import { PUBLIC_DIR, DOWNLOADS_DIR } from './platform/paths.ts';
 import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
+import { apiKeyHeader } from './app/http.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
 
 // Not yet layered: reads the persona service from the composition root.
@@ -102,6 +103,7 @@ const egressServer = process.env.OYA_EGRESS_PORT ? createEgressServer() : null;
 egressServer?.listen(Number(process.env.OYA_EGRESS_PORT), process.env.OYA_EGRESS_HOST || '127.0.0.1');
 
 app.use(cors());
+app.use(apiKeyHeader);
 
 // ── Legacy domain redirect: old hosts → canonical host ──
 // The old hosts still resolve and terminate TLS at the ingress; anything
@@ -129,6 +131,10 @@ const publicDir = PUBLIC_DIR;
 
 // ── Discovery & docs (root level) ──
 app.use('/.well-known', express.static(join(publicDir, '.well-known')));
+// The A2A spec renamed agent.json to agent-card.json; agents look for either.
+app.get('/.well-known/agent-card.json', (req, res) =>
+  res.sendFile(join(publicDir, '.well-known', 'agent.json'), { dotfiles: 'allow' }),
+);
 // One file, several names. Crawlers look for different ones and a second copy
 // would only drift from this.
 for (const path of ['/llms.txt', '/llms-full.txt', '/docs.txt']) {

@@ -30,6 +30,10 @@ type Fs = {
   existsSync(path: string): boolean;
   /** Its contents. */
   readFileSync(path: string, encoding: string): string;
+  /** Makes the config folder. */
+  mkdirSync(path: string, options: { /** Parents too. */ recursive: boolean }): void;
+  /** Writes the file. */
+  writeFileSync(path: string, data: string, options: { /** Owner only: it holds a key. */ mode: number }): void;
 };
 
 /** The part of `node:os` this file reads through. */
@@ -43,7 +47,7 @@ const node = (): NodeProcess | undefined =>
   (globalThis as { /** Node's process, when there is one. */ process?: NodeProcess }).process;
 
 /** A Node builtin, when this runtime has them and exposes them synchronously. */
-function builtin<T>(name: string): T | null {
+export function builtin<T>(name: string): T | null {
   const get = node()?.getBuiltinModule;
   return typeof get === 'function' ? ((get.call(node(), name) as T) ?? null) : null;
 }
@@ -65,4 +69,21 @@ export function savedConfig(): SavedConfig {
   } catch {
     return {}; // an unreadable or half-written file is not a reason to fail a call
   }
+}
+
+/** Owner read and write only: the file holds a key. */
+const PRIVATE_FILE = 0o600;
+/** Indent of the saved JSON, as `oya login` writes it. */
+const JSON_INDENT = 2;
+
+/** Saves a key where `oya login` would, unless one is there already. True when it wrote. */
+export function saveKey(apiKey: string, baseUrl: string): boolean {
+  const fs = builtin<Fs>('node:fs');
+  const file = configFile();
+  if (!fs || !file || savedConfig().apiKey) return false;
+  fs.mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ...savedConfig(), apiKey, baseUrl }, null, JSON_INDENT), {
+    mode: PRIVATE_FILE,
+  });
+  return true;
 }

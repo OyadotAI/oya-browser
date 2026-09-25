@@ -63,6 +63,15 @@ describe('DeepLinks', () => {
     assert.equal(await links.applyDeepLink('oya://connect?code=c&server=wss://b.test/ws'), true);
     assert.deepEqual([ctx.config.values.apiKey, ctx.config.values.persona], ['k9', 'work']);
     assert.equal(ctx.socket.connects, 1);
+    assert.equal(ctx.mirror.importOnConnect, undefined, 'no import unless ticked');
+    globalThis.fetch.mock.restore();
+  });
+
+  it('imports the logins once connected when the person left the box ticked', async () => {
+    ctx.electron.dialog.answers.messageBox.push({ response: 1, checkboxChecked: true });
+    mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ apiKey: 'k9' }) }));
+    await links.applyDeepLink('oya://connect?code=c&server=wss://b.test/ws');
+    assert.equal(ctx.mirror.importOnConnect, true);
     globalThis.fetch.mock.restore();
   });
 });

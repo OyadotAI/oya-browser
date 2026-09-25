@@ -75,3 +75,10 @@ export const Status = {
   /** A browser did not come up in time. */
   GATEWAY_TIMEOUT: 504,
 } as const;
+
+/** The provider the server names the Oya desktop app by. */
+export const DESKTOP_PROVIDER = 'oya-desktop';
+/** How long `desktop.connect()` waits for a person to click Connect (and allow the keychain prompt). */
+export const DESKTOP_TIMEOUT_MS = 300_000;
+/** Where the desktop app is downloaded. */
+export const DESKTOP_DOWNLOAD_URL = 'https://oyabrowser.com/#download';

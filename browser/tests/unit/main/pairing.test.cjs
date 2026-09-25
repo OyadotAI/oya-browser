@@ -34,12 +34,21 @@ describe('pairFromLink', () => {
       apiKey: 'key-1',
       persona: 'work',
       serverUrl: 'wss://oya.example/ws',
+      importLogins: false,
     });
     assert.equal(asked[0].message, 'Connect to oya.example?');
     assert.equal(asked[0].defaultId, 0, 'Cancel is the default');
     const [url, init] = fetch.mock.calls[0].arguments;
     assert.equal(url, 'https://oya.example/api/pairing/claim');
     assert.deepEqual([init.method, init.redirect, init.body], ['POST', 'error', '{"code":"abc"}']);
+  });
+
+  it('imports the logins when the person leaves "import my logins" ticked, as it starts', async () => {
+    fakeClaim(200, { apiKey: 'k' });
+    const asked = [];
+    const ask = async (options) => (asked.push(options), { response: 1, checkboxChecked: true });
+    assert.equal((await pairFromLink(LINK, ask)).importLogins, true);
+    assert.equal(asked[0].checkboxChecked, true);
   });
 
   it('uses the default persona when the server names none', async () => {

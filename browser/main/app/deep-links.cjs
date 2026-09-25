@@ -27,6 +27,8 @@ class DeepLinks {
     const paired = await pairFromLink(rawUrl, (opts) => this.ask(opts));
     if (!paired) return false;
     this.retarget(paired);
+    // The import needs the new connection, so it runs once that signs in.
+    if (paired.importLogins) this.ctx.mirror.importOnConnect = true;
     // connect() emits ws-status, which is how the renderer learns about this.
     this.ctx.socket.connect();
     this.ctx.shell.window?.show();

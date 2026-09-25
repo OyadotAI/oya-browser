@@ -47,13 +47,16 @@ const PAIRING_PROMPT = {
   detail:
     'This browser will sign in to that control plane and share its cookies and ' +
     'logged-in sessions with it, so remote browsers can act as you.\n\n' +
-    'Only continue if you started this from that dashboard. Cancel if a web page opened it.',
+    'Only continue if you started this from that dashboard or your agent. Cancel if a web page opened it.',
+  // An agent pairs the app to use the person's own logins, so bringing them over is the default.
+  checkboxLabel: 'Also import my logins from my usual browser',
+  checkboxChecked: true,
 };
 
-/** Asks the person to confirm, naming the host; true only for Connect. */
+/** Asks the person to confirm, naming the host: `{ importLogins }` for Connect, null otherwise. */
 async function confirmPairing(ask, parsed) {
-  const { response } = await ask({ ...PAIRING_PROMPT, message: `Connect to ${parsed.host}?` });
-  return response === 1;
+  const { response, checkboxChecked } = await ask({ ...PAIRING_PROMPT, message: `Connect to ${parsed.host}?` });
+  return response === 1 ? { importLogins: !!checkboxChecked } : null;
 }
 
 /** The claim request: JSON, no redirects, bounded in time. */
@@ -84,12 +87,13 @@ function tryClaimPairingCode(parsed, code) {
   );
 }
 
-/** Pairs from an oya:// link: `{ apiKey, persona, serverUrl }`, or false when refused or failed. */
+/** Pairs from an oya:// link: `{ apiKey, persona, serverUrl, importLogins }`, or false when refused or failed. */
 async function pairFromLink(rawUrl, ask) {
   const link = parsePairingLink(rawUrl);
-  if (!link || !(await confirmPairing(ask, link.parsed))) return false;
+  const confirmed = link && (await confirmPairing(ask, link.parsed));
+  if (!confirmed) return false;
   const claim = await tryClaimPairingCode(link.parsed, link.code);
-  if (claim.ok) return { ...claim.ok, serverUrl: link.parsed.href };
+  if (claim.ok) return { ...claim.ok, serverUrl: link.parsed.href, ...confirmed };
   await ask({ type: 'error', title: 'Could not pair', message: 'Pairing failed', detail: claim.error.message });
   return false;
 }

@@ -26,7 +26,8 @@ import { proxyApi } from './api/proxies.js';
 import { personaApi } from './api/personas.js';
 import { configApi } from './api/config.js';
 import { waitUntilConnected } from './api/ready.js';
-import type { OyaOptions } from './types/index.js';
+import { desktopApi, signup } from './api/agent.js';
+import type { OyaOptions, Signup, SignupOptions } from './types/index.js';
 
 export { Browser, Run, OyaError };
 export { file, MAX_FILE_BYTES } from './file.js';
@@ -47,6 +48,20 @@ export class Oya {
     () => this.http,
     (id, timeoutMs) => this.waitUntilConnected(id, timeoutMs),
   );
+
+  /** The person's own desktop browser, with their logins: `await oya.desktop.connect()` pairs it when it is not up yet. */
+  readonly desktop = desktopApi(
+    () => this.http,
+    () => this.browser.list(),
+  );
+
+  /**
+   * An agent's own key, with no person or dashboard: `await Oya.signup({ email })`.
+   * Saved to ~/.oya/config.json, so a later `new Oya()` finds it.
+   */
+  static signup(options: SignupOptions): Promise<Signup> {
+    return signup(options);
+  }
 
   /** Durable operational controls, including disconnected and cleanup-pending sessions. */
   readonly control = controlApi(() => this.http);

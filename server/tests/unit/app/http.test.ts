@@ -7,6 +7,7 @@ import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   announce,
+  apiKeyHeader,
   canAccess,
   evaluateIn,
   getKey,
@@ -25,6 +26,28 @@ import { connectBrowser, disconnectBrowser } from '../support/fakes.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../support/browsers.ts';
 
 const B = 'b-http';
+
+describe('an X-API-Key header', () => {
+  /** Runs the middleware over these headers and returns them. */
+  const through = (headers) => {
+    const next = mock.fn();
+    apiKeyHeader({ headers }, null, next);
+    assert.equal(next.mock.callCount(), 1);
+    return headers;
+  };
+
+  it('becomes the bearer key, so directories that cannot add "Bearer " still authenticate', () => {
+    assert.equal(getKey({ headers: through({ 'x-api-key': 'k1' }) }), 'k1');
+  });
+
+  it('never overrides an Authorization header', () => {
+    assert.equal(through({ 'x-api-key': 'k1', authorization: 'Bearer k2' }).authorization, 'Bearer k2');
+  });
+
+  it('adds nothing when it is absent or empty', () => {
+    assert.equal(through({ 'x-api-key': '' }).authorization, undefined);
+  });
+});
 
 describe('the caller’s key', () => {
   it('is the bearer token, or empty without one', () => {

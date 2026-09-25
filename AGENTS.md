@@ -1,5 +1,8 @@
 # Working in this repository
 
+> Here to **use** Oya Browser rather than change it? Read the "For AI agents"
+> section of `README.md`, or https://oyabrowser.com/llms.txt.
+
 Guidance for AI coding agents and people alike. Read `ARCHITECTURE.md` first
 for the map, then the ARCHITECTURE.md of the part you are changing.
 
