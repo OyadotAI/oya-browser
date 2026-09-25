@@ -47,7 +47,7 @@ const isDue = (routine, now) =>
 const runningRun = (routine) => (routine.runs || []).find((run) => run.status === 'running');
 
 /** How a run ended, from the agent's answer. */
-function statusOf(answer) {
+function runStatusOf(answer) {
   if (answer?.error === STOPPED) return 'stopped';
   return answer?.error || answer?.failed ? 'failed' : 'done';
 }
@@ -56,7 +56,7 @@ function statusOf(answer) {
 function endingOf(answer) {
   const text = answer?.error && answer.error !== STOPPED ? `Error: ${answer.error}` : answer?.text || '';
   const steps = (answer?.toolCalls || []).map((call) => call.name).slice(0, ROUTINE_STEPS_KEPT);
-  return { status: statusOf(answer), result: text.slice(0, ROUTINE_RESULT_CHARS), steps };
+  return { status: runStatusOf(answer), result: text.slice(0, ROUTINE_RESULT_CHARS), steps };
 }
 
 /** What Run now and the pane say when this app cannot run a routine now, or '' when it can. */
