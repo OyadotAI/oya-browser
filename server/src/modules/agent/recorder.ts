@@ -144,6 +144,18 @@ export function rememberHandle(browserId, elementId, handle) {
   if (run && handle) run.handles.set(Number(elementId), handle);
 }
 
+/**
+ * Forgets what the browser read off an element id, before a new action on it.
+ *
+ * Ids are renumbered on every analysis, so a handle kept from an earlier action
+ * describes whatever element held the id then. A select or an upload reports no
+ * handle of its own, and inherited that one: a select on a wizard's second panel
+ * was recorded as the header link clicked earlier under the same id.
+ */
+export function forgetHandle(browserId, elementId) {
+  runs.get(browserId)?.handles?.delete(Number(elementId));
+}
+
 /** The elements the model was last given for this browser, or none. */
 export const elementsOf = (browserId): any[] => runs.get(browserId)?.elements || [];
 

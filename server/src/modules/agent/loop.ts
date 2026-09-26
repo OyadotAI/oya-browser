@@ -7,7 +7,7 @@ import { actionsOf } from '../browsers/socket.ts';
 import { REMEMBER, REQUEST_HUMAN, UPDATE_PLAN, returnDataTool } from './prompt.ts';
 import { notesHere, rememberNote } from './site-notes.ts';
 import { executeTool } from './executor.ts';
-import { recordStep, elementOf } from './recorder.ts';
+import { recordStep, elementOf, forgetHandle } from './recorder.ts';
 import { batchOf, currentId, ELEMENT_MOVED, type Batch } from './batch.ts';
 import { fill, redact } from './placeholders.ts';
 import { trimContext } from './context.ts';
@@ -214,10 +214,14 @@ function aimedArgs(ctx: LoopContext, tc, batch: Batch) {
   return id == null ? null : { ...args, element_id: id };
 }
 
-/** Runs the call, unless its element is gone; the element it acted on is taken before it acts. */
+/**
+ * Runs the call, unless its element is gone. The element it acts on is taken before it acts, and any
+ * handle an earlier action left under the same id is dropped, so the step records only this action's.
+ */
 async function runAimed(ctx: LoopContext, name, args) {
   if (!args) return { result: ELEMENT_MOVED, acted: undefined };
   const acted = args.element_id == null ? undefined : elementOf(ctx.browserId, args.element_id);
+  if (acted) forgetHandle(ctx.browserId, args.element_id);
   return { result: await invoke(ctx, name, args), acted };
 }
 

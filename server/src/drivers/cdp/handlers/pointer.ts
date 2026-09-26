@@ -13,10 +13,13 @@ function coords(params) {
   return { x: Number(params.x) || 0, y: Number(params.y) || 0 };
 }
 
-/** Clicks an analyzer element and reports where the page ended up. */
+/**
+ * Clicks an analyzer element, or a selector as the agent sends it (the way type
+ * and hover take one), and reports where the page ended up.
+ */
 export const click: Handler = async (driver, params) => {
-  if (!params.element_id) return { ok: false, error: 'element_id required' };
-  const { x, y } = await driver.locate(elementSelector(params.element_id));
+  if (!params.element_id && !params.selector) return { ok: false, error: 'element_id required' };
+  const { x, y } = await driver.locate(params.selector || elementSelector(params.element_id));
   await driver.clickAt(x, y);
   return { ok: true, data: { clicked: true, url: await driver.evaluate('location.href') } };
 };

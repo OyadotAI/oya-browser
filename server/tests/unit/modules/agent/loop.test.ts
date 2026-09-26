@@ -369,6 +369,27 @@ describe('agentLoop', () => {
     assert.equal(after.chat_output_tokens - before.chat_output_tokens, 10);
   });
 
+  it('records a select by its own element, not a link an earlier click left under the same id', async () => {
+    const link = { id: 3, type: 'link', tag: 'a', href: '/request', text: 'Authorization Request', visible: true };
+    const select = { id: 3, type: 'select', tag: 'select', domId: 'requestType', visible: true };
+    recorder.setElements(BROWSER, [link]);
+    answer = (action) =>
+      action === 'click'
+        ? { ok: true, data: { handle: { tag: 'a', href: '/request', text: 'Authorization Request' } } }
+        : action === 'analyze'
+          ? { ok: true, data: { elements: [select] } }
+          : { ok: true, data: { result: { ok: true, chosen: 'Outpatient' } } };
+    stubLlm([
+      toolReply(['click', { element_id: 3 }]),
+      toolReply(['select_option', { element_id: 3, option: 'Outpatient' }]),
+      textReply('DONE'),
+    ]);
+    await agentLoop(ctx(), start());
+    const chose = recorder.lastRun(BROWSER).steps.find((s) => s.action === 'select_option');
+    assert.equal(chose.el.domId, 'requestType');
+    assert.equal(chose.el.href, undefined);
+  });
+
   it('types a turn’s later calls into the element the model meant, after an earlier call renumbered the page', async () => {
     const before = [
       { id: 1, type: 'input', tag: 'input', domId: 'first', visible: true },

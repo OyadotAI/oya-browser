@@ -37,6 +37,16 @@ describe('click', () => {
     assert.ok(conn.sent('Input.dispatchMouseEvent').every((c) => c.sessionId === SESSION));
   });
 
+  it('clicks a selector, which is what the agent sends', async () => {
+    const { driver, conn } = pageWithElement();
+    const result = await driver.dispatch('click', { selector: '[data-ac-id="13"]' });
+    assert.deepEqual(result, { ok: true, data: { clicked: true, url: 'https://site.example/next' } });
+    assert.deepEqual(mouse(conn), [
+      ['mousePressed', 40, 60, 1],
+      ['mouseReleased', 40, 60, 1],
+    ]);
+  });
+
   it('requires an element id', async () => {
     const { driver } = pageWithElement();
     assert.deepEqual(await driver.dispatch('click', {}), { ok: false, error: 'element_id required' });
