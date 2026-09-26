@@ -145,6 +145,19 @@ describe('fetchRelayCode', () => {
     assert.equal(await fetchRelayCode(config, 1_000_000), '777777');
   });
 
+  it('takes a mailbox code dated to the whole second before the login it answers', async () => {
+    // Sent while the login post was handled: Gmail dates it 08:00:26.000, the login 08:00:26.400.
+    clearTokens();
+    const calls = stubFetch((url) => {
+      if (url.includes('oauth2')) return json({ access_token: 'at' });
+      if (url.includes('/messages?')) return json({ messages: [{ id: 'm1' }] });
+      return json({ internalDate: '1000000', payload: { mimeType: 'text/plain', body: { data: b64('code 872051') } } });
+    });
+    const config = { type: 'gmail', refreshToken: 'rt-second', clientId: 'c' };
+    assert.equal(await fetchRelayCode(config, 1_000_400), '872051');
+    assert.match(new URL(calls[1].url).searchParams.get('q') ?? '', /after:995\b/);
+  });
+
   it('stops at once when the mailbox refuses its refresh token', async () => {
     clearTokens();
     const calls = stubFetch(() => text('{"error":"invalid_grant"}', 400));

@@ -102,8 +102,9 @@ function lockedOut(liveViewUrl) {
 
 /** Presses the site's request-a-code control. */
 async function requestCode(evaluate, liveViewUrl) {
+  const requestedAt = Date.now(); // before the press: the code can be sent while it is handled
   const asked = await evaluate(requestCodeJS);
-  const head = { present: true, completed: !!asked?.requested, method: 'request_code', requestedAt: Date.now() };
+  const head = { present: true, completed: !!asked?.requested, method: 'request_code', requestedAt };
   const failure = asked?.requested ? {} : { error: asked?.reason || 'Could not ask the site for a code' };
   return { ...head, liveViewUrl, ...failure };
 }
@@ -151,12 +152,14 @@ async function signIn(run: SignIn) {
   const used = attempts.get(run.key) || 0;
   if (used >= MAX_LOGIN_ATTEMPTS) return exhausted(run, used);
   attempts.set(run.key, used + 1);
+  // Taken before the form is sent: a site emails the code while it handles the post, so a
+  // code that arrives before the fill returns is still this login's, not an older one.
+  const submittedAt = Date.now();
   const filled = await run.evaluate(fillCredentialsJS(run.stored.username, run.stored.password));
   if (!filled?.filled) return fillFailed(filled, run.liveViewUrl);
   // Filling a form is not proof the site accepted it. The observable signal is
   // the password box going away, or an error appearing where it stood.
-  const submittedAt = Date.now();
-  const after = await verdict(run.evaluate, submittedAt + (filled.submitted ? LOGIN_CONFIRM_MS : 0));
+  const after = await verdict(run.evaluate, Date.now() + (filled.submitted ? LOGIN_CONFIRM_MS : 0));
   return settle(after, !!filled.submitted, submittedAt, run);
 }
 

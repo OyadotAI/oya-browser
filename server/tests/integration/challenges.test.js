@@ -18,6 +18,7 @@ process.env.OYA_PROFILE_SECRET = 'd'.repeat(64);
 delete process.env.OYA_CAPTCHA_API_KEY;
 
 const { CDPConnection } = await import('../../src/drivers/cdp.ts');
+const loginPage = await import('../../src/modules/challenges/login-page.ts');
 const captcha = await import('../../src/modules/challenges/captcha.ts');
 const mfa = await import('../../src/modules/challenges/mfa.ts');
 
@@ -63,6 +64,16 @@ const PAGES = {
   '/otp-compact': `<!doctype html><title>t</title><body><input type="email" name="email">
     <input type="password" name="password"><input type="text" name="totpmfa" id="totpmfa" placeholder="123456"></body>`,
   '/otp-lookalike': `<!doctype html><title>f</title><body><input type="text" name="footprint" placeholder="Shoe size"></body>`,
+  // Carelon's account-first page: no "sign in" anywhere, only a field that says it holds a username.
+  '/account-first': `<!doctype html><title>Portal</title><body><form><h1>User Confirmation</h1>
+    <label for="u">USERNAME</label><input id="u" name="asPrimary$ctl00$txtLoginId" autocomplete="username">
+    <input type="submit" value="Next"></form></body>`,
+  // The same step named only by its title.
+  '/account-first-title': `<!doctype html><title>Sign in</title><body><form><label>Email</label>
+    <input type="email" name="email"><button>Next</button></form></body>`,
+  // A search box beside a Continue button is not a sign-in step.
+  '/account-search': `<!doctype html><title>Accounts</title><body><form>
+    <input name="account" placeholder="Search accounts"><button>Continue</button></form></body>`,
 };
 
 const site = createServer((req, res) => {
@@ -185,7 +196,16 @@ try {
   const joined = await evaluate(`[...document.querySelectorAll('input')].map(i=>i.value).join('')`);
   assert(/^\d{6}$/.test(joined), `each box got one digit (${joined})`);
 
-  console.log('\n6️⃣  Nothing to answer it with is a handoff, not a failure...');
+  console.log('\n6️⃣  An account-first sign-in page is found by its text, title or username field...');
+  for (const path of ['/account-first', '/account-first-title']) {
+    await goto(path);
+    const found = await evaluate(loginPage.DETECT_JS);
+    assert(found.present && found.stage === 'username', `${path} is an account-first sign-in step`);
+  }
+  await goto('/account-search');
+  assert((await evaluate(loginPage.DETECT_JS)).present === false, 'a search box with Continue is not a sign-in step');
+
+  console.log('\n7️⃣  Nothing to answer it with is a handoff, not a failure...');
   mfa.reset();
   await goto('/otp');
   const handoff = await mfa.complete(evaluate, 'p-no-factor', { liveViewUrl: '/api/live/abc' });

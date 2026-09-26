@@ -29,6 +29,14 @@ export const MIN_CHALLENGE_HEIGHT_PX = 30;
 export const TOKEN_REFRESH_MARGIN_MS = 60_000;
 /** One request to a mailbox or token endpoint. */
 export const MAILBOX_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * How far before the login a mailbox message may be dated and still be its code.
+ * Gmail dates a message to the whole second, and its clock and ours differ a
+ * little: a code sent during the login post read as older than the login and was
+ * skipped. A previous run's code is minutes old, well outside this.
+ */
+export const MAILBOX_CLOCK_SLACK_MS = 5_000;
 /** Assumed access-token lifetime when the provider does not say (seconds). */
 export const DEFAULT_TOKEN_LIFETIME_S = 3600;
 /** Characters of a provider's error body kept in the message. */
