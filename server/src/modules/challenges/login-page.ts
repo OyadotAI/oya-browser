@@ -40,13 +40,20 @@ export const DETECT_JS = `(() => {
     // then for the password. With no password box to anchor on, the signal is an
     // identifier field with a Next-shaped control: a search box next to a
     // "Continue" link is not a sign-in step, so both must be true.
+    //
+    // And the page has to be about signing in: its text or title says so, or the
+    // field declares itself a username (autocomplete="username", which no search
+    // box does). Carelon's "User Confirmation" page says neither "sign in" nor
+    // "log in" anywhere in its body, only in its title and its field.
     const named = (el) => [el.name, el.id, el.autocomplete, el.placeholder, el.getAttribute('aria-label')].filter(Boolean).join(' ');
     const identifier = [...document.querySelectorAll('input')].find((el) => visible(el)
       && /^(text|email)$/.test(el.type || 'text')
       && /\\b(user.?name|user.?id|email|account|login|identifier)\\b/i.test(named(el)));
     const next = !identifier ? null : [...(identifier.form || document).querySelectorAll('button, input[type="submit"]')].find((b) =>
       visible(b) && !b.disabled && /^(next|continue|sign ?in|log ?in|submit)$/i.test((b.innerText || b.value || '').trim()));
-    if (identifier && next && /\\b(sign ?in|log ?in|signin)\\b/i.test(text)) {
+    const aboutSignIn = /\\b(sign ?in|log ?in|signin)\\b/i.test(text + ' ' + document.title)
+      || /\\busername\\b/i.test((identifier && identifier.autocomplete) || '');
+    if (identifier && next && aboutSignIn) {
       identifier.setAttribute('data-oya-login-target', 'username');
       next.setAttribute('data-oya-login-target', 'next');
       return { present: true, stage: 'username', rejected, locked };

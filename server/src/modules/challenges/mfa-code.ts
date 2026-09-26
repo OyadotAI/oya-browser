@@ -9,7 +9,13 @@ import { chatCompletion } from '../../platform/llm.ts';
 import { assertSafeTarget } from '../../platform/net-guard.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { DEFAULT_RELAY_TIMEOUT_MS, MAX_MESSAGE_CHARS, RELAY_POLL_MS, RELAY_REQUEST_TIMEOUT_MS } from './constants.ts';
+import {
+  DEFAULT_RELAY_TIMEOUT_MS,
+  MAILBOX_CLOCK_SLACK_MS,
+  MAX_MESSAGE_CHARS,
+  RELAY_POLL_MS,
+  RELAY_REQUEST_TIMEOUT_MS,
+} from './constants.ts';
 
 /** What the tenant's LLM is told when asked to read a code out of a message. */
 const EXTRACT_PROMPT =
@@ -116,9 +122,9 @@ async function attempt(poll) {
   }
 }
 
-/** The code in the newest mailbox message since `since`, if any. */
+/** The code in the newest mailbox message since `since` (give or take the mailbox's clock), if any. */
 async function pollInbox(readInbox, config, since, read) {
-  const message = await readInbox(config, since);
+  const message = await readInbox(config, since ? since - MAILBOX_CLOCK_SLACK_MS : 0);
   return message && (await read(message.text));
 }
 

@@ -122,6 +122,30 @@ describe('login.complete', () => {
     assert.equal(login.attemptsFor('b1', 'portal.example'), 0, 'a success clears the counter');
   });
 
+  it('dates a sign-in from before its form was sent, so a code emailed during the post counts', async () => {
+    const evaluate = mock.fn(async (script: string) => {
+      if (script === FILL) {
+        mock.timers.tick(3000); // the site handles the post, and emails the code, meanwhile
+        return { filled: true, submitted: true };
+      }
+      return evaluate.mock.callCount() > 1 ? GONE : FORM;
+    });
+    const result = await login.complete(evaluate, 'p1', OPTIONS);
+    assert.equal(result.submittedAt, 1000);
+  });
+
+  it('dates a code request from before its control was pressed', async () => {
+    const evaluate = mock.fn(async (script: string) => {
+      if (script === requestCodeJS) {
+        mock.timers.tick(3000);
+        return { requested: true };
+      }
+      return { present: true, stage: 'request_code' };
+    });
+    const result = await login.complete(evaluate, 'p1', OPTIONS);
+    assert.equal(result.requestedAt, 1000);
+  });
+
   it('counts reaching the code step as signed in', async () => {
     const evaluate = scriptedPage([
       [DETECT_JS, [FORM, { present: true, stage: 'request_code' }]],
