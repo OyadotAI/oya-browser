@@ -29,6 +29,8 @@ COPY server/src/ ./src/
 COPY browser/scripts/ /browser/scripts/
 COPY browser/anonymity/ /browser/anonymity/
 COPY browser/login-state.js /browser/login-state.js
+# The release version /health reports (src/platform/version.ts), bumped with the SDK by the release script.
+COPY browser/package.json /browser/package.json
 
 # Standard Next.js runtime, traced dependencies, and static assets
 COPY --from=ui-build /ui/.next/standalone/ /ui/.next/standalone/

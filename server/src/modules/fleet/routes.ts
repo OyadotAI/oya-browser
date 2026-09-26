@@ -15,15 +15,17 @@ import { pool } from '../gateway/routing.ts';
 import { control } from '../control/service.ts';
 import { getKey, operatorOnly } from '../../app/http.ts';
 import { summarize } from './summary.ts';
+import { RELEASE_VERSION } from '../../platform/version.ts';
 import { MAX_PROVISION, DEFAULT_USAGE_HOURS, DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT } from './constants.ts';
 
 /** Health, key provisioning, metrics, fleet overview, usage, audit and operator drain routes. */
 export const router = Router({ caseSensitive: true });
 
-/** GET /health, liveness, connected browser count and uptime; no auth required. */
+/** GET /health, liveness, release version, connected browser count and uptime; no auth required. */
 router.get('/health', (req, res) => {
   res.json({
     status: 'ok',
+    version: RELEASE_VERSION,
     browsers: registry.list().length,
     uptime: process.uptime(),
   });

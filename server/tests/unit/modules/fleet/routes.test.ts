@@ -4,6 +4,7 @@
  */
 import { describe, it, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 ownDataDir();
@@ -39,6 +40,12 @@ describe('fleet routes', () => {
     assert.equal(res.body.status, 'ok');
     assert.ok(res.body.browsers >= 1);
     assert.equal(typeof res.body.uptime, 'number');
+  });
+
+  it('reports the release it belongs to, so a client can tell an old server', async () => {
+    const res = await callRoute(router, { url: '/health' });
+    const release = JSON.parse(readFileSync(new URL('../../../../../browser/package.json', import.meta.url), 'utf8'));
+    assert.equal(res.body.version, release.version);
   });
 
   it('refuses provisioning to a tenant key', async () => {
