@@ -157,7 +157,7 @@ export const REQUEST_HUMAN = {
 
 /** How to write task values: as placeholders, with filters for parts and formats. */
 const TASK_VALUES_NOTE =
-  'TASK VALUES: type every task value as its {{placeholder}}, never as literal text, so the recorded playbook replays with other data. Transform a value with filters instead of retyping part of it: {{name|first}}, {{name|last}}, {{name|part:2}} (Nth word), {{x|upper}}, {{x|lower}}, {{x|digits}}, {{dob|date:MM/DD/YYYY}} (tokens YYYY YY MMMM MMM MM M DD D; separate month, day and year fields take {{dob|date:MM}}, {{dob|date:DD}}, {{dob|date:YYYY}}). select_option takes placeholders too.';
+  'TASK VALUES: type every task value as its {{placeholder}}, never as literal text, so the recorded playbook replays with other data. Transform a value with filters instead of retyping part of it: {{name|first}}, {{name|last}}, {{name|part:2}} (Nth word), {{x|upper}}, {{x|lower}}, {{x|digits}}, {{seed|totp}} (the current authenticator code from a TOTP seed; type it into the one-time code field, and type it again if the site says the code expired), {{dob|date:MM/DD/YYYY}} (tokens YYYY YY MMMM MMM MM M DD D; separate month, day and year fields take {{dob|date:MM}}, {{dob|date:DD}}, {{dob|date:YYYY}}). select_option takes placeholders too.';
 
 /** A file's size from its base64 length, in KB or MB. */
 const fileSize = (f) => {

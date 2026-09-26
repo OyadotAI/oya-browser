@@ -40,7 +40,7 @@ export interface Signup {
 
 /** What `oya.desktop.connect()` takes. */
 export interface DesktopOptions {
-  /** The persona the desktop app signs in as. Defaults to the key's own. */
+  /** The persona (id or name) the desktop app signs in as, switching a running app that is on another one. Defaults to the key's own. */
   persona?: string;
   /** Open the pairing link on this machine (the default). Off, the link is only in the error when the app does not connect. */
   open?: boolean;

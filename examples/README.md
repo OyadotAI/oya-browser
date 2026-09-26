@@ -16,9 +16,11 @@ Every script needs `OYA_API_KEY`, and runs from this `examples/` folder. The mul
 |:---|:---|:---|
 | [`01-quickstart.ts`](sdk/01-quickstart.ts) | Start a browser, or use the one already connected, and drive it in plain language | `npx tsx --env-file=.env sdk/01-quickstart.ts` |
 | [`02-captcha.ts`](sdk/02-captcha.ts) | Automated reCAPTCHA detection and resolution | `npx tsx --env-file=.env sdk/02-captcha.ts` |
-| [`03-mfa.ts`](sdk/03-mfa.ts) | Two-factor authentication with sealed TOTP seeds and human live view fallback | `npx tsx --env-file=.env sdk/03-mfa.ts` |
+| [`03-mfa.ts`](sdk/03-mfa.ts) | Password plus TOTP sign-in: the login and seed are sealed on the persona, the agent never sees them | `npx tsx --env-file=.env sdk/03-mfa.ts` |
 | [`04-personas.ts`](sdk/04-personas.ts) | Stable device identities: create, reuse, rotate, and clone fingerprints | `npx tsx --env-file=.env sdk/04-personas.ts` |
 | [`05-playbooks.ts`](sdk/05-playbooks.ts) | Ask once with hidden data, save it as a playbook, replay it without the LLM, and get callbacks with auto-heal | `npx tsx --env-file=.env sdk/05-playbooks.ts` |
+| [`06-sign-in.ts`](sdk/06-sign-in.ts) | Sign in with a stored username and password | `npx tsx --env-file=.env sdk/06-sign-in.ts` |
+| [`07-prompt-login.ts`](sdk/07-prompt-login.ts) | Sign in from a prompt: login and TOTP seed passed as secrets, typed as `{{password}}` and `{{seed\|totp}}` | `npx tsx --env-file=.env sdk/07-prompt-login.ts` |
 | [`demo.ts`](sdk/demo.ts) | 🎬 Interactive tour of every capability | `npx tsx --env-file=.env sdk/demo.ts` |
 
 ### 🎭 [`playwright/`](playwright/): bring your own tools

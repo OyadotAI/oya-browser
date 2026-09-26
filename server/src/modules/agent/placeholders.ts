@@ -51,6 +51,23 @@ export const FILTERS = {
     };
     return format.replace(/YYYY|YY|MMMM|MMM|MM|M|DD|D/g, (t) => parts[t]);
   },
+  /**
+   * The authenticator code a base32 TOTP seed gives right now (RFC 6238, SHA-1, 6
+   * digits, 30 s), so a prompt can sign in with {{seed|totp}} and a replay gets a
+   * fresh code. challenges/totp.ts is the same arithmetic; this copy stays inline.
+   */
+  totp: (seed) => {
+    const { createHmac } = process.getBuiltinModule('node:crypto');
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    const clean = seed.toUpperCase().replace(/[^A-Z2-7]/g, '');
+    const bits = [...clean].map((c) => alphabet.indexOf(c).toString(2).padStart(5, '0')).join('');
+    const key = Buffer.from((bits.match(/.{8}/g) || []).map((b) => parseInt(b, 2)));
+    const counter = Buffer.alloc(8);
+    counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
+    const hmac = createHmac('sha1', key).update(counter).digest();
+    const offset = hmac[hmac.length - 1] & 15;
+    return String((hmac.readUInt32BE(offset) & 0x7fffffff) % 1e6).padStart(6, '0');
+  },
   /* eslint-enable max-lines-per-function, no-magic-numbers */
 };
 

@@ -129,6 +129,16 @@ describe('recorder', () => {
     assert.equal(run.steps.at(-1).el.ariaLabel, 'Next page');
   });
 
+  it('records a step without a handle once the handle an earlier action left under its id is forgotten', async () => {
+    const run = await started();
+    recorder.rememberHandle(BROWSER, 3, { tag: 'a', href: '/request', text: 'Authorization Request' });
+    recorder.forgetHandle(BROWSER, 3);
+    recorder.setElements(BROWSER, [{ id: 3, type: 'select', tag: 'select', domId: 'requestType', visible: true }]);
+    await recorder.recordStep(BROWSER, 'select_option', { element_id: 3, option: 'Outpatient' }, {});
+    assert.equal(run.steps.at(-1).el.domId, 'requestType');
+    assert.equal(run.steps.at(-1).el.href, undefined);
+  });
+
   it('marks a step whose element nothing can find again, rather than aiming it at the body', async () => {
     const run = await started();
     recorder.setElements(BROWSER, []);

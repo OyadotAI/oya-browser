@@ -68,7 +68,14 @@ export async function signup(options: SignupOptions): Promise<Signup> {
 }
 
 /** The desktop app on this key, when one is connected and alive. */
-const desktopOf = (all: BrowserInfo[]) => all.find((b) => b.provider === DESKTOP_PROVIDER && b.health !== 'dead');
+/** The live desktop app, and with `persona` (an id or name) only one signed in as that persona. */
+const desktopOf = (all: BrowserInfo[], persona?: string) =>
+  all.find(
+    (b) =>
+      b.provider === DESKTOP_PROVIDER &&
+      b.health !== 'dead' &&
+      (!persona || b.persona === persona || b.personaName === persona),
+  );
 
 /** The oya:// link that pairs the desktop app with this key, through a single-use code. */
 async function pairingLink(http: Http, persona?: string): Promise<string> {
@@ -120,11 +127,11 @@ function openLink(link: string): void {
   child.unref();
 }
 
-/** Polls until the desktop app shows up on this key; throws, with what to do, when it never does. */
-async function waitForDesktop(list: () => Promise<BrowserInfo[]>, link: string, timeoutMs: number) {
+/** Polls until the desktop app shows up on this key as `persona`; throws, with what to do, when it never does. */
+async function waitForDesktop(list: () => Promise<BrowserInfo[]>, link: string, timeoutMs: number, persona?: string) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const found = desktopOf(await list());
+    const found = desktopOf(await list(), persona);
     if (found) return found;
     await new Promise((r) => setTimeout(r, READY_POLL_MS));
   }
@@ -145,14 +152,15 @@ export const desktopApi = (http: HttpRef, list: () => Promise<BrowserInfo[]>) =>
    * The person's own desktop browser, signed in to their sites. When it is not
    * connected yet this pairs it: it opens a link, the person clicks Connect in
    * the app (with "Import my logins" ticked, their Chrome logins come along),
-   * and this waits until it is up.
+   * and this waits until it is up. With `persona`, a running app signed in as
+   * another persona is switched the same way: the link reconnects it as this one.
    */
   connect: async (options: DesktopOptions = {}): Promise<Browser> => {
-    const running = desktopOf(await list());
+    const running = desktopOf(await list(), options.persona);
     if (running) return handleOn(http(), running.id);
     const link = await pairingLink(http(), options.persona);
     if (options.open !== false) openLink(link);
-    const found = await waitForDesktop(list, link, options.timeoutMs ?? DESKTOP_TIMEOUT_MS);
+    const found = await waitForDesktop(list, link, options.timeoutMs ?? DESKTOP_TIMEOUT_MS, options.persona);
     return handleOn(http(), found.id);
   },
 });

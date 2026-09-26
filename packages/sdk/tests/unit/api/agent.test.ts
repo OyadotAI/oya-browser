@@ -80,15 +80,39 @@ describe('oya.desktop.connect', () => {
   });
 
   it('pairs with the persona and waits until the app connects', async () => {
+    const work = { ...desktop, persona: 'p-work', personaName: 'work' };
     const { oya, calls } = client({
-      'GET /api/browsers': [{ body: [] }, { body: [] }, { body: [desktop] }],
+      'GET /api/browsers': [{ body: [] }, { body: [] }, { body: [work] }],
       'POST /api/pairing': { status: 201, body: { code: 'c1' } },
-      'GET /api/browsers/d1': { body: desktop },
+      'GET /api/browsers/d1': { body: work },
     });
     const connecting = oya.desktop.connect({ open: false, persona: 'work' });
     await tickUntil(connecting, 2000);
     assert.equal((await connecting).id, 'd1');
     assert.deepEqual(calls.find((c) => c.path === '/api/pairing')!.body, { persona: 'work' });
+  });
+
+  it('reuses a running app already signed in as the persona, by id or name', async () => {
+    const work = { ...desktop, persona: 'p-work', personaName: 'work' };
+    for (const persona of ['p-work', 'work']) {
+      const { oya, calls } = client({ 'GET /api/browsers': { body: [work] }, 'GET /api/browsers/d1': { body: work } });
+      assert.equal((await oya.desktop.connect({ persona })).id, 'd1');
+      assert.ok(!calls.some((c) => c.path === '/api/pairing'));
+    }
+  });
+
+  it('switches a running app signed in as another persona, then waits for it', async () => {
+    const home = { ...desktop, persona: 'p-home', personaName: 'home' };
+    const work = { ...desktop, persona: 'p-work', personaName: 'work' };
+    const { oya, calls } = client({
+      'GET /api/browsers': [{ body: [home] }, { body: [home] }, { body: [work] }],
+      'POST /api/pairing': { status: 201, body: { code: 'c1' } },
+      'GET /api/browsers/d1': { body: work },
+    });
+    const connecting = oya.desktop.connect({ open: false, persona: 'p-work' });
+    await tickUntil(connecting, 2000);
+    assert.equal((await connecting).id, 'd1');
+    assert.deepEqual(calls.find((c) => c.path === '/api/pairing')!.body, { persona: 'p-work' });
   });
 
   it('says how to install and pair when the app never connects', async () => {

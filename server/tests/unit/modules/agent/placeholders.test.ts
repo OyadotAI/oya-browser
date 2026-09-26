@@ -2,7 +2,7 @@
  * Unit tests for task values in text: placeholders filled with their filters,
  * values redacted back to placeholders, and file values recognised.
  */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { FILTERS, pipesOf, fill, redact, isFileValue, dataKey } from '../../../../src/modules/agent/placeholders.ts';
 
@@ -34,6 +34,14 @@ describe('filters', () => {
 
   it('leaves a value that is not a date as it is', () => {
     assert.equal(FILTERS.date('someday'), 'someday');
+  });
+
+  it('turns a TOTP seed into the current authenticator code (RFC 6238 vector)', (t) => {
+    t.after(() => mock.timers.reset());
+    mock.timers.enable({ apis: ['Date'], now: 59_000 });
+    assert.equal(FILTERS.totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'), '287082');
+    assert.equal(FILTERS.totp('gezd gnbv gy3t qojq gezd gnbv gy3t qojq'), '287082');
+    assert.equal(fill('{{seed|totp}}', { seed: 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' }), '287082');
   });
 });
 
