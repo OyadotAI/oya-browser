@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.136](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.136) · 2026-09-27
+
 ### Changed
 
 - **Coverage and status badges on the README.** CI now uploads the server's and the UI's test coverage to Codecov (an unreachable Codecov never fails the build), and the README shows build status, coverage, the latest release, npm downloads, bundled types, the supported Node version and GitHub stars.
