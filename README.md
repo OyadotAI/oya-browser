@@ -11,8 +11,16 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/OyadotAI/oya-browser/actions/workflows/deploy-dev.yaml"><img src="https://img.shields.io/github/actions/workflow/status/OyadotAI/oya-browser/deploy-dev.yaml?branch=main&label=build&logo=github" alt="Build"></a>
+  <a href="https://codecov.io/gh/OyadotAI/oya-browser"><img src="https://img.shields.io/codecov/c/github/OyadotAI/oya-browser?label=coverage&logo=codecov" alt="Coverage"></a>
+  <a href="https://github.com/OyadotAI/oya-browser/releases/latest"><img src="https://img.shields.io/github/v/release/OyadotAI/oya-browser?label=release&color=39ed35" alt="Latest release"></a>
   <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/npm/v/@oya-ai/browser?color=39ed35&label=@oya-ai/browser&logo=npm" alt="npm: @oya-ai/browser"></a>
+  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/npm/dm/@oya-ai/browser?label=downloads" alt="npm downloads"></a>
+  <br>
+  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/npm/types/@oya-ai/browser" alt="TypeScript types included"></a>
+  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/node/v/@oya-ai/browser" alt="Node version"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable_Use_%2B_MIT_SDK-157a13" alt="License"></a>
+  <a href="https://github.com/OyadotAI/oya-browser/stargazers"><img src="https://img.shields.io/github/stars/OyadotAI/oya-browser?logo=github" alt="GitHub stars"></a>
   <a href="https://oyabrowser.com"><img src="https://img.shields.io/badge/hosted-oyabrowser.com-141410?logo=googlechrome&logoColor=39ed35" alt="Hosted"></a>
   <a href="https://discord.gg/wqSeXJPygn"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
 </p>

@@ -131,13 +131,26 @@ const release = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'k8s', 's
 assert.ok(/latest-mac\.yml/.test(release), 'release.sh must publish latest-mac.yml');
 assert.ok(/gh release create[^\n]*SRC_ZIP/.test(release), 'release.sh must upload the update zip');
 
-// DAYTONA_SNAPSHOT is the deploy's fallback, so it must only ever name a
-// snapshot that exists. Setting it before registration succeeds would send a
-// later deploy to a snapshot that was never created, instead of leaving cloud
-// browsers on the last build that worked.
+// DAYTONA_SNAPSHOT must only ever name a snapshot that exists, or a deploy sends
+// cloud browsers to one that was never created. The prod workflow registers it,
+// so only the workflow may move it: a local release cannot know whether CI's
+// registration succeeded. The deploy takes this release's snapshot from the
+// registration job alone, and when that failed keeps the one the cluster runs.
 assert.ok(
-  /if \[ "\$CONCLUSION" = "success" \]; then\s*\n\s*gh secret set DAYTONA_SNAPSHOT/.test(release),
-  'release.sh moves DAYTONA_SNAPSHOT without first confirming the snapshot was registered',
+  !/gh secret set DAYTONA_SNAPSHOT/.test(release),
+  'release.sh must not move DAYTONA_SNAPSHOT: it cannot know CI registered the snapshot',
+);
+const deployProd = fs.readFileSync(
+  path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'deploy-prod.yaml'),
+  'utf8',
+);
+assert.ok(
+  /DAYTONA_SNAPSHOT: \$\{\{ needs\['register-snapshot'\]\.outputs\.snapshot \}\}/.test(deployProd),
+  'the prod deploy must take the snapshot from the registration job, the only place that knows it exists',
+);
+assert.ok(
+  /if \[ -z "\$DAYTONA_SNAPSHOT" \]; then\s*\n\s*DAYTONA_SNAPSHOT=\$\(kubectl get secret app-secrets/.test(deployProd),
+  'when registration fails, the prod deploy must keep the snapshot the cluster already runs',
 );
 
 // Check every renderer entrypoint: a parse failure otherwise silently stops the UI.

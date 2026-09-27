@@ -16,6 +16,7 @@ export default defineConfig({
     // Node 25 defines its own (unconfigured) localStorage global, which shadows
     // jsdom's; switching Node's off lets the page code see a working one.
     execArgv: ['--no-experimental-webstorage'],
-    coverage: { include: ['src/**'], reporter: ['text-summary'] },
+    // lcov is what CI uploads for the coverage badge; text-summary is for people.
+    coverage: { include: ['src/**'], reporter: ['text-summary', 'lcov'] },
   },
 });
