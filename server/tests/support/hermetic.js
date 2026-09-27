@@ -20,6 +20,17 @@ if (!process.env.OYA_TEST_LIVE) process.env.OYA_OPENROUTER_MODELS_URL = '';
 // or Supabase project. Suites that exercise another driver set these themselves.
 if (!process.env.OYA_TEST_LIVE)
   for (const name of ['OYA_STORAGE', 'DATABASE_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY']) delete process.env[name];
+// No test bills through a real Stripe account or runs under a real license: a suite that needs
+// billing on or a license key sets its own.
+if (!process.env.OYA_TEST_LIVE)
+  for (const name of [
+    'STRIPE_SECRET_KEY',
+    'STRIPE_WEBHOOK_SECRET',
+    'STRIPE_PORTAL_CONFIGURATION',
+    'OYA_LICENSE_KEY',
+    'OYA_LICENSE_SIGNING_KEY',
+  ])
+    delete process.env[name];
 
 /**
  * The runner's own process and every test file process get a fresh directory;

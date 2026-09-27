@@ -30,7 +30,21 @@ const hourOf = (d = new Date()) =>
 const buckets = new Map();
 /** fingerprint -> Map<browserId, connectedAtMs>, for browser_seconds. */
 const live = new Map();
+/** Browser ids this server runs, whose time is also booked as cloud_seconds. */
+const cloud = new Set();
+/** fingerprint -> the user id that owns the key, learned when billing admits it. */
+const owners = new Map();
+/** The counters a plan is priced on: each is also added to the owner's own row, which outlives any one key. */
+const BILLED = ['cloud_seconds', 'residential_proxy_bytes', 'hosted_llm_microusd', 'agent_steps'];
 let dirty = false;
+
+/** The usage row that sums every key a person owns: `u:<user id>`, never a key fingerprint. */
+export const personRow = (userId: string) => `u:${userId}`;
+
+/** Books this key's billed counters to `userId` from now on, so their plan sees them whichever key spent them. */
+export function billTo(apiKey, userId) {
+  if (apiKey && userId) owners.set(fingerprint(apiKey), userId);
+}
 
 /** This fingerprint's bucket for the current hour, started fresh when the hour has rolled over. */
 function bucket(id) {
@@ -48,6 +62,8 @@ function recordId(id, field, n) {
   if (!id || !FIELDS.includes(field) || !Number.isFinite(n)) return;
   bucket(id).counters[field] += n;
   dirty = true;
+  const owner = owners.get(id);
+  if (owner && BILLED.includes(field)) bucket(personRow(owner)).counters[field] += n;
 }
 
 /** Add to a counter for this key's current hour. */
@@ -56,10 +72,11 @@ export function record(apiKey, field, n = 1) {
   recordId(fingerprint(apiKey), field, n);
 }
 
-/** Starts the browser_seconds clock for a browser and counts it as started. */
-export function browserConnected(apiKey, browserId) {
+/** Starts the browser_seconds clock for a browser and counts it as started; `inCloud` when this server runs it. */
+export function browserConnected(apiKey, browserId, inCloud = false) {
   if (!apiKey || !browserId) return;
   const id = fingerprint(apiKey);
+  if (inCloud) cloud.add(browserId);
   if (!live.has(id)) live.set(id, new Map());
   live.get(id).set(browserId, Date.now());
   recordId(id, 'browsers_started', 1);
@@ -72,7 +89,14 @@ export function browserDisconnected(apiKey, browserId) {
   const started = live.get(id)?.get(browserId);
   if (!started) return;
   live.get(id).delete(browserId);
-  recordId(id, 'browser_seconds', Math.round((Date.now() - started) / MS_PER_SECOND));
+  bookSeconds(id, browserId, Math.round((Date.now() - started) / MS_PER_SECOND));
+  cloud.delete(browserId);
+}
+
+/** Books a browser's seconds, and again as cloud_seconds when this server runs it. */
+function bookSeconds(id, browserId, seconds) {
+  recordId(id, 'browser_seconds', seconds);
+  if (cloud.has(browserId)) recordId(id, 'cloud_seconds', seconds);
 }
 
 /**
@@ -89,7 +113,7 @@ function settleBrowsers(key, browsers, now) {
   for (const [id, since] of browsers) {
     const seconds = Math.round((now - since) / MS_PER_SECOND);
     if (seconds <= 0) continue;
-    recordId(key, 'browser_seconds', seconds);
+    bookSeconds(key, id, seconds);
     browsers.set(id, now);
   }
 }
@@ -103,6 +127,13 @@ export function current(apiKey) {
   const b = buckets.get(id)?.hour === hour ? buckets.get(id) : null;
   const openBrowsers = live.get(id)?.size || 0;
   return { hour, openBrowsers, ...(b?.counters || Object.fromEntries(FIELDS.map((f) => [f, 0]))) };
+}
+
+/** The current hour's counters for a person's own row, including what is not written yet; zeros when there are none. */
+export function currentForPerson(userId: string) {
+  const b = buckets.get(personRow(userId));
+  const counters = b?.hour === hourOf() ? b.counters : Object.fromEntries(FIELDS.map((f) => [f, 0]));
+  return { hour: hourOf(), counters };
 }
 
 /** Every key with activity this hour. */
@@ -186,5 +217,7 @@ export async function drain() {
 export function reset() {
   buckets.clear();
   live.clear();
+  cloud.clear();
+  owners.clear();
   dirty = false;
 }

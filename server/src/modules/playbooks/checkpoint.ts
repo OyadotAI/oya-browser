@@ -132,7 +132,8 @@ async function checkpoint(run: RunContext) {
 
 /** A CAPTCHA on the page solved by the solver or the provider; null when detection failed. */
 function tryCaptcha(run: RunContext, { browser }: PageContext) {
-  const options = { providerSolves: NATIVE_CAPTCHA.includes(browser?.provider), env: keyConfig.envFor(run.apiKey) };
+  const env = keyConfig.captchaEnvFor(run.apiKey, browser?.provider);
+  const options = { providerSolves: NATIVE_CAPTCHA.includes(browser?.provider), env };
   return captcha.handle(run.evaluate, options).catch(() => null);
 }
 

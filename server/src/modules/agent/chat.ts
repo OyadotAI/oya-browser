@@ -17,6 +17,7 @@ import { forgetPage } from './changes.ts';
 import { AGENT_VERIFY } from './constants.ts';
 import { systemPrompt, FOLLOW_UP_NOTE } from './prompt.ts';
 import { agentLoop } from './loop.ts';
+import { container } from '../../app/container.ts';
 
 export { FILTERS, PLACEHOLDER, pipesOf, fill, redact, isFileValue, dataKey } from './placeholders.ts';
 export { selectOptionIn, UPLOAD_FILE_JS, uploadFileIn } from './page-scripts.ts';
@@ -75,7 +76,24 @@ function llmFor(apiKey) {
   const { openaiKey, baseUrl, model, own } = keyConfig.resolve(apiKey);
   enforceBudget(apiKey, own);
   if (!openaiKey) throw missingLlm(apiKey);
-  return { llm: { openaiKey, baseUrl, model }, budget: () => enforceBudget(apiKey, own) };
+  return { llm: { openaiKey, baseUrl, model, hosted: !own }, budget: () => stepAllowed(apiKey, own) };
+}
+
+/**
+ * Checked before every model call, not only the first: the hourly token ceiling,
+ * and the person's plan, whose allowance a long run or runs side by side could
+ * otherwise spend far past.
+ */
+async function stepAllowed(apiKey, own) {
+  enforceBudget(apiKey, own);
+  await container.billing.entitlements.admitAgent(apiKey);
+}
+
+/** The run's model settings, once the person's plan admits another agent run. */
+async function admitted(apiKey) {
+  const settings = llmFor(apiKey);
+  await settings.budget();
+  return settings;
 }
 
 /**
@@ -136,7 +154,7 @@ function systemFor(messages, values, scalars, files, secrets) {
  */
 export async function runChat(browserId, messages, options: any = {}) {
   const { apiKey, data = {}, secrets = {} } = options;
-  const { llm, budget } = llmFor(apiKey);
+  const { llm, budget } = await admitted(apiKey);
   const { files, scalars, values } = taskValues(data, secrets);
   await begin(browserId, messages, values, secrets);
   const system = { role: 'system', content: systemFor(messages, values, scalars, files, secrets) };

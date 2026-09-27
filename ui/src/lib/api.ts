@@ -97,6 +97,60 @@ export async function getProfile(token: string) {
   return data;
 }
 
+/** A page the person is sent to. */
+interface Redirect {
+  /** Its address. */
+  url: string;
+}
+
+/** The person's plan, its allowances and what they used this period; `{enabled: false}` on a self-hosted server. */
+export const getBilling = (token: string) =>
+  account('/billing', 'Could not load your plan', { headers: authHeaders(token) });
+
+/** A Stripe Checkout page to subscribe to `plan` on. */
+export const billingCheckout = (token: string, plan: string) =>
+  account<Redirect>('/billing/checkout', 'Could not open checkout', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ plan }),
+  });
+
+/** The Stripe page to change card or plan, or cancel. */
+export const billingPortal = (token: string) =>
+  account<Redirect>('/billing/portal', 'Could not open billing', {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+
+/** The admin overview: accounts, plans, heaviest users, installs, downloads and the fleet. Admins only. */
+export const adminOverview = (token: string) =>
+  account('/admin/overview', 'Could not load the overview', { headers: authHeaders(token) });
+
+/** Every self-hosted license issued. Admins only. */
+export const adminLicenses = (token: string) =>
+  account('/admin/licenses', 'Could not load licenses', { headers: authHeaders(token) });
+
+/** Issues a self-hosted license; the answer carries its key, shown once. Admins only. */
+export const adminIssueLicense = (token: string, request: Record<string, unknown>) =>
+  account('/admin/licenses', 'Could not issue the license', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+  });
+
+/** Revokes a self-hosted license. Admins only. */
+export const adminRevokeLicense = (token: string, id: string) =>
+  account(`/admin/licenses/${encodeURIComponent(id)}/revoke`, 'Could not revoke the license', {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+
+/** One person by email: plan, usage this period and key prefixes. Admins only. */
+export const adminLookup = (token: string, email: string) =>
+  account(`/admin/users?email=${encodeURIComponent(email)}`, 'No account with that email', {
+    headers: authHeaders(token),
+  });
+
 /** The person's API keys (metadata only); an empty answer is an empty list. */
 export const listApiKeys = async (token: string) =>
   (await account('/auth/keys', 'Failed to list keys', { headers: authHeaders(token) })) ?? [];

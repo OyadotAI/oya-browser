@@ -20,9 +20,10 @@ By using the software, you agree to all of the terms and conditions below.
 
 ### Copyright License
 
-The licensor grants you a non-exclusive, royalty-free, worldwide, non-sublicensable, non-transferable license
-to use, copy, distribute, make available, and prepare derivative works of the software, in each case subject
-to the limitations below.
+The licensor grants you a non-exclusive, worldwide, non-sublicensable, non-transferable license to use, copy,
+distribute, make available, and prepare derivative works of the software, in each case subject to the
+limitations below. The license is royalty-free within the self-hosted scale limit below; use beyond it requires
+a commercial license from the licensor.
 
 ### Limitations
 
@@ -30,6 +31,23 @@ You may use or modify the software only for your own internal business purposes 
 personal use. You may distribute the software or provide it to others only if you do so free of charge for
 non-commercial purposes. You may not alter, remove, or obscure any licensing, copyright, or other notices of
 the licensor in the software. Any use of the licensor’s trademarks is subject to applicable law.
+
+### Self-Hosted Scale Limit
+
+Operating the software yourself so that more than five (5) cloud browsers run at the same time requires a
+separate commercial license from the licensor; contact sales@getoya.ai. A "cloud browser" is a browser the
+software launches in a sandbox or container runtime it manages, as opposed to the desktop application or a
+browser you connect to it yourself. The software enforces this limit unless a valid license key issued by the
+licensor is configured. Circumventing, disabling or modifying the limit, the license key check, or the
+component that performs them is not licensed.
+
+### Usage Report
+
+A self-hosted server sends the licensor, once a day, an anonymous report containing a random installation
+identifier, the software version, the number of browsers connected, the most cloud browsers run at once since
+the last report and, if one is configured, the license key's identifier. It contains no personal data, page
+content, credentials or network addresses of your users. The report cannot be turned off; sending it is a
+condition of this license, and blocking or altering it is not licensed.
 
 ### Patents
 

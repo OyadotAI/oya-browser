@@ -17,7 +17,8 @@
  */
 import { managedConfigured } from '../control/managed.ts';
 import { HttpError, invalid } from '../../platform/errors.ts';
-import { CONFIG_VALUE_MAX_CHARS } from './constants.ts';
+import { CAPTCHA_FIELDS, CLOUD_ONLY_ENV_PROVIDERS, CONFIG_VALUE_MAX_CHARS, OPERATOR_ONLY_ENV } from './constants.ts';
+import { hosted } from '../billing/config.ts';
 import { GOT_MAX_CHARS } from '../../platform/constants.ts';
 import { Status } from '../../platform/http-status.ts';
 import { fingerprint as ownerOf } from '../../platform/audit.ts';
@@ -234,11 +235,34 @@ export function resolve(apiKey): LlmConfig {
 }
 
 /**
+ * The server's environment as a key starts from. On the hosted deployment the
+ * operator's own vendor accounts are left out: a person runs Browserbase, Steel
+ * and the rest on their own keys, never on the operator's.
+ */
+export function operatorEnv() {
+  if (!hosted()) return process.env;
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !OPERATOR_ONLY_ENV.has(name)));
+}
+
+/**
+ * The environment a CAPTCHA on this key's browser is solved with. The operator's
+ * solver account pays for Oya Cloud browsers only; on the hosted deployment any
+ * other browser solves on the key's own account, or not at all.
+ */
+export function captchaEnvFor(apiKey, provider: string) {
+  const env = envFor(apiKey);
+  if (!hosted() || CLOUD_ONLY_ENV_PROVIDERS.has(provider)) return env;
+  const own = plain(apiKey);
+  for (const [field, name] of Object.entries(CAPTCHA_FIELDS)) if (!own[field]) delete env[name];
+  return env;
+}
+
+/**
  * process.env with this key's credentials layered on top. Anything that reads
  * configuration from the environment, providers.js, captcha.js, takes this
  * and becomes per-key without knowing that keys exist.
  */
-export function envFor(apiKey, base = process.env) {
+export function envFor(apiKey, base = operatorEnv()) {
   const own = plain(apiKey);
   const env = { ...base };
   for (const [field, spec] of Object.entries(FIELDS)) {

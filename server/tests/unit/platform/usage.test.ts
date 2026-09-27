@@ -72,6 +72,41 @@ describe('usage', () => {
     assert.equal(now.openBrowsers, 0);
   });
 
+  it('books cloud_seconds only for a browser this server runs', () => {
+    usage.browserConnected('key-a', 'cloud-1', true);
+    usage.browserConnected('key-a', 'desk-1');
+    mock.timers.tick(10 * MS_PER_SECOND);
+    usage.browserDisconnected('key-a', 'cloud-1');
+    usage.browserDisconnected('key-a', 'desk-1');
+    assert.equal(usage.current('key-a').browser_seconds, 20);
+    assert.equal(usage.current('key-a').cloud_seconds, 10);
+  });
+
+  it('adds a key’s billed counters to its owner’s own row, and nothing else', async () => {
+    usage.billTo('key-a', 'user-1');
+    usage.record('key-a', 'agent_steps', 3);
+    usage.record('key-a', 'commands', 5);
+    await usage.drain();
+    const [person] = await getConnection().select('usage', { api_key: usage.personRow('user-1') });
+    assert.equal(person.agent_steps, 3);
+    assert.equal(person.commands, 0);
+  });
+
+  it('keeps the owner’s total when the key that spent it is deleted', async () => {
+    usage.billTo('key-a', 'user-1');
+    usage.record('key-a', 'agent_steps', 3);
+    await usage.drain();
+    await getConnection().delete('usage', { api_key: fingerprint('key-a') });
+    const [person] = await getConnection().select('usage', { api_key: usage.personRow('user-1') });
+    assert.equal(person.agent_steps, 3);
+  });
+
+  it('bills nothing to anyone for a key with no owner learned', () => {
+    usage.billTo('', 'user-1');
+    usage.record('key-a', 'agent_steps', 3);
+    assert.equal(usage.snapshot().length, 1);
+  });
+
   it('ignores a disconnect for a browser it never saw', () => {
     usage.browserDisconnected('key-a', 'ghost');
     usage.browserDisconnected('', 'ghost');

@@ -17,7 +17,9 @@ import {
   DEFAULT_PROVIDER,
   MAX_ANNOUNCED_ACTIONS,
   MAX_BROWSERS_PER_KEY,
+  SERVER_RUN,
 } from './constants.ts';
+import { container } from '../../../app/container.ts';
 
 /** The persona fields registration uses. */
 export interface PersonaSlot {
@@ -96,7 +98,10 @@ export async function list(reg: Registration, provider: string, msg) {
   if (provider === DEFAULT_PROVIDER) await noteDesktop(reg, msg);
   metrics.wsConnections.inc({ outcome: 'ok' });
   metrics.browsersConnected.set({}, registry.browsers.size);
-  usage.browserConnected(reg.apiKey, reg.browserId);
+  const inCloud = SERVER_RUN.has(provider);
+  usage.browserConnected(reg.apiKey, reg.browserId, inCloud);
+  // Before the welcome: the proxy it is given depends on its owner's plan.
+  if (inCloud) await container.billing.entitlements.attribute(reg.apiKey);
 }
 
 /**

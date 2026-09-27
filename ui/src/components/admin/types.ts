@@ -1,0 +1,113 @@
+/**
+ * What the admin API answers, as the page reads it.
+ */
+import type { DownloadRow } from './model';
+
+/** One person's usage this month. */
+export interface Person {
+  /** Their user id. */
+  userId: string;
+  /** Their email, when known. */
+  email: string | null;
+  /** Cloud browser time, in seconds. */
+  cloud_seconds: number;
+  /** Agent steps. */
+  agent_steps: number;
+}
+
+/** A self-hosted install as its last ping described it. */
+export interface Install {
+  /** Its random id. */
+  install_id: string;
+  /** The release it runs. */
+  version: string;
+  /** Browsers connected. */
+  browsers: number;
+  /** Most cloud browsers at once since the ping before. */
+  peak_cloud: number;
+  /** Its license id, or null. */
+  license_id: string | null;
+  /** Pings received. */
+  pings: number;
+  /** When it last pinged. */
+  last_seen: string;
+}
+
+/** Accounts and plans. */
+export interface Accounts {
+  /** Accounts in all. */
+  total: number;
+  /** Signups per day. */
+  signups: { /** The day. */ day: string; /** How many. */ count: number }[];
+  /** Paying people by plan. */
+  byPlan: Record<string, number>;
+  /** Paying people whose last payment failed. */
+  pastDue: number;
+}
+
+/** The overview. */
+export interface Overview {
+  /** Accounts and plans. */
+  accounts: Accounts;
+  /** Heaviest users by cloud hours and by steps. */
+  top: { /** By cloud hours. */ cloud: Person[]; /** By steps. */ steps: Person[] };
+  /** Installs, counted and listed. */
+  installs: {
+    /** In all. */ total: number;
+    /** Pinged this week. */ active: number;
+    /** Unlicensed past the cap. */ overCap: number;
+    /** Most recent first. */ list: Install[];
+  };
+  /** Download counts per day. */
+  downloads: DownloadRow[];
+  /** Browsers connected now. */
+  fleet: {
+    /** In all. */ total: number;
+    /** In the cloud. */ cloud: number;
+    /** By provider. */ byProvider: Record<string, number>;
+  };
+}
+
+/** An issued license. */
+export interface License {
+  /** Its id. */
+  id: string;
+  /** Who it is for. */
+  licensee: string;
+  /** Cloud browsers at once. */
+  max_concurrent: number;
+  /** When it ends. */
+  expires_at: string;
+  /** Who issued it. */
+  created_by: string | null;
+  /** When it was revoked, if it was. */
+  revoked_at: string | null;
+}
+
+/** A key as the lookup shows it. */
+export interface KeyShown {
+  /** Its first characters. */
+  prefix: string;
+  /** Its label. */
+  label: string;
+  /** When it was made. */
+  created_at: string;
+  /** When it was last used. */
+  last_used_at: string | null;
+}
+
+/** A person found by email. */
+export interface Found {
+  /** Their plan and period. */
+  standing: {
+    /** The plan. */ plan: string;
+    /** Its status. */ status: string | null;
+    /** The period's start. */ since: string;
+  };
+  /** What they used this period. */
+  used: Record<string, number>;
+  /** Their subscription row, if any. */
+  subscription: { /** Their Stripe customer. */ stripe_customer_id?: string } | null;
+  /** Their keys. */
+  keys: KeyShown[];
+}

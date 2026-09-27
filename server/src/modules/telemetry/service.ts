@@ -104,6 +104,9 @@ export const track = {
   /** An installed app checked for an update. */
   updateChecked: (visitor: string, props: EventProps['update_checked']) =>
     send('update_checked', visitorWho(visitor), props),
+  /** A self-hosted server pinged, by its random install id. */
+  installPinged: (installId: string, props: EventProps['install_pinged']) =>
+    send('install_pinged', visitorWho(`install-${installId}`), props),
   /** A persona was created. */
   personaCreated: (key: string, props: EventProps['persona_created']) => emit('persona_created', key, props),
   /** The server answered a 500 under a reference. */

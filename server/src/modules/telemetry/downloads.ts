@@ -13,6 +13,7 @@ import { Status } from '../../platform/http-status.ts';
 import { track } from './service.ts';
 import type { EventProps } from './catalog.ts';
 import { UNKNOWN, VERSION_HEADER, versionOf } from './version.ts';
+import { countDownload } from '../admin/index.ts';
 
 /** An installer file's extension → the platform it installs on. */
 const INSTALLERS: Record<string, string> = { dmg: 'mac', exe: 'windows', AppImage: 'linux' };
@@ -55,9 +56,23 @@ function fileName(req: Request) {
 /** The event a finished response is, or null when it is nothing worth counting. */
 function eventFor(req: Request) {
   const name = fileName(req);
-  if (Object.hasOwn(FEEDS, name)) return () => track.updateChecked(visitorOf(req), updateCheck(req, name));
+  if (Object.hasOwn(FEEDS, name)) return () => noteCheck(req, name);
   const match = RELEASE_FILE.exec(name);
-  return match ? () => track.downloadServed(visitorOf(req), download(req, match[1], match[2])) : null;
+  return match ? () => noteDownload(req, match[1], match[2]) : null;
+}
+
+/** An update check: counted for the admin page, and sent as an event. */
+function noteCheck(req: Request, feed: string) {
+  const props = updateCheck(req, feed);
+  countDownload('update_check', props.platform);
+  track.updateChecked(visitorOf(req), props);
+}
+
+/** A download: counted for the admin page as an installer a person fetched or an update the app did, and sent as an event. */
+function noteDownload(req: Request, version: string, ext: string) {
+  const props = download(req, version, ext);
+  countDownload(props.via === 'updater' ? 'update' : props.file_type, props.platform);
+  track.downloadServed(visitorOf(req), props);
 }
 
 /** What an update check says: which feed, and the version asking. */

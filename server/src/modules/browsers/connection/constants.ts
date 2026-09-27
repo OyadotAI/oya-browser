@@ -71,3 +71,5 @@ export const CLAIMABLE_PROVIDERS = ['oya-cloud', 'oya-selfhosted', 'oya-desktop'
 export const DEFAULT_PROVIDER = 'oya-desktop';
 /** A browser in a sandbox this server provisioned. */
 export const CLOUD_PROVIDER = 'oya-cloud';
+/** Providers whose browsers this server runs, and pays for: what plans and the self-hosted license count. */
+export const SERVER_RUN = new Set([CLOUD_PROVIDER, 'oya-selfhosted']);

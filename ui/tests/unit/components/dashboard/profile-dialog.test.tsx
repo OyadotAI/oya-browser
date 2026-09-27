@@ -8,7 +8,13 @@ import userEvent from '@testing-library/user-event';
 
 const auth = { user: {}, token: 't', logout: vi.fn(), applyProfile: vi.fn() };
 vi.mock('@/components/auth-provider', () => ({ useAuth: () => auth }));
-vi.mock('@/lib/api', () => ({ updateProfile: vi.fn() }));
+// A self-hosted server's answer: no plan section, so the dialog is what these tests describe.
+vi.mock('@/lib/api', () => ({
+  updateProfile: vi.fn(),
+  getBilling: vi.fn().mockResolvedValue({ enabled: false }),
+  billingCheckout: vi.fn(),
+  billingPortal: vi.fn(),
+}));
 
 import { updateProfile } from '@/lib/api';
 import ProfileDialog from '@/components/dashboard/profile-dialog';

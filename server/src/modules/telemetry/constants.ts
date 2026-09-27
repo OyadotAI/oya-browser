@@ -19,3 +19,7 @@ export const CARD_MIN_SESSION_SECONDS = 60;
 export const CLIENTS = new Set(['mcp', 'console']);
 /** The header a client names itself in. */
 export const CLIENT_HEADER = 'x-oya-client';
+/** Past this many cloud browsers at once, an unlicensed self-hosted install is worth a line in Slack. */
+export { SELF_HOST_FREE_CAP } from '../../platform/license/index.ts';
+/** The largest browser count a ping may report: anything above is a malformed ping. */
+export const PING_MAX_COUNT = 1_000_000;

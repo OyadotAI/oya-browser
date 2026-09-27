@@ -2,6 +2,7 @@
 import { fault, hash } from '../service.ts';
 import { registry } from '../../browsers/registry.ts';
 import { Status } from '../../../platform/http-status.ts';
+import { HttpError, sendError } from '../../../platform/errors.ts';
 
 /** The project key the caller authenticated as. */
 export const key = (req) => req.principal.key;
@@ -34,7 +35,11 @@ export function requireOwnBrowser(req) {
 export async function redispatchStart(req, res, failure) {
   const { router } = await import('../../../app/api.ts');
   req.url = '/browsers/start';
-  (router as any).handle(req, res, (error) => {
-    if (error) res.status(Status.UNAVAILABLE).json({ error: failure });
-  }); // untyped in @types/express 5
+  (router as any).handle(req, res, (error) => startFailed(req, res, error, failure)); // untyped in @types/express 5
+}
+
+/** A refusal that speaks for itself (a plan or license limit) keeps its answer; anything else is `failure`, a 503. */
+export function startFailed(req, res, error, failure: string) {
+  if (error instanceof HttpError) sendError(res, error, req);
+  else if (error) res.status(Status.UNAVAILABLE).json({ error: failure });
 }

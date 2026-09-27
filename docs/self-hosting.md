@@ -174,9 +174,24 @@ A key can't name an SSO profile, because that would use this host's own SSO sess
 
 With `ecs.auth` set, the key's ECS browsers run on its own account, and none of the deployment's ECS or AWS settings are mixed in. A key that sets `daytona_api_key` runs on its own Daytona account in the same way. Without these, a key runs on the deployment's account, and any cluster it names is ignored. `docker` and `k8s` run on the deployment's own daemon or cluster, so a key can choose them but can never set their image, host, namespace or kubeconfig. On ECS the browser's environment, which includes the key's Oya API key, is visible to anyone in that AWS account with `ecs:DescribeTasks`, the same as a Daytona sandbox's env vars are to its account.
 
+## License and scale
+
+A self-hosted server runs up to 5 cloud browsers (browsers it launches in Docker, Kubernetes,
+ECS or Daytona) at once for free. The sixth start is refused with a 402 that says so. The
+desktop app and browsers you connect yourself are not counted. For more, write to
+**sales@getoya.ai** for a license key and set it as `OYA_LICENSE_KEY`. See the
+[license](../LICENSE.md).
+
 ## Telemetry
 
-The server sends nothing to anyone unless you set the variables below; the CLI and SDK never send anything, and the desktop app tells only the server it connects to its version (when it connects and when it checks for an update). With `POSTHOG_KEY` and `POSTHOG_HOST` both set, it reports product events to that PostHog: `account_signed_up`, `api_key_created`, `browser_started`, `browser_stopped`, `playbook_saved`, `playbook_replayed`, `mcp_tool_called`, `cdp_attached`, `desktop_connected` (with the app version), `desktop_updated`, `download_served`, `update_checked`, `persona_created` and `server_error`, each with a few properties such as provider, step count, platform, version or the error reference. Downloads and update checks are counted under a fingerprint of the address and user agent, never the address itself, and create no person. The console reports pageviews, time on page, and on public pages the clicks it tags (download and call-to-action buttons, by name only). With `SLACK_OPS_WEBHOOK_SIGNUPS` or `SLACK_OPS_WEBHOOK_EVENTS` set, it posts one Slack line per signup, key created, desktop download, first desktop connection, playbook saved, CDP attach and server error; with `SLACK_OPS_WEBHOOK_PRODUCT` set, a short card for those and for a key's first browser, sessions of a minute or more, replays and desktop updates. Visited URLs, page content, cookies, API keys, key labels, persona and playbook names never leave the server this way; the sign-up email goes to PostHog's identify call and the Slack lines, nowhere else. Sending is best effort and never delays a request. Unset the variables and it stops.
+**The daily ping.** A self-hosted server sends Oya one small report a day to
+`https://oyabrowser.com/api/telemetry/ping`: a random install id it makes once, the version, how
+many browsers are connected, the most cloud browsers it ran at once since the last ping, and the
+license id if it has one. Nothing else: no addresses, keys, users, URLs or page content. It cannot
+be turned off; it is a condition of the [license](../LICENSE.md). A ping that fails is dropped and
+changes nothing.
+
+Apart from that ping, the server sends nothing to anyone unless you set the variables below; the CLI and SDK never send anything, and the desktop app tells only the server it connects to its version (when it connects and when it checks for an update). With `POSTHOG_KEY` and `POSTHOG_HOST` both set, it reports product events to that PostHog: `account_signed_up`, `api_key_created`, `browser_started`, `browser_stopped`, `playbook_saved`, `playbook_replayed`, `mcp_tool_called`, `cdp_attached`, `desktop_connected` (with the app version), `desktop_updated`, `download_served`, `update_checked`, `persona_created` and `server_error`, each with a few properties such as provider, step count, platform, version or the error reference. Downloads and update checks are counted under a fingerprint of the address and user agent, never the address itself, and create no person. The console reports pageviews, time on page, and on public pages the clicks it tags (download and call-to-action buttons, by name only). With `SLACK_OPS_WEBHOOK_SIGNUPS` or `SLACK_OPS_WEBHOOK_EVENTS` set, it posts one Slack line per signup, key created, desktop download, first desktop connection, playbook saved, CDP attach and server error; with `SLACK_OPS_WEBHOOK_PRODUCT` set, a short card for those and for a key's first browser, sessions of a minute or more, replays and desktop updates. Visited URLs, page content, cookies, API keys, key labels, persona and playbook names never leave the server this way; the sign-up email goes to PostHog's identify call and the Slack lines, nowhere else. Sending is best effort and never delays a request. Unset the variables and it stops.
 
 Health: `/livez` is liveness, `/readyz` is readiness. `/api/health` answers `ok`
 unconditionally and is not a readiness probe.

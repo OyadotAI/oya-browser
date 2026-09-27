@@ -172,6 +172,11 @@ own machines. For production, [`deployments/`](deployments) deploys the control 
 browsers to one Docker host, Amazon ECS on Fargate, any Kubernetes cluster, or GKE Autopilot, with
 one `deploy.sh` each.
 
+Self-hosting is free up to 5 cloud browsers running at once. Past that, or if you are using it
+seriously, write to **sales@getoya.ai** for a license key (`OYA_LICENSE_KEY`). A self-hosted server
+sends Oya one anonymous ping a day (a random install id, the version and browser counts, nothing
+about your users or pages); see [telemetry](docs/self-hosting.md#telemetry).
+
 <p align="center">
   <img src="assets/oya-demo.gif" alt="The Oya browser: a task asked in plain language, answered, and kept as a playbook" width="100%">
 </p>
@@ -208,4 +213,5 @@ cd server && npm run stealth -- --live   # the stealth numbers, on your machine
 
 The [SDK](packages/sdk) and [CLI](packages/cli) are MIT. Embed them in commercial agents.
 Everything else is source-available under the [Sustainable Use License](LICENSE.md): free for
-internal business use, research and non-commercial use.
+internal business use, research and non-commercial use, self-hosted up to 5 cloud browsers at once.
+Beyond that, write to sales@getoya.ai.
