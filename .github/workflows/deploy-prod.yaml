@@ -208,7 +208,11 @@ jobs:
           ${{ env.IMAGE_SERVER }}:${{ github.ref_name }}
           ${{ env.IMAGE_SERVER }}:latest
         platforms: linux/amd64
-        cache-from: type=gha,scope=server-prod
+        # Dev built nearly the same layers from main; reading its cache too means a
+        # release rebuilds only what the version bump changed, not the whole image.
+        cache-from: |
+          type=gha,scope=server-prod
+          type=gha,scope=server-dev
         cache-to: type=gha,mode=max,scope=server-prod
 
   build-browser:
@@ -234,7 +238,9 @@ jobs:
           ${{ env.IMAGE_BROWSER }}:${{ github.ref_name }}
           ${{ env.IMAGE_BROWSER }}:latest
         platforms: linux/amd64
-        cache-from: type=gha,scope=browser-prod
+        cache-from: |
+          type=gha,scope=browser-prod
+          type=gha,scope=browser-dev
         cache-to: type=gha,mode=max,scope=browser-prod
 
   register-snapshot:
