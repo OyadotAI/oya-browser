@@ -37,7 +37,7 @@ export async function withControls(browserId, said, expected = false) {
   const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT });
   if (!r.ok || !r.data?.elements?.length) return said;
   const same = sameElements(browserId, r.data.elements);
-  setElements(browserId, r.data.elements);
+  setElements(browserId, r.data.elements, r.data.modal);
   const change = changeNote(browserId, r.data, expected);
   const head = `${said}${change ? `. ${change}` : ''}`;
   // A page that did not move leaves every id where it was, so sending the index

@@ -419,7 +419,8 @@ async function tryStep(browserId, pb, i, values, task) {
     await runStep(browserId, pb.steps[i], values, pb.defaults || {}, task);
     return null;
   } catch (err) {
-    return { err };
+    // A popup the recording closed that this run never showed: nothing to close.
+    return pb.steps[i].optional ? null : { err };
   }
 }
 

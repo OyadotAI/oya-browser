@@ -108,6 +108,21 @@ describe('recorder', () => {
     );
   });
 
+  it('marks a click that closed a popup as optional, and a click inside one that did something as not', async () => {
+    const run = await started();
+    const close = { id: 5, tag: 'button', text: 'Close', visible: true };
+    const save = { id: 6, tag: 'button', text: 'Save', visible: true };
+    recorder.setElements(BROWSER, [close, save], 'Important update');
+    await recorder.recordStep(BROWSER, 'click', { element_id: 5 }, {}, recorder.elementOf(BROWSER, 5));
+    await recorder.recordStep(BROWSER, 'click', { element_id: 6 }, {}, recorder.elementOf(BROWSER, 6));
+    recorder.setElements(BROWSER, [close]);
+    await recorder.recordStep(BROWSER, 'click', { element_id: 5 }, {}, recorder.elementOf(BROWSER, 5));
+    assert.deepEqual(
+      run.steps.slice(1).map((s) => !!s.optional),
+      [true, false, false],
+    );
+  });
+
   it('has no last run for a browser that never ran', () => {
     assert.equal(recorder.lastRun('b-never'), null);
   });

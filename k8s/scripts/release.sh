@@ -210,7 +210,12 @@ git tag -a "$TAG" -F "$NOTES_FILE"
 log_ok "Tagged $TAG"
 
 git push origin "$(git branch --show-current)"
-log_ok "Pushed branch; publishing desktop assets before pushing the tag"
+# The annotated tag goes up before the release, which then uses it (--verify-tag).
+# Left to gh release create, the remote tag was a plain one made by GitHub, the push
+# of this annotated one was refused, and the tag lost its notes. CI starting on the
+# tag is fine: wait-release.sh holds it until the release below is published.
+git push origin "$TAG"
+log_ok "Pushed branch and tag; publishing the release"
 
 # ── Create GitHub release with binaries ──
 
@@ -220,19 +225,15 @@ log_info "Creating GitHub release $TAG..."
 # Windows builds to this release, and the macOS binary stays on the release
 # that last shipped one.
 if [ "$BUILD_DESKTOP" = "0" ]; then
-  gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "Oya Browser $TAG" --notes-file "$NOTES_FILE"
+  gh release create "$TAG" --verify-tag --title "Oya Browser $TAG" --notes-file "$NOTES_FILE"
   log_ok "GitHub release $TAG created (no desktop build in this one)"
 else
-  gh release create "$TAG" "$DST_DMG" "$SRC_ZIP" "$SRC_YML" --target "$(git rev-parse HEAD)" \
+  gh release create "$TAG" "$DST_DMG" "$SRC_ZIP" "$SRC_YML" --verify-tag \
     --title "Oya Browser $TAG" \
     --notes-file "$NOTES_FILE"
   log_ok "GitHub release $TAG created with macOS binary and update feed"
 fi
-# Release creation may create the remote tag itself. Either way CI waits for
-# publication before downloading, so it cannot mistake an uploading draft for
-# a release without desktop assets.
-git push origin "$TAG"
-log_ok "Published release and pushed tag"
+log_ok "Published release $TAG"
 
 # ── SDK and CLI ──
 #

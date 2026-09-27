@@ -207,6 +207,17 @@ describe('play', () => {
     assert.ok(commands().some((c) => c.action === 'click'));
   });
 
+  it('skips closing a popup this run never showed', async () => {
+    const steps = [
+      { action: 'click', el: { text: 'Close', type: 'button' }, optional: true },
+      { action: 'press_key', key: 'Tab' },
+    ];
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const run = play(KEY, BROWSER, pb(steps), {}, { autoHeal: false });
+    await advance(FIND_RETRY_MS, FIND_ATTEMPTS + 4);
+    assert.equal((await run).steps, 2);
+  });
+
   it('goes on to answer the dialog a recorded click opens', async () => {
     const blocked = 'A JavaScript confirm dialog is open: "Sure?". The page is blocked until you call handle_dialog.';
     answer = (action) => (action === 'click' ? { ok: false, error: blocked } : page(action));
