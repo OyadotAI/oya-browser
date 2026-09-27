@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- The macOS build in CI failed at signing: electron-builder's own temporary keychain could not be unlocked on GitHub's runner. The workflow now imports the certificate into a keychain of its own.
+
+### Changed
+
+- **`make release` returns as soon as the release is published.** It used to wait for CI to register the cloud-browser snapshot and then update the `DAYTONA_SNAPSHOT` secret from the releaser's machine. The prod workflow now does it all: a release deploys its own snapshot, a failed registration keeps the snapshot prod already runs, dev follows prod's snapshot, and a manual redeploy keeps it by default.
+
 ## [1.0.134](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.134) · 2026-09-27
 
 ### Fixed

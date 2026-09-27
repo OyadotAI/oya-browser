@@ -244,56 +244,9 @@ log_ok "Published release $TAG"
 
 # ── Point cloud browsers at this release ──
 #
-# CI builds the browser image, registers snapshot oya-browser-<version>, and
-# the deploy uses that job's output directly, so prod is already on the new
-# snapshot by the time this runs. What is left is the DAYTONA_SNAPSHOT secret,
-# which is the deploy's *fallback*.
-#
-# That is why this waits rather than setting it up front: the fallback must
-# only ever name a snapshot that exists. Move it to a version whose
-# registration then failed and a later deploy would send every cloud browser to
-# a snapshot that was never created, instead of leaving them on the last build
-# that worked.
-#
-# The release is complete at this point, interrupting here costs nothing but a
-# stale fallback.
+# All in the prod workflow: it registers snapshot oya-browser-<version> and the
+# deploy uses it. If registration fails the deploy keeps the snapshot prod is
+# already running, read from the cluster, so nothing here waits on CI any more.
 
-SNAPSHOT="oya-browser-${VERSION}"
-JOB="Register Daytona snapshot"
-
-log_info "Waiting for \"$JOB\" so the fallback can follow it..."
-
-RUN_ID=""
-for _ in $(seq 1 30); do
-  RUN_ID=$(gh run list --workflow=deploy-prod.yaml --branch "$TAG" --limit 1 \
-    --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
-  [ -n "$RUN_ID" ] && break
-  sleep 5
-done
-
-if [ -z "$RUN_ID" ]; then
-  log_err "No workflow run found for $TAG, leaving DAYTONA_SNAPSHOT alone."
-  log_err "Once CI is green: gh secret set DAYTONA_SNAPSHOT --body \"$SNAPSHOT\""
-  exit 0
-fi
-
-CONCLUSION=""
-for _ in $(seq 1 90); do
-  CONCLUSION=$(gh run view "$RUN_ID" --json jobs \
-    --jq ".jobs[] | select(.name==\"$JOB\") | .conclusion" 2>/dev/null || true)
-  [ -n "$CONCLUSION" ] && [ "$CONCLUSION" != "null" ] && break
-  # The whole run finishing without that job ever reporting means it is not in
-  # this workflow at all. Stop instead of waiting out the full timeout.
-  if [ "$(gh run view "$RUN_ID" --json status --jq '.status' 2>/dev/null)" = "completed" ]; then
-    break
-  fi
-  sleep 10
-done
-
-if [ "$CONCLUSION" = "success" ]; then
-  gh secret set DAYTONA_SNAPSHOT --body "$SNAPSHOT"
-  log_ok "Cloud browsers now default to $SNAPSHOT"
-else
-  log_err "\"$JOB\" did not succeed (${CONCLUSION:-timed out}), DAYTONA_SNAPSHOT left alone."
-  log_err "Cloud browsers stay on the last snapshot that worked. Check: gh run view $RUN_ID"
-fi
+log_ok "Released $TAG. CI builds the desktop apps, the images and the snapshot, then deploys:"
+log_info "  gh run watch \$(gh run list --workflow=deploy-prod.yaml --branch $TAG --limit 1 --json databaseId --jq '.[0].databaseId')"
