@@ -161,4 +161,45 @@ describe('PlaybooksTab', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Playwright code for order' }));
     expect(screen.getByText('export default async () => {}')).toBeTruthy();
   });
+
+  it('downloads a playbook as an export file another environment can import', async () => {
+    const doc = { format: 'oya-playbook', version: 1, playbook: { name: 'order' } };
+    apiMock.mockImplementation(async (path) =>
+      path === '/playbooks' ? { playbooks: [order] } : path === '/playbooks/order/export' ? doc : {},
+    );
+    const created = vi.fn(() => 'blob:x');
+    Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await setup();
+    await userEvent.click(screen.getByRole('button', { name: 'Export order' }));
+    expect(click).toHaveBeenCalled();
+    expect((click.mock.contexts[0] as HTMLAnchorElement).download).toBe('order.oya-playbook.json');
+  });
+
+  it('imports a chosen export file and says so', async () => {
+    serve([]);
+    await setup();
+    apiMock.mockImplementation(async (path) =>
+      path === '/playbooks/import' ? { name: 'order', steps: 4 } : { playbooks: [] },
+    );
+    const file = new File([JSON.stringify({ format: 'oya-playbook', version: 1, playbook: {} })], 'order.json');
+    await userEvent.upload(screen.getByLabelText('Playbook export file'), file);
+    await act(async () => {});
+    expect(apiMock).toHaveBeenCalledWith('/playbooks/import', expect.objectContaining({ method: 'POST' }));
+    expect(await screen.findByText('Imported order')).toBeTruthy();
+  });
+
+  it('says what to do when an imported name is already taken, and refuses a file that is not JSON', async () => {
+    serve([]);
+    await setup();
+    const { ApiError } = await vi.importActual<typeof import('@/lib/api-client')>('@/lib/api-client');
+    apiMock.mockImplementation(async (path) => {
+      if (path === '/playbooks/import') throw new ApiError('exists', 409, null);
+      return { playbooks: [] };
+    });
+    await userEvent.upload(screen.getByLabelText('Playbook export file'), new File(['{}'], 'a.json'));
+    expect(await screen.findByText(/already exists here\. Rename or delete it/)).toBeTruthy();
+    await userEvent.upload(screen.getByLabelText('Playbook export file'), new File(['nope'], 'b.json'));
+    expect(await screen.findByText('b.json is not a playbook export (not JSON)')).toBeTruthy();
+  });
 });

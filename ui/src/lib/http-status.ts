@@ -9,6 +9,8 @@ export const Status = {
   UNAUTHORIZED: 401,
   /** The credential is valid but may not do this. */
   FORBIDDEN: 403,
+  /** What was asked for clashes with something already there, such as a name. */
+  CONFLICT: 409,
   /** The credential existed once and has been revoked or expired. */
   GONE: 410,
 } as const;

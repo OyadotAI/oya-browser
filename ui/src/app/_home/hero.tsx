@@ -6,7 +6,7 @@ import Link from 'next/link';
 import CopyExample from '@/components/copy-example';
 import SyntaxCode from '@/components/ui/syntax-code';
 import { BotWall } from './bot-wall';
-import { heroExample, installCommand } from './content';
+import { foundersCall, heroExample, installCommand } from './content';
 import { browserDownloads } from '@/lib/browser-downloads';
 import { ArrowRight, ArrowUpRight, Download } from 'lucide-react';
 import styles from '../page.module.css';
@@ -71,6 +71,9 @@ export function Hero() {
           <Link href="/docs" className={styles.secondary} data-track="cta_clicked" data-track-label="hero_docs">
             Read the docs <ArrowRight size={15} aria-hidden="true" />
           </Link>
+          <a href={foundersCall} className={styles.secondary} data-track="cta_clicked" data-track-label="hero_founders">
+            Talk to the founders <ArrowUpRight size={15} aria-hidden="true" />
+          </a>
         </div>
         <Downloads />
       </div>

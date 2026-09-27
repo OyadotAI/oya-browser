@@ -5,6 +5,8 @@ WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
+# The release notes page is built from the changelog at the repository root.
+COPY CHANGELOG.md /CHANGELOG.md
 RUN npm run build
 
 # ── Stage 2: Production server ──

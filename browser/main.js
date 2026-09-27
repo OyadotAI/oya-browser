@@ -76,6 +76,20 @@ process.on('unhandledRejection', (reason) => {
 applyTelemetryFlags(app);
 applyDNSLeakPrevention(app);
 
+/**
+ * Pages keep rendering while the window is hidden or covered. An agent drives the
+ * browser while the person works in other windows, and Chromium stops drawing a
+ * window it thinks nobody sees: every click and keystroke then waited 30 seconds for
+ * a frame, some ran past the command timeout, and those steps went missing from the
+ * recording.
+ */
+const KEEP_RENDERING_SWITCHES = [
+  'disable-renderer-backgrounding',
+  'disable-backgrounding-occluded-windows',
+  'disable-background-timer-throttling',
+];
+for (const name of KEEP_RENDERING_SWITCHES) app.commandLine.appendSwitch(name);
+
 // Set dock icon on macOS (needed for dev mode, built app uses icon from package.json)
 //
 // icon_1024, not icon.png: the latter is the 6250x6250 master electron-builder

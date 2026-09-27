@@ -122,8 +122,8 @@ try {
     ...(exists ? { data: { ...data, ...secrets } } : { data, secrets }),
     onSuccess: () => console.log('Run succeeded.'),
     onFailure: (error) => console.error('Run failed with status:', error.status),
-    onHealed: (result) => {
-      console.log('A repair draft is ready for review:', result.draft);
+    onHealed: () => {
+      console.log('A step no longer fit the page; the agent finished and fixed the playbook.');
     },
     onHumanAttention: async (request) => {
       console.log('Attention needed:', request.reason);
@@ -201,22 +201,26 @@ await browser.play('job-application', { name: 'Ada Lovelace', resume: await file
 
 The generated Playwright module calls `setInputFiles`, where the same variable is a plain path rather than a `file()` value.
 
-### Review a repaired playbook
+### When a replay heals
 
-Replay normally runs recorded steps without an LLM. With `autoHeal: true` (the default), a broken step can hand over to the agent, which saves a repair as `<name>:draft`. Promotion replaces the saved playbook with that draft.
+Replay normally runs recorded steps without an LLM. With `autoHeal: true` (the default), a broken step hands over to the agent, which finishes the task; its steps replace the broken ones in the playbook, so the next replay runs without the model again. The result says so with `healed: true`.
 
-The following continues with an active `browser` and the inputs above. Replaying a draft performs its actions, so review its code and use test inputs before promoting it.
+A replay that meets a sign-in page signs in with the profile's stored login and second factor (`oya.personas.setCredentials`, `setMfa`), returns to where the flow was, and carries on.
+
+Use `autoHeal: false` with `play()` or `submit({ playbook: name }, options)` to fail at a broken step without agent repair. `oya.playbooks.remove(name)` removes a playbook.
+
+### Free-text answers
+
+A field the agent wrote itself (a comment, the reason for a request, a question's answer), rather than copying it from your prompt, is not replayed word for word. Each replay asks your model for fresh text, from the prompt and that run's data. The playbook lists these fields in `answers`; pass a field's `key` in `data` to type fixed text instead. The Playwright export calls `oya.llm.answer(question, vars)` for them, so run it as `run(page, vars, oya)` with an `Oya` client.
+
+### Move a playbook to another environment
 
 ```js
-const saved = (await oya.playbooks.list()).find((p) => p.name === playbookName);
-if (saved?.draft) {
-  // Review saved.draft.code before executing it.
-  await browser.play(`${playbookName}:draft`, { ...data, ...secrets }, { autoHeal: false });
-  await oya.playbooks.promote(playbookName);
-}
+const doc = await oya.playbooks.export('new-request');   // JSON: steps, defaults, secret names (never values)
+await prodOya.playbooks.import(doc, { name: 'new-request', overwrite: false });
 ```
 
-Use `autoHeal: false` with `play()` or `submit({ playbook: name }, options)` to fail at a broken step without agent repair. `oya.playbooks.remove(name)` removes a playbook and its draft; `remove("<name>:draft")` removes only the draft.
+The CLI does the same with `oya playbooks export <name> --out file.json` and `oya playbooks import file.json`.
 
 ## Use your own model key
 

@@ -52,6 +52,17 @@ describe('matchElement', () => {
     assert.equal(matchElement({ testId: 't' }, els, 'Enterprise'), null);
   });
 
+  it('finds a label holding the value as a whole word when asked for part of it', () => {
+    const els = [live(1, { tag: 'li', text: 'Charlotte Smithers, DO' }), live(2, { tag: 'li', text: 'Jo Smith, MD' })];
+    assert.equal(matchElement({ tag: 'li' }, els, 'smith', true).id, 2);
+    assert.equal(matchElement({ tag: 'li' }, els, 'Smit', true), null);
+  });
+
+  it('prefers the recorded kind of element over the field the value was typed in', () => {
+    const els = [live(1, { tag: 'input', text: '73721' }), live(2, { tag: 'li', text: '73721 - MRI knee' })];
+    assert.equal(matchElement({ tag: 'li' }, els, '73721', true).id, 2);
+  });
+
   it('answers null when nothing matches, or nothing was recorded', () => {
     assert.equal(matchElement({ testId: 'gone' }, [live(1)]), null);
     assert.equal(matchElement(undefined, [live(1)], undefined), null);

@@ -34,6 +34,7 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: Props)
         count={(tab.playbooks || []).length}
         hasBrowsers={browsers.length > 0}
         onRecord={() => tab.dialogs.setRecording(true)}
+        onImport={tab.actions.importFile}
       />
       {tab.loadError && (
         <div

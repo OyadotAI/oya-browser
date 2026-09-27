@@ -237,9 +237,8 @@ export class Browser {
   /**
    * Replay a playbook with no LLM in the loop. Variables left out reuse the
    * recorded values where there are any. If a step no longer fits the page and
-   * `autoHeal` is on (the default), the agent finishes the task and its fix is
-   * saved as a draft (`healed`, `draft`); off, the step's error is thrown.
-   * Play `'<name>:draft'` to try a draft before promoting it.
+   * `autoHeal` is on (the default), the agent finishes the task and its fix
+   * replaces the broken steps in the playbook (`healed`); off, the step's error is thrown.
    */
   async play(name: string, data: RunData = {}, { autoHeal = true }: PlayOptions = {}): Promise<PlayResult> {
     const path = `/api/browsers/${this.id}/playbooks/${segment(name, 'name')}/play`;

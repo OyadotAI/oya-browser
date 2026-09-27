@@ -6,7 +6,7 @@
   ],
   "scripts": {
     "build": "npm run build:sdk && npm run build --prefix ui",
-    "test": "npm run build:sdk && npm run test:server && npm run test:cli && npm run test:packages",
+    "test": "npm run build:sdk && npm run test:server && npm run test:cli && npm run test:packages && npm run test:scripts",
     "test:recording:e2e": "cd server && node tests/integration/recording-playwright.test.js",
     "setup": "npm ci && npm ci --prefix server && npm ci --prefix ui && npm ci --prefix browser",
     "dev": "OYA_UI_MODE=development node --env-file-if-exists=server/.env server/src/index.ts",
@@ -17,7 +17,8 @@
     "test:cli": "npm run build --workspace=@oya-ai/cli && node packages/cli/tests/integration/prompt.mjs && node packages/cli/tests/integration/install.mjs && node packages/cli/tests/integration/init.mjs",
     "typecheck": "npm run typecheck --prefix server",
     "format:check": "prettier --check packages/*/src packages/*/tests tooling && npm run format:check --prefix server && npm run format:check --prefix ui && npm run format:check --prefix browser",
-    "test:packages": "npm run build:sdk && node --test \"packages/*/tests/unit/**/*.test.ts\""
+    "test:packages": "npm run build:sdk && node --test \"packages/*/tests/unit/**/*.test.ts\"",
+    "test:scripts": "node --test scripts/*.test.mjs"
   },
   "engines": {
     "node": ">=22.18"

@@ -106,6 +106,50 @@ describe('runChat', () => {
     assert.equal(browser.calls.find((c) => c.action === 'type').params.text, 'ada@x.test');
   });
 
+  it('keeps recording into the same run when the chat carries on, so the playbook has every message', async () => {
+    stubLlm([toolReply(['type', { element_id: 1, text: 'shoes' }]), textReply('DONE')]);
+    await runChat(BROWSER, [{ role: 'user', content: 'search shoes' }], { apiKey: 'chat-key' });
+    mock.restoreAll();
+    stubLlm([toolReply(['click', { element_id: 2 }]), textReply('DONE')]);
+    const chat = [
+      { role: 'user', content: 'search shoes' },
+      { role: 'assistant', content: 'DONE' },
+      { role: 'user', content: 'open the first one' },
+    ];
+    await runChat(BROWSER, chat, { apiKey: 'chat-key' });
+    const run = lastRun(BROWSER);
+    assert.deepEqual(
+      run.steps.map((s) => s.action),
+      ['navigate', 'type', 'click'],
+    );
+    assert.equal(run.prompt, 'search shoes\n\nopen the first one');
+  });
+
+  it('tells the model on a follow-up that the earlier messages are done', async () => {
+    const llm = stubLlm([textReply('DONE'), textReply('DONE')]);
+    await runChat(BROWSER, [{ role: 'user', content: 'a' }], { apiKey: 'chat-key' });
+    const chat = [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'DONE' },
+      { role: 'user', content: 'b' },
+    ];
+    await runChat(BROWSER, chat, { apiKey: 'chat-key' });
+    assert.doesNotMatch(llm.requests[0].messages[0].content, /FOLLOW-UP/);
+    assert.match(llm.requests[1].messages[0].content, /FOLLOW-UP: .*never redo an earlier message/);
+  });
+
+  it('starts a new recording when a new chat begins', async () => {
+    stubLlm([toolReply(['type', { element_id: 1, text: 'shoes' }]), textReply('DONE')]);
+    await runChat(BROWSER, [{ role: 'user', content: 'search shoes' }], { apiKey: 'chat-key' });
+    mock.restoreAll();
+    stubLlm([textReply('DONE')]);
+    await runChat(BROWSER, [{ role: 'user', content: 'something else' }], { apiKey: 'chat-key' });
+    assert.deepEqual(
+      lastRun(BROWSER).steps.map((s) => s.action),
+      ['navigate'],
+    );
+  });
+
   it('records an empty prompt when the last user message is not text', async () => {
     stubLlm([textReply('DONE')]);
     await runChat(BROWSER, [{ role: 'user', content: [{ type: 'text', text: 'x' }] }], { apiKey: 'chat-key' });

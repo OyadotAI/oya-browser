@@ -60,6 +60,13 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || gh release view "$TA
   exit 1
 fi
 
+# A release says what it changes: its notes are what is listed under Unreleased in
+# CHANGELOG.md. Checked here, before the desktop build, so an empty one costs nothing.
+if ! node scripts/changelog.mjs check; then
+  log_err "Write what this release changes under ## Unreleased in CHANGELOG.md, then release again."
+  exit 1
+fi
+
 log_info "Latest tag: ${LATEST:-none}"
 log_info "New tag:    $TAG"
 log_info "Version:    $VERSION"
@@ -186,13 +193,20 @@ fi
 
 # ── Commit, tag, push ──
 
+# Unreleased becomes this version, its heading linked to the GitHub release below.
+node scripts/changelog.mjs stamp "$VERSION"
+NOTES_FILE="$(mktemp)"
+node scripts/changelog.mjs notes "$VERSION" > "$NOTES_FILE"
+log_ok "CHANGELOG.md stamped with $VERSION"
+
 log_info "Committing version bump and link updates"
-git add browser/package.json browser/package-lock.json packages/sdk/package.json packages/cli/package.json package-lock.json \
+git add CHANGELOG.md browser/package.json browser/package-lock.json packages/sdk/package.json packages/cli/package.json package-lock.json \
   .claude-plugin/plugin.json server.json
 for UI_PAGE in $UI_PAGES; do [ -f "$UI_PAGE" ] && git add "$UI_PAGE"; done
 git commit -m "release: $TAG, update versions and download links"
 
-git tag "$TAG"
+# An annotated tag carrying the release's notes, so `git show $TAG` says what changed.
+git tag -a "$TAG" -F "$NOTES_FILE"
 log_ok "Tagged $TAG"
 
 git push origin "$(git branch --show-current)"
@@ -206,12 +220,12 @@ log_info "Creating GitHub release $TAG..."
 # Windows builds to this release, and the macOS binary stays on the release
 # that last shipped one.
 if [ "$BUILD_DESKTOP" = "0" ]; then
-  gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "Oya Browser $TAG" --generate-notes
+  gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "Oya Browser $TAG" --notes-file "$NOTES_FILE"
   log_ok "GitHub release $TAG created (no desktop build in this one)"
 else
   gh release create "$TAG" "$DST_DMG" "$SRC_ZIP" "$SRC_YML" --target "$(git rev-parse HEAD)" \
     --title "Oya Browser $TAG" \
-    --generate-notes
+    --notes-file "$NOTES_FILE"
   log_ok "GitHub release $TAG created with macOS binary and update feed"
 fi
 # Release creation may create the remote tag itself. Either way CI waits for

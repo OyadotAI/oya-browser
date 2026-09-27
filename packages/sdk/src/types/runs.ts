@@ -14,8 +14,38 @@ export interface Playbook {
   defaults: Record<string, string>;
   /** How many steps it replays. */
   steps: number;
-  /** The same flow as a Playwright module: `export default async function run(page, vars)`. */
+  /** Free-text fields the model writes fresh on each replay (pass the key in `play()` data to type fixed text). */
+  answers?: PlaybookAnswer[];
+  /** The same flow as a Playwright module: `export default async function run(page, vars, oya)`. */
   code: string;
+}
+
+/** A free-text field a replay asks the model to fill: a comment, a reason, a question's answer. */
+export interface PlaybookAnswer {
+  /** The variable that overrides it with fixed text. */
+  key: string;
+  /** What the field asks, as its label says. */
+  question: string;
+}
+
+/** How `oya.playbooks.import()` saves an export. */
+export interface ImportOptions {
+  /** The name to save it as; the name it was exported with when left out. */
+  name?: string;
+  /** Replace a playbook that already has that name. */
+  overwrite?: boolean;
+}
+
+/** A playbook as one JSON document, to import into another Oya environment. */
+export interface PlaybookExport {
+  /** Always `'oya-playbook'`. */
+  format: 'oya-playbook';
+  /** The layout's version. */
+  version: number;
+  /** When it was exported. */
+  exportedAt: string;
+  /** The playbook: its prompt, steps, defaults and secret names (never secret values). */
+  playbook: Record<string, unknown>;
 }
 
 /** What a `play()` did. */
@@ -26,9 +56,9 @@ export interface PlayResult {
   total: number;
   /** A step no longer fit the page and the agent finished the task. */
   fellBack: boolean;
-  /** The agent's fix was saved as `draft`; promote it with `oya.playbooks.promote(name)`. */
+  /** The agent's fix replaced the broken steps in the playbook, so the next replay runs it. */
   healed?: boolean;
-  /** The draft's name, when one was saved. */
+  /** The draft's name, from a server that saved fixes as drafts to promote by hand. */
   draft?: string;
   /** The agent's summary, when it fell back. */
   text?: string;

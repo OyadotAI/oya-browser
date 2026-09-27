@@ -71,6 +71,18 @@ async function loadWithRetries(tab, url) {
  * Reported from here because here the element is unambiguous, an id from an
  * earlier analysis may name nothing by the time the step is recorded.
  */
+/**
+ * The click itself. A covered element (an ad over the button) is clicked on the element,
+ * since the mouse would land on the cover; an element inside an iframe gets the mouse
+ * and the events too, as CDP mouse events may not reach framework handlers there.
+ */
+async function pressOn(driver, view, selector, data) {
+  const onElement = () => driver.ctx.worldEval(view, s.iframeClickJs(selector), true).catch(() => {});
+  if (data.covered) return onElement();
+  await cdpClick(view, data.x, data.y);
+  if (data.inIframe) await onElement();
+}
+
 const withHandle = (info) => (info?.data?.handle ? { handle: info.data.handle } : {});
 
 /** Gives a click or Enter time to start a navigation and waits it out; true when there was one. */
@@ -214,16 +226,13 @@ const PAGE_COMMANDS = {
     driver.ctx.sendResult(id, true, { screenshot: `data:image/${shot.format};base64,` + result.data });
   },
 
-  /** Clicks an element with the CDP mouse and follows any navigation it starts. */
+  /** Clicks an element with the CDP mouse (or on the element itself when covered) and follows any navigation it starts. */
   async click(driver, id, params) {
     const view = driver.ctx.getActiveView();
     const selector = params?.selector || '';
     const info = await driver.find(id, view, selector);
     if (!info) return;
-    await cdpClick(view, info.data.x, info.data.y);
-    // For iframe elements, also dispatch full pointer/mouse event sequence, CDP
-    // mouse events may not trigger framework handlers (jsaction, etc.) in iframes.
-    if (info.data.inIframe) await driver.ctx.worldEval(view, s.iframeClickJs(selector), true).catch(() => {});
+    await pressOn(driver, view, selector, info.data);
     const { url, title } = await landedPage(driver, view);
     driver.ctx.sendResult(id, true, { clicked: true, url, title, ...withHandle(info) });
   },

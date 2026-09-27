@@ -110,6 +110,23 @@ const REPORTED_KEYS = [
 /** The analysis without the fields the browser reports for itself. */
 const analyzerOnly = (e = {}) => Object.fromEntries(Object.entries(e).filter(([k]) => !REPORTED_KEYS.includes(k)));
 
+/** Form fields, whose own text is always empty: what names one is its label. */
+const FIELD_TAGS = new Set(['input', 'select', 'textarea']);
+
+/**
+ * The analyzer's label for a field the browser read no text off. The browser reads an
+ * element's own text, and a field has none, so its empty answer means "cannot see the
+ * label", not "has none". Taken at its word it erased "More than 12 weeks" from a
+ * radio, leaving only the name its whole group shares, and every replay then answered
+ * the question with the group's first choice.
+ */
+function fieldLabel(analyzed, reported) {
+  // A submit or button input is named by its value, not a label; the analyzer's text for
+  // one is whatever surrounds it ("Has this procedure been performed? No Yes").
+  const unread = FIELD_TAGS.has(reported.tag) && !reported.text && analyzed?.type !== 'button';
+  return unread && analyzed?.text ? { text: analyzed.text } : {};
+}
+
 /** An element's stable handles, without the id that dies with the analysis. */
 const stable = (e: any = {}) => Object.fromEntries(STABLE_KEYS.filter((k) => e[k] !== undefined).map((k) => [k, e[k]]));
 
@@ -165,12 +182,35 @@ export function setElements(browserId, elements) {
   if (run) run.elements = elements;
 }
 
+/**
+ * Drops what the current message recorded: the agent is starting it over. Steps an
+ * earlier message of the same chat recorded stay, since that part was done.
+ */
+export async function restartRun(browserId) {
+  const run = runs.get(browserId);
+  if (!run) return;
+  run.steps = run.steps.slice(0, run.mark ?? 0);
+  // The new attempt starts where the agent is: it may have gone back to the form
+  // before saying it was starting over, and that navigation was just dropped.
+  const here = await tabHandle(browserId);
+  const last = run.steps.at(-1);
+  const there = last?.action === 'navigate' && last.url === here;
+  if (/^https?:/.test(here || '') && !there) run.steps.push({ action: 'navigate', url: here, start: true });
+}
+
+/** Marks where the current message's steps begin, for restartRun. */
+export function markMessage(browserId) {
+  const run = runs.get(browserId);
+  if (run) run.mark = run.steps.length;
+}
+
 /** Makes `run` the browser's current run, starting from the page it is on so a playbook replays from the same place. */
 export async function startRun(browserId, run) {
   run.handles = new Map();
   const tabs = await sendCommand(browserId, 'list_tabs').catch(() => null);
   const startUrl = tabs?.data?.tabs?.find((t) => t.active)?.url;
   if (/^https?:/.test(startUrl || '')) run.steps.push({ action: 'navigate', url: startUrl, start: true });
+  run.mark = run.steps.length;
   runs.delete(browserId);
   runs.set(browserId, run);
   if (runs.size > MAX_RECORDED_RUNS) runs.delete(runs.keys().next().value);
@@ -189,7 +229,9 @@ function redactedElement(run, elementId, values, acted?) {
   // page, after which the same id may name a different element.
   const analyzed = acted ?? run.elements.find((e) => e.id === Number(elementId));
   const reported = run.handles?.get(Number(elementId));
-  const el = stable(reported ? { ...analyzerOnly(analyzed), ...defined(reported) } : analyzed);
+  const el = stable(
+    reported ? { ...analyzerOnly(analyzed), ...defined(reported), ...fieldLabel(analyzed, reported) } : analyzed,
+  );
   for (const k of Object.keys(el)) el[k] = redact(el[k], values);
   return el;
 }
@@ -235,14 +277,24 @@ function aim(step, run, name, args, values, acted?) {
  * previous run's page, challenge wall and all, before going where it meant to.
  */
 function dropRedundantStart(run, name) {
-  if (name !== 'navigate' || run.steps.length !== 1) return;
-  if (run.steps[0].start) run.steps.pop();
+  if (name === 'navigate' && run.steps.at(-1)?.start) run.steps.pop();
+}
+
+/**
+ * Whether this call closes the tab the run's last step opened, with nothing done in it.
+ * An agent that opens a page only to read it (a help page, a file the portal serves)
+ * and closes it again changed nothing a replay has to repeat; recorded, the round
+ * trip made every replay open and close pages for no reason.
+ */
+function closesUnusedTab(run, name) {
+  return name === 'close_tab' && run.steps.at(-1)?.action === 'open_tab';
 }
 
 /** Append a replayable tool call to the browser's current run, with typed values redacted to placeholders. */
 export async function recordStep(browserId, name, args, values, acted?) {
   const run = runs.get(browserId);
   if (!run || !RECORDED.has(name)) return;
+  if (closesUnusedTab(run, name)) return void run.steps.pop();
   dropRedundantStart(run, name);
   const step: any = { action: name };
   aim(step, run, name, args, values, acted);

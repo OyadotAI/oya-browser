@@ -37,6 +37,13 @@ export const promotePlaybook = (key: string, name: string) =>
 /** Deletes a playbook, or only its draft when `name` ends in `:draft`. */
 export const deletePlaybook = (key: string, name: string) => api(`/playbooks/${seg(name)}`, { key, method: 'DELETE' });
 
+/** A playbook as one JSON document, to move it to another environment. */
+export const exportPlaybook = (key: string, name: string) => api<unknown>(`/playbooks/${seg(name)}/export`, { key });
+
+/** Saves an exported playbook here, under the name it was exported with. */
+export const importPlaybook = (key: string, playbook: unknown) =>
+  api<PlaybookBody>('/playbooks/import', { key, method: 'POST', body: { playbook } });
+
 /** Renames a playbook; its draft moves with it. */
 export const renamePlaybook = (key: string, from: string, name: string) =>
   api(`/playbooks/${seg(from)}`, { key, method: 'PATCH', body: { name } });

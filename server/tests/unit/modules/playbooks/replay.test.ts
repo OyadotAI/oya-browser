@@ -13,7 +13,7 @@ const { play } = await import('../../../../src/modules/playbooks/replay.ts');
 const keyConfig = await import('../../../../src/modules/config/service.ts');
 const { FIND_ATTEMPTS, FIND_RETRY_MS, NAVIGATE_TIMEOUT_MS, REPLAY_PAUSE_MS, REPLAY_SETTLE_MS } =
   await import('../../../../src/modules/playbooks/constants.ts');
-const { scriptedBrowser, stubLlm, textReply } = await import('../../support/agent.ts');
+const { scriptedBrowser, stubLlm, textReply, toolReply } = await import('../../support/agent.ts');
 const { advance } = await import('../../support/http.ts');
 
 const KEY = 'replay-key';
@@ -126,6 +126,98 @@ describe('play', () => {
     assert.deepEqual(commands()[0].params, { selector: '[data-ac-id="2"]' });
   });
 
+  it('finds an option whose label carries the new value among other words', async () => {
+    answer = (action) =>
+      action === 'analyze'
+        ? {
+            ok: true,
+            data: {
+              elements: [
+                { id: 7, tag: 'input', text: '73721', visible: true },
+                { id: 8, tag: 'li', text: '73721 - MRI lower extremity joint', visible: true },
+              ],
+            },
+          }
+        : page(action);
+    const steps = [{ action: 'click', el: { tag: 'li', text: '{{cpt}} - CT head/brain' } }];
+    await play(KEY, BROWSER, pb(steps, { defaults: { cpt: '70450' } }), { cpt: '73721' });
+    assert.deepEqual(commands()[0].params, { selector: '[data-ac-id="8"]' });
+  });
+
+  it('types the model’s answer into a free-text field, given the task and this run’s values', async () => {
+    process.env.OPENAI_API_KEY = 'sk-host';
+    const llm = stubLlm([textReply('Follow-up for Ada.')]);
+    const steps = [
+      {
+        action: 'type',
+        el: { tag: 'input', name: 'email' },
+        answer: { key: 'note', question: 'Notes', example: 'old' },
+      },
+    ];
+    await play(KEY, BROWSER, pb(steps, { prompt: 'Book {{who}}' }), { who: 'Ada' });
+    assert.equal(commands()[0].params.text, 'Follow-up for Ada.');
+    const asked = llm.requests[0].messages.at(-1).content;
+    assert.match(asked, /TASK:\nBook Ada/);
+    assert.match(asked, /FIELD:\nNotes/);
+  });
+
+  it('types the caller’s own text into an answer field without asking the model', async () => {
+    const steps = [
+      {
+        action: 'type',
+        el: { tag: 'input', name: 'email' },
+        answer: { key: 'note', question: 'Notes', example: 'old' },
+      },
+    ];
+    await play(KEY, BROWSER, pb(steps), { note: 'fixed text' });
+    assert.equal(commands()[0].params.text, 'fixed text');
+  });
+
+  it('goes back to where the flow was after the checkpoint signs in', async () => {
+    const checkpoint = mock.fn(async () => checkpoint.mock.callCount() === 1);
+    const steps = [
+      { action: 'navigate', url: 'https://a.test/deep' },
+      { action: 'press_key', key: 'Tab' },
+    ];
+    await play(KEY, BROWSER, pb(steps), {}, { checkpoint });
+    const navigations = commands()
+      .filter((c) => c.action === 'navigate')
+      .map((c) => c.params.url);
+    assert.deepEqual(navigations, ['https://a.test/deep', 'https://a.test/deep']);
+  });
+
+  it('signs in and tries a step again before calling it broken', async () => {
+    let signedOut = true;
+    answer = (action, params) =>
+      action === 'analyze' && signedOut ? { ok: true, data: { elements: [] } } : page(action, params);
+    const checkpoint = mock.fn(async () => {
+      if (!signedOut) return false;
+      signedOut = false;
+      return true;
+    });
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const steps = [
+      { action: 'navigate', url: 'https://a.test/form' },
+      { action: 'click', el: { text: 'Go', type: 'button' } },
+    ];
+    const run = play(KEY, BROWSER, pb(steps), {}, { checkpoint, autoHeal: false });
+    await advance(FIND_RETRY_MS, FIND_ATTEMPTS * 3 + 6);
+    const result = await run;
+    assert.equal(result.steps, 2);
+    assert.ok(commands().some((c) => c.action === 'click'));
+  });
+
+  it('goes on to answer the dialog a recorded click opens', async () => {
+    const blocked = 'A JavaScript confirm dialog is open: "Sure?". The page is blocked until you call handle_dialog.';
+    answer = (action) => (action === 'click' ? { ok: false, error: blocked } : page(action));
+    const steps = [
+      { action: 'click', el: { text: 'Go', type: 'button' } },
+      { action: 'handle_dialog', accept: true },
+    ];
+    const result = await play(KEY, BROWSER, pb(steps), {}, { autoHeal: false });
+    assert.equal(result.steps, 2);
+  });
+
   it('uploads the file() value passed for the step’s variable', async () => {
     const steps = [{ action: 'upload_file', file: '{{cv}}' }];
     await play(KEY, BROWSER, pb(steps), { cv: FILE });
@@ -201,25 +293,47 @@ describe('play', () => {
     const broken = () =>
       pb([{ action: 'press_key', key: 'Tab' }, { action: 'teleport' }], { secrets: ['pw'], labels: ['go'] });
 
-    it('lets the agent finish from the broken step and saves its steps as a draft', async () => {
+    it('lets the agent finish from the broken step and puts its steps in the playbook', async () => {
       process.env.OPENAI_API_KEY = 'sk-host';
-      const llm = stubLlm([textReply('DONE: finished')]);
+      const llm = stubLlm([toolReply(['press_key', { key: 'Enter' }]), textReply('DONE: finished')]);
       const result = await play(KEY, BROWSER, broken(), { email: 'ada@x.test', pw: 'hunter2', go: 'Go now' });
       assert.deepEqual(result, {
         steps: 1,
         total: 2,
         fellBack: true,
         healed: true,
-        draft: 'demo:draft',
         text: 'DONE: finished',
       });
-      const draft = keyConfig.getPlaybook(KEY, 'demo:draft');
-      assert.equal(draft.healedFrom, 1);
-      assert.deepEqual(draft.steps, [{ action: 'press_key', key: 'Tab' }]);
+      const healed = keyConfig.getPlaybook(KEY, 'demo');
+      assert.equal(healed.healedFrom, 1);
+      assert.deepEqual(healed.steps, [
+        { action: 'press_key', key: 'Tab' },
+        { action: 'press_key', key: 'Enter' },
+      ]);
+      assert.equal(keyConfig.getPlaybook(KEY, 'demo:draft'), null);
       const [system, user] = llm.requests[0].messages;
       assert.match(user.content, /already did 1 of 2 steps .*\(unknown step teleport\)/);
       assert.match(system.content, /\{\{email\}\} = "ada@x\.test"/);
       assert.doesNotMatch(system.content, /Go now|hunter2/, 'labels are not data, secrets are never shown');
+    });
+
+    it('leaves the playbook alone when the healing agent had nothing to do', async () => {
+      process.env.OPENAI_API_KEY = 'sk-host';
+      stubLlm([textReply('DONE: already signed in')]);
+      const original = pb([{ action: 'press_key', key: 'Tab' }, { action: 'teleport' }]);
+      await keyConfig.savePlaybook(KEY, 'demo', structuredClone(original));
+      await play(KEY, BROWSER, original);
+      assert.equal(keyConfig.getPlaybook(KEY, 'demo').steps.length, 2);
+    });
+
+    it('turns what the healing agent typed literally into variables, keeping the ones it had', async () => {
+      process.env.OPENAI_API_KEY = 'sk-host';
+      stubLlm([toolReply(['keyboard_type', { text: 'boots' }]), textReply('DONE: finished')]);
+      const withData = pb([{ action: 'press_key', key: '{{q}}' }, { action: 'teleport' }], { defaults: { q: 'Tab' } });
+      await play(KEY, BROWSER, withData);
+      const healed = keyConfig.getPlaybook(KEY, 'demo');
+      assert.equal(healed.steps[1].text, '{{field2}}');
+      assert.deepEqual(healed.defaults, { q: 'Tab', field2: 'boots' });
     });
 
     it('hands over to a person when the agent says it failed', async () => {
@@ -354,6 +468,25 @@ describe('play across tabs', () => {
     await play(KEY, BROWSER, pb([{ action: 'keyboard_type', text: '{{member_id}}' }]), { member_id: 'MEM000000001' });
     const typed = commands().find((c) => c.action === 'keyboard_type');
     assert.deepEqual(typed.params, { text: 'MEM000000001' });
+  });
+
+  it('closes the tab it is in and returns to the one the run landed on', async () => {
+    answer = tabsWith(['https://portal.example.com/help', 'https://portal.example.com/form']);
+    await noHeal([{ action: 'close_tab', tabUrl: 'https://portal.example.com/form' }]);
+    const acts = commands().filter((c) => c.action !== 'list_tabs');
+    assert.deepEqual(
+      acts.map((c) => [c.action, c.params.tab_id]),
+      [
+        ['close_tab', 1],
+        ['switch_tab', 2],
+      ],
+    );
+  });
+
+  it('never closes the tab the run landed on', async () => {
+    answer = tabsWith(['https://portal.example.com/form', 'https://portal.example.com/help']);
+    await noHeal([{ action: 'close_tab', tabUrl: 'https://portal.example.com/form' }]);
+    assert.ok(!commands().some((c) => c.action === 'close_tab'));
   });
 
   it('treats a tab that is already closed as closed', async () => {

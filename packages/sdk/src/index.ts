@@ -21,7 +21,7 @@ import { Run } from './run.js';
 import { OyaError } from './errors.js';
 import { browserApi } from './api/browsers.js';
 import { controlApi } from './api/control.js';
-import { playbookApi } from './api/playbooks.js';
+import { llmApi, playbookApi } from './api/playbooks.js';
 import { proxyApi } from './api/proxies.js';
 import { personaApi } from './api/personas.js';
 import { configApi } from './api/config.js';
@@ -68,6 +68,9 @@ export class Oya {
 
   /** Playbooks saved with `browser.toPlaybook()`. */
   readonly playbooks = playbookApi(() => this.http);
+
+  /** This key's model for one-off text: `oya.llm.answer(question, vars)` fills a playbook's free-text field. */
+  readonly llm = llmApi(() => this.http);
 
   /**
    * Proxy exits for your personas. A persona takes one at first connect (by its

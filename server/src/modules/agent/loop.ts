@@ -4,10 +4,11 @@
  */
 import { toolsOn } from './tools.ts';
 import { actionsOf } from '../browsers/socket.ts';
-import { REMEMBER, REQUEST_HUMAN, UPDATE_PLAN, returnDataTool } from './prompt.ts';
+import { REMEMBER, REQUEST_HUMAN, RESTART_RECORDING, UPDATE_PLAN, returnDataTool } from './prompt.ts';
 import { notesHere, rememberNote } from './site-notes.ts';
 import { executeTool } from './executor.ts';
-import { recordStep, elementOf, forgetHandle } from './recorder.ts';
+import { DIALOG_BLOCKED } from '../../drivers/dialogs.ts';
+import { recordStep, elementOf, forgetHandle, restartRun } from './recorder.ts';
 import { batchOf, currentId, ELEMENT_MOVED, type Batch } from './batch.ts';
 import { fill, redact } from './placeholders.ts';
 import { trimContext } from './context.ts';
@@ -160,6 +161,10 @@ const LOCAL_TOOLS: Record<string, (ctx: LoopContext, args: any) => Promise<strin
   return_data: async (ctx, args) => returnData(ctx, args),
   remember: rememberNote,
   update_plan: async (ctx, args) => ((ctx.plan = Array.isArray(args.steps) ? args.steps : []), planText(ctx.plan)),
+  restart_recording: async (ctx) => (
+    await restartRun(ctx.browserId),
+    'Recording restarted: do the task again from the start.'
+  ),
 };
 
 /** Whether the loop answers `name` itself: a local tool, or a challenge the run was given. */
@@ -174,6 +179,7 @@ const runLocal = (ctx: LoopContext, name, args) =>
 const toolsFor = (ctx: LoopContext) => [
   ...toolsOn(actionsOf(ctx.browserId)),
   UPDATE_PLAN,
+  RESTART_RECORDING,
   REQUEST_HUMAN,
   ...(ctx.challenges ? CHALLENGE_TOOLS : []),
   ...(ctx.schema ? [returnDataTool(ctx.schema)] : []),
@@ -225,13 +231,20 @@ async function runAimed(ctx: LoopContext, name, args) {
   return { result: await invoke(ctx, name, args), acted };
 }
 
+/**
+ * Whether the call did what it was asked. A click that opened a confirm dialog answers
+ * with an error, because the page is now blocked, yet the click happened: left out, a
+ * playbook answered a dialog that nothing on the replay ever opened.
+ */
+const ran = (result) => !String(result).startsWith('Error') || String(result).includes(DIALOG_BLOCKED);
+
 /** Runs one tool call and returns its result, recorded when it worked and redacted for the model. */
 async function callTool(ctx: LoopContext, tc, batch: Batch) {
   const name = tc.function?.name;
   const args = aimedArgs(ctx, tc, batch);
   ctx.onToolCall?.({ name, args: args || parseArgs(tc.function?.arguments) });
   const { result, acted } = await runAimed(ctx, name, args);
-  if (!String(result).startsWith('Error')) await afterSuccess(ctx, name, args, acted);
+  if (ran(result)) await afterSuccess(ctx, name, args, acted);
   const seen = guarded(ctx, name, args, String(result));
   if (AGENT_LOG) logCall(ctx, name, args, seen);
   return seen;

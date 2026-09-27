@@ -22,6 +22,7 @@ interface Entry {
 const PAGES: Entry[] = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/docs', changeFrequency: 'weekly', priority: 0.9 },
+  { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
   { path: '/openapi.json', changeFrequency: 'weekly', priority: 0.5 },
   { path: '/signup', changeFrequency: 'monthly', priority: 0.5 },

@@ -30,6 +30,20 @@ const FIND_ELEMENT_JS = `(() => {
     window.scrollBy(0, rect.top - 100);
     rect = el.getBoundingClientRect();
   }
+  // Something drawn over the element (an ad, a cookie bar) takes a click aimed at its
+  // centre. Scroll it clear once; if it is still covered, say so, and the click is
+  // sent to the element itself rather than to whatever sits on top of it.
+  const reaches = (r) => {
+    if (el.ownerDocument !== document) return true;
+    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+    return !!top && (top === el || el.contains(top) || top.contains(el));
+  };
+  if (!reaches(rect)) {
+    el.scrollIntoView({ behavior: 'instant', block: 'start' });
+    window.scrollBy(0, -100);
+    rect = el.getBoundingClientRect();
+  }
+  const covered = !reaches(rect);
   let offsetX = 0, offsetY = 0;
   // If element is inside an iframe, offset by the iframe's position in the parent page
   const ownerDoc = el.ownerDocument;
@@ -56,6 +70,7 @@ const FIND_ELEMENT_JS = `(() => {
       tag: el.tagName,
       editable: el.isContentEditable,
       inIframe: ownerDoc !== document,
+      covered,
       handle: {
         tag: (el.tagName || '').toLowerCase(),
         text,

@@ -69,3 +69,6 @@ export const RECORD_ERRORS: Record<string, string> = {
 
 /** The error code for a browser someone else holds. */
 export const CONTROL_BUSY = 'control_busy';
+
+/** Indentation of a downloaded playbook export, so it reads and diffs well. */
+export const EXPORT_INDENT = 2;

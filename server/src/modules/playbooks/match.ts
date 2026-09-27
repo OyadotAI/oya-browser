@@ -16,6 +16,12 @@ const { handlesOf, contradicts, missingIdentity } = workflow as any;
 /** Case- and whitespace-insensitive equality. */
 const same = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 
+/** A regex source for literal text. */
+const escaped = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Whether `text` holds `part` as a whole word or number: "73721" is in "73721 - MRI knee", "Smith" is not in "Smithers". */
+const holds = (text, part) => new RegExp(`(?<!\\w)${escaped(String(part).trim())}(?!\\w)`, 'i').test(String(text));
+
 /** Whether a live element is the same kind of thing as the recorded one. */
 function inScope(scope: string | undefined, el, candidate) {
   if (scope === 'tag') return candidate.tag === el.tag;
@@ -41,7 +47,9 @@ function byHandle(handle, el, pool) {
 
 /**
  * The live element a recorded one corresponds to, or null. `text` overrides the
- * label for a data-driven click.
+ * label for a data-driven click; `partial` finds the label holding it, for an
+ * option whose label carries the value among other words ("73721 - MRI knee"),
+ * preferring the recorded kind of element over, say, the field it was typed in.
  *
  * A handle that fits several elements has not said which one: three rows with a
  * Delete button each all answer to "Delete", and taking the first deleted the wrong
@@ -49,10 +57,11 @@ function byHandle(handle, el, pool) {
  * if none does is an ambiguous handle's first fit used, which is the best that can
  * be said for a page whose controls are genuinely indistinguishable.
  */
-export function matchElement(el: any = {}, elements = [], text?) {
+export function matchElement(el: any = {}, elements = [], text?, partial = false) {
   const pool = [...elements.filter((e) => e.visible), ...elements.filter((e) => !e.visible)];
-  if (text !== undefined) return pool.find((e) => e.text && same(e.text, text)) || null;
-  return bestFit(el, pool);
+  if (text === undefined) return bestFit(el, pool);
+  const hits = pool.filter((e) => e.text && (partial ? holds(e.text, text) : same(e.text, text)));
+  return hits.find((e) => e.tag === el.tag) || hits[0] || null;
 }
 
 /** The first handle that fits exactly one element; failing that, the best ambiguous handle's first fit. */

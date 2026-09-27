@@ -1,0 +1,70 @@
+/* The release notes: one readable column of releases. */
+.main {
+  max-width: 760px;
+  padding: 64px 0 96px;
+}
+.main h1 {
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.lead {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.release {
+  margin-top: 56px;
+  padding-top: 32px;
+  border-top: 1px solid #e5e9e1;
+}
+.release h2 {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.release p {
+  margin-top: 12px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.group {
+  margin-top: 24px;
+}
+.group h3 {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.group ul {
+  margin-top: 10px;
+  padding-left: 20px;
+  list-style: disc;
+}
+.group li {
+  margin-top: 10px;
+  line-height: 1.65;
+}
+.release a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.release code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f1f4ee;
+  font-family: var(--font-mono, ui-monospace), monospace;
+  font-size: 0.88em;
+}
+@media (max-width: 600px) {
+  .main {
+    padding: 40px 0 64px;
+  }
+  .main h1 {
+    font-size: 34px;
+  }
+}

@@ -19,6 +19,16 @@ export const MAX_VARIABLE_NAME = 40;
 export const FIRST_NAME_SUFFIX = 2;
 /** Shorter values are not substituted into the prompt: they would match inside other words. */
 export const MIN_PROMPT_VALUE_LEN = 3;
+/** How many steps after typing a value a click on a label holding it still counts as picking it. */
+export const ECHO_WINDOW = 3;
+/** The shortest clicked label that counts as a value the person named in their prompt. */
+export const MIN_PICK_LEN = 6;
+/** The shortest radio or checkbox label that counts as a named choice ("No"). */
+export const MIN_CHOICE_LEN = 2;
+/** Typed text of at least this many words, not taken from the prompt, is an answer the model writes fresh each run. */
+export const MIN_ANSWER_WORDS = 4;
+/** Longest answer the model may put in one field. */
+export const MAX_ANSWER_CHARS = 2000;
 
 /** Times replay re-analyzes the page looking for a recorded element. */
 export const FIND_ATTEMPTS = 5;

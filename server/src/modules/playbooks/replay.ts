@@ -5,6 +5,7 @@
 import workflow from '../../../../browser/scripts/workflow.cjs';
 
 import { sendCommand } from '../browsers/socket.ts';
+import { DIALOG_BLOCKED } from '../../drivers/dialogs.ts';
 import { fill, selectOptionIn, uploadFileIn, isFileValue } from '../agent/chat.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
@@ -20,11 +21,12 @@ import {
 import { matchElement } from './match.ts';
 import { validateWorkflow } from './sanitize.ts';
 import { heal } from './heal.ts';
+import { answerField } from './answer.ts';
 
 const { contradicts, volatileTarget } = workflow as any;
 
 /** Replays one step against a browser. */
-type Replayer = (browserId: string, step: any, values: any, defaults: any) => Promise<any>;
+type Replayer = (browserId: string, step: any, values: any, defaults: any, task?: any) => Promise<any>;
 
 /** Steps after which the page may have changed, so the checkpoint runs. */
 const PAGE_CHANGING = new Set([
@@ -45,10 +47,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pauseWithin = ({ min, max }) => sleep(min + Math.random() * (max - min));
 /** The variable a step's value is, when the value is exactly one placeholder. */
 const soleVariable = (value) => (value || '').match(/^\{\{(\w+)\}\}$/)?.[1];
+/** The first variable a label carries anywhere in it, or undefined. */
+const echoedVariable = (value) => (value || '').match(/\{\{(\w+)(?:\|[^}]*)?\}\}/)?.[1];
 
 /** Send one browser command and return its data, throwing on failure. */
 async function command(browserId, action, params = {}, timeout?) {
   const r = await sendCommand(browserId, action, params, timeout);
+  // An action that opened a confirm dialog did run; the recorded handle_dialog step answers it next.
+  if (!r.ok && String(r.error || '').includes(DIALOG_BLOCKED)) return { dialog: r.error };
   if (!r.ok) throw new Error(r.error || `${action} failed`);
   return r.data;
 }
@@ -80,14 +86,14 @@ function pageChanged(browserId) {
 }
 
 /** The recorded element in the analysis in hand, or null. */
-async function matchHere(browserId, el, text?) {
-  return matchElement(el, await elementsOf(browserId), text);
+async function matchHere(browserId, el, text?, partial = false) {
+  return matchElement(el, await elementsOf(browserId), text, partial);
 }
 
 /** Re-analyzes until the recorded element appears, for up to about five seconds. */
-async function waitFor(browserId, el, text?) {
+async function waitFor(browserId, el, text?, partial = false) {
   for (let attempt = 0; attempt < FIND_ATTEMPTS; attempt++) {
-    const match = await matchHere(browserId, el, text);
+    const match = await matchHere(browserId, el, text, partial);
     if (match) return match;
     pageChanged(browserId);
     await sleep(FIND_RETRY_MS);
@@ -100,8 +106,8 @@ async function waitFor(browserId, el, text?) {
  * in hand, which on a page that has not changed is the whole cost of the step;
  * after that it re-analyzes on the same budget as before.
  */
-async function find(browserId, el, text?) {
-  const found = await waitFor(browserId, el, text);
+async function find(browserId, el, text?, partial = false) {
+  const found = await waitFor(browserId, el, text, partial);
   if (found) return found;
   throw new Error(`no element matching ${JSON.stringify(el?.text ?? el?.domId ?? el?.name ?? '')}`);
 }
@@ -130,7 +136,7 @@ function directSelector(el) {
 
 /** Clicks the recorded element, or the option a data-driven click now names. */
 async function replayClick(browserId, step, values, defaults) {
-  const key = soleVariable(step.el?.text);
+  const key = echoedVariable(step.el?.text);
   // A data-driven click aims by value, so it cannot take the fast path.
   const direct = key ? null : await clickDirect(browserId, withValues(step.el, values));
   if (direct) return direct;
@@ -144,11 +150,13 @@ async function replayClick(browserId, step, values, defaults) {
  * Changed, a data-driven option, an insurer, a plan, and the old DOM id
  * belonged to another choice, so the value is the only handle left.
  */
-function aimedAt(step, key, values, defaults): [any, string | undefined] {
+function aimedAt(step, key, values, defaults): [any, string | undefined, boolean] {
   const el = withValues(step.el, values);
-  if (!key) return [el, undefined];
-  const byValue = el.text !== defaults[key] ? el.text : undefined;
-  return [el, byValue];
+  if (!key || el.text === fill(step.el.text, defaults)) return [el, undefined, false];
+  // A label that is only the value is found by it whole; one that carries it among the
+  // option's other words ("{{cpt}} - CT head") is found by the value, since the other
+  // words belong to the recorded option and change with it.
+  return soleVariable(step.el.text) ? [el, el.text, false] : [el, fill(`{{${key}}}`, values), true];
 }
 
 /**
@@ -203,9 +211,16 @@ function whereItWent(result) {
 }
 
 /** Types the step's value into the recorded field. */
-async function replayType(browserId, step, values) {
+async function replayType(browserId, step, values, _defaults, task: any = {}) {
   const el = await find(browserId, withValues(step.el, values));
-  return command(browserId, 'type', { selector: `[data-ac-id="${el.id}"]`, text: fill(step.text ?? '', values) });
+  const text = step.answer ? await answerFor(step.answer, values, task) : fill(step.text ?? '', values);
+  return command(browserId, 'type', { selector: `[data-ac-id="${el.id}"]`, text });
+}
+
+/** A free-text field's words: the caller's own when passed, otherwise the model's, written for this run. */
+async function answerFor(answer, values, task) {
+  if (values[answer.key] != null) return String(values[answer.key]);
+  return answerField(task.apiKey, answer.question, { task: task.prompt, values, example: answer.example });
 }
 
 /** Picks the step's option in the recorded select or dropdown. */
@@ -263,10 +278,20 @@ async function replaySwitchTab(browserId, step) {
   return command(browserId, 'switch_tab', { tab_id: tab.id });
 }
 
-/** Closes the tab the recording closed, found by where it was. */
+/**
+ * Closes the tab the run closed and goes back to the one it landed on. A close is
+ * recorded with the tab it left the run on (the recorder reads the active tab after
+ * the close), so that is where the replay has to end up. Closing the tab at that
+ * address instead closed the form the run was filling and carried on in the page it
+ * had only opened to read.
+ */
 async function replayCloseTab(browserId, step) {
-  const tab = step.tabUrl ? await findTab(browserId, step.tabUrl).catch(() => null) : null;
-  return tab ? command(browserId, 'close_tab', { tab_id: tab.id }) : { skipped: 'that tab is already gone' };
+  const { tabs = [] } = await command(browserId, 'list_tabs');
+  const active = tabs.find((t) => t.active);
+  const landed = tabs.find((t) => t !== active && step.tabUrl && sameTarget(t.url, step.tabUrl));
+  if (!active || !landed) return { skipped: 'that tab is already gone' };
+  await command(browserId, 'close_tab', { tab_id: active.id });
+  return command(browserId, 'switch_tab', { tab_id: landed.id });
 }
 
 /** Hovers over the recorded element, for a menu that opens on hover. */
@@ -320,17 +345,20 @@ const REPLAYERS: Record<string, Replayer> = {
   reload: (browserId) => command(browserId, 'reload', {}, NAVIGATE_TIMEOUT_MS),
 };
 
+/** Whether replay knows how to run this action, for a playbook arriving from elsewhere. */
+export const replayableAction = (action) => typeof action === 'string' && Object.hasOwn(REPLAYERS, action);
+
 /** Replay one recorded step, filling its placeholders from `values`. */
-async function runStep(browserId, step, values, defaults = {}) {
+async function runStep(browserId, step, values, defaults = {}, task = {}) {
   const known = typeof step.action === 'string' && Object.hasOwn(REPLAYERS, step.action);
   if (!known) throw new Error(`unknown step ${step.action}`);
-  return REPLAYERS[step.action](browserId, step, values, defaults);
+  return REPLAYERS[step.action](browserId, step, values, defaults, task);
 }
 
 /**
  * Replay without the LLM. `checkpoint` runs after page-changing steps (CAPTCHA,
  * MFA). When a step no longer fits the page: autoHeal off throws; on, the agent
- * finishes the task and its steps are saved as the draft `<name>:draft`.
+ * finishes the task and its steps replace the broken ones in the playbook.
  */
 export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, checkpoint, requestHuman }: any = {}) {
   if (pb.schemaVersion === WORKFLOW_SCHEMA) return playWorkflow(browserId, pb, vars, autoHeal);
@@ -340,12 +368,11 @@ export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, 
 /** Replays the steps in order, running the checkpoint after page-changing ones; a failure heals or throws. */
 async function replaySteps(apiKey, browserId, pb, values, options) {
   const total = pb.steps.length;
-  // Nothing in hand describes this page yet.
-  pageChanged(browserId);
-  for (let i = 0; i < total; i++) {
-    const failed = await tryStep(browserId, pb, i, values);
+  pageChanged(browserId); // nothing in hand describes this page yet
+  for (let i = 0, task = { apiKey, prompt: pb.prompt }; i < total; i++) {
+    const failed = await stepOrSignIn(browserId, pb, i, values, { task, options });
     if (failed) return recover(apiKey, browserId, pb, i, failed.err, values, options);
-    await afterStep(browserId, pb.steps[i].action, options);
+    await afterStep(browserId, pb, i, values, options);
   }
   return { steps: total, total, fellBack: false };
 }
@@ -354,17 +381,42 @@ async function replaySteps(apiKey, browserId, pb, values, options) {
  * After a step that may have changed the page: drop the analysis, let the page be
  * read the way a person would before the next action, and run the checkpoint.
  */
-async function afterStep(browserId, action, options) {
-  if (!PAGE_CHANGING.has(action)) return await pauseWithin(REPLAY_PAUSE_MS);
+async function afterStep(browserId, pb, i, values, options) {
+  if (!PAGE_CHANGING.has(pb.steps[i].action)) return await pauseWithin(REPLAY_PAUSE_MS);
   pageChanged(browserId);
   await pauseWithin(REPLAY_SETTLE_MS);
-  await options.checkpoint?.();
+  if (await options.checkpoint?.()) await returnTo(browserId, pb, i, values);
+}
+
+/**
+ * Step `i`, and when it fails, one more try after the checkpoint: a session that ran
+ * out mid-flow shows a login where the step's element was, and signing in again is
+ * what a person would do before calling the flow broken.
+ */
+async function stepOrSignIn(browserId, pb, i, values, { task, options }) {
+  const failed = await tryStep(browserId, pb, i, values, task);
+  if (!failed || !(await options.checkpoint?.())) return failed;
+  await returnTo(browserId, pb, i - 1, values);
+  return tryStep(browserId, pb, i, values, task);
+}
+
+/**
+ * After a sign-in, back to the last address the playbook went to. A login lands on
+ * the site's home page, not the deep link the flow was on, and the next step's
+ * element is on that page, not this one.
+ */
+async function returnTo(browserId, pb, i, values) {
+  const last = pb.steps.slice(0, i + 1).findLast((step) => step.action === 'navigate' && step.url);
+  if (!last) return;
+  await command(browserId, 'navigate', { url: fill(last.url, values) }, NAVIGATE_TIMEOUT_MS);
+  pageChanged(browserId);
+  await pauseWithin(REPLAY_SETTLE_MS);
 }
 
 /** Runs step `i`; the error it failed with, or null. */
-async function tryStep(browserId, pb, i, values) {
+async function tryStep(browserId, pb, i, values, task) {
   try {
-    await runStep(browserId, pb.steps[i], values, pb.defaults || {});
+    await runStep(browserId, pb.steps[i], values, pb.defaults || {}, task);
     return null;
   } catch (err) {
     return { err };
