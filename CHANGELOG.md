@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.134](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.134) · 2026-09-27
+
 ### Fixed
 
 - **Replays sign in through every stage of a login.** A username page, then a password page, then a choice of second factor, then the code: a replay used to stop after the first and carry on half signed in. It now works through them all and goes back to the flow's page only if the next step needs it.
