@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 ownDataDir();
-const { checkpointFor } = await import('../../../../src/modules/playbooks/checkpoint.ts');
+const { checkpointFor, quietCheckpointFor } = await import('../../../../src/modules/playbooks/checkpoint.ts');
 const { registry } = await import('../../../../src/modules/browsers/registry.ts');
 const { control } = await import('../../../../src/modules/control/service.ts');
 const { scriptedBrowser } = await import('../../support/agent.ts');
@@ -89,5 +89,16 @@ describe('checkpointFor', () => {
     const requestHuman = mock.fn();
     await checkpointFor(KEY, 'b-gone', requestHuman)();
     assert.equal(requestHuman.mock.callCount(), 0);
+  });
+
+  it('says a replay was not signed in when the page has no login, after one look', async () => {
+    assert.equal(await quietCheckpointFor(KEY, BROWSER)(), false);
+    assert.equal(browser.calls.filter((c) => c.action === 'evaluate_raw').length, 3);
+  });
+
+  it('stops at a login it cannot finish instead of trying round after round', async () => {
+    detected = { present: true, stage: 'password' };
+    assert.equal(await quietCheckpointFor(KEY, BROWSER)(), false);
+    assert.ok(browser.calls.filter((c) => c.action === 'evaluate_raw').length <= 4, 'one pass, not LOGIN_ROUNDS');
   });
 });

@@ -188,7 +188,7 @@ describe('play', () => {
     assert.equal(commands()[0].params.text, 'fixed text');
   });
 
-  it('goes back to where the flow was after the checkpoint signs in', async () => {
+  it('carries on where the sign-in left the page when the next step is there', async () => {
     const checkpoint = mock.fn(async () => checkpoint.mock.callCount() === 1);
     const steps = [
       { action: 'navigate', url: 'https://a.test/deep' },
@@ -198,7 +198,7 @@ describe('play', () => {
     const navigations = commands()
       .filter((c) => c.action === 'navigate')
       .map((c) => c.params.url);
-    assert.deepEqual(navigations, ['https://a.test/deep', 'https://a.test/deep']);
+    assert.deepEqual(navigations, ['https://a.test/deep']);
   });
 
   it('signs in and tries a step again before calling it broken', async () => {

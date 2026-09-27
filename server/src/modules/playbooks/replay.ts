@@ -367,25 +367,28 @@ export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, 
 
 /** Replays the steps in order, running the checkpoint after page-changing ones; a failure heals or throws. */
 async function replaySteps(apiKey, browserId, pb, values, options) {
-  const total = pb.steps.length;
   pageChanged(browserId); // nothing in hand describes this page yet
-  for (let i = 0, task = { apiKey, prompt: pb.prompt }; i < total; i++) {
-    const failed = await stepOrSignIn(browserId, pb, i, values, { task, options });
+  const run = { task: { apiKey, prompt: pb.prompt }, options, signedIn: false };
+  for (let i = 0; i < pb.steps.length; i++) {
+    const failed = await stepOrSignIn(browserId, pb, i, values, run);
     if (failed) return recover(apiKey, browserId, pb, i, failed.err, values, options);
-    await afterStep(browserId, pb, i, values, options);
+    await afterStep(browserId, pb, i, run);
   }
-  return { steps: total, total, fellBack: false };
+  return { steps: pb.steps.length, total: pb.steps.length, fellBack: false };
 }
 
 /**
  * After a step that may have changed the page: drop the analysis, let the page be
  * read the way a person would before the next action, and run the checkpoint.
  */
-async function afterStep(browserId, pb, i, values, options) {
+async function afterStep(browserId, pb, i, run) {
   if (!PAGE_CHANGING.has(pb.steps[i].action)) return await pauseWithin(REPLAY_PAUSE_MS);
   pageChanged(browserId);
   await pauseWithin(REPLAY_SETTLE_MS);
-  if (await options.checkpoint?.()) await returnTo(browserId, pb, i, values);
+  // Signed in: the next steps may be the login's own (a method to pick), so they run
+  // where the sign-in left the page, and the flow's address is gone back to only if
+  // the next step is not there.
+  if (await run.options.checkpoint?.()) run.signedIn = true;
 }
 
 /**
@@ -393,11 +396,14 @@ async function afterStep(browserId, pb, i, values, options) {
  * out mid-flow shows a login where the step's element was, and signing in again is
  * what a person would do before calling the flow broken.
  */
-async function stepOrSignIn(browserId, pb, i, values, { task, options }) {
-  const failed = await tryStep(browserId, pb, i, values, task);
-  if (!failed || !(await options.checkpoint?.())) return failed;
+async function stepOrSignIn(browserId, pb, i, values, run) {
+  const failed = await tryStep(browserId, pb, i, values, run.task);
+  if (!failed) return null;
+  const signedIn = run.signedIn || (await run.options.checkpoint?.());
+  run.signedIn = false;
+  if (!signedIn) return failed;
   await returnTo(browserId, pb, i - 1, values);
-  return tryStep(browserId, pb, i, values, task);
+  return tryStep(browserId, pb, i, values, run.task);
 }
 
 /**
