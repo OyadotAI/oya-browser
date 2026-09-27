@@ -252,3 +252,91 @@ jobs:
     - name: Show status
       if: always()
       run: kubectl get pods,svc,ingress -n ${{ env.NAMESPACE }}
+
+  # Tells Slack how the dev deploy went: deployed, skipped (nothing changed),
+  # which stage failed, or cancelled, with the commit and the files it changed.
+  # Copied from A2ABase's pipeline. Release commits deploy prod, not dev, so
+  # they post nothing here.
+  notify:
+    name: Slack notify (dev)
+    needs: [ci, changes, build, build-browser, deploy]
+    if: ${{ always() && !startsWith(github.event.head_commit.message, 'release:') }}
+    runs-on: ubuntu-latest
+    steps:
+      # History, to diff what this push changed.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute diff
+        id: diff
+        run: |
+          # The mrkdwn block is composed here so its newlines are real.
+          BEFORE='${{ github.event.before }}'
+          AFTER='${{ github.event.after }}'
+          # A first push has no "before": diff against the parent.
+          if [[ "$BEFORE" =~ ^0+$ ]]; then BEFORE="${AFTER}^"; fi
+          git rev-parse "$BEFORE" >/dev/null 2>&1 || BEFORE="HEAD~1"
+          git rev-parse "$AFTER" >/dev/null 2>&1 || AFTER="HEAD"
+          STAT=$(git diff --stat "$BEFORE..$AFTER" 2>/dev/null || echo "(stat unavailable)")
+          # Headroom under Slack's 3000-character block limit.
+          STAT="${STAT:0:2500}"
+          {
+            echo "files_block<<DIFF_BLOCK_EOF"
+            printf '*Files changed:*\n```\n%s\n```\n' "$STAT"
+            echo "DIFF_BLOCK_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute outcome
+        id: outcome
+        run: |
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "emoji=✅" >> "$GITHUB_OUTPUT"; echo "status=Deploy succeeded" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.ci.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Tests failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.build.result }}" == "failure" || "${{ needs.build-browser.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Image build failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Deploy failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.deploy.result }}" == "skipped" ]]; then
+            echo "emoji=⏭️" >> "$GITHUB_OUTPUT"; echo "status=Nothing to deploy" >> "$GITHUB_OUTPUT"
+          else
+            echo "emoji=⚪" >> "$GITHUB_OUTPUT"; echo "status=Cancelled" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@37ebaef184d7626c5f204ab8d3baff4262dd30f0 # v1.27.0
+        with:
+          payload: |
+            {
+              "text": "${{ steps.outcome.outputs.emoji }} dev.oyabrowser.com: ${{ steps.outcome.outputs.status }} (${{ github.actor }})",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ steps.outcome.outputs.emoji }} *dev.oyabrowser.com*: ${{ steps.outcome.outputs.status }}\n*${{ github.actor }}* pushed to `main`"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": { "type": "mrkdwn", "text": ${{ toJSON(format('>{0}', github.event.head_commit.message)) }} }
+                },
+                {
+                  "type": "section",
+                  "text": { "type": "mrkdwn", "text": ${{ toJSON(steps.diff.outputs.files_block) }} }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "<${{ github.event.compare }}|View full diff on GitHub> · <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Workflow run>"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL || secrets.SLACK_OPS_WEBHOOK_EVENTS }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
