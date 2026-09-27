@@ -75,11 +75,13 @@ deploy-dev: ## Push to main (triggers dev deploy)
 
 deploy-prod: release ## Tag and push (triggers prod deploy)
 
-release: ## Full release, no prompts: build the desktop app, tag, push; CI publishes npm SDK + CLI (V=1.2.0 to pin the version)
+release: ## Full release, no prompts: tag and push; CI builds every desktop app and publishes npm SDK + CLI (V=1.2.0 to pin the version)
 	@./k8s/scripts/release.sh $(V)
 
-release-no-desktop: ## Release without rebuilding the desktop app — the last one is carried forward
-	@./k8s/scripts/release.sh --no-desktop $(V)
+release-local-mac: ## Release, building and notarizing the macOS app on this Mac (fallback while CI signing secrets are missing)
+	@./k8s/scripts/release.sh --local-mac $(V)
+
+release-no-desktop: release ## Kept for muscle memory: every release now leaves the desktop builds to CI
 
 # ── Kubernetes ──
 

@@ -91,6 +91,26 @@ Read [ARCHITECTURE.md](ARCHITECTURE.md) and the one for the part you touch;
 4. If you touched anything under `server/src/modules/control/`, say in the PR how you
    tested tenant isolation: that is the boundary most likely to regress.
 
+## Releases
+
+Write what a change does under **Unreleased** in `CHANGELOG.md` as it lands. `make release`
+refuses to cut a release with nothing listed there, turns Unreleased into the version, and puts
+the same notes on the tag and the GitHub release.
+
+`make release` tags and pushes; GitHub Actions then builds every desktop app, macOS included,
+and deploys. The macOS job signs and notarizes from five repository secrets:
+
+| Secret | What it holds |
+|:---|:---|
+| `MAC_CERTIFICATE_P12` | The Developer ID Application certificate and its key, exported from Keychain Access as a `.p12`, base64 |
+| `MAC_CERTIFICATE_PASSWORD` | The password chosen when exporting that `.p12` |
+| `APPLE_ID` | The Apple ID that notarizes |
+| `APPLE_APP_SPECIFIC_PASSWORD` | An app-specific password for it, from appleid.apple.com |
+| `APPLE_TEAM_ID` | The team the certificate belongs to |
+
+Until they are set, `make release-local-mac` builds and notarizes the macOS app on your own Mac,
+as releases used to.
+
 ## Project layout
 
 | Path | What lives there |

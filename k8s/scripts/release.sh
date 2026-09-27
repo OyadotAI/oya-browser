@@ -2,16 +2,18 @@
 # Build browser, update download links, create GitHub release, tag and push.
 # Runs start to finish with no prompt. The tag's prod workflow publishes the
 # npm SDK (@oya-ai/browser) and CLI (@oya-ai/cli) at the same version.
-# Usage: ./release.sh [version] [--no-desktop]
+# Usage: ./release.sh [version] [--local-mac]
 #   ./release.sh             , auto-increments patch (v1.0.0 → v1.0.1)
 #   ./release.sh 1.2.0       , tags as v1.2.0
-#   ./release.sh --no-desktop, skip the macOS build (see below)
+#   ./release.sh --local-mac , build and notarize the macOS app on this Mac too
 #
-# Only macOS is built here; Linux and Windows are built by GitHub Actions on the
-# tag either way. --no-desktop skips that local build, which is the slow part of
-# a release that only changes the server, the console or the SDK. The prod image
-# then carries the previous release's desktop assets forward, so downloads and
-# auto-update keep working, they just stay on the version they already named.
+# Every desktop build, macOS included, runs in GitHub Actions on the tag: the
+# macOS job signs with the Developer ID certificate and notarizes from secrets
+# (MAC_CERTIFICATE_P12, MAC_CERTIFICATE_PASSWORD, APPLE_ID,
+# APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID). --local-mac is the fallback for a
+# release that has to ship while those secrets are missing: the macOS app is then
+# built here, as it used to be, and attached to the release before CI runs.
+# --no-desktop is still accepted and now means the default.
 
 set -e
 
@@ -24,10 +26,11 @@ log_err()  { echo -e "\033[0;31m[ERR]\033[0m $1"; }
 
 # ── Determine version ──
 
-BUILD_DESKTOP=1
+BUILD_DESKTOP=0
 VERSION_ARG=""
 for arg in "$@"; do
   case "$arg" in
+    --local-mac)  BUILD_DESKTOP=1 ;;
     --no-desktop) BUILD_DESKTOP=0 ;;
     -*)           log_err "Unknown option: $arg"; exit 1 ;;
     *)            VERSION_ARG="$arg" ;;
@@ -77,6 +80,7 @@ echo ""
 
 # The universal build takes ~5min and notarization runs at the very end, so a
 # revoked app-specific password used to cost a full build before surfacing.
+if [ "$BUILD_DESKTOP" = "1" ]; then
 log_info "Checking Apple notarization credentials"
 if ! xcrun notarytool history \
   --apple-id "$APPLE_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --team-id "$APPLE_TEAM_ID" \
@@ -88,6 +92,7 @@ if ! xcrun notarytool history \
 fi
 log_ok "Notarization credentials valid"
 echo ""
+fi
 
 log_info "Releasing $TAG"
 
@@ -130,10 +135,7 @@ node -e '
 # the slow step, and a release that does not touch browser/ does not need it.
 
 if [ "$BUILD_DESKTOP" = "0" ]; then
-  log_info "Skipping the macOS build (--no-desktop)"
-  log_info "Linux and Windows are still built by CI for this tag."
-  log_info "Downloads and auto-update carry the previous desktop release forward,"
-  log_info "so they keep working and keep naming that version."
+  log_info "macOS, Windows and Linux are built, signed and attached by CI for this tag."
 else
 
   log_info "Building browser app..."

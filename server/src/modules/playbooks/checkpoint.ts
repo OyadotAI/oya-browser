@@ -10,6 +10,7 @@ import * as siteLogin from '../challenges/login.ts';
 import * as credentials from '../personas/credentials.ts';
 import * as keyConfig from '../config/service.ts';
 import { NATIVE_CAPTCHA, announce, evaluateIn } from '../../app/http.ts';
+import { LOGIN_ROUNDS } from './constants.ts';
 
 // Not yet layered: reads the persona service from the composition root.
 const { personas } = container;
@@ -87,11 +88,32 @@ export function challengesFor(apiKey, browserId) {
  */
 export function quietCheckpointFor(apiKey, browserId) {
   const tries = challengesFor(apiKey, browserId);
-  return async () => {
-    await tries.captcha();
-    const login = await tries.signIn();
-    return signedIn(login, await tries.mfa(login));
-  };
+  return () => throughLogin(tries);
+}
+
+/**
+ * Every stage of a sign-in, one after another, until no login or code page is left:
+ * username, then password, then the code. One pass per page change left a replay
+ * holding a half-finished login (the username typed, the password page never seen).
+ * True only when a stage was completed and nothing is left to answer.
+ */
+async function throughLogin(tries) {
+  let progressed = false;
+  for (let round = 0; round < LOGIN_ROUNDS; round++) {
+    const stage = await loginStage(tries);
+    if (!stage.present) return progressed;
+    if (!stage.completed) return false;
+    progressed = true;
+  }
+  return false;
+}
+
+/** One pass: a CAPTCHA, the credentials, the code; whether any was there, and whether it was answered. */
+async function loginStage(tries) {
+  await tries.captcha();
+  const login = await tries.signIn();
+  const code = await tries.mfa(login);
+  return { present: !!(login?.present || code?.present), completed: signedIn(login, code) };
 }
 
 /** Whether a checkpoint signed the page in, so a replay knows the page it was on was replaced by a login. */

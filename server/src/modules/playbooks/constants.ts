@@ -66,3 +66,6 @@ export const RECORD_POLL_MS = 5000;
 export const RECORD_MAX_MS = 1_800_000;
 /** Milliseconds in a minute. */
 export const MS_PER_MINUTE = 60_000;
+
+/** Most sign-in stages one checkpoint works through: username, password, a method choice, the code. */
+export const LOGIN_ROUNDS = 4;

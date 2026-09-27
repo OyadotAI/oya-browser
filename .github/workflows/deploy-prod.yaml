@@ -103,13 +103,73 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  build-mac:
+    name: Build macOS app
+    needs: ci
+    # Signed with the Developer ID certificate and notarized by Apple, both from
+    # secrets, so a release no longer waits on a build on someone's own Mac.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+
+    - name: Check signing secrets
+      shell: bash
+      run: |
+        missing=""
+        for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          [ -n "${!name}" ] || missing="$missing $name"
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::macOS signing secrets not set:$missing. See the release section of CONTRIBUTING.md."
+          exit 1
+        fi
+      env:
+        CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
+        CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    - name: Install browser dependencies
+      run: cd browser && npm ci
+
+    - name: Build, sign and notarize (universal)
+      run: cd browser && npm run dist:mac
+      env:
+        # electron-builder imports the certificate into a throwaway keychain.
+        CSC_LINK: ${{ secrets.MAC_CERTIFICATE_P12 }}
+        CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    - name: Upload to GitHub release
+      shell: bash
+      run: |
+        VERSION="${GITHUB_REF_NAME#v}"
+        # Auto-update reads latest-mac.yml and downloads the zip; the DMG is the download.
+        FILES=("browser/dist/Oya.Browser-${VERSION}-universal.dmg" "browser/dist/Oya.Browser-${VERSION}-universal.zip" browser/dist/latest-mac.yml)
+        for f in "${FILES[@]}"; do
+          [ -f "$f" ] || { echo "::error::$f missing, macOS download or auto-update would break"; exit 1; }
+        done
+        gh release upload "${GITHUB_REF_NAME}" "${FILES[@]}" --clobber
+        echo "Uploaded the macOS DMG, zip and latest-mac.yml"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-image:
     name: Build & push Docker image
     # Ordered after the desktop builds so their binaries are on the release to
     # be bundled, but not gated on them: a broken AppImage used to skip this
     # job and with it the entire prod deploy, no server update, no snapshot
     # repoint, over a download link. The desktop job still goes red on its own.
-    needs: [ci, build-linux, build-windows]
+    needs: [ci, build-linux, build-windows, build-mac]
     # !cancelled() deliberately lets a broken desktop build through, but not a
     # red suite, which is why ci is checked explicitly: a skipped dependency
     # does not make !cancelled() false.
