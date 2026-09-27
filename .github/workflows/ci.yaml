@@ -17,6 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Server unit tests run once, with coverage: the floor is checked on the same run that
+  # proves them green. They used to run twice in one job, plain and then with coverage.
   test:
     name: Tests
     runs-on: ubuntu-latest
@@ -26,14 +28,44 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
       - run: npm ci
       - run: npm ci --prefix server
+      - run: npm run build:sdk
       # No secrets are passed on purpose: the suite must stay hermetic. A test
       # that only passes with a live Supabase or Daytona key fails here.
-      # npm test = SDK build, server unit + integration, CLI and package suites.
-      - run: npm test
       # Coverage floor for the server's unit tests (lines 95%, branches and functions 90%).
       - run: npm run test:coverage --prefix server
+      - run: npm run test:integration --prefix server
+
+  packages:
+    name: SDK, CLI and scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # The CLI builds against the SDK's own build, so the SDK comes first.
+      - run: npm run build:sdk
+      - run: npm run test:cli
+      - run: npm run test:packages
+      - run: npm run test:scripts
+
+  desktop:
+    name: Desktop unit and regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: browser/package-lock.json
       # The desktop regression suite reads source and needs no Electron binary,
       # which is the only reason installing browser/ here is cheap.
       - run: npm ci --prefix browser
@@ -68,6 +100,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            ui/package-lock.json
+            browser/package-lock.json
       # Every part imports the shared rules in tooling/eslint and the root .prettierrc.json.
       - run: npm ci
       - run: npm ci --prefix server
@@ -87,6 +124,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: ui/package-lock.json
       - run: npm ci --prefix ui
       - run: npm run typecheck --prefix ui
       - run: npm test --prefix ui
@@ -100,6 +138,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
       - run: npm ci
       - run: npm run build:sdk
       # What npm publishes: exports resolve for ESM, CJS and bundlers, with matching types.
