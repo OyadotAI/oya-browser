@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.135](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.135) · 2026-09-27
+
 ### Fixed
 
 - The macOS build in CI failed at signing: electron-builder's own temporary keychain could not be unlocked on GitHub's runner. The workflow now imports the certificate into a keychain of its own.
