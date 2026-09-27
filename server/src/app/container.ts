@@ -18,6 +18,14 @@ import * as mfa from '../modules/challenges/mfa.ts';
 import * as credentials from '../modules/personas/credentials.ts';
 import * as logins from '../modules/personas/cookies.ts';
 import { PersonaService, PersonaTable, type PersonaRepository } from '../modules/personas/index.ts';
+import { createBilling } from '../modules/billing/index.ts';
+import { getKeyOwner, keyDigest, keysOf } from '../modules/auth/service.ts';
+import { registry } from '../modules/browsers/registry.ts';
+import { SERVER_RUN } from '../modules/browsers/connection/constants.ts';
+import { consoleUrl } from '../modules/slack/service.ts';
+import * as keyConfig from '../modules/config/service.ts';
+import * as usage from '../platform/usage.ts';
+import * as license from '../platform/license/index.ts';
 
 /** Personas in the configured storage, taking in a personas.json left from before storage drivers. */
 function personaRepository(): PersonaRepository {
@@ -28,6 +36,35 @@ function personaRepository(): PersonaRepository {
 function personaService() {
   return new PersonaService({ repository: personaRepository(), ownerOf, proxies, mfa, credentials, logins, metrics });
 }
+
+/** The key of every cloud browser this replica runs. */
+function cloudKeys(): string[] {
+  return [...registry.browsers.values()].filter((b: any) => SERVER_RUN.has(b.provider)).map((b: any) => b.apiKey);
+}
+
+/**
+ * Billing, wired to who owns which key, what runs, and the license. Every
+ * dependency is called late: these modules import the container back.
+ */
+function billing() {
+  return createBilling({ ...KEYS, ...LICENSE, cloudKeys, consoleUrl: () => consoleUrl() });
+}
+
+/** Who owns a key, what its model is, and whose usage it books to. */
+const KEYS = {
+  ownerOf: (key: string) => getKeyOwner(key),
+  keyDigest: (key: string) => keyDigest(key),
+  keyDigestsOf: async (userId: string) => new Set((await keysOf(userId)).map((row) => String(row.key_hash))),
+  billTo: (key: string, userId: string) => usage.billTo(key, userId),
+  ownsModel: (key: string) => Boolean(keyConfig.resolve(key).own),
+  modelOf: (key: string) => keyConfig.resolve(key).model,
+};
+
+/** The self-hosted license, as billing asks it. */
+const LICENSE = {
+  licenseAdmit: (count: number) => license.admit(count),
+  hostedDeployment: () => license.hostedDeployment(),
+};
 
 /** Reports an unexpected failure as a product event, so a 500 shows up where the owner looks. */
 function reportUnexpected(ref: string, req: Asked) {
@@ -40,7 +77,7 @@ export function createContainer() {
   const personas = personaService();
   personas.startAutosave();
   setUnexpectedReporter(reportUnexpected);
-  return { personas };
+  return { personas, billing: billing() };
 }
 
 /** The services the composition root provides. */

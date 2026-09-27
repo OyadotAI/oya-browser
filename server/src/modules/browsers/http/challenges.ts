@@ -28,7 +28,7 @@ export async function solveCaptcha(req, res) {
 const captchaOptions = (req, browser) => ({
   solve: req.body?.solve !== false,
   providerSolves: NATIVE_CAPTCHA.includes(browser.provider),
-  env: keyConfig.envFor(getKey(req)),
+  env: keyConfig.captchaEnvFor(getKey(req), browser.provider),
 });
 
 /** Completes an MFA prompt on the page for the browser's persona. */

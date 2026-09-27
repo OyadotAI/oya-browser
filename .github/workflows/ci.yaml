@@ -33,6 +33,8 @@ jobs:
             server/package-lock.json
       - run: npm ci
       - run: npm ci --prefix server
+      # The server's vendored runtime file must ship with every release.
+      - run: test -s server/vendor/oya-license.js
       - run: npm run build:sdk
       # No secrets are passed on purpose: the suite must stay hermetic. A test
       # that only passes with a live Supabase or Daytona key fails here.

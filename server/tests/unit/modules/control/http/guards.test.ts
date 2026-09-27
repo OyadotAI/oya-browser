@@ -4,7 +4,8 @@
  */
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { admin, holder, key, requireOwnBrowser } from '../../../../../src/modules/control/http/guards.ts';
+import { admin, holder, key, requireOwnBrowser, startFailed } from '../../../../../src/modules/control/http/guards.ts';
+import { HttpError } from '../../../../../src/platform/errors.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
 
 /** A response that records its status and JSON. */
@@ -78,5 +79,31 @@ describe('requireOwnBrowser', () => {
     } finally {
       disconnectBrowser('b-guard');
     }
+  });
+});
+
+describe('startFailed', () => {
+  it('keeps a plan or license refusal as it was said, so the caller sees the 402 and where to upgrade', () => {
+    const res = response();
+    startFailed(
+      {},
+      res,
+      new HttpError(402, 'Upgrade', { code: 'plan_limit', upgrade_url: 'u' }),
+      'Session creation failed',
+    );
+    assert.equal(res.code, 402);
+    assert.equal(res.body.upgrade_url, 'u');
+  });
+
+  it('answers any other failure as the retryable one it names', () => {
+    const res = response();
+    startFailed({}, res, new Error('boom'), 'Session creation failed');
+    assert.deepEqual([res.code, res.body], [503, { error: 'Session creation failed' }]);
+  });
+
+  it('answers nothing when there was no failure', () => {
+    const res = response();
+    startFailed({}, res, undefined, 'x');
+    assert.equal(res.code, undefined);
   });
 });

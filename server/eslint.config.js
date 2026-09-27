@@ -10,7 +10,7 @@ import globals from 'globals';
 import { localPlugin, baseRules, designRules, docRules, ROUTE_DOC_CONTEXTS } from '../tooling/eslint/index.js';
 
 export default tseslint.config(
-  { ignores: ['node_modules', 'data', 'downloads', 'src/public', 'coverage'] },
+  { ignores: ['node_modules', 'data', 'downloads', 'src/public', 'coverage', 'vendor'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

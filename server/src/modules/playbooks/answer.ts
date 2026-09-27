@@ -10,6 +10,9 @@ import { Status } from '../../platform/http-status.ts';
 import * as keyConfig from '../config/service.ts';
 import { fill } from '../agent/chat.ts';
 import { MAX_ANSWER_CHARS } from './constants.ts';
+import { container } from '../../app/container.ts';
+import { llmCost } from '../billing/index.ts';
+import * as usage from '../../platform/usage.ts';
 
 /** What the model is told. */
 const WRITER = `You fill in one free-text field of a web form for a person, as part of a task they described.
@@ -32,17 +35,30 @@ function modelFor(apiKey) {
   return { apiKey: openaiKey, baseUrl, model };
 }
 
+/** One answer is one agent step, and on the operator's model its cost is the person's too. */
+function bill(apiKey, used) {
+  usage.record(apiKey, 'agent_steps', 1);
+  const { own, model } = keyConfig.resolve(apiKey);
+  if (!own) usage.record(apiKey, 'hosted_llm_microusd', llmCost(model, used));
+}
+
 /**
- * The text for one free-text field, from the key's own model.
+ * The text for one free-text field, from the key's own model; the person's plan
+ * admits it and is billed for it like any agent step.
  * ponytail: not counted against the hourly chat budget; one short call per field.
  */
 export async function answerField(apiKey, question: string, context: any = {}) {
-  const messages = [
-    { role: 'system', content: WRITER },
-    { role: 'user', content: brief(question, context.task, context.values, context.example) },
-  ];
-  const reply = await chatCompletion({ ...modelFor(apiKey), messages });
+  await container.billing.entitlements.admitAgent(apiKey);
+  const asked = brief(question, context.task, context.values, context.example);
+  const reply = await chatCompletion({ ...modelFor(apiKey), messages: conversation(asked) });
+  bill(apiKey, reply.usage);
   return String(reply.choices?.[0]?.message?.content ?? '')
     .trim()
     .slice(0, MAX_ANSWER_CHARS);
 }
+
+/** The writer's instructions and the brief, as the model reads them. */
+const conversation = (asked: string) => [
+  { role: 'system', content: WRITER },
+  { role: 'user', content: asked },
+];

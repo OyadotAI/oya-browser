@@ -64,6 +64,10 @@ import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
 import { apiKeyHeader } from './app/http.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
+import { billingWebhook, startReporting } from './modules/billing/index.ts';
+import * as license from './platform/license/index.ts';
+import { drainDownloads } from './modules/admin/index.ts';
+import { RELEASE_VERSION } from './platform/version.ts';
 
 // Not yet layered: reads the persona service from the composition root.
 const { personas } = container;
@@ -84,6 +88,13 @@ const [authLoaded] = await Promise.all([
 if (!authLoaded) throw new Error('API keys could not be loaded; refusing to accept browser connections');
 
 keyConfig.restoreRouting(pool);
+
+// Plans report their usage to Stripe where billing is on. Every server loads its
+// license, which decides the cloud cap and whether the daily ping goes out; tests run neither.
+const stopReporting = startReporting(container.billing.reporter);
+await license.load();
+if (!process.env.OYA_TEST_SCRATCH)
+  await license.start({ version: RELEASE_VERSION, browsers: () => registry.browsers.size });
 
 await control().store.get('meta', 'draining'); // fail fast when control storage is unreachable
 await migrateLegacy();
@@ -165,6 +176,8 @@ app.use(
   }),
   slackActionsRouter,
 );
+// Stripe signs a webhook's raw bytes, so its path too is read raw, before the JSON parser.
+app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), billingWebhook(container.billing));
 
 app.use(
   '/api',
@@ -268,7 +281,7 @@ const drainStores = () =>
   Promise.allSettled([
     drainAudit(),
     drainLogins(),
-    usage.drain(),
+    Promise.all([usage.drain(), drainDownloads(), stopReporting()]),
     personas.drain(),
     keyConfig.drain(),
     analytics.drain(),

@@ -385,6 +385,26 @@ describe('agentLoop', () => {
     assert.equal(after.chat_output_tokens - before.chat_output_tokens, 10);
   });
 
+  it('counts each model call as one agent step, whoever’s model it is', async () => {
+    const before = usage.current(KEY);
+    stubLlm([toolReply(['press_key', { key: 'Tab' }]), textReply('DONE')]);
+    await agentLoop(ctx(), start());
+    const after = usage.current(KEY);
+    assert.equal(after.agent_steps - before.agent_steps, 2);
+    assert.equal(
+      after.hosted_llm_microusd,
+      before.hosted_llm_microusd,
+      'the key’s own model costs the operator nothing',
+    );
+  });
+
+  it('books what the operator’s model cost when the run is on it', async () => {
+    const before = usage.current(KEY);
+    stubLlm([textReply('DONE')]);
+    await agentLoop(ctx({ llm: { ...LLM, model: 'gpt-4o-mini', hosted: true } }), start());
+    assert.ok(usage.current(KEY).hosted_llm_microusd > before.hosted_llm_microusd);
+  });
+
   it('records a select by its own element, not a link an earlier click left under the same id', async () => {
     const link = { id: 3, type: 'link', tag: 'a', href: '/request', text: 'Authorization Request', visible: true };
     const select = { id: 3, type: 'select', tag: 'select', domId: 'requestType', visible: true };

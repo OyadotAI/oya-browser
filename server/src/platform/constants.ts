@@ -79,6 +79,10 @@ export const DEFAULT_CONNECT_PER_MIN = 120;
 export const DEFAULT_CONNECT_BURST = 60;
 /** New agent keys one caller address may sign up for in a day. */
 export const DEFAULT_AGENT_SIGNUPS_PER_DAY = 3;
+/** Install pings one address may send in an hour: a server sends one a day. */
+export const DEFAULT_INSTALL_PINGS_PER_HOUR = 4;
+/** Minutes in an hour. */
+export const MINUTES_PER_HOUR = 60;
 /** Minutes in a day, for limits counted per day on a per-minute bucket. */
 export const MINUTES_PER_DAY = 1440;
 /** Browsers one key may hold at once. */

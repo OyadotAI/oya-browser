@@ -18,7 +18,9 @@ import { Status } from './http-status.ts';
 import {
   BEARER_PREFIX_LENGTH,
   DEFAULT_AGENT_SIGNUPS_PER_DAY,
+  DEFAULT_INSTALL_PINGS_PER_HOUR,
   MINUTES_PER_DAY,
+  MINUTES_PER_HOUR,
   DEFAULT_CHAT_BURST,
   DEFAULT_CHAT_PER_MIN,
   DEFAULT_CHAT_TOKENS_PER_HOUR,
@@ -59,6 +61,11 @@ export const LIMITS = {
   connect: {
     perMinute: num('OYA_LIMIT_CONNECT_PER_MIN', DEFAULT_CONNECT_PER_MIN),
     burst: num('OYA_LIMIT_CONNECT_BURST', DEFAULT_CONNECT_BURST),
+  },
+  // Keyed by caller address: a self-hosted server pings once a day, so a few an hour is plenty.
+  installPing: {
+    perMinute: DEFAULT_INSTALL_PINGS_PER_HOUR / MINUTES_PER_HOUR,
+    burst: DEFAULT_INSTALL_PINGS_PER_HOUR,
   },
   // Keyed by caller address, not key: new agent keys per address, a day's worth at most.
   agentSignup: {

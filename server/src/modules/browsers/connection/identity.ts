@@ -20,14 +20,21 @@ export interface Identity {
 /**
  * The persona's fingerprint with its proxy: the proxy is part of the identity.
  * The residential gateway is only for sandboxes we run, its credentials are the
- * operator's account, and a desktop could lift them.
+ * operator's account, and a desktop could lift them; and only on a plan that
+ * includes proxy traffic, which Free does not.
  */
 export function identityFor(apiKey: string, persona, provider: string): Identity {
   const fingerprint = container.personas.fingerprintFor(persona);
   const proxy = proxies.forPersona(personaOwner(apiKey), persona);
-  const residential = provider === CLOUD_PROVIDER && !proxy && !fingerprint.proxy?.host && proxies.residential(persona);
+  const residential = !proxy && !fingerprint.proxy?.host && residentialFor(apiKey, persona, provider);
   if (proxy || residential) attachProxy(fingerprint, persona, proxy, residential);
   return { fingerprint, residential: !!residential };
+}
+
+/** The operator's residential gateway for a cloud browser whose owner's plan includes it, or none. */
+function residentialFor(apiKey: string, persona, provider: string) {
+  if (provider !== CLOUD_PROVIDER || !container.billing.entitlements.proxyAllowed(apiKey)) return null;
+  return proxies.residential(persona);
 }
 
 /** Puts the proxy on the fingerprint; metered, so the browser counts bytes (the vendor bills per GB). */

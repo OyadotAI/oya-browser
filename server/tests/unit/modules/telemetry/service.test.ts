@@ -101,6 +101,9 @@ describe('track', () => {
     track.downloadServed('dl-1', { platform: 'mac', version: '1.0.115', file_type: 'installer', via: 'web' });
     track.downloadServed('dl-1', { platform: 'mac', version: '1.0.116', file_type: 'update', via: 'updater' });
     track.updateChecked('dl-1', { platform: 'mac', from_version: '1.0.115' });
+    track.installPinged('i-1', { version: '1.0.135', browsers: 9, peak_cloud: 9, licensed: false });
+    track.installPinged('i-2', { version: '1.0.135', browsers: 9, peak_cloud: 9, licensed: true });
+    track.installPinged('i-3', { version: '1.0.135', browsers: 3, peak_cloud: 3, licensed: false });
     track.playbookSaved(KEY, { steps: 1 });
     track.browserStarted(KEY, { provider: 'cdp', persona: false, via: 'rest', first: false });
     track.serverError(null, { ref: '9f2b7c1d', method: 'GET', route: 'middleware' });
@@ -119,6 +122,7 @@ describe('track', () => {
         ['signups', '🔑 API key created: ana@example.com (project 7c1e9a02)'],
         ['signups', `🖥️ Desktop connected: ${label} (MacIntel)`],
         ['signups', '⬇️ Desktop downloaded: mac 1.0.115'],
+        ['signups', '🏢 Self-hosted server install-i-1 ran 9 cloud browsers at once (v1.0.135), unlicensed'],
       ].sort(),
     );
   });

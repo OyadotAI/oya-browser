@@ -21,6 +21,7 @@ import { newGuard, afterCall, afterEmpty, failed, type Guard } from './guards.ts
 import { verify, recheck } from './verifier.ts';
 import { CHALLENGE_TOOLS, CHALLENGE_HANDLERS, type Challenges } from './challenge-tools.ts';
 import { VERIFY_ROUNDS } from './constants.ts';
+import { llmCost } from '../billing/index.ts';
 
 /** Tools after which the page may have changed, so the caller's checkpoint runs. */
 const PAGE_CHANGING = new Set([
@@ -46,6 +47,8 @@ export type LlmSettings = {
   baseUrl: string;
   /** The chat model to use. */
   model: string;
+  /** Whether it is the operator's model, whose cost the person is billed for. */
+  hosted?: boolean;
 };
 
 /** One run's settings and callbacks, shared by every step of the loop. */
@@ -76,8 +79,8 @@ export type LoopContext = {
   guard?: Guard;
   /** Set when the guard ends the run: the report it ends on. */
   stop?: string;
-  /** Throws when the key's token budget is spent; checked before every model call. */
-  budget?: () => void;
+  /** Throws when the key's token budget or plan allowance is spent; checked before every model call. */
+  budget?: () => void | Promise<void>;
   /** The walls the agent may clear itself (CAPTCHA, sign-in, MFA); none offered when absent. */
   challenges?: Challenges;
   /** The agent's plan, as update_plan last wrote it. */
@@ -303,12 +306,14 @@ async function handleToolCalls(ctx: LoopContext, allMessages, msg) {
 /** Asks the model for its next move, billing the tokens. */
 async function complete(ctx: LoopContext, allMessages) {
   const { baseUrl, openaiKey, model } = ctx.llm;
-  ctx.budget?.();
+  await ctx.budget?.();
   const tools = toolsFor(ctx);
   const completion = await chatCompletion({ baseUrl, apiKey: openaiKey, model, messages: allMessages, tools });
   // Every iteration of the agentic loop bills, so account per iteration
-  // rather than once per request.
+  // rather than once per request. Each is also one agent step, the unit the
+  // platform fee is on, whoever's model it ran on; the verifier's calls are not steps.
   billUsage(ctx, completion.usage);
+  usage.record(ctx.apiKey, 'agent_steps', 1);
   return completion;
 }
 
@@ -316,6 +321,7 @@ async function complete(ctx: LoopContext, allMessages) {
 function billUsage(ctx: LoopContext, used) {
   bill(ctx.apiKey, 'input', 'chat_input_tokens', used?.prompt_tokens || 0);
   bill(ctx.apiKey, 'output', 'chat_output_tokens', used?.completion_tokens || 0);
+  if (ctx.llm.hosted) usage.record(ctx.apiKey, 'hosted_llm_microusd', llmCost(ctx.llm.model, used));
 }
 
 /**

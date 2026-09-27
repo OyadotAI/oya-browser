@@ -219,6 +219,43 @@ describe('key settings', () => {
     assert.deepEqual(env, { PATH: '/bin', ANCHOR_API_KEY: 'an-1', OYA_CAPTCHA_PROVIDER: 'capsolver' });
   });
 
+  it('never lends the operator’s vendor accounts to a key on the hosted deployment', async () => {
+    const saved = { stripe: process.env.STRIPE_SECRET_KEY, steel: process.env.STEEL_API_KEY };
+    Object.assign(process.env, { STRIPE_SECRET_KEY: 'sk_test', STEEL_API_KEY: 'operator-steel' });
+    try {
+      await keyConfig.set(KEY, { anchor_api_key: 'an-1' });
+      const env = keyConfig.envFor(KEY);
+      assert.equal(env.STEEL_API_KEY, undefined);
+      assert.equal(env.ANCHOR_API_KEY, 'an-1', 'the key’s own vendor account still counts');
+      delete process.env.STRIPE_SECRET_KEY;
+      assert.equal(keyConfig.envFor(KEY).STEEL_API_KEY, 'operator-steel', 'a self-hosted server lends its own');
+    } finally {
+      restoreEnv('STRIPE_SECRET_KEY', saved.stripe);
+      restoreEnv('STEEL_API_KEY', saved.steel);
+    }
+  });
+
+  it('solves a CAPTCHA on the operator’s account only in the browsers it runs, on the hosted deployment', async () => {
+    const saved = { stripe: process.env.STRIPE_SECRET_KEY, captcha: process.env.OYA_CAPTCHA_API_KEY };
+    Object.assign(process.env, { STRIPE_SECRET_KEY: 'sk_test', OYA_CAPTCHA_API_KEY: 'operator-solver' });
+    try {
+      assert.equal(keyConfig.captchaEnvFor(KEY, 'oya-cloud').OYA_CAPTCHA_API_KEY, 'operator-solver');
+      assert.equal(keyConfig.captchaEnvFor(KEY, 'oya-desktop').OYA_CAPTCHA_API_KEY, undefined);
+      await keyConfig.set(KEY, { captcha_api_key: 'own-solver' });
+      assert.equal(keyConfig.captchaEnvFor(KEY, 'oya-desktop').OYA_CAPTCHA_API_KEY, 'own-solver');
+      delete process.env.STRIPE_SECRET_KEY;
+      await keyConfig.set(KEY, { captcha_api_key: '' });
+      assert.equal(
+        keyConfig.captchaEnvFor(KEY, 'oya-desktop').OYA_CAPTCHA_API_KEY,
+        'operator-solver',
+        'a self-hosted server lends its own',
+      );
+    } finally {
+      restoreEnv('STRIPE_SECRET_KEY', saved.stripe);
+      restoreEnv('OYA_CAPTCHA_API_KEY', saved.captcha);
+    }
+  });
+
   it('picks the key’s browser provider, else the environment’s, else cdp', async () => {
     assert.equal(keyConfig.providerFor(KEY), 'cdp');
     process.env.OYA_BROWSER_PROVIDER = 'steel';

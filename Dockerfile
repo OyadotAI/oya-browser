@@ -21,8 +21,9 @@ RUN apk add --no-cache docker-cli
 COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev
 
-# Server source
+# Server source, and its vendor/ folder beside it
 COPY server/src/ ./src/
+COPY server/vendor/ ./vendor/
 
 # The page analyzer and the fingerprint injection, both of which drivers/cdp.js
 # loads relative to its own file (../../../browser/...), so the layout matters:

@@ -32,6 +32,9 @@ export const USAGE_FIELDS = [
   'quota_denied',
   'bytes_out',
   'residential_proxy_bytes',
+  'cloud_seconds',
+  'hosted_llm_microusd',
+  'agent_steps',
 ];
 
 /** Each table by name. */
@@ -74,6 +77,36 @@ export const TABLES: Record<string, Table> = {
   routines: {
     key: ['owner', 'id'],
     columns: { owner: 'text', id: 'text', value: 'text', version: 'int', updated_at: 'time' },
+  },
+  // A person's paid plan, as Stripe last said, and what of the period's usage has been reported to it.
+  subscriptions: {
+    key: ['user_id'],
+    columns: {
+      ...{ user_id: 'text', stripe_customer_id: 'text', stripe_subscription_id: 'text', plan: 'text' },
+      ...{ status: 'text', period_start: 'time', period_end: 'time', reported: 'json', stripe_event_at: 'int' },
+      updated_at: 'time',
+    },
+  },
+  // Self-hosted installs as their daily ping last described them (see modules/admin).
+  installs: {
+    key: ['install_id'],
+    columns: {
+      ...{ install_id: 'text', version: 'text', browsers: 'int', peak_cloud: 'int', license_id: 'text' },
+      ...{ pings: 'int', first_seen: 'time', last_seen: 'time' },
+    },
+  },
+  // Downloads and update checks, counted per UTC day, kind and platform.
+  download_counts: {
+    key: ['day', 'kind', 'platform'],
+    columns: { day: 'text', kind: 'text', platform: 'text', count: 'int' },
+  },
+  // Self-hosted licenses admins issued; the key itself is never stored.
+  licenses: {
+    key: ['id'],
+    columns: {
+      ...{ id: 'text', licensee: 'text', max_concurrent: 'int', expires_at: 'time' },
+      ...{ created_at: 'time', created_by: 'text', revoked_at: 'time' },
+    },
   },
   audit_log: {
     key: ['id'],

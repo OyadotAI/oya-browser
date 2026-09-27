@@ -36,7 +36,7 @@ const AI_AGENTS = [
 ];
 
 /** Paths behind auth, not worth crawling. */
-const DISALLOW = ['/dashboard', '/dashboard/', '/live/', '/api/'];
+const DISALLOW = ['/dashboard', '/dashboard/', '/live/', '/api/', '/admin'];
 
 /** The rules, the sitemap and the canonical host. */
 export default function robots(): MetadataRoute.Robots {

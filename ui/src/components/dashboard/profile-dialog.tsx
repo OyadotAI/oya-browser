@@ -1,6 +1,6 @@
 /**
- * The account dialog: who you are signed in as, and the one thing you can
- * change. Its state lives in `personas/use-profile-dialog.ts`.
+ * The account dialog: who you are signed in as, your plan, and the one thing
+ * you can change. Its state lives in `personas/use-profile-dialog.ts`.
  */
 'use client';
 
@@ -9,6 +9,7 @@ import Dialog from '@/components/ui/dialog';
 import { DISPLAY_NAME_MAX_LENGTH } from './personas/constants';
 import { memberSince } from './personas/model';
 import { useProfileDialog, type ProfileState } from './personas/use-profile-dialog';
+import PlanSection from './billing/plan-section';
 
 /** One read-only detail: a label and its value. */
 function Row({ label, value }: { /** What the detail is. */ label: string; /** Its value. */ value: string }) {
@@ -66,6 +67,7 @@ export default function ProfileDialog({ open, onClose }: Props) {
           />
         </label>
         <Details s={s} />
+        <PlanSection open={open} />
         {s.error && <p className="text-xs text-red-400">{s.error}</p>}
         {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved.</p>}
         <div className="flex items-center justify-between gap-3 pt-1">

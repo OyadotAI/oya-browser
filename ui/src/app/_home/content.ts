@@ -195,7 +195,7 @@ export const FAQ = [
   },
   {
     q: 'How much does it cost?',
-    a: 'It depends on how many browsers you run and where. Talk to the founders and we will size it with you.',
+    a: 'The desktop app is free, and so are 500 agent steps a month. Oya Cloud: Free gives 1 cloud browser hour; Developer is $20 a month for 100 hours, 1 GB of proxy and 5,000 agent steps; Startup is $99 a month for 500 hours, 5 GB and 50,000 steps. Past that, $0.10 or $0.08 a browser hour, $8 a GB and $0.002 a step. Self-hosting is free up to 5 cloud browsers at once. For more, write to sales@getoya.ai.',
   },
 ];
 

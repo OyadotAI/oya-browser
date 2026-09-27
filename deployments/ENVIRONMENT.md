@@ -144,7 +144,17 @@ Without these, sign-in is by API key and the console asks for one. The control p
 | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET` | none | Your Slack app, so customers can connect alerts in one click. Without them, customers paste a bot token of their own. |
 | `OYA_CONSOLE_URL` | from `OYA_PUBLIC_WS_URL` | The console's public address, for links in Slack messages. **Set this** in these deployments: `OYA_PUBLIC_WS_URL` is a private address. |
 
+### Self-hosted license
+
+| Variable | Default | What it does |
+|:---|:---|:---|
+| `OYA_LICENSE_KEY` | none | A license key from sales@getoya.ai. Without one, at most 5 cloud browsers run at once. |
+
 ### Telemetry (all off unless set)
+
+A self-hosted server also sends one anonymous ping a day, which is not optional; see
+[self-hosting](../docs/self-hosting.md#telemetry).
+
 
 | Variable | What it does |
 |:---|:---|

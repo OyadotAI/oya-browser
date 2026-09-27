@@ -4,7 +4,7 @@
  * is a small typed value; never a key, a URL, a name a person chose or page
  * content, so the catalog itself is the privacy rule.
  */
-import { PROJECT_ID_CHARS } from './constants.ts';
+import { PROJECT_ID_CHARS, SELF_HOST_FREE_CAP } from './constants.ts';
 
 /** Who an event is about, as an ops line names them: an email when the key has an owner, else a short key fingerprint. */
 export type Who = {
@@ -118,6 +118,17 @@ export type EventProps = {
     /** The version asking, or `unknown` for an app too old to say. */
     from_version: string;
   };
+  /** A self-hosted server sent its daily ping: anonymous, by a random install id. */
+  install_pinged: {
+    /** The release it runs. */
+    version: string;
+    /** Browsers connected when it pinged. */
+    browsers: number;
+    /** The most cloud browsers it ran at once since the last ping. */
+    peak_cloud: number;
+    /** Whether it runs under a license key. */
+    licensed: boolean;
+  };
   /** A persona was created. */
   persona_created: {
     /** Whether it was given a proxy. */
@@ -148,6 +159,7 @@ export const CHANNEL: Partial<Record<EventName, 'signups' | 'events'>> = {
   playbook_saved: 'events',
   cdp_attached: 'events',
   server_error: 'events',
+  install_pinged: 'signups',
 };
 
 /** `n step` or `n steps`. */
@@ -164,6 +176,11 @@ export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) 
   // Only a person's download: the app fetching its own update is not news.
   download_served: (_who, p) =>
     p.via === 'web' && p.file_type === 'installer' ? `⬇️ Desktop downloaded: ${p.platform} ${p.version}` : null,
+  // Only an unlicensed install past the free cap: that is a sales lead, the rest is a count.
+  install_pinged: (who, p) =>
+    !p.licensed && p.peak_cloud > SELF_HOST_FREE_CAP
+      ? `🏢 Self-hosted server ${who.id} ran ${p.peak_cloud} cloud browsers at once (v${p.version}), unlicensed`
+      : null,
   playbook_saved: (who, p) => `💾 Playbook saved: ${who.label} (${steps(p.steps)})`,
   cdp_attached: (who, p) => `🔌 CDP attached: ${who.label} (${p.provider})`,
   server_error: (who, p) =>

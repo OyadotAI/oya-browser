@@ -15,6 +15,8 @@ export const Status = {
   PERMANENT_REDIRECT: 308,
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,
+  /** The plan or license does not cover this: upgrade, or buy a license. */
+  PAYMENT_REQUIRED: 402,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,

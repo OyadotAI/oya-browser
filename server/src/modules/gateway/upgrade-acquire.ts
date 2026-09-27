@@ -100,7 +100,8 @@ function targetFor(start: Start, provider) {
     return { wsUrl: provider.wsUrl, provider: provider.name, sessionId: null, release: async () => {} };
   return acquireProvider({
     provider: provider.type,
-    env: provider.owner === null ? process.env : keyConfig.envFor(start.token),
+    // A shared provider runs on the operator's environment, which the hosted deployment never lends out.
+    env: provider.owner === null ? keyConfig.operatorEnv() : keyConfig.envFor(start.token),
     onCreated: (cleanup) => control().update(start.token, start.reservation.id, { cleanup }),
   });
 }

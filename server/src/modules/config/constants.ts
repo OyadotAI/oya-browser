@@ -21,3 +21,21 @@ export const OPENROUTER_MODELS_TTL_MS = 3_600_000;
 export const OPENROUTER_MODELS_TIMEOUT_MS = 10_000;
 /** The most OpenRouter models a picker offers: enough for every family, few enough to scroll. */
 export const OPENROUTER_MODELS_MAX = 150;
+
+/** The operator's vendor credentials, which the hosted deployment never lends to a caller's browsers. */
+export const OPERATOR_ONLY_ENV = new Set([
+  'ANCHOR_API_KEY',
+  'BROWSERBASE_API_KEY',
+  'BROWSERBASE_PROJECT_ID',
+  'STEEL_API_KEY',
+  'BROWSERUSE_API_KEY',
+  'OYA_CDP_WS_URL',
+]);
+
+/** The CAPTCHA solver's settings by key field: the operator's are lent to Oya Cloud browsers only. */
+export const CAPTCHA_FIELDS: Record<string, string> = {
+  captcha_api_key: 'OYA_CAPTCHA_API_KEY',
+  captcha_solver: 'OYA_CAPTCHA_PROVIDER',
+};
+/** Browsers the operator's CAPTCHA solver pays for: the ones this server runs. */
+export const CLOUD_ONLY_ENV_PROVIDERS = new Set(['oya-cloud', 'oya-selfhosted']);
