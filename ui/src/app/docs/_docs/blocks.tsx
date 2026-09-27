@@ -61,7 +61,7 @@ export function CodeBlock({ children, label = 'Example' }: CodeBlockProps) {
   }
   return (
     <div className="my-5 min-w-0 overflow-hidden rounded-xl border border-border bg-bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+      <div data-md="skip" className="flex items-center justify-between border-b border-border px-4 py-2">
         <span className="font-mono text-[11.5px] text-text-dim">{label}</span>
         <button onClick={copy} className="btn-ghost h-7 text-[11px]" aria-label="Copy code">
           {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}

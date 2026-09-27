@@ -1,10 +1,14 @@
 /**
- * The account button in the header and its menu: profile settings and log out.
+ * The account button in the header and its menu: profile settings, the admin
+ * page for Oya staff, and log out.
  */
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { LogOut, Settings, User } from 'lucide-react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import { CreditCard, LogOut, Settings, Shield, User } from 'lucide-react';
+import { BILLING_PAGE } from '../billing/constants';
+import { ADMIN_DOMAIN } from '@/components/admin/constants';
 import { useAuth } from '@/components/auth-provider';
 import { useOutsideClick } from '../hooks/use-outside-click';
 
@@ -12,6 +16,31 @@ import { useOutsideClick } from '../hooks/use-outside-click';
 interface Props {
   /** Opens the profile dialog. */
   onOpenProfile: () => void;
+}
+
+/** Whether the signed-in address is Oya staff's; the server still decides who sees the admin page. */
+const isStaff = (email?: string) =>
+  String(email || '')
+    .toLowerCase()
+    .endsWith(ADMIN_DOMAIN);
+
+/** A menu entry that goes to another page, closing the menu on the way. */
+function MenuLink(p: {
+  /** Where. */ href: string;
+  /** Its icon. */ icon: ReactNode;
+  /** Its text. */ label: string;
+  /** Closes the menu. */ onClose: () => void;
+}) {
+  return (
+    <Link
+      href={p.href}
+      onClick={p.onClose}
+      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text hover:bg-text/5 rounded-md transition-colors"
+    >
+      {p.icon}
+      {p.label}
+    </Link>
+  );
 }
 
 /** The open menu: who is signed in, then the actions. Each action closes the menu. */
@@ -34,6 +63,17 @@ function AccountMenu({ onOpenProfile, onClose }: Props & { /** Closes the menu. 
           <Settings className="w-4 h-4" />
           Profile settings
         </button>
+        {user && (
+          <MenuLink
+            href={BILLING_PAGE}
+            icon={<CreditCard className="w-4 h-4" />}
+            label="Plan & billing"
+            onClose={onClose}
+          />
+        )}
+        {isStaff(user?.email) && (
+          <MenuLink href="/admin" icon={<Shield className="w-4 h-4" />} label="Admin" onClose={onClose} />
+        )}
         <button
           onClick={() => {
             logout();

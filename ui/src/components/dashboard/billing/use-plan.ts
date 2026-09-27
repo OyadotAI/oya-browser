@@ -9,19 +9,31 @@ import { SECONDS_PER_HOUR } from '@/lib/constants';
 import { TENTHS } from './constants';
 
 /** A plan's allowances. */
-interface Included {
+export interface Included {
   /** Cloud browser time, in seconds. */
   cloudSeconds: number;
   /** Agent steps. */
   steps: number;
+  /** Residential proxy traffic, in bytes. */
+  proxyBytes?: number;
+  /** The hosted model's cost, in micro-USD. */
+  llmMicroUsd?: number;
+  /** Cloud browsers at once. */
+  concurrent?: number;
+  /** Whether use past the allowances is billed rather than refused. */
+  overage?: boolean;
 }
 
 /** What was used this period. */
-interface Used {
+export interface Used {
   /** Cloud browser time, in seconds. */
   cloud_seconds?: number;
   /** Agent steps. */
   agent_steps?: number;
+  /** Residential proxy traffic, in bytes. */
+  residential_proxy_bytes?: number;
+  /** The hosted model's cost, in micro-USD. */
+  hosted_llm_microusd?: number;
 }
 
 /** The plan as the server says it. */
@@ -36,10 +48,14 @@ export interface Billing {
   included?: Included;
   /** What was used this period. */
   used?: Used;
+  /** When the period began. */
+  since?: string;
+  /** When it ends, for a paid plan. */
+  until?: string | null;
 }
 
 /** A page the person is sent to. */
-interface Redirect {
+export interface Redirect {
   /** Its address. */
   url: string;
 }
@@ -70,7 +86,7 @@ async function goTo(page: () => Promise<Redirect>) {
 }
 
 /** Sends the person to a Stripe page, or keeps why it could not be opened. */
-function useLeave() {
+export function useLeave() {
   const [error, setError] = useState('');
   const leaveFor = useCallback(async (page: () => Promise<Redirect>) => {
     setError('');

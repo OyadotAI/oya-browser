@@ -39,14 +39,19 @@ const row = (extra = {}) => ({
 const sent = (events: any[]) => events.map((e) => [e.event_name, e.payload.value]);
 
 describe('UsageReporter', () => {
-  it('sends each meter’s total in its unit: minutes, MB, micro-USD and steps', async () => {
-    const used = { cloud_seconds: 150, residential_proxy_bytes: 3 * 1_048_576, hosted_llm_microusd: 7, agent_steps: 4 };
+  it('sends each meter’s total in its unit: minutes, MB, cents of model cost and steps', async () => {
+    const used = {
+      cloud_seconds: 150,
+      residential_proxy_bytes: 3 * 1_048_576,
+      hosted_llm_microusd: 70_000,
+      agent_steps: 4,
+    };
     const { r, events, saved } = fixture([row()], { P1: used });
     await r.report();
     assert.deepEqual(sent(events), [
       ['oya_cloud_minutes', 2],
       ['oya_proxy_mb', 3],
-      ['oya_llm_microusd', 7],
+      ['oya_model_cents', 7],
       ['oya_agent_steps', 4],
     ]);
     assert.equal(events[0].payload.stripe_customer_id, 'cus_1');
@@ -54,7 +59,7 @@ describe('UsageReporter', () => {
       period: 'P1',
       oya_cloud_minutes: 2,
       oya_proxy_mb: 3,
-      oya_llm_microusd: 7,
+      oya_model_cents: 7,
       oya_agent_steps: 4,
     });
   });

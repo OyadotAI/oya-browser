@@ -3,6 +3,7 @@
  */
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
+import { DOC_PAGES } from './docs/_docs/pages';
 
 /** One page of the sitemap. */
 interface Entry {
@@ -15,15 +16,18 @@ interface Entry {
 }
 
 /**
- * Public pages only, plus the files written for agents (answer engines cite
- * what they can find). /dashboard and /live/* are per-account and behind auth,
+ * Public pages only, plus the files written for agents: llms.txt and the docs'
+ * Markdown twins (answer engines cite what they can find). /dashboard and /live/* are per-account and behind auth,
  * so listing them would just advertise redirects.
  */
 const PAGES: Entry[] = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/docs', changeFrequency: 'weekly', priority: 0.9 },
+  { path: '/docs.md', changeFrequency: 'weekly', priority: 0.8 },
+  ...DOC_PAGES.map(({ slug }): Entry => ({ path: `/docs/${slug}.md`, changeFrequency: 'weekly', priority: 0.6 })),
   { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
+  { path: '/llms-full.txt', changeFrequency: 'weekly', priority: 0.6 },
   { path: '/openapi.json', changeFrequency: 'weekly', priority: 0.5 },
   { path: '/signup', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/login', changeFrequency: 'monthly', priority: 0.3 },

@@ -4,7 +4,7 @@
  * is a small typed value; never a key, a URL, a name a person chose or page
  * content, so the catalog itself is the privacy rule.
  */
-import { PROJECT_ID_CHARS, SELF_HOST_FREE_CAP } from './constants.ts';
+import { CENT_DIGITS, CENTS, PROJECT_ID_CHARS, SELF_HOST_FREE_CAP } from './constants.ts';
 
 /** Who an event is about, as an ops line names them: an email when the key has an owner, else a short key fingerprint. */
 export type Who = {
@@ -118,6 +118,24 @@ export type EventProps = {
     /** The version asking, or `unknown` for an app too old to say. */
     from_version: string;
   };
+  /** A person paid an invoice: the first month of a plan, or a renewal that went through on its own. */
+  payment_received: {
+    /** What was paid, in cents. */
+    amount_cents: number;
+    /** Its currency, such as usd. */
+    currency: string;
+    /** Why the invoice was made: subscription_create for a new plan, subscription_cycle for a renewal. */
+    reason: string;
+  };
+  /** A person's payment failed; Stripe will try again. */
+  payment_failed: {
+    /** What was due, in cents. */
+    amount_cents: number;
+    /** Its currency. */
+    currency: string;
+    /** How many times Stripe has tried. */
+    attempt: number;
+  };
   /** A self-hosted server sent its daily ping: anonymous, by a random install id. */
   install_pinged: {
     /** The release it runs. */
@@ -160,6 +178,21 @@ export const CHANNEL: Partial<Record<EventName, 'signups' | 'events'>> = {
   cdp_attached: 'events',
   server_error: 'events',
   install_pinged: 'signups',
+  payment_received: 'signups',
+  payment_failed: 'signups',
+};
+
+/** An amount in cents as money: $99.00, or 99.00 EUR in any other currency. */
+const money = (cents: number, currency: string) =>
+  currency === 'usd'
+    ? `$${(cents / CENTS).toFixed(CENT_DIGITS)}`
+    : `${(cents / CENTS).toFixed(CENT_DIGITS)} ${currency.toUpperCase()}`;
+
+/** How a payment's reason reads in Slack. */
+const REASONS: Record<string, string> = {
+  subscription_create: 'new plan',
+  subscription_cycle: 'renewal',
+  subscription_update: 'plan change',
 };
 
 /** `n step` or `n steps`. */
@@ -176,6 +209,10 @@ export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) 
   // Only a person's download: the app fetching its own update is not news.
   download_served: (_who, p) =>
     p.via === 'web' && p.file_type === 'installer' ? `⬇️ Desktop downloaded: ${p.platform} ${p.version}` : null,
+  payment_received: (who, p) =>
+    `💰 Payment received: ${money(p.amount_cents, p.currency)} from ${who.label} (${Object.hasOwn(REASONS, p.reason) ? REASONS[p.reason] : p.reason})`,
+  payment_failed: (who, p) =>
+    `⚠️ Payment failed: ${money(p.amount_cents, p.currency)} from ${who.label} (attempt ${p.attempt})`,
   // Only an unlicensed install past the free cap: that is a sales lead, the rest is a count.
   install_pinged: (who, p) =>
     !p.licensed && p.peak_cloud > SELF_HOST_FREE_CAP

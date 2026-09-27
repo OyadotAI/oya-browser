@@ -102,6 +102,11 @@ describe('track', () => {
     track.downloadServed('dl-1', { platform: 'mac', version: '1.0.116', file_type: 'update', via: 'updater' });
     track.updateChecked('dl-1', { platform: 'mac', from_version: '1.0.115' });
     track.installPinged('i-1', { version: '1.0.135', browsers: 9, peak_cloud: 9, licensed: false });
+    track.paymentReceived(
+      { id: 'u-2', email: 'bo@example.com' },
+      { amount_cents: 9900, currency: 'usd', reason: 'subscription_cycle' },
+    );
+    track.paymentFailed({ id: 'u-2', email: 'bo@example.com' }, { amount_cents: 2000, currency: 'eur', attempt: 2 });
     track.installPinged('i-2', { version: '1.0.135', browsers: 9, peak_cloud: 9, licensed: true });
     track.installPinged('i-3', { version: '1.0.135', browsers: 3, peak_cloud: 3, licensed: false });
     track.playbookSaved(KEY, { steps: 1 });
@@ -123,6 +128,8 @@ describe('track', () => {
         ['signups', `🖥️ Desktop connected: ${label} (MacIntel)`],
         ['signups', '⬇️ Desktop downloaded: mac 1.0.115'],
         ['signups', '🏢 Self-hosted server install-i-1 ran 9 cloud browsers at once (v1.0.135), unlicensed'],
+        ['signups', '💰 Payment received: $99.00 from bo@example.com (renewal)'],
+        ['signups', '⚠️ Payment failed: 20.00 EUR from bo@example.com (attempt 2)'],
       ].sort(),
     );
   });

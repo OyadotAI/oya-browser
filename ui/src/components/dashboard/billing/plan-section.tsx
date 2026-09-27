@@ -5,7 +5,8 @@
  */
 'use client';
 
-import { SALES_EMAIL, UPGRADES } from './constants';
+import Link from 'next/link';
+import { BILLING_PAGE, SALES_EMAIL, UPGRADES } from './constants';
 import { hours, usePlan } from './use-plan';
 
 /** One line of use against an allowance. */
@@ -64,6 +65,9 @@ export default function PlanSection({ open }: { /** Whether the dialog is showin
           </button>
         )}
       </div>
+      <Link href={BILLING_PAGE} className="text-xs text-accent hover:underline">
+        Usage, invoices and history
+      </Link>
       <p className="text-[11px] text-text-dim">
         Need more?{' '}
         <a className="underline" href={`mailto:${SALES_EMAIL}`}>

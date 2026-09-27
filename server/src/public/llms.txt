@@ -7,7 +7,8 @@
 
 Contents: Agent quickstart, Playbooks, CLI, Overview, Personas, Human in the
 loop, Quickstart, Agent self-signup, MCP Endpoint, MCP Tools, Browser Pool,
-REST API, WebSocket Protocol, Self-hosting, Machine-readable, Limits.
+REST API, WebSocket Protocol, Self-hosting, Machine-readable, Docs as Markdown,
+Limits.
 
 Add it to your agent as a skill, for Claude Code, Codex, Cursor, OpenClaw or any
 agent that reads SKILL.md: `npx skills add OyadotAI/oya-browser`. Claude Code
@@ -590,10 +591,29 @@ https://github.com/OyadotAI/oya-browser/blob/main/docs/self-hosting.md
 ## Machine-readable
 
 - OpenAPI 3.0 spec: https://oyabrowser.com/openapi.json
-- This file: https://oyabrowser.com/llms.txt (also /llms-full.txt, /docs.txt)
+- This file: https://oyabrowser.com/llms.txt (also /docs.txt)
+- Every docs page in one file: https://oyabrowser.com/llms-full.txt
 - Agent card: https://oyabrowser.com/.well-known/agent.json
 - Sitemap: https://oyabrowser.com/sitemap.xml
-- Human docs: https://oyabrowser.com/docs
+- Human docs: https://oyabrowser.com/docs (send `Accept: text/markdown` for Markdown)
+
+## Docs as Markdown
+
+The human docs, page by page, as Markdown. The same text as the HTML page.
+
+- [All docs](https://oyabrowser.com/docs.md)
+- [Get started](https://oyabrowser.com/docs/getting-started.md): quickstart, API keys, desktop sign-in
+- [Playbooks](https://oyabrowser.com/docs/playbooks.md): record once, replay with no model
+- [SDK](https://oyabrowser.com/docs/sdk.md): every call, in TypeScript
+- [CLI](https://oyabrowser.com/docs/cli.md): the same, from a terminal
+- [MCP setup](https://oyabrowser.com/docs/mcp.md): Cursor, Claude Desktop, Claude Code
+- [MCP tools](https://oyabrowser.com/docs/mcp-tools.md): analyze_page, click, type and the rest
+- [Identity](https://oyabrowser.com/docs/identity.md): personas, CAPTCHA, MFA
+- [Stealth and anonymity](https://oyabrowser.com/docs/anonymity.md): fingerprints, proxies
+- [Self-hosting](https://oyabrowser.com/docs/self-hosting.md): your network, one command
+- [Control plane](https://oyabrowser.com/docs/control-plane.md): routing, failover, benchmarks
+- [Dashboard](https://oyabrowser.com/docs/dashboard.md): chat, live view, settings
+- [REST and WebSocket API](https://oyabrowser.com/docs/api.md): endpoints and protocol
 
 ## Limits, stated plainly
 

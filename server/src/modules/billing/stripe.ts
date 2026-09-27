@@ -9,10 +9,12 @@ import { Status } from '../../platform/http-status.ts';
 import { MS_PER_SECOND, OUTBOUND_TIMEOUT_MS } from '../../platform/constants.ts';
 import { STRIPE_API, STRIPE_VERSION, WEBHOOK_TOLERANCE_S } from './constants.ts';
 
-/** Posts to Stripe; the one thing the services need from it. */
+/** Stripe, as far as the services use it. */
 export type Stripe = {
   /** Posts `params` to `path` and answers the parsed body. */
   post(path: string, params?: Record<string, unknown>): Promise<any>;
+  /** Reads `path` with `query` and answers the parsed body. */
+  get(path: string, query?: Record<string, unknown>): Promise<any>;
 };
 
 /** Stripe's form encoding: nested objects and arrays as `a[b][0]=v`. */
@@ -28,19 +30,22 @@ export function formEncode(params: Record<string, unknown>, prefix = '', out = n
 
 /** A client for the key `key()` names, calling through `fetchFn` (a fake in tests). */
 export function stripeClient(key: () => string, fetchFn: typeof fetch = fetch): Stripe {
-  return { post: (path, params = {}) => call(fetchFn, key(), path, params) };
+  return {
+    post: (path, params = {}) => call(fetchFn, key(), path, params),
+    get: (path, query = {}) => call(fetchFn, key(), `${path}?${formEncode(query)}`, null),
+  };
 }
 
 /** The request for one call: authorized with the key and pinned to the API version. */
-const request = (key: string, params: Record<string, unknown>) => ({
-  method: 'POST',
+const request = (key: string, params: Record<string, unknown> | null) => ({
+  method: params ? 'POST' : 'GET',
   headers: { authorization: `Bearer ${key}`, 'stripe-version': STRIPE_VERSION },
-  body: formEncode(params),
+  body: params ? formEncode(params) : undefined,
   signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
 });
 
-/** One POST; Stripe's own error message comes back as a 502. */
-async function call(fetchFn: typeof fetch, key: string, path: string, params: Record<string, unknown>) {
+/** One call, a POST with `params` or a GET without; Stripe's own error message comes back as a 502. */
+async function call(fetchFn: typeof fetch, key: string, path: string, params: Record<string, unknown> | null) {
   const res = await fetchFn(`${STRIPE_API}${path}`, request(key, params));
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new HttpError(Status.BAD_GATEWAY, `Stripe: ${body?.error?.message || res.status}`);

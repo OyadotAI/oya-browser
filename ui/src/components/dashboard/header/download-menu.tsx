@@ -5,6 +5,7 @@
 'use client';
 
 import type { FocusEvent, KeyboardEvent } from 'react';
+import Link from 'next/link';
 import { Download } from 'lucide-react';
 import { browserDownloads } from '@/lib/browser-downloads';
 
@@ -48,12 +49,12 @@ export default function DownloadMenu() {
             <span className="text-[11px] text-text-muted">{architecture}</span>
           </a>
         ))}
-        <a
+        <Link
           href="/docs#download"
           className="mt-1 block border-t border-border px-3 pt-3 pb-1 text-xs text-text-muted hover:text-text"
         >
           Installation instructions
-        </a>
+        </Link>
       </nav>
     </details>
   );

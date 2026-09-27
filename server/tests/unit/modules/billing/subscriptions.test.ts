@@ -24,7 +24,7 @@ function fixture() {
     saveStripe: async (id, cols) => void rows.set(id, { ...rows.get(id), user_id: id, ...cols }),
     usageSince: async () => ({ cloud_seconds: 60 }),
     stripe,
-    returnUrl: () => 'https://console.test/dashboard#billing',
+    returnUrl: () => 'https://console.test/dashboard/billing',
     now: () => NOW,
   };
   return { s: new Subscriptions(deps), rows, posts };
@@ -62,6 +62,65 @@ describe('Subscriptions', () => {
     assert.deepEqual(params.line_items[1], { price: 'min_dev' });
     assert.equal(params.subscription_data.metadata.user_id, 'u1');
     assert.equal(params.customer, undefined);
+  });
+
+  it('opens Checkout in Oya’s look: its name, icon and colors', async () => {
+    const { s, posts } = fixture();
+    await s.checkout('u1', 'developer');
+    assert.equal(posts[0].params.branding_settings.display_name, 'Oya Browser');
+    assert.match(posts[0].params.branding_settings.icon.url, /^https:\/\/oyabrowser\.com\//);
+  });
+
+  it('still opens Checkout, plain, if Stripe refuses the look', async () => {
+    const posts: any[] = [];
+    const stripe = {
+      post: async (_p, params) => {
+        posts.push(params);
+        if (params.branding_settings) throw new Error('Stripe: Received unknown parameter: branding_settings');
+        return { url: 'plain' };
+      },
+      get: async () => ({}),
+    };
+    const s = new Subscriptions({
+      find: async () => null,
+      saveStripe: async () => {},
+      usageSince: async () => ({}),
+      stripe,
+      returnUrl: () => 'r',
+      now: () => NOW,
+    });
+    assert.deepEqual(await s.checkout('u1', 'developer'), { url: 'plain' });
+    assert.equal(posts.length, 2);
+  });
+
+  it('does not hide any other Checkout failure', async () => {
+    const stripe = {
+      post: async () => {
+        throw new Error('Stripe: No such price');
+      },
+      get: async () => ({}),
+    };
+    const s = new Subscriptions({
+      find: async () => null,
+      saveStripe: async () => {},
+      usageSince: async () => ({}),
+      stripe,
+      returnUrl: () => 'r',
+      now: () => NOW,
+    });
+    await assert.rejects(s.checkout('u1', 'developer'), /No such price/);
+  });
+
+  it('says when the current period ends', async () => {
+    const { s, rows } = fixture();
+    rows.set('u1', {
+      user_id: 'u1',
+      plan: 'developer',
+      status: 'active',
+      period_start: '2026-03-10T00:00:00.000Z',
+      period_end: '2026-04-10T00:00:00.000Z',
+    });
+    assert.equal((await s.summary('u1')).until, '2026-04-10T00:00:00.000Z');
   });
 
   it('reuses the person’s Stripe customer when they have one', async () => {

@@ -38,6 +38,15 @@ describe('stripeClient', () => {
     assert.equal(calls[0].init.headers['stripe-version'], STRIPE_VERSION);
   });
 
+  it('reads with a GET carrying the query, and no body', async () => {
+    const calls: any[] = [];
+    const fetchFn = async (url, init) => (calls.push({ url, init }), new Response(JSON.stringify({ data: [] })));
+    await stripeClient(() => 'sk_test', fetchFn as any).get('/invoices', { customer: 'cus_1', limit: 3 });
+    assert.equal(calls[0].url, 'https://api.stripe.com/v1/invoices?customer=cus_1&limit=3');
+    assert.equal(calls[0].init.method, 'GET');
+    assert.equal(calls[0].init.body, undefined);
+  });
+
   it('turns a Stripe error into a 502 carrying Stripe’s message', async () => {
     const fetchFn = async () => new Response(JSON.stringify({ error: { message: 'No such price' } }), { status: 400 });
     await assert.rejects(stripeClient(() => 'k', fetchFn as any).post('/x'), {

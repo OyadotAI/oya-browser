@@ -20,3 +20,9 @@ export const SNIPPET_CONTEXT = 30;
 export const MAX_HITS = 12;
 /** How long "Copied" shows on a code block. */
 export const COPIED_RESET_MS = 1800;
+/** How long caches may keep a Markdown twin: it changes only with a deploy. */
+export const MARKDOWN_MAX_AGE_SECONDS = 300;
+/** The base of a hexadecimal character reference such as &#x27;. */
+export const HEX_RADIX = 16;
+/** The port Next.js listens on when nothing set PORT. */
+export const NEXT_DEFAULT_PORT = 3000;
