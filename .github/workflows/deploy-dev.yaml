@@ -17,11 +17,15 @@ env:
 
 jobs:
   # The gate. Nothing is built or deployed unless the suite is green.
+  # A release commit only moves version numbers, and its tag runs this same suite
+  # and deploys prod from the same commit: running it here too tested one commit twice.
   ci:
+    if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
     uses: ./.github/workflows/ci.yaml
 
   changes:
     name: Detect changes
+    if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
     runs-on: ubuntu-latest
     outputs:
       server: ${{ steps.filter.outputs.server }}
@@ -113,7 +117,7 @@ jobs:
     # those, and `!failure()` does not count a skipped dependency, so without it
     # a red suite would still deploy.
     needs: [ci, changes, build, build-browser]
-    if: always() && !failure() && !cancelled()
+    if: always() && !failure() && !cancelled() && !startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     permissions:
       contents: read

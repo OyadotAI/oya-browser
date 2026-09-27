@@ -34,6 +34,21 @@ const page = (action) => {
   if (action === 'evaluate_raw') return { ok: true, data: { result: { ok: true, chosen: 'x', field: 'cv' } } };
   return { ok: true, data: {} };
 };
+/** A cap on the fake-clock ticks one replay may take, so a hang fails the test instead of the run. */
+const MAX_TICKS = 200;
+
+/**
+ * A replay run to the end under a mocked clock, ticking until it settles rather than a
+ * fixed number of times: with coverage on, the code runs slower than a fixed count
+ * assumed, the ticks ran out before the replay's next timer, and CI hung.
+ */
+async function settled<T>(run: Promise<T>): Promise<T> {
+  let done = false;
+  const watched = run.finally(() => (done = true));
+  for (let i = 0; i < MAX_TICKS && !done; i++) await advance(FIND_RETRY_MS);
+  return watched;
+}
+
 /** A playbook of these steps. */
 const pb = (steps, extra = {}) => ({ name: 'demo', prompt: 'Do the demo', steps, defaults: {}, ...extra });
 /** The commands sent, without the analyses. */
@@ -200,9 +215,7 @@ describe('play', () => {
       { action: 'navigate', url: 'https://a.test/form' },
       { action: 'click', el: { text: 'Go', type: 'button' } },
     ];
-    const run = play(KEY, BROWSER, pb(steps), {}, { checkpoint, autoHeal: false });
-    await advance(FIND_RETRY_MS, FIND_ATTEMPTS * 3 + 6);
-    const result = await run;
+    const result = await settled(play(KEY, BROWSER, pb(steps), {}, { checkpoint, autoHeal: false }));
     assert.equal(result.steps, 2);
     assert.ok(commands().some((c) => c.action === 'click'));
   });
@@ -213,9 +226,7 @@ describe('play', () => {
       { action: 'press_key', key: 'Tab' },
     ];
     mock.timers.enable({ apis: ['setTimeout'] });
-    const run = play(KEY, BROWSER, pb(steps), {}, { autoHeal: false });
-    await advance(FIND_RETRY_MS, FIND_ATTEMPTS + 4);
-    assert.equal((await run).steps, 2);
+    assert.equal((await settled(play(KEY, BROWSER, pb(steps), {}, { autoHeal: false }))).steps, 2);
   });
 
   it('goes on to answer the dialog a recorded click opens', async () => {
