@@ -177,9 +177,10 @@ export function forgetHandle(browserId, elementId) {
 export const elementsOf = (browserId): any[] => runs.get(browserId)?.elements || [];
 
 /** Keeps the latest analysis, so steps can name elements by their stable handles. */
-export function setElements(browserId, elements) {
+export function setElements(browserId, elements, modal?) {
   const run = runs.get(browserId);
-  if (run) run.elements = elements;
+  // With a dialog open the analyzer reads only the dialog, so every element is in it.
+  if (run) run.elements = modal ? elements.map((e) => ({ ...e, inModal: true })) : elements;
 }
 
 /**
@@ -254,6 +255,17 @@ async function tabHandle(browserId) {
  */
 const aimable = (el) => handlesOf(el || {}).length > 0;
 
+/** Words on a button that closes a popup rather than doing anything in it. */
+const DISMISS =
+  /^(close|dismiss|×|✕|x|ok|okay|got it|no thanks|not now|maybe later|skip|accept|accept all|allow all|i agree|reject all)$/i;
+
+/**
+ * Whether a click closed a popup: a dismiss button inside a dialog. A notice shown once
+ * a session, a cookie banner or a promo may not be there on the next run, and a replay
+ * that fails for the lack of one is failing for nothing.
+ */
+const dismisses = (el) => !!el?.inModal && DISMISS.test(String(el.text || el.ariaLabel || '').trim());
+
 /** What the step aims at: the element's stable handles, and the file a replay must bring. */
 function aim(step, run, name, args, values, acted?) {
   if (ELEMENT_ACTIONS.includes(name) && args.element_id != null) {
@@ -263,6 +275,7 @@ function aim(step, run, name, args, values, acted?) {
     if (aimable(el)) step.el = el;
     else step.unaimable = true;
   }
+  if (name === 'click' && dismisses(acted)) step.optional = true;
   // The bytes never enter a playbook; the variable name does, so a replay brings its own file.
   if (name === 'upload_file' && args.name) step.file = `{{${dataKey(args.name)}}}`;
   for (const k of STEP_ARGS) if (args[k] !== undefined) step[k] = args[k];

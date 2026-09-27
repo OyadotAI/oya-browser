@@ -24,7 +24,7 @@ async function analyzePage(browserId, args: Record<string, any> = {}) {
   const scope = args.selector ? { selector: args.selector } : {};
   const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT, ...scope });
   if (!r.ok) return `Error: ${r.error}`;
-  setElements(browserId, r.data.elements);
+  setElements(browserId, r.data.elements, r.data.modal);
   noteAnalysis(browserId, r.data);
   return analysisText(r.data, { content: args.content !== false });
 }
@@ -106,7 +106,7 @@ async function scroll(browserId, args) {
   const r = await sendCommand(browserId, 'scroll', { direction, amount, format: PAGE_FORMAT });
   if (!r.ok) return `Error: ${r.error}`;
   if (!r.data?.elements) return `Scrolled ${args.direction}`;
-  setElements(browserId, r.data.elements);
+  setElements(browserId, r.data.elements, r.data.modal);
   noteAnalysis(browserId, r.data);
   return `Scrolled ${args.direction}.\n\n` + analysisText(r.data);
 }
@@ -121,7 +121,7 @@ async function wait(browserId, args) {
 async function readElements(browserId, args) {
   const r = await sendCommand(browserId, 'analyze', args.selector ? { selector: args.selector } : {});
   if (!r.ok) return `Error: ${r.error}`;
-  setElements(browserId, r.data.elements);
+  setElements(browserId, r.data.elements, r.data.modal);
   return elementList(r.data, args.limit);
 }
 

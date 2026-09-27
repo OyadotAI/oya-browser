@@ -137,7 +137,7 @@ function ranked(elements, query) {
 async function find(browserId, args) {
   const r = await sendCommand(browserId, 'analyze', {});
   if (!r.ok) return `Error: ${r.error}`;
-  setElements(browserId, r.data.elements);
+  setElements(browserId, r.data.elements, r.data.modal);
   noteAnalysis(browserId, r.data);
   const hits = ranked(r.data.elements || [], args.query);
   if (!hits.length) return `Nothing on the page matches "${args.query}". Analyze the page, or scroll to load more.`;
