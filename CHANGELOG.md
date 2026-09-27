@@ -12,7 +12,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Changed
 
-- **Faster CI.** The server's unit tests run once, with coverage, instead of twice; the test job is split into parallel jobs for the server, the SDK and CLI, and the desktop app; installs are cached for every part; and a release commit no longer runs the whole suite a second time on its way to dev, since its tag runs it for prod.
+- **Faster CI.** The server's unit tests run once, with coverage, instead of twice; the test job is split into parallel jobs for the server, the SDK and CLI, and the desktop app; installs are cached for every part; and a release commit no longer runs the whole suite a second time on its way to dev, since its tag runs it for prod. A release's images reuse the layers dev already built, rather than starting from an empty cache.
 
 ## [1.0.132](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.132) · 2026-09-27
 
