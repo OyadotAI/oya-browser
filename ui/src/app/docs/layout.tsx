@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     '(navigate, click, type, scroll, wait, screenshot, tabs), personas and fingerprinting, ' +
     'proxy and rotation, provider routing and failover, MCP setup for Claude Code, Claude ' +
     'Desktop and Cursor, live view, CAPTCHA and MFA handling, and self-hosting.',
-  alternates: { canonical: '/docs' },
+  alternates: { canonical: '/docs', types: { 'text/plain': '/llms.txt', 'application/json': '/openapi.json' } },
   openGraph: {
     type: 'article',
     url: `${SITE_URL}/docs`,

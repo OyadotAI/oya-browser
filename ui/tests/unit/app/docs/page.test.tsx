@@ -24,7 +24,20 @@ afterEach(() => {
 });
 
 /** Every section the sidebar links to. */
-const SECTIONS = ['control-plane', 'quickstart', 'sdk', 'cli', 'download', 'mcp-setup', 'cursor', 'tabs', 'personas'];
+const SECTIONS = [
+  'quickstart',
+  'playbooks',
+  'free-text-fields',
+  'sdk',
+  'cli',
+  'download',
+  'mcp-setup',
+  'cursor',
+  'tabs',
+  'personas',
+  'self-hosting',
+  'control-plane',
+];
 
 describe('DocsPage', () => {
   it('renders every section anchor once', () => {
@@ -32,6 +45,13 @@ describe('DocsPage', () => {
     for (const id of [...SECTIONS, 'rotation', 'onboarding', 'command-api', 'websocket']) {
       expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
     }
+  });
+
+  it('opens on the quickstart, ahead of the architecture', () => {
+    render(<DocsPage />);
+    const ids = [...document.querySelectorAll('main h2[id]')].map((h) => h.id);
+    expect(ids[0]).toBe('quickstart');
+    expect(ids.indexOf('playbooks')).toBeLessThan(ids.indexOf('control-plane'));
   });
 
   it('searches after a pause and jumps to a result', async () => {
@@ -81,7 +101,7 @@ describe('DocsPage', () => {
     render(<DocsPage />);
     await user.click(screen.getByRole('button', { name: 'Open documentation menu' }));
     const dialog = screen.getByRole('dialog', { name: 'Documentation' });
-    const inMenu = [...dialog.querySelectorAll('a')].find((a) => a.textContent === 'SDK')!;
+    const inMenu = [...dialog.querySelectorAll('a')].find((a) => a.textContent === 'TypeScript SDK')!;
     await user.click(inMenu);
     expect(screen.queryByRole('dialog')).toBeNull();
   });

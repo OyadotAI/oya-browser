@@ -226,6 +226,27 @@
     opacity: 0;
   }
 }
+/* On a phone the portal sits under the lanes as a bar, and each lane's label
+   stacks, so nothing wraps into a column of single words. */
+@media (max-width: 560px) {
+  .figure {
+    padding: 22px 18px 18px;
+  }
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .portal {
+    grid-auto-flow: column;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .label {
+    display: grid;
+    gap: 2px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .dot {
     display: none;

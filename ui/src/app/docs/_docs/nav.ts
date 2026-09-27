@@ -16,7 +16,7 @@ export interface DocsNavValue {
 }
 
 /** Shared by the sidebar links and the in-page links. */
-export const DocsNav = createContext<DocsNavValue>({ active: 'control-plane', navigate: () => {} });
+export const DocsNav = createContext<DocsNavValue>({ active: 'quickstart', navigate: () => {} });
 
 /** The docs navigation, for any component on the page. */
 export const useDocsNav = () => useContext(DocsNav);
@@ -59,7 +59,7 @@ function goTo(id: string, setActive: (id: string) => void, closeMenu: () => void
 
 /** The section in view, and a navigate() that also closes the mobile menu. */
 export function useDocsNavState(closeMenu: () => void): DocsNavValue {
-  const [active, setActive] = useState('control-plane');
+  const [active, setActive] = useState('quickstart');
   useEffect(() => trackHeadings(setActive), []);
   const navigate = useCallback((id: string) => goTo(id, setActive, closeMenu), [closeMenu]);
   return { active, navigate };

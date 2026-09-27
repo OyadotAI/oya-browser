@@ -14,7 +14,9 @@ import { DocsNav, useDocsNavState, useSlashToSearch } from './_docs/nav';
 import { Sidebar } from './_docs/sidebar';
 import { useDocsSearch } from './_docs/use-docs-search';
 import { ControlPlaneDocs } from './_sections/control-plane';
-import { GettingStartedDocs } from './_sections/getting-started';
+import { CliDocs, GetStartedDocs, SdkDocs } from './_sections/getting-started';
+import { PlaybooksDocs } from './_sections/playbooks';
+import { SelfHostingDocs } from './_sections/self-hosting';
 import { AiIntegrationDocs } from './_sections/ai-integration';
 import { McpToolsDocs } from './_sections/mcp-tools';
 import { IdentityDocs } from './_sections/identity';
@@ -54,12 +56,16 @@ export default function DocsPage() {
         <main className="min-w-0 lg:ml-[260px] px-5 pt-28 pb-24 sm:px-10 lg:px-14 lg:pt-32">
           <div className="max-w-[800px] mx-auto">
             <DocsIntro />
-            <ControlPlaneDocs />
-            <GettingStartedDocs />
+            <GetStartedDocs />
+            <PlaybooksDocs />
+            <SdkDocs />
+            <CliDocs />
             <AiIntegrationDocs />
             <McpToolsDocs />
             <IdentityDocs />
             <AnonymityDocs />
+            <SelfHostingDocs />
+            <ControlPlaneDocs />
             <DashboardDocs />
             <ApiDocs />
           </div>

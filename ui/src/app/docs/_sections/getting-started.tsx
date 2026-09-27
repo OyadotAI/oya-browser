@@ -1,5 +1,6 @@
 /**
- * Docs: getting started: quickstart, SDK, CLI, API keys, desktop sign-in and connecting.
+ * Docs: get started (the quickstart, API keys, desktop sign-in and connecting),
+ * and the SDK and CLI references.
  */
 'use client';
 
@@ -12,6 +13,7 @@ import {
   InlineLink,
   NoteBox,
   SectionHeading,
+  Step,
   Table,
   WarnBox,
 } from '../_docs/blocks';
@@ -67,28 +69,74 @@ const CONNECT_ROWS_1: ReactNode[][] = [
   ['Browser Name', 'Optional, how it shows in the dashboard'],
 ];
 
-/** The Quickstart section. */
+/** The first run: do a task once with the model, save it, replay it without. */
+const FIRST_RUN = `import { Oya } from "@oya-ai/browser";
+
+const oya = new Oya();                          // reads OYA_API_KEY
+const browser = await oya.browser.start();      // a real browser, not headless Chrome
+
+try {
+  // 1. Do the task once, in plain language. The model works it out.
+  await browser.ask(
+    "On https://httpbin.org/forms/post order a medium pizza for {{name}} and submit it.",
+    { data: { name: "Ada Lovelace" } },
+  );
+
+  // 2. Save that run as a playbook: Playwright steps, with your values as variables.
+  const playbook = await browser.toPlaybook("pizza-order");
+  console.log(playbook.variables);              // the inputs play() takes
+
+  // 3. Replay it with new values. No model, no tokens.
+  console.log(await browser.play("pizza-order", { name: "Grace Hopper" }));
+} finally {
+  await browser.close();                        // stop paying for it, even on an error
+}`;
+
+/** The Quickstart section: three steps from nothing to a replayed playbook. */
 function Quickstart() {
+  return (
+    <>
+      <SectionHeading id="quickstart" first>
+        Quickstart
+      </SectionHeading>
+      <p className="mb-6">Three steps, about three minutes. You end with a task your code replays with no model.</p>
+      <Step n={1} title="Get an API key">
+        <p className="mb-3">
+          Open the <InlineLink href="/dashboard">console</InlineLink>, create a key from the API key menu, and export
+          it.
+        </p>
+        <CodeBlock label="Terminal">{'export OYA_API_KEY=oya_...'}</CodeBlock>
+      </Step>
+      <Step n={2} title="Install the SDK">
+        <CodeBlock label="Terminal">{'npm i @oya-ai/browser'}</CodeBlock>
+      </Step>
+      <Step n={3} title="Run a task, save it, replay it">
+        <CodeBlock label="first-run.mjs">{FIRST_RUN}</CodeBlock>
+      </Step>
+      <QuickstartNext />
+    </>
+  );
+}
+
+/** Where to go after the first run, and the CLI route for people who would rather not write code yet. */
+function QuickstartNext() {
   const { navigate } = useDocsNav();
   return (
     <>
-      {/* ============ QUICKSTART ============ */}
-      <SectionHeading id="quickstart">Quickstart</SectionHeading>
-      <CodeBlock>{`npm i @oya-ai/browser
-npm i -g @oya-ai/cli && oya login && oya init`}</CodeBlock>
-      <CodeBlock>{`import { Oya } from "@oya-ai/browser";
-
-const oya = new Oya();                                    // OYA_API_KEY
-const browser = await oya.browser.start({ persona: "auto", captcha: "auto" });
-await browser.goto("https://example.com");`}</CodeBlock>
-      <p className="mb-3 text-[15px] leading-relaxed">
-        That is the whole surface. Which provider actually runs the browser, Oya Cloud, your own machines, Browser Use,
-        Browserbase, Steel, Anchor, or a CDP URL you hand us, is a setting on your API key, chosen once during{' '}
-        <InlineAnchor onClick={() => navigate('onboarding')}>onboarding</InlineAnchor>. Your code never branches on it.
+      <p className="mb-3">
+        That is the loop: <strong>ask once, replay forever</strong>. From here, read{' '}
+        <InlineAnchor onClick={() => navigate('playbooks')}>Playbooks</InlineAnchor> for variables, free-text fields and
+        healing, or <InlineAnchor onClick={() => navigate('mcp-setup')}>MCP</InlineAnchor> to hand the browser to Claude
+        or Cursor.
       </p>
+      <h3 className="text-base font-semibold mt-6 mb-2 text-text">From a terminal instead</h3>
+      <CodeBlock label="Terminal">{`npm i -g @oya-ai/cli
+oya login && oya start
+oya ask "find the pricing page on example.com"`}</CodeBlock>
       <NoteBox>
-        The API key is the identity for everything: browsers, personas, cookies, settings, usage and audit history are
-        all scoped to it, and one key can never see another&apos;s.
+        Everything belongs to the API key: browsers, personas, cookies, playbooks, settings and usage. One key never
+        sees another&apos;s. Which provider runs the browser is a setting on the key, chosen during{' '}
+        <InlineAnchor onClick={() => navigate('onboarding')}>onboarding</InlineAnchor>, so your code never changes.
       </NoteBox>
     </>
   );
@@ -161,6 +209,9 @@ oya ls                          What is running
 oya rm <id> | --all             Stop browsers
 oya personas [new|rm <id>]      Identities and their concurrency
 oya open                        Watch a browser work
+oya playbooks                   Saved playbooks
+oya playbooks export <name>     One playbook as JSON [--out <file>]
+oya playbooks import <file>     Save an export here [--name <n>] [--replace]
 oya config [key=value ...]      This key's settings
 oya usage                       What this key has spent
 oya stealth-test [--live]       Score this deployment against bot detectors`}</CodeBlock>
@@ -178,7 +229,7 @@ function CreateKey() {
   return (
     <>
       {/* ============ CREATE KEY ============ */}
-      <SectionHeading id="create-key">Create API Key</SectionHeading>
+      <SectionHeading id="create-key">API keys</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
         Go to the <InlineLink href="/dashboard">dashboard</InlineLink>. Open the API key menu to create or select a key
         for your workspace.
@@ -200,7 +251,7 @@ function Download() {
   return (
     <>
       {/* ============ DOWNLOAD ============ */}
-      <SectionHeading id="download">Desktop Sign-in</SectionHeading>
+      <SectionHeading id="download">Desktop sign-in</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
         For browsers on Oya infrastructure, the desktop app is a one-time step: log into the sites your agents need, and
         those cookies move to the remote browsers, which run the same fingerprint as that identity. The agent arrives
@@ -260,7 +311,7 @@ function Connect() {
   return (
     <>
       {/* ============ CONNECT ============ */}
-      <SectionHeading id="connect">Connect</SectionHeading>
+      <SectionHeading id="connect">Connect a desktop browser</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">Open Oya Browser. The setup screen appears on first launch.</p>
       <Table headers={['Field', 'Value']} rows={CONNECT_ROWS_1} />
       <p className="mb-3 text-[15px] leading-relaxed">
@@ -271,16 +322,24 @@ function Connect() {
   );
 }
 
-/** Getting started: quickstart, SDK, CLI, API keys, desktop sign-in and connecting. */
-export function GettingStartedDocs() {
+/** Get started: the quickstart, then the key, the desktop app and connecting it. */
+export function GetStartedDocs() {
   return (
     <>
       <Quickstart />
-      <Sdk />
-      <Cli />
       <CreateKey />
       <Download />
       <Connect />
     </>
   );
+}
+
+/** The SDK reference. */
+export function SdkDocs() {
+  return <Sdk />;
+}
+
+/** The CLI reference. */
+export function CliDocs() {
+  return <Cli />;
 }

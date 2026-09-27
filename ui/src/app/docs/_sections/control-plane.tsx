@@ -50,9 +50,7 @@ function ControlPlane() {
   return (
     <>
       {/* ============ CONTROL PLANE ARCHITECTURE ============ */}
-      <SectionHeading id="control-plane" first>
-        Control Plane Architecture
-      </SectionHeading>
+      <SectionHeading id="control-plane">Control Plane Architecture</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
         Raw browser runners like <strong>Browserbase</strong>, <strong>Steel</strong>, <strong>Anchor</strong>, and{' '}
         <strong>Browser Use</strong> are execution targets: they spin up headless Chromium instances inside isolated
