@@ -1,12 +1,13 @@
 /**
  * The changelog at release time: what the release script asks of CHANGELOG.md.
  *
- *   node scripts/changelog.mjs check            refuse a release with nothing under Unreleased
+ *   node scripts/changelog.mjs check            refuse a changelog with no Unreleased section
  *   node scripts/changelog.mjs stamp <version>  Unreleased becomes the version, linked to its release
  *   node scripts/changelog.mjs notes <version>  that version's notes, for the tag and the GitHub release
  *
  * A release's notes are written once, under Unreleased, as the work lands; the tag,
- * the GitHub release and the website all carry those same words.
+ * the GitHub release and the website all carry those same words. A release can be
+ * cut with nothing written there: it then says "Maintenance and fixes."
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -40,11 +41,15 @@ export function unreleased(markdown) {
 
 /** Why a release cannot be cut from this changelog, or null when it can. */
 export function refusal(markdown) {
-  const body = unreleased(markdown);
-  if (!body) return `CHANGELOG.md has no "${UNRELEASED}" section.`;
-  if (!hasChanges(body)) return `CHANGELOG.md lists nothing under "${UNRELEASED}". Add what this release changes.`;
-  return null;
+  return unreleased(markdown) ? null : `CHANGELOG.md has no "${UNRELEASED}" section.`;
 }
+
+/** What a release says when nothing was written under Unreleased: a release can be cut any time. */
+export const NO_NOTES = '### Changed\n\n- Maintenance and fixes.';
+
+/** The changelog with a default note under an empty Unreleased, so every release says something. */
+const withNotes = (markdown) =>
+  hasChanges(unreleased(markdown)) ? markdown : markdown.replace(UNRELEASED, `${UNRELEASED}\n\n${NO_NOTES}`);
 
 /** The heading a released version gets: its number linked to its GitHub release, and the date. */
 export const releaseHeading = (version, date) => `## [${version}](${RELEASES}/v${version}) · ${date}`;
@@ -53,7 +58,7 @@ export const releaseHeading = (version, date) => `## [${version}](${RELEASES}/v$
 export function stamp(markdown, version, date) {
   const why = refusal(markdown);
   if (why) throw new Error(why);
-  return markdown.replace(UNRELEASED, `${UNRELEASED}\n\n${releaseHeading(version, date)}`);
+  return withNotes(markdown).replace(UNRELEASED, `${UNRELEASED}\n\n${releaseHeading(version, date)}`);
 }
 
 /** One version's notes, as the tag and the GitHub release carry them, with a link back to all of them. */

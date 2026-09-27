@@ -63,13 +63,6 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || gh release view "$TA
   exit 1
 fi
 
-# A release says what it changes: its notes are what is listed under Unreleased in
-# CHANGELOG.md. Checked here, before the desktop build, so an empty one costs nothing.
-if ! node scripts/changelog.mjs check; then
-  log_err "Write what this release changes under ## Unreleased in CHANGELOG.md, then release again."
-  exit 1
-fi
-
 log_info "Latest tag: ${LATEST:-none}"
 log_info "New tag:    $TAG"
 log_info "Version:    $VERSION"

@@ -24,8 +24,7 @@ Intro.
 `;
 
 describe('changelog', () => {
-  it('refuses a release with nothing listed under Unreleased, or no Unreleased at all', () => {
-    assert.match(refusal('# Changelog\n\n## Unreleased\n\n### Fixed\n'), /lists nothing under/);
+  it('refuses only a changelog with no Unreleased section', () => {
     assert.match(refusal('# Changelog\n'), /has no "## Unreleased" section/);
     assert.equal(refusal(WITH_CHANGES), null);
   });
@@ -36,11 +35,12 @@ describe('changelog', () => {
       out,
       /## Unreleased\n\n## \[1\.0\.2\]\(https:\/\/github\.com\/OyadotAI\/oya-browser\/releases\/tag\/v1\.0\.2\) · 2026-02-02\n\n### Fixed\n\n- A fix\./,
     );
-    assert.equal(refusal(out) !== null, true, 'the new Unreleased is empty until the next change');
+    assert.equal(refusal(out), null, 'the new, empty Unreleased can be released again at once');
   });
 
-  it('refuses to stamp a changelog with nothing to release', () => {
-    assert.throws(() => stamp('## Unreleased\n', '1.0.2', '2026-02-02'), /lists nothing/);
+  it('stamps a release with nothing under Unreleased as maintenance, so a release can be cut any time', () => {
+    const out = stamp('# Changelog\n\n## Unreleased\n', '1.0.2', '2026-02-02');
+    assert.match(notesFor(out, '1.0.2'), /^### Changed\n\n- Maintenance and fixes\./);
   });
 
   it('gives one version its own notes, ending with a link to all of them', () => {
