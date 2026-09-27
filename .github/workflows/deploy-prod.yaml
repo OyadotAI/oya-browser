@@ -612,3 +612,92 @@ jobs:
           echo "$out" | grep -q 'duplicate version' || exit $code
           echo "::notice::io.github.OyadotAI/oya-browser ${VERSION} was already published"
         fi
+
+  # Tells Slack how the release went, whatever happened: deployed, which stage
+  # failed, or cancelled, with the files changed since the previous tag. Copied
+  # from A2ABase's pipeline. Posts to SLACK_DEPLOY_WEBHOOK_URL, else the ops
+  # events channel.
+  notify:
+    name: Slack notify (prod)
+    needs: [ci, build-linux, build-windows, build-mac, build-image, build-browser, register-snapshot, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # Full history and tags, to diff the previous tag against this one.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute diff
+        id: diff
+        run: |
+          # The mrkdwn block is composed here so its newlines are real: a `\n` inside
+          # format() in the payload reaches Slack as a literal backslash-n.
+          CURRENT='${{ github.ref_name }}'
+          PREV=$(git describe --tags --abbrev=0 "${CURRENT}^" 2>/dev/null || echo "")
+          if [[ -z "$PREV" ]]; then
+            STAT="(no previous tag: first release)"
+            PREV="${CURRENT}"
+          else
+            STAT=$(git diff --stat "$PREV..$CURRENT" 2>/dev/null || echo "(stat unavailable)")
+            # Headroom under Slack's 3000-character block limit.
+            STAT="${STAT:0:2500}"
+          fi
+          {
+            echo "files_block<<DIFF_BLOCK_EOF"
+            printf '*Files changed:*\n```\n%s\n```\n' "$STAT"
+            echo "DIFF_BLOCK_EOF"
+            echo "prev_tag=$PREV"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compute outcome
+        id: outcome
+        run: |
+          if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "emoji=🎉" >> "$GITHUB_OUTPUT"; echo "status=Release deployed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.ci.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Tests failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.build-mac.result }}" == "failure" || "${{ needs.build-windows.result }}" == "failure" || "${{ needs.build-linux.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Desktop build failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.build-image.result }}" == "failure" || "${{ needs.build-browser.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Image build failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.register-snapshot.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Snapshot registration failed" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Deploy failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "emoji=⚪" >> "$GITHUB_OUTPUT"; echo "status=Cancelled" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@37ebaef184d7626c5f204ab8d3baff4262dd30f0 # v1.27.0
+        with:
+          payload: |
+            {
+              "text": "${{ steps.outcome.outputs.emoji }} prod (oyabrowser.com): Release ${{ github.ref_name }}, ${{ steps.outcome.outputs.status }} (${{ github.actor }})",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ steps.outcome.outputs.emoji }} *prod (oyabrowser.com)*: Release `${{ github.ref_name }}` (since `${{ steps.diff.outputs.prev_tag }}`), ${{ steps.outcome.outputs.status }}\nTagged by *${{ github.actor }}*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": { "type": "mrkdwn", "text": ${{ toJSON(steps.diff.outputs.files_block) }} }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "<${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}|View release> · <${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.diff.outputs.prev_tag }}...${{ github.ref_name }}|View full diff> · <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|Workflow run>"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL || secrets.SLACK_OPS_WEBHOOK_EVENTS }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
