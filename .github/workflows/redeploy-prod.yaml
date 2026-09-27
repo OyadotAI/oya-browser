@@ -4,14 +4,15 @@ name: Redeploy Prod (no new release)
 # with cluster credentials, and neither is what you want when prod is already
 # broken. This re-applies the secrets and restarts the server on demand.
 #
-# The snapshot input wins over the DAYTONA_SNAPSHOT secret, so a bad snapshot
-# can be reverted from the Actions tab without touching the repo.
+# The snapshot input wins over what prod runs now, so a bad snapshot can be
+# reverted from the Actions tab without touching the repo. Left blank, prod keeps
+# its current snapshot.
 
 on:
   workflow_dispatch:
     inputs:
       snapshot:
-        description: 'DAYTONA_SNAPSHOT to deploy (blank = use the repo secret)'
+        description: 'DAYTONA_SNAPSHOT to deploy (blank = keep the one prod runs now)'
         required: false
         type: string
 
@@ -46,7 +47,7 @@ jobs:
       env:
         SNAPSHOT_INPUT: ${{ inputs.snapshot }}
         DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-        DAYTONA_SNAPSHOT: ${{ secrets.DAYTONA_SNAPSHOT }}
+        DAYTONA_SNAPSHOT_FALLBACK: ${{ secrets.DAYTONA_SNAPSHOT }}
         DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
         DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
         API_KEYS: ${{ secrets.API_KEYS }}
@@ -59,13 +60,16 @@ jobs:
         TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
         OYA_PROFILE_SECRET: ${{ secrets.OYA_PROFILE_SECRET }}
       run: |
-        SNAPSHOT="${SNAPSHOT_INPUT:-$DAYTONA_SNAPSHOT}"
+        # Blank input keeps what prod runs now; the repository secret is the last resort.
+        RUNNING=$(kubectl get secret app-secrets -n ${{ env.NAMESPACE }} \
+          -o jsonpath='{.data.DAYTONA_SNAPSHOT}' 2>/dev/null | base64 -d || true)
+        SNAPSHOT="${SNAPSHOT_INPUT:-${RUNNING:-$DAYTONA_SNAPSHOT_FALLBACK}}"
         : "${DAYTONA_API_KEY:?Missing DAYTONA_API_KEY deployment secret}"
         # Without it the server generates a new key per restart and every stored project becomes unreadable.
         : "${OYA_PROFILE_SECRET:?Missing OYA_PROFILE_SECRET deployment secret}"
         # Without it the server refuses to start: Supabase sign-in needs OYA_STORAGE=postgres and DATABASE_URL.
         : "${DATABASE_URL:?Missing DATABASE_URL deployment secret (the Supabase project Postgres connection string)}"
-        : "${SNAPSHOT:?No snapshot given and DAYTONA_SNAPSHOT secret is empty}"
+        : "${SNAPSHOT:?No snapshot given, none deployed, and the DAYTONA_SNAPSHOT secret is empty}"
         echo "Deploying with DAYTONA_SNAPSHOT=${SNAPSHOT}"
         kubectl create secret generic app-secrets \
           --from-literal=API_KEYS="${API_KEYS}" \

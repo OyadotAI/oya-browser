@@ -153,7 +153,8 @@ jobs:
         TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
         OYA_PROFILE_SECRET: ${{ secrets.OYA_PROFILE_SECRET }}
         DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-        DAYTONA_SNAPSHOT: ${{ secrets.DAYTONA_SNAPSHOT }}
+        # Last resort only: dev runs the snapshot prod runs, read from the prod namespace below.
+        DAYTONA_SNAPSHOT_FALLBACK: ${{ secrets.DAYTONA_SNAPSHOT }}
         DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
         DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
         # Slack alerts. Optional: with no app configured the console still offers
@@ -175,7 +176,12 @@ jobs:
         : "${OYA_PROFILE_SECRET:?Missing OYA_PROFILE_SECRET deployment secret}"
         # Without it the server refuses to start: Supabase sign-in needs OYA_STORAGE=postgres and DATABASE_URL.
         : "${DATABASE_URL:?Missing DATABASE_URL deployment secret (the Supabase project Postgres connection string)}"
-        : "${DAYTONA_SNAPSHOT:?Missing DAYTONA_SNAPSHOT deployment secret}"
+        # The latest release's snapshot is the one prod deployed; the prod workflow keeps it
+        # current, so nothing has to copy it into a repository secret after each release.
+        DAYTONA_SNAPSHOT=$(kubectl get secret app-secrets -n oya-browser \
+          -o jsonpath='{.data.DAYTONA_SNAPSHOT}' 2>/dev/null | base64 -d || true)
+        DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT:-$DAYTONA_SNAPSHOT_FALLBACK}"
+        : "${DAYTONA_SNAPSHOT:?No snapshot deployed in prod and no DAYTONA_SNAPSHOT secret}"
         kubectl create secret generic app-secrets \
           --from-literal=API_KEYS="${API_KEYS}" \
           --from-literal=SUPABASE_URL="${SUPABASE_URL}" \
