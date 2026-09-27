@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { Code, Pencil, Play, Trash2 } from 'lucide-react';
+import { Code, Download, Pencil, Play, Trash2 } from 'lucide-react';
 import { ago } from '@/lib/api-client';
 import { DRAFT_SUFFIX } from './constants';
 import type { PlaybookBody, PlaybookInfo } from './types';
@@ -21,6 +21,8 @@ export interface RowHandlers {
   onRemove: (name: string) => void;
   /** Makes the healed draft the playbook's steps. */
   onPromote: (name: string) => void;
+  /** Downloads the playbook as a file another environment can import. */
+  onExport: (name: string) => void;
 }
 
 /** Props for a row. */
@@ -93,7 +95,7 @@ function DraftCell({ p, now, on }: RowProps) {
   );
 }
 
-/** Code, rename, run and delete. */
+/** Code, export, rename, run and delete. */
 function ActionsCell({ p, on }: Omit<RowProps, 'now'>) {
   return (
     <td className="px-2 py-3">
@@ -105,6 +107,14 @@ function ActionsCell({ p, on }: Omit<RowProps, 'now'>) {
           onClick={() => on.onCode(p)}
         >
           <Code className="h-4 w-4" />
+        </button>
+        <button
+          className="btn-icon"
+          title="Export to move it to another environment"
+          aria-label={`Export ${p.name}`}
+          onClick={() => on.onExport(p.name)}
+        >
+          <Download className="h-4 w-4" />
         </button>
         <button className="btn-icon" title="Rename" aria-label={`Rename ${p.name}`} onClick={() => on.onRename(p)}>
           <Pencil className="h-4 w-4" />

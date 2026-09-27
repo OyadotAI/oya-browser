@@ -13,6 +13,7 @@ import { track } from '../telemetry/index.ts';
 import * as runs from './runs.ts';
 import { saveRefusal, recordedRun, playable, runnable } from './requests.ts';
 import { runJob } from './jobs.ts';
+import { quietCheckpointFor } from './checkpoint.ts';
 import { getKey, longJson, requireBrowser } from '../../app/http.ts';
 
 /** Playbook and run routes, mounted on the API router. */
@@ -46,8 +47,9 @@ router.post(
     const variables = req.body?.variables ?? {};
     const { pb, status, error } = playable(getKey(req), name, variables);
     if (error) return res.status(status).json({ error });
-    const autoHeal = req.body?.autoHeal !== false;
-    await longJson(res, () => playbooks.play(getKey(req), browserId, pb, variables, { autoHeal }));
+    // The same walls a chat clears itself: a replay signs in with the profile's saved login and factor.
+    const options = { autoHeal: req.body?.autoHeal !== false, checkpoint: quietCheckpointFor(getKey(req), browserId) };
+    await longJson(res, () => playbooks.play(getKey(req), browserId, pb, variables, options));
   },
 );
 
@@ -60,6 +62,25 @@ router.get('/playbooks', authMiddleware, (req, res) => {
 router.delete('/playbooks/:name', authMiddleware, async (req, res) => {
   await playbooks.remove(getKey(req), req.params.name);
   res.json({ ok: true });
+});
+
+/** GET /playbooks/:name/export, the playbook as one JSON document another environment can import. */
+router.get('/playbooks/:name/export', authMiddleware, (req, res) => {
+  res.json(playbooks.exportPlaybook(getKey(req), req.params.name));
+});
+
+/** POST /playbooks/import, save an exported playbook here: `{ playbook: <export>, name?, overwrite? }`. */
+router.post('/playbooks/import', authMiddleware, async (req, res) => {
+  const { playbook, name, overwrite } = req.body || {};
+  res.json(await playbooks.importPlaybook(getKey(req), playbook, { name, overwrite: overwrite === true }));
+});
+
+/** POST /playbooks/answer, a free-text field written by the key's model: `{ question, task?, values? }` → `{ answer }`. */
+router.post('/playbooks/answer', authMiddleware, enforce('chat'), async (req, res) => {
+  const { question, task, values } = req.body || {};
+  if (typeof question !== 'string' || !question.trim())
+    return res.status(Status.BAD_REQUEST).json({ error: 'question is required' });
+  res.json({ answer: await playbooks.answerField(getKey(req), question, { task, values }) });
 });
 
 /** PATCH /playbooks/:name, rename a playbook; its healed draft moves with it. */

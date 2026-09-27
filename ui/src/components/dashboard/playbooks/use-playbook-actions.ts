@@ -3,9 +3,11 @@
  * playbook or its draft, and rename one. Each reports by toast and refreshes.
  */
 import { useState } from 'react';
-import { errorMessage } from '@/lib/api-client';
+import { ApiError, errorMessage } from '@/lib/api-client';
+import { Status } from '@/lib/http-status';
 import { useToast } from '../toast';
-import { deletePlaybook, promotePlaybook, renamePlaybook } from './api';
+import { deletePlaybook, exportPlaybook, importPlaybook, promotePlaybook, renamePlaybook } from './api';
+import { downloadExport, readExport } from './transfer';
 import { DRAFT_SUFFIX } from './constants';
 import type { PlaybookInfo } from './types';
 
@@ -72,6 +74,32 @@ function rename(ctx: ActionContext, from: string, name: string, done: () => void
   });
 }
 
+/** Downloads a playbook's export. */
+async function exportOne(ctx: ActionContext, name: string) {
+  try {
+    downloadExport(name, await exportPlaybook(ctx.apiKey, name));
+  } catch (err) {
+    ctx.toast(errorMessage(err), 'error');
+  }
+}
+
+/** What an import that clashes with a name here should tell the person to do. */
+const CLASH = 'A playbook with that name already exists here. Rename or delete it, then import again.';
+
+/** Imports a chosen export file and refreshes; a name already taken is said plainly. */
+function importFile(ctx: ActionContext, file: File) {
+  return withBusy(ctx, async () => {
+    const saved = await importPlaybook(ctx.apiKey, await readExport(file)).catch(explainClash);
+    ctx.toast(`Imported ${saved.name}`, 'success');
+    ctx.refresh();
+  });
+}
+
+/** A clash on the name, said as what to do about it; any other failure as it came. */
+function explainClash(err: unknown): never {
+  throw err instanceof ApiError && err.status === Status.CONFLICT ? new Error(CLASH) : err;
+}
+
 /** Which playbook (or `name:draft`) is waiting for delete confirmation, and the delete. */
 function useRemoval(ctx: ActionContext) {
   const [removing, setRemoving] = useState<string | null>(null);
@@ -87,12 +115,13 @@ function useRenaming(ctx: ActionContext) {
   return { renaming, setRenaming, applyRename };
 }
 
-/** Promote, delete and rename, with the dialogs' state and a shared busy flag. */
+/** Promote, delete, rename, export and import, with the dialogs' state and a shared busy flag. */
 export function usePlaybookActions(apiKey: string, refresh: () => void) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const ctx: ActionContext = { apiKey, refresh, toast, setBusy };
   const removal = useRemoval(ctx);
   const renaming = useRenaming(ctx);
-  return { busy, promote: (name: string) => promote(ctx, name), ...removal, ...renaming };
+  const transfer = { exportOne: (name: string) => exportOne(ctx, name), importFile: (f: File) => importFile(ctx, f) };
+  return { busy, promote: (name: string) => promote(ctx, name), ...transfer, ...removal, ...renaming };
 }

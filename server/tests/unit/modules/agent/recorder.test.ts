@@ -53,6 +53,61 @@ describe('recorder', () => {
     assert.deepEqual(run.steps, []);
   });
 
+  it('drops a tab opened only to be read and closed again', async () => {
+    const run = await started();
+    await recorder.recordStep(BROWSER, 'open_tab', { url: 'https://a.test/help' }, {});
+    await recorder.recordStep(BROWSER, 'close_tab', {}, {});
+    assert.deepEqual(
+      run.steps.map((s) => s.action),
+      ['navigate'],
+    );
+  });
+
+  it('keeps a tab the run acted in before closing it', async () => {
+    const run = await started();
+    await recorder.recordStep(BROWSER, 'open_tab', { url: 'https://a.test/sso' }, {});
+    await recorder.recordStep(BROWSER, 'press_key', { key: 'Enter' }, {});
+    await recorder.recordStep(BROWSER, 'close_tab', {}, {});
+    assert.deepEqual(
+      run.steps.map((s) => s.action),
+      ['navigate', 'open_tab', 'press_key', 'close_tab'],
+    );
+  });
+
+  it('keeps only the attempt that worked when the agent starts over', async () => {
+    const run = await started();
+    await recorder.recordStep(BROWSER, 'press_key', { key: 'Tab' }, {});
+    await recorder.restartRun(BROWSER);
+    await recorder.recordStep(BROWSER, 'press_key', { key: 'Enter' }, {});
+    assert.deepEqual(
+      run.steps.map((s) => s.key ?? s.url),
+      ['https://a.test/start', 'Enter'],
+    );
+  });
+
+  it('starts the new attempt from the page the agent is on, unless it navigates first', async () => {
+    const run = await started('https://a.test/form');
+    await recorder.recordStep(BROWSER, 'press_key', { key: 'Tab' }, {});
+    await recorder.restartRun(BROWSER);
+    await recorder.recordStep(BROWSER, 'navigate', { url: 'https://a.test/other' }, {});
+    assert.deepEqual(
+      run.steps.map((s) => s.url),
+      ['https://a.test/other'],
+    );
+  });
+
+  it('keeps what an earlier message of the chat did when a later one starts over', async () => {
+    const run = await started();
+    await recorder.recordStep(BROWSER, 'press_key', { key: 'Tab' }, {});
+    recorder.markMessage(BROWSER);
+    await recorder.recordStep(BROWSER, 'press_key', { key: 'Escape' }, {});
+    await recorder.restartRun(BROWSER);
+    assert.deepEqual(
+      run.steps.map((s) => s.key ?? s.action),
+      ['navigate', 'Tab', 'navigate'],
+    );
+  });
+
   it('has no last run for a browser that never ran', () => {
     assert.equal(recorder.lastRun('b-never'), null);
   });
@@ -127,6 +182,43 @@ describe('recorder', () => {
     await recorder.recordStep(BROWSER, 'click', { element_id: 3 }, {});
     assert.equal(run.steps.at(-1).el.text, 'Next');
     assert.equal(run.steps.at(-1).el.ariaLabel, 'Next page');
+  });
+
+  it('keeps a radio’s label when the browser reads no text off the input', async () => {
+    const run = await started();
+    const radio = { id: 3, tag: 'input', type: 'radio', name: 'duration', text: 'More than 12 weeks', visible: true };
+    recorder.setElements(BROWSER, [radio]);
+    recorder.rememberHandle(BROWSER, 3, {
+      tag: 'input',
+      name: 'duration',
+      text: '',
+      path: 'form > label:nth-of-type(3) > input',
+    });
+    await recorder.recordStep(BROWSER, 'click', { element_id: 3 }, {}, radio);
+    assert.equal(run.steps.at(-1).el.text, 'More than 12 weeks');
+  });
+
+  it('does not name a submit input after the form around it', async () => {
+    const run = await started();
+    const next = {
+      id: 4,
+      tag: 'input',
+      type: 'button',
+      text: 'Has this procedure been performed? No Yes',
+      visible: true,
+    };
+    recorder.setElements(BROWSER, [next]);
+    recorder.rememberHandle(BROWSER, 4, { tag: 'input', text: '', path: 'form > p > input' });
+    await recorder.recordStep(BROWSER, 'click', { element_id: 4 }, {}, next);
+    assert.equal(run.steps.at(-1).el.text, '');
+  });
+
+  it('still lets the browser say a button has no text', async () => {
+    const run = await started();
+    recorder.setElements(BROWSER, [{ id: 3, tag: 'button', text: 'stale', visible: true }]);
+    recorder.rememberHandle(BROWSER, 3, { tag: 'button', text: '', ariaLabel: 'Close' });
+    await recorder.recordStep(BROWSER, 'click', { element_id: 3 }, {});
+    assert.equal(run.steps.at(-1).el.text, '');
   });
 
   it('records a step without a handle once the handle an earlier action left under its id is forgotten', async () => {

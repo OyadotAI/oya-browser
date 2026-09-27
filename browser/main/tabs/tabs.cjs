@@ -60,6 +60,18 @@ function reportFirstLoad(e) {
   console.error('[tab] Could not open page:', e.message);
 }
 
+/**
+ * A tab's page settings. Background throttling is off so a tab keeps drawing while
+ * the window is hidden or covered, and an agent's click is not left waiting for a
+ * frame (see KEEP_RENDERING_SWITCHES in main.js).
+ */
+const tabPreferences = (partition) => ({
+  contextIsolation: true,
+  sandbox: true,
+  partition,
+  backgroundThrottling: false,
+});
+
 /** The open tabs and which one is showing. */
 class TabManager {
   /** `ctx` is the main-process context (see main.js). */
@@ -102,9 +114,7 @@ class TabManager {
   /** A new view in the persona's partition, on the list. */
   addTab(url) {
     const partition = this.ctx.persona.partitionName();
-    const view = new this.ctx.electron.BrowserView({
-      webPreferences: { contextIsolation: true, sandbox: true, partition },
-    });
+    const view = new this.ctx.electron.BrowserView({ webPreferences: tabPreferences(partition) });
     // A page that sets no background of its own paints nothing, and the window's colour
     // shows through, in the dark theme that is dark text on a dark canvas. White is what
     // every other browser puts under a page; a page with its own background still wins.

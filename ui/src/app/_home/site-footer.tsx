@@ -3,7 +3,7 @@
  */
 import Link from 'next/link';
 import { OyaWordmark } from '@/components/oya-logo';
-import { repository } from './content';
+import { discord, foundersCall, repository } from './content';
 import styles from '../page.module.css';
 
 /** Wordmark and footer links. */
@@ -15,7 +15,10 @@ export function SiteFooter() {
         <a href={`${repository}/tree/main/packages/sdk`}>SDK</a>
         <Link href="/docs#download">Desktop</Link>
         <a href={`${repository}/blob/main/docs/self-hosting.md`}>Self-host</a>
+        <Link href="/release-notes">Release notes</Link>
         <a href={repository}>GitHub</a>
+        <a href={discord}>Discord</a>
+        <a href={foundersCall}>Talk to the founders</a>
       </nav>
     </footer>
   );

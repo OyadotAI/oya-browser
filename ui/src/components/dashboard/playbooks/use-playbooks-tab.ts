@@ -28,8 +28,8 @@ type Actions = ReturnType<typeof usePlaybookActions>;
 
 /** What each row button opens or does. */
 function rowHandlers(actions: Actions, dialogs: ReturnType<typeof useOpenDialogs>): RowHandlers {
-  const { setRenaming: onRename, setRemoving: onRemove, promote: onPromote } = actions;
-  return { onCode: dialogs.setCode, onRun: dialogs.setRunning, onRename, onRemove, onPromote };
+  const { setRenaming: onRename, setRemoving: onRemove, promote: onPromote, exportOne: onExport } = actions;
+  return { onCode: dialogs.setCode, onRun: dialogs.setRunning, onRename, onRemove, onPromote, onExport };
 }
 
 /** The tab's state. */

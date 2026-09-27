@@ -3,7 +3,7 @@
  */
 import Link from 'next/link';
 import { OyaWordmark } from '@/components/oya-logo';
-import { repository } from './content';
+import { discord, repository } from './content';
 import styles from '../page.module.css';
 
 /** Wordmark and main navigation. */
@@ -17,6 +17,9 @@ export function SiteHeader() {
         </Link>
         <a href={repository} data-track="cta_clicked" data-track-label="header_github">
           GitHub
+        </a>
+        <a href={discord} className={styles.roomy} data-track="cta_clicked" data-track-label="header_discord">
+          Discord
         </a>
         <Link href="/dashboard" className={styles.console} data-track="cta_clicked" data-track-label="header_console">
           Open console

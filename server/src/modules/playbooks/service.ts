@@ -17,6 +17,8 @@ export { sanitizeSteps, validateWorkflow } from './sanitize.ts';
 export { variablesOf, missingVariables, templateValues } from './variables.ts';
 export { renderPlaywright } from './playwright.ts';
 export { create, promote, rename, list, remove } from './catalog.ts';
+export { exportPlaybook, importPlaybook, EXPORT_FORMAT, EXPORT_VERSION } from './transfer.ts';
+export { answerField } from './answer.ts';
 import { play as replay } from './replay.ts';
 import { track } from '../telemetry/index.ts';
 

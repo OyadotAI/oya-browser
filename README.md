@@ -14,6 +14,12 @@
   <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/npm/v/@oya-ai/browser?color=39ed35&label=@oya-ai/browser&logo=npm" alt="npm: @oya-ai/browser"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable_Use_%2B_MIT_SDK-157a13" alt="License"></a>
   <a href="https://oyabrowser.com"><img src="https://img.shields.io/badge/hosted-oyabrowser.com-141410?logo=googlechrome&logoColor=39ed35" alt="Hosted"></a>
+  <a href="https://discord.gg/wqSeXJPygn"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/wqSeXJPygn">Join the Discord</a> ·
+  <a href="https://calendly.com/d/dvrm-r65-kkx/oya-founder-call">Talk to the founders</a>
 </p>
 
 ## Start
@@ -98,8 +104,22 @@ await replay.play("new-request", { name: "Sam Example", user, pass });   // no m
 
 Nine of ten public sites replay every recorded step with no model and no repair.
 [The tenth is named, with its error](docs/replay-benchmark.md). When a page really has changed,
-the agent fixes it and leaves you a draft to approve. Every playbook is also a Playwright module
-you can read and keep.
+the agent finishes the run and its fix replaces the broken steps, so the next replay runs clean.
+A replay that meets a login signs in with the profile's saved credentials and carries on.
+
+Values you gave in the prompt become variables. A free-text field the agent wrote itself, a
+comment or the answer to a question, is written fresh by your model on every replay instead of
+repeating the first run's words. Every playbook is also a Playwright module you can read and keep:
+
+```js
+export default async function run(page, vars = {}, oya) {
+  await page.getByLabel("Customer name:").first().fill(`${vars["custname"]}`);
+  await page.getByLabel("Delivery instructions:").first().fill(vars["comments"] ?? (await oya.llm.answer("Delivery instructions:", vars)));
+}
+```
+
+Move one to another environment with `oya.playbooks.export(name)` and `oya.playbooks.import(doc)`,
+`oya playbooks export|import` on the command line, or Export and Import in the dashboard.
 
 ## Sign in once
 

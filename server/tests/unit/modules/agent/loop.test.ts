@@ -198,6 +198,22 @@ describe('agentLoop', () => {
     );
   });
 
+  it('records a click that opened a confirm dialog, since the click happened', async () => {
+    answer = (action) =>
+      action === 'click'
+        ? {
+            ok: false,
+            error: 'A JavaScript confirm dialog is open: "Sure?". The page is blocked until you call handle_dialog.',
+          }
+        : { ok: true };
+    stubLlm([toolReply(['click', { element_id: 2 }]), textReply('DONE')]);
+    await agentLoop(ctx(), start());
+    assert.deepEqual(
+      recorder.lastRun(BROWSER).steps.map((s) => s.action),
+      ['click'],
+    );
+  });
+
   it('runs the checkpoint after page-changing tools only', async () => {
     const checkpoint = mock.fn();
     stubLlm([

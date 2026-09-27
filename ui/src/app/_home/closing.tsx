@@ -1,8 +1,8 @@
 /**
- * The last word on the page: what to do next, and where the source is.
+ * The last word on the page: what to do next, where the source is, and a call with the founders.
  */
 import Link from 'next/link';
-import { repository } from './content';
+import { foundersCall, repository } from './content';
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
 import styles from '../page.module.css';
 
@@ -25,6 +25,14 @@ export function Closing() {
         </Link>
         <a href={repository} className={styles.secondary} data-track="cta_clicked" data-track-label="closing_github">
           Read the source <ArrowRight size={15} aria-hidden="true" />
+        </a>
+        <a
+          href={foundersCall}
+          className={styles.secondary}
+          data-track="cta_clicked"
+          data-track-label="closing_founders"
+        >
+          Talk to the founders <ArrowUpRight size={15} aria-hidden="true" />
         </a>
       </div>
     </section>

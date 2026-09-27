@@ -40,6 +40,11 @@ Personas and cookies
   oya cookies copy <from> <to>               One persona's logins into another
   oya cookies clear <persona>                Delete a persona's logins
 
+Playbooks
+  oya playbooks                              List saved playbooks
+  oya playbooks export <name>                One playbook as JSON; [--out <file>]
+  oya playbooks import <file>                Save an export here; [--name <name>] [--replace]
+
 Account
   oya config [key=value ...]                 Show or change this key's settings
   oya usage                                  What this key has spent

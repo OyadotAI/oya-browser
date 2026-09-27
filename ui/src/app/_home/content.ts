@@ -7,6 +7,12 @@
 /** The public repository. */
 export const repository = 'https://github.com/OyadotAI/oya-browser';
 
+/** The community Discord. */
+export const discord = 'https://discord.gg/wqSeXJPygn';
+
+/** A call with the founders, booked on Calendly. */
+export const foundersCall = 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call';
+
 /** The install line above the hero snippet. */
 export const installCommand = 'npm i @oya-ai/browser';
 

@@ -22,3 +22,6 @@ export const AUTO_ACCEPT: Set<string> = dialogText.AUTO_ACCEPT;
 
 /** The note the model reads about a dialog, either answered for it or still waiting on handle_dialog. */
 export const describe: (dialog?: object, handled?: boolean) => string = dialogText.describe;
+
+/** How a note about a dialog still open ends; an action answering with it opened the dialog, so it ran. */
+export const DIALOG_BLOCKED: string = dialogText.BLOCKED;

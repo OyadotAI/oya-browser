@@ -1,16 +1,17 @@
 /**
  * Healing a broken replay: the agent finishes the task from the failed step, and
- * its steps are saved as the draft `<name>:draft` for review.
+ * its steps replace the broken ones in the playbook, so the next replay runs clean.
  */
 import { runChat, lastRun } from '../agent/chat.ts';
 import * as keyConfig from '../config/service.ts';
 import { challengesFor } from './checkpoint.ts';
+import { templateValues } from './variables.ts';
 
 /** The entries of `values` whose key passes `keep`. */
 const pick = (values, keep) => Object.fromEntries(Object.entries(values).filter(([k]) => keep(k)));
 
 /**
- * The agent finishes the task from the failed step and its steps are saved as the draft `<name>:draft`.
+ * The agent finishes the task from the failed step and its steps replace the broken ones in the playbook.
  * If it cannot and a person is reachable, they finish it in the live view instead.
  */
 export async function heal(apiKey, browserId, pb, i, err, values, hooks) {
@@ -18,7 +19,7 @@ export async function heal(apiKey, browserId, pb, i, err, values, hooks) {
   const task = healTask(pb, i, total, err);
   const outcome = await attempt(apiKey, browserId, pb, task, values, hooks);
   if (outcome.failed) return handOver(outcome.healErr, hooks, i, total);
-  return saveDraft(apiKey, browserId, pb, i, outcome.result);
+  return saveHealed(apiKey, browserId, pb, i, outcome.result);
 }
 
 /** The agent's result, or the error it failed with. */
@@ -65,12 +66,28 @@ async function handOver(healErr, hooks, i, total) {
   return { steps: i, total, fellBack: true, healed: false, text: 'Finished by a person.' };
 }
 
-/** Saves the recorded steps before `i` plus the agent's as the draft. */
-async function saveDraft(apiKey, browserId, pb, i, result) {
-  const healed = (lastRun(browserId)?.steps || []).filter((s) => !s.start);
-  const steps = [...pb.steps.slice(0, i), ...healed];
-  const draft = { ...pb, steps, healedFrom: i, healedAt: new Date().toISOString() };
-  await keyConfig.savePlaybook(apiKey, `${pb.name}:draft`, draft);
-  const total = pb.steps.length;
-  return { steps: i, total, fellBack: true, healed: true, draft: `${pb.name}:draft`, text: result.text };
+/** The steps the healing agent recorded, without the page it started on. */
+const healedSteps = (browserId) => (lastRun(browserId)?.steps || []).filter((s) => !s.start);
+
+/** The recorded steps before `i` plus the agent's, with variables for what it typed. */
+function healedPlaybook(pb, i, healed) {
+  const fixed = { ...pb, steps: [...pb.steps.slice(0, i), ...healed], defaults: { ...pb.defaults } };
+  return { ...templateValues(fixed), healedFrom: i, healedAt: new Date().toISOString() };
+}
+
+/**
+ * Makes the recorded steps before `i` plus the agent's the playbook. Kept as a draft,
+ * the playbook broke and healed at the same step on every replay until someone
+ * promoted it. The agent's steps get the same variables a recording does, so
+ * whatever it typed literally is not baked in. Any older draft is superseded.
+ */
+async function saveHealed(apiKey, browserId, pb, i, result) {
+  const healed = healedSteps(browserId);
+  // An agent that found the task already done (a login it was still signed in to)
+  // recorded nothing to replay; saving that cut the playbook off at the broken step.
+  if (healed.some((s) => s.action !== 'navigate')) {
+    await keyConfig.savePlaybook(apiKey, pb.name, healedPlaybook(pb, i, healed));
+    await keyConfig.deletePlaybook(apiKey, `${pb.name}:draft`);
+  }
+  return { steps: i, total: pb.steps.length, fellBack: true, healed: true, text: result.text };
 }

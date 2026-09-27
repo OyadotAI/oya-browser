@@ -16,16 +16,18 @@ import { renderPlaywright } from './playwright.ts';
 const NAME = /^[\w-]{1,64}$/;
 
 /** What callers see of a playbook: its inputs and its Playwright export. */
-const describe = (pb) => ({
+export const describe = (pb) => ({
   name: pb.name,
   variables: namesOf(pb),
   defaults: pb.defaults || {},
   steps: pb.steps.length,
+  // The free-text fields the model writes fresh on each run, by variable and question.
+  answers: pb.steps.filter((step) => step.answer).map(({ answer }) => ({ key: answer.key, question: answer.question })),
   code: renderPlaywright(pb),
 });
 
 /** Refuses a name that is not 1-64 letters, digits, _ or -. */
-function checkName(name) {
+export function checkName(name) {
   if (typeof name !== 'string' || !NAME.test(name))
     throw new HttpError(Status.BAD_REQUEST, 'Playbook name must be 1-64 letters, digits, _ or -');
 }

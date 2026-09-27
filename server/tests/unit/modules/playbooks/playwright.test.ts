@@ -176,6 +176,29 @@ describe('renderPlaywright', () => {
       assert.match(lineFor({ action: 'click', el: { testId: 'go' }, unaimable: true }), /^throw new Error/);
     });
 
+    it('finds a select or checkbox by its label, and other elements by their words', () => {
+      assert.equal(
+        lineFor({ action: 'select_option', option: 'Two', el: { tag: 'select', text: 'Dropdown' } }),
+        'await page.getByLabel("Dropdown").first().selectOption({ label: "Two" });',
+      );
+      assert.equal(click({ tag: 'button', text: 'Go' }), 'page.getByText("Go", { exact: true })');
+    });
+
+    it('fills an answer step from vars, or from the model through oya.llm.answer', () => {
+      const code = renderPlaywright({
+        name: 'x',
+        steps: [{ action: 'type', el: { domId: 'notes' }, answer: { key: 'notes', question: 'Notes', example: 'e' } }],
+        defaults: {},
+      });
+      assert.match(code, /export default async function run\(page, vars = \{\}, oya\)/);
+      assert.match(code, /\.fill\(vars\["notes"\] \?\? \(await oya\.llm\.answer\("Notes", vars\)\)\)/);
+      assert.match(code, /oya\.llm\.answer\(question, vars\) writes a free-text field/);
+    });
+
+    it('finds an option carrying the value among other words by the value alone', () => {
+      assert.equal(click({ tag: 'li', text: '{{cpt}} - CT head' }), 'page.getByText(`${vars["cpt"]}`)');
+    });
+
     it('finds a data-driven click by its filled-in text before any id', () => {
       assert.equal(click({ testId: 't', text: '{{plan}}' }), 'page.getByText(`${vars["plan"]}`, { exact: true })');
     });

@@ -12,10 +12,10 @@ import { HttpError } from '../../platform/errors.ts';
 import { LlmError } from '../../platform/llm/index.ts';
 import { Status } from '../../platform/http-status.ts';
 import { redact, isFileValue } from './placeholders.ts';
-import { startRun } from './recorder.ts';
+import { startRun, lastRun, markMessage } from './recorder.ts';
 import { forgetPage } from './changes.ts';
 import { AGENT_VERIFY } from './constants.ts';
-import { systemPrompt } from './prompt.ts';
+import { systemPrompt, FOLLOW_UP_NOTE } from './prompt.ts';
 import { agentLoop } from './loop.ts';
 
 export { FILTERS, PLACEHOLDER, pipesOf, fill, redact, isFileValue, dataKey } from './placeholders.ts';
@@ -90,21 +90,40 @@ function taskValues(data, secrets) {
   return { files, scalars, values: { ...scalars, ...secrets } };
 }
 
-/** A fresh recorded run for the task, its prompt redacted to placeholders. */
-function newRun(messages, values, secrets) {
-  const prompt = messages.filter((m) => m.role === 'user').at(-1)?.content;
-  return {
-    prompt: typeof prompt === 'string' ? redact(prompt, values) : '',
-    steps: [],
-    elements: [],
-    secrets: Object.keys(secrets),
-  };
+/** What the person asked, every message of the chat, redacted to placeholders: a playbook is the whole conversation's task. */
+function chatPrompt(messages, values) {
+  const asked = messages.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => m.content);
+  return redact(asked.join('\n\n'), values);
 }
 
-/** Makes `run` the browser's current one, with no memory of the page before it. */
-async function begin(browserId, run) {
-  await startRun(browserId, run);
+/** A fresh recorded run for the task, its prompt redacted to placeholders. */
+function newRun(messages, values, secrets) {
+  return { prompt: chatPrompt(messages, values), steps: [], elements: [], secrets: Object.keys(secrets) };
+}
+
+/** Whether this is a follow-up in a chat already under way. */
+const followUp = (messages) => messages.filter((m) => m.role === 'user').length > 1;
+
+/**
+ * Starts recording the task, or keeps recording it. A follow-up message ("now fill
+ * the form") carries on the same chat, so its steps join the run the first message
+ * started. Starting over on every message saved a playbook of the last message alone.
+ * ponytail: a playbook replayed on the same browser between two messages becomes the run followed; a chat id on the request if that bites.
+ */
+async function begin(browserId, messages, values, secrets) {
+  const run = lastRun(browserId);
+  if (followUp(messages) && run) {
+    run.prompt = chatPrompt(messages, values);
+    run.secrets = [...new Set([...run.secrets, ...Object.keys(secrets)])];
+    markMessage(browserId);
+  } else await startRun(browserId, newRun(messages, values, secrets));
   forgetPage(browserId);
+}
+
+/** The system prompt, with the follow-up note when the chat is already under way. */
+function systemFor(messages, values, scalars, files, secrets) {
+  const note = followUp(messages) ? `\n\n${FOLLOW_UP_NOTE}` : '';
+  return systemPrompt(values, scalars, files, secrets) + note;
 }
 
 /**
@@ -119,8 +138,8 @@ export async function runChat(browserId, messages, options: any = {}) {
   const { apiKey, data = {}, secrets = {} } = options;
   const { llm, budget } = llmFor(apiKey);
   const { files, scalars, values } = taskValues(data, secrets);
-  await begin(browserId, newRun(messages, values, secrets));
-  const system = { role: 'system', content: systemPrompt(values, scalars, files, secrets) };
+  await begin(browserId, messages, values, secrets);
+  const system = { role: 'system', content: systemFor(messages, values, scalars, files, secrets) };
   const allMessages = [system, ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) }))];
   const run = { ...options, browserId, llm, budget, verify: options.verify ?? AGENT_VERIFY, files, values, secrets };
   return agentLoop(run, allMessages).catch(rejectedKey);

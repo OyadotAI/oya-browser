@@ -89,11 +89,15 @@ export function quietCheckpointFor(apiKey, browserId) {
   const tries = challengesFor(apiKey, browserId);
   return async () => {
     await tries.captcha();
-    await tries.mfa(await tries.signIn());
+    const login = await tries.signIn();
+    return signedIn(login, await tries.mfa(login));
   };
 }
 
-/** One checkpoint: CAPTCHA, then sign-in, then MFA. */
+/** Whether a checkpoint signed the page in, so a replay knows the page it was on was replaced by a login. */
+const signedIn = (login, code) => !!(login?.completed || code?.completed);
+
+/** One checkpoint: CAPTCHA, then sign-in, then MFA; true when it signed the page in. */
 async function checkpoint(run: RunContext) {
   const page = pageOf(run);
   await clearCaptcha(run, page);
@@ -101,7 +105,7 @@ async function checkpoint(run: RunContext) {
   // accepted a password, and a login page can carry a CAPTCHA of its own,
   // which is why this sits between the two.
   const login = await signIn(run, page);
-  await completeMfa(run, page, login);
+  return signedIn(login, await completeMfa(run, page, login));
 }
 
 /** A CAPTCHA on the page solved by the solver or the provider; null when detection failed. */
@@ -163,6 +167,7 @@ async function tryMfa(run: RunContext, { personaId, domain }: PageContext, l?) {
 async function completeMfa(run: RunContext, page: PageContext, l) {
   const m = await tryMfa(run, page, l);
   if (m?.present && !m.completed) await askForCode(run, m);
+  return m;
 }
 
 /** Parks the run on a person for the MFA code, and types it if their reply carries one. */

@@ -28,7 +28,12 @@ async function replayedEvents(calls) {
 describe('playbooks facade', () => {
   it('exports matching, checking, variables, the export, the catalog and replay', () => {
     assert.deepEqual(Object.keys(playbooks).sort(), [
+      'EXPORT_FORMAT',
+      'EXPORT_VERSION',
+      'answerField',
       'create',
+      'exportPlaybook',
+      'importPlaybook',
       'list',
       'matchElement',
       'missingVariables',

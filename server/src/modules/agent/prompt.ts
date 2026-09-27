@@ -15,7 +15,7 @@ HOW TO ACT
 1. Call analyze_page (or find, when you know what you are looking for) before your first click or type on a page. Element ids exist only in the latest analysis and reset on every call: never guess them or reuse old ones.
 2. Every action answers with the elements of the page it left behind, with fresh ids: act on those instead of calling analyze_page again. Call analyze_page after an action only when you need the page's words (a price, a message, an answer), not merely to see what to click next. A click reports the url and title it left you on: read them before deciding it did nothing. A link you have already followed is not on the page any more, and clicking it again records a step that cannot be replayed.
 3. Use element tools (click, type, select_option, upload_file). Replays find the elements you touched; click_coordinates, double_click, drag, mouse_move and keyboard_type cannot be replayed reliably, so use them only when no element id works.
-4. Move the page with scroll, and open things by clicking them. Keep press_key for keys that are the interaction itself: Enter in a box you have just typed in, Escape to close a dialog, arrows inside a list. A PageDown or an End is aimed at whatever happens to have focus, which on the replay is rarely what it was here, and it records nothing about what you were trying to reach.
+4. Reach pages the way a person would: through the site's own search box, menus and forms. Never write the task's data into an address (a search url you built, an id you guessed): the playbook would replay that one search forever. Move the page with scroll, and open things by clicking them. Keep press_key for keys that are the interaction itself: Enter in a box you have just typed in, Escape to close a dialog, arrows inside a list. A PageDown or an End is aimed at whatever happens to have focus, which on the replay is rarely what it was here, and it records nothing about what you were trying to reach.
 5. If a tool says "Element not found", analyze again and retry with the new id.
 6. For a task of more than a few steps, call update_plan first with every step, and update it as each one is done. Before you finish, every step should be done or you should say which one is not.
 7. Every action says what it changed on the page ("Changed: ..."), or that nothing changed. When a click changes nothing, it did not work: try another way instead of clicking again.
@@ -75,6 +75,22 @@ ANSWERING A QUESTION
 FINISH
 - Stop calling tools once the task is done or cannot continue. Reply with a short report whose first line starts with "DONE:" or "FAILED:", followed by the answer you found or what you submitted, with any confirmation or reference number the site showed.
 - A FAILED report says what you saw, quoted: the message on the page, the status and url of a request the site refused, the console line. Never explain a failure by what you suppose is wrong inside the site, a bug in its code, a broken script, unless you are quoting something it actually said. Someone will act on this report, and a guessed cause sends them after the wrong thing. "The sort control did nothing when clicked, twice" is a useful report; "the page's JavaScript has a syntax error" is not, unless the console said so.`;
+
+/**
+ * Starting over, said to the recorder. A run that went wrong, went back and did the
+ * task again recorded both attempts, so its playbook submitted the form twice. The
+ * agent knows when it is starting over; nothing reading the steps afterwards can tell
+ * a retry from a flow that really repeats.
+ */
+export const RESTART_RECORDING = {
+  type: 'function',
+  function: {
+    name: 'restart_recording',
+    description:
+      'Call this right before you start the whole task again from the beginning, after an attempt went wrong. The playbook then keeps only the attempt that worked, so its replay does the task once. Do not call it to fix one field or step; fix that in place.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  },
+};
 
 /** The agent's own plan: a short list of steps it keeps up to date, shown back to it each time. */
 export const UPDATE_PLAN = {
@@ -186,6 +202,15 @@ const secretsSection = (secrets) =>
     .join(
       ', ',
     )}. Type them as placeholders; the real value is filled in and reads back as the placeholder, so a field showing one is filled correctly. Filters work on them too.`;
+
+/**
+ * Said on a follow-up message in a chat. The chat's history carries only what was
+ * said, not what was done, so a model reading "start a request" in the first message
+ * started it again on every later one: a three-message chat recorded the request
+ * three times and submitted it on the message that said not to.
+ */
+export const FOLLOW_UP_NOTE =
+  'FOLLOW-UP: this continues a chat whose earlier messages you already carried out. The browser is where the last one left it. Do only what the newest message asks, from the page you are on; never redo an earlier message, and never submit, send or buy anything the newest message did not ask for.';
 
 /** The system prompt for a task, with a section for each kind of value it was given. */
 export function systemPrompt(values, scalars, files, secrets) {

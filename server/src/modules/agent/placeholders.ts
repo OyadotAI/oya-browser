@@ -16,6 +16,7 @@ export const FILTERS = {
   upper: (s) => s.toUpperCase(),
   lower: (s) => s.toLowerCase(),
   digits: (s) => s.replace(/\D/g, ''),
+  url: (s) => encodeURIComponent(s),
   /* eslint-disable max-lines-per-function, no-magic-numbers -- copied verbatim into Playwright exports, so it stays self-contained */
   date: (s, format = 'MM/DD/YYYY') => {
     const iso = /^\d{4}-\d{2}-\d{2}$/.test(s.trim());

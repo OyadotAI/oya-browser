@@ -32,6 +32,7 @@
   color: #16733b;
 }
 .console {
+  white-space: nowrap;
   padding: 10px 15px;
   border: 1px solid #cfd7ca;
   border-radius: 5px;
@@ -70,8 +71,9 @@
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 25px;
+  gap: 16px 25px;
   margin-top: 34px;
   font-size: 14px;
   font-weight: 500;
@@ -994,6 +996,7 @@
   color: #626b62;
 }
 .closing .actions {
+  justify-content: center;
   margin-top: 6px;
 }
 
@@ -1026,5 +1029,12 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 32px;
     padding: 64px 0 10px;
+  }
+}
+
+/* A header link the footer repeats, dropped where the header has no room for it. */
+@media (max-width: 360px) {
+  .roomy {
+    display: none;
   }
 }
