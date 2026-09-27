@@ -18,7 +18,7 @@ export function SiteFooter() {
         <Link href="/release-notes">Release notes</Link>
         <a href={repository}>GitHub</a>
         <a href={discord}>Discord</a>
-        <a href={foundersCall}>Talk to the founders</a>
+        <a href={foundersCall}>Talk to Founders</a>
       </nav>
     </footer>
   );

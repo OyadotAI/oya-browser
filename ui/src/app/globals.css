@@ -578,8 +578,49 @@ textarea {
 .docs-page main {
   color: var(--secondary);
 }
-.docs-page main p {
-  line-height: 1.85;
+/* Docs prose: a comfortable size and a line short enough to read without losing your place. */
+.docs-page main p,
+.docs-page main li {
+  max-width: 70ch;
+  font-size: 16px;
+  line-height: 1.75;
+}
+.docs-page main .docs-lede {
+  font-size: 18px;
+  line-height: 1.65;
+}
+.docs-page main strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.docs-page main td {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+/* The quickstart's steps, joined by a quiet line from one number to the next. */
+.docs-step::before {
+  content: '';
+  position: absolute;
+  top: 34px;
+  bottom: 6px;
+  left: 13.5px;
+  width: 1px;
+  background: var(--border);
+}
+.docs-step:last-of-type::before {
+  display: none;
+}
+@media (max-width: 640px) {
+  .docs-page main p,
+  .docs-page main li {
+    font-size: 15.5px;
+  }
+  .docs-page main pre {
+    font-size: 12.5px;
+  }
+  .docs-step {
+    padding-left: 38px;
+  }
 }
 .docs-page main table {
   min-width: 560px;

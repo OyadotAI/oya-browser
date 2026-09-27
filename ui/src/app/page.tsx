@@ -1,16 +1,18 @@
 /**
- * The public landing page. Each section lives in app/_home.
+ * The public landing page, in the order a buyer reads it: what it is and who it
+ * is for, proof, the problems it solves, how it works, why it is different, how it
+ * compares, questions, and the next step.
+ * Each section lives in app/_home.
  */
 import styles from './page.module.css';
 import { SiteHeader } from './_home/site-header';
 import { Hero } from './_home/hero';
-import { Providers } from './_home/providers';
-import { Portals } from './_home/portals';
-import { Playbooks } from './_home/playbooks';
-import { ControlPlane } from './_home/control-plane';
-import { Media } from './_home/media';
+import { Proof } from './_home/proof';
+import { Problems } from './_home/problems';
+import { HowItWorks } from './_home/how-it-works';
+import { Benefits } from './_home/benefits';
 import { Compare } from './_home/compare';
-import { Developers } from './_home/developers';
+import { Faq } from './_home/faq';
 import { Closing } from './_home/closing';
 import { SiteFooter } from './_home/site-footer';
 
@@ -22,13 +24,12 @@ export default function Home() {
         <SiteHeader />
         <main>
           <Hero />
-          <Providers />
-          <Portals />
-          <Playbooks />
-          <ControlPlane />
-          <Media />
+          <Proof />
+          <Problems />
+          <HowItWorks />
+          <Benefits />
           <Compare />
-          <Developers />
+          <Faq />
           <Closing />
         </main>
         <SiteFooter />

@@ -41,10 +41,12 @@ export function InlineCode({ children }: PropsWithChildren) {
 interface CodeBlockProps {
   /** The code. */
   children: string;
+  /** What it is, shown above it: a file name, a language, "Terminal". */
+  label?: string;
 }
 
 /** A highlighted example with a copy button, and a manual fallback when the clipboard is refused. */
-export function CodeBlock({ children }: CodeBlockProps) {
+export function CodeBlock({ children, label = 'Example' }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
   /** Copies the code; "Copied" shows for a moment. */
@@ -60,12 +62,12 @@ export function CodeBlock({ children }: CodeBlockProps) {
   return (
     <div className="my-5 min-w-0 overflow-hidden rounded-xl border border-border bg-bg-card">
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
-        <span className="font-mono text-[10px] text-text-dim">Example</span>
+        <span className="font-mono text-[11.5px] text-text-dim">{label}</span>
         <button onClick={copy} className="btn-ghost h-7 text-[11px]" aria-label="Copy code">
           {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="overflow-x-auto p-5 text-[12px] font-mono leading-[1.9]">
+      <pre className="overflow-x-auto p-5 text-[13.5px] font-mono leading-[1.75]">
         <SyntaxCode code={children} />
       </pre>
       {error && (
@@ -80,7 +82,7 @@ export function CodeBlock({ children }: CodeBlockProps) {
 /** A highlighted aside. */
 export function NoteBox({ children }: PropsWithChildren) {
   return (
-    <div className="bg-indigo/10 border border-indigo/20 rounded-xl p-4 text-sm text-indigo mb-4 leading-relaxed">
+    <div className="bg-indigo/10 border border-indigo/20 rounded-xl p-4 text-[15px] text-indigo mb-4 leading-relaxed">
       {children}
     </div>
   );
@@ -89,7 +91,7 @@ export function NoteBox({ children }: PropsWithChildren) {
 /** A caution. */
 export function WarnBox({ children }: PropsWithChildren) {
   return (
-    <div className="bg-yellow/10 border border-yellow/20 rounded-xl p-4 text-sm text-yellow mb-4 leading-relaxed">
+    <div className="bg-yellow/10 border border-yellow/20 rounded-xl p-4 text-[15px] text-yellow mb-4 leading-relaxed">
       {children}
     </div>
   );
@@ -162,6 +164,30 @@ export function Table({ headers, rows }: TableProps) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** A numbered step's props. */
+interface StepProps extends PropsWithChildren {
+  /** Its place in the sequence. */
+  n: number;
+  /** What the step does, in a few words. */
+  title: string;
+}
+
+/** One numbered step of a walkthrough: the number, the title, then what to do. */
+export function Step({ n, title, children }: StepProps) {
+  return (
+    <div className="docs-step relative pl-11 pb-2">
+      <span
+        aria-hidden="true"
+        className="absolute left-0 top-0 grid h-7 w-7 place-items-center rounded-full border border-border bg-bg-card font-mono text-[12.5px] text-accent"
+      >
+        {n}
+      </span>
+      <h3 className="mb-2 text-[17px] font-semibold text-text">{title}</h3>
+      {children}
     </div>
   );
 }

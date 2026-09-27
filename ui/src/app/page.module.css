@@ -1,7 +1,7 @@
 .page {
   --primary: #16733b;
   --foreground: #1a261e;
-  --muted: #626b62;
+  --muted: #454f47;
   color-scheme: light;
   min-height: 100dvh;
   background: #fff;
@@ -50,7 +50,7 @@
 .eyebrow {
   margin-bottom: 25px;
   font-size: 13px;
-  color: #506349;
+  color: #3b5335;
   font-weight: 500;
 }
 .hero h1 {
@@ -67,7 +67,7 @@
   margin-top: 28px;
   font-size: 17px;
   line-height: 1.7;
-  color: #626b62;
+  color: #454f47;
 }
 .actions {
   display: flex;
@@ -99,6 +99,19 @@
 .secondary:hover {
   color: #16733b;
 }
+.founders {
+  display: inline-flex;
+  align-items: center;
+  padding: 14px 21px;
+  border: 1px solid #cfd7ca;
+  border-radius: 5px;
+  background: #fff;
+  white-space: nowrap;
+}
+.founders:hover {
+  border-color: #16733b;
+  color: #16733b;
+}
 .providers {
   display: flex;
   flex-wrap: wrap;
@@ -109,7 +122,7 @@
   border-top: 1px solid #e5e9e1;
 }
 .providers p {
-  color: #6b7566;
+  color: #535d55;
   font-size: 12px;
 }
 .providers ul {
@@ -145,7 +158,7 @@
 .controlCopy p {
   max-width: 300px;
   margin-top: 22px;
-  color: #becbbb;
+  color: #dbe4dd;
   font-size: 14px;
   line-height: 1.75;
 }
@@ -166,7 +179,7 @@
   align-items: center;
   gap: 10px;
   margin-top: 42px;
-  color: #a3baa0;
+  color: #c3d4bf;
   font-size: 12px;
 }
 .product {
@@ -183,7 +196,7 @@
 .product figcaption {
   margin-top: 12px;
   font-size: 10px;
-  color: #a3baa0;
+  color: #c3d4bf;
 }
 .developers {
   display: grid;
@@ -210,7 +223,7 @@
   margin-top: 20px;
   font-size: 15px;
   line-height: 1.7;
-  color: #626b62;
+  color: #454f47;
 }
 .exampleIntro a {
   display: inline-flex;
@@ -235,7 +248,7 @@
   border-top: 1px solid #e5e9e1;
   font-size: 12px;
   line-height: 1.7;
-  color: #626b62;
+  color: #454f47;
 }
 .profileNote svg {
   flex-shrink: 0;
@@ -260,7 +273,7 @@
 }
 .runtime {
   margin-left: 12px;
-  color: #626b62;
+  color: #454f47;
 }
 .codeHeader button {
   cursor: pointer;
@@ -279,7 +292,7 @@
 .codeNote {
   padding: 0 20px 18px;
   font-size: 11px;
-  color: #626b62;
+  color: #454f47;
 }
 .footer {
   display: flex;
@@ -289,7 +302,7 @@
   padding: 28px 0 36px;
   border-top: 1px solid #e5e9e1;
   font-size: 12px;
-  color: #626b62;
+  color: #454f47;
 }
 .footer nav {
   display: flex;
@@ -330,6 +343,128 @@
 .hero > figure {
   min-width: 0;
 }
+.heroSnippetWrap {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+/* Proof: four measured numbers above the providers strip. */
+.proof {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+  margin: 0;
+  padding: 30px 0 26px;
+  border-top: 1px solid #e5e9e1;
+}
+.proofItem dt {
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: #16733b;
+  font-variant-numeric: tabular-nums;
+}
+.proofItem dd {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #454f47;
+}
+
+/* How it works: three numbered steps inside the dark card. */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 32px;
+  margin-top: 36px;
+  list-style: none;
+}
+.stepNumber {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #c3d4bf;
+}
+.steps h3 {
+  margin-top: 9px;
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+.steps p {
+  margin-top: 9px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: #dbe4dd;
+}
+
+/* Questions: one hairline between each. */
+.faq {
+  padding: 96px 0 20px;
+}
+.faqList {
+  max-width: 820px;
+  margin-top: 36px;
+  border-top: 1px solid #e5e9e1;
+}
+.faqList details {
+  border-bottom: 1px solid #e5e9e1;
+}
+.faqList summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.faqList summary::-webkit-details-marker {
+  display: none;
+}
+.faqList summary svg {
+  flex: none;
+  color: #454f47;
+  transition: transform 0.2s ease;
+}
+.faqList details[open] summary svg {
+  transform: rotate(45deg);
+}
+.faqList details p {
+  max-width: 64ch;
+  padding-bottom: 20px;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: #454f47;
+}
+@media (max-width: 960px) {
+  .proof {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .steps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 26px;
+  }
+  .faq {
+    padding-top: 70px;
+  }
+}
+@media (max-width: 500px) {
+  .founders {
+    padding: 13px 17px;
+  }
+  .media {
+    padding: 34px 22px 26px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .faqList summary svg {
+    transition: none;
+  }
+}
 
 /* The portal reality: four numbered truths. */
 .portals {
@@ -354,7 +489,7 @@
 .portalNumber {
   font-size: 11px;
   letter-spacing: 0.1em;
-  color: #8a9487;
+  color: #65705f;
 }
 .portalsList h3 {
   margin-top: 9px;
@@ -366,7 +501,7 @@
   margin-top: 9px;
   font-size: 14.5px;
   line-height: 1.75;
-  color: #626b62;
+  color: #454f47;
 }
 
 /* See it run: the clips. */
@@ -378,7 +513,7 @@
   border-radius: 9px;
 }
 .media .eyebrow {
-  color: #a3baa0;
+  color: #c3d4bf;
 }
 .mediaIntro h2 {
   font-size: clamp(29px, 2.8vw, 38px);
@@ -391,7 +526,7 @@
 }
 .walkthrough {
   margin-top: 40px;
-  aspect-ratio: 930 / 697;
+  aspect-ratio: 16 / 9;
   max-width: 100%;
   border: 1px solid #425741;
   border-radius: 6px;
@@ -420,12 +555,12 @@
   margin-top: 14px;
   font-size: 14px;
   line-height: 1.75;
-  color: #becbbb;
+  color: #dbe4dd;
 }
 .clipNote {
   margin-top: 16px;
   font-size: 11px;
-  color: #a3baa0;
+  color: #c3d4bf;
 }
 .clipVideo {
   display: block;
@@ -469,7 +604,7 @@
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #6b7566;
+  color: #535d55;
 }
 .compareTable tbody th {
   width: 26%;
@@ -477,7 +612,7 @@
   color: #1a261e;
 }
 .compareTable td {
-  color: #626b62;
+  color: #454f47;
   line-height: 1.6;
 }
 .compareOya {
@@ -711,7 +846,7 @@
 .installHelp {
   display: inline-block;
   margin-top: 10px;
-  color: #626b62;
+  color: #454f47;
   font-size: 12px;
 }
 
@@ -743,7 +878,7 @@
 }
 .controlPlaneIntro > div > p:not(.eyebrow) {
   max-width: 420px;
-  color: #626b62;
+  color: #454f47;
   font-size: 15px;
   line-height: 1.75;
 }
@@ -775,7 +910,7 @@
 }
 .planeLabel {
   display: block;
-  color: #626b62;
+  color: #454f47;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.12em;
@@ -798,7 +933,7 @@
   border: 1px solid #dce3d7;
   border-radius: 4px;
   background: #fff;
-  color: #506349;
+  color: #3b5335;
   font-family: var(--font-geist-mono), monospace;
   font-size: 10px;
 }
@@ -839,7 +974,7 @@
   flex-direction: column;
   gap: 6px;
   margin-top: 14px;
-  color: #626b62;
+  color: #454f47;
   font-size: 12px;
 }
 .controlPlaneBenefits {
@@ -859,7 +994,7 @@
 }
 .controlPlaneBenefits p {
   margin-top: 8px;
-  color: #626b62;
+  color: #454f47;
   font-size: 13px;
   line-height: 1.75;
 }
@@ -993,7 +1128,7 @@
   max-width: 520px;
   font-size: 15px;
   line-height: 1.75;
-  color: #626b62;
+  color: #454f47;
 }
 .closing .actions {
   justify-content: center;
@@ -1022,7 +1157,7 @@
   margin-top: 20px;
   font-size: 15px;
   line-height: 1.7;
-  color: #626b62;
+  color: #454f47;
 }
 @media (max-width: 960px) {
   .playbooks {
@@ -1033,8 +1168,1384 @@
 }
 
 /* A header link the footer repeats, dropped where the header has no room for it. */
-@media (max-width: 360px) {
+@media (max-width: 420px) {
   .roomy {
     display: none;
+  }
+}
+
+/*
+ * Reading sizes. The landing page is read on phones and laptops alike, so body
+ * copy sits at 16 to 19px and labels never drop under 13px.
+ */
+.navigation {
+  font-size: 15px;
+}
+.eyebrow {
+  font-size: 14px;
+}
+.hero h1 {
+  font-size: clamp(42px, 5vw, 72px);
+  line-height: 1.04;
+}
+.heroDescription {
+  max-width: 460px;
+  font-size: 19px;
+  line-height: 1.6;
+}
+.actions {
+  font-size: 16px;
+}
+.primary,
+.founders {
+  padding: 15px 24px;
+}
+.downloads p {
+  font-size: 15px;
+}
+.heroSnippet pre {
+  font-size: 14px;
+}
+.codeHeader {
+  font-size: 13.5px;
+}
+.proofItem dt {
+  font-size: clamp(32px, 3.6vw, 46px);
+}
+.proofItem dd {
+  font-size: 15px;
+}
+.providers p {
+  font-size: 14px;
+}
+.providers ul {
+  font-size: 16px;
+}
+.mediaIntro h2,
+.portalsIntro h2,
+.controlPlaneIntro h2 {
+  font-size: clamp(32px, 3.6vw, 48px);
+}
+.stepNumber {
+  font-size: 13px;
+}
+.steps h3 {
+  font-size: 24px;
+}
+.steps p {
+  font-size: 16.5px;
+  line-height: 1.7;
+}
+.controlPlaneIntro > div > p:not(.eyebrow) {
+  font-size: 17px;
+}
+.controlPlaneBenefits h3 {
+  font-size: 20px;
+}
+.controlPlaneBenefits p {
+  font-size: 16px;
+  line-height: 1.65;
+}
+.faqList summary {
+  font-size: 19px;
+}
+.faqList details p {
+  font-size: 17px;
+}
+.closing h2 {
+  font-size: clamp(32px, 3.8vw, 52px);
+}
+.closing p {
+  font-size: 18px;
+}
+.footer,
+.footer nav {
+  font-size: 14px;
+}
+@media (max-width: 500px) {
+  .navigation {
+    font-size: 14px;
+  }
+  .hero h1 {
+    font-size: 40px;
+  }
+  .heroDescription {
+    font-size: 17.5px;
+  }
+  .heroSnippet pre {
+    font-size: 13px;
+  }
+  .steps p,
+  .controlPlaneBenefits p,
+  .faqList details p {
+    font-size: 16px;
+  }
+  .faqList summary {
+    font-size: 17.5px;
+  }
+}
+@media (max-width: 380px) {
+  .navigation {
+    gap: 7px;
+    font-size: 13px;
+  }
+  .console {
+    padding: 6px 8px;
+  }
+  .hero h1 {
+    font-size: 35px;
+  }
+}
+
+/* Three problems, each with the answer under it in green. */
+.problems {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 40px;
+  margin-top: 44px;
+  list-style: none;
+}
+.problems h3 {
+  margin-top: 9px;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+.problems p {
+  margin-top: 10px;
+  font-size: 16px;
+  line-height: 1.65;
+  color: #454f47;
+}
+.problems .answer {
+  padding-top: 12px;
+  border-top: 1px solid #e5e9e1;
+  color: #1a261e;
+}
+@media (max-width: 960px) {
+  .problems {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 30px;
+  }
+}
+
+/* The comparison scrolls inside itself on a phone, so five columns never crush. */
+.compareScroll {
+  margin-top: 42px;
+  overflow-x: auto;
+}
+.compareScroll .compareTable {
+  min-width: 720px;
+  margin-top: 0;
+  font-size: 15.5px;
+}
+.compareTable thead th {
+  font-size: 13px;
+}
+.compareNote {
+  margin-top: 14px;
+  font-size: 13px;
+  color: #535d55;
+}
+
+/*
+ * Premium finish. The same clean theme, with the details that make it feel
+ * made: a frosted header that stays, balanced headings, a soft halo behind the
+ * product, cards and buttons that answer the pointer, and quieter hairlines.
+ */
+.page {
+  /* The halos reach past the edges; clip, unlike hidden, keeps the header sticky. */
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.page ::selection {
+  background: #c7f7a4;
+  color: #1a331d;
+}
+
+/* The header stays, frosted, across the full width of the window. */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  height: 76px;
+  border-bottom-color: transparent;
+}
+.header::before {
+  content: '';
+  position: absolute;
+  inset: 0 50%;
+  z-index: -1;
+  width: 100vw;
+  transform: translateX(-50%);
+  border-bottom: 1px solid rgba(26, 38, 30, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+}
+.console {
+  border-radius: 999px;
+  padding: 9px 16px;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+.console:hover {
+  border-color: #16733b;
+  background: #f6fbf2;
+}
+
+/* Headings break where a reader would, never leaving one word alone. */
+.hero h1,
+.portalsIntro h2,
+.mediaIntro h2,
+.controlPlaneIntro h2,
+.compareIntro h2,
+.closing h2 {
+  text-wrap: balance;
+}
+.heroDescription,
+.problems p,
+.steps p,
+.controlPlaneBenefits p,
+.faqList details p {
+  text-wrap: pretty;
+}
+.hero h1 {
+  letter-spacing: -0.055em;
+}
+
+/* The product sits on a soft halo, and the code below it on a quiet card. */
+.hero {
+  position: relative;
+  isolation: isolate;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 4%;
+  right: -6%;
+  z-index: -1;
+  width: 62%;
+  height: 78%;
+  background: radial-gradient(closest-side, rgba(199, 247, 164, 0.55), rgba(199, 247, 164, 0) 72%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+.heroSnippet {
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px rgba(26, 38, 30, 0.04),
+    0 18px 40px -28px rgba(26, 38, 30, 0.25);
+}
+
+/* Buttons that answer the pointer. */
+.primary,
+.founders {
+  border-radius: 999px;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+.primary {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 8px 20px -12px rgba(22, 115, 59, 0.55);
+}
+.primary:hover,
+.founders:hover {
+  transform: translateY(-1px);
+}
+.primary:hover {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 14px 28px -14px rgba(22, 115, 59, 0.6);
+}
+.founders:hover {
+  box-shadow: 0 10px 24px -16px rgba(26, 38, 30, 0.35);
+}
+.downloads nav a {
+  border-radius: 999px;
+  transition:
+    transform 0.2s ease,
+    filter 0.2s ease;
+}
+.downloads nav a:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+/* Proof numbers, set like a spec sheet. */
+.proof {
+  gap: 0;
+  padding: 36px 0 32px;
+}
+.proofItem {
+  padding: 0 24px;
+  border-left: 1px solid #e5e9e1;
+}
+.proofItem:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* The three problems: the answer reads as the resolution, in green. */
+.problems .answer {
+  color: #16733b;
+  font-weight: 500;
+}
+
+/* The dark card: a quiet glow, and each step on its own pane. */
+.media {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+}
+.media::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  left: 30%;
+  width: 70%;
+  height: 90%;
+  background: radial-gradient(closest-side, rgba(199, 247, 164, 0.14), transparent 70%);
+  pointer-events: none;
+}
+.media > * {
+  position: relative;
+}
+.steps li {
+  padding: 26px 24px;
+  border: 1px solid rgba(199, 247, 164, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  transition:
+    border-color 0.25s ease,
+    transform 0.25s ease;
+}
+.steps li:hover {
+  transform: translateY(-2px);
+  border-color: rgba(199, 247, 164, 0.35);
+}
+.walkthrough {
+  border-radius: 12px;
+}
+
+/* Why Oya: each benefit on a card that lifts a little under the pointer. */
+.controlPlane {
+  border-radius: 16px;
+}
+.controlPlaneBenefits {
+  gap: 16px;
+}
+.controlPlaneBenefits article {
+  height: 100%;
+  padding: 26px 24px;
+  border: 1px solid #e2e8dc;
+  border-radius: 12px;
+  background: #fff;
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease,
+    border-color 0.25s ease;
+}
+.controlPlaneBenefits article:hover {
+  transform: translateY(-2px);
+  border-color: #cfe3c2;
+  box-shadow: 0 18px 36px -26px rgba(26, 38, 30, 0.3);
+}
+
+/* The comparison on a rounded panel, Oya's column marked. */
+.compareScroll {
+  border: 1px solid #e2e8dc;
+  border-radius: 14px;
+  background: #fff;
+}
+.compareScroll .compareTable tbody tr:last-child th,
+.compareScroll .compareTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+.compareOya::before {
+  content: '✓';
+  margin-right: 8px;
+  color: #16733b;
+  font-weight: 600;
+}
+
+/* Questions open smoothly where the browser can animate to auto height. */
+.faqList details {
+  interpolate-size: allow-keywords;
+}
+.faqList details::details-content {
+  height: 0;
+  overflow: hidden;
+  transition:
+    height 0.3s ease,
+    content-visibility 0.3s allow-discrete;
+}
+.faqList details[open]::details-content {
+  height: auto;
+}
+.faqList summary:hover {
+  color: #16733b;
+}
+
+/* The closing, on a soft wash. */
+.closing {
+  position: relative;
+  isolation: isolate;
+  border-top: 0;
+}
+.closing::before {
+  content: '';
+  position: absolute;
+  inset: 10% 15% 20%;
+  z-index: -1;
+  background: radial-gradient(closest-side, rgba(199, 247, 164, 0.4), transparent 75%);
+  pointer-events: none;
+}
+
+@media (max-width: 960px) {
+  .proof {
+    gap: 22px 0;
+  }
+  .proofItem:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  .hero::before {
+    top: 40%;
+    right: -10%;
+    width: 110%;
+    height: 45%;
+  }
+}
+@media (max-width: 500px) {
+  .header {
+    height: 64px;
+  }
+  .steps li,
+  .controlPlaneBenefits article {
+    padding: 22px 18px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .primary,
+  .founders,
+  .console,
+  .downloads nav a,
+  .steps li,
+  .controlPlaneBenefits article,
+  .faqList details::details-content {
+    transition: none;
+  }
+}
+
+/*
+ * Second pass. The headline gets the full width so it reads in two lines, the
+ * downloads step back behind the one primary action, the video waits behind a
+ * poster, and the FAQ sits beside its heading.
+ */
+.heroTitle {
+  grid-column: 1 / -1;
+}
+.heroTitle h1 {
+  font-size: clamp(42px, 6.4vw, 92px);
+  line-height: 1;
+  letter-spacing: -0.058em;
+}
+.hero {
+  row-gap: 44px;
+  padding-top: 84px;
+}
+.heroCopy .heroDescription {
+  margin-top: 0;
+  max-width: 520px;
+}
+
+/* The desktop build: a quiet second path, not a second primary action. */
+.downloads p {
+  color: #535d55;
+  font-size: 14px;
+  font-weight: 500;
+}
+.downloads nav {
+  gap: 8px;
+  margin-top: 12px;
+}
+.downloads nav a {
+  min-height: 38px;
+  padding: 7px 14px;
+  border-color: #d5ddd0;
+  background: #fff;
+  color: #1a261e;
+  font-size: 14px;
+  font-weight: 500;
+}
+.downloads nav a:hover {
+  border-color: #16733b;
+  background: #f6fbf2;
+  filter: none;
+}
+.downloads nav a svg {
+  color: #16733b;
+}
+
+/* Proof numbers, large enough to be the thing you remember. */
+.proofItem dt {
+  font-size: clamp(38px, 4.4vw, 60px);
+  letter-spacing: -0.06em;
+}
+.proofItem dd {
+  max-width: 24ch;
+  margin-top: 12px;
+}
+
+/* The walkthrough poster: the dark card's own colours and one play button. */
+.poster {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  border-color: rgba(199, 247, 164, 0.18);
+  background:
+    radial-gradient(60% 70% at 50% 45%, rgba(199, 247, 164, 0.16), transparent 70%),
+    linear-gradient(180deg, #223a26, #142518);
+  color: #f3f7f0;
+  font: inherit;
+  cursor: pointer;
+}
+.play {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: #c7f7a4;
+  color: #1a331d;
+  box-shadow: 0 0 0 10px rgba(199, 247, 164, 0.12);
+  transition:
+    transform 0.25s ease,
+    box-shadow 0.25s ease;
+}
+.play svg {
+  margin-left: 3px;
+}
+.poster:hover .play,
+.poster:focus-visible .play {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 16px rgba(199, 247, 164, 0.1);
+}
+.posterTitle {
+  margin-top: 8px;
+  font-size: clamp(20px, 2.2vw, 28px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+.posterMeta {
+  font-size: 14px;
+  color: #c3d4bf;
+}
+
+/* Each benefit's icon on a small tinted tile. */
+.benefitIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #eef6e8;
+  color: #16733b;
+}
+.controlPlaneBenefits article h3 {
+  margin-top: 18px;
+}
+
+/* The FAQ beside its heading, which stays in view while the questions scroll. */
+.faq {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 64px;
+  align-items: start;
+}
+.faq > :first-child {
+  position: sticky;
+  top: 110px;
+}
+.faq .faqList {
+  max-width: none;
+  margin-top: 0;
+}
+
+@media (max-width: 960px) {
+  .faq {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+  .faq > :first-child {
+    position: static;
+  }
+  .hero {
+    row-gap: 32px;
+  }
+}
+@media (max-width: 500px) {
+  .hero {
+    padding-top: 52px;
+  }
+  .downloads nav a {
+    padding: 7px 12px;
+  }
+  .proofItem dt {
+    font-size: 40px;
+  }
+  .play {
+    width: 60px;
+    height: 60px;
+  }
+  .posterMeta {
+    font-size: 13px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .play {
+    transition: none;
+  }
+}
+
+/*
+ * Third pass. The product on show: a playbook replaying in a window, the
+ * problems as today-and-with-Oya cards, and a dark closing that ends the page
+ * the way how-it-works sits in it.
+ */
+
+/* The replay window. */
+.showcase {
+  overflow: hidden;
+  border: 1px solid #dce3d7;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow:
+    0 1px 2px rgba(26, 38, 30, 0.05),
+    0 50px 100px -50px rgba(26, 38, 30, 0.35),
+    0 30px 60px -40px rgba(22, 115, 59, 0.25);
+}
+.windowBar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 16px;
+  height: 46px;
+  padding: 0 16px;
+  border-bottom: 1px solid #e5e9e1;
+  background: #f7f9f5;
+}
+.dots {
+  display: flex;
+  gap: 7px;
+}
+.dots i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #dde3d8;
+}
+.address {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 16px;
+  border: 1px solid #e2e8dc;
+  border-radius: 999px;
+  background: #fff;
+  color: #535d55;
+  font-size: 12.5px;
+}
+.liveChip {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  color: #16733b;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.liveChip i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22a052;
+  box-shadow: 0 0 0 0 rgba(34, 160, 82, 0.5);
+  animation: live 1.8s ease-out infinite;
+}
+@keyframes live {
+  to {
+    box-shadow: 0 0 0 8px rgba(34, 160, 82, 0);
+  }
+}
+.showcaseBody {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  min-height: 380px;
+}
+
+/* The portal: a plain form, filled as the lines run. */
+.portalPane {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 28px 30px;
+}
+.portalTitle {
+  margin-bottom: 4px;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.field {
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #535d55;
+}
+.fieldBox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #dfe5da;
+  border-radius: 8px;
+  background: #fbfcfa;
+  color: #1a261e;
+  font-size: 14px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.field[data-active='true'] .fieldBox {
+  border-color: #16733b;
+  box-shadow: 0 0 0 3px rgba(22, 115, 59, 0.12);
+}
+.typed {
+  white-space: nowrap;
+  animation: type 0.7s steps(14, end) both;
+}
+@keyframes type {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.portalButton {
+  justify-self: start;
+  margin-top: 6px;
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: #16733b;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  transition: transform 0.15s ease;
+}
+.portalButton[data-active='true'] {
+  transform: scale(0.96);
+  box-shadow: 0 0 0 4px rgba(22, 115, 59, 0.18);
+}
+.portalResult {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: start;
+  padding: 8px 12px;
+  border: 1px solid #cde8c4;
+  border-radius: 8px;
+  background: #effaea;
+  color: #16733b;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+.portalResult[data-shown='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* The playbook: dark, the running line lit, the finished ones ticked. */
+.codePane {
+  min-width: 0;
+  padding: 22px 0 22px;
+  background: #15251b;
+  color: #dbe4dd;
+}
+.codeFile {
+  padding: 0 24px 14px;
+  color: #8fa18a;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.codePane ol {
+  overflow-x: auto;
+  list-style: none;
+}
+.codePane li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: max-content;
+  padding: 6px 24px 6px 20px;
+  border-left: 2px solid transparent;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre;
+  transition:
+    background 0.3s ease,
+    opacity 0.3s ease;
+}
+.codePane li[data-state='next'] {
+  opacity: 0.42;
+}
+.codePane li[data-state='running'] {
+  border-left-color: #c7f7a4;
+  background: rgba(199, 247, 164, 0.09);
+}
+.codePane em {
+  font-style: normal;
+  color: #c7f7a4;
+}
+.gutter {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  color: #65705f;
+  font-size: 11.5px;
+}
+.codePane li[data-state='done'] .gutter {
+  color: #c7f7a4;
+}
+
+.codeDone {
+  margin-top: 18px;
+  padding: 0 24px 0 50px;
+  color: #8fa18a;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.codeDone[data-shown='true'] {
+  opacity: 1;
+}
+
+/* The meter: what the run has cost. */
+.meter {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-top: 1px solid #e5e9e1;
+  background: #f7f9f5;
+}
+.meter div {
+  padding: 14px 20px;
+  border-left: 1px solid #e5e9e1;
+}
+.meter div:first-child {
+  border-left: 0;
+}
+.meter dt {
+  color: #535d55;
+  font-size: 12px;
+}
+.meter dd {
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.meter div:nth-child(2) dd,
+.meter div:nth-child(3) dd {
+  color: #16733b;
+}
+
+/* The install line under the window. */
+.installBar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 0 4px;
+  font-size: 13.5px;
+}
+.installPlay {
+  overflow: hidden;
+  flex: 1;
+  color: #535d55;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.installBar button {
+  cursor: pointer;
+  padding: 4px 6px;
+  color: #16733b;
+  font-weight: 500;
+}
+
+/* The problems, each a card: today above, with Oya below. */
+.problems {
+  gap: 20px;
+}
+.problems li {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e2e8dc;
+  border-radius: 14px;
+  background: #fff;
+}
+.today {
+  padding: 26px 24px 24px;
+}
+.problems .answer {
+  flex: 1;
+  margin-top: 0;
+  padding: 20px 24px 24px;
+  border-top: 1px solid #e2efd9;
+  background: #f4faef;
+}
+.answer span {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #16733b;
+}
+.problems .answer p {
+  margin-top: 8px;
+  color: #1a261e;
+  font-weight: 500;
+}
+
+/* The closing, dark, as the page's last word. */
+.closing {
+  overflow: hidden;
+  margin-top: 88px;
+  margin-bottom: 72px;
+  padding: 104px 32px 108px;
+  border-radius: 20px;
+  background: #1b2d22;
+  color: #f5f7ed;
+}
+.closing::before {
+  inset: -30% 10% 30%;
+  background: radial-gradient(closest-side, rgba(199, 247, 164, 0.2), transparent 75%);
+}
+.closing h2 span {
+  color: #c7f7a4;
+}
+.closing p {
+  color: #c3d4bf;
+}
+.closing .founders {
+  border-color: rgba(245, 247, 237, 0.28);
+  background: transparent;
+  color: #f5f7ed;
+}
+.closing .founders:hover {
+  border-color: #c7f7a4;
+  color: #c7f7a4;
+}
+
+@media (max-width: 860px) {
+  .showcaseBody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .meter {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .meter div:nth-child(3) {
+    border-left: 0;
+  }
+  .meter div:nth-child(n + 3) {
+    border-top: 1px solid #e5e9e1;
+  }
+  .installPlay {
+    display: none;
+  }
+  .installBar {
+    justify-content: space-between;
+  }
+}
+@media (max-width: 560px) {
+  .windowBar {
+    grid-template-columns: auto 1fr;
+  }
+  .address {
+    display: none;
+  }
+  .portalPane {
+    padding: 22px 18px;
+  }
+  .codePane li {
+    align-items: start;
+    min-width: 0;
+    padding: 5px 18px 5px 14px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .codeDone {
+    padding: 0 18px 0 44px;
+    font-size: 12px;
+  }
+  .meter div {
+    padding: 12px 16px;
+  }
+  .closing {
+    margin-top: 64px;
+    padding: 72px 20px 76px;
+    border-radius: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .liveChip i,
+  .typed {
+    animation: none;
+  }
+  .fieldBox,
+  .portalButton,
+  .portalResult,
+  .codeDone,
+  .codePane li {
+    transition: none;
+  }
+}
+
+/*
+ * Fourth pass. One lead per screen: the hero is the claim, one line and the
+ * next steps, then the product. Green is kept for the hero and the dark
+ * blocks; elsewhere a heading's second line steps back to grey. Every section
+ * sits the same distance from the last.
+ */
+
+/* The hero: copy and actions on one row, the replay right under them. */
+.heroCopy {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 48px;
+  padding-bottom: 0;
+}
+.heroCopy .actions {
+  flex: none;
+  margin-top: 0;
+}
+.hero {
+  row-gap: 40px;
+  padding-bottom: 0;
+}
+.heroSnippetWrap {
+  margin-top: 16px;
+}
+.hero::before {
+  top: 42%;
+  right: auto;
+  left: 8%;
+  width: 84%;
+  height: 58%;
+  background: radial-gradient(closest-side, rgba(199, 247, 164, 0.5), rgba(199, 247, 164, 0) 75%);
+}
+
+/* The desktop app, at the end of the install bar. */
+.installBar {
+  flex-wrap: wrap;
+  row-gap: 12px;
+}
+.installBar .downloads {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.installBar .downloads p {
+  color: #535d55;
+  font-size: 13px;
+  font-weight: 500;
+}
+.installBar .downloads nav {
+  gap: 6px;
+  margin: 0;
+}
+.installBar .downloads nav a {
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+/* A heading's second line steps back, so the green in the hero means something. */
+.portalsIntro h2 span,
+.controlPlaneIntro h2 span,
+.compareIntro h2 span {
+  color: #7a857a;
+}
+
+/* The problems: the heading beside the figure of the first one happening. */
+.problemsIntro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+}
+.problemsIntro > * {
+  min-width: 0;
+}
+
+/* One rhythm between sections. */
+.proof {
+  margin-top: 96px;
+}
+.portals,
+.compare,
+.faq {
+  padding-top: 128px;
+}
+.media {
+  margin-top: 128px;
+}
+.controlPlane {
+  margin-top: 40px;
+}
+.closing {
+  margin-top: 128px;
+}
+
+@media (max-width: 960px) {
+  .heroCopy {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 28px;
+  }
+  .heroCopy .actions {
+    flex: initial;
+  }
+  .problemsIntro {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+  }
+  .proof {
+    margin-top: 72px;
+  }
+  .portals,
+  .compare,
+  .faq {
+    padding-top: 96px;
+  }
+  .media,
+  .closing {
+    margin-top: 96px;
+  }
+}
+@media (max-width: 560px) {
+  .portals,
+  .compare,
+  .faq {
+    padding-top: 80px;
+  }
+  .media,
+  .closing {
+    margin-top: 80px;
+  }
+  .controlPlane {
+    margin-top: 24px;
+  }
+  .installBar .downloads {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+/*
+ * Phone pass. A phone gets its own composition, not the desktop squeezed:
+ * a two-item header, full-width actions, a replay that shows only the running
+ * line, benefits stacked under their icons, and the comparison as one card
+ * per question.
+ */
+@media (max-width: 560px) {
+  /* The header: the wordmark, Docs and the console. */
+  .navigation {
+    gap: 16px;
+  }
+  .console {
+    padding: 7px 14px;
+    font-size: 14px;
+  }
+
+  /* The hero: the headline a touch tighter, the actions full width. */
+  .heroTitle h1 {
+    font-size: clamp(38px, 11vw, 46px);
+    line-height: 1.02;
+  }
+  .heroCopy .heroDescription {
+    font-size: 17.5px;
+  }
+  .heroCopy .actions,
+  .closing .actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    width: 100%;
+  }
+  .heroCopy .primary,
+  .heroCopy .founders,
+  .closing .primary,
+  .closing .founders {
+    justify-content: center;
+    gap: 12px;
+    padding: 15px 20px;
+  }
+  .heroCopy .secondary {
+    justify-content: center;
+    padding: 6px 0;
+  }
+
+  /* The replay: the form, then only the line that is running. */
+  .portalPane {
+    gap: 10px;
+  }
+  .fieldBox {
+    height: 36px;
+  }
+  .codePane {
+    padding: 16px 0 18px;
+  }
+  .codeFile {
+    padding: 0 18px 10px;
+  }
+  .codePane li:not([data-state='running']) {
+    display: none;
+  }
+  .codePane li[data-state='running'] {
+    min-height: 60px;
+  }
+  .codeDone {
+    margin-top: 0;
+    padding: 0 18px;
+  }
+  .codeDone[data-shown='false'] {
+    display: none;
+  }
+  .codeDone[data-shown='true'] {
+    min-height: 60px;
+  }
+
+  /* Benefits: the icon, then the title and the text under it. */
+  .controlPlane {
+    padding: 36px 20px;
+  }
+  .controlPlaneBenefits article {
+    display: block;
+  }
+  .controlPlaneBenefits article h3 {
+    margin-top: 16px;
+  }
+  .controlPlaneBenefits article p {
+    padding: 0;
+    margin-top: 8px;
+  }
+
+  /* The comparison: one card per question, each cell labelled. */
+  .compareScroll {
+    overflow: visible;
+    border: 0;
+    background: none;
+  }
+  .compareScroll .compareTable {
+    display: block;
+    min-width: 0;
+  }
+  .compareTable thead {
+    display: none;
+  }
+  .compareTable tbody {
+    display: grid;
+    gap: 14px;
+  }
+  .compareTable tr {
+    display: block;
+    overflow: hidden;
+    border: 1px solid #e2e8dc;
+    border-radius: 14px;
+    background: #fff;
+  }
+  .compareScroll .compareTable th,
+  .compareScroll .compareTable td {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 18px;
+    border-bottom: 0;
+    text-align: right;
+  }
+  .compareScroll .compareTable th {
+    width: auto;
+    padding-top: 16px;
+    font-size: 16px;
+    text-align: left;
+  }
+  .compareTable td::before {
+    content: attr(data-label);
+    flex: none;
+    color: #535d55;
+    text-align: left;
+  }
+  .compareScroll .compareTable td.compareOya {
+    display: block;
+    margin: 4px 0 6px;
+    padding: 12px 18px;
+    border-block: 1px solid #e2efd9;
+    background: #f4faef;
+    font-weight: 500;
+    text-align: left;
+  }
+  .compareScroll .compareTable td.compareOya::before {
+    content: '✓ Oya';
+    margin-right: 10px;
+    color: #16733b;
+    font-weight: 600;
+  }
+  .compareScroll .compareTable tr td:last-child {
+    padding-bottom: 16px;
+  }
+
+  /* The closing, and a footer that stacks. */
+  .closing h2 {
+    font-size: 31px;
+  }
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+  }
+  .footer nav {
+    gap: 10px 20px;
   }
 }

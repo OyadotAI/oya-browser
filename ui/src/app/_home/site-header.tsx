@@ -15,7 +15,7 @@ export function SiteHeader() {
         <Link href="/docs" data-track="cta_clicked" data-track-label="header_docs">
           Docs
         </Link>
-        <a href={repository} data-track="cta_clicked" data-track-label="header_github">
+        <a href={repository} className={styles.roomy} data-track="cta_clicked" data-track-label="header_github">
           GitHub
         </a>
         <a href={discord} className={styles.roomy} data-track="cta_clicked" data-track-label="header_discord">

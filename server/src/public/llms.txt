@@ -1,8 +1,13 @@
 # Oya Browser
 
-> A browser control plane for AI agents. One API drives real Chrome, in the
-> cloud, on a third-party provider, or on your own machine, with identities
-> that persist across runs.
+> A real browser for AI agents. The agent does a task once in plain language;
+> Oya saves it as a playbook (Playwright code) and replays it with no model,
+> signed in like the person and never flagged as a bot. One API drives real
+> Chrome in the cloud, on a third-party provider, or on your own machine.
+
+Contents: Agent quickstart, Playbooks, CLI, Overview, Personas, Human in the
+loop, Quickstart, Agent self-signup, MCP Endpoint, MCP Tools, Browser Pool,
+REST API, WebSocket Protocol, Self-hosting, Machine-readable, Limits.
 
 Add it to your agent as a skill, for Claude Code, Codex, Cursor, OpenClaw or any
 agent that reads SKILL.md: `npx skills add OyadotAI/oya-browser`. Claude Code
@@ -49,6 +54,73 @@ Only if you need Oya Cloud browsers (`oya.browser.start()`), send the person
 
 The sections below are the reference: the raw HTTP behind signup, MCP for AI
 tools that cannot run code, and every API.
+
+## Playbooks
+
+A playbook is a task the agent did once, kept as Playwright steps. Replaying it
+runs those steps with no model: fast, no tokens, the same every time. Use one
+for any task that repeats.
+
+    const browser = await oya.browser.start();
+    try {
+      // Do it once. {{name}} placeholders keep values out of the saved steps.
+      await browser.ask('On https://httpbin.org/forms/post order a medium pizza for {{name}} and submit it.', {
+        data: { name: 'Ada Lovelace' },        // the agent may read these
+        secrets: {},                           // the agent never sees these
+      });
+      const pb = await browser.toPlaybook('pizza-order');
+      // pb.variables: the inputs play() takes; pb.defaults: what the run used;
+      // pb.answers: free-text fields; pb.code: the same flow as Playwright.
+
+      // Replay with new values, no model. Left-out variables reuse defaults.
+      const result = await browser.play('pizza-order', { name: 'Grace Hopper' });
+      // { steps, total, fellBack, healed? }
+    } finally {
+      await browser.close();
+    }
+
+- Free-text fields (a comment, a reason, a question's answer) are written by
+  the key's model on each replay, one short call per field, as
+  `vars[key] ?? (await oya.llm.answer(question, vars))` in the code. Pass the
+  key in `play()` to type fixed text instead.
+- When a step no longer fits the page, the agent finishes the task and its fix
+  replaces the broken steps (`healed: true`), so the next replay runs clean.
+  `play(name, data, { autoHeal: false })` throws the step's error instead.
+- A replay that meets a login page signs in with the persona's stored login and
+  second factor: `oya.personas.setCredentials(personaId, { domain, username,
+  password })` and `oya.personas.setMfa(personaId, { type: 'totp', secret })`.
+- `pb.code` is `export default async function run(page, vars, oya)`: run it on
+  any Playwright page, or keep it in git.
+- Move a playbook between environments: `oya.playbooks.export(name)` here,
+  `oya.playbooks.import(doc, { overwrite: true })` there. Secrets travel by name
+  only. CLI: `oya playbooks export <name> --out f.json`, `oya playbooks import f.json`.
+- Long queues: `browser.submit({ playbook: name }, { data, onSuccess, onHealed,
+  onHumanAttention })`; the run waits for `request.respond()` when a person is needed.
+- MCP: `list_playbooks` and `run_playbook` (name, variables).
+
+REST (Bearer API key):
+
+    POST   /api/browsers/:id/playbooks              save the browser's last run: { name }
+    POST   /api/browsers/:id/playbooks/:name/play   replay: { variables, autoHeal }
+    GET    /api/playbooks                           every saved playbook
+    GET    /api/playbooks/:name/export              one playbook as a JSON document
+    POST   /api/playbooks/import                    { playbook, name?, overwrite? }
+    DELETE /api/playbooks/:name                     delete one
+
+## CLI
+
+    npm i -g @oya-ai/cli
+    oya login                       save an API key for this machine
+    oya start [--persona auto]      start a browser and print its id
+    oya goto <url>                  navigate (the newest browser by default)
+    oya ask "<prompt>"              drive it in plain language
+    oya ls | oya rm <id> | --all    what is running; stop browsers
+    oya playbooks                   saved playbooks
+    oya playbooks export <name>     one playbook as JSON [--out <file>]
+    oya playbooks import <file>     save an export here [--name <n>] [--replace]
+
+`OYA_API_KEY` and `OYA_BASE_URL` beat the saved `~/.oya/config.json`, so CI
+never needs `oya login`.
 
 ## Overview
 
@@ -500,6 +572,20 @@ Live stream: { "type": "stream_start", "fps": 2 } / { "type": "frame", "data": "
 ## Key Scoping
 
 Each API key only sees browsers connected with that key. Users cannot see or control other users' browsers. Admin keys (set via API_KEYS env var) can see all browsers.
+
+## Self-hosting
+
+The whole stack in your own network (Docker, Amazon ECS, Kubernetes or Google
+Cloud; SQLite or Postgres; any LLM, including a local one). Needs git, Docker
+and Node 20+:
+
+    curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
+
+A wizard asks six questions, starts the stack, and prints an API key. Then
+`oya login --url http://localhost:3100 --key <key>`, or set `OYA_BASE_URL` for
+the SDK; nothing else changes. Keep the `oya-data` volume or set
+`OYA_PROFILE_SECRET`: it encrypts stored logins. Full guide:
+https://github.com/OyadotAI/oya-browser/blob/main/docs/self-hosting.md
 
 ## Machine-readable
 

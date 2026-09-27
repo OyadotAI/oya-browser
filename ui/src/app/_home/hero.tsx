@@ -1,36 +1,21 @@
 /**
- * The landing hero: the portal problem in one line, the install and the five
- * lines that solve it, and the figure showing who gets through the bot wall.
+ * The landing hero: who Oya is for and what it does in one line, the two next
+ * steps, and the figure showing who gets through the bot wall.
  */
 import Link from 'next/link';
 import CopyExample from '@/components/copy-example';
-import SyntaxCode from '@/components/ui/syntax-code';
-import { BotWall } from './bot-wall';
 import { foundersCall, heroExample, installCommand } from './content';
 import { browserDownloads } from '@/lib/browser-downloads';
 import { ArrowRight, ArrowUpRight, Download } from 'lucide-react';
+import { Reveal } from './motion';
+import { ReplayShowcase } from './replay-showcase';
 import styles from '../page.module.css';
-
-/** The install line and the five lines that follow it. */
-function HeroSnippet() {
-  return (
-    <div className={styles.heroSnippet}>
-      <div className={styles.codeHeader}>
-        <span className={styles.installLine}>$ {installCommand}</span>
-        <CopyExample code={`${installCommand}\n\n${heroExample}`} />
-      </div>
-      <pre tabIndex={0} aria-label="Starting a browser and replaying a recorded portal run">
-        <SyntaxCode code={heroExample} language="typescript" />
-      </pre>
-    </div>
-  );
-}
 
 /** The desktop build, for the people who sign in by hand. */
 function Downloads() {
   return (
     <div id="download" className={styles.downloads}>
-      <p>Or sign in by hand, once</p>
+      <p>Desktop app</p>
       <nav aria-label="Browser downloads">
         {browserDownloads.map(({ platform, architecture, href }) => (
           <a
@@ -41,7 +26,7 @@ function Downloads() {
             data-track="download_clicked"
             data-track-label={platform}
           >
-            <Download size={17} aria-hidden="true" /> {platform}
+            <Download size={14} aria-hidden="true" /> {platform}
           </a>
         ))}
       </nav>
@@ -49,36 +34,60 @@ function Downloads() {
   );
 }
 
-/** The opening: the claim, the code, and the figure. */
+/** Under the showcase, both ways in for a developer: the SDK install line, and the desktop app. */
+function InstallBar() {
+  return (
+    <div className={styles.installBar}>
+      <span className={styles.installLine}>$ {installCommand}</span>
+      <CopyExample code={`${installCommand}\n\n${heroExample}`} />
+      <code className={styles.installPlay}>
+        await browser.play(&quot;eligibility-check&quot;, {'{'} memberId {'}'})
+      </code>
+      <Downloads />
+    </div>
+  );
+}
+
+/** Start building, talk to the founders, or read the docs. */
+function HeroActions() {
+  return (
+    <div className={styles.actions}>
+      <Link href="/dashboard" className={styles.primary} data-track="cta_clicked" data-track-label="hero_start">
+        Start building <ArrowUpRight size={17} aria-hidden="true" />
+      </Link>
+      <a href={foundersCall} className={styles.founders} data-track="cta_clicked" data-track-label="hero_founders">
+        Talk to Founders
+      </a>
+      <Link href="/docs" className={styles.secondary} data-track="cta_clicked" data-track-label="hero_docs">
+        Read the docs <ArrowRight size={15} aria-hidden="true" />
+      </Link>
+    </div>
+  );
+}
+
+/** The opening: the claim, the next steps, and the product replaying a portal run. */
 export function Hero() {
   return (
     <section className={styles.hero} aria-labelledby="hero-title">
-      <div className={styles.heroCopy}>
-        <p className={styles.eyebrow}>Browser infrastructure for portal automation</p>
+      <Reveal className={styles.heroTitle}>
+        <p className={styles.eyebrow}>For teams automating payer portals, EHRs and registries</p>
         <h1 id="hero-title">
           The portal has no API.
           <br />
-          <span>Your agent still gets in.</span>
+          <span>Your agent still gets&nbsp;in.</span>
         </h1>
+      </Reveal>
+      <Reveal order={1} className={styles.heroCopy}>
         <p className={styles.heroDescription}>
-          Payer portals, EHRs and registries are built to stop bots. Oya is a real browser with the automation inside
-          it: your agents sign in like staff, and a run recorded once replays forever with no model in the loop.
+          Oya is a real browser your agents use without being flagged. Record a task once, and every run after that is
+          pure compute: no model, no token bill, signed in like your staff.
         </p>
-        <div className={styles.actions}>
-          <Link href="/dashboard" className={styles.primary} data-track="cta_clicked" data-track-label="hero_start">
-            Start building <ArrowUpRight size={17} aria-hidden="true" />
-          </Link>
-          <Link href="/docs" className={styles.secondary} data-track="cta_clicked" data-track-label="hero_docs">
-            Read the docs <ArrowRight size={15} aria-hidden="true" />
-          </Link>
-          <a href={foundersCall} className={styles.secondary} data-track="cta_clicked" data-track-label="hero_founders">
-            Talk to the founders <ArrowUpRight size={15} aria-hidden="true" />
-          </a>
-        </div>
-        <Downloads />
-      </div>
-      <BotWall />
-      <HeroSnippet />
+        <HeroActions />
+      </Reveal>
+      <Reveal order={2} className={styles.heroSnippetWrap}>
+        <ReplayShowcase />
+        <InstallBar />
+      </Reveal>
     </section>
   );
 }

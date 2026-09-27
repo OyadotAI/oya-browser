@@ -16,10 +16,14 @@ import {
   Terminal,
   Code,
   Globe,
-  Zap,
   Shield,
   Users,
   Layers,
+  Package,
+  Repeat,
+  Rocket,
+  Server,
+  Wrench,
 } from 'lucide-react';
 import { useDocsNav } from './nav';
 import type { DocsSearch } from './use-docs-search';
@@ -37,53 +41,47 @@ interface NavGroup {
   links: NavEntry[];
 }
 
-/** Every sidebar group, in page order. */
+/** Every sidebar group, in page order: what a developer reaches for first comes first. */
 const NAV_GROUPS: NavGroup[] = [
   {
-    icon: Layers,
-    label: 'Control Plane',
-    links: [
-      ['control-plane', 'Architecture'],
-      ['comparison', 'Why Oya (10x Leap)'],
-      ['routing-failover', 'Routing & Failover'],
-      ['stealth-benchmarks', 'Stealth Benchmarks'],
-    ],
-  },
-  {
-    icon: Zap,
-    label: 'Getting Started',
+    icon: Rocket,
+    label: 'Get started',
     links: [
       ['quickstart', 'Quickstart'],
-      ['sdk', 'SDK'],
-      ['cli', 'CLI'],
-      ['create-key', 'Create API Key'],
-      ['download', 'Desktop Sign-in'],
-      ['connect', 'Connect'],
+      ['create-key', 'API keys'],
+      ['download', 'Desktop sign-in'],
+      ['connect', 'Connect a desktop browser'],
     ],
   },
   {
-    icon: Users,
-    label: 'Identity',
+    icon: Repeat,
+    label: 'Playbooks',
     links: [
-      ['personas', 'Personas'],
-      ['rotation', 'Rotation'],
-      ['captcha', 'CAPTCHA'],
-      ['mfa', 'MFA'],
+      ['playbooks', 'Record and replay'],
+      ['playbook-variables', 'Variables and secrets'],
+      ['free-text-fields', 'Free-text fields'],
+      ['healing', 'When a page changes'],
+      ['replay-sign-in', 'Signing in on replay'],
+      ['playwright-code', 'The Playwright code'],
+      ['export-import', 'Export and import'],
+      ['background-runs', 'Background runs'],
     ],
   },
+  { icon: Package, label: 'SDK', links: [['sdk', 'TypeScript SDK']] },
+  { icon: Terminal, label: 'CLI', links: [['cli', 'Commands']] },
   {
     icon: BookOpen,
-    label: 'AI Integration',
+    label: 'MCP',
     links: [
-      ['mcp-setup', 'MCP Setup'],
+      ['mcp-setup', 'Setup'],
       ['cursor', 'Cursor'],
       ['claude-desktop', 'Claude Desktop'],
       ['claude-code', 'Claude Code'],
     ],
   },
   {
-    icon: Terminal,
-    label: 'MCP Tools',
+    icon: Wrench,
+    label: 'MCP tools',
     links: [
       ['analyze_page', 'analyze_page'],
       ['navigate', 'navigate'],
@@ -97,8 +95,18 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    icon: Users,
+    label: 'Identity',
+    links: [
+      ['personas', 'Personas'],
+      ['rotation', 'Rotation'],
+      ['captcha', 'CAPTCHA'],
+      ['mfa', 'MFA'],
+    ],
+  },
+  {
     icon: Shield,
-    label: 'Anonymity',
+    label: 'Stealth',
     links: [
       ['anonymity', 'Overview'],
       ['fingerprint', 'Fingerprint Spoofing'],
@@ -108,8 +116,27 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    icon: Server,
+    label: 'Self-hosting',
+    links: [
+      ['self-hosting', 'Install'],
+      ['self-hosting-connect', 'Point your code at it'],
+      ['self-hosting-settings', 'Settings that matter'],
+    ],
+  },
+  {
+    icon: Layers,
+    label: 'Architecture',
+    links: [
+      ['control-plane', 'Control plane'],
+      ['comparison', 'Why Oya'],
+      ['routing-failover', 'Routing & Failover'],
+      ['stealth-benchmarks', 'Stealth Benchmarks'],
+    ],
+  },
+  {
     icon: Globe,
-    label: 'Dashboard',
+    label: 'Console',
     links: [
       ['dashboard-overview', 'Overview'],
       ['onboarding', 'Onboarding'],
@@ -119,7 +146,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     icon: Code,
-    label: 'API',
+    label: 'API reference',
     links: [
       ['rest-api', 'REST API'],
       ['command-api', 'Command Reference'],
