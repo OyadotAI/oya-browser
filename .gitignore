@@ -27,3 +27,6 @@ k8s/fleet/
 # Working notes that are ours, not a user's. This repository is public, so
 # anything written for internal use lives here and never ships.
 compliance/local/
+
+# Coverage reports, written by test:coverage for the badge upload.
+lcov.info

@@ -38,6 +38,13 @@ jobs:
       # that only passes with a live Supabase or Daytona key fails here.
       # Coverage floor for the server's unit tests (lines 95%, branches and functions 90%).
       - run: npm run test:coverage --prefix server
+      # The coverage badge. Public repositories upload without a token; an
+      # unreachable or unconfigured Codecov never fails the build.
+      - uses: codecov/codecov-action@v5
+        with:
+          files: server/lcov.info
+          flags: server
+          fail_ci_if_error: false
       - run: npm run test:integration --prefix server
 
   packages:
@@ -127,7 +134,13 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - run: npm ci --prefix ui
       - run: npm run typecheck --prefix ui
-      - run: npm test --prefix ui
+      # The same unit run as npm test, with coverage for the badge.
+      - run: npm run test:coverage --prefix ui
+      - uses: codecov/codecov-action@v5
+        with:
+          files: ui/coverage/lcov.info
+          flags: ui
+          fail_ci_if_error: false
 
   typecheck:
     name: Typecheck server, SDK and CLI
