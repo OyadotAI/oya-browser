@@ -23,3 +23,7 @@ export const CLIENT_HEADER = 'x-oya-client';
 export { SELF_HOST_FREE_CAP } from '../../platform/license/index.ts';
 /** The largest browser count a ping may report: anything above is a malformed ping. */
 export const PING_MAX_COUNT = 1_000_000;
+/** Cents in a dollar, for amounts said in Slack. */
+export const CENTS = 100;
+/** Digits after the point in an amount of money. */
+export const CENT_DIGITS = 2;

@@ -104,6 +104,12 @@ export const track = {
   /** An installed app checked for an update. */
   updateChecked: (visitor: string, props: EventProps['update_checked']) =>
     send('update_checked', visitorWho(visitor), props),
+  /** A person paid an invoice. */
+  paymentReceived: (user: Person, props: EventProps['payment_received']) =>
+    send('payment_received', person(user.id, user.email), props),
+  /** A person's payment failed. */
+  paymentFailed: (user: Person, props: EventProps['payment_failed']) =>
+    send('payment_failed', person(user.id, user.email), props),
   /** A self-hosted server pinged, by its random install id. */
   installPinged: (installId: string, props: EventProps['install_pinged']) =>
     send('install_pinged', visitorWho(`install-${installId}`), props),

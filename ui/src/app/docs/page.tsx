@@ -6,11 +6,12 @@
  */
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ComponentType } from 'react';
 import Dialog from '@/components/ui/dialog';
 import { DocsHeader } from './_docs/docs-header';
 import { DocsIntro } from './_docs/intro';
 import { DocsNav, useDocsNavState, useSlashToSearch } from './_docs/nav';
+import { DOC_PAGES } from './_docs/pages';
 import { Sidebar } from './_docs/sidebar';
 import { useDocsSearch } from './_docs/use-docs-search';
 import { ControlPlaneDocs } from './_sections/control-plane';
@@ -23,6 +24,34 @@ import { IdentityDocs } from './_sections/identity';
 import { AnonymityDocs } from './_sections/anonymity';
 import { DashboardDocs } from './_sections/dashboard';
 import { ApiDocs } from './_sections/api';
+
+/** Each part of the docs (see _docs/pages.ts) by its slug. */
+const SECTIONS: Record<string, ComponentType> = {
+  'getting-started': GetStartedDocs,
+  playbooks: PlaybooksDocs,
+  sdk: SdkDocs,
+  cli: CliDocs,
+  mcp: AiIntegrationDocs,
+  'mcp-tools': McpToolsDocs,
+  identity: IdentityDocs,
+  anonymity: AnonymityDocs,
+  'self-hosting': SelfHostingDocs,
+  'control-plane': ControlPlaneDocs,
+  dashboard: DashboardDocs,
+  api: ApiDocs,
+};
+
+/** Every part in page order, each in the <section> its Markdown twin (/docs/<slug>.md) is cut from. */
+function DocsSections() {
+  return DOC_PAGES.map(({ slug }) => {
+    const Section = SECTIONS[slug];
+    return (
+      <section key={slug} data-doc-page={slug}>
+        <Section />
+      </section>
+    );
+  });
+}
 
 /** The mobile menu's state, the navigation and the search. */
 function useDocsPage() {
@@ -56,18 +85,7 @@ export default function DocsPage() {
         <main className="min-w-0 lg:ml-[260px] px-5 pt-28 pb-24 sm:px-10 lg:px-14 lg:pt-32">
           <div className="max-w-[800px] mx-auto">
             <DocsIntro />
-            <GetStartedDocs />
-            <PlaybooksDocs />
-            <SdkDocs />
-            <CliDocs />
-            <AiIntegrationDocs />
-            <McpToolsDocs />
-            <IdentityDocs />
-            <AnonymityDocs />
-            <SelfHostingDocs />
-            <ControlPlaneDocs />
-            <DashboardDocs />
-            <ApiDocs />
+            <DocsSections />
           </div>
         </main>
       </div>

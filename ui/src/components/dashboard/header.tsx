@@ -4,8 +4,7 @@
  */
 'use client';
 
-import { useEffect, useState } from 'react';
-import { BILLING_HASH } from './billing/constants';
+import { useState } from 'react';
 import { Settings } from 'lucide-react';
 import { OyaWordmark } from '@/components/oya-logo';
 import ThemeToggle from '@/components/theme-toggle';
@@ -28,11 +27,6 @@ interface HeaderProps {
 /** The top bar. */
 export default function Header({ apiKey, setApiKey, onOpenSettings }: HeaderProps) {
   const [showProfile, setShowProfile] = useState(false);
-  // An upgrade link from a refusal (…/dashboard#billing) opens the account dialog on the plan.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the hash is only readable after mount
-    if (window.location.hash === BILLING_HASH) setShowProfile(true);
-  }, []);
   return (
     // relative z-50 keeps the account menu and log out reachable. Selecting a
     // browser renders the detail panel as `fixed inset-0 z-40` below the lg

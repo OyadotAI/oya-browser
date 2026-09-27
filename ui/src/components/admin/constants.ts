@@ -16,3 +16,5 @@ export const DAY_CHARS = 10;
 export const SECONDS_PER_HOUR = 3600;
 /** Characters of an install id shown: enough to tell installs apart. */
 export const INSTALL_ID_CHARS = 8;
+/** Oya staff's addresses: they get a link to the admin page. */
+export const ADMIN_DOMAIN = '@getoya.ai';

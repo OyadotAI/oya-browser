@@ -8,6 +8,7 @@ import { hosted, stripeKey } from './config.ts';
 import { Entitlements, type EntitlementDeps } from './entitlements.ts';
 import { Subscriptions } from './subscriptions.ts';
 import { UsageReporter } from './reporter.ts';
+import { Invoices } from './invoices.ts';
 import { REPORT_INTERVAL_MS, BILLING_PATH } from './constants.ts';
 import * as repository from './repository.ts';
 
@@ -17,6 +18,7 @@ export { verifySignature } from './stripe.ts';
 export { Entitlements, type EntitlementDeps } from './entitlements.ts';
 export { Subscriptions } from './subscriptions.ts';
 export { UsageReporter } from './reporter.ts';
+export { Invoices } from './invoices.ts';
 export { PLANS, SALES_EMAIL } from './constants.ts';
 export { billingRoutes, billingWebhook } from './routes.ts';
 
@@ -28,13 +30,13 @@ export type BillingWiring = Omit<EntitlementDeps, 'find' | 'usageSince' | 'upgra
 
 /** Builds billing's three parts over the subscriptions table and Stripe. */
 export function createBilling(wiring: BillingWiring, fetchFn: typeof fetch = fetch) {
-  const stripe = stripeClient(stripeKey, fetchFn);
   const back = () => `${wiring.consoleUrl()}${BILLING_PATH}`;
-  const shared = { ...repository, now: () => Date.now() };
+  const shared = { ...repository, now: () => Date.now(), stripe: stripeClient(stripeKey, fetchFn) };
   return {
     entitlements: new Entitlements({ ...wiring, ...shared, upgradeUrl: back }),
-    subscriptions: new Subscriptions({ ...shared, stripe, returnUrl: back }),
-    reporter: new UsageReporter({ ...shared, stripe }),
+    subscriptions: new Subscriptions({ ...shared, returnUrl: back }),
+    reporter: new UsageReporter(shared),
+    invoices: new Invoices(shared),
   };
 }
 

@@ -22,7 +22,17 @@ export function DocsIntro() {
   const { navigate } = useDocsNav();
   return (
     <>
-      <p className="eyebrow mb-5 text-accent">Oya Browser docs</p>
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <p className="eyebrow text-accent">Oya Browser docs</p>
+        <a
+          href="/docs.md"
+          data-md="skip"
+          className="text-[12px] text-text-dim hover:text-text transition-colors"
+          title="These docs as Markdown, for AI agents and LLMs"
+        >
+          View as Markdown
+        </a>
+      </div>
       <h1 className="text-[38px] sm:text-[48px] leading-[1.1] font-medium tracking-[-.045em] text-text mb-5">
         A real browser for your agents.
       </h1>
@@ -30,7 +40,7 @@ export function DocsIntro() {
         Your agent does a task once in plain language. Oya saves it as Playwright code and replays it with no model,
         signed in like your staff and never flagged as a bot. Start with the quickstart: three steps, three minutes.
       </p>
-      <div className="mb-14 grid gap-3 grid-cols-2 lg:grid-cols-3">
+      <div data-md="skip" className="mb-14 grid gap-3 grid-cols-2 lg:grid-cols-3">
         {CARDS.map(([id, title, description]) => (
           <a
             key={id}

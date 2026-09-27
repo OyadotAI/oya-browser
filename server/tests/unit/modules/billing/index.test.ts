@@ -36,7 +36,7 @@ describe('billing facade', () => {
     assert.ok(billing.entitlements instanceof Entitlements);
     assert.ok(billing.subscriptions instanceof Subscriptions);
     assert.ok(billing.reporter instanceof UsageReporter);
-    assert.equal(billing.entitlements.deps.upgradeUrl(), 'https://console.test/dashboard#billing');
+    assert.equal(billing.entitlements.deps.upgradeUrl(), 'https://console.test/dashboard/billing');
   });
 
   it('reports on an interval on the hosted deployment, until stopped', () => {

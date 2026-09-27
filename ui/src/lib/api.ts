@@ -115,6 +115,14 @@ export const billingCheckout = (token: string, plan: string) =>
     body: JSON.stringify({ plan }),
   });
 
+/** The person's issued invoices, newest first. */
+export const billingInvoices = (token: string) =>
+  account('/billing/invoices', 'Could not load your invoices', { headers: authHeaders(token) });
+
+/** The person's next invoice as it stands, line by line; `{upcoming: null}` without a subscription. */
+export const billingUpcoming = (token: string) =>
+  account('/billing/upcoming', 'Could not load your next invoice', { headers: authHeaders(token) });
+
 /** The Stripe page to change card or plan, or cancel. */
 export const billingPortal = (token: string) =>
   account<Redirect>('/billing/portal', 'Could not open billing', {

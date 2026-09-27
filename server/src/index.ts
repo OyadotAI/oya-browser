@@ -147,8 +147,9 @@ app.get('/.well-known/agent-card.json', (req, res) =>
   res.sendFile(join(publicDir, '.well-known', 'agent.json'), { dotfiles: 'allow' }),
 );
 // One file, several names. Crawlers look for different ones and a second copy
-// would only drift from this.
-for (const path of ['/llms.txt', '/llms-full.txt', '/docs.txt']) {
+// would only drift from this. /llms-full.txt is not one of them: the UI serves
+// it as the whole docs site in Markdown, next to /docs.md and /docs/<slug>.md.
+for (const path of ['/llms.txt', '/docs.txt']) {
   app.get(path, (req, res) => res.type('text/plain').sendFile(join(publicDir, 'llms.txt')));
 }
 app.get('/openapi.json', (req, res) => res.type('application/json').sendFile(join(publicDir, 'openapi.json')));

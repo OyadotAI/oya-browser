@@ -36,7 +36,7 @@ function fixture({
     modelOf: () => model.name,
     licenseAdmit: (count) => (license.push(count), { ok: count <= 5, message: 'needs a license' }),
     hostedDeployment: () => hostedDeployment,
-    upgradeUrl: () => 'https://console.test/dashboard#billing',
+    upgradeUrl: () => 'https://console.test/dashboard/billing',
     now: () => clock.now,
   };
   return { e: new Entitlements(deps), billed, license, ownModel, clock, model };
@@ -65,7 +65,7 @@ describe('Entitlements', () => {
     await assert.rejects(e.admitCloud('k-u'), (err: any) => {
       assert.equal(err.status, 402);
       assert.equal(err.code, 'plan_limit');
-      assert.equal(err.upgrade_url, 'https://console.test/dashboard#billing');
+      assert.equal(err.upgrade_url, 'https://console.test/dashboard/billing');
       assert.match(err.message, /sales@getoya\.ai/);
       return true;
     });

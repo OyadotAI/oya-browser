@@ -6,6 +6,8 @@
  */
 import { BYTES_PER_MIB, MS_PER_MINUTE, SECONDS_PER_HOUR } from '../../platform/constants.ts';
 
+/** Micro-USD in a cent: the hosted model is reported in cents of its cost. */
+const MICRO_USD_PER_CENT = 10_000;
 /** Seconds in a minute: cloud time is reported in minutes. */
 const SECONDS_PER_MINUTE = 60;
 
@@ -81,7 +83,7 @@ export type Meter = {
 export const METERS: Meter[] = [
   { field: 'cloud_seconds', event: 'oya_cloud_minutes', per: SECONDS_PER_MINUTE },
   { field: 'residential_proxy_bytes', event: 'oya_proxy_mb', per: BYTES_PER_MIB },
-  { field: 'hosted_llm_microusd', event: 'oya_llm_microusd', per: 1 },
+  { field: 'hosted_llm_microusd', event: 'oya_model_cents', per: MICRO_USD_PER_CENT },
   { field: 'agent_steps', event: 'oya_agent_steps', per: 1 },
 ];
 
@@ -117,7 +119,17 @@ export const STRIPE_VERSION = '2025-03-31.basil';
 /** Who to write to for more than the plans offer, or a self-hosted license. */
 export const SALES_EMAIL = 'sales@getoya.ai';
 /** Where in the console a person manages their plan. */
-export const BILLING_PATH = '/dashboard#billing';
+export const BILLING_PATH = '/dashboard/billing';
+/** How Checkout looks: Oya's name, icon and colors, whatever else shares the Stripe account. */
+export const CHECKOUT_BRANDING = {
+  display_name: 'Oya Browser',
+  icon: { type: 'url', url: 'https://oyabrowser.com/apple-icon.png' },
+  background_color: '#0c0c0a',
+  button_color: '#157a13',
+  border_style: 'rounded',
+};
+/** Invoices the billing page lists. */
+export const INVOICES_SHOWN = 24;
 /** Characters of a hashed meter-event identifier: Stripe allows up to 100. */
 export const IDENTIFIER_CHARS = 40;
 /** Characters of an ISO time up to its hour: 2026-03-10T14. */
@@ -126,3 +138,5 @@ export const HOUR_CHARS = 13;
 const RESERVATION_MINUTES = 3;
 /** How long an admitted cloud browser holds its place. */
 export const RESERVATION_MS = RESERVATION_MINUTES * MS_PER_MINUTE;
+/** Payment events remembered, so a retried delivery is not announced twice. */
+export const TOLD_MAX = 1_000;

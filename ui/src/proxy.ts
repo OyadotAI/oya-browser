@@ -2,6 +2,8 @@
  * The request proxy (Next.js 16's name for middleware): gives every page
  * request a fresh nonce and the Content-Security-Policy it belongs to. The
  * policy itself, and why it is shaped the way it is, lives in lib/csp.ts.
+ * It also answers an agent asking for /docs with `Accept: text/markdown`
+ * with the Markdown twin, /docs.md.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { contentSecurityPolicy } from '@/lib/csp';
@@ -15,8 +17,23 @@ export function proxy(request: NextRequest) {
   const headers = new Headers(request.headers);
   headers.set('x-nonce', nonce);
   headers.set('content-security-policy', csp);
-  const response = NextResponse.next({ request: { headers } });
+  const response = forward(request, headers);
   response.headers.set('content-security-policy', csp);
+  return response;
+}
+
+/** /docs itself, the one page with a Markdown twin to negotiate. */
+const isDocs = (request: NextRequest) => ['/docs', '/docs/'].includes(request.nextUrl.pathname);
+
+/** On to the page, or to /docs.md for a client that asked for Markdown; /docs answers vary on Accept. */
+function forward(request: NextRequest, headers: Headers) {
+  if (!isDocs(request)) return NextResponse.next({ request: { headers } });
+  const markdown = request.headers.get('accept')?.includes('text/markdown');
+  const url = new URL('/docs.md', request.url);
+  const response = markdown
+    ? NextResponse.rewrite(url, { request: { headers } })
+    : NextResponse.next({ request: { headers } });
+  response.headers.set('vary', 'Accept');
   return response;
 }
 

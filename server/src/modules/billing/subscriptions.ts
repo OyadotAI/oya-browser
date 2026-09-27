@@ -8,7 +8,7 @@ import { HttpError, invalid, notFound } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { MS_PER_SECOND } from '../../platform/constants.ts';
 import { portalConfiguration, pricesFor, planOfPrice } from './config.ts';
-import { PAID_PLANS, PLANS, type PlanName } from './constants.ts';
+import { CHECKOUT_BRANDING, PAID_PLANS, PLANS, type PlanName } from './constants.ts';
 import { standingOf } from './standing.ts';
 import type { Stripe } from './stripe.ts';
 import type { Subscription } from './repository.ts';
@@ -93,11 +93,21 @@ export class Subscriptions {
     const prices = pricesOnSale(plan);
     const customer = (await this.deps.find(userId))?.stripe_customer_id || undefined;
     const back = this.deps.returnUrl();
-    const session = await this.deps.stripe.post('/checkout/sessions', {
+    const session = await this.openCheckout({
       ...{ mode: 'subscription', line_items: lineItems(prices), client_reference_id: userId, customer },
       ...{ subscription_data: { metadata: { user_id: userId } }, success_url: back, cancel_url: back },
     });
     return { url: session.url };
+  }
+
+  /** Opens Checkout in Oya's look; should Stripe refuse the look, the page still opens, plain. */
+  openCheckout(params: Record<string, unknown>) {
+    const branded = { ...params, branding_settings: CHECKOUT_BRANDING };
+    return this.deps.stripe
+      .post('/checkout/sessions', branded)
+      .catch((e) =>
+        /branding/i.test(e.message) ? this.deps.stripe.post('/checkout/sessions', params) : Promise.reject(e),
+      );
   }
 
   /** A Customer Portal page, where the person changes card, sees invoices or cancels: Oya's own portal where one is set. */
@@ -111,9 +121,10 @@ export class Subscriptions {
 
   /** The person's plan, its allowances and what they used this period, for the console. */
   async summary(userId: string) {
-    const { plan, status, since } = standingOf(userId, await this.deps.find(userId), this.deps.now());
+    const row = await this.deps.find(userId);
+    const { plan, status, since } = standingOf(userId, row, this.deps.now());
     const used = await this.deps.usageSince(userId, since);
-    return { enabled: true, plan, status, since, included: PLANS[plan], used };
+    return { enabled: true, plan, status, since, until: row?.period_end ?? null, included: PLANS[plan], used };
   }
 
   /** Applies a verified webhook event; events billing does not follow are ignored. */
