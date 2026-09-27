@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.133](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.133) · 2026-09-27
+
 ### Fixed
 
 - A replay test could hang CI when run with coverage, which held the 1.0.132 deploy at its tests.
