@@ -22,4 +22,17 @@ describe('sentry settings', () => {
     const event = { message: 'Key Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z refused' } as ErrorEvent;
     expect(scrub(event).message).toBe('Key [redacted] refused');
   });
+
+  it('keeps Sentry’s own ids, which are 32 characters too, so the event is accepted', () => {
+    const id = 'f3a32feeeebc45baa1782a36c8937285';
+    const event = { event_id: id, contexts: { trace: { trace_id: id } } } as unknown as ErrorEvent;
+    expect(scrub(event).event_id).toBe(id);
+  });
+
+  it('redacts a key in a fetch breadcrumb URL', () => {
+    const event = {
+      breadcrumbs: [{ data: { url: '/api?k=Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z' } }],
+    } as unknown as ErrorEvent;
+    expect(scrub(event).breadcrumbs?.[0].data?.url).toBe('/api?k=[redacted]');
+  });
 });

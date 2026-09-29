@@ -26,4 +26,19 @@ describe('sentry', () => {
     const event = scrub({ exception: { values: [{ type: 'Error', value: `Key ${KEY} was refused` }] } } as any);
     assert.equal(event.exception.values[0].value, 'Key [redacted] was refused');
   });
+
+  it('keeps Sentry’s own ids, which are 32 characters too, so the event is accepted', () => {
+    const id = 'f3a32feeeebc45baa1782a36c8937285';
+    const event = scrub({ event_id: id, contexts: { trace: { trace_id: id, span_id: 'b'.repeat(16) } } } as any);
+    assert.deepEqual([event.event_id, event.contexts.trace.trace_id], [id, id]);
+  });
+
+  it('redacts a key in a breadcrumb or request URL', () => {
+    const event = scrub({
+      request: { url: `https://x.test/?key=${KEY}` },
+      breadcrumbs: [{ message: `sent ${KEY}`, data: { url: `https://y.test/${KEY}` } }],
+    } as any);
+    assert.equal(event.request.url, 'https://x.test/?key=[redacted]');
+    assert.deepEqual(event.breadcrumbs[0], { message: 'sent [redacted]', data: { url: 'https://y.test/[redacted]' } });
+  });
 });
