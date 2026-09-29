@@ -183,6 +183,42 @@ describe('chat', () => {
     }
   });
 
+  it('announces a chat that stops to ask a person as run.needs_attention, so webhooks and Slack hear about it', async () => {
+    const call = {
+      id: 'c1',
+      type: 'function',
+      function: { name: 'request_human', arguments: '{"message":"Solve the CAPTCHA"}' },
+    };
+    const answer = { choices: [{ message: { role: 'assistant', content: null, tool_calls: [call] } }] };
+    mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(answer), { status: 200 }));
+    const { emit } = stubControl();
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const body = JSON.parse((await talk({ messages: [{ role: 'user', content: 'sign up' }] })).ended);
+      assert.equal(body.text, 'NEEDS INPUT: Solve the CAPTCHA');
+      const [, type, sessionId, detail] = emit.mock.calls[0].arguments;
+      assert.deepEqual(
+        [type, sessionId, detail],
+        ['run.needs_attention', B, { reason: 'agent', message: 'Solve the CAPTCHA', source: 'chat' }],
+      );
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  it('announces nothing when a chat simply answers', async () => {
+    const answer = { choices: [{ message: { role: 'assistant', content: 'DONE: all good' } }] };
+    mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(answer), { status: 200 }));
+    const { emit } = stubControl();
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      await talk({ messages: [{ role: 'user', content: 'go' }] });
+      assert.equal(emit.mock.callCount(), 0);
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
   it('refuses a file passed as a secret', async () => {
     const file = { file: 'a.txt', type: 'text/plain', b64: 'YQ==' };
     const res = await talk({ messages: [], secrets: { doc: file } });

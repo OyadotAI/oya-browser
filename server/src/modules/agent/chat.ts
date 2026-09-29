@@ -24,6 +24,7 @@ export { selectOptionIn, UPLOAD_FILE_JS, uploadFileIn } from './page-scripts.ts'
 export { lastRun, hasReplayableSteps } from './recorder.ts';
 export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
 export { PAGE_FORMAT } from './constants.ts';
+export { NEEDS_INPUT } from './loop.ts';
 export { executeTool } from './executor.ts';
 export { BROWSER_TOOLS, toolsOn } from './tools.ts';
 export { CHALLENGE_TOOLS, CHALLENGE_HANDLERS } from './challenge-tools.ts';

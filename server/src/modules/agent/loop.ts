@@ -145,6 +145,9 @@ async function returnData(ctx: LoopContext, args) {
   return 'Returned.';
 }
 
+/** How a run's reply begins when it stopped to ask a person, so callers can announce the handover. */
+export const NEEDS_INPUT = 'NEEDS INPUT: ';
+
 /**
  * Asks a person: one who can be reached mid-run answers and the run goes on; with
  * none (a chat, where the person reads the reply), the question ends the run as
@@ -153,7 +156,7 @@ async function returnData(ctx: LoopContext, args) {
 async function askPerson(ctx: LoopContext, args) {
   const message = String(args.message || '');
   if (ctx.requestHuman) return `The person replied: ${await ctx.requestHuman({ reason: 'agent', message })}`;
-  ctx.stop = `NEEDS INPUT: ${message}`;
+  ctx.stop = `${NEEDS_INPUT}${message}`;
   return 'Your question goes to the user as your reply; the run stops here until they answer.';
 }
 

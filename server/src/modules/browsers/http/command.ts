@@ -3,7 +3,8 @@
  * the browser tools.
  */
 import { sendCommand } from '../socket.ts';
-import { runChat, lastRun, hasReplayableSteps, requireLlm } from '../../agent/chat.ts';
+import { runChat, lastRun, hasReplayableSteps, requireLlm, NEEDS_INPUT } from '../../agent/chat.ts';
+import { control } from '../../control/service.ts';
 import * as usage from '../../../platform/usage.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { HttpError, answerFor, sendError } from '../../../platform/errors.ts';
@@ -106,6 +107,22 @@ const walls = (key, browserId) => ({
   checkpoint: quietCheckpointFor(key, browserId),
 });
 
+/**
+ * A chat that stopped to ask a person goes on the project's event log as
+ * `run.needs_attention`, like a background run's, so webhooks and the Slack sink
+ * hear about it. A chat has no run to resume, so there is no runId: the person
+ * answers in the chat. Never on the critical path: the reply goes out regardless.
+ */
+function announceHandover(key, browserId, text: string) {
+  const detail = { reason: 'agent', message: text.slice(NEEDS_INPUT.length), source: 'chat' };
+  control()
+    .emit(key, 'run.needs_attention', browserId, detail)
+    .catch((err) => console.error('[chat] run.needs_attention not recorded:', err.message));
+}
+
+/** Whether the chat's run can be saved as a playbook. */
+const replayableRun = (req) => hasReplayableSteps(lastRun(req.params.browserId));
+
 /** Runs the chat, collecting the tool calls it made, and whether the run can be saved as a playbook. */
 async function converse(req, messages, task) {
   const toolCalls = [];
@@ -113,7 +130,7 @@ async function converse(req, messages, task) {
   const key = getKey(req);
   const options = { apiKey: key, ...task, onToolCall, onText: () => {}, ...walls(key, req.params.browserId) };
   const result = await runChat(req.params.browserId, messages, options);
-  const replayable = hasReplayableSteps(lastRun(req.params.browserId));
-  const answer = { text: result.text, failed: !!result.failed, toolCalls, replayable };
+  if (result.text.startsWith(NEEDS_INPUT)) announceHandover(key, req.params.browserId, result.text);
+  const answer = { text: result.text, failed: !!result.failed, toolCalls, replayable: replayableRun(req) };
   return result.data === undefined ? answer : { ...answer, data: result.data };
 }
