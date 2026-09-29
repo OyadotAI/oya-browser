@@ -43,10 +43,20 @@ const DESKTOP_APPLIER = { screen: false, injection: DESKTOP_INJECTION };
  * follows the exit, as a laptop's does when it travels; the device stays the
  * persona's.
  */
-function atThisExit(profile) {
-  const proxy = normalizeProxy(governance.configuration?.proxy || profile.proxy);
-  if (proxy?.host) return profile;
-  return { ...profile, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+function atThisExit(profile, exitZone) {
+  if (!leavesByProxy(profile)) return { ...profile, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+  return exitZone ? { ...profile, timezone: exitZone } : profile;
+}
+
+/** Whether the persona's traffic leaves through a proxy rather than this machine's own connection. */
+function leavesByProxy(profile) {
+  return !!exitProxy(profile);
+}
+
+/** The proxy the persona's traffic leaves through, as anonymity/proxy.js configures it; null when it goes direct. */
+function exitProxy(profile) {
+  const proxy = normalizeProxy(governance.configuration?.proxy || profile?.proxy);
+  return proxy?.host ? proxy : null;
 }
 
 /**
@@ -154,12 +164,21 @@ class Protection {
    */
   applyPersona(dbg, fail) {
     const port = portOf(dbg);
+    const persona = this.personaOptions();
+    if (!persona) return injectStealthOnly(port, personaIdentity(null).override, fail);
+    return createPersonaApplier({ ...port, ...persona, onError: fail }).page();
+  }
+
+  /**
+   * How the active persona is applied in this browser, the same for its tabs and
+   * its workers (workers.cjs), so a page and its service worker agree; null when
+   * there is no persona yet.
+   */
+  personaOptions() {
     const active = this.ctx.persona.active;
-    const userAgent = personaIdentity(active).override;
-    if (!active) return injectStealthOnly(port, userAgent, fail);
-    const profile = onThisMachine(atThisExit(active), this.ctx.config?.values);
-    const applier = { ...port, ...DESKTOP_APPLIER, profile, userAgent, onError: fail };
-    return createPersonaApplier(applier).page();
+    if (!active) return null;
+    const profile = onThisMachine(atThisExit(active, this.ctx.persona.exitZone), this.ctx.config?.values);
+    return { ...DESKTOP_APPLIER, profile, userAgent: personaIdentity(active).override };
   }
 
   /**
@@ -278,4 +297,4 @@ class Protection {
   }
 }
 
-module.exports = { Protection };
+module.exports = { exitProxy, Protection };

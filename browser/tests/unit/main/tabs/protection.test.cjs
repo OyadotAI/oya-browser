@@ -88,6 +88,17 @@ describe('Protection', () => {
     assert.equal(zone, 'Asia/Tokyo');
   });
 
+  it("follows the proxy's exit timezone once it is known, as a laptop's zone does when it travels", async () => {
+    const proxied = { ...generateProfile({ seed: 'tz', platform: 'MacIntel' }), timezone: 'America/Los_Angeles' };
+    ctx.persona.active = { ...proxied, proxy: { host: 'gate.test', port: 8080 } };
+    ctx.persona.exitZone = 'America/Denver';
+    const dbg = new FakeDebugger();
+    await ctx.protection.applyPersona(dbg, () => {});
+    ctx.persona.exitZone = null;
+    const zone = dbg.sent.find((c) => c.method === 'Emulation.setTimezoneOverride').params.timezoneId;
+    assert.equal(zone, 'America/Denver', 'Los Angeles over a Denver IP is the mismatch sites look for');
+  });
+
   it("overrides the page's user agent data with the persona's, not only the session's string", async () => {
     ctx.persona.active = generateProfile({ seed: 'ua', platform: 'Win32' });
     const dbg = new FakeDebugger();

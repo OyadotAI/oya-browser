@@ -311,6 +311,70 @@ describe('play', () => {
     });
   });
 
+  describe('a link replay cannot find', () => {
+    const noHeal = (steps, vars = {}) => play(KEY, BROWSER, pb(steps), vars, { autoHeal: false });
+    /** A page where the link is not clickable (hidden in a closed menu) and the tab is at `url`. */
+    const hiddenLinkOn = (url) => (action) => {
+      if (action === 'click') return { ok: false, error: 'element is not visible' };
+      if (action === 'list_tabs') return { ok: true, data: { tabs: [{ id: 't1', active: true, url }] } };
+      return page(action);
+    };
+    const link = (rawHref, extra = {}) => ({
+      action: 'click',
+      el: { tag: 'a', type: 'link', text: 'Deutsch', rawHref, ...extra },
+    });
+    const navigations = () =>
+      commands()
+        .filter((c) => c.action === 'navigate')
+        .map((c) => c.params.url);
+    /** Runs the steps without healing under the fake clock; resolves to the error, or null. */
+    const outcome = (steps, vars = {}) =>
+      settled(
+        noHeal(steps, vars).then(
+          () => null,
+          (e) => e,
+        ),
+      );
+    beforeEach(() => mock.timers.enable({ apis: ['setTimeout'] }));
+
+    it('is followed to the target it was recorded with', async () => {
+      answer = hiddenLinkOn('https://en.wikipedia.org/wiki/Alan_Turing');
+      assert.equal(await outcome([link('https://de.wikipedia.org/wiki/Alan_Turing')]), null);
+      assert.deepEqual(navigations(), ['https://de.wikipedia.org/wiki/Alan_Turing']);
+    });
+
+    it('resolves a relative target against the page it was on', async () => {
+      answer = hiddenLinkOn('https://arxiv.org/search/advanced?terms=x');
+      assert.equal(await outcome([link('/abs/1706.03762')]), null);
+      assert.deepEqual(navigations(), ['https://arxiv.org/abs/1706.03762']);
+    });
+
+    it('is not followed when the click did more than navigate', async () => {
+      answer = hiddenLinkOn('https://a.test/page');
+      for (const target of ['#top', 'javascript:void(0)', 'https://a.test/next?sessionid=abc', 'mailto:x@a.test']) {
+        const err = await outcome([link(target)]);
+        assert.match(err?.message ?? '', /no element matching "Deutsch"/, target);
+      }
+      assert.deepEqual(navigations(), []);
+    });
+
+    it('is not followed for an element that is not a link', async () => {
+      answer = hiddenLinkOn('https://a.test/page');
+      const err = await outcome([
+        { action: 'click', el: { tag: 'button', text: 'Deutsch', rawHref: 'https://a.test/x' } },
+      ]);
+      assert.match(err?.message ?? '', /no element matching "Deutsch"/);
+      assert.deepEqual(navigations(), []);
+    });
+
+    it('is not followed for a data-driven click, whose target belongs to the recorded choice', async () => {
+      answer = hiddenLinkOn('https://a.test/page');
+      const err = await outcome([link('https://a.test/lang/{{lang}}', { text: '{{lang}}' })], { lang: 'Deutsch' });
+      assert.match(err?.message ?? '', /no element matching/);
+      assert.deepEqual(navigations(), []);
+    });
+  });
+
   describe('healing', () => {
     const broken = () =>
       pb([{ action: 'press_key', key: 'Tab' }, { action: 'teleport' }], { secrets: ['pw'], labels: ['go'] });

@@ -23,6 +23,14 @@ const LINK_SCHEME = 'oya://';
  * that then replaced the logged-in copy the server held.
  */
 const RESUME_OFFLINE_MS = 5000;
+/**
+ * Asked, through a proxied persona's own session, where its traffic comes out: any
+ * service answering JSON with an IANA `timezone` field (ipinfo.io does). The exit's
+ * IP is all it sees, never this machine's.
+ */
+const EXIT_GEO_URL = process.env.OYA_EXIT_GEO_URL || 'https://ipinfo.io/json';
+/** How long a session waits for that answer before keeping the persona's own zone. */
+const EXIT_GEO_TIMEOUT_MS = 4000;
 
 module.exports = {
   PRIVATE_FILE_MODE,
@@ -31,4 +39,6 @@ module.exports = {
   NOISE_SEED_DIGITS,
   LINK_SCHEME,
   RESUME_OFFLINE_MS,
+  EXIT_GEO_URL,
+  EXIT_GEO_TIMEOUT_MS,
 };

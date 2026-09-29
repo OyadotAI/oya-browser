@@ -51,8 +51,9 @@ function rewritten(ses, headers) {
 describe('configureSession', () => {
   let restore;
   let configureSession;
+  const app = new EventEmitter();
   before(() => {
-    restore = installElectron({ app: new EventEmitter() });
+    restore = installElectron({ app });
     ({ configureSession } = freshRequire('main/session.cjs'));
   });
   after(() => restore());
@@ -78,6 +79,13 @@ describe('configureSession', () => {
     await configureSession(ses, { navigator: { platform: 'Win32', languages: ['fr-FR', 'fr'] } });
     assert.equal(ses.languages, 'fr-FR,fr');
     assert.equal(ses.permissionCheck(null, 'media'), false);
+  });
+
+  it("gives service workers the persona's user agent, not Electron's", async () => {
+    const ses = fakeSession();
+    await configureSession(ses, { navigator: { platform: 'Win32' } });
+    assert.equal(app.userAgentFallback, ses.ua);
+    assert.ok(!/Electron|oya-browser/i.test(app.userAgentFallback));
   });
 
   it('applies the persona proxy, or goes direct without one', async () => {

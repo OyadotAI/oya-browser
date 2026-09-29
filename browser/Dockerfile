@@ -33,12 +33,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-dri \
     libegl1 \
     libgl1 \
-    # Fonts
+    # Fonts: open fonts registered under a Mac's font names (docker-fonts.conf)
     fonts-liberation \
     fonts-noto-color-emoji \
+    fonts-dejavu-core \
+    fonts-urw-base35 \
     # VNC (optional, for debugging)
     x11vnc \
     && rm -rf /var/lib/apt/lists/*
+
+# Of the URW set only Helvetica's twin (Nimbus Sans) and Palatino's (P052) stay, in
+# one format: the rest would be found by pages under names no Mac has.
+RUN find /usr/share/fonts -path '*urw-base35*' -type f ! -name 'NimbusSans-*.otf' ! -name 'P052-*.otf' -delete \
+    && rm -rf /usr/share/fonts/X11/Type1 && rm -f /etc/fonts/conf.d/61-urw-*.conf
+COPY docker-fonts.conf /etc/fonts/local.conf
+RUN fc-cache -f
 
 WORKDIR /app
 
