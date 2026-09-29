@@ -8,7 +8,7 @@
 import type { KeyConfig } from './config';
 import type { Persona, BrowserRow } from './types';
 import { StepPreview } from './onboarding/preview';
-import { ConnectStep, Finish, ModelStep } from './onboarding/steps';
+import { CodeAccess, ConnectStep, Finish, ModelStep } from './onboarding/steps';
 import { useOnboarding } from './onboarding/use-onboarding';
 import styles from './onboarding/onboarding.module.css';
 
@@ -16,6 +16,8 @@ import styles from './onboarding/onboarding.module.css';
 interface Props {
   /** The key being set up. */
   apiKey: string;
+  /** The open project, whose API key onboarding offers to copy. */
+  projectId?: string | null;
   /** Its settings. */
   config: KeyConfig;
   /** Its personas. */
@@ -41,7 +43,7 @@ function Progress({ done }: { /** Steps done, in order. */ done: boolean[] }) {
 }
 
 /** The onboarding page. */
-export default function Onboarding({ apiKey, config, personas, browsers, onDone }: Props) {
+export default function Onboarding({ apiKey, projectId, config, personas, browsers, onDone }: Props) {
   const s = useOnboarding({ apiKey, config, personas, browsers, onDone });
   return (
     <div className="flex-1 overflow-y-auto">
@@ -62,6 +64,11 @@ export default function Onboarding({ apiKey, config, personas, browsers, onDone 
             <ConnectStep s={s} />
             <ModelStep s={s} />
           </ol>
+          {projectId && (
+            <div className={styles.rise}>
+              <CodeAccess projectId={projectId} />
+            </div>
+          )}
           <div className={styles.rise}>
             <Finish s={s} />
           </div>

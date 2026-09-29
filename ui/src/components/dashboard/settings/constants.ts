@@ -2,7 +2,7 @@
  * Fixed choices in the settings dialog: its sections, how a provider is told
  * from its endpoint, and the names of browser-provider credentials.
  */
-import { Bell, Cpu, Monitor, ShieldCheck, Webhook } from 'lucide-react';
+import { Bell, Cpu, KeyRound, Monitor, ShieldCheck, Webhook } from 'lucide-react';
 
 /** The dialog's sections, in tab order. */
 export const SECTIONS = [
@@ -11,6 +11,7 @@ export const SECTIONS = [
   { id: 'verification' as const, label: 'Verification', icon: ShieldCheck },
   { id: 'alerts' as const, label: 'Alerts', icon: Bell },
   { id: 'webhooks' as const, label: 'Webhooks', icon: Webhook },
+  { id: 'keys' as const, label: 'API key', icon: KeyRound },
 ];
 
 /** A settings section id. */

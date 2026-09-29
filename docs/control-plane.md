@@ -84,6 +84,36 @@ The `/api/control` overview includes the latest 100 events. Read the full retain
 
 SDK runs publish to the same log, so a task that ends badly is visible to the same subscribers as a session that does: `run.needs_attention` carries the reason (`captcha`, `mfa`, `agent`, `heal_failed`) and the message shown to a person, and `run.failed` carries the error. Both name the browser as their session, so a subscriber can open or share it.
 
+### Webhook payload
+
+Each delivery is a JSON POST of one event. Every event has the same envelope, and only `detail` changes with the type:
+
+```json
+{ "id": 4812, "project": "prj_3f9a…", "type": "run.failed", "sessionId": "brw_…", "at": 1759100000000,
+  "detail": { "runId": "run_…", "owner": "…", "error": "Timed out" } }
+```
+
+`id` is also sent as `Oya-Event-Id`. `sessionId` is the browser the event is about, or `null`. `at` is in milliseconds.
+
+| Type | `detail` |
+|:---|:---|
+| `session.ready` | `{}` |
+| `session.stopped`, `session.disconnected` | `{ reason? }` |
+| `session.failed` | `{ reason }` |
+| `run.needs_attention` | `{ runId, owner, reason, message }` |
+| `run.failed` | `{ runId, owner, error }` |
+| `budget.threshold` | `{ threshold, estimatedUsd }` |
+| `persona.created` | `{ personaId, name }` |
+| `persona.updated` | `{ personaId, fields }` |
+| `persona.deleted` | `{ personaId }` |
+| `recording.ready` | `{}`, with `sessionId` set to the recorded browser |
+| `login.completed`, `login.failed`, `mfa.completed` | `{ personaId, domain, method }` |
+| `credential.created` | `{ id, role }` |
+| `credential.revoked` | `{ id }` |
+| `webhook.test` | `{ message }` |
+
+`POST /api/control/webhook/test` sends one signed `webhook.test` event to the project's saved endpoint straight away, outside the outbox. It answers `{ delivered }`, plus `error` when the endpoint could not be reached. Nothing is stored or retried. Settings → Webhooks has the same thing as a **Send test event** button.
+
 ## Slack
 
 A project may point one Slack channel at its events. Connect either by installing the Slack app (`GET /api/slack/install`, available when the deployment sets `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` and `SLACK_SIGNING_SECRET`) or by sending a bot token from your own app to `PUT /api/slack` with `{ botToken, channelId }`; the token needs `chat:write`, `chat:write.public`, `channels:read` and `groups:read`, and is stored sealed against the project's key. `GET /api/slack/channels` lists what the bot can post to. A private channel also needs the bot invited. The install's `state` is single-use, expires in five minutes, and is bound to the browser that requested it by an `HttpOnly` cookie, so an authorize link cannot be completed anywhere else, finish an install in the browser that started it.

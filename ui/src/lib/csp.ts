@@ -11,7 +11,8 @@
  * `connect-src` has to be computed too: NEXT_PUBLIC_API_URL may point at a
  * different origin than the console, and hard-coding 'self' would silently
  * break every request in that topology. POSTHOG_HOST joins it only when the
- * operator set one, and RB2B's hosts only with RB2B_ID, so a console with
+ * operator set one, RB2B's hosts only with RB2B_ID, and Sentry's ingest host
+ * only with SENTRY_DSN, so a console with
  * analytics off can reach nothing extra. RB2B's script itself needs no entry:
  * a script a nonced script adds is trusted under 'strict-dynamic'.
  *
@@ -21,6 +22,8 @@
  * `base-uri`/`object-src`/`form-action` below close the usual ways of turning
  * one into the other.
  */
+
+import { sentryOrigin } from './sentry';
 
 /** Directives before script-src and connect-src, which depend on the request. */
 const OPENING = ["default-src 'self'"];
@@ -45,12 +48,13 @@ const RB2B_HOSTS = ['https://app.rb2b.com', 'https://9xgnrndqve.execute-api.us-w
 
 /**
  * Where the page may send requests: itself, the API's origin when elsewhere,
- * PostHog and RB2B when the operator turned them on, and the dev bundler's socket.
+ * PostHog, RB2B and Sentry when the operator turned them on, and the dev bundler's socket.
  */
 function connectSources(dev: boolean): string {
   const api = originOf(process.env.NEXT_PUBLIC_API_URL);
   const rb2b = process.env.RB2B_ID ? RB2B_HOSTS : [];
-  return ["'self'", api, originOf(process.env.POSTHOG_HOST), ...rb2b, dev ? 'ws:' : null].filter(Boolean).join(' ');
+  const hosts = [originOf(process.env.POSTHOG_HOST), ...rb2b, sentryOrigin()];
+  return ["'self'", api, ...hosts, dev ? 'ws:' : null].filter(Boolean).join(' ');
 }
 
 /** The origin of a URL the page may send to, or null when the setting is absent or not a URL. */

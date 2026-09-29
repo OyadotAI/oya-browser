@@ -35,6 +35,12 @@ describe('contentSecurityPolicy', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://ph.example.test");
   });
 
+  it('lets the page reach Sentry only when the operator set a DSN', () => {
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
+    vi.stubEnv('SENTRY_DSN', 'https://abc@o1.ingest.us.sentry.io/42');
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://o1.ingest.us.sentry.io");
+  });
+
   it('lets the page reach RB2B only when the operator set its account', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
     vi.stubEnv('RB2B_ID', 'ABC123DEF456');

@@ -9,6 +9,7 @@ import type { RowComponent } from './settings/fields';
 import { ErrorNote, Loading, SectionHeading } from './settings/heading';
 import { useWebhook } from './settings/use-webhook';
 import { Deliveries, SigningSecret, VerifyHelp, WebhookActions, WebhookFields } from './settings/webhook-parts';
+import { PayloadHelp } from './settings/webhook-payload';
 
 /** The panel. */
 export default function WebhookSection({
@@ -35,6 +36,7 @@ export default function WebhookSection({
       <WebhookActions webhook={webhook} config={config} />
       {secret && <SigningSecret secret={secret} />}
       <VerifyHelp />
+      <PayloadHelp />
       {config.hook && <Deliveries webhook={webhook} config={config} />}
     </>
   );

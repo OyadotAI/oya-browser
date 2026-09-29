@@ -9,6 +9,8 @@ import { DM_Sans, Archivo_Black } from 'next/font/google';
 import { AuthProvider } from '@/components/auth-provider';
 import { Analytics } from '@/components/analytics';
 import { Rb2b } from '@/components/rb2b';
+import { ErrorReporting } from '@/components/error-reporting';
+import { sentryDsn } from '@/lib/sentry';
 import { validRb2bId } from '@/lib/rb2b';
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION } from '@/lib/site';
 import './globals.css';
@@ -148,6 +150,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
   const nonce = (await headers()).get('x-nonce') ?? undefined;
   const analytics = analyticsSettings();
   const rb2b = rb2bId();
+  const sentry = sentryDsn();
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning className={`${dmSans.variable} ${archivo.variable}`}>
       <head>
@@ -168,6 +171,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
           {children}
           {analytics && <Analytics posthogKey={analytics.key} host={analytics.host} />}
           {rb2b && <Rb2b id={rb2b} />}
+          {sentry && <ErrorReporting dsn={sentry} />}
         </AuthProvider>
       </body>
     </html>

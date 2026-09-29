@@ -5,6 +5,7 @@
  */
 'use client';
 
+import { ProjectKey } from '../project-switcher';
 import type { ReactNode } from 'react';
 import { ArrowRight, Check, Download, Loader2, Monitor } from 'lucide-react';
 import type { Step, useOnboarding } from './use-onboarding';
@@ -155,6 +156,19 @@ export function ModelStep({ s }: { /** State. */ s: OnboardingState }) {
         onChange={(e) => s.setKey(e.target.value)}
       />
     </RailStep>
+  );
+}
+
+/** For people driving browsers from code rather than the desktop: this project's key, one click away. */
+export function CodeAccess({ projectId }: { /** The open project. */ projectId: string | null }) {
+  return (
+    <div className="mt-8 rounded-xl border border-border bg-bg-sunken p-5">
+      <h2 className="text-sm font-semibold text-text">Using the SDK, CLI or MCP instead?</h2>
+      <p className="mb-3 mt-1 text-[13px] leading-relaxed text-text-muted">
+        They sign in with this project&apos;s API key. It is also in Settings, under API key.
+      </p>
+      <ProjectKey projectId={projectId} />
+    </div>
   );
 }
 

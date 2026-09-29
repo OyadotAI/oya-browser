@@ -43,3 +43,11 @@ export type SavedHook = Hook & {
   /** The new signing secret. */
   secret?: string;
 };
+
+/** What a test send answers. */
+export interface TestResult {
+  /** Whether the endpoint answered 2xx. */
+  delivered: boolean;
+  /** Why the send failed, when it could not reach the endpoint. */
+  error?: string;
+}
