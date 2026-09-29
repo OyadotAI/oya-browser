@@ -50,7 +50,12 @@ trap cleanup SIGTERM SIGINT
 # gives up with "GPU process isn't usable. Goodbye." and SIGTRAPs the whole app.
 # Streaming a browser for ~20s was enough to kill it every time.
 echo "[oya-docker] Starting Oya Browser (${SCREEN_WIDTH:-1920}x${SCREEN_HEIGHT:-1080})"
-./node_modules/.bin/electron . --no-sandbox --disable-gpu --disable-dev-shm-usage &
+#
+# No --disable-gpu: without a GPU process Chromium has no WebGL at all, and a
+# persona that says Mac but has no WebGL is the first thing DataDome and Akamai
+# flag. SwiftShader gives WebGL in software; the persona's renderer strings are
+# patched over it (anonymity/fingerprint.js).
+./node_modules/.bin/electron . --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --disable-dev-shm-usage &
 ELECTRON_PID=$!
 
 # ── Hard lifetime ──
