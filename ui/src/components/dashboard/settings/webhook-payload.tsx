@@ -21,7 +21,7 @@ export const EVENT_DETAILS: [type: string, detail: string][] = [
   ['session.stopped', '{ reason? }'],
   ['session.disconnected', '{ reason? }'],
   ['session.failed', '{ reason }'],
-  ['run.needs_attention', '{ runId, owner, reason, message }'],
+  ['run.needs_attention', '{ runId, owner, reason, message }, or from Ask: { reason, message, source: "chat" }'],
   ['run.failed', '{ runId, owner, error }'],
   ['budget.threshold', '{ threshold, estimatedUsd }'],
   ['persona.created', '{ personaId, name }'],

@@ -100,7 +100,7 @@ Each delivery is a JSON POST of one event. Every event has the same envelope, an
 | `session.ready` | `{}` |
 | `session.stopped`, `session.disconnected` | `{ reason? }` |
 | `session.failed` | `{ reason }` |
-| `run.needs_attention` | `{ runId, owner, reason, message }` |
+| `run.needs_attention` | `{ runId, owner, reason, message }` from an SDK run; `{ reason: "agent", message, source: "chat" }` when an Ask or `/chat` run stops to ask a person (no run to resume: they answer in the chat) |
 | `run.failed` | `{ runId, owner, error }` |
 | `budget.threshold` | `{ threshold, estimatedUsd }` |
 | `persona.created` | `{ personaId, name }` |
