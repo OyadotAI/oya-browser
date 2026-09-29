@@ -25,8 +25,25 @@ export function sentryOrigin(dsn = sentryDsn()): string | null {
   }
 }
 
-/** The event with every key-shaped string replaced. */
-export const scrub = (event: ErrorEvent): ErrorEvent => JSON.parse(JSON.stringify(event).replace(KEYISH, '[redacted]'));
+/** Free text with key-shaped runs replaced. */
+const clean = (text?: string) => text?.replace(KEYISH, '[redacted]');
+
+/**
+ * The event with keys removed from the fields free text can reach: the page
+ * URL, the message, exception texts and breadcrumbs. Only those: Sentry's own
+ * ids are 32 characters too and must survive, or the event is rejected.
+ */
+export function scrub(event: ErrorEvent): ErrorEvent {
+  if (event.request) event.request.url = clean(event.request.url);
+  if (event.message) event.message = clean(event.message);
+  for (const e of event.exception?.values ?? []) e.value = clean(e.value);
+  for (const b of event.breadcrumbs ?? []) Object.assign(b, { message: clean(b.message), data: cleanData(b.data) });
+  return event;
+}
+
+/** A breadcrumb's data with its URL cleaned: fetch and navigation crumbs carry one. */
+const cleanData = (data?: Record<string, unknown>) =>
+  data && typeof data.url === 'string' ? { ...data, url: clean(data.url) } : data;
 
 /** Starts reporting in the browser; loaded only when a DSN is set, so a console without one fetches nothing. */
 export async function startSentry(dsn: string) {
