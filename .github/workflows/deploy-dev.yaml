@@ -22,6 +22,10 @@ jobs:
   ci:
     if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
     uses: ./.github/workflows/ci.yaml
+    # CI's coverage jobs log in to Codecov by OIDC, which needs id-token granted from here.
+    permissions:
+      contents: read
+      id-token: write
 
   changes:
     name: Detect changes

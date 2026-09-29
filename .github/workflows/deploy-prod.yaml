@@ -19,6 +19,10 @@ jobs:
   # suite ran on pull requests and on nothing that actually shipped.
   ci:
     uses: ./.github/workflows/ci.yaml
+    # CI's coverage jobs log in to Codecov by OIDC, which needs id-token granted from here.
+    permissions:
+      contents: read
+      id-token: write
 
   build-linux:
     name: Build Linux AppImage
