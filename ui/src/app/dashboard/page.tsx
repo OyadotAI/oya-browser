@@ -24,6 +24,7 @@ export default function DashboardPage() {
       {onboarding ? (
         <Onboarding
           apiKey={apiKey}
+          projectId={c.project}
           config={config}
           personas={c.personas}
           browsers={c.browsers}

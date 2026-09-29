@@ -146,6 +146,8 @@ controlRouter.put('/webhook', admin, async (req, res) => {
     await control().webhook(key(req), { url: req.body.url, types: req.body.types ?? [], roll: req.body.roll === true }),
   );
 });
+/** POST /control/webhook/test, send a signed sample event to the project webhook now. Administrators only. */
+controlRouter.post('/webhook/test', admin, async (req, res) => res.json(await control().testWebhook(key(req))));
 /** DELETE /control/webhook, disable the project webhook. Administrators only. */
 controlRouter.delete('/webhook', admin, async (req, res) => {
   await control().store.transact(async (tx) => {

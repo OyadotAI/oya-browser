@@ -15,7 +15,7 @@ import { drain, holdProvider, releaseProvider } from './holds.ts';
 import { redeem, ticket } from './tickets.ts';
 import { authenticate, credential, issue, revoke, share } from './credentials.ts';
 import { beginCommand, takeover } from './takeover.ts';
-import { emit, slackSink, webhook, webhookConfig } from './webhooks.ts';
+import { emit, slackSink, testWebhook, webhook, webhookConfig } from './webhooks.ts';
 import { DEFAULT_EVENT_LIMIT } from '../store/constants.ts';
 
 /** Every control-plane operation, over one control store. */
@@ -154,6 +154,10 @@ export class ControlService {
   /** The project's endpoint without its secret, and its latest deliveries; null hook when never set. */
   async webhookConfig(key) {
     return webhookConfig(this.store, key);
+  }
+  /** Send a signed sample event to the project's webhook now and say whether it answered 2xx (see webhooks.ts). */
+  async testWebhook(key, sender?) {
+    return testWebhook(this.store, key, sender);
   }
   /** Connect or update the project's Slack sink, one row per project (see webhooks.ts). */
   async slackSink(key, patch = {}) {

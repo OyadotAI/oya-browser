@@ -115,6 +115,8 @@ export const track = {
     send('install_pinged', visitorWho(`install-${installId}`), props),
   /** A persona was created. */
   personaCreated: (key: string, props: EventProps['persona_created']) => emit('persona_created', key, props),
+  /** An SDK run failed. */
+  runFailed: (key: string, props: EventProps['run_failed']) => emit('run_failed', key, props),
   /** The server answered a 500 under a reference. */
   serverError: (key: string | null, props: EventProps['server_error']) => emit('server_error', key, props),
 };

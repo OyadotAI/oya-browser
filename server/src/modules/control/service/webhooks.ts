@@ -8,6 +8,7 @@ import { Status } from '../../../platform/http-status.ts';
 import { fault, projectId } from './model.ts';
 import { ensure } from './projects.ts';
 import { RECENT_DELIVERIES, TOKEN_BYTES } from './constants.ts';
+import { sendWebhook, signedEvent } from '../worker/webhook.ts';
 
 /** What the Settings endpoint offers to subscribe to; an empty selection means all. */
 export const WEBHOOK_EVENTS = [
@@ -89,6 +90,32 @@ export async function webhookConfig(store, key) {
     events: WEBHOOK_EVENTS,
     deliveries: await deliveryView(store, deliveries),
   };
+}
+
+/** The sample event a test sends: the real envelope, a `webhook.test` type and an id that never collides with a real one. */
+const testEvent = (project) => ({
+  id: `test_${Date.now()}`,
+  project,
+  type: 'webhook.test',
+  sessionId: null,
+  at: Date.now(),
+  detail: { message: 'Test event from Oya. Your endpoint is reachable and can verify the signature.' },
+});
+
+/**
+ * Sends one signed sample event to the project's hook right now, outside the
+ * delivery queue, so Settings can say at once whether the endpoint answers.
+ * Nothing is stored; a failure comes back as its message rather than an error.
+ */
+export async function testWebhook(store, key, sender = sendWebhook) {
+  const hook = await store.get('webhook', `hook:${projectId(key)}`);
+  if (!hook?.enabled) throw fault('not_found', 'Save a webhook before testing it', Status.NOT_FOUND);
+  const { body, headers } = signedEvent(hook, testEvent(hook.project));
+  try {
+    return { delivered: await sender(hook.url, body, headers) };
+  } catch (e) {
+    return { delivered: false, error: e.message };
+  }
 }
 
 /** The stored sink: defaults, then what it had, then only what the caller passed. */

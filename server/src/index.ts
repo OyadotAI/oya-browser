@@ -12,6 +12,10 @@ import { startWorkers, stopWorkers, workerHealth } from './modules/control/worke
 
 import 'dotenv/config';
 import { startFrontend } from './app/frontend.ts';
+import { startSentry } from './platform/sentry.ts';
+
+// Before anything can fail: Sentry's own handlers report crashes once the process is serving.
+startSentry();
 
 // Prevent crashes from unhandled errors once we are serving. Before that, a
 // failure is a failed boot: every hard check below runs at top level, and a

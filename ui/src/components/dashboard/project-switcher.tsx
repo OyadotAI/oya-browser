@@ -11,6 +11,9 @@ import PickerPanel from './projects/picker-panel';
 import { useProjectSwitcher } from './projects/use-project-switcher';
 import { triggerLabel } from './projects/view';
 
+/** The open project's key as a show-and-copy button, for Settings and onboarding. */
+export { default as ProjectKey } from './projects/project-key';
+
 /** The console credential, and how to replace it when the project changes. */
 interface Props {
   /** The console's current credential. */

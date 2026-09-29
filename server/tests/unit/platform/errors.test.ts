@@ -90,14 +90,15 @@ describe('answerFor', () => {
     assert.ok(line.includes('name.slice is not a function'), 'the log carries the real error');
   });
 
-  it('tells the reporter about an unexpected failure with its ref and the route that matched, and never about an HttpError', () => {
+  it('tells the reporter about an unexpected failure with its ref, the route that matched and the error, and never about an HttpError', () => {
     mock.method(console, 'error', () => {});
     const seen: any[] = [];
-    setUnexpectedReporter((ref, asked) => seen.push([ref, asked.route?.path]));
-    const { body } = answerFor(new Error('x'), { ...req, route: { path: '/personas/:id' } });
+    const err = new Error('x');
+    setUnexpectedReporter((ref, asked, e) => seen.push([ref, asked.route?.path, e]));
+    const { body } = answerFor(err, { ...req, route: { path: '/personas/:id' } });
     answerFor(new HttpError(Status.CONFLICT, 'busy'), req);
     setUnexpectedReporter(null);
-    assert.deepEqual(seen, [[body.ref, '/personas/:id']]);
+    assert.deepEqual(seen, [[body.ref, '/personas/:id', err]]);
   });
 
   it('a reporter that throws does not change the answer', () => {

@@ -4,7 +4,7 @@
  */
 'use client';
 
-import { Check, Copy, Loader2, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, Copy, Loader2, RefreshCw, RotateCcw, Send, Trash2 } from 'lucide-react';
 import { ago } from '@/lib/api-client';
 import { useToast } from '../toast';
 import type { RowComponent } from './fields';
@@ -64,9 +64,9 @@ export function WebhookFields({
   );
 }
 
-/** Save, and once an endpoint exists, Rotate secret; Disable while it is active. */
+/** Save, and once an endpoint exists, Rotate secret; Send test event and Disable while it is active. */
 export function WebhookActions({ webhook, config }: Props) {
-  const { busy, url, save, disable } = webhook;
+  const { busy, url, save, disable, test } = webhook;
   return (
     <div className="mt-5 flex flex-wrap gap-2">
       <button type="button" className="btn-primary h-9 px-4" disabled={busy || !url.trim()} onClick={() => void save()}>
@@ -76,6 +76,12 @@ export function WebhookActions({ webhook, config }: Props) {
         <button type="button" className="btn-ghost h-9" disabled={busy || !url.trim()} onClick={() => void save(true)}>
           <RotateCcw className="h-3.5 w-3.5" />
           Rotate secret
+        </button>
+      )}
+      {config.hook?.enabled && (
+        <button type="button" className="btn-ghost h-9" disabled={busy} onClick={() => void test()}>
+          <Send className="h-3.5 w-3.5" />
+          Send test event
         </button>
       )}
       {config.hook?.enabled && (

@@ -24,6 +24,7 @@
     "@aws-sdk/credential-providers": "^3.1138.0",
     "@daytona/sdk": "0.211.2",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "@sentry/node": "^10.75.3",
     "@supabase/supabase-js": "^2.99.3",
     "cors": "^2.8.6",
     "dotenv": "^16.4.7",

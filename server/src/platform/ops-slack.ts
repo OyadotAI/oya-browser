@@ -1,6 +1,7 @@
 /**
  * One-line ops messages to Slack incoming webhooks: best effort, never awaited,
- * never retried, dropped on any failure, and a no-op without a webhook. Not
+ * never retried, dropped on any failure (a refused webhook is logged once), and a
+ * no-op without a webhook. Not
  * evidence and not alerting; nothing here is recorded. Each channel is one
  * env var holding its webhook URL, so a self-host that sets none sends nothing.
  */
@@ -35,10 +36,31 @@ export const plain = (text: string, max = MESSAGE_MAX_CHARS) =>
 export function post(channel: Channel, text: string, max = MESSAGE_MAX_CHARS) {
   const url = webhookFor(channel);
   if (!url) return;
-  void fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ text: plain(text, max) }),
-    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
-  }).catch(() => {});
+  void fetch(url, request(text, max))
+    .then((res) => warnIfRefused(channel, res))
+    .catch(() => {});
+}
+
+/** The webhook POST for one message. */
+const request = (text: string, max: number): RequestInit => ({
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ text: plain(text, max) }),
+  signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
+});
+
+/** Channels already reported dead, so a revoked webhook is one log line, not one per event. */
+const warned = new Set<Channel>();
+
+/**
+ * Says once, in the log, when Slack refuses a channel's webhook (a revoked one
+ * answers 404 `no_service`). A network blip stays silent; a refusal means every
+ * message on that channel is being dropped until someone replaces the URL.
+ */
+async function warnIfRefused(channel: Channel, res: Response) {
+  if (res.ok || warned.has(channel)) return;
+  warned.add(channel);
+  console.error(
+    `[ops-slack] ${WEBHOOKS[channel]} refused (${res.status} ${await res.text()}); replace the webhook URL.`,
+  );
 }

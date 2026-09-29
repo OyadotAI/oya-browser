@@ -70,17 +70,17 @@ export type Asked = {
 };
 
 /** Told about every unexpected failure once its reference is minted; the reporter must never throw or slow the answer. */
-let reporter: ((ref: string, req: Asked) => void) | null = null;
+let reporter: ((ref: string, req: Asked, err: unknown) => void) | null = null;
 
 /** Installs the one reporter for unexpected failures, from the composition root. */
-export function setUnexpectedReporter(fn: ((ref: string, req: Asked) => void) | null) {
+export function setUnexpectedReporter(fn: ((ref: string, req: Asked, err: unknown) => void) | null) {
   reporter = fn;
 }
 
 /** Tells the reporter, if any; a reporter that throws is a bug in the reporter, not a second failure for the caller. */
-function report(ref: string, req: Asked) {
+function report(ref: string, req: Asked, err: unknown) {
   try {
-    reporter?.(ref, req);
+    reporter?.(ref, req, err);
   } catch {}
 }
 
@@ -109,7 +109,7 @@ function answerForUnexpected(err: unknown, req: Asked): Answer {
   const stack = err instanceof Error ? err.stack || err.message : String(err);
   // The path only: a query string can carry a key or a ticket, and a log is not where those belong.
   console.error(`[api] 500 ref=${ref} ${req.method} ${String(req.originalUrl).split('?')[0]}`, stack);
-  report(ref, req);
+  report(ref, req, err);
   return { status: Status.INTERNAL, body: { error: unexpected(ref), code: 'internal_error', ref } };
 }
 

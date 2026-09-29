@@ -227,6 +227,8 @@ export const OUTBOUND_TIMEOUT_MS = 5_000;
 export const MESSAGE_MAX_CHARS = 400;
 /** Characters in a multi-line product card: a handful of short lines, still bounded. */
 export const CARD_MAX_CHARS = 1500;
+/** Shortest unbroken base64url run scrubbed from error reports as a possible key: an API key is 32. */
+export const SECRET_MIN_CHARS = 32;
 
 // ── Postgres ──
 

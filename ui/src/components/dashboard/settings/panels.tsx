@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import type { KeyConfig } from '../config';
 import SlackSection from '../slack-section';
 import WebhookSection from '../webhook-section';
+import ApiKeySection from './api-key-section';
 import BrowsersSection from './browsers-section';
 import type { Section } from './constants';
 import { Row } from './fields';
@@ -22,6 +23,8 @@ interface PanelProps {
   config: KeyConfig;
   /** The key being configured; Slack and webhooks save themselves with it. */
   apiKey: string;
+  /** The open project, for its API key. */
+  projectId: string | null;
 }
 
 /** Section → panel. Slack and webhooks save on their own, so they only need the key. */
@@ -33,4 +36,5 @@ export const PANELS: Record<Section, (props: PanelProps) => ReactNode> = {
   verification: ({ editor, config }) => <VerificationSection config={config} form={editor.form} />,
   alerts: ({ apiKey }) => <SlackSection apiKey={apiKey} Row={Row} />,
   webhooks: ({ apiKey }) => <WebhookSection apiKey={apiKey} Row={Row} />,
+  keys: ({ projectId }) => <ApiKeySection projectId={projectId} />,
 };

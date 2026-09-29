@@ -26,6 +26,7 @@ const KEYED: Array<() => void> = [
   () => track.desktopUpdated(KEY, { platform: 'MacIntel', from: '1.0.114', to: '1.0.115' }),
   () => track.personaCreated(KEY, { has_proxy: false }),
   () => track.serverError(KEY, { ref: '9f2b7c1d', method: 'POST', route: '/browsers/:id/playbooks' }),
+  () => track.runFailed(KEY, { run_id: 'run_1', error: 'Timed out' }),
 ];
 
 /** Turns every destination on, pointed at a fake network. */
@@ -112,6 +113,7 @@ describe('track', () => {
     track.playbookSaved(KEY, { steps: 1 });
     track.browserStarted(KEY, { provider: 'cdp', persona: false, via: 'rest', first: false });
     track.serverError(null, { ref: '9f2b7c1d', method: 'GET', route: 'middleware' });
+    track.runFailed(KEY, { run_id: 'run_1', error: 'Timed out\n    at step 3' });
     await settle();
     const lines = calls
       .filter((c) => c.url.includes('hooks.') && !c.url.endsWith('/product'))
@@ -122,6 +124,7 @@ describe('track', () => {
       lines.sort(),
       [
         ['events', `💾 Playbook saved: ${label} (1 step)`],
+        ['events', `❌ Run failed: Timed out (run_1) for ${label}`],
         ['events', '⚠️ Server error: GET middleware (ref 9f2b7c1d)'],
         ['signups', '🎉 New signup: ana@example.com'],
         ['signups', '🔑 API key created: ana@example.com (project 7c1e9a02)'],

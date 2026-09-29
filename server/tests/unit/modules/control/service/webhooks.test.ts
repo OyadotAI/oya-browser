@@ -116,3 +116,37 @@ describe('emit', () => {
     assert.deepEqual(await service.events(B), []);
   });
 });
+
+describe('testWebhook', () => {
+  it('refuses a project with no webhook saved', async () => {
+    await assert.rejects(
+      service.testWebhook(A, async () => true),
+      { status: 404 },
+    );
+  });
+
+  it('sends one signed webhook.test event to the saved URL and reports delivery', async () => {
+    await service.webhook(A, { url: 'https://h.example/a' });
+    const sent = [];
+    const answer = await service.testWebhook(A, async (url, body, headers) => sent.push({ url, body, headers }) > 0);
+    assert.deepEqual(answer, { delivered: true });
+    assert.equal(sent[0].url, 'https://h.example/a');
+    assert.equal(JSON.parse(sent[0].body).type, 'webhook.test');
+    assert.match(sent[0].headers['Oya-Signature'], /^t=\d+,v1=[0-9a-f]{64}$/);
+  });
+
+  it('answers a failed send with its message instead of throwing', async () => {
+    await service.webhook(A, { url: 'https://h.example/a' });
+    const answer = await service.testWebhook(A, async () => {
+      throw new Error('connect ECONNREFUSED');
+    });
+    assert.deepEqual(answer, { delivered: false, error: 'connect ECONNREFUSED' });
+  });
+
+  it('queues nothing, so the delivery list stays as it was', async () => {
+    await service.webhook(A, { url: 'https://h.example/a' });
+    const before = (await service.webhookConfig(A)).deliveries.length;
+    await service.testWebhook(A, async () => true);
+    assert.equal((await service.webhookConfig(A)).deliveries.length, before);
+  });
+});

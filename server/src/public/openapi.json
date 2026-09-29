@@ -1056,6 +1056,50 @@
         ]
       }
     },
+    "/api/control/webhook/test": {
+      "post": {
+        "summary": "Send a signed webhook.test event to the project webhook now",
+        "operationId": "postApiControlWebhookTest",
+        "tags": [
+          "Durable control"
+        ],
+        "description": "Requires an administrator credential. Sends one signed sample event outside the delivery queue and reports whether the endpoint answered 2xx. Nothing is stored or retried.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "delivered": {
+                      "type": "boolean",
+                      "description": "True when the endpoint answered 2xx."
+                    },
+                    "error": {
+                      "type": "string",
+                      "description": "Why the send failed, when it did."
+                    }
+                  },
+                  "required": [
+                    "delivered"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or revoked credential"
+          },
+          "403": {
+            "description": "Insufficient role"
+          },
+          "404": {
+            "description": "No webhook saved for this project"
+          }
+        }
+      }
+    },
     "/api/control/deliveries/{id}/replay": {
       "post": {
         "summary": "Replay a delivery within its audit retention period",

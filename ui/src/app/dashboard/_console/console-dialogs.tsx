@@ -105,6 +105,7 @@ function Settings({ c }: Props) {
       initialSection={c.view.settingsSection}
       onClose={() => (c.patch({ showSettings: false, settingsSection: undefined }), c.fetchConfig())}
       apiKey={c.apiKey}
+      projectId={c.project}
       onRerunSetup={() => c.patch({ showOnboarding: true })}
     />
   );

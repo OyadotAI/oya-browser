@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, errorMessage } from '@/lib/api-client';
 import { useToast } from '../toast';
 import { withBusy } from './busy';
-import type { SavedHook, WebhookConfig } from './webhook-types';
+import type { SavedHook, TestResult, WebhookConfig } from './webhook-types';
 
 /** Where a load puts its results. */
 interface LoadTarget {
@@ -75,6 +75,13 @@ async function applyDisable(ctx: ActionContext) {
   await ctx.load();
 }
 
+/** Sends a signed webhook.test event to the saved endpoint now; a miss shows why, as the panel's error. */
+async function applyTest(ctx: ActionContext) {
+  const r = await api<TestResult>('/control/webhook/test', { key: ctx.apiKey, method: 'POST' });
+  if (r.delivered) ctx.toast('Test event delivered: your endpoint answered 2xx', 'success');
+  else ctx.setError(`Test event not delivered: ${r.error ?? 'your endpoint did not answer 2xx'}.`);
+}
+
 /** Queues one delivery again. Not a busy action: the rest of the panel stays usable. */
 async function replay(id: string, ctx: ActionContext) {
   try {
@@ -86,13 +93,14 @@ async function replay(id: string, ctx: ActionContext) {
   }
 }
 
-/** Save, disable and replay, bound to the panel. */
+/** Save, disable, test and replay, bound to the panel. */
 function webhookActions(ctx: ActionContext, setBusy: (busy: boolean) => void) {
   const onError = (err: unknown) => ctx.setError(errorMessage(err));
   const run = (task: () => Promise<void>) => (ctx.setError(''), withBusy(setBusy, task, onError));
   return {
     save: (roll = false) => run(() => applySave(roll, ctx)),
     disable: () => run(() => applyDisable(ctx)),
+    test: () => run(() => applyTest(ctx)),
     replay: (id: string) => replay(id, ctx),
   };
 }

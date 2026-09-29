@@ -10,6 +10,7 @@
 import { randomUUID } from 'crypto';
 import { control } from '../control/service.ts';
 import { fingerprint } from '../../platform/audit.ts';
+import { track as telemetry } from '../telemetry/index.ts';
 import { Status } from '../../platform/http-status.ts';
 import { HUMAN_WAIT_MS, RUN_KEEP_MS } from './constants.ts';
 
@@ -29,7 +30,7 @@ export function start(apiKey, browserId, work) {
   runs.set(run.id, run);
   const announce = announcer(apiKey, browserId, run);
   const requestHuman = (attention) => waitForHuman(run, attention, announce);
-  track(run, work({ requestHuman }), announce);
+  track(run, work({ requestHuman }), announce, apiKey);
   return view(run);
 }
 
@@ -77,10 +78,13 @@ function park(run, attention, timer, resolve) {
 }
 
 /** Records the work's outcome on the run, and forgets the run RUN_KEEP_MS after it ends. */
-function track(run, work: Promise<any>, announce: Announce) {
+function track(run, work: Promise<any>, announce: Announce, apiKey) {
   work
     .then((result) => Object.assign(run, { status: 'succeeded', result }))
-    .catch((err) => fail(run, err, announce))
+    .catch((err) => {
+      fail(run, err, announce);
+      telemetry.runFailed(apiKey, { run_id: run.id, error: String(err.message) });
+    })
     .finally(() => finish(run));
 }
 

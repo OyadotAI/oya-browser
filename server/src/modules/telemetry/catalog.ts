@@ -152,6 +152,13 @@ export type EventProps = {
     /** Whether it was given a proxy. */
     has_proxy: boolean;
   };
+  /** An SDK run failed. */
+  run_failed: {
+    /** The run's id. */
+    run_id: string;
+    /** The error the run failed with. */
+    error: string;
+  };
   /** The server answered a 500 under a reference. */
   server_error: {
     /** The reference in the body and the log line. */
@@ -177,6 +184,7 @@ export const CHANNEL: Partial<Record<EventName, 'signups' | 'events'>> = {
   playbook_saved: 'events',
   cdp_attached: 'events',
   server_error: 'events',
+  run_failed: 'events',
   install_pinged: 'signups',
   payment_received: 'signups',
   payment_failed: 'signups',
@@ -220,6 +228,8 @@ export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) 
       : null,
   playbook_saved: (who, p) => `💾 Playbook saved: ${who.label} (${steps(p.steps)})`,
   cdp_attached: (who, p) => `🔌 CDP attached: ${who.label} (${p.provider})`,
+  run_failed: (who, p) =>
+    `❌ Run failed: ${p.error.split('\n')[0]} (${p.run_id})${who.label ? ` for ${who.label}` : ''}`,
   server_error: (who, p) =>
     `⚠️ Server error: ${p.method} ${p.route} (ref ${p.ref})${who.label ? ` for ${who.label}` : ''}`,
 };

@@ -95,6 +95,40 @@ describe('WebhookSection', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Must be HTTPS');
   });
 
+  it('sends a test event to the saved endpoint and says it arrived', async () => {
+    serve(HOOK);
+    setup();
+    await screen.findByLabelText('Endpoint URL');
+    apiMock.mockResolvedValueOnce({ delivered: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Send test event' }));
+    expect(apiMock).toHaveBeenCalledWith('/control/webhook/test', { key: 'k', method: 'POST' });
+    expect(await screen.findByText(/Test event delivered/)).toBeTruthy();
+  });
+
+  it('says why a test event did not arrive', async () => {
+    serve(HOOK);
+    setup();
+    await screen.findByLabelText('Endpoint URL');
+    apiMock.mockResolvedValueOnce({ delivered: false, error: 'connect ECONNREFUSED' });
+    await userEvent.click(screen.getByRole('button', { name: 'Send test event' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Test event not delivered: connect ECONNREFUSED.');
+  });
+
+  it('offers no test until an endpoint is saved', async () => {
+    serve(null);
+    setup();
+    await screen.findByLabelText('Endpoint URL');
+    expect(screen.queryByRole('button', { name: 'Send test event' })).toBeNull();
+  });
+
+  it('documents the payload of every event the endpoint can subscribe to', async () => {
+    serve(HOOK);
+    setup();
+    await userEvent.click(await screen.findByText('What each event looks like'));
+    expect(screen.getByText('run.failed', { selector: 'td' })).toBeTruthy();
+    expect(screen.getByText('{ runId, owner, error }')).toBeTruthy();
+  });
+
   it('toggles an event type in or out', () => {
     expect(toggled(['a'], 'b')).toEqual(['a', 'b']);
     expect(toggled(['a', 'b'], 'a')).toEqual(['b']);

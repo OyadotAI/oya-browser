@@ -16,6 +16,7 @@
     "format:check": "prettier --check src tests"
   },
   "dependencies": {
+    "@sentry/browser": "^10.75.3",
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.577.0",
     "next": "16.3.4",

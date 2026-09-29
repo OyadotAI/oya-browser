@@ -1,7 +1,7 @@
 /**
  * Unit tests for ops Slack messages: a channel without a webhook sends nothing,
- * a configured one gets a single fire-and-forget POST with the text, and a
- * failing webhook is silent.
+ * a configured one gets a single fire-and-forget POST with the text, a network
+ * failure is silent, and a webhook Slack refuses is logged once.
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -61,5 +61,16 @@ describe('ops slack', () => {
     post('events', 'x');
     await new Promise((r) => setImmediate(r));
     assert.equal(logged.mock.callCount(), 0);
+  });
+
+  it('logs once when Slack refuses the webhook, so a revoked URL does not drop messages unnoticed', async () => {
+    process.env.SLACK_OPS_WEBHOOK_SIGNUPS = 'https://hooks.example.test/signups';
+    const logged = mock.method(console, 'error', () => {});
+    stubFetch(() => new Response('no_service', { status: 404 }));
+    post('signups', 'x');
+    post('signups', 'y');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(logged.mock.callCount(), 1);
+    assert.match(String(logged.mock.calls[0].arguments[0]), /SLACK_OPS_WEBHOOK_SIGNUPS refused \(404 no_service\)/);
   });
 });

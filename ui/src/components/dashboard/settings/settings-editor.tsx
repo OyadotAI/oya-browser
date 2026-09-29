@@ -21,6 +21,8 @@ export interface SettingsProps {
   onClose: () => void;
   /** The key whose settings are edited. */
   apiKey: string;
+  /** The open project, whose API key the API keys section shows. */
+  projectId?: string | null;
   /** Restarts onboarding; offers a "Run setup again" link when given. */
   onRerunSetup?: () => void;
   /** The section to open on. */
@@ -28,7 +30,7 @@ export interface SettingsProps {
 }
 
 /** The dialog for one session. */
-export default function SettingsEditor({ onClose, apiKey, onRerunSetup, initialSection }: SettingsProps) {
+export default function SettingsEditor({ onClose, apiKey, projectId, onRerunSetup, initialSection }: SettingsProps) {
   const [section, setSection] = useState<Section>(initialSection || 'model');
   const editor = useSettingsEditor(apiKey, onClose);
   const { config, error, saving } = editor;
@@ -65,7 +67,7 @@ export default function SettingsEditor({ onClose, apiKey, onRerunSetup, initialS
               aria-labelledby={`settings-tab-${section}`}
               className="min-w-0"
             >
-              {PANELS[section]({ editor, config, apiKey })}
+              {PANELS[section]({ editor, config, apiKey, projectId: projectId ?? null })}
             </fieldset>
           )}
         </div>

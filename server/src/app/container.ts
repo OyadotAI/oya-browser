@@ -9,6 +9,7 @@
  */
 import { metrics } from '../platform/metrics.ts';
 import { setUnexpectedReporter, type Asked } from '../platform/errors.ts';
+import { captureUnexpected } from '../platform/sentry.ts';
 import { BEARER_PREFIX_LENGTH } from '../platform/constants.ts';
 import { track } from '../modules/telemetry/index.ts';
 import { fingerprint as ownerOf } from '../platform/audit.ts';
@@ -66,10 +67,12 @@ const LICENSE = {
   hostedDeployment: () => license.hostedDeployment(),
 };
 
-/** Reports an unexpected failure as a product event, so a 500 shows up where the owner looks. */
-function reportUnexpected(ref: string, req: Asked) {
+/** Reports an unexpected failure as a product event and to Sentry, so a 500 shows up where the owner looks. */
+function reportUnexpected(ref: string, req: Asked, err: unknown) {
   const key = String(req.headers?.authorization || '').slice(BEARER_PREFIX_LENGTH) || null;
-  track.serverError(key, { ref, method: req.method || '', route: req.route?.path ?? 'middleware' });
+  const where = { ref, method: req.method || '', route: req.route?.path ?? 'middleware' };
+  track.serverError(key, where);
+  captureUnexpected(err, where);
 }
 
 /** Build every service once, wired to its dependencies. */
