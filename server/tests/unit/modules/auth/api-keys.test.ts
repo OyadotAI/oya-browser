@@ -9,6 +9,9 @@ import { Status } from '../../../../src/platform/http-status.ts';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 ownDataDir('oya-api-keys-');
+/** A key listed in API_KEYS, as a deployment's own integration key is; set before the modules read it. */
+const ENV_KEY = 'env-integration-key'.padEnd(32, 'e');
+process.env.API_KEYS = [process.env.API_KEYS, ENV_KEY].filter(Boolean).join(',');
 const apiKeys = await import('../../../../src/modules/auth/api-keys.ts');
 const keys = await import('../../../../src/modules/auth/keys.ts');
 const { control, projectId } = await import('../../../../src/modules/control/service.ts');
@@ -20,6 +23,18 @@ describe('getKeyOwner', () => {
   it('finds no owner for a missing or unknown key', async () => {
     assert.equal(await apiKeys.getKeyOwner(''), null);
     assert.equal(await apiKeys.getKeyOwner(keys.generateKey()), null);
+  });
+});
+
+describe('registeredOwner', () => {
+  it('names who registered a key listed in API_KEYS, which getKeyOwner leaves ownerless on purpose', async () => {
+    await apiKeys.registerApiKey(ENV_KEY, 'user-env', 'Integration');
+    assert.equal(await apiKeys.getKeyOwner(ENV_KEY), null, 'an env key keeps off its owner’s model settings');
+    assert.equal(await apiKeys.registeredOwner(ENV_KEY), 'user-env');
+  });
+
+  it('finds nobody for a key nobody registered', async () => {
+    assert.equal(await apiKeys.registeredOwner(keys.generateKey()), null);
   });
 });
 

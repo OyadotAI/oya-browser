@@ -44,6 +44,15 @@ async function lookupOwner(key) {
   }
 }
 
+/**
+ * Who registered a key, for naming it in product events. Unlike getKeyOwner it
+ * also answers for a key listed in API_KEYS: that rule keeps an env key off a
+ * person's own model settings, but the person is still who is using it.
+ */
+export async function registeredOwner(key) {
+  return (await ownerRow(keyDigest(key)))?.user_id || null;
+}
+
 /** The api_keys row for a digest (its user_id, and agent_email for a key an agent made), or null. */
 async function ownerRow(digest) {
   return findKey(digest);

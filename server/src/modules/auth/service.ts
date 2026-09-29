@@ -15,6 +15,7 @@
 export { keyDigest, knownKeys, authReady, validateApiKey, isFleetToken, agentKeyUnclaimed } from './keys.ts';
 export {
   getKeyOwner,
+  registeredOwner,
   registerApiKey,
   registerAgentKey,
   isUnclaimedAgentKey,

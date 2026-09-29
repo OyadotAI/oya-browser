@@ -5,7 +5,7 @@
  * so a request is never slowed by analytics.
  */
 import { fingerprint } from '../../platform/audit.ts';
-import { getKeyOwner, getProfile } from '../auth/service.ts';
+import { getProfile, registeredOwner } from '../auth/service.ts';
 import { WHO_CACHE_MAX, WHO_FINGERPRINT_CHARS, WHO_TTL_MS } from './constants.ts';
 import type { Who } from './catalog.ts';
 
@@ -50,7 +50,7 @@ function remember(fp: string, who: Who | null) {
 
 /** The key's owner as a person, or null when nobody owns it. A profile that cannot be read still leaves the person, only nameless. */
 async function ownerOf(key: string): Promise<Who | null> {
-  const userId = await getKeyOwner(key);
+  const userId = await registeredOwner(key);
   if (!userId) return null;
   const email = await getProfile(userId)
     .then((profile) => profile?.email)
