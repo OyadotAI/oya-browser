@@ -28,6 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libxkbcommon0 \
     libatspi2.0-0 \
+    # Mesa's software GL (llvmpipe): WebGL through Chromium's normal GPU path,
+    # not the deprecated SwiftShader fallback that needs --enable-unsafe-swiftshader
+    libgl1-mesa-dri \
+    libegl1 \
+    libgl1 \
     # Fonts
     fonts-liberation \
     fonts-noto-color-emoji \
