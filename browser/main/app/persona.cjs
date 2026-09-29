@@ -7,6 +7,8 @@ const { LoginState } = require('../../login-state');
 const { ProfileStore } = require('../../anonymity/profile-store');
 const { configureSession } = require('../session.cjs');
 const { NOISE_SEED_DIGITS } = require('./constants.cjs');
+const { exitTimezone } = require('../exit-zone.cjs');
+const { exitProxy } = require('../tabs/protection.cjs');
 
 /** What the fingerprint debug bar shows for a profile. */
 function fingerprintSummary(profile) {
@@ -87,6 +89,10 @@ class Persona {
   /** Configure the persistent browser session, user-agent, cookies, privacy. */
   async setupBrowserSession() {
     await configureSession(this.session(), this.active, this.ctx.observer);
+    // Only a proxied persona asks: without one the zone is this machine's own, known already.
+    const proxy = exitProxy(this.active);
+    this.exitZone = proxy ? await exitTimezone(this.session(), proxy) : null;
+    await this.ctx.workers?.cover();
   }
 
   /** The fingerprint bar's view of the active profile, or null. */
@@ -161,6 +167,7 @@ class Persona {
 
   /** Same persona, fresh profile: every live tab gets it re-applied. */
   reprotectTabs() {
+    this.ctx.workers?.cover();
     for (const tab of this.ctx.tabs.list) {
       if (!tab.view.webContents.isDestroyed()) this.ctx.protection.setupTabCDP(tab.view);
     }

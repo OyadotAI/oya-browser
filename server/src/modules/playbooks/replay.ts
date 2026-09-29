@@ -109,7 +109,12 @@ async function waitFor(browserId, el, text?, partial = false) {
 async function find(browserId, el, text?, partial = false) {
   const found = await waitFor(browserId, el, text, partial);
   if (found) return found;
-  throw new Error(`no element matching ${JSON.stringify(el?.text ?? el?.domId ?? el?.name ?? '')}`);
+  throw missing(el);
+}
+
+/** The error a step fails with when its element is not on the page. */
+function missing(el) {
+  return new Error(`no element matching ${JSON.stringify(el?.text ?? el?.domId ?? el?.name ?? '')}`);
 }
 
 /**
@@ -140,8 +145,37 @@ async function replayClick(browserId, step, values, defaults) {
   // A data-driven click aims by value, so it cannot take the fast path.
   const direct = key ? null : await clickDirect(browserId, withValues(step.el, values));
   if (direct) return direct;
-  const el = await find(browserId, ...aimedAt(step, key, values, defaults));
-  return command(browserId, 'click', { selector: `[data-ac-id="${el.id}"]` });
+  const aim = aimedAt(step, key, values, defaults);
+  const el = await waitFor(browserId, ...aim);
+  if (el) return command(browserId, 'click', { selector: `[data-ac-id="${el.id}"]` });
+  return followLink(browserId, aim[0], !!key);
+}
+
+/**
+ * A link replay could not find, followed to where it was recorded going. The run
+ * clicked it where replay cannot: an agent reaches a link inside a closed menu
+ * (Wikipedia's language list), or a results page lays its pager out differently,
+ * yet the link's own target still says exactly where the click went. Following it
+ * is that click without the menu. A data-driven click is not followed: its target
+ * belongs to the recorded choice, and the value is what has to be found.
+ */
+async function followLink(browserId, el, dataDriven) {
+  const url = dataDriven ? null : await linkDestination(browserId, el).catch(() => null);
+  if (!url) throw missing(el);
+  return command(browserId, 'navigate', { url }, NAVIGATE_TIMEOUT_MS);
+}
+
+/**
+ * Where a recorded link goes, resolved against the page it is on: an http(s)
+ * target only, never a same-page anchor, a `javascript:` handler or a target with
+ * per-visit parameters, where following it is not what the click did.
+ */
+async function linkDestination(browserId, el) {
+  const raw = el?.rawHref;
+  if (String(el?.tag || '').toLowerCase() !== 'a' || !raw || raw.startsWith('#') || volatileTarget(raw)) return null;
+  const { tabs = [] } = await command(browserId, 'list_tabs');
+  const url = new URL(raw, tabs.find((t) => t.active)?.url);
+  return /^https?:$/.test(url.protocol) ? url.href : null;
 }
 
 /**

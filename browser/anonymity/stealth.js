@@ -155,39 +155,46 @@ function buildStealthBody() {
   // member is a lie. chrome.runtime is deliberately never defined, it exists
   // only on extension pages, so defining it is evidence, not cover.
   if (!window.chrome) window.chrome = {};
-  if (!window.chrome.app) {
-    window.chrome.app = {
-      isInstalled: false,
-      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-      getDetails: _nativeLike('getDetails', () => null, 0),
-      getIsInstalled: _nativeLike('getIsInstalled', () => false, 0),
-      installState: _nativeLike('installState', (cb) => { if (cb) cb('not_installed'); }, 0),
-    };
-  }
-  if (!window.chrome.csi) {
-    window.chrome.csi = _nativeLike('csi', () => ({ onloadT: Date.now(), startE: Date.now(), pageT: performance.now() }), 0);
-  }
+  // Chrome's own shape, member for member, measured on Chrome 153: the keys in
+  // this order (loadTimes, csi, app), loadTimes and csi anonymous
+  // ("function () { [native code] }"), csi carrying tran, app carrying
+  // runningState. Pages read Object.keys and toString, so the order and the
+  // names are as much the fingerprint as the values.
   if (!window.chrome.loadTimes) {
-    window.chrome.loadTimes = _nativeLike('loadTimes', () => {
+    window.chrome.loadTimes = _nativeLike('', () => {
       const nav = performance.getEntriesByType('navigation')[0] || {};
       const origin = performance.timeOrigin / 1000;
       return {
-        commitLoadTime: origin + (nav.responseStart || 0) / 1000,
-        connectionInfo: 'h2',
-        finishDocumentLoadTime: origin + (nav.domContentLoadedEventEnd || 0) / 1000,
-        finishLoadTime: origin + (nav.loadEventEnd || 0) / 1000,
-        firstPaintAfterLoadTime: 0,
-        firstPaintTime: origin + (nav.responseEnd || 0) / 1000,
-        navigationType: 'Other',
-        npnNegotiatedProtocol: 'h2',
         requestTime: origin + (nav.startTime || 0) / 1000,
         startLoadTime: origin + (nav.startTime || 0) / 1000,
-        wasAlternateProtocolAvailable: false,
+        commitLoadTime: origin + (nav.responseStart || 0) / 1000,
+        finishDocumentLoadTime: origin + (nav.domContentLoadedEventEnd || 0) / 1000,
+        finishLoadTime: origin + (nav.loadEventEnd || 0) / 1000,
+        firstPaintTime: origin + (nav.responseEnd || 0) / 1000,
+        firstPaintAfterLoadTime: 0,
+        navigationType: 'Other',
         wasFetchedViaSpdy: true,
         wasNpnNegotiated: true,
+        npnNegotiatedProtocol: 'h2',
+        wasAlternateProtocolAvailable: false,
+        connectionInfo: 'h2',
       };
     }, 0);
+  }
+  if (!window.chrome.csi) {
+    // tran is the navigation's transition type; 15 is what a typed or scripted load reports.
+    window.chrome.csi = _nativeLike('', () => ({ startE: Date.now(), onloadT: Date.now(), pageT: performance.now(), tran: 15 }), 0);
+  }
+  if (!window.chrome.app) {
+    window.chrome.app = {
+      isInstalled: false,
+      getDetails: _nativeLike('getDetails', () => null, 0),
+      getIsInstalled: _nativeLike('getIsInstalled', () => false, 0),
+      installState: _nativeLike('installState', (cb) => { if (cb) cb('not_installed'); }, 0),
+      runningState: _nativeLike('runningState', () => 'cannot_run', 0),
+      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+    };
   }
 
   // ── navigator.plugins / mimeTypes ──
