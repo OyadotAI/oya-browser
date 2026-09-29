@@ -8,7 +8,7 @@
     "source": "github"
   },
   "websiteUrl": "https://oyabrowser.com",
-  "version": "1.0.139",
+  "version": "1.0.140",
   "remotes": [
     {
       "type": "streamable-http",
