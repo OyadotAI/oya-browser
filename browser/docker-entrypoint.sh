@@ -53,9 +53,13 @@ echo "[oya-docker] Starting Oya Browser (${SCREEN_WIDTH:-1920}x${SCREEN_HEIGHT:-
 #
 # No --disable-gpu: without a GPU process Chromium has no WebGL at all, and a
 # persona that says Mac but has no WebGL is the first thing DataDome and Akamai
-# flag. SwiftShader gives WebGL in software; the persona's renderer strings are
-# patched over it (anonymity/fingerprint.js).
-./node_modules/.bin/electron . --no-sandbox --use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --disable-dev-shm-usage &
+# flag. WebGL comes from Mesa's llvmpipe through ANGLE's GL backend, the normal
+# GPU path. Chromium blocklists llvmpipe, hence --ignore-gpu-blocklist; that
+# list is about driver stability, unlike --enable-unsafe-swiftshader, which is
+# deprecated for security and also reports an 8192 max texture size no Mac
+# has (llvmpipe reports 16384, as an M1 does). The persona's renderer strings
+# are patched over it (anonymity/fingerprint.js).
+./node_modules/.bin/electron . --no-sandbox --use-gl=angle --use-angle=gl --ignore-gpu-blocklist --disable-dev-shm-usage &
 ELECTRON_PID=$!
 
 # ── Hard lifetime ──
