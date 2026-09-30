@@ -44,10 +44,39 @@ describe('ClientHints', () => {
     new ClientHints(HINTS).install(ses);
   });
 
-  it("puts Chrome's three hints first on every secure request", () => {
-    const headers = sent({ url: 'https://a.test/x.js', resourceType: 'script' });
-    assert.deepEqual(Object.keys(headers), ['sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'Accept']);
+  /** The headers Electron hands the hook for a request, in its own order. */
+  const ELECTRON = {
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'UA',
+    'Accept-Language': 'en-US,en;q=0.9',
+    Accept: '*/*',
+  };
+
+  it('leads a navigation with the three hints, then the language, as Chrome does on the wire', () => {
+    const headers = sent({ url: 'https://a.test/', resourceType: 'mainFrame', requestHeaders: ELECTRON });
+    assert.deepEqual(Object.keys(headers), [
+      'sec-ch-ua',
+      'sec-ch-ua-mobile',
+      'sec-ch-ua-platform',
+      'Accept-Language',
+      'Upgrade-Insecure-Requests',
+      'User-Agent',
+      'Accept',
+    ]);
     assert.equal(headers['sec-ch-ua-platform'], '"Windows"');
+  });
+
+  it('starts a fetch or subresource with the platform hint and interleaves the rest with the user agent, as Chrome does', () => {
+    const { 'Upgrade-Insecure-Requests': _, ...fetchHeaders } = ELECTRON;
+    const headers = sent({ url: 'https://a.test/x.js', resourceType: 'script', requestHeaders: fetchHeaders });
+    assert.deepEqual(Object.keys(headers), [
+      'sec-ch-ua-platform',
+      'Accept-Language',
+      'sec-ch-ua',
+      'User-Agent',
+      'sec-ch-ua-mobile',
+      'Accept',
+    ]);
   });
 
   it('sends none over plain http, as Chrome does', () => {

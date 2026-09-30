@@ -9,6 +9,21 @@
  * whose page asked for it with Accept-CH, and only on that origin's own pages.
  */
 
+/**
+ * Where Chrome puts the first request headers, measured off the wire (tls.peet.ws) on
+ * Chrome 153; Electron writes them in its own order, and the hint headers are ours. A
+ * navigation leads with the three hints; a fetch or subresource interleaves them with
+ * the user agent. Both real Chromes measured start a fetch with sec-ch-ua-platform, and
+ * servers read header order before any script runs. Headers not named keep their order.
+ */
+const LEADING = {
+  navigation: ['sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform', 'accept-language'],
+  subresource: ['sec-ch-ua-platform', 'accept-language', 'sec-ch-ua', 'user-agent', 'sec-ch-ua-mobile'],
+};
+
+/** Resource types Chrome sends as a navigation. */
+const NAVIGATIONS = new Set(['mainFrame', 'subFrame']);
+
 /** The hints every secure request carries, in Chrome's order. */
 const ALWAYS = ['sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform'];
 
@@ -86,8 +101,22 @@ class ClientHints {
     const entries = Object.entries(details.requestHeaders).filter(([name]) => !/^sec-ch-ua/i.test(name));
     if (!details.url.startsWith('https:')) return Object.fromEntries(entries);
     const hints = this.namesFor(details).map((name) => [name, this.hints[name]]);
-    return Object.fromEntries([...hints, ...entries]);
+    return Object.fromEntries(inChromeOrder([...hints, ...entries], details.resourceType));
   }
+}
+
+/** `entries` with the headers Chrome leads with moved to the front in its order for this kind of request. */
+function inChromeOrder(entries, resourceType) {
+  const leading = LEADING[NAVIGATIONS.has(resourceType) ? 'navigation' : 'subresource'];
+  // A stable sort: headers with the same rank, all the unnamed ones, keep their order.
+  const ranked = entries.map((entry, i) => [entry, rankIn(leading, entry[0]), i]);
+  return ranked.sort(([, a, i], [, b, j]) => a - b || i - j).map(([entry]) => entry);
+}
+
+/** A header's place among the leading ones; every other header ranks after them all. */
+function rankIn(leading, name) {
+  const i = leading.indexOf(name.toLowerCase());
+  return i === -1 ? leading.length : i;
 }
 
 module.exports = { ClientHints };
