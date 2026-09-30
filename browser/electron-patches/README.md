@@ -10,9 +10,9 @@ ClientHello. Chrome fills the list in `chrome/browser/ssl/ssl_config_service_man
 from the compiled-in Chrome Root Store; Electron has no such layer, so Oya's ClientHello
 lacked the extension and its JA4 was one no Chrome has:
 
-| Browser | JA4 |
-|:--|:--|
-| Google Chrome 154 | `t13d1517h2_8daaf6152771_…` |
+| Browser                                          | JA4                                    |
+| :----------------------------------------------- | :------------------------------------- |
+| Google Chrome 154                                | `t13d1517h2_8daaf6152771_…`            |
 | Oya on stock Electron 44 (and Electron 45 alpha) | `t13d1516h2_8daaf6152771_806a8c22fdea` |
 
 Anti-bot vendors (DataDome, Akamai, Cloudflare) read JA4 before any page script runs.
