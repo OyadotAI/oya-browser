@@ -2,10 +2,7 @@
  * The admin overview, worked out from rows: pure functions, so the page's
  * numbers are tested without a database.
  */
-import { ACTIVE_DAYS, DAY_CHARS, MS_PER_DAY, TOP_USERS } from './constants.ts';
-
-/** How a person's own usage row is keyed: `u:<user id>` (platform/usage.ts personRow). */
-const PERSON_PREFIX = 'u:';
+import { ACTIVE_DAYS, DAY_CHARS, MS_PER_DAY, PERSON_PREFIX, TOP_USERS } from './constants.ts';
 
 /** A row as storage hands it back. */
 type Row = Record<string, any>;

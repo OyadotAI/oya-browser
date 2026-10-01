@@ -18,7 +18,7 @@ interface Preset {
 }
 
 /** The vendors with a known endpoint. */
-const LLM_PRESETS: Record<string, Preset> = {
+export const LLM_PRESETS: Record<string, Preset> = {
   // Same defaults as the server's catalog (server/src/modules/config/llm-catalog.ts).
   anthropic: { base: 'https://api.anthropic.com/v1', model: 'claude-opus-5', label: 'Anthropic (Claude)' },
   openai: { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini', label: 'OpenAI' },

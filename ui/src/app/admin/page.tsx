@@ -1,7 +1,8 @@
 /**
  * The admin page, for Oya staff (a confirmed @getoya.ai account): accounts and
- * plans, downloads, self-hosted installs and their licenses, the heaviest
- * users, the live fleet, and a person looked up by email. The server decides
+ * plans, growth day by day and week over week, revenue from Stripe,
+ * downloads, self-hosted installs and their licenses, the heaviest users, the
+ * live fleet, and a person looked up by email. The server decides
  * who may see it; anyone else is told so. Its state lives in
  * `components/admin/use-admin.ts`.
  */
@@ -11,6 +12,7 @@ import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
 import { useAdmin, type AdminState } from '@/components/admin/use-admin';
 import { Downloads, Fleet, Headline, Installs, TopUsers } from '@/components/admin/overview-sections';
+import { Daily, Growth, Reach } from '@/components/admin/growth-sections';
 import Licenses from '@/components/admin/licenses';
 import Lookup from '@/components/admin/lookup';
 import type { Overview } from '@/components/admin/types';
@@ -26,6 +28,9 @@ function Sections({ s, o }: { /** The page's state. */ s: AdminState; /** The lo
     <main className="mx-auto flex max-w-6xl flex-col gap-4 bg-bg p-4 lg:p-6">
       <h1 className="text-lg font-semibold text-text">Admin</h1>
       <Headline o={o} />
+      <Reach o={o} />
+      <Growth o={o} />
+      <Daily o={o} />
       <Lookup s={s} />
       <Licenses s={s} />
       <Installs o={o} />

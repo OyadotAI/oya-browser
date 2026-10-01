@@ -3,7 +3,7 @@
  * revoking a license, and looking a person up.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import AdminPage from '@/app/admin/page';
 import { adminIssueLicense, adminLicenses, adminLookup, adminOverview, adminRevokeLicense } from '@/lib/api';
 
@@ -17,8 +17,32 @@ vi.mock('@/lib/api', () => ({
   adminLookup: vi.fn(),
 }));
 
+/** The counters every day carries. */
+const COUNTERS = [
+  ...['signups', 'active', 'agent_steps', 'cloud_seconds', 'browsers_started', 'commands'],
+  ...['installers', 'update_checks', 'new_installs', 'revenue_cents'],
+];
+
+/** A day with every counter at `n`, signups at `signups`. */
+const day = (d: string, n: number, signups: number) => ({
+  day: d,
+  ...Object.fromEntries(COUNTERS.map((c) => [c, n])),
+  signups,
+});
+
+/** The same comparison for every counter. */
+const each = (now: number, before: number, change: number | null) =>
+  Object.fromEntries(COUNTERS.map((c) => [c, { now, before, change }]));
+
 /** An overview with a little of everything. */
 const OVERVIEW = {
+  growth: {
+    days: [day('2026-03-14', 0, 2), day('2026-03-15', 3, 4)],
+    week: { ...each(6, 4, 50), signups: { now: 6, before: 0, change: null } },
+    day: each(1, 2, -50),
+    reach: { today: 7, week: 31, month: 88 },
+  },
+  revenue: { enabled: true, mrrCents: 11900, error: '' },
   accounts: { total: 12, signups: [{ day: '2026-03-14', count: 3 }], byPlan: { developer: 2 }, pastDue: 1 },
   top: { cloud: [{ userId: 'u1', email: 'ana@example.com', cloud_seconds: 7200, agent_steps: 40 }], steps: [] },
   installs: {
@@ -65,6 +89,29 @@ afterEach(() => {
 });
 
 describe('AdminPage', () => {
+  it('shows people reached, MRR, each counter’s week and day change, and the days newest first', async () => {
+    loaded();
+    expect(await screen.findByText('Active, 30 days (MAU)')).toBeTruthy();
+    expect(screen.getByText('88')).toBeTruthy();
+    expect(screen.getByText('$119')).toBeTruthy();
+    expect(screen.getAllByText(/\+50%/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/-50%/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/new/)).toBeTruthy();
+    const table = within(screen.getByText('Day by day (UTC)').closest('section')!);
+    expect(table.getAllByText(/^2026-03-1[45]$/).map((n) => n.textContent)).toEqual(['2026-03-15', '2026-03-14']);
+  });
+
+  it('says when Stripe could not be read, and still shows the rest', async () => {
+    vi.mocked(adminOverview).mockResolvedValue({
+      ...OVERVIEW,
+      revenue: { enabled: true, mrrCents: 0, error: 'Stripe: down' },
+    });
+    vi.mocked(adminLicenses).mockResolvedValue({ licenses: [] });
+    render(<AdminPage />);
+    expect(await screen.findByText('Stripe could not be read: Stripe: down')).toBeTruthy();
+    expect(screen.getByText('Active today (DAU)')).toBeTruthy();
+  });
+
   it('asks a signed-out visitor to sign in', () => {
     Object.assign(auth, { token: null, user: null });
     render(<AdminPage />);

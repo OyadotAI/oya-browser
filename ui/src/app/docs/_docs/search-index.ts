@@ -62,7 +62,7 @@ const ITEMS: [string, string, string][] = [
   ['Export and import playbooks between environments: oya playbooks export, import', 'export-import', 'H3'],
   ['Background runs: submit a playbook, onSuccess, onHealed, onHumanAttention', 'background-runs', 'H3'],
   ['Self-hosting', 'self-hosting', 'H2'],
-  ['Install with one command: install.sh, the wizard, Docker, --dry-run', 'self-hosting', 'P'],
+  ['Install with one command: install.sh, the wizard, Docker, --dry-run, --yes for agents', 'self-hosting', 'P'],
   ['Control plane on Docker, ECS, Kubernetes or Google Cloud; SQLite or Postgres; your own LLM', 'self-hosting', 'TD'],
   ['Point your code at it: oya login --url, OYA_BASE_URL', 'self-hosting-connect', 'H3'],
   ['Settings that matter: OYA_PROFILE_SECRET, API_KEYS, OYA_STORAGE, DATABASE_URL', 'self-hosting-settings', 'H3'],

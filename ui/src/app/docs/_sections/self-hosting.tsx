@@ -46,6 +46,12 @@ function Install() {
         key. Add <InlineCode>--dry-run</InlineCode> after <InlineCode>sh -s --</InlineCode> to see the plan without
         writing anything.
       </p>
+      <p className="mb-3">
+        For agents and CI, <InlineCode>--yes</InlineCode> asks nothing: SQLite, the server and one browser worker in
+        Docker on this machine. It ends by printing <InlineCode>OYA_BASE_URL</InlineCode> and{' '}
+        <InlineCode>OYA_API_KEY</InlineCode>.
+      </p>
+      <CodeBlock label="Terminal">{`curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh -s -- --yes`}</CodeBlock>
       <Table headers={['Choice', 'Options']} rows={CHOICE_ROWS} />
     </>
   );

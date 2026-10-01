@@ -18,3 +18,9 @@ export const SECONDS_PER_HOUR = 3600;
 export const INSTALL_ID_CHARS = 8;
 /** Oya staff's addresses: they get a link to the admin page. */
 export const ADMIN_DOMAIN = '@getoya.ai';
+/** Cents in a dollar. */
+export const CENTS_PER_DOLLAR = 100;
+/** A fraction as a percentage. */
+export const PERCENT = 100;
+/** Bars at least this tall, in percent of the chart, so a day with something on it never looks empty. */
+export const MIN_BAR_PERCENT = 4;

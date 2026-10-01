@@ -83,3 +83,9 @@ export async function profileByEmail(email: string) {
 
 /** Every usage row since an ISO time. ponytail: scans all keys' rows, a per-person monthly table if usage grows large. */
 export const usageSince = (since: string) => getConnection().select('usage', { hour: { gte: since } });
+
+/** Every API key's hash and owner, which ties a key's usage rows to a person. */
+export const apiKeys = () => getConnection().select('api_keys', {});
+
+/** Every self-hosted install, for when each was first seen. */
+export const allInstalls = () => getConnection().select('installs', {});
