@@ -138,4 +138,23 @@ function writePlan(root) {
   console.log('✔ a dry run outside a checkout clones nothing');
 }
 
+// ── --yes asks nothing and picks SQLite + Docker, even with no stdin ────────
+{
+  const root = fakeRepo();
+  const out = execFileSync('node', [CLI, 'install', '--yes', '--dry-run'], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, OPENAI_API_KEY: '', ANTHROPIC_API_KEY: 'sk-ant-DO-NOT-PRINT' },
+  });
+
+  assert.match(out, /control\s+docker · sqlite/, '--yes must pick Docker and SQLite');
+  assert.match(out, /browsers\s+docker-workers ×1/, '--yes must run one Docker browser worker');
+  assert.match(out, /OYA_STORAGE=sqlite/);
+  assert.match(out, /OPENAI_BASE_URL=https:\/\/api\.anthropic\.com/, 'an Anthropic key in the env picks Anthropic');
+  assert.ok(!out.includes('sk-ant-DO-NOT-PRINT'), 'the key from the env must not be echoed');
+  assert.equal(existsSync(join(root, '.env')), false, 'a dry run must not write .env');
+  console.log('✔ --yes installs SQLite + Docker without a single question');
+}
+
 console.log('\nAll install wizard checks passed.');

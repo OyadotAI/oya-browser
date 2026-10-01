@@ -167,6 +167,8 @@ curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.s
 ```
 
 It checks for git, Docker and Node 20+, asks six questions, then clones, writes the config, builds and waits for `/readyz`.
+Add `-s -- --yes` (what an agent should run) to skip the questions: SQLite, the server and a browser
+worker in Docker on this machine, and it prints `OYA_BASE_URL` and `OYA_API_KEY` at the end.
 Storage is SQLite (the default), Postgres or JSON files; browsers run on Docker, Kubernetes or your
 own machines. For production, [`deployments/`](deployments) deploys the control plane and its
 browsers to one Docker host, Amazon ECS on Fargate, any Kubernetes cluster, or GKE Autopilot, with

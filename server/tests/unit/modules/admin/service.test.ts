@@ -86,6 +86,9 @@ describe('admin service', () => {
       [['installer', 2]],
     );
     assert.equal(typeof o.fleet.total, 'number');
+    const today = o.growth.days.at(-1)!;
+    assert.deepEqual([today.day, today.installers, today.new_installs], ['2026-03-15', 2, 1]);
+    assert.equal(o.revenue.enabled, false);
   });
 
   it('adds later downloads to the same day', async () => {

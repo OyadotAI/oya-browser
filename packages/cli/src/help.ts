@@ -11,7 +11,9 @@ export const HELP = `oya, thousands of browsers, one API
 Usage: oya <command> [arguments] [options]
 
 Set up
-  oya install [--dry-run] [--config <file>]  Stand up a self-hosted control plane
+  oya install [--yes] [--dry-run] [--config <file>]
+                                             Stand up a self-hosted control plane;
+                                             --yes: SQLite + Docker here, no questions
   oya login [--key <key>] [--url <url>]      Save an API key for this machine
   oya init                                   Set your model, browser provider and sign-ins
   oya whoami                                 Which control plane and key are in use, and from where

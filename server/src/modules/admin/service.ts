@@ -12,7 +12,9 @@ import { registry } from '../browsers/registry.ts';
 import { SERVER_RUN } from '../browsers/connection/constants.ts';
 import * as repo from './repository.ts';
 import * as view from './overview.ts';
-import { DAYS_SHOWN, INSTALLS_SHOWN } from './constants.ts';
+import * as growth from './growth.ts';
+import { revenue } from './revenue.ts';
+import { DAYS_SHOWN, INSTALLS_SHOWN, MS_PER_DAY } from './constants.ts';
 
 /** People, signups and plans. */
 async function accounts(now: number) {
@@ -21,9 +23,9 @@ async function accounts(now: number) {
   return { profiles, summary: { total: profiles.length, signups, ...view.plans(subscriptions) } };
 }
 
-/** This month's heaviest people by cloud hours and by agent steps. */
-async function heaviest(now: number, profiles: Record<string, any>[]) {
-  const people = view.perPerson(await repo.usageSince(monthStart(now)));
+/** This month's heaviest people by cloud hours and by agent steps, from usage rows reaching back at least that far. */
+function heaviest(now: number, profiles: Record<string, any>[], usage: Record<string, any>[]) {
+  const people = view.perPerson(usage.filter((r) => String(r.hour) >= monthStart(now)));
   const emails = new Map(profiles.map((p) => [String(p.id), String(p.email)]));
   return { cloud: view.top(people, 'cloud_seconds', emails), steps: view.top(people, 'agent_steps', emails) };
 }
@@ -37,11 +39,26 @@ async function reach(now: number) {
   return { installs: { ...view.installSummary(installs, now, license.SELF_HOST_FREE_CAP), list: installs }, downloads };
 }
 
+/** The earliest usage the overview needs: this month's start or the first day shown, whichever is sooner. */
+const usageFrom = (now: number) => [monthStart(now), view.daysAgo(now, DAYS_SHOWN)].sort()[0];
+
+/** The day by day series, its trends, the people reached, and revenue as Stripe has it. */
+async function trends(now: number, rows: Pick<growth.Sources, 'profiles' | 'usage' | 'downloads'>) {
+  const since = now - DAYS_SHOWN * MS_PER_DAY;
+  const [keys, installs, money] = await Promise.all([repo.apiKeys(), repo.allInstalls(), revenue(since)]);
+  const active = growth.activePeople(rows.usage, keys);
+  const days = growth.daily({ ...rows, keys, installs, payments: money.payments }, now, DAYS_SHOWN, active);
+  const { payments: _, ...stripe } = money;
+  return { growth: { days, ...growth.trends(days), reach: growth.reach(active, now) }, revenue: stripe };
+}
+
 /** Everything the overview shows. */
 export async function overview(now = Date.now()) {
-  const { profiles, summary } = await accounts(now);
+  const [{ profiles, summary }, usage] = await Promise.all([accounts(now), repo.usageSince(usageFrom(now))]);
   const fleet = view.fleet([...registry.browsers.values()], SERVER_RUN);
-  return { accounts: summary, top: await heaviest(now, profiles), ...(await reach(now)), fleet };
+  const seen = await reach(now);
+  const more = await trends(now, { profiles, usage, downloads: seen.downloads });
+  return { accounts: summary, top: heaviest(now, profiles, usage), ...seen, fleet, ...more };
 }
 
 /** One person by email: plan, usage this period and keys (never the keys themselves). */

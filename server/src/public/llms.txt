@@ -53,6 +53,9 @@ The desktop browser is the person's. `browser.stop()` leaves it running.
 Only if you need Oya Cloud browsers (`oya.browser.start()`), send the person
 `claimUrl`; opening it while signed in to Oya unlocks them.
 
+If the person wants Oya running on their own machine instead, see
+Self-hosting below: one command, no questions.
+
 The sections below are the reference: the raw HTTP behind signup, MCP for AI
 tools that cannot run code, and every API.
 
@@ -578,13 +581,33 @@ Each API key only sees browsers connected with that key. Users cannot see or con
 
 The whole stack in your own network (Docker, Amazon ECS, Kubernetes or Google
 Cloud; SQLite or Postgres; any LLM, including a local one). Needs git, Docker
-and Node 20+:
+(running) and Node 20+.
 
-    curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
+If you are an agent installing it for a person, run exactly this. It asks no
+questions and needs no terminal:
 
-A wizard asks six questions, starts the stack, and prints an API key. Then
-`oya login --url http://localhost:3100 --key <key>`, or set `OYA_BASE_URL` for
-the SDK; nothing else changes. Keep the `oya-data` volume or set
+    curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh -s -- --yes
+
+It clones the repo to ~/oya-browser, writes .env (SQLite, the server and one
+browser worker in Docker on this machine), builds, starts it with
+`docker compose`, waits for http://localhost:3100/readyz and ends with two
+lines to read back:
+
+    OYA_BASE_URL=http://localhost:3100
+    OYA_API_KEY=oya_...
+
+The key is also the first entry of API_KEYS in ~/oya-browser/.env. To give the
+agent an LLM, have OPENAI_API_KEY (plus OPENAI_BASE_URL and CHAT_MODEL for
+another OpenAI-compatible endpoint) or ANTHROPIC_API_KEY set in the environment
+when you run it; without one, everything but `ask` works. First build takes a
+few minutes. Re-running it is safe: it keeps .env and its secrets. If it stops
+with "holds encrypted data from an earlier install", re-run with the old
+OYA_PROFILE_SECRET set; never delete the `oya-data` volume without asking.
+
+Then point the SDK at it with OYA_BASE_URL and OYA_API_KEY, or
+`oya login --url http://localhost:3100 --key <key>` for the CLI; nothing else
+changes. A person at a terminal can drop `-s -- --yes` to get a six-question
+wizard instead (Postgres, Kubernetes, hosted browser vendors). Keep the `oya-data` volume or set
 `OYA_PROFILE_SECRET`: it encrypts stored logins. Full guide:
 https://github.com/OyadotAI/oya-browser/blob/main/docs/self-hosting.md
 

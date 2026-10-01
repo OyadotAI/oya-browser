@@ -1,7 +1,7 @@
 /**
  * What the admin API answers, as the page reads it.
  */
-import type { DownloadRow } from './model';
+import type { Comparison, DownloadRow } from './model';
 
 /** One person's usage this month. */
 export interface Person {
@@ -45,8 +45,53 @@ export interface Accounts {
   pastDue: number;
 }
 
+/** The counters each day carries. */
+export type Counted =
+  | 'signups'
+  | 'active'
+  | 'agent_steps'
+  | 'cloud_seconds'
+  | 'browsers_started'
+  | 'commands'
+  | 'installers'
+  | 'update_checks'
+  | 'new_installs'
+  | 'revenue_cents';
+
+/** One UTC day's counters. */
+export type Day = Record<Counted, number> & {
+  /** The day, YYYY-MM-DD. */
+  day: string;
+};
+
+/** The days shown and how they trend. */
+export interface Growth {
+  /** One row per day, oldest first, today last. */
+  days: Day[];
+  /** The last 7 days against the 7 before. */
+  week: Record<Counted, Comparison>;
+  /** Yesterday against the day before. */
+  day: Record<Counted, Comparison>;
+  /** Distinct people active today, this week and this month. */
+  reach: { /** Today. */ today: number; /** Last 7 days. */ week: number; /** Last 30 days. */ month: number };
+}
+
+/** Revenue as Stripe has it. */
+export interface Revenue {
+  /** Whether Stripe is set up here. */
+  enabled: boolean;
+  /** Monthly recurring revenue, in cents. */
+  mrrCents: number;
+  /** Why Stripe could not be read; empty when it could. */
+  error: string;
+}
+
 /** The overview. */
 export interface Overview {
+  /** Day by day growth. */
+  growth: Growth;
+  /** Revenue from Stripe. */
+  revenue: Revenue;
   /** Accounts and plans. */
   accounts: Accounts;
   /** Heaviest users by cloud hours and by steps. */

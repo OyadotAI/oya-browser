@@ -28,6 +28,7 @@ import { provisionDocker, waitReady } from './install/docker.ts';
 import { printDone, printDryRun, printPlan, printPreflight } from './install/report.ts';
 import type { Answers, Interview } from './install/types.ts';
 import { INTERVIEW_STEPS, JSON_INDENT } from './install/constants.ts';
+import { defaultInstall } from './install/defaults.ts';
 
 export type { Answers } from './install/types.ts';
 
@@ -52,16 +53,40 @@ interface Gathered extends Interview {
   root: string;
 }
 
-/** Finds the checkout, loads any --config plan, and asks the rest. */
-async function gather(configPath: string | null, dryRun: boolean): Promise<Gathered> {
-  const root = await locateRepo(dryRun);
-  const preset = (configPath ? readJsonFile(configPath) : {}) as Partial<Answers>;
+/** How this run was started: `--config`, `--yes`, `--dry-run`. */
+interface RunMode {
+  /** A saved plan to replay, or null. */
+  configPath: string | null;
+  /** Ask nothing: defaults for whatever the plan leaves out. */
+  yes: boolean;
+  /** Preview only. */
+  dryRun: boolean;
+}
+
+/** The answers given in advance: the defaults under --yes, overlaid by any --config plan. */
+function presetFor(m: RunMode): Partial<Answers> {
+  const saved = (m.configPath ? readJsonFile(m.configPath) : {}) as Partial<Answers>;
+  return m.yes ? { ...defaultInstall().answers, ...saved } : saved;
+}
+
+/** The banner, and which answers were given in advance. */
+function announce(root: string, m: RunMode, replay: boolean): void {
   banner('Oya Browser, self-host install', root);
-  if (configPath) note(`replaying ${configPath}`);
+  if (m.configPath) note(`replaying ${m.configPath}`);
+  if (m.yes) note('--yes: SQLite, Docker on this machine, no questions');
   // A replay asks nothing, so numbering the handful of surviving prompts would
   // count to six and never get there.
-  steps(configPath ? 0 : INTERVIEW_STEPS);
-  return { root, ...(await interview(preset, !!configPath)) };
+  steps(replay ? 0 : INTERVIEW_STEPS);
+}
+
+/** Finds the checkout, loads any --config plan or --yes defaults, and asks the rest. */
+async function gather(m: RunMode): Promise<Gathered> {
+  const root = await locateRepo(m.dryRun, m.yes);
+  const replay = !!m.configPath || m.yes;
+  announce(root, m, replay);
+  const result = await interview(presetFor(m), replay);
+  if (m.yes) result.secrets = { ...defaultInstall().secrets, ...result.secrets };
+  return { root, ...result };
 }
 
 /** Prints preflight; a preview reports what is missing, only a real install refuses to proceed. */
@@ -81,24 +106,33 @@ function warnLocalDatabase(answers: Answers, databaseUrl = ''): void {
   note('Use host.docker.internal (macOS, Windows) or the host IP so the server can reach it.');
 }
 
+/** Under --yes nobody can answer the question, and deleting data unasked is never the default. */
+function unattendedKek(volume: string): string {
+  if (process.env.OYA_PROFILE_SECRET) return process.env.OYA_PROFILE_SECRET;
+  throw new Error(
+    `${volume} holds encrypted data from an earlier install, and there is no .env with its OYA_PROFILE_SECRET.\n` +
+      '  Re-run with OYA_PROFILE_SECRET=<the old secret> set, or without --yes to choose what to do.',
+  );
+}
+
 /** Only a fresh KEK can orphan existing data; reusing .env's is always safe. */
-async function guardKek(existing: Record<string, string>, answers: Answers, root: string, dryRun: boolean) {
-  if (existing.OYA_PROFILE_SECRET || answers.host !== 'docker' || dryRun) return;
+async function guardKek(existing: Record<string, string>, answers: Answers, root: string, m: RunMode) {
+  if (existing.OYA_PROFILE_SECRET || answers.host !== 'docker' || m.dryRun) return;
   const volume = await priorState();
   if (!volume) return;
-  const reused = await resolveKekConflict(volume, root);
+  const reused = m.yes ? unattendedKek(volume) : await resolveKekConflict(volume, root);
   if (reused) existing.OYA_PROFILE_SECRET = reused;
 }
 
 /** Everything decided, checked and resolved, before anything is written. */
-async function plan(flags: Record<string, string | boolean>, dryRun: boolean): Promise<Plan> {
-  const interviewed = await gather(typeof flags.config === 'string' ? flags.config : null, dryRun);
+async function plan(m: RunMode): Promise<Plan> {
+  const interviewed = await gather(m);
   const { root, answers, secrets } = interviewed;
-  await checkMachine(root, answers, dryRun);
+  await checkMachine(root, answers, m.dryRun);
   warnLocalDatabase(answers, secrets.DATABASE_URL);
   const envPath = join(root, '.env');
   const existing = readEnv(envPath);
-  await guardKek(existing, answers, root, dryRun);
+  await guardKek(existing, answers, root, m);
   return { ...interviewed, envPath, existing, env: buildEnv(answers, secrets, existing) };
 }
 
@@ -131,11 +165,12 @@ async function apply(p: Plan): Promise<void> {
   printDone(p.answers.publicUrl, p.env.apiKey);
 }
 
-/** `oya install [--dry-run] [--config oya-install.json]`. */
+/** `oya install [--yes] [--dry-run] [--config oya-install.json]`. */
 export async function cmdInstall(flags: Record<string, string | boolean>): Promise<void> {
-  const dryRun = flags['dry-run'] === true;
-  const p = await plan(flags, dryRun);
+  const configPath = typeof flags.config === 'string' ? flags.config : null;
+  const m: RunMode = { configPath, yes: flags.yes === true, dryRun: flags['dry-run'] === true };
+  const p = await plan(m);
   printPlan(p.answers, p.envPath);
-  if (dryRun) return printDryRun(p.env.values);
+  if (m.dryRun) return printDryRun(p.env.values);
   await apply(p);
 }

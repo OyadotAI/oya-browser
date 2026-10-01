@@ -46,4 +46,7 @@ export function printDone(publicUrl: string, apiKey: string): void {
   console.log(`  unset OYA_API_KEY`);
   console.log(`  oya login --url ${publicUrl} --key ${apiKey}`);
   console.log(`  oya ls && oya goto https://example.com\n`);
+  // Unstyled, one per line, for an agent (or a script) to read back.
+  console.log(`OYA_BASE_URL=${publicUrl}`);
+  console.log(`OYA_API_KEY=${apiKey}`);
 }

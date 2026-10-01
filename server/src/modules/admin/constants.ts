@@ -24,3 +24,15 @@ export const DAY_CHARS = 10;
 const FLUSH_MINUTES = 1;
 /** How often download counters are written. */
 export const DOWNLOAD_FLUSH_MS = FLUSH_MINUTES * MS_PER_MINUTE;
+/** Days in the week the week-over-week numbers compare. */
+export const WEEK_DAYS = 7;
+/** Days counted as a month for monthly active people. */
+export const MONTH_DAYS = 30;
+/** A fraction as a percentage. */
+export const PERCENT = 100;
+/** How a person's own usage row is keyed: `u:<user id>` (platform/usage.ts personRow). */
+export const PERSON_PREFIX = 'u:';
+/** Months in a year, for a yearly price's monthly share. */
+export const MONTHS_PER_YEAR = 12;
+/** The most Stripe answers in one list call. ponytail: one page only, page through with starting_after past 100 subscriptions or invoices a month. */
+export const STRIPE_PAGE = 100;

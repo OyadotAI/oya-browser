@@ -13,6 +13,19 @@ clones the repo into `~/oya-browser` (set `OYA_DIR` to change that, rerun it to 
 and starts the wizard there. Arguments pass through: `... | sh -s -- --dry-run`.
 From a checkout you already have, `make wizard` does the same.
 
+No questions at all, for agents, CI or anyone who wants the default:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh -s -- --yes
+```
+
+That is SQLite, the server and one browser worker in Docker on this machine, at
+`http://localhost:3100`. An LLM is set up only if `OPENAI_API_KEY` or
+`ANTHROPIC_API_KEY` is in the environment. It ends with `OYA_BASE_URL=` and
+`OYA_API_KEY=` lines. With no terminal to ask on (an agent's shell), `install.sh`
+adds `--yes` itself; `OYA_YES=1` forces it. On macOS it starts Docker Desktop if it
+is installed but not running.
+
 Six questions, then it writes the config, builds the images, brings the stack up and
 waits for `/readyz` before telling you it worked. It ends by printing an API key.
 

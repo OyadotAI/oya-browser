@@ -12,9 +12,9 @@ import { Invoices } from './invoices.ts';
 import { REPORT_INTERVAL_MS, BILLING_PATH } from './constants.ts';
 import * as repository from './repository.ts';
 
-export { hosted } from './config.ts';
+export { hosted, stripeKey } from './config.ts';
 export { llmCost } from './cost.ts';
-export { verifySignature } from './stripe.ts';
+export { verifySignature, stripeClient, type Stripe } from './stripe.ts';
 export { Entitlements, type EntitlementDeps } from './entitlements.ts';
 export { Subscriptions } from './subscriptions.ts';
 export { UsageReporter } from './reporter.ts';

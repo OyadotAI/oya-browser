@@ -37,6 +37,7 @@ export const SWITCHES = new Set([
   'preview',
   'replace',
   'version',
+  'yes',
 ]);
 
 /** Flags that take a value, each with an example for the message when the value is missing. */

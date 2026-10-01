@@ -1,7 +1,7 @@
 /**
  * The admin page's numbers, shaped for display: pure functions, tested alone.
  */
-import { DAY_CHARS, MS_PER_DAY, SECONDS_PER_HOUR } from './constants';
+import { CENTS_PER_DOLLAR, DAY_CHARS, MIN_BAR_PERCENT, MS_PER_DAY, PERCENT, SECONDS_PER_HOUR } from './constants';
 
 /** A download count as the server keeps it. */
 export interface DownloadRow {
@@ -47,3 +47,34 @@ export const dayOf = (iso?: string | null) => (iso ? String(iso).slice(0, DAY_CH
 /** The day `days` from now, as a date input takes it. */
 export const daysFromNow = (days: number, now = Date.now()) =>
   new Date(now + days * MS_PER_DAY).toISOString().slice(0, DAY_CHARS);
+
+/** A stretch's total against the one before, as the server worked it out. */
+export interface Comparison {
+  /** This stretch's total. */
+  now: number;
+  /** The stretch before's total. */
+  before: number;
+  /** The change in percent, or null when the stretch before had none. */
+  change: number | null;
+}
+
+/** A change as it reads: "+12%", "-3%", "new" when there was nothing before, or "flat". */
+export function changeText(c: Comparison) {
+  if (c.change === null) return c.now ? 'new' : 'flat';
+  return c.change > 0 ? `+${c.change}%` : c.change < 0 ? `${c.change}%` : 'flat';
+}
+
+/** Whether a change went up, down, or neither. */
+export function direction(c: Comparison) {
+  const sign = c.change ?? c.now;
+  return sign > 0 ? 'up' : sign < 0 ? 'down' : 'flat';
+}
+
+/** Cents as whole dollars, with thousands separated. */
+export const dollars = (cents = 0) => `$${Math.round(cents / CENTS_PER_DOLLAR).toLocaleString('en-US')}`;
+
+/** Each bar's height in percent of the tallest; a day with anything on it gets at least a sliver. */
+export function barHeights(values: number[]) {
+  const top = Math.max(...values, 0);
+  return values.map((v) => (top && v ? Math.max((v / top) * PERCENT, MIN_BAR_PERCENT) : 0));
+}
