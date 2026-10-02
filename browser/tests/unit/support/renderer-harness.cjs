@@ -74,7 +74,7 @@ function windowGlobals(document, bridge, options) {
     getSelection: () => ({ toString: () => options.selection?.() || '' }),
     requestAnimationFrame: (fn) => frames.push(fn),
     cancelAnimationFrame: () => {},
-    runFrames: () => frames.splice(0).forEach((fn) => fn()),
+    runFrames: (now) => frames.splice(0).forEach((fn) => fn(now)),
     ...{ setTimeout, clearTimeout, setInterval, clearInterval, console, Event, URL },
   };
 }

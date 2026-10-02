@@ -65,21 +65,48 @@ const RendererConstants = Object.freeze({
   /** Milliseconds in a second, for elapsed counts shown to people. */
   MS_PER_SECOND: 1000,
   /** The control shield's scan runs at least this long, so a quick analysis still reads as one. */
-  SHIELD_MIN_SCAN_MS: 1000,
+  SHIELD_MIN_SCAN_MS: 1600,
   /** How long the outlines of what an analysis found stay up. */
-  SHIELD_HOLD_MS: 2600,
+  SHIELD_HOLD_MS: 3800,
   /** How long the outlines take to fade away. */
-  SHIELD_FADE_MS: 600,
+  SHIELD_FADE_MS: 1200,
   /** How long the reveal's wash of light takes to cross the page; each outline lights up as it passes. */
-  SHIELD_REVEAL_MS: 1100,
-  /** How much wider and taller than its element an outline's brackets start, in pixels (half on each side), before they lock on. */
-  SHIELD_LOCK_REACH_PX: 16,
-  /** How much wider and taller than its element the ripple grows as it leaves, in pixels. */
-  SHIELD_RIPPLE_REACH_PX: 28,
+  SHIELD_REVEAL_MS: 2400,
+  /** How much wider and taller than its element a found element's rim starts, in pixels (half on each side), before it settles on. */
+  SHIELD_LOCK_REACH_PX: 14,
+  /** How long Oya's caption stays after the agent's last action, before it goes quiet. */
+  SHIELD_ACT_HOLD_MS: 4200,
+  /** How long an action's flight of light and target ring stay on the page before they are removed (they finish playing first). */
+  SHIELD_TARGET_MS: 1500,
+  /** One sweep of the beam down the page while the agent reads; the reveal starts as a sweep ends (matches the CSS --loop). */
+  SHIELD_SCAN_LOOP_MS: 1800,
+  /** How long the show takes to let go when the agent changes the page under it (matches .dismissing in control-shield.html). */
+  SHIELD_DISMISS_MS: 500,
+  /** The share of the veil's reach, from its middle, that stays at its lightest before darkening towards the edges. */
+  SHIELD_VEIL_CLEAR_SHARE: 0.15,
+  /** How long a window in the veil takes to open over a found element. */
+  SHIELD_VEIL_OPEN_MS: 900,
+  /** How long a window in the veil takes to glide after its element moves (matches .box's transform transition). */
+  SHIELD_VEIL_GLIDE_MS: 320,
+  /** How far a window in the veil reaches past its element on each side, in pixels, so the rim sits in the light. */
+  SHIELD_VEIL_PAD_PX: 3,
+  /** A window's corner radius, in pixels (matches .box::before). */
+  SHIELD_VEIL_RADIUS_PX: 8,
+  /**
+   * The soft light around each window in the veil, outermost first: how far past the
+   * window each step reaches, in pixels, and how much of the smoke it clears.
+   */
+  SHIELD_VEIL_FALLOFF: Object.freeze([Object.freeze({ px: 22, share: 0.16 }), Object.freeze({ px: 9, share: 0.3 })]),
+  /** The share of its full size a window starts at as it opens. */
+  SHIELD_VEIL_START: 0.85,
+  /** How strongly a window's opening eases out: the power of a cubic ease. */
+  SHIELD_VEIL_EASE_POWER: 3,
+  /** How far the veil's canvas reaches past the window on each side, in pixels (matches #veil's inset), so its blur never lightens the edges. */
+  SHIELD_VEIL_BLEED_PX: 12,
   /** The most sparks that fly into the orb; past this, every few elements send one. */
-  SHIELD_SPARKS_MAX: 36,
-  /** How long after the beam reaches an element its spark leaves, so the brackets lock first. */
-  SHIELD_SPARK_LAG_MS: 260,
+  SHIELD_SPARKS_MAX: 18,
+  /** How long after the beam reaches an element its spark leaves, so its rim settles first. */
+  SHIELD_SPARK_LAG_MS: 520,
   /** A found element covering more than this share of the page is a container, not something to outline. */
   SHIELD_MAX_BOX_SHARE: 0.25,
   /** Past this many outlines a page is busy: their numbers step back once they have locked on. */
@@ -89,7 +116,9 @@ const RendererConstants = Object.freeze({
   /** A number badge's height, and its width for one digit, in pixels (matches .box b in control-shield.html). */
   SHIELD_TAG_PX: 16,
   /** How far a badge sits up and left of its outline's corner, in pixels (matches .box b). */
-  SHIELD_TAG_OFFSET_PX: 7,
+  SHIELD_TAG_OFFSET_PX: 10,
+  /** How far inside its outline's corner a badge sits when its element hugs the window's edge, in pixels (matches .box.tucked b). */
+  SHIELD_TAG_TUCK_PX: 3,
   /** How much wider a badge grows for each further digit, in pixels. */
   SHIELD_TAG_DIGIT_PX: 6,
   /** Half, for the middle of a box. */

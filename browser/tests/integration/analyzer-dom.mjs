@@ -41,7 +41,12 @@ const FIXTURE = `<!doctype html><title>Portal widgets</title>
 <div class="rating">
   <input type="radio" name="stars" id="s1" style="display:none"><label for="s1">★</label>
   <input type="radio" name="stars" id="s2" style="display:none" checked><label for="s2">★</label>
-</div>`;
+</div>
+<div class="suggestions" style="width:840px">
+  <div class="row" style="cursor:pointer;padding:8px"><div>Tartine Bakery</div><div>600 Guerrero St</div></div>
+  <div class="row" style="cursor:pointer;padding:8px"><div>Tartine Manufactory</div><div>595 Alabama St</div></div>
+</div>
+<div class="panel" style="cursor:pointer;width:840px;height:400px"><p>A whole panel is not one control</p></div>`;
 
 /** Every element the analyzer found, by id. */
 async function analyse() {
@@ -87,4 +92,10 @@ const stars = elements.filter((e) => e.type === 'radio');
 assert.equal(stars.length, 2, 'both stars are elements');
 assert.equal(stars.filter((s) => s.checked).length, 1, 'the chosen star reads as checked');
 
-console.log(`Analyzer DOM checks passed: ${elements.length} elements across five portal widgets.`);
+// A no-code site's suggestion list: full-width rows with a pointer cursor, no role and no handler attribute.
+const rows = elements.filter((e) => /Tartine/.test(e.text || ''));
+assert.equal(rows.length, 2, 'each full-width suggestion row is one element an agent can click');
+assert.match(rows[0].text, /Tartine Bakery\s*600 Guerrero St/, 'a row is named by all of its text');
+assert.ok(!named(elements, /whole panel/), 'a tall panel with a pointer cursor is not a control');
+
+console.log(`Analyzer DOM checks passed: ${elements.length} elements across six portal widgets.`);

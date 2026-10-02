@@ -8,6 +8,12 @@ const { EventEmitter } = require('node:events');
 const { ControlShield } = require('../../../../main/shell/control-shield.cjs');
 const { mainCtx, FakeBrowserView } = require('../../support/main-ctx.cjs');
 const { SHIELD_TRACK_MS, SHIELD_TRACK_FOR_MS } = require('../../../../main/shell/constants.cjs');
+const { BRIGHTNESS_JS } = require('../../../../main/shell/page-tone.cjs');
+
+/** An isolated world that answers `measure` for every script but the page-brightness read, which it answers with `brightness`. */
+const worldOf = (measure, brightness = null) => ({
+  worldEval: async (view, js, options) => (js === BRIGHTNESS_JS ? brightness : measure(view, js, options)),
+});
 
 describe('ControlShield', () => {
   let ctx, page;
@@ -117,11 +123,31 @@ describe('ControlShield', () => {
       assert.deepEqual(told, []);
     });
 
+    it('says what the agent does, naming the element from the last analysis, with where it sits', async () => {
+      cover();
+      const box = { id: 0, type: 'input', x: 4, y: 8, w: 40, h: 20 };
+      ctx.world = { worldEval: async () => [box] };
+      const elements = [{ id: 1, type: 'input', selector: '[data-x="1"]', text: 'Email', visible: true }];
+      await ctx.shield.analysisFinished(page, { data: { elements } });
+      ctx.shield.stopTracking();
+      told = [];
+      await ctx.shield.acting(page, 'type', { selector: '[data-x="1"]', text: 'secret' });
+      const act = { phase: 'act', text: 'Typing into “Email”', box, changes: true };
+      assert.deepEqual(told, [`window.oyaShield?.(${JSON.stringify(act)})`]);
+    });
+
+    it('says nothing about an action while a person has control', async () => {
+      cover();
+      ctx.control.state.interactive = true;
+      await ctx.shield.acting(page, 'navigate', { url: 'https://example.com' });
+      assert.deepEqual(told, []);
+    });
+
     it('outlines only the visible elements, measured by their selectors in the isolated world', async () => {
       cover();
       const box = { id: 1, type: 'link', x: 4, y: 8, w: 40, h: 20 };
       let measured;
-      ctx.world = { worldEval: async (_view, js) => ((measured = js), [box]) };
+      ctx.world = worldOf(async (_view, js) => ((measured = js), [box]));
       const elements = [
         { id: 1, type: 'link', selector: '[data-x="1"]', visible: true },
         { id: 2, type: 'button', selector: '[data-x="2"]', visible: false },
@@ -137,7 +163,7 @@ describe('ControlShield', () => {
       cover();
       const scripts = [];
       ctx.world = {
-        worldEval: async (_view, js) => (scripts.push(js), [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }]),
+        ...worldOf(async (_view, js) => (scripts.push(js), [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }])),
       };
       const elements = [
         { id: 1, type: 'link', selector: '[data-x="1"]', visible: true },
@@ -162,6 +188,14 @@ describe('ControlShield', () => {
       assert.deepEqual(told, [
         `window.oyaShield?.(${JSON.stringify({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 10, y: 20, w: 50, h: 25 }] })})`,
       ]);
+    });
+
+    it('tells its page whether the page under it is dark, from the page’s own background colours', async () => {
+      cover();
+      ctx.world = worldOf(async () => [], 0.1);
+      await ctx.shield.analysisFinished(page, { data: { elements: [] } });
+      ctx.shield.stopTracking();
+      assert.deepEqual(told, [`window.oyaShield?.(${JSON.stringify({ phase: 'found', boxes: [], tone: 'dark' })})`]);
     });
 
     describe('following the outlines', () => {

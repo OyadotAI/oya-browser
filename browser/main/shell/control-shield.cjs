@@ -14,6 +14,8 @@ const {
   SHIELD_TRACK_FOR_MS,
 } = require('./constants.cjs');
 const { drivenElsewhere } = require('../../control-state.cjs');
+const { lineFor, namesFrom, idOf, changesPage } = require('./narration.cjs');
+const { pageTone } = require('./page-tone.cjs');
 
 /**
  * Measures elements in the isolated world; it only reads. Each is found as the
@@ -68,6 +70,9 @@ function analysisBoxesJs(elements, strict = false) {
 
 /** Whether an agent holds the page: anything that re-analyzes it would renumber the agent's element ids. */
 const agentDriving = (ctx) => !ctx.control.snapshot().interactive;
+
+/** The colour a target ring takes for each action, by the kind of element it acts on; anything else is a click. */
+const ACT_TARGET_TYPES = { type: 'input', select: 'select' };
 
 /** What a read of the page answers while an agent holds it. */
 const AGENT_HOLDS_PAGE = 'The agent is using this page. Take control to read it.';
@@ -157,10 +162,34 @@ class ControlShield {
     this.stopTracking();
     if (!this.showing(view)) return;
     const elements = raw?.data?.elements || [];
-    const boxes = (await this.measure(view, analysisBoxesJs(elements, true))) || [];
-    this.tell(view, { phase: 'found', boxes });
+    this.names = namesFrom(elements);
+    const boxes = await this.outline(view, elements);
     const shown = new Set(boxes.map((b) => b.id));
     this.track(view, analysisBoxesJs(elements.filter((e) => shown.has(e.id))), Date.now() + SHIELD_TRACK_FOR_MS);
+  }
+
+  /** Measures what the page really shows of `elements`, and how dark the page is, and has the shield outline them; returns their boxes. */
+  async outline(view, elements) {
+    const read = (js) => this.ctx.world.worldEval(view, js, { retry: false });
+    const [measured, tone] = await Promise.all([this.measure(view, analysisBoxesJs(elements, true)), pageTone(read)]);
+    const boxes = measured || [];
+    this.tell(view, { phase: 'found', boxes, ...(tone && { tone }) });
+    return boxes;
+  }
+
+  /** The agent is acting on the page: the companion says what it is doing, and a target ring locks onto the element it acts on. */
+  async acting(view, action, params) {
+    const text = lineFor(action, params, this.names || new Map());
+    if (!text || !this.showing(view)) return;
+    const id = idOf(params);
+    const box = id === null ? null : await this.target(view, { id, selector: params?.selector }, action);
+    this.tell(view, { phase: 'act', text, box, changes: changesPage(action) });
+  }
+
+  /** Where the element an action is aimed at sits now, coloured for the action, or null when it cannot be found. */
+  async target(view, { id, selector }, action) {
+    const js = analysisBoxesJs([{ id, type: ACT_TARGET_TYPES[action] || 'button', selector, visible: true }]);
+    return (await this.measure(view, js, { retry: false }))?.[0] || null;
   }
 
   /** Where the elements sit now, in the shield's pixels (the page may be zoomed, the shield is not); null when the page cannot be read. */
