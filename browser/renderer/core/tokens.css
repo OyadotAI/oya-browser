@@ -1,0 +1,113 @@
+/**
+ * Oya's design tokens, for every surface of the desktop shell: colour, glass, type,
+ * shape and motion, in a light theme (pearl glass) and a dark one (smoked glass).
+ * The agent is always the same light, green into mint and cyan, so it reads as one
+ * presence wherever it shows up. Surfaces use these names, never raw values.
+ */
+:root {
+  color-scheme: light;
+  /* Oya's paper-and-ink neutrals (ui/src/app/globals.css), with its green as the one accent. */
+  --bg: #f4f3ef;
+  --surface: #ffffff;
+  --muted-surface: #ecebe6;
+  --hover: #e5e4de;
+  --text: #1c1c1a;
+  --secondary: #6b6b66;
+  --border: #e0dfd9;
+  --hairline: #0000001a;
+  --logo-green: #157a13;
+  --accent: #157a13;
+  --accent-hover: #106410;
+  --accent-soft: #e2f3df;
+  --on-accent: #ffffff;
+  --danger: #c23a32;
+  --danger-soft: #fbe8e6;
+  /* Glass for dialogs and floating surfaces: translucent, blurred behind. */
+  --material: #fbfaf7cc;
+  --shadow-xs: 0 1px 1px #0000000a, 0 0 0 0.5px var(--hairline);
+  --shadow-sm: 0 1px 2px #00000014, 0 2px 6px #0000000a, 0 0 0 0.5px var(--hairline);
+  --shadow: 0 12px 32px #0000001f, 0 2px 8px #00000014, 0 0 0 0.5px var(--hairline);
+  --shadow-lg: 0 30px 80px #00000033, 0 8px 24px #0000001a, 0 0 0 0.5px var(--hairline);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  --radius-sm: 7px;
+  --radius: 9px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  /* One spring for everything that moves: it settles without a bounce you can see. */
+  --spring: linear(
+    0,
+    0.009,
+    0.035 2.1%,
+    0.141 4.4%,
+    0.723 12.9%,
+    0.938 16.7%,
+    1.017 20.4%,
+    1.043 24.5%,
+    1.035 29.4%,
+    1.007 38.6%,
+    0.997 48.3%,
+    1
+  );
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --panel-width: 360px;
+  --panel-height: 260px;
+  --chrome-height: 88px;
+  --mono: ui-monospace, 'SF Mono', Consolas, monospace;
+  /* ── Oya's light: the one colour that means "the agent", in every surface ── */
+  --oya: #39ed35;
+  --mint: #a6ffc9;
+  --cyan: #5ef3ff;
+  --amber: #f5b14c;
+  /* The aurora: green into mint, white and a cold cyan, for edge light and the orb's rim. */
+  --light: #39ed35, #a6ffc9, #ffffff, #5ef3ff, #39ed35;
+  /* Glass, light theme: pearl. Translucent white over a soft blur, a hairline of light on top. */
+  --glass: #ffffffb8;
+  --glass-strong: #ffffffe0;
+  --glass-edge: inset 0 1px 0 #ffffffcc, 0 0 0 0.5px #0000001a;
+  --glass-blur: blur(28px) saturate(1.7);
+  --glow: 0 0 0 1px color-mix(in srgb, var(--oya) 35%, transparent), 0 0 24px color-mix(in srgb, var(--oya) 22%, transparent);
+  --stage: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #f1f3ef 55%, #e7ebe6 100%);
+  /* Type: a calm system face, an editorial serif for the few big moments, and a mono for labels. */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'New York', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 20px;
+  --text-hero: 34px;
+  /* Motion: slow in, slow out for anything that travels; durations named once. */
+  --glide: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 160ms;
+  --t-base: 280ms;
+  --t-slow: 600ms;
+  --t-scene: 1200ms;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface: #1b1b19;
+  --muted-surface: #252522;
+  --hover: #2d2d2a;
+  --text: #f4f3ef;
+  --secondary: #a3a39b;
+  --border: #2f2f2b;
+  --hairline: #ffffff1c;
+  --logo-green: #39ed35;
+  --accent: #39ed35;
+  --accent-hover: #62f25e;
+  --accent-soft: #1c3a1b;
+  --on-accent: #0c0c0a;
+  --danger: #ff6b6b;
+  --danger-soft: #3d2322;
+  --material: #1e1e1ccc;
+  --shadow-xs: 0 1px 1px #00000040, 0 0 0 0.5px var(--hairline);
+  --shadow-sm: 0 1px 2px #00000059, 0 2px 6px #00000033, 0 0 0 0.5px var(--hairline);
+  --shadow: 0 12px 32px #00000073, 0 2px 8px #00000040, 0 0 0 0.5px var(--hairline);
+  --shadow-lg: 0 30px 80px #0000008c, 0 8px 24px #00000059, 0 0 0 0.5px var(--hairline);
+  /* Glass, dark theme: smoked. Deep green-black, a faint lift of light along the top edge. */
+  --glass: #101312b8;
+  --glass-strong: #0d100ee6;
+  --glass-edge: inset 0 1px 0 #ffffff14, 0 0 0 0.5px #ffffff1a;
+  --stage: radial-gradient(120% 90% at 50% 0%, #17201b 0%, #0c0f0d 55%, #070908 100%);
+}
