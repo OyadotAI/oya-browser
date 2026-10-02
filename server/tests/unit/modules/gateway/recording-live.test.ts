@@ -85,9 +85,13 @@ describe('recording-live', () => {
         's-1',
       );
     await until(() => browser.commands.filter((c) => c.method === 'Page.screencastFrameAck').length === 3);
-    await until(() => existsSync(join(live.DIR, session.id, live.frameFile(1))));
+    // Spooling does not wait for the disk, so wait for both frames' bytes, not just the files.
+    const written = (i: number) => {
+      const file = join(live.DIR, session.id, live.frameFile(i));
+      return existsSync(file) && readFileSync(file).toString() === 'fake-jpeg';
+    };
+    await until(() => written(0) && written(1));
     assert.equal(live.active.get(session.id).frames.length, 2);
-    assert.equal(readFileSync(join(live.DIR, session.id, live.frameFile(0))).toString(), 'fake-jpeg');
     await live.stop(session.id);
   });
 
