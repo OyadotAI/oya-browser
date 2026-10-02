@@ -9,6 +9,7 @@ import { ownDataDir } from '../../support/data-dir.ts';
 ownDataDir('oya-admin-service-');
 const admin = await import('../../../../src/modules/admin/service.ts');
 const repo = await import('../../../../src/modules/admin/repository.ts');
+const { readImpersonation } = await import('../../../../src/modules/auth/impersonate.ts');
 const license = await import('../../../../src/platform/license/index.ts');
 const { getConnection } = await import('../../../../src/platform/storage/index.ts');
 const { countDownload, flushDownloads } = await import('../../../../src/modules/admin/download-counter.ts');
@@ -140,5 +141,26 @@ describe('download counter', () => {
     const { drainDownloads } = await import('../../../../src/modules/admin/download-counter.ts');
     await flushDownloads();
     await drainDownloads();
+  });
+
+  it('mints a Login as token for a customer, naming the admin', async () => {
+    process.env.OYA_IMPERSONATE_SECRET = 'x'.repeat(32);
+    const find = async (id: string) => ({ id, email: 'c@example.com' }) as any;
+    const out = await admin.impersonate('cust', { id: 'adm' }, undefined, find);
+    const claims = readImpersonation(out.impersonate_token);
+    delete process.env.OYA_IMPERSONATE_SECRET;
+    assert.deepEqual(
+      [out.impersonated_user_id, out.email, claims?.sub, claims?.impersonated_by],
+      ['cust', 'c@example.com', 'cust', 'adm'],
+    );
+  });
+
+  it('refuses to log in as another admin', async () => {
+    const find = async (id: string) => ({ id, email: 'b@getoya.ai', email_confirmed_at: 'x' }) as any;
+    await assert.rejects(admin.impersonate('adm2', { id: 'adm' }, undefined, find), { status: 403 });
+  });
+
+  it('answers 503 for Login as without Supabase Auth', async () => {
+    await assert.rejects(admin.impersonate('cust', { id: 'adm' }), { status: 503 });
   });
 });

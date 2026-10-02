@@ -7,7 +7,11 @@ import { notFound } from '../../platform/errors.ts';
 import * as license from '../../platform/license/index.ts';
 import { monthStart, standingOf } from '../billing/standing.ts';
 import * as billing from '../billing/repository.ts';
-import { keysOf } from '../auth/service.ts';
+import { impersonatedUser, keysOf, mintImpersonation } from '../auth/service.ts';
+import { HttpError } from '../../platform/errors.ts';
+import { Status } from '../../platform/http-status.ts';
+import { audit } from '../../platform/audit.ts';
+import { isAdmin } from './access.ts';
 import { registry } from '../browsers/registry.ts';
 import { SERVER_RUN } from '../browsers/connection/constants.ts';
 import * as repo from './repository.ts';
@@ -70,6 +74,15 @@ export async function lookup(email: string, now = Date.now()) {
   const standing = standingOf(id, subscription, now);
   const keys = (await keysOf(id)).map(keyShown);
   return { profile, standing, subscription, used: await billing.usageSince(id, standing.since), keys };
+}
+
+/** A one-hour "Login as" token for one customer; never for another admin. Issuing it is audited. `find` is the user lookup, a seam for tests. */
+export async function impersonate(id: string, admin, req?, find = impersonatedUser) {
+  const user = await find(id);
+  if (isAdmin(user)) throw new HttpError(Status.FORBIDDEN, 'Cannot log in as another admin', { code: 'forbidden' });
+  const token = mintImpersonation(user.id, admin.id);
+  audit({ action: 'admin.impersonate.issued', actorUser: admin.id, targetType: 'user', targetId: user.id, req });
+  return { impersonate_token: token, impersonated_user_id: user.id, email: user.email };
 }
 
 /** A key as the admin page shows it: its prefix and label, never the key. */

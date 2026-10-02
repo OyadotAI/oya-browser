@@ -1,9 +1,9 @@
 /**
- * The admin overview's growth sections: people reached and revenue, each
- * counter's last 7 days with its week-over-week and day-over-day change and
- * a bar per day, and the days themselves as a table.
+ * The admin overview's growth sections: each counter's last 7 days with its
+ * week-over-week and day-over-day change and a bar per day, and the days
+ * themselves as a table, folded away until asked for.
  */
-import { Section, Table, Tile } from './parts';
+import { Fold, Section, Table } from './parts';
 import { barHeights, changeText, direction, dollars, hours, type Comparison } from './model';
 import type { Counted, Day, Overview } from './types';
 
@@ -42,7 +42,13 @@ const LOOK = {
 };
 
 /** A change, such as "▲ +12% vs last week". */
-function Trend({ c, against }: { /** The comparison. */ c: Comparison; /** What it is against. */ against: string }) {
+export function Trend({
+  c,
+  against,
+}: {
+  /** The comparison. */ c: Comparison;
+  /** What it is against. */ against: string;
+}) {
   const look = LOOK[direction(c)];
   return (
     <span className={`text-[11px] ${look.ink}`}>
@@ -74,14 +80,18 @@ function MetricCard({ o, m }: { /** The overview. */ o: Overview; /** The counte
   const week = o.growth.week[m.key];
   const day = o.growth.day[m.key];
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-border px-3 py-2">
-      <span className="text-[11px] text-text-dim">{m.label}, last 7 days</span>
-      <span className="text-lg font-semibold text-text">{m.format(week.now)}</span>
-      <Trend c={week} against="vs the 7 days before" />
-      <span className="text-[11px] text-text-secondary">
-        Yesterday {m.format(day.now)} <Trend c={day} against="vs the day before" />
-      </span>
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-bg-card p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px] text-text-dim">{m.label}</span>
+        <span className="text-lg font-semibold text-text tabular-nums">{m.format(week.now)}</span>
+      </div>
       <Bars days={o.growth.days} m={m} />
+      <div className="flex flex-wrap justify-between gap-x-2 text-[11px]">
+        <Trend c={week} against="vs last week" />
+        <span className="text-text-dim">
+          yesterday {m.format(day.now)} <Trend c={day} against="" />
+        </span>
+      </div>
     </div>
   );
 }
@@ -89,8 +99,8 @@ function MetricCard({ o, m }: { /** The overview. */ o: Overview; /** The counte
 /** Every counter's card. */
 export function Growth({ o }: { /** The overview. */ o: Overview }) {
   return (
-    <Section title={`Growth (bars: last ${o.growth.days.length} days, today on the right)`}>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+    <Section title="Last 7 days" hint={`bars: ${o.growth.days.length} days, today on the right`}>
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
         {METRICS.map((m) => (
           <MetricCard key={m.key} o={o} m={m} />
         ))}
@@ -99,31 +109,12 @@ export function Growth({ o }: { /** The overview. */ o: Overview }) {
   );
 }
 
-/** Distinct people active today, this week and this month, and revenue from Stripe. */
-export function Reach({ o }: { /** The overview. */ o: Overview }) {
-  const { reach } = o.growth;
-  const r = o.revenue;
-  const thirty = o.growth.days.reduce((n, d) => n + d.revenue_cents, 0);
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-        <Tile label="Active today (DAU)" value={reach.today} />
-        <Tile label="Active, 7 days (WAU)" value={reach.week} />
-        <Tile label="Active, 30 days (MAU)" value={reach.month} />
-        <Tile label="MRR (Stripe)" value={r.enabled ? dollars(r.mrrCents) : 'off'} />
-        <Tile label={`Paid, last ${o.growth.days.length} days`} value={r.enabled ? dollars(thirty) : 'off'} />
-      </div>
-      {r.error && <p className="text-xs text-red">Stripe could not be read: {r.error}</p>}
-    </div>
-  );
-}
-
-/** Every day shown, newest first, with every counter. */
+/** Every day shown, newest first, with every counter, folded away. */
 export function Daily({ o }: { /** The overview. */ o: Overview }) {
   const rows = [...o.growth.days].reverse().map((d) => [d.day, ...METRICS.map((m) => m.format(d[m.key]))]);
   return (
-    <Section title="Day by day (UTC)">
+    <Fold label="Day by day (UTC)">
       <Table head={['Day', ...METRICS.map((m) => m.label)]} rows={rows} />
-    </Section>
+    </Fold>
   );
 }

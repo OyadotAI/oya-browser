@@ -4,7 +4,7 @@
  * them to React.
  */
 import { login as apiLogin, signup as apiSignup, getProfile, refreshToken as apiRefreshToken } from '../api';
-import { clearStoredSession, hasSessionCookie, keepRefreshToken, storedRefreshToken } from './storage';
+import { clearStoredSession, hasSessionCookie, impersonation, keepRefreshToken, storedRefreshToken } from './storage';
 import { refreshDelay, tokenExpiry } from './token';
 import type { SessionHandle, User } from './types';
 
@@ -51,7 +51,8 @@ function adopt(h: SessionHandle, data: RefreshAnswer): string {
   h.setToken(data.access_token);
   // Only ever stored when the server could not use a cookie.
   keepRefreshToken(data.refresh_token);
-  if (data.user) h.setUser(data.user);
+  // The refresh answers with the admin; during a "Login as" the person shown stays the customer.
+  if (data.user && !impersonation()) h.setUser(data.user);
   return data.access_token;
 }
 

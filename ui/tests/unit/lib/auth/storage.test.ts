@@ -2,7 +2,14 @@
  * Unit tests for what the session keeps in browser storage.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { clearStoredSession, hasSessionCookie, keepRefreshToken, storedRefreshToken } from '@/lib/auth/storage';
+import {
+  clearStoredSession,
+  hasSessionCookie,
+  impersonation,
+  keepRefreshToken,
+  setImpersonation,
+  storedRefreshToken,
+} from '@/lib/auth/storage';
 
 afterEach(() => {
   localStorage.clear();
@@ -30,5 +37,23 @@ describe('session storage', () => {
     expect(hasSessionCookie()).toBe(false);
     document.cookie = 'oya_session=1; path=/';
     expect(hasSessionCookie()).toBe(true);
+  });
+
+  it('starts and ends a Login as, dropping the project credentials each time', () => {
+    sessionStorage.setItem('oya_project_credential', 'admin-cred');
+    setImpersonation({ token: 't', email: 'c@example.com' });
+    expect(impersonation()).toEqual({ token: 't', email: 'c@example.com' });
+    expect(sessionStorage.getItem('oya_project_credential')).toBeNull();
+    sessionStorage.setItem('oya_project_credential', 'cust-cred');
+    setImpersonation(null);
+    expect([impersonation(), sessionStorage.length]).toEqual([null, 0]);
+  });
+
+  it('ends a Login as on sign-out, and reads a damaged one as none', () => {
+    setImpersonation({ token: 't', email: 'c@example.com' });
+    clearStoredSession();
+    expect(impersonation()).toBeNull();
+    sessionStorage.setItem('oya_impersonation', '{');
+    expect(impersonation()).toBeNull();
   });
 });

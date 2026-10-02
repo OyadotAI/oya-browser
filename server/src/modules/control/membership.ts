@@ -23,7 +23,15 @@ projectAccountRouter.get('/', async (req, res) => res.json(await listProjects(re
 projectAccountRouter.post('/join', async (req, res) => res.json(await joinProject(req.user.id, req.body?.code)));
 
 /** POST /auth/projects/:id/access, a one-hour console credential for a project the user owns or belongs to. */
-projectAccountRouter.post('/:id/access', async (req, res) => res.json(await consoleAccess(req.user.id, req.params.id)));
+projectAccountRouter.post('/:id/access', async (req, res) =>
+  res.json(
+    await consoleAccess(
+      req.user.id,
+      req.params.id,
+      req.impersonatedBy && `Console access (Login as by ${req.impersonatedBy})`,
+    ),
+  ),
+);
 
 /** PATCH /auth/projects/:id, rename a project; owner only. */
 projectAccountRouter.patch('/:id', async (req, res) => {

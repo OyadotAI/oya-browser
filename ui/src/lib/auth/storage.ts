@@ -16,10 +16,41 @@ const LOCAL_KEYS = [
 /** The console's per-tab credentials. */
 const SESSION_KEYS = ['oya_console_key', 'oya_project_credential', 'oya_project_id'];
 
-/** Removes everything a session stored. */
+/** An admin's "Login as" in this tab: the token and whose account it opens. */
+const IMPERSONATION = 'oya_impersonation';
+
+/** Removes everything a session stored, including a "Login as". */
 export function clearStoredSession() {
   for (const key of LOCAL_KEYS) localStorage.removeItem(key);
+  for (const key of [...SESSION_KEYS, IMPERSONATION]) sessionStorage.removeItem(key);
+}
+
+/** An admin acting as a customer: the token the server minted and the customer's email. */
+export interface Impersonation {
+  /** Sent as X-Impersonate-Token. */
+  token: string;
+  /** Whose account this tab is in. */
+  email: string;
+}
+
+/** The "Login as" this tab is in, if any. */
+export function impersonation(): Impersonation | null {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    return JSON.parse(sessionStorage.getItem(IMPERSONATION) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Starts or ends a "Login as" in this tab. Either way the console's project
+ * credentials go, so the dashboard asks again as whoever this tab now is.
+ */
+export function setImpersonation(next: Impersonation | null) {
   for (const key of SESSION_KEYS) sessionStorage.removeItem(key);
+  if (next) sessionStorage.setItem(IMPERSONATION, JSON.stringify(next));
+  else sessionStorage.removeItem(IMPERSONATION);
 }
 
 /** The stored refresh token, if the server handed one over. */

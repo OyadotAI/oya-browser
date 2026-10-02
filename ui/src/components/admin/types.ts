@@ -143,6 +143,11 @@ export interface KeyShown {
 
 /** A person found by email. */
 export interface Found {
+  /** Their profile row. */
+  profile: {
+    /** Their user id. */ id: string;
+    /** Their email. */ email: string;
+  };
   /** Their plan and period. */
   standing: {
     /** The plan. */ plan: string;

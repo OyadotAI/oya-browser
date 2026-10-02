@@ -36,6 +36,13 @@ describe('URLs and headers', () => {
       'X-Oya-Client': 'console',
     });
   });
+
+  it('adds the Login as token while an admin is acting as a customer', () => {
+    sessionStorage.setItem('oya_impersonation', JSON.stringify({ token: 'imp', email: 'c@example.com' }));
+    expect(authHeaders('t')).toMatchObject({ Authorization: 'Bearer t', 'X-Impersonate-Token': 'imp' });
+    sessionStorage.clear();
+    expect(authHeaders('t')).not.toHaveProperty('X-Impersonate-Token');
+  });
 });
 
 describe('account endpoints', () => {

@@ -28,4 +28,5 @@ export { issueChallenge, spendChallenge, validEmail, clientAddress, claimUrl } f
 export { signup, login, refreshSession, oauthUrl, oauthSignup, getProfile, updateProfile } from './accounts.ts';
 export { verifyCaptcha } from './captcha.ts';
 export { ownedProjects, keysOf } from './repository.ts';
+export { mintImpersonation, impersonatedUser } from './impersonate.ts';
 export { userAuthMiddleware, authenticateToken, authMiddleware } from './middleware.ts';

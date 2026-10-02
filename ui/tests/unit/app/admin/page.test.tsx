@@ -1,11 +1,18 @@
 /**
- * Unit tests for the admin page: who sees what, the overview, issuing and
- * revoking a license, and looking a person up.
+ * Unit tests for the admin page: who sees what, its tabs, the overview,
+ * issuing and revoking a license, and looking a person up and logging in as them.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import AdminPage from '@/app/admin/page';
-import { adminIssueLicense, adminLicenses, adminLookup, adminOverview, adminRevokeLicense } from '@/lib/api';
+import {
+  adminImpersonate,
+  adminIssueLicense,
+  adminLicenses,
+  adminLookup,
+  adminOverview,
+  adminRevokeLicense,
+} from '@/lib/api';
 
 const auth = { token: 'jwt' as string | null, user: { email: 'mk@getoya.ai' } as object | null, loading: false };
 vi.mock('@/components/auth-provider', () => ({ useAuth: () => auth }));
@@ -15,6 +22,7 @@ vi.mock('@/lib/api', () => ({
   adminIssueLicense: vi.fn(),
   adminRevokeLicense: vi.fn(),
   adminLookup: vi.fn(),
+  adminImpersonate: vi.fn(),
 }));
 
 /** The counters every day carries. */
@@ -82,26 +90,54 @@ function loaded(licenses = [LICENSE]) {
   render(<AdminPage />);
 }
 
+/** A person as the lookup answers. */
+const found = (email: string, extra = {}) => ({
+  profile: { id: `u-${email}`, email },
+  standing: { plan: 'free', status: null, since: '2026-03-10T00:00:00Z' },
+  used: {},
+  subscription: null,
+  keys: [],
+  ...extra,
+});
+
+/** Opens a tab by its label. */
+const openTab = async (name: string) => fireEvent.click(await screen.findByRole('tab', { name }));
+
+/** Types an email in the top bar and looks it up. */
+async function search(email: string) {
+  fireEvent.change(await screen.findByLabelText('Customer email'), { target: { value: email } });
+  fireEvent.click(screen.getByText('Look up'));
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  sessionStorage.clear();
+  window.history.replaceState(null, '', '/');
   Object.assign(auth, { token: 'jwt', user: { email: 'mk@getoya.ai' }, loading: false });
 });
 
 describe('AdminPage', () => {
-  it('shows people reached, MRR, each counter’s week and day change, and the days newest first', async () => {
+  it('opens on the overview: headline numbers, each counter’s week and day change, and the days folded away', async () => {
     loaded();
-    expect(await screen.findByText('Active, 30 days (MAU)')).toBeTruthy();
-    expect(screen.getByText('88')).toBeTruthy();
+    expect((await screen.findByRole('tab', { name: 'Overview' })).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('88 in 30 days', { exact: false })).toBeTruthy();
     expect(screen.getByText('$119')).toBeTruthy();
+    expect(screen.getByText('Paying: 2 developer')).toBeTruthy();
     expect(screen.getAllByText(/\+50%/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/-50%/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/new/)).toBeTruthy();
-    const table = within(screen.getByText('Day by day (UTC)').closest('section')!);
-    expect(table.getAllByText(/^2026-03-1[45]$/).map((n) => n.textContent)).toEqual(['2026-03-15', '2026-03-14']);
+    expect(screen.getAllByText(/new/).length).toBeGreaterThan(0);
+    const fold = screen.getByText('Day by day (UTC)').closest('details')!;
+    expect(fold.open).toBe(false);
+    expect(
+      within(fold)
+        .getAllByText(/^2026-03-1[45]$/)
+        .map((n) => n.textContent),
+    ).toEqual(['2026-03-15', '2026-03-14']);
   });
 
-  it('says when Stripe could not be read, and still shows the rest', async () => {
+  it('calls out a failed payment, an unlicensed install over the cap and an unreadable Stripe', async () => {
     vi.mocked(adminOverview).mockResolvedValue({
       ...OVERVIEW,
       revenue: { enabled: true, mrrCents: 0, error: 'Stripe: down' },
@@ -109,7 +145,19 @@ describe('AdminPage', () => {
     vi.mocked(adminLicenses).mockResolvedValue({ licenses: [] });
     render(<AdminPage />);
     expect(await screen.findByText('Stripe could not be read: Stripe: down')).toBeTruthy();
-    expect(screen.getByText('Active today (DAU)')).toBeTruthy();
+    expect(screen.getByText('1 payment failed')).toBeTruthy();
+    expect(screen.getByText(/over the free cap/)).toBeTruthy();
+  });
+
+  it('opens the tab the address names, and keeps the open tab in the address', async () => {
+    window.history.replaceState(null, '', '/admin?tab=fleet');
+    loaded();
+    expect(await screen.findByText('oya-desktop')).toBeTruthy();
+    await openTab('Self-hosted');
+    expect(window.location.search).toBe('?tab=self-hosted');
+    expect(screen.getByText('6ed27761')).toBeTruthy();
+    expect(screen.getByText('Acme')).toBeTruthy();
+    expect(screen.queryByText('oya-desktop')).toBeNull();
   });
 
   it('asks a signed-out visitor to sign in', () => {
@@ -126,20 +174,11 @@ describe('AdminPage', () => {
     expect(await screen.findByText('Admins only')).toBeTruthy();
   });
 
-  it('shows accounts, plans, installs, downloads, heaviest users and the fleet', async () => {
-    loaded();
-    expect(await screen.findByText('2 developer')).toBeTruthy();
-    expect(screen.getByText('6ed27761')).toBeTruthy();
-    expect(screen.getByText('ana@example.com')).toBeTruthy();
-    expect(screen.getByText('2.0')).toBeTruthy();
-    expect(screen.getByText('oya-desktop')).toBeTruthy();
-    expect(screen.getByText('Acme')).toBeTruthy();
-  });
-
   it('issues a license and shows its key once, then reloads the list', async () => {
     vi.mocked(adminIssueLicense).mockResolvedValue({ ...LICENSE, key: 'THE-KEY' });
     loaded([]);
-    fireEvent.change(await screen.findByPlaceholderText('Company name'), { target: { value: 'Acme' } });
+    await openTab('Self-hosted');
+    fireEvent.change(screen.getByPlaceholderText('Company name'), { target: { value: 'Acme' } });
     fireEvent.click(screen.getByText('Issue'));
     expect(await screen.findByDisplayValue('THE-KEY')).toBeTruthy();
     expect(vi.mocked(adminIssueLicense).mock.calls[0][1]).toMatchObject({ licensee: 'Acme', maxConcurrent: 20 });
@@ -149,39 +188,76 @@ describe('AdminPage', () => {
   it('says why a license could not be issued', async () => {
     vi.mocked(adminIssueLicense).mockRejectedValue(new Error('licensee is required'));
     loaded([]);
-    fireEvent.click(await screen.findByText('Issue'));
+    await openTab('Self-hosted');
+    fireEvent.click(screen.getByText('Issue'));
     expect(await screen.findByText('licensee is required')).toBeTruthy();
   });
 
   it('revokes a license', async () => {
     vi.mocked(adminRevokeLicense).mockResolvedValue({});
     loaded();
-    fireEvent.click(await screen.findByText('Revoke'));
+    await openTab('Self-hosted');
+    fireEvent.click(screen.getByText('Revoke'));
     await vi.waitFor(() => expect(adminRevokeLicense).toHaveBeenCalledWith('jwt', 'L1'));
   });
 
-  it('looks a person up by email, with their plan, keys and Stripe customer', async () => {
-    vi.mocked(adminLookup).mockResolvedValue({
-      standing: { plan: 'developer', status: 'active', since: '2026-03-10T00:00:00Z' },
-      used: { cloud_seconds: 3600, agent_steps: 7 },
-      subscription: { stripe_customer_id: 'cus_1' },
-      keys: [{ prefix: 'abc', label: 'CI', created_at: '2026-03-01T00:00:00Z', last_used_at: null }],
-    });
+  it('searches from the top bar, opening Customers with the plan, keys and Stripe customer', async () => {
+    vi.mocked(adminLookup).mockResolvedValue(
+      found('ana@example.com', {
+        standing: { plan: 'developer', status: 'active', since: '2026-03-10T00:00:00Z' },
+        used: { cloud_seconds: 3600, agent_steps: 7 },
+        subscription: { stripe_customer_id: 'cus_1' },
+        keys: [{ prefix: 'abc', label: 'CI', created_at: '2026-03-01T00:00:00Z', last_used_at: null }],
+      }),
+    );
     loaded();
-    fireEvent.change(await screen.findByPlaceholderText('email@example.com'), {
-      target: { value: ' ana@example.com ' },
-    });
-    fireEvent.click(screen.getByText('Look up'));
+    await search(' ana@example.com ');
     expect(await screen.findByText('developer (active)')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Customers' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('abc…')).toBeTruthy();
     expect(screen.getByText('Open in Stripe').getAttribute('href')).toContain('cus_1');
     expect(adminLookup).toHaveBeenCalledWith('jwt', 'ana@example.com');
   });
 
+  it('looks up one of the heaviest users when clicked', async () => {
+    vi.mocked(adminLookup).mockResolvedValue(found('ana@example.com'));
+    loaded();
+    await openTab('Customers');
+    expect(screen.getByText('2.0')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'ana@example.com' }));
+    await vi.waitFor(() => expect(adminLookup).toHaveBeenCalledWith('jwt', 'ana@example.com'));
+    expect((screen.getByLabelText('Customer email') as HTMLInputElement).value).toBe('ana@example.com');
+  });
+
+  it('logs in as the person found: stores the token and opens their dashboard', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('location', { ...window.location, replace });
+    vi.mocked(adminLookup).mockResolvedValue(found('ana@example.com'));
+    vi.mocked(adminImpersonate).mockResolvedValue({ impersonate_token: 'imp', email: 'ana@example.com' });
+    loaded();
+    await search('ana@example.com');
+    fireEvent.click(await screen.findByText('Login as'));
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
+    expect(adminImpersonate).toHaveBeenCalledWith('jwt', 'u-ana@example.com');
+    expect(JSON.parse(sessionStorage.getItem('oya_impersonation') || '{}')).toEqual({
+      token: 'imp',
+      email: 'ana@example.com',
+    });
+  });
+
+  it('says when Login as is refused', async () => {
+    vi.mocked(adminLookup).mockResolvedValue(found('b@getoya.ai'));
+    vi.mocked(adminImpersonate).mockRejectedValue(new Error('Cannot log in as another admin'));
+    loaded();
+    await search('b@getoya.ai');
+    fireEvent.click(await screen.findByText('Login as'));
+    expect(await screen.findByText('Cannot log in as another admin')).toBeTruthy();
+  });
+
   it('says when nobody has that email', async () => {
     vi.mocked(adminLookup).mockRejectedValue(new Error('Account not found'));
     loaded();
-    fireEvent.click(await screen.findByText('Look up'));
+    await search('nobody@example.com');
     expect(await screen.findByText('Account not found')).toBeTruthy();
   });
 });
