@@ -1,12 +1,16 @@
 /**
  * The sign-in page's body: Google or GitHub, an account (email and password)
- * or, for a self-hosted deployment without accounts, an API key.
+ * or, for a self-hosted deployment without accounts, an API key. Under the
+ * card, the same two ways forward as sign-up: a free account, or a sales call
+ * for teams.
  */
 'use client';
 
 import Link from 'next/link';
 import { AuthLoading, AuthShell } from '@/components/auth/auth-shell';
+import { EnterpriseNudge } from '@/components/auth/enterprise-nudge';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
+import { DEVELOPER_PITCH, Pitch } from '@/components/auth/pitch';
 import { AccountForm, KeyForm, ModeSwitch } from './login-forms';
 import { AgentSetup } from './agent-setup';
 import { useLogin, type LoginMode } from './use-login';
@@ -31,14 +35,14 @@ export function LoginView({ siteKey }: ViewProps) {
   if (auth.loading || auth.user) return <AuthLoading />;
   const footer = (
     <>
-      Don&apos;t have an account?{' '}
+      New to Oya?{' '}
       <Link href="/signup" className="font-medium text-accent hover:text-accent-hover">
-        Sign up
+        Create a free account
       </Link>
     </>
   );
   return (
-    <AuthShell glow="accent" footer={footer}>
+    <AuthShell glow="accent" footer={footer} pitch={<Pitch content={DEVELOPER_PITCH} />}>
       <h1 className="mb-1 font-display text-2xl font-bold text-text">Welcome back</h1>
       <p className="mb-6 text-sm text-text-muted">{SUBTITLES[fields.mode]}</p>
       <ModeSwitch fields={fields} form={form} />
@@ -50,6 +54,7 @@ export function LoginView({ siteKey }: ViewProps) {
           <AccountForm fields={fields} form={form} captcha={captcha} onSubmit={submitAccount} />
         </>
       )}
+      <EnterpriseNudge />
     </AuthShell>
   );
 }

@@ -36,8 +36,8 @@ const MIDDLE = [
   "media-src 'self' blob:",
   "font-src 'self' data:",
   // The Turnstile captcha on sign-in and sign-up draws its challenge in Cloudflare's iframe;
-  // the landing page's walkthrough plays in Loom's.
-  'frame-src https://challenges.cloudflare.com https://www.loom.com',
+  // the landing page's walkthrough plays in Loom's; sign-up's sales path books the call in Calendly's.
+  'frame-src https://challenges.cloudflare.com https://www.loom.com https://calendly.com',
 ];
 
 /** Directives after connect-src. */

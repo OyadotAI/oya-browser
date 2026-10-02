@@ -30,6 +30,14 @@ afterEach(() => {
 /** Clicks the submit button labeled `name`. */
 const submit = (name: string) => userEvent.click(screen.getByRole('button', { name }));
 
+describe('LoginPage links', () => {
+  it('leads to a free account and, for teams, to the sales questions', () => {
+    render(<LoginPage />);
+    expect(screen.getByRole('link', { name: 'Create a free account' }).getAttribute('href')).toBe('/signup');
+    expect(screen.getByRole('link', { name: /Talk to sales/ }).getAttribute('href')).toBe('/signup?plan=enterprise');
+  });
+});
+
 describe('LoginPage with an account', () => {
   it('asks for the email, then the password', async () => {
     render(<LoginPage />);
