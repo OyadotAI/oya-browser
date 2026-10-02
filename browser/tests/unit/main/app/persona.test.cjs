@@ -28,6 +28,7 @@ describe('Persona', () => {
     const tabs = [
       { id: 1, url: 'https://a.test/', view: { webContents: { isDestroyed: () => false } } },
       { id: 2, url: '', view: {} },
+      { id: 3, url: '', home: true, view: {} },
     ];
     ctx.tabs = {
       list: tabs,
@@ -74,18 +75,20 @@ describe('Persona', () => {
     assert.equal(ctx.persona.summary(), null);
   });
 
-  it('switching persona drops queued cookies, empties the old jar, and reopens its pages in the new one', async () => {
+  it('switching persona drops queued cookies, empties the old jar, and reopens its pages, start page included, in the new one', async () => {
     await ctx.persona.applyServerFingerprint(PROFILE, [{}, {}], 9000);
     assert.deepEqual(order, [
       'drop',
       ['close', 1, { keepOne: false }],
       ['close', 2, { keepOne: false }],
+      ['close', 3, { keepOne: false }],
       'forget',
       'session',
       'listen',
       ['cookies', 2, 9000],
       ['open', 'https://a.test/'],
       ['open', 'about:blank'],
+      ['open', 'oya:home'],
     ]);
     assert.equal(ctx.config.values.activeProfileId, 'p1');
     assert.equal(ctx.shell.sentOn('fingerprint-changed')[0].id, 'p1');
@@ -109,7 +112,7 @@ describe('Persona', () => {
     const protectedViews = [];
     ctx.protection.setupTabCDP = (view) => protectedViews.push(view);
     ctx.persona.active = PROFILE;
-    ctx.tabs.list.pop();
+    ctx.tabs.list.splice(1);
     await ctx.persona.applyServerFingerprint(PROFILE);
     assert.equal(protectedViews.length, 1);
     assert.ok(!order.includes('drop'));

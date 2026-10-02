@@ -3,6 +3,7 @@
  * session (cookie jar) that belongs to it, and the localStorage transport for
  * its logins. The server is the single source of truth for the profile.
  */
+const { addressOf } = require('../tabs/home.cjs');
 const { LoginState } = require('../../login-state');
 const { ProfileStore } = require('../../anonymity/profile-store');
 const { configureSession } = require('../session.cjs');
@@ -133,7 +134,7 @@ class Persona {
   /** Closes every tab of the old jar and returns their addresses to reopen in the new one. */
   leaveJar() {
     const tabs = this.ctx.tabs.list;
-    const reopen = tabs.map((tab) => tab.url || 'about:blank');
+    const reopen = tabs.map(addressOf);
     // Drop the pending batch rather than flushing it. Those changes were seen
     // under the previous persona, but this socket is already authenticated as
     // the new one, so the server would file another identity's cookies in this

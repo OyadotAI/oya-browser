@@ -127,15 +127,12 @@ try {
   await page.locator('#btn-connect').click();
   assert.match(await page.locator('#setup-error').innerText(), /valid/);
   await capture('connection-validation-light');
-  await application.evaluate(({ app }, url) => {
-    app.on('web-contents-created', (_event, contents) => {
-      contents.session.webRequest.onBeforeRequest(
-        { urls: ['https://google.com/*', 'https://www.google.com/*'] },
-        (_details, callback) => callback({ redirectURL: url }),
-      );
-    });
-  }, url);
   await page.locator('#btn-skip').click();
+  // Browsing opens on the Oya start page, drawn by the shell; the fixture page is opened from the address bar.
+  await page.locator('#start-page').waitFor();
+  await page.waitForTimeout(1300);
+  await capture('start-light');
+  await page.evaluate((address) => window.oyaBrowser.navigate(address), url);
   await page.getByRole('tab', { name: 'Member lookup · Northline', exact: true }).waitFor();
   await application.evaluate(async ({ BrowserWindow }) => {
     const contents = BrowserWindow.getAllWindows()[0].getBrowserView().webContents;
@@ -162,7 +159,8 @@ try {
   await page.locator('#url-bar').press('Enter');
   await page.locator('#navigation-progress').waitFor({ state: 'hidden' });
 
-  // Ask is open from the moment pages show: a new person starts there.
+  // Browsing began on the start page, whose own task box is the way in, so the panel opens from the Oya button, on Ask.
+  if (!(await page.locator('#dev-panel.open').count())) await page.locator('#btn-dev').click();
   await page.locator('#pane-chat').waitFor({ state: 'visible' });
   await page.getByRole('tab', { name: 'Record', exact: true }).click();
   await page.locator('#pane-record').waitFor({ state: 'visible' });

@@ -18,12 +18,6 @@ const NOISE_SEED_DIGITS = 6;
 /** The scheme one-click sign-in links use. */
 const LINK_SCHEME = 'oya://';
 /**
- * How long a signed-in launch waits for the server's cookies before opening its
- * pages anyway (offline). Opening them sooner let a site mint a logged-out cookie
- * that then replaced the logged-in copy the server held.
- */
-const RESUME_OFFLINE_MS = 5000;
-/**
  * Asked, through a proxied persona's own session, where its traffic comes out: any
  * service answering JSON with an IANA `timezone` field (ipinfo.io does). The exit's
  * IP is all it sees, never this machine's.
@@ -38,7 +32,6 @@ module.exports = {
   DEFAULT_SERVER_URL,
   NOISE_SEED_DIGITS,
   LINK_SCHEME,
-  RESUME_OFFLINE_MS,
   EXIT_GEO_URL,
   EXIT_GEO_TIMEOUT_MS,
 };

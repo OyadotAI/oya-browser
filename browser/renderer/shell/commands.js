@@ -10,9 +10,8 @@
 const COMMANDS = [
   ['Focus address bar', 'L', () => CommandPalette.focusAddress()],
   ['New tab', 'T', () => oyaBrowser.newTab()],
-  ['Open Oya Agent', '⇧ D', () => DevPanel.toggle()],
+  ['Ask Oya', '⇧ D', () => (CommandPalette.openPane('chat'), Dom.byId('chat-input').focus())],
   ['Record a workflow', '⌥ R', () => StudioActions.recordButton()],
-  ['Ask Oya', '', () => (CommandPalette.openPane('chat'), Dom.byId('chat-input').focus())],
   ['Inspect this page', '', () => CommandPalette.openPane('actions')],
   ['Connection and profile', '', () => ShellDialog.open(true)],
   ['Check for updates', '', async () => Updates.render(await oyaBrowser.checkForUpdates())],

@@ -9,8 +9,10 @@
 const Theme = {
   /** The chosen appearance: system, light or dark. */
   theme: 'system',
-  /** Whether the OS is in dark mode. */
-  systemDark: matchMedia('(prefers-color-scheme: dark)').matches,
+  /** Whether the OS is in dark mode, as first painted (core/first-paint.js), else as the page's media query says. */
+  systemDark: document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === 'dark'
+    : matchMedia('(prefers-color-scheme: dark)').matches,
 
   /** Applies the theme to the document, all at once: controls must not fade from one theme to the other. */
   apply() {

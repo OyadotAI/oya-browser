@@ -374,6 +374,9 @@ function mainCtx(real = {}) {
       keepFocusOnShell() {},
       adoptPopup() {},
       controlChanged() {},
+      runEnded() {
+        this.ended = (this.ended || 0) + 1;
+      },
     },
     layout: { layoutActiveTab() {}, reveal() {}, flush() {} },
     overlays: { names: new Set() },

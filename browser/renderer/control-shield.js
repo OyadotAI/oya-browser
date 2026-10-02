@@ -270,6 +270,14 @@ const Act = {
     Act.timer = setTimeout(Act.quiet, RendererConstants.SHIELD_ACT_HOLD_MS);
   },
 
+  /** The run ended: whatever the show still drew lets go, and Oya says it is done before going quiet. */
+  end() {
+    Show.dismiss();
+    Companion.say('acting', 'Done');
+    clearTimeout(Act.timer);
+    Act.timer = setTimeout(Act.quiet, RendererConstants.SHIELD_DONE_MS);
+  },
+
   /** The agent has been still: the caption goes, unless a read has taken it over. */
   quiet() {
     if (Companion.mood === 'acting') Companion.say('', '');
@@ -587,6 +595,6 @@ const Show = {
 };
 
 /** The main process's updates, by phase. */
-const PHASES = { scan: Show.scan, found: Show.finish, move: Show.move, act: Act.act };
+const PHASES = { scan: Show.scan, found: Show.finish, move: Show.move, act: Act.act, end: Act.end };
 
 window.oyaShield = Show.update;

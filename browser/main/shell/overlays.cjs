@@ -20,17 +20,18 @@ class Overlays {
 
   /** The active tab, when pages are being shown at all. */
   shownView() {
-    const view = this.ctx.tabs.getActiveView();
+    const view = this.ctx.tabs.getShownView();
     return view && this.ctx.shell.browsingMode ? view : null;
   }
 
   /** Raises an overlay: freeze the page as a backdrop, then take the view away. */
   async show(name = 'legacy') {
     if (!OVERLAYS.includes(name)) return;
-    const view = this.ctx.tabs.getActiveView();
-    if (!this.names.size && view && this.ctx.shell.browsingMode) await this.freeze(view);
+    // The start page is the shell's own, so it stays live under the overlay: no frozen backdrop, no view to take away.
+    const view = this.shownView();
+    if (!this.names.size && view) await this.freeze(view);
     this.names.add(name);
-    if (view && this.ctx.shell.browsingMode) this.ctx.shell.window.removeBrowserView(view);
+    if (view) this.ctx.shell.window.removeBrowserView(view);
     this.ctx.shield.sync();
   }
 

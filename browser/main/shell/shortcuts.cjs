@@ -21,8 +21,8 @@ const BRACKETS = { BracketRight: ']', BracketLeft: '[' };
 const LOCAL_COMMANDS = {
   'new-tab': (ctx) => {
     if (!ctx.control.snapshot().interactive) return;
+    // The start page loads nothing, so a recording has no navigation to keep.
     ctx.tabs.createTab(HOME_URL, true);
-    ctx.recorder.recordNavigation(HOME_URL);
   },
   reload: (ctx) => ctx.control.snapshot().interactive && ctx.tabs.reloadActivePage(),
   'close-tab': (ctx) => ctx.control.snapshot().interactive && ctx.tabs.closeTab(ctx.tabs.activeTabId),

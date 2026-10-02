@@ -13,6 +13,7 @@ import { getKey, longJson, validData } from '../../../app/http.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
 import { MAX_SCHEMA_CHARS } from '../constants.ts';
 import { challengesFor, quietCheckpointFor } from '../../playbooks/checkpoint.ts';
+import { LiveRun } from '../../agent/run-events.ts';
 
 /** Runs one action on a browser; server-internal actions are refused. */
 export async function runCommand(req, res) {
@@ -123,14 +124,44 @@ function announceHandover(key, browserId, text: string) {
 /** Whether the chat's run can be saved as a playbook. */
 const replayableRun = (req) => hasReplayableSteps(lastRun(req.params.browserId));
 
+/** The task a chat asks for: its newest message from the person. */
+const taskOf = (messages) => [...messages].reverse().find((m) => m?.role === 'user')?.content ?? '';
+
+/** Runs the chat with its live events told to the browser that asked; a run that throws is told as failed. */
+async function runLive(browserId, messages, options, live: LiveRun) {
+  live.start(typeof taskOf(messages) === 'string' ? taskOf(messages) : '');
+  const result = await runChat(browserId, messages, options).catch((err) => {
+    live.failed(err);
+    throw err;
+  });
+  live.done(result);
+  return result;
+}
+
+/** A tool-call listener that keeps each call for the answer and tells the browser it is happening. */
+const collecting =
+  (toolCalls: any[], live: LiveRun) =>
+  ({ name, args }) => (toolCalls.push({ name, args }), live.toolCall({ name, args }));
+
 /** Runs the chat, collecting the tool calls it made, and whether the run can be saved as a playbook. */
 async function converse(req, messages, task) {
   const toolCalls = [];
-  const onToolCall = ({ name, args }) => toolCalls.push({ name, args });
+  const live = new LiveRun(req.params.browserId, task.secrets);
   const key = getKey(req);
-  const options = { apiKey: key, ...task, onToolCall, onText: () => {}, ...walls(key, req.params.browserId) };
-  const result = await runChat(req.params.browserId, messages, options);
+  const result = await runLive(req.params.browserId, messages, chatOptions(req, task, toolCalls, live), live);
   if (result.text.startsWith(NEEDS_INPUT)) announceHandover(key, req.params.browserId, result.text);
   const answer = { text: result.text, failed: !!result.failed, toolCalls, replayable: replayableRun(req) };
   return result.data === undefined ? answer : { ...answer, data: result.data };
+}
+
+/** The run's options: the key, the task, a listener that keeps and tells each tool call, and the walls it may clear. */
+function chatOptions(req, task, toolCalls: any[], live: LiveRun) {
+  const key = getKey(req);
+  return {
+    apiKey: key,
+    ...task,
+    onToolCall: collecting(toolCalls, live),
+    onText: () => {},
+    ...walls(key, req.params.browserId),
+  };
 }

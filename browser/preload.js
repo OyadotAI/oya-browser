@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   onUrlChanged: (cb) => ipcRenderer.on('url-changed', (e, url) => cb(url)),
   onTitleChanged: (cb) => ipcRenderer.on('title-changed', (e, title) => cb(title)),
   onWsStatus: (cb) => ipcRenderer.on('ws-status', (e, status) => cb(status)),
+  onAgentEvent: (cb) => ipcRenderer.on('agent-event', (_e, message) => cb(message)),
   onModeChanged: (cb) => ipcRenderer.on('mode-changed', (e, mode) => cb(mode)),
   onDevLog: (cb) => ipcRenderer.on('dev-log', (e, entry) => cb(entry)),
   onDevPanelState: (cb) => ipcRenderer.on('dev-panel-state', (e, open) => cb(open)),

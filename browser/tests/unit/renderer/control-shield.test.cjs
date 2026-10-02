@@ -229,6 +229,18 @@ describe('the control shield page', () => {
       assert.equal(said(), 'Clicking');
     });
 
+    it('lets go of everything when the run ends, says it is done, then goes quiet', () => {
+      app.window.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+      reveal();
+      app.window.oyaShield({ phase: 'end' });
+      assert.equal(said(), 'Done');
+      mock.timers.tick(app.run('RendererConstants.SHIELD_DISMISS_MS'));
+      assert.equal(boxes().length, 0);
+      assert.ok(!app.document.body.classList.contains('lit'));
+      mock.timers.tick(app.run('RendererConstants.SHIELD_DONE_MS'));
+      assert.ok(!app.$('companion').classList.contains('talking'));
+    });
+
     it('keeps the show when the agent only looks at the page', () => {
       app.window.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
       reveal();

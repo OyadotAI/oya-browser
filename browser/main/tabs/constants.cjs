@@ -3,8 +3,8 @@
  * long a tab's protection may take, and the size of sign-in popups.
  */
 
-/** Where a new tab, and a browser with no tabs left, opens. */
-const HOME_URL = 'https://google.com';
+/** Where a new tab, and a browser with no tabs left, opens: the Oya start page, which the shell draws (see home.cjs). */
+const HOME_URL = 'oya:home';
 /** A web address, as opposed to about:, file: or view-source:. */
 const WEB_URL = /^https?:\/\//i;
 /** An address that reads this machine: a file: one, or the source view of one. */

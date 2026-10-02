@@ -8,18 +8,21 @@ const { navigateActive, normalizeAddress } = require('./navigation.cjs');
 const { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } = require('./constants.cjs');
 const popups = require('./popup-tabs.cjs');
 const { loadInTab, isUnprotected } = require('./load.cjs');
+const { isHome, shownViewOf, mountTab, leaveHomeFor, staysHome } = require('./home.cjs');
 
 /** What the tab strip shows for one tab. */
 function tabSummary(t, activeTabId) {
   return {
     id: t.id,
-    title: t.title,
-    url: t.url,
+    ...placeSummary(t),
     active: t.id === activeTabId,
     ...loadSummary(t),
     ...historySummary(t.view.webContents.navigationHistory),
   };
 }
+
+/** Where the tab is: its title and address, and whether it is on the start page. */
+const placeSummary = (t) => ({ title: t.title, url: t.url, home: !!t.home });
 
 /** Whether the tab is loading, and why it failed if it did. */
 function loadSummary(t) {
@@ -72,6 +75,14 @@ const tabPreferences = (partition) => ({
   backgroundThrottling: false,
 });
 
+/** Stops a load and forgets the navigation it was for. */
+function stopLoading(tabs, tab) {
+  tab.navigationRequest = (tab.navigationRequest || 0) + 1;
+  tab.navigationPending = false;
+  tab.view.webContents.stop();
+  tabs.sendTabList();
+}
+
 /** The open tabs and which one is showing. */
 class TabManager {
   /** `ctx` is the main-process context (see main.js). */
@@ -94,6 +105,11 @@ class TabManager {
   /** The active tab's view, or null. */
   getActiveView() {
     return this.find(this.activeTabId)?.view || null;
+  }
+
+  /** The active tab's view as the window shows it: null while that tab is on the start page. */
+  getShownView() {
+    return shownViewOf(this.find(this.activeTabId));
   }
 
   /** Puts a window the page opened on the tab list, so an agent can drive it. */
@@ -119,7 +135,8 @@ class TabManager {
     // shows through, in the dark theme that is dark text on a dark canvas. White is what
     // every other browser puts under a page; a page with its own background still wins.
     view.setBackgroundColor(PAGE_BACKGROUND);
-    const tab = { id: this.nextTabId++, view, title: 'New Tab', url: url || '' };
+    const home = isHome(url);
+    const tab = { id: this.nextTabId++, view, title: home ? 'Oya' : 'New Tab', url: home ? '' : url || '', home };
     this.list.push(tab);
     return tab;
   }
@@ -127,7 +144,7 @@ class TabManager {
   /** Loads the tab's first page once it is protected, unless a navigation already took over. */
   openFirstPage(tab, tabReady, { url, loadOptions }) {
     tab.setup = tabReady;
-    const load = () => (url && !tab.navigationRequest ? loadInTab(tab, url, loadOptions) : undefined);
+    const load = () => (url && !isHome(url) && !tab.navigationRequest ? loadInTab(tab, url, loadOptions) : undefined);
     tab.ready = Promise.resolve(tabReady).then(load);
     tab.ready.catch(reportFirstLoad);
   }
@@ -143,7 +160,7 @@ class TabManager {
 
   /** Mounts a tab's view on the shell window and tells the strip what is showing. */
   showInShell(tab) {
-    if (!this.ctx.overlays.names.size) this.ctx.shell.window.setBrowserView(tab.view);
+    mountTab(this.ctx, tab);
     this.ctx.layout.layoutActiveTab();
     this.ctx.shell.send('url-changed', tab.url);
     this.ctx.shell.send('title-changed', tab.title);
@@ -206,25 +223,29 @@ class TabManager {
 
   /** A tab's address changed. */
   urlChanged(tab, url) {
+    if (staysHome(tab, url)) return;
     tab.url = url;
-    if (tab.id === this.activeTabId) this.ctx.shell.send('url-changed', url);
+    const shown = tab.id === this.activeTabId;
+    if (leaveHomeFor(tab, url) && shown) return this.showInShell(tab);
+    if (shown) this.ctx.shell.send('url-changed', url);
     this.sendTabList();
   }
 
   /** A tab's title changed. */
   titleChanged(tab, title) {
+    if (tab.home) return;
     tab.title = title;
     if (tab.id === this.activeTabId) this.ctx.shell.send('title-changed', title);
     this.sendTabList();
   }
 
-  /** Leaves the setup screen and starts showing pages, on `url`, with Ask open: it is where a new person starts. */
+  /** Leaves the setup screen and starts showing pages, on `url`: a site opens with Ask beside it, the start page with only its own task box (the panel opens with the first task). */
   enterBrowsingMode(url) {
     if (this.ctx.shell.browsingMode) return;
     this.ctx.shell.browsingMode = true;
     this.createTab(url || HOME_URL, true);
     this.ctx.shell.send('mode-changed', 'browsing');
-    this.ctx.layout.reveal();
+    if (!isHome(url || HOME_URL)) this.ctx.layout.reveal();
   }
 
   /** Back to the welcome screen (log out): every tab closes and the shell shows setup. */
@@ -253,16 +274,8 @@ class TabManager {
     this.ctx.shield.requireHumanControl();
     const tab = this.find(this.activeTabId);
     if (!tab) return;
-    if (tab.navigationPending || tab.view.webContents.isLoading()) this.stopLoading(tab);
+    if (tab.navigationPending || tab.view.webContents.isLoading()) stopLoading(this, tab);
     else this.reloadTab(tab);
-  }
-
-  /** Stops a load and forgets the navigation it was for. */
-  stopLoading(tab) {
-    tab.navigationRequest = (tab.navigationRequest || 0) + 1;
-    tab.navigationPending = false;
-    tab.view.webContents.stop();
-    this.sendTabList();
   }
 
   /** Reloads a tab, clearing its error; one that could not be protected keeps saying so (only about:blank reloads). */
