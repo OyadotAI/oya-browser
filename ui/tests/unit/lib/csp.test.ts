@@ -49,9 +49,9 @@ describe('contentSecurityPolicy', () => {
     );
   });
 
-  it('lets only the captcha and the walkthrough video draw frames', () => {
+  it('lets only the captcha, the walkthrough video and the sales calendar draw frames', () => {
     expect(directives(contentSecurityPolicy('n', false))['frame-src']).toBe(
-      'https://challenges.cloudflare.com https://www.loom.com',
+      'https://challenges.cloudflare.com https://www.loom.com https://calendly.com',
     );
   });
 
