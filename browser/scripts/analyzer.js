@@ -21,6 +21,11 @@
   // its tag when the tag's label cannot hold it.
   const MAX_WRAPPED_TEXT = 600;
 
+  // An element known only by its pointer cursor counts as a control below this
+  // height, and below this width unless it is where the pointer starts.
+  const POINTER_MAX_HEIGHT = 120;
+  const POINTER_MAX_WIDTH = 400;
+
   // Layout that starts a new line, and layout that sits beside its neighbours.
   // React and minified pages put no whitespace between elements, so without
   // these <div>$19.99</div><div>4.5 stars</div> reads as "$19.994.5 stars".
@@ -662,6 +667,22 @@
     return false;
   }
 
+  /**
+   * A control known only by its pointer cursor: small, or a row-sized element
+   * where the pointer starts (its parent has none). No-code builders draw a
+   * suggestion list as full-width rows with nothing else marking them, and the
+   * width cap alone hid every one of them; the row's own children inherit the
+   * cursor, so only the row where it starts is taken.
+   */
+  function pointerControl(node) {
+    if (window.getComputedStyle(node).cursor !== 'pointer' || !node.textContent?.trim()) return false;
+    const r = node.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0 && r.height < POINTER_MAX_HEIGHT)) return false;
+    if (r.width < POINTER_MAX_WIDTH) return true;
+    const parent = node.parentElement;
+    return !!parent && window.getComputedStyle(parent).cursor !== 'pointer';
+  }
+
   function getInteractiveType(node) {
     const tag = node.tagName;
     const hidden = hiddenControl(node);
@@ -719,10 +740,7 @@
 
     // cursor:pointer fallback, tighter constraints
     try {
-      if (window.getComputedStyle(node).cursor === 'pointer' && node.textContent?.trim()) {
-        const r = node.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0 && r.width < 400 && r.height < 120) return 'button';
-      }
+      if (pointerControl(node)) return 'button';
     } catch {}
 
     // ── Site-specific interactive element detection ──

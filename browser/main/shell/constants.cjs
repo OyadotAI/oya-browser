@@ -38,8 +38,12 @@ const DEV_LOG_MAX_CHARS = 8000;
 const MAX_ANALYSIS_BOXES = 150;
 /** How often the control shield re-measures its outlines, so they follow the page as it scrolls and reflows. */
 const SHIELD_TRACK_MS = 100;
-/** How long outlines are followed: the renderer's scan minimum, reveal, hold and fade (renderer/core/constants.js), summed. */
-const SHIELD_TRACK_FOR_MS = 5300;
+/** Below this average brightness (0 black, 1 white) a page is dark, and the shield dims it more deeply. */
+const DARK_PAGE_LUMA = 0.4;
+/** The longest element name the companion quotes before it shortens it with an ellipsis. */
+const NARRATION_NAME_MAX = 42;
+/** How long outlines are followed: the renderer's longest wait for a scan sweep to end, then its reveal, hold and fade (renderer/core/constants.js), summed. */
+const SHIELD_TRACK_FOR_MS = 10000;
 
 /** Menu items that act on the page, disabled while an agent has control. */
 const HUMAN_MENU_ITEMS = ['browser-new-tab', 'browser-close-tab', 'browser-reload'];
@@ -54,6 +58,8 @@ module.exports = {
   MAX_ANALYSIS_BOXES,
   SHIELD_TRACK_MS,
   SHIELD_TRACK_FOR_MS,
+  NARRATION_NAME_MAX,
+  DARK_PAGE_LUMA,
   DEFAULT_PANEL_WIDTH,
   MIN_PANEL_WIDTH,
   MAX_PANEL_WIDTH,

@@ -75,6 +75,14 @@ export function changeNote(browserId: string, data: any, expected = false) {
   return expected ? 'Nothing on the page changed. If you expected it to, the action may not have worked.' : '';
 }
 
+/** Whether a new analysis differs from the last one remembered, without remembering it. */
+export function hasChanged(browserId: string, data: any) {
+  const before = seen.get(browserId);
+  if (!before || !data?.facts) return true;
+  const errors = newErrors(before.errors, errorsOf(data.elements));
+  return differences(before.facts, data.facts).length > 0 || errors.length > 0;
+}
+
 /** Remembers an analysis the model reads whole, so the next action is compared with it. */
 export const noteAnalysis = (browserId: string, data: any) => void remember(browserId, data);
 

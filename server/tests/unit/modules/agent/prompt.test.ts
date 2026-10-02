@@ -57,6 +57,18 @@ describe('systemPrompt', () => {
     assert.match(systemPrompt({}, {}, {}, {}), /repeating it can leave duplicate work behind/);
   });
 
+  it('goes straight to the site a task names instead of searching for it, since search engines wall off automated browsers', () => {
+    assert.match(systemPrompt({}, {}, {}, {}), /Start at the site the task names by navigating to its address/);
+  });
+
+  it('treats the last step of a counted flow as the submit, so a stop-before-submit task stops there', () => {
+    assert.match(systemPrompt({}, {}, {}, {}), /On the last step, its Continue, Next or Finish is the submit/);
+  });
+
+  it('reads the page again before repeating an action that seemed to do nothing', () => {
+    assert.match(systemPrompt({}, {}, {}, {}), /call wait_for and analyze again before you try it once more/);
+  });
+
   it('names secrets by placeholder and never includes their values', () => {
     const prompt = systemPrompt({ pw: 'hunter2' }, {}, {}, { pw: 'hunter2' });
     assert.match(prompt, /SECRETS \(hidden from you\): \{\{pw\}\}/);

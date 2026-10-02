@@ -81,6 +81,8 @@ class PageDriver {
   /** Everything after tab management in runCommand; answers through sendResult. */
   async runPageAction(id, action, params, view) {
     if (!Object.hasOwn(PAGE_COMMANDS, action)) return this.runInjected(id, action, params, view);
+    // Said on the shield while the action runs; the agent never waits for it.
+    this.ctx.narrate?.(view, action, params);
     await PAGE_COMMANDS[action](this, id, params, view);
   }
 

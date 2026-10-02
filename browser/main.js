@@ -167,6 +167,7 @@ ctx.actions = createPageActions({
   requireHumanControl: () => ctx.shield.requireHumanControl(),
   analysisStarted: (view) => ctx.shield.analysisStarted(view),
   analysisFinished: (view, raw) => ctx.shield.analysisFinished(view, raw),
+  narrate: (view, action, params) => ctx.shield.acting(view, action, params).catch(() => {}),
   tabs: () => ctx.tabs.list,
   activeTabId: () => ctx.tabs.activeTabId,
 });

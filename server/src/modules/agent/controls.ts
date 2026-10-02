@@ -5,8 +5,8 @@
 import { sendCommand } from '../browsers/socket.ts';
 import { elementsOf, setElements } from './recorder.ts';
 import { analysisText } from './element-index.ts';
-import { changeNote } from './changes.ts';
-import { PAGE_FORMAT } from './constants.ts';
+import { changeNote, hasChanged } from './changes.ts';
+import { CLICK_RECHECK_MS, PAGE_FORMAT } from './constants.ts';
 
 /** What the model is told when an element id is not in the latest analysis. */
 export const ELEMENT_GONE = 'Error: Element not found. Call analyze_page and use a current id.';
@@ -23,6 +23,22 @@ function sameElements(browserId: string, elements: any[]) {
   );
 }
 
+/** The page as the analyzer reads it now. */
+const analyze = (browserId) => sendCommand(browserId, 'analyze', { format: PAGE_FORMAT });
+
+/**
+ * The page an action left behind. One that should have moved and has not yet is
+ * read once more after a moment: a link that opens a new tab, or a form that posts
+ * to its server and redraws, lands just after the first look, and "nothing changed"
+ * then sent the model to click again, or submit twice.
+ */
+async function settledPage(browserId, expected) {
+  const r = await analyze(browserId);
+  if (!expected || !r.ok || hasChanged(browserId, r.data)) return r;
+  await new Promise((resolve) => setTimeout(resolve, CLICK_RECHECK_MS));
+  return analyze(browserId);
+}
+
 /** The CSS selector for an element id from the latest analysis. */
 export const byId = (elementId) => `[data-ac-id="${elementId}"]`;
 
@@ -34,7 +50,7 @@ export const byId = (elementId) => `[data-ac-id="${elementId}"]`;
  * needs to act again. `expected` says the action should visibly change the page.
  */
 export async function withControls(browserId, said, expected = false) {
-  const r = await sendCommand(browserId, 'analyze', { format: PAGE_FORMAT });
+  const r = await settledPage(browserId, expected);
   if (!r.ok || !r.data?.elements?.length) return said;
   const same = sameElements(browserId, r.data.elements);
   setElements(browserId, r.data.elements, r.data.modal);

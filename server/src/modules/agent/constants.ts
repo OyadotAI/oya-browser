@@ -83,6 +83,8 @@ export const AGENT_LOG_CHARS = Number(process.env.OYA_AGENT_LOG_CHARS) || DEFAUL
 export const DEFAULT_MAX_ITERATIONS = '200';
 /** The most of a run_script result the model reads, in characters. */
 export const RUN_SCRIPT_OUTPUT_CHARS = 8_000;
+/** How long after an action that seemed to change nothing the page is read once more. */
+export const CLICK_RECHECK_MS = 1500;
 /** How long wait_for waits by default, in ms. */
 export const WAIT_FOR_DEFAULT_MS = 10_000;
 /** The longest wait_for may wait, in ms: under the browser command's own timeout. */

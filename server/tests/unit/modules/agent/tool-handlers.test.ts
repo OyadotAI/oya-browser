@@ -10,7 +10,8 @@ ownDataDir();
 const { TOOL_HANDLERS } = await import('../../../../src/modules/agent/tool-handlers.ts');
 const { BROWSER_TOOLS } = await import('../../../../src/modules/agent/tools.ts');
 const recorder = await import('../../../../src/modules/agent/recorder.ts');
-const { MAX_ANALYSIS_CHARS, NAVIGATE_TIMEOUT_MS } = await import('../../../../src/modules/agent/constants.ts');
+const { MAX_ANALYSIS_CHARS, NAVIGATE_TIMEOUT_MS, CLICK_RECHECK_MS } =
+  await import('../../../../src/modules/agent/constants.ts');
 const { scriptedBrowser } = await import('../../support/agent.ts');
 
 const BROWSER = 'b-tools';
@@ -143,6 +144,23 @@ describe('tool handlers', () => {
     // A page that did move brings its new ids with it.
     answer = () => ({ ok: true, data: { elements: [{ id: 1, type: 'button', text: 'Next', visible: true }] } });
     assert.match(await run('click', { element_id: 1 }), /Element Index/);
+  });
+
+  it('looks again once before saying a click changed nothing, so a tab it opened or a slow redraw is reported', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const page = (url) => ({
+      ok: true,
+      data: { facts: { url, title: 't', elements: '1 total' }, elements: [{ id: 1, type: 'button', text: 'Go' }] },
+    });
+    const pages = [page('https://a.test/'), page('https://a.test/'), page('https://new.test/')];
+    answer = (action) => (action === 'analyze' ? pages.shift() : { ok: true, data: {} });
+    await run('analyze_page');
+    const said = run('click', { element_id: 1 });
+    for (let i = 0; i < 5; i += 1) await new Promise(setImmediate);
+    t.mock.timers.tick(CLICK_RECHECK_MS);
+    const out = await said;
+    assert.match(out, /Changed: the page moved to https:\/\/new\.test\//);
+    assert.doesNotMatch(out, /Nothing on the page changed/);
   });
 
   describe('select_option', () => {
