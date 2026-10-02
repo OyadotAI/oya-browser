@@ -38,7 +38,7 @@ describe('server messages', () => {
       persona: { name: 'Work' },
       now: 9000,
     });
-    const browse = ['browse', 'https://google.com'];
+    const browse = ['browse', 'oya:home'];
     assert.deepEqual(order, ['login', ['fingerprint', 'p', 0, 9000], browse, 'flush', 'dump']);
     assert.equal(ctx.socket.browserId, 'srv');
     assert.equal(ctx.socket.ready, true);
@@ -102,5 +102,11 @@ describe('server messages', () => {
   it('ignores unknown and inherited message types', async () => {
     assert.equal(await handleServerMessage(ctx, { type: 'nope' }), undefined);
     assert.equal(await handleServerMessage(ctx, { type: 'toString' }), undefined);
+  });
+
+  it('forwards the agent’s live events to the shell, so the panel can show the run as it goes', () => {
+    const event = { kind: 'step', tool: 'navigate', line: 'Opening amazon.com' };
+    handleServerMessage(ctx, { type: 'agent-event', runId: 'r1', event });
+    assert.deepEqual(ctx.shell.sentOn('agent-event'), [{ runId: 'r1', event }]);
   });
 });

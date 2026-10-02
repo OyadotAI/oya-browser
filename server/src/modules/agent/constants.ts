@@ -101,6 +101,12 @@ export const FIND_LIMIT = 15;
 export const MAX_SITE_NOTES = 20;
 /** The longest one note may be, in characters. */
 export const MAX_NOTE_CHARS = 300;
+/** The longest element name a live step line quotes before it shortens it. */
+export const EVENT_NAME_CHARS = 42;
+/** The longest task, plan step or error a live event carries. */
+export const EVENT_TEXT_CHARS = 300;
+/** The most plan steps a live plan event carries. */
+export const EVENT_PLAN_STEPS = 30;
 /** How many steps before the limit the agent is told to wrap up and report what it has. */
 export const WRAP_UP_STEPS = 5;
 

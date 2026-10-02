@@ -30,7 +30,8 @@ const NAVIGATION_HANDLERS = {
   'new-tab': (ctx, _e, url) => {
     requireHuman(ctx);
     const id = ctx.tabs.createTab(url || HOME_URL, true);
-    ctx.recorder.recordNavigation(url || HOME_URL);
+    // The start page loads nothing, so a recording keeps only a real address.
+    if (url) ctx.recorder.recordNavigation(url);
     return id;
   },
   'close-tab': (ctx, _e, id) => {

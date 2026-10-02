@@ -9,36 +9,61 @@
     />
     <title>Oya Browser</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="core/first-paint.js"></script>
     <link rel="stylesheet" href="core/tokens.css" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="shell.css" />
+    <link rel="stylesheet" href="core/orb.css" />
+    <link rel="stylesheet" href="start.css" />
+    <link rel="stylesheet" href="agent.css" />
+    <link rel="stylesheet" href="chrome.css" />
+    <link rel="stylesheet" href="welcome.css" />
+    <link rel="stylesheet" href="panes.css" />
+    <link rel="stylesheet" href="core/type.css" />
   </head>
   <body class="mode-setup">
+    <!-- The Oya mark, drawn once: the green ring behind, offset, and the ink ring in front. Every brand mark uses it. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="oya-mark" viewBox="0 0 512 512">
+        <circle
+          cx="276"
+          cy="276"
+          r="160"
+          fill="none"
+          stroke-width="80"
+          style="stroke: var(--mark-back, var(--logo-green))"
+        />
+        <circle
+          cx="236"
+          cy="236"
+          r="160"
+          fill="none"
+          stroke-width="80"
+          style="stroke: var(--mark-front, var(--text))"
+        />
+      </symbol>
+    </svg>
     <!-- ── Full-page welcome and sign-in screen ── -->
     <div class="setup-screen" data-view="start">
       <section class="welcome-stage" aria-labelledby="welcome-title">
-        <svg class="brand-mark" viewBox="0 0 512 512" width="40" height="40" fill="none" aria-hidden="true">
-          <circle cx="276" cy="276" r="160" stroke="var(--logo-green)" stroke-width="80" />
-          <circle cx="236" cy="236" r="160" stroke="var(--text)" stroke-width="80" />
-        </svg>
+        <span class="brand-mark" data-orb="lg"></span>
         <div class="eyebrow">Oya Browser</div>
-        <h1 id="welcome-title">Sign in once.<br /><em>Your agents</em> take it from&nbsp;here.</h1>
+        <h1 id="welcome-title">Sign in once.<br /><em>Oya</em> takes it from&nbsp;here.</h1>
         <p class="welcome-lede">
-          A real browser that is yours. The agents you hand it to browse with your logins, and you can take the wheel
-          back at any moment.
+          A real browser that is yours. Give Oya a task and it works with your logins. Take the wheel back any time.
         </p>
         <ol class="welcome-steps">
           <li>
             <span class="welcome-num">01</span><strong>Sign in</strong
-            ><span>Connect this browser to your Oya workspace.</span>
+            ><span>Link this browser to your Oya workspace.</span>
           </li>
           <li>
             <span class="welcome-num">02</span><strong>Log in to your sites</strong
             ><span>Here, as usual. Agents reuse those sessions.</span>
           </li>
           <li>
-            <span class="welcome-num">03</span><strong>Hand it to an agent</strong
-            ><span><em>Oya Agent</em> at the top right, or code, MCP and Playwright.</span>
+            <span class="welcome-num">03</span><strong>Hand it to Oya</strong
+            ><span>Type a task on the start page, or drive it from code, MCP and Playwright.</span>
           </li>
         </ol>
       </section>
@@ -56,7 +81,7 @@
         </div>
 
         <div class="welcome-view" data-view="waiting" id="setup-waiting" role="status">
-          <span class="welcome-orbit" aria-hidden="true"></span>
+          <span class="welcome-orbit" data-orb="lg" data-orb-state="thinking"></span>
           <h2>Finish in your web browser</h2>
           <p class="sub">
             Sign in there, then click <em>Connect</em> when this browser asks. This screen closes on its own.
@@ -94,9 +119,9 @@
     </div>
 
     <nav class="tab-bar" id="tab-bar" aria-label="Browser tabs">
-      <svg class="window-brand" viewBox="0 0 512 512" fill="none" aria-hidden="true">
-        <circle cx="276" cy="276" r="160" stroke="var(--logo-green)" stroke-width="80" />
-        <circle cx="236" cy="236" r="160" stroke="var(--text)" stroke-width="80" />
+      <svg class="oya-mark window-brand" id="brand-orb" viewBox="0 0 512 512" aria-hidden="true">
+        <circle class="mark-back" cx="276" cy="276" r="160" />
+        <circle class="mark-front" cx="236" cy="236" r="160" />
       </svg>
       <div class="tab-list" id="tab-list" role="tablist" aria-label="Open pages"></div>
       <button
@@ -146,18 +171,67 @@
         ><button id="control-action" hidden>Take control</button
         ><button id="control-resume" hidden>Return to agent</button>
       </div>
-      <button class="dev-btn agent-button" id="btn-dev" aria-expanded="false" title="Oya Agent (⌘/Ctrl Shift D)">
-        <span class="agent-dot" aria-hidden="true"></span><span data-icon="spark"></span
-        ><span class="button-label">Oya Agent</span>
+      <button class="dev-btn agent-button" id="btn-dev" aria-expanded="false" title="Ask Oya (⌘/Ctrl Shift D)">
+        <span class="agent-dot" aria-hidden="true"></span
+        ><svg class="oya-mark agent-mark" viewBox="0 0 512 512" aria-hidden="true">
+          <circle class="mark-back" cx="276" cy="276" r="160" />
+          <circle class="mark-front" cx="236" cy="236" r="160" /></svg
+        ><span class="button-label">Oya</span>
       </button>
       <div id="navigation-progress" hidden aria-hidden="true"></div>
     </nav>
     <img id="page-backdrop" alt="" hidden />
+    <!-- ── The Oya start page: drawn by the shell where a new tab's page would be ── -->
+    <main class="start-page" id="start-page" aria-labelledby="start-title" hidden>
+      <div class="start-aura" aria-hidden="true"><i></i></div>
+      <div class="start-lattice" aria-hidden="true"></div>
+      <div class="start-center">
+        <span data-orb="xl" id="start-orb"></span>
+        <h1 class="start-title" id="start-title">What should I <em>do?</em></h1>
+        <p class="start-sub">
+          Give Oya a task. It works right here, with your logins, and you can take the wheel at any moment.
+        </p>
+        <form class="start-ask" id="start-ask">
+          <textarea
+            id="start-input"
+            rows="1"
+            aria-label="A task for Oya"
+            placeholder="Ask Oya to do anything on the web"
+            spellcheck="false"
+          ></textarea>
+          <button class="start-go" id="start-go" type="submit" aria-label="Start the task" data-icon="send"></button>
+        </form>
+        <div class="start-examples" id="start-examples" aria-label="Example tasks">
+          <button type="button" data-task="Go to amazon.com and find Jordans under $150">Jordans under $150</button>
+          <button type="button" data-task="Find the top story on Hacker News and tell me what it is about">
+            Top story on Hacker News
+          </button>
+          <button type="button" data-task="Find the weather in San Francisco for this weekend">
+            Weekend weather in SF
+          </button>
+        </div>
+      </div>
+      <footer class="start-foot"><kbd>⌘K</kbd> Commands <span aria-hidden="true">·</span> <kbd>⌘L</kbd> Address</footer>
+    </main>
+    <!-- ── The launch: Oya wakes up, once per app start ── -->
+    <div class="launch playing" id="launch" aria-hidden="true">
+      <div class="launch-edge"><i></i></div>
+      <svg class="launch-rings" viewBox="0 0 512 512">
+        <circle class="launch-ring back" cx="276" cy="276" r="160" />
+        <circle class="launch-ring front" cx="236" cy="236" r="160" />
+      </svg>
+      <span data-orb="xl" id="launch-orb"></span>
+      <div class="launch-word">Oya</div>
+    </div>
     <!-- ── Dev Panel (right side) ── -->
     <div class="dev-panel" id="dev-panel">
       <div class="dev-panel-resize" id="dev-panel-resize"></div>
       <header class="tool-heading">
-        <span class="tool-title"><span class="tool-mark" data-icon="spark" aria-hidden="true"></span>Agent</span
+        <span class="tool-title"
+          ><svg class="oya-mark panel-mark" id="panel-orb" viewBox="0 0 512 512" aria-hidden="true">
+            <circle class="mark-back" cx="276" cy="276" r="160" />
+            <circle class="mark-front" cx="236" cy="236" r="160" /></svg
+          >Oya</span
         ><button class="nav-btn" id="tools-close" aria-label="Close agent panel" data-icon="close"></button>
       </header>
       <div class="dev-panel-header" role="tablist" aria-label="Agent tools">
@@ -270,9 +344,15 @@
         </form>
         <div class="chat-messages" id="chat-messages">
           <div class="chat-empty">
-            <span class="empty-icon" data-icon="spark"></span>
-            <h2>A little help, right here.</h2>
-            <p>Ask Oya to navigate, find information, or complete a task on the current page.</p>
+            <span data-orb="lg"></span>
+            <h2>What should I <em>do?</em></h2>
+            <p>Give Oya a task on this page or anywhere on the web. You can take the wheel at any moment.</p>
+            <div class="chat-examples">
+              <button type="button" data-task="Summarize this page in three bullet points">Summarize this page</button>
+              <button type="button" data-task="Find the contact or support email on this site">
+                Find a contact email
+              </button>
+            </div>
           </div>
         </div>
         <div class="chat-input-bar">
@@ -762,6 +842,7 @@
     </div>
     <script src="core/constants.js"></script>
     <script src="core/dom.js"></script>
+    <script src="core/orb.js"></script>
     <script src="core/state.js"></script>
     <script src="shell/icons.js"></script>
     <script src="shell/dialogs.js"></script>
@@ -781,6 +862,7 @@
     <script src="panes/net-log.js"></script>
     <script src="panes/chat-playbook.js"></script>
     <script src="panes/chat-files.js"></script>
+    <script src="panes/chat-run.js"></script>
     <script src="panes/chat.js"></script>
     <script src="panes/chat-persona.js"></script>
     <script src="panes/model-picker.js"></script>
@@ -802,6 +884,9 @@
     <script src="studio/run.js"></script>
     <script src="studio/actions.js"></script>
     <script src="control.js"></script>
+    <script src="shell/activity.js"></script>
+    <script src="shell/start.js"></script>
+    <script src="shell/launch.js"></script>
     <script src="ready.js"></script>
   </body>
 </html>

@@ -1,6 +1,3 @@
-* {
-  box-sizing: border-box;
-}
 [hidden] {
   display: none !important;
 }
@@ -555,9 +552,6 @@ input::placeholder {
   max-width: 300px;
   margin: auto;
 }
-.chat-messages {
-  padding: 16px;
-}
 .chat-msg {
   font-size: 13px;
   line-height: 1.65;
@@ -686,9 +680,6 @@ input::placeholder {
   font-size: 12px;
   line-height: 1.5;
   margin-top: 6px;
-}
-.setup-btns button {
-  min-height: 36px;
 }
 .setup-error {
   margin-bottom: 4px;
@@ -856,13 +847,6 @@ kbd {
   .dev-panel-header {
     height: 34px;
   }
-  .dev-tab {
-    padding: 6px 0;
-  }
-
-  .record-controls {
-    padding: 0 16px 10px;
-  }
   .rec-steps {
     padding: 0 16px 10px;
     min-height: 0;
@@ -919,16 +903,6 @@ kbd {
   }
   .setup-card .sub {
     margin-bottom: 16px;
-  }
-}
-@keyframes surface-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.99);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
   }
 }
 .control-status {
@@ -1023,9 +997,6 @@ kbd {
   .toolbar .conn-pill {
     display: none;
   }
-  .control-status {
-    gap: 4px;
-  }
   #control-label {
     max-width: 100px;
   }
@@ -1047,26 +1018,6 @@ kbd {
   to {
     opacity: 1;
   }
-}
-.shell-overlay:not([hidden]),
-.reconnect-overlay.open {
-  animation: backdrop-enter 140ms ease-out;
-}
-.shell-dialog,
-.reconnect-overlay.open .setup-card {
-  animation: surface-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.dev-pane.active {
-  animation: pane-enter 160ms ease-out;
-}
-.tab-item {
-  animation: pane-enter 160ms ease-out;
-}
-button {
-  transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    box-shadow 120ms ease;
 }
 button:active:not(:disabled) {
   filter: brightness(0.94);
@@ -1103,9 +1054,6 @@ button:active:not(:disabled) {
 /* Workflow studio: restrained chrome, stable step list, progressive detail. */
 #pane-record {
   gap: 0;
-}
-#pane-record [hidden] {
-  display: none !important;
 }
 .studio-library {
   display: flex;
@@ -1340,11 +1288,6 @@ button:active:not(:disabled) {
 .run-event:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-@media (max-width: 959px) {
-  .studio-tabs button {
-    padding: 6px 0;
-  }
 }
 .record-finish {
   margin: 0 18px 14px;
@@ -1734,9 +1677,6 @@ button:active:not(:disabled) {
 }
 
 /* Ask: profile picker, Clear, attachments, Stop */
-.chat-toolbar {
-  padding-bottom: 0;
-}
 .chat-toolbar select {
   font-weight: 500;
 }
@@ -1750,9 +1690,6 @@ button:active:not(:disabled) {
   border-radius: var(--radius-sm);
   background: var(--surface);
   font-size: 13px;
-}
-.chat-card[hidden] {
-  display: none;
 }
 .chat-card h2 {
   font-size: 15px;
@@ -1951,9 +1888,6 @@ button:active:not(:disabled) {
   box-shadow: var(--shadow);
   transform-origin: top center;
   animation: model-menu-in 140ms var(--ease);
-}
-.model-menu[hidden] {
-  display: none;
 }
 @keyframes model-menu-in {
   from {
@@ -2475,9 +2409,6 @@ button:active:not(:disabled) {
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
     var(--shadow-sm);
 }
-.routine-editor[hidden] {
-  display: none;
-}
 .routine-editor-title {
   font-size: 13.5px;
   font-weight: 600;
@@ -2729,10 +2660,6 @@ button:active:not(:disabled) {
   padding-left: 16px;
   padding-right: 16px;
 }
-
-.record-controls {
-  padding: 0 16px 14px;
-}
 #pane-record :is(.primary-button, .secondary-button) {
   min-height: 32px;
   padding: 0 14px;
@@ -2744,10 +2671,6 @@ button:active:not(:disabled) {
   padding: 0 8px;
   font-size: 12.5px;
   line-height: 16px;
-}
-.studio-tabs {
-  padding: 0 16px;
-  gap: 20px;
 }
 .studio-tabs button {
   padding: 9px 0;
@@ -2770,10 +2693,6 @@ button:active:not(:disabled) {
 @media (max-width: 959px) {
   .dev-panel-header {
     margin: 8px 12px;
-  }
-
-  .record-controls {
-    padding: 0 16px 10px;
   }
   .record-empty {
     margin: 0;
@@ -3172,11 +3091,6 @@ button:active:not(:disabled) {
     transform: scale(0.9);
   }
 }
-.tab-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .tab-close {
   width: 20px;
   height: 20px;
@@ -3481,9 +3395,6 @@ body.mode-setup {
   box-shadow: var(--shadow-lg);
   animation: dialog-enter 700ms var(--spring);
 }
-.brand-mark {
-  filter: drop-shadow(0 6px 18px color-mix(in srgb, var(--logo-green) 35%, transparent));
-}
 .setup-card h1 {
   font-size: 32px;
   font-weight: 650;
@@ -3722,9 +3633,6 @@ body.mode-setup .setup-screen {
 }
 /* Short or narrow windows keep the promise and the button; the steps go. */
 @media (max-height: 720px) {
-  .welcome-stage {
-    padding-top: 48px;
-  }
   .welcome-stage .brand-mark {
     margin-bottom: 16px;
   }
@@ -3855,9 +3763,6 @@ body.mode-setup .setup-screen {
   display: flex;
   gap: 8px;
   padding: 0 16px 8px;
-}
-#record-toggle {
-  gap: 8px;
 }
 .record-dot {
   display: none;
@@ -4099,9 +4004,6 @@ body.mode-setup .setup-screen {
 }
 #pane-actions.busy {
   cursor: progress;
-}
-.action-result {
-  display: none;
 }
 .action-result.visible {
   display: flex;

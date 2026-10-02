@@ -63,16 +63,31 @@ class ShellWindow {
 
   /** Shell appearance is independent of the websites' preferred color scheme. */
   background() {
+    return this.dark() ? SHELL_BACKGROUND.dark : SHELL_BACKGROUND.light;
+  }
+
+  /** Loads the shell page in its theme, then readies the control shield. */
+  loadShellPage() {
+    const page = path.join(APP_DIR, 'renderer/index.html');
+    this.window.loadFile(page, this.firstPaint()).then(() => this.ctx.shield.prepare());
+  }
+
+  /** The shell page's address options: its theme rides in the query so the very first paint is already in it (renderer/core/first-paint.js). */
+  firstPaint() {
+    return { query: { theme: this.dark() ? 'dark' : 'light' } };
+  }
+
+  /** Whether the shell is dark: chosen so, or following a dark system. */
+  dark() {
     const ui = this.ctx.config.values.ui;
-    const dark = ui?.theme === 'dark' || (ui?.theme !== 'light' && this.ctx.electron.nativeTheme.shouldUseDarkColors);
-    return dark ? SHELL_BACKGROUND.dark : SHELL_BACKGROUND.light;
+    return ui?.theme === 'dark' || (ui?.theme !== 'light' && this.ctx.electron.nativeTheme.shouldUseDarkColors);
   }
 
   /** Opens the window and wires what it listens to. */
   create() {
     this.ctx.layout.width = Number(this.ctx.config.values.ui?.panelWidth) || DEFAULT_PANEL_WIDTH;
     this.window = new this.ctx.electron.BrowserWindow(this.options());
-    this.window.loadFile(path.join(APP_DIR, 'renderer/index.html')).then(() => this.ctx.shield.prepare());
+    this.loadShellPage();
     this.ctx.shortcuts.install(this.window.webContents);
     this.lockToShellPage();
     this.followTheme();
@@ -104,6 +119,8 @@ class ShellWindow {
     contents.on('did-finish-load', () => {
       contents.setZoomLevel(0);
       this.ctx.layout.layoutActiveTab();
+      // A fast connection opens tabs while the page is still loading its scripts, and a late one misses that list.
+      this.ctx.tabs.sendTabList();
     });
   }
 

@@ -140,12 +140,12 @@ describe('bootBrowser', () => {
     done();
   });
 
-  it('opens straight to browsing on a blank tab when this desktop has signed in before', async () => {
+  it('opens straight to browsing on the start page when this desktop has signed in before', async () => {
     const order = [];
     const { ctx, done } = bootCtx(order);
     ctx.persona.loadActive = () => (ctx.persona.active = { id: 'p1' });
     await bootBrowser(ctx);
-    assert.deepEqual(order.slice(order.indexOf('connect'), -2), ['connect', ['browse', 'about:blank']]);
+    assert.deepEqual(order.slice(order.indexOf('connect'), -2), ['connect', ['browse', 'oya:home']]);
     done();
   });
 

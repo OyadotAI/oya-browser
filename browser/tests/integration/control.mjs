@@ -73,14 +73,6 @@ try {
   page.setDefaultTimeout(6000);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await app.evaluate(({ app }, url) => {
-    app.on('web-contents-created', (_event, contents) =>
-      contents.session.webRequest.onBeforeRequest(
-        { urls: ['https://google.com/*', 'https://www.google.com/*'] },
-        (_details, callback) => callback({ redirectURL: url }),
-      ),
-    );
-  }, fixtureUrl);
   await page.locator('#btn-manual').click();
   await page.locator('#cfg-key').fill('test');
   await page.locator('#btn-connect').click();
@@ -92,6 +84,17 @@ try {
         .map((view) => ({ url: view.webContents.getURL(), bounds: view.getBounds() })),
     );
   await page.waitForFunction(() => document.body.classList.contains('mode-browsing'));
+  // Browsing opens on the Oya start page, which is never shielded: nothing of a site is there to protect.
+  await page.locator('#start-page').waitFor();
+  assert.equal((await views()).length, 0, 'the start page is the shell itself: no page view, no shield');
+  // The agent holds control, so the fixture is loaded as the agent would, from the main process.
+  await app.evaluate(async ({ webContents }, url) => {
+    const tab = webContents
+      .getAllWebContents()
+      .find((c) => c.getType() === 'browserView' && !/control-shield/.test(c.getURL()));
+    await tab.loadURL(url);
+  }, fixtureUrl);
+  await page.waitForFunction(() => document.getElementById('start-page').hidden);
   assert.equal((await views()).length, 2, 'native input shield sits above the page');
   assert.equal(await page.locator('#url-bar').getAttribute('readonly'), '');
   const rejected = await page.evaluate(() =>

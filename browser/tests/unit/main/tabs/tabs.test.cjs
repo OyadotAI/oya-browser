@@ -55,11 +55,26 @@ describe('TabManager', () => {
     ]);
   });
 
+  it('shows no web page on the start page, and brings the tab back with its first real page', () => {
+    const tab = ctx.tabs.find(ctx.tabs.createTab(HOME_URL));
+    assert.equal(tab.url, '', 'the address bar is empty on the start page');
+    assert.deepEqual(ctx.shell.window.views, [], 'the shell draws the start page, so no view is mounted');
+    assert.equal(ctx.tabs.getShownView(), null);
+    ctx.tabs.urlChanged(tab, 'about:blank');
+    ctx.tabs.titleChanged(tab, 'about:blank');
+    assert.ok(tab.home, 'a blank page is not a real page');
+    assert.deepEqual([tab.url, tab.title], ['', 'Oya'], 'the start page keeps its own name and an empty address');
+    ctx.tabs.urlChanged(tab, 'https://a.test/');
+    assert.ok(!tab.home);
+    assert.deepEqual(ctx.shell.window.views, [tab.view]);
+    assert.equal(ctx.shell.sentOn('url-changed').at(-1), 'https://a.test/');
+  });
+
   it('keeps one tab open when the person closes the last', () => {
     const id = ctx.tabs.createTab('https://a.test/');
     ctx.tabs.closeTab(id);
     assert.equal(ctx.tabs.list.length, 1);
-    assert.equal(ctx.tabs.list[0].url, HOME_URL);
+    assert.ok(ctx.tabs.list[0].home, 'the one left is on the start page');
   });
 
   it('takes a closed tab out of the recording', () => {
@@ -153,15 +168,18 @@ describe('TabManager', () => {
     ctx.tabs.enterBrowsingMode();
     ctx.tabs.enterBrowsingMode('https://x.test/');
     assert.equal(ctx.tabs.list.length, 1);
-    assert.equal(ctx.tabs.list[0].url, HOME_URL);
+    assert.ok(ctx.tabs.list[0].home);
     assert.deepEqual(ctx.shell.sentOn('mode-changed'), ['browsing']);
   });
 
-  it('opens the Ask panel when pages first show, so a new person starts there', () => {
+  it('opens the Ask panel when pages first show on a site, and leaves the start page to its own task box', () => {
     let revealed = 0;
     ctx.layout.reveal = () => revealed++;
     ctx.shell.browsingMode = false;
     ctx.tabs.enterBrowsingMode();
+    assert.equal(revealed, 0, 'the start page asks for the task itself');
+    ctx.tabs.leaveBrowsingMode();
+    ctx.tabs.enterBrowsingMode('https://a.test/');
     assert.equal(revealed, 1);
   });
 
@@ -192,6 +210,7 @@ describe('TabManager', () => {
         id: 1,
         title: 'New Tab',
         url: 'https://a.test/',
+        home: false,
         active: true,
         loading: true,
         loadError: null,

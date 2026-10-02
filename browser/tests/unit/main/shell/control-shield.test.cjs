@@ -21,8 +21,15 @@ describe('ControlShield', () => {
     ctx = mainCtx({ shield: ControlShield });
     page = new FakeBrowserView();
     page.setBounds({ x: 0, y: 88, width: 900, height: 700 });
-    ctx.tabs = { getActiveView: () => page };
+    ctx.tabs = { getActiveView: () => page, getShownView: () => page };
     ctx.shell.window.setBrowserView(page);
+  });
+
+  it('never covers the start page, so its task box takes typing even while an agent holds control', () => {
+    ctx.control.state.interactive = false;
+    ctx.tabs.getShownView = () => null;
+    ctx.shield.sync();
+    assert.ok(!ctx.shell.window.views.includes(ctx.shield.view));
   });
 
   it('covers the page exactly while an agent has control', () => {
@@ -134,6 +141,12 @@ describe('ControlShield', () => {
       await ctx.shield.acting(page, 'type', { selector: '[data-x="1"]', text: 'secret' });
       const act = { phase: 'act', text: 'Typing into “Email”', box, changes: true };
       assert.deepEqual(told, [`window.oyaShield?.(${JSON.stringify(act)})`]);
+    });
+
+    it('tells its page the run ended, so the show lets go', () => {
+      cover();
+      ctx.shield.runEnded();
+      assert.deepEqual(told, ['window.oyaShield?.({"phase":"end"})']);
     });
 
     it('says nothing about an action while a person has control', async () => {

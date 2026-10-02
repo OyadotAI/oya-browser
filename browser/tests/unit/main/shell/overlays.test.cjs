@@ -14,7 +14,7 @@ describe('Overlays', () => {
     mock.timers.enable({ apis: ['setTimeout'] });
     ctx = mainCtx({ overlays: Overlays });
     page = new FakeBrowserView();
-    ctx.tabs = { getActiveView: () => page };
+    ctx.tabs = { getActiveView: () => page, getShownView: () => page };
     ctx.shell.window.setBrowserView(page);
   });
   afterEach(() => mock.timers.reset());

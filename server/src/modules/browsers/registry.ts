@@ -155,6 +155,12 @@ class ConnectionRegistry extends EventEmitter {
     return open.filter((b) => sendQuietly(b.ws, message)).length;
   }
 
+  /** Sends `message` to one Oya browser this replica holds, if its socket is open; answers whether it went. */
+  send(browserId, message) {
+    const b = this.browsers.get(browserId);
+    return !!b && b.clientType === 'oya' && b.ws?.readyState === WebSocket.OPEN && sendQuietly(b.ws, message);
+  }
+
   /** List browsers visible to a specific API key */
   list(apiKey?) {
     const result = [];

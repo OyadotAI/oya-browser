@@ -1,0 +1,92 @@
+/**
+ * The agent panel's other tools (Record, Routines, Inspect) and the command
+ * palette, in the same calm language as Ask: one flat primary action per view,
+ * quiet secondary ones, one style of sub-tab (an underline), Oya's green on form
+ * controls instead of the system's blue, and dropdowns drawn alike everywhere.
+ */
+
+/* ── Buttons ── */
+.primary-button,
+.btn-connect {
+  box-shadow: none;
+  transition: background-color var(--t-fast) var(--ease);
+}
+.secondary-button,
+.btn-skip {
+  background: transparent;
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+.secondary-button:hover:not(:disabled),
+.btn-skip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+/* One primary per view: once a recording is captured, saving it is the next step, so Resume steps back. */
+#pane-record:has(#record-finish:not([hidden])) #record-toggle:not(.recording) {
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+#pane-record:has(#record-finish:not([hidden])) #record-toggle:not(.recording):hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+/* ── Sub-tabs: Inspect's match Record's, an underline under the one in view ── */
+.inspect-nav button {
+  height: auto;
+  padding: 8px 0;
+  margin-right: 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--secondary);
+  font-weight: 500;
+}
+.inspect-nav button:hover {
+  background: none;
+  color: var(--text);
+}
+.inspect-nav button.active,
+.inspect-nav button.active:hover {
+  background: none;
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.inspect-nav .dev-tab-btn {
+  margin-left: auto;
+  margin-right: 0;
+  border-bottom: 0;
+}
+
+/* ── Dropdowns: one look, with a quiet chevron, in every pane and the palette ── */
+/* Scoped by id, so it outranks the older per-control rules (#theme-preference, .studio-library select). */
+#dev-panel select,
+#shell-overlay select {
+  appearance: none;
+  padding-right: 28px;
+  border: 0;
+  border-radius: var(--radius);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1 4 4 4-4'/%3E%3C/svg%3E")
+      no-repeat right 10px center / 10px 6px,
+    color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  color: var(--text);
+}
+#dev-panel select:focus-visible,
+#shell-overlay select:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 0.5px var(--hairline),
+    var(--glow);
+}
+
+/* ── The palette ── */
+#command-search:focus {
+  background: var(--glass-strong);
+  box-shadow: var(--glow);
+}
+/* A command with no shortcut shows nothing there, not an empty key. */
+.shell-dialog kbd:empty {
+  display: none;
+}

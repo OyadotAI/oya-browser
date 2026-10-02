@@ -64,6 +64,14 @@ const RendererConstants = Object.freeze({
   JSON_INDENT: 2,
   /** Milliseconds in a second, for elapsed counts shown to people. */
   MS_PER_SECOND: 1000,
+  /** How long after the agent's last command the chrome stops showing it at work. */
+  AGENT_ACTIVE_MS: 3000,
+  /** How long the panel's orb shows a run's outcome before it rests. */
+  CHAT_ORB_REST_MS: 4000,
+  /** How long the launch plays before it dissolves on its own (matches the launch keyframes in start.css). */
+  LAUNCH_MS: 1500,
+  /** How long the launch takes to dissolve (matches .launch.leaving in start.css). */
+  LAUNCH_LEAVE_MS: 420,
   /** The control shield's scan runs at least this long, so a quick analysis still reads as one. */
   SHIELD_MIN_SCAN_MS: 1600,
   /** How long the outlines of what an analysis found stay up. */
@@ -80,6 +88,8 @@ const RendererConstants = Object.freeze({
   SHIELD_TARGET_MS: 1500,
   /** One sweep of the beam down the page while the agent reads; the reveal starts as a sweep ends (matches the CSS --loop). */
   SHIELD_SCAN_LOOP_MS: 1800,
+  /** How long Oya says it is done after a run ends, before going quiet. */
+  SHIELD_DONE_MS: 2200,
   /** How long the show takes to let go when the agent changes the page under it (matches .dismissing in control-shield.html). */
   SHIELD_DISMISS_MS: 500,
   /** The share of the veil's reach, from its middle, that stays at its lightest before darkening towards the edges. */

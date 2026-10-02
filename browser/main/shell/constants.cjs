@@ -7,8 +7,8 @@
 const WINDOW_SIZE = { width: 1280, height: 860, minWidth: 600, minHeight: 400 };
 /** Where macOS draws the traffic lights on the inset title bar. */
 const TRAFFIC_LIGHTS = { x: 12, y: 12 };
-/** The shell's background in each theme, before its page paints. */
-const SHELL_BACKGROUND = { dark: '#1b1e1c', light: '#f5f5f2' };
+/** The shell's background in each theme, before its page paints: the launch stage's own edge colour, so nothing flashes. */
+const SHELL_BACKGROUND = { dark: '#0c0f0d', light: '#eef1ed' };
 /** A see-through view: the control shield only catches input. */
 const TRANSPARENT = '#00000000';
 

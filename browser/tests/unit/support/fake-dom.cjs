@@ -53,6 +53,16 @@ class Node {
   remove() {
     this.parentNode?.removeChild(this);
   }
+
+  /** Puts `node` where this node is, and detaches this one. */
+  replaceWith(node) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    node.remove?.();
+    parent.childNodes.splice(parent.childNodes.indexOf(this), 1, node);
+    node.parentNode = parent;
+    this.parentNode = null;
+  }
 }
 
 /** A text node. */
@@ -232,6 +242,14 @@ class Element extends Node {
     node.parentNode = this;
     this.childNodes.push(node);
     return node;
+  }
+
+  /** As the DOM's: puts nodes before the first child, in order; strings become text. */
+  prepend(...nodes) {
+    const made = nodes.map((n) => (typeof n === 'string' ? this.ownerDocument.createTextNode(n) : n));
+    for (const n of made) n.remove?.();
+    for (const n of made) n.parentNode = this;
+    this.childNodes.unshift(...made);
   }
 
   /** As the DOM's; strings become text. */
@@ -541,6 +559,11 @@ class Document extends Element {
 
   /** As the DOM's. */
   createElement(tag) {
+    return new Element(this, tag);
+  }
+
+  /** As the DOM's; the namespace is ignored, since nothing here draws. */
+  createElementNS(_namespace, tag) {
     return new Element(this, tag);
   }
 

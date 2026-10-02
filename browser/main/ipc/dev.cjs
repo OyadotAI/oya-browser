@@ -69,8 +69,13 @@ async function lendToAgent(ctx) {
 function sendChat(ctx, _e, messages, data) {
   if (!canCallServer(ctx)) return Promise.resolve({ error: 'Not connected to server' });
   const payload = data ? { messages, data } : { messages };
-  return asOnlyChat(ctx, (signal) => withAgentControl(ctx, () => askServer(ctx, 'chat', payload, signal)));
+  // Only a run that actually ran tells the shield it ended; a chat refused while another runs leaves that one's show alone.
+  const run = (signal) => withAgentControl(ctx, () => askServer(ctx, 'chat', payload, signal)).then(ended(ctx));
+  return asOnlyChat(ctx, run);
 }
+
+/** Passes a run's answer through, telling the shield the run ended first. */
+const ended = (ctx) => (answer) => (ctx.shield.runEnded(), answer);
 
 /** Runs `work` with control lent to the agent, handing it back to the person after. */
 async function withAgentControl(ctx, work) {

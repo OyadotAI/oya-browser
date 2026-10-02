@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const { ShellWindow } = require('../../../../main/shell/window.cjs');
 const { installApplicationMenu } = require('../../../../main/shell/menu.cjs');
 const { mainCtx } = require('../../support/main-ctx.cjs');
+const { SHELL_BACKGROUND } = require('../../../../main/shell/constants.cjs');
 
 describe('ShellWindow', () => {
   let ctx;
@@ -16,11 +17,11 @@ describe('ShellWindow', () => {
   });
 
   it('follows the system theme unless the person chose one', () => {
-    assert.equal(ctx.shell.background(), '#f5f5f2');
+    assert.equal(ctx.shell.background(), SHELL_BACKGROUND.light);
     ctx.electron.nativeTheme.shouldUseDarkColors = true;
-    assert.equal(ctx.shell.background(), '#1b1e1c');
+    assert.equal(ctx.shell.background(), SHELL_BACKGROUND.dark);
     ctx.config.values.ui = { theme: 'light' };
-    assert.equal(ctx.shell.background(), '#f5f5f2');
+    assert.equal(ctx.shell.background(), SHELL_BACKGROUND.light);
   });
 
   it('drops messages once the window is gone', () => {
@@ -61,6 +62,7 @@ describe('ShellWindow', () => {
   });
 
   it('undoes a zoom left on the shell, whose layout is in window pixels', () => {
+    ctx.tabs = { sendTabList: () => {} };
     ctx.shell.create();
     const contents = ctx.shell.window.webContents;
     contents.zoomLevel = -1;
@@ -68,11 +70,19 @@ describe('ShellWindow', () => {
     assert.equal(contents.zoomLevel, 0);
   });
 
+  it('sends the tab list again once the shell page has loaded, so a script that loaded late still sees the tabs', () => {
+    let sent = 0;
+    ctx.tabs = { sendTabList: () => sent++ };
+    ctx.shell.create();
+    ctx.shell.window.webContents.emit('did-finish-load');
+    assert.equal(sent, 1);
+  });
+
   it('repaints when the system theme changes', () => {
     ctx.shell.create();
     ctx.electron.nativeTheme.shouldUseDarkColors = true;
     ctx.electron.nativeTheme.emit('updated');
-    assert.equal(ctx.shell.window.background, '#1b1e1c');
+    assert.equal(ctx.shell.window.background, SHELL_BACKGROUND.dark);
     assert.deepEqual(ctx.shell.window.webContents.sentOn('shell-appearance'), [true]);
   });
 });

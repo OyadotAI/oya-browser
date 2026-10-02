@@ -141,14 +141,18 @@ class ControlShield {
     return shell.browsingMode && !overlays.names.size && !control.snapshot().interactive;
   }
 
-  /** Puts the shield over the active tab, or takes it away. */
+  /**
+   * Puts the shield over the active tab, or takes it away. The start page is the
+   * shell's own, not a website, so there is nothing there to keep a person's hands
+   * off, and its task box must take their typing: it is never covered.
+   */
   sync() {
     const win = this.ctx.shell.window;
     if (!win || win.isDestroyed()) return;
-    if (!this.shouldCover()) return this.uncover(win);
+    const view = this.ctx.tabs.getShownView();
+    if (!this.shouldCover() || !view) return this.uncover(win);
     this.prepare();
-    const view = this.ctx.tabs.getActiveView();
-    if (view) this.cover(win, view);
+    this.cover(win, view);
   }
 
   /** An agent began reading the page: the shield starts its scan, and stops following the last outlines. */
@@ -175,6 +179,13 @@ class ControlShield {
     const boxes = measured || [];
     this.tell(view, { phase: 'found', boxes, ...(tone && { tone }) });
     return boxes;
+  }
+
+  /** A run from the panel ended: the shield lets go of what it was showing, so nothing claims the agent is still at work. */
+  runEnded() {
+    this.stopTracking();
+    const view = this.ctx.tabs.getActiveView();
+    if (this.showing(view)) this.tell(view, { phase: 'end' });
   }
 
   /** The agent is acting on the page: the companion says what it is doing, and a target ring locks onto the element it acts on. */

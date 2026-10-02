@@ -68,14 +68,15 @@ function windowGlobals(document, bridge, options) {
     document,
     oyaBrowser: bridge,
     navigator: { platform: options.platform || 'MacIntel', clipboard },
+    location: { search: options.search ?? '' },
     innerWidth: options.innerWidth ?? 1280,
     innerHeight: options.innerHeight ?? 800,
-    matchMedia: () => ({ matches: !!options.dark }),
+    matchMedia: (query) => ({ matches: String(query).includes('reduce') ? !!options.reducedMotion : !!options.dark }),
     getSelection: () => ({ toString: () => options.selection?.() || '' }),
     requestAnimationFrame: (fn) => frames.push(fn),
     cancelAnimationFrame: () => {},
     runFrames: (now) => frames.splice(0).forEach((fn) => fn(now)),
-    ...{ setTimeout, clearTimeout, setInterval, clearInterval, console, Event, URL },
+    ...{ setTimeout, clearTimeout, setInterval, clearInterval, console, Event, URL, URLSearchParams },
   };
 }
 

@@ -11,6 +11,7 @@ import { HttpError } from '../../../../../src/platform/errors.ts';
 import { CdpConnectionError } from '../../../../../src/drivers/cdp.ts';
 import { STOPPED_TEXT } from '../../../../../src/modules/agent/constants.ts';
 import { disconnectBrowser } from '../../../support/fakes.ts';
+import { LiveRun } from '../../../../../src/modules/agent/run-events.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../../../support/browsers.ts';
 
 const B = 'b-command';
@@ -203,6 +204,37 @@ describe('chat', () => {
       );
     } finally {
       delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  it('tells the browser that asked what the run is doing as it goes, then how it ended', async () => {
+    const plan = {
+      id: 'c1',
+      type: 'function',
+      function: { name: 'update_plan', arguments: '{"steps":[{"step":"Look","done":true}]}' },
+    };
+    const turns = [
+      { choices: [{ message: { role: 'assistant', content: null, tool_calls: [plan] } }] },
+      { choices: [{ message: { role: 'assistant', content: 'DONE: looked' } }] },
+    ];
+    mock.method(
+      globalThis,
+      'fetch',
+      async () => new Response(JSON.stringify(turns.length > 1 ? turns.shift() : turns[0]), { status: 200 }),
+    );
+    stubControl();
+    driveBrowser(B, () => ({ ok: true }));
+    const told = mock.method(LiveRun.prototype, 'send', () => {});
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      await talk({ messages: [{ role: 'user', content: 'have a look' }] });
+      assert.deepEqual(
+        told.mock.calls.map((c) => c.arguments[0].kind),
+        ['start', 'plan', 'done'],
+      );
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+      disconnectBrowser(B);
     }
   });
 

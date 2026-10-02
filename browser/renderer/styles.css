@@ -433,10 +433,6 @@ body.mode-browsing .tab-bar {
   flex: 1;
   min-height: 80px;
 }
-.rec-code {
-  max-height: 40%;
-  display: none;
-}
 
 /* ── Dev Panel ── */
 
@@ -672,9 +668,6 @@ body.mode-browsing .tab-bar {
 .action-field::placeholder {
   color: var(--secondary);
 }
-.action-field-sm {
-  max-width: 50px;
-}
 .action-btn-sm {
   flex-shrink: 0;
   padding: 6px 10px;
@@ -826,22 +819,12 @@ body.mode-browsing .tab-bar {
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
-.chat-dots {
-  display: inline-flex;
-  gap: 3px;
-}
 .chat-dots span {
   width: 5px;
   height: 5px;
   background: var(--secondary);
   border-radius: 50%;
   animation: dotPulse 1.2s infinite;
-}
-.chat-dots span:nth-child(2) {
-  animation-delay: 0.2s;
-}
-.chat-dots span:nth-child(3) {
-  animation-delay: 0.4s;
 }
 @keyframes dotPulse {
   0%,

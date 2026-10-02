@@ -10,6 +10,7 @@ const { showUnprotected } = require('./load.cjs');
 const { trackFrameSessions } = require('../recording/frame-sessions.cjs');
 const { pageReached } = require('../recording/outcomes.cjs');
 const { CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE, LOCAL_FILE } = require('./constants.cjs');
+const { wireHome } = require('./home.cjs');
 
 /**
  * Makes view-source pages readable (forces the light theme). This text runs
@@ -25,10 +26,7 @@ const VIEW_SOURCE_LIGHT = `
 
 /** Wires every listener on a new tab; returns the promise that settles once it is protected (or given up on). */
 function wireTab(ctx, tab) {
-  wireRecording(ctx, tab);
-  wireTabLoadState(ctx, tab);
-  wireTabFailures(ctx, tab);
-  wireRendererLoss(ctx, tab);
+  for (const wire of [wireRecording, wireTabLoadState, wireTabFailures, wireRendererLoss, wireHome]) wire(ctx, tab);
   const tabReady = protectNewTab(ctx, tab);
   wireTabPage(ctx, tab, tabReady);
   wireTabWindows(ctx, tab);

@@ -91,12 +91,14 @@ describe('IPC handlers', () => {
     assert.deepEqual(order, ['go_back', 'back']);
   });
 
-  it('opens a new tab on the home page and records it', () => {
+  it('opens a new tab on the start page, recording nothing, and records a tab opened on an address', () => {
     const recorded = [];
     ctx.tabs = { createTab: () => 5 };
     ctx.recorder.recordNavigation = (url) => recorded.push(url);
     assert.equal(call('new-tab'), 5);
-    assert.deepEqual(recorded, ['https://google.com']);
+    assert.deepEqual(recorded, []);
+    call('new-tab', 'https://a.test/');
+    assert.deepEqual(recorded, ['https://a.test/']);
   });
 
   it('saves settings and reconnects with them', () => {
@@ -211,6 +213,7 @@ describe('IPC handlers', () => {
     assert.equal(fetch.mock.calls[0].arguments[0], 'http://s.test/api/browsers/b1/chat');
     fetch.mock.mockImplementation(async () => ({ status: 502, text: async () => '<html>' }));
     assert.deepEqual(await call('send-chat', []), { error: 'Server returned 502: <html>' });
+    assert.equal(ctx.shield.ended, 2, 'each run, answered or failed, tells the shield it ended');
     ctx.socket.ready = false;
     assert.deepEqual(await call('send-chat', []), { error: 'Not connected to server' });
     fetch.mock.restore();
@@ -333,9 +336,11 @@ describe('IPC handlers', () => {
     const fetch = mock.method(globalThis, 'fetch', () => new Promise((resolve) => (answer = resolve)));
     const first = call('send-chat', [{ role: 'user' }]);
     assert.match((await call('send-chat', [{ role: 'user' }])).error, /busy/);
+    assert.equal(ctx.shield.ended, undefined, 'a refused chat leaves the running one’s show alone');
     await new Promise((resolve) => setImmediate(resolve));
     answer({ status: 200, text: async () => '{"text":"done"}' });
     assert.deepEqual(await first, { text: 'done' });
+    assert.equal(ctx.shield.ended, 1, 'the run that ran tells the shield it ended');
     assert.equal(fetch.mock.callCount(), 1);
     fetch.mock.restore();
   });

@@ -3,7 +3,7 @@
  * rendered from a small, escaped subset of Markdown: paragraphs, headings,
  * lists, code blocks, inline code, bold and italic.
  */
-/* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress, ChatFiles, ChatPersona, ChatModel */
+/* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress, ChatFiles, ChatPersona, ChatModel, ChatRun, OyaOrb */
 /* exported Chat */
 
 /** A Markdown list item: `-`, `*`, `•` or `1.` / `1)` at the start of a line. */
@@ -11,6 +11,9 @@ const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
 
 /** A Markdown heading line. */
 const HEADING = /^#{1,6}\s+(.+)$/;
+
+/** How the agent opens its report: DONE: or FAILED:, which the answer card shows as a verdict instead of text. */
+const VERDICT = /^(DONE|FAILED):\s*/i;
 
 /** The words the chat shows. */
 const CHAT_TEXT = {
@@ -95,30 +98,36 @@ const Chat = {
     Dom.byId('chat-messages').querySelector('.chat-empty')?.remove();
   },
 
-  /** A message's markup, with badges for the tools the agent used. */
-  messageHtml(role, content, toolCalls) {
-    const body = role === 'user' ? Dom.esc(content) : Chat.mdToHtml(content);
-    if (!toolCalls?.length) return body;
-    const badges = toolCalls.map((t) => '<span class="chat-tool-badge">' + Dom.esc(t.name) + '</span>');
-    return body + '<div class="chat-tools">' + badges.join('') + '</div>';
+  /** A message's markup; an agent report's DONE: or FAILED: becomes its verdict, above the rest. */
+  messageHtml(role, content) {
+    if (role === 'user') return Dom.esc(content);
+    const verdict = VERDICT.exec(content);
+    const body = Chat.mdToHtml(verdict ? content.slice(verdict[0].length) : content);
+    return verdict ? Chat.verdictHtml(verdict[1]) + body : body;
+  },
+
+  /** The verdict above a report: done in Oya's green, or could not finish in amber. */
+  verdictHtml(word) {
+    const done = word.toUpperCase() === 'DONE';
+    return `<span class="chat-verdict ${done ? 'done' : 'failed'}">${done ? 'Done' : 'Could not finish'}</span>`;
   },
 
   /** Appends a message (replacing the thinking indicator), scrolls to it, and answers its element. */
-  addChatMessage(role, content, toolCalls) {
+  addChatMessage(role, content) {
     const list = Dom.byId('chat-messages');
     Chat.dropEmpty();
     list.querySelector('.chat-thinking')?.remove();
-    const node = list.appendChild(Chat.messageNode(role, content, toolCalls));
+    const node = list.appendChild(Chat.messageNode(role, content));
     list.scrollTop = list.scrollHeight;
     return node;
   },
 
   /** One message's element: an assistant error is marked, an assistant reply gets a Copy button. */
-  messageNode(role, content, toolCalls) {
+  messageNode(role, content) {
     const div = Dom.node('div', null, 'chat-msg ' + role);
     const failed = role === 'assistant' && content.startsWith('Error:');
     if (failed) div.classList.add('error');
-    div.innerHTML = Chat.messageHtml(role, content, toolCalls);
+    div.innerHTML = Chat.messageHtml(role, content);
     if (role === 'assistant' && !failed) div.appendChild(Chat.copyButton(content));
     return div;
   },
@@ -145,20 +154,18 @@ const Chat = {
     }, RendererConstants.COPIED_MS);
   },
 
-  /** Shows the thinking indicator. */
+  /** Shows the live run card under the question, with its thinking line. */
   showThinking() {
-    const list = Dom.byId('chat-messages');
     Chat.dropEmpty();
-    const div = Dom.node('div', null, 'chat-thinking');
-    div.innerHTML = '<div class="chat-dots"><span></span><span></span><span></span></div> Thinking…';
-    list.appendChild(div);
-    list.scrollTop = list.scrollHeight;
+    ChatRun.begin();
+    ChatProgress.draw();
+    ChatRun.scroll();
   },
 
   /** Records and shows one message; answers its element. */
   say(message) {
     Chat.history.push(message);
-    return Chat.addChatMessage(message.role, message.content, message.toolCalls);
+    return Chat.addChatMessage(message.role, message.content);
   },
 
   /** Sends the input to the agent and shows its reply or the error. */
@@ -210,6 +217,7 @@ const Chat = {
 
   /** Shows an answer: the reply, a stop, the model card when the project has no key, or the error. */
   answer(data) {
+    ChatRun.finish(!data.error && !/^FAILED:/i.test(data.text || ''));
     if (CHAT_TEXT.keyCodes.includes(data.code)) ChatModel.needed(data.code === 'llm_rejected' && data.error);
     else if (data.error === CHAT_TEXT.stoppedError) Chat.say({ role: 'assistant', content: CHAT_TEXT.stopped });
     else if (data.error) Chat.sayError(data.error);
@@ -257,7 +265,17 @@ const Chat = {
     Chat.history = [];
     ChatFiles.clear();
     ChatPlaybook.withdraw();
+    ChatRun.reset();
     Dom.byId('chat-messages').innerHTML = Chat.emptyHtml;
+    OyaOrb.mountAll(Dom.byId('chat-messages'));
+  },
+
+  /** An example task in the empty state was picked: it is sent as if typed. */
+  example(event) {
+    const task = event.target.closest?.('.chat-empty [data-task]')?.dataset.task;
+    if (!task || Chat.sending) return;
+    Dom.byId('chat-input').value = task;
+    Chat.send();
   },
 
   /** Enter sends; Shift+Enter and IME composition insert text as usual. */
@@ -274,3 +292,4 @@ Dom.byId('chat-stop').addEventListener('click', Chat.stop);
 Dom.byId('chat-clear').addEventListener('click', Chat.clear);
 Dom.byId('chat-input').addEventListener('keydown', Chat.keydown);
 Dom.byId('chat-input').addEventListener('input', Chat.grow);
+Dom.byId('chat-messages').addEventListener('click', Chat.example);

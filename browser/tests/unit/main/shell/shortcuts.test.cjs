@@ -72,11 +72,12 @@ describe('Shortcuts', () => {
     assert.deepEqual(ctx.shell.sentOn('shell-command'), ['commands']);
   });
 
-  it('opens and records a new tab only for a person in control', () => {
+  it('opens a new tab on the start page only for a person in control, recording no navigation', () => {
     const recorded = mock.method(ctx.recorder, 'recordNavigation', () => {});
     press(key('t'));
     assert.equal(ctx.tabs.list.length, 1);
-    assert.equal(recorded.mock.callCount(), 1);
+    assert.ok(ctx.tabs.list[0].home);
+    assert.equal(recorded.mock.callCount(), 0);
     ctx.control.state.interactive = false;
     press(key('t'));
     assert.equal(ctx.tabs.list.length, 1);

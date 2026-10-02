@@ -5,7 +5,6 @@
 const governance = require('../../governance');
 const { HOME_URL } = require('../tabs/constants.cjs');
 const { DEFAULT_STREAM_FPS } = require('./constants.cjs');
-const { openResumedHome } = require('../app/resume.cjs');
 
 /** The server accepted us: take the persona it sent, go online, and share our cookies. */
 async function acceptAuth(ctx, msg) {
@@ -17,7 +16,6 @@ async function acceptAuth(ctx, msg) {
   if (msg.fingerprint) await ctx.persona.applyServerFingerprint(msg.fingerprint, msg.cookies || [], msg.now);
   goOnline(ctx, msg);
   if (!ctx.shell.browsingMode) ctx.tabs.enterBrowsingMode(governance.configuration ? 'about:blank' : HOME_URL);
-  openResumedHome(ctx);
   await shareProfile(ctx);
 }
 
@@ -65,6 +63,8 @@ const SERVER_MESSAGES = {
   profile_saved: (ctx, msg) => ctx.shell.send('profile-saved', msg),
   // The project's settings changed elsewhere (the console, the CLI): the model card re-reads them.
   settings_changed: (ctx, msg) => ctx.shell.send('settings-changed', msg),
+  // What the agent is doing in a chat this browser started (its plan, each step, how it ended), for the panel to show live.
+  'agent-event': (ctx, msg) => ctx.shell.send('agent-event', { runId: msg.runId, event: msg.event }),
   // The project's routines changed (another desktop, a run starting or ending): re-read them.
   routines_changed: (ctx) => void ctx.routines.refresh(),
   cookie_sync: async (ctx, msg) => {

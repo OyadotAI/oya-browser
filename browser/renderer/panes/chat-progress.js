@@ -11,7 +11,7 @@
  * real tool calls as NDJSON through the chat response, which is already held
  * open for the whole run.
  */
-/* global oyaBrowser, Dom, RendererConstants, Studio */
+/* global oyaBrowser, Dom, RendererConstants, Studio, ChatRun */
 /* exported ChatProgress */
 
 /** An activity entry for a command from the server: `cmd: <action>`. */
@@ -78,7 +78,8 @@ const ChatProgress = {
 
   /** Counts one command the server sent while a question is in flight. */
   note(entry) {
-    if (!ChatProgress.running || entry.dir !== 'in') return;
+    // A run the agent narrates itself (chat-run.js) is not named from the browser's commands.
+    if (!ChatProgress.running || entry.dir !== 'in' || ChatRun.live) return;
     const action = COMMAND_ENTRY.exec(entry.type)?.[1];
     if (!action) return;
     ChatProgress.steps++;
