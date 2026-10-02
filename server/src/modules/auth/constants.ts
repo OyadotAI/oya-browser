@@ -37,3 +37,12 @@ export const AGENT_NONCE_MAX_CHARS = 64;
 export const AGENT_EMAIL_MAX_CHARS = 254;
 /** How recently an account must have been made for a Google or GitHub sign-in to count as its sign-up: ten minutes. */
 export const NEW_ACCOUNT_MS = 600_000;
+
+/** The header an admin's "Login as" token travels in; it wins over Authorization. */
+export const IMPERSONATE_HEADER = 'x-impersonate-token';
+/** How long a "Login as" token lasts: one hour. */
+export const IMPERSONATE_TTL_MS = 3_600_000;
+/** Shortest signing secret accepted for "Login as" tokens. */
+export const IMPERSONATE_MIN_SECRET = 32;
+/** Mixed into the service key to derive the signing secret, so the two never coincide. */
+export const IMPERSONATE_CONTEXT = 'oya-impersonate-token-v1';

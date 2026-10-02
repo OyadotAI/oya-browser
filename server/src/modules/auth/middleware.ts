@@ -7,10 +7,12 @@
 import { control, projectId } from '../control/service.ts';
 import { dbAuth as supabaseAuth } from '../../platform/db.ts';
 import { findKey } from './repository.ts';
-import { HttpError } from '../../platform/errors.ts';
+import { HttpError, sendError } from '../../platform/errors.ts';
+import { audit } from '../../platform/audit.ts';
 import { Status } from '../../platform/http-status.ts';
 import { isEnvKey, isFleetToken, keyCache, keyDigest, noteAgentKey } from './keys.ts';
-import { BEARER } from './constants.ts';
+import { BEARER, IMPERSONATE_HEADER } from './constants.ts';
+import { impersonatedUser, readImpersonation, type Impersonation } from './impersonate.ts';
 
 /** Methods that only read. */
 const READ_METHODS = ['GET', 'HEAD'];
@@ -51,8 +53,12 @@ const ROLE_RULES: RoleRule[] = [
 
 // ── JWT middleware (for authenticated user routes) ──
 
-/** Requires a Supabase access token in the Authorization header and sets req.user. */
+/**
+ * Requires a Supabase access token in the Authorization header and sets req.user.
+ * An admin's "Login as" token, when present, wins: req.user is then the customer.
+ */
 export async function userAuthMiddleware(req, res, next) {
+  if (req.headers[IMPERSONATE_HEADER]) return asImpersonated(req, res, next);
   const header = req.headers.authorization;
   if (!header || !header.startsWith(BEARER)) return res.status(Status.UNAUTHORIZED).json({ error: 'Missing token' });
   const token = header.slice(BEARER.length);
@@ -70,6 +76,27 @@ async function withUser(req, res, next, token) {
   } catch {
     return res.status(Status.UNAUTHORIZED).json({ error: 'Invalid or expired token' });
   }
+}
+
+/** Sets req.user to the customer a "Login as" token names, audited under the admin, or answers 401. */
+async function asImpersonated(req, res, next) {
+  try {
+    const claims = readImpersonation(String(req.headers[IMPERSONATE_HEADER]));
+    if (!claims) return res.status(Status.UNAUTHORIZED).json({ error: 'Invalid or expired Login as token' });
+    await actAs(req, claims);
+  } catch (err) {
+    return sendError(res, err, req);
+  }
+  next();
+}
+
+/** Makes the request the customer's, and leaves one audit row for it under the admin. */
+async function actAs(req, claims: Impersonation) {
+  req.user = await impersonatedUser(claims.sub);
+  req.impersonatedBy = claims.impersonated_by;
+  const meta = { method: req.method, path: req.originalUrl };
+  const subject = { actorUser: claims.impersonated_by, targetType: 'user', targetId: claims.sub };
+  audit({ action: 'admin.impersonate.request', ...subject, meta, req });
 }
 
 // ── API key middleware (for browser/MCP connections) ──

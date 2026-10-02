@@ -20,6 +20,11 @@ router.get('/admin/overview', ...guard, async (_req, res) => res.json(await admi
 /** GET /admin/users?email=, one person's plan, usage and keys. */
 router.get('/admin/users', ...guard, async (req, res) => res.json(await admin.lookup(String(req.query.email || ''))));
 
+/** POST /admin/users/:id/impersonate, a one-hour "Login as" token for that customer. */
+router.post('/admin/users/:id/impersonate', ...guard, async (req, res) =>
+  res.json(await admin.impersonate(req.params.id, req.user, req)),
+);
+
 /** GET /admin/licenses, every license issued. */
 router.get('/admin/licenses', ...guard, async (_req, res) => res.json({ licenses: await admin.listLicenses() }));
 

@@ -95,8 +95,8 @@ async function validInvite(tx, digest) {
   return invite;
 }
 
-/** A one-hour console credential for a project the user owns or belongs to. */
-export async function consoleAccess(userId, id) {
+/** A one-hour console credential for a project the user owns or belongs to, labelled so an admin's "Login as" shows in its trail. */
+export async function consoleAccess(userId, id, label = 'Console access') {
   const [[p], [m]] = await control().store.load([
     { kind: 'project', id },
     { kind: 'membership', id: `${id}:${userId}` },
@@ -104,5 +104,5 @@ export async function consoleAccess(userId, id) {
   const role = p?.body.ownerUser === userId ? 'administrator' : m?.body.role;
   if (!p || p.body.deletedAt || !role) throw fault('not_found', 'Project not found', Status.NOT_FOUND);
   const expiresAt = Date.now() + CONSOLE_ACCESS_MS;
-  return control().credential(control().projectKey(p.body), { role, label: 'Console access', expiresAt }, userId);
+  return control().credential(control().projectKey(p.body), { role, label, expiresAt }, userId);
 }

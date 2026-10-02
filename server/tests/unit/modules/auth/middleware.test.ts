@@ -15,6 +15,7 @@ process.env.API_KEYS = 'env-admin-key';
 after(() => restoreEnv('API_KEYS', savedKeys));
 const { authenticateToken, authMiddleware, userAuthMiddleware } =
   await import('../../../../src/modules/auth/middleware.ts');
+const { mintImpersonation } = await import('../../../../src/modules/auth/impersonate.ts');
 const { registerApiKey } = await import('../../../../src/modules/auth/api-keys.ts');
 const { generateKey } = await import('../../../../src/modules/auth/keys.ts');
 const { control, projectId } = await import('../../../../src/modules/control/service.ts');
@@ -234,5 +235,22 @@ describe('userAuthMiddleware', () => {
     const req = fakeRequest({ headers: { authorization: 'Bearer jwt' } });
     const { res } = await runMiddleware(userAuthMiddleware, req);
     assert.deepEqual([res.statusCode, res.body], [Status.UNAVAILABLE, { error: 'Auth not configured' }]);
+  });
+
+  it('refuses a forged Login as token with 401, even beside a bearer token', async () => {
+    const req = fakeRequest({ headers: { authorization: 'Bearer jwt', 'x-impersonate-token': 'forged' } });
+    const { res, passed } = await runMiddleware(userAuthMiddleware, req);
+    assert.equal(passed, false);
+    assert.equal(res.statusCode, Status.UNAUTHORIZED);
+    assert.equal(req.user, undefined);
+  });
+
+  it('takes a genuine Login as token over the bearer token, and needs Supabase Auth to find its user', async () => {
+    process.env.OYA_IMPERSONATE_SECRET = 'x'.repeat(32);
+    const token = mintImpersonation('cust', 'admin');
+    const req = fakeRequest({ headers: { 'x-impersonate-token': token } });
+    const { res, passed } = await runMiddleware(userAuthMiddleware, req);
+    delete process.env.OYA_IMPERSONATE_SECRET;
+    assert.deepEqual([passed, res.statusCode], [false, Status.UNAVAILABLE]);
   });
 });

@@ -22,6 +22,8 @@ declare global {
       principal?: Principal;
       /** Supabase user, set by userAuthMiddleware. */
       user?: User;
+      /** The admin's user id when req.user came from their "Login as" token. */
+      impersonatedBy?: string;
       /** Reservation from control admission, when the route admits a session. */
       controlSession?: any;
       /** Policies of the session being replaced, inherited by its replacement. */

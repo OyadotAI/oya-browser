@@ -20,14 +20,24 @@ const failed = (e: unknown): Outcome => ({
   error: e instanceof Error ? e.message : 'No account with that email',
 });
 
-/** Everything the lookup shows and does. */
+/** Keeps what a search answered, or why it failed. */
+const settle = (asked: Promise<Found>, keep: (o: Outcome) => void) =>
+  asked.then(
+    (found) => keep({ found, error: '' }),
+    (e) => keep(failed(e)),
+  );
+
+/** Everything the lookup shows and does. `search` looks up the typed email, or the one given (which it also types). */
 export function useLookup(lookup: AdminState['lookup']) {
   const [email, setEmail] = useState('');
   const [outcome, setOutcome] = useState<Outcome>({ found: null, error: '' });
-  const search = () =>
-    lookup(email.trim()).then(
-      (found) => setOutcome({ found, error: '' }),
-      (e) => setOutcome(failed(e)),
-    );
+  const search = (asked = email) => {
+    setEmail(asked);
+    return settle(lookup(asked.trim()), setOutcome);
+  };
+
   return { email, setEmail, search, ...outcome };
 }
+
+/** The lookup's state, as the search box and the customers tab share it. */
+export type LookupState = ReturnType<typeof useLookup>;

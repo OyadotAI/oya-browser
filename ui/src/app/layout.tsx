@@ -7,6 +7,7 @@ import type { Metadata } from 'next';
 import { headers } from 'next/headers';
 import { DM_Sans, Archivo_Black } from 'next/font/google';
 import { AuthProvider } from '@/components/auth-provider';
+import { ImpersonationBanner } from '@/components/impersonation-banner';
 import { Analytics } from '@/components/analytics';
 import { Rb2b } from '@/components/rb2b';
 import { ErrorReporting } from '@/components/error-reporting';
@@ -168,6 +169,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
       </head>
       <body className="antialiased">
         <AuthProvider>
+          <ImpersonationBanner />
           {children}
           {analytics && <Analytics posthogKey={analytics.key} host={analytics.host} />}
           {rb2b && <Rb2b id={rb2b} />}

@@ -24,3 +24,12 @@ export const CENTS_PER_DOLLAR = 100;
 export const PERCENT = 100;
 /** Bars at least this tall, in percent of the chart, so a day with something on it never looks empty. */
 export const MIN_BAR_PERCENT = 4;
+/** The admin page's tabs, in order: the id the URL carries (`?tab=`) and the label shown. */
+export const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'customers', label: 'Customers' },
+  { id: 'self-hosted', label: 'Self-hosted' },
+  { id: 'fleet', label: 'Fleet' },
+] as const;
+/** One tab's id. */
+export type TabId = (typeof TABS)[number]['id'];

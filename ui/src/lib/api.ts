@@ -4,6 +4,8 @@
  * credential), and the credential this tab drives the console with.
  */
 
+import { impersonation } from './auth/storage';
+
 /** The API base: NEXT_PUBLIC_API_URL when the API is on another origin, else same-origin `/api`. */
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
 /** Base for resolving a relative API_URL during server rendering, where there is no window. */
@@ -20,13 +22,15 @@ export function apiOrigin(): string {
   return url.origin;
 }
 
-/** Bearer auth plus a JSON content type, for every authenticated request. */
+/** Bearer auth plus a JSON content type, for every authenticated request; an admin's "Login as" token rides along and wins on the server. */
 export function authHeaders(token: string): HeadersInit {
+  const acting = impersonation();
   return {
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
     // Names the client, so a start can be counted as one a person clicked for.
     'X-Oya-Client': 'console',
+    ...(acting && { 'X-Impersonate-Token': acting.token }),
   };
 }
 
@@ -156,6 +160,13 @@ export const adminRevokeLicense = (token: string, id: string) =>
 /** One person by email: plan, usage this period and key prefixes. Admins only. */
 export const adminLookup = (token: string, email: string) =>
   account(`/admin/users?email=${encodeURIComponent(email)}`, 'No account with that email', {
+    headers: authHeaders(token),
+  });
+
+/** A one-hour "Login as" token for one customer. Admins only, and never for another admin. */
+export const adminImpersonate = (token: string, id: string) =>
+  account(`/admin/users/${encodeURIComponent(id)}/impersonate`, 'Could not log in as them', {
+    method: 'POST',
     headers: authHeaders(token),
   });
 

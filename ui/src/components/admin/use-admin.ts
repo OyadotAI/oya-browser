@@ -1,11 +1,19 @@
 /**
  * The admin page's state: the overview and licenses, loaded for the signed-in
- * person, and the actions it takes (issue, revoke, look a person up). The
+ * person, and the actions it takes (issue, revoke, look a person up, log in as them). The
  * server decides who is an admin; a refusal is shown as it was said.
  */
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
-import { adminIssueLicense, adminLicenses, adminLookup, adminOverview, adminRevokeLicense } from '@/lib/api';
+import {
+  adminImpersonate,
+  adminIssueLicense,
+  adminLicenses,
+  adminLookup,
+  adminOverview,
+  adminRevokeLicense,
+} from '@/lib/api';
+import { setImpersonation } from '@/lib/auth/storage';
 import type { Found, License, Overview } from './types';
 
 /** Loaded data, or why it could not be. */
@@ -44,6 +52,13 @@ type Issued = License & {
   key: string;
 };
 
+/** Opens the dashboard in this tab as that customer, on a one-hour "Login as" token. */
+async function loginAs(token: string, id: string) {
+  const { impersonate_token, email } = await adminImpersonate(token, id);
+  setImpersonation({ token: impersonate_token, email });
+  window.location.replace('/dashboard');
+}
+
 /** Issue, revoke and look up, each reloading what it changed. */
 function useActions(token: string, reload: () => void) {
   const issue = async (request: Record<string, unknown>) => {
@@ -52,7 +67,8 @@ function useActions(token: string, reload: () => void) {
     return issued;
   };
   const revoke = async (id: string) => void (await adminRevokeLicense(token, id), reload());
-  return { issue, revoke, lookup: async (email: string): Promise<Found> => adminLookup(token, email) };
+  const lookup = async (email: string): Promise<Found> => adminLookup(token, email);
+  return { issue, revoke, lookup, loginAs: (id: string) => loginAs(token, id) };
 }
 
 /** Everything the admin page shows and does. */

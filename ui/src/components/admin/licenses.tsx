@@ -51,7 +51,7 @@ function IssueForm({ issue }: { /** Issues a license. */ issue: AdminState['issu
         />
         <button
           onClick={() => void f.submit()}
-          className="h-8 rounded-md bg-accent px-3 text-xs font-medium text-white"
+          className="h-8 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground hover:bg-accent-hover"
         >
           Issue
         </button>
@@ -90,7 +90,7 @@ const row = (l: License, revoke: AdminState['revoke']) => [
 /** Issue a license, and the list of those issued. */
 export default function Licenses({ s }: { /** The page's state. */ s: AdminState }) {
   return (
-    <Section title="Self-hosted licenses">
+    <Section title="Licenses" hint="the key is shown once, on issue">
       <IssueForm issue={s.issue} />
       <Table
         head={['Licensee', 'Browsers', 'Expires', 'Issued by', '']}
