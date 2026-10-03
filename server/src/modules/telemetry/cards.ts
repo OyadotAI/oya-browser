@@ -52,7 +52,14 @@ export const CARD_DETAILS: { [K in EventName]?: (props: EventProps[K]) => string
   desktop_updated: (p) => [`💻 Platform: ${p.platform}`, `⬆️ Version: ${p.from} → ${p.to}`],
   // Only a person's download: the app fetching its own update is not news.
   download_served: (p) =>
-    p.via === 'web' && p.file_type === 'installer' ? [`💻 Platform: ${p.platform}`, `🏷️ Version: ${p.version}`] : null,
+    p.via === 'web' && p.file_type === 'installer'
+      ? [
+          `💻 Platform: ${p.platform}`,
+          `🏷️ Version: ${p.version}`,
+          `🧭 Source: ${p.source}`,
+          ...(p.client ? [`🤖 Not a browser: ${p.client}`] : []),
+        ]
+      : null,
   persona_created: (p) => [`🌐 Proxy: ${p.has_proxy ? 'yes' : 'no'}`],
   server_error: (p) => [`⚠️ Route: ${p.method} ${p.route}`, `🔎 Ref: ${p.ref}`],
 };

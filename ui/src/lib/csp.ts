@@ -56,20 +56,40 @@ const RB2B_HOSTS = [
   'https://*.liadm.com',
 ];
 
+/** Where Meta's pixel sends its events: requests to both, and an image beacon to facebook.com. */
+const META_HOSTS = ['https://connect.facebook.net', 'https://www.facebook.com'];
+
+/** Meta's hosts when the operator set a pixel, otherwise none. */
+const metaHosts = () => (process.env.META_PIXEL_ID ? META_HOSTS : []);
+
 /** RB2B's hosts when the operator set its account, otherwise none. */
 const rb2bHosts = () => (process.env.RB2B_ID ? RB2B_HOSTS : []);
 
-/** Images: data: for the live view's JPEG frames, blob: for anything captured client-side, and RB2B's pixels. */
-const imageSources = () => ["img-src 'self' data: blob:", ...rb2bHosts()].join(' ');
+/** Images: data: for the live view's JPEG frames, blob: for anything captured client-side, and RB2B's and Meta's pixels. */
+const imageSources = () => ["img-src 'self' data: blob:", ...rb2bHosts(), ...metaHosts()].join(' ');
 
 /**
  * Where the page may send requests: itself, the API's origin when elsewhere,
- * PostHog, RB2B and Sentry when the operator turned them on, and the dev bundler's socket.
+ * PostHog, RB2B, Meta and Sentry when the operator turned them on, and the dev bundler's socket.
  */
 function connectSources(dev: boolean): string {
   const api = originOf(process.env.NEXT_PUBLIC_API_URL);
-  const hosts = [originOf(process.env.POSTHOG_HOST), ...rb2bHosts(), sentryOrigin()];
+  const hosts = [...posthogOrigins(), ...rb2bHosts(), ...metaHosts(), sentryOrigin()];
   return ["'self'", api, ...hosts, dev ? 'ws:' : null].filter(Boolean).join(' ');
+}
+
+/** PostHog's cloud hosts, us.i.posthog.com or eu.i.posthog.com, by region. */
+const POSTHOG_CLOUD = /^https:\/\/(us|eu)\.i\.posthog\.com$/;
+
+/**
+ * The PostHog host, plus its assets host on PostHog's cloud: posthog-js fetches
+ * the project's remote config (session recording, surveys, feature flag
+ * settings) from <region>-assets.i.posthog.com, not from the host it sends to.
+ */
+function posthogOrigins(): (string | null)[] {
+  const host = originOf(process.env.POSTHOG_HOST);
+  const region = host?.match(POSTHOG_CLOUD)?.[1];
+  return [host, region ? `https://${region}-assets.i.posthog.com` : null];
 }
 
 /** The origin of a URL the page may send to, or null when the setting is absent or not a URL. */

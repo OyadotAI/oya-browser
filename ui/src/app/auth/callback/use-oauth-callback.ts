@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 import { refreshToken } from '@/lib/api';
 import { keepRefreshToken } from '@/lib/auth/storage';
 import { afterSignIn } from '@/components/auth/use-auth-form';
+import { metaSignUp } from '@/lib/meta-pixel';
 
 /** The refresh token or the provider's error, from the fragment or the query. */
 function readReturn() {
@@ -19,10 +20,16 @@ function readReturn() {
   return { token: hash.get('refresh_token') || '', error: pick('error_description') || pick('error') };
 }
 
-/** Starts the session from `token`, then goes to the console, whose restore picks it up. */
+/**
+ * Starts the session from `token`, then goes to the console, whose restore
+ * picks it up. A new account is reported to Meta first: the reload would cut
+ * the event off. This page is private, so the pixel loads only here, after
+ * finish() has taken the token off the URL.
+ */
 async function adopt(token: string) {
   const data = await refreshToken(token, true);
   if (data.refresh_token) keepRefreshToken(data.refresh_token);
+  if (data.signed_up) await metaSignUp();
   window.location.replace(afterSignIn());
 }
 

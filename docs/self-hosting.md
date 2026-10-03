@@ -137,6 +137,7 @@ Everything is optional except the secrets you want to survive a restart.
 | `SLACK_OPS_WEBHOOK_SIGNUPS` / `SLACK_OPS_WEBHOOK_EVENTS` | Slack incoming webhooks for one-line ops messages: signups, keys, desktop downloads and desktop connections in the first; saved playbooks, CDP attaches and server errors in the second. Unset means no message. |
 | `SLACK_OPS_WEBHOOK_PRODUCT` | A Slack incoming webhook for product cards: one short block per event worth reading (event, who, what happened, when), such as a sign-up and how it was made, a key's first browser, a session of a minute or more and how long it ran, a playbook saved or replayed, a desktop installed or updated, and server errors. Routine events (update checks, reconnects, MCP tool calls) never post. Unset means no card. |
 | `RB2B_ID` | An RB2B account id. Loads RB2B's visitor identification on the public pages (landing, docs, sign-in, sign-up), never on the console or the live view. Unset means it never loads. |
+| `META_PIXEL_ID` | A Meta pixel id. Loads Meta's ad pixel on the same public pages, counts their page views and reports each sign-up as `CompleteRegistration`. Never on the console, the live view, the admin page or a claim link. Unset means it never loads. |
 
 ## Cloud browser runtimes
 

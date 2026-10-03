@@ -27,3 +27,6 @@ export const PING_MAX_COUNT = 1_000_000;
 export const CENTS = 100;
 /** Digits after the point in an amount of money. */
 export const CENT_DIGITS = 2;
+
+/** The longest download source or client name kept, matching the site's limit (ui/src/lib/constants.ts). */
+export const SOURCE_MAX_LENGTH = 80;

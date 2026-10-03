@@ -26,3 +26,13 @@ export const LIVE_RETRY_MS = 2000;
 export const REFRESH_LEAD_SECONDS = 60;
 /** Never schedule a token renewal sooner than this, even for a nearly expired token. */
 export const MIN_REFRESH_DELAY_MS = 1000;
+
+/** After Meta's pixel library loads, how long a sign-up event gets to leave before the page reloads. */
+export const META_FLUSH_MS = 300;
+/** The longest a sign-up waits on Meta's pixel, so a blocked or slow pixel never holds it up. */
+export const META_MAX_WAIT_MS = 1500;
+
+/** How long the site remembers where a visitor came from, so a download days later still says. */
+export const SOURCE_MEMORY_DAYS = 30;
+/** The longest source kept: a campaign name, never a page of text. */
+export const SOURCE_MAX_LENGTH = 80;

@@ -162,6 +162,7 @@ A self-hosted server also sends one anonymous ping a day, which is not optional;
 | `SLACK_OPS_WEBHOOK_SIGNUPS`, `SLACK_OPS_WEBHOOK_EVENTS` | One-line ops messages to Slack webhooks. A webhook Slack refuses (revoked: `404 no_service`) is logged once as `[ops-slack] … refused`. |
 | `SLACK_OPS_WEBHOOK_PRODUCT` | A multi-line card per product event worth reading (sign-ups with their method, a key's first browser, sessions of a minute or more with their length, playbooks, desktop installs and updates, server errors). |
 | `RB2B_ID` | RB2B visitor identification on the public pages only. |
+| `META_PIXEL_ID` | Meta's ad pixel on the public pages only: page views, and each sign-up as `CompleteRegistration`. |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT` | Error reports from the server and the console to Sentry, with key-shaped strings scrubbed. Unset sends nothing. Errors reach Slack through Sentry alert rules. |
 
 ### Tuning

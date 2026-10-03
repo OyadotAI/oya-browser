@@ -99,8 +99,30 @@ describe('track', () => {
     track.apiKeyCreated({ id: 'u-1', email: 'ana@example.com' }, '7c1e9a02-aaaa');
     track.desktopConnected(KEY, { platform: 'MacIntel', first: true, version: '1.0.115' });
     track.desktopConnected(KEY, { platform: 'MacIntel', first: false, version: '1.0.115' });
-    track.downloadServed('dl-1', { platform: 'mac', version: '1.0.115', file_type: 'installer', via: 'web' });
-    track.downloadServed('dl-1', { platform: 'mac', version: '1.0.116', file_type: 'update', via: 'updater' });
+    track.downloadServed('dl-1', {
+      platform: 'mac',
+      version: '1.0.115',
+      file_type: 'installer',
+      via: 'web',
+      source: 'facebook ad',
+      client: '',
+    });
+    track.downloadServed('dl-2', {
+      platform: 'windows',
+      version: '1.0.115',
+      file_type: 'installer',
+      via: 'web',
+      source: 'direct',
+      client: 'curl',
+    });
+    track.downloadServed('dl-1', {
+      platform: 'mac',
+      version: '1.0.116',
+      file_type: 'update',
+      via: 'updater',
+      source: 'direct',
+      client: '',
+    });
     track.updateChecked('dl-1', { platform: 'mac', from_version: '1.0.115' });
     track.installPinged('i-1', { version: '1.0.135', browsers: 9, peak_cloud: 9, licensed: false });
     track.paymentReceived(
@@ -129,7 +151,8 @@ describe('track', () => {
         ['signups', '🎉 New signup: ana@example.com'],
         ['signups', '🔑 API key created: ana@example.com (project 7c1e9a02)'],
         ['signups', `🖥️ Desktop connected: ${label} (MacIntel)`],
-        ['signups', '⬇️ Desktop downloaded: mac 1.0.115'],
+        ['signups', '⬇️ Desktop downloaded: mac 1.0.115 · from facebook ad'],
+        ['signups', '⬇️ Desktop downloaded: windows 1.0.115 · from direct · 🤖 not a browser: curl'],
         ['signups', '🏢 Self-hosted server install-i-1 ran 9 cloud browsers at once (v1.0.135), unlicensed'],
         ['signups', '💰 Payment received: $99.00 from bo@example.com (renewal)'],
         ['signups', '⚠️ Payment failed: 20.00 EUR from bo@example.com (attempt 2)'],

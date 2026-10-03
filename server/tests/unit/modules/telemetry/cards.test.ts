@@ -28,6 +28,8 @@ describe('product cards', () => {
         version: '1.0.121',
         file_type: 'installer',
         via: 'web',
+        source: 'direct',
+        client: '',
       },
     );
     assert.match(text!, /👤 User: anonymous visitor/);
@@ -55,9 +57,22 @@ describe('product cards', () => {
   });
 
   it('posts a person’s installer download, never the app fetching its update', () => {
-    const base = { platform: 'mac', version: '1.0.121' };
+    const base = { platform: 'mac', version: '1.0.121', source: 'direct', client: '' };
     assert.ok(card('download_served', ANA, { ...base, file_type: 'installer', via: 'web' }));
     assert.equal(card('download_served', ANA, { ...base, file_type: 'update', via: 'updater' }), null);
+  });
+
+  it('says where a download came from, and names a client that is not a browser', () => {
+    const base = { platform: 'mac', version: '1.0.121', file_type: 'installer' as const, via: 'web' as const };
+    assert.match(
+      card('download_served', ANA, { ...base, source: 'facebook ad', client: '' })!,
+      /🧭 Source: facebook ad/,
+    );
+    assert.doesNotMatch(card('download_served', ANA, { ...base, source: 'direct', client: '' })!, /Not a browser/);
+    assert.match(
+      card('download_served', ANA, { ...base, source: 'direct', client: 'curl' })!,
+      /🤖 Not a browser: curl/,
+    );
   });
 
   it('says how a replay ended', () => {

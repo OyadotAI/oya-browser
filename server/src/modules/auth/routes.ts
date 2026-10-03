@@ -126,12 +126,16 @@ router.post('/auth/refresh', async (req, res) => {
   await guarded(res, Status.UNAUTHORIZED, session, () => clearSessionCookies(res));
 });
 
-/** Starts the session, counting a Google or GitHub sign-in as a sign-up when it made the account just now. */
+/**
+ * Starts the session, counting a Google or GitHub sign-in as a sign-up when it
+ * made the account just now. The answer then says `signed_up`, so the callback
+ * page can report the sign-up to the ad pixel before it moves on.
+ */
 function refreshed(req, res, session) {
   // Only the OAuth callback page says `oauth`; a restore, even one sending its token in the body, does not.
   const method = req.body?.oauth === true ? oauthSignup(session.user) : null;
   if (method) track.accountSignedUp(session.user, method);
-  issueSession(req, res, session);
+  issueSession(req, res, method ? { ...session, signed_up: method } : session);
 }
 
 /** Signing out has to reach the cookie, which the page cannot clear itself. */
