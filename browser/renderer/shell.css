@@ -1524,11 +1524,32 @@ button:active:not(:disabled) {
   background: var(--danger-soft);
   color: var(--danger);
 }
-.chat-msg :is(p, ul, ol, pre, h4) {
+.chat-msg :is(p, ul, ol, pre, h4, hr) {
   margin: 0;
 }
-.chat-msg > :is(p, ul, ol, pre, h4) + :is(p, ul, ol, pre, h4) {
+.chat-msg > :is(p, ul, ol, pre, h4, hr, .chat-table) + :is(p, ul, ol, pre, h4, hr, .chat-table) {
   margin-top: 8px;
+}
+.chat-msg hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.chat-table {
+  overflow-x: auto;
+}
+.chat-msg table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.chat-msg :is(th, td) {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.chat-msg th {
+  background: var(--muted-surface);
+  font-weight: 650;
 }
 .chat-msg :is(ul, ol) {
   padding-left: 20px;

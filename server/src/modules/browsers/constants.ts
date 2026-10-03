@@ -20,6 +20,11 @@ export const ERROR_CHARS = 200;
 /** A live-view viewer more than this many bytes behind skips frames (1 MiB). */
 export const VIEWER_BACKLOG_BYTES = 1_048_576;
 
+/** How long shutdown waits for chats in flight before it exits anyway: under the pod's grace period. */
+const DEFAULT_CHAT_DRAIN_MS = 300_000;
+/** The shutdown wait for chats in flight; `OYA_CHAT_DRAIN_MS` overrides it. */
+export const CHAT_DRAIN_MS = Number(process.env.OYA_CHAT_DRAIN_MS) || DEFAULT_CHAT_DRAIN_MS;
+
 /** How long a browser has to confirm a CDP relay before it is abandoned. */
 export const RELAY_OPEN_TIMEOUT_MS = 20_000;
 

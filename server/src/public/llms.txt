@@ -308,7 +308,7 @@ Parameters: browser_id (string, optional; defaults to the one being driven)
 ### analyze_page
 Analyzes the current page. Returns the full page with every interactive element numbered, written as markdown (the default), TOON or JSONL. Includes viewport size, scroll position and each element's state (off-screen, disabled, checked, a field's hint).
 
-Parameters: format (string, optional): "markdown", "toon" or "jsonl". Left out, the server's OYA_PAGE_FORMAT when it sets one, else the default picked in the Oya Browser's settings (markdown unless changed).
+Parameters: format (string, optional): "markdown", "toon" or "jsonl". Left out, the server's OYA_PAGE_FORMAT (toon unless set).
 
 IMPORTANT: Always call analyze_page BEFORE click or type. Element IDs only exist after analysis and reset on every call. After navigating or clicking a link that changes the page, call analyze_page again.
 

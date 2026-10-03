@@ -219,6 +219,15 @@ describe('IPC handlers', () => {
     fetch.mock.restore();
   });
 
+  it('explains a chat the server hung up on mid-run, as a restart does, instead of saying "terminated"', async () => {
+    ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
+    const fetch = mock.method(globalThis, 'fetch', async () => {
+      throw new TypeError('terminated');
+    });
+    assert.match((await call('send-chat', [{ role: 'user' }])).error, /dropped mid-run, likely a server restart/);
+    fetch.mock.restore();
+  });
+
   /** A server config: the key runs on OpenAI's gpt-4.1 with its own key, and offers two providers. */
   const SERVER = {
     llm_provider: 'openai',

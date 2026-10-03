@@ -138,6 +138,22 @@ describe('runChat', () => {
     assert.match(llm.requests[1].messages[0].content, /FOLLOW-UP: .*never redo an earlier message/);
   });
 
+  it('checks a follow-up against the newest message, so the agent is not sent back to redo the first', async () => {
+    const llm = stubLlm([
+      toolReply(['navigate', { url: 'https://a.test' }]),
+      textReply('DONE: details entered'),
+      textReply(JSON.stringify({ verdict: 'pass' })),
+    ]);
+    const chat = [
+      { role: 'user', content: 'find flights' },
+      { role: 'assistant', content: 'DONE: three flights' },
+      { role: 'user', content: 'enter my details' },
+    ];
+    await runChat(BROWSER, chat, { apiKey: 'chat-key', verify: true });
+    const asked = JSON.stringify(llm.requests.at(-1).messages[1].content);
+    assert.match(asked, /EARLIER IN THE CHAT[^]*find flights[^]*TASK:\\nenter my details/);
+  });
+
   it('starts a new recording when a new chat begins', async () => {
     stubLlm([toolReply(['type', { element_id: 1, text: 'shoes' }]), textReply('DONE')]);
     await runChat(BROWSER, [{ role: 'user', content: 'search shoes' }], { apiKey: 'chat-key' });

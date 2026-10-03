@@ -59,6 +59,7 @@ import { restore as restoreCredentials } from './modules/personas/credentials.ts
 import { restore as restoreMfa } from './modules/challenges/mfa-factors.ts';
 import { closeConnection } from './platform/storage/index.ts';
 import { handleConnection } from './modules/browsers/socket.ts';
+import { drainChats } from './modules/browsers/http/command.ts';
 import { handleMcpRequest, handlePoolMcpRequest } from './mcp/server.ts';
 import { validateApiKey, authReady } from './modules/auth/service.ts';
 import { registry } from './modules/browsers/registry.ts';
@@ -306,7 +307,8 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.once(signal, async () => {
     registry.draining = true;
     egressServer?.close();
-    await stopWorkers();
+    // Chats in flight finish on this replica, over the browser socket it still holds; new ones go to the replica replacing it.
+    await Promise.all([stopWorkers(), drainChats()]);
     frontend?.stop();
     // End gateway sessions cleanly so profiles are captured and recordings
     // get their manifest, rather than being cut off mid-write.

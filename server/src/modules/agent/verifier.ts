@@ -26,8 +26,19 @@ export type Verdict = {
   reason?: string;
 };
 
-/** The task the run was given: its first user message. */
-const taskOf = (messages: any[]) => String(messages.find((m) => m.role === 'user')?.content ?? '');
+/**
+ * The task the run was given: the person's newest message, with their earlier
+ * ones as context. Judging a follow-up ("what about via Dublin") against the
+ * first message failed every follow-up as incomplete and sent the agent back to
+ * redo the first task. `asked` is the person's messages alone: the loop adds its
+ * own user turns (nudges, rechecks), so the last user message may not be theirs.
+ */
+function taskOf(asked: string[]) {
+  const task = `TASK:\n${asked.at(-1) ?? ''}`;
+  const earlier = asked.slice(0, -1);
+  if (!earlier.length) return task;
+  return `EARLIER IN THE CHAT (already done; context for the task only):\n${earlier.join('\n')}\n\n${task}`;
+}
 
 /** The last calls the run made, one per line. */
 function callsOf(messages: any[]) {
@@ -46,7 +57,7 @@ async function pageNow(ctx) {
 
 /** Everything the checker is told about the run, redacted: the checker is a model like any other. */
 async function evidenceFor(ctx, messages: any[], answer: string) {
-  const said = `TASK:\n${taskOf(messages)}\n\nREPORT:\n${answer}\n\nCALLS MADE:\n${callsOf(messages)}`;
+  const said = `${taskOf(ctx.asked ?? [])}\n\nREPORT:\n${answer}\n\nCALLS MADE:\n${callsOf(messages)}`;
   return `${redact(said, ctx.secrets)}\n\nPAGE NOW:\n${await pageNow(ctx)}`;
 }
 

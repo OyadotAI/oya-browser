@@ -11,7 +11,7 @@ import { HttpError, answerFor, sendError } from '../../../platform/errors.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
 import { getKey, longJson, validData } from '../../../app/http.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
-import { MAX_SCHEMA_CHARS } from '../constants.ts';
+import { CHAT_DRAIN_MS, MAX_SCHEMA_CHARS } from '../constants.ts';
 import { challengesFor, quietCheckpointFor } from '../../playbooks/checkpoint.ts';
 import { LiveRun } from '../../agent/run-events.ts';
 
@@ -92,7 +92,29 @@ export async function chat(req, res) {
   if (!withLlm(req, res)) return;
   const { messages, data = {}, secrets = {}, schema } = req.body;
   const signal = abortOnHangUp(res);
-  await longJson(res, () => converse(req, messages, { data, secrets, schema, signal }));
+  await inFlight(longJson(res, () => converse(req, messages, { data, secrets, schema, signal })));
+}
+
+/** Chats this replica is answering, so a shutdown lets them finish instead of cutting them off mid-run. */
+const chats = new Set<Promise<unknown>>();
+
+/** Holds a chat in the in-flight set until it settles. */
+function inFlight(work: Promise<unknown>) {
+  chats.add(work);
+  return work.finally(() => chats.delete(work));
+}
+
+/**
+ * Waits for the chats in flight, for shutdown: a deploy otherwise killed the
+ * agent mid-task and the person saw "terminated". Gives up after `ms`, so a
+ * stuck run cannot hold the process past its grace period.
+ */
+export function drainChats(ms = CHAT_DRAIN_MS) {
+  if (!chats.size) return Promise.resolve();
+  console.log(`[oya] Waiting for ${chats.size} chat(s) to finish before exiting`);
+  let timer;
+  const deadline = new Promise((resolve) => (timer = setTimeout(resolve, ms)));
+  return Promise.race([Promise.allSettled([...chats]), deadline]).finally(() => clearTimeout(timer));
 }
 
 /** A signal aborted when the caller hangs up before the answer (the desktop's Stop), so the run stops too. */

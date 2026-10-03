@@ -120,6 +120,16 @@ function newRun(messages, values, secrets) {
   return { prompt: chatPrompt(messages, values), steps: [], elements: [], secrets: Object.keys(secrets) };
 }
 
+/** The person's messages, oldest first and redacted, for the check before done. */
+const askedIn = (messages, secrets) =>
+  messages.filter((m) => m.role === 'user' && typeof m.content === 'string').map((m) => redact(m.content, secrets));
+
+/** Whether the report is checked before done, and the person's messages it is checked against. */
+const checkFor = (options, messages, secrets) => ({
+  verify: options.verify ?? AGENT_VERIFY,
+  asked: askedIn(messages, secrets),
+});
+
 /** Whether this is a follow-up in a chat already under way. */
 const followUp = (messages) => messages.filter((m) => m.role === 'user').length > 1;
 
@@ -160,7 +170,7 @@ export async function runChat(browserId, messages, options: any = {}) {
   await begin(browserId, messages, values, secrets);
   const system = { role: 'system', content: systemFor(messages, values, scalars, files, secrets) };
   const allMessages = [system, ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) }))];
-  const run = { ...options, browserId, llm, budget, verify: options.verify ?? AGENT_VERIFY, files, values, secrets };
+  const run = { ...options, browserId, llm, budget, ...checkFor(options, messages, secrets), files, values, secrets };
   return agentLoop(run, allMessages).catch(rejectedKey);
 }
 

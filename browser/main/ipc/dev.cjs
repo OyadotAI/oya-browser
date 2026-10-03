@@ -8,6 +8,9 @@ const { ERROR_PREVIEW_CHARS } = require('../connection/constants.cjs');
 const STOPPED = 'Stopped';
 /** What a chat answers while the agent is already on another task (a routine, or another chat). */
 const BUSY = 'The agent is busy with another task. Stop it first, or try again when it finishes.';
+/** What a chat answers when the server hung up mid-run (fetch says "terminated"), as a restart does. */
+const CUT_OFF =
+  'The connection to the server dropped mid-run, likely a server restart. Check where the page got to, then ask again.';
 
 /** The server's JSON answer, or an error quoting what it sent instead. */
 async function readChatAnswer(res) {
@@ -25,7 +28,8 @@ async function askServer(ctx, route, payload, signal) {
   try {
     return await readChatAnswer(await postToBrowserApi(ctx, route, payload, undefined, signal));
   } catch (err) {
-    return { error: signal?.aborted ? STOPPED : err.message };
+    if (signal?.aborted) return { error: STOPPED };
+    return { error: err.message === 'terminated' ? CUT_OFF : err.message };
   }
 }
 

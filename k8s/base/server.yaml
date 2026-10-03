@@ -19,7 +19,8 @@ spec:
       labels:
         app: server
     spec:
-      terminationGracePeriodSeconds: 60
+      # Room for a chat in flight to finish (OYA_CHAT_DRAIN_MS, 300s) before the pod is killed.
+      terminationGracePeriodSeconds: 330
       imagePullSecrets:
         - name: ghcr-oyadotai
       containers:
