@@ -28,11 +28,8 @@ import { sentryOrigin } from './sentry';
 /** Directives before script-src and connect-src, which depend on the request. */
 const OPENING = ["default-src 'self'"];
 
-/** Directives between script-src and connect-src. */
+/** Directives between img-src and connect-src. */
 const MIDDLE = [
-  "style-src 'self' 'unsafe-inline'",
-  // data: for the live view's JPEG frames, blob: for anything captured client-side.
-  "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "font-src 'self' data:",
   // The Turnstile captcha on sign-in and sign-up draws its challenge in Cloudflare's iframe;
@@ -43,8 +40,27 @@ const MIDDLE = [
 /** Directives after connect-src. */
 const CLOSING = ["frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'", "form-action 'self'"];
 
-/** Where RB2B's script reports to, observed from a real page (its script builds the API host at runtime). */
-const RB2B_HOSTS = ['https://app.rb2b.com', 'https://9xgnrndqve.execute-api.us-west-2.amazonaws.com'];
+/**
+ * Where RB2B's script reports to, observed from a real page (its script builds
+ * the API host at runtime). The rest are its visitor lookup (ip-api) and the
+ * identity partners it matches visitors through (LiveIntent's liadm.com sends
+ * pixels too, so these go in img-src as well); with any of them blocked, RB2B
+ * still gets a report but identifies nobody.
+ */
+const RB2B_HOSTS = [
+  'https://app.rb2b.com',
+  'https://9xgnrndqve.execute-api.us-west-2.amazonaws.com',
+  'https://pro.ip-api.com',
+  'https://a.usbrowserspeed.com',
+  'https://alocdn.com',
+  'https://*.liadm.com',
+];
+
+/** RB2B's hosts when the operator set its account, otherwise none. */
+const rb2bHosts = () => (process.env.RB2B_ID ? RB2B_HOSTS : []);
+
+/** Images: data: for the live view's JPEG frames, blob: for anything captured client-side, and RB2B's pixels. */
+const imageSources = () => ["img-src 'self' data: blob:", ...rb2bHosts()].join(' ');
 
 /**
  * Where the page may send requests: itself, the API's origin when elsewhere,
@@ -52,8 +68,7 @@ const RB2B_HOSTS = ['https://app.rb2b.com', 'https://9xgnrndqve.execute-api.us-w
  */
 function connectSources(dev: boolean): string {
   const api = originOf(process.env.NEXT_PUBLIC_API_URL);
-  const rb2b = process.env.RB2B_ID ? RB2B_HOSTS : [];
-  const hosts = [originOf(process.env.POSTHOG_HOST), ...rb2b, sentryOrigin()];
+  const hosts = [originOf(process.env.POSTHOG_HOST), ...rb2bHosts(), sentryOrigin()];
   return ["'self'", api, ...hosts, dev ? 'ws:' : null].filter(Boolean).join(' ');
 }
 
@@ -72,6 +87,7 @@ function scriptSources(nonce: string, dev: boolean): string {
 
 /** The full policy for one response. */
 export function contentSecurityPolicy(nonce: string, dev: boolean): string {
-  const directives = [...OPENING, scriptSources(nonce, dev), ...MIDDLE, `connect-src ${connectSources(dev)}`];
+  const head = [...OPENING, scriptSources(nonce, dev), "style-src 'self' 'unsafe-inline'", imageSources()];
+  const directives = [...head, ...MIDDLE, `connect-src ${connectSources(dev)}`];
   return [...directives, ...CLOSING].join('; ');
 }

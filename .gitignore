@@ -30,3 +30,7 @@ compliance/local/
 
 # Coverage reports, written by test:coverage for the badge upload.
 lcov.info
+
+# Local promo videos
+/video1.mp4
+/video2.mp4

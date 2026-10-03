@@ -41,12 +41,15 @@ describe('contentSecurityPolicy', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://o1.ingest.us.sentry.io");
   });
 
-  it('lets the page reach RB2B only when the operator set its account', () => {
+  it('lets the page reach RB2B and its identity partners only when the operator set its account', () => {
+    const rb2b =
+      'https://app.rb2b.com https://9xgnrndqve.execute-api.us-west-2.amazonaws.com https://pro.ip-api.com ' +
+      'https://a.usbrowserspeed.com https://alocdn.com https://*.liadm.com';
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe("'self' data: blob:");
     vi.stubEnv('RB2B_ID', 'ABC123DEF456');
-    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(
-      "'self' https://app.rb2b.com https://9xgnrndqve.execute-api.us-west-2.amazonaws.com",
-    );
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(`'self' ${rb2b}`);
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(`'self' data: blob: ${rb2b}`);
   });
 
   it('lets only the captcha, the walkthrough video and the sales calendar draw frames', () => {
