@@ -78,7 +78,7 @@ const TOOLS: Record<string, Tool> = {
   analyze_page: {
     description: `Analyze the current page. Returns its content and every interactive element with an id to use with click/type tools,
 plus page facts (url, title, viewport, scroll, and when they apply: panelScroll, modal, covered, truncated) and each element's state (off-screen, disabled, checked, a field's hint).
-format picks how it is written: markdown (default) or toon (one table of blocks, fewer tokens).`,
+format picks how it is written: toon (default; one table of blocks, fewer tokens), markdown or jsonl.`,
     schema: {
       format: z
         .enum(pageRender.FORMATS as [string, ...string[]])

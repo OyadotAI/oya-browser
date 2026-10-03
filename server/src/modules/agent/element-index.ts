@@ -36,15 +36,9 @@ export function analysisText(data, { content = true } = {}) {
   return renderer.forAgent(data, MAX_ANALYSIS_CHARS);
 }
 
-/** Leads the guides when the format is not pinned, so the agent reads whichever it gets. */
-const UNPINNED_GUIDE =
-  '- The browser picks the page format (markdown, TOON or JSONL); read whichever analyze_page returns:';
-
-/** How the agent is told to read the page: the pinned format's guide, or every format's when none is pinned. */
+/** How the agent is told to read the page: the guide of the format the server asks for. */
 export function pageGuide(): string {
-  if (PAGE_FORMAT) return pageRender.createRenderer(PAGE_FORMAT).guide;
-  const guides = pageRender.FORMATS.map((format: string) => pageRender.createRenderer(format).guide);
-  return [UNPINNED_GUIDE, ...guides].join('\n');
+  return pageRender.createRenderer(PAGE_FORMAT).guide;
 }
 
 /**

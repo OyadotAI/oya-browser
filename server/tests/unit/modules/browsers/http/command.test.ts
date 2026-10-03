@@ -5,7 +5,7 @@
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { chat, runCommand } from '../../../../../src/modules/browsers/http/command.ts';
+import { chat, drainChats, runCommand } from '../../../../../src/modules/browsers/http/command.ts';
 import * as usage from '../../../../../src/platform/usage.ts';
 import { HttpError } from '../../../../../src/platform/errors.ts';
 import { CdpConnectionError } from '../../../../../src/drivers/cdp.ts';
@@ -301,5 +301,61 @@ describe('chat', () => {
     const body = JSON.parse(res.ended);
     assert.ok(body.error);
     assert.ok(body.status >= 400);
+  });
+});
+
+describe('drainChats', () => {
+  afterEach(() => {
+    mock.restoreAll();
+    mock.timers.reset();
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  /** Starts a chat whose model call waits until the test answers it; answers the response and that answer. */
+  function chatWaitingOnModel() {
+    let reply: (r: Response) => void = () => {};
+    mock.method(globalThis, 'fetch', () => new Promise((resolve) => (reply = resolve)));
+    mock.method(console, 'log', () => {});
+    process.env.OPENAI_API_KEY = 'sk-test';
+    const res = new FakeResponse();
+    const done = chat(
+      fakeRequest({ params: { browserId: B }, body: { messages: [{ role: 'user', content: 'go' }] } }),
+      res,
+    );
+    const answer = () =>
+      reply(new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })));
+    return { res, done, answer };
+  }
+
+  /** Whether `promise` has settled once pending callbacks have run. */
+  const settled = async (promise: Promise<unknown>) => {
+    let over = false;
+    void promise.then(() => (over = true));
+    await new Promise((resolve) => setImmediate(resolve));
+    return over;
+  };
+
+  it('answers at once when no chat is in flight', async () => {
+    assert.equal(await settled(drainChats()), true);
+  });
+
+  it('waits for a chat in flight to answer, so a deploy does not cut the run off', async () => {
+    const { res, done, answer } = chatWaitingOnModel();
+    const drained = drainChats();
+    assert.equal(await settled(drained), false);
+    answer();
+    await drained;
+    assert.equal(JSON.parse(res.ended).text, 'ok');
+    await done;
+  });
+
+  it('stops waiting at its deadline, so a stuck run cannot hold the process past its grace period', async () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const { done, answer } = chatWaitingOnModel();
+    const drained = drainChats(1000);
+    mock.timers.tick(1000);
+    assert.equal(await settled(drained), true);
+    answer();
+    await done;
   });
 });

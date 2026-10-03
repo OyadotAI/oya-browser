@@ -1,7 +1,7 @@
 /**
  * The Ask pane: a chat with the agent about the current page. Replies are
  * rendered from a small, escaped subset of Markdown: paragraphs, headings,
- * lists, code blocks, inline code, bold and italic.
+ * lists, tables, rules, code blocks, inline code, bold and italic.
  */
 /* global oyaBrowser, Dom, RendererConstants, ShellIcons, ChatPlaybook, ChatProgress, ChatFiles, ChatPersona, ChatModel, ChatRun, OyaOrb */
 /* exported Chat */
@@ -11,6 +11,12 @@ const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
 
 /** A Markdown heading line. */
 const HEADING = /^#{1,6}\s+(.+)$/;
+
+/** A Markdown rule: three or more dashes, stars or underscores alone on a line. */
+const RULE = /^(?:-{3,}|\*{3,}|_{3,})$/;
+
+/** The line under a Markdown table's header: cells of dashes, each with optional colons. */
+const TABLE_DIVIDER = /^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$/;
 
 /** How the agent opens its report: DONE: or FAILED:, which the answer card shows as a verdict instead of text. */
 const VERDICT = /^(DONE|FAILED):\s*/i;
@@ -55,18 +61,38 @@ const Chat = {
     return '<pre><code>' + code.replace(/\n$/, '') + '</code></pre>';
   },
 
-  /** Text between code blocks: blank lines and headings start new blocks. */
+  /** Text between code blocks: blank lines, headings and rules start new blocks. */
   prose(text) {
-    const blocks = text.replace(/^(#{1,6}\s.+)$/gm, '\n$1\n').split(/\n\s*\n/);
+    const blocks = text.replace(/^(#{1,6}\s.+|-{3,}|\*{3,}|_{3,})$/gm, '\n$1\n').split(/\n\s*\n/);
     const filled = blocks.map((block) => block.trim()).filter(Boolean);
     return filled.map(Chat.block).join('');
   },
 
-  /** A heading, or runs of paragraph lines and list items. */
+  /** A heading, a rule, a table, or runs of paragraph lines and list items. */
   block(block) {
     const heading = HEADING.exec(block);
     if (heading) return '<h4>' + Chat.inline(heading[1]) + '</h4>';
-    return Chat.runs(block.split('\n')).map(Chat.run).join('');
+    if (RULE.test(block)) return '<hr>';
+    const lines = block.split('\n');
+    if (TABLE_DIVIDER.test(lines[1] ?? '')) return Chat.table(lines);
+    return Chat.runs(lines).map(Chat.run).join('');
+  },
+
+  /** A table: the header row, the divider skipped, then the body rows. Wrapped so a wide one scrolls. */
+  table(lines) {
+    const [head, , ...rows] = lines.map(Chat.cells);
+    const row = (cells, tag) => '<tr>' + cells.map((c) => `<${tag}>${Chat.inline(c)}</${tag}>`).join('') + '</tr>';
+    const body = rows.map((cells) => row(cells, 'td')).join('');
+    return `<div class="chat-table"><table><thead>${row(head, 'th')}</thead><tbody>${body}</tbody></table></div>`;
+  },
+
+  /** One table line's cells, with the outer pipes dropped. */
+  cells(line) {
+    return line
+      .trim()
+      .replace(/^\||\|$/g, '')
+      .split('|')
+      .map((cell) => cell.trim());
   },
 
   /** Consecutive lines grouped by whether they are list items. */

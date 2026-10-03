@@ -75,13 +75,13 @@ describe('browser tools', () => {
     assert.match(textOf(await server.call('analyze_page')), /^# Hi\n\n## Element Index \(0 total/);
   });
 
-  it('asks the browser for the page in the format the caller picks, else leaves it to the browser settings', async () => {
+  it("asks the browser for the page in the format the caller picks, else the server's TOON", async () => {
     const { server, driver } = tools(() => ({ ok: true, data: { markdown: '# Hi', elements: [] } }));
-    await server.call('analyze_page', { format: 'toon' });
+    await server.call('analyze_page', { format: 'markdown' });
     await server.call('analyze_page');
     assert.deepEqual(
       driver.sent.map((s) => s.params.format),
-      ['toon', undefined],
+      ['markdown', 'toon'],
     );
   });
 

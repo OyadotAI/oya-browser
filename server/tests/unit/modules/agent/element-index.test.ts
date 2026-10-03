@@ -137,8 +137,9 @@ describe('analysisText asked for no content', () => {
 });
 
 describe('pageGuide', () => {
-  it('explains every format when the server pins none, since each browser picks its own', () => {
+  it('explains only the TOON the agent is sent by default, not every format', () => {
     const guide = pageGuide();
-    for (const format of ['as markdown', 'as TOON', 'as JSONL']) assert.ok(guide.includes(format), format);
+    assert.ok(guide.includes('as TOON'));
+    for (const format of ['as markdown', 'as JSONL']) assert.ok(!guide.includes(format), format);
   });
 });

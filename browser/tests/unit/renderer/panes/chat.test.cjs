@@ -107,6 +107,28 @@ describe('the Ask pane', () => {
   });
 });
 
+describe('the reply Markdown', () => {
+  /** The HTML a reply renders to. */
+  const html = async (markdown) => {
+    const { app } = await chatting();
+    return app.run(`Chat.mdToHtml(${JSON.stringify(markdown)})`);
+  };
+
+  it('renders a pipe table with a header row', async () => {
+    const out = await html('| Name | Fit |\n| :--- | :--- |\n| **Ann** | Good |');
+    assert.match(out, /<thead><tr><th>Name<\/th><th>Fit<\/th><\/tr><\/thead>/);
+    assert.match(out, /<tbody><tr><td><strong>Ann<\/strong><\/td><td>Good<\/td><\/tr><\/tbody>/);
+  });
+
+  it('renders a line of dashes as a rule, even without blank lines around it', async () => {
+    assert.equal(await html('Intro\n---\nNext'), '<p>Intro</p><hr><p>Next</p>');
+  });
+
+  it('keeps pipes in a paragraph without a divider line as text', async () => {
+    assert.equal(await html('a | b'), '<p>a | b</p>');
+  });
+});
+
 describe('the profile picker', () => {
   const personas = [
     { id: 'd', name: 'Default', isDefault: true },

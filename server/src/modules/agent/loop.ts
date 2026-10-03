@@ -87,6 +87,8 @@ export type LoopContext = {
   plan?: any[];
   /** Whether a report of success is checked against the page before it is accepted (verifier.ts). */
   verify?: boolean;
+  /** What the person asked, oldest first: the check judges the report against the newest (verifier.ts). */
+  asked?: string[];
   /** How many times the check sent the report back. */
   rechecks?: number;
   /** The JSON schema of the data the caller wants back; the run then ends with return_data. */

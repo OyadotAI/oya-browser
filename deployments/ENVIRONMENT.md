@@ -57,7 +57,7 @@ Defaults are what the server uses when the variable is unset. For limits and quo
 | `OYA_AGENT_VERIFY` | on | `0` skips the check before a run reports done (saves one short model call per run). |
 | `OYA_AGENT_LOG` | off | `1` logs each tool call and the start of its result. |
 | `OYA_AGENT_LOG_CHARS` | `300` | How much of each call the agent log prints. |
-| `OYA_PAGE_FORMAT` | the browser's setting | How pages are shown to the agent: `markdown`, `toon` or `jsonl`. |
+| `OYA_PAGE_FORMAT` | `toon` | How pages are shown to the agent: `markdown`, `toon` or `jsonl`. |
 
 ### Access and operations
 
@@ -84,6 +84,7 @@ Defaults are what the server uses when the variable is unset. For limits and quo
 | `OYA_ALLOW_PRIVATE_TARGETS` | `false` | Allows provider URLs on private addresses. Only where every API key is yours; cloud metadata stays blocked either way. |
 | `OYA_SESSION_GRACE_MS` | `60000` | How long a session waits for a dropped client to come back. |
 | `OYA_COMMAND_TIMEOUT_MS` | `60000` | How long one browser command may take. |
+| `OYA_CHAT_DRAIN_MS` | `300000` | How long a shutdown waits for chats in flight. Keep it under the pod's grace period. |
 | `OYA_STUCK_COMMAND_MS` | `60000` | When a gateway command counts as stuck. |
 
 ### Personas and proxies
