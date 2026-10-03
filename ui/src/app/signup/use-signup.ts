@@ -5,6 +5,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { event } from '@/lib/analytics';
+import { metaSignUp } from '@/lib/meta-pixel';
 import {
   firstProblem,
   afterSignIn,
@@ -42,7 +43,7 @@ function signupProblem(f: SignupFields, captcha: Captcha): string {
 /** Creates the account and goes to the console; a failure spends the captcha, so it resets. */
 function createAccount(f: SignupFields, name: string | undefined, auth: Auth, captcha: Captcha) {
   return auth.signup(f.email, f.password, name, captcha.token || undefined).then(
-    () => (event('sign_up_success'), auth.router.replace(afterSignIn())),
+    () => (event('sign_up_success'), void metaSignUp(), auth.router.replace(afterSignIn())),
     (err) => (captcha.reset(), Promise.reject(err)),
   );
 }

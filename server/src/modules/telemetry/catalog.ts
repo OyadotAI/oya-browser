@@ -110,6 +110,10 @@ export type EventProps = {
     file_type: 'installer' | 'update';
     /** `updater` when the app itself fetched it, `web` when a person did. */
     via: 'web' | 'updater';
+    /** Where they came from: an ad or campaign the site noted, the site that linked the file, or `direct`. */
+    source: string;
+    /** The client when it is not a person's browser (a crawler, a script, an AI agent), '' for a browser. */
+    client: string;
   };
   /** An installed app asked whether there is a newer release. */
   update_checked: {
@@ -216,7 +220,9 @@ export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) 
   desktop_connected: (who, p) => (p.first ? `🖥️ Desktop connected: ${who.label} (${p.platform})` : null),
   // Only a person's download: the app fetching its own update is not news.
   download_served: (_who, p) =>
-    p.via === 'web' && p.file_type === 'installer' ? `⬇️ Desktop downloaded: ${p.platform} ${p.version}` : null,
+    p.via === 'web' && p.file_type === 'installer'
+      ? `⬇️ Desktop downloaded: ${p.platform} ${p.version} · from ${p.source}${p.client ? ` · 🤖 not a browser: ${p.client}` : ''}`
+      : null,
   payment_received: (who, p) =>
     `💰 Payment received: ${money(p.amount_cents, p.currency)} from ${who.label} (${Object.hasOwn(REASONS, p.reason) ? REASONS[p.reason] : p.reason})`,
   payment_failed: (who, p) =>

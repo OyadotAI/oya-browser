@@ -35,6 +35,13 @@ describe('contentSecurityPolicy', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self' https://ph.example.test");
   });
 
+  it("lets the page fetch its remote config from PostHog cloud's assets host", () => {
+    vi.stubEnv('POSTHOG_HOST', 'https://us.i.posthog.com');
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(
+      "'self' https://us.i.posthog.com https://us-assets.i.posthog.com",
+    );
+  });
+
   it('lets the page reach Sentry only when the operator set a DSN', () => {
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
     vi.stubEnv('SENTRY_DSN', 'https://abc@o1.ingest.us.sentry.io/42');
@@ -50,6 +57,14 @@ describe('contentSecurityPolicy', () => {
     vi.stubEnv('RB2B_ID', 'ABC123DEF456');
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(`'self' ${rb2b}`);
     expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(`'self' data: blob: ${rb2b}`);
+  });
+
+  it("lets the page reach Meta's pixel only when the operator set one", () => {
+    const meta = 'https://connect.facebook.net https://www.facebook.com';
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe("'self' data: blob:");
+    vi.stubEnv('META_PIXEL_ID', '123456789012345');
+    expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(`'self' ${meta}`);
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(`'self' data: blob: ${meta}`);
   });
 
   it('lets only the captcha, the walkthrough video and the sales calendar draw frames', () => {

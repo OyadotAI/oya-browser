@@ -15,6 +15,11 @@ describe('isPublicPage', () => {
       expect(isPublicPage(path)).toBe(false);
   });
 
+  it('keeps the admin page, and the claim link and OAuth callback, which carry a key or token in their URL, private', () => {
+    for (const path of ['/admin', '/admin/customers', '/claim', '/auth/callback'])
+      expect(isPublicPage(path)).toBe(false);
+  });
+
   it('matches a private prefix only as a whole segment', () => {
     expect(isPublicPage('/dashboards')).toBe(true);
     expect(isPublicPage('/lively')).toBe(true);

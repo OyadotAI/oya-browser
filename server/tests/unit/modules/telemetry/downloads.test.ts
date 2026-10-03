@@ -3,6 +3,8 @@
  * check with its version, and the app fetching its update each count once the
  * response went out whole; a failed, partial or HEAD response and any other
  * file count nothing, and who asked is a fingerprint, never an address.
+ * Each download says where it came from and names a client that is not a
+ * browser.
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,14 +41,24 @@ describe('trackDownloads', () => {
   it('counts a person downloading an installer, by platform and release', () => {
     const [[event, , props]] = served('/Oya.Browser-1.0.115-universal.dmg', { headers: { 'user-agent': BROWSER_UA } });
     assert.equal(event, 'download_served');
-    assert.deepEqual(props, { platform: 'mac', version: '1.0.115', file_type: 'installer', via: 'web' });
+    assert.deepEqual(props, {
+      platform: 'mac',
+      version: '1.0.115',
+      file_type: 'installer',
+      via: 'web',
+      source: 'direct',
+      client: '',
+    });
     assert.equal(served('/Oya.Browser-1.0.115-x64.exe')[0][2].platform, 'windows');
     assert.equal(served('/Oya.Browser-1.0.115-x64.AppImage')[0][2].platform, 'linux');
   });
 
   it('counts the app fetching its own update as an update the updater asked for', () => {
     const [[, , props]] = served('/Oya.Browser-1.0.116-universal.zip', { headers: { 'user-agent': UPDATER_UA } });
-    assert.deepEqual(props, { platform: 'mac', version: '1.0.116', file_type: 'update', via: 'updater' });
+    assert.deepEqual(
+      [props.platform, props.version, props.file_type, props.via],
+      ['mac', '1.0.116', 'update', 'updater'],
+    );
   });
 
   it('counts an update check with the version asking, and an old app as unknown', () => {
@@ -84,5 +96,36 @@ describe('trackDownloads', () => {
     assert.equal(first, again);
     assert.match(String(first), /^dl-[0-9a-f]+$/);
     assert.ok(!String(first).includes('203.0.113.9'));
+  });
+
+  it('says where a download came from: the source the site kept, else the linking site, else direct', () => {
+    const from = (headers: Record<string, string>) =>
+      served('/Oya.Browser-1.0.115-x64.exe', {
+        headers: { 'user-agent': BROWSER_UA, host: 'oyabrowser.com', ...headers },
+      })[0][2].source;
+    assert.equal(from({ cookie: 'oya_rt=x; oya_src=facebook%20%2F%20fall-launch' }), 'facebook / fall-launch');
+    assert.equal(from({ referer: 'https://www.github.com/OyadotAI/oya-browser' }), 'github.com');
+    assert.equal(from({ referer: 'https://oyabrowser.com/docs' }), 'direct');
+    assert.equal(from({}), 'direct');
+  });
+
+  it('ignores a kept source that is malformed, rather than printing it', () => {
+    const [[, , props]] = served('/Oya.Browser-1.0.115-x64.exe', {
+      headers: { 'user-agent': BROWSER_UA, cookie: 'oya_src=%3Cscript%3E' },
+    });
+    assert.equal(props.source, 'direct');
+  });
+
+  it('names a client that is not a browser, so a crawler reads as one', () => {
+    const client = (agent: string) =>
+      served('/Oya.Browser-1.0.115-x64.exe', { headers: { 'user-agent': agent } })[0][2].client;
+    assert.equal(client(BROWSER_UA), '');
+    assert.equal(client('curl/8.4.0'), 'curl');
+    assert.equal(
+      client('facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)'),
+      'facebookexternalhit',
+    );
+    assert.equal(client('Mozilla/5.0 (compatible; Googlebot/2.1)'), 'bot');
+    assert.equal(client(''), 'no user agent');
   });
 });

@@ -5,7 +5,10 @@
  * counts once the response has gone out whole, so a missing file, a resumed
  * download's later ranges and a HEAD are not counted. Who asked is a
  * fingerprint of their address and user agent: enough to count unique
- * downloaders, never enough to name one.
+ * downloaders, never enough to name one. Where they came from is the oya_src
+ * cookie the site keeps (an ad, a campaign, a linking site, or direct), else
+ * the site that linked the file; a client that is not a browser is named, so
+ * a crawler's burst of every platform reads as one.
  */
 import type { NextFunction, Request, Response } from 'express';
 import { fingerprint } from '../../platform/audit.ts';
@@ -13,6 +16,7 @@ import { Status } from '../../platform/http-status.ts';
 import { track } from './service.ts';
 import type { EventProps } from './catalog.ts';
 import { UNKNOWN, VERSION_HEADER, versionOf } from './version.ts';
+import { SOURCE_MAX_LENGTH } from './constants.ts';
 import { countDownload } from '../admin/index.ts';
 
 /** An installer file's extension → the platform it installs on. */
@@ -29,6 +33,13 @@ const FEEDS: Record<string, string> = {
 const RELEASE_FILE = /^Oya\.Browser-(\d+\.\d+\.\d+)-[\w.-]+?\.(dmg|exe|AppImage|zip)$/;
 /** The user agents electron-updater fetches with. */
 const UPDATER_AGENT = /electron-builder|electron-updater|Electron/i;
+/** The cookie the site keeps a visitor's source in (ui/src/lib/visitor-source.ts). */
+const SOURCE_COOKIE = 'oya_src';
+/** What a kept source may look like; anything else is not printed. */
+const SOURCE = new RegExp(`^[\\w.\\-/ ]{1,${SOURCE_MAX_LENGTH}}$`);
+/** Clients that are not a person's browser: crawlers, link previews, scripts and AI agents. */
+const NOT_A_BROWSER =
+  /bot|crawl|spider|slurp|preview|scan|curl|wget|python|go-http|java\/|okhttp|axios|node-fetch|undici|headless|facebookexternalhit|claude|gpt|perplexity/i;
 
 /** Who asked, as a fingerprint no one can turn back into an address. */
 function visitorOf(req: Request) {
@@ -81,12 +92,57 @@ const updateCheck = (req: Request, feed: string) => ({
   from_version: versionOf(req.headers[VERSION_HEADER]),
 });
 
-/** What a download says: platform, release, installer or update, and whether a person or the updater asked. */
+/** The raw value of the source cookie, or '' when the request has none. */
+const sourceCookie = (req: Request) =>
+  String(req.headers.cookie || '')
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${SOURCE_COOKIE}=`))
+    ?.slice(SOURCE_COOKIE.length + 1) || '';
+
+/** The source the site kept for this visitor, or '' when there is none or it is malformed. */
+function keptSource(req: Request) {
+  try {
+    const source = decodeURIComponent(sourceCookie(req));
+    return SOURCE.test(source) ? source : '';
+  } catch {
+    return '';
+  }
+}
+
+/** The site that linked the file when it was not this one, or '' (a typed URL, or a client that sends no referrer). */
+function linkingSite(req: Request) {
+  try {
+    const host = new URL(String(req.headers.referer || '')).host.replace(/^www\./, '');
+    return host && host !== String(req.headers.host || '').replace(/^www\./, '') ? host : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Where the download came from: the kept source, else the linking site, else `direct`. */
+const sourceOf = (req: Request) => keptSource(req) || linkingSite(req) || 'direct';
+
+/** The client's name when it is not a person's browser, '' when it is one. */
+function clientOf(req: Request) {
+  const agent = String(req.headers['user-agent'] || '');
+  if (agent.startsWith('Mozilla/') && !NOT_A_BROWSER.test(agent)) return '';
+  return (agent.match(NOT_A_BROWSER)?.[0] || agent.split(' ')[0] || 'no user agent').slice(0, SOURCE_MAX_LENGTH);
+}
+
+/** Where a download came from, and the client when it is not a browser. */
+const origin = (req: Request) => ({ source: sourceOf(req), client: clientOf(req) });
+
+/**
+ * What a download says: platform, release, installer or update, whether a
+ * person or the updater asked, where they came from, and the client when it
+ * is not a browser.
+ */
 function download(req: Request, version: string, ext: string): EventProps['download_served'] {
   const update = Object.hasOwn(UPDATES, ext);
   const platform = (update ? UPDATES[ext] : INSTALLERS[ext]) || UNKNOWN;
   const via = UPDATER_AGENT.test(String(req.headers['user-agent'] || '')) ? 'updater' : 'web';
-  return { platform, version, file_type: update ? 'update' : 'installer', via };
+  return { platform, version, file_type: update ? 'update' : 'installer', via, ...origin(req) };
 }
 
 /** Middleware for /downloads: counts the file once its response has finished, then lets the static files answer. */

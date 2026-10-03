@@ -10,9 +10,12 @@ import { AuthProvider } from '@/components/auth-provider';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
 import { Analytics } from '@/components/analytics';
 import { Rb2b } from '@/components/rb2b';
+import { MetaPixel } from '@/components/meta-pixel';
+import { VisitorSource } from '@/components/visitor-source';
 import { ErrorReporting } from '@/components/error-reporting';
 import { sentryDsn } from '@/lib/sentry';
 import { validRb2bId } from '@/lib/rb2b';
+import { validMetaPixelId } from '@/lib/meta-pixel';
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION } from '@/lib/site';
 import './globals.css';
 
@@ -144,6 +147,12 @@ function rb2bId() {
   return validRb2bId(id) ? id : null;
 }
 
+/** The Meta pixel to run on public pages, read at request time like RB2B's account; null when unset or malformed. */
+function metaPixelId() {
+  const id = process.env.META_PIXEL_ID?.trim();
+  return validMetaPixelId(id) ? id : null;
+}
+
 /** The document shell every page renders in. */
 export default async function RootLayout({ children }: PropsWithChildren) {
   // Set by src/proxy.ts, which also sends the Content-Security-Policy this
@@ -151,6 +160,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
   const nonce = (await headers()).get('x-nonce') ?? undefined;
   const analytics = analyticsSettings();
   const rb2b = rb2bId();
+  const metaPixel = metaPixelId();
   const sentry = sentryDsn();
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning className={`${dmSans.variable} ${archivo.variable}`}>
@@ -173,6 +183,8 @@ export default async function RootLayout({ children }: PropsWithChildren) {
           {children}
           {analytics && <Analytics posthogKey={analytics.key} host={analytics.host} />}
           {rb2b && <Rb2b id={rb2b} />}
+          {metaPixel && <MetaPixel id={metaPixel} />}
+          <VisitorSource />
           {sentry && <ErrorReporting dsn={sentry} />}
         </AuthProvider>
       </body>

@@ -72,7 +72,8 @@ export const oauthStartUrl = (provider: 'google' | 'github', redirectTo: string)
  * login. The explicit token is the fallback for a console served from a
  * different origin than the API, where SameSite=Lax keeps the cookie at home.
  * `oauth` says the token just came back from Google or GitHub, so the server
- * can count a new account made that way as a sign-up, once.
+ * can count a new account made that way as a sign-up, once; the answer then
+ * carries `signed_up` (the provider).
  */
 export const refreshToken = (refreshToken?: string, oauth = false) =>
   account('/auth/refresh', 'Refresh failed', {
