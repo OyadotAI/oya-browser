@@ -3,7 +3,7 @@
  * issuing and revoking a license, and looking a person up and logging in as them.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import AdminPage from '@/app/admin/page';
 import {
   adminImpersonate,
@@ -182,7 +182,8 @@ describe('AdminPage', () => {
     fireEvent.click(screen.getByText('Issue'));
     expect(await screen.findByDisplayValue('THE-KEY')).toBeTruthy();
     expect(vi.mocked(adminIssueLicense).mock.calls[0][1]).toMatchObject({ licensee: 'Acme', maxConcurrent: 20 });
-    expect(adminLicenses).toHaveBeenCalledTimes(2);
+    // The reload runs in an effect after the key shows, so it is waited for, not assumed.
+    await waitFor(() => expect(adminLicenses).toHaveBeenCalledTimes(2));
   });
 
   it('says why a license could not be issued', async () => {
