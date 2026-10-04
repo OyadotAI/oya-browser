@@ -7,6 +7,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { projectId } from '../../../../../src/modules/control/service.ts';
 import { patchRow, putRow, readySession, scratchService } from '../../../support/control.ts';
+import { AUDIT_RETENTION_FLOOR_DAYS } from '../../../../../src/modules/control/service/constants.ts';
 
 const A = 'key-a',
   B = 'key-b';
@@ -28,7 +29,7 @@ describe('project', () => {
     assert.equal(p.name, `Project ${p.id.slice(-6)}`);
     assert.deepEqual(p.settings, {
       recordingDays: 7,
-      auditDays: 90,
+      auditDays: AUDIT_RETENTION_FLOOR_DAYS,
       budgetUsd: null,
       maxConcurrent: null,
       rates: {},
@@ -71,14 +72,14 @@ describe('project', () => {
     await service.project(A);
     await patchRow(service, 'project', projectId(A), { deletedAt: 1 });
     await assert.rejects(service.project(A), { status: 410, code: 'project_deleted' });
-    await assert.rejects(service.settings(A, { auditDays: 10 }), { status: 410 });
+    await assert.rejects(service.settings(A, { auditDays: AUDIT_RETENTION_FLOOR_DAYS }), { status: 410 });
   });
 });
 
 describe('settings', () => {
   it('merges validated changes and records which fields changed', async () => {
-    const p = await service.settings(A, { auditDays: 30, rates: { cdp: 1 } });
-    assert.equal(p.settings.auditDays, 30);
+    const p = await service.settings(A, { auditDays: AUDIT_RETENTION_FLOOR_DAYS + 1, rates: { cdp: 1 } });
+    assert.equal(p.settings.auditDays, AUDIT_RETENTION_FLOOR_DAYS + 1);
     assert.equal(p.settings.recordingDays, 7);
     const last = (await service.events(A)).at(-1);
     assert.equal(last.type, 'project.settings.updated');

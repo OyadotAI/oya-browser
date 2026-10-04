@@ -119,10 +119,10 @@ function RoutingFailover() {
         Configure providers in the dashboard under <strong>Control → Providers</strong> or via the API. Each provider
         has a unique route name, vendor type, priority (0 goes first), and session capacity.
       </p>
-      <CodeBlock>{`// Point any CDP client at the Oya Control Plane gateway:
-const browser = await chromium.connectOverCDP(
-  "wss://oyabrowser.com/connect?token=YOUR_OYA_KEY"
-);
+      <CodeBlock>{`// Point any CDP client at the Oya Control Plane gateway, key in a header:
+const browser = await chromium.connectOverCDP("wss://oyabrowser.com/connect", {
+  headers: { Authorization: "Bearer YOUR_OYA_KEY" },
+});
 
 // Oya selects the highest-priority available provider.
 // If Steel errors or hits rate limits, Oya instantly fails over to Browserbase or Oya Cloud.`}</CodeBlock>

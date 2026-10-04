@@ -28,9 +28,12 @@ oya rm --all`;
 /** Opens a fresh gateway session from Playwright. */
 const playwrightCode = (ws: string) => (k: string) => `import { chromium } from "playwright";
 
-// A fresh browser from whichever provider the gateway routes to.
-// Add &profile=<name> to keep cookies, &record=1 to record the session.
-const browser = await chromium.connectOverCDP("${ws}/connect?token=${k}");
+// A fresh browser from whichever provider the gateway routes to. The key goes
+// in a header, never the URL. Add ?profile=<name> to keep cookies, ?record=1
+// to record the session.
+const browser = await chromium.connectOverCDP("${ws}/connect", {
+  headers: { Authorization: "Bearer ${k}" },
+});
 const page = await browser.newPage();
 await page.goto("https://example.com");
 await browser.close();`;

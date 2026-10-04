@@ -1,12 +1,14 @@
 /**
- * Unit tests for audit tamper evidence: each row links to the one before it, a
- * changed or removed row is found and named, a jsonb round trip does not break
- * a hash, and two chains are verified independently.
+ * Unit tests for audit tamper evidence: each row links to the one before it by
+ * a keyed hash, a changed or removed row is found and named, a jsonb round trip
+ * does not break a hash, two chains are verified independently, a window of the
+ * newest rows verifies from its first row, and unkeyed chains are counted.
  */
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, head, link, linkHash, verifyAll, verifyChain } from '../../../src/platform/audit-chain.ts';
-import { AUDIT_GENESIS_HASH } from '../../../src/platform/constants.ts';
+import { AUDIT_GENESIS_HASH, AUDIT_HMAC_CHAIN_PREFIX } from '../../../src/platform/constants.ts';
 
 /** A row as audit() builds them, before linking. */
 const row = (over = {}) => ({
@@ -37,6 +39,21 @@ describe('link', () => {
     assert.equal(b.prev_hash, a.hash);
     assert.equal(b.seq, a.seq + 1);
     assert.equal(b.chain, a.chain);
+  });
+
+  it('signs with a key, so the link cannot be recomputed as a plain SHA-256', () => {
+    const placed = link(row());
+    const plain = createHash('sha256')
+      .update(`${placed.prev_hash}\n${canonical(placed)}`)
+      .digest('hex');
+    assert.ok(placed.chain.startsWith(AUDIT_HMAC_CHAIN_PREFIX));
+    assert.notEqual(placed.hash, plain);
+  });
+
+  it('signs who authenticated, so changing the credential, member or role breaks the link', () => {
+    const placed = link(row({ credential_id: 'c-1', member_user: 'u-1', actor_role: 'viewer' }));
+    for (const field of ['credential_id', 'member_user', 'actor_role'])
+      assert.notEqual(linkHash(placed.prev_hash, { ...placed, [field]: 'x' }), placed.hash);
   });
 
   it('reports its head so a report can anchor the chain', () => {
@@ -95,7 +112,25 @@ describe('verifyAll', () => {
     const one = relink([link(row()), link(row())].map((r, i) => ({ ...r, seq: i + 1, chain: 'one' })));
     const two = relink([link(row()), link(row())].map((r, i) => ({ ...r, seq: i + 1, chain: 'two' })));
     const verdict = verifyAll([...two, ...one]);
-    assert.deepEqual(verdict, { ok: true, checked: 4, chains: 2 });
+    assert.deepEqual(verdict, { ok: true, checked: 4, chains: 2, unkeyed: 4 });
+  });
+
+  it('counts no unkeyed rows on keyed chains', () => {
+    const keyed = `${AUDIT_HMAC_CHAIN_PREFIX}k`;
+    const rows = relink([link(row()), link(row())].map((r, i) => ({ ...r, seq: i + 1, chain: keyed })));
+    assert.deepEqual(verifyAll(rows), { ok: true, checked: 2, chains: 1, unkeyed: 0 });
+  });
+
+  it('verifies a window of the newest rows from its first row when anchored, and refuses it otherwise', () => {
+    const rows = relink([link(row()), link(row()), link(row())].map((r, i) => ({ ...r, seq: i + 1, chain: 'w' })));
+    assert.equal(verifyAll(rows.slice(1), true).ok, true);
+    assert.equal(verifyAll(rows.slice(1)).ok, false);
+  });
+
+  it('still finds an edit inside an anchored window', () => {
+    const rows = relink([link(row()), link(row()), link(row())].map((r, i) => ({ ...r, seq: i + 1, chain: 'w' })));
+    const verdict = verifyAll([rows[1], { ...rows[2], outcome: 'denied' }], true);
+    assert.deepEqual([verdict.ok, verdict.broken.seq], [false, 3]);
   });
 
   it('ignores rows written before the chain existed', () => {
@@ -114,3 +149,19 @@ function relink(rows) {
     return placed;
   });
 }
+
+describe('chain key changes', () => {
+  it('still verifies chains signed under the derived key after OYA_AUDIT_HMAC_KEY is set', () => {
+    const before = process.env.OYA_AUDIT_HMAC_KEY;
+    delete process.env.OYA_AUDIT_HMAC_KEY;
+    const row = link({ ts: 1, action: 'key.change.before' });
+    process.env.OYA_AUDIT_HMAC_KEY = 'an-operator-key-set-later';
+    try {
+      const after = link({ ts: 2, action: 'key.change.after' });
+      assert.equal(verifyAll([row, after], true).ok, true);
+    } finally {
+      if (before === undefined) delete process.env.OYA_AUDIT_HMAC_KEY;
+      else process.env.OYA_AUDIT_HMAC_KEY = before;
+    }
+  });
+});

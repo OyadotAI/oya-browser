@@ -113,6 +113,39 @@ configured storage on first start, seeds and all, and renamed `<name>.imported`.
 already in storage wins over the file. **A Postgres deployment must add
 `OYA_STORAGE=postgres` before upgrading**; the templates in `deployments/` set it.
 
+### Audit trail
+
+Every audit row is linked to the one before it by an HMAC (`OYA_AUDIT_HMAC_KEY`), and
+the server checks the links on start. Three things make that evidence rather than a
+convention:
+
+- **Anchors.** Set `OYA_AUDIT_ANCHOR_BUCKET` to a private Supabase Storage bucket and
+  every 15 minutes (`OYA_AUDIT_ANCHOR_INTERVAL_MS`), and at shutdown, each replica
+  adds the head of its chain to it, sealed with the chain key, never overwriting an
+  object. On start the newest anchor of every chain from the last 30 days is compared
+  with the database, so rows cut from the end of a chain, or a chain deleted whole,
+  are reported. This needs `SUPABASE_URL` and `SUPABASE_SERVICE_KEY`. **The bucket must
+  refuse overwrite and delete to the server's key**, and a storage policy cannot do
+  that: the service role key bypasses them. `deployments/sql/audit-anchor-bucket.sql`
+  creates the bucket and a trigger on `storage.objects` that refuses both, whoever
+  asks. For anchors that outlive the Supabase project, replicate the bucket to S3 or
+  GCS with a retention lock. A bucket the server can delete from proves nothing.
+- **An insert-only role.** `deployments/sql/audit-insert-only.sql` creates the role the
+  server should sign in as: everything it needs, but only `INSERT` and `SELECT` on
+  `audit_log`, which stays owned by another role. Run it once as the owning role, then
+  point `DATABASE_URL` at the new role and `OYA_MIGRATE_DATABASE_URL` at the old URL, so
+  migrations still run as the owner. The script's header has the steps.
+- **The verdict.** `GET /operator/audit/verify` (operator token) answers the same check
+  on demand; `?project=<id>` also checks that project's control event chain.
+
+When storage cannot keep up, audit rows go to `data/audit-overflow.jsonl` instead of
+being dropped. Load them with `node src/platform/audit-import.ts [file]` from the
+server directory, with the server's environment; it is safe to run twice.
+
+Control events (`control_events`) are chained too, per project, inside the database.
+That chain is plain SHA-256 and is not anchored: it finds edited events and ones
+removed from the middle, not a writer who recomputes every link after an edit.
+
 ## Configuration
 
 Everything is optional except the secrets you want to survive a restart.

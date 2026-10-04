@@ -35,6 +35,15 @@ describe('usage', () => {
     assert.equal(now.hour, '2026-01-01T10:00:00.000Z');
   });
 
+  it("forgets an erased owner's counters, so no flush writes them back", () => {
+    usage.record('key-a', 'commands');
+    usage.record('key-b', 'commands');
+    usage.forget(new Set([fingerprint('key-a')]));
+    const actors = usage.snapshot().map((r) => r.actor);
+    assert.equal(actors.length, 1);
+    assert.equal(usage.current('key-a').commands, 0);
+  });
+
   it('ignores unknown fields, non-numbers and a missing key', () => {
     usage.record('key-a', 'not_a_field');
     usage.record('key-a', 'commands', NaN);

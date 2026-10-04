@@ -8,7 +8,14 @@
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { PostgresConnection, pgRemote, closePgPool, libpqSslModes } from '../../../../src/platform/storage/postgres.ts';
+import {
+  PostgresConnection,
+  pgRemote,
+  closePgPool,
+  libpqSslModes,
+  pgConnectionString,
+  verifyFull,
+} from '../../../../src/platform/storage/postgres.ts';
 
 afterEach(async () => {
   mock.restoreAll();
@@ -143,5 +150,52 @@ describe('libpqSslModes', () => {
   it('leaves a string that already chose its semantics alone', () => {
     const chosen = 'postgres://h/db?uselibpqcompat=false&sslmode=verify-full';
     assert.equal(libpqSslModes(chosen), chosen);
+  });
+});
+
+/** The TLS options node-postgres derives from a connection string, as a client would dial with. */
+const sslOf = (url: string) => (new pg.Client({ connectionString: url }) as any).connectionParameters.ssl;
+
+describe('pgConnectionString', () => {
+  it('keeps the libpq reading by default, so a local URL without TLS still connects', () => {
+    const local = 'postgresql://postgres:pw@127.0.0.1:54322/postgres';
+    assert.equal(pgConnectionString(local, undefined), `${local}?uselibpqcompat=true`);
+    assert.equal(sslOf(pgConnectionString(local, 'libpq')), false);
+  });
+
+  it('under verify-full, requires TLS and checks the certificate even when the URL asked for less', () => {
+    for (const url of ['postgres://h/db', 'postgres://h/db?sslmode=disable', 'postgres://h/db?sslmode=require']) {
+      const ssl = sslOf(pgConnectionString(url, 'verify-full'));
+      assert.equal(typeof ssl, 'object', url);
+      assert.notEqual(ssl.rejectUnauthorized, false, url);
+      assert.equal(ssl.checkServerIdentity, undefined, url);
+    }
+  });
+
+  it('refuses an OYA_DB_TLS it does not know, rather than falling back to plaintext', () => {
+    assert.throws(() => pgConnectionString('postgres://h/db', 'verify'), /OYA_DB_TLS must be libpq or verify-full/);
+  });
+});
+
+describe('verifyFull', () => {
+  it('replaces a weaker sslmode and drops libpq compatibility, keeping the other parameters', () => {
+    assert.equal(
+      verifyFull('postgres://u:p@h:5432/db?sslmode=require&uselibpqcompat=true&application_name=oya', ''),
+      'postgres://u:p@h:5432/db?sslmode=verify-full&application_name=oya',
+    );
+  });
+
+  it('takes the CA from PGSSLROOTCERT when the URL names none', () => {
+    assert.equal(
+      verifyFull('postgres://h/db', '/etc/ssl/ca.pem'),
+      'postgres://h/db?sslmode=verify-full&sslrootcert=%2Fetc%2Fssl%2Fca.pem',
+    );
+  });
+
+  it('keeps a CA the URL already names', () => {
+    assert.equal(
+      verifyFull('postgres://h/db?sslrootcert=/a.pem', '/b.pem'),
+      'postgres://h/db?sslrootcert=%2Fa.pem&sslmode=verify-full',
+    );
   });
 });

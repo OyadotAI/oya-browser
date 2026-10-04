@@ -27,6 +27,10 @@ import { consoleUrl } from '../modules/slack/service.ts';
 import * as keyConfig from '../modules/config/service.ts';
 import * as usage from '../platform/usage.ts';
 import * as license from '../platform/license/index.ts';
+import { audit } from '../platform/audit.ts';
+import * as profiles from '../modules/gateway/profiles.ts';
+import { control } from '../modules/control/service.ts';
+import { Erasure, erasureRows } from '../modules/erasure/index.ts';
 
 /** Personas in the configured storage, taking in a personas.json left from before storage drivers. */
 function personaRepository(): PersonaRepository {
@@ -75,12 +79,20 @@ function reportUnexpected(ref: string, req: Asked, err: unknown) {
   captureUnexpected(err, where);
 }
 
+/** Erasure of deleted projects and accounts, wired to everything that holds a project's data. */
+function erasure(personas: PersonaService) {
+  return new Erasure({
+    ...{ store: () => control().store, rows: erasureRows, personas, settings: keyConfig, usage, profiles, audit },
+    deleteProject: (userId, id) => control().updateOwnedProject(userId, id, { remove: true, stopBrowsers: true }),
+  });
+}
+
 /** Build every service once, wired to its dependencies. */
 export function createContainer() {
   const personas = personaService();
   personas.startAutosave();
   setUnexpectedReporter(reportUnexpected);
-  return { personas, billing: billing() };
+  return { personas, billing: billing(), erasure: erasure(personas) };
 }
 
 /** The services the composition root provides. */

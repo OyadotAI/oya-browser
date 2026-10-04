@@ -50,11 +50,11 @@ curl -X POST ${http}/api/browsers/${b.id}/stop -H "Authorization: Bearer ${k}"`;
 /** Attaches Playwright to a CDP-backed browser through the gateway. */
 const cdpPlaywrightCode = (b: BrowserRow, ws: string) => (k: string) => `import { chromium } from "playwright";
 
-// Attaches to this exact browser through the gateway. Closing your client
-// leaves the browser running in the fleet.
-const browser = await chromium.connectOverCDP(
-  "${ws}/connect?token=${k}&browser=${b.id}",
-);
+// Attaches to this exact browser through the gateway, with the key in a
+// header. Closing your client leaves the browser running in the fleet.
+const browser = await chromium.connectOverCDP("${ws}/connect?browser=${b.id}", {
+  headers: { Authorization: "Bearer ${k}" },
+});
 const page = browser.contexts()[0]?.pages()[0] ?? await browser.newPage();
 await page.goto("https://example.com");
 console.log(await page.title());`;
@@ -66,14 +66,16 @@ const oyaPlaywrightCode = (b: BrowserRow, ws: string) => () =>
 // or start a CDP-backed browser (Browserbase, Steel, Anchor, your own Chrome) and
 // attach to that with:
 //
-//   chromium.connectOverCDP("${ws}/connect?token=<key>&browser=<id>")`;
+//   chromium.connectOverCDP("${ws}/connect?browser=<id>", {
+//     headers: { Authorization: "Bearer <key>" },
+//   })`;
 
 /** The Playwright tab: a working attach for CDP browsers, an explanation for Oya clients. */
 function playwrightSnippet(b: BrowserRow, ws: string): Snippet {
   if (b.clientType !== 'cdp')
     return { id: 'playwright', label: 'Playwright', file: 'attach.ts', code: oyaPlaywrightCode(b, ws) };
   const note =
-    'Puppeteer: puppeteer.connect({ browserWSEndpoint: <the same URL> }). browser-use and Stagehand take a CDP URL too.';
+    'Puppeteer: puppeteer.connect({ browserWSEndpoint: <the same URL>, headers }). For a tool that takes only a URL (browser-use, Stagehand), use the one-use cdpUrl from GET /api/browsers/<id>.';
   return { id: 'playwright', label: 'Playwright', file: 'attach.ts', code: cdpPlaywrightCode(b, ws), note };
 }
 

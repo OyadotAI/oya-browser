@@ -1,6 +1,6 @@
 /**
  * Unit tests for the Turnstile check: off without a secret, closed without a
- * token, Cloudflare's verdict otherwise, and open when Cloudflare is down.
+ * token, Cloudflare's verdict otherwise, and closed when Cloudflare is down.
  */
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,10 +43,11 @@ describe('verifyCaptcha', () => {
     assert.equal(await verifyCaptcha('tok'), false);
   });
 
-  it('lets the request through when Cloudflare cannot be reached', async () => {
+  it('refuses the request when Cloudflare cannot be reached and a secret is configured', async () => {
+    mock.method(console, 'warn', () => {});
     mock.method(globalThis, 'fetch', async () => {
       throw new Error('offline');
     });
-    assert.equal(await verifyCaptcha('tok'), true);
+    assert.equal(await verifyCaptcha('tok'), false);
   });
 });

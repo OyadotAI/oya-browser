@@ -252,6 +252,8 @@ export interface ProjectSettings {
   rates: Record<string, number>;
   /** Managed-browser policy. */
   policy: Record<string, unknown>;
+  /** Model providers that may see page text and screenshots; absent or null means every one. */
+  llm?: { /** Allowed providers, by name; empty means none. */ allow: string[] } | null;
 }
 
 /** GET /control: the project's durable state. */

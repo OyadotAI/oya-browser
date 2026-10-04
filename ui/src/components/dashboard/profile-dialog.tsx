@@ -4,7 +4,9 @@
  */
 'use client';
 
+import Link from 'next/link';
 import { LogOut, Loader2 } from 'lucide-react';
+import { MFA_PAGE } from '@/lib/auth/step-up';
 import Dialog from '@/components/ui/dialog';
 import { DISPLAY_NAME_MAX_LENGTH } from './personas/constants';
 import { memberSince } from './personas/model';
@@ -29,7 +31,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** Email, role and member-since: shown, never edited. */
+/** Email, role and member-since: shown, never edited; and the way to the two-factor page. */
 function Details({ s }: { /** The dialog's state. */ s: ProfileState }) {
   const since = memberSince(s.user?.created_at);
   return (
@@ -37,6 +39,9 @@ function Details({ s }: { /** The dialog's state. */ s: ProfileState }) {
       <Row label="Email" value={s.user?.email || '—'} />
       <Row label="Role" value={s.user?.role || 'member'} />
       {since && <Row label="Member since" value={since} />}
+      <Link href={MFA_PAGE} className="text-xs text-accent hover:underline">
+        Two-factor authentication
+      </Link>
     </div>
   );
 }

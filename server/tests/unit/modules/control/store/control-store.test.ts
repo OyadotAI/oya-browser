@@ -26,6 +26,12 @@ describe('ControlStore over SQLite', () => {
     assert.equal((await store.load([{ kind: 'session', id: 's' }]))[0][0].version, 1);
   });
 
+  it('verifies a project’s event chain', async () => {
+    const store = scratchStore();
+    await store.transact(async (tx) => tx.emit('p1', 'a'));
+    assert.deepEqual(await store.verifyEvents('p1'), { ok: true, checked: 1 });
+  });
+
   it('hands back a copy of the result, not the transaction’s row', async () => {
     const store = scratchStore();
     const row = await store.transact(async (tx) => tx.put('meta', 'm', { id: 'm', n: 1 }));

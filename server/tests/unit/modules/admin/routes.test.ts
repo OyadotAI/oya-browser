@@ -12,6 +12,7 @@ const { router } = await import('../../../../src/modules/admin/routes.ts');
 const { adminOnly } = await import('../../../../src/modules/admin/access.ts');
 const { userAuthMiddleware } = await import('../../../../src/modules/auth/service.ts');
 const license = await import('../../../../src/platform/license/index.ts');
+const { recent } = await import('../../../../src/platform/audit.ts');
 
 /** Each route's path, method and handlers. */
 const routes = router.stack.filter((l: any) => l.route).map((l: any) => l.route);
@@ -20,7 +21,9 @@ const routes = router.stack.filter((l: any) => l.route).map((l: any) => l.route)
 async function call(method: string, path: string, req: any) {
   const route = routes.find((r) => r.path === path && r.methods[method]);
   const res = new FakeResponse();
-  await route.stack.at(-1).handle({ user: { email: 'mk@getoya.ai' }, body: {}, query: {}, params: {}, ...req }, res);
+  await route.stack
+    .at(-1)
+    .handle({ user: { id: 'admin-1', email: 'mk@getoya.ai' }, body: {}, query: {}, params: {}, ...req }, res);
   return res;
 }
 
@@ -58,9 +61,16 @@ describe('admin routes', () => {
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.key, 'K');
     assert.equal((await call('post', '/admin/licenses/:id/revoke', { params: { id: 'L9' } })).body.id, 'L9');
+    for (const action of ['admin.license.issue', 'admin.license.revoke'])
+      assert.deepEqual(
+        recent({ action }).map((r) => [r.actor_user, r.target_id]),
+        [['admin-1', 'L9']],
+      );
   });
 
-  it('looks up a person by the email asked for', async () => {
-    await assert.rejects(call('get', '/admin/users', { query: { email: 'nobody@example.com' } }), { status: 404 });
+  it('looks up a person by the email asked for, auditing the lookup even when nobody is found', async () => {
+    await assert.rejects(call('get', '/admin/users', { query: { email: 'Nobody@example.com' } }), { status: 404 });
+    const [row] = recent({ action: 'admin.user.lookup' });
+    assert.deepEqual([row.actor_user, row.target_id], ['admin-1', 'nobody@example.com']);
   });
 });

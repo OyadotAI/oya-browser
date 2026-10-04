@@ -1,9 +1,10 @@
 /**
  * Unit tests for per-user API keys on the tests' own storage: registering a
  * key claims its project for the user, owners are resolved and cached, keys are
- * minted with projects, and a user lists and deletes only their own keys.
+ * minted with projects, and a user lists and deletes only their own keys;
+ * deleting one ends its live browser sockets and gateway sessions.
  */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { Status } from '../../../../src/platform/http-status.ts';
 import { ownDataDir } from '../../support/data-dir.ts';
@@ -15,6 +16,11 @@ process.env.API_KEYS = [process.env.API_KEYS, ENV_KEY].filter(Boolean).join(',')
 const apiKeys = await import('../../../../src/modules/auth/api-keys.ts');
 const keys = await import('../../../../src/modules/auth/keys.ts');
 const { control, projectId } = await import('../../../../src/modules/control/service.ts');
+const { registry } = await import('../../../../src/modules/browsers/registry.ts');
+const { sessions } = await import('../../../../src/modules/gateway/service.ts');
+// Loaded for the revocation listeners they register.
+await import('../../../../src/modules/browsers/connection/admission.ts');
+const { FakeSocket } = await import('../../support/fakes.ts');
 
 /** The stored project row for a key. */
 const projectOf = (key: string) => control().store.get('project', projectId(key));
@@ -142,5 +148,82 @@ describe('listing and deleting keys', () => {
 
   it('records a last use, and does not fail for an unknown key', async () => {
     assert.equal(await apiKeys.touchApiKey('anything'), undefined);
+  });
+});
+
+describe('key expiry', () => {
+  /** A fixed clock, so expiry times are exact. */
+  const NOW = Date.parse('2026-01-01T00:00:00.000Z');
+
+  it('never expires a key created without expiresInDays when there is no cap', () => {
+    assert.equal(apiKeys.keyExpiry(undefined, null, NOW), null);
+  });
+
+  it('expires a key the requested number of days from now', () => {
+    assert.equal(apiKeys.keyExpiry(30, null, NOW), '2026-01-31T00:00:00.000Z');
+  });
+
+  for (const bad of [0, 3651, 1.5, '30', -1])
+    it(`refuses expiresInDays ${JSON.stringify(bad)} with 400`, () => {
+      assert.throws(() => apiKeys.keyExpiry(bad, null, NOW), { status: Status.BAD_REQUEST });
+    });
+
+  it('caps a requested lifetime at the operator maximum', () => {
+    assert.equal(apiKeys.keyExpiry(365, 90, NOW), apiKeys.keyExpiry(90, null, NOW));
+  });
+
+  it('gives a never-expiring request the operator maximum', () => {
+    assert.equal(apiKeys.keyExpiry(undefined, 90, NOW), apiKeys.keyExpiry(90, null, NOW));
+  });
+
+  it('keeps a shorter lifetime than the operator maximum', () => {
+    assert.equal(apiKeys.keyExpiry(30, 90, NOW), apiKeys.keyExpiry(30, null, NOW));
+  });
+
+  it('lists a key’s expiry, and null for a key that never expires', async () => {
+    const [dated, never] = [keys.generateKey(), keys.generateKey()];
+    await apiKeys.registerApiKey(dated, 'user-expiry', 'dated', '2030-01-01T00:00:00.000Z');
+    await apiKeys.registerApiKey(never, 'user-expiry-never', 'never');
+    assert.equal((await apiKeys.listApiKeys('user-expiry'))[0].expires_at, '2030-01-01T00:00:00.000Z');
+    assert.equal((await apiKeys.listApiKeys('user-expiry-never'))[0].expires_at, null);
+  });
+
+  it('keeps a key’s expiry when its owner re-imports it', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-reimport', 'x', '2030-01-01T00:00:00.000Z');
+    await apiKeys.registerApiKey(key, 'user-reimport', 'x', null);
+    assert.equal((await apiKeys.listApiKeys('user-reimport'))[0].expires_at, '2030-01-01T00:00:00.000Z');
+  });
+});
+
+describe('revoking a key', () => {
+  it('drops the key’s browsers and ends its gateway sessions, and leaves other keys’', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-rev');
+    const [mine, theirs] = [new FakeSocket(), new FakeSocket()];
+    registry.add('rev-mine', { ws: mine, apiKey: key, name: 'Mine' } as any);
+    registry.add('rev-theirs', { ws: theirs, apiKey: 'other-key', name: 'Theirs' } as any);
+    const destroy = mock.fn(async () => {});
+    sessions.set('rev-session', { apiKey: key, destroy } as any);
+    await apiKeys.deleteApiKey(keys.keyDigest(key), 'user-rev');
+    sessions.delete('rev-session');
+    assert.deepEqual([registry.get('rev-mine'), mine.closed?.reason], [undefined, 'API key revoked']);
+    assert.ok(registry.get('rev-theirs'));
+    assert.deepEqual(destroy.mock.calls[0].arguments, ['API key revoked']);
+    registry.remove('rev-theirs');
+  });
+
+  it('tells every listener even when one of them fails', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-rev2');
+    mock.method(console, 'error', () => {});
+    const heard: string[] = [];
+    apiKeys.onKeyRevoked(() => {
+      throw new Error('boom');
+    });
+    apiKeys.onKeyRevoked((digest) => heard.push(digest));
+    await apiKeys.deleteApiKey(keys.keyDigest(key), 'user-rev2');
+    assert.deepEqual(heard, [keys.keyDigest(key)]);
+    mock.restoreAll();
   });
 });

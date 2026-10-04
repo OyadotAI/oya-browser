@@ -14,6 +14,7 @@ import {
   deleteApiKey,
   consoleCredential,
   CONSOLE_KEY,
+  mfaVerify,
 } from '@/lib/api';
 import { fakeFetch, fetchCall } from '../support';
 
@@ -95,6 +96,26 @@ describe('account endpoints', () => {
     const fn = fakeFetch({ body: {} });
     await deleteApiKey('t', '../admin');
     expect(fetchCall(fn)[0]).toBe('/api/auth/keys/..%2Fadmin');
+  });
+});
+
+describe('two-factor requests', () => {
+  it('carries the code, the cookie and a stored refresh token for another-origin consoles', async () => {
+    localStorage.setItem('oya_refresh_token', 'rt-local');
+    const fn = fakeFetch({ body: {} });
+    await mfaVerify('t', 'f1', '123456');
+    const [url, init] = fetchCall(fn);
+    expect([url, init.method, init.credentials]).toEqual(['/api/auth/mfa/verify', 'POST', 'include']);
+    expect(JSON.parse(String(init.body))).toEqual({ factor_id: 'f1', code: '123456', refresh_token: 'rt-local' });
+    localStorage.clear();
+  });
+
+  it('keeps the server code on a refusal, so the console can send the person to their code', async () => {
+    fakeFetch({ status: 401, body: { error: 'Enter the code', code: 'mfa_required' } });
+    await expect(mfaVerify('t', 'f1', '123456')).rejects.toMatchObject({
+      message: 'Enter the code',
+      code: 'mfa_required',
+    });
   });
 });
 

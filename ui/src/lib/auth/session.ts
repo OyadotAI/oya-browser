@@ -4,7 +4,15 @@
  * them to React.
  */
 import { login as apiLogin, signup as apiSignup, getProfile, refreshToken as apiRefreshToken } from '../api';
-import { clearStoredSession, hasSessionCookie, impersonation, keepRefreshToken, storedRefreshToken } from './storage';
+import {
+  clearStoredSession,
+  hasSessionCookie,
+  impersonation,
+  keepRefreshToken,
+  keepStepUp,
+  stepUpPending,
+  storedRefreshToken,
+} from './storage';
 import { refreshDelay, tokenExpiry } from './token';
 import type { SessionHandle, User } from './types';
 
@@ -16,6 +24,8 @@ interface RefreshAnswer {
   refresh_token?: string;
   /** The person, when the server includes them. */
   user?: User;
+  /** True when the person has an authenticator this session has not passed yet. */
+  mfa_required?: boolean;
 }
 
 /** Forgets the session: state, stored credentials and the renewal timer. */
@@ -51,6 +61,7 @@ function adopt(h: SessionHandle, data: RefreshAnswer): string {
   h.setToken(data.access_token);
   // Only ever stored when the server could not use a cookie.
   keepRefreshToken(data.refresh_token);
+  keepStepUp(data.mfa_required);
   // The refresh answers with the admin; during a "Login as" the person shown stays the customer.
   if (data.user && !impersonation()) h.setUser(data.user);
   return data.access_token;
@@ -64,6 +75,8 @@ function adopt(h: SessionHandle, data: RefreshAnswer): string {
 export async function restoreSession(h: SessionHandle, refresh: () => Promise<string | null>, current: () => boolean) {
   const tok = await refresh();
   if (!tok) return;
+  // The server refuses the profile until the second factor is passed; the code page needs only the token.
+  if (stepUpPending()) return void (current() && h.setToken(tok));
   const profile = await getProfile(tok);
   if (current()) {
     h.setToken(tok);

@@ -107,6 +107,15 @@ describe('IPC handlers', () => {
     assert.deepEqual([ctx.config.saves, ctx.socket.disconnects, ctx.socket.connects], [1, 1, 1]);
   });
 
+  it('refuses a plaintext ws:// server that is not this machine', () => {
+    assert.throws(() => call('save-config', { serverUrl: 'ws://evil.example/ws', apiKey: 'k2' }), /wss:\/\//);
+    assert.equal(ctx.config.saves, 0);
+  });
+
+  it('accepts ws:// to this machine', () => {
+    assert.equal(call('save-config', { serverUrl: 'ws://localhost:3000/ws' }), true);
+  });
+
   it('keeps a key entered in the app over OYA_API_KEY on later launches', () => {
     call('save-config', { apiKey: 'k2' });
     assert.equal(ctx.config.values.keyFromApp, true);

@@ -60,6 +60,14 @@ export async function dropField(owner, field) {
   await flush();
 }
 
+/** Drops every field these owners hold, here and in storage: their project is erased. */
+export async function forgetOwners(owners: Set<string>) {
+  const held = [...owners].filter((owner) => store.has(owner));
+  for (const owner of held) store.delete(owner);
+  for (const owner of held) markChanged(owner);
+  if (held.length) await flush();
+}
+
 /**
  * Write the changed owners' settings to key_settings (a save touches one row set,
  * not every tenant's). A failed write puts those owners back, so the next flush

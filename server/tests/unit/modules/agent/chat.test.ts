@@ -73,6 +73,17 @@ describe('runChat', () => {
     assert.equal(llm.requests[0].model, 'claude-opus-5');
   });
 
+  it('refuses a run whose project policy disallows its provider before anything is sent to it', async () => {
+    const { control } = await import('../../../../src/modules/control/service.ts');
+    await control().settings('hipaa-key', { llm: { allow: [] } });
+    const llm = stubLlm([textReply('DONE')]);
+    await assert.rejects(runChat(BROWSER, [{ role: 'user', content: 'x' }], { apiKey: 'hipaa-key' }), {
+      status: 403,
+      code: 'llm_not_allowed',
+    });
+    assert.equal(llm.requests.length, 0);
+  });
+
   it('tells the model its data and files, and names secrets without their values', async () => {
     const llm = stubLlm([textReply('DONE')]);
     const data = { email: 'ada@x.test', cv: FILE };

@@ -8,7 +8,7 @@
 import { ControlService } from './service/control-service.ts';
 
 export { instanceId, terminal, live, attachOnly, holdsSlot, hash, projectId, fault } from './service/model.ts';
-export { validatePolicy } from './service/policy.ts';
+export { validatePolicy, llmAllowed } from './service/policy.ts';
 export { WEBHOOK_EVENTS, SLACK_EVENTS } from './service/webhooks.ts';
 export { ControlService };
 

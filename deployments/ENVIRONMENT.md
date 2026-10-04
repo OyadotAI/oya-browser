@@ -66,7 +66,7 @@ Defaults are what the server uses when the variable is unset. For limits and quo
 | `OYA_OPERATOR_TOKEN` | none | Bearer token for `/metrics`, `POST /api/operator/drain` and fleet provisioning. No API key can do these. Generate with `openssl rand -hex 32`. |
 | `OYA_METRICS_TOKEN` | none | Lets a Prometheus scraper read `/metrics` without the operator token. |
 | `FLEET_TOKEN` | none | One shared token any browser can enrol with; for fleets of desktop browsers. |
-| `OYA_ALLOW_LEGACY_QUERY_KEYS` | allowed | `false` refuses API keys passed as `?token=` on WebSocket URLs (headers only). |
+| `OYA_ALLOW_LEGACY_QUERY_KEYS` | `false` | API keys in WebSocket URLs (`/connect?token=`, `/ws?key=`) are refused; send them in an `Authorization: Bearer` header or use a one-use ticket. `true` accepts the old form again for clients that cannot be updated yet. |
 | `OYA_PAIRING_TTL_MS` | `300000` | How long a desktop pairing code lives. |
 
 ### Other browser providers and the CDP gateway

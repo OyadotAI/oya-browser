@@ -50,6 +50,10 @@ export class ControlStore {
   async events(options) {
     return this.backend.events(options);
   }
+  /** Check that a project's newest control events still link up as they were written. */
+  async verifyEvents(project, limit?) {
+    return this.backend.verifyEvents(project, limit);
+  }
   /** Delete expired rows and events older than each project's cutoff. */
   async prune(now, cutoffs) {
     return this.backend.prune(now, cutoffs);

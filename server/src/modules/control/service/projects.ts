@@ -6,7 +6,7 @@ import { sealText, openText } from '../../../platform/secrets.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { fault, hash, projectDeleted, projectId, stamp, terminal } from './model.ts';
 import { publicSession, stopSession } from './sessions.ts';
-import { validateSettings } from './policy.ts';
+import { validateSettings, withAuditFloor } from './policy.ts';
 import {
   DEFAULT_AUDIT_DAYS,
   DEFAULT_RECORDING_DAYS,
@@ -71,8 +71,9 @@ export function openProjectKey(project) {
 }
 
 /** Merge validated changes into the project's settings. */
-export async function updateSettings(store, key, changes) {
-  validateSettings(changes);
+export async function updateSettings(store, key, requested) {
+  validateSettings(requested);
+  const changes = withAuditFloor(requested);
   return store.transact(async (tx) => {
     const p = await ensure(tx, key);
     p.settings = { ...p.settings, ...changes };

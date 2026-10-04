@@ -53,6 +53,18 @@ describe('AuthProvider', () => {
     expect(result.current.loading).toBe(false);
   });
 
+  it('sends a session that owes its second factor to the code page, without asking for the profile', async () => {
+    const replace = vi.fn();
+    vi.stubGlobal('location', { ...window.location, pathname: '/dashboard', search: '', replace });
+    document.cookie = 'oya_session=1; path=/';
+    vi.mocked(api.refreshToken).mockResolvedValue({ access_token: 'tok', user: USER, mfa_required: true });
+    const { result } = setup();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/account/mfa?next=%2Fdashboard'));
+    expect(result.current.token).toBe('tok');
+    expect(api.getProfile).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it('clears everything stored when the refresh is refused', async () => {
     localStorage.setItem('oya_refresh_token', 'old');
     sessionStorage.setItem('oya_console_key', 'k');

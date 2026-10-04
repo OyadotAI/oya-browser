@@ -202,5 +202,13 @@ export async function remove(owner, name) {
   }
 }
 
+/** Deletes every profile these owners saved, held or not: their project is erased. Answers how many went. */
+export async function removeOwners(owners: Set<string>) {
+  const files = await readdir(DIR).catch(() => []);
+  const theirs = files.filter((f) => f.endsWith(PROFILE_SUFFIX) && owners.has(f.split('__')[0]));
+  for (const f of theirs) await unlink(join(DIR, f)).catch(() => {});
+  return theirs.length;
+}
+
 /** Exposed for tests: prove a profile cannot be opened under another name. */
 export const _internals = { seal, open, timingSafeEqual };

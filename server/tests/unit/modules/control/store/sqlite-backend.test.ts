@@ -1,11 +1,13 @@
 /**
  * Unit tests for SqliteBackend: loading rows by id, project and state,
  * compare-and-swap commits, the event log and the webhook deliveries it queues,
- * pruning, the session command gate, and the single-writer lock.
+ * pruning, the session command gate, the single-writer lock, and the hash chain
+ * that links each project's events.
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { SqliteBackend, columns } from '../../../../../src/modules/control/store.ts';
 import { scratchDir } from '../../../support/control.ts';
 
@@ -82,6 +84,70 @@ describe('SqliteBackend rows', () => {
     backend.commit({ writes: [write('meta', 'm', { id: 'm' })] });
     backend.commit({ writes: [write('meta', 'm', null, 1)] });
     assert.deepEqual(backend.load([{ kind: 'meta', id: 'm' }]), [[]]);
+  });
+});
+
+describe('SqliteBackend event chain', () => {
+  it('links each event to its project’s previous one, and the chain verifies', () => {
+    backend.commit({ events: ['a', 'b', 'c'].map((type, at) => ({ project: 'p1', type, at, detail: { at } })) });
+    backend.commit({ events: [{ project: 'p2', type: 'x', at: 0 }] });
+    assert.deepEqual(backend.verifyEvents('p1'), { ok: true, checked: 3 });
+    assert.deepEqual(backend.verifyEvents('p2'), { ok: true, checked: 1 });
+  });
+
+  it('links past an unlinked event an old release wrote mid-rollout, so the chain still verifies', () => {
+    backend.commit({ events: [{ project: 'p1', type: 'a', at: 1 }] });
+    backend.db
+      .prepare('INSERT INTO control_events (project, type, session_id, at, detail) VALUES (?, ?, ?, ?, ?)')
+      .run('p1', 'old-release', null, 2, '{}');
+    backend.commit({ events: [{ project: 'p1', type: 'c', at: 3 }] });
+    assert.deepEqual(backend.verifyEvents('p1'), { ok: true, checked: 2 });
+  });
+
+  it('names an event edited in the database', () => {
+    const { events } = backend.commit({ events: ['a', 'b'].map((type) => ({ project: 'p1', type, at: 1 })) });
+    backend.db.prepare('UPDATE control_events SET type = ? WHERE seq = ?').run('forged', events[0]);
+    assert.deepEqual(backend.verifyEvents('p1').broken, {
+      seq: events[0],
+      reason: 'hash does not match the event, it was edited',
+    });
+  });
+
+  it('names the event after one deleted from the middle', () => {
+    const { events } = backend.commit({ events: ['a', 'b', 'c'].map((type) => ({ project: 'p1', type, at: 1 })) });
+    backend.db.prepare('DELETE FROM control_events WHERE seq = ?').run(events[1]);
+    assert.equal(backend.verifyEvents('p1').broken.seq, events[2]);
+  });
+
+  it('prunes only from the start, so a late-stamped event never leaves a hole', () => {
+    // A replica with a slow clock stamped the third event earlier than the second.
+    backend.commit({ events: [5, 20, 8, 30].map((at, i) => ({ project: 'p1', type: `e${i}`, at })) });
+    backend.prune(0, { p1: 10 });
+    assert.deepEqual(
+      backend.events({ project: 'p1' }).map((e) => e.type),
+      ['e1', 'e2', 'e3'],
+    );
+    assert.equal(backend.verifyEvents('p1').ok, true);
+  });
+
+  it('prunes all of a project’s events when none is at or after the cutoff', () => {
+    backend.commit({ events: [{ project: 'p1', type: 'old', at: 1 }] });
+    backend.prune(0, { p1: 10 });
+    assert.deepEqual(backend.events({ project: 'p1' }), []);
+  });
+
+  it('adds the chain columns to a database made before them, and links from there', () => {
+    const path = join(scratchDir(), 'old.sqlite');
+    const old = new DatabaseSync(path);
+    old.exec(
+      'CREATE TABLE control_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, type TEXT NOT NULL, session_id TEXT, at INTEGER NOT NULL, detail TEXT NOT NULL)',
+    );
+    old.exec(`INSERT INTO control_events (project, type, at, detail) VALUES ('p1', 'legacy', 1, '{}')`);
+    old.close();
+    const upgraded = new SqliteBackend(path, { lock: false });
+    upgraded.commit({ events: [{ project: 'p1', type: 'new', at: 2 }] });
+    assert.deepEqual(upgraded.verifyEvents('p1'), { ok: true, checked: 1 });
+    upgraded.close();
   });
 });
 

@@ -44,6 +44,7 @@ function useDrawerForm(persona: Persona | null, apiKey: string) {
   const [mfa, setMfa] = useState<MfaDraft>(newMfa());
   useEffect(() => {
     if (!persona) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- opening another persona starts its own form
     setFields(fieldsOf(persona));
     setMfa(newMfa());
     // Refreshing profile counts must not overwrite a form being edited.

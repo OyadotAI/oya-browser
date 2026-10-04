@@ -1,8 +1,9 @@
 /**
  * Who is calling an MCP endpoint. Viewers may watch but not drive, so only an
- * operator key gets through.
+ * operator key gets through; a share link reaches only its own browser's MCP,
+ * never the pool.
  */
-import { authenticateToken } from '../modules/auth/service.ts';
+import { authenticateToken, shareReaches } from '../modules/auth/service.ts';
 import { Status } from '../platform/http-status.ts';
 import { BEARER } from './constants.ts';
 
@@ -20,10 +21,17 @@ export async function authorize(req, res) {
   }
 }
 
-/** The key, unless it belongs to a viewer (answered 403). */
+/** The key, unless it belongs to a viewer or a share reaching past its browser (answered 403). */
 async function operatorKey(req, res) {
   const principal = await authenticateToken(bearer(req.headers.authorization));
-  if (principal.role !== 'viewer') return { key: principal.key };
-  res.status(Status.FORBIDDEN).json({ error: 'Operator permission required' });
+  const refusal = refusalOf(principal, req.params?.browserId);
+  if (!refusal) return { key: principal.key };
+  res.status(Status.FORBIDDEN).json({ error: refusal });
   return null;
+}
+
+/** Why this principal may not use this MCP endpoint (the pool when browserId is unset), or null. */
+function refusalOf(principal, browserId?: string) {
+  if (principal.role === 'viewer') return 'Operator permission required';
+  return shareReaches(principal, browserId) ? null : 'This link only grants access to its shared browser';
 }

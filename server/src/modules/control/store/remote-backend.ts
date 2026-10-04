@@ -1,7 +1,7 @@
 /** The control storage contract over Postgres functions (server/migrations/008_durable_control.sql). */
 import { Status } from '../../../platform/http-status.ts';
 import { commandsPending, controlPaused, fail } from './errors.ts';
-import { DEFAULT_EVENT_LIMIT } from './constants.ts';
+import { DEFAULT_EVENT_LIMIT, EVENT_VERIFY_LIMIT } from './constants.ts';
 
 /** The error an RPC failure stands for, by its message text; null for a version conflict. */
 function rpcFailure(error) {
@@ -43,6 +43,10 @@ export class RemoteBackend {
     return (
       await this.call('control_read_events', { target_project: project, after_seq: after, lim: limit, latest, seqs })
     ).data;
+  }
+  /** Check a project's newest chained events link up, inside the database (control_verify_events, migration 021). */
+  async verifyEvents(project, limit = EVENT_VERIFY_LIMIT) {
+    return (await this.call('control_verify_events', { target_project: project, lim: limit })).data;
   }
   /** Delete expired rows and events older than each project's cutoff. */
   async prune(now, cutoffs = {}) {

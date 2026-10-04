@@ -30,6 +30,25 @@ export const BASE64_GROUP_CHARS = 4;
 /** How often a long JSON answer trickles whitespace to keep the connection open. */
 export const LONG_JSON_KEEPALIVE_MS = 15_000;
 
+/**
+ * Longest a client may take to send a request's headers: a slow-loris guard.
+ * Upgrades (/ws, /connect) are past it once their headers are in.
+ */
+export const HEADERS_TIMEOUT_MS = 60_000;
+/**
+ * Longest a client may take to send a whole request, headers and body (15 MB
+ * at most). Only the request is timed: a long answer (longJson, SSE, a
+ * recording download) runs as long as it needs.
+ */
+export const REQUEST_TIMEOUT_MS = 300_000;
+
+/**
+ * Origins a web page may call the API from, comma separated in
+ * OYA_CORS_ORIGINS. Unset, any origin may, but never with cookies: that is
+ * what SDK clients holding an API key need, and the console is same-origin.
+ */
+export const CORS_ORIGIN: string | string[] = process.env.OYA_CORS_ORIGINS?.split(',').map((o) => o.trim()) ?? '*';
+
 /** Close code for a browser socket presenting an invalid API key; the client stops reconnecting. */
 export const INVALID_KEY_CLOSE_CODE = 4003;
 

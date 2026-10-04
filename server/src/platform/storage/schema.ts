@@ -50,7 +50,7 @@ export const TABLES: Record<string, Table> = {
     key: ['key_hash'],
     columns: {
       ...{ key_hash: 'text', key_prefix: 'text', project: 'text', user_id: 'text', label: 'text' },
-      ...{ created_at: 'time', last_used_at: 'time', agent_email: 'text' },
+      ...{ created_at: 'time', last_used_at: 'time', agent_email: 'text', expires_at: 'time' },
     },
   },
   profiles: {
@@ -114,6 +114,7 @@ export const TABLES: Record<string, Table> = {
       ...{ id: 'serial', ts: 'time', action: 'text', actor: 'text', actor_user: 'text', target_type: 'text' },
       ...{ target_id: 'text', outcome: 'text', ip: 'text', user_agent: 'text', meta: 'json' },
       ...{ chain: 'text', seq: 'int', prev_hash: 'text', hash: 'text' },
+      ...{ credential_id: 'text', member_user: 'text', actor_role: 'text' },
     },
   },
 };

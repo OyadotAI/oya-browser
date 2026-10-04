@@ -19,7 +19,13 @@ describe('snippet builders', () => {
   it('a CDP browser gets a working Playwright attach, second', () => {
     const snippets = browserSnippets(row({ clientType: 'cdp' }));
     expect(snippets.map((s) => s.id)).toEqual(['sdk', 'playwright', 'cli', 'mcp', 'curl']);
-    expect(snippets[1].code('KEY')).toContain('wss://oya.test/connect?token=KEY&browser=b1');
+    expect(snippets[1].code('KEY')).toContain('"wss://oya.test/connect?browser=b1"');
+    expect(snippets[1].code('KEY')).toContain('Authorization: "Bearer KEY"');
+  });
+
+  it('no snippet puts the key in a URL', () => {
+    const all = [...browserSnippets(row({ clientType: 'cdp' })), ...browserSnippets(row({})), ...fleetSnippets()];
+    for (const s of all) expect(s.code('KEY')).not.toMatch(/[?&](token|key)=KEY/);
   });
 
   it('an Oya client explains it has no CDP endpoint, last', () => {

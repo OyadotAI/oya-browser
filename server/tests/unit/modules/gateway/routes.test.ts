@@ -181,6 +181,16 @@ describe('gateway recording routes', () => {
     });
   });
 
+  it('audits each look at a recording or a frame, and a refused one as denied', async () => {
+    const id = recording(OWNER);
+    await call('GET', `/gateway/recordings/${id}`);
+    await call('GET', `/gateway/recordings/${id}/frames/0`);
+    await call('GET', `/gateway/recordings/${id}`, undefined, OTHER);
+    const [denied, viewed] = recent({ action: 'recording.view' });
+    assert.deepEqual([viewed.target_id, viewed.outcome, denied.outcome], [id, 'ok', 'denied']);
+    assert.deepEqual(recent({ action: 'recording.frame.view' })[0].meta, { index: '0' });
+  });
+
   it("deletes the caller's recording, and not another key's", async () => {
     const id = recording(OWNER);
     assert.deepEqual((await call('DELETE', `/gateway/recordings/${id}`, undefined, OTHER)).body, { ok: false });

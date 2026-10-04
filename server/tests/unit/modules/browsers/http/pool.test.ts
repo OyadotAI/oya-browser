@@ -159,4 +159,13 @@ describe('exportJar', () => {
     exportJar(fakeRequest({ key: 'k-export', query: { format: 'yaml' } }), res);
     assert.equal(res.statusCode, 400);
   });
+
+  it('audits every export with the persona and format, and not a refused one', () => {
+    const before = recent({ action: 'cookies.export' }).length;
+    exportJar(fakeRequest({ key: 'k-export-audit', query: { format: 'netscape' } }), new FakeResponse());
+    exportJar(fakeRequest({ key: 'k-export-audit', query: { format: 'yaml' } }), new FakeResponse());
+    const events = recent({ action: 'cookies.export' });
+    assert.equal(events.length, before + 1);
+    assert.deepEqual([events[0].target_type, events[0].meta], ['cookies', { format: 'netscape' }]);
+  });
 });

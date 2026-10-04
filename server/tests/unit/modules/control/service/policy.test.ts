@@ -5,7 +5,13 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { validatePolicy, validateSettings } from '../../../../../src/modules/control/service/policy.ts';
+import {
+  validatePolicy,
+  validateSettings,
+  withAuditFloor,
+  llmAllowed,
+} from '../../../../../src/modules/control/service/policy.ts';
+import { AUDIT_RETENTION_FLOOR_DAYS } from '../../../../../src/modules/control/service/constants.ts';
 
 /** Asserts `fn` throws a 400 with `code`. */
 const refused = (fn, code) => assert.throws(fn, { status: 400, code });
@@ -75,7 +81,20 @@ describe('validateSettings', () => {
   });
 
   it('refuses retention outside 1–3650 whole days', () => {
-    for (const days of [0, 3651, 1.5, '7']) refused(() => validateSettings({ auditDays: days }), 'invalid_retention');
+    for (const days of [0, 3651, 1.5, '7'])
+      refused(() => validateSettings({ recordingDays: days }), 'invalid_retention');
+  });
+
+  it('refuses an audit window outside 1–3650 whole days', () => {
+    for (const days of [0, 3651, 1.5]) refused(() => validateSettings({ auditDays: days }), 'invalid_retention');
+  });
+
+  it('raises an audit window below the retention floor to it, so an administrator cannot shorten the record', () => {
+    assert.deepEqual(withAuditFloor({ auditDays: 90, budgetUsd: 5 }), {
+      auditDays: AUDIT_RETENTION_FLOOR_DAYS,
+      budgetUsd: 5,
+    });
+    assert.deepEqual(withAuditFloor({ budgetUsd: 5 }), { budgetUsd: 5 });
   });
 
   it('refuses a limit that is not positive, and a fractional browser cap', () => {
@@ -92,5 +111,37 @@ describe('validateSettings', () => {
 
   it('validates a policy change as a policy', () => {
     refused(() => validateSettings({ policy: { nope: 1 } }), 'invalid_policy');
+  });
+});
+
+describe('the llm setting', () => {
+  it('accepts any set of known providers, an empty list and null', () => {
+    for (const llm of [{ allow: ['anthropic', 'openai', 'gemini'] }, { allow: ['openai'] }, { allow: [] }, null])
+      assert.doesNotThrow(() => validateSettings({ llm }));
+  });
+
+  it('refuses an unknown provider, a repeated one, extra fields or a shape that is not { allow: [] }', () => {
+    for (const llm of [
+      { allow: ['mistral'] },
+      { allow: ['openai', 'openai'] },
+      { allow: [], deny: [] },
+      'none',
+      ['openai'],
+      {},
+    ])
+      refused(() => validateSettings({ llm }), 'invalid_llm_policy');
+  });
+});
+
+describe('llmAllowed', () => {
+  it('allows every provider when the project has no model policy', () => {
+    assert.equal(llmAllowed({}, 'anthropic'), true);
+    assert.equal(llmAllowed({ llm: null }, 'gemini'), true);
+  });
+
+  it('allows only the providers the policy lists', () => {
+    assert.equal(llmAllowed({ llm: { allow: ['openai'] } }, 'openai'), true);
+    assert.equal(llmAllowed({ llm: { allow: ['openai'] } }, 'anthropic'), false);
+    assert.equal(llmAllowed({ llm: { allow: [] } }, 'openai'), false);
   });
 });

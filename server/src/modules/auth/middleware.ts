@@ -10,9 +10,10 @@ import { findKey } from './repository.ts';
 import { HttpError, sendError } from '../../platform/errors.ts';
 import { audit } from '../../platform/audit.ts';
 import { Status } from '../../platform/http-status.ts';
-import { isEnvKey, isFleetToken, keyCache, keyDigest, noteAgentKey } from './keys.ts';
-import { BEARER, IMPERSONATE_HEADER } from './constants.ts';
-import { impersonatedUser, readImpersonation, type Impersonation } from './impersonate.ts';
+import { cacheKey, isEnvKey, isFleetToken, keyDigest, noteAgentKey, uncacheKey } from './keys.ts';
+import { BEARER, IMPERSONATE_HEADER, ISO_DATE_CHARS, KEY_EXPIRED_AUDIT_MS } from './constants.ts';
+import { actingAs, readImpersonation, type Impersonation } from './impersonate.ts';
+import { owesSecondFactor } from './mfa.ts';
 
 /** Methods that only read. */
 const READ_METHODS = ['GET', 'HEAD'];
@@ -62,19 +63,47 @@ export async function userAuthMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith(BEARER)) return res.status(Status.UNAUTHORIZED).json({ error: 'Missing token' });
   const token = header.slice(BEARER.length);
-  if (!supabaseAuth) return res.status(Status.UNAVAILABLE).json({ error: 'Auth not configured' });
+  if (!sessionUsers.configured()) return res.status(Status.UNAVAILABLE).json({ error: 'Auth not configured' });
   return withUser(req, res, next, token);
 }
 
-/** Sets req.user from the access token and passes the request on, or answers 401. */
+/** Who a console access token belongs to, asked of Supabase Auth; a test puts a fake here. */
+export const sessionUsers = {
+  /** Whether Supabase Auth is configured at all. */
+  configured: () => Boolean(supabaseAuth),
+  /** Supabase's answer for the token: the user with their factors, or an error. */
+  getUser: (token: string): Promise<any> => supabaseAuth.auth.getUser(token),
+};
+
+/** What a session that still owes its second factor is told; the console sends the person to enter a code. */
+const MFA_REQUIRED = { error: 'Enter the code from your authenticator app', code: 'mfa_required' };
+
+/**
+ * Sets req.user (and req.authAal, how strongly they signed in) from the access
+ * token and passes the request on, or answers 401. A person with a verified
+ * authenticator whose session has not passed it (aal1) is refused here, so a
+ * password alone, stolen or not, opens nothing but the /auth/mfa routes.
+ */
 async function withUser(req, res, next, token) {
+  const user = await verifiedUser(token);
+  if (!user) return res.status(Status.UNAUTHORIZED).json({ error: 'Invalid or expired token' });
+  if (owesSecondFactor(user, token)) return res.status(Status.UNAUTHORIZED).json(MFA_REQUIRED);
+  Object.assign(req, { user, authAal: claimOf(token, 'aal') });
+  next();
+}
+
+/** The user a Supabase access token belongs to (with their factors), or null when Supabase refuses it. */
+async function verifiedUser(token) {
+  const { data, error } = await sessionUsers.getUser(token).catch(() => ({ data: null, error: true }));
+  return error ? null : data?.user || null;
+}
+
+/** One claim of a JWT that Supabase has already verified, or undefined when it cannot be read. */
+function claimOf(token: string, name: string) {
   try {
-    const { data, error } = await supabaseAuth.auth.getUser(token);
-    if (error) throw error;
-    req.user = data.user;
-    next();
+    return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString())[name];
   } catch {
-    return res.status(Status.UNAUTHORIZED).json({ error: 'Invalid or expired token' });
+    return undefined;
   }
 }
 
@@ -90,9 +119,9 @@ async function asImpersonated(req, res, next) {
   next();
 }
 
-/** Makes the request the customer's, and leaves one audit row for it under the admin. */
+/** Makes the request the customer's (re-checked every time, see actingAs), and leaves one audit row for it under the admin. */
 async function actAs(req, claims: Impersonation) {
-  req.user = await impersonatedUser(claims.sub);
+  req.user = await actingAs(claims);
   req.impersonatedBy = claims.impersonated_by;
   const meta = { method: req.method, path: req.originalUrl };
   const subject = { actorUser: claims.impersonated_by, targetType: 'user', targetId: claims.sub };
@@ -127,9 +156,31 @@ async function isStoredKey(digest) {
     throw new HttpError(Status.UNAVAILABLE, 'Credential validation unavailable');
   });
   noteAgentKey(digest, Boolean(row?.agent_email && !row.user_id));
-  if (row) keyCache.add(digest);
-  else keyCache.delete(digest);
+  refuseExpired(row);
+  if (row) cacheKey(digest, row.expires_at);
+  else uncacheKey(digest);
   return !!row;
+}
+
+/** When each expired key's refusal was last audited, by digest. */
+const expiredAudited = new Map<string, number>();
+
+/** Refuses a stored key past its expires_at with 401; a key without one never expires. */
+function refuseExpired(row) {
+  if (!row?.expires_at || Date.parse(row.expires_at) > Date.now()) return;
+  uncacheKey(row.key_hash);
+  auditExpired(row);
+  const day = String(row.expires_at).slice(0, ISO_DATE_CHARS);
+  throw new HttpError(Status.UNAUTHORIZED, `API key expired on ${day}; create a new key in the console`);
+}
+
+/** Audits an expired key's refusal as key.expired, at most once per key per KEY_EXPIRED_AUDIT_MS so a retrying client does not flood the log. */
+function auditExpired(row) {
+  const now = Date.now();
+  if (now - (expiredAudited.get(row.key_hash) ?? -Infinity) < KEY_EXPIRED_AUDIT_MS) return;
+  expiredAudited.set(row.key_hash, now);
+  const subject = { actorUser: row.user_id ?? null, targetType: 'key', targetId: row.key_hash };
+  audit({ action: 'key.expired', outcome: 'denied', actorKey: null, ...subject });
 }
 
 /** Authenticates the bearer token for API routes and enforces role limits: share links reach only their own browser, viewers only read, and settings writes need an administrator. */
@@ -156,13 +207,30 @@ async function admit(req, res, next) {
 /** The token in a `Bearer` Authorization header, or ''. */
 const bearerToken = (header) => (header?.startsWith(BEARER) ? header.slice(BEARER.length) : '');
 
+/**
+ * Whether a principal is a share link's credential: bound to one session
+ * (sessionId set) and not a managed browser's own credential.
+ */
+export const isShare = (principal) => !!principal?.sessionId && principal.role !== 'browser';
+
+/**
+ * The one confinement every non-REST entry point (CDP /connect, MCP, browser
+ * /ws) applies to share links: a share may reach only the session it was
+ * issued for. `target` is the session or browser id the caller names; null
+ * means "no single session" (a new browser, a profile, the MCP pool, a /ws
+ * registration), which a share may never reach. Any other credential passes;
+ * its role limits are checked by the caller.
+ */
+export const shareReaches = (principal, target: string | null | undefined) =>
+  !isShare(principal) || (!!target && target === principal.sessionId);
+
 /** Why this principal may not make this request, or null when it may. */
 function refusalFor(principal, req) {
   // A share credential is scoped to one session (sessionId set, not a managed
   // browser). It may only reach its own browser's live view, stream ticket,
   // status and, for an operator share, input and control. Everything else is
   // refused, so a shareable link can never see or touch the rest of the project.
-  if (principal.sessionId && principal.role !== 'browser')
+  if (isShare(principal))
     return shareAllows(principal, req) ? null : 'This link only grants access to its shared browser';
   return ROLE_RULES.find((rule) => rule.applies(principal, req))?.error ?? null;
 }

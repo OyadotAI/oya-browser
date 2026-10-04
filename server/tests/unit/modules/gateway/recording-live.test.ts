@@ -16,6 +16,7 @@ const live = await import('../../../../src/modules/gateway/recording-live.ts');
 const { control } = await import('../../../../src/modules/control/service.ts');
 const { fakeCdp, pageBrowser } = await import('../../support/gateway.ts');
 const { endpointAt } = await import('../../../../src/drivers/cdp.ts');
+const { openFrame, openManifest } = await import('../../../../src/modules/control/recording-storage.ts');
 
 const JPEG = Buffer.from('fake-jpeg').toString('base64');
 const opened: { close(): Promise<void> }[] = [];
@@ -88,7 +89,7 @@ describe('recording-live', () => {
     // Spooling does not wait for the disk, so wait for both frames' bytes, not just the files.
     const written = (i: number) => {
       const file = join(live.DIR, session.id, live.frameFile(i));
-      return existsSync(file) && readFileSync(file).toString() === 'fake-jpeg';
+      return existsSync(file) && openFrame(session.id, i, readFileSync(file)).toString() === 'fake-jpeg';
     };
     await until(() => written(0) && written(1));
     assert.equal(live.active.get(session.id).frames.length, 2);
@@ -101,13 +102,24 @@ describe('recording-live', () => {
     for (let i = 0; i < 2; i++) browser.emit('Page.screencastFrame', { sessionId: i, data: JPEG }, 's-1');
     await until(() => live.active.get(session.id).frames.length === 2);
     assert.equal(await live.stop(session.id), true);
-    const m = JSON.parse(readFileSync(join(live.DIR, session.id, 'manifest.json'), 'utf8'));
+    const m = openManifest(session.id, readFileSync(join(live.DIR, session.id, 'manifest.json')));
     assert.deepEqual(
       [m.sessionId, m.owner, m.provider, m.profile, m.frameCount, m.truncated, m.frames[0].meta],
       [session.id, 'abcdef12', 'chrome', 'shop', 2, true, null],
     );
     assert.equal(live.isRecording(session.id), false);
     assert.ok(browser.commands.some((c) => c.method === 'Page.stopScreencast'));
+  });
+
+  it('never writes a frame or the manifest to disk in the clear', async () => {
+    const { browser, session } = await recordable({});
+    await live.start(session);
+    browser.emit('Page.screencastFrame', { sessionId: 1, data: JPEG }, 's-1');
+    const file = join(live.DIR, session.id, live.frameFile(0));
+    await until(() => existsSync(file) && readFileSync(file).length > 0);
+    await live.stop(session.id);
+    assert.equal(readFileSync(file).includes('fake-jpeg'), false);
+    assert.equal(readFileSync(join(live.DIR, session.id, 'manifest.json')).includes(session.id), false);
   });
 
   it('says false when asked to stop a session it is not recording', async () => {

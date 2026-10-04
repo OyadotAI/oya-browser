@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { track } from '../telemetry/index.ts';
 import { control, projectId, instanceId } from '../control/service.ts';
 import { registry } from '../browsers/registry.ts';
+import { keyDigest, onKeyRevoked } from '../auth/service.ts';
 import { metrics } from '../../platform/metrics.ts';
 import { Status } from '../../platform/http-status.ts';
 import { Session } from './session.ts';
@@ -26,6 +27,12 @@ import { ATTACHMENT_LEASE_MS } from './constants.ts';
  */
 registry.on('browser:disconnected', ({ id }) => {
   for (const session of sessions.values()) if (session.attachedTo === id) void session.destroy('browser stopped');
+});
+
+/** A revoked key's gateway sessions end at once, which also hands their browsers back. */
+onKeyRevoked((digest) => {
+  for (const session of sessions.values())
+    if (keyDigest(session.apiKey) === digest) void session.destroy('API key revoked');
 });
 
 /** Why this caller may not attach to the browser, or null when it may. */

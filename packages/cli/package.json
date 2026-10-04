@@ -52,8 +52,8 @@
   "devDependencies": {
     "@oya-ai/browser": "1.0.154",
     "@types/node": "^20.19.43",
-    "tsup": "^8.0.0",
-    "typescript": "^5.4.0"
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
   },
   "author": "mk@getoya.ai"
 }

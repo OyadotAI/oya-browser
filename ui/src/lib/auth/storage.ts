@@ -16,13 +16,16 @@ const LOCAL_KEYS = [
 /** The console's per-tab credentials. */
 const SESSION_KEYS = ['oya_console_key', 'oya_project_credential', 'oya_project_id'];
 
+/** Set while this tab's session still owes its second factor (the server said `mfa_required`). */
+const STEP_UP = 'oya_mfa_pending';
+
 /** An admin's "Login as" in this tab: the token and whose account it opens. */
 const IMPERSONATION = 'oya_impersonation';
 
 /** Removes everything a session stored, including a "Login as". */
 export function clearStoredSession() {
   for (const key of LOCAL_KEYS) localStorage.removeItem(key);
-  for (const key of [...SESSION_KEYS, IMPERSONATION]) sessionStorage.removeItem(key);
+  for (const key of [...SESSION_KEYS, IMPERSONATION, STEP_UP]) sessionStorage.removeItem(key);
 }
 
 /** An admin acting as a customer: the token the server minted and the customer's email. */
@@ -71,4 +74,16 @@ export function keepRefreshToken(token: string | undefined) {
  */
 export function hasSessionCookie(): boolean {
   return document.cookie.split('; ').some((c) => c.startsWith('oya_session='));
+}
+
+/** Whether this tab's session still owes the code from the person's authenticator. */
+export function stepUpPending(): boolean {
+  if (typeof sessionStorage === 'undefined') return false;
+  return sessionStorage.getItem(STEP_UP) === '1';
+}
+
+/** Records what the server last said about the second factor: owed, or not (passed, or none set up). */
+export function keepStepUp(owed: boolean | undefined) {
+  if (owed) sessionStorage.setItem(STEP_UP, '1');
+  else sessionStorage.removeItem(STEP_UP);
 }

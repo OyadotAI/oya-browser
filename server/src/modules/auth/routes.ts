@@ -6,12 +6,14 @@ import { Router } from 'express';
 import {
   userAuthMiddleware,
   registerApiKey,
+  keyExpiry,
   listApiKeys,
   deleteApiKey,
   keyDigest,
   signup,
   login,
   refreshSession,
+  signOutEverywhere,
   oauthUrl,
   oauthSignup,
   verifyCaptcha,
@@ -20,14 +22,17 @@ import {
 } from './service.ts';
 import { track } from '../telemetry/index.ts';
 import { generateKey } from './keys.ts';
+import { mfaRoutes } from './mfa-routes.ts';
 import { issueSession, readRefreshCookie, clearSessionCookies } from './session-cookie.ts';
 import { audit } from '../../platform/audit.ts';
 import { control } from '../control/service.ts';
+import { consume } from '../../platform/limits.ts';
 import { Status } from '../../platform/http-status.ts';
-import { KEY_PREFIX_CHARS, MIN_PASSWORD_CHARS } from './constants.ts';
+import { BEARER, KEY_PREFIX_CHARS, MIN_PASSWORD_CHARS } from './constants.ts';
 
 /** Account and API key routes, mounted by the API. */
 export const router = Router({ caseSensitive: true });
+mfaRoutes(router);
 
 /**
  * An imported key becomes an administrator credential over a project holding
@@ -64,6 +69,12 @@ async function captchaRefused(req, res) {
   return true;
 }
 
+/** Audits a change to one of the signed-in user's keys, named by its digest. */
+function auditKey(req, action: string, digest: string) {
+  const meta = req.impersonatedBy ? { impersonatedBy: req.impersonatedBy } : undefined;
+  audit({ action, actorKey: null, actorUser: req.user.id, targetType: 'key', targetId: digest, meta, req });
+}
+
 /** What a key list shows for a key: its digest, prefix, project and label. */
 const keyInfo = (key, label) => ({
   id: keyDigest(key),
@@ -95,12 +106,46 @@ router.post('/auth/signup', async (req, res) => {
   await guarded(res, Status.BAD_REQUEST, () => signUpAndIn(req, res));
 });
 
-/** POST /auth/login, sign in with email and password and start a session. */
+/** The email a sign-in names, as the limit and the audit trail key it. */
+const loginEmail = (req) => String(req.body.email).trim().toLowerCase();
+
+/** Audits a password sign-in: who it was for, how it went and, once known, the account. */
+function auditLogin(req, outcome: string, userId = null, reason?: string) {
+  const meta = { method: 'password', ...(reason ? { reason } : {}) };
+  const subject = { actorUser: userId, targetType: 'account', targetId: loginEmail(req) };
+  audit({ action: 'auth.login', outcome, actorKey: null, ...subject, meta, req });
+}
+
+/** Answers 429 once this email has had its hour's sign-in attempts; true when it was answered. */
+function loginLimited(req, res) {
+  const limit = consume('login', loginEmail(req));
+  if (limit.allowed) return false;
+  auditLogin(req, 'denied', null, 'rate_limited');
+  res.set('Retry-After', String(limit.retryAfter));
+  res.status(Status.TOO_MANY_REQUESTS).json({ error: 'Too many sign-in attempts, try again later' });
+  return true;
+}
+
+/** Signs in with the request's email and password, audits it either way, and answers with the new session. */
+async function signIn(req, res) {
+  const session = await login(req.body.email, req.body.password).catch((err) => {
+    auditLogin(req, 'denied');
+    throw err;
+  });
+  auditLogin(req, 'ok', session.user.id);
+  issueSession(req, res, session);
+}
+
+/**
+ * POST /auth/login, sign in with email and password and start a session. The
+ * captcha is checked before the per-email limit, so a script that cannot pass
+ * it cannot spend a person's attempts and lock them out.
+ */
 router.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return badRequest(res, 'email and password required');
-  if (await captchaRefused(req, res)) return;
-  await guarded(res, Status.UNAUTHORIZED, async () => issueSession(req, res, await login(email, password)));
+  if ((await captchaRefused(req, res)) || loginLimited(req, res)) return;
+  await guarded(res, Status.UNAUTHORIZED, () => signIn(req, res));
 });
 
 /**
@@ -138,8 +183,33 @@ function refreshed(req, res, session) {
   issueSession(req, res, method ? { ...session, signed_up: method } : session);
 }
 
-/** Signing out has to reach the cookie, which the page cannot clear itself. */
-router.post('/auth/logout', (req, res) => {
+/**
+ * The access token to sign out with: the request's bearer token, else one
+ * traded for the refresh token in the body or cookie; '' when there is neither.
+ */
+async function accessTokenOf(req) {
+  const header = req.headers.authorization;
+  if (header?.startsWith(BEARER)) return header.slice(BEARER.length);
+  const refresh = req.body?.refresh_token || readRefreshCookie(req);
+  return refresh ? (await refreshSession(refresh)).access_token : '';
+}
+
+/** Revokes every Supabase session of the person signing out; a failure is logged, never blocks signing out. */
+async function revokeSession(req) {
+  try {
+    const access = await accessTokenOf(req);
+    if (access) await signOutEverywhere(access);
+  } catch (e) {
+    console.warn('[auth] sign-out could not revoke the session:', e.message);
+  }
+}
+
+/**
+ * POST /auth/logout. Signing out has to reach the cookie, which the page
+ * cannot clear itself, and Supabase, so the tokens stop working everywhere.
+ */
+router.post('/auth/logout', async (req, res) => {
+  await revokeSession(req);
   clearSessionCookies(res);
   res.json({ ok: true });
 });
@@ -166,25 +236,37 @@ router.get('/auth/keys', userAuthMiddleware, async (req, res) => {
 /**
  * POST /auth/keys, mint an API key for the signed-in user. The only time the key
  * itself is returned. Only its digest is stored, so there is no second chance to
- * read it and nothing to hand back later.
+ * read it and nothing to hand back later. Optional `expiresInDays` (1-3650)
+ * sets when it stops working; the answer's `expires_at` is null for never.
  */
 router.post('/auth/keys', userAuthMiddleware, async (req, res) => {
-  const { label } = req.body;
-  await guarded(res, Status.INTERNAL, async () => {
-    const key = generateKey();
-    await registerApiKey(key, req.user.id, label);
-    const info = keyInfo(key, label || 'Default');
-    track.apiKeyCreated(req.user, info.project);
-    res.json({ key, ...info });
-  });
+  const expiresAt = keyExpiry(req.body?.expiresInDays);
+  await guarded(res, Status.INTERNAL, () => mintKey(req, res, expiresAt));
 });
 
-/** POST /auth/keys/import, register an existing key (32-128 URL-safe characters) to the signed-in user. */
+/** Mints and registers a key for the signed-in user, audits and counts it, and answers with it once. */
+async function mintKey(req, res, expiresAt: string | null) {
+  const { label } = req.body;
+  const key = generateKey();
+  await registerApiKey(key, req.user.id, label, expiresAt);
+  const info = keyInfo(key, label || 'Default');
+  auditKey(req, 'key.create', info.id);
+  track.apiKeyCreated(req.user, info.project);
+  res.json({ key, ...info, expires_at: expiresAt });
+}
+
+/**
+ * POST /auth/keys/import, register an existing key (32-128 URL-safe characters)
+ * to the signed-in user. Optional `expiresInDays` applies when the key is new to
+ * this server; re-importing one already registered keeps its expiry.
+ */
 router.post('/auth/keys/import', userAuthMiddleware, async (req, res) => {
   const { key, label } = req.body;
   if (!key || typeof key !== 'string' || !IMPORTABLE_KEY.test(key))
     return badRequest(res, 'key must be 32-128 characters of A-Z a-z 0-9 _ -');
-  const claimedFromAgent = await registerApiKey(key, req.user.id, label || 'Imported');
+  const expiresAt = keyExpiry(req.body.expiresInDays);
+  const claimedFromAgent = await registerApiKey(key, req.user.id, label || 'Imported', expiresAt);
+  auditKey(req, 'key.import', keyDigest(key));
   if (claimedFromAgent) track.agentKeyClaimed(req.user);
   res.json({ ok: true, claimed_from_agent: Boolean(claimedFromAgent), ...keyInfo(key, label || 'Imported') });
 });
@@ -197,6 +279,7 @@ router.post('/auth/keys/import', userAuthMiddleware, async (req, res) => {
 router.delete('/auth/keys/:id', userAuthMiddleware, async (req, res) => {
   await guarded(res, Status.INTERNAL, async () => {
     await deleteApiKey(req.params.id, req.user.id);
+    auditKey(req, 'key.revoke', req.params.id);
     res.json({ ok: true });
   });
 });

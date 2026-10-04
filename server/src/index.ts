@@ -44,7 +44,7 @@ import { join } from 'path';
 import cors from 'cors';
 import { router as apiRouter } from './app/api.ts';
 import { slackActionsRouter } from './modules/slack/service.ts';
-import { drain as drainAudit } from './platform/audit.ts';
+import { drain as drainAudit, startAnchoring, verifyStored as verifyAudit } from './platform/audit.ts';
 import {
   handleJsonVersion,
   handleJsonList,
@@ -69,6 +69,7 @@ import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
 import { apiKeyHeader } from './app/http.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
+import { CORS_ORIGIN, HEADERS_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from './app/constants.ts';
 import { billingWebhook, startReporting } from './modules/billing/index.ts';
 import * as license from './platform/license/index.ts';
 import { drainDownloads } from './modules/admin/index.ts';
@@ -118,7 +119,8 @@ startWorkers();
 const egressServer = process.env.OYA_EGRESS_PORT ? createEgressServer() : null;
 egressServer?.listen(Number(process.env.OYA_EGRESS_PORT), process.env.OYA_EGRESS_HOST || '127.0.0.1');
 
-app.use(cors());
+// Without credentials either way: the console is same-origin, and a split one carries its token in the body.
+app.use(cors({ origin: CORS_ORIGIN }));
 app.use(apiKeyHeader);
 
 // ── Legacy domain redirect: old hosts → canonical host ──
@@ -228,9 +230,11 @@ else
 
 const server = createServer(app);
 
-// Disable HTTP server timeout so long-running commands aren't killed
+// No socket idle timeout: long commands answer through longJson, SSE streams
+// and sockets idle between frames. Receiving a request is still bounded.
 server.timeout = 0;
-server.requestTimeout = 0;
+server.headersTimeout = HEADERS_TIMEOUT_MS;
+server.requestTimeout = REQUEST_TIMEOUT_MS;
 
 // ── WebSocket at /ws ──
 const wss = new WebSocketServer({
@@ -263,8 +267,12 @@ function upgradeGateway(req, socket, head) {
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const apiKey = url.searchParams.get('key');
+  // A key in the URL lands in access logs; the client sends it in its first
+  // message instead. The old form is refused unless OYA_ALLOW_LEGACY_QUERY_KEYS=true,
+  // the same switch /connect?token= obeys.
+  const queryKeysOff = process.env.OYA_ALLOW_LEGACY_QUERY_KEYS !== 'true';
 
-  if (apiKey && !validateApiKey(apiKey)) {
+  if (apiKey && (queryKeysOff || !validateApiKey(apiKey))) {
     ws.close(INVALID_KEY_CLOSE_CODE, 'Invalid API key');
     return;
   }
@@ -318,6 +326,10 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     process.exit(process.exitCode || 0);
   });
 }
+
+// Tamper evidence is only evidence if someone checks it: verify the stored chains on every boot.
+verifyAudit().catch((e) => console.error(`[audit] startup verification could not run: ${e.message}`));
+startAnchoring();
 
 server.listen(PORT, () => {
   booted = true;

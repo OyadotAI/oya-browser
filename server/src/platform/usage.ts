@@ -46,6 +46,14 @@ export function billTo(apiKey, userId) {
   if (apiKey && userId) owners.set(fingerprint(apiKey), userId);
 }
 
+/** Drops these fingerprints' counters, so a flush never writes back usage rows of an erased project. */
+export function forget(ids: Set<string>) {
+  for (const id of ids) {
+    buckets.delete(id);
+    owners.delete(id);
+  }
+}
+
 /** This fingerprint's bucket for the current hour, started fresh when the hour has rolled over. */
 function bucket(id) {
   const hour = hourOf();

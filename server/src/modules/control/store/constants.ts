@@ -43,3 +43,12 @@ export const BASE_BACKOFF_MS = 5;
 export const BACKOFF_GROWTH = 2;
 /** The backoff ceiling never grows past this. */
 export const MAX_BACKOFF_MS = 250;
+
+/** Characters in a hex sha256 digest. */
+const SHA256_HEX_CHARS = 64;
+/** What the first chained event of a project links to: all zeros, a sha256 that no event has. */
+export const EVENT_GENESIS_HASH = '0'.repeat(SHA256_HEX_CHARS);
+/** Newest events of a project the event chain check reads. */
+export const EVENT_VERIFY_LIMIT = 10_000;
+/** Above every event sequence number: "no kept event" for the prune's cutoff. */
+export const MAX_EVENT_SEQ = Number.MAX_SAFE_INTEGER;

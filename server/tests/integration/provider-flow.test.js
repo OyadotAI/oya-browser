@@ -144,7 +144,9 @@ try {
   });
   pool.setStrategy(fingerprint('owner-a'), 'priority');
   const connect = async () => {
-    const client = new WebSocket(origin.replace('http:', 'ws:') + '/connect?token=owner-a');
+    const client = new WebSocket(origin.replace('http:', 'ws:') + '/connect', {
+      headers: { Authorization: 'Bearer owner-a' },
+    });
     await new Promise((resolve, reject) => {
       client.once('open', resolve);
       client.once('error', reject);

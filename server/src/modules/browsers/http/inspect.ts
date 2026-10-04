@@ -6,6 +6,7 @@ import { registry } from '../registry.ts';
 import { listSandboxBrowsers } from '../../../drivers/sandbox.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { canAccess, getKey } from '../../../app/http.ts';
+import { audit } from '../../../platform/audit.ts';
 import { browserCdpUrl } from '../lifecycle/cdp-url.ts';
 
 /** One browser with its recent activity; a CDP URL too, for anyone but a viewer. */
@@ -32,6 +33,7 @@ const SSE_HEADERS = { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-
 /** Streams a browser's frames to this response until the viewer goes away. */
 export function liveView(req, res) {
   const { browserId } = req.params;
+  audit({ action: 'browser.live.view', actorKey: getKey(req), targetType: 'browser', targetId: browserId, req });
   res.writeHead(Status.OK, SSE_HEADERS);
   sendLatestFrame(res, registry.get(browserId));
   res.authToken = req.authToken;

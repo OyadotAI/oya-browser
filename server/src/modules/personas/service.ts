@@ -190,6 +190,15 @@ function newPersona(ids: PersonaIds, { name, proxy, maxConcurrent, prefs, prefsC
 /** Least recently used first; never-used personas lead. */
 const byLastUse = (a: Persona, b: Persona) => String(a.lastUsedAt || '').localeCompare(String(b.lastUsedAt || ''));
 
+/** Drops a persona's login state, factors and credentials. */
+function clearSecrets(deps: PersonaDeps, id: string) {
+  deps.logins.clear(id);
+  // clearAll, not clear: a persona may hold a factor and a credential per
+  // portal, and leaving those behind would outlive the identity they belong to.
+  const cleared = [deps.mfa.clearAll(id), deps.credentials.clearAll(id)];
+  Promise.all(cleared).catch((e) => console.error(`[personas] clearing ${id}'s secrets failed:`, e.message));
+}
+
 /** Owns every persona in memory, enforces per-persona concurrency, and saves changes on a timer. */
 export class PersonaService {
   /** Collaborators wired in by the composition root. */
@@ -211,10 +220,7 @@ export class PersonaService {
     return describePersona(p, this, this.deps);
   }
 
-  /**
-   * The key's default persona, created on first use. Its seed reproduces the
-   * pre-persona fingerprint for that key exactly.
-   */
+  /** The key's default persona, created on first use; its seed reproduces the key's pre-persona fingerprint. */
   defaultFor(apiKey: string, first?: FirstBrowser) {
     const { id, seed } = defaultPersonaSeed(apiKey);
     const existing = this.store.get(id);
@@ -285,14 +291,15 @@ export class PersonaService {
     return true;
   }
 
+  /** Forgets every persona these owners hold, the default included, with all their secrets: their project is erased. */
+  forgetOwners(owners: Set<string>) {
+    for (const p of this.store.all()) if (owners.has(p.owner)) this.forget(p.id);
+  }
+
   /** Drops a persona with its login state, factors, credentials and slots. */
   private forget(id: string) {
     this.store.delete(id);
-    this.deps.logins.clear(id);
-    // clearAll, not clear: a persona may hold a factor and a credential per
-    // portal, and leaving those behind would outlive the identity they belong to.
-    const cleared = [this.deps.mfa.clearAll(id), this.deps.credentials.clearAll(id)];
-    Promise.all(cleared).catch((e) => console.error(`[personas] clearing ${id}'s secrets failed:`, e.message));
+    clearSecrets(this.deps, id);
     this.slots.delete(id);
   }
 

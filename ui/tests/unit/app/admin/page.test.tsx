@@ -230,6 +230,17 @@ describe('AdminPage', () => {
     expect((screen.getByLabelText('Customer email') as HTMLInputElement).value).toBe('ana@example.com');
   });
 
+  it('sends an admin without a second factor to the code page, and back here after', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+    vi.mocked(adminOverview).mockRejectedValue(
+      Object.assign(new Error('Sign in with a second factor'), { code: 'mfa_required' }),
+    );
+    vi.mocked(adminLicenses).mockResolvedValue({ licenses: [] });
+    render(<AdminPage />);
+    await vi.waitFor(() => expect(assign).toHaveBeenCalledWith('/account/mfa?next=%2Fadmin'));
+  });
+
   it('logs in as the person found: stores the token and opens their dashboard', async () => {
     const replace = vi.fn();
     vi.stubGlobal('location', { ...window.location, replace });

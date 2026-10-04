@@ -10,6 +10,7 @@ import * as mfa from '../../challenges/mfa.ts';
 import * as credentials from '../../personas/credentials.ts';
 import * as keyConfig from '../../config/service.ts';
 import { auditBrowser } from './helpers.ts';
+import { allowedLlm } from '../../agent/chat.ts';
 
 /** Not yet layered: reads the persona service from the composition root. */
 const { personas } = container;
@@ -36,16 +37,16 @@ export async function completeMfa(req, res) {
   const { browserId } = req.params;
   const browser = registry.get(browserId);
   const personaId = browser.persona?.id || personas.defaultFor(getKey(req)).id;
-  const result = await mfa.complete((expr) => evaluateIn(browserId, expr), personaId, mfaOptions(req, browser));
+  const result = await mfa.complete((expr) => evaluateIn(browserId, expr), personaId, await mfaOptions(req, browser));
   const meta = { method: result.method };
   if (result.present) auditBrowser(req, 'mfa.complete', browserId, meta, result.completed ? 'ok' : 'error');
   res.json(result);
 }
 
-/** Where a person can step in, which site it is, and what counts as a fresh code. */
-const mfaOptions = (req, browser) => ({
+/** Where a person can step in, which site it is, what counts as a fresh code, and the model the project allows to read it. */
+const mfaOptions = async (req, browser) => ({
   liveViewUrl: `/dashboard/?browser=${encodeURIComponent(req.params.browserId)}`,
   domain: credentials.domainOf(browser?.currentUrl || ''),
   since: Number(req.body?.since) || 0,
-  llm: keyConfig.resolve(getKey(req)),
+  llm: await allowedLlm(getKey(req), keyConfig.resolve(getKey(req))),
 });

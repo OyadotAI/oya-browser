@@ -7,13 +7,18 @@ import { Copy, KeyRound, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { copyKey, show } from './actions';
 import { ACTION_CLASS } from './constants';
 import type { TargetProps } from './types';
+import { expiryText } from './view';
 
-/** The key's prefix (with an ellipsis), or the project id when no key is listed. */
+/** The key's prefix (with an ellipsis), or the project id when no key is listed, and when a listed key expires. */
 function KeyHint({ c, target }: TargetProps) {
+  const key = c.keys.find((k) => k.project === target.id);
   return (
-    <p className="px-3 pb-3 pt-2 font-mono text-[11px] text-text-dim">
-      {c.keys.find((k) => k.project === target.id)?.prefix || target.id}
-      {c.keys.some((k) => k.project === target.id && k.prefix) && '…'}
+    <p className="px-3 pb-3 pt-2 text-[11px] text-text-dim">
+      <span className="font-mono">
+        {key?.prefix || target.id}
+        {key?.prefix && '…'}
+      </span>
+      {key && <span className="block pt-1">{expiryText(key.expires_at)}</span>}
     </p>
   );
 }

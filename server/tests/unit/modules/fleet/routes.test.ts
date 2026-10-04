@@ -102,6 +102,14 @@ describe('fleet routes', () => {
     assert.ok(res.body.events.every((e) => e.actor === fingerprint(KEY)));
   });
 
+  it('answers the audit verdict, and a project’s event chain when asked, to the operator only', async () => {
+    assert.equal((await as('GET', '/operator/audit/verify')).status, 403);
+    const plain = await as('GET', '/operator/audit/verify', OPERATOR);
+    assert.deepEqual([plain.status, plain.body.audit.ok, plain.body.controlEvents], [200, true, undefined]);
+    const withProject = await as('GET', '/operator/audit/verify?project=p-none', OPERATOR);
+    assert.deepEqual(withProject.body.controlEvents, { ok: true, checked: 0 });
+  });
+
   it('drains and undrains for the operator', async () => {
     assert.equal((await as('POST', '/operator/drain', KEY, {})).status, 403);
     const on = await as('POST', '/operator/drain', OPERATOR, {});

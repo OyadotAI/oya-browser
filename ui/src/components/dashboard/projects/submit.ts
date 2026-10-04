@@ -28,9 +28,9 @@ async function destroy(c: PickerContext) {
 
 /** Creates a project and shows its new key. */
 async function create(c: PickerContext) {
-  const data = await createApiKey(c.session.token!, c.ui.name.trim() || undefined);
+  const data = await createApiKey(c.session.token!, c.ui.name.trim() || undefined, c.ui.expiresInDays);
   // Show the key before anything else can fail, so it is never lost behind an error.
-  c.patch({ name: '', copied: false, revealedKey: data.key, form: 'key' });
+  c.patch({ name: '', expiresInDays: null, copied: false, revealedKey: data.key, form: 'key' });
   await loadProjects(c.session);
   if (data.project) await openProject(c.session, data.project).catch((e) => c.session.toast(message(e), 'error'));
   c.session.toast('Project created. Copy your API key below.', 'success');

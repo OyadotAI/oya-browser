@@ -5,7 +5,13 @@
  */
 import { HttpError } from '../errors.ts';
 import { Status } from '../http-status.ts';
-import { DB_BATCH_ROWS, DEFAULT_POOL_MAX, PG_CONNECT_TIMEOUT_MS, PG_IDLE_TIMEOUT_MS } from '../constants.ts';
+import {
+  DB_BATCH_ROWS,
+  DEFAULT_DB_TLS,
+  DEFAULT_POOL_MAX,
+  PG_CONNECT_TIMEOUT_MS,
+  PG_IDLE_TIMEOUT_MS,
+} from '../constants.ts';
 import { rowFromStored, TABLES } from './schema.ts';
 import { whereSql, tailSql, conflictSql, setSql, type Bind } from './sql.ts';
 import type { Connection, ControlRemote, Row, SelectOptions, Where } from './connection.ts';
@@ -36,7 +42,7 @@ async function getPool(connectionString: string) {
 /** Pool settings: size from DATABASE_POOL_MAX, and bounded connect and idle times. */
 function poolOptions(connectionString: string) {
   return {
-    connectionString: libpqSslModes(connectionString),
+    connectionString: pgConnectionString(connectionString),
     max: Number(process.env.DATABASE_POOL_MAX || DEFAULT_POOL_MAX),
     // Storage is on the request path; a hung connect must not hang a request.
     connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
@@ -55,6 +61,40 @@ function poolOptions(connectionString: string) {
 export function libpqSslModes(connectionString: string) {
   if (/[?&]uselibpqcompat=/.test(connectionString)) return connectionString;
   return `${connectionString}${connectionString.includes('?') ? '&' : '?'}uselibpqcompat=true`;
+}
+
+/**
+ * The connection string as node-postgres should read it under OYA_DB_TLS:
+ * `libpq` (the default) keeps the URL's own sslmode as psql reads it;
+ * `verify-full` requires TLS and checks the certificate and host name. Any
+ * other value is refused, so a typo never falls back to plaintext.
+ */
+export function pgConnectionString(connectionString: string, tls = process.env.OYA_DB_TLS || DEFAULT_DB_TLS) {
+  if (!Object.hasOwn(TLS_MODES, tls))
+    throw new Error(`OYA_DB_TLS must be ${Object.keys(TLS_MODES).join(' or ')}, not "${tls}"`);
+  return TLS_MODES[tls](connectionString);
+}
+
+/** Each OYA_DB_TLS value's rewrite of the connection string. */
+const TLS_MODES: Record<string, (url: string) => string> = {
+  libpq: libpqSslModes,
+  'verify-full': verifyFull,
+};
+
+/**
+ * The connection string forced to sslmode=verify-full: TLS is required and the
+ * server's certificate must chain to a trusted CA and name the host. The CA is
+ * the URL's sslrootcert, else PGSSLROOTCERT, else the system store. Libpq
+ * compatibility is dropped, since it would read verify-full the same anyway
+ * and its `require` is what this replaces.
+ */
+export function verifyFull(connectionString: string, ca = process.env.PGSSLROOTCERT) {
+  const [, base, query] = connectionString.match(/^([^?]*)\??(.*)$/s);
+  const params = new URLSearchParams(query);
+  params.delete('uselibpqcompat');
+  params.set('sslmode', 'verify-full');
+  if (ca && !params.has('sslrootcert')) params.set('sslrootcert', ca);
+  return `${base}?${params}`;
 }
 
 /** Close the pool, if one was opened. */

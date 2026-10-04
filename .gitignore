@@ -34,3 +34,6 @@ lcov.info
 # Local promo videos
 /video1.mp4
 /video2.mp4
+
+# Local one-off: strips Claude from git history
+/strip-claude-oya-browser.sh

@@ -15,6 +15,17 @@ const library = await import('../../../../src/modules/gateway/recording-library.
 const { DIR, active, frameFile } = await import('../../../../src/modules/gateway/recording-live.ts');
 const { control } = await import('../../../../src/modules/control/service.ts');
 const { DEFAULT_RECORDING_DAYS, MS_PER_DAY } = await import('../../../../src/modules/gateway/constants.ts');
+const { sealFrame, sealManifest } = await import('../../../../src/modules/control/recording-storage.ts');
+
+/** Spools a finished recording the way the recorder writes it now: manifest and frame sealed. */
+function spoolSealed(owner: string) {
+  const id = randomUUID();
+  mkdirSync(join(DIR, id), { recursive: true });
+  const manifest = { sessionId: id, owner, startedAt: new Date().toISOString(), frameCount: 1, frames: [{ i: 0 }] };
+  writeFileSync(join(DIR, id, 'manifest.json'), sealManifest(manifest));
+  writeFileSync(join(DIR, id, frameFile(0)), sealFrame(id, 0, Buffer.from('jpeg-0')));
+  return id;
+}
 
 /** Spools a finished recording for `owner`, started `startedAt`, with one frame. */
 function spool(owner: string, startedAt = new Date().toISOString()) {
@@ -99,6 +110,19 @@ describe('manifest and frame', () => {
     assert.equal(await library.frame(id, 0, 'bbbb2222'), null);
   });
 
+  it('opens a sealed manifest and frame for their owner', async () => {
+    const id = spoolSealed('aaaa1111');
+    assert.equal((await library.manifest(id, 'aaaa1111')).owner, 'aaaa1111');
+    assert.equal(await library.manifest(id, 'bbbb2222'), null);
+    assert.equal((await library.frame(id, 0, 'aaaa1111')).toString(), 'jpeg-0');
+  });
+
+  it('refuses a sealed frame moved into another frame’s place', async () => {
+    const id = spoolSealed('aaaa1111');
+    writeFileSync(join(DIR, id, frameFile(1)), sealFrame(id, 0, Buffer.from('jpeg-0')));
+    assert.equal(await library.frame(id, 1, 'aaaa1111'), null);
+  });
+
   it('refuses a frame index out of range or not a whole number', async () => {
     const id = spool('aaaa1111');
     for (const index of [-1, 1.5, 'x', 1e9]) assert.equal(await library.frame(id, index, 'aaaa1111'), null);
@@ -138,6 +162,20 @@ describe('maintain', () => {
     assert.deepEqual(
       [expired, kept, shortLived].map((id) => existsSync(join(DIR, id))),
       [false, true, false],
+    );
+  });
+
+  it('deletes every recording of a deleted project, however recent', async () => {
+    const gone = spool('dddd4444');
+    const kept = spool('aaaa1111');
+    mock.method(control().store as any, 'load', async () => [
+      [{ body: { legacyOwner: 'dddd4444', deletedAt: Date.now(), settings: {} } }],
+      [],
+    ]);
+    await library.maintain();
+    assert.deepEqual(
+      [gone, kept].map((id) => existsSync(join(DIR, id))),
+      [false, true],
     );
   });
 

@@ -38,6 +38,8 @@ process.env.FLEET_TOKEN = 'tenant-key';
 process.env.OYA_PROFILE_SECRET = 'a'.repeat(64);
 process.env.OYA_SESSION_GRACE_MS = '10000';
 process.env.OYA_RECORD_EVERY_NTH = '1';
+// The CDP client here dials a bare URL with no headers, so it uses the opt-in ?token= form.
+process.env.OYA_ALLOW_LEGACY_QUERY_KEYS = 'true';
 
 const { handleJsonVersion, handleJsonList, handleUpgrade, sessions } =
   await import('../../src/modules/gateway/service.ts');

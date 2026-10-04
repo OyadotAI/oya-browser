@@ -1,9 +1,10 @@
 /**
  * Recordings in progress on this replica: starting the screencast, spooling
- * its frames to disk, and writing the manifest when it stops.
+ * its frames to disk, and writing the manifest when it stops. Frames and the
+ * manifest are sealed before they are written; nothing reaches disk in the clear.
  */
 import { control } from '../control/service.ts';
-import { archiveRecording, sharedRecordings } from '../control/recording-storage.ts';
+import { archiveRecording, sealFrame, sealManifest, sharedRecordings } from '../control/recording-storage.ts';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { metrics } from '../../platform/metrics.ts';
@@ -25,7 +26,7 @@ import {
 /** Where recordings are spooled. */
 export const DIR = dataPath('recordings');
 
-/** sessionId -> { conn, sessionId, dir, frames, bytes, startedAt, provider, owner, profile } */
+/** sessionId -> { conn, sessionId, id, dir, frames, bytes, startedAt, provider, owner, profile } */
 export const active = new Map();
 
 /** What Chrome is asked to stream. */
@@ -83,7 +84,7 @@ async function assertRecordable(session) {
 async function track(session, { conn, sessionId }) {
   const dir = join(DIR, session.id);
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  const state = { conn, sessionId, dir, ...emptySpool(), ...ownership(session) };
+  const state = { conn, sessionId, id: session.id, dir, ...emptySpool(), ...ownership(session) };
   active.set(session.id, state);
   conn.on('Page.screencastFrame', async (params) => onFrame(state, params));
   return state;
@@ -113,12 +114,12 @@ function onFrame(state, params) {
 }
 
 /**
- * Writes one frame to the spool. The first failure is logged with where it
+ * Writes one frame, sealed, to the spool. The first failure is logged with where it
  * was writing; later ones are silent, since a full or gone disk fails every
  * frame after it and one line says as much as a thousand.
  */
 function spool(state, index, buf) {
-  writeFile(join(state.dir, frameFile(index)), buf).catch((e) => {
+  writeFile(join(state.dir, frameFile(index)), sealFrame(state.id, index, buf)).catch((e) => {
     if (state.writeFailed) return;
     state.writeFailed = true;
     console.error(`[gateway] recording frames not written to ${state.dir}:`, e.message);
@@ -156,9 +157,9 @@ async function endScreencast(state) {
   state.conn.close();
 }
 
-/** Writes the manifest to the spool and archives the recording; a failed upload keeps the spool. */
+/** Writes the sealed manifest to the spool and archives the recording; a failed upload keeps the spool. */
 async function saveManifest(manifest, dir) {
-  await writeFile(join(dir, 'manifest.json'), JSON.stringify(manifest));
+  await writeFile(join(dir, 'manifest.json'), sealManifest(manifest));
   await archiveRecording(manifest, dir).catch((e) => console.error('[recording] local spool retained:', e.message));
 }
 

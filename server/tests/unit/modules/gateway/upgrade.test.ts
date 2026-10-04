@@ -16,6 +16,8 @@ import { ownDataDir, restoreEnv } from '../../support/data-dir.ts';
 ownDataDir('oya-upgrade-');
 process.env.OYA_LIMIT_CONNECT_BURST = '5';
 process.env.OYA_QUOTA_MAX_BROWSERS = '1';
+// Most rules below are easiest to state with ?token=; the default (refused) has its own test.
+process.env.OYA_ALLOW_LEGACY_QUERY_KEYS = 'true';
 const { handleUpgrade, sessions } = await import('../../../../src/modules/gateway/service.ts');
 const { pool } = await import('../../../../src/modules/gateway/routing.ts');
 const profiles = await import('../../../../src/modules/gateway/profiles.ts');
@@ -108,11 +110,23 @@ describe('authentication', () => {
     assert.ok(ws);
   });
 
-  it('refuses a key in the query when legacy query keys are turned off', async () => {
+  it('refuses a key in the query by default', async () => {
+    const saved = process.env.OYA_ALLOW_LEGACY_QUERY_KEYS;
+    delete process.env.OYA_ALLOW_LEGACY_QUERY_KEYS;
+    assert.equal((await connect(`token=${newKey()}`)).status, 401);
+    restoreEnv('OYA_ALLOW_LEGACY_QUERY_KEYS', saved);
+  });
+
+  it('refuses a key in the query when the legacy switch is anything but true', async () => {
     const saved = process.env.OYA_ALLOW_LEGACY_QUERY_KEYS;
     process.env.OYA_ALLOW_LEGACY_QUERY_KEYS = 'false';
     assert.equal((await connect(`token=${newKey()}`)).status, 401);
     restoreEnv('OYA_ALLOW_LEGACY_QUERY_KEYS', saved);
+  });
+
+  it('accepts a key in the query when OYA_ALLOW_LEGACY_QUERY_KEYS=true', async () => {
+    const { ws } = await connect(`token=${newKey()}`);
+    assert.ok(ws);
   });
 
   it('redeems a connection ticket for the key it was issued to', async () => {
@@ -127,6 +141,16 @@ describe('authentication', () => {
     const key = newKey();
     mock.method(control() as any, 'authenticate', async () => ({ key, role: 'viewer' }));
     assert.equal((await connect('token=oya_viewer')).status, 403);
+  });
+
+  it('confines a share link to its own session: no new browser, profile or other browser', async () => {
+    const key = newKey();
+    mock.method(control() as any, 'authenticate', async () => ({ key, role: 'operator', sessionId: 'shared-1' }));
+    assert.equal((await connect('token=oya_share')).status, 403);
+    assert.equal((await connect('token=oya_share&profile=work')).status, 403);
+    assert.equal((await connect('token=oya_share&browser=other')).status, 403);
+    assert.equal((await connect('token=oya_share&session=shared-1&browser=other')).status, 403);
+    assert.equal((await connect('token=oya_share&session=shared-1')).status, 404);
   });
 
   it('answers 503 when credentials cannot be checked', async () => {

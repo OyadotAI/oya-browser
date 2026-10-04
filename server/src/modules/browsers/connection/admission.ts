@@ -4,13 +4,20 @@
  * turns into a close code; anything else is a server-side failure.
  */
 import { randomUUID } from 'crypto';
-import { authenticateToken } from '../../auth/service.ts';
+import { authenticateToken, isShare, keyDigest, onKeyRevoked } from '../../auth/service.ts';
+import { dropBrowser } from '../lifecycle/fleet.ts';
 import { registry } from '../registry.ts';
 import { destroyMcpServer } from '../../../mcp/server.ts';
 import { container } from '../../../app/container.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { failPending } from './commands.ts';
 import { CloseCode, KEY_HINT_CHARS, MAX_CLOSE_REASON } from './constants.ts';
+
+/** A revoked key's browsers are dropped at once; they are refused if they dial back. */
+onKeyRevoked((digest) => {
+  for (const [id, browser] of registry.browsers)
+    if (browser.apiKey && keyDigest(browser.apiKey) === digest) dropBrowser(id, browser.ws, 'API key revoked');
+});
 
 /** A refused connection: closed with `code`, counted as `outcome`, logged as `detail`. */
 export class Rejection extends Error {
@@ -78,10 +85,15 @@ function principalOf(presented: string) {
   });
 }
 
-/** Viewers never register; a managed browser's credential registers only its own session. */
+/**
+ * Viewers and share links never register (a share holder registering the
+ * shared browser's id would take it over); a managed browser's credential
+ * registers only its own session.
+ */
 const mayRegister = (principal, browserId: string) =>
   !!principal?.key &&
   principal.role !== 'viewer' &&
+  !isShare(principal) &&
   !(principal.role === 'browser' && principal.sessionId !== browserId);
 
 /** The end of a key, for the log. */

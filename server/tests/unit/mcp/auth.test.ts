@@ -1,7 +1,7 @@
 /**
  * Unit tests for MCP authorization: only an operator credential gets through;
  * a viewer is refused 403, a bad or missing key 401, and an unavailable
- * credential store 503.
+ * credential store 503. A share link reaches only its own browser.
  */
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,9 +10,9 @@ import { HttpError } from '../../../src/platform/errors.ts';
 import { FakeResponse, fakeRequest, stubControl } from '../support/browsers.ts';
 
 /** Authorizes a request carrying `key`; returns the outcome and the response. */
-async function check(key: string) {
+async function check(key: string, params = {}) {
   const res = new FakeResponse();
-  return { caller: await authorize(fakeRequest({ key }), res), res };
+  return { caller: await authorize(fakeRequest({ key, params }), res), res };
 }
 
 describe('authorize', () => {
@@ -28,6 +28,16 @@ describe('authorize', () => {
     const { caller, res } = await check('oya_viewer');
     assert.equal(caller, null);
     assert.deepEqual([res.statusCode, res.body], [403, { error: 'Operator permission required' }]);
+  });
+
+  it('confines a share link to its own browser, never the pool', async () => {
+    stubControl({ authenticate: async () => ({ key: 'k-op', role: 'operator', sessionId: 'b-1' }) });
+    assert.deepEqual((await check('oya_share', { browserId: 'b-1' })).caller, { key: 'k-op' });
+    for (const params of [{}, { browserId: 'b-2' }]) {
+      const { caller, res } = await check('oya_share', params);
+      assert.equal(caller, null);
+      assert.equal(res.statusCode, 403);
+    }
   });
 
   it('answers 401 when no key is sent', async () => {

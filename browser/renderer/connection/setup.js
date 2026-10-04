@@ -9,8 +9,12 @@
 
 /** The setup screen. */
 const Setup = {
-  /** A usable server address: ws:// or wss:// and no spaces. */
-  SERVER_URL: /^wss?:\/\/[^\s]+$/,
+  /**
+   * A usable server address: wss:// anywhere, or plaintext ws:// only to this
+   * machine, the rule pairing links follow (main/pairing.cjs). Anywhere else
+   * ws:// would put the key and every synced cookie on the wire in the clear.
+   */
+  SERVER_URL: /^(wss:\/\/[^\s]+|ws:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?([/?#][^\s]*)?)$/i,
 
   /** Shows one of the panel's views: 'start', 'waiting' or 'manual'. */
   show(view) {
@@ -27,7 +31,7 @@ const Setup = {
 
   /** Why the entered settings cannot be used, or '' when they can. */
   problem(server, key) {
-    if (!Setup.SERVER_URL.test(server)) return 'Enter a valid ws:// or wss:// server address.';
+    if (!Setup.SERVER_URL.test(server)) return 'Enter a valid wss:// server address (ws:// only for this computer).';
     if (!key) return 'API key is required';
     return '';
   },

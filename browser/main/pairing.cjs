@@ -98,4 +98,4 @@ async function pairFromLink(rawUrl, ask) {
   return false;
 }
 
-module.exports = { pairFromLink };
+module.exports = { pairFromLink, pairingServer };

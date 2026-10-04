@@ -8,8 +8,6 @@ const HOURS_PER_DAY = 24;
 /** Milliseconds in a day. */
 export const MS_PER_DAY = HOURS_PER_DAY * MS_PER_HOUR;
 
-/** Only people signed in with a confirmed address at this domain are admins. */
-export const ADMIN_DOMAIN = '@getoya.ai';
 /** Days of downloads and signups the overview shows. */
 export const DAYS_SHOWN = 30;
 /** Heaviest users the overview lists. */

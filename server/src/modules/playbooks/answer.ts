@@ -8,7 +8,7 @@ import { chatCompletion } from '../../platform/llm.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import * as keyConfig from '../config/service.ts';
-import { fill } from '../agent/chat.ts';
+import { fill, requireLlmAllowed } from '../agent/chat.ts';
 import { MAX_ANSWER_CHARS } from './constants.ts';
 import { container } from '../../app/container.ts';
 import { llmCost } from '../billing/index.ts';
@@ -35,6 +35,13 @@ function modelFor(apiKey) {
   return { apiKey: openaiKey, baseUrl, model };
 }
 
+/** The key's model, once its project's policy allows page content to go to it. */
+async function allowedModel(apiKey) {
+  const model = modelFor(apiKey);
+  await requireLlmAllowed(apiKey, model.baseUrl);
+  return model;
+}
+
 /** One answer is one agent step, and on the operator's model its cost is the person's too. */
 function bill(apiKey, used) {
   usage.record(apiKey, 'agent_steps', 1);
@@ -48,9 +55,10 @@ function bill(apiKey, used) {
  * ponytail: not counted against the hourly chat budget; one short call per field.
  */
 export async function answerField(apiKey, question: string, context: any = {}) {
+  const model = await allowedModel(apiKey);
   await container.billing.entitlements.admitAgent(apiKey);
   const asked = brief(question, context.task, context.values, context.example);
-  const reply = await chatCompletion({ ...modelFor(apiKey), messages: conversation(asked) });
+  const reply = await chatCompletion({ ...model, messages: conversation(asked) });
   bill(apiKey, reply.usage);
   return String(reply.choices?.[0]?.message?.content ?? '')
     .trim()

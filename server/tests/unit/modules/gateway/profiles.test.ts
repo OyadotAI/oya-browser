@@ -70,6 +70,24 @@ describe('profile locks', () => {
   });
 });
 
+describe('removeOwners', () => {
+  it("deletes every profile an erased owner saved, and nobody else's", async () => {
+    const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+    mkdirSync(join(dir, 'profiles'), { recursive: true });
+    for (const [o, n] of [
+      [OWNER, 'shop'],
+      [OWNER, 'other'],
+      [OTHER, 'shop'],
+    ])
+      writeFileSync(fileOf(o, n), 'sealed');
+    assert.equal(await profiles.removeOwners(new Set([OWNER])), 2);
+    assert.deepEqual(
+      [fileOf(OWNER, 'shop'), fileOf(OWNER, 'other'), fileOf(OTHER, 'shop')].map((f) => existsSync(f)),
+      [false, false, true],
+    );
+  });
+});
+
 describe('capture and restore', () => {
   beforeEach(async () => {
     await profiles.remove(OWNER, 'shop');

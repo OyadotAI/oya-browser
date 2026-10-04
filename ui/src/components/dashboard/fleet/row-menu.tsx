@@ -4,12 +4,12 @@
 import { Camera, Copy, ExternalLink, PanelRightOpen, Plug, Square } from 'lucide-react';
 import type { MenuItem } from '@/components/ui/context-menu';
 import type { BrowserRow } from '../types';
-import { errorMessage } from '@/lib/api-client';
+import { api, errorMessage } from '@/lib/api-client';
 import { openStream } from './open-stream';
 
 /** What the menu's items call back into. */
 export interface RowMenuActions {
-  /** Key that authorises the stream token and goes in the CDP attach URL. */
+  /** Key that authorises the stream token and the one-use CDP ticket; it never goes in a URL. */
   apiKey: string;
   /** Opens the browser in the side panel. */
   onSelect: (id: string) => void;
@@ -23,35 +23,46 @@ export interface RowMenuActions {
   notify: (message: string, kind: 'success' | 'error') => void;
 }
 
-/** This page's http origin, and the same origin as a WebSocket URL. */
-function origins() {
-  const http = typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : '';
-  return { http, ws: http.replace(/^http/, 'ws') };
+/** What GET /browsers/:id answers, as far as attaching goes. */
+interface AttachDetail {
+  /** A CDP URL carrying a one-use ticket that expires in 60 seconds; absent when the browser offers no CDP. */
+  cdpUrl?: string;
 }
 
-/** Copies `text` and says so; a clipboard that refuses (no permission, no focus) is said too. */
-async function copyText(text: string, what: string, notify: RowMenuActions['notify']) {
+/** This page's http origin. */
+function httpOrigin() {
+  return typeof window !== 'undefined' ? `${window.location.protocol}//${window.location.host}` : '';
+}
+
+/** A fresh ticketed CDP URL from the server, so the copied URL never carries the key. */
+async function freshCdpUrl(apiKey: string, id: string): Promise<string> {
+  const { cdpUrl } = await api<AttachDetail>(`/browsers/${encodeURIComponent(id)}`, { key: apiKey });
+  if (!cdpUrl) throw new Error('this browser offers no CDP URL');
+  return cdpUrl;
+}
+
+/** Copies `text` (awaited, so a fetch that fails is reported too) and says so; a clipboard that refuses is said too. */
+async function copyText(text: string | Promise<string>, what: string, notify: RowMenuActions['notify']) {
   try {
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(await text);
     notify(`${what} copied`, 'success');
   } catch (err) {
     notify(`Could not copy: ${errorMessage(err)}`, 'error');
   }
 }
 
-/** The copy items: id, MCP URL, and the CDP attach URL (only CDP browsers can take it). */
+/** The copy items: id, MCP URL, and a one-use CDP attach URL (only CDP browsers can take it). */
 function copyItems(r: BrowserRow, { apiKey, notify }: RowMenuActions): MenuItem[] {
-  const { http, ws } = origins();
+  const http = httpOrigin();
   const cdp = r.clientType === 'cdp';
-  const attach = `${ws}/connect?token=${encodeURIComponent(apiKey)}&browser=${r.id}`;
   return [
     { label: 'Copy browser id', icon: <Copy />, separator: true, onSelect: () => copyText(r.id, 'Browser id', notify) },
     { label: 'Copy MCP URL', icon: <Copy />, onSelect: () => copyText(`${http}/mcp/${r.id}`, 'MCP URL', notify) },
     {
-      label: cdp ? 'Copy CDP attach URL (with key)' : 'Copy CDP attach URL, not a CDP browser',
+      label: cdp ? 'Copy CDP attach URL (one use, 60 s)' : 'Copy CDP attach URL, not a CDP browser',
       icon: <Copy />,
       disabled: !cdp,
-      onSelect: () => copyText(attach, 'CDP attach URL', notify),
+      onSelect: () => copyText(freshCdpUrl(apiKey, r.id), 'CDP attach URL', notify),
     },
   ];
 }

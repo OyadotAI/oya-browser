@@ -11,12 +11,27 @@
  * need the instances to agree on an order before they could write. A chain id
  * plus a per-chain sequence gives every row a place with no coordination, and
  * verification runs per chain.
+ *
+ * A plain hash proves nothing to someone who can write the table: they can edit
+ * a row and recompute every link after it. So chains are keyed: each link is an
+ * HMAC under OYA_AUDIT_HMAC_KEY, or, when that is unset, under a key derived
+ * from the server secret. Chains written before that (ids without the HMAC
+ * prefix) still verify as plain SHA-256 and are counted as unkeyed.
  */
 
-import { createHash, randomBytes } from 'crypto';
-import { AUDIT_CHAIN_ID_BYTES, AUDIT_GENESIS_HASH, AUDIT_HASH_ALGORITHM } from './constants.ts';
+import { createHash, createHmac, randomBytes } from 'crypto';
+import { derivedKey } from './secrets.ts';
+import {
+  AUDIT_CHAIN_ID_BYTES,
+  AUDIT_GENESIS_HASH,
+  AUDIT_HASH_ALGORITHM,
+  AUDIT_HMAC_ALGORITHM,
+  AUDIT_HMAC_CHAIN_PREFIX,
+  AUDIT_HMAC_KEY_PURPOSE,
+  auditHmacKey,
+} from './constants.ts';
 
-/** The fields that are hashed, in this order. Anything outside this list is not protected. */
+/** The fields an unkeyed (legacy) chain hashed, in this order. Anything outside this list is not protected. */
 const SIGNED_FIELDS = [
   'chain',
   'seq',
@@ -32,8 +47,69 @@ const SIGNED_FIELDS = [
   'meta',
 ] as const;
 
-/** This process's chain, and where it has got to. */
-const state = { chain: randomBytes(AUDIT_CHAIN_ID_BYTES).toString('hex'), seq: 0, prev: AUDIT_GENESIS_HASH };
+/** The fields a keyed chain signs: the legacy ones plus who acted, as the credential that authenticated them. */
+const KEYED_FIELDS = [...SIGNED_FIELDS, 'credential_id', 'member_user', 'actor_role'] as const;
+
+/** The key derived from the server secret, once loaded; null until a keyed link needs it. */
+let derived: Buffer | null = null;
+
+/** The key derived from the server secret; throws when there is no secret to derive from. */
+function derivedChainKey(): Buffer {
+  derived ??= derivedKey(AUDIT_HMAC_KEY_PURPOSE);
+  return derived;
+}
+
+/** The key keyed links are signed with now: the operator's, else the derived one. */
+function chainKey(): Buffer {
+  const explicit = auditHmacKey();
+  return explicit ? Buffer.from(explicit) : derivedChainKey();
+}
+
+/**
+ * Every key a stored keyed link may be under. Links carry no key id, so an
+ * operator setting OYA_AUDIT_HMAC_KEY on a running deployment would otherwise
+ * make every chain signed under the derived key read as tampered.
+ */
+function verifyKeys(): Buffer[] {
+  const keys = [chainKey()];
+  try {
+    if (auditHmacKey()) keys.push(derivedChainKey());
+  } catch {
+    // No server secret: only the operator's key can have signed anything.
+  }
+  return keys;
+}
+
+/** Whether a chain id names a keyed (HMAC) chain. */
+const isKeyed = (chain) => typeof chain === 'string' && chain.startsWith(AUDIT_HMAC_CHAIN_PREFIX);
+
+/** Where one writer's chain has got to. */
+type ChainState = {
+  /** The chain id; a keyed chain's starts with the HMAC prefix. */
+  chain: string;
+  /** The last sequence number written. */
+  seq: number;
+  /** The last hash written, which the next row links to. */
+  prev: string;
+};
+
+/** This process's chain; started on first use. */
+let state: ChainState | null = null;
+
+/** A new keyed chain, or an unkeyed one, said loudly, when no key can be had: an audit write must not fail. */
+function startChain() {
+  const id = randomBytes(AUDIT_CHAIN_ID_BYTES).toString('hex');
+  try {
+    chainKey();
+    return { chain: AUDIT_HMAC_CHAIN_PREFIX + id, seq: 0, prev: AUDIT_GENESIS_HASH };
+  } catch (e) {
+    console.error(`[audit] NO CHAIN KEY (${e.message}): this process writes an UNKEYED chain; set OYA_AUDIT_HMAC_KEY`);
+    return { chain: id, seq: 0, prev: AUDIT_GENESIS_HASH };
+  }
+}
+
+/** This process's chain. */
+const current = () => (state ??= startChain());
 
 /**
  * A value as the digest sees it. Keys are sorted because Postgres `jsonb` does
@@ -65,30 +141,46 @@ function field(row, name) {
 
 /** The exact bytes hashed for a row: the signed fields, in order, length-prefixed. */
 export function canonical(row): string {
-  return SIGNED_FIELDS.map((name) => {
-    const value = field(row, name);
-    return `${name}:${value.length}:${value}`;
-  }).join('\n');
+  return (isKeyed(row.chain) ? KEYED_FIELDS : SIGNED_FIELDS)
+    .map((name) => {
+      const value = field(row, name);
+      return `${name}:${value.length}:${value}`;
+    })
+    .join('\n');
 }
 
-/** The digest that links a row to the one before it. */
-export function linkHash(prevHash: string, row): string {
-  return createHash(AUDIT_HASH_ALGORITHM)
-    .update(`${prevHash}\n${canonical(row)}`)
-    .digest('hex');
+/** The digest that links a row to the one before it: an HMAC on a keyed chain, plain SHA-256 on a legacy one. */
+export function linkHash(prevHash: string, row, key: Buffer = chainKey()): string {
+  const digest = isKeyed(row.chain) ? createHmac(AUDIT_HMAC_ALGORITHM, key) : createHash(AUDIT_HASH_ALGORITHM);
+  return digest.update(`${prevHash}\n${canonical(row)}`).digest('hex');
 }
+
+/** Whether a stored row's hash is its link under any key it may have been signed with. */
+const linkMatches = (row) =>
+  isKeyed(row.chain)
+    ? verifyKeys().some((key) => row.hash === linkHash(row.prev_hash, row, key))
+    : row.hash === linkHash(row.prev_hash, row);
 
 /** Stamps a row with its place in this process's chain and advances the chain. */
 export function link(row) {
-  const placed = { ...row, chain: state.chain, seq: (state.seq += 1), prev_hash: state.prev };
-  placed.hash = linkHash(state.prev, placed);
-  state.prev = placed.hash;
+  const chain = current();
+  const placed = { ...row, chain: chain.chain, seq: (chain.seq += 1), prev_hash: chain.prev };
+  placed.hash = linkHash(chain.prev, placed);
+  chain.prev = placed.hash;
   return placed;
 }
 
+/** A keyed digest of `text` under the chain key: what an anchor is signed with. */
+export const seal = (text: string) => createHmac(AUDIT_HMAC_ALGORITHM, chainKey()).update(text).digest('hex');
+
+/** Whether `sig` seals `text` under any key a chain may have been signed with. */
+export const sealMatches = (text: string, sig: string) =>
+  verifyKeys().some((key) => createHmac(AUDIT_HMAC_ALGORITHM, key).update(text).digest('hex') === sig);
+
 /** Where this process's chain stands, for the evidence report's anchor. */
 export function head() {
-  return { chain: state.chain, seq: state.seq, hash: state.prev };
+  const { chain, seq, prev } = current();
+  return { chain, seq, hash: prev };
 }
 
 /** The first row that does not add up, and why. */
@@ -115,27 +207,33 @@ export type ChainVerdict = {
 export type ChainsVerdict = ChainVerdict & {
   /** How many distinct writer chains were present. */
   chains: number;
+  /** Rows on unkeyed (plain SHA-256) chains: consistent, but recomputable by anyone who can write the table. */
+  unkeyed: number;
 };
 
 /** Why a row does not follow the one before it, or null when it does. */
 function breakReason(row, expectedSeq: number, expectedPrev: string): string | null {
   if (row.seq !== expectedSeq) return `expected seq ${expectedSeq}, found ${row.seq}, a row is missing or reordered`;
   if (row.prev_hash !== expectedPrev) return 'prev_hash does not match the previous row, a row was changed or removed';
-  if (row.hash !== linkHash(row.prev_hash, row)) return 'hash does not match the row contents, the row was edited';
+  if (!linkMatches(row)) return 'hash does not match the row contents, the row was edited';
   return null;
 }
+
+/** Where a chain read from its beginning starts. */
+const GENESIS = { seq: 1, prev_hash: AUDIT_GENESIS_HASH };
 
 /**
  * Verifies one chain's rows in ascending sequence. Rows of several chains are
  * verified by calling this once per chain: `verifyAll` does that grouping.
+ * `anchored` verifies a window that does not start at the genesis, trusting
+ * the first row's place and prev_hash: what a bounded read of the newest rows needs.
  */
-export function verifyChain(rows): ChainVerdict {
+export function verifyChain(rows, anchored = false): ChainVerdict {
   const ordered = [...rows].sort((a, b) => a.seq - b.seq);
-  let prev = AUDIT_GENESIS_HASH;
+  const first = anchored && ordered.length ? ordered[0] : GENESIS;
   for (const [index, row] of ordered.entries()) {
-    const reason = breakReason(row, index + 1, prev);
+    const reason = breakReason(row, first.seq + index, index ? ordered[index - 1].hash : first.prev_hash);
     if (reason) return { ok: false, checked: index, broken: { chain: row.chain, seq: row.seq, reason } };
-    prev = row.hash;
   }
   return { ok: true, checked: ordered.length };
 }
@@ -150,14 +248,14 @@ function byChain(rows): Map<string, any[]> {
   return chains;
 }
 
-/** Verifies every chain present in the rows; the first break found wins. */
-export function verifyAll(rows): ChainsVerdict {
+/** Verifies every chain present in the rows (each as a window when `anchored`); the first break found wins. */
+export function verifyAll(rows, anchored = false): ChainsVerdict {
   const chains = byChain(rows.filter((r) => r.chain));
-  let checked = 0;
+  const tally = { checked: 0, chains: chains.size, unkeyed: rows.filter((r) => r.chain && !isKeyed(r.chain)).length };
   for (const [, chainRows] of chains) {
-    const verdict = verifyChain(chainRows);
-    checked += verdict.checked;
-    if (!verdict.ok) return { ...verdict, checked, chains: chains.size };
+    const verdict = verifyChain(chainRows, anchored);
+    tally.checked += verdict.checked;
+    if (!verdict.ok) return { ...verdict, ...tally };
   }
-  return { ok: true, checked, chains: chains.size };
+  return { ok: true, ...tally };
 }

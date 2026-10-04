@@ -39,6 +39,12 @@ describe('RemoteBackend calls', () => {
     });
   });
 
+  it('verifies a project’s event chain inside the database, through control_verify_events', async () => {
+    const c = client({ data: { ok: true, checked: 2 } });
+    assert.deepEqual(await new RemoteBackend(c).verifyEvents('p1'), { ok: true, checked: 2 });
+    assert.deepEqual(c.calls[0], { name: 'control_verify_events', args: { target_project: 'p1', lim: 10_000 } });
+  });
+
   it('prunes, begins and finishes commands through their RPCs', async () => {
     const c = client({ data: 7 });
     const backend = new RemoteBackend(c);

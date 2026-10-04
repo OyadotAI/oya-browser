@@ -7,7 +7,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { syncBuiltinESMExports } from 'node:module';
-import { assertSafeTarget, isNeverAllowed, isPrivateAddress } from '../../../src/platform/net-guard.ts';
+import { assertSafeTarget, embeddedV4, isNeverAllowed, isPrivateAddress } from '../../../src/platform/net-guard.ts';
 
 /** Makes DNS answer every lookup with `addresses` (or fail when null) until the test ends. */
 function resolveTo(addresses: string[] | null) {
@@ -17,6 +17,29 @@ function resolveTo(addresses: string[] | null) {
   });
   syncBuiltinESMExports();
 }
+
+describe('embeddedV4', () => {
+  it('reads the IPv4 address out of mapped, SIIT, NAT64, compatible and 6to4 forms', () => {
+    const cases = {
+      '::ffff:169.254.169.254': '169.254.169.254',
+      '::ffff:a9fe:a9fe': '169.254.169.254',
+      '0:0:0:0:0:FFFF:A9FE:A9FE': '169.254.169.254',
+      '::ffff:0:a9fe:a9fe': '169.254.169.254',
+      '64:ff9b::a9fe:a9fe': '169.254.169.254',
+      '64:ff9b::10.0.0.1': '10.0.0.1',
+      '::a9fe:a9fe': '169.254.169.254',
+      '::127.0.0.1': '127.0.0.1',
+      '2002:a9fe:a9fe::1': '169.254.169.254',
+      '2002:7f00:1::': '127.0.0.1',
+    };
+    for (const [ip, v4] of Object.entries(cases)) assert.equal(embeddedV4(ip), v4, ip);
+  });
+
+  it('finds none in a native IPv6 address, the loopback or the unspecified address', () => {
+    for (const ip of ['2001:4860:4860::8888', '::1', '::', '0:0:0:0:0:0:0:1', 'fe80::1', '64:ff9b:1::a9fe:a9fe'])
+      assert.equal(embeddedV4(ip), null, ip);
+  });
+});
 
 describe('isNeverAllowed', () => {
   it('refuses the cloud metadata range and "this network"', () => {
@@ -33,6 +56,18 @@ describe('isNeverAllowed', () => {
     assert.equal(isNeverAllowed('fe80::1'), true);
     assert.equal(isNeverAllowed('::'), true);
     assert.equal(isNeverAllowed('::ffff:169.254.169.254'), true);
+  });
+
+  it('refuses the metadata address in every IPv6 spelling that reaches it', () => {
+    for (const ip of [
+      '::ffff:a9fe:a9fe',
+      '::ffff:0:a9fe:a9fe',
+      '64:ff9b::a9fe:a9fe',
+      '::a9fe:a9fe',
+      '2002:a9fe:a9fe::',
+      '0:0:0:0:0:0:0:0',
+    ])
+      assert.equal(isNeverAllowed(ip), true, ip);
   });
 
   it('refuses anything that is not an IP', () => {
@@ -70,6 +105,20 @@ describe('isPrivateAddress', () => {
       assert.equal(isPrivateAddress(ip), true, ip);
     assert.equal(isPrivateAddress('2001:4860:4860::8888'), false);
     assert.equal(isPrivateAddress('::ffff:8.8.8.8'), false);
+  });
+
+  it('judges hex-mapped, NAT64, compatible and 6to4 forms by the IPv4 address they carry', () => {
+    for (const ip of [
+      '::ffff:7f00:1',
+      '::ffff:a00:1',
+      '64:ff9b::a00:1',
+      '::a00:1',
+      '2002:c0a8:101::1',
+      '0:0:0:0:0:0:0:1',
+    ])
+      assert.equal(isPrivateAddress(ip), true, ip);
+    for (const ip of ['::ffff:808:808', '64:ff9b::808:808', '2002:808:808::1'])
+      assert.equal(isPrivateAddress(ip), false, ip);
   });
 
   it('treats anything unresolvable as unsafe', () => {
@@ -134,6 +183,19 @@ describe('assertSafeTarget', () => {
   it('never allows the metadata service, even with the opt-in', async () => {
     process.env.OYA_ALLOW_PRIVATE_TARGETS = 'true';
     await assert.rejects(assertSafeTarget('ws://169.254.169.254/'), /link-local or reserved address/);
+  });
+
+  it('refuses the metadata service written as an IPv4-mapped IPv6 literal, which URL turns into hex', async () => {
+    process.env.OYA_ALLOW_PRIVATE_TARGETS = 'true';
+    for (const url of ['ws://[::ffff:169.254.169.254]/', 'ws://[64:ff9b::169.254.169.254]/'])
+      await assert.rejects(assertSafeTarget(url), /link-local or reserved address/, url);
+  });
+
+  it('refuses loopback written as an IPv4-mapped IPv6 literal', async () => {
+    await assert.rejects(
+      assertSafeTarget('ws://[::ffff:127.0.0.1]:9222/'),
+      /private or loopback address \(::ffff:7f00:1\)/,
+    );
   });
 
   it('judges a bracketed IPv6 literal by its address', async () => {

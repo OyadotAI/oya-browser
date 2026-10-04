@@ -7,7 +7,16 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { commandsPending, controlPaused } from './errors.ts';
 import { claimLock, releaseLockFile, writeLockRecord } from './sqlite-lock.ts';
-import { DEFAULT_EVENT_LIMIT, LOCK_HEARTBEAT_MS, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE } from './constants.ts';
+import {
+  DEFAULT_EVENT_LIMIT,
+  EVENT_GENESIS_HASH,
+  EVENT_VERIFY_LIMIT,
+  LOCK_HEARTBEAT_MS,
+  MAX_EVENT_SEQ,
+  PRIVATE_DIR_MODE,
+  PRIVATE_FILE_MODE,
+} from './constants.ts';
+import { eventHash, verifyEventChain } from './event-chain.ts';
 import * as sql from './sqlite-sql.ts';
 
 /** An event row as the API returns it. */
@@ -59,6 +68,13 @@ function admits(gate, holder, owner) {
   );
 }
 
+/** Adds the event chain columns to a database created before them; a new one has them already. */
+function addChainColumns(db: DatabaseSync) {
+  const names = (db.prepare(sql.EVENT_COLUMNS).all() as any[]).map((c) => c.name);
+  for (const name of ['prev_hash', 'hash'])
+    if (!names.includes(name)) db.exec(`ALTER TABLE control_events ADD COLUMN ${name} TEXT`);
+}
+
 /** Local control storage in one SQLite file, guarded by a heartbeat lock file so only one server writes it. */
 export class SqliteBackend {
   /** Open SQLite handle. */
@@ -75,6 +91,7 @@ export class SqliteBackend {
     this.db = new DatabaseSync(path);
     chmodSync(path, PRIVATE_FILE_MODE);
     this.db.exec(sql.SCHEMA);
+    addChainColumns(this.db);
   }
   /** Claim the lock file and keep refreshing it. */
   private holdLock(lockPath) {
@@ -141,13 +158,21 @@ export class SqliteBackend {
   }
   /** Append an event and queue a pending delivery for every enabled webhook in its project that wants its type. */
   append(e) {
-    const seq = Number(
-      this.db
-        .prepare(sql.INSERT_EVENT)
-        .run(e.project, e.type, e.sessionId ?? null, e.at, JSON.stringify(e.detail || {})).lastInsertRowid,
-    );
+    const seq = this.insertEvent(e);
     for (const hook of this.webhooksOf(e.project)) if (wants(hook, e.type)) this.queueDelivery(hook, e, seq);
     return seq;
+  }
+  /** Insert an event linked to its project's previous one; answers its sequence number. */
+  private insertEvent(e) {
+    const row = { project: e.project, type: e.type, session_id: e.sessionId ?? null, at: e.at };
+    const event = { ...row, detail: JSON.stringify(e.detail || {}) };
+    const prev = (this.db.prepare(sql.SELECT_LAST_EVENT_HASH).get(e.project) as any)?.hash ?? EVENT_GENESIS_HASH;
+    const values = [...Object.values(event), prev, eventHash(prev, event)];
+    return Number(this.db.prepare(sql.INSERT_EVENT).run(...values).lastInsertRowid);
+  }
+  /** Check a project's newest chained events link up, from the first kept one. */
+  verifyEvents(project, limit = EVENT_VERIFY_LIMIT) {
+    return verifyEventChain((this.db.prepare(sql.SELECT_CHAINED_EVENTS).all(project, limit) as any[]).reverse());
   }
   /** A project's webhook bodies. */
   private webhooksOf(project) {
@@ -181,7 +206,7 @@ export class SqliteBackend {
       this.db.prepare(sql.DELETE_EXPIRED_GATES).run(now);
       this.db.prepare(sql.DELETE_EXPIRED_ROWS).run(now);
       for (const [project, before] of Object.entries(cutoffs) as [string, number][])
-        this.db.prepare(sql.DELETE_OLD_EVENTS).run(project, before);
+        this.db.prepare(sql.DELETE_OLD_EVENTS).run(project, project, before, MAX_EVENT_SEQ);
     });
   }
   /** Admit an agent command against the session gate and count it in flight; returns the gate's fence, or null for an unknown session. */

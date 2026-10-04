@@ -1,6 +1,7 @@
 /**
  * Unit tests for browser error reporting settings: the DSN is read at request
- * time, its origin feeds the CSP, and key-shaped strings never leave the page.
+ * time, its origin feeds the CSP, and key-shaped strings, emails, long text and
+ * console output never leave the page.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ErrorEvent } from '@sentry/browser';
@@ -34,5 +35,25 @@ describe('sentry settings', () => {
       breadcrumbs: [{ data: { url: '/api?k=Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z' } }],
     } as unknown as ErrorEvent;
     expect(scrub(event).breadcrumbs?.[0].data?.url).toBe('/api?k=[redacted]');
+  });
+
+  it('redacts an email in an error', () => {
+    const event = { exception: { values: [{ value: 'No account for jane.doe+x@clinic.example.org' }] } } as ErrorEvent;
+    expect(scrub(event).exception?.values?.[0].value).toBe('No account for [redacted]');
+  });
+
+  it('cuts long error text short, so a page quoted in an error does not leave', () => {
+    const event = { message: `Failed on page: ${'patient notes '.repeat(100)}` } as ErrorEvent;
+    expect(scrub(event).message?.length).toBe(200);
+  });
+
+  it('drops console breadcrumbs and keeps the rest', () => {
+    const event = {
+      breadcrumbs: [
+        { category: 'console', message: 'page said something' },
+        { category: 'fetch', data: { url: '/api' } },
+      ],
+    } as unknown as ErrorEvent;
+    expect(scrub(event).breadcrumbs?.map((b) => b.category)).toEqual(['fetch']);
   });
 });

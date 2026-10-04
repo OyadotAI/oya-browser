@@ -32,6 +32,21 @@ function createSql(name: string) {
   return `create table if not exists ${name} (${defs.join(', ')}${primary})`;
 }
 
+/**
+ * Adds each schema column an older file lacks, so a column added to schema.ts
+ * reaches existing SQLite installs as the migrations reach Postgres.
+ */
+function addMissingColumns(db: DatabaseSync, name: string) {
+  const have = new Set(
+    db
+      .prepare(`pragma table_info(${name})`)
+      .all()
+      .map((c: any) => c.name),
+  );
+  for (const [column, type] of Object.entries(TABLES[name].columns))
+    if (!have.has(column)) db.exec(`alter table ${name} add column ${column} ${AFFINITY[type]}`);
+}
+
 /** A value as SQLite takes it: json as text, booleans as 0 or 1, undefined as null. */
 function toStored(type: ColumnType | undefined, value: unknown) {
   if (value === undefined || value === null) return null;
@@ -61,7 +76,10 @@ export class SqliteConnection implements Connection {
     mkdirSync(dirname(path), { recursive: true, mode: PRIVATE_DIR_MODE });
     this.db = new DatabaseSync(path);
     chmodSync(path, PRIVATE_FILE_MODE);
-    for (const name of Object.keys(TABLES)) this.db.exec(createSql(name));
+    for (const name of Object.keys(TABLES)) {
+      this.db.exec(createSql(name));
+      addMissingColumns(this.db, name);
+    }
   }
 
   /** Rows of `table` matching `where`, sorted and cut as asked. */

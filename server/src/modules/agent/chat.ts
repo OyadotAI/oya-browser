@@ -17,6 +17,7 @@ import { forgetPage } from './changes.ts';
 import { AGENT_VERIFY } from './constants.ts';
 import { systemPrompt, FOLLOW_UP_NOTE } from './prompt.ts';
 import { agentLoop } from './loop.ts';
+import { requireLlmAllowed } from './llm-policy.ts';
 import { container } from '../../app/container.ts';
 
 export { FILTERS, PLACEHOLDER, pipesOf, fill, redact, isFileValue, dataKey } from './placeholders.ts';
@@ -25,6 +26,7 @@ export { lastRun, hasReplayableSteps } from './recorder.ts';
 export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
 export { PAGE_FORMAT } from './constants.ts';
 export { NEEDS_INPUT } from './loop.ts';
+export { requireLlmAllowed, allowedLlm } from './llm-policy.ts';
 export { executeTool } from './executor.ts';
 export { BROWSER_TOOLS, toolsOn } from './tools.ts';
 export { CHALLENGE_TOOLS, CHALLENGE_HANDLERS } from './challenge-tools.ts';
@@ -90,9 +92,10 @@ async function stepAllowed(apiKey, own) {
   await container.billing.entitlements.admitAgent(apiKey);
 }
 
-/** The run's model settings, once the person's plan admits another agent run. */
+/** The run's model settings, once the project's model policy and the person's plan admit another agent run. */
 async function admitted(apiKey) {
   const settings = llmFor(apiKey);
+  await requireLlmAllowed(apiKey, settings.llm.baseUrl);
   await settings.budget();
   return settings;
 }

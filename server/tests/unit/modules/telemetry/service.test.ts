@@ -7,7 +7,6 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { track, clientOf } from '../../../../src/modules/telemetry/index.ts';
-import { forgetIdentifiedForTests } from '../../../../src/modules/telemetry/service.ts';
 import { forgetAllForTests, keyLabel } from '../../../../src/modules/telemetry/who.ts';
 import { drain, resetForTests } from '../../../../src/platform/analytics.ts';
 import { stubFetch, json } from '../../support/http.ts';
@@ -58,7 +57,6 @@ describe('track', () => {
     allOff();
     resetForTests();
     forgetAllForTests();
-    forgetIdentifiedForTests();
   });
   afterEach(() => {
     mock.restoreAll();
@@ -176,7 +174,7 @@ describe('track', () => {
     assert.ok(cards.some((t) => t.includes('👤 User: ana@example.com') && t.includes('🔐 Method: google')));
   });
 
-  it('identifies a person by email in PostHog, and marks a bare key as no person', async () => {
+  it('knows a person in PostHog by user id, never by email, and marks a bare key as no person', async () => {
     allOn();
     const calls = stubFetch(() => json({}));
     track.accountSignedUp({ id: 'u-1', email: 'ana@example.com' }, 'email');
@@ -184,8 +182,9 @@ describe('track', () => {
     await settle();
     await drain();
     const batch = calls.filter((c) => c.url.includes('/batch/')).flatMap((c) => JSON.parse(c.init.body).batch);
-    const identify = batch.find((e) => e.event === '$identify');
-    assert.deepEqual([identify.distinct_id, identify.properties.$set], ['u-1', { email: 'ana@example.com' }]);
+    const signup = batch.find((e) => e.event === 'account_signed_up');
+    assert.deepEqual([signup.distinct_id, signup.properties.$process_person_profile], ['u-1', true]);
+    assert.doesNotMatch(JSON.stringify(batch), /ana@example\.com/);
     const keyed = batch.find((e) => e.event === 'playbook_saved');
     assert.equal(keyed.properties.$process_person_profile, false);
     assert.notEqual(keyed.distinct_id, KEY);

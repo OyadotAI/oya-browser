@@ -16,17 +16,59 @@ import { lookup } from 'dns/promises';
 import { isIP } from 'net';
 import { HttpError } from './errors.ts';
 import { Status } from './http-status.ts';
-import { IPV4_MULTICAST_FIRST_OCTET, IPV6, NEVER_ALLOWED_V4, PRIVATE_V4, type Ipv4Range } from './constants.ts';
+import {
+  BYTE_BITS,
+  BYTE_MASK,
+  HEX_RADIX,
+  IPV4_MULTICAST_FIRST_OCTET,
+  IPV6,
+  IPV6_GROUPS,
+  NEVER_ALLOWED_V4,
+  PRIVATE_V4,
+  V4_EMBEDDINGS,
+  type Ipv4Range,
+} from './constants.ts';
 
 const allowPrivate = () => process.env.OYA_ALLOW_PRIVATE_TARGETS === 'true';
-
-/** An IPv4-mapped IPv6 address (::ffff:127.0.0.1), capturing the v4 part. */
-const V4_MAPPED = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/;
 
 /** True when the IPv4 address falls in one of the ranges. */
 function inRanges(ip, ranges: Ipv4Range[]) {
   const [a, b] = ip.split('.').map(Number);
   return ranges.some((r) => a === r.first && (r.from === undefined || (b >= r.from && b <= r.to)));
+}
+
+/** The IPv6 address as its eight 16-bit groups: `::` expanded, a dotted tail split in two, a zone dropped. */
+function groups(ip: string): number[] {
+  const [head, tail] = ip.split('%')[0].split('::');
+  const parts = (s?: string) => (s ? s.split(':').flatMap(group) : []);
+  const [h, t] = [parts(head), parts(tail)];
+  return [...h, ...Array(IPV6_GROUPS - h.length - t.length).fill(0), ...t];
+}
+
+/** One colon-separated part as groups: a hex group, or a dotted IPv4 tail as two. */
+function group(part: string): number[] {
+  if (!part.includes('.')) return [parseInt(part, HEX_RADIX)];
+  const [a, b, c, d] = part.split('.').map(Number);
+  return [(a << BYTE_BITS) | b, (c << BYTE_BITS) | d];
+}
+
+/** The two groups from `at` as a dotted IPv4 address. */
+const dotted = (g: number[], at: number) =>
+  [g[at] >> BYTE_BITS, g[at] & BYTE_MASK, g[at + 1] >> BYTE_BITS, g[at + 1] & BYTE_MASK].join('.');
+
+/** True for :: and ::1 in any spelling, which are IPv6's own and carry no IPv4 address. */
+const isUnspecifiedOrLoopback = (g: number[]) => g.slice(0, -1).every((x) => x === 0) && g.at(-1) <= 1;
+
+/**
+ * The IPv4 address an IPv6 address routes to or names (mapped, SIIT, NAT64,
+ * compatible, 6to4), as dotted text, or null when it carries none. Every
+ * check judges these by the IPv4 address, whatever the spelling.
+ */
+export function embeddedV4(ip: string): string | null {
+  const g = groups(ip.toLowerCase());
+  if (isUnspecifiedOrLoopback(g)) return null;
+  const hit = V4_EMBEDDINGS.find(({ prefix }) => prefix.every((x, i) => g[i] === x));
+  return hit ? dotted(g, hit.at) : null;
 }
 
 /**
@@ -41,12 +83,12 @@ export function isNeverAllowed(ip) {
   return inRanges(ip, NEVER_ALLOWED_V4) || Number(ip.split('.')[0]) >= IPV4_MULTICAST_FIRST_OCTET;
 }
 
-/** isNeverAllowed for IPv6: link-local and the unspecified address, or the mapped v4 address. */
+/** isNeverAllowed for IPv6: link-local and the unspecified address, or the embedded v4 address. */
 function isNeverAllowedV6(ip) {
-  const s = ip.toLowerCase();
-  const mapped = s.match(V4_MAPPED);
-  if (mapped) return isNeverAllowed(mapped[1]);
-  return /^fe[89ab]/.test(s) || s === '::';
+  const v4 = embeddedV4(ip);
+  if (v4) return isNeverAllowed(v4);
+  const g = groups(ip.toLowerCase());
+  return /^fe[89ab]/i.test(ip) || g.every((x) => x === 0);
 }
 
 /** True for addresses that are not safely routable on behalf of a caller. */
@@ -58,13 +100,12 @@ export function isPrivateAddress(ip) {
   return inRanges(ip, PRIVATE_V4) || Number(ip.split('.')[0]) >= IPV4_MULTICAST_FIRST_OCTET;
 }
 
-/** isPrivateAddress for IPv6: loopback, unspecified, unique local and link-local. */
+/** isPrivateAddress for IPv6: loopback, unspecified, unique local and link-local, or the embedded v4 address. */
 function isPrivateV6(ip) {
+  const v4 = embeddedV4(ip);
+  if (v4) return isPrivateAddress(v4);
+  if (isUnspecifiedOrLoopback(groups(ip.toLowerCase()))) return true;
   const s = ip.toLowerCase();
-  // IPv4-mapped (::ffff:127.0.0.1) must be judged as the v4 address.
-  const mapped = s.match(V4_MAPPED);
-  if (mapped) return isPrivateAddress(mapped[1]);
-  if (s === '::1' || s === '::') return true;
   if (/^f[cd]/.test(s)) return true; // unique local fc00::/7
   return /^fe[89ab]/.test(s); // link-local fe80::/10
 }

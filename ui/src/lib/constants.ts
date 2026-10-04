@@ -36,3 +36,6 @@ export const META_MAX_WAIT_MS = 1500;
 export const SOURCE_MEMORY_DAYS = 30;
 /** The longest source kept: a campaign name, never a page of text. */
 export const SOURCE_MAX_LENGTH = 80;
+
+/** Digits in a code from an authenticator app. */
+export const TOTP_CODE_LENGTH = 6;

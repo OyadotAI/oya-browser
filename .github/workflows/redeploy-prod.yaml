@@ -27,17 +27,28 @@ jobs:
   redeploy:
     name: Re-apply secrets and restart
     runs-on: ubuntu-latest
+    # Same gate as a release: prod waits for an approver set under Settings > Environments.
+    environment: production
     permissions:
       contents: read
       id-token: write
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
-    - uses: google-github-actions/auth@v2
+    # Keyless by Workload Identity Federation once GCP_WIF_PROVIDER is set
+    # (deployments/gcloud/OIDC.md); the JSON key is only the fallback until then.
+    - uses: google-github-actions/auth@v3
+      if: ${{ vars.GCP_WIF_PROVIDER != '' }}
+      with:
+        workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+        service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+    - uses: google-github-actions/auth@v3
+      if: ${{ vars.GCP_WIF_PROVIDER == '' }}
       with:
         credentials_json: ${{ secrets.GKE_SA_KEY }}
 
-    - uses: google-github-actions/get-gke-credentials@v2
+    - uses: google-github-actions/get-gke-credentials@v3
       with:
         cluster_name: ${{ secrets.GKE_CLUSTER }}
         location: ${{ secrets.GKE_ZONE }}

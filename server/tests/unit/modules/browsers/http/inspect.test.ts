@@ -8,6 +8,7 @@ import { browserDetail, liveView } from '../../../../../src/modules/browsers/htt
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
 import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
 import { restoreEnv } from '../../../support/data-dir.ts';
+import { recent } from '../../../../../src/platform/audit.ts';
 import { FakeResponse, driveBrowser, fakeRequest, stubControl } from '../../../support/browsers.ts';
 
 const B = 'b-inspect';
@@ -98,6 +99,15 @@ describe('liveView', () => {
     assert.equal(registry.hasViewers(B), true);
     req.emit('close');
     assert.equal(registry.hasViewers(B), false);
+  });
+
+  it('audits who opened the live view of which browser', () => {
+    connectBrowser(B);
+    const before = recent({ action: 'browser.live.view' }).length;
+    liveView(fakeRequest({ key: 'k-live-audit', params: { browserId: B } }), new FakeResponse());
+    const events = recent({ action: 'browser.live.view' });
+    assert.equal(events.length, before + 1);
+    assert.deepEqual([events[0].target_type, events[0].target_id], ['browser', B]);
   });
 
   it('waits for the first frame when there is none yet', () => {

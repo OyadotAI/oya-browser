@@ -8,7 +8,7 @@
  */
 
 /** Path prefixes of pages no third party may see. */
-const PRIVATE_PREFIXES = ['/dashboard', '/live', '/admin', '/claim', '/auth/callback'];
+const PRIVATE_PREFIXES = ['/dashboard', '/live', '/admin', '/claim', '/auth/callback', '/account'];
 
 /** Whether `pathname` is a public page. Matches a prefix as a whole segment, so `/dashboards` would still be public. */
 export function isPublicPage(pathname: string) {

@@ -8,12 +8,21 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth-provider';
 import { pendingClaim } from '@/lib/claim';
+import { stepUpPending } from '@/lib/auth/storage';
+import { stepUpUrl } from '@/lib/auth/step-up';
 
 /** Where a signed-in person goes. */
 export const HOME = '/dashboard';
 
-/** Where a person goes right after signing in: back to a claim they were in the middle of, else the console. */
-export const afterSignIn = () => (pendingClaim() ? '/claim' : HOME);
+/**
+ * Where a person goes right after signing in: back to a claim they were in
+ * the middle of, else the console; by way of the code page when the account
+ * has an authenticator this session has not passed yet.
+ */
+export function afterSignIn() {
+  const next = pendingClaim() ? '/claim' : HOME;
+  return stepUpPending() ? stepUpUrl(next) : next;
+}
 
 /** A form's error and busy state. */
 export interface FormState {

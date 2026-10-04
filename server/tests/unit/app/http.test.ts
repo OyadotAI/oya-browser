@@ -14,6 +14,7 @@ import {
   longJson,
   MAX_FILE_BYTES,
   operatorOnly,
+  metricsAccess,
   ownerScope,
   requireBrowser,
   validData,
@@ -72,10 +73,10 @@ describe('operatorOnly', () => {
   });
 
   /** Runs the gate for `key`; returns whether it passed and the response. */
-  function gate(key: string) {
+  function gate(key: string, guard = operatorOnly) {
     const res = new FakeResponse();
     const next = mock.fn();
-    operatorOnly(fakeRequest({ key }), res, next);
+    guard(fakeRequest({ key }), res, next);
     return { passed: next.mock.callCount() === 1, res };
   }
 
@@ -84,10 +85,18 @@ describe('operatorOnly', () => {
     assert.equal(gate('op-secret').passed, true);
   });
 
-  it('accepts the metrics token when no operator token is set', () => {
+  it('never accepts the metrics token for host controls', () => {
     delete process.env.OYA_OPERATOR_TOKEN;
     process.env.OYA_METRICS_TOKEN = 'm-secret';
-    assert.equal(gate('m-secret').passed, true);
+    assert.equal(gate('m-secret').passed, false);
+  });
+
+  it('accepts the metrics token on the scrape gate', () => {
+    process.env.OYA_OPERATOR_TOKEN = 'op-secret';
+    process.env.OYA_METRICS_TOKEN = 'm-secret';
+    assert.equal(gate('m-secret', metricsAccess).passed, true);
+    assert.equal(gate('op-secret', metricsAccess).passed, true);
+    assert.equal(gate('other', metricsAccess).passed, false);
   });
 
   it('refuses any other key with 403', () => {

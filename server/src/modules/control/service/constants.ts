@@ -16,10 +16,22 @@ export const MINUTES_PER_HOUR = 60;
 
 /** A new project keeps recordings this many days. */
 export const DEFAULT_RECORDING_DAYS = 7;
-/** A new project keeps its audit log this many days. */
-export const DEFAULT_AUDIT_DAYS = 90;
 /** Longest retention a project may set, in days. */
 export const MAX_RETENTION_DAYS = 3650;
+/** The audit retention floor when OYA_AUDIT_RETENTION_FLOOR_DAYS is unset: one year. */
+const DEFAULT_AUDIT_RETENTION_FLOOR_DAYS = 365;
+/**
+ * Fewest days a project's audit events are kept, whatever it sets: a project
+ * administrator must not be able to erase the record of what they did by
+ * shortening the window. HIPAA keeps documentation six years (2190 days); a
+ * covered entity sets OYA_AUDIT_RETENTION_FLOOR_DAYS to that. Read here only.
+ */
+export const AUDIT_RETENTION_FLOOR_DAYS = Math.min(
+  Math.max(Math.trunc(Number(process.env.OYA_AUDIT_RETENTION_FLOOR_DAYS)) || DEFAULT_AUDIT_RETENTION_FLOOR_DAYS, 1),
+  MAX_RETENTION_DAYS,
+);
+/** A new project keeps its audit log this many days: the floor, since nothing shorter is allowed. */
+export const DEFAULT_AUDIT_DAYS = AUDIT_RETENTION_FLOOR_DAYS;
 /** A new project's name ends with this many characters of its id. */
 export const PROJECT_NAME_SUFFIX = 6;
 /** Hex characters of the key's hash in a project id. */

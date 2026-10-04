@@ -12,3 +12,16 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
 export const dbAuth = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 console.log(`[auth] sign-in: ${dbAuth ? 'Supabase Auth' : 'API keys only'}`);
+
+/**
+ * A fresh Supabase Auth client that keeps its session in memory and never
+ * refreshes on its own, for calls made as one signed-in person (MFA). A
+ * request opens one and drops it, so no person's session is ever shared.
+ * Null when Supabase is not configured.
+ */
+export const dbAuthClient = () =>
+  supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      }).auth
+    : null;

@@ -15,7 +15,9 @@ let token: string | null = 't';
 vi.mock('@/lib/api', () => ({
   apiUrl: (p: string) => p,
   authHeaders: () => ({}),
-  listApiKeys: vi.fn(async () => ({ keys: [{ id: 'k', prefix: 'oya_ab', project: 'mine' }] })),
+  listApiKeys: vi.fn(async () => ({
+    keys: [{ id: 'k', prefix: 'oya_ab', project: 'mine', expires_at: '2099-03-04T00:00:00.000Z' }],
+  })),
   createApiKey: vi.fn(),
   importApiKey: vi.fn(),
 }));
@@ -102,8 +104,24 @@ describe('ProjectSwitcher', () => {
     await userEvent.type(screen.getByPlaceholderText('e.g. Checkout agents'), 'New one');
     await userEvent.click(screen.getByRole('button', { name: 'Create project' }));
     expect(((await screen.findByDisplayValue('oya_new')) as HTMLInputElement).readOnly).toBe(true);
-    expect(createApiKey).toHaveBeenCalledWith('t', 'New one');
+    expect(createApiKey).toHaveBeenCalledWith('t', 'New one', null);
     expect(toast).toHaveBeenCalledWith('Project created. Copy your API key below.', 'success');
+  });
+
+  it('creating a project with an expiry sends the chosen days', async () => {
+    vi.mocked(createApiKey).mockResolvedValueOnce({ key: 'oya_new', project: 'mine' });
+    await setup();
+    await userEvent.click(screen.getByRole('button', { name: /Create project/ }));
+    await userEvent.selectOptions(screen.getByLabelText('API key expires'), '90 days');
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    await screen.findByDisplayValue('oya_new');
+    expect(createApiKey).toHaveBeenCalledWith('t', undefined, 90);
+  });
+
+  it('a project’s options show when its key expires', async () => {
+    await setup();
+    await userEvent.click(screen.getByRole('button', { name: 'Options for Checkout' }));
+    expect(await screen.findByText(/^Expires .*2099/)).toBeTruthy();
   });
 
   it('joining with an invitation code opens the project', async () => {

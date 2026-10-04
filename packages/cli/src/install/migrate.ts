@@ -37,6 +37,6 @@ export async function migrate(root: string, databaseUrl: string): Promise<void> 
     spin.done();
   } catch (e) {
     spin.fail();
-    throw new Error(`Migrations failed: ${(e as Error).message}\n  ${RETRY}`);
+    throw new Error(`Migrations failed: ${(e as Error).message}\n  ${RETRY}`, { cause: e });
   }
 }

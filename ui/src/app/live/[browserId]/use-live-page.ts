@@ -28,7 +28,6 @@ function useCredential() {
     if (resolved.current) return;
     resolved.current = true;
     // The fragment only exists in the browser, so it is read after hydration.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setApiKey(takeSharedCredential());
   }, []);
   return apiKey;

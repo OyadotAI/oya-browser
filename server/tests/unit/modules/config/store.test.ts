@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 ownDataDir();
-const { store, state, changed, flush, writeField, dropField, seal, unseal, markChanged, pendingWrite } =
+const { store, state, changed, flush, writeField, dropField, seal, unseal, markChanged, pendingWrite, forgetOwners } =
   await import('../../../../src/modules/config/store.ts');
 const { writeRows } = await import('../../../../src/modules/config/repository.ts');
 const { getConnection } = await import('../../../../src/platform/storage/index.ts');
@@ -40,6 +40,14 @@ describe('settings store', () => {
     await writeField('owner-1', 'b', '2');
     await dropField('owner-1', 'a');
     assert.deepEqual(await stored(), { 'owner-1': { b: '2' } });
+  });
+
+  it("drops an erased owner's fields here and in storage, and nobody else's", async () => {
+    await writeField('owner-1', 'a', '1');
+    await writeField('owner-2', 'a', '2');
+    await forgetOwners(new Set(['owner-1', 'owner-9']));
+    assert.equal(store.has('owner-1'), false);
+    assert.deepEqual(await stored(), { 'owner-2': { a: '2' } });
   });
 
   it('skips the write when nothing changed', async () => {

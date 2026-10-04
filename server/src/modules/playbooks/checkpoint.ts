@@ -9,6 +9,7 @@ import * as mfa from '../challenges/mfa.ts';
 import * as siteLogin from '../challenges/login.ts';
 import * as credentials from '../personas/credentials.ts';
 import * as keyConfig from '../config/service.ts';
+import { allowedLlm } from '../agent/chat.ts';
 import { NATIVE_CAPTCHA, announce, evaluateIn } from '../../app/http.ts';
 import { LOGIN_ROUNDS } from './constants.ts';
 
@@ -177,8 +178,10 @@ async function tryMfa(run: RunContext, { personaId, domain }: PageContext, l?) {
   const since = l?.submittedAt || l?.requestedAt || 0;
   // The tenant's own LLM reads the code out of the message: these email
   // templates are rewritten constantly and the code is not always digits.
+  // A project whose policy refuses that model gets the pattern match alone.
+  const llm = await allowedLlm(run.apiKey, run.llm);
   const m = await mfa
-    .complete(run.evaluate, personaId, { liveViewUrl: run.liveViewUrl, domain, since, llm: run.llm })
+    .complete(run.evaluate, personaId, { liveViewUrl: run.liveViewUrl, domain, since, llm })
     .catch(() => null);
   // Provider and outcome only: the code itself never leaves this process.
   if (m?.present && m.completed)

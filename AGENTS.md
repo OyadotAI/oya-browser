@@ -74,3 +74,7 @@ server, CLI and package suites.
 - Persona fingerprints must be deterministic: the same persona gives the same
   device, forever.
 - Leave commits to the maintainer unless asked.
+- **Never mention Claude in commits or pull requests.** No `Co-Authored-By: Claude`
+  trailer, no "Generated with Claude Code" line, no claude.ai session link, and
+  never commit as `Claude <noreply@anthropic.com>`. Commits are authored by the
+  maintainer alone.

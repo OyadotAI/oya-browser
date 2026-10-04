@@ -15,9 +15,9 @@ export async function findKey(digest: string) {
   return (await getConnection().select(KEYS, { key_hash: digest }))[0] ?? null;
 }
 
-/** Every stored digest. */
-export async function keyDigests(): Promise<string[]> {
-  return (await getConnection().select(KEYS)).map((row) => row.key_hash);
+/** Every stored key's digest and expiry (null is never), never the key. */
+export async function storedKeys() {
+  return (await getConnection().select(KEYS)).map(({ key_hash, expires_at }) => ({ key_hash, expires_at }));
 }
 
 /** Stores key rows; a digest already stored is left as it is. Columns a row leaves out keep their defaults. */

@@ -10,7 +10,7 @@ export const SCHEMA = `PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA 
       CREATE INDEX IF NOT EXISTS control_rows_project ON control_rows (kind, project);
       CREATE INDEX IF NOT EXISTS control_rows_state ON control_rows (kind, state);
       CREATE INDEX IF NOT EXISTS control_rows_expiry ON control_rows (expires_at) WHERE expires_at IS NOT NULL;
-      CREATE TABLE IF NOT EXISTS control_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, type TEXT NOT NULL, session_id TEXT, at INTEGER NOT NULL, detail TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS control_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, type TEXT NOT NULL, session_id TEXT, at INTEGER NOT NULL, detail TEXT NOT NULL, prev_hash TEXT, hash TEXT);
       CREATE INDEX IF NOT EXISTS control_events_project ON control_events (project, seq);
       CREATE TABLE IF NOT EXISTS control_gates (id TEXT PRIMARY KEY, state TEXT NOT NULL, mode TEXT NOT NULL, holder TEXT, expiresAt INTEGER, fence INTEGER NOT NULL, inFlight INTEGER NOT NULL DEFAULT 0, owner TEXT);`;
 
@@ -37,8 +37,17 @@ export const UPSERT_GATE =
 export const BEGIN_COMMAND = 'UPDATE control_gates SET inFlight = inFlight + 1 WHERE id = ?';
 /** Settle a command admitted under the gate's current fence. */
 export const FINISH_COMMAND = 'UPDATE control_gates SET inFlight = max(0, inFlight - 1) WHERE id = ? AND fence = ?';
-/** Append one event. */
-export const INSERT_EVENT = 'INSERT INTO control_events (project, type, session_id, at, detail) VALUES (?,?,?,?,?)';
+/** Append one event with its links. */
+export const INSERT_EVENT =
+  'INSERT INTO control_events (project, type, session_id, at, detail, prev_hash, hash) VALUES (?,?,?,?,?,?,?)';
+/** The hash of a project's newest event: what the next one links to (null before the chain began). */
+export const SELECT_LAST_EVENT_HASH =
+  'SELECT hash FROM control_events WHERE project = ? AND hash IS NOT NULL ORDER BY seq DESC LIMIT 1';
+/** A project's newest chained events, newest first. */
+export const SELECT_CHAINED_EVENTS =
+  'SELECT * FROM control_events WHERE project = ? AND hash IS NOT NULL ORDER BY seq DESC LIMIT ?';
+/** The columns of the event table, to add the chain columns to a database made before them. */
+export const EVENT_COLUMNS = 'PRAGMA table_info(control_events)';
 /** A project's webhooks. */
 export const SELECT_WEBHOOKS = "SELECT body FROM control_rows WHERE kind = 'webhook' AND project = ?";
 /** Queue a pending delivery. */
@@ -52,8 +61,14 @@ export const DELETE_EXPIRED_GATES =
   "DELETE FROM control_gates WHERE id IN (SELECT id FROM control_rows WHERE kind = 'session' AND expires_at < ?)";
 /** Rows past their expiry. */
 export const DELETE_EXPIRED_ROWS = 'DELETE FROM control_rows WHERE expires_at < ?';
-/** A project's events older than its cutoff. */
-export const DELETE_OLD_EVENTS = 'DELETE FROM control_events WHERE project = ? AND at < ?';
+/**
+ * A project's events older than its cutoff, cut only from the start: everything
+ * before its first event at or after the cutoff (all of them when there is
+ * none). Clocks on different replicas can stamp a later event earlier, and a
+ * hole in the middle would read as a removed event in the chain.
+ */
+export const DELETE_OLD_EVENTS =
+  'DELETE FROM control_events WHERE project = ? AND seq < COALESCE((SELECT MIN(seq) FROM control_events WHERE project = ? AND at >= ?), ?)';
 
 /** `?,?,…` for an IN list of `values`. */
 export const placeholders = (values) => values.map(() => '?').join(',');

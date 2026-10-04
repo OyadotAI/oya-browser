@@ -3,7 +3,7 @@
  * managed policy, saved together. Rates and policy are edited as JSON.
  */
 import type { FormEvent } from 'react';
-import { DURABLE_BUTTON, DURABLE_FIELD, LIMIT_FIELDS } from './constants';
+import { DURABLE_BUTTON, DURABLE_FIELD, LIMIT_FIELDS, LLM_PROVIDERS } from './constants';
 import { settingsBody, type Durable } from './use-durable';
 
 /** Label class for each setting. */
@@ -40,6 +40,7 @@ export default function DurableSettings({ d }: { /** Project operations state an
           onChange={(e) => d.editDrafts({ policy: e.target.value })}
         />
       </label>
+      <ModelFields d={d} />
       <p className="text-xs text-text-dim">
         Hard budgets require managed browsers and a configured rate. Costs are estimates; provider billing may lag.
       </p>
@@ -72,5 +73,34 @@ function LimitFields({ d }: { /** Project operations state and actions. */ d: Du
         </label>
       ))}
     </div>
+  );
+}
+
+/** Every provider's name; a project with no model policy allows them all. */
+const ALL_PROVIDERS = Object.keys(LLM_PROVIDERS);
+
+/** Which model providers may see page text and screenshots: a checkbox each, all checked by default. */
+function ModelFields({ d }: { /** Project operations state and actions. */ d: Durable }) {
+  const settings = d.drafts.settings!;
+  const allowed = settings.llm?.allow ?? ALL_PROVIDERS;
+  const toggle = (name: string, on: boolean) =>
+    d.editDrafts({
+      settings: { ...settings, llm: { allow: ALL_PROVIDERS.filter((p) => (p === name ? on : allowed.includes(p))) } },
+    });
+  return (
+    <fieldset className="space-y-1 text-xs text-text-muted">
+      <legend>Model providers that may see page text and screenshots</legend>
+      <div className="flex gap-4">
+        {(Object.keys(LLM_PROVIDERS) as (keyof typeof LLM_PROVIDERS)[]).map((name) => (
+          <label className="flex items-center gap-1" key={name}>
+            <input type="checkbox" checked={allowed.includes(name)} onChange={(e) => toggle(name, e.target.checked)} />
+            {LLM_PROVIDERS[name]}
+          </label>
+        ))}
+      </div>
+      <p className="text-text-dim">
+        An agent run on a provider left unchecked is refused before any page content is sent.
+      </p>
+    </fieldset>
   );
 }

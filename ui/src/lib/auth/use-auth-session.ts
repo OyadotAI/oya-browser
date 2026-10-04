@@ -7,6 +7,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { logout as apiLogout } from '../api';
 import { clearSession, refreshSession, scheduleRefresh, signIn, signUp, startRestore } from './session';
+import { stepUpPending } from './storage';
+import { onMfaPage, stepUpUrl } from './step-up';
 import type { AuthContextType, SessionHandle, User } from './types';
 
 /** Session state plus a stable handle over its setters and refs. */
@@ -58,11 +60,23 @@ function useAccountActions(handle: SessionHandle, clear: () => void) {
   return { login, signup, logout, applyProfile };
 }
 
+/**
+ * Sends a session that still owes its second factor to the code page, from
+ * wherever it is: the server refuses everything else until the code is in.
+ */
+function useStepUpRedirect(token: string | null) {
+  useEffect(() => {
+    const { pathname, search } = window.location;
+    if (token && stepUpPending() && !onMfaPage(pathname)) window.location.replace(stepUpUrl(pathname + search));
+  }, [token]);
+}
+
 /** Everything the auth context provides. */
 export function useAuthSession(): AuthContextType {
   const { user, token, loading, handle } = useSessionHandle();
   const { clear, refresh } = useRefresh(handle);
   useRefreshSchedule(token, refresh, handle);
   useRestore(handle, refresh, clear);
+  useStepUpRedirect(token);
   return { user, token, loading, ...useAccountActions(handle, clear) };
 }

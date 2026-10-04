@@ -12,14 +12,16 @@ import {
   safe,
   sharedRecordings,
 } from './recording-storage/bucket.ts';
+import { openFrame, openManifest } from './recording-storage/sealing.ts';
 
 export { sharedRecordings };
+export { sealFrame, openFrame, sealManifest, openManifest } from './recording-storage/sealing.ts';
 
-/** Upload one file of a recording directory under `prefix`. */
+/** Upload one file of a recording directory under `prefix`, sealed as the spool holds it. */
 async function upload(prefix, directory, name) {
   const { error } = await objects().upload(`${prefix}/${name}`, await readFile(join(directory, name)), {
     upsert: true,
-    contentType: name.endsWith('.jpg') ? 'image/jpeg' : 'application/json',
+    contentType: 'application/octet-stream',
   });
   if (error) throw new Error('Recording archive upload failed');
 }
@@ -50,7 +52,7 @@ export async function archivedManifest(id, owner) {
   assertShared();
   const { data, error } = await objects().download(`${m.owner}/${id}/manifest.json`);
   if (error) throw new Error('Recording manifest unavailable');
-  return JSON.parse(await data.text());
+  return openManifest(id, Buffer.from(await data.arrayBuffer()));
 }
 
 /** One archived JPEG frame, or null when it is missing or not the caller's. */
@@ -58,7 +60,7 @@ export async function archivedFrame(id, index, owner) {
   const m = await archivedManifest(id, owner);
   if (!m || !sharedRecordings()) return null;
   const { data, error } = await objects().download(`${m.owner}/${id}/${frameName(index)}`);
-  return error ? null : Buffer.from(await data.arrayBuffer());
+  return error ? null : openFrame(id, index, Buffer.from(await data.arrayBuffer()));
 }
 
 /** Every frame path of an archived recording, persisted on its record before anything is deleted; null when it has no manifest. */

@@ -2,9 +2,9 @@
  * The one place a product event is emitted from. Each `track` function is a
  * seam another module calls beside its existing audit or usage call; it
  * returns at once, resolves who the event is about in the background, sends
- * the event to PostHog and, for the few events that have one, a line to the
- * ops Slack channel. Nothing here is awaited by a request and nothing here is
- * evidence.
+ * the event to PostHog under an id (never an email) and, for the few events
+ * that have one, a line to the ops Slack channel. Nothing here is awaited by a
+ * request and nothing here is evidence.
  */
 import * as analytics from '../../platform/analytics.ts';
 import * as slack from '../../platform/ops-slack.ts';
@@ -12,26 +12,13 @@ import { CHANNEL, SLACK_LINES, type EventName, type EventProps, type SignupMetho
 import { card } from './cards.ts';
 import { CARD_MAX_CHARS } from '../../platform/constants.ts';
 import { anonymous, keyLabel, nobody, person, whoHolds } from './who.ts';
-
-/** Forgets who was identified, so one test cannot leak into the next. */
-export const forgetIdentifiedForTests = () => identified.clear();
 import { CLIENTS, CLIENT_HEADER } from './constants.ts';
-
-/** People already identified this process: an identify is PostHog's costly merge, so once is enough. */
-const identified = new Set<string>();
-
-/** Attaches the email to the person the first time they are seen. */
-function identifyOnce(who: Who) {
-  if (!who.email || identified.has(who.id)) return;
-  identified.add(who.id);
-  analytics.identify(who.id, { email: who.email });
-}
 
 /** Sends one event about `who` to PostHog, its Slack line when it has one, and its product card when it is worth one. */
 function send<K extends EventName>(name: K, who: Who, props: EventProps[K]) {
   const profile = who.email !== undefined;
+  // The person is known by their user id; their email never goes to PostHog.
   analytics.capture(who.id, name, { ...props, $process_person_profile: profile });
-  identifyOnce(who);
   const line = Object.hasOwn(SLACK_LINES, name) ? SLACK_LINES[name](who, props) : null;
   if (line) slack.post(CHANNEL[name], line);
   const text = slack.enabled('product') ? card(name, who, props) : null;

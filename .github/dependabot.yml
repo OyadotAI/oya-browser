@@ -1,0 +1,40 @@
+# Weekly dependency updates, one grouped pull request per folder, so a week's
+# bumps land together and CI judges them together. Security fixes come as they
+# are published, outside the weekly batch.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      root:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    groups:
+      server:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    groups:
+      ui:
+        patterns: ['*']
+  - package-ecosystem: npm
+    directory: /browser
+    schedule:
+      interval: weekly
+    groups:
+      browser:
+        patterns: ['*']
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

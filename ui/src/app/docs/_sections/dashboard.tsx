@@ -83,7 +83,8 @@ function DashboardOverviewPart2() {
         browser or verify its credentials. Its first connection does that. End active sessions before removing a route.
       </p>
       <p className="mb-3 text-[15px] leading-relaxed">
-        These routes serve new CDP connections to <InlineCode>/connect?token=YOUR_OYA_KEY</InlineCode>. The{' '}
+        These routes serve new CDP connections to <InlineCode>/connect</InlineCode>, with your key in an{' '}
+        <InlineCode>Authorization: Bearer</InlineCode> header or a one-use ticket from the API, never in the URL. The{' '}
         <strong>Start browser</strong> action uses your provider selection in <strong>Settings → Browsers</strong>.
         Attaching with <InlineCode>?browser=ID</InlineCode> connects to that existing browser.
       </p>
@@ -111,14 +112,16 @@ function DashboardOverviewPart3() {
       <p className="mb-3 text-[15px] leading-relaxed">
         Right-click any row (or press <strong>Connect</strong> in the panel) for code that targets that exact browser:
         SDK, CLI, an MCP config, curl, and for CDP-backed browsers a Playwright <InlineCode>connectOverCDP</InlineCode>{' '}
-        URL. Snippets are written for this deployment and your key; the key is masked until you ask, and copy always
-        copies the real one.
+        attach with the key in a header. Snippets are written for this deployment and your key; the key is masked until
+        you ask, and copy always copies the real one. <strong>Copy CDP attach URL</strong> copies a URL with a one-use
+        ticket that expires in 60 seconds, the same <InlineCode>cdpUrl</InlineCode> that{' '}
+        <InlineCode>GET /api/browsers/:id</InlineCode> returns, for tools that take only a URL.
       </p>
       <CodeBlock>{`// Attach through the gateway to one browser in the fleet. Closing your
 // client leaves the browser running.
-const browser = await chromium.connectOverCDP(
-  "wss://<host>/connect?token=<api-key>&browser=<browser-id>",
-);`}</CodeBlock>
+const browser = await chromium.connectOverCDP("wss://<host>/connect?browser=<browser-id>", {
+  headers: { Authorization: "Bearer <api-key>" },
+});`}</CodeBlock>
     </>
   );
 }

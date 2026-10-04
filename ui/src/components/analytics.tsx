@@ -26,7 +26,7 @@ function useAnalyticsIdentity(ready: boolean) {
   const { user } = useAuth();
   useEffect(() => {
     if (!ready) return;
-    if (user) identify(user.id, { email: user.email });
+    if (user) identify(user.id);
     else reset();
   }, [ready, user]);
 }

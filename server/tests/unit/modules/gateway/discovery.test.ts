@@ -33,10 +33,21 @@ describe('handleJsonVersion', () => {
     assert.deepEqual(res.body, { ...CHROME_VERSION, webSocketDebuggerUrl: 'ws://gw.example:8080/connect' });
   });
 
-  it('uses wss behind an https proxy, and carries a token through', () => {
+  it('uses wss behind an https proxy, and never echoes a key into the URL by default', () => {
     const res = response();
     handleJsonVersion(request('/json/version?token=a b', { host: 'gw.example', 'x-forwarded-proto': 'https' }), res);
-    assert.equal(res.body.webSocketDebuggerUrl, 'wss://gw.example/connect?token=a%20b');
+    assert.equal(res.body.webSocketDebuggerUrl, 'wss://gw.example/connect');
+  });
+
+  it('carries a token through only when keys in the URL are allowed again', () => {
+    process.env.OYA_ALLOW_LEGACY_QUERY_KEYS = 'true';
+    try {
+      const res = response();
+      handleJsonVersion(request('/json/version?token=a b', { host: 'gw.example' }), res);
+      assert.equal(res.body.webSocketDebuggerUrl, 'ws://gw.example/connect?token=a%20b');
+    } finally {
+      delete process.env.OYA_ALLOW_LEGACY_QUERY_KEYS;
+    }
   });
 
   it('falls back to localhost without a Host header', () => {

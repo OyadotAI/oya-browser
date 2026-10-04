@@ -127,6 +127,7 @@ router.get('/gateway/recordings', authMiddleware, async (req, res) =>
 /** GET /gateway/recordings/:id, one recording's manifest. */
 router.get('/gateway/recordings/:id', authMiddleware, async (req, res) => {
   const found = await recorder.manifest(req.params.id, ownerScope(req));
+  auditRecordingView(req, 'recording.view', found);
   if (!found) return res.status(Status.NOT_FOUND).json({ error: 'No such recording' });
   res.json(found);
 });
@@ -134,9 +135,19 @@ router.get('/gateway/recordings/:id', authMiddleware, async (req, res) => {
 /** One frame of a recording, for the dashboard player to scrub through. */
 router.get('/gateway/recordings/:id/frames/:index', authMiddleware, async (req, res) => {
   const buf = await recorder.frame(req.params.id, req.params.index, ownerScope(req));
+  auditRecordingView(req, 'recording.frame.view', buf, { index: req.params.index });
   if (!buf) return res.status(Status.NOT_FOUND).json({ error: 'No such frame' });
   res.type('image/jpeg').set('Cache-Control', 'private, max-age=3600').send(buf);
 });
+
+/**
+ * Records a look at a recording or one of its frames, found or not: a
+ * recording is what the page showed, so reading it is access to whatever was on it.
+ */
+function auditRecordingView(req, action, found, meta = undefined) {
+  const outcome = found ? 'ok' : 'denied';
+  audit({ action, actorKey: getKey(req), targetType: 'recording', targetId: req.params.id, outcome, meta, req });
+}
 
 /** DELETE /gateway/recordings/:id, deletes one of this key's recordings. */
 router.delete('/gateway/recordings/:id', authMiddleware, async (req, res) => {

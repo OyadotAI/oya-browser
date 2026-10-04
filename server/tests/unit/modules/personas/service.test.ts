@@ -293,6 +293,17 @@ describe('PersonaService.remove', () => {
     assert.deepEqual(deps.credentials.clearAll.mock.calls[0].arguments, [p.id]);
   });
 
+  it("forgets every persona of an erased owner, the default included, and nobody else's", () => {
+    const { service, deps } = personaService();
+    const d = service.defaultFor('k');
+    const p = service.create('k');
+    const theirs = service.create('other');
+    service.forgetOwners(new Set([deps.ownerOf('k')]));
+    assert.deepEqual([service.get('k', d.id), service.get('k', p.id)], [null, null]);
+    assert.ok(service.get('other', theirs.id));
+    assert.equal(deps.mfa.clearAll.mock.calls.length, 2);
+  });
+
   it('refuses the default persona with a 400', () => {
     const { service } = personaService();
     const d = service.defaultFor('k');

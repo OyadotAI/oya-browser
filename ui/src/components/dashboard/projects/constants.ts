@@ -2,7 +2,7 @@
  * Fixed values for the project switcher: storage keys, timings, HTTP codes,
  * lengths and the class strings its panels share.
  */
-import type { PickerState } from './types';
+import type { ExpiryChoice, PickerState } from './types';
 
 /** What a new account's first project, made for it at sign-in, is called. */
 export const FIRST_PROJECT_NAME = 'My project';
@@ -59,6 +59,7 @@ export const INITIAL_PICKER: PickerState = {
   target: null,
   revealedKey: '',
   name: '',
+  expiresInDays: null,
   secret: '',
   query: '',
   error: '',
@@ -67,6 +68,14 @@ export const INITIAL_PICKER: PickerState = {
   pending: null,
   busy: false,
 };
+
+/** The lifetimes offered for a new key, in days; null is never. */
+export const EXPIRY_CHOICES: ExpiryChoice[] = [
+  { label: 'Never', days: null },
+  { label: '30 days', days: 30 },
+  { label: '90 days', days: 90 },
+  { label: '365 days', days: 365 },
+];
 
 /** Text inputs in the switcher. */
 export const FIELD_CLASS =

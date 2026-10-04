@@ -7,6 +7,7 @@ import { dbAuth as supabaseAuth } from '../../platform/db.ts';
 import { findProfile, renameProfile } from './repository.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
+import { owesSecondFactor } from './mfa.ts';
 import { MAX_DISPLAY_NAME, NEW_ACCOUNT_MS } from './constants.ts';
 import type { SignupMethod } from '../telemetry/index.ts';
 
@@ -23,12 +24,17 @@ const userOf = (data) => ({
   provider: data.user.app_metadata?.provider,
 });
 
-/** The user and session tokens in a Supabase auth answer. */
+/**
+ * The user and session tokens in a Supabase auth answer. `mfa_required` says
+ * the person has an authenticator but this session has not passed it yet, so
+ * the console asks for a code before going on.
+ */
 const sessionOf = (data) => ({
   user: userOf(data),
   access_token: data.session.access_token,
   refresh_token: data.session.refresh_token,
   expires_at: data.session.expires_at,
+  mfa_required: owesSecondFactor(data.user, data.session.access_token),
 });
 
 // ── Signup / Login ──
@@ -57,6 +63,16 @@ export async function refreshSession(refreshToken) {
   const { data, error } = await supabaseAuth.auth.refreshSession({ refresh_token: refreshToken });
   if (error) throw error;
   return sessionOf(data);
+}
+
+/**
+ * Ends every session of the person behind an access token, on Supabase's side,
+ * so a refresh token copied before signing out stops working too.
+ */
+export async function signOutEverywhere(accessToken) {
+  requireAuth();
+  const { error } = await supabaseAuth.auth.admin.signOut(accessToken, 'global');
+  if (error) throw error;
 }
 
 /** The OAuth providers a person can sign in with, as Supabase names them. */

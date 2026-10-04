@@ -18,19 +18,19 @@
     "stealth": "node tests/integration/stealth.test.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.127.0",
-    "@aws-sdk/client-ecs": "^3.1138.0",
-    "@aws-sdk/client-sso": "^3.1138.0",
-    "@aws-sdk/credential-providers": "^3.1138.0",
-    "@daytona/sdk": "0.211.2",
-    "@modelcontextprotocol/sdk": "^1.12.1",
-    "@sentry/node": "^10.75.3",
-    "@supabase/supabase-js": "^2.99.3",
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@aws-sdk/client-ecs": "^3.1146.0",
+    "@aws-sdk/client-sso": "^3.1146.0",
+    "@aws-sdk/credential-providers": "^3.1146.0",
+    "@daytona/sdk": "0.220.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@sentry/node": "^11.4.0",
+    "@supabase/supabase-js": "^2.117.2",
     "cors": "^2.8.6",
-    "dotenv": "^16.4.7",
+    "dotenv": "^18.0.5",
     "express": "^5.2.1",
-    "pg": "^8.23.0",
-    "ws": "^8.18.1"
+    "pg": "^8.23.1",
+    "ws": "^8.22.0"
   },
   "overrides": {
     "qs": "^6.16.0"
@@ -39,18 +39,18 @@
     "node": ">=22.18"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^24.13.5",
     "@types/pg": "^8.23.1",
-    "@types/ws": "^8.18.1",
-    "eslint": "^9.39.5",
+    "@types/ws": "^8.18.2",
+    "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-jsdoc": "^64.5.3",
-    "globals": "^17.12.0",
-    "prettier": "^3.9.8",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.0"
+    "eslint-plugin-jsdoc": "^65.1.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.9",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0"
   }
 }

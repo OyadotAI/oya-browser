@@ -24,6 +24,16 @@ export interface OwnedKey {
   project?: string;
   /** The owner's label for it. */
   label?: string;
+  /** When the key stops working, as an ISO time; null or absent is never. */
+  expires_at?: string | null;
+}
+
+/** One lifetime the create form offers for a new key. */
+export interface ExpiryChoice {
+  /** What the option says. */
+  label: string;
+  /** Days the key lives; null is never. */
+  days: number | null;
 }
 
 /** A failed request, with the server's status and error code when it gave them. */
@@ -52,6 +62,8 @@ export interface PickerState {
   revealedKey: string;
   /** The name field. */
   name: string;
+  /** The new key's lifetime in days, chosen when creating; null is never. */
+  expiresInDays: number | null;
   /** The invitation code or API key field. */
   secret: string;
   /** The project search. */

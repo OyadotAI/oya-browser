@@ -6,6 +6,7 @@ import { authenticateToken } from '../auth/service.ts';
 import { Status } from '../../platform/http-status.ts';
 import { sessions } from './session-store.ts';
 import { BEARER_PREFIX_LENGTH, CHROME_VERSION } from './constants.ts';
+import { legacyQueryKeysAllowed } from './upgrade-auth.ts';
 
 /** The host the client reached us on, and the WebSocket scheme that matches it. */
 function endpointOf(req) {
@@ -17,10 +18,13 @@ function endpointOf(req) {
 /**
  * CDP discovery. Playwright and Puppeteer fetch this first and then dial
  * webSocketDebuggerUrl, which is why pointing them at the gateway just works.
+ * A key in the URL is carried through only where /connect would still accept
+ * it; otherwise the client dials with the same header it sent here.
  */
 export function handleJsonVersion(req, res) {
   const { host, scheme } = endpointOf(req);
-  const token = new URL(req.url, `http://${host}`).searchParams.get('token');
+  const asked = new URL(req.url, `http://${host}`).searchParams.get('token');
+  const token = legacyQueryKeysAllowed() && asked;
   res.json({
     ...CHROME_VERSION,
     webSocketDebuggerUrl: `${scheme}://${host}/connect${token ? `?token=${encodeURIComponent(token)}` : ''}`,

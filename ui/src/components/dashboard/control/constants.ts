@@ -167,6 +167,9 @@ export const LIMIT_FIELDS = {
   auditDays: 'Audit retention · days',
 } as const;
 
+/** Model providers a project can let see its pages, by the name the server's policy uses. */
+export const LLM_PROVIDERS = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini' } as const;
+
 /** Class for every small button in Project operations. */
 export const DURABLE_BUTTON =
   'rounded border border-border px-3 py-1.5 text-xs hover:bg-bg-elevated disabled:opacity-40';

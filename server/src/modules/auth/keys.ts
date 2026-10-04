@@ -4,7 +4,7 @@
  */
 
 import { createHash, randomBytes } from 'crypto';
-import { keyDigests } from './repository.ts';
+import { storedKeys } from './repository.ts';
 import { KEY_BYTES, KEY_PREFIX_CHARS } from './constants.ts';
 
 // ── Env-configured admin keys ──
@@ -60,6 +60,34 @@ export function isFleetToken(key) {
 
 /** sha256 hex digests, never keys. */
 export const keyCache = new Set();
+/**
+ * When each cached key expires, in epoch ms, by digest; a digest absent here
+ * never expires. Every cache-backed check consults it, so a cached key stops
+ * passing the moment it expires.
+ */
+const keyExpiries = new Map<string, number>();
+
+/** Caches a stored key's digest with its expiry (an ISO time, or null for never). */
+export function cacheKey(digest: string, expiresAt: string | null | undefined) {
+  keyCache.add(digest);
+  if (expiresAt) keyExpiries.set(digest, Date.parse(expiresAt));
+  else keyExpiries.delete(digest);
+}
+
+/** Forgets a digest and its expiry. */
+export function uncacheKey(digest: string) {
+  keyCache.delete(digest);
+  keyExpiries.delete(digest);
+}
+
+/** Whether a cached key is known and not past its expiry; an expired one is evicted. */
+function cachedAndCurrent(digest: string) {
+  if (!keyCache.has(digest)) return false;
+  if (!(keyExpiries.get(digest) <= Date.now())) return true;
+  uncacheKey(digest);
+  return false;
+}
+
 /** Whether the cache has been filled from storage. */
 let loaded = false;
 
@@ -75,19 +103,19 @@ async function loadKeys() {
 
 /** Reads every stored digest into the cache and marks it loaded. */
 async function fillCache() {
-  const digests = await keyDigests();
-  for (const digest of digests) keyCache.add(digest);
+  const rows = await storedKeys();
+  for (const row of rows) cacheKey(row.key_hash, row.expires_at);
   loaded = true;
-  console.log(`[auth] Loaded ${digests.length} API key digests`);
+  console.log(`[auth] Loaded ${rows.length} API key digests`);
 }
 
 /** Readiness is shared with server startup; an empty cache is not an invalid key. */
 export const authReady = loadKeys().then(() => loaded);
 
-/** Whether a key is an env key, a known stored key or the fleet token. */
+/** Whether a key is an env key, a known unexpired stored key or the fleet token. */
 export function validateApiKey(key) {
   if (!key) return false;
-  return envKeys.has(key) || keyCache.has(keyDigest(key)) || isFleetToken(key);
+  return envKeys.has(key) || cachedAndCurrent(keyDigest(key)) || isFleetToken(key);
 }
 
 // ── Agent keys no person has claimed ──

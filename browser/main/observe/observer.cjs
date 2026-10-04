@@ -143,7 +143,7 @@ function matcher(pattern, texts) {
     const hits = regexpHits(pattern, texts);
     return (i) => hits[i];
   } catch (err) {
-    if (err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw new Error(PATTERN_TOO_SLOW);
+    if (err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') throw new Error(PATTERN_TOO_SLOW, { cause: err });
     return (i) => String(texts[i]).includes(pattern);
   }
 }

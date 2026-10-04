@@ -7,6 +7,8 @@ import {
   archiveRecording,
   archivedManifest,
   archivedFrame,
+  openFrame,
+  openManifest,
   removeArchive,
   sharedRecordings,
 } from '../control/recording-storage.ts';
@@ -60,9 +62,9 @@ function liveSummary(id, owner) {
   return { sessionId: id, owner: live.owner, live: true, frameCount: live.frames.length };
 }
 
-/** A spooled recording's manifest; throws when there is none. */
+/** A spooled recording's manifest, sealed or from before sealing; throws when there is none. */
 async function readManifest(id) {
-  return JSON.parse(await readFile(join(DIR, id, 'manifest.json'), 'utf8'));
+  return openManifest(id, await readFile(join(DIR, id, 'manifest.json')));
 }
 
 /** Returns null rather than 403 for someone else's recording: its existence is not their business. */
@@ -110,7 +112,7 @@ export async function frame(sessionId, index, owner) {
   // A frame is a screenshot of a browser, so the same check as the manifest.
   if (!(await manifest(sessionId, owner))) return null;
   try {
-    return await readFile(join(DIR, sessionId, frameFile(i)));
+    return openFrame(sessionId, i, await readFile(join(DIR, sessionId, frameFile(i))));
   } catch {
     return archivedFrame(sessionId, i, owner);
   }
@@ -135,19 +137,30 @@ async function removeSpool(sessionId) {
   }
 }
 
-/** Retention and failed-upload retry run independently of browser command traffic. */
+/**
+ * Retention and failed-upload retry run independently of browser command
+ * traffic. A deleted project's recordings go on the next pass, on every
+ * replica's spool as well as the archive.
+ */
 export async function maintain() {
   const [projects, stored] = await control().store.load([{ kind: 'project' }, { kind: 'recording' }]);
   const days = new Map<string, number>(projects.map(({ body: p }) => [p.legacyOwner, p.settings.recordingDays]));
+  const deleted = new Set(projects.filter(({ body: p }) => p.deletedAt).map(({ body: p }) => p.legacyOwner));
   const archivedIds = new Set(stored.map((r) => r.id));
-  for (const entry of await list(null)) if (!entry.live) await maintainOne(entry, days, archivedIds);
+  for (const entry of await list(null)) if (!entry.live) await maintainOne(entry, { days, deleted, archivedIds });
+}
+
+/** Whether a recording is past its project's retention, or its project is gone. */
+function expired(entry, { days, deleted }) {
+  if (deleted.has(entry.owner)) return true;
+  return Date.parse(entry.startedAt) < Date.now() - (days.get(entry.owner) || DEFAULT_RECORDING_DAYS) * MS_PER_DAY;
 }
 
 /** Deletes an expired recording, or retries archiving one the archive does not have yet. */
-async function maintainOne(entry, days, archivedIds) {
-  if (Date.parse(entry.startedAt) < Date.now() - (days.get(entry.owner) || DEFAULT_RECORDING_DAYS) * MS_PER_DAY) {
+async function maintainOne(entry, known) {
+  if (expired(entry, known)) {
     await remove(entry.sessionId, entry.owner);
-  } else if (sharedRecordings() && !archivedIds.has(entry.sessionId)) {
+  } else if (sharedRecordings() && !known.archivedIds.has(entry.sessionId)) {
     const m = await manifest(entry.sessionId, entry.owner);
     if (m) await archiveRecording(m, join(DIR, entry.sessionId));
   }

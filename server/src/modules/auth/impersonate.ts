@@ -1,14 +1,16 @@
 /**
  * "Login as" tokens: a one-hour HS256 JWT that lets an admin act as one
  * customer to see what they see. It is signed with its own secret, never
- * Supabase's, so it can never pass as a sign-in token, and every request made
- * with it is audited under the admin who asked for it.
+ * Supabase's, so it can never pass as a sign-in token, every request made
+ * with it is audited under the admin who asked for it, and every request
+ * re-checks that the admin still is one.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { dbAuth } from '../../platform/db.ts';
 import { HttpError, notFound } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { MS_PER_SECOND } from '../../platform/constants.ts';
+import { isAdmin } from './admins.ts';
 import { IMPERSONATE_CONTEXT, IMPERSONATE_MIN_SECRET, IMPERSONATE_TTL_MS } from './constants.ts';
 
 /** What a token says: who is acted as, by which admin, and until when. */
@@ -82,4 +84,17 @@ export async function impersonatedUser(id: string) {
   const { data, error } = await dbAuth.auth.admin.getUserById(id);
   if (error || !data?.user) throw notFound('User');
   return data.user;
+}
+
+/**
+ * The customer a "Login as" token acts as, checked on every request rather
+ * than only when it was issued: an admin who has since lost admin rights (or
+ * been deleted), or a customer who has since become an admin, ends the token
+ * at once with a 401. `find` is the user lookup, a seam for tests.
+ */
+export async function actingAs(claims: Impersonation, find = impersonatedUser) {
+  const stillAdmin = find(claims.impersonated_by).then(isAdmin, () => false);
+  const [user, admin] = await Promise.all([find(claims.sub), stillAdmin]);
+  if (!admin || isAdmin(user)) throw new HttpError(Status.UNAUTHORIZED, 'Login as is no longer allowed');
+  return user;
 }

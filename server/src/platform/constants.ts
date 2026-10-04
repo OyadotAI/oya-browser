@@ -51,6 +51,48 @@ export const SHA256_HEX_CHARS = 64;
 export const AUDIT_GENESIS_HASH = '0'.repeat(SHA256_HEX_CHARS);
 /** Most rows one durable audit history query returns. */
 export const AUDIT_HISTORY_MAX_ROWS = 1000;
+/** Keyed digest used on chains written since the chain became an HMAC. */
+export const AUDIT_HMAC_ALGORITHM = 'sha256';
+/**
+ * Chain ids that start with this are HMAC chains. Older chains are plain
+ * SHA-256, which anyone with write access can recompute, so the verifier counts
+ * them as unkeyed rather than trusting them.
+ */
+export const AUDIT_HMAC_CHAIN_PREFIX = 'h-';
+/** Purpose label for the chain key derived from the server secret when OYA_AUDIT_HMAC_KEY is unset. */
+export const AUDIT_HMAC_KEY_PURPOSE = 'oya-audit-chain-v1';
+/** Operator-supplied chain key; read here and nowhere else, at use, so setting it later is seen. Unset derives one from the server secret. */
+export const auditHmacKey = () => process.env.OYA_AUDIT_HMAC_KEY || '';
+/**
+ * Most pending audit events kept in memory. Past it, events are appended to
+ * the overflow file on disk rather than dropped.
+ */
+export const AUDIT_PENDING_MAX = 5000;
+/** Milliseconds audit events wait to be written together. */
+export const AUDIT_FLUSH_DELAY_MS = 2000;
+/** Audit events kept in memory for recent(). */
+export const AUDIT_RING_MAX = 500;
+/** Newest stored audit rows the startup check verifies. */
+export const AUDIT_VERIFY_MAX_ROWS = 50_000;
+/** File mode of the audit overflow file: owner read and write only. */
+export const AUDIT_OVERFLOW_FILE_MODE = 0o600;
+/** How often a chain head is anchored to external storage unless OYA_AUDIT_ANCHOR_INTERVAL_MS says otherwise: 15 minutes. */
+export const DEFAULT_AUDIT_ANCHOR_INTERVAL_MS = 900_000;
+/** Milliseconds between anchors; read here and nowhere else. */
+export const auditAnchorIntervalMs = () =>
+  Number(process.env.OYA_AUDIT_ANCHOR_INTERVAL_MS) || DEFAULT_AUDIT_ANCHOR_INTERVAL_MS;
+/** Storage bucket chain heads are anchored to; unset turns anchoring off. Read here and nowhere else. */
+export const auditAnchorBucket = () => process.env.OYA_AUDIT_ANCHOR_BUCKET || '';
+/** Days of anchors the startup check reads: chains whose last anchor is older are not compared. */
+export const AUDIT_ANCHOR_VERIFY_DAYS = 30;
+/** Most anchor objects listed from one day's folder. */
+export const AUDIT_ANCHOR_LIST_MAX = 10_000;
+/** Digits a sequence number is padded to in an anchor's object name, so names sort by position. */
+export const AUDIT_ANCHOR_SEQ_DIGITS = 12;
+/** Characters of an ISO timestamp that make its date: the anchor's day folder. */
+export const ISO_DATE_CHARS = 10;
+/** Milliseconds in a day, for the anchor lookback. */
+export const AUDIT_DAY_MS = 86_400_000;
 
 // ── Usage ──
 
@@ -81,6 +123,8 @@ export const DEFAULT_CONNECT_BURST = 60;
 export const DEFAULT_AGENT_SIGNUPS_PER_DAY = 3;
 /** Install pings one address may send in an hour: a server sends one a day. */
 export const DEFAULT_INSTALL_PINGS_PER_HOUR = 4;
+/** Password sign-in attempts one email may make in an hour, so a password cannot be guessed online. */
+export const DEFAULT_LOGINS_PER_HOUR = 10;
 /** Minutes in an hour. */
 export const MINUTES_PER_HOUR = 60;
 /** Minutes in a day, for limits counted per day on a per-minute bucket. */
@@ -169,6 +213,44 @@ export type Ipv4Range = {
 /** Link-local (the cloud metadata service lives there) and "this network": never dialled. */
 export const NEVER_ALLOWED_V4: Ipv4Range[] = [{ first: 169, from: 254, to: 254 }, { first: 0 }];
 
+/** Sixteen-bit groups in a full IPv6 address. */
+export const IPV6_GROUPS = 8;
+/** Radix of an IPv6 group. */
+export const HEX_RADIX = 16;
+/** Bits in a byte: an IPv6 group holds two IPv4 octets. */
+export const BYTE_BITS = 8;
+/** Mask for the low byte of a group. */
+export const BYTE_MASK = 0xff;
+
+/** The group that marks an IPv4-mapped or SIIT-translated IPv6 address. */
+export const V4_MAPPED_GROUP = 0xffff;
+/** The two leading groups of the NAT64 well-known prefix 64:ff9b::/96. */
+export const NAT64_GROUPS = { first: 0x64, second: 0xff9b };
+/** The leading group of 6to4 (2002::/16), followed by the IPv4 address. */
+export const SIX_TO_FOUR_GROUP = 0x2002;
+
+/** An IPv6 prefix, as its leading groups, that carries an IPv4 address in the two groups from `at`. */
+export type V4Embedding = {
+  /** The leading groups, each matched exactly. */
+  prefix: number[];
+  /** Index of the group holding the first two IPv4 octets. */
+  at: number;
+};
+
+/**
+ * IPv6 forms that route to, or name, an IPv4 address: judged as that address.
+ * Mapped ::ffff:0:0/96, SIIT ::ffff:0:0:0/96, NAT64 64:ff9b::/96, compatible
+ * ::/96 and 6to4 2002::/16. WHATWG URL rewrites [::ffff:169.254.169.254] to
+ * [::ffff:a9fe:a9fe], so the hex spelling is the one that arrives here.
+ */
+export const V4_EMBEDDINGS: V4Embedding[] = [
+  { prefix: [0, 0, 0, 0, 0, V4_MAPPED_GROUP], at: 6 },
+  { prefix: [0, 0, 0, 0, V4_MAPPED_GROUP, 0], at: 6 },
+  { prefix: [NAT64_GROUPS.first, NAT64_GROUPS.second, 0, 0, 0, 0], at: 6 },
+  { prefix: [0, 0, 0, 0, 0, 0], at: 6 },
+  { prefix: [SIX_TO_FOUR_GROUP], at: 1 },
+];
+
 /** Ranges that are not safely routable on behalf of a caller (multicast is checked separately). */
 export const PRIVATE_V4: Ipv4Range[] = [
   { first: 0 },
@@ -184,8 +266,19 @@ export const PRIVATE_V4: Ipv4Range[] = [
 
 // ── Secrets ──
 
-/** Version byte at the start of every sealed buffer. */
+/** Version byte of the first sealed format, which names no key: it opens under any key the server holds. */
 export const SEALED_VERSION = 1;
+/** Version byte of the keyed format: the version, then the id of the key that wrapped the data key. */
+export const SEALED_KEYED_VERSION = 2;
+/**
+ * Whether new records are written in the keyed format. Off by default: a
+ * release before it cannot open keyed records, so turning it on during a
+ * rolling update or before a rollback would strand them. Turn it on with
+ * OYA_SEAL_KEY_IDS=true once every replica reads it. Both formats always open.
+ */
+export const sealKeyIds = () => process.env.OYA_SEAL_KEY_IDS === 'true';
+/** Bytes of a key id: a fingerprint of the key, enough to pick between current and previous. */
+export const KEY_ID_BYTES = 4;
 /** AES-256 key size: data keys, the KEK and a generated secret. */
 export const KEY_BYTES = 32;
 /** AES-GCM nonce size. */
@@ -238,3 +331,9 @@ export const DEFAULT_POOL_MAX = 10;
 export const PG_CONNECT_TIMEOUT_MS = 10_000;
 /** Idle Postgres connections are closed after this. */
 export const PG_IDLE_TIMEOUT_MS = 30_000;
+/**
+ * How DATABASE_URL's TLS is read when OYA_DB_TLS is unset: `libpq`, its own
+ * sslmode as psql reads it (`require` encrypts without verifying). Set
+ * OYA_DB_TLS=verify-full to require TLS with the certificate and host checked.
+ */
+export const DEFAULT_DB_TLS = 'libpq';

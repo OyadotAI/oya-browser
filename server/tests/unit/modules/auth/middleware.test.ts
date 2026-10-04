@@ -13,11 +13,13 @@ ownDataDir('oya-middleware-');
 const savedKeys = process.env.API_KEYS;
 process.env.API_KEYS = 'env-admin-key';
 after(() => restoreEnv('API_KEYS', savedKeys));
-const { authenticateToken, authMiddleware, userAuthMiddleware } =
+const { authenticateToken, authMiddleware, userAuthMiddleware, shareReaches } =
   await import('../../../../src/modules/auth/middleware.ts');
 const { mintImpersonation } = await import('../../../../src/modules/auth/impersonate.ts');
 const { registerApiKey } = await import('../../../../src/modules/auth/api-keys.ts');
-const { generateKey } = await import('../../../../src/modules/auth/keys.ts');
+const { generateKey, keyDigest, validateApiKey } = await import('../../../../src/modules/auth/keys.ts');
+const { recent } = await import('../../../../src/platform/audit.ts');
+const { KEY_EXPIRED_AUDIT_MS } = await import('../../../../src/modules/auth/constants.ts');
 const { control, projectId } = await import('../../../../src/modules/control/service.ts');
 const { issue } = await import('../../../../src/modules/control/service/credentials.ts');
 
@@ -47,7 +49,10 @@ function admit(token: string, request: any = {}) {
   return runMiddleware(authMiddleware, req).then((out) => ({ ...out, req }));
 }
 
-afterEach(() => mock.restoreAll());
+afterEach(() => {
+  mock.restoreAll();
+  mock.timers.reset();
+});
 
 describe('authenticateToken', () => {
   it('refuses a missing token with 401', async () => {
@@ -88,6 +93,57 @@ describe('authenticateToken', () => {
       message: 'Managed browser credentials cannot call this API',
     });
     assert.equal(await authenticateToken('oya_browser', { allowBrowser: true }), browser);
+  });
+});
+
+describe('an expiring API key', () => {
+  /** A stored key that expires at `expiresAt`. */
+  async function keyExpiring(expiresAt: string) {
+    const key = generateKey();
+    await registerApiKey(key, 'owner', 'Test', expiresAt);
+    return key;
+  }
+
+  /** The key.expired audit rows for a key. */
+  const expiredRows = (key: string) =>
+    recent({ action: 'key.expired' }).filter((r: any) => r.target_id === keyDigest(key));
+
+  it('works until its expiry', async () => {
+    const key = await keyExpiring(new Date(Date.now() + 60_000).toISOString());
+    assert.deepEqual(await authenticateToken(key), { key, role: 'administrator' });
+  });
+
+  it('is refused with 401 and the day it expired once past it', async () => {
+    const key = await keyExpiring('2020-05-06T00:00:00.000Z');
+    await assert.rejects(authenticateToken(key), {
+      status: Status.UNAUTHORIZED,
+      message: 'API key expired on 2020-05-06; create a new key in the console',
+    });
+  });
+
+  it('is refused once it expires, though it was valid and cached a moment before', async () => {
+    mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const key = await keyExpiring(new Date(Date.now() + 60_000).toISOString());
+    await authenticateToken(key);
+    assert.equal(validateApiKey(key), true);
+    mock.timers.tick(60_000);
+    assert.equal(validateApiKey(key), false, 'the cache-only check honours expiry');
+    await assert.rejects(authenticateToken(key), { status: Status.UNAUTHORIZED });
+  });
+
+  it('is answered 401 by the API middleware', async () => {
+    const out = await admit(await keyExpiring('2020-05-06T00:00:00.000Z'));
+    assert.equal(out.res.statusCode, Status.UNAUTHORIZED);
+  });
+
+  it('audits a refusal as key.expired once per key per hour, however often the client retries', async () => {
+    mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const key = await keyExpiring('2020-05-06T00:00:00.000Z');
+    for (let i = 0; i < 3; i++) await authenticateToken(key).catch(() => {});
+    assert.equal(expiredRows(key).length, 1);
+    mock.timers.tick(KEY_EXPIRED_AUDIT_MS);
+    await authenticateToken(key).catch(() => {});
+    assert.equal(expiredRows(key).length, 2);
   });
 });
 
@@ -170,6 +226,21 @@ describe('authMiddleware', () => {
     const { token } = await credential('administrator');
     assert.equal((await admit(token, { method: 'POST', path: '/config' })).passed, true);
     assert.equal((await admit('env-admin-key', { method: 'DELETE', path: '/personas/p1' })).passed, true);
+  });
+});
+
+describe('shareReaches', () => {
+  it('lets a share reach only its own session', () => {
+    const share = { key: 'k', role: 'operator', sessionId: 's-1' };
+    assert.deepEqual(
+      ['s-1', 's-2', null, undefined].map((target) => shareReaches(share, target)),
+      [true, false, false, false],
+    );
+  });
+
+  it('never confines project credentials or a managed browser', () => {
+    assert.equal(shareReaches({ key: 'k', role: 'operator' }, null), true);
+    assert.equal(shareReaches({ key: 'k', role: 'browser', sessionId: 's-1' }, null), true);
   });
 });
 

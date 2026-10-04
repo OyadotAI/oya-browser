@@ -7,7 +7,9 @@ import {
   hasSessionCookie,
   impersonation,
   keepRefreshToken,
+  keepStepUp,
   setImpersonation,
+  stepUpPending,
   storedRefreshToken,
 } from '@/lib/auth/storage';
 
@@ -55,5 +57,21 @@ describe('session storage', () => {
     expect(impersonation()).toBeNull();
     sessionStorage.setItem('oya_impersonation', '{');
     expect(impersonation()).toBeNull();
+  });
+});
+
+describe('the owed second factor', () => {
+  it('remembers that the session owes its code until the server says otherwise', () => {
+    expect(stepUpPending()).toBe(false);
+    keepStepUp(true);
+    expect(stepUpPending()).toBe(true);
+    keepStepUp(false);
+    expect(stepUpPending()).toBe(false);
+  });
+
+  it('forgets it on sign-out', () => {
+    keepStepUp(true);
+    clearStoredSession();
+    expect(stepUpPending()).toBe(false);
   });
 });

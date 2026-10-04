@@ -19,6 +19,7 @@ import {
   BEARER_PREFIX_LENGTH,
   DEFAULT_AGENT_SIGNUPS_PER_DAY,
   DEFAULT_INSTALL_PINGS_PER_HOUR,
+  DEFAULT_LOGINS_PER_HOUR,
   MINUTES_PER_DAY,
   MINUTES_PER_HOUR,
   DEFAULT_CHAT_BURST,
@@ -66,6 +67,11 @@ export const LIMITS = {
   installPing: {
     perMinute: DEFAULT_INSTALL_PINGS_PER_HOUR / MINUTES_PER_HOUR,
     burst: DEFAULT_INSTALL_PINGS_PER_HOUR,
+  },
+  // Keyed by the email being signed in to, so guessing one account's password is slow from any number of addresses.
+  login: {
+    perMinute: num('OYA_LIMIT_LOGINS_PER_HOUR', DEFAULT_LOGINS_PER_HOUR) / MINUTES_PER_HOUR,
+    burst: num('OYA_LIMIT_LOGINS_PER_HOUR', DEFAULT_LOGINS_PER_HOUR),
   },
   // Keyed by caller address, not key: new agent keys per address, a day's worth at most.
   agentSignup: {

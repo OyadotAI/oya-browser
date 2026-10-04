@@ -3,11 +3,12 @@
  * before any account call, logout clearing the cookies, and the key routes
  * refusing a caller without a signed-in session.
  */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { Status } from '../../../../src/platform/http-status.ts';
 import { ownDataDir } from '../../support/data-dir.ts';
 import { fakeRequest, routeThrough } from '../../support/auth.ts';
+import { recent } from '../../../../src/platform/audit.ts';
 
 ownDataDir('oya-auth-routes-');
 const { router } = await import('../../../../src/modules/auth/routes.ts');
@@ -38,9 +39,19 @@ describe('POST /auth/login', () => {
     assert.equal((await send('POST', '/auth/login', { password: 'x' })).statusCode, Status.BAD_REQUEST);
   });
 
-  it('answers a failed sign-in with 401', async () => {
-    const res = await send('POST', '/auth/login', { email: 'a@example.com', password: 'long-enough' });
+  it('answers a failed sign-in with 401, audited as denied for that email', async () => {
+    const res = await send('POST', '/auth/login', { email: 'Audit@Example.com', password: 'long-enough' });
     assert.equal(res.statusCode, Status.UNAUTHORIZED);
+    const [row] = recent({ action: 'auth.login' });
+    assert.deepEqual([row.outcome, row.target_id], ['denied', 'audit@example.com']);
+  });
+
+  it('limits sign-in attempts per email with 429, whatever its case', async () => {
+    const attempt = (email: string) => send('POST', '/auth/login', { email, password: 'long-enough' });
+    for (let i = 0; i < 10; i++) assert.equal((await attempt('limited@example.com')).statusCode, Status.UNAUTHORIZED);
+    const refused = await attempt('LIMITED@example.com');
+    assert.equal(refused.statusCode, Status.TOO_MANY_REQUESTS);
+    assert.equal((await attempt('other@example.com')).statusCode, Status.UNAUTHORIZED);
   });
 });
 
@@ -103,6 +114,14 @@ describe('POST /auth/logout', () => {
     const res = await send('POST', '/auth/logout');
     assert.deepEqual(res.body, { ok: true });
     assert.deepEqual(Object.keys(res.cleared).sort(), ['oya_rt', 'oya_session']);
+  });
+
+  it('still signs out when the session cannot be revoked upstream', async () => {
+    const warn = mock.method(console, 'warn', () => {});
+    const res = await send('POST', '/auth/logout', {}, { cookie: 'oya_rt=stale' });
+    assert.deepEqual(res.body, { ok: true });
+    assert.equal(warn.mock.callCount(), 1);
+    warn.mock.restore();
   });
 });
 

@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { show } from './actions';
-import { FIELD_CLASS, NAME_MAX_LENGTH } from './constants';
+import { EXPIRY_CHOICES, FIELD_CLASS, NAME_MAX_LENGTH } from './constants';
 import { submit } from './submit';
 import type { FormProps, PickerState, SubmitForm } from './types';
 import { isRestoring, submitLabel } from './view';
@@ -51,6 +51,27 @@ function NameField({ c, form }: FormProps) {
         value={c.ui.name}
         onChange={(e) => c.patch({ name: e.target.value })}
       />
+    </label>
+  );
+}
+
+/** When a new project's key stops working: never, or after 30, 90 or 365 days. */
+function ExpiryField({ c, form }: FormProps) {
+  if (form !== 'new') return null;
+  return (
+    <label className="block space-y-2">
+      <span className="text-xs font-medium text-text">API key expires</span>
+      <select
+        className={FIELD_CLASS}
+        value={c.ui.expiresInDays ?? ''}
+        onChange={(e) => c.patch({ expiresInDays: e.target.value ? Number(e.target.value) : null })}
+      >
+        {EXPIRY_CHOICES.map(({ label, days }) => (
+          <option key={label} value={days ?? ''}>
+            {label}
+          </option>
+        ))}
+      </select>
     </label>
   );
 }
@@ -112,6 +133,7 @@ export default function ProjectForm({ c, form }: FormProps) {
     >
       <p className="text-xs leading-relaxed text-text-muted">{INTRO[form](c.ui)}</p>
       <NameField c={c} form={form} />
+      <ExpiryField c={c} form={form} />
       <SecretField c={c} form={form} />
       <Buttons c={c} form={form} />
     </form>

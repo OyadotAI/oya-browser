@@ -4,7 +4,7 @@
  * credential), and the credential this tab drives the console with.
  */
 
-import { impersonation } from './auth/storage';
+import { impersonation, storedRefreshToken } from './auth/storage';
 
 /** The API base: NEXT_PUBLIC_API_URL when the API is on another origin, else same-origin `/api`. */
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
@@ -43,8 +43,20 @@ export function authHeaders(token: string): HeadersInit {
 async function account<T = any>(path: string, fallback: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(apiUrl(path), { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error || fallback);
+  if (!res.ok) throw new AccountError(data?.error || fallback, data?.code);
   return data;
+}
+
+/** A refused account request, with the server's machine-readable reason (`mfa_required`) when it gave one. */
+export class AccountError extends Error {
+  /** The server's code for the refusal, or undefined. */
+  code?: string;
+
+  /** Carries the server's message and code. */
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
 }
 
 /** Signs in with email and password; the server sets the refresh cookie. */
@@ -175,12 +187,12 @@ export const adminImpersonate = (token: string, id: string) =>
 export const listApiKeys = async (token: string) =>
   (await account('/auth/keys', 'Failed to list keys', { headers: authHeaders(token) })) ?? [];
 
-/** Creates a project and its key. */
-export const createApiKey = (token: string, label?: string) =>
+/** Creates a project and its key; `expiresInDays` null (or left out) is a key that never expires. */
+export const createApiKey = (token: string, label?: string, expiresInDays: number | null = null) =>
   account('/auth/keys', 'Could not create the project', {
     method: 'POST',
     headers: authHeaders(token),
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({ label, ...(expiresInDays ? { expiresInDays } : {}) }),
   });
 
 /** Adds an existing key to the person's account. */
@@ -221,3 +233,66 @@ export function consoleCredential(): string {
     return '';
   }
 }
+
+/** One authenticator app on the account. */
+export interface MfaFactor {
+  /** Supabase's factor id. */
+  id: string;
+  /** Its name, as given when it was added. */
+  name: string;
+  /** `verified` once a first code was accepted, else `unverified`. */
+  status: string;
+  /** When it was added. */
+  created_at: string;
+}
+
+/** The person's authenticators and how strongly this session signed in. */
+export interface MfaStatus {
+  /** Their authenticator apps. */
+  factors: MfaFactor[];
+  /** `aal2` once this session passed a second factor, else `aal1`. */
+  aal: string;
+}
+
+/** An authenticator being added: its factor, QR code (an SVG data URI) and the secret to type in instead. */
+export interface MfaEnrolment {
+  /** The factor to verify a first code against. */
+  id: string;
+  /** The QR code to scan. */
+  qr_code: string;
+  /** The secret, for an app that cannot scan. */
+  secret: string;
+}
+
+/**
+ * A POST to an MFA route. Those run on the person's own Supabase session, so
+ * they carry the refresh token: the cookie, or the stored one for a console
+ * on another origin.
+ */
+const mfaPost = <T>(token: string, path: string, fallback: string, body: object = {}) =>
+  account<T>(`/auth/mfa/${path}`, fallback, {
+    method: 'POST',
+    credentials: 'include',
+    headers: authHeaders(token),
+    body: JSON.stringify({ ...body, refresh_token: storedRefreshToken() }),
+  });
+
+/** The person's authenticators and this session's level. */
+export const mfaStatus = (token: string) => mfaPost<MfaStatus>(token, 'status', 'Could not load your authenticators');
+
+/** Starts adding an authenticator app. */
+export const mfaEnroll = (token: string) => mfaPost<MfaEnrolment>(token, 'enroll', 'Could not start the setup');
+
+/** What a good code answers: the new session, with its refresh token only when the server could not set the cookie. */
+export interface StepUpAnswer {
+  /** The refresh token, for a console on another origin. */
+  refresh_token?: string;
+}
+
+/** Checks a code; the answer is a new, two-factor session (the server sets its refresh cookie). */
+export const mfaVerify = (token: string, factorId: string, code: string) =>
+  mfaPost<StepUpAnswer>(token, 'verify', 'That code did not work', { factor_id: factorId, code });
+
+/** Removes an authenticator app. */
+export const mfaUnenroll = (token: string, factorId: string) =>
+  mfaPost(token, 'unenroll', 'Could not remove it', { factor_id: factorId });

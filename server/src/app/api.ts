@@ -20,6 +20,7 @@ import { router as fleetRoutes } from '../modules/fleet/routes.ts';
 import { router as browsersRoutes } from '../modules/browsers/routes.ts';
 import { personaRoutes } from '../modules/personas/routes.ts';
 import { container } from './container.ts';
+import { accountRoutes } from '../modules/erasure/index.ts';
 import { router as pairingRoutes } from '../modules/pairing/routes.ts';
 import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
 import { router as gatewayRoutes } from '../modules/gateway/routes.ts';
@@ -51,6 +52,8 @@ router.use('/control', controlRouter);
 router.use('/slack', slackRouter);
 /** /auth/projects, the signed-in account's projects: list, join, rename, delete, keys. */
 router.use('/auth/projects', projectAccountRouter);
+/** /auth/me DELETE, the signed-in person deletes their account; GET /auth/me falls through to the auth routes. */
+router.use('/auth/me', accountRoutes(container.erasure));
 
 /**
  * HTTP metrics. Labelled by the route pattern, never the concrete path, at

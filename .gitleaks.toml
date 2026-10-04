@@ -1,0 +1,13 @@
+# Secret scan settings for CI (ci.yaml "Secret scan"). The default rules apply;
+# these paths hold only fake fixtures, example placeholders and public test keys.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures and examples carry fake keys by design."
+paths = [
+  '''(^|/)tests?/''',
+  '''^server/test-[^/]+\.js$''',
+  '''^examples/\.env\.example$''',
+  '''^extension/content/agent\.js$''',
+]

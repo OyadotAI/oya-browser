@@ -28,7 +28,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PLAIN = join(HERE, 'postgres');
 // Accounts, profiles and RLS keyed on auth.users / auth.uid(): Supabase only.
 const AUTH_ONLY = /^(001|003|009|010)_/;
-const url = process.env.DATABASE_URL || '';
+// The owning role. A deployment whose server signs in with a narrower role
+// (deployments/sql/audit-insert-only.sql) sets this to the owner's URL.
+const url = process.env.OYA_MIGRATE_DATABASE_URL || process.env.DATABASE_URL || '';
 const dryRun = process.argv.includes('--dry-run');
 
 async function psql(args) {
@@ -53,7 +55,7 @@ async function main() {
   try {
     await query('select 1');
   } catch (err) {
-    throw new Error(`cannot reach the database: ${err.stderr?.trim() || err.message}`);
+    throw new Error(`cannot reach the database: ${err.stderr?.trim() || err.message}`, { cause: err });
   }
 
   // Supabase supplies auth.users and service_role; plain Postgres does not, and

@@ -1,5 +1,6 @@
 /** IPC: settings, connection status, control handoff, the saved profile and the fingerprint. */
 const { getFromApi } = require('../connection/server-api.cjs');
+const { pairingServer } = require('../pairing.cjs');
 /**
  * The workspace's own console, derived from the server address rather than
  * taken from the renderer: openExternal will hand any scheme to the operating
@@ -52,6 +53,14 @@ function movesProject(config, changes) {
   return differs('apiKey') || differs('serverUrl');
 }
 
+/** `changes`, refused when its server URL is one the renderer should not have let through: plaintext ws:// would send the key and cookies in the clear. */
+function checkedServer(changes) {
+  if ('serverUrl' in changes && !pairingServer(changes.serverUrl)) {
+    throw new Error('Use wss://, or ws:// to this machine');
+  }
+  return changes;
+}
+
 /**
  * Saves the settings and reconnects. A key typed here is the person's choice,
  * kept over OYA_API_KEY from then on. Another project's server refused the old
@@ -90,7 +99,7 @@ const SESSION_HANDLERS = {
     if (url) await ctx.electron.shell.openExternal(url);
     return url;
   },
-  'save-config': saveConfig,
+  'save-config': (ctx, e, changes) => saveConfig(ctx, e, checkedServer(changes)),
   'get-status': (ctx) => ({
     connected: ctx.socket.ready,
     browserId: ctx.socket.browserId,

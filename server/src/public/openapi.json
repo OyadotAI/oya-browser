@@ -634,7 +634,22 @@
                   },
                   "auditDays": {
                     "type": "integer",
-                    "minimum": 1
+                    "minimum": 1,
+                    "description": "A value below the server's audit retention floor (365 days unless OYA_AUDIT_RETENTION_FLOOR_DAYS says otherwise) is raised to it."
+                  },
+                  "llm": {
+                    "type": "object",
+                    "nullable": true,
+                    "description": "Model providers that may see page text and screenshots. Absent or null allows every provider; an empty list allows none. An agent run on a refused provider fails with 403 llm_not_allowed before any page content is sent, and is audited as llm.refused.",
+                    "required": ["allow"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "allow": {
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": { "type": "string", "enum": ["anthropic", "openai", "gemini"] }
+                      }
+                    }
                   }
                 }
               }

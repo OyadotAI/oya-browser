@@ -105,4 +105,19 @@ describe('DurableControl', () => {
     expect(screen.getByRole('alert').textContent).toBe('Rate cards and policy must be valid JSON');
     expect(api).not.toHaveBeenCalledWith('/control/project', expect.anything());
   });
+
+  it('allows every model provider by default, and saves the ones left checked', async () => {
+    await setup();
+    const anthropic = screen.getByLabelText('Anthropic') as HTMLInputElement;
+    expect(anthropic.checked).toBe(true);
+    fireEvent.click(anthropic);
+    fireEvent.submit(screen.getByRole('button', { name: 'Save settings' }).closest('form')!);
+    expect(api).toHaveBeenCalledWith(
+      '/control/project',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.objectContaining({ llm: { allow: ['openai', 'gemini'] } }),
+      }),
+    );
+  });
 });

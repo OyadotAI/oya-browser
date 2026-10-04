@@ -196,6 +196,11 @@ describe('BrowserConnection', () => {
     assert.equal((await connect(auth())).closed.reason, 'Invalid API key');
   });
 
+  it('refuses a share link credential, even for its own shared browser', async () => {
+    principal({ key: 'k-conn', role: 'operator', sessionId: B });
+    assert.equal((await connect(auth())).closed.reason, 'Invalid API key');
+  });
+
   it('refuses a managed browser credential for another session', async () => {
     principal({ key: 'k-conn', role: 'browser', sessionId: 'someone-else' });
     assert.equal((await connect(auth())).closed.reason, 'Invalid API key');

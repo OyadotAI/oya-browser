@@ -14,6 +14,7 @@ import {
   adminRevokeLicense,
 } from '@/lib/api';
 import { setImpersonation } from '@/lib/auth/storage';
+import { stepUpUrl } from '@/lib/auth/step-up';
 import type { Found, License, Overview } from './types';
 
 /** Loaded data, or why it could not be. */
@@ -26,12 +27,20 @@ interface Loaded {
   error: string;
 }
 
-/** Loads the overview and licenses, or says why not. */
+/** Whether the server refused because admins must sign in with a second factor and this session has not. */
+const needsSecondFactor = (e: unknown) => Object(e).code === 'mfa_required';
+
+/**
+ * Loads the overview and licenses, or says why not. Refused for want of a
+ * second factor, it sends the person to the code page (which offers set-up
+ * when they have no authenticator yet) and back here.
+ */
 async function load(token: string): Promise<Loaded> {
   try {
     const [overview, { licenses }] = await Promise.all([adminOverview(token), adminLicenses(token)]);
     return { overview, licenses, error: '' };
   } catch (e) {
+    if (needsSecondFactor(e)) window.location.assign(stepUpUrl('/admin'));
     return { overview: null, licenses: [], error: e instanceof Error ? e.message : 'Could not load' };
   }
 }

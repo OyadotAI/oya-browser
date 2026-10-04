@@ -16,8 +16,6 @@ export const TICK_INTERVAL_MS = 2000;
 export const DRAIN_POLL_MS = 50;
 /** Gap between maintenance passes. */
 export const MAINTENANCE_INTERVAL_MS = 60_000;
-/** Audit window for a project that has not set one. */
-export const DEFAULT_AUDIT_DAYS = 90;
 
 /** A gateway attachment is renewed once its lease has less than this left… */
 export const ATTACHMENT_RENEW_BEFORE_MS = 90_000;

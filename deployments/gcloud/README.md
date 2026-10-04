@@ -81,3 +81,4 @@ Check it end to end:
 - **Architecture.** Autopilot schedules on `linux/amd64` by default, which is what the browser image is built for. On an arm64 machine, the image build runs under emulation and is slower the first time.
 - **Capacity.** Each browser is one Autopilot pod (250m CPU, 512 MiB requested). Autopilot bills per pod resource, so you pay for browsers only while they run.
 - **Database password.** It's generated once, stored in Cloud SQL and in the `oya-secrets` Secret, and never printed.
+- **Deploying from GitHub Actions.** Sign in with Workload Identity Federation instead of a service-account key: [`OIDC.md`](OIDC.md).

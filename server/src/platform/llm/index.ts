@@ -12,6 +12,9 @@ import { withRetries } from './transport.ts';
 /** The providers, most specific first: the OpenAI-compatible one takes any base URL the others do not claim. */
 const PROVIDERS: LlmProvider[] = [anthropic, gemini, openai];
 
+/** Every provider's name, what a project's model policy lists. */
+export const LLM_PROVIDERS = PROVIDERS.map((p) => p.name);
+
 /** The provider that serves `baseUrl`. */
 export const providerFor = (baseUrl: string) => PROVIDERS.find((p) => p.handles(baseUrl)) as LlmProvider;
 

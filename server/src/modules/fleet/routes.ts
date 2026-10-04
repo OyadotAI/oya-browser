@@ -7,13 +7,13 @@ import { authMiddleware, provisionKeys } from '../auth/service.ts';
 import { registry } from '../browsers/registry.ts';
 import { listSandboxBrowsers } from '../../drivers/sandbox.ts';
 import { metrics, render as renderMetrics } from '../../platform/metrics.ts';
-import { audit, history as auditHistory, fingerprint } from '../../platform/audit.ts';
+import { audit, history as auditHistory, fingerprint, verifyStored } from '../../platform/audit.ts';
 import * as usage from '../../platform/usage.ts';
 import { status as limitStatus, QUOTAS } from '../../platform/limits.ts';
 import { listSessions } from '../gateway/service.ts';
 import { pool } from '../gateway/routing.ts';
 import { control } from '../control/service.ts';
-import { getKey, operatorOnly } from '../../app/http.ts';
+import { getKey, metricsAccess, operatorOnly } from '../../app/http.ts';
 import { summarize } from './summary.ts';
 import { RELEASE_VERSION } from '../../platform/version.ts';
 import { MAX_PROVISION, DEFAULT_USAGE_HOURS, DEFAULT_AUDIT_LIMIT, MAX_AUDIT_LIMIT } from './constants.ts';
@@ -47,10 +47,10 @@ router.post('/fleet/provision', operatorOnly, async (req, res) => {
 // ─── Observability ───────────────────────────────────────────────────────────
 
 /**
- * Prometheus scrape target. Accepts an admin key or a dedicated
- * OYA_METRICS_TOKEN, so a scraper does not need admin credentials.
+ * Prometheus scrape target. Accepts the operator token or a dedicated
+ * OYA_METRICS_TOKEN, so a scraper does not need host-control credentials.
  */
-router.get('/metrics', operatorOnly, (req, res) => {
+router.get('/metrics', metricsAccess, (req, res) => {
   metrics.browsersConnected.set({}, registry.browsers.size);
   res.type('text/plain; version=0.0.4').send(renderMetrics());
 });
@@ -110,6 +110,18 @@ router.get('/audit', authMiddleware, async (req, res) => {
     since: req.query.since,
   });
   res.json(result);
+});
+
+/**
+ * GET /operator/audit/verify, the audit trail's verdict: every stored chain
+ * checked link by link and against its newest external anchor. With
+ * `?project=`, that project's control event chain is verified too. operatorOnly:
+ * the verdict names every writer's chain.
+ */
+router.get('/operator/audit/verify', operatorOnly, async (req, res) => {
+  const project = typeof req.query.project === 'string' ? req.query.project : null;
+  const controlEvents = project ? await control().store.verifyEvents(project) : undefined;
+  res.json({ audit: await verifyStored(), controlEvents });
 });
 
 /**

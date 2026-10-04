@@ -35,6 +35,14 @@ const SUBMIT_LABELS: Record<SubmitForm, string> = {
 export const submitLabel = (ui: PickerState) =>
   isRestoring(ui) ? 'Restore access' : SUBMIT_LABELS[ui.form as SubmitForm];
 
+/** A key's expiry for people: "Never expires", "Expires 5 Jan 2027" or "Expired 5 Jan 2026". */
+export function expiryText(expiresAt: string | null | undefined, now = Date.now()) {
+  if (!expiresAt) return 'Never expires';
+  const when = Date.parse(expiresAt);
+  const day = new Date(when).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${when <= now ? 'Expired' : 'Expires'} ${day}`;
+}
+
 /** What the switcher button says: the open project, or a prompt to pick one. */
 export const triggerLabel = (c: PickerContext, apiKey: string) =>
   c.projects.find((p) => p.id === c.currentId)?.name || (apiKey ? 'Project' : 'Select project');

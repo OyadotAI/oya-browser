@@ -11,9 +11,19 @@ ownDataDir('oya-control-maintenance-');
 const { hash } = await import('../../../../../src/modules/control/service.ts');
 const { maintainControl, startMaintenance } = await import('../../../../../src/modules/control/worker/maintenance.ts');
 const { flags } = await import('../../../../../src/modules/control/worker/state.ts');
-const { putRow, scratchService } = await import('../../../support/control.ts');
+const { patchRow, putRow, scratchService } = await import('../../../support/control.ts');
+const { AUDIT_RETENTION_FLOOR_DAYS, DAY_MS } = await import('../../../../../src/modules/control/service/constants.ts');
 
 afterEach(() => mock.restoreAll());
+
+/** Appends an event of type 'old' at `at` to each key's project. */
+const pushOld = (service, keys, at) =>
+  service.store.transact(async (tx) => {
+    for (const key of keys) tx.events.push({ project: service.projectIdFor(key), type: 'old', at, detail: {} });
+  });
+
+/** Whether the key's project still has an 'old' event. */
+const hasOld = async (service, key) => (await service.events(key)).some((e) => e.type === 'old');
 
 describe('maintainControl', () => {
   it('prunes expired rows', async () => {
@@ -25,23 +35,23 @@ describe('maintainControl', () => {
 
   it('prunes events older than each project’s own audit window', async () => {
     const service = scratchService();
-    await service.settings('key-a', { auditDays: 1 });
-    await service.project('key-b');
-    const twoDaysAgo = Date.now() - 2 * 86_400_000;
-    await service.store.transact(async (tx) => {
-      tx.events.push({ project: service.projectIdFor('key-a'), type: 'old', at: twoDaysAgo, detail: {} });
-      tx.events.push({ project: service.projectIdFor('key-b'), type: 'old', at: twoDaysAgo, detail: {} });
-    });
+    // Written first, as an old event was: retention cuts a project's history from the start.
+    const pastFloor = Date.now() - (AUDIT_RETENTION_FLOOR_DAYS + 1) * DAY_MS;
+    await pushOld(service, ['key-a', 'key-b'], pastFloor);
+    await service.settings('key-a', { auditDays: AUDIT_RETENTION_FLOOR_DAYS });
+    await service.settings('key-b', { auditDays: AUDIT_RETENTION_FLOOR_DAYS + 2 });
     await maintainControl(service);
-    assert.equal(
-      (await service.events('key-a')).some((e) => e.type === 'old'),
-      false,
-    );
-    assert.equal(
-      (await service.events('key-b')).some((e) => e.type === 'old'),
-      true,
-      'default 90 days',
-    );
+    assert.equal(await hasOld(service, 'key-a'), false);
+    assert.equal(await hasOld(service, 'key-b'), true);
+  });
+
+  it('keeps events for the retention floor even when a stored setting is shorter', async () => {
+    const service = scratchService();
+    await service.project('key-a');
+    await patchRow(service, 'project', service.projectIdFor('key-a'), { settings: { auditDays: 1 } });
+    await pushOld(service, ['key-a'], Date.now() - 2 * DAY_MS);
+    await maintainControl(service);
+    assert.equal(await hasOld(service, 'key-a'), true);
   });
 
   it('deletes managed-browser credentials whose session ended, and keeps running ones', async () => {

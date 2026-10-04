@@ -1,11 +1,14 @@
 /**
  * Retention, run at most once a minute: expired rows, events past each
- * project's audit window, credentials of ended managed browsers, recordings.
+ * project's audit window, credentials of ended managed browsers, recordings,
+ * and erasure of deleted projects past their grace period (modules/erasure).
  */
 import { control, terminal } from '../service.ts';
 import { maintain as maintainRecordings } from '../../gateway/recorder.ts';
+import { container } from '../../../app/container.ts';
 import { flags } from './state.ts';
-import { DAY_MS, DEFAULT_AUDIT_DAYS, MAINTENANCE_INTERVAL_MS } from './constants.ts';
+import { DAY_MS, MAINTENANCE_INTERVAL_MS } from './constants.ts';
+import { AUDIT_RETENTION_FLOOR_DAYS } from '../service/constants.ts';
 
 /** Starts a maintenance pass in the background unless one is running or ran within the interval. */
 export function startMaintenance(service) {
@@ -25,11 +28,14 @@ export async function maintainControl(service = control()) {
   await service.store.prune(now, auditCutoffs(projects, now));
   await forgetEndedCredentials(service);
   await maintainRecordings();
+  await container.erasure.maintain();
 }
 
+/** A project's audit window in days: its own setting, never below the floor, which also covers older settings. */
+const auditDays = (p) => Math.max(p.settings.auditDays || 0, AUDIT_RETENTION_FLOOR_DAYS);
+
 /** Each project's oldest event to keep. */
-const auditCutoffs = (projects, now) =>
-  Object.fromEntries(projects.map((p) => [p.id, now - (p.settings.auditDays || DEFAULT_AUDIT_DAYS) * DAY_MS]));
+const auditCutoffs = (projects, now) => Object.fromEntries(projects.map((p) => [p.id, now - auditDays(p) * DAY_MS]));
 
 /** Deletes enrolment credentials whose browser session has ended. */
 async function forgetEndedCredentials(service) {

@@ -9,8 +9,18 @@ import type { Row } from '../../platform/storage/index.ts';
 import { findKey, insertKeys, claimAgentKey, keysOf, deleteKey, touchKey } from './repository.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { generateKey, isEnvKey, isFleetToken, keyCache, keyDigest, keyPrefix, noteAgentKey } from './keys.ts';
-import { MAX_PROJECT_NAME } from './constants.ts';
+import {
+  cacheKey,
+  generateKey,
+  isEnvKey,
+  isFleetToken,
+  keyCache,
+  keyDigest,
+  keyPrefix,
+  noteAgentKey,
+  uncacheKey,
+} from './keys.ts';
+import { API_KEY_MAX_DAYS, DAY_MS, MAX_KEY_DAYS, MAX_PROJECT_NAME, MIN_KEY_DAYS } from './constants.ts';
 
 /** What a new project is called until its key's label names it. */
 const DEFAULT_PROJECT_NAME = /^Project [0-9a-f]{6}$/;
@@ -66,17 +76,44 @@ const keyRow = (key) => ({
   created_at: new Date().toISOString(),
 });
 
-/** Stores a key's digest for a user and claims its project. Re-importing a key already registered to the same user re-seals its project; an agent's unclaimed key becomes this user's (resolving true); a key owned by someone else is refused. */
-export async function registerApiKey(key, userId, label) {
+/**
+ * When a new key expires, as an ISO time, or null for never. `days` is the
+ * caller's choice (a whole number from MIN_KEY_DAYS to MAX_KEY_DAYS, or absent
+ * for never); the operator's cap, when set, shortens it and turns never into the cap.
+ */
+export function keyExpiry(days?: unknown, maxDays = API_KEY_MAX_DAYS, now = Date.now()) {
+  const asked = days === undefined || days === null ? null : validDays(days);
+  const lifetime = maxDays === null ? asked : Math.min(asked ?? maxDays, maxDays);
+  return lifetime === null ? null : new Date(now + lifetime * DAY_MS).toISOString();
+}
+
+/** A requested lifetime in days, or a 400 when it is not a whole number in range. */
+function validDays(days: unknown) {
+  if (Number.isInteger(days) && (days as number) >= MIN_KEY_DAYS && (days as number) <= MAX_KEY_DAYS)
+    return days as number;
+  throw new HttpError(
+    Status.BAD_REQUEST,
+    `expiresInDays must be a whole number from ${MIN_KEY_DAYS} to ${MAX_KEY_DAYS}`,
+  );
+}
+
+/**
+ * Stores a key's digest for a user and claims its project. `expiresAt` (from
+ * keyExpiry) applies to a newly stored key only. Re-importing a key already
+ * registered to the same user re-seals its project and keeps its expiry; an
+ * agent's unclaimed key becomes this user's (resolving true); a key owned by
+ * someone else is refused.
+ */
+export async function registerApiKey(key, userId, label, expiresAt: string | null = null) {
   const digest = keyDigest(key);
   if (userId) {
     const existing = await ownerRow(digest);
     if (existing) return reimport(key, digest, userId, existing);
-    await insertKeyRow(key, userId, label);
+    await insertKeyRow(key, userId, label, expiresAt);
   }
   // Claim first: a refused claim must not leave the key cached as the refused user's.
   await claimNewProject(key, userId, label);
-  remember(key, digest, userId);
+  remember(key, digest, userId, expiresAt);
 }
 
 /** A key this user already registered: re-seal its project under this server's secret. */
@@ -85,7 +122,7 @@ async function reimport(key, digest, userId, existing) {
   if (adopted) await adoptAgentKey(digest, userId);
   else if (existing.user_id !== userId) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
   await claimProject(key, userId);
-  remember(key, digest, userId);
+  remember(key, digest, userId, existing.expires_at);
   return adopted;
 }
 
@@ -125,15 +162,16 @@ export async function isUnclaimedAgentKey(key) {
   return isUnclaimedAgent(await ownerRow(keyDigest(key)));
 }
 
-/** Records a new key for a user. */
-async function insertKeyRow(key, userId, label) {
+/** Records a new key for a user; a null expiresAt is a key that never expires. */
+async function insertKeyRow(key, userId, label, expiresAt) {
   const { key_hash, key_prefix, project, created_at } = keyRow(key);
-  await insertKeys([{ key_hash, key_prefix, project, user_id: userId, label: label || 'Default', created_at }]);
+  const owned = { user_id: userId, label: label || 'Default', expires_at: expiresAt };
+  await insertKeys([{ key_hash, key_prefix, project, created_at, ...owned }]);
 }
 
-/** Caches the digest, and the owner when there is one. */
-function remember(key, digest, userId) {
-  keyCache.add(digest);
+/** Caches the digest with its expiry, and the owner when there is one. */
+function remember(key, digest, userId, expiresAt: string | null = null) {
+  cacheKey(digest, expiresAt);
   if (userId) ownerCache.set(key, userId);
 }
 
@@ -171,16 +209,39 @@ export async function listApiKeys(userId) {
   return (await keysOf(userId)).map(listed);
 }
 
-/** A key row as the console lists it: the digest as its id, never the key. */
-const listed = ({ key_hash, key_prefix, project, label, created_at, last_used_at }: Row) => ({
-  ...{ id: key_hash, prefix: key_prefix, project, label, created_at, last_used_at },
+/** A key row as the console lists it: the digest as its id, never the key; expires_at null is never. */
+const listed = ({ key_hash, key_prefix, project, label, created_at, last_used_at, expires_at }: Row) => ({
+  ...{ id: key_hash, prefix: key_prefix, project, label, created_at, last_used_at, expires_at: expires_at ?? null },
 });
 
-/** By digest: the server has no way to look a key up by its plaintext any more. */
+/** Who is told a key was revoked, with its digest: the browser socket and the CDP gateway, which end what it holds open. */
+const revokedListeners = new Set<(digest: string) => void>();
+
+/** Subscribes to key revocations; `listener` gets the revoked key's digest and must end what that key holds open. */
+export function onKeyRevoked(listener: (digest: string) => void) {
+  revokedListeners.add(listener);
+}
+
+/** Tells every listener a key is revoked; one that throws is logged and does not stop the rest. */
+function announceRevoked(digest: string) {
+  for (const listener of revokedListeners)
+    try {
+      listener(digest);
+    } catch (e) {
+      console.error('[auth] closing a revoked key’s connections failed:', e.message);
+    }
+}
+
+/**
+ * By digest: the server has no way to look a key up by its plaintext any more.
+ * The key's live browser sockets and gateway sessions on this replica end at
+ * once; a replica that holds others refuses them when they reconnect.
+ */
 export async function deleteApiKey(id, userId) {
   if (!(await deleteKey(id, userId))) throw new HttpError(Status.NOT_FOUND, 'Key not found');
-  keyCache.delete(id);
+  uncacheKey(id);
   for (const [key, owner] of ownerCache) if (owner === userId && keyDigest(key) === id) ownerCache.delete(key);
+  announceRevoked(id);
 }
 
 /** Records when a key was last used; failures are logged, never thrown. */

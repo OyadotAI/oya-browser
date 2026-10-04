@@ -68,9 +68,9 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "publint": "^0.3.24",
-    "tsup": "^8.0.0",
-    "typescript": "^5.4.0"
+    "publint": "^0.3.25",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
   },
   "author": "mk@getoya.ai"
 }

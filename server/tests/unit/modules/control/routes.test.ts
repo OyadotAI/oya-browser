@@ -14,6 +14,7 @@ const { control, projectId } = await import('../../../../src/modules/control/ser
 const { allowKey, callRoute } = await import('../../support/agent.ts');
 const { connectBrowser, disconnectBrowser } = await import('../../support/fakes.ts');
 const { readySession } = await import('../../support/control.ts');
+const { AUDIT_RETENTION_FLOOR_DAYS } = await import('../../../../src/modules/control/service/constants.ts');
 
 const A = 'routes-key-a',
   B = 'routes-key-b';
@@ -115,12 +116,13 @@ describe('sessions routes', () => {
 describe('administrator routes', () => {
   it('refuses a non-administrator', async () => {
     const operator = await control().credential(A, { role: 'operator' });
-    const res = await call('PATCH', '/project', { auditDays: 5 }, operator.token);
+    const res = await call('PATCH', '/project', { auditDays: AUDIT_RETENTION_FLOOR_DAYS }, operator.token);
     assert.equal(res.status, 403);
   });
 
   it('updates settings', async () => {
-    assert.equal((await call('PATCH', '/project', { auditDays: 5 })).body.settings.auditDays, 5);
+    const days = AUDIT_RETENTION_FLOOR_DAYS + 1;
+    assert.equal((await call('PATCH', '/project', { auditDays: days })).body.settings.auditDays, days);
   });
 
   it('invites an operator by default and lists members', async () => {

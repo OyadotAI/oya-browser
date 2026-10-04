@@ -26,6 +26,15 @@ export class FakeResponse {
     return this;
   }
 
+  /** Headers set, by name. */
+  headers: Record<string, string> = {};
+
+  /** Records a header. */
+  set(name: string, value: string) {
+    this.headers[name] = value;
+    return this;
+  }
+
   /** Records a cookie. */
   cookie(name: string, value: string, options: any) {
     this.cookies[name] = { value, options };

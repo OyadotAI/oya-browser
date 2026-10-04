@@ -30,10 +30,23 @@ export const ownerScope = (req) => fingerprint(getKey(req));
  * env var silently turns a key into a superuser.
  */
 export function operatorOnly(req, res, next) {
-  const token = process.env.OYA_OPERATOR_TOKEN || process.env.OYA_METRICS_TOKEN;
   // Header only: a token in the query string lands in access logs, proxy logs
   // and browser history. Prometheus sends an Authorization header natively.
-  if (matchesToken(getKey(req), token)) return next();
+  return gateOn([process.env.OYA_OPERATOR_TOKEN], req, res, next);
+}
+
+/**
+ * The Prometheus scrape gate: the operator token, or the read-only
+ * OYA_METRICS_TOKEN. The metrics token opens /metrics and nothing else, so a
+ * leaked scraper credential cannot mint keys or drain the host.
+ */
+export function metricsAccess(req, res, next) {
+  return gateOn([process.env.OYA_OPERATOR_TOKEN, process.env.OYA_METRICS_TOKEN], req, res, next);
+}
+
+/** Passes the request on when its credential matches one of `tokens`, else answers 403. */
+function gateOn(tokens: (string | undefined)[], req, res, next) {
+  if (tokens.some((token) => matchesToken(getKey(req), token))) return next();
   return res.status(Status.FORBIDDEN).json({
     error: 'Host controls need OYA_OPERATOR_TOKEN in the Authorization header',
   });

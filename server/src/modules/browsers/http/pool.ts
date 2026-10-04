@@ -75,8 +75,21 @@ export function exportJar(req, res) {
   const format = req.query.format === undefined ? 'json' : String(req.query.format);
   const jar = formatJar(format, getAllCookies(resolved.persona.id));
   if (jar === undefined) return refuseFormat(req, res);
+  auditExport(req, resolved.persona.id, format);
   if (typeof jar === 'string') return sendCookiesTxt(res, resolved.persona.id, jar);
   res.json({ persona: resolved.persona.id, cookies: jar });
+}
+
+/** Records a jar export: the cookies are live sessions, so who took them, and in what form, is evidence. */
+function auditExport(req, personaId, format) {
+  audit({
+    action: 'cookies.export',
+    actorKey: getKey(req),
+    targetType: 'cookies',
+    targetId: personaId,
+    meta: { format },
+    req,
+  });
 }
 
 /** Sends a cookies.txt as a file to save. */
