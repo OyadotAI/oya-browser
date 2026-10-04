@@ -10,7 +10,24 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Changed
 
-- Maintenance and fixes.
+- API keys in WebSocket URLs (`/connect?token=`, `/ws?key=`) are refused. Send `Authorization: Bearer <key>`, or use the one-use `cdpUrl` from `GET /api/browsers/:id`. `OYA_ALLOW_LEGACY_QUERY_KEYS=true` turns the old form back on for a self-hosted server.
+- Console sign-ins end after 24 hours without use (`OYA_SESSION_IDLE_HOURS`), and signing out ends the session everywhere.
+- Audit events are kept at least 365 days (`OYA_AUDIT_RETENTION_FLOOR_DAYS`); a shorter project setting is raised to it.
+- Every dependency updated to its latest version.
+
+### Added
+
+- Two-factor sign-in with an authenticator app, under Account > Two-factor authentication. `oya login` asks for the code.
+- API keys can expire after 30, 90 or 365 days.
+- A project can choose which model providers may see its pages.
+- `DELETE /api/auth/me` deletes an account, and a deleted project's data is purged after a day.
+
+### Security
+
+- Share links reach only their own session, on every route.
+- Recordings are encrypted at rest.
+- The audit trail records which credential acted, is signed, and can be checked at `GET /api/operator/audit/verify`.
+- Blocked private-network addresses written in IPv6 form.
 
 ## [1.0.154](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.154) · 2026-10-03
 
