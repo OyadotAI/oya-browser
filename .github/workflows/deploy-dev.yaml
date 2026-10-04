@@ -169,6 +169,8 @@ jobs:
         TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
         TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
         OYA_PROFILE_SECRET: ${{ secrets.OYA_PROFILE_SECRET }}
+        # Signs the audit trail; one key per environment, kept in the Keychain too. Empty falls back to a key derived from OYA_PROFILE_SECRET.
+        OYA_AUDIT_HMAC_KEY: ${{ secrets.OYA_AUDIT_HMAC_KEY }}
         DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
         # Last resort only: dev runs the snapshot prod runs, read from the prod namespace below.
         DAYTONA_SNAPSHOT_FALLBACK: ${{ secrets.DAYTONA_SNAPSHOT }}
@@ -211,6 +213,7 @@ jobs:
           --from-literal=TURNSTILE_SITE_KEY="${TURNSTILE_SITE_KEY}" \
           --from-literal=TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY}" \
           --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \
+          --from-literal=OYA_AUDIT_HMAC_KEY="${OYA_AUDIT_HMAC_KEY}" \
           --from-literal=DAYTONA_API_KEY="${DAYTONA_API_KEY}" \
           --from-literal=DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT}" \
           --from-literal=DAYTONA_API_URL="${DAYTONA_API_URL}" \
