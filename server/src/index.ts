@@ -9,6 +9,7 @@ import * as analytics from './platform/analytics.ts';
 import { track, trackDownloads } from './modules/telemetry/index.ts';
 import { forwardHttp } from './modules/control/cluster.ts';
 import { startWorkers, stopWorkers, workerHealth } from './modules/control/worker.ts';
+import { startCloudRoutines, stopCloudRoutines } from './modules/routines/cloud.ts';
 
 import 'dotenv/config';
 import { startFrontend } from './app/frontend.ts';
@@ -116,6 +117,7 @@ app.get('/readyz', async (req, res) => {
   }
 });
 startWorkers();
+startCloudRoutines();
 const egressServer = process.env.OYA_EGRESS_PORT ? createEgressServer() : null;
 egressServer?.listen(Number(process.env.OYA_EGRESS_PORT), process.env.OYA_EGRESS_HOST || '127.0.0.1');
 
@@ -316,7 +318,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     registry.draining = true;
     egressServer?.close();
     // Chats in flight finish on this replica, over the browser socket it still holds; new ones go to the replica replacing it.
-    await Promise.all([stopWorkers(), drainChats()]);
+    await Promise.all([stopWorkers(), drainChats(), stopCloudRoutines()]);
     frontend?.stop();
     // End gateway sessions cleanly so profiles are captured and recordings
     // get their manifest, rather than being cut off mid-write.

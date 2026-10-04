@@ -414,3 +414,25 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+.routine-cloud {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.routine-cloud small {
+  display: block;
+  color: var(--secondary);
+  font-size: 10.5px;
+}
+
+.routine-cloud-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--secondary);
+  font-size: 10px;
+}

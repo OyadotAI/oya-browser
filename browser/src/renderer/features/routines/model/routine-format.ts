@@ -49,9 +49,11 @@ export function duration(run: Pick<RoutineRun, 'startedAt' | 'finishedAt'>): str
 const PHASE_LINE: Readonly<Record<Phase, (r: Routine, snap: RoutinesSnapshot, now: number) => string>> = {
   here: (r, _s, now) =>
     ROUTINES_TEXT.runningHere(duration({ startedAt: r.runs?.[0]?.startedAt ?? now, finishedAt: now })),
-  elsewhere: () => ROUTINES_TEXT.runningElsewhere,
+  elsewhere: (r) => (r.target === 'cloud' ? ROUTINES_TEXT.runningCloud : ROUTINES_TEXT.runningElsewhere),
   off: (r) => `${scheduleOf(r)} · ${ROUTINES_TEXT.off}`,
-  due: (r, s) => `${scheduleOf(r)} · ${s.busy ? ROUTINES_TEXT.waiting(s.busy) : ROUTINES_TEXT.dueNow}`,
+  // A busy desktop holds back only its own routines; the cloud runs a cloud one regardless.
+  due: (r, s) =>
+    `${scheduleOf(r)} · ${s.busy && r.target !== 'cloud' ? ROUTINES_TEXT.waiting(s.busy) : ROUTINES_TEXT.dueNow}`,
   scheduled: (r, _s, now) => `${scheduleOf(r)} · ${ROUTINES_TEXT.next(when(r.nextRunAt ?? now, now))}`,
 };
 

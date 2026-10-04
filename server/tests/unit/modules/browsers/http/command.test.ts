@@ -197,11 +197,12 @@ describe('chat', () => {
     try {
       const body = JSON.parse((await talk({ messages: [{ role: 'user', content: 'sign up' }] })).ended);
       assert.equal(body.text, 'NEEDS INPUT: Solve the CAPTCHA');
-      const [, type, sessionId, detail] = emit.mock.calls[0].arguments;
+      const [, type, sessionId, { runId, ...detail }] = emit.mock.calls[1].arguments;
       assert.deepEqual(
         [type, sessionId, detail],
         ['run.needs_attention', B, { reason: 'agent', message: 'Solve the CAPTCHA', source: 'chat' }],
       );
+      assert.equal(runId, emit.mock.calls[0].arguments[3].runId, 'the same run as its run.started');
     } finally {
       delete process.env.OPENAI_API_KEY;
     }
@@ -238,14 +239,37 @@ describe('chat', () => {
     }
   });
 
-  it('announces nothing when a chat simply answers', async () => {
+  it('announces a chat that simply answers as run.started then run.completed', async () => {
     const answer = { choices: [{ message: { role: 'assistant', content: 'DONE: all good' } }] };
     mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(answer), { status: 200 }));
     const { emit } = stubControl();
     process.env.OPENAI_API_KEY = 'sk-test';
     try {
       await talk({ messages: [{ role: 'user', content: 'go' }] });
-      assert.equal(emit.mock.callCount(), 0);
+      assert.deepEqual(
+        emit.mock.calls.map((c) => [c.arguments[1], c.arguments[3].source]),
+        [
+          ['run.started', 'chat'],
+          ['run.completed', 'chat'],
+        ],
+      );
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  it('announces a chat that throws as run.failed with its error', async () => {
+    mock.method(globalThis, 'fetch', async () => {
+      throw new Error('network is off in tests');
+    });
+    mock.method(console, 'error', () => {});
+    const { emit } = stubControl();
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      await talk({ messages: [{ role: 'user', content: 'go' }] });
+      const [, type, , detail] = emit.mock.calls.at(-1).arguments;
+      assert.equal(type, 'run.failed');
+      assert.ok(detail.error);
     } finally {
       delete process.env.OPENAI_API_KEY;
     }

@@ -131,16 +131,28 @@ const walls = (key, browserId) => ({
 });
 
 /**
- * A chat that stopped to ask a person goes on the project's event log as
- * `run.needs_attention`, like a background run's, so webhooks and the Slack sink
- * hear about it. A chat has no run to resume, so there is no runId: the person
- * answers in the chat. Never on the critical path: the reply goes out regardless.
+ * Puts one moment of a chat run on the project's event log, so webhooks and the
+ * Slack sink see the chat's whole lifecycle like a background run's. Never on
+ * the critical path: the reply goes out regardless.
  */
-function announceHandover(key, browserId, text: string) {
-  const detail = { reason: 'agent', message: text.slice(NEEDS_INPUT.length), source: 'chat' };
+function announceChat(key, browserId, live: LiveRun, type: string, detail: object = {}) {
   control()
-    .emit(key, 'run.needs_attention', browserId, detail)
-    .catch((err) => console.error('[chat] run.needs_attention not recorded:', err.message));
+    .emit(key, type, browserId, { runId: live.runId, source: 'chat', ...detail })
+    .catch((err) => console.error(`[chat] ${type} not recorded:`, err.message));
+}
+
+/**
+ * How a chat's answer ends its run: stopped to ask a person (`run.needs_attention`,
+ * answered in the chat, not by resuming), failed, or completed.
+ */
+function announceEnd(key, browserId, live: LiveRun, result) {
+  if (result.text.startsWith(NEEDS_INPUT))
+    return announceChat(key, browserId, live, 'run.needs_attention', {
+      reason: 'agent',
+      message: live.safe(result.text.slice(NEEDS_INPUT.length)),
+    });
+  if (result.failed) return announceChat(key, browserId, live, 'run.failed', { error: live.safe(result.text) });
+  announceChat(key, browserId, live, 'run.completed');
 }
 
 /** Whether the chat's run can be saved as a playbook. */
@@ -165,13 +177,25 @@ const collecting =
   (toolCalls: any[], live: LiveRun) =>
   ({ name, args }) => (toolCalls.push({ name, args }), live.toolCall({ name, args }));
 
+/** Runs the chat between `run.started` and its end event; a run that throws is announced as failed. */
+async function announced(key, browserId, live: LiveRun, run: () => Promise<any>) {
+  announceChat(key, browserId, live, 'run.started');
+  const result = await run().catch((err) => {
+    announceChat(key, browserId, live, 'run.failed', { error: live.safe(err.message) });
+    throw err;
+  });
+  announceEnd(key, browserId, live, result);
+  return result;
+}
+
 /** Runs the chat, collecting the tool calls it made, and whether the run can be saved as a playbook. */
 async function converse(req, messages, task) {
   const toolCalls = [];
   const live = new LiveRun(req.params.browserId, task.secrets);
   const key = getKey(req);
-  const result = await runLive(req.params.browserId, messages, chatOptions(req, task, toolCalls, live), live);
-  if (result.text.startsWith(NEEDS_INPUT)) announceHandover(key, req.params.browserId, result.text);
+  const result = await announced(key, req.params.browserId, live, () =>
+    runLive(req.params.browserId, messages, chatOptions(req, task, toolCalls, live), live),
+  );
   const answer = { text: result.text, failed: !!result.failed, toolCalls, replayable: replayableRun(req) };
   return result.data === undefined ? answer : { ...answer, data: result.data };
 }

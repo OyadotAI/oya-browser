@@ -11,6 +11,8 @@ import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { fingerprint } from '../../platform/audit.ts';
 import { registry } from '../browsers/registry.ts';
+import { announce } from '../../app/http.ts';
+import { control, projectId } from '../control/service.ts';
 import * as repository from './repository.ts';
 import { definitionFrom, endingFrom, importedRoutine, type Routine, type Run } from './rules.ts';
 import { ROUTINE_MAX_PER_KEY, ROUTINE_RUN_LEASE_MS, ROUTINE_RUNS_KEPT, ROUTINE_WRITE_TRIES } from './constants.ts';
@@ -29,15 +31,26 @@ export async function list(apiKey: string): Promise<Routine[]> {
   return stored.map((s) => s.routine).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/** A routine just made from a client's definition, with no runs yet. */
+function newRoutine(apiKey: string, input: unknown): Routine {
+  const definition = { ...definitionFrom(input), project: projectId(apiKey) };
+  return { id: randomUUID(), createdAt: Date.now(), ...definition, lastRunAt: null, runs: [] };
+}
+
 /** Adds a routine from a client's definition. */
 export async function create(apiKey: string, input: unknown): Promise<Routine> {
   const owner = fingerprint(apiKey);
   if ((await repository.all(owner)).length >= ROUTINE_MAX_PER_KEY)
     throw new HttpError(Status.CONFLICT, `A project keeps at most ${ROUTINE_MAX_PER_KEY} routines.`);
-  const routine = { id: randomUUID(), createdAt: Date.now(), ...definitionFrom(input), lastRunAt: null, runs: [] };
+  const routine = newRoutine(apiKey, input);
+  await readyForCloud(apiKey, routine);
   await repository.insert(owner, routine);
-  notify(apiKey);
-  return routine;
+  return (notify(apiKey), announceCreated(apiKey, routine), routine);
+}
+
+/** Puts a new routine on the event log. */
+function announceCreated(apiKey: string, routine: Routine) {
+  announce(apiKey, 'routine.created', null, { routineId: routine.id, name: routine.name });
 }
 
 /**
@@ -55,14 +68,27 @@ async function change(apiKey: string, id: string, edit: (r: Routine) => Routine)
   throw new HttpError(Status.CONFLICT, 'The routine changed while saving. Try again.');
 }
 
+/**
+ * A cloud routine runs with no caller, so the server finds its key through the
+ * key's control project: make sure that project exists before it is due.
+ */
+async function readyForCloud(apiKey: string, routine: Routine) {
+  if (routine.target === 'cloud') await control().project(apiKey);
+}
+
 /** Changes a routine's name, prompt, schedule or on/off; its history is kept. */
-export const edit = (apiKey: string, id: string, input: unknown) =>
-  change(apiKey, id, (r) => ({ ...r, ...definitionFrom(input, r) }));
+export async function edit(apiKey: string, id: string, input: unknown): Promise<Routine> {
+  const routine = await change(apiKey, id, (r) => ({ ...r, ...definitionFrom(input, r), project: projectId(apiKey) }));
+  await readyForCloud(apiKey, routine);
+  announce(apiKey, 'routine.updated', null, { routineId: id, fields: Object.keys(input ?? {}) });
+  return routine;
+}
 
 /** Deletes a routine and its history. */
 export async function remove(apiKey: string, id: string): Promise<void> {
   if (!(await repository.remove(fingerprint(apiKey), id))) throw missing();
   notify(apiKey);
+  announce(apiKey, 'routine.deleted', null, { routineId: id });
 }
 
 /** Drops a routine's finished runs; a run in progress stays. */
@@ -105,6 +131,7 @@ export async function claim(apiKey: string, id: string, claim: Claim): Promise<R
   const next = claimed(stored.routine, claim, Date.now());
   if (!(await repository.swap(owner, next, stored.version)))
     throw new HttpError(Status.CONFLICT, 'Another browser already ran this routine.');
+  announce(apiKey, 'routine.run.started', claim.browserId ?? null, { routineId: id, runId: claim.runId });
   return (notify(apiKey), next);
 }
 
@@ -121,10 +148,18 @@ function claimed(routine: Routine, claim: Claim, now: number): Routine {
 export async function finishRun(apiKey: string, id: string, runId: string, input: unknown): Promise<Routine> {
   const ending = endingFrom(input);
   const finish = (run: Run) => (run.id === runId ? { ...run, ...ending } : run);
-  return change(apiKey, id, (r) => {
+  const routine = await change(apiKey, id, (r) => {
     if (!r.runs.some((run) => run.id === runId)) throw new HttpError(Status.NOT_FOUND, 'No such run');
     return { ...r, runs: r.runs.map(finish) };
   });
+  announceFinish(apiKey, routine, runId, ending.status);
+  return routine;
+}
+
+/** Puts a routine run's end on the event log, with how it ended: done, failed, stopped or interrupted. */
+function announceFinish(apiKey: string, routine: Routine, runId: string, status: string) {
+  const by = routine.runs.find((run) => run.id === runId)?.by ?? null;
+  announce(apiKey, 'routine.run.finished', by, { routineId: routine.id, runId, status });
 }
 
 /** Takes in routines a desktop kept locally; any already here (same id) are left alone. Answers how many came in. */

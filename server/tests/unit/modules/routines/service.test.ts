@@ -11,6 +11,7 @@ import { ownDataDir } from '../../support/data-dir.ts';
 ownDataDir('oya-routines-');
 const routines = await import('../../../../src/modules/routines/service.ts');
 const { registry } = await import('../../../../src/modules/browsers/registry.ts');
+const { control } = await import('../../../../src/modules/control/service.ts');
 const { getConnection } = await import('../../../../src/platform/storage/index.ts');
 const { fingerprint } = await import('../../../../src/platform/audit.ts');
 const { ROUTINE_RUN_LEASE_MS, ROUTINE_RUNS_KEPT } = await import('../../../../src/modules/routines/constants.ts');
@@ -20,9 +21,10 @@ const OTHER = 'routines-other-key';
 const HOURLY = { name: 'Check prices', prompt: 'Look up the price', schedule: { kind: 'every', n: 1, unit: 'hours' } };
 
 describe('routines', () => {
-  let tell;
+  let tell, emit;
   beforeEach(async () => {
     tell = mock.method(registry, 'tell', () => 0);
+    emit = mock.method(control(), 'emit', async () => {});
     await getConnection().delete('routines', {});
   });
   afterEach(() => mock.restoreAll());
@@ -37,6 +39,31 @@ describe('routines', () => {
     assert.deepEqual(tell.mock.calls[0].arguments, [KEY, { type: 'routines_changed' }]);
     assert.equal(made.enabled, true);
     assert.equal(made.lastRunAt, null);
+  });
+
+  it('announces its lifecycle for webhooks: created, updated, run started and finished, deleted', async () => {
+    const made = await routines.create(KEY, HOURLY);
+    await routines.edit(KEY, made.id, { enabled: false });
+    await routines.claim(KEY, made.id, { lastRunAt: null, runId: 'r1', browserId: 'desktop-a' });
+    await routines.finishRun(KEY, made.id, 'r1', { status: 'done' });
+    await routines.remove(KEY, made.id);
+    const told = emit.mock.calls.map((c) => c.arguments.slice(1));
+    assert.deepEqual(told, [
+      ['routine.created', null, { routineId: made.id, name: 'Check prices' }],
+      ['routine.updated', null, { routineId: made.id, fields: ['enabled'] }],
+      ['routine.run.started', 'desktop-a', { routineId: made.id, runId: 'r1' }],
+      ['routine.run.finished', 'desktop-a', { routineId: made.id, runId: 'r1', status: 'done' }],
+      ['routine.deleted', null, { routineId: made.id }],
+    ]);
+  });
+
+  it('runs on the desktop unless asked to run in the cloud, with a daily time in a known time zone', async () => {
+    const desktop = await routines.create(KEY, HOURLY);
+    assert.equal(desktop.target, 'desktop');
+    const cloud = await routines.create(KEY, { ...HOURLY, target: 'cloud', tz: 'Europe/London' });
+    assert.deepEqual([cloud.target, cloud.tz], ['cloud', 'Europe/London']);
+    await assert.rejects(routines.create(KEY, { ...HOURLY, target: 'moon' }), { status: 400 });
+    await assert.rejects(routines.create(KEY, { ...HOURLY, tz: 'Mars/Olympus' }), { status: 400, message: /IANA/ });
   });
 
   it('stores routines sealed, never the prompt in the clear', async () => {

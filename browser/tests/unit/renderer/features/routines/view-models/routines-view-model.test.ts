@@ -258,10 +258,28 @@ describe('the routine editor', () => {
     vm.editor.setField('at', '08:30');
     await vm.editor.submit();
     assert.deepEqual(fake.called('saveRoutine'), [
-      [{ name: 'Standup', prompt: 'Summarize Slack', enabled: true, schedule: { kind: 'daily', at: '08:30' } }],
+      [
+        {
+          name: 'Standup',
+          prompt: 'Summarize Slack',
+          enabled: true,
+          schedule: { kind: 'daily', at: '08:30' },
+          target: 'desktop',
+        },
+      ],
     ]);
     assert.equal(vm.editor.state.open, false);
     assert.equal(vm.state.snapshot.routines[0].id, 'r1');
+  });
+
+  it('saves a routine to run in the cloud, and opens a cloud routine with the box ticked', async () => {
+    const { fake, vm } = await pane();
+    vm.edit(null);
+    vm.editor.setCloud(true);
+    await vm.editor.submit();
+    assert.equal((fake.called('saveRoutine')[0][0] as any).target, 'cloud');
+    vm.edit({ ...INBOX, target: 'cloud' });
+    assert.equal(vm.editor.state.cloud, true);
   });
 
   it('saves an every-N schedule with its number', async () => {

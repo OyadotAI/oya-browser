@@ -51,6 +51,8 @@ export interface Routine {
   runs?: RoutineRun[];
   /** When it is next due, or null when off or unknown. */
   nextRunAt?: number | null;
+  /** Where it runs: on a desktop, or in the cloud. */
+  target?: 'desktop' | 'cloud';
 }
 
 /** What the Routines pane shows (`RoutinesSnapshot` in the main process). */

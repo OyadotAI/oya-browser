@@ -34,6 +34,8 @@ export interface RoutineEditorState {
   unit: string;
   /** HH:MM, for Daily at. */
   at: string;
+  /** Run in the cloud, by the server, rather than on a desktop. */
+  cloud: boolean;
   /** Why the last save was refused, or ''. */
   error: string;
 }
@@ -47,7 +49,8 @@ function fieldsOf(routine: Routine | null): Omit<RoutineEditorState, 'open' | 'o
   const kind: ScheduleKind = s.kind === 'daily' ? 'daily' : 'every';
   const n = String(s.n ?? DEFAULT_SCHEDULE.n);
   const [unit, at] = [s.unit ?? DEFAULT_SCHEDULE.unit, s.at ?? DEFAULT_SCHEDULE.at];
-  return { name: routine?.name ?? '', prompt: routine?.prompt ?? '', kind, n, unit, at };
+  const cloud = routine?.target === 'cloud';
+  return { name: routine?.name ?? '', prompt: routine?.prompt ?? '', kind, n, unit, at, cloud };
 }
 
 /** A refusal's words, without what Electron puts before an error from the main process. */
@@ -77,6 +80,11 @@ export class RoutineEditorViewModel extends ViewModel<RoutineEditorState> {
     this.set({ [field]: value });
   }
 
+  /** Runs the routine in the cloud, or on a desktop. */
+  setCloud(cloud: boolean): void {
+    this.set({ cloud });
+  }
+
   /** Picks the schedule kind, showing its fields. */
   setKind(kind: ScheduleKind): void {
     this.set({ kind });
@@ -90,8 +98,9 @@ export class RoutineEditorViewModel extends ViewModel<RoutineEditorState> {
 
   /** What the fields hold, as a routine to save; an edit keeps its id and whether it is on. */
   routine(): Payload {
-    const { editing, name, prompt } = this.state;
-    const base = { name, prompt, enabled: editing?.enabled ?? true, schedule: this.schedule() };
+    const { editing, name, prompt, cloud } = this.state;
+    const target = cloud ? 'cloud' : 'desktop';
+    const base = { name, prompt, enabled: editing?.enabled ?? true, schedule: this.schedule(), target };
     return editing ? { ...base, id: editing.id } : base;
   }
 

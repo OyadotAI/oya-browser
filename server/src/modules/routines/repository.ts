@@ -59,3 +59,20 @@ export async function swap(owner: string, routine: Routine, version: number): Pr
 export async function remove(owner: string, id: string): Promise<boolean> {
   return (await getConnection().delete(TABLE, { owner, id })) > 0;
 }
+
+/** A stored routine with the owner it is sealed under. */
+export interface Owned extends Stored {
+  /** The owner: the project's key fingerprint. */
+  owner: string;
+}
+
+/**
+ * Every project's cloud routines, with the owner each is sealed under: what the
+ * server's own scheduler runs, with no caller to name a project.
+ * ponytail: unseals every routine on every tick; add a target column when routines number in the tens of thousands.
+ */
+export async function cloud(): Promise<Owned[]> {
+  const rows = await getConnection().select(TABLE, {});
+  const stored = rows.map((row) => ({ owner: row.owner, ...fromRow(row.owner, row) }));
+  return stored.filter((s) => s.routine?.target === 'cloud') as Owned[];
+}

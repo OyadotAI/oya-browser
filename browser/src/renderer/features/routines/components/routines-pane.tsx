@@ -44,7 +44,8 @@ export function RoutinesPane({ routines: vm, panel }: RoutinesPaneProps) {
           <div>
             <h2 className="routines-title">Routines</h2>
             <p className="routines-sub">
-              Prompts the agent runs on a schedule. They belong to this project and run while an Oya app on it is open.
+              Prompts the agent runs on a schedule. They belong to this project and run while an Oya app on it is open,
+              or in the cloud.
             </p>
           </div>
           <Button

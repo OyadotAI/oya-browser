@@ -27,7 +27,7 @@ export interface EverySchedule {
   unit: string;
 }
 
-/** Daily at a 24-hour HH:MM, the desktop's local time. */
+/** Daily at a 24-hour HH:MM: the desktop's local time, or the routine's `tz` when it runs in the cloud. */
 export interface DailySchedule {
   /** The kind. */
   kind: 'daily';
@@ -70,14 +70,23 @@ export interface Routine {
   schedule: Schedule;
   /** Off: kept, but never run on schedule. */
   enabled: boolean;
+  /** Where it runs: on a project desktop that claims it, or on a cloud browser the server starts. */
+  target: Target;
+  /** The IANA time zone a daily cloud routine's time is in; a desktop uses its own. */
+  tz?: string;
+  /** The project a cloud routine runs for, which is how the server finds its key with no caller. */
+  project?: string;
   /** When its last run started (ms), which the next one counts from; null before the first. */
   lastRunAt: number | null;
   /** Its runs, newest first. */
   runs: Run[];
 }
 
+/** Where a routine runs. */
+export type Target = 'desktop' | 'cloud';
+
 /** The fields a client sets on a routine. */
-export type Definition = Pick<Routine, 'name' | 'prompt' | 'schedule' | 'enabled'>;
+export type Definition = Pick<Routine, 'name' | 'prompt' | 'schedule' | 'enabled' | 'target' | 'tz'>;
 
 /** A refusal. */
 const refuse = (message: string) => new HttpError(Status.BAD_REQUEST, message);
@@ -119,7 +128,33 @@ export function definitionFrom(input: any, current?: Definition): Definition {
     prompt: has('prompt') ? text(input?.prompt, ROUTINE_MAX_PROMPT, 'prompt') : current!.prompt,
     schedule: has('schedule') ? scheduleFrom(input?.schedule) : current!.schedule,
     enabled: input?.enabled === undefined ? (current?.enabled ?? true) : input.enabled === true,
+    ...placeFrom(input, current),
   };
+}
+
+/** Where and in which time zone the routine runs, each left as `current` has it when `input` leaves it out. */
+function placeFrom(input: any, current?: Definition): Pick<Definition, 'target' | 'tz'> {
+  const has = (field: string) => input?.[field] !== undefined || !current;
+  return {
+    target: has('target') ? targetFrom(input?.target) : (current!.target ?? 'desktop'),
+    tz: has('tz') ? tzFrom(input?.tz) : current!.tz,
+  };
+}
+
+/** Where a routine runs: "desktop" when left out, else "desktop" or "cloud". */
+function targetFrom(value: unknown): Target {
+  if (value === undefined || value === 'desktop' || value === 'cloud') return (value as Target) ?? 'desktop';
+  throw refuse('A routine runs on "desktop" or in the "cloud".');
+}
+
+/** An IANA time zone the runtime knows, or UTC when left out. */
+function tzFrom(value: unknown): string {
+  if (value === undefined) return 'UTC';
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: String(value) }).resolvedOptions().timeZone;
+  } catch {
+    throw refuse('A routine\'s time zone is an IANA name, like "Europe/London".');
+  }
 }
 
 /** A finished run's record from a client: its status, answer and steps, bounded. */

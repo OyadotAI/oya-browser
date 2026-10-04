@@ -37,11 +37,11 @@ npm i @oya-ai/browser
 ```
 
 ```js
-import { Oya } from "@oya-ai/browser";
+import { Oya } from '@oya-ai/browser';
 
-const browser = await new Oya().browser.start();     // real Chrome, yours for the session
-await browser.goto("https://news.ycombinator.com");
-console.log(await browser.ask("What are the top 3 stories?"));
+const browser = await new Oya().browser.start(); // real Chrome, yours for the session
+await browser.goto('https://news.ycombinator.com');
+console.log(await browser.ask('What are the top 3 stories?'));
 await browser.stop();
 ```
 
@@ -75,11 +75,11 @@ npx skills add OyadotAI/oya-browser
 browser, already signed in to their sites:
 
 ```js
-import { Oya } from "@oya-ai/browser";
+import { Oya } from '@oya-ai/browser';
 
-await Oya.signup({ email: "person@example.com" });   // your own key, saved to ~/.oya/config.json
-const browser = await new Oya().desktop.connect();   // pairs the Oya desktop app, imports their logins
-await browser.goto("https://example.com");
+await Oya.signup({ email: 'person@example.com' }); // your own key, saved to ~/.oya/config.json
+const browser = await new Oya().desktop.connect(); // pairs the Oya desktop app, imports their logins
+await browser.goto('https://example.com');
 const { markdown, elements } = await browser.analyze();
 ```
 
@@ -94,7 +94,7 @@ claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
   --header "Authorization: Bearer $OYA_API_KEY"
 ```
 
-Then just ask: *"Start a browser, open Hacker News and summarise the top 3 stories."* Oya is in
+Then just ask: _"Start a browser, open Hacker News and summarise the top 3 stories."_ Oya is in
 the MCP registry as `io.github.OyadotAI/oya-browser`, on [Smithery](https://smithery.ai/skills/oyaai/oya-browser)
 and on ClawHub as `oya-browser`.
 
@@ -103,11 +103,13 @@ and on ClawHub as `oya-browser`.
 `ask()` costs a model call every time. Save the run and it never costs one again.
 
 ```js
-await browser.ask("Log in with {{user}} and {{pass}}. Open New Request for {{name}}.",
-  { data: { name: "Alex Example" }, secrets: { user, pass } });
-await browser.toPlaybook("new-request");             // the steps it just took
+await browser.ask('Log in with {{user}} and {{pass}}. Open New Request for {{name}}.', {
+  data: { name: 'Alex Example' },
+  secrets: { user, pass },
+});
+await browser.toPlaybook('new-request'); // the steps it just took
 
-await replay.play("new-request", { name: "Sam Example", user, pass });   // no model, new inputs
+await replay.play('new-request', { name: 'Sam Example', user, pass }); // no model, new inputs
 ```
 
 Nine of ten public sites replay every recorded step with no model and no repair.
@@ -121,8 +123,11 @@ repeating the first run's words. Every playbook is also a Playwright module you 
 
 ```js
 export default async function run(page, vars = {}, oya) {
-  await page.getByLabel("Customer name:").first().fill(`${vars["custname"]}`);
-  await page.getByLabel("Delivery instructions:").first().fill(vars["comments"] ?? (await oya.llm.answer("Delivery instructions:", vars)));
+  await page.getByLabel('Customer name:').first().fill(`${vars['custname']}`);
+  await page
+    .getByLabel('Delivery instructions:')
+    .first()
+    .fill(vars['comments'] ?? (await oya.llm.answer('Delivery instructions:', vars)));
 }
 ```
 
@@ -193,25 +198,25 @@ about your users or pages); see [telemetry](docs/self-hosting.md#telemetry).
 
 ## The rest
 
-| | |
-|:--|:--|
-| **CAPTCHA and 2FA** | Solved where they can be, handed to a person where they can't |
-| **Record it yourself** | The desktop recorder keeps a draft you edit step by step, validate in fresh tabs and save as a playbook ([how](docs/workflow-studio.md)) |
-| **Routines** | Saved prompts the desktop agent runs every N minutes or daily at a set time, with each run's steps and answer kept |
-| **It proves what it did** | A hash-chained audit trail the database won't let you rewrite, host allow-listing, [regenerable evidence](compliance/EVIDENCE.md) |
-| **It isn't one vendor** | Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome ([why](docs/why-oya.md)) |
-| **It keeps your tools** | Every browser has a `cdpUrl`, so Playwright and Puppeteer connect unchanged |
-| **Full docs** | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [deployments](deployments) · [moving logins](docs/logins.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) · [for agents](https://oyabrowser.com/llms.txt) |
+|                           |                                                                                                                                                                                                                                                                             |
+| :------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CAPTCHA and 2FA**       | Solved where they can be, handed to a person where they can't                                                                                                                                                                                                               |
+| **Record it yourself**    | The desktop recorder keeps a draft you edit step by step, validate in fresh tabs and save as a playbook ([how](docs/workflow-studio.md))                                                                                                                                    |
+| **Routines**              | Saved prompts the agent runs every N minutes or daily at a set time, on the desktop or, with **Run in the cloud**, on an Oya Cloud browser the server starts for each run, with each run's steps and answer kept                                                            |
+| **It proves what it did** | A hash-chained audit trail the database won't let you rewrite, host allow-listing, [regenerable evidence](compliance/EVIDENCE.md)                                                                                                                                           |
+| **It isn't one vendor**   | Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome ([why](docs/why-oya.md))                                                                                                                                                                              |
+| **It keeps your tools**   | Every browser has a `cdpUrl`, so Playwright and Puppeteer connect unchanged                                                                                                                                                                                                 |
+| **Full docs**             | [SDK](packages/sdk) · [CLI](packages/cli) · [self-hosting](docs/self-hosting.md) · [deployments](deployments) · [moving logins](docs/logins.md) · [examples](examples) · [oyabrowser.com/docs](https://oyabrowser.com/docs) · [for agents](https://oyabrowser.com/llms.txt) |
 
 ## Packages
 
-| Package | |
-|:---|:---|
-| [`@oya-ai/browser`](packages/sdk) | TypeScript SDK. ESM and CJS, typed, zero runtime dependencies. |
-| [`@oya-ai/cli`](packages/cli) | The fleet, the live view, the installer. |
-| [`server`](server) · [`ui`](ui) · [`browser`](browser) | Control plane, console, and the browser itself. |
-| [`skills/oya-browser`](skills/oya-browser) | The agent skill: `npx skills add OyadotAI/oya-browser`. |
-| [`deployments`](deployments) | Production deploys: Docker, ECS, Kubernetes, GKE. |
+| Package                                                |                                                                |
+| :----------------------------------------------------- | :------------------------------------------------------------- |
+| [`@oya-ai/browser`](packages/sdk)                      | TypeScript SDK. ESM and CJS, typed, zero runtime dependencies. |
+| [`@oya-ai/cli`](packages/cli)                          | The fleet, the live view, the installer.                       |
+| [`server`](server) · [`ui`](ui) · [`browser`](browser) | Control plane, console, and the browser itself.                |
+| [`skills/oya-browser`](skills/oya-browser)             | The agent skill: `npx skills add OyadotAI/oya-browser`.        |
+| [`deployments`](deployments)                           | Production deploys: Docker, ECS, Kubernetes, GKE.              |
 
 ```bash
 npm test                 # server, CLI and packages; ui and browser run their own (see AGENTS.md)

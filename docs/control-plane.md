@@ -34,15 +34,15 @@ docker build -t oya-browser:managed browser
 
 Create an internal Docker bridge network. Put the control service and its egress proxy on that network, with a separate uplink for the trusted control service. Browser containers must have only the internal network. The operator must give the control service access to the Docker daemon; the server image includes the Docker CLI but does not mount a Docker socket automatically.
 
-| Variable | Meaning |
-| --- | --- |
-| `OYA_MANAGED_NETWORK` | Existing internal Docker bridge network |
-| `OYA_MANAGED_IMAGE` | Governance-enabled browser image; its immutable ID is recorded |
-| `OYA_MANAGED_CONTROL_URL` | Browser-reachable control WebSocket URL, ending in `/ws` |
-| `OYA_MANAGED_PROXY_URL` | Browser-reachable HTTP egress proxy URL |
-| `OYA_MANAGED_REGION` | Operator-declared runtime region, default `local` |
-| `OYA_EGRESS_PORT` | Enables the authenticated egress listener |
-| `OYA_EGRESS_HOST` | Listener address, default `127.0.0.1`; use a reachable interface in the isolated network |
+| Variable                  | Meaning                                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------------- |
+| `OYA_MANAGED_NETWORK`     | Existing internal Docker bridge network                                                  |
+| `OYA_MANAGED_IMAGE`       | Governance-enabled browser image; its immutable ID is recorded                           |
+| `OYA_MANAGED_CONTROL_URL` | Browser-reachable control WebSocket URL, ending in `/ws`                                 |
+| `OYA_MANAGED_PROXY_URL`   | Browser-reachable HTTP egress proxy URL                                                  |
+| `OYA_MANAGED_REGION`      | Operator-declared runtime region, default `local`                                        |
+| `OYA_EGRESS_PORT`         | Enables the authenticated egress listener                                                |
+| `OYA_EGRESS_HOST`         | Listener address, default `127.0.0.1`; use a reachable interface in the isolated network |
 
 Creation verifies the network is internal and the image carries the governance label. Session-specific enrollment and proxy credentials bind the container to its reservation. The container never receives the project key: its API credential can register only its own session's browser, is refused by every other API, and stops working when the session ends. Browser hooks enforce navigation and subresource policy; the proxy pins public DNS results and denies private destinations and nonstandard ports. Container creation drops capabilities and sets resource limits. Cleanup checks ownership labels and the original Docker daemon ID before deleting anything. A replica that cannot reach that daemon retains the cleanup obligation.
 
@@ -84,35 +84,71 @@ The `llm` setting limits which model providers see a project's page text and scr
 
 The `/api/control` overview includes the latest 100 events. Read the full retained log using `/api/control/events?after={cursor}` or export administrator audit data from `/api/control/audit/export` as NDJSON. Webhooks use a durable outbox, at-least-once delivery, exponential retries for 24 hours, and manual replay through `/api/control/deliveries/{id}/replay`. Deduplicate with `Oya-Event-Id`. Validate `Oya-Signature: t=<seconds>,v1=<hex>` as HMAC-SHA256 of `<seconds>.<raw request body>` with the returned secret, using a constant-time comparison and an appropriate timestamp tolerance.
 
-SDK runs publish to the same log, so a task that ends badly is visible to the same subscribers as a session that does: `run.needs_attention` carries the reason (`captcha`, `mfa`, `agent`, `heal_failed`) and the message shown to a person, and `run.failed` carries the error. Both name the browser as their session, so a subscriber can open or share it.
+Runs publish their whole lifecycle to the same log: `run.started`, then `run.needs_attention` (with the reason, `captcha`, `mfa`, `agent` or `heal_failed`, and the message shown to a person) and `run.resumed` when someone answers, and finally `run.completed` or `run.failed` (with the error). SDK runs carry `runId` and `owner`; Ask and `/chat` runs carry `source: "chat"` and are answered in the chat rather than resumed. Routines add `routine.run.started` and `routine.run.finished` around the chat run that does the work.
+
+A routine saved with `target: "cloud"` is run by the server rather than a desktop: every replica checks each minute, the routine's versioned claim lets one of them take a due run, and that replica starts an Oya Cloud browser (under the same plan, claim and hourly quota checks as `POST /api/browsers/provision`), waits up to three minutes for it to connect, asks the agent the prompt through the browser's chat route (forwarded to whichever replica the browser joined), records the answer on the routine and stops the browser. A daily time is read in the routine's `tz` (an IANA zone the desktop sends, else UTC). A cloud run whose agent stops to ask a person is recorded as failed, since nobody is there to answer. Cloud routines need Oya Cloud configured and an LLM key on the project; set `OYA_SELF_URL` when the server cannot reach its own API at `http://127.0.0.1:$PORT`. Every run event names the browser as its session, so a subscriber can open or share it.
 
 ### Webhook payload
 
 Each delivery is a JSON POST of one event. Every event has the same envelope, and only `detail` changes with the type:
 
 ```json
-{ "id": 4812, "project": "prj_3f9a…", "type": "run.failed", "sessionId": "brw_…", "at": 1759100000000,
-  "detail": { "runId": "run_…", "owner": "…", "error": "Timed out" } }
+{
+  "id": 4812,
+  "project": "prj_3f9a…",
+  "type": "run.failed",
+  "sessionId": "brw_…",
+  "at": 1759100000000,
+  "detail": { "runId": "run_…", "owner": "…", "error": "Timed out" }
+}
 ```
 
 `id` is also sent as `Oya-Event-Id`. `sessionId` is the browser the event is about, or `null`. `at` is in milliseconds.
 
-| Type | `detail` |
-|:---|:---|
-| `session.ready` | `{}` |
-| `session.stopped`, `session.disconnected` | `{ reason? }` |
-| `session.failed` | `{ reason }` |
-| `run.needs_attention` | `{ runId, owner, reason, message }` from an SDK run; `{ reason: "agent", message, source: "chat" }` when an Ask or `/chat` run stops to ask a person (no run to resume: they answer in the chat) |
-| `run.failed` | `{ runId, owner, error }` |
-| `budget.threshold` | `{ threshold, estimatedUsd }` |
-| `persona.created` | `{ personaId, name }` |
-| `persona.updated` | `{ personaId, fields }` |
-| `persona.deleted` | `{ personaId }` |
-| `recording.ready` | `{}`, with `sessionId` set to the recorded browser |
-| `login.completed`, `login.failed`, `mfa.completed` | `{ personaId, domain, method }` |
-| `credential.created` | `{ id, role }` |
-| `credential.revoked` | `{ id }` |
-| `webhook.test` | `{ message }` |
+| Type                       | `detail`                                                                                     |
+| :------------------------- | :------------------------------------------------------------------------------------------- |
+| `session.queued`           | `{}`                                                                                         |
+| `session.provisioning`     | `{}`                                                                                         |
+| `session.ready`            | `{}`                                                                                         |
+| `session.disconnected`     | `{ reason? }`                                                                                |
+| `session.stopping`         | `{ reason? }`                                                                                |
+| `session.cleanup_pending`  | `{ reason? }`                                                                                |
+| `session.unknown_outcome`  | `{ reason? }`                                                                                |
+| `session.stopped`          | `{ reason? }`                                                                                |
+| `session.failed`           | `{ reason }`                                                                                 |
+| `control.agent`            | `{}` (the agent drives again)                                                                |
+| `control.human`            | `{}` (a person took over)                                                                    |
+| `control.paused`           | `{}`                                                                                         |
+| `run.started`              | `{ runId, owner }, or from Ask: { runId, source: "chat" }`                                   |
+| `run.needs_attention`      | `{ runId, owner, reason, message }, or from Ask: { runId, source: "chat", reason, message }` |
+| `run.resumed`              | `{ runId, owner }` (a person answered)                                                       |
+| `run.completed`            | `{ runId, owner }, or from Ask: { runId, source: "chat" }`                                   |
+| `run.failed`               | `{ runId, owner, error }, or from Ask: { runId, source: "chat", error }`                     |
+| `routine.created`          | `{ routineId, name }`                                                                        |
+| `routine.updated`          | `{ routineId, fields: string[] }`                                                            |
+| `routine.deleted`          | `{ routineId }`                                                                              |
+| `routine.run.started`      | `{ routineId, runId }` (sessionId is the browser running it)                                 |
+| `routine.run.finished`     | `{ routineId, runId, status: "done", "failed", "stopped" or "interrupted" }`                 |
+| `recording.ready`          | `{}` (sessionId is the recorded browser)                                                     |
+| `login.completed`          | `{ personaId, domain, method }`                                                              |
+| `login.failed`             | `{ personaId, domain, method }`                                                              |
+| `mfa.completed`            | `{ personaId, domain, method }`                                                              |
+| `persona.created`          | `{ personaId, name }`                                                                        |
+| `persona.updated`          | `{ personaId, fields: string[] }`                                                            |
+| `persona.deleted`          | `{ personaId }`                                                                              |
+| `credential.created`       | `{ id, role }`                                                                               |
+| `credential.revoked`       | `{ id }`                                                                                     |
+| `budget.threshold`         | `{ threshold, estimatedUsd }`                                                                |
+| `project.created`          | `{}`                                                                                         |
+| `project.renamed`          | `{}`                                                                                         |
+| `project.settings.updated` | `{ fields: string[] }`                                                                       |
+| `project.deleted`          | `{}`                                                                                         |
+| `member.invited`           | `{ role }`                                                                                   |
+| `member.joined`            | `{ userId, role }`                                                                           |
+| `member.removed`           | `{ userId }`                                                                                 |
+| `webhook.created`          | `{ id, kind? }`                                                                              |
+| `webhook.updated`          | `{ id, kind? }`                                                                              |
+| `webhook.test`             | `{ message }` (only from Send test event)                                                    |
 
 `POST /api/control/webhook/test` sends one signed `webhook.test` event to the project's saved endpoint straight away, outside the outbox. It answers `{ delivered }`, plus `error` when the endpoint could not be reached. Nothing is stored or retried. Settings → Webhooks has the same thing as a **Send test event** button.
 

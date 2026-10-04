@@ -112,6 +112,20 @@ function TextFields({ editor }: RoutineEditorProps) {
   );
 }
 
+/** Run in the cloud: the server runs it on a cloud browser instead of a desktop. */
+function CloudField({ editor }: RoutineEditorProps) {
+  const { cloud } = useViewModel(editor);
+  return (
+    <label className="routine-cloud">
+      <input id="routine-cloud" type="checkbox" checked={cloud} onChange={(e) => editor.setCloud(e.target.checked)} />
+      <span>
+        {EDITOR_TEXT.cloud}
+        <small>{EDITOR_TEXT.cloudHint}</small>
+      </span>
+    </label>
+  );
+}
+
 /** The editor card. */
 export function RoutineEditor({ editor }: RoutineEditorProps) {
   const state = useViewModel(editor);
@@ -132,6 +146,7 @@ export function RoutineEditor({ editor }: RoutineEditorProps) {
         <span id="routine-repeat-label">Repeat</span>
         <ScheduleFields editor={editor} />
       </div>
+      <CloudField editor={editor} />
       <p className="routine-error" id="routine-error" role="alert" hidden={!state.error}>
         {state.error}
       </p>

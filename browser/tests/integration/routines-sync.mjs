@@ -4,7 +4,8 @@
  * is handed to the project, a routine made elsewhere appears in the pane by
  * itself, a run another browser claimed shows as running elsewhere (with no
  * Run now), the switch turns a routine off on the server, and Run now claims
- * and records a run as this browser. Screenshots of the pane land in the temp
+ * and records a run as this browser, and a routine saved to run in the cloud
+ * reaches the server as one, with this desktop's time zone. Screenshots of the pane land in the temp
  * folder. Run: npm run test:routines-sync. Needs no network.
  */
 /* global document, window */
@@ -131,6 +132,20 @@ try {
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
   await card(page, 'Price watch').locator('.routine-more').click();
   await shot(page, 'menu-dark');
+  await page.keyboard.press('Escape');
+
+  // 6. A routine saved with "Run in the cloud" is left to the server, with this desktop's time zone.
+  await page.locator('#routine-new').click();
+  await page.locator('#routine-name').fill('Cloud prices');
+  await page.locator('#routine-prompt').fill('Check prices');
+  await page.locator('#routine-cloud').check();
+  await shot(page, 'editor-cloud');
+  await page.locator('#routine-save').click();
+  await card(page, 'Cloud prices').locator('.routine-cloud-badge').waitFor();
+  const saved = (await api('GET', 'routines')).routines.find((r) => r.name === 'Cloud prices');
+  const tz = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  assert.deepEqual([saved.target, saved.tz], ['cloud', tz]);
+  await shot(page, 'cloud-card');
   assert.deepEqual(errors, [], 'no page errors');
   console.log('routines-sync: ok');
 } finally {

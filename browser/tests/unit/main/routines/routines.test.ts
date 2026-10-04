@@ -51,6 +51,10 @@ describe('isDue', () => {
     assert.equal(isDue(routine({ kind: 'every', n: 1, unit: 'minutes' }, { enabled: false }), EIGHT_AM + HOUR), false);
   });
 
+  it('leaves a cloud routine to the server', () => {
+    assert.equal(isDue(routine({ kind: 'every', n: 1, unit: 'minutes' }, { target: 'cloud' }), EIGHT_AM + HOUR), false);
+  });
+
   it('never starts a routine another browser is running', () => {
     const running = routine({ kind: 'every', n: 1, unit: 'minutes' }, { runs: [{ id: 'x', status: 'running' }] });
     assert.equal(isDue(running, EIGHT_AM + HOUR), false);
@@ -204,6 +208,8 @@ describe('Routines', () => {
     await routines.clearHistory('r1');
     await routines.remove('r1');
     const writes = server.calls.filter(([m]) => m !== 'GET').map(([m, p]) => `${m} ${p}`);
+    const created = server.called('POST', 'routines')[0][2];
+    assert.equal(created.tz, Intl.DateTimeFormat().resolvedOptions().timeZone, 'its daily time is in this zone');
     assert.deepEqual(writes, [
       'POST routines',
       'PATCH routines/r1',

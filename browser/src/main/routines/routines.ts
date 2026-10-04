@@ -61,6 +61,10 @@ export interface Routine {
   schedule?: Schedule;
   /** Its recent runs. */
   runs?: RoutineRun[];
+  /** Where it runs: on a desktop (the default), or in the cloud, where the server runs it and no desktop does. */
+  target?: 'desktop' | 'cloud';
+  /** The time zone its daily time is in, for the server running it in the cloud. */
+  tz?: string;
 }
 
 /** What the agent answered a run. */
@@ -168,10 +172,11 @@ export function nextRunAt(routine: Routine): number | null {
 const runningRun = (routine: Routine): RoutineRun | undefined =>
   (routine.runs || []).find((run) => run.status === 'running');
 
-/** Whether `routine` should run at `now`: on, due, and not running anywhere. */
+/** Whether this app should run `routine` at `now`: a desktop routine, on, due, and not running anywhere. */
 export const isDue = (routine: Routine, now: number): boolean => {
   const next = nextRunAt(routine);
-  return routine.enabled && next !== null && next <= now && !runningRun(routine);
+  const here = routine.target !== 'cloud';
+  return here && routine.enabled && next !== null && next <= now && !runningRun(routine);
 };
 
 /** How a run ended, from the agent's answer. */
@@ -298,8 +303,10 @@ export class Routines {
 
   /** Adds a routine, or changes the one with its id (its history is kept). */
   save(input: Partial<Routine> | null | undefined): Promise<RoutinesSnapshot | Refusal> {
-    const { id, name, prompt, schedule, enabled } = input || {};
-    const body = { name, prompt, schedule, enabled };
+    const { id, name, prompt, schedule, enabled, target } = input || {};
+    // This desktop's time zone, so a daily time means the same hour when the server runs it in the cloud.
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const body = { name, prompt, schedule, enabled, target, tz };
     return id ? this.change('PATCH', routineRoute(id), body) : this.change('POST', 'routines', body);
   }
 

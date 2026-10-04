@@ -125,8 +125,8 @@ describe('WebhookSection', () => {
     serve(HOOK);
     setup();
     await userEvent.click(await screen.findByText('What each event looks like'));
-    expect(screen.getByText('run.failed', { selector: 'td' })).toBeTruthy();
-    expect(screen.getByText('{ runId, owner, error }')).toBeTruthy();
+    expect(screen.getByText('run.completed', { selector: 'td' })).toBeTruthy();
+    expect(screen.getByText('{ runId, owner }  (a person answered)', { normalizer: (t) => t })).toBeTruthy();
   });
 
   it('toggles an event type in or out', () => {

@@ -133,6 +133,11 @@ export function RoutineCard(props: RoutineCardProps) {
           onClick={() => void vm.setEnabled(routine)}
         />
         <span className="routine-name">{name}</span>
+        {routine.target === 'cloud' && (
+          <span className="routine-cloud-badge" title={ROUTINES_TEXT.cloudHint}>
+            {ROUTINES_TEXT.cloud}
+          </span>
+        )}
         <RunBadge status={routine.runs?.[0]?.status} label={lastRunLabel(routine, now)} />
       </div>
       <div className="routine-status">{statusLine(routine, phase, snapshot, now)}</div>

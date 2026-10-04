@@ -16,6 +16,7 @@ export const ROUTINES_TEXT = {
   next: (when: string) => `Next ${when}`,
   runningHere: (elapsed: string) => `Running on this browser · ${elapsed}`,
   runningElsewhere: 'Running on another Oya browser',
+  runningCloud: 'Running in the cloud',
   runNow: 'Run now',
   stop: 'Stop',
   history: (n: number) => (n ? `History · ${n}` : 'History'),
@@ -28,6 +29,8 @@ export const ROUTINES_TEXT = {
   cancel: 'Cancel',
   every: (n: number, unit: string) => `Every ${n === 1 ? unit.replace(/s$/, '') : `${n} ${unit}`}`,
   daily: (at: string) => `Daily at ${at}`,
+  cloud: 'Cloud',
+  cloudHint: 'Runs in the cloud',
 } as const;
 
 /** The words the run history shows. */
@@ -55,6 +58,8 @@ export const RUNS_TEXT = {
 
 /** The words the editor shows. */
 export const EDITOR_TEXT = {
+  cloud: 'Run in the cloud',
+  cloudHint: 'Oya runs it on a cloud browser, even when this app is closed.',
   newTitle: 'New routine',
   editTitle: 'Edit routine',
   create: 'Save routine',

@@ -58,8 +58,8 @@ describe('background runs', () => {
     await settle();
     const run = runs.get(OWNER, id);
     assert.deepEqual([run.status, run.error, run.errorStatus], ['failed', 'Step 2 failed', 422]);
-    assert.equal(events[0].type, 'run.failed');
-    assert.deepEqual(events[0].detail, { runId: id, owner: OWNER, error: 'Step 2 failed' });
+    assert.equal(events[1].type, 'run.failed');
+    assert.deepEqual(events[1].detail, { runId: id, owner: OWNER, error: 'Step 2 failed' });
   });
 
   it('fails with 500 when the error carries no status', async () => {
@@ -79,11 +79,22 @@ describe('background runs', () => {
     const parked = runs.get(OWNER, id);
     assert.equal(parked.status, 'needs_attention');
     assert.equal(parked.attention.reason, 'captcha');
-    assert.equal(events[0].type, 'run.needs_attention');
+    assert.equal(events[1].type, 'run.needs_attention');
     assert.equal(runs.respond(OWNER, id, 'solved'), true);
     await settle();
     assert.equal(answered, 'solved');
     assert.equal(runs.get(OWNER, id).status, 'succeeded');
+  });
+
+  it('announces the whole lifecycle: started, needs attention, resumed, completed', async () => {
+    const { id } = runs.start(KEY, 'b-1', async ({ requestHuman }) => requestHuman({ reason: 'mfa' }));
+    runs.respond(OWNER, id);
+    await settle();
+    assert.deepEqual(
+      events.map((e) => e.type),
+      ['run.started', 'run.needs_attention', 'run.resumed', 'run.completed'],
+    );
+    assert.ok(events.every((e) => e.detail.runId === id && e.browserId === 'b-1'));
   });
 
   it('answers "done" when the responder says nothing', async () => {
@@ -127,7 +138,7 @@ describe('background runs', () => {
     const { id } = runs.start(KEY, 'b-1', async ({ requestHuman }) => requestHuman({}));
     await settle();
     assert.equal(runs.get(OWNER, id).status, 'needs_attention');
-    assert.match(error.mock.calls[0].arguments[0], /run\.needs_attention not recorded/);
+    assert.ok(error.mock.calls.some((c) => /run\.needs_attention not recorded/.test(c.arguments[0])));
     runs.respond(OWNER, id);
   });
 });

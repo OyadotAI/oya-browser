@@ -20,16 +20,17 @@ type Announce = (type: string, detail: object) => void;
 /** Runs by id. */
 const runs = new Map();
 
-/** A run as its owner sees it: without the owner and the waiting callback. */
-const view = ({ owner, waiter, ...run }: Record<string, any>) => run;
+/** A run as its owner sees it: without the owner, the waiting callback and its announcer. */
+const view = ({ owner, waiter, announce, ...run }: Record<string, any>) => run;
 
 /** Start `work` in the background and return the run's public view straight away. */
 export function start(apiKey, browserId, work) {
   const owner = fingerprint(apiKey);
   const run: Record<string, any> = newRun(owner, browserId);
   runs.set(run.id, run);
-  const announce = announcer(apiKey, browserId, run);
+  const announce = (run.announce = announcer(apiKey, browserId, run));
   const requestHuman = (attention) => waitForHuman(run, attention, announce);
+  announce('run.started', {});
   track(run, work({ requestHuman }), announce, apiKey);
   return view(run);
 }
@@ -80,12 +81,18 @@ function park(run, attention, timer, resolve) {
 /** Records the work's outcome on the run, and forgets the run RUN_KEEP_MS after it ends. */
 function track(run, work: Promise<any>, announce: Announce, apiKey) {
   work
-    .then((result) => Object.assign(run, { status: 'succeeded', result }))
+    .then((result) => succeed(run, result, announce))
     .catch((err) => {
       fail(run, err, announce);
       telemetry.runFailed(apiKey, { run_id: run.id, error: String(err.message) });
     })
     .finally(() => finish(run));
+}
+
+/** The work finished: the run succeeded with its result. */
+function succeed(run, result, announce: Announce) {
+  Object.assign(run, { status: 'succeeded', result });
+  announce('run.completed', {});
 }
 
 /** The work threw: the run failed with its message and status. */
@@ -106,12 +113,13 @@ export function get(owner, id) {
   return run && run.owner === owner ? view(run) : null;
 }
 
-/** Answer the run's open attention request. False when it is not waiting for anyone. */
+/** Answer the run's open attention request, announcing it resumed. False when it is not waiting for anyone. */
 export function respond(owner, id, response = 'done') {
   const run = runs.get(id);
   if (!run || run.owner !== owner || !run.waiter) return false;
   const { waiter } = run;
   Object.assign(run, { waiter: null, attention: null, status: 'running' });
   waiter(String(response));
+  run.announce('run.resumed', {});
   return true;
 }
