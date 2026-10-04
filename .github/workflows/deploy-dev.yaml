@@ -44,9 +44,14 @@ jobs:
           server:
             - 'server/**'
             - 'ui/**'
+            # Everything the root Dockerfile copies from browser/ into the server image.
             - 'browser/scripts/**'
             - 'browser/anonymity/**'
-            - 'browser/login-state.js'
+            - 'browser/src/package.json'
+            - 'browser/src/workflow/**'
+            - 'browser/src/page/**'
+            - 'browser/src/anonymity/**'
+            - 'browser/package.json'
             - 'Dockerfile'
           browser:
             - 'browser/**'

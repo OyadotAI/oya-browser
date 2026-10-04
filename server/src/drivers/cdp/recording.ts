@@ -2,14 +2,11 @@
  * Recording what a person does in the live view: the channel that streams
  * steps out of the page, and the buffer they collect in.
  */
-import { createRequire } from 'module';
+import { RecordingChannel } from '../../../../browser/src/page/recording.ts';
 import { analyzerSource, getAnalyzer } from './browser-scripts.ts';
 import { sessionListener, sessionSender } from './session.ts';
 import { MAX_RECORDED_STEPS } from './constants.ts';
 import type { CDPDriver } from './driver.ts';
-
-const require = createRequire(import.meta.url);
-const { RecordingChannel } = require('../../../../browser/scripts/recording.cjs');
 
 /** Adds newly recorded steps and secret names from the page, skipping duplicates. */
 export function collectRecording(driver: CDPDriver, out) {

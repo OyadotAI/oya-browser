@@ -5,7 +5,7 @@
  * server without losing the key, and a change made while the card is closed
  * is pushed to the desktop. Run: npm run test:model-sync. Needs no network.
  */
-/* global window, document, ChatModel */
+/* global window, document */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
@@ -61,7 +61,7 @@ try {
 
   app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
-    args: [fileURLToPath(new URL('../../main.js', import.meta.url))],
+    args: [fileURLToPath(new URL('../../', import.meta.url))],
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
     env: {
       ...process.env,
@@ -79,8 +79,9 @@ try {
     () => page.evaluate(() => window.oyaBrowser.getStatus().then((s) => !!s.connected)),
     'the desktop to connect',
   );
-  // Ask opens by itself once pages show (clicking the Agent button would close it): wait for it to settle.
+  // Browsing begins on the start page, with the panel closed; the Oya button opens it on Ask.
   await page.waitForFunction(() => document.body.classList.contains('mode-browsing'));
+  if (!(await page.locator('#dev-panel.open').count())) await page.locator('#btn-dev').click();
   await page.locator('#pane-chat').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.documentElement.dataset.panelMoving === 'false');
   await page.locator('#chat-model-open').waitFor({ state: 'visible' });
@@ -114,7 +115,7 @@ try {
   // 3. Server to desktop again, with the card closed: the push reaches the desktop by itself.
   await setConfig({ llm_provider: 'openai', chat_model: 'gpt-6-sol' });
   await until(
-    () => page.evaluate(() => ChatModel.status.model === 'gpt-6-sol'),
+    () => page.evaluate(() => window.oyaShell.ask.model.state.status?.model === 'gpt-6-sol'),
     'the pushed change to reach the desktop',
   );
   await page.locator('#chat-model-open').click();

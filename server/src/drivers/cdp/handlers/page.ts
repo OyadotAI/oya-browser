@@ -4,10 +4,10 @@
  */
 import { elementSelector } from '../browser-scripts.ts';
 import { ANALYZE_JS, SCROLL_TO_JS, SET_VALUE_JS } from '../page-scripts.ts';
-import queries from '../../../../../browser/scripts/page-queries.cjs';
+import * as queries from '../../../../../browser/src/page/queries.ts';
 import { SCREENSHOT_QUALITY, WAIT_TIMEOUT_MS, WAIT_POLL_MS } from '../constants.ts';
 import type { Handler } from './types.ts';
-import pageRender from '../../../../../browser/scripts/page-render.cjs';
+import * as pageRender from '../../../../../browser/src/page/render.ts';
 
 /** The agent's script, in the analyzer's isolated world, so the page never sees it (page-queries.cjs runScriptJs). */
 export const runScript: Handler = async (driver, params) => {

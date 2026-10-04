@@ -1,6 +1,7 @@
 node_modules/
 .env
 dist/
+browser/out/
 server/dist/
 *.log
 .DS_Store

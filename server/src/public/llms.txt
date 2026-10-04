@@ -604,6 +604,12 @@ few minutes. Re-running it is safe: it keeps .env and its secrets. If it stops
 with "holds encrypted data from an earlier install", re-run with the old
 OYA_PROFILE_SECRET set; never delete the `oya-data` volume without asking.
 
+To update that install to the latest version, run this. It asks nothing, keeps
+.env and the number of browser workers, rebuilds, restarts and waits for
+/readyz; if ~/oya-browser has local edits it stops without changing anything:
+
+    curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/update.sh | sh
+
 Then point the SDK at it with OYA_BASE_URL and OYA_API_KEY, or
 `oya login --url http://localhost:3100 --key <key>` for the CLI; nothing else
 changes. A person at a terminal can drop `-s -- --yes` to get a six-question

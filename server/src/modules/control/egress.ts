@@ -11,7 +11,7 @@ import { assertSafeTarget, isPrivateAddress } from '../../platform/net-guard.ts'
  * like `_dmarc.example.com`, which reads as hardening but is a humanHosts bypass.
  * Star count and rule length are capped by validatePolicy; without that cap these
  * patterns backtrack catastrophically.
- * Kept byte-identical to browser/governance.js, the proxy and the renderer
+ * Kept byte-identical to browser/src/main/identity/host-rules.ts, the proxy and the renderer
  * disagreeing means a host one allows and the other blocks.
  */
 const patterns = new Map();

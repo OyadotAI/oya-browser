@@ -56,13 +56,14 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 # Copy browser source
-COPY main.js preload.js login-state.js governance.js cdp-front-door.js shell-layout.cjs control-state.cjs constants.cjs ./
-COPY main/ ./main/
-COPY front-door/ ./front-door/
-COPY renderer/ ./renderer/
+COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY anonymity/ ./anonymity/
 COPY build/ ./build/
+
+# Bundle the main process and preload into out/ (package.json "main")
+COPY electron.vite.config.ts tsconfig.json ./
+RUN npm run build
 
 # Copy entrypoint
 COPY docker-entrypoint.sh /docker-entrypoint.sh

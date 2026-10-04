@@ -5,7 +5,7 @@
  * [N] row count shows when a list was cut short.
  */
 
-import pageRender from '../../../../browser/scripts/page-render.cjs';
+import * as pageRender from '../../../../browser/src/page/render.ts';
 
 /** One cell: numbers as they are, strings quoted (JSON style) only when TOON needs it. */
 export const toonCell: (value: unknown) => string = pageRender.toonCell;

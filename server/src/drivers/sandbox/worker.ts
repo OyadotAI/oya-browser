@@ -18,7 +18,7 @@ export type SandboxSpec = {
   name: string;
   /** Selection and ownership labels; never the API key itself. */
   labels: Record<string, string>;
-  /** The environment browser/main.js enrols with. Carries the API key. */
+  /** The environment browser/src/main/main.ts enrols with. Carries the API key. */
   env: Record<string, string>;
   /** Idle stop, where the runtime has one. */
   ttlMinutes: number;

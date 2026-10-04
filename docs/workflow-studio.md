@@ -12,7 +12,7 @@ The desktop recorder now keeps a local draft separately from a published playboo
 
 ## Execution and repair
 
-The shared schema and generator live in `browser/scripts/workflow.cjs`. Desktop validation imports the same generated module that is exported. Playwright runs in an Electron utility process and connects to the installed Chromium; customers do not need Node or a separate browser installation. New exports use strict locators and never silently select the first matching element. Unsupported interactions and unidentified frames block validation until reviewed.
+The shared schema and generator live in `browser/src/workflow/` (its facade is `index.ts`). Desktop validation imports the same generated module that is exported. Playwright runs in an Electron utility process and connects to the installed Chromium; customers do not need Node or a separate browser installation. New exports use strict locators and never silently select the first matching element. Unsupported interactions and unidentified frames block validation until reviewed.
 
 Each run uses fresh tabs. The authenticated run proxy filters unrelated targets and retains the normal human/agent control gate. Chromium uses an ephemeral loopback debugging endpoint when no explicit debugging port is configured. This is not a security boundary against other privileged local processes.
 

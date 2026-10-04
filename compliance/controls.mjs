@@ -41,7 +41,7 @@ export const CONTROLS = [
     id: '164.312(e)(1)',
     title: 'Transmission security',
     requirement: 'Guard against unauthorised access to ePHI in transit.',
-    implements: ['server/src/modules/control/egress.ts', 'browser/governance.js'],
+    implements: ['server/src/modules/control/egress.ts', 'browser/src/main/identity/host-rules.ts'],
     check: 'egress.containment',
   },
   {

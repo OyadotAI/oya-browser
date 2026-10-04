@@ -1,0 +1,124 @@
+/**
+ * Save as playbook, under the latest agent reply (save-offer.tsx).
+ */
+/* Save as playbook, under the latest agent reply. */
+.chat-save {
+  margin-top: 10px;
+}
+.chat-save-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.chat-save-button svg {
+  width: 13px;
+  height: 13px;
+  color: var(--accent);
+}
+.chat-save-button:disabled {
+  color: var(--secondary);
+  cursor: default;
+  opacity: 0.6;
+}
+.chat-save-button:disabled svg {
+  color: inherit;
+}
+.chat-save-note {
+  display: block;
+  margin-top: 6px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.chat-save-button:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--hover);
+}
+.chat-save:has(.chat-save-row) {
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted-surface);
+}
+.chat-save-copy {
+  margin: 0 0 8px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.chat-save-row {
+  display: flex;
+  gap: 6px;
+}
+.chat-save-name {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: 12.5px var(--mono);
+  outline: none;
+}
+.chat-save-name:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.chat-save-confirm,
+.chat-save-cancel {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.chat-save-confirm {
+  border: 0;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.chat-save-confirm:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.chat-save-cancel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.chat-save-cancel:hover:not(:disabled) {
+  background: var(--hover);
+}
+.chat-save :disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.chat-save-error {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+.chat-save-error:empty {
+  display: none;
+}
+.chat-save-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+}
+.chat-save-done svg {
+  width: 14px;
+  height: 14px;
+}

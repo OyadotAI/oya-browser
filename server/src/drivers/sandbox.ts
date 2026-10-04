@@ -10,7 +10,7 @@
  *
  * A provisioned sandbox enrolls into the normal registry over the normal
  * WebSocket, using the same OYA_SERVER_URL / OYA_API_KEY / OYA_BROWSER_ID
- * contract browser/main.js already reads. Once connected it is an ordinary
+ * contract browser/src/main/main.ts already reads. Once connected it is an ordinary
  * browser: /browsers, /live/:id, /browsers/:id/command, /pool/* all work on it
  * with no special-casing anywhere.
  *

@@ -3,13 +3,13 @@
  * numeric id, which dies with each analysis.
  *
  * Which handles to trust, and in what order, is not decided here: it comes from
- * the one place that knows (browser/scripts/workflow/handles.cjs), so the live
+ * the one place that knows (browser/src/workflow/handles.ts), so the live
  * replay, the version-1 export and the version-2 locator builder cannot drift
  * apart. They did, and a recording ended up clicking a different button than the
  * one it recorded.
  */
 
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 const { handlesOf, contradicts, missingIdentity } = workflow as any;
 

@@ -1,0 +1,143 @@
+/**
+ * Fields (ui/text-field.tsx and every input drawn like one): the label, the
+ * input, its hint, and the one field look shared by setup, the palette, the theme
+ * select and the Record pane. The few older per-field rules that look overrides are
+ * kept here, in their original order, ahead of it.
+ */
+.field {
+  margin-bottom: 18px;
+}
+.field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.field input {
+  width: 100%;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+.field input:focus {
+  border-color: var(--accent);
+}
+.field input::placeholder {
+  color: var(--secondary);
+}
+.field .hint {
+  font-size: 12px;
+  color: var(--secondary);
+  margin-top: 4px;
+}
+.field label {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  font-weight: 500;
+}
+.field label span {
+  font-weight: 400;
+  color: var(--secondary);
+  margin-left: 5px;
+}
+.field input {
+  font-size: 13px;
+  height: 36px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--muted-surface);
+}
+.field input::placeholder,
+textarea::placeholder,
+input::placeholder {
+  color: var(--secondary);
+  opacity: 0.85;
+}
+#command-search {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--border);
+  background: var(--muted-surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+#theme-preference,
+#page-format-preference {
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  color: var(--text);
+}
+#pane-record select,
+.studio-field input {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+.studio-field input,
+.studio-field select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.finish-save input {
+  min-width: 100px;
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 8px 9px;
+  font: inherit;
+  font-size: 12px;
+}
+.finish-save input {
+  height: 36px;
+}
+/* ── Fields ── */
+.field input,
+.setup-card input,
+.finish-save input,
+.studio-field input,
+.studio-field select,
+.studio-library select,
+.studio-toolbar select,
+#command-search,
+#theme-preference,
+#page-format-preference,
+#import-source {
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--muted-surface);
+  color: var(--text);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  transition:
+    background-color 180ms var(--ease),
+    box-shadow 180ms var(--ease);
+}
+.field input:focus,
+.setup-card input:focus,
+.finish-save input:focus,
+.studio-field input:focus,
+#command-search:focus {
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent),
+    var(--ring);
+}

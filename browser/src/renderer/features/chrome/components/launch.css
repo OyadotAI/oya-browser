@@ -1,0 +1,195 @@
+/**
+ * The launch moment (launch.tsx): it plays once per app start, over everything,
+ * as two rings drift together into the orb, and dissolves into the shell.
+ */
+/* ── The launch ── */
+.launch {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: var(--stage);
+  pointer-events: none;
+}
+.launch.leaving {
+  opacity: 0;
+  transition: opacity 420ms var(--ease);
+}
+/* The two rings start apart and drift together into the mark, then give way to the orb. */
+.launch-rings {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  overflow: visible;
+}
+.launch-ring {
+  fill: none;
+  stroke-width: 34;
+  opacity: 0;
+}
+.launch-ring.back {
+  stroke: var(--oya);
+  filter: drop-shadow(0 0 18px color-mix(in srgb, var(--oya) 70%, transparent));
+}
+.launch-ring.front {
+  stroke: var(--text);
+}
+.launch.playing .launch-ring.back {
+  animation: launch-ring-back 1100ms var(--glide) both;
+}
+.launch.playing .launch-ring.front {
+  animation: launch-ring-front 1100ms var(--glide) both;
+}
+/* The rings drift together, then shrink into the orb's own mark as its lens opens around them. */
+.launch.playing .launch-rings {
+  animation: launch-rings-settle 1100ms var(--ease) both;
+}
+.launch .oya-orb {
+  opacity: 0;
+  transform-origin: top left;
+}
+/* As the stage dissolves its orb glides onto the orb underneath (shell/launch.js), so there is one orb throughout. */
+.launch.leaving .oya-orb {
+  opacity: 1;
+  animation: none;
+  transition: transform 420ms var(--ease);
+}
+.launch.playing .oya-orb {
+  animation: launch-orb 600ms var(--ease) 620ms both;
+}
+.launch-word {
+  position: absolute;
+  top: calc(50% + 86px);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+  opacity: 0;
+}
+.launch.playing .launch-word {
+  animation: launch-word 800ms var(--ease) 900ms both;
+}
+/* Light runs once around the window's edge as Oya wakes. */
+.launch-edge {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 1.5px;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  opacity: 0;
+}
+.launch-edge i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(100vw + 100vh);
+  aspect-ratio: 1;
+  background: conic-gradient(var(--light));
+  transform: translate(-50%, -50%);
+}
+.launch.playing .launch-edge {
+  animation: launch-edge 1400ms var(--ease) 300ms both;
+}
+.launch.playing .launch-edge i {
+  animation: launch-edge-turn 1400ms var(--glide) 300ms both;
+}
+@keyframes start-turn {
+  to {
+    transform: rotate(1turn);
+  }
+}
+@keyframes start-rise {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(10px);
+  }
+}
+@keyframes launch-ring-back {
+  from {
+    opacity: 0;
+    transform: translate(90px, 90px);
+  }
+  30%,
+  70% {
+    opacity: 1;
+  }
+  55%,
+  to {
+    transform: none;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes launch-ring-front {
+  from {
+    opacity: 0;
+    transform: translate(-90px, -90px);
+  }
+  30%,
+  70% {
+    opacity: 1;
+  }
+  55%,
+  to {
+    transform: none;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes launch-rings-settle {
+  55% {
+    transform: none;
+  }
+  to {
+    transform: scale(0.34);
+  }
+}
+@keyframes launch-orb {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes launch-word {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    letter-spacing: 0.6em;
+  }
+  to {
+    opacity: 0.85;
+  }
+}
+@keyframes launch-edge {
+  20%,
+  70% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes launch-edge-turn {
+  from {
+    transform: translate(-50%, -50%) rotate(0);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(0.5turn);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .launch {
+    display: none;
+  }
+}

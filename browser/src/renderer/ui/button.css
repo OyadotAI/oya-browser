@@ -1,0 +1,146 @@
+/**
+ * Buttons (ui/button.tsx): the primary, secondary and text looks, and the round
+ * icon button. The setup and reconnect screens' older .btn-connect and .btn-skip
+ * names share these looks, so their own early rules are kept here, ahead of the
+ * shared ones that override them.
+ */
+.btn-connect {
+  background: var(--accent);
+  color: var(--surface);
+}
+.btn-connect:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.btn-skip {
+  background: var(--hover);
+  color: var(--secondary);
+}
+.btn-skip:hover {
+  background: var(--border);
+  color: var(--text);
+}
+.primary-button,
+.secondary-button,
+.text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.primary-button,
+.btn-connect,
+.chat-send {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.primary-button:hover:not(:disabled),
+.btn-connect:hover:not(:disabled),
+.chat-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.secondary-button {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.text-button {
+  padding: 5px 8px;
+  color: var(--secondary);
+  background: transparent;
+}
+.secondary-button:hover:not(:disabled),
+.text-button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+/* ── Buttons ── */
+.primary-button,
+.secondary-button,
+.text-button,
+.btn-connect,
+.btn-skip {
+  min-height: 32px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  font-weight: 560;
+  letter-spacing: -0.005em;
+}
+.primary-button,
+.btn-connect,
+.chat-send {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 0;
+  box-shadow:
+    inset 0 1px 0 #ffffff33,
+    0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent),
+    0 0 0 0.5px color-mix(in srgb, var(--accent) 70%, #000);
+}
+.primary-button:hover:not(:disabled),
+.btn-connect:hover:not(:disabled),
+.chat-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.secondary-button,
+.btn-skip {
+  background: var(--surface);
+  color: var(--text);
+  border: 0;
+  box-shadow: var(--shadow-xs);
+}
+.secondary-button:hover:not(:disabled),
+.btn-skip:hover:not(:disabled) {
+  background: var(--hover);
+}
+.text-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  list-style: none;
+}
+.icon-button::-webkit-details-marker {
+  display: none;
+}
+.icon-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.icon-button.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.icon-button .icon {
+  width: 15px;
+  height: 15px;
+}
+/* ── Buttons ── */
+.primary-button,
+.btn-connect {
+  box-shadow: none;
+  transition: background-color var(--t-fast) var(--ease);
+}
+.secondary-button,
+.btn-skip {
+  background: transparent;
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+.secondary-button:hover:not(:disabled),
+.btn-skip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}

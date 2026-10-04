@@ -1,0 +1,151 @@
+/**
+ * The toolbar's connection chip, update pill and version label
+ * (toolbar-pills.tsx).
+ */
+/* Quiet by default, it is the version label until there is news. */
+.update-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+  font-family: inherit;
+}
+.update-pill:hover {
+  background: var(--hover);
+}
+/* Outdated: the one state allowed to draw the eye. */
+.update-pill.attention {
+  background: #e7f6e7;
+  border-color: #a8d5a8;
+  color: #246d21;
+}
+.update-pill.attention:hover {
+  background: #d8efd8;
+}
+.update-pill:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.conn-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+.conn-pill:hover {
+  border-color: var(--secondary);
+  color: var(--text);
+}
+.conn-pill .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+}
+.conn-pill.ok .dot {
+  background: #22c55e;
+  box-shadow: 0 0 6px #22c55e80;
+}
+.conn-pill.trying .dot {
+  background: #f59e0b;
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.conn-pill {
+  height: 32px;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  max-width: 140px;
+  padding: 5px 9px;
+}
+.conn-pill .dot {
+  width: 6px;
+  height: 6px;
+  background: var(--secondary);
+}
+.conn-pill.ok .dot {
+  background: var(--accent);
+  box-shadow: none;
+}
+#conn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.update-pill {
+  height: 30px;
+  font-size: 12px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.update-pill.attention,
+.update-pill.attention:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--border);
+}
+#app-version {
+  margin-left: auto;
+  font-size: 11px;
+}
+@media (max-width: 959px) {
+  .conn-pill {
+    max-width: 105px;
+    padding: 5px 6px;
+  }
+  .update-pill {
+    max-width: 90px;
+  }
+}
+@media (max-width: 1050px) {
+  .toolbar .conn-pill {
+    display: none;
+  }
+}
+/* Status: quiet text with a living dot; its action is a small capsule. */
+.conn-pill {
+  gap: 6px;
+  border-radius: 999px;
+  color: var(--secondary);
+  font-weight: 500;
+}
+.conn-pill:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+.conn-pill .dot {
+  width: 7px;
+  height: 7px;
+}
+.conn-pill.ok .dot {
+  background: var(--logo-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--logo-green) 20%, transparent);
+}

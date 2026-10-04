@@ -27,7 +27,7 @@ import { userAgentFor, metadataFor } from '../../src/modules/personas/ua.ts';
 import { removeScratch } from '../support/scratch.js';
 
 const require = createRequire(import.meta.url);
-const { createPersonaApplier } = require('../../../browser/anonymity/apply.js');
+const { createPersonaApplier } = require('../../../browser/src/anonymity/apply.ts');
 const { generateProfile } = require('../../../browser/anonymity/fingerprint.js');
 
 const args = process.argv.slice(2);

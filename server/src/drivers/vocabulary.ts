@@ -3,8 +3,8 @@
  * can do it. The server checks every command against it before the browser is
  * asked, so a caller learns at once that an action does not exist, or does not
  * exist on this kind, instead of a timeout or a driver's own wording. The
- * desktop keeps its own literal of the Oya column (browser/main/actions/
- * vocabulary.cjs); a test holds the two equal, since the server's image does
+ * desktop keeps its own literal of the Oya column (browser/src/main/actions/
+ * vocabulary.ts); a test holds the two equal, since the server's image does
  * not carry the desktop's code and cannot read it at run time.
  */
 

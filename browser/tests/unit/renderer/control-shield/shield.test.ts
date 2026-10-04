@@ -1,0 +1,467 @@
+/**
+ * Unit tests for the control shield page, through `window.oyaShield`'s
+ * updates: the scan while an agent reads the page, the outlines of what it
+ * found, the veil's windows, the companion's words and an action's target.
+ */
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import { RendererConstants as C } from '../../../../src/renderer/core/constants.ts';
+import { loadShield, type ShieldPage } from './page.ts';
+
+/** Steps of time to let every chained timer of one show run. */
+const STEPS = 10;
+/** One step, in milliseconds. */
+const STEP_MS = 1000;
+
+describe('the control shield page', () => {
+  let page: ShieldPage;
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    page = loadShield();
+  });
+  afterEach(() => mock.timers.reset());
+
+  /** Lets time pass step by step, so timers set by timers run too. */
+  const drain = () => {
+    for (let i = 0; i < STEPS; i++) mock.timers.tick(STEP_MS);
+  };
+  /** The bubble's words. */
+  const said = () => page.$('bubble-text').textContent;
+  /** The outlines on the stage. */
+  const boxes = () => page.$('stage').children;
+  /** Lets the show start, then the beam finish its pass, so every outline has locked on. */
+  const reveal = () => {
+    mock.timers.tick(0);
+    mock.timers.tick(C.SHIELD_REVEAL_MS);
+  };
+
+  it('scans and says so while the analysis runs', () => {
+    page.oyaShield({ phase: 'scan' });
+    assert.ok(page.document.body.classList.contains('scanning'));
+    assert.equal(said(), 'Reading the page');
+    assert.ok(page.$('companion').classList.contains('talking'));
+  });
+
+  it('outlines what was found top to bottom, numbered and coloured by kind, after the scan', () => {
+    page.oyaShield({ phase: 'scan' });
+    const found = [
+      { id: 2, type: 'link', x: 10, y: 300, w: 50, h: 20 },
+      { id: 1, type: 'button', x: 10, y: 20, w: 80, h: 30 },
+    ];
+    page.oyaShield({ phase: 'found', boxes: found });
+    assert.equal(boxes().length, 0, 'the scan runs its sweep first');
+    mock.timers.tick(C.SHIELD_SCAN_LOOP_MS);
+    reveal();
+    assert.deepEqual(
+      [...boxes()].map((b) => b.dataset.id),
+      ['1', '2'],
+    );
+    assert.equal(boxes()[0].style['--c'], '#39ed35');
+    assert.equal(boxes()[0].style.transform, 'translate3d(10px, 20px, 0)');
+    assert.equal(boxes()[0].textContent, '1');
+    assert.ok(!page.document.body.classList.contains('scanning'));
+  });
+
+  it('starts the reveal only as the reading beam ends a sweep, so the beam never jumps back up', () => {
+    const { SHIELD_MIN_SCAN_MS: min, SHIELD_SCAN_LOOP_MS: loop } = C;
+    page.oyaShield({ phase: 'scan' });
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+    mock.timers.tick(min);
+    assert.ok(
+      page.document.body.classList.contains('scanning'),
+      'the scan has run its minimum, but its sweep is not over',
+    );
+    mock.timers.tick(loop - min);
+    assert.ok(page.document.body.classList.contains('revealing'));
+    assert.ok(!page.document.body.classList.contains('scanning'));
+  });
+
+  it('lets a pass finish crossing the page before a new read starts its scan', () => {
+    const reveal = C.SHIELD_REVEAL_MS;
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+    mock.timers.tick(0);
+    page.oyaShield({ phase: 'scan' });
+    assert.ok(page.document.body.classList.contains('revealing'), 'the pass keeps going');
+    mock.timers.tick(reveal);
+    assert.ok(page.document.body.classList.contains('scanning'));
+    assert.equal(said(), 'Reading the page');
+  });
+
+  it('adds each outline as the beam reaches it, top first', () => {
+    const reveal = C.SHIELD_REVEAL_MS;
+    const found = [
+      { id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 },
+      { id: 2, type: 'link', x: 0, y: 400, w: 5, h: 5 },
+      { id: 3, type: 'link', x: 0, y: 5000, w: 5, h: 5 },
+    ];
+    page.oyaShield({ phase: 'found', boxes: found });
+    const shown = () => [...boxes()].map((b) => b.dataset.id);
+    mock.timers.tick(0);
+    assert.deepEqual(shown(), ['1']);
+    assert.ok(page.document.body.classList.contains('revealing'));
+    assert.ok(page.$('companion').classList.contains('found'));
+    mock.timers.tick(reveal / 2);
+    assert.deepEqual(shown(), ['1', '2']);
+    mock.timers.tick(reveal / 2);
+    assert.deepEqual(shown(), ['1', '2', '3'], 'one below the page is reached as the pass ends');
+  });
+
+  it('clears the outlines and goes quiet after a while', () => {
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+    drain();
+    assert.equal(boxes().length, 0);
+    assert.ok(!page.$('companion').classList.contains('talking'));
+  });
+
+  it('counts the elements up as the beam reaches each one', () => {
+    const found = [
+      { id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 },
+      { id: 2, type: 'link', x: 0, y: 400, w: 5, h: 5 },
+    ];
+    page.oyaShield({ phase: 'found', boxes: found });
+    mock.timers.tick(0);
+    assert.equal(said(), 'Found 1 element', 'the top one is reached at once');
+    mock.timers.tick(C.SHIELD_REVEAL_MS);
+    assert.equal(said(), 'Found 2 elements');
+  });
+
+  it('starts each outline’s brackets just outside its element, so they lock on', () => {
+    const reach = C.SHIELD_LOCK_REACH_PX;
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'input', x: 0, y: 0, w: reach * 10, h: reach }] });
+    mock.timers.tick(0);
+    assert.equal(boxes()[0].style['--sx'], '1.1');
+    assert.equal(boxes()[0].style['--sy'], '2');
+  });
+
+  describe('the veil', () => {
+    /** A canvas context that records each window cut out of the smoke, with how it was cut. */
+    const fakeContext = () => {
+      const cuts = [];
+      const ctx = {
+        cuts,
+        setTransform() {},
+        fillRect() {},
+        beginPath() {},
+        fill() {},
+        createRadialGradient: () => ({ addColorStop() {} }),
+      };
+      ctx.roundRect = (x, y, w, h) =>
+        cuts.push({ x, y, w, h, mode: ctx.globalCompositeOperation, fill: ctx.fillStyle, alpha: ctx.globalAlpha });
+      return ctx;
+    };
+    /** The cuts of one frame drawn at `now`. */
+    const frameAt = (ctx, now) => {
+      ctx.cuts.length = 0;
+      page.runFrames(now);
+      return [...ctx.cuts];
+    };
+
+    it('opens a solid window over each element as it lights up, reaching full strength', () => {
+      const ctx = fakeContext();
+      page.$('veil').getContext = () => ctx;
+      const pad = C.SHIELD_VEIL_PAD_PX;
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 100, y: 0, w: 50, h: 20 }] });
+      mock.timers.tick(0);
+      assert.deepEqual(frameAt(ctx, 0), [], 'it starts closed');
+      const cut = frameAt(ctx, C.SHIELD_VEIL_OPEN_MS).at(-1);
+      assert.deepEqual(cut, {
+        x: 100 - pad,
+        y: -pad,
+        w: 50 + pad * 2,
+        h: 20 + pad * 2,
+        mode: 'destination-out',
+        fill: '#000',
+        alpha: 1,
+      });
+    });
+
+    it('lets a faint light into each window on a dark page, and none on a light one', () => {
+      const ctx = fakeContext();
+      page.$('veil').getContext = () => ctx;
+      const open = C.SHIELD_VEIL_OPEN_MS;
+      const lifts = (tone) => {
+        page.oyaShield({ phase: 'found', tone, boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+        mock.timers.tick(0);
+        frameAt(ctx, 0);
+        return frameAt(ctx, open).filter((cut) => cut.mode === 'source-over');
+      };
+      assert.equal(lifts('dark').length, 1);
+      assert.equal(lifts('light').length, 0);
+    });
+
+    it('closes the window of an element that has gone, smoothly, and opens it again if it comes back', () => {
+      const ctx = fakeContext();
+      page.$('veil').getContext = () => ctx;
+      const open = C.SHIELD_VEIL_OPEN_MS;
+      const one = { id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 };
+      page.oyaShield({ phase: 'found', boxes: [one] });
+      mock.timers.tick(0);
+      frameAt(ctx, 0);
+      frameAt(ctx, open);
+      page.oyaShield({ phase: 'move', boxes: [] });
+      frameAt(ctx, open);
+      const closing = frameAt(ctx, open * 1.5).filter((c) => c.mode === 'destination-out');
+      assert.ok(closing.length && closing.at(-1).alpha < 1 && closing.at(-1).alpha > 0, 'it is closing');
+      assert.deepEqual(frameAt(ctx, open * 3), [], 'it has closed');
+      page.oyaShield({ phase: 'move', boxes: [one] });
+      frameAt(ctx, open * 3);
+      assert.equal(frameAt(ctx, open * 4).at(-1).alpha, 1, 'it opened again');
+    });
+
+    it('closes every window once the show is over', () => {
+      const ctx = fakeContext();
+      page.$('veil').getContext = () => ctx;
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+      drain();
+      assert.deepEqual(frameAt(ctx, 0), []);
+      assert.ok(!page.document.body.classList.contains('lit'));
+    });
+  });
+
+  describe('acting', () => {
+    it('lets go of the show at once when the agent changes the page, so nothing outlines a page that has gone', () => {
+      page.oyaShield({ phase: 'scan' });
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+      page.oyaShield({ phase: 'act', text: 'Clicking', changes: true });
+      mock.timers.tick(C.SHIELD_DISMISS_MS);
+      mock.timers.tick(C.SHIELD_SCAN_LOOP_MS);
+      assert.equal(boxes().length, 0, 'the reveal that was waiting never plays');
+      assert.ok(!page.document.body.classList.contains('scanning'));
+      assert.ok(!page.document.body.classList.contains('lit'));
+      assert.equal(said(), 'Clicking');
+    });
+
+    it('lets go of everything when the run ends, says it is done, then goes quiet', () => {
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+      reveal();
+      page.oyaShield({ phase: 'end' });
+      assert.equal(said(), 'Done');
+      mock.timers.tick(C.SHIELD_DISMISS_MS);
+      assert.equal(boxes().length, 0);
+      assert.ok(!page.document.body.classList.contains('lit'));
+      mock.timers.tick(C.SHIELD_DONE_MS);
+      assert.ok(!page.$('companion').classList.contains('talking'));
+    });
+
+    it('keeps the show when the agent only looks at the page', () => {
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+      reveal();
+      page.oyaShield({ phase: 'act', text: 'Looking at the page', changes: false });
+      assert.equal(boxes().length, 1);
+      assert.ok(page.document.body.classList.contains('lit'));
+    });
+
+    it('draws nothing for an element that left the page before the beam reached it', () => {
+      const one = { id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 };
+      page.oyaShield({ phase: 'found', boxes: [one, { id: 2, type: 'link', x: 0, y: 700, w: 5, h: 5 }] });
+      mock.timers.tick(0);
+      page.oyaShield({ phase: 'move', boxes: [one] });
+      mock.timers.tick(C.SHIELD_REVEAL_MS);
+      assert.deepEqual(
+        [...boxes()].map((b) => b.dataset.id),
+        ['1'],
+      );
+      assert.equal(said(), 'Found 2 elements', 'it is still counted');
+    });
+
+    const box = { id: 0, type: 'input', x: 10, y: 20, w: 100, h: 30 };
+
+    it('says what the agent is doing, word by word, and pulses the orb', () => {
+      page.oyaShield({ phase: 'act', text: 'Typing into “Email”' });
+      assert.equal(said(), 'Typing into “Email”');
+      assert.equal(page.$('bubble-text').children.length, 3);
+      assert.ok(page.$('companion').classList.contains('acting'));
+      assert.ok(page.document.querySelector('.orb .pulse').classList.contains('go'));
+    });
+
+    it('locks a target ring on the element it acts on, then removes it', () => {
+      page.oyaShield({ phase: 'act', text: 'Clicking', box });
+      const [ring] = page.$('targets').children;
+      assert.equal(ring.style.transform, 'translate3d(10px, 20px, 0)');
+      assert.equal(ring.style['--c'], '#6cb4ff');
+      mock.timers.tick(C.SHIELD_TARGET_MS);
+      assert.equal(page.$('targets').children.length, 0);
+    });
+
+    it('goes quiet once the agent has been still a while', () => {
+      page.oyaShield({ phase: 'act', text: 'Scrolling' });
+      mock.timers.tick(C.SHIELD_ACT_HOLD_MS);
+      assert.ok(!page.$('companion').classList.contains('talking'));
+    });
+
+    it('plays over a reveal without stopping it, and the reveal’s end does not cut off what Oya is saying', () => {
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+      reveal();
+      const { SHIELD_HOLD_MS: hold, SHIELD_FADE_MS: fade } = C;
+      mock.timers.tick(hold - 1);
+      page.oyaShield({ phase: 'act', text: 'Clicking' });
+      mock.timers.tick(1);
+      mock.timers.tick(fade);
+      assert.equal(boxes().length, 0, 'the reveal still faded');
+      assert.ok(!page.document.body.classList.contains('lit'));
+      assert.ok(page.$('companion').classList.contains('talking'));
+    });
+  });
+
+  describe('sparks into the orb', () => {
+    /** Lays the orb out at 1000,700, 50 across, so its middle is 1025,725. */
+    beforeEach(() => {
+      page.document.querySelector('.orb').getBoundingClientRect = () => ({
+        left: 1000,
+        top: 700,
+        width: 50,
+        height: 50,
+      });
+    });
+    /** The sparks in flight. */
+    const sparks = () => [...page.$('sparks').children];
+
+    it('sends a spark from the middle of each element towards the middle of the orb, after the lock', () => {
+      const lag = C.SHIELD_SPARK_LAG_MS;
+      page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'input', x: 10, y: 0, w: 100, h: 40 }] });
+      mock.timers.tick(0);
+      const [spark] = sparks();
+      assert.deepEqual(
+        ['--fx', '--fy', '--dx', '--dy', '--d'].map((name) => spark.style[name]),
+        ['60px', '20px', '965px', '705px', `${lag}ms`],
+      );
+      assert.equal(spark.style['--c'], '#6cb4ff');
+    });
+
+    it('sends at most SHIELD_SPARKS_MAX, spread over the page, and clears them with the outlines', () => {
+      const max = C.SHIELD_SPARKS_MAX;
+      const many = Array.from({ length: max * 3 }, (_, i) => ({ id: i, type: 'link', x: 0, y: i, w: 5, h: 5 }));
+      page.oyaShield({ phase: 'found', boxes: many });
+      reveal();
+      assert.equal(sparks().length, max);
+      drain();
+      assert.equal(sparks().length, 0);
+    });
+  });
+
+  describe('on a busy page', () => {
+    /** The ids of the outlines drawn once the beam has passed. */
+    const shownIds = (found) => {
+      page.oyaShield({ phase: 'found', boxes: found });
+      reveal();
+      return [...boxes()].map((b) => b.dataset.id);
+    };
+
+    it('leaves out a box that wraps a smaller one, keeping the inner control', () => {
+      const card = { id: 1, type: 'link', x: 0, y: 0, w: 300, h: 200 };
+      const button = { id: 2, type: 'button', x: 20, y: 20, w: 80, h: 30 };
+      assert.deepEqual(shownIds([card, button]), ['2']);
+    });
+
+    it('leaves out a near copy of a box already outlined', () => {
+      const link = { id: 1, type: 'link', x: 10, y: 10, w: 100, h: 20 };
+      const same = { id: 2, type: 'link', x: 8, y: 9, w: 104, h: 22 };
+      assert.deepEqual(shownIds([same, link]), ['1']);
+    });
+
+    it('leaves out a page-sized container, but keeps boxes that sit side by side', () => {
+      const page = { id: 1, type: 'link', x: 0, y: 0, w: 1280, h: 800 };
+      const a = { id: 2, type: 'link', x: 0, y: 900, w: 50, h: 20 };
+      const b = { id: 3, type: 'link', x: 60, y: 900, w: 50, h: 20 };
+      assert.deepEqual(shownIds([page, a, b]), ['2', '3']);
+    });
+
+    it('marks a page with many outlines busy, so their numbers step back once locked on', () => {
+      const busy = C.SHIELD_BUSY_COUNT;
+      const row = (n) => Array.from({ length: n }, (_, i) => ({ id: i, type: 'link', x: i * 20, y: 0, w: 10, h: 10 }));
+      shownIds(row(busy));
+      assert.ok(!page.$('stage').classList.contains('busy'));
+      shownIds(row(busy + 1));
+      assert.ok(page.$('stage').classList.contains('busy'));
+    });
+
+    it('tucks the number of an element at the window edge inside its corner, so it stays on the page', () => {
+      assert.deepEqual(
+        shownIds([
+          { id: 1, type: 'link', x: 40, y: 0, w: 60, h: 20 },
+          { id: 2, type: 'link', x: 40, y: 300, w: 60, h: 20 },
+        ]),
+        ['1', '2'],
+      );
+      assert.deepEqual(
+        [...boxes()].map((b) => b.classList.contains('tucked')),
+        [true, false],
+      );
+    });
+
+    it('hides a number that would land on another, and still counts every element the agent found', () => {
+      const wrapper = { id: 3, type: 'link', x: 395, y: 5, w: 70, h: 30 };
+      const one = { id: 1, type: 'link', x: 400, y: 10, w: 50, h: 20 };
+      const two = { id: 2, type: 'link', x: 405, y: 20, w: 50, h: 20 };
+      assert.deepEqual(shownIds([wrapper, one, two]), ['1', '2']);
+      assert.deepEqual(
+        [...boxes()].map((b) => b.classList.contains('quiet')),
+        [false, true],
+      );
+      assert.equal(said(), 'Found 3 elements');
+    });
+  });
+
+  it('glides each outline to where its element moved, without restarting the show', () => {
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 40, w: 50, h: 20 }] });
+    reveal();
+    const outline = boxes()[0];
+    page.oyaShield({ phase: 'move', boxes: [{ id: 1, type: 'link', x: 0, y: 10, w: 60, h: 20 }] });
+    assert.equal(boxes()[0], outline);
+    assert.equal(outline.style.transform, 'translate3d(0px, 10px, 0)');
+    assert.equal(outline.style.width, '60px');
+    drain();
+    assert.equal(boxes().length, 0, 'the hold and fade still run');
+  });
+
+  it('fades an outline whose element is gone, and brings it back if it returns', () => {
+    const one = { id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 };
+    page.oyaShield({ phase: 'found', boxes: [one, { id: 2, type: 'link', x: 0, y: 9, w: 5, h: 5 }] });
+    reveal();
+    page.oyaShield({ phase: 'move', boxes: [one] });
+    assert.deepEqual(
+      [...boxes()].map((b) => b.classList.contains('gone')),
+      [false, true],
+    );
+    page.oyaShield({ phase: 'move', boxes: [one, { id: 2, type: 'link', x: 0, y: 9, w: 5, h: 5 }] });
+    assert.ok(!boxes()[1].classList.contains('gone'));
+  });
+
+  it('outlines where the elements moved to while the scan was still running', () => {
+    page.oyaShield({ phase: 'scan' });
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 300, w: 5, h: 5 }] });
+    page.oyaShield({ phase: 'move', boxes: [{ id: 1, type: 'link', x: 0, y: 100, w: 5, h: 5 }] });
+    mock.timers.tick(C.SHIELD_SCAN_LOOP_MS);
+    reveal();
+    assert.equal(boxes()[0].style.transform, 'translate3d(0px, 100px, 0)');
+  });
+
+  it('fades the last show’s outlines out when a new read starts, rather than cutting them', () => {
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+    reveal();
+    // The pass has crossed the page (the clock moved with it), so the read starts at once.
+    page.oyaShield({ phase: 'scan' });
+    mock.timers.tick(C.SHIELD_DISMISS_MS - 1);
+    assert.equal(boxes().length, 1, 'still there, fading');
+    assert.ok(page.$('stage').classList.contains('leaving'));
+    mock.timers.tick(1);
+    assert.equal(boxes().length, 0);
+    assert.ok(page.document.body.classList.contains('scanning'));
+  });
+
+  it('a new scan cancels the last one’s outlines', () => {
+    page.oyaShield({ phase: 'found', boxes: [{ id: 1, type: 'link', x: 0, y: 0, w: 5, h: 5 }] });
+    page.oyaShield({ phase: 'scan' });
+    drain();
+    assert.equal(boxes().length, 0);
+    assert.equal(said(), 'Reading the page');
+  });
+
+  it('says when there is nothing to click, and ignores an unknown update', () => {
+    page.oyaShield({ phase: 'found', boxes: [] });
+    mock.timers.tick(0);
+    assert.equal(said(), 'Nothing to interact with here');
+    page.oyaShield({ phase: 'constructor' });
+    assert.equal(said(), 'Nothing to interact with here');
+  });
+});

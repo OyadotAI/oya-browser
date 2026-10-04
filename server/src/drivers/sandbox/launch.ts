@@ -64,7 +64,7 @@ function labelsFor({ apiKey, name, persona, browserId }) {
   };
 }
 
-/** The contract browser/main.js reads to enrol over the normal WebSocket. */
+/** The contract browser/src/main/main.ts reads to enrol over the normal WebSocket. */
 function envFor(config, browser) {
   return {
     ...enrolment(config, browser),

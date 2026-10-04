@@ -2,7 +2,7 @@
  * A key's saved playbooks: saving a run by name, renaming, promoting a healed
  * draft, listing and deleting. A healed draft is stored as `<name>:draft`.
  */
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 import { lastRun, hasReplayableSteps } from '../agent/chat.ts';
 import * as keyConfig from '../config/service.ts';

@@ -61,7 +61,7 @@ async function read(script) {
 try {
   app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
-    args: [fileURLToPath(new URL('../../main.js', import.meta.url))],
+    args: [fileURLToPath(new URL('../../', import.meta.url))],
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
     env: {
       ...process.env,

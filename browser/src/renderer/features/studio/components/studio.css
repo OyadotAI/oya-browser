@@ -1,0 +1,730 @@
+/**
+ * The Record studio (record-pane.tsx and its tabs): restrained chrome, a stable
+ * step list, progressive detail, the step editor, the test run, the code view and
+ * the save card. Visibility per stage comes from #pane-record[data-stage].
+ */
+.rec-steps,
+.rec-code {
+  margin: 6px 10px;
+  padding: 8px;
+  background: var(--muted-surface);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 12px;
+  color: var(--secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+}
+.rec-steps {
+  flex: 1;
+  min-height: 80px;
+}
+.count-badge {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.record-controls {
+  display: flex;
+  gap: 8px;
+  padding: 0 18px 16px;
+  flex-shrink: 0;
+}
+.rec-steps {
+  margin: 0;
+  padding: 0 18px 16px;
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text);
+  white-space: normal;
+  flex: 1;
+  min-height: 80px;
+  overflow-y: auto;
+}
+.record-empty {
+  margin-top: 22px;
+  padding: 28px 12px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.empty-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin: 0 auto 16px;
+}
+.record-empty h3 {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.record-empty .empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.record-empty p {
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.65;
+  max-width: 260px;
+  margin: auto;
+}
+.step-number {
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  color: var(--secondary);
+  background: var(--muted-surface);
+  border-radius: var(--radius-sm);
+  font: 11px var(--mono);
+  flex-shrink: 0;
+}
+.step-copy {
+  min-width: 0;
+  flex: 1;
+}
+.step-copy strong {
+  display: block;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.step-value {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--secondary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+.rec-code {
+  display: block;
+  margin: 0;
+  border-radius: 0;
+  padding: 12px;
+  max-height: 230px;
+  color: var(--text);
+  font: 12px/1.7 var(--mono);
+  user-select: text;
+}
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+}
+@media (max-width: 959px) {
+  .rec-steps {
+    padding: 0 16px 10px;
+    min-height: 0;
+    overflow: visible;
+  }
+  .record-empty {
+    margin: 0;
+    padding: 16px;
+  }
+  .record-empty .empty-icon {
+    display: none;
+  }
+}
+.rec-steps,
+.chat-messages {
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+/* Workflow studio: restrained chrome, stable step list, progressive detail. */
+#pane-record {
+  gap: 0;
+}
+.studio-library {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 6px;
+}
+.studio-library select {
+  min-width: 0;
+  flex: 1;
+}
+.studio-tabs {
+  display: flex;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 24px;
+}
+.studio-tabs button {
+  border: 0;
+  background: none;
+  color: var(--secondary);
+  padding: 11px 0;
+  font: inherit;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.studio-tabs button[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.studio-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.studio-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 10px 18px;
+}
+.studio-toolbar select {
+  margin-left: auto;
+  max-width: 170px;
+}
+#pane-record .rec-steps {
+  flex: none;
+  min-height: 0;
+  max-height: 300px;
+  padding: 0 10px 10px;
+}
+.studio-step {
+  width: 100%;
+  display: flex;
+  text-align: left;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.studio-step:hover {
+  background: var(--hover);
+}
+.studio-step.selected {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.studio-step.disabled {
+  opacity: 0.5;
+}
+.studio-step .step-copy {
+  min-width: 0;
+  flex: 1;
+}
+.studio-step strong {
+  font-size: 12px;
+}
+.studio-step .step-value {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  margin-top: 3px;
+}
+.step-editor {
+  padding: 16px 18px;
+  border-top: 1px solid var(--border);
+}
+.editor-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.editor-heading h3,
+.run-heading h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+.step-editor .studio-toolbar {
+  padding: 10px 0;
+}
+.studio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  font-size: 11px;
+  color: var(--secondary);
+}
+.studio-details {
+  margin: 0 18px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.studio-details summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.studio-details p,
+.studio-hint,
+.run-heading p {
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.studio-details pre {
+  max-height: 260px;
+  overflow: auto;
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.variable-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.studio-checkbox {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  margin-left: 12px;
+}
+.studio-checkbox input {
+  width: auto;
+}
+.run-heading {
+  padding: 20px 18px 8px;
+}
+.run-heading h3 {
+  margin-top: 8px;
+}
+.run-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 18px 12px;
+}
+#run-inputs {
+  padding: 0 18px;
+}
+.run-event {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 18px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.run-event > span:nth-child(2) {
+  flex: 1;
+}
+.run-event small {
+  flex-shrink: 0;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
+.run-event.passed .step-number {
+  color: var(--accent);
+}
+.studio-issue,
+.step-issue,
+.studio-save-state.error,
+.run-event.failed,
+.run-event.outcome-unknown {
+  color: #d98876;
+}
+.studio-issue {
+  padding: 8px 18px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.repair-review {
+  margin: 16px 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.record-finish {
+  margin: 0 18px 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  flex-shrink: 0;
+}
+.finish-heading p,
+.finish-connection {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--secondary);
+  margin: 0;
+}
+.finish-save {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.finish-save .primary-button {
+  flex-shrink: 0;
+  padding: 8px 11px;
+}
+.finish-connection {
+  margin-top: 8px;
+}
+@media (max-width: 959px) {
+  .record-finish {
+    margin-bottom: 10px;
+  }
+}
+.code-line {
+  display: block;
+  white-space: pre;
+  min-height: 1.6em;
+}
+.code-line.selected {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.code-line-number {
+  display: inline-block;
+  width: 3ch;
+  margin-right: 2ch;
+  color: var(--secondary);
+  opacity: 0.65;
+  user-select: none;
+  text-align: right;
+}
+.count-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--muted-surface);
+  font-size: 11px;
+  line-height: 16px;
+}
+/* Whole-pixel line heights keep controls on whole pixels when the pane scrolls. */
+.studio-save-state,
+#record-finish-copy,
+#record-save-hint {
+  line-height: 18px;
+}
+#record-finish-title {
+  line-height: 20px;
+}
+.studio-library,
+.studio-toolbar {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+#pane-record :is(.primary-button, .secondary-button) {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 12.5px;
+  line-height: 16px;
+}
+#pane-record .text-button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  line-height: 16px;
+}
+.studio-tabs button {
+  padding: 9px 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 18px;
+}
+#pane-record .record-empty {
+  margin: 12px 6px 0;
+  padding: 24px 16px;
+}
+.record-empty h3 {
+  font-size: 14px;
+}
+.record-empty p {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+@media (max-width: 959px) {
+  .record-empty {
+    margin: 0;
+  }
+  #pane-record.active {
+    padding-bottom: 12px;
+  }
+}
+.record-finish {
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  box-shadow: var(--shadow-xs);
+}
+/* ════════════════════════════════════════════════════════════════════════
+   Record studio and Inspect: only what the moment needs, in the shell's
+   material. Visibility per stage comes from #pane-record[data-stage].
+   ════════════════════════════════════════════════════════════════════════ */
+/* The workflow header: the workflow list is the title. */
+.studio-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 16px 10px;
+  flex-shrink: 0;
+}
+.studio-header select {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.studio-header .count-badge {
+  padding: 0 4px;
+  font-size: 11.5px;
+  color: var(--secondary);
+}
+.studio-banner {
+  margin: 0 16px 10px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* Record and Test run, with what blocks a run and the latest message right beneath. */
+#pane-record .record-controls {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+.record-dot {
+  display: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: record-pulse 1.4s var(--ease) infinite;
+}
+#record-toggle.recording {
+  background: var(--danger);
+  color: #fff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--danger) 40%, transparent);
+}
+#record-toggle.recording .record-dot {
+  display: block;
+}
+@keyframes record-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.studio-issues {
+  margin: 0 16px;
+  padding: 0;
+  list-style: none;
+}
+.studio-issues li {
+  margin-bottom: 6px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+}
+.studio-status {
+  margin: 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--secondary);
+}
+.studio-status:empty {
+  display: none;
+}
+.studio-status:not(:empty) {
+  margin-bottom: 8px;
+}
+.studio-status.error {
+  color: var(--danger);
+}
+/* The save card. */
+#pane-record .record-finish {
+  margin: 4px 16px 12px;
+  padding: 14px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  box-shadow: var(--shadow-xs);
+}
+.record-finish h3 {
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.record-finish > p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.record-finish .finish-save {
+  margin-top: 10px;
+}
+.record-finish .studio-status,
+.record-finish .finish-connection {
+  margin: 8px 0 0;
+}
+.finish-connection:empty {
+  display: none;
+}
+.record-finish .studio-details {
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 0;
+}
+.record-finish .studio-details input {
+  width: 100%;
+  margin-top: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--muted-surface);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  color: var(--text);
+}
+/* Stage: an empty draft shows how to start; a recording shows only its live steps. */
+#pane-record[data-stage='empty'] .studio-tabs,
+#pane-record[data-stage='empty'] #record-validate,
+#pane-record[data-stage='empty'] #step-undo,
+#pane-record[data-stage='empty'] #step-redo,
+#pane-record[data-stage='empty'] #variables-details,
+#pane-record[data-stage='recording'] .studio-tabs,
+#pane-record[data-stage='recording'] #record-validate,
+#pane-record[data-stage='recording'] .studio-toolbar,
+#pane-record[data-stage='recording'] #variables-details,
+#pane-record:not([data-stage='empty']) #record-open {
+  display: none;
+}
+#pane-record .studio-tabs {
+  gap: 20px;
+  padding: 0 16px;
+  border-bottom: 0;
+  box-shadow: inset 0 -0.5px 0 var(--hairline);
+}
+#pane-record .rec-steps {
+  max-height: none;
+}
+.record-empty h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+/* The step editor: heading and icon row, then only the fields that matter. */
+.step-editor {
+  border-top: 0;
+  box-shadow: inset 0 0.5px 0 var(--hairline);
+}
+.editor-heading {
+  align-items: center;
+}
+.editor-icons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.editor-more {
+  position: relative;
+}
+.editor-more[open] > summary {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.editor-more[open] {
+  z-index: 5;
+}
+.editor-more > .editor-menu {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--material);
+  backdrop-filter: blur(30px) saturate(1.8);
+  box-shadow: var(--shadow);
+}
+.editor-menu .text-button {
+  justify-content: flex-start;
+  width: 100%;
+}
+.editor-target {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) 2fr;
+  gap: 8px;
+}
+.editor-alternatives {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 8px;
+}
+.step-editor .studio-details {
+  margin: 8px 0 0;
+}
+.step-issue {
+  cursor: help;
+}
+/* Run and Code. */
+.run-controls {
+  display: flex;
+  gap: 6px;
+  padding: 0 18px 10px;
+}
+#studio-code .rec-code {
+  margin: 14px 16px 10px;
+  max-height: 360px;
+  border-radius: var(--radius);
+}
+#studio-code .export-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 8px;
+}
+@media (max-width: 959px) {
+  #pane-record.active {
+    display: block;
+    overflow-y: auto;
+  }
+  #pane-record .studio-scroll {
+    overflow: visible;
+  }
+}
+/* One primary per view: once a recording is captured, saving it is the next step, so Resume steps back. */
+#pane-record:has(#record-finish:not([hidden])) #record-toggle:not(.recording) {
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+#pane-record:has(#record-finish:not([hidden])) #record-toggle:not(.recording):hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}

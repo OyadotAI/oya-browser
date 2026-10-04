@@ -2,7 +2,7 @@
  * Checking what a browser recorded, or a workflow draft, before it becomes a
  * playbook. The payload is built in a web page, so nothing here trusts a shape.
  */
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';

@@ -92,6 +92,9 @@ jobs:
       - run: npx playwright install chromium
         working-directory: browser
       - run: npm test --prefix browser
+      # The main process and preload ship bundled (out/); both must type-check and build.
+      - run: npm run typecheck --prefix browser
+      - run: npm run build --prefix browser
 
   recording:
     name: Electron recording

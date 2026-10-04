@@ -1,5 +1,5 @@
 /**
- * End-to-end check of the CDP front door (cdp-front-door.js), driven the way a
+ * End-to-end check of the CDP front door (src/main/front-door/cdp-front-door.ts), driven the way a
  * benchmark harness drives it. Needs a running browser and playwright-core:
  *   docker run -d -p 9222:9222 -e OYA_REMOTE_DEBUGGING_PORT=9222 \
  *     -e OYA_USER_DATA_DIR=/data -v <userData>:/data oya-browser:bench

@@ -4,12 +4,9 @@
  * state. CDPDriver adds the behaviour on top.
  */
 import { randomBytes } from 'crypto';
-import { createRequire } from 'module';
 import { CDP_CAPABILITIES } from './actions.ts';
 import { WORLD_NAME_BYTES } from './constants.ts';
-
-const require = createRequire(import.meta.url);
-const { LoginState } = require('../../../../browser/login-state.js');
+import { LoginState } from '../../../../browser/src/page/login-state.ts';
 
 /** The state one CDP driver carries between commands. */
 export class CDPDriverState {

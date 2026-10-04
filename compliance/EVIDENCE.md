@@ -10,7 +10,7 @@ Generated 2026-09-20T16:26:12.283Z by `compliance/run-evidence.mjs`. Regenerate 
 | 164.312(c)(1) | Integrity | PASS | `server/src/platform/audit-chain.ts`<br>`server/migrations/012_audit_tamper_evidence.sql` | 11 passed, 0 failed |
 | 164.312(c)(2) | Mechanism to authenticate ePHI | PASS | `server/src/platform/audit-chain.ts` | update refused: true; delete refused: true; service_role holds INSERT,SELECT |
 | 164.312(d) | Person or entity authentication | PASS | `server/src/modules/challenges/` | 36 passed, 0 failed |
-| 164.312(e)(1) | Transmission security | PASS | `server/src/modules/control/egress.ts`<br>`browser/governance.js` | 11 passed, 0 failed |
+| 164.312(e)(1) | Transmission security | PASS | `server/src/modules/control/egress.ts`<br>`browser/src/main/identity/host-rules.ts` | 11 passed, 0 failed |
 | 164.308(a)(4) | Information access management | PASS | `server/src/modules/control/egress.ts` | 11 passed, 0 failed |
 | 164.312(a)(2)(iv) | Encryption and decryption | PASS | `server/src/platform/secrets.ts`<br>`server/migrations/010_hash_api_keys.sql` | 8 passed, 0 failed; api keys stored as sha256: true |
 | 164.502(b) | Minimum necessary, recordings and logs | GAP | — | redaction exists in 10 files but targets secrets and placeholders, not PHI |

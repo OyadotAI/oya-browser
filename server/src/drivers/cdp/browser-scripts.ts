@@ -22,9 +22,9 @@ export function getApplier() {
 /** Requires the applier; null (with a warning) when the browser package is absent. */
 function loadApplier() {
   try {
-    return require('../../../../browser/anonymity/apply.js').createPersonaApplier;
+    return require('../../../../browser/src/anonymity/apply.ts').createPersonaApplier;
   } catch (e) {
-    console.warn(`[cdp] anonymity/apply.js not found (${e.message}), CDP browsers run unspoofed`);
+    console.warn(`[cdp] anonymity/apply.ts not found (${e.message}), CDP browsers run unspoofed`);
     return null;
   }
 }

@@ -4,12 +4,12 @@
  * failed takeover, disconnects and servers without desktop control.
  */
 const assert = require('node:assert/strict');
-const { createControlState } = require('../../control-state.cjs');
+const { DesktopControl } = require('../../src/main/control/control-state.ts');
 (async () => {
   let server = { mode: 'agent', revision: 1 },
     failAcquire = false;
   const sent = [];
-  const controller = createControlState({
+  const controller = new DesktopControl({
     changed() {},
     send(message) {
       sent.push(message);

@@ -3,14 +3,11 @@
  * and preparing each target it attaches to.
  */
 import { randomBytes } from 'crypto';
-import { createRequire } from 'module';
 import { CDPConnection } from './connection.ts';
 import { PROVIDER_SHIPS_STEALTH, applyPersona } from './persona.ts';
 import { TAG_BYTES } from './constants.ts';
 import type { CDPDriver } from './driver.ts';
-
-const require = createRequire(import.meta.url);
-const { cdpCookies } = require('../../../../browser/login-state.js');
+import { cdpCookies } from '../../../../browser/src/page/login-state.ts';
 
 /** CDP domains every attached target runs with. */
 const DOMAINS = ['Page', 'Runtime', 'DOM', 'Network'];

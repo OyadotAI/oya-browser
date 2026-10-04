@@ -1,7 +1,7 @@
 /**
  * analyze's result as an MCP client reads it: the page in the format the browser
  * wrote it in (markdown, toon, or any renderer added in
- * browser/scripts/page-render.cjs), cut to fit like the agent's.
+ * browser/src/page/render.ts), cut to fit like the agent's.
  */
 import { analysisText } from '../modules/agent/chat.ts';
 

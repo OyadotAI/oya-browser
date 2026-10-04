@@ -117,7 +117,8 @@ use `node:test` with `mock.timers` for anything time-based, plus the fakes in
 ## Exceptions
 
 - **`modules/control/egress.ts`** is exempt from the size and number rules.
-  Its host matcher must stay byte-identical to `browser/governance.js`, and
+  Its host matcher must stay byte-identical to
+  `browser/src/main/identity/host-rules.ts`, and
   `tests/integration/egress-rules.test.js` compares the two.
 - **`agent/placeholders.ts` `FILTERS.date`** sits inside a lint-disable block.
   Its source text is copied into the Playwright export, so it must not change.

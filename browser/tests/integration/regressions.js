@@ -8,16 +8,19 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-// The main process: main.js plus the modules it is split into, at any depth.
+// The main process: every TypeScript module under src/main/, at any depth,
+// the composition root (src/main/main.ts) included.
 const root = path.join(__dirname, '..', '..');
-const src = [
-  'main.js',
-  ...fs
-    .readdirSync(path.join(root, 'main'), { recursive: true })
-    .filter((f) => f.endsWith('.cjs'))
-    .sort()
-    .map((f) => path.join('main', f)),
-]
+/** Every file under `dir` (relative to the browser folder) ending in `ext`, sorted. */
+const sources = (dir, ext) =>
+  fs.existsSync(path.join(root, dir))
+    ? fs
+        .readdirSync(path.join(root, dir), { recursive: true })
+        .filter((f) => f.endsWith(ext))
+        .sort()
+        .map((f) => path.join(dir, f))
+    : [];
+const src = sources(path.join('src', 'main'), '.ts')
   .map((f) => fs.readFileSync(path.join(root, f), 'utf8'))
   .join('\n');
 const has = (re, msg) => assert.ok(re.test(src), msg);
@@ -30,14 +33,17 @@ for (const call of bulk) {
 }
 
 // ...and closeTab must actually honour that opt-out.
-has(/(?:function |^\s+)closeTab\(id, \{ keepOne = true \} = \{\}\) \{/m, 'closeTab lost its keepOne parameter');
+has(
+  /^\s+closeTab\(id: number, \{ keepOne = true \}: CloseOptions = \{\}\): void \{/m,
+  'closeTab lost its keepOne parameter',
+);
 has(/if \(keepOne\) (?:this\.)?createTab\(/, 'closeTab recreates unconditionally, bulk close loops forever');
 
 // The page actions render an analysis in the saved page format, and navigate the
-// way the address bar does; both need the context main.js hands them.
+// way the address bar does; both need what the composition root hands the PageDriver.
 {
-  const actions =
-    fs.readFileSync(path.join(root, 'main.js'), 'utf8').match(/createPageActions\(\{[\s\S]*?\n\}\);/)?.[0] || '';
+  const main = fs.readFileSync(path.join(root, 'src', 'main', 'main.ts'), 'utf8');
+  const actions = main.match(/new PageDriver\(\{[\s\S]*?\n\}\);/)?.[0] || '';
   assert.ok(
     /\bconfig: ctx\.config\b/.test(actions),
     'page actions lost the saved settings: analyze ignores the page format',
@@ -153,21 +159,19 @@ assert.ok(
   'when registration fails, the prod deploy must keep the snapshot the cluster already runs',
 );
 
-// Check every renderer entrypoint: a parse failure otherwise silently stops the UI.
-const html = fs.readFileSync(path.join(__dirname, '..', '..', 'renderer', 'index.html'), 'utf8');
-const inline = html.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g) || [];
-const external = [...html.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
-assert.ok(inline.length + external.length, 'no renderer scripts found');
-for (const block of inline) {
-  const body = block.replace(/^<script[^>]*>/, '').replace(/<\/script>$/, '');
-  assert.doesNotThrow(() => new Function(body), 'renderer inline script does not parse');
+// The shell pages load their bundle as a module, and the one classic script (the
+// first paint's theme, which must run before any style) must parse: a failure
+// in either silently leaves the window blank.
+const rendererDir = path.join(__dirname, '..', '..', 'src', 'renderer');
+for (const page of ['index.html', path.join('control-shield', 'index.html')]) {
+  const html = fs.readFileSync(path.join(rendererDir, page), 'utf8');
+  assert.ok(/<script type="module" src="\.\/[\w/.-]+\.tsx?"><\/script>/.test(html), `${page} loads no module entry`);
+  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), `${page} has an inline script, which the CSP blocks`);
 }
-for (const file of external) {
-  assert.doesNotThrow(
-    () => new Function(fs.readFileSync(path.join(__dirname, '..', '..', 'renderer', file), 'utf8')),
-    `${file} does not parse`,
-  );
-}
+assert.doesNotThrow(
+  () => new Function(fs.readFileSync(path.join(rendererDir, 'public', 'first-paint.js'), 'utf8')),
+  'first-paint.js does not parse',
+);
 
 // ── Recording ──
 // A recorded password must never leave the page: the step keeps a placeholder and the
@@ -176,7 +180,7 @@ const analyzer = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'an
 for (const [re, msg] of [
   [/window\.__acRecordStart\b/, 'the recorder lost its start hook'],
   [/window\.__acRecordStop\b/, 'the recorder lost its stop hook'],
-  [/window\.__acRecordDrain\b/, 'the recorder lost its drain hook, main.js has no way to collect steps'],
+  [/window\.__acRecordDrain\b/, 'the recorder lost its drain hook, the main process has no way to collect steps'],
   [
     /isSecretField\(node\) \? secretPlaceholder\(node\) : value/,
     'a typed password is no longer masked before it is buffered',
@@ -204,17 +208,15 @@ assert.ok(
   'stopRecording no longer remembers where the pause left each tab',
 );
 assert.ok(
-  /else if \(resumedElsewhere\(recorder, url\)\)\s*recorder\.pushRecordedStep\(\{ action: 'navigate', url \}\)/.test(
-    src,
-  ),
+  /else if \(this\.resumedElsewhere\(url\)\)\s*recorder\.pushRecordedStep\(\{ action: 'navigate', url \}\)/.test(src),
   'a resume on another page records no navigation, replay will run the rest against the paused page',
 );
 assert.ok(
-  /if \(known\) return recorder\.pausedUrls\.get\(tabId\) !== url;/.test(src),
+  /if \(known\) return this\.pausedUrls\.get\(tabId\) !== url;/.test(src),
   'a resume no longer compares the page with where the pause left the tab',
 );
 assert.ok(
-  /const known = recorder\.pausedDraft === recorder\.ctx\.workspace\?\.draft\.id && recorder\.pausedUrls\.has\(tabId\);/.test(
+  /const known = this\.pausedDraft === recorder\.deps\.workspace\?\.draft\.id && this\.pausedUrls\.has\(tabId\);/.test(
     src,
   ),
   "a resumed draft is compared with another draft's paused pages, and its move to this page goes unrecorded",
@@ -234,11 +236,13 @@ assert.ok(/Promise\.race\(\[tab\.ready\.catch/.test(src), 'waitForTabReady must 
 // two attempts fails closed rather than loading its page unprotected.
 assert.ok(
   /const blank = tab\.view\.webContents\.loadURL\('about:blank'\)/.test(src) &&
-    /withinTime\(\s*blank\.then\(\(\) => ctx\.protection\.setupTabCDP\(view\)\),\s*CDP_SETUP_TIMEOUT,?\s*\)/.test(src),
+    /withinTime\(\s*blank\.then\(\(\) => this\.deps\.protection\.setupTabCDP\(view\)\),\s*CDP_SETUP_TIMEOUT,?\s*\)/.test(
+      src,
+    ),
   'setupTabCDP must be bounded and run after about:blank starts the renderer, otherwise every first page is unprotected',
 );
 assert.ok(
-  /function failClosed\(ctx, tab\) \{[\s\S]{0,200}tab\.protection = 'failed'/.test(src),
+  /^\s+private failClosed\(tab: Tab\): void \{[\s\S]{0,200}tab\.protection = 'failed'/m.test(src),
   'a tab whose protection failed twice must be marked failed, so nothing loads in it',
 );
 
@@ -248,7 +252,7 @@ const pageLoads = src.match(/\.loadURL\((?!'about:blank')/g) || [];
 assert.strictEqual(
   pageLoads.length,
   1,
-  `exactly one loadURL of a real address may exist in main/ (loadInTab); found ${pageLoads.length}`,
+  `exactly one loadURL of a real address may exist in src/main/ (loadInTab); found ${pageLoads.length}`,
 );
 
 // Cloud browsers stream frames through viz CopyOutputResult, which needs more
@@ -279,9 +283,9 @@ assert.ok(
 // The CDP front door re-issues every request to Chromium itself, so Chromium's
 // own DNS-rebinding and CSRF defences never see the caller. Losing any of these
 // three lets a page the user is visiting drive the persona's authenticated tabs.
-const door = fs.readFileSync(path.join(__dirname, '..', '..', 'cdp-front-door.js'), 'utf8');
+const door = fs.readFileSync(path.join(root, 'src', 'main', 'front-door', 'cdp-front-door.ts'), 'utf8');
 assert.ok(
-  /const localHost = \(req\) => \{[\s\S]*?isIP\(host\) !== 0;/.test(door),
+  /const localHost = \(req: \w+\): boolean => \{[\s\S]*?isIP\(host\) !== 0;/.test(door),
   'cdp-front-door lost its Host check, a rebound DNS name reaches this port same-origin',
 );
 assert.ok(
@@ -299,7 +303,7 @@ assert.ok(
 
 // Sign-in popups become real windows only for the providers themselves, matched
 // on the hostname: a substring match let box.com (it holds "x.com") open one.
-const { isAuthPopup } = require('../../main/auth-popup.cjs');
+const { isAuthPopup } = require('../../src/main/tabs/auth-popup.ts');
 for (const [url, want] of [
   ['https://accounts.google.com/o/oauth2/auth', true],
   ['https://api.twitter.com/oauth', true],
@@ -322,10 +326,18 @@ assert.ok(!/ipcMain\.handle\((?!channel)/.test(src), 'an ipcMain.handle bypasses
 
 // ...and it must parse a bracketed IPv6 Host: a naive split on ':' reads
 // "[::1]" as "[" and locks out every IPv6 loopback client.
-const { localHost, isUi } = require('../../cdp-front-door');
+const { localHost, isUi } = require('../../src/main/front-door/cdp-front-door.ts');
 assert(
-  isUi({ type: 'page', url: 'file:///app/renderer/control-shield.html' }),
+  isUi({ type: 'page', url: 'file:///app/out/renderer/control-shield/index.html' }),
   'native input shield must never be exposed as an agent target',
+);
+assert(
+  isUi({ type: 'page', url: 'file:///app/out/renderer/index.html?theme=dark' }),
+  'the shell page must never be exposed as an agent target',
+);
+assert(
+  !isUi({ type: 'page', url: 'file:///Users/me/renderer/index.html.evil.html' }),
+  'only the shell pages themselves are hidden, not a lookalike file',
 );
 for (const [host, want] of [
   ['127.0.0.1:9222', true],
@@ -341,7 +353,7 @@ for (const [host, want] of [
 
 // The server sends a proxy as a URL. A config without a host used to mean
 // "direct", so every persona proxy was silently ignored.
-const { normalizeProxy } = require('../../anonymity/proxy');
+const { normalizeProxy } = require('../../src/anonymity/proxy.ts');
 const fromServer = normalizeProxy({ url: 'http://gate.example.com:7000', username: 'u-session-1', password: 'pw' });
 assert.deepStrictEqual(
   [fromServer.type, fromServer.host, fromServer.port, fromServer.username],
@@ -355,8 +367,8 @@ assert.strictEqual(normalizeProxy(null), null, 'no proxy stays no proxy');
 // enables it without a watcher wedges that surface on the first alert().
 for (const enable of src.match(/(?:sendCommand|send)\('Page\.enable'\)[\s\S]{0,160}/g) || []) {
   assert.ok(
-    /attachDialogWatcher/.test(enable),
-    'Page.enable without attachDialogWatcher nearby, that surface blocks forever on an alert()',
+    /\bdialogs\.watch\(dbg\)/.test(enable),
+    'Page.enable without dialogs.watch(dbg) nearby, that surface blocks forever on an alert()',
   );
 }
 // The early answer must go out BEFORE the id is parked, or sendResult drops the
@@ -371,7 +383,7 @@ assert.ok(
 // Residential proxy bytes are billed per GB, so every byte both ways must be counted.
 (async () => {
   const net = require('net');
-  const { meter, takeProxyBytes } = require('../../anonymity/proxy');
+  const { meter, takeProxyBytes } = require('../../src/anonymity/proxy.ts');
   const echo = net.createServer((s) => s.pipe(s));
   await new Promise((r) => echo.listen(0, '127.0.0.1', r));
   const port = await meter('127.0.0.1', echo.address().port);

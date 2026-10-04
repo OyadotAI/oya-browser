@@ -1,0 +1,962 @@
+/**
+ * The Ask pane (ask-pane.tsx and its messages, run cards and composer). It reads
+ * as a conversation with someone at work: your task, then the run as it happens
+ * (its plan ticking off, one narrated line per action), then the answer with a
+ * clear verdict.
+ */
+/* ── Chat pane ── */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-empty {
+  color: var(--secondary);
+  font-size: 12px;
+  text-align: center;
+  padding: 40px 10px;
+}
+.chat-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+  animation: chatIn 0.15s ease-out;
+}
+@keyframes chatIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.chat-msg.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--surface);
+  border-bottom-right-radius: 3px;
+}
+.chat-msg.assistant {
+  align-self: flex-start;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  color: #27272a;
+  border-bottom-left-radius: 3px;
+}
+.chat-msg.error {
+  color: var(--danger);
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.chat-msg code {
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.chat-msg pre {
+  background: var(--muted-surface);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-msg pre code {
+  background: none;
+  padding: 0;
+}
+.chat-msg strong {
+  color: var(--text);
+}
+.chat-msg em {
+  font-style: italic;
+}
+.chat-copy {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--secondary);
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+  z-index: 1;
+}
+.chat-copy:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.chat-msg {
+  position: relative;
+}
+.chat-msg:hover .chat-copy {
+  display: block;
+}
+.chat-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
+}
+.chat-tool-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-family: ui-monospace, monospace;
+}
+.chat-thinking {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 8px 12px;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  border-bottom-left-radius: 3px;
+  font-size: 12px;
+  color: var(--secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-step-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-step-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+.chat-dots span {
+  width: 5px;
+  height: 5px;
+  background: var(--secondary);
+  border-radius: 50%;
+  animation: dotPulse 1.2s infinite;
+}
+@keyframes dotPulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+.chat-input-bar {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.chat-input {
+  flex: 1;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.chat-input:focus {
+  border-color: var(--accent);
+}
+.chat-input::placeholder {
+  color: var(--secondary);
+}
+.chat-send {
+  width: 34px;
+  height: 34px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--surface);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.chat-send:hover {
+  background: var(--accent-hover);
+}
+.chat-send:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.chat-empty {
+  color: var(--secondary);
+  font-size: 13px;
+  padding: 42px 24px;
+  text-align: center;
+}
+.chat-empty h2 {
+  color: var(--text);
+  font-size: 19px;
+  margin: 0 0 10px;
+}
+.chat-empty p {
+  line-height: 1.7;
+  max-width: 300px;
+  margin: auto;
+}
+.chat-msg {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.chat-msg.user {
+  color: var(--on-accent);
+}
+.chat-msg.assistant {
+  color: var(--text);
+}
+.chat-msg.error {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.chat-input-bar {
+  padding: 12px 16px;
+  border-color: var(--border);
+  background: var(--surface);
+  align-items: flex-end;
+}
+.chat-input {
+  resize: vertical;
+  min-height: 64px;
+  max-height: 180px;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+  background: var(--muted-surface);
+}
+.chat-send {
+  height: 34px;
+  width: 34px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+}
+@media (max-width: 959px) {
+  .chat-input-bar {
+    position: sticky;
+    bottom: 0;
+  }
+}
+/* Ask */
+.chat-messages {
+  padding: 16px 16px 8px;
+  gap: 16px;
+  scroll-behavior: smooth;
+}
+.chat-empty {
+  margin: auto;
+  padding: 24px 8px;
+  font-size: 13px;
+}
+.chat-empty .empty-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chat-empty h2 {
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  margin-bottom: 6px;
+}
+.chat-empty p {
+  line-height: 1.55;
+  max-width: 260px;
+}
+.chat-msg {
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  cursor: text;
+  animation: chatIn 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.chat-msg.user {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--accent-soft);
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.chat-msg.assistant {
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  white-space: normal;
+}
+.chat-msg.error {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 10px;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.chat-msg :is(p, ul, ol, pre, h4, hr) {
+  margin: 0;
+}
+.chat-msg > :is(p, ul, ol, pre, h4, hr, .chat-table) + :is(p, ul, ol, pre, h4, hr, .chat-table) {
+  margin-top: 8px;
+}
+.chat-msg hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.chat-table {
+  overflow-x: auto;
+}
+.chat-msg table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.chat-msg :is(th, td) {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.chat-msg th {
+  background: var(--muted-surface);
+  font-weight: 650;
+}
+.chat-msg :is(ul, ol) {
+  padding-left: 20px;
+}
+.chat-msg li + li {
+  margin-top: 2px;
+}
+.chat-msg li::marker {
+  color: var(--secondary);
+}
+.chat-msg h4 {
+  margin-top: 4px;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+.chat-msg code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--muted-surface);
+  font: 12px var(--mono);
+}
+.chat-msg pre {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted-surface);
+  white-space: pre;
+  overflow-x: auto;
+}
+.chat-msg pre code {
+  padding: 0;
+  background: none;
+  font: 12px/1.55 var(--mono);
+}
+.chat-tools {
+  gap: 4px;
+  margin-top: 10px;
+}
+.chat-tool-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: var(--muted-surface);
+  color: var(--secondary);
+  font: 500 11px var(--mono);
+}
+.chat-copy {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  margin-top: 6px;
+  margin-left: -6px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--secondary);
+  font-size: 11.5px;
+  opacity: 0.7;
+  transition:
+    opacity 140ms ease,
+    background-color 140ms ease,
+    color 140ms ease;
+}
+.chat-copy svg {
+  width: 13px;
+  height: 13px;
+}
+.chat-msg:hover .chat-copy,
+.chat-copy:focus-visible,
+.chat-copy.done {
+  opacity: 1;
+}
+.chat-msg:hover .chat-copy {
+  display: inline-flex;
+}
+.chat-copy:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.chat-copy.done {
+  color: var(--accent);
+}
+.chat-thinking {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+}
+.chat-input-bar {
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 16px 12px;
+  border-top: 0;
+  background: transparent;
+  align-items: stretch;
+}
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px #0000000d;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.chat-composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.chat-input,
+.chat-input:focus {
+  flex: 1;
+  min-height: 0;
+  height: 28px;
+  max-height: none;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  resize: none;
+  font-size: 13px;
+  line-height: 18px;
+  outline: none;
+}
+.chat-send {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+.chat-send svg {
+  width: 15px;
+  height: 15px;
+}
+.chat-hint {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.8;
+}
+/* Ask: profile picker, Clear, attachments, Stop */
+.chat-toolbar select {
+  font-weight: 500;
+}
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+}
+.chat-card h2 {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.chat-card p {
+  line-height: 1.55;
+  color: var(--secondary);
+}
+.chat-card :is(select, input) {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted-surface);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.chat-card .chat-card-error {
+  color: var(--danger);
+}
+.chat-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.chat-card-actions :first-child {
+  margin-right: auto;
+}
+.chat-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 2px 2px 9px;
+  border-radius: 999px;
+  background: var(--muted-surface);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  font-size: 12px;
+}
+.chat-file-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-file-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.chat-file-remove:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.chat-files-note {
+  color: var(--danger);
+  font-size: 11.5px;
+}
+.chat-composer .chat-attach {
+  align-self: flex-end;
+  margin-left: -6px;
+}
+/* ── The conversation ── */
+.chat-messages {
+  padding: 18px 16px 12px;
+  gap: 14px;
+}
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: auto;
+  padding: 24px 8px;
+  text-align: center;
+}
+.chat-empty .oya-orb {
+  margin-bottom: 18px;
+}
+.chat-empty h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+.chat-empty h2 em {
+  color: var(--accent);
+  font-style: normal;
+}
+.chat-empty p {
+  max-width: 260px;
+  margin: 0;
+  color: var(--secondary);
+  line-height: 1.55;
+}
+.chat-examples {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 16px;
+}
+.chat-examples button {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-base) var(--ease);
+}
+.chat-examples button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+/* Your task: a quiet card with a mono label, the way a brief reads. */
+.chat-msg {
+  font-size: var(--text-md);
+  line-height: 1.6;
+  animation: agent-in var(--t-slow) var(--ease) backwards;
+}
+.chat-msg.user {
+  align-self: stretch;
+  max-width: none;
+  padding: 10px 14px 12px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  font-size: var(--text-lg);
+  line-height: 1.45;
+}
+.chat-msg.user::before {
+  content: 'Task';
+  display: block;
+  margin-bottom: 4px;
+  color: var(--secondary);
+  font: 600 9.5px/12px var(--mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+/* The answer: a clear verdict, then the report. */
+.chat-msg.assistant {
+  padding: 2px 2px 0;
+}
+.chat-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  font: 600 10px/16px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.chat-verdict::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.chat-verdict.done {
+  background: color-mix(in srgb, var(--oya) 14%, transparent);
+  color: var(--accent);
+}
+.chat-verdict.failed {
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  color: color-mix(in srgb, var(--amber) 80%, var(--text));
+}
+.chat-msg.error {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+/* Signed out, the sign-in card is the only thing to do: the hero and its examples stay away until Ask can run. */
+.dev-pane:has(#chat-signin:not([hidden])) .chat-empty {
+  display: none;
+}
+/* ── The run: what the agent is doing, live ── */
+.chat-run {
+  position: relative;
+  padding: 2px 0 2px 16px;
+  animation: agent-in var(--t-slow) var(--ease) backwards;
+}
+/* A thread of light down the left edge, alive while the agent works. */
+.chat-run::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, var(--oya), var(--cyan), transparent);
+  opacity: 0.55;
+}
+.chat-run.done::before {
+  background: linear-gradient(180deg, var(--oya), transparent);
+}
+.chat-run.failed::before {
+  background: linear-gradient(180deg, var(--amber), transparent);
+}
+.run-plan,
+.run-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-plan {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.run-plan li {
+  position: relative;
+  padding: 3px 0 3px 22px;
+  color: var(--secondary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.run-plan li::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--secondary) 60%, transparent);
+  transition:
+    background-color var(--t-base) var(--ease),
+    box-shadow var(--t-base) var(--ease);
+}
+.run-plan li.done {
+  color: var(--text);
+}
+.run-plan li.done::before {
+  background: var(--accent);
+  box-shadow: none;
+}
+.run-step {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: var(--text-md);
+  animation: agent-step var(--t-slow) var(--ease) backwards;
+}
+.run-step::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-left: -14px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateY(-1px);
+}
+.run-step-line {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-step-time {
+  flex: none;
+  color: var(--secondary);
+  font: 10.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+/* The live line: what Oya is doing now, with light passing through the words. */
+.chat-thinking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 2px;
+  color: var(--secondary);
+  font-size: var(--text-md);
+}
+.chat-step-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: transparent;
+  background: linear-gradient(
+      90deg,
+      var(--secondary) 0%,
+      var(--secondary) 38%,
+      var(--text) 50%,
+      var(--secondary) 62%,
+      var(--secondary) 100%
+    )
+    0 0 / 250% 100%;
+  background-clip: text;
+  animation: agent-shimmer 2.6s linear infinite;
+}
+.chat-step-meta {
+  flex: none;
+  font: 10.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.chat-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.chat-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--oya);
+  animation: agent-dot 1.2s var(--glide) infinite;
+}
+.chat-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.chat-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+/* A finished run folds behind one line that opens it again. */
+.run-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px -2px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  font: 11px var(--mono);
+  cursor: pointer;
+}
+.run-summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform var(--t-base) var(--ease);
+}
+.chat-run:not(.folded) .run-summary::after {
+  transform: rotate(-135deg) translate(-1px, -1px);
+}
+.run-summary:hover {
+  color: var(--text);
+}
+.chat-run.folded .run-steps,
+.chat-run.folded .run-plan {
+  display: none;
+}
+/* ── The composer ── */
+.chat-input-bar {
+  padding: 10px 14px 12px;
+  border-top: 0;
+}
+.chat-composer {
+  border: 0;
+  border-radius: 16px;
+  background: var(--glass-strong);
+  box-shadow: var(--glass-edge), var(--shadow-sm);
+  transition: box-shadow var(--t-base) var(--ease);
+}
+.chat-composer:focus-within {
+  box-shadow: var(--glass-edge), var(--shadow-sm), var(--glow);
+}
+.chat-input,
+.chat-input:focus,
+.chat-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.chat-send {
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  transition: background-color var(--t-fast) var(--ease);
+}
+.chat-send:hover {
+  background: var(--accent-hover);
+}
+.chat-stop {
+  background: color-mix(in srgb, var(--text) 85%, transparent);
+  color: var(--bg);
+  box-shadow: none;
+}
+@keyframes agent-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes agent-step {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+    transform: translateX(-4px);
+  }
+}
+@keyframes agent-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -150% 0;
+  }
+}
+@keyframes agent-dot {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-step-label,
+  .chat-dots span {
+    animation: none;
+  }
+}

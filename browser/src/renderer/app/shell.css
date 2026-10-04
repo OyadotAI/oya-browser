@@ -1,0 +1,322 @@
+/**
+ * The page itself, under every surface: the reset, html and body in each mode, base
+ * controls, moving the window (the drag strip and what refuses it), the focus ring,
+ * the press spring, scrollbars, the theme switch, reduced motion, and the
+ * screen-reader helper. Imported by app/main.tsx right after the tokens, so every
+ * feature's rules come after these.
+ *
+ * Two rules from features sit here on purpose, before the focus ring that once
+ * overrode them from later in the cascade: the panel tab's own focus outline
+ * (.dev-tab:focus-visible) and the Record pane's (#pane-record, .run-event).
+ */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+/* ── Setup mode, full page ── */
+body.mode-setup {
+  height: 100vh;
+}
+/* ── Fingerprint debug bar ── */
+.fp-bar {
+  display: none;
+  height: 20px;
+  padding: 0 12px 0 80px;
+  background: #18181b;
+  color: var(--secondary);
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 12px;
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-bottom: 1px solid #27272a;
+}
+body.mode-browsing .fp-bar {
+  display: flex;
+}
+.fp-bar .fp-label {
+  color: #a78bfa;
+  font-weight: 600;
+}
+.fp-bar .fp-val {
+  color: var(--secondary);
+}
+.fp-bar .fp-sep {
+  color: var(--text);
+}
+.fp-bar .fp-none {
+  color: var(--secondary);
+  font-style: italic;
+}
+/* ── Browsing mode, toolbar + tab bar + fp bar ── */
+body.mode-browsing {
+  height: 102px;
+}
+/* 52 toolbar + 30 tab bar + 20 fp bar */
+[hidden] {
+  display: none !important;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+body.mode-setup,
+body.mode-browsing {
+  height: 100dvh;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button,
+select,
+summary {
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+input,
+textarea,
+[contenteditable='true'] {
+  -webkit-app-region: no-drag;
+  user-select: text;
+}
+/*
+ * Moving the window. Only strips drag it and only controls refuse; layout boxes
+ * set nothing, because a later no-drag box, even an invisible one (the start
+ * page's aura), cuts a hole in any drag region it overlaps.
+ */
+a[href],
+label,
+[role='tab'],
+[role='button'] {
+  -webkit-app-region: no-drag;
+}
+/* Full-window views start with a strip the tab bar's height that moves the window; controls over it still win. */
+.window-drag {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--tab-strip-height);
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+button {
+  color: inherit;
+}
+button,
+input,
+textarea,
+select {
+  transition:
+    background 140ms,
+    border-color 140ms,
+    color 140ms;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+[data-icon] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+h2 {
+  font-size: 19px;
+  line-height: 1.3;
+}
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--secondary);
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+kbd {
+  font: 11px var(--mono);
+  color: var(--secondary);
+}
+button:active:not(:disabled) {
+  filter: brightness(0.94);
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+#pane-record button:focus-visible,
+#pane-record input:focus-visible,
+#pane-record select:focus-visible,
+.run-event:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.dev-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The on/off switch. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 160ms var(--ease);
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform 180ms var(--spring, var(--ease));
+}
+.switch[aria-checked='true'] {
+  background: var(--accent);
+}
+.switch[aria-checked='true']::after {
+  transform: translateX(14px);
+}
+/* ════════════════════════════════════════════════════════════════════════
+   Finish: one material, one geometry and one motion across the browser.
+   Safari-like unified chrome, floating tabs, glass dialogs, soft focus rings
+   and spring feedback, in Oya's paper, ink and green.
+   ════════════════════════════════════════════════════════════════════════ */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+  letter-spacing: -0.003em;
+}
+h1,
+h2,
+h3 {
+  letter-spacing: -0.022em;
+}
+/* Focus: a soft ring of the accent, never a hard outline. */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible,
+.dev-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+/* Press: a quick spring squeeze instead of a nudge down. */
+button {
+  transition:
+    background-color 160ms var(--ease),
+    color 160ms var(--ease),
+    box-shadow 200ms var(--ease),
+    opacity 160ms var(--ease),
+    transform 360ms var(--spring);
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  filter: none;
+}
+::placeholder {
+  color: color-mix(in srgb, var(--secondary) 75%, transparent);
+}
+/* ── Scrollbars: thin, rounded, out of the way ── */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 22%, transparent) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 38%, transparent) padding-box;
+}
+kbd {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  font:
+    500 11px -apple-system,
+    system-ui,
+    sans-serif;
+  letter-spacing: 0.04em;
+}
+/* ── Setup: a calm card under a soft Oya glow ── */
+body.mode-setup {
+  background:
+    radial-gradient(60% 50% at 50% 0%, color-mix(in srgb, var(--logo-green) 12%, transparent), transparent 70%),
+    var(--bg);
+}
+/* A theme change lands at once; nothing fades between the two themes. */
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after {
+  transition: none !important;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Read by screen readers, never shown. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -9,9 +9,26 @@ curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.s
 ```
 
 It needs git, Docker (running) and Node 20+, and tells you which one is missing. It
-clones the repo into `~/oya-browser` (set `OYA_DIR` to change that, rerun it to update)
-and starts the wizard there. Arguments pass through: `... | sh -s -- --dry-run`.
-From a checkout you already have, `make wizard` does the same.
+clones the repo into `~/oya-browser` (set `OYA_DIR` to change that) and starts the
+wizard there. Arguments pass through: `... | sh -s -- --dry-run`. From a checkout you
+already have, `make wizard` does the same.
+
+## Updating
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/update.sh | sh
+```
+
+For an install on Docker Compose (what `install.sh` sets up by default). It pulls the
+latest code into `~/oya-browser` (or `OYA_DIR`), rebuilds the server and browser images
+(and the governed browser image, `oya-browser:local`, when there is one), restarts
+everything with the settings already in `.env`, keeps the number of browser workers
+running now, and waits for `/readyz`. It asks nothing. Already up to date, it says so and
+stops; `... | sh -s -- --force` rebuilds and restarts anyway. If the checkout has local
+edits it stops before changing anything and says how to move them aside, so an update
+never quietly leaves the old code running. Governed browser containers already running
+finish their sessions on the old image; new sessions use the new one. Kubernetes fleets
+pin the browser image by digest at install, so run `install.sh` again to move them.
 
 No questions at all, for agents, CI or anyone who wants the default:
 

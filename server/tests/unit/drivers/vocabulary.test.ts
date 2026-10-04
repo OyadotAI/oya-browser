@@ -7,7 +7,6 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,10 +20,10 @@ import {
 } from '../../../src/drivers/vocabulary.ts';
 import { HANDLERS } from '../../../src/drivers/cdp/handlers/index.ts';
 import { normalise } from '../../../src/drivers/cdp/actions.ts';
+import { OYA_ACTIONS } from '../../../../browser/src/main/actions/vocabulary.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '../../../..');
-const { OYA_ACTIONS } = createRequire(import.meta.url)('../../../../browser/main/actions/vocabulary.cjs');
 
 describe('the action vocabulary', () => {
   it('has the Oya column the desktop app announces', () => {

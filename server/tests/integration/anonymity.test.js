@@ -214,7 +214,7 @@ try {
   assert((await evaluate('navigator.platform')) === profilePlatform, 'the profile platform is applied');
 
   console.log('\n8️⃣  The analyzer works from an isolated world, invisibly...');
-  // This is the mechanism browser/main.js now uses: Page.createIsolatedWorld
+  // This is the mechanism browser/src/main/main.ts now uses: Page.createIsolatedWorld
   // returns the context id directly, so it needs no Runtime.enable, that
   // domain is itself a detection vector.
   await conn.send(

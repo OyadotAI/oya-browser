@@ -1,6 +1,6 @@
 /**
  * Helpers for the page-command tests: a view whose debugger answers, a ctx
- * like main.js's, timers that fire at once and record their delays, and a
+ * like the composition root's (src/main/main.ts), timers that fire at once and record their delays, and a
  * Math.random that repeats one value.
  */
 const { mock } = require('node:test');
@@ -46,7 +46,7 @@ function pageView({ evalValue = { w: 1000, h: 700 }, loading = false, load } = {
 }
 
 /**
- * main.js's side of createPageActions: `world` answers worldEval (a value, or
+ * The composition root's (src/main/main.ts) side of the PageDriver: `world` answers worldEval (a value, or
  * a function of the expression), and every call is recorded in `calls`.
  */
 function pageCtx(view, { world, human = true, tabs } = {}) {

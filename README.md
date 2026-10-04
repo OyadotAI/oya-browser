@@ -174,6 +174,13 @@ own machines. For production, [`deployments/`](deployments) deploys the control 
 browsers to one Docker host, Amazon ECS on Fargate, any Kubernetes cluster, or GKE Autopilot, with
 one `deploy.sh` each.
 
+To update an install made this way to the latest version (it keeps your settings and number of
+browser workers, and stops without changing anything if the checkout has local edits):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/update.sh | sh
+```
+
 Self-hosting is free up to 5 cloud browsers running at once. Past that, or if you are using it
 seriously, write to **sales@getoya.ai** for a license key (`OYA_LICENSE_KEY`). A self-hosted server
 sends Oya one anonymous ping a day (a random install id, the version and browser counts, nothing

@@ -12,7 +12,7 @@ for the map, then the ARCHITECTURE.md of the part you are changing.
 |:---|:---|:---|:---|
 | `server/` | `npm run lint` · `npm run format:check` | `npm run typecheck` | `npm test` (unit + integration) · `npm run test:unit` · `npm run test:coverage` |
 | `ui/` | `npm run lint` · `npm run format:check` | `npm run typecheck` | `npm test` (Vitest) · `npm run test:ui` (Playwright, needs a running stack) |
-| `browser/` | `npm run lint` · `npm run format:check` | none (plain JavaScript) | `npm test` (unit + regressions) · `npm run test:shell` · `npm run test:control` · `npm run test:identity` · `npm run test:sync` (real Electron) |
+| `browser/` | `npm run lint` · `npm run format:check` | `npm run typecheck` · `npm run build` (electron-vite, into `out/`) | `npm test` (unit + regressions) · `npm run test:shell` · `npm run test:control` · `npm run test:recording` · `npm run test:identity` · `npm run test:workflow` · `npm run test:sync` (real Electron) |
 | `packages/*` | `npm run lint` (root) | `npm run build:sdk` | `npm run test:packages` (root) |
 
 Run the commands from the part's own folder. The root `npm test` runs the
@@ -65,10 +65,13 @@ server, CLI and package suites.
 
 ## Things that must not change casually
 
-- `server/src/modules/control/egress.ts` and `browser/governance.js` share a
-  host matcher that must stay byte-identical. A test compares the two.
+- `server/src/modules/control/egress.ts` and
+  `browser/src/main/identity/host-rules.ts` share a host matcher that must
+  stay byte-identical. A test compares the two.
 - Scripts injected into web pages (`browser/scripts/analyzer.js`,
-  `browser/anonymity/*`) are visible to the pages they run in, including
+  `browser/anonymity/{stealth,fingerprint,inject}.js`, and the page-script
+  strings in `browser/src/main/actions/scripts.ts`, `src/main/tabs/` and
+  `src/page/`) are visible to the pages they run in, including
   their source text and shape. Change them only on purpose, and re-run the
   stealth checks.
 - Persona fingerprints must be deterministic: the same persona gives the same

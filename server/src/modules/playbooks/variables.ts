@@ -2,7 +2,7 @@
  * A playbook's `{{name}}` placeholders: which it uses, which a run must supply,
  * and turning recorded values into placeholders with the value as their default.
  */
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 import {
   ECHO_WINDOW,

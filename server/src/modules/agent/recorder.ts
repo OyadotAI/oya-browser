@@ -3,7 +3,7 @@
  * with each analysis, so steps keep the analyzer's stable metadata instead.
  * ponytail: in memory, oldest evicted past 1000 browsers; a run is lost on restart unless saved as a playbook.
  */
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 import { sendCommand } from '../browsers/socket.ts';
 import { redact, dataKey } from './placeholders.ts';

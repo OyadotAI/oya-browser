@@ -53,6 +53,11 @@ function Install() {
       </p>
       <CodeBlock label="Terminal">{`curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh -s -- --yes`}</CodeBlock>
       <Table headers={['Choice', 'Options']} rows={CHOICE_ROWS} />
+      <p className="mb-3">
+        To update to the latest version, run the update script. It keeps your settings and browser workers, rebuilds,
+        restarts, and waits until the server is ready; with local edits in the checkout it stops and changes nothing.
+      </p>
+      <CodeBlock label="Terminal">{`curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/update.sh | sh`}</CodeBlock>
     </>
   );
 }

@@ -2,7 +2,7 @@
  * Replay without the LLM: each recorded step is matched to the live page by its
  * stable handles and sent to the browser as a command. Works on every provider.
  */
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 import { sendCommand } from '../browsers/socket.ts';
 import { DIALOG_BLOCKED } from '../../drivers/dialogs.ts';

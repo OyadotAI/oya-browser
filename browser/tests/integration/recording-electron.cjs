@@ -8,9 +8,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createServer } = require('node:http');
-const { RecordingChannel } = require('../../scripts/recording.cjs');
-const { candidates } = require('../../scripts/workflow.cjs');
-const { LoginState } = require('../../login-state');
+const { RecordingChannel } = require('../../src/page/recording.ts');
+const { candidates } = require('../../src/workflow/index.ts');
+const { LoginState } = require('../../src/page/login-state.ts');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-recorder-electron-'));
 app.setPath('userData', profile);
 app.commandLine.appendSwitch('disable-gpu');
@@ -20,7 +20,7 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.once('quit', () => fs.rmSync(profile, { recursive: true, force: true }));
 const analyzerScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts/analyzer.js'), 'utf8');
 // The app's own analyzer context creation/recreation, alongside recording.
-const { createWorld } = require('../../main/world.cjs');
+const { World } = require('../../src/main/cdp/world.ts');
 const ISOLATED_WORLD = 'test-recording-world';
 let server, win, channel;
 // The last step started, so a CI timeout names where it hung.
@@ -74,12 +74,12 @@ let lastStep = 'startup';
   // Do not enable Runtime here: the production Electron setup doesn't.
   await send('Page.enable');
   await new LoginState().attach(send, on);
-  const context = createWorld({
+  const context = new World({
     cdp: (_view, method, params) => send(method, params),
     analyzerScript,
     worldName: ISOLATED_WORLD,
   });
-  view.webContents.on('did-finish-load', () => context.ensureWorld(view, { force: true }).catch(console.error));
+  view.webContents.on('did-finish-load', () => context.ensure(view, { force: true }).catch(console.error));
   await view.webContents.loadURL(`http://127.0.0.1:${server.address().port}/start`);
   const steps = [],
     secrets = new Set();
@@ -109,7 +109,7 @@ let lastStep = 'startup';
   await view.webContents.loadURL(`http://127.0.0.1:${server.address().port}/redirect`);
   // Polling creates/uses the ordinary analyzer context; it must not switch the
   // recorder to that different, same-document world.
-  await context.worldEval(view, 'analyzePage()');
+  await context.evaluate(view, 'analyzePage()');
   await channel.drain();
   await click('username');
   await send('Input.insertText', { text: 'fixture-user' });

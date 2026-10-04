@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!-- Local scripts only; styles and data: images are what the shell renders into innerHTML. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>Oya Browser</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Before the first paint: the theme the main process chose, so nothing flashes light in the dark. -->
+    <script src="./first-paint.js"></script>
+  </head>
+  <body class="mode-setup">
+    <!-- The Oya mark, drawn once: the green ring behind, offset, and the ink ring in front. Every brand mark uses it. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="oya-mark" viewBox="0 0 512 512">
+        <circle
+          cx="276"
+          cy="276"
+          r="160"
+          fill="none"
+          stroke-width="80"
+          style="stroke: var(--mark-back, var(--logo-green))"
+        />
+        <circle
+          cx="236"
+          cy="236"
+          r="160"
+          fill="none"
+          stroke-width="80"
+          style="stroke: var(--mark-front, var(--text))"
+        />
+      </symbol>
+    </svg>
+    <!-- The shell (app/shell-root.tsx). display: contents keeps body's layout as if its regions were its children. -->
+    <div id="root" style="display: contents"></div>
+    <script type="module" src="./app/main.tsx"></script>
+  </body>
+</html>

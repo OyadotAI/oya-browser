@@ -1,0 +1,431 @@
+/**
+ * The agent panel's frame (panel-frame.tsx): the glass sheet beside the page, its
+ * header and segmented tabs, the resize edge, Inspect's sub-tabs, each pane's box,
+ * and the dropdown look every pane and the palette share.
+ */
+/* ── Dev Panel ── */
+.dev-panel {
+  position: fixed;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: none;
+  flex-direction: column;
+  z-index: 50;
+  -webkit-app-region: no-drag;
+}
+.dev-panel.open {
+  display: flex;
+}
+.dev-panel-resize {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 51;
+}
+.dev-panel-resize:hover,
+.dev-panel-resize.dragging {
+  background: var(--accent);
+  opacity: 0.4;
+}
+.dev-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.dev-tab {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--secondary);
+  cursor: pointer;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s;
+}
+.dev-tab:hover {
+  color: var(--secondary);
+}
+.dev-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.dev-tab-btn {
+  background: none;
+  border: none;
+  color: var(--secondary);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 8px 10px;
+}
+.dev-tab-btn:hover {
+  color: var(--secondary);
+}
+.dev-pane {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  display: none;
+}
+.dev-pane.active {
+  display: flex;
+  flex-direction: column;
+}
+.dev-panel {
+  top: var(--chrome-height);
+  width: var(--panel-width);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  transform: translateX(calc(100% - var(--panel-reveal, 0px)));
+}
+:root[data-panel-moving='true'] .dev-panel {
+  will-change: transform;
+}
+.tool-heading {
+  height: 44px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.tool-heading .nav-btn {
+  width: 24px;
+  height: 24px;
+}
+.dev-panel-header {
+  padding: 0 16px;
+  gap: 22px;
+  height: 42px;
+  border-bottom: 1px solid var(--border);
+}
+.dev-tab {
+  padding: 10px 0 9px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--secondary);
+}
+.dev-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+.dev-tab:hover {
+  color: var(--text);
+  background: transparent;
+}
+.dev-pane {
+  min-height: 0;
+  overflow: hidden;
+}
+.dev-panel-resize:hover,
+.dev-panel-resize.dragging {
+  background: var(--accent);
+}
+.inspect-nav {
+  padding: 8px 12px;
+  display: flex;
+  gap: 3px;
+  border-bottom: 1px solid var(--border);
+}
+.inspect-nav button {
+  border: 0;
+  background: transparent;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--secondary);
+}
+.inspect-nav button.active {
+  background: var(--muted-surface);
+  color: var(--text);
+}
+.inspect-nav #dev-clear {
+  margin-left: auto;
+}
+@media (max-width: 959px) {
+  .dev-panel {
+    top: auto;
+    left: 0;
+    width: 100%;
+    height: var(--panel-height);
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    transform: translateY(calc(100% - var(--panel-reveal, 0px)));
+  }
+  .dev-panel-resize,
+  .tool-heading {
+    display: none;
+  }
+  .dev-panel-header {
+    height: 34px;
+  }
+}
+@keyframes pane-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.dev-panel-resize {
+  touch-action: none;
+}
+/* Agent panel: a segmented Ask / Record / Inspect switch, a readable chat, and
+   compact Inspect tools. Everything the panel shows can be selected and copied. */
+.dev-pane {
+  user-select: text;
+}
+.dev-pane :is(button, select, summary, label, .chat-hint, .action-label, .source-panel-label) {
+  user-select: none;
+}
+.dev-panel ::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.tool-heading {
+  height: 48px;
+  padding: 10px 12px 6px 16px;
+}
+.tool-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+.dev-panel-header {
+  height: auto;
+  margin: 0 16px 12px;
+  padding: 3px;
+  gap: 2px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--muted-surface);
+}
+.dev-tab,
+.dev-tab:hover,
+.dev-tab.active {
+  border: 0;
+}
+.dev-tab {
+  flex: 1;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--secondary);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+.dev-tab:hover {
+  color: var(--text);
+}
+.dev-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow:
+    0 1px 2px #0000001a,
+    0 0 0 1px var(--border);
+}
+.dev-panel-header + .inspect-nav,
+.dev-panel-header ~ .dev-pane {
+  border-top: 1px solid var(--border);
+}
+.inspect-nav {
+  align-items: center;
+  padding: 8px 16px;
+  gap: 2px;
+}
+.inspect-nav button {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+.inspect-nav button:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.inspect-nav button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.inspect-nav:not([hidden]) ~ .dev-pane {
+  border-top: 0;
+}
+@media (max-width: 959px) {
+  .dev-panel-header {
+    margin: 8px 12px;
+  }
+  .dev-tab {
+    height: 26px;
+    padding: 0 8px;
+  }
+}
+/* ── The agent panel: a clean sheet beside the page ── */
+.dev-panel {
+  background: var(--surface);
+  border-left: 0;
+  box-shadow: -0.5px 0 0 var(--hairline);
+}
+/* Segmented control: a raised thumb on a recessed track. */
+.dev-panel-header {
+  padding: 2px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.dev-tab {
+  height: 28px;
+  border-radius: 7px;
+  font-weight: 500;
+  transition:
+    background-color 200ms var(--ease),
+    color 200ms var(--ease),
+    box-shadow 240ms var(--ease);
+}
+.dev-tab.active {
+  background: var(--surface);
+  font-weight: 590;
+  box-shadow:
+    0 1px 3px #0000001f,
+    0 0 0 0.5px var(--hairline);
+}
+:root[data-theme='dark'] .dev-tab.active {
+  background: #3a3a36;
+}
+.dev-panel-header + .inspect-nav,
+.dev-panel-header ~ .dev-pane {
+  border-top: 0;
+  box-shadow: inset 0 0.5px 0 var(--hairline);
+}
+.inspect-nav button {
+  border-radius: var(--radius-sm);
+}
+.inspect-nav button.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.dev-pane.active {
+  animation: pane-enter 320ms var(--ease);
+}
+@media (max-width: 959px) {
+  .dev-pane.active {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+/* ── The panel ── */
+.dev-panel {
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
+  border-left: 0;
+  box-shadow:
+    inset 1px 0 0 var(--hairline),
+    -24px 0 48px -32px #00000040;
+}
+.tool-heading {
+  height: 54px;
+  padding: 12px 12px 6px 16px;
+}
+.tool-title {
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.tool-title .panel-mark {
+  width: 18px;
+  height: 18px;
+}
+.dev-panel-header {
+  margin: 0 16px 12px;
+  padding: 3px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.dev-tab {
+  height: 28px;
+  border-radius: 8px;
+  font-size: var(--text-sm);
+  transition:
+    background-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+.dev-tab.active {
+  background: var(--glass-strong);
+  box-shadow:
+    var(--glass-edge),
+    0 1px 3px #0000001f;
+}
+/* ── Sub-tabs: Inspect's match Record's, an underline under the one in view ── */
+.inspect-nav button {
+  height: auto;
+  padding: 8px 0;
+  margin-right: 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--secondary);
+  font-weight: 500;
+}
+.inspect-nav button:hover {
+  background: none;
+  color: var(--text);
+}
+.inspect-nav button.active,
+.inspect-nav button.active:hover {
+  background: none;
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.inspect-nav .dev-tab-btn {
+  margin-left: auto;
+  margin-right: 0;
+  border-bottom: 0;
+}
+/* ── Dropdowns: one look, with a quiet chevron, in every pane and the palette ── */
+/* Scoped by id, so it outranks the older per-control rules (#theme-preference, .studio-library select). */
+#dev-panel select,
+#shell-overlay select {
+  appearance: none;
+  padding-right: 28px;
+  border: 0;
+  border-radius: var(--radius);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1 4 4 4-4'/%3E%3C/svg%3E")
+      no-repeat right 10px center / 10px 6px,
+    color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+  color: var(--text);
+}
+#dev-panel select:focus-visible,
+#shell-overlay select:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 0.5px var(--hairline),
+    var(--glow);
+}

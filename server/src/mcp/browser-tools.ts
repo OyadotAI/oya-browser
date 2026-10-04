@@ -10,7 +10,7 @@ import { sendCommand } from '../modules/browsers/socket.ts';
 import { registry } from '../modules/browsers/registry.ts';
 import { analysis, type Page } from './analysis.ts';
 import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
-import pageRender from '../../../browser/scripts/page-render.cjs';
+import * as pageRender from '../../../browser/src/page/render.ts';
 import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
 import { fail } from './replies.ts';
 import { AGENT_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';

@@ -12,13 +12,11 @@
  * so it is held open and handed to the model.
  */
 
-import { createRequire } from 'module';
-
 /** The dialog wording and the auto-accepted types, shared with the desktop app so both say the same thing. */
-const dialogText = createRequire(import.meta.url)('../../../browser/scripts/dialog-text.cjs');
+import * as dialogText from '../../../browser/src/page/dialog-text.ts';
 
 /** Dialog types answered automatically: they have one outcome, so nothing is decided for the agent. */
-export const AUTO_ACCEPT: Set<string> = dialogText.AUTO_ACCEPT;
+export const AUTO_ACCEPT: ReadonlySet<string> = dialogText.AUTO_ACCEPT;
 
 /** The note the model reads about a dialog, either answered for it or still waiting on handle_dialog. */
 export const describe: (dialog?: object, handled?: boolean) => string = dialogText.describe;

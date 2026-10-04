@@ -1,0 +1,42 @@
+/**
+ * The window's own marks (chrome-views.tsx): the brand in the tab strip, the Oya
+ * mark whose green ring circles while the agent works, the page backdrop, and the
+ * theme select.
+ */
+@media (max-width: 959px) {
+  .window-brand {
+    display: none;
+  }
+}
+#page-backdrop {
+  position: fixed;
+  object-fit: fill;
+  pointer-events: none;
+  z-index: 1;
+}
+/* The Oya mark, drawn flat; while the agent works its green ring circles the other, slowly. */
+.oya-mark circle {
+  fill: none;
+  stroke-width: 80;
+}
+.oya-mark .mark-back {
+  stroke: var(--logo-green);
+  transform-origin: 236px 236px;
+}
+.oya-mark .mark-front {
+  stroke: var(--text);
+}
+.oya-mark[data-state='thinking'] .mark-back {
+  animation: chrome-orbit 2.8s var(--glide) infinite;
+}
+@keyframes chrome-orbit {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.window-brand {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 4px 0 8px;
+}

@@ -1,0 +1,23 @@
+{
+  // Type-check only: electron-vite does the emit. The JavaScript is checked as it
+  // becomes TypeScript, folder by folder (checkJs stays off until then).
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "strict": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "types": ["node"],
+    "lib": ["es2024", "dom", "dom.iterable"]
+  },
+  "include": ["electron.vite.config.ts", "src/**/*"],
+  "exclude": ["node_modules", "out", "dist"]
+}

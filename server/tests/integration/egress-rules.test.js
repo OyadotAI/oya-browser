@@ -88,14 +88,21 @@ const started = Date.now();
 allowedHost('a'.repeat(2000) + '.example.com', ['*-*-*.example.com']);
 assert.ok(Date.now() - started < 1000, 'three stars stay linear on a long hostname');
 
-// governance.js is CJS, runs in Electron and exports no matcher, so the two copies
-// cannot be compared by calling them. Compare the source instead: the failure mode this
-// guards against is one copy being edited and the other left behind.
+// The browser's copy runs in Electron's main process, beside code the server cannot load,
+// so the two copies are compared as source rather than by calling them: the failure mode
+// this guards against is one copy being edited and the other left behind.
 const extract = (file) =>
   readFileSync(new URL(file, import.meta.url), 'utf8').match(/const patterns = new Map\(\);[\s\S]*?\n}\n/)?.[0];
-const [proxy, renderer] = ['../../src/modules/control/egress.ts', '../../../browser/governance.js'].map(extract);
-assert.ok(proxy, 'the compile() block is still findable in egress.js');
-assert.equal(renderer, proxy, 'browser/governance.js and server/src/modules/control/egress.ts must share one matcher');
+const [proxy, renderer] = [
+  '../../src/modules/control/egress.ts',
+  '../../../browser/src/main/identity/host-rules.ts',
+].map(extract);
+assert.ok(proxy, 'the compile() block is still findable in egress.ts');
+assert.equal(
+  renderer,
+  proxy,
+  'browser/src/main/identity/host-rules.ts and server/src/modules/control/egress.ts must share one matcher',
+);
 
 console.log(
   'Egress host rules passed: equivalence with the previous matcher, *.domain excludes the bare domain, mid-label wildcards, no label crossing, star/length/count caps, punycode and IP-literal rules still accepted, proxy and renderer copies identical.',

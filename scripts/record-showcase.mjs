@@ -116,8 +116,9 @@ function startCapture(out, scale, b) {
 async function launchApp(profile) {
   const require_ = createRequire(`${BROWSER_DIR}/`);
   const app = await electron.launch({
-    executablePath: require_(join(BROWSER_DIR, 'launch.cjs')).developmentExecutable(),
-    args: [join(BROWSER_DIR, 'main.js')],
+    executablePath: require_(join(BROWSER_DIR, 'src', 'dev', 'launch.ts')).developmentExecutable(),
+    // The package's main: the bundled main process (out/main/), built by `npm run build` in browser/.
+    args: [BROWSER_DIR],
     cwd: BROWSER_DIR,
     env: { ...process.env, OYA_USER_DATA_DIR: profile, OYA_API_KEY: '', OYA_AUTO_CONNECT: 'false', OYA_SERVER_URL: '' },
   });

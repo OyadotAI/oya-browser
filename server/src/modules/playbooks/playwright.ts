@@ -2,7 +2,7 @@
  * The Playwright export: a playbook as a module to read or run yourself. Nothing
  * here evaluates it. Locators follow matchElement's precedence.
  */
-import workflow from '../../../../browser/scripts/workflow.cjs';
+import * as workflow from '../../../../browser/src/workflow/index.ts';
 
 const { handlesOf, withoutLiveCount, rawTargetOf, volatileTarget } = workflow as any;
 

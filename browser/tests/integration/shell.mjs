@@ -4,16 +4,16 @@
  * screenshots. Run: npm run test:shell. Code passed to page.evaluate runs in
  * the shell page.
  */
-/* global window, document, getComputedStyle, Theme, TabStrip, requestAnimationFrame, innerWidth, Chat, NetLog */
+/* global window, document, getComputedStyle, requestAnimationFrame, innerWidth */
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
+import { developmentExecutable } from '../../src/dev/launch.ts';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from '../../../ui/node_modules/playwright/index.mjs';
-import { shellLayout } from '../../shell-layout.cjs';
+import { shellLayout } from '../../src/main/shell/shell-layout.ts';
 
 const profile = await mkdtemp(join(tmpdir(), 'oya-shell-test-'));
 const output = process.env.OYA_SHELL_SCREENSHOTS || join(tmpdir(), 'oya-desktop-redesign');
@@ -106,9 +106,8 @@ try {
   await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${site.address().port}/`;
   application = await electron.launch({
-    executablePath:
-      process.env.OYA_TEST_EXECUTABLE || createRequire(import.meta.url)('../../launch.cjs').developmentExecutable(),
-    args: [fileURLToPath(new URL('../../main.js', import.meta.url))],
+    executablePath: process.env.OYA_TEST_EXECUTABLE || developmentExecutable(),
+    args: [fileURLToPath(new URL('../../', import.meta.url))],
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
     env: {
       ...process.env,
@@ -132,7 +131,7 @@ try {
   page.setDefaultTimeout(6000);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.waitForFunction(() => typeof window.shellIcon === 'function');
+  await page.waitForFunction(() => document.documentElement.dataset.ready === 'true');
   await page.locator('#btn-manual').click();
   // CDP clicks bypass native draggable regions: check those separately so a
   // passing automation test cannot conceal a shell that swallows human clicks.
@@ -499,8 +498,7 @@ try {
   /** Shows the shell in `theme` for a capture, without saving it as the person's choice. */
   const paint = (theme) =>
     page.evaluate((theme) => {
-      Theme.theme = theme;
-      Theme.apply();
+      window.oyaShell.chrome.theme.show(theme);
     }, theme);
   for (const theme of ['light', 'dark']) {
     await paint(theme);
@@ -530,12 +528,12 @@ try {
   await page.getByRole('tab', { name: 'Ask', exact: true }).click();
   await capture('ask-dark');
   // A reply whose run acted on the page offers to save it; only the latest run can be saved.
-  await page.evaluate(() => Chat.reply('Searched.', [{ name: 'analyze_page' }, { name: 'type' }]));
+  await page.evaluate(() => window.oyaShell.ask.reply('Searched.', [{ name: 'analyze_page' }, { name: 'type' }]));
   await page.getByRole('button', { name: 'Save as playbook', exact: true }).click();
   assert.equal(await page.getByRole('textbox', { name: 'Playbook name' }).inputValue(), 'agent-run');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.locator('.chat-save-error', { hasText: 'Not connected to server' }).waitFor();
-  await page.evaluate(() => Chat.reply('Nothing to replay.', [{ name: 'analyze_page' }]));
+  await page.evaluate(() => window.oyaShell.ask.reply('Nothing to replay.', [{ name: 'analyze_page' }]));
   const readOnly = page.getByRole('button', { name: 'Save as playbook', exact: true });
   assert.equal(await readOnly.isDisabled(), true, 'a read-only run shows the offer disabled');
   await page.locator('.chat-save-note', { hasText: 'only read pages' }).waitFor();
@@ -563,7 +561,7 @@ try {
   // Inspect: Activity says when it is empty, then shows a row; Source names the page; the tab remembers its view.
   await page.locator('.dev-panel-header').getByRole('tab', { name: 'Inspect', exact: true }).click();
   await page.locator('[data-inspect=network]').click();
-  await page.evaluate(() => NetLog.clear());
+  await page.evaluate(() => window.oyaShell.inspect.netLog.clear());
   assert(await page.locator('#net-empty').isVisible(), 'an empty activity log says what will show up');
   await application.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].webContents.send('dev-log', {
@@ -600,7 +598,7 @@ try {
   assert.notEqual(fresh.id, savedDraft, 'Start made a new draft');
   assert.equal(fresh.steps[0]?.start, true, 'a fresh recording starts where the person is');
   await page.getByRole('tab', { name: 'Ask', exact: true }).click();
-  await page.evaluate(() => Chat.clear());
+  await page.evaluate(() => window.oyaShell.ask.clear());
   await page.locator('#chat-input').fill('First line');
   await page.locator('#chat-input').press('Shift+Enter');
   await page.locator('#chat-input').pressSequentially('Second line');
@@ -678,7 +676,9 @@ try {
   const reported = () => application.evaluate(() => globalThis.reportedTabs.map((tab) => tab.url));
   const shownOrder = () =>
     page.evaluate(() =>
-      [...document.querySelectorAll('#tab-list .tab-item:not(.closing)')].map((item) => item.tabData.url),
+      [...document.querySelectorAll('#tab-list .tab-item:not(.closing)')].map(
+        (item) => window.oyaShell.tabs.strip.state.tabs.find((tab) => String(tab.id) === item.dataset.id)?.url,
+      ),
     );
   const tabCount = (count) =>
     page.waitForFunction((n) => document.querySelectorAll('#tab-list .tab-item:not(.closing)').length === n, count);
@@ -696,8 +696,7 @@ try {
   /** Shows the shell in `theme` without saving it as the person's choice. */
   const showTheme = async (theme) => {
     await page.evaluate((theme) => {
-      Theme.theme = theme;
-      Theme.apply();
+      window.oyaShell.chrome.theme.show(theme);
     }, theme);
     await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, theme);
   };
@@ -772,7 +771,7 @@ try {
   assert(await nthTab(0).evaluate((el) => el.classList.contains('dragging')), 'the tab lifts once it moves');
   await page.mouse.up();
   await page.waitForFunction(
-    (expected) => JSON.stringify(TabStrip.tabs.map((t) => t.url)) === expected,
+    (expected) => JSON.stringify(window.oyaShell.tabs.strip.state.tabs.map((t) => t.url)) === expected,
     JSON.stringify([before[1], before[2], before[0], ...before.slice(3)]),
   );
   assert.deepEqual(await reported(), [before[1], before[2], before[0], ...before.slice(3)], 'main owns the new order');
@@ -792,10 +791,12 @@ try {
   await page.waitForTimeout(300);
   assert.deepEqual(await reported(), settled, 'Escape cancels the drag');
   // Keyboard reorder, as Chrome: Cmd/Ctrl+Shift+PageUp moves the active tab left.
-  const activeIndex = settled.indexOf((await page.evaluate(() => TabStrip.tabs.find((t) => t.active))).url);
+  const activeIndex = settled.indexOf(
+    (await page.evaluate(() => window.oyaShell.tabs.strip.state.tabs.find((t) => t.active))).url,
+  );
   await shortcut('PageUp', ['shift']);
   await page.waitForFunction(
-    ([url, index]) => TabStrip.tabs.findIndex((t) => t.url === url) === index,
+    ([url, index]) => window.oyaShell.tabs.strip.state.tabs.findIndex((t) => t.url === url) === index,
     [settled[activeIndex], activeIndex - 1],
   );
   // Middle-click closes; Cmd/Ctrl+Shift+T brings it back where it was.

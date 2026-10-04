@@ -5,7 +5,7 @@
  * agent fills forms from the field table, so it carries what the page shows
  * about each field: required, invalid and the page's error for it.
  */
-import pageRender from '../../../../browser/scripts/page-render.cjs';
+import * as pageRender from '../../../../browser/src/page/render.ts';
 import { MAX_ANALYSIS_CHARS, READ_ELEMENTS_LIMIT, PAGE_FORMAT } from './constants.ts';
 
 /** The element index (TOON tables of fields and elements), shared with the markdown page renderer. */

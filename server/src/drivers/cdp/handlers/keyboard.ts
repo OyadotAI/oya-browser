@@ -3,7 +3,7 @@
  */
 import { elementSelector } from '../browser-scripts.ts';
 import { SELECT_CONTENTS_JS, INPUT_TYPE_JS, SET_DATE_VALUE_JS } from '../page-scripts.ts';
-import dates from '../../../../../browser/scripts/date-value.cjs';
+import * as dates from '../../../../../browser/src/page/date-value.ts';
 import type { CDPDriver } from '../driver.ts';
 import type { Handler } from './types.ts';
 

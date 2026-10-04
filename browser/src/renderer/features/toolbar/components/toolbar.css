@@ -1,0 +1,435 @@
+/**
+ * The toolbar under the tab strip (toolbar.tsx and its parts): navigation
+ * buttons, the pill address field with its progress line, the Oya Agent button,
+ * and the thread of Oya light along its lower edge while the agent drives.
+ */
+.toolbar {
+  display: none;
+  align-items: center;
+  height: 52px;
+  padding: 0 12px 0 80px;
+  gap: 8px;
+}
+body.mode-browsing .toolbar {
+  display: flex;
+}
+.nav-btn {
+  width: 30px;
+  height: 30px;
+  background: none;
+  border: none;
+  color: var(--secondary);
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+.nav-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.url-bar {
+  flex: 1;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  -webkit-app-region: no-drag;
+}
+.url-bar:focus {
+  border-color: var(--accent);
+}
+.dev-btn {
+  width: 30px;
+  height: 30px;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--secondary);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+}
+.dev-btn:hover {
+  background: var(--hover);
+  color: var(--secondary);
+}
+.dev-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.dev-btn.recording {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+@keyframes rec-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.dev-btn.recording {
+  animation: rec-blink 1.2s infinite;
+}
+.nav-btn {
+  width: 30px;
+  height: 32px;
+  flex: 0 0 auto;
+  color: var(--secondary);
+}
+.toolbar {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  right: 0;
+  height: 48px;
+  padding: 0 12px;
+  gap: 5px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.address-wrap {
+  min-width: 100px;
+  flex: 1;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted-surface);
+  margin: 0 8px;
+  -webkit-app-region: no-drag;
+}
+.address-wrap:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.address-icon {
+  color: var(--secondary);
+  padding-left: 10px;
+}
+.address-icon .icon {
+  width: 14px;
+  height: 14px;
+}
+.url-bar {
+  min-width: 0;
+  height: 30px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: 13px;
+}
+.url-bar:focus-visible {
+  outline-offset: 0;
+}
+.dev-btn {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  color: var(--secondary);
+  font-family: inherit;
+}
+.dev-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.record-button {
+  width: auto;
+  padding: 0 10px;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.dev-btn.recording {
+  animation: none;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+@media (max-width: 959px) {
+  .address-wrap {
+    margin: 0 3px;
+  }
+  .toolbar {
+    gap: 2px;
+    padding: 0 8px;
+  }
+}
+#navigation-status {
+  font-size: 10px;
+  color: var(--secondary);
+  white-space: nowrap;
+  padding-right: 8px;
+}
+#navigation-status:empty {
+  display: none;
+}
+#navigation-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  overflow: hidden;
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+#navigation-progress::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 35%;
+  background: var(--accent);
+  animation: navigation-progress 1.2s ease-in-out infinite;
+}
+@keyframes navigation-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(390%);
+  }
+}
+.address-wrap {
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+.address-wrap:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* The Oya Agent button: opens the agent panel; a pulsing dot while recording. */
+.agent-button {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  padding: 0 12px 0 10px;
+  gap: 6px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.agent-button svg {
+  width: 14px;
+  height: 14px;
+}
+.agent-button:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--accent-soft));
+  color: var(--accent);
+}
+.agent-button.active,
+.agent-button.active:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.dev-btn.agent-button.recording {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.dev-btn.agent-button.recording.active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.agent-dot {
+  display: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.agent-button.recording .agent-dot {
+  display: block;
+  animation: agent-recording 1.4s ease-in-out infinite;
+}
+@keyframes agent-recording {
+  50% {
+    opacity: 0.35;
+  }
+}
+/* ── The toolbar under the tab strip ── */
+.toolbar {
+  border-bottom: 0;
+  box-shadow: inset 0 -0.5px 0 var(--hairline);
+}
+/* Toolbar: round controls and a pill address field. */
+.nav-btn,
+.toolbar .dev-btn:not(.agent-button) {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--secondary);
+}
+.nav-btn:hover:not(:disabled),
+.toolbar .dev-btn:not(.agent-button):hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+.nav-btn:disabled {
+  opacity: 0.3;
+}
+.address-wrap {
+  height: 32px;
+  border: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 6%, var(--bg));
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+.address-wrap:hover {
+  background: color-mix(in srgb, var(--text) 8%, var(--bg));
+}
+.address-wrap:focus-within {
+  border: 0;
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    var(--ring),
+    0 4px 14px #0000000f;
+}
+.url-bar {
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+.address-icon {
+  padding-left: 11px;
+  opacity: 0.8;
+}
+#navigation-progress {
+  height: 2px;
+  background: transparent;
+}
+#navigation-progress::after {
+  width: 30%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: navigation-progress 1.3s var(--ease) infinite;
+}
+/* The Oya Agent button: a capsule of Oya green, filled when its panel is open. */
+.agent-button {
+  height: 30px;
+  padding: 0 13px 0 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.agent-button:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.agent-button.active,
+.agent-button.active:hover,
+.dev-btn.agent-button.recording.active {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow:
+    inset 0 1px 0 #ffffff33,
+    0 2px 10px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.toolbar {
+  background: var(--chrome-bar);
+}
+.toolbar {
+  position: relative;
+  box-shadow: inset 0 -0.5px 0 var(--hairline);
+}
+/* The agent at work (shell/activity.js): a slow thread of light along the toolbar's lower edge. */
+.toolbar::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--oya), var(--mint), var(--cyan), transparent) 0 0 / 50% 100%
+    no-repeat;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-slow) var(--ease);
+}
+:root[data-agent-active='true'] .toolbar::after {
+  opacity: 1;
+  animation: chrome-thread 3.2s var(--glide) infinite;
+}
+/* ── Address ── */
+.address-wrap {
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.address-wrap:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.address-wrap:focus-within {
+  background: var(--glass-strong);
+  box-shadow: var(--glass-edge), var(--glow);
+}
+#navigation-progress::after {
+  background: linear-gradient(90deg, transparent, var(--oya), var(--cyan), transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--oya) 55%, transparent);
+}
+/* ── The Oya button ── */
+.agent-button {
+  gap: 7px;
+  padding: 0 13px 0 10px;
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+.agent-button:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.agent-button .agent-mark {
+  width: 15px;
+  height: 15px;
+}
+.agent-button.active,
+.agent-button.active:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.agent-button .agent-dot {
+  display: none;
+}
+@keyframes chrome-thread {
+  from {
+    background-position: -50% 0;
+  }
+  to {
+    background-position: 150% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-agent-active='true'] .toolbar::after {
+    animation: none;
+    background-size: 100% 100%;
+  }
+}

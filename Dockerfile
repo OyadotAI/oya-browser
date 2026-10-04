@@ -25,13 +25,18 @@ RUN npm ci --omit=dev
 COPY server/src/ ./src/
 COPY server/vendor/ ./vendor/
 
-# The page analyzer and the fingerprint injection, both of which drivers/cdp.js
-# loads relative to its own file (../../../browser/...), so the layout matters:
-# without these, CDP browsers lose analyze, click-by-element-id, and every
-# fingerprint patch — silently.
+# What the server shares with the browser, loaded relative to its own files
+# (../../../browser/...), so the layout matters: the page analyzer
+# (scripts/analyzer.js) and the fingerprint injection (anonymity/), whose loss
+# costs CDP browsers analyze, click-by-element-id and every fingerprint patch
+# silently; and the TypeScript the server imports: the workflow model, the page
+# helpers and the persona applier (src/package.json makes them ES modules).
 COPY browser/scripts/ /browser/scripts/
 COPY browser/anonymity/ /browser/anonymity/
-COPY browser/login-state.js /browser/login-state.js
+COPY browser/src/package.json /browser/src/package.json
+COPY browser/src/workflow/ /browser/src/workflow/
+COPY browser/src/page/ /browser/src/page/
+COPY browser/src/anonymity/ /browser/src/anonymity/
 # The release version /health reports (src/platform/version.ts), bumped with the SDK by the release script.
 COPY browser/package.json /browser/package.json
 

@@ -1,0 +1,125 @@
+/**
+ * The control capsule (control-bar.tsx): who is driving, its turning ring, the
+ * handoff button, and controls blocked while the agent drives.
+ */
+.control-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--secondary);
+  -webkit-app-region: no-drag;
+}
+.control-status button {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.control-orbit {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+}
+.control-status[data-mode='agent'] .control-orbit,
+.control-status[data-mode='taking'] .control-orbit {
+  border-top-color: var(--accent);
+  animation: control-orbit 1.8s linear infinite;
+}
+.control-status[data-mode='human'] .control-orbit {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+#control-label {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-control-blocked] {
+  opacity: 0.5;
+}
+@keyframes control-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 1050px) {
+  #control-label {
+    max-width: 100px;
+  }
+}
+.control-status {
+  font-size: 12px;
+  font-weight: 500;
+}
+.control-status button {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 560;
+  box-shadow: var(--shadow-xs);
+}
+.control-status button:hover {
+  background: var(--hover);
+}
+.control-orbit {
+  width: 11px;
+  height: 11px;
+  border-width: 1.5px;
+}
+/* ── The control capsule: who is driving ── */
+/* Offline, the connection chip already says so; a second chip saying it again is noise. */
+.control-status[data-mode='offline'] {
+  display: none;
+}
+.control-status {
+  gap: 8px;
+  padding: 0 4px 0 10px;
+  height: 30px;
+  border-radius: 999px;
+  transition:
+    background-color var(--t-base) var(--ease),
+    box-shadow var(--t-base) var(--ease),
+    color var(--t-base) var(--ease);
+}
+.control-status[data-mode='agent'] {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+}
+/* Its ring: Oya's light turning, a small mirror of the orb. */
+.control-orbit {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: conic-gradient(var(--light));
+  mask: radial-gradient(circle, transparent 3.5px, #000 4px);
+  opacity: 0.45;
+}
+.control-status[data-mode='agent'] .control-orbit,
+.control-status[data-mode='taking'] .control-orbit {
+  display: block;
+  opacity: 1;
+  animation: none;
+}
+/* The ring turns only while the agent is actually working, or while control changes hands. */
+:root[data-agent-active='true'] .control-status[data-mode='agent'] .control-orbit,
+.control-status[data-mode='taking'] .control-orbit {
+  animation: control-orbit 2.4s linear infinite;
+}
+.control-status[data-mode='agent'] button {
+  background: var(--glass-strong);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}

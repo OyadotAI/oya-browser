@@ -1,12 +1,14 @@
 /**
- * A main-process context like main.js builds, for unit tests of the services
- * in main/app, main/shell, main/tabs, main/recording, main/connection and
- * main/ipc. Electron is faked (windows, views, menus, dialogs), the socket and
+ * A main-process context like src/main/main.ts builds, for unit tests of the
+ * services in src/main/ (app, shell, tabs, recording, connection, ipc). Electron is faked (windows, views, menus, dialogs), the socket and
  * the control state are recorders, and `with` swaps in real services so a
  * test drives the class it is about through its neighbours.
  */
+const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { FakeWebContents } = require('./fakes.cjs');
+const { Dialogs } = require('../../../src/main/cdp/dialogs.ts');
+const { Governance } = require('../../../src/main/identity/governance.ts');
 
 /** A tab's webContents: loads, history and handlers a BrowserView's page has. */
 class FakePageContents extends FakeWebContents {
@@ -349,6 +351,7 @@ function fakeShell() {
 function mainCtx(real = {}) {
   const ctx = {
     electron: fakeElectron(),
+    appDir: path.join(__dirname, '..', '..', '..'),
     isolatedWorld: 'w-test',
     analyzerScript: 'analyzer(__OYA_ATTR__, __OYA_RECORD__)',
     cdpPort: 0,
@@ -381,6 +384,9 @@ function mainCtx(real = {}) {
     layout: { layoutActiveTab() {}, reveal() {}, flush() {} },
     overlays: { names: new Set() },
     protection: { setupTabCDP: async () => true, resetTabCDP() {}, injectScripts: async () => {}, protectPopup() {} },
+    dialogs: new Dialogs(),
+    // Ungoverned, as a person's own browser is; a test about governance swaps in a configured one.
+    governance: new Governance(null),
     persona: {
       active: null,
       loginState: null,

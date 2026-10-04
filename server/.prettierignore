@@ -4,5 +4,5 @@ downloads
 src/public
 # Generated; never edited here.
 vendor
-# Its host matcher must stay byte-identical to browser/governance.js (tests/egress-rules.test.js).
+# Its host matcher must stay byte-identical to browser/src/main/identity/host-rules.ts (tests/integration/egress-rules.test.js).
 src/modules/control/egress.ts

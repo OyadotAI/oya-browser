@@ -14,10 +14,12 @@ const os = require('node:os');
 const { createServer } = require('node:https');
 const { execFileSync } = require('node:child_process');
 const { generateProfile } = require('../../anonymity/fingerprint');
-const { configureSession } = require('../../main/session.cjs');
-const { applyTelemetryFlags } = require('../../anonymity/telemetry');
-const { applyDNSLeakPrevention } = require('../../anonymity/proxy');
-const { Protection } = require('../../main/tabs/protection.cjs');
+const { configureSession } = require('../../src/main/identity/session.ts');
+const { applyTelemetryFlags } = require('../../src/anonymity/telemetry.ts');
+const { applyDNSLeakPrevention } = require('../../src/anonymity/proxy.ts');
+const { Protection } = require('../../src/main/tabs/protection.ts');
+const { Dialogs } = require('../../src/main/cdp/dialogs.ts');
+const { Governance } = require('../../src/main/identity/governance.ts');
 
 /** How long the whole run may take. */
 const TIMEOUT_MS = 90_000;
@@ -34,7 +36,7 @@ const READ_IDENTITY = `(async () => ({
 }))()`;
 
 /** The analyzer's isolated world plays no part in the identity. */
-const NO_WORLD = { ensureWorld: async () => {} };
+const NO_WORLD = { ensure: async () => {} };
 
 // An exception in a main-process listener opens Electron's modal error box, which hangs the run.
 process.on('uncaughtException', (error) => (console.error(error), app.exit(1)));
@@ -42,7 +44,7 @@ process.on('uncaughtException', (error) => (console.error(error), app.exit(1)));
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-identity-electron-'));
 app.setPath('userData', userData);
 app.commandLine.appendSwitch('disable-gpu');
-// The switches main.js starts with: some of the surface (window.sharedStorage) is decided by them.
+// The switches src/main/main.ts starts with: some of the surface (window.sharedStorage) is decided by them.
 applyTelemetryFlags(app);
 applyDNSLeakPrevention(app);
 // Chrome sends client hints over TLS only; the fixture's certificate is self-signed.
@@ -79,12 +81,19 @@ async function hintServer() {
 /** A tab set up the way the app sets one up: the persona's session, then its protection. */
 async function personaTab(win, profile) {
   const partition = `identity-${profile.navigator.platform}`;
-  await configureSession(session.fromPartition(partition), profile);
+  // Ungoverned, as a person's own browser is.
+  const governance = new Governance(null);
+  await configureSession(app, session.fromPartition(partition), profile, { governance });
   const view = new BrowserView({ webPreferences: { contextIsolation: true, sandbox: true, partition } });
   win.setBrowserView(view);
   view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
   await view.webContents.loadURL('about:blank');
-  await new Protection({ persona: { active: profile }, world: NO_WORLD }).setupTabCDP(view);
+  await new Protection({
+    persona: { active: profile },
+    world: NO_WORLD,
+    dialogs: new Dialogs(),
+    governance,
+  }).setupTabCDP(view);
   return view;
 }
 

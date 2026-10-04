@@ -1,0 +1,163 @@
+/**
+ * The shell dialog (shell-dialog.tsx) and the reconnect dialog: glass over a
+ * softly blurred page, the command palette's search and commands, and the footer.
+ */
+/* ── Reconnect dialog (overlay in browsing mode) ── */
+.reconnect-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+.reconnect-overlay.open {
+  display: flex;
+}
+.shell-overlay,
+.reconnect-overlay {
+  position: fixed;
+  inset: 0;
+  background: #10191155;
+  z-index: 200;
+  display: flex;
+  align-items: safe center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
+  -webkit-app-region: no-drag;
+}
+.reconnect-overlay:not(.open) {
+  display: none;
+}
+.shell-dialog {
+  width: 500px;
+  max-width: 100%;
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.shell-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 10px;
+}
+.shell-dialog h2 {
+  font-size: 17px;
+}
+#commands-section,
+#profile-section {
+  padding: 8px 20px 18px;
+}
+.command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 38px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+.command:hover,
+.command:focus-visible {
+  background: var(--accent-soft);
+}
+.shell-dialog footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  color: var(--secondary);
+  font-size: 12px;
+}
+@keyframes backdrop-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* ── Dialogs: glass over a softly blurred page ── */
+.shell-overlay,
+.reconnect-overlay {
+  background: color-mix(in srgb, var(--bg) 22%, transparent);
+  backdrop-filter: blur(18px) saturate(1.3);
+}
+.shell-overlay:not([hidden]),
+.reconnect-overlay.open {
+  animation: backdrop-enter 260ms var(--ease);
+}
+.shell-dialog,
+.reconnect-overlay .setup-card {
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--material);
+  backdrop-filter: blur(40px) saturate(1.8);
+  box-shadow: var(--shadow-lg);
+}
+.shell-dialog,
+.reconnect-overlay.open .setup-card {
+  animation: dialog-enter 560ms var(--spring);
+}
+@keyframes dialog-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(6px);
+    filter: blur(4px);
+  }
+}
+.shell-dialog header {
+  padding: 18px 20px 8px;
+}
+.shell-dialog h2 {
+  font-size: 15px;
+  font-weight: 600;
+}
+#command-search {
+  height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+.command {
+  min-height: 36px;
+  border-radius: var(--radius);
+  transition: background-color 120ms var(--ease);
+}
+.command:hover,
+.command:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: none;
+}
+.shell-dialog footer {
+  border-top: 0;
+  box-shadow: inset 0 0.5px 0 var(--hairline);
+}
+/* ── The command palette and dialogs: the same smoked or pearl glass as the panel ── */
+.shell-dialog {
+  background: var(--glass-strong);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-edge), var(--shadow-lg);
+}
+/* ── The palette ── */
+#command-search:focus {
+  background: var(--glass-strong);
+  box-shadow: var(--glow);
+}
+/* A command with no shortcut shows nothing there, not an empty key. */
+.shell-dialog kbd:empty {
+  display: none;
+}

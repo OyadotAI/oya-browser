@@ -67,7 +67,7 @@ try {
   await writeFile(join(profile, 'config.json'), JSON.stringify({ routines: [LEGACY] }));
   app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
-    args: [fileURLToPath(new URL('../../main.js', import.meta.url))],
+    args: [fileURLToPath(new URL('../../', import.meta.url))],
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
     env: {
       ...process.env,
@@ -82,6 +82,8 @@ try {
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.waitForFunction(() => document.body.classList.contains('mode-browsing'));
+  // Browsing begins on the start page, with the panel closed; the Oya button opens it on Ask.
+  if (!(await page.locator('#dev-panel.open').count())) await page.locator('#btn-dev').click();
   await page.locator('#pane-chat').waitFor({ state: 'visible' });
   await page.waitForFunction(() => document.documentElement.dataset.panelMoving === 'false');
 

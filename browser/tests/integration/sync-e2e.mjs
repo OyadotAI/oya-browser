@@ -75,18 +75,33 @@ function launchApp(userData) {
   const env = { OYA_USER_DATA_DIR: userData, OYA_SERVER_URL: `ws://127.0.0.1:${PORT}/ws`, OYA_API_KEY: KEY };
   return electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
-    args: [join(BROWSER_DIR, 'main.js')],
+    args: [BROWSER_DIR],
     cwd: BROWSER_DIR,
     env: { ...process.env, ...env, OYA_AUTO_CONNECT: 'true' },
   });
 }
 
-/** Loads `url` in the app's tab and returns the cookies the page can read. */
+/**
+ * Loads `url` in the app's tab and returns the cookies the page can read. Browsing
+ * begins on the start page, which the shell draws with no page view, so the first
+ * visit goes through the address bar and waits for the tab it opens.
+ */
 function visit(app, url) {
   return app.evaluate(async ({ BrowserWindow }, target) => {
-    const views = BrowserWindow.getAllWindows()[0].getBrowserViews();
-    const tab = views.find((v) => !v.webContents.getURL().startsWith('file:')).webContents;
-    await tab.loadURL(target);
+    const win = BrowserWindow.getAllWindows()[0];
+    const pageView = () => win.getBrowserViews().find((v) => !v.webContents.getURL().startsWith('file:'));
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    if (!pageView()) {
+      // The server holds agent control until a person takes it; the address bar is refused before that.
+      const shell = (code) => win.webContents.executeJavaScript(code, true);
+      const control = await shell("window.oyaBrowser.changeControl('acquire')");
+      if (control?.error) throw new Error(control.error);
+      await shell(`window.oyaBrowser.navigate(${JSON.stringify(target)})`);
+      for (let i = 0; i < 100 && !pageView(); i++) await sleep(100);
+    }
+    const tab = pageView().webContents;
+    if (!tab.getURL().startsWith(target)) await tab.loadURL(target);
+    else await new Promise((resolve) => (tab.isLoading() ? tab.once('did-stop-loading', resolve) : resolve()));
     return tab.executeJavaScript('document.cookie', true);
   }, url);
 }

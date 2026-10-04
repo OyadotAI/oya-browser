@@ -9,8 +9,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
-const { validate } = require('../../scripts/validation.cjs');
-const { normalizeDraft } = require('../../scripts/workflow.cjs');
+const { validate } = require('../../src/main/workflow/validation.ts');
+const { normalizeDraft } = require('../../src/workflow/index.ts');
+const { start: startFrontDoor } = require('../../src/main/front-door/cdp-front-door.ts');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-workflow-electron-'));
 app.setPath('userData', profile);
 app.commandLine.appendSwitch('remote-debugging-port', '0');
@@ -59,6 +60,8 @@ async function run(draft, options = {}, onEvent = () => {}) {
       },
       app,
       utilityProcess,
+      startFrontDoor,
+      workerPath: path.join(__dirname, '..', '..', 'out', 'main', 'worker.js'),
       control,
       tabs: () => tabs,
       createTab,

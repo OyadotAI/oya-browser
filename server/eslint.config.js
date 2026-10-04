@@ -34,7 +34,7 @@ export default tseslint.config(
   },
   {
     files: ['src/**/*.ts'],
-    // Its host matcher must stay byte-identical to browser/governance.js (tests/integration/egress-rules.test.js).
+    // Its host matcher must stay byte-identical to browser/src/main/identity/host-rules.ts (tests/integration/egress-rules.test.js).
     ignores: ['src/modules/control/egress.ts'],
     rules: designRules(),
   },
