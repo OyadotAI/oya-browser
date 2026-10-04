@@ -7,6 +7,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # typescript-eslint supports TypeScript below 6.1 only; lift when it supports 7.
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+      # Node's types follow the Node version the part runs on, not the newest Node.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
       root:
         patterns: ['*']
@@ -14,6 +21,13 @@ updates:
     directory: /server
     schedule:
       interval: weekly
+    ignore:
+      # typescript-eslint supports TypeScript below 6.1 only; lift when it supports 7.
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+      # Node's types follow the Node version the part runs on, not the newest Node.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
     groups:
       server:
         patterns: ['*']
@@ -21,6 +35,16 @@ updates:
     directory: /ui
     schedule:
       interval: weekly
+    ignore:
+      # typescript-eslint supports TypeScript below 6.1 only; lift when it supports 7.
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+      # Node's types follow the Node version the part runs on, not the newest Node.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # eslint-config-next's react, import and jsx-a11y plugins stop at ESLint 9.
+      - dependency-name: eslint
+        versions: ['>=10.0.0']
     groups:
       ui:
         patterns: ['*']
