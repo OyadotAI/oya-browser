@@ -50,7 +50,7 @@ const Dialogs = {
 
   /** The dialog's visible, focusable controls, in tab order. */
   focusable() {
-    const selector = 'button:not(:disabled), input, select, textarea, [tabindex="0"]';
+    const selector = 'button:not(:disabled), input, select, textarea, summary, [tabindex="0"]';
     return [...Dialogs.active.querySelectorAll(selector)].filter((el) => el.getClientRects().length);
   },
 };

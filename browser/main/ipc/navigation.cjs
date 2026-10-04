@@ -1,5 +1,7 @@
-/** IPC: the address bar, back/forward/reload, and the tab strip. */
+/** IPC: the address bar, back/forward/reload, and the tab strip (open, close, switch, move, its menu). */
 const { HOME_URL } = require('../tabs/constants.cjs');
+const { moveTabTo } = require('../tabs/tab-order.cjs');
+const { showTabMenu } = require('../tabs/tab-menu.cjs');
 
 /** Throws unless a person holds control. */
 const requireHuman = (ctx) => ctx.shield.requireHumanControl();
@@ -39,6 +41,15 @@ const NAVIGATION_HANDLERS = {
     ctx.tabs.closeTab(id);
   },
   'activate-tab': (ctx, _e, id) => ctx.tabs.activateTab(id),
+  // A drag on the strip: the main process owns the order, and the strip redraws from it.
+  'move-tab': (ctx, _e, id, toIndex) => {
+    requireHuman(ctx);
+    return moveTabTo(ctx.tabs, id, toIndex);
+  },
+  'tab-menu': (ctx, _e, id) => {
+    requireHuman(ctx);
+    showTabMenu(ctx, id);
+  },
 };
 
 module.exports = { NAVIGATION_HANDLERS };

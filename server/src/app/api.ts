@@ -28,7 +28,8 @@ import { router as configRoutes } from '../modules/config/routes.ts';
 import { router as runsRoutes } from '../modules/playbooks/routes.ts';
 import { router as routinesRoutes } from '../modules/routines/routes.ts';
 import { router as poolRoutes } from '../modules/browsers/pool-routes.ts';
-import { billingRoutes } from '../modules/billing/index.ts';
+import { billingRoutes, hosted } from '../modules/billing/index.ts';
+import { whoamiRoutes } from '../modules/auth/whoami.ts';
 import { router as pingRoutes } from '../modules/telemetry/ping-routes.ts';
 import { router as adminRoutes } from '../modules/admin/index.ts';
 
@@ -86,6 +87,8 @@ registry.on('browser:disconnected', ({ id }) => siteLogin.forget(id));
 
 /** Resources. Mounted without a prefix so req.path, which the role guards read, is unchanged. Auth: sign-in, account and API keys. */
 router.use(authRoutes);
+/** Who the calling credential is signed in as, with the plan where this server has plans. */
+router.use(whoamiRoutes(async (userId) => (hosted() ? container.billing.subscriptions.plan(userId) : null)));
 /** Agent self-signup: an AI agent gets its own key, no person needed. */
 router.use(agentSignupRoutes);
 /** Health, metrics, usage, audit and fleet operations. */

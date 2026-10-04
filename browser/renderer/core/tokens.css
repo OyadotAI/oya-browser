@@ -72,8 +72,9 @@
     0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
     0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
   --stage: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #f1f3ef 55%, #e7ebe6 100%);
-  /* The window's chrome: one calm surface for the tab bar and the toolbar. */
-  --chrome: linear-gradient(180deg, #f3f5f1, #eef1ed);
+  /* The window's chrome, as in Chrome: a deeper tab strip, and the toolbar the active tab grows out of. */
+  --chrome-strip: #e3e7e1;
+  --chrome-bar: #f9faf8;
   /* Type: Oya's own (core/type.css), DM Sans to read and Archivo Black for headings, with a mono for labels. */
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-display: 'Archivo Black', 'DM Sans', 'Arial Black', sans-serif;
@@ -117,5 +118,6 @@
   --glass-strong: #0d100ee6;
   --glass-edge: inset 0 1px 0 #ffffff14, 0 0 0 0.5px #ffffff1a;
   --stage: radial-gradient(120% 90% at 50% 0%, #17201b 0%, #0c0f0d 55%, #070908 100%);
-  --chrome: linear-gradient(180deg, #111513, #0c0f0d);
+  --chrome-strip: #0b0d0c;
+  --chrome-bar: #1a1e1b;
 }

@@ -48,9 +48,46 @@ describe('IPC handlers', () => {
       browserName: 'Desk',
       signedOut: true,
       keyFromApp: false,
+      account: null,
     });
     assert.equal(ctx.socket.browserId, null);
     assert.ok(left);
+  });
+
+  it('asks the server who this browser is signed in as, with its key, and remembers the answer', async () => {
+    ctx.config.values = { serverUrl: 'wss://s.test/ws', apiKey: 'k' };
+    const account = { email: 'ada@example.com', name: 'Ada', plan: 'pro', project: { id: 'prj_1', name: 'Lab' } };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => account }));
+    assert.deepEqual(await call('get-account'), account);
+    const [url, init] = fetch.mock.calls[0].arguments;
+    assert.deepEqual([url, init.headers.Authorization], ['https://s.test/api/auth/whoami', 'Bearer k']);
+    assert.deepEqual(ctx.config.values.account, account);
+    fetch.mock.restore();
+  });
+
+  it('answers the account it last knew while offline, or when the server cannot say', async () => {
+    const known = { email: 'ada@example.com', project: { id: 'prj_1', name: 'Lab' } };
+    ctx.config.values = { serverUrl: 'wss://s.test/ws', apiKey: 'k', account: known };
+    const fetch = mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 404 }));
+    assert.deepEqual(await call('get-account'), known, 'a server without whoami');
+    ctx.socket.ready = false;
+    assert.deepEqual(await call('get-account'), known, 'offline');
+    assert.equal(fetch.mock.callCount(), 1);
+    fetch.mock.restore();
+  });
+
+  it('forgets the account when the browser moves to another key or server', async () => {
+    ctx.config.values = { serverUrl: 'wss://s/ws', apiKey: 'k', account: { email: 'ada@example.com' } };
+    await call('save-config', { browserName: 'Desk' });
+    assert.equal(ctx.config.values.account.email, 'ada@example.com', 'a new name is the same account');
+    await call('save-config', { apiKey: 'k2' });
+    assert.equal(ctx.config.values.account, null);
+  });
+
+  it('reports when the logins last went to the server', async () => {
+    ctx.tabs = { getActiveView: () => null };
+    ctx.cookies = { syncedAt: () => 1234 };
+    assert.equal((await call('get-status')).syncedAt, 1234);
   });
 
   it('signing in again clears the logged-out mark', async () => {
@@ -63,7 +100,16 @@ describe('IPC handlers', () => {
     ctx.shield.requireHumanControl = () => {
       throw new Error('Take control');
     };
-    for (const channel of ['navigate', 'go-back', 'go-forward', 'new-tab', 'close-tab', 'start-recording']) {
+    for (const channel of [
+      'navigate',
+      'go-back',
+      'go-forward',
+      'new-tab',
+      'close-tab',
+      'move-tab',
+      'tab-menu',
+      'start-recording',
+    ]) {
       await assert.rejects(async () => call(channel, 'x'), /Take control/, channel);
     }
   });

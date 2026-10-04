@@ -32,8 +32,17 @@ const ERR_ABORTED = -3;
 const AUTH_POPUP_SIZE = { width: 500, height: 700 };
 /** White, under every page that sets no background of its own. */
 const PAGE_BACKGROUND = '#ffffff';
+/** How many closed tabs Reopen closed tab (Cmd/Ctrl+Shift+T) remembers, as Chrome does. */
+const CLOSED_TABS_MAX = 25;
+/** The largest favicon the strip fetches (256 KiB); anything bigger is not an icon. */
+const FAVICON_MAX_BYTES = 262_144;
+/** Favicon addresses the strip fetches through the tab's own session. */
+const FAVICON_URL = /^(https?|data):/i;
 
 module.exports = {
+  CLOSED_TABS_MAX,
+  FAVICON_MAX_BYTES,
+  FAVICON_URL,
   HOME_URL,
   WEB_URL,
   LOCAL_FILE,

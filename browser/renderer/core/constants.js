@@ -133,4 +133,39 @@ const RendererConstants = Object.freeze({
   SHIELD_TAG_DIGIT_PX: 6,
   /** Half, for the middle of a box. */
   SHIELD_HALF: 0.5,
+  /** Half, for the middle of a tab. */
+  HALF: 0.5,
+  /** The widest a tab grows, as in Chrome, in pixels. */
+  TAB_MAX_WIDTH: 240,
+  /** The narrowest a tab shrinks before the strip scrolls: room for its icon, in pixels (matches tabs.css). */
+  TAB_MIN_WIDTH: 44,
+  /** Below this width an inactive tab drops its close button, in pixels. */
+  TAB_SMALL_WIDTH: 96,
+  /** Below this width a tab shows only its icon (the active one its close button), in pixels. */
+  TAB_TINY_WIDTH: 60,
+  /** Free strip kept right of the new-tab button so the window can always be dragged, in pixels (matches tabs.css). */
+  TAB_DRAG_RESERVE: 48,
+  /** How far the pointer moves on a tab before a press becomes a drag, in pixels. */
+  TAB_DRAG_THRESHOLD: 5,
+  /** How close to the strip's edge a dragged tab starts scrolling it, in pixels. */
+  TAB_EDGE_PX: 32,
+  /** The fastest the strip scrolls under a dragged tab, in pixels a frame. */
+  TAB_SCROLL_MAX_PX: 14,
+  /** How long the pointer rests on a tab before its hover card shows. */
+  TAB_CARD_DELAY_MS: 500,
+  /** How long a closing tab takes to fold away (matches tabs.css). */
+  TAB_CLOSE_MS: 180,
+  /** Under this many seconds ago, a time reads "just now". */
+  JUST_NOW_SECONDS: 45,
+  /** The units a past time is told in ("3 days ago"), largest first, each with its length in seconds. */
+  TIME_UNIT_SECONDS: Object.freeze({
+    year: 31_536_000,
+    month: 2_592_000,
+    week: 604_800,
+    day: 86_400,
+    hour: 3600,
+    minute: 60,
+  }),
+  /** How many earlier imports the account page lists under the latest one. */
+  EARLIER_IMPORTS_SHOWN: 4,
 });

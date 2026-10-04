@@ -8,7 +8,7 @@
 const { captureAll } = require('./capture.cjs');
 const { seedStorage } = require('./storage.cjs');
 const { installedSources } = require('./locate.cjs');
-const { MIRROR_ANSWER_TIMEOUT_MS } = require('./constants.cjs');
+const { MIRROR_ANSWER_TIMEOUT_MS, IMPORTS_KEPT } = require('./constants.cjs');
 
 /** The mirror_persona message: one entry per captured profile, all on the real device. */
 function mirrorMessage(captured) {
@@ -26,11 +26,15 @@ const NOT_CONNECTED = 'Connect to Oya first, then import your logins.';
 /** Shown when the server never answers an import. */
 const NO_ANSWER = 'The server did not answer. Check your connection and try again.';
 
-/** How many profiles and cookies a capture holds, for the person to read. */
+/** How many profiles, cookies and sites (distinct cookie domains) a capture holds, for the person to read. */
 function tally(captured) {
-  const cookies = captured.profiles.reduce((sum, p) => sum + (p.cookies?.length || 0), 0);
-  return { source: captured.name, profiles: captured.profiles.length, cookies };
+  const all = captured.profiles.flatMap((p) => p.cookies || []);
+  const sites = new Set(all.map((c) => String(c.domain || '').replace(/^\./, ''))).size;
+  return { source: captured.name, profiles: captured.profiles.length, cookies: all.length, sites };
 }
+
+/** The import history with `record` first, at most IMPORTS_KEPT long. */
+const withImport = (imports, record) => [record, ...(Array.isArray(imports) ? imports : [])].slice(0, IMPORTS_KEPT);
 
 /** Drives one mirror run and applies the server's answer. Wired in as ctx.mirror. */
 class Mirror {
@@ -105,15 +109,23 @@ class Mirror {
     return captured;
   }
 
-  /** The server made the personas: seed the default's storage, remember it, and reconnect as it. */
+  /** The server made the personas: seed the default's storage, remember it and the import, and reconnect as it. */
   onOk(msg) {
     const captured = this.settle();
     if (!captured) return;
     this.seedDefault(captured, msg);
+    const record = this.remember(captured);
     this.ctx.config.merge({ mirroredFrom: captured.source, persona: msg.defaultPersonaId });
     this.ctx.config.save();
     this.reconnect();
-    this.notify({ done: true, ...tally(captured) });
+    this.notify({ done: true, ...record });
+  }
+
+  /** Puts this import at the top of the history the account page shows; answers its record. */
+  remember(captured) {
+    const record = { ...tally(captured), at: Date.now() };
+    this.ctx.config.merge({ imports: withImport(this.ctx.config.values.imports, record) });
+    return record;
   }
 
   /** The server refused the import: tell the person why. */

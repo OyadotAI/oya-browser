@@ -16,8 +16,8 @@ const CAPTURED = {
   userDataDir: '/chrome',
   device: { navigator: { platform: 'MacIntel' } },
   profiles: [
-    { profile: 'Default', name: 'Work', lastUsed: true, cookies: [{}, {}] },
-    { profile: 'Profile 1', name: 'Home', lastUsed: false, cookies: [{}] },
+    { profile: 'Default', name: 'Work', lastUsed: true, cookies: [{ domain: '.a.test' }, { domain: 'b.test' }] },
+    { profile: 'Profile 1', name: 'Home', lastUsed: false, cookies: [{ domain: 'a.test' }] },
   ],
 };
 
@@ -62,10 +62,32 @@ describe('Mirror', () => {
     assert.equal(ctx.sent[0].type, 'mirror_persona');
     assert.equal(ctx.sent[0].profiles[0].name, 'Chrome · Work', 'named without an em-dash');
     mirror.onOk({ personaIds: ['p-1', 'p-2'], defaultPersonaId: 'p-1' });
-    assert.deepEqual(ctx.statuses.at(-1), { done: true, source: 'Chrome', profiles: 2, cookies: 3 });
+    const { at, ...done } = ctx.statuses.at(-1);
+    assert.deepEqual(done, { done: true, source: 'Chrome', profiles: 2, cookies: 3, sites: 2 });
+    assert.equal(typeof at, 'number');
     assert.deepEqual(seeded[0].slice(1), ['p-1', '/chrome', 'Default']);
     assert.equal(ctx.config.values.persona, 'p-1');
     assert.equal(ctx.reconnects, 1);
+  });
+
+  it('remembers each finished import for the account page, the newest first, the last five only', async () => {
+    const { ctx, mirror } = mirrorWith();
+    ctx.config.values.imports = [1, 2, 3, 4, 5].map((n) => ({ source: `Old ${n}` }));
+    await mirror.reimport('chrome');
+    mirror.onOk({ personaIds: ['p-1'], defaultPersonaId: 'p-1' });
+    const { imports } = ctx.config.values;
+    assert.deepEqual(
+      imports.map((record) => record.source),
+      ['Chrome', 'Old 1', 'Old 2', 'Old 3', 'Old 4'],
+    );
+    assert.deepEqual([imports[0].sites, imports[0].cookies, imports[0].at], [2, 3, ctx.statuses.at(-1).at]);
+  });
+
+  it('remembers nothing of an import the server refused', async () => {
+    const { ctx, mirror } = mirrorWith();
+    await mirror.reimport('chrome');
+    mirror.onFailed({ error: 'no' });
+    assert.equal(ctx.config.values.imports, undefined);
   });
 
   it('imports on the first sign-in after a pairing that asked for it, and only then', async () => {

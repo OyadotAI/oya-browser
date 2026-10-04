@@ -29,6 +29,25 @@ textarea,
   -webkit-app-region: no-drag;
   user-select: text;
 }
+/*
+ * Moving the window. Only strips drag it and only controls refuse; layout boxes
+ * set nothing, because a later no-drag box, even an invisible one (the start
+ * page's aura), cuts a hole in any drag region it overlaps.
+ */
+a[href],
+label,
+[role='tab'],
+[role='button'] {
+  -webkit-app-region: no-drag;
+}
+/* Full-window views start with a strip the tab bar's height that moves the window; controls over it still win. */
+.window-drag {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--tab-strip-height);
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
 button {
   color: inherit;
 }
@@ -129,100 +148,6 @@ h2 {
   height: 32px;
   flex: 0 0 auto;
   color: var(--secondary);
-}
-.tab-bar {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 40px;
-  align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  background: var(--bg);
-  border: 0;
-  overflow: hidden;
-  -webkit-app-region: drag;
-}
-:root[data-platform='darwin'] .tab-bar {
-  padding-left: 82px;
-}
-.window-brand {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  margin: 0 13px 0 3px;
-}
-.tab-list {
-  display: flex;
-  gap: 4px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  -webkit-app-region: no-drag;
-}
-.tab-item {
-  height: 30px;
-  min-width: 100px;
-  max-width: 200px;
-  width: 176px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--secondary);
-  font-size: 12px;
-  padding: 0 5px 0 10px;
-}
-.tab-item.active {
-  background: var(--surface);
-  border-color: var(--border);
-  color: var(--text);
-  box-shadow: 0 1px 2px #18221908;
-}
-.tab-item:hover {
-  background: var(--hover);
-}
-.tab-close {
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--secondary);
-}
-.tab-close .icon {
-  width: 12px;
-  height: 12px;
-}
-.tab-close:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.tab-title {
-  border: 0;
-  padding: 4px 0;
-  text-align: left;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-.tab-new {
-  background: transparent;
-  width: 30px;
-  height: 30px;
-}
-#btn-commands {
-  margin-left: auto;
-}
-.tab-loading {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  flex: 0 0 auto;
 }
 @keyframes spin {
   to {
@@ -767,8 +692,7 @@ kbd {
   font-size: 12px;
 }
 #theme-preference,
-#page-format-preference,
-#import-source {
+#page-format-preference {
   background: var(--muted-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -778,57 +702,6 @@ kbd {
 #app-version {
   margin-left: auto;
   font-size: 11px;
-}
-.profile-avatar {
-  background: var(--accent-soft);
-  color: var(--accent);
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  margin: 8px 0 12px;
-}
-#profile-section h3 {
-  font-size: 20px;
-  margin-bottom: 6px;
-}
-#profile-section p {
-  color: var(--secondary);
-  line-height: 1.65;
-}
-#profile-section dl {
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
-  margin-top: 18px;
-}
-#profile-section dt {
-  font-size: 12px;
-  color: var(--secondary);
-  margin-top: 8px;
-}
-#profile-section dd {
-  overflow-wrap: anywhere;
-  user-select: text;
-  font-size: 13px;
-}
-#profile-section .export-actions {
-  padding: 16px 0 10px;
-}
-.import-logins {
-  border-top: 1px solid var(--border);
-  margin-top: 8px;
-  padding-top: 14px;
-}
-.import-logins h4 {
-  font-size: 14px;
-  margin-bottom: 4px;
-}
-#import-source {
-  flex: 1;
-  min-width: 0;
-  padding: 8px;
-}
-#import-status[data-kind='error'] {
-  color: var(--danger);
 }
 @media (max-width: 959px) {
   .dev-panel {
@@ -3041,118 +2914,11 @@ button:active:not(:disabled) {
   background: color-mix(in srgb, var(--text) 38%, transparent) padding-box;
 }
 
-/* ── Unified chrome: tab bar and toolbar read as one surface ── */
-.tab-bar,
-.toolbar {
-  background: var(--bg);
-}
+/* ── The toolbar under the tab strip ── */
 .toolbar {
   border-bottom: 0;
   box-shadow: inset 0 -0.5px 0 var(--hairline);
 }
-.window-brand {
-  width: 20px;
-  height: 20px;
-  opacity: 0.95;
-}
-
-/* Tabs float: the active one is a raised sheet, the rest are quiet text. */
-.tab-list {
-  gap: 2px;
-  padding: 4px 2px;
-  scrollbar-width: none;
-  mask: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 10px), transparent 100%);
-}
-.tab-list::-webkit-scrollbar {
-  display: none;
-}
-.tab-item {
-  position: relative;
-  height: 30px;
-  border: 0;
-  border-radius: var(--radius);
-  color: var(--secondary);
-  font-size: 12.5px;
-  font-weight: 500;
-  padding: 0 4px 0 12px;
-  transition:
-    background-color 180ms var(--ease),
-    color 180ms var(--ease),
-    box-shadow 220ms var(--ease);
-  animation: tab-enter 520ms var(--spring);
-}
-.tab-item:hover {
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  color: var(--text);
-}
-.tab-item.active,
-.tab-item.active:hover {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-}
-/* A hairline between quiet tabs, hidden next to the raised one and on hover. */
-.tab-item:not(.active) + .tab-item:not(.active)::before {
-  content: '';
-  position: absolute;
-  left: -1px;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  background: var(--hairline);
-  transition: opacity 160ms var(--ease);
-}
-.tab-item:hover::before,
-.tab-item:hover + .tab-item::before {
-  opacity: 0;
-}
-@keyframes tab-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-}
-.tab-close {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  opacity: 0;
-  transform: scale(0.8);
-  transition:
-    opacity 160ms var(--ease),
-    transform 300ms var(--spring),
-    background-color 160ms var(--ease);
-}
-.tab-item:hover .tab-close,
-.tab-item.active .tab-close,
-.tab-close:focus-visible {
-  opacity: 1;
-  transform: none;
-}
-.tab-close:hover {
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-}
-.tab-new,
-#btn-commands {
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius);
-  color: var(--secondary);
-}
-.tab-new:hover,
-#btn-commands:hover {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
-  color: var(--text);
-}
-.tab-loading {
-  width: 11px;
-  height: 11px;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
-  border-top-color: var(--accent);
-  animation-duration: 0.8s;
-}
-
 /* Toolbar: round controls and a pill address field. */
 .nav-btn,
 .toolbar .dev-btn:not(.agent-button) {
@@ -3395,10 +3161,6 @@ kbd {
 .shell-dialog footer {
   border-top: 0;
   box-shadow: inset 0 0.5px 0 var(--hairline);
-}
-.profile-avatar {
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 /* ── Setup: a calm card under a soft Oya glow ── */
@@ -3700,13 +3462,6 @@ body.mode-setup .setup-screen {
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
-}
-/* A focused tab rings the whole tab, not its title inside it. */
-.tab-title:focus-visible {
-  box-shadow: none;
-}
-.tab-item:has(.tab-title:focus-visible) {
-  box-shadow: var(--shadow-sm), var(--ring);
 }
 
 /* ════════════════════════════════════════════════════════════════════════

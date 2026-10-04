@@ -22,6 +22,24 @@ describe('shortcutFor', () => {
     assert.equal(shortcutFor(key('}', { shift: true, code: 'BracketRight' })), 'next-tab');
   });
 
+  it("maps Chrome's tab keys: numbers, Ctrl+Tab, Cmd+Option+arrows, reopen and move", () => {
+    assert.equal(shortcutFor(key('1', { code: 'Digit1' })), 'tab-1');
+    assert.equal(shortcutFor(key('&', { code: 'Digit1' })), 'tab-1', 'by physical key, so AZERTY has it too');
+    assert.equal(shortcutFor(key('9', { code: 'Digit9' })), 'tab-9');
+    assert.equal(shortcutFor({ type: 'keyDown', key: 'Tab', code: 'Tab', control: true }), 'next-tab');
+    assert.equal(shortcutFor({ type: 'keyDown', key: 'Tab', code: 'Tab', control: true, shift: true }), 'previous-tab');
+    assert.equal(shortcutFor(key('ArrowRight', { alt: true, code: 'ArrowRight' })), 'next-tab');
+    assert.equal(shortcutFor(key('ArrowLeft', { alt: true, code: 'ArrowLeft' })), 'previous-tab');
+    assert.equal(shortcutFor(key('T', { shift: true, code: 'KeyT' })), 'reopen-tab');
+    assert.equal(shortcutFor(key('PageUp', { shift: true, code: 'PageUp' })), 'move-tab-left');
+    assert.equal(shortcutFor(key('PageDown', { shift: true, code: 'PageDown' })), 'move-tab-right');
+  });
+
+  it('leaves a plain Tab, and Tab with Alt, to the page', () => {
+    assert.equal(shortcutFor({ type: 'keyDown', key: 'Tab', code: 'Tab' }), undefined);
+    assert.equal(shortcutFor({ type: 'keyDown', key: 'Tab', code: 'Tab', control: true, alt: true }), undefined);
+  });
+
   it("reloads on Chrome's hard-reload keys instead of toggling the recording", () => {
     assert.equal(shortcutFor(key('r', { shift: true })), 'reload');
   });
@@ -92,6 +110,47 @@ describe('Shortcuts', () => {
     assert.deepEqual(
       ctx.tabs.list.map((t) => t.id),
       [2],
+    );
+  });
+
+  it('goes to tab N with Cmd/Ctrl+N, and to the last with 9', () => {
+    for (const site of ['a', 'b', 'c']) ctx.tabs.createTab(`https://${site}.test/`);
+    press(key('1', { code: 'Digit1' }));
+    assert.equal(ctx.tabs.activeTabId, 1);
+    press(key('9', { code: 'Digit9' }));
+    assert.equal(ctx.tabs.activeTabId, 3);
+    press(key('8', { code: 'Digit8' }));
+    assert.equal(ctx.tabs.activeTabId, 3, 'there is no eighth tab');
+  });
+
+  it('reopens the last closed tab where it was, only for a person in control', () => {
+    for (const site of ['a', 'b', 'c']) ctx.tabs.createTab(`https://${site}.test/`);
+    ctx.tabs.closeTab(2);
+    ctx.control.state.interactive = false;
+    press(key('T', { shift: true, code: 'KeyT' }));
+    assert.equal(ctx.tabs.list.length, 2);
+    ctx.control.state.interactive = true;
+    press(key('T', { shift: true, code: 'KeyT' }));
+    assert.equal(ctx.tabs.list[1].url, 'https://b.test/');
+  });
+
+  it('moves the active tab along the strip from the keyboard, stopping at the ends', () => {
+    for (const site of ['a', 'b', 'c']) ctx.tabs.createTab(`https://${site}.test/`);
+    press(key('PageUp', { shift: true, code: 'PageUp' }));
+    assert.deepEqual(
+      ctx.tabs.list.map((t) => t.id),
+      [1, 3, 2],
+    );
+    press(key('PageUp', { shift: true, code: 'PageUp' }));
+    press(key('PageUp', { shift: true, code: 'PageUp' }));
+    assert.deepEqual(
+      ctx.tabs.list.map((t) => t.id),
+      [3, 1, 2],
+    );
+    press(key('PageDown', { shift: true, code: 'PageDown' }));
+    assert.deepEqual(
+      ctx.tabs.list.map((t) => t.id),
+      [1, 3, 2],
     );
   });
 });

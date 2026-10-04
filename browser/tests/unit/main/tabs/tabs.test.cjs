@@ -211,6 +211,7 @@ describe('TabManager', () => {
         title: 'New Tab',
         url: 'https://a.test/',
         home: false,
+        favicon: null,
         active: true,
         loading: true,
         loadError: null,

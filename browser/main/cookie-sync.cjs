@@ -108,6 +108,9 @@ class CookieSync {
   /** The listener on `watched`. */
   listener = null;
 
+  /** When this jar last went to the server, whole or as a batch of changes (0 before it ever has). */
+  sentAt = 0;
+
   /** Host → the server's clock when that host was last pulled. */
   hostMarks = new Map();
 
@@ -122,6 +125,7 @@ class CookieSync {
     try {
       const cookies = await this.session().cookies.get({});
       this.send({ type: 'cookie_dump', cookies: cookies.map(slimCookie) });
+      this.sentAt = Date.now();
     } catch (e) {
       console.log('[oya] Cookie dump failed:', e.message);
     }
@@ -230,6 +234,7 @@ class CookieSync {
     const changes = [...this.batch.values()];
     this.batch = new Map();
     this.send({ type: 'cookie_changed', changes });
+    this.sentAt = Date.now();
   }
 
   /** Start listening for local cookie changes and forward them in batches. */
@@ -275,6 +280,8 @@ function createCookieSync(deps) {
   const api = Object.fromEntries(COOKIE_SYNC_API.map((name) => [name, sync[name].bind(sync)]));
   /** Forget which hosts were pulled: the jar just changed persona. */
   api.forgetPulls = () => (sync.pulledAt.clear(), sync.hostMarks.clear());
+  /** When this jar last went to the server (0 before it ever has). */
+  api.syncedAt = () => sync.sentAt;
   /** The server answered a cookie_pull. */
   api.answerPull = (pullId) => sync.pendingPulls.get(pullId)?.(true);
   return api;

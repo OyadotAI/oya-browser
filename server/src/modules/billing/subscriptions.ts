@@ -127,6 +127,11 @@ export class Subscriptions {
     return { enabled: true, plan, status, since, until: row?.period_end ?? null, included: PLANS[plan], used };
   }
 
+  /** The person's plan name alone: one row read, for places that only name the plan. */
+  async plan(userId: string) {
+    return standingOf(userId, await this.deps.find(userId), this.deps.now()).plan;
+  }
+
   /** Applies a verified webhook event; events billing does not follow are ignored. */
   async applyEvent(event: StripeEvent) {
     const sub = event.data?.object;

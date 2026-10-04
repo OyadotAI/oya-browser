@@ -2,7 +2,7 @@
  * A minimal DOM for driving the shell's renderer scripts under plain Node:
  * elements with attributes, classes, dataset and style, an HTML parser for
  * index.html and innerHTML, a small selector engine (tag, #id, .class,
- * [attr], [attr=value], :not(:disabled), descendants), and events with
+ * [attr], [attr=value], :not(:disabled) and :not(simple), descendants), and events with
  * capture and bubbling. Only what the renderer uses; no layout.
  */
 
@@ -244,6 +244,21 @@ class Element extends Node {
     return node;
   }
 
+  /** As the DOM's: `node` goes before `ref`, or last when `ref` is null. */
+  insertBefore(node, ref) {
+    if (!ref) return this.appendChild(node);
+    node.remove();
+    node.parentNode = this;
+    this.childNodes.splice(this.childNodes.indexOf(ref), 0, node);
+    return node;
+  }
+
+  /** As the DOM's: whether `node` is this element or inside it. */
+  contains(node) {
+    for (let n = node; n; n = n.parentNode) if (n === this) return true;
+    return false;
+  }
+
   /** As the DOM's: puts nodes before the first child, in order; strings become text. */
   prepend(...nodes) {
     const made = nodes.map((n) => (typeof n === 'string' ? this.ownerDocument.createTextNode(n) : n));
@@ -476,7 +491,7 @@ function dispatch(target, event) {
 
 /** One compound selector (no combinators) against one element. */
 function matchesCompound(el, compound) {
-  const parts = compound.match(/(:not\(:disabled\))|(\[[^\]]+\])|([#.]?[\w-]+)|(\*)/g) || [];
+  const parts = compound.match(/(:not\([^)]+\))|(\[[^\]]+\])|([#.]?[\w-]+)|(\*)/g) || [];
   return parts.every((part) => matchesPart(el, part));
 }
 
@@ -484,6 +499,7 @@ function matchesCompound(el, compound) {
 function matchesPart(el, part) {
   if (part === '*') return true;
   if (part === ':not(:disabled)') return !el.disabled;
+  if (part.startsWith(':not(')) return !matchesCompound(el, part.slice(':not('.length, -1));
   if (part[0] === '#') return el.id === part.slice(1);
   if (part[0] === '.') return el.classList.contains(part.slice(1));
   if (part[0] !== '[') return el.localName === part.toLowerCase();

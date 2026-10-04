@@ -6,9 +6,11 @@
  */
 
 /* ── One surface ── */
-.tab-bar,
+.tab-bar {
+  background: var(--chrome-strip);
+}
 .toolbar {
-  background: var(--chrome);
+  background: var(--chrome-bar);
 }
 .toolbar {
   position: relative;
@@ -32,11 +34,6 @@
   opacity: 1;
   animation: chrome-thread 3.2s var(--glide) infinite;
 }
-.window-brand.oya-mark {
-  width: 18px;
-  height: 18px;
-  margin-right: 4px;
-}
 /* The Oya mark, drawn flat; while the agent works its green ring circles the other, slowly. */
 .oya-mark circle {
   fill: none;
@@ -51,19 +48,6 @@
 }
 .oya-mark[data-state='thinking'] .mark-back {
   animation: chrome-orbit 2.8s var(--glide) infinite;
-}
-
-/* ── Tabs ── */
-.tab-item.active,
-.tab-item.active:hover {
-  background: var(--glass-strong);
-  box-shadow:
-    var(--glass-edge),
-    0 1px 3px #0000001a;
-}
-:root[data-theme='dark'] .tab-item.active,
-:root[data-theme='dark'] .tab-item.active:hover {
-  background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 
 /* ── Address ── */

@@ -60,7 +60,12 @@ const SERVER_MESSAGES = {
     if (msg.state) governance.setMode(ctx.control.snapshot().mode);
   },
   auth_ok: acceptAuth,
-  profile_saved: (ctx, msg) => ctx.shell.send('profile-saved', msg),
+  // A save the person asked for: how many sites the server now keeps, remembered for the profile dialog.
+  profile_saved: (ctx, msg) => {
+    if (!msg.error) ctx.config.merge({ lastSync: { at: Date.now(), sites: msg.sites?.length || 0 } });
+    ctx.config.save();
+    ctx.shell.send('profile-saved', msg);
+  },
   // The project's settings changed elsewhere (the console, the CLI): the model card re-reads them.
   settings_changed: (ctx, msg) => ctx.shell.send('settings-changed', msg),
   // What the agent is doing in a chat this browser started (its plan, each step, how it ended), for the panel to show live.

@@ -5,8 +5,8 @@
 
 /** The main window's first size and the smallest it may shrink to. */
 const WINDOW_SIZE = { width: 1280, height: 860, minWidth: 600, minHeight: 400 };
-/** Where macOS draws the traffic lights on the inset title bar. */
-const TRAFFIC_LIGHTS = { x: 12, y: 12 };
+/** Where macOS draws the traffic lights on the inset title bar: centred on the tabs (34px tall, ending at the strip's 40px; renderer/tabs.css). */
+const TRAFFIC_LIGHTS = { x: 12, y: 16 };
 /** The shell's background in each theme, before its page paints: the launch stage's own edge colour, so nothing flashes. */
 const SHELL_BACKGROUND = { dark: '#0c0f0d', light: '#eef1ed' };
 /** A see-through view: the control shield only catches input. */
@@ -47,6 +47,8 @@ const SHIELD_TRACK_FOR_MS = 10000;
 
 /** Menu items that act on the page, disabled while an agent has control. */
 const HUMAN_MENU_ITEMS = ['browser-new-tab', 'browser-close-tab', 'browser-reload'];
+/** Cmd/Ctrl + this digit goes to the last tab, whatever their number (Chrome's rule). */
+const LAST_TAB_DIGIT = 9;
 /** Named overlays the renderer may raise over the page. */
 const OVERLAYS = ['legacy', 'shell'];
 
@@ -71,5 +73,6 @@ module.exports = {
   BACKDROP_WAIT_MS,
   DEV_LOG_MAX_CHARS,
   HUMAN_MENU_ITEMS,
+  LAST_TAB_DIGIT,
   OVERLAYS,
 };

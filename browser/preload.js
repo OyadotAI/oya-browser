@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
   openConsole: (serverUrl) => ipcRenderer.invoke('open-console', serverUrl),
   signOut: () => ipcRenderer.invoke('sign-out'),
+  getAccount: () => ipcRenderer.invoke('get-account'),
   importSources: () => ipcRenderer.invoke('import-sources'),
   reimportBrowser: (sourceId) => ipcRenderer.invoke('reimport-browser', sourceId),
   onMirrorStatus: (cb) => ipcRenderer.on('mirror-status', (_event, status) => cb(status)),
@@ -39,6 +40,8 @@ contextBridge.exposeInMainWorld('oyaBrowser', {
   newTab: (url) => ipcRenderer.invoke('new-tab', url),
   closeTab: (id) => ipcRenderer.invoke('close-tab', id),
   activateTab: (id) => ipcRenderer.invoke('activate-tab', id),
+  moveTab: (id, toIndex) => ipcRenderer.invoke('move-tab', id, toIndex),
+  showTabMenu: (id) => ipcRenderer.invoke('tab-menu', id),
   workspace: (command) => ipcRenderer.invoke('workspace', command),
   onWorkspace: (cb) => ipcRenderer.on('workspace-state', (_event, state) => cb(state)),
   // Recording

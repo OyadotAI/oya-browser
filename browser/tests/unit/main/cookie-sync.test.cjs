@@ -236,6 +236,17 @@ describe('createCookieSync', () => {
     assert.equal(sent.length, 0);
   });
 
+  it('says when the jar last went to the server: never, then at each dump and batch', async () => {
+    const { sync, cookies } = syncWith({ jar: [cookie('a')] });
+    assert.equal(sync.syncedAt(), 0);
+    await sync.dumpCookies();
+    assert.equal(sync.syncedAt(), 1_000_000);
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('b'), 'explicit', false);
+    mock.timers.tick(COOKIE_FLUSH_MS);
+    assert.equal(sync.syncedAt(), 1_000_000 + COOKIE_FLUSH_MS);
+  });
+
   it('drops queued changes when the persona changes', () => {
     const { sync, sent, cookies } = syncWith();
     sync.startCookieChangeListener();

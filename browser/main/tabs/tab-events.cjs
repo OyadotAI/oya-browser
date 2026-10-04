@@ -1,6 +1,6 @@
 /**
- * What a tab listens to: its load state, its address and title, windows it
- * tries to open, and its right-click menu. Wired once, when the tab is made.
+ * What a tab listens to: its load state, its address, title and icon, windows
+ * it tries to open, and its right-click menu. Wired once, when the tab is made.
  */
 const { withinTime } = require('../../scripts/within-time.cjs');
 const { isAuthPopup, opensNamedWindow } = require('../auth-popup.cjs');
@@ -11,6 +11,7 @@ const { trackFrameSessions } = require('../recording/frame-sessions.cjs');
 const { pageReached } = require('../recording/outcomes.cjs');
 const { CDP_SETUP_TIMEOUT, ERR_ABORTED, AUTH_POPUP_SIZE, LOCAL_FILE } = require('./constants.cjs');
 const { wireHome } = require('./home.cjs');
+const { wireFavicon } = require('./favicon.cjs');
 
 /**
  * Makes view-source pages readable (forces the light theme). This text runs
@@ -26,7 +27,8 @@ const VIEW_SOURCE_LIGHT = `
 
 /** Wires every listener on a new tab; returns the promise that settles once it is protected (or given up on). */
 function wireTab(ctx, tab) {
-  for (const wire of [wireRecording, wireTabLoadState, wireTabFailures, wireRendererLoss, wireHome]) wire(ctx, tab);
+  for (const wire of [wireRecording, wireTabLoadState, wireTabFailures, wireRendererLoss, wireHome, wireFavicon])
+    wire(ctx, tab);
   const tabReady = protectNewTab(ctx, tab);
   wireTabPage(ctx, tab, tabReady);
   wireTabWindows(ctx, tab);

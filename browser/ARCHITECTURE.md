@@ -51,6 +51,8 @@ main/
     protection.cjs      persona, dialog watcher, login state and isolated world on a tab or popup
     navigation.cjs      the address bar
     context-menu.cjs, page-source.cjs   the right-click menu and the source pane
+    tab-order.cjs       the strip's order (the main process owns it): move, open beside, close others, reopen closed
+    tab-menu.cjs, favicon.cjs   the tab's right-click menu, and its favicon fetched through the tab's own session
   recording/            demonstrations recorded as playbooks
     recorder.cjs        Recorder: steps in, limits, stop, clear, the serialized task queue
     start.cjs           starting and resuming (the stages of a start)

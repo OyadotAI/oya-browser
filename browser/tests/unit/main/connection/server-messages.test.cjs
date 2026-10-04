@@ -99,6 +99,16 @@ describe('server messages', () => {
     assert.equal(await handleServerMessage(ctx, { type: 'cmd', id: 'c' }), undefined);
   });
 
+  it('remembers when a Sync now was confirmed and how many sites the server keeps', () => {
+    mock.timers.enable({ apis: ['Date'], now: 5000 });
+    handleServerMessage(ctx, { type: 'profile_saved', sites: ['a.test', 'b.test'] });
+    assert.deepEqual(ctx.config.values.lastSync, { at: 5000, sites: 2 });
+    handleServerMessage(ctx, { type: 'profile_saved', error: 'Could not save profile. Try again.' });
+    assert.deepEqual(ctx.config.values.lastSync, { at: 5000, sites: 2 }, 'a failed save changes nothing');
+    assert.equal(ctx.shell.sentOn('profile-saved').length, 2);
+    mock.timers.reset();
+  });
+
   it('ignores unknown and inherited message types', async () => {
     assert.equal(await handleServerMessage(ctx, { type: 'nope' }), undefined);
     assert.equal(await handleServerMessage(ctx, { type: 'toString' }), undefined);

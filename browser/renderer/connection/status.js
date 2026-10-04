@@ -10,7 +10,6 @@ const ConnectionStatus = {
   /** Shows connected (with the browser id) or offline. */
   updatePill(isConnected, browserId) {
     ShellState.connected = isConnected;
-    Dom.byId('save-profile').disabled = !isConnected;
     const [pill, label] = [Dom.byId('conn-pill'), Dom.byId('conn-label')];
     pill.className = isConnected ? 'conn-pill ok' : 'conn-pill';
     label.textContent = isConnected ? 'Connected' : 'Offline';

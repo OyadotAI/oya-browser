@@ -9,7 +9,6 @@ body {
   background: var(--surface);
   color: var(--text);
   overflow: hidden;
-  -webkit-app-region: no-drag;
   user-select: none;
 }
 
@@ -24,7 +23,6 @@ body.mode-setup {
   align-items: center;
   justify-content: center;
   height: 100vh;
-  -webkit-app-region: no-drag;
 }
 body.mode-browsing .setup-screen {
   display: none;
@@ -37,7 +35,6 @@ body.mode-browsing .setup-screen {
   padding: 36px;
   width: 420px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.1);
-  -webkit-app-region: no-drag;
 }
 
 .setup-card .logo {
@@ -175,91 +172,6 @@ body.mode-browsing {
 }
 body.mode-browsing .toolbar {
   display: flex;
-}
-
-/* ── Tab Bar ── */
-
-.tab-bar {
-  display: none;
-  height: 30px;
-  padding: 0 8px;
-  gap: 2px;
-  align-items: flex-end;
-  background: var(--muted-surface);
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-app-region: no-drag;
-}
-.tab-bar::-webkit-scrollbar {
-  display: none;
-}
-body.mode-browsing .tab-bar {
-  display: flex;
-}
-
-.tab-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  background: var(--hover);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
-  font-size: 12px;
-  color: var(--secondary);
-  cursor: pointer;
-  white-space: nowrap;
-  max-width: 180px;
-  flex-shrink: 0;
-}
-.tab-item:hover {
-  background: var(--border);
-  color: var(--text);
-}
-.tab-item.active {
-  background: var(--surface);
-  color: var(--text);
-}
-
-.tab-item .tab-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
-}
-
-.tab-close {
-  font-size: 13px;
-  color: var(--secondary);
-  cursor: pointer;
-  line-height: 1;
-  flex-shrink: 0;
-}
-.tab-close:hover {
-  color: var(--danger);
-}
-
-.tab-new {
-  width: 24px;
-  height: 24px;
-  background: none;
-  border: none;
-  color: var(--secondary);
-  font-size: 16px;
-  cursor: pointer;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  margin-left: 2px;
-}
-.tab-new:hover {
-  background: var(--hover);
-  color: var(--secondary);
 }
 
 .nav-btn {

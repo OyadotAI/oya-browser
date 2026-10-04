@@ -219,6 +219,12 @@ describe('Subscriptions', () => {
     assert.equal(rows.size, 0);
   });
 
+  it('names a paying person’s plan, and Free for anyone else', async () => {
+    const { s, rows } = fixture();
+    rows.set('u1', { user_id: 'u1', plan: 'developer', status: 'active', period_start: '2026-03-10T00:00:00.000Z' });
+    assert.deepEqual([await s.plan('u1'), await s.plan('u2')], ['developer', 'free']);
+  });
+
   it('summarizes a person’s plan, allowances and use this period', async () => {
     const { s } = fixture();
     const summary = await s.summary('u1');

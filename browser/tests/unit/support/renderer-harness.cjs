@@ -72,6 +72,7 @@ function windowGlobals(document, bridge, options) {
     innerWidth: options.innerWidth ?? 1280,
     innerHeight: options.innerHeight ?? 800,
     matchMedia: (query) => ({ matches: String(query).includes('reduce') ? !!options.reducedMotion : !!options.dark }),
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
     getSelection: () => ({ toString: () => options.selection?.() || '' }),
     requestAnimationFrame: (fn) => frames.push(fn),
     cancelAnimationFrame: () => {},

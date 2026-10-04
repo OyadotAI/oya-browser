@@ -32,11 +32,15 @@ describe('preload', () => {
     api.saveRecording('name', 'what');
     api.devAction('click', { id: 1 });
     api.saveChatPlaybook('lookup');
-    assert.deepEqual(invoked.slice(-4), [
+    api.moveTab(3, 0);
+    api.showTabMenu(3);
+    assert.deepEqual(invoked.slice(-6), [
       ['navigate', 'https://a.test'],
       ['save-recording', 'name', 'what'],
       ['dev-action', 'click', { id: 1 }],
       ['save-chat-playbook', 'lookup'],
+      ['move-tab', 3, 0],
+      ['tab-menu', 3],
     ]);
   });
 

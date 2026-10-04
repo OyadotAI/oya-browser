@@ -13,7 +13,7 @@ const COMMANDS = [
   ['Ask Oya', '⇧ D', () => (CommandPalette.openPane('chat'), Dom.byId('chat-input').focus())],
   ['Record a workflow', '⌥ R', () => StudioActions.recordButton()],
   ['Inspect this page', '', () => CommandPalette.openPane('actions')],
-  ['Connection and profile', '', () => ShellDialog.open(true)],
+  ['Account and connection', '', () => ShellDialog.open(true)],
   ['Check for updates', '', async () => Updates.render(await oyaBrowser.checkForUpdates())],
 ];
 

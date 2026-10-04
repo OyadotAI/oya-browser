@@ -1,10 +1,11 @@
 /**
- * "Import logins" in the connection dialog: bring the sessions of a browser on
+ * "Imported logins" on the account page: bring the sessions of a browser on
  * this computer (Chrome, Firefox, Arc, Brave, Edge) into Oya, so nobody has to
- * sign in to every site again. The main process does the import (main/mirror);
- * this shows the choice, and says plainly how it went.
+ * sign in to every site again. The main process does the import (main/mirror)
+ * and keeps the last few (config `imports`); this shows the latest, the ones
+ * before it, the choice of browser, and says plainly how it went.
  */
-/* global oyaBrowser, Dom */
+/* global oyaBrowser, Dom, When, RendererConstants */
 /* exported LoginImport */
 
 /** Importing logins from another browser. */
@@ -13,6 +14,52 @@ const LoginImport = {
   connected: false,
   /** Whether an import is running. */
   running: false,
+  /** Finished imports, newest first: { source, at, sites, cookies, profiles }. */
+  history: [],
+  /** The browsers found on this computer, by name, for the empty state. */
+  names: [],
+
+  /** Takes the import history the main process kept, and shows it. */
+  showHistory(imports) {
+    LoginImport.history = Array.isArray(imports) ? imports : [];
+    LoginImport.renderHistory();
+  },
+
+  /** How much one import brought: sites when it counted them, else cookies. */
+  amount(record) {
+    const [count, what] = record.sites ? [record.sites, 'site'] : [record.cookies || 0, 'cookie'];
+    return `${count} ${what}${count === 1 ? '' : 's'}`;
+  },
+
+  /** The latest import (or the empty state), the earlier ones, and the button's label. */
+  renderHistory() {
+    const [latest, ...earlier] = LoginImport.history;
+    Dom.byId('import-logins').textContent = latest ? 'Import again' : 'Import';
+    if (!latest) return LoginImport.renderEmpty();
+    Dom.byId('import-latest').textContent = `Imported from ${latest.source}`;
+    Dom.byId('import-detail').replaceChildren(When.element(latest.at), ` · ${LoginImport.amount(latest)}`);
+    LoginImport.renderEarlier(earlier.slice(0, RendererConstants.EARLIER_IMPORTS_SHOWN));
+  },
+
+  /** No import yet: say what an import is for, naming the browsers this computer has. */
+  renderEmpty() {
+    const names = LoginImport.names.length ? LoginImport.names : ['Chrome', 'Arc', 'Firefox'];
+    const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0];
+    Dom.byId('import-latest').textContent = 'No imports yet';
+    Dom.byId('import-detail').textContent = `Bring your logins from ${list}, so you are already signed in here.`;
+    LoginImport.renderEarlier([]);
+  },
+
+  /** The imports before the latest, one line each. */
+  renderEarlier(records) {
+    const item = (r) => {
+      const li = Dom.node('li', `${r.source} · `);
+      li.append(When.element(r.at), ` · ${LoginImport.amount(r)}`);
+      return li;
+    };
+    Dom.byId('import-history').replaceChildren(...records.map(item));
+    Dom.byId('import-history').hidden = !records.length;
+  },
 
   /** One browser as a choice in the list; the person's default says so. */
   option(source) {
@@ -27,7 +74,9 @@ const LoginImport = {
     const sources = (await oyaBrowser.importSources().catch(() => [])) || [];
     Dom.byId('import-source').replaceChildren(...sources.map(LoginImport.option));
     Dom.byId('import-controls').hidden = !sources.length;
+    LoginImport.names = sources.map((source) => source.name);
     LoginImport.render();
+    LoginImport.renderHistory();
   },
 
   /** The name of the browser chosen, as the list shows it, without the default note. */
@@ -83,10 +132,10 @@ const LoginImport = {
     LoginImport.say(text, kind);
   },
 
-  /** What one finished import brought over, in words. */
-  summary(s) {
-    const profiles = `${s.profiles} profile${s.profiles === 1 ? '' : 's'}`;
-    return `Imported ${s.source}: ${profiles}, ${s.cookies} cookies. You are signed in here now.`;
+  /** A finished import goes to the top of the history the page shows, as the main process kept it. */
+  remember(s) {
+    const record = { ...s, at: s.at || Date.now() };
+    LoginImport.showHistory([record, ...LoginImport.history].slice(0, RendererConstants.EARLIER_IMPORTS_SHOWN + 1));
   },
 
   /** Progress from the main process: started, or done with a result, an error, or nothing to bring. */
@@ -94,7 +143,8 @@ const LoginImport = {
     if (s.started) return void ((LoginImport.running = true), LoginImport.render());
     if (s.error) return LoginImport.finish(s.error, 'error');
     if (s.empty) return LoginImport.finish('Nothing to import: that browser has no profiles with logins.');
-    LoginImport.finish(LoginImport.summary(s));
+    LoginImport.remember(s);
+    LoginImport.finish('Done. You are signed in to those sites here now.');
   },
 };
 
@@ -107,4 +157,5 @@ oyaBrowser
   .catch(() => {});
 oyaBrowser.onMirrorStatus(LoginImport.onMirror);
 Dom.byId('import-logins').addEventListener('click', LoginImport.start);
+oyaBrowser.getConfig().then((config) => LoginImport.showHistory(config?.imports));
 LoginImport.load();

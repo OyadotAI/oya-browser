@@ -34,9 +34,26 @@ async function saveProfile(ctx) {
 function signOut(ctx) {
   ctx.socket.disconnect();
   ctx.socket.browserId = null;
-  ctx.config.merge({ apiKey: '', signedOut: true, keyFromApp: false });
+  ctx.config.merge({ apiKey: '', signedOut: true, keyFromApp: false, account: null });
   ctx.config.save();
   ctx.tabs.leaveBrowsingMode();
+}
+
+/** What is known of the account when the server cannot say: nothing, or what it said last time. */
+const lastAccount = (ctx) => ctx.config.values.account || null;
+
+/**
+ * Who this browser is signed in as (GET /api/auth/whoami: email, name, plan,
+ * project), asked of the server while connected and remembered, so the profile
+ * dialog can still say it offline. A server too old to answer leaves what was known.
+ */
+async function readAccount(ctx) {
+  if (!ctx.socket.ready) return lastAccount(ctx);
+  const account = await getFromApi(ctx, 'auth/whoami').catch(() => null);
+  if (!account) return lastAccount(ctx);
+  ctx.config.merge({ account });
+  ctx.config.save();
+  return account;
 }
 
 /** The project's personas for the chat's profile picker, and the one this browser asked for. */
@@ -71,7 +88,7 @@ function saveConfig(ctx, _e, changes) {
   const moved = movesProject(ctx.config.values, changes);
   if (moved) ctx.socket.browserId = null;
   const chosen = 'apiKey' in changes ? { keyFromApp: true } : {};
-  ctx.config.merge({ ...(moved && { persona: 'default' }), ...changes, signedOut: false, ...chosen });
+  ctx.config.merge({ ...(moved && { persona: 'default', account: null }), ...changes, signedOut: false, ...chosen });
   ctx.config.save();
   ctx.socket.disconnect();
   ctx.socket.connect();
@@ -109,6 +126,8 @@ const SESSION_HANDLERS = {
     // a shell that was still loading when the server accepted the browser would
     // otherwise sit on the setup screen for the rest of the session.
     browsing: !!ctx.shell.browsingMode,
+    // When this browser's logins last went to the server (0 before they have this run).
+    syncedAt: ctx.cookies?.syncedAt?.() || 0,
   }),
   'save-profile': saveProfile,
   'import-sources': (ctx) => ctx.mirror.sources(),
@@ -117,6 +136,7 @@ const SESSION_HANDLERS = {
   'sign-out': signOut,
   'get-fingerprint': (ctx) => ctx.persona.summary(),
   'list-personas': listPersonas,
+  'get-account': readAccount,
 };
 
 module.exports = { SESSION_HANDLERS };

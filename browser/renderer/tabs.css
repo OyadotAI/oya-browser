@@ -1,0 +1,419 @@
+/**
+ * The tab strip, in Chrome's shape and Oya's colours, and every rule for it in
+ * one place. The strip is a deeper band that moves the window wherever it is
+ * empty; inactive tabs sit on it as text with a hairline between them; the
+ * active tab is the toolbar's own colour and grows out of it, with rounded
+ * top corners and the small concave flares where it meets the toolbar. Motion
+ * is short and eases out, moves only transform and opacity while dragging,
+ * and stops for reduced motion.
+ */
+:root {
+  /* The strip's height: the toolbar starts under it (88px of chrome in all, shell-layout.cjs). */
+  --tab-strip-height: 40px;
+  --tab-height: 34px;
+  --tab-radius: 8px;
+  --tab-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --tab-motion: 180ms;
+  --tab-separator: color-mix(in srgb, var(--text) 16%, transparent);
+  --tab-hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --tab-press: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+/* ── The strip ── */
+.tab-bar {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 1;
+  display: none;
+  align-items: center;
+  height: var(--tab-strip-height);
+  padding: calc(var(--tab-strip-height) - var(--tab-height)) 8px 0 12px;
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+body.mode-browsing .tab-bar {
+  display: flex;
+}
+/* Room for the traffic lights, which sit centred on the tabs (TRAFFIC_LIGHTS in main/shell/constants.cjs). */
+:root[data-platform='darwin'] .tab-bar {
+  padding-left: 80px;
+}
+.window-brand {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0 4px 0 8px;
+}
+.tab-list {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  align-self: stretch;
+  align-items: flex-end;
+  min-width: 0;
+  padding: 0 8px;
+  overflow: auto hidden;
+  scrollbar-width: none;
+}
+.tab-list::-webkit-scrollbar {
+  display: none;
+}
+/* Tabs scrolled out of view fade at the strip's ends. */
+.tab-list.overflowing {
+  mask: linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+.tab-drag-space {
+  flex: 1 0 48px;
+  align-self: stretch;
+}
+
+/* ── A tab ── */
+.tab-item {
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: var(--tab-width, 240px);
+  height: var(--tab-height);
+  padding: 0 6px 0 12px;
+  border-radius: var(--tab-radius) var(--tab-radius) 0 0;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  -webkit-app-region: no-drag;
+  -webkit-user-drag: none;
+  transition:
+    width var(--tab-motion) var(--tab-ease),
+    color var(--tab-motion) var(--tab-ease),
+    transform var(--tab-motion) var(--tab-ease);
+}
+.tab-item:hover {
+  color: var(--text);
+}
+/* The hairline between two quiet tabs; gone beside the active or hovered one. */
+.tab-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: var(--tab-separator);
+  transition: opacity var(--tab-motion) var(--tab-ease);
+}
+.tab-item:first-child::before,
+.tab-item.active + .tab-item::before,
+.tab-item:hover::before,
+.tab-item:hover + .tab-item::before,
+.tab-list.dragging .tab-item::before {
+  opacity: 0;
+}
+/* Hover: a soft rounded highlight, inset from the tab's edges. */
+.tab-item::after {
+  content: '';
+  position: absolute;
+  inset: 4px 2px;
+  z-index: -1;
+  border-radius: var(--tab-radius);
+  background: var(--tab-hover);
+  opacity: 0;
+  transition: opacity var(--tab-motion) var(--tab-ease);
+}
+.tab-item:not(.active):hover::after {
+  opacity: 1;
+}
+
+/* The active tab: the toolbar's colour, joined to it by a flare on each side. */
+.tab-item.active {
+  z-index: 1;
+  background: var(--chrome-bar);
+  color: var(--text);
+  font-weight: 500;
+}
+.tab-list .tab-item.active::before,
+.tab-list .tab-item.active::after {
+  inset: auto;
+  bottom: 0;
+  z-index: 0;
+  width: var(--tab-radius);
+  height: var(--tab-radius);
+  border-radius: 0;
+  opacity: 1;
+}
+.tab-list .tab-item.active::before {
+  left: calc(-1 * var(--tab-radius));
+  background: radial-gradient(
+    circle at 0 0,
+    transparent calc(var(--tab-radius) - 0.5px),
+    var(--chrome-bar) var(--tab-radius)
+  );
+}
+.tab-list .tab-item.active::after {
+  right: calc(-1 * var(--tab-radius));
+  background: radial-gradient(
+    circle at 100% 0,
+    transparent calc(var(--tab-radius) - 0.5px),
+    var(--chrome-bar) var(--tab-radius)
+  );
+}
+.tab-item:has(.tab-title:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+
+/* ── Icon, title, close ── */
+.tab-icon {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+.tab-icon img,
+.tab-icon .tab-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+.tab-icon svg.icon {
+  width: 14px;
+  height: 14px;
+  color: var(--secondary);
+}
+.tab-item.failed .tab-icon svg.icon {
+  color: var(--danger);
+}
+.tab-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.tab-title {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: default;
+  /* A long title fades out at the right edge, as in Chrome, instead of an ellipsis. */
+  mask: linear-gradient(90deg, #000 calc(100% - 20px), transparent);
+}
+.tab-title:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.tab-title:active:not(:disabled),
+.tab-close:active:not(:disabled) {
+  transform: none;
+}
+.tab-close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--secondary);
+  opacity: 0;
+  transition:
+    opacity 120ms var(--tab-ease),
+    background-color 120ms var(--tab-ease);
+}
+.tab-close .icon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.2;
+}
+.tab-item:hover .tab-close,
+.tab-item.active .tab-close {
+  opacity: 1;
+}
+.tab-close:hover {
+  background: var(--tab-hover);
+  color: var(--text);
+}
+.tab-close:active {
+  background: var(--tab-press);
+}
+
+/* ── Narrow tabs: no close on quiet ones, then the icon alone (the active one keeps its close) ── */
+.tab-list[data-size='small'] .tab-item,
+.tab-list[data-size='tiny'] .tab-item {
+  gap: 6px;
+  padding: 0 4px 0 8px;
+}
+.tab-list[data-size='small'] .tab-item:not(.active) .tab-close,
+.tab-list[data-size='tiny'] .tab-item:not(.active) .tab-close {
+  display: none;
+}
+.tab-list[data-size='tiny'] .tab-item {
+  justify-content: center;
+  padding: 0;
+}
+.tab-list[data-size='tiny'] .tab-title {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+.tab-list[data-size='tiny'] .tab-item.active .tab-icon {
+  display: none;
+}
+
+/* ── The agent drives this tab: a small Oya light on its icon ── */
+:root[data-agent-active='true'] .tab-item.active .tab-icon::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--oya);
+  box-shadow: 0 0 0 1.5px var(--chrome-bar);
+  animation: tab-agent 1.6s ease-in-out infinite;
+}
+@keyframes tab-agent {
+  50% {
+    box-shadow:
+      0 0 0 1.5px var(--chrome-bar),
+      0 0 6px 1px color-mix(in srgb, var(--oya) 70%, transparent);
+  }
+}
+
+/* ── Opening, closing and dragging ── */
+.tab-item.opening {
+  animation: tab-open var(--tab-motion) var(--tab-ease);
+}
+@keyframes tab-open {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+}
+.tab-item.closing {
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    width var(--tab-motion) var(--tab-ease),
+    padding var(--tab-motion) var(--tab-ease),
+    opacity 120ms var(--tab-ease);
+}
+/* The dragged tab rises off the strip and follows the pointer exactly; the others slide. */
+.tab-item.dragging {
+  z-index: 2;
+  border-radius: var(--tab-radius);
+  background: var(--chrome-bar);
+  box-shadow:
+    0 6px 16px #0000002e,
+    0 0 0 0.5px var(--hairline);
+  transition: box-shadow var(--tab-motion) var(--tab-ease);
+}
+.tab-list .tab-item.dragging::before,
+.tab-list .tab-item.dragging::after {
+  opacity: 0;
+}
+.tab-item.settling {
+  transition: none;
+}
+
+/* ── New tab, right after the last tab, and the menu at the far end ── */
+.tab-bar .tab-new,
+.tab-bar #btn-commands {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--secondary);
+  transition:
+    background-color 150ms var(--tab-ease),
+    color 150ms var(--tab-ease);
+}
+.tab-bar #btn-commands {
+  border-radius: var(--tab-radius);
+}
+.tab-bar .tab-new:hover,
+.tab-bar #btn-commands:hover {
+  background: var(--tab-hover);
+  color: var(--text);
+}
+.tab-bar .tab-new .icon,
+.tab-bar #btn-commands .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── Hover card: the tab's full title and address, inside the toolbar's height ── */
+.tab-card {
+  position: fixed;
+  top: calc(var(--tab-strip-height) + 2px);
+  z-index: 300;
+  max-width: 340px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  animation: tab-card-in 120ms var(--tab-ease);
+}
+.tab-card strong,
+.tab-card span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tab-card strong {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--text);
+}
+.tab-card span {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--secondary);
+}
+@keyframes tab-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-item,
+  .tab-item::before,
+  .tab-item::after,
+  .tab-close,
+  .tab-card,
+  .tab-bar .tab-new,
+  .tab-bar #btn-commands {
+    transition: none;
+    animation: none;
+  }
+}

@@ -17,8 +17,10 @@
     <link rel="stylesheet" href="start.css" />
     <link rel="stylesheet" href="agent.css" />
     <link rel="stylesheet" href="chrome.css" />
+    <link rel="stylesheet" href="tabs.css" />
     <link rel="stylesheet" href="welcome.css" />
     <link rel="stylesheet" href="panes.css" />
+    <link rel="stylesheet" href="profile.css" />
     <link rel="stylesheet" href="core/type.css" />
   </head>
   <body class="mode-setup">
@@ -45,6 +47,8 @@
     </svg>
     <!-- ── Full-page welcome and sign-in screen ── -->
     <div class="setup-screen" data-view="start">
+      <!-- The window moves by this strip (main/shell/window.cjs hides the title bar). -->
+      <div class="window-drag" aria-hidden="true"></div>
       <section class="welcome-stage" aria-labelledby="welcome-title">
         <span class="brand-mark" data-orb="lg"></span>
         <div class="eyebrow">Oya Browser</div>
@@ -131,6 +135,8 @@
         title="New tab (⌘/Ctrl T)"
         data-icon="plus"
       ></button>
+      <!-- Free strip that always drags the window, however many tabs are open. -->
+      <div class="tab-drag-space" aria-hidden="true"></div>
       <button
         class="nav-btn"
         id="btn-commands"
@@ -139,6 +145,7 @@
         data-icon="menu"
       ></button>
     </nav>
+    <div class="tab-card" id="tab-card" role="tooltip" hidden><strong></strong><span></span></div>
     <nav class="toolbar" aria-label="Browser navigation">
       <button class="nav-btn" id="btn-back" aria-label="Back" title="Back" data-icon="back" disabled></button>
       <button
@@ -162,7 +169,7 @@
         /><span id="navigation-status" role="status" aria-live="polite"></span>
       </div>
       <button class="update-pill" id="update-pill" hidden>Update available</button>
-      <button class="conn-pill" id="conn-pill" title="Connection and profile" aria-label="Connection and profile">
+      <button class="conn-pill" id="conn-pill" title="Account and connection" aria-label="Account and connection">
         <span class="dot"></span><span id="conn-label">Offline</span>
       </button>
       <div class="control-status" id="control-status" data-mode="offline">
@@ -751,6 +758,7 @@
       aria-modal="true"
       aria-label="Connection settings"
     >
+      <div class="window-drag" aria-hidden="true"></div>
       <div class="setup-card">
         <div class="logo">Server Connection</div>
         <div class="sub" id="reconn-sub">Update connection settings</div>
@@ -785,6 +793,7 @@
       aria-modal="true"
       aria-label="Commands and settings"
     >
+      <div class="window-drag" aria-hidden="true"></div>
       <div class="shell-dialog">
         <header>
           <h2 id="shell-dialog-title">Commands</h2>
@@ -794,35 +803,88 @@
           <input id="command-search" aria-label="Search commands" placeholder="Search commands…" autocomplete="off" />
           <div id="command-list"></div>
         </section>
-        <section id="profile-section" hidden>
-          <div class="profile-avatar" data-icon="profile"></div>
-          <h3 id="profile-title">This browser</h3>
-          <p id="fp-content">Your account sessions stay on this desktop.</p>
-          <dl>
-            <dt>Server</dt>
-            <dd><span id="profile-server"></span><button class="text-button" id="copy-server">Copy</button></dd>
-            <dt>Device</dt>
-            <dd><span id="profile-device"></span></dd>
-            <dt>Browser ID</dt>
-            <dd>
-              <span id="profile-browser-id">Not connected</span
-              ><button class="text-button" id="copy-browser-id">Copy</button>
-            </dd>
-          </dl>
-          <div class="export-actions">
-            <button class="secondary-button" id="save-profile">Save profile</button
-            ><button class="secondary-button" id="connection-edit">Connection settings</button
-            ><button class="secondary-button" id="sign-out">Log out</button>
+        <section id="profile-section" hidden aria-labelledby="account-name">
+          <div class="account-card">
+            <div class="account-avatar" id="account-avatar" aria-hidden="true">O</div>
+            <div class="account-who">
+              <h3 id="account-name">Signed in with an API key</h3>
+              <p id="account-email" hidden></p>
+              <p class="account-meta" id="account-meta"></p>
+              <p class="account-status" id="account-status" role="status" data-state="offline">
+                <span class="status-dot" aria-hidden="true"></span><span id="account-status-text">Offline</span>
+              </p>
+            </div>
           </div>
-          <p id="profile-save-status" role="status"></p>
-          <div class="import-logins">
-            <h4>Import logins</h4>
-            <p>Bring your sessions over from a browser on this computer, so you do not sign in to every site again.</p>
-            <div class="export-actions" id="import-controls">
+
+          <div class="profile-group" role="group" aria-labelledby="sync-label">
+            <h4 class="profile-label" id="sync-label">Sync</h4>
+            <div class="profile-row">
+              <div class="row-text">
+                <p class="row-title" id="sync-title">Logins sync while you are connected</p>
+                <p class="quiet" id="sync-detail">Kept for your agents and cloud browsers.</p>
+              </div>
+              <button class="secondary-button" id="sync-now">Sync now</button>
+            </div>
+            <p class="quiet profile-note" id="profile-save-status" role="status"></p>
+          </div>
+
+          <div class="profile-group" role="group" aria-labelledby="import-label">
+            <h4 class="profile-label" id="import-label">Imported logins</h4>
+            <div class="profile-row">
+              <div class="row-text">
+                <p class="row-title" id="import-latest">No imports yet</p>
+                <p class="quiet" id="import-detail"></p>
+                <ol class="import-history quiet" id="import-history" aria-label="Earlier imports" hidden></ol>
+              </div>
+            </div>
+            <div class="import-controls" id="import-controls">
               <select id="import-source" aria-label="Browser to import from"></select
               ><button class="secondary-button" id="import-logins">Import</button>
             </div>
-            <p id="import-status" role="status"></p>
+            <p class="quiet profile-note" id="import-status" role="status"></p>
+          </div>
+
+          <div class="profile-group" role="group" aria-labelledby="persona-label">
+            <h4 class="profile-label" id="persona-label">Browsing as</h4>
+            <p class="row-title" id="persona-name">Oya's own profile</p>
+            <p class="quiet" id="fp-content">Logins you make here are kept in this profile.</p>
+          </div>
+
+          <div class="profile-group" role="group" aria-labelledby="device-label">
+            <h4 class="profile-label" id="device-label">This device</h4>
+            <input
+              id="profile-name"
+              class="device-name"
+              aria-label="Name of this browser"
+              autocomplete="off"
+              spellcheck="false"
+              maxlength="64"
+            />
+            <p class="quiet" id="profile-device"></p>
+            <p class="quiet profile-note" id="profile-name-status" role="status"></p>
+          </div>
+
+          <details class="profile-advanced" id="profile-advanced">
+            <summary>Advanced</summary>
+            <dl>
+              <dt>Server</dt>
+              <dd>
+                <code id="profile-server"></code
+                ><button class="text-button" id="copy-server" aria-label="Copy server address">Copy</button>
+              </dd>
+              <dt>Browser ID</dt>
+              <dd>
+                <code id="profile-browser-id">Not connected</code
+                ><button class="text-button" id="copy-browser-id" aria-label="Copy browser ID">Copy</button>
+              </dd>
+            </dl>
+            <button class="secondary-button" id="connection-edit">Connection settings…</button>
+            <p class="quiet profile-note" id="copy-status" role="status"></p>
+          </details>
+
+          <div class="profile-actions">
+            <button class="secondary-button" id="switch-account">Switch account</button
+            ><button class="secondary-button sign-out" id="sign-out">Log out</button>
           </div>
         </section>
         <footer>
@@ -849,6 +911,10 @@
     <script src="shell/layout.js"></script>
     <script src="shell/backdrop.js"></script>
     <script src="shell/tool-nav.js"></script>
+    <script src="shell/tab-math.js"></script>
+    <script src="shell/tab-card.js"></script>
+    <script src="shell/tab-drag.js"></script>
+    <script src="shell/tab-item.js"></script>
     <script src="shell/tabs.js"></script>
     <script src="shell/shell-dialog.js"></script>
     <script src="shell/commands.js"></script>

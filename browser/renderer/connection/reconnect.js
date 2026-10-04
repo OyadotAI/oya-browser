@@ -87,7 +87,7 @@ const Reconnect = {
   /** The settings were saved: show them in the profile and wait for the connection. */
   saved(server, name, message) {
     Dom.byId('profile-server').textContent = server;
-    Dom.byId('profile-title').textContent = name || 'This browser';
+    if (name) Dom.byId('profile-name').value = name;
     Reconnect.timer = setTimeout(() => Reconnect.timedOut(message), RendererConstants.CONNECT_TIMEOUT_MS);
   },
 

@@ -9,6 +9,7 @@ const { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } = require('./constants.cjs');
 const popups = require('./popup-tabs.cjs');
 const { loadInTab, isUnprotected } = require('./load.cjs');
 const { isHome, shownViewOf, mountTab, leaveHomeFor, staysHome } = require('./home.cjs');
+const { ClosedTabs } = require('./tab-order.cjs');
 
 /** What the tab strip shows for one tab. */
 function tabSummary(t, activeTabId) {
@@ -21,8 +22,8 @@ function tabSummary(t, activeTabId) {
   };
 }
 
-/** Where the tab is: its title and address, and whether it is on the start page. */
-const placeSummary = (t) => ({ title: t.title, url: t.url, home: !!t.home });
+/** Where the tab is: its title, address and icon, and whether it is on the start page. */
+const placeSummary = (t) => ({ title: t.title, url: t.url, home: !!t.home, favicon: t.favicon || null });
 
 /** Whether the tab is loading, and why it failed if it did. */
 function loadSummary(t) {
@@ -75,6 +76,17 @@ const tabPreferences = (partition) => ({
   backgroundThrottling: false,
 });
 
+/**
+ * A person's close is remembered for Reopen closed tab; a bulk close (log
+ * out, profile switch) forgets everything, so one profile never reopens
+ * another's pages.
+ */
+function rememberClosed(tabs, idx, keepOne) {
+  const tab = tabs.list[idx];
+  if (!keepOne) return tabs.closed.clear();
+  if (!tab.home && !tab.window) tabs.closed.push(tab.url, idx);
+}
+
 /** Stops a load and forgets the navigation it was for. */
 function stopLoading(tabs, tab) {
   tab.navigationRequest = (tab.navigationRequest || 0) + 1;
@@ -95,6 +107,8 @@ class TabManager {
     this.activeTabId = null;
     /** The id the next tab gets. */
     this.nextTabId = 1;
+    /** Tabs a person closed, for Reopen closed tab. */
+    this.closed = new ClosedTabs();
   }
 
   /** The tab with this id, if open. */
@@ -179,6 +193,7 @@ class TabManager {
     const idx = this.list.findIndex((t) => t.id === id);
     if (idx === -1) return;
     const wasActive = this.list[idx].id === this.activeTabId;
+    rememberClosed(this, idx, keepOne);
     this.removeTab(idx);
     this.afterClose(idx, wasActive, keepOne);
   }
@@ -206,19 +221,15 @@ class TabManager {
   /** The last tab closed. */
   closedLast(keepOne) {
     this.activeTabId = null;
-    // Only the user-facing close paths keep a window's worth of browser alive.
-    // A bulk close (profile switch) wants the list actually empty, recreating
-    // here made `while (tabs.length)` loop forever, spawning a renderer per turn.
+    // Only a person's close keeps one tab; a bulk close wants the list empty (recreating here looped forever).
     if (keepOne) this.createTab(HOME_URL, true);
     else this.sendTabList();
   }
 
   /** Sends the tab strip to the shell. */
   sendTabList() {
-    this.ctx.shell.send(
-      'tabs-updated',
-      this.list.map((t) => tabSummary(t, this.activeTabId)),
-    );
+    const summaries = this.list.map((t) => tabSummary(t, this.activeTabId));
+    this.ctx.shell.send('tabs-updated', summaries);
   }
 
   /** A tab's address changed. */

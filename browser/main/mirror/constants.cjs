@@ -34,8 +34,11 @@ const PROFILE_STORES = ['Local Storage', 'IndexedDB', 'Service Worker', 'WebStor
 const LAUNCH_INPUTS = ['Local State'];
 /** Per-profile files the launched browser needs; joined under the profile dir. Never `Login Data`: saved passwords play no part in reading cookies, so they are not copied anywhere. */
 const PROFILE_INPUTS = ['Cookies', 'Network', 'Preferences'];
+/** How many finished imports the app remembers, newest first, for the profile dialog. */
+const IMPORTS_KEPT = 5;
 
 module.exports = {
+  IMPORTS_KEPT,
   MS_PER_SECOND,
   SQLITE_MAX_BUFFER,
   LAUNCH_READY_TIMEOUT_MS,

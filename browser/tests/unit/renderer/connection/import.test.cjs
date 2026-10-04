@@ -45,10 +45,8 @@ describe('Import logins', () => {
     assert.equal(app.$('import-status').textContent, 'Reading your logins from Chrome…');
     assert.equal(app.$('import-logins').disabled, true);
     app.bridge.emit('MirrorStatus', { done: true, source: 'Chrome', profiles: 2, cookies: 412 });
-    assert.equal(
-      app.$('import-status').textContent,
-      'Imported Chrome: 2 profiles, 412 cookies. You are signed in here now.',
-    );
+    assert.equal(app.$('import-status').textContent, 'Done. You are signed in to those sites here now.');
+    assert.equal(app.$('import-detail').textContent, 'just now · 412 cookies');
     assert.equal(app.$('import-logins').disabled, false);
   });
 
@@ -58,10 +56,7 @@ describe('Import logins', () => {
     app.bridge.emit('WsStatus', { connected: false });
     assert.equal(app.$('import-status').textContent, 'Connect to Oya to import your logins.');
     app.bridge.emit('WsStatus', { connected: true });
-    assert.equal(
-      app.$('import-status').textContent,
-      'Imported Firefox: 1 profile, 2 cookies. You are signed in here now.',
-    );
+    assert.equal(app.$('import-status').textContent, 'Done. You are signed in to those sites here now.');
     assert.equal(app.$('import-logins').disabled, false);
   });
 
@@ -87,7 +82,7 @@ describe('Import logins', () => {
     await settle();
     assert.equal(app.$('import-logins').disabled, false);
     assert.equal(app.$('import-status').textContent, '');
-    assert.equal(app.$('fp-content').textContent, 'Profile · Work · Account sessions sync automatically');
+    assert.equal(app.$('persona-name').textContent, '“Work”');
   });
 
   it('waits for a connection, and says so', async () => {
@@ -97,6 +92,47 @@ describe('Import logins', () => {
     await settle();
     assert.equal(app.$('import-logins').disabled, true);
     assert.equal(app.$('import-status').textContent, 'Connect to Oya to import your logins.');
+  });
+
+  it('shows the latest import from the saved history, with when and how much, and the ones before it', async () => {
+    const DAY = 86_400_000;
+    const imports = [
+      { source: 'Chrome', at: Date.now() - 3 * DAY, sites: 412, cookies: 3000, profiles: 2 },
+      { source: 'Firefox', at: Date.now() - 10 * DAY, cookies: 1, profiles: 1 },
+    ];
+    const app = loadRenderer({ answers: { importSources: SOURCES, getConfig: { serverUrl: '', imports } } });
+    await settle();
+    assert.equal(app.$('import-latest').textContent, 'Imported from Chrome');
+    assert.equal(app.$('import-detail').textContent, '3 days ago · 412 sites');
+    assert.match(app.$('import-detail').querySelector('time').title, /\d/, 'the exact time on hover');
+    assert.equal(app.$('import-history').hidden, false);
+    assert.equal(app.$('import-history').textContent, 'Firefox · last week · 1 cookie');
+    assert.equal(app.$('import-logins').textContent, 'Import again');
+  });
+
+  it('puts a finished import at the top as it lands', async () => {
+    const app = await connected();
+    app.bridge.emit('MirrorStatus', {
+      done: true,
+      source: 'Chrome',
+      profiles: 1,
+      cookies: 9,
+      sites: 4,
+      at: Date.now(),
+    });
+    assert.equal(app.$('import-latest').textContent, 'Imported from Chrome');
+    assert.equal(app.$('import-detail').textContent, 'just now · 4 sites');
+    assert.equal(app.$('import-history').hidden, true);
+  });
+
+  it('with no import yet, says what one is for and names the browsers this computer has', async () => {
+    const app = await connected();
+    assert.equal(app.$('import-latest').textContent, 'No imports yet');
+    assert.equal(
+      app.$('import-detail').textContent,
+      'Bring your logins from Firefox or Chrome, so you are already signed in here.',
+    );
+    assert.equal(app.$('import-logins').textContent, 'Import');
   });
 
   it('says so when no supported browser is installed', async () => {
