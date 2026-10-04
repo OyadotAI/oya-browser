@@ -23,10 +23,12 @@ const analyzerScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts
 const { createWorld } = require('../../main/world.cjs');
 const ISOLATED_WORLD = 'test-recording-world';
 let server, win, channel;
+// The last step started, so a CI timeout names where it hung.
+let lastStep = 'startup';
 (async () => {
   await app.whenReady();
   setTimeout(() => {
-    console.error('Electron recording test timed out');
+    console.error(`Electron recording test timed out during: ${lastStep}`);
     app.exit(1);
   }, 20000).unref();
   server = createServer((req, res) => {
@@ -59,6 +61,7 @@ let server, win, channel;
   const sent = [];
   const send = (method, params) => {
     sent.push(method);
+    lastStep = method;
     return dbg.sendCommand(method, params);
   };
   const on = (method, fn) => {
@@ -95,6 +98,7 @@ let server, win, channel;
     await channel.start();
   };
   const click = async (id) => {
+    lastStep = `click #${id}`;
     const point = await view.webContents.executeJavaScript(
       `(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
     );
