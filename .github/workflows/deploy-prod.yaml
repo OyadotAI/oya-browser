@@ -27,7 +27,7 @@ jobs:
   build-linux:
     name: Build Linux AppImage
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -203,7 +203,7 @@ jobs:
     # red suite, which is why ci is checked explicitly: a skipped dependency
     # does not make !cancelled() false.
     if: ${{ !cancelled() && needs.ci.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -307,7 +307,7 @@ jobs:
   build-browser:
     name: Build & push browser image
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -335,7 +335,7 @@ jobs:
   register-snapshot:
     name: Register Daytona snapshot
     needs: build-browser
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A snapshot failure must not strand the rest of the release. The deploy
     # falls back to the previous snapshot, so cloud browsers keep working on
     # the last good build while this job goes red.
@@ -367,7 +367,7 @@ jobs:
   deploy:
     name: Deploy to GKE (prod)
     needs: [build-image, build-browser, register-snapshot]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A GitHub environment, so a release can wait for a named approver before it
     # touches prod. The approvers are set in the repo's Settings > Environments.
     environment: production
@@ -556,7 +556,7 @@ jobs:
     # Each package must list this repo and deploy-prod.yaml as its trusted
     # publisher on npmjs.com (package settings, Trusted Publisher).
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       id-token: write
       contents: read
@@ -591,7 +591,7 @@ jobs:
     # After the deploy, so the listing never points at tools that are not live
     # yet: the registry entry advertises this server to every MCP client.
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       # OIDC proves the workflow belongs to this repo, and the repo's owner is
       # what grants the io.github.OyadotAI/* namespace. No secret to rotate.
@@ -642,7 +642,7 @@ jobs:
     name: Slack notify (prod)
     needs: [ci, build-linux, build-windows, build-mac, build-image, build-browser, register-snapshot, deploy]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # Full history and tags, to diff the previous tag against this one.
       - uses: actions/checkout@v7

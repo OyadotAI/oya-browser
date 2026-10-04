@@ -22,7 +22,7 @@ jobs:
   # proves them green. They used to run twice in one job, plain and then with coverage.
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # id-token lets Codecov accept the coverage upload by OIDC; a fork's pull request is never given one.
     permissions:
       contents: read
@@ -58,7 +58,7 @@ jobs:
 
   packages:
     name: SDK, CLI and scripts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -74,7 +74,7 @@ jobs:
 
   desktop:
     name: Desktop unit and regressions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -95,7 +95,7 @@ jobs:
 
   recording:
     name: Electron recording
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -109,7 +109,7 @@ jobs:
 
   lint:
     name: Lint and format
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -133,7 +133,7 @@ jobs:
 
   ui:
     name: Console unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # id-token lets Codecov accept the coverage upload by OIDC; a fork's pull request is never given one.
     permissions:
       contents: read
@@ -159,7 +159,7 @@ jobs:
 
   typecheck:
     name: Typecheck server, SDK and CLI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -181,7 +181,7 @@ jobs:
   # the ones scripts/audit.mjs allows by id with a reason.
   audit:
     name: Dependency audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -196,7 +196,7 @@ jobs:
   # No credential lands in the repo. Fixture paths are allowlisted in .gitleaks.toml.
   secrets:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # Full history, so every commit in the pull request or push is scanned.
       - uses: actions/checkout@v7

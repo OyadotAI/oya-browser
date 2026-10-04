@@ -30,7 +30,7 @@ jobs:
   changes:
     name: Detect changes
     if: ${{ !startsWith(github.event.head_commit.message, 'release:') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       server: ${{ steps.filter.outputs.server }}
       browser: ${{ steps.filter.outputs.browser }}
@@ -57,7 +57,7 @@ jobs:
     name: Build & push image
     needs: [ci, changes]
     if: needs.changes.outputs.server == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -94,7 +94,7 @@ jobs:
     name: Build & push browser image
     needs: [ci, changes]
     if: needs.changes.outputs.browser == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -122,7 +122,7 @@ jobs:
     # a red suite would still deploy.
     needs: [ci, changes, build, build-browser]
     if: always() && !failure() && !cancelled() && !startsWith(github.event.head_commit.message, 'release:')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
@@ -277,7 +277,7 @@ jobs:
     name: Slack notify (dev)
     needs: [ci, changes, build, build-browser, deploy]
     if: ${{ always() && !startsWith(github.event.head_commit.message, 'release:') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # History, to diff what this push changed.
       - uses: actions/checkout@v7
