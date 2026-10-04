@@ -117,6 +117,10 @@ jobs:
 
   deploy:
     name: Deploy to GKE (dev)
+    # Named so the repo's Deployments panel lists dev beside production, with a link.
+    environment:
+      name: dev
+      url: https://dev.oyabrowser.com
     # ci is named here as well as in the build jobs: a failed gate only *skips*
     # those, and `!failure()` does not count a skipped dependency, so without it
     # a red suite would still deploy.

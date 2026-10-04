@@ -370,7 +370,9 @@ jobs:
     runs-on: ubuntu-24.04
     # A GitHub environment, so a release can wait for a named approver before it
     # touches prod. The approvers are set in the repo's Settings > Environments.
-    environment: production
+    environment:
+      name: production
+      url: https://oyabrowser.com
     permissions:
       contents: read
       id-token: write

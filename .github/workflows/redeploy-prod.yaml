@@ -28,7 +28,9 @@ jobs:
     name: Re-apply secrets and restart
     runs-on: ubuntu-24.04
     # Same gate as a release: prod waits for an approver set under Settings > Environments.
-    environment: production
+    environment:
+      name: production
+      url: https://oyabrowser.com
     permissions:
       contents: read
       id-token: write
