@@ -4,7 +4,14 @@
  * tilted orbit with one bright point. It is built by core/orb.js and sized by
  * --orb-size; its state (idle, thinking, acting, done, failed) changes only how fast
  * and how bright it moves. Everything that moves is a transform or an opacity, so the
- * compositor runs it, and slow loops pause while the window is hidden.
+ * compositor runs it. At rest nothing loops: any motion makes the window draw 120
+ * frames a second and re-blur every frosted-glass panel on each (a third of a core),
+ * so the orb only turns while the agent works.
+ *
+ * While it works, every loop steps at 30 frames a second: steps(duration x 30).
+ * Slow turns of soft light look the same, and the compositor skips the frames in
+ * between, which halves what a working orb costs. One eased loop would bring back
+ * all 120, so the mark's eased turn is baked into keyframes and stepped too.
  */
 .oya-orb {
   --orb-size: 40px;
@@ -41,7 +48,7 @@
   background: conic-gradient(var(--light));
 }
 .oya-orb-spin {
-  animation: oya-orb-turn 6s linear infinite paused;
+  animation: oya-orb-turn 6s steps(180) infinite paused;
 }
 .oya-orb-halo {
   inset: calc(var(--orb-size) * -0.08);
@@ -51,7 +58,7 @@
 }
 .oya-orb-rim {
   opacity: 0.7;
-  animation: oya-orb-turn 16s linear infinite;
+  animation: oya-orb-turn 16s steps(480) infinite paused;
 }
 .oya-orb-lens {
   position: absolute;
@@ -78,7 +85,7 @@
 .oya-orb-core {
   position: absolute;
   inset: 0;
-  animation: oya-orb-turn 11s linear infinite;
+  animation: oya-orb-turn 11s steps(330) infinite paused;
 }
 .oya-orb-core i {
   position: absolute;
@@ -123,7 +130,7 @@
   border-radius: 50%;
   opacity: 0;
   transform: rotateX(74deg);
-  animation: oya-orb-orbit 8s linear infinite paused;
+  animation: oya-orb-orbit 8s steps(240) infinite paused;
   transition: opacity var(--t-slow) var(--ease);
 }
 .oya-orb-orbit i {
@@ -153,8 +160,8 @@
   animation: oya-orb-ping 1200ms var(--ease);
 }
 /* ── States ── */
-.oya-orb[data-state='thinking'] .oya-orb-spin,
-.oya-orb[data-state='acting'] .oya-orb-spin {
+.oya-orb[data-state='thinking'] :is(.oya-orb-spin, .oya-orb-rim, .oya-orb-core),
+.oya-orb[data-state='acting'] :is(.oya-orb-spin, .oya-orb-rim, .oya-orb-core) {
   animation-play-state: running;
 }
 .oya-orb[data-state='thinking'] .oya-orb-halo,
@@ -172,7 +179,7 @@
   animation-play-state: running;
 }
 .oya-orb[data-state='thinking'] .mark-back {
-  animation: oya-orb-turn 4.8s var(--glide) infinite;
+  animation: oya-orb-glide 4.8s steps(12) infinite;
 }
 /* Done: the light settles into a steady green bloom. */
 .oya-orb[data-state='done'] .oya-orb-halo {
@@ -195,6 +202,45 @@
 /* While the window is hidden nothing loops. */
 :root[data-hidden='true'] .oya-orb * {
   animation-play-state: paused !important;
+}
+/* One turn on the --glide curve, sampled every twelfth: its stepped timing applies between these stops. */
+@keyframes oya-orb-glide {
+  8.33% {
+    transform: rotate(2.2deg);
+  }
+  16.67% {
+    transform: rotate(9.8deg);
+  }
+  25% {
+    transform: rotate(25.5deg);
+  }
+  33.33% {
+    transform: rotate(53.7deg);
+  }
+  41.67% {
+    transform: rotate(102.8deg);
+  }
+  50% {
+    transform: rotate(180deg);
+  }
+  58.33% {
+    transform: rotate(257.2deg);
+  }
+  66.67% {
+    transform: rotate(306.3deg);
+  }
+  75% {
+    transform: rotate(334.5deg);
+  }
+  83.33% {
+    transform: rotate(350.2deg);
+  }
+  91.67% {
+    transform: rotate(357.8deg);
+  }
+  to {
+    transform: rotate(1turn);
+  }
 }
 @keyframes oya-orb-turn {
   to {

@@ -4,8 +4,20 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { FakeView } from '../../support/fakes.cjs';
-import { holdStill, inContainer } from '../../../../src/main/shell/hold-still.ts';
+import { holdStill, inContainer, stillWhileAway } from '../../../../src/main/shell/hold-still.ts';
+
+/** A CDP command the fake debugger recorded. */
+interface Sent {
+  /** What the command was sent with. */
+  params: unknown;
+}
+
+/** A sent CDP command's parameters. */
+function paramsOf(sent: Sent) {
+  return sent.params;
+}
 
 describe('holdStill', () => {
   it('tells the page to prefer reduced motion in a container', async () => {
@@ -31,5 +43,21 @@ describe('holdStill', () => {
   it('knows a container by OYA_DOCKER', () => {
     assert.equal(inContainer({ OYA_DOCKER: 'true' }), true);
     assert.equal(inContainer({}), false);
+  });
+
+  it('holds still while another app is in front, and moves again on return', async () => {
+    const events = new EventEmitter();
+    const win = Object.assign(new FakeView(), {
+      /** The window's focus events, as Electron's. */
+      on: (name: string, fn: () => void) => events.on(name, fn),
+    });
+    stillWhileAway(win);
+    events.emit('blur');
+    events.emit('focus');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(win.webContents.debugger.sent.map(paramsOf), [
+      { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] },
+      { features: [] },
+    ]);
   });
 });

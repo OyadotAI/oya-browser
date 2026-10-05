@@ -97,11 +97,6 @@
 .launch.playing .launch-edge i {
   animation: launch-edge-turn 1400ms var(--glide) 300ms both;
 }
-@keyframes start-turn {
-  to {
-    transform: rotate(1turn);
-  }
-}
 @keyframes start-rise {
   from {
     opacity: 0;

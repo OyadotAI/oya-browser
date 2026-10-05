@@ -9,7 +9,7 @@ import type { AppServices } from '../app/services.ts';
 import { redact } from '../../workflow/index.ts';
 import { JSON_INDENT } from '../app/constants.ts';
 import { WINDOW_SIZE, TRAFFIC_LIGHTS, SHELL_BACKGROUND, PANEL_WIDTH, DEV_LOG_MAX_CHARS } from './constants.ts';
-import { holdStill, inContainer } from './hold-still.ts';
+import { holdStill, inContainer, stillWhileAway } from './hold-still.ts';
 
 /** The services the shell window uses. */
 type Deps = Pick<AppServices, 'electron' | 'appDir' | 'config' | 'layout' | 'shortcuts' | 'shield' | 'tabs'>;
@@ -72,6 +72,7 @@ export class ShellWindow {
   /** Loads the shell page in its theme, then readies the control shield. */
   private loadShellPage(win: BrowserWindow): void {
     void holdStill(win, inContainer()); // before the page loads, so its loops never start
+    if (!inContainer()) stillWhileAway(win);
     const page = path.join(this.deps.appDir, 'out', 'renderer', 'index.html');
     win.loadFile(page, this.firstPaint()).then(() => this.deps.shield.prepare());
   }

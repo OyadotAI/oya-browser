@@ -26,7 +26,7 @@ body:not(.mode-browsing) .start-page {
     bottom: var(--panel-reveal, 0px);
   }
 }
-/* A soft field of Oya light behind the orb, turning slowly on the compositor. */
+/* A soft field of Oya light behind the orb. It holds still: the frosted glass over it re-blurs whatever moves behind it on every frame (a sixth of a core on a 120 Hz screen). */
 .start-aura {
   position: absolute;
   top: 38%;
@@ -50,7 +50,6 @@ body:not(.mode-browsing) .start-page {
   );
   filter: blur(70px);
   opacity: 0.35;
-  animation: start-turn 40s linear infinite;
 }
 :root[data-theme='dark'] .start-aura i {
   opacity: 0.45;
@@ -221,7 +220,6 @@ body:not(.mode-browsing) .start-page {
   animation-delay: 260ms;
 }
 @media (prefers-reduced-motion: reduce) {
-  .start-aura i,
   .start-page.arriving .start-center > * {
     animation: none;
   }
