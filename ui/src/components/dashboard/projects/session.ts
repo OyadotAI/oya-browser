@@ -96,13 +96,13 @@ async function renewalFailed(s: Session, id: string, seq: number, e: unknown) {
   await openAny(s, rest);
 }
 
-/** Renews the open project's credential; losing access moves the console to another project. */
+/** Renews the open project's credential; losing access moves the console to another project. Never rejects: its callers fire and forget. */
 export async function renew(s: Session, id: string) {
   const seq = s.opening.current;
   try {
     await openProject(s, id, true);
   } catch (e) {
-    await renewalFailed(s, id, seq, e);
+    await renewalFailed(s, id, seq, e).catch((err) => s.toast(message(err, 'Could not load projects'), 'error'));
   }
 }
 

@@ -23,13 +23,12 @@ export const HttpStatus = {
   GONE: 410,
 } as const;
 
-/** Answers that mean this account can no longer open the project, as opposed to a passing outage. */
-export const GONE_STATUSES: number[] = [
-  HttpStatus.UNAUTHORIZED,
-  HttpStatus.FORBIDDEN,
-  HttpStatus.NOT_FOUND,
-  HttpStatus.GONE,
-];
+/**
+ * Answers that mean this account can no longer open the project, as opposed to a passing outage.
+ * Not 401: on /auth/projects that is the account token expiring (a slept tab), which the account
+ * refresh fixes, and a new token reruns startup.
+ */
+export const GONE_STATUSES: number[] = [HttpStatus.FORBIDDEN, HttpStatus.NOT_FOUND, HttpStatus.GONE];
 
 /** Milliseconds in a minute. */
 const MS_PER_MINUTE = 60_000;

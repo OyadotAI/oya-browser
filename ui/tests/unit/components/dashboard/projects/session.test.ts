@@ -161,6 +161,23 @@ describe('project session', () => {
     expect(sessionStorage.getItem(PROJECT_ID)).toBe('a');
   });
 
+  it('an expired account token on renewal keeps the open project', async () => {
+    stubFetch({ [access('a')]: [401, { error: 'Invalid or expired token' }] });
+    const s = fakeSession();
+    sessionStorage.setItem(PROJECT_ID, 'a');
+    await renew(s, 'a');
+    expect(s.toast).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(PROJECT_ID)).toBe('a');
+  });
+
+  it('a renewal whose fallback fails toasts instead of rejecting', async () => {
+    stubFetch({ [access('gone')]: [403, {}], 'GET /auth/projects': [500, { error: 'down' }] });
+    const s = fakeSession();
+    sessionStorage.setItem(PROJECT_ID, 'gone');
+    await expect(renew(s, 'gone')).resolves.toBeUndefined();
+    expect(s.toast).toHaveBeenLastCalledWith('down', 'error');
+  });
+
   it('a stale renewal does not forget a project switched to meanwhile', async () => {
     stubFetch({ [access('old')]: [403, {}] });
     const s = fakeSession();
