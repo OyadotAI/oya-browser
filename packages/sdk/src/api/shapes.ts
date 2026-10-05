@@ -101,8 +101,8 @@ export interface Invite {
 export interface Webhook {
   /** Its id, for removing it. */
   id: string;
-  /** The key its deliveries are signed with. */
-  secret: string;
+  /** The key its deliveries are signed with; only on the first save, since saving again edits the same endpoint. */
+  secret?: string;
 }
 
 /** One proxy's check. */

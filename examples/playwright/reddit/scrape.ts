@@ -64,7 +64,7 @@ const failed = (query: string) => (err: unknown): Result => ({ query, error: Str
 
 /** A fresh cloud browser per query, stopped when done even if the search throws. */
 async function inCloud(query: string): Promise<Result> {
-  await using browser = await oya.browser.start({ persona: process.env.OYA_PERSONA || 'default', name: `reddit: ${query}` });
+  await using browser = await oya.browser.start({ provider: 'oya-cloud', persona: process.env.OYA_PERSONA || 'default', name: `reddit: ${query}` });
   const { pw, page } = await open(browser.cdpUrl);
   try { return await search(page, query); } finally { await pw.close(); }
 }

@@ -12,47 +12,49 @@ Every script needs `OYA_API_KEY`, and runs from this `examples/` folder. The mul
 
 ### 🧰 [`sdk/`](sdk/): the Oya SDK on its own
 
-| File | Feature Demonstrated | Run Command |
-|:---|:---|:---|
-| [`01-quickstart.ts`](sdk/01-quickstart.ts) | Start a browser, or use the one already connected, and drive it in plain language | `npx tsx --env-file=.env sdk/01-quickstart.ts` |
-| [`02-captcha.ts`](sdk/02-captcha.ts) | Automated reCAPTCHA detection and resolution | `npx tsx --env-file=.env sdk/02-captcha.ts` |
-| [`03-mfa.ts`](sdk/03-mfa.ts) | Password plus TOTP sign-in: the login and seed are sealed on the persona, the agent never sees them | `npx tsx --env-file=.env sdk/03-mfa.ts` |
-| [`04-personas.ts`](sdk/04-personas.ts) | Stable device identities: create, reuse, rotate, and clone fingerprints | `npx tsx --env-file=.env sdk/04-personas.ts` |
-| [`05-playbooks.ts`](sdk/05-playbooks.ts) | Ask once with hidden data, save it as a playbook, replay it without the LLM, and get callbacks with auto-heal | `npx tsx --env-file=.env sdk/05-playbooks.ts` |
-| [`06-sign-in.ts`](sdk/06-sign-in.ts) | Sign in with a stored username and password | `npx tsx --env-file=.env sdk/06-sign-in.ts` |
-| [`07-prompt-login.ts`](sdk/07-prompt-login.ts) | Sign in from a prompt: login and TOTP seed passed as secrets, typed as `{{password}}` and `{{seed\|totp}}` | `npx tsx --env-file=.env sdk/07-prompt-login.ts` |
-| [`demo.ts`](sdk/demo.ts) | 🎬 Interactive tour of every capability | `npx tsx --env-file=.env sdk/demo.ts` |
+| File                                           | Feature Demonstrated                                                                                                   | Run Command                                      |
+| :--------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------- |
+| [`01-quickstart.ts`](sdk/01-quickstart.ts)     | Start an Oya Cloud browser and drive it in plain language                                                              | `npx tsx --env-file=.env sdk/01-quickstart.ts`   |
+| [`02-captcha.ts`](sdk/02-captcha.ts)           | Automated reCAPTCHA detection and resolution                                                                           | `npx tsx --env-file=.env sdk/02-captcha.ts`      |
+| [`03-mfa.ts`](sdk/03-mfa.ts)                   | Password plus TOTP sign-in: the login and seed are sealed on the persona, the agent never sees them                    | `npx tsx --env-file=.env sdk/03-mfa.ts`          |
+| [`04-personas.ts`](sdk/04-personas.ts)         | Stable device identities: create, reuse, rotate, and clone fingerprints                                                | `npx tsx --env-file=.env sdk/04-personas.ts`     |
+| [`05-playbooks.ts`](sdk/05-playbooks.ts)       | Ask once with hidden data, save it as a playbook, replay it without the LLM, and get callbacks with auto-heal          | `npx tsx --env-file=.env sdk/05-playbooks.ts`    |
+| [`06-sign-in.ts`](sdk/06-sign-in.ts)           | Sign in with a stored username and password                                                                            | `npx tsx --env-file=.env sdk/06-sign-in.ts`      |
+| [`07-prompt-login.ts`](sdk/07-prompt-login.ts) | Sign in from a prompt: login and TOTP seed passed as secrets, typed as `{{password}}` and `{{seed\|totp}}`             | `npx tsx --env-file=.env sdk/07-prompt-login.ts` |
+| [`08-webhooks.ts`](sdk/08-webhooks.ts)         | Get a signed POST for every run event (started, needs attention, resumed, completed, failed), and verify its signature | `npx tsx --env-file=.env sdk/08-webhooks.ts`     |
+| [`demo.ts`](sdk/demo.ts)                       | 🎬 Interactive tour of every capability                                                                                | `npx tsx --env-file=.env sdk/demo.ts`            |
 
 ### 🎭 [`playwright/`](playwright/): bring your own tools
 
-| File | Feature Demonstrated | Run Command |
-|:---|:---|:---|
-| [`01-connect.ts`](playwright/01-connect.ts) | Connect standard Playwright directly over Oya's universal CDP gateway | `npx tsx --env-file=.env playwright/01-connect.ts` |
-| [`reddit/`](playwright/reddit/) | 🔎 Scrape Reddit with 10 parallel browsers through a residential-proxy profile | `npx tsx --env-file=.env playwright/reddit/scrape.ts` |
+| File                                        | Feature Demonstrated                                                           | Run Command                                           |
+| :------------------------------------------ | :----------------------------------------------------------------------------- | :---------------------------------------------------- |
+| [`01-connect.ts`](playwright/01-connect.ts) | Connect standard Playwright directly over Oya's universal CDP gateway          | `npx tsx --env-file=.env playwright/01-connect.ts`    |
+| [`reddit/`](playwright/reddit/)             | 🔎 Scrape Reddit with 10 parallel browsers through a residential-proxy profile | `npx tsx --env-file=.env playwright/reddit/scrape.ts` |
 
 ### 🌐 [`multi-vendor/`](multi-vendor/): one API, many clouds
 
-| File | Feature Demonstrated | Run Command |
-|:---|:---|:---|
+| File                                                    | Feature Demonstrated                                                                                       | Run Command                                               |
+| :------------------------------------------------------ | :--------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------- |
 | [`01-multi-vendor.ts`](multi-vendor/01-multi-vendor.ts) | Execute identical automation across **Oya Cloud, Browserbase, Steel, Anchor, and Browser Use** in parallel | `npx tsx --env-file=.env multi-vendor/01-multi-vendor.ts` |
 
 ### ☁️ [`ecs/`](ecs/): Oya browsers in your own AWS account
 
 Each one sets `sandbox_runtime: 'ecs'` and a nested `ecs` setting, then starts a browser as a Fargate task in your account. They need the `ECS_*` and `AWS_*` values in [`.env.example`](.env.example), and a task definition whose `browser` container runs the Oya browser image.
 
-| File | Feature Demonstrated | Run Command |
-|:---|:---|:---|
-| [`01-iam.ts`](ecs/01-iam.ts) | Sign in with an IAM access key | `npx tsx --env-file=.env ecs/01-iam.ts` |
-| [`02-role.ts`](ecs/02-role.ts) | Oya assumes a role you trust with your own ExternalId: no long-lived keys | `npx tsx --env-file=.env ecs/02-role.ts` |
-| [`03-sso.ts`](ecs/03-sso.ts) | Sign in with an IAM Identity Center (SSO) access token | `npx tsx --env-file=.env ecs/03-sso.ts` |
-| [`04-cluster-name.ts`](ecs/04-cluster-name.ts) | Name the cluster by its name, looked up in `region` | `npx tsx --env-file=.env ecs/04-cluster-name.ts` |
-| [`05-cluster-arn.ts`](ecs/05-cluster-arn.ts) | Name the cluster by its full ARN, whose region must match `region` | `npx tsx --env-file=.env ecs/05-cluster-arn.ts` |
+| File                                           | Feature Demonstrated                                                      | Run Command                                      |
+| :--------------------------------------------- | :------------------------------------------------------------------------ | :----------------------------------------------- |
+| [`01-iam.ts`](ecs/01-iam.ts)                   | Sign in with an IAM access key                                            | `npx tsx --env-file=.env ecs/01-iam.ts`          |
+| [`02-role.ts`](ecs/02-role.ts)                 | Oya assumes a role you trust with your own ExternalId: no long-lived keys | `npx tsx --env-file=.env ecs/02-role.ts`         |
+| [`03-sso.ts`](ecs/03-sso.ts)                   | Sign in with an IAM Identity Center (SSO) access token                    | `npx tsx --env-file=.env ecs/03-sso.ts`          |
+| [`04-cluster-name.ts`](ecs/04-cluster-name.ts) | Name the cluster by its name, looked up in `region`                       | `npx tsx --env-file=.env ecs/04-cluster-name.ts` |
+| [`05-cluster-arn.ts`](ecs/05-cluster-arn.ts)   | Name the cluster by its full ARN, whose region must match `region`        | `npx tsx --env-file=.env ecs/05-cluster-arn.ts`  |
 
 ---
 
 ## ⚡ Setup in 60 Seconds
 
 ### Prerequisites
+
 - Node.js **20.6+** (native `--env-file` support)
 - An Oya API key from [oyabrowser.com](https://oyabrowser.com) or your local self-hosted instance (`http://localhost:3100`)
 
@@ -103,7 +105,7 @@ npx tsx --env-file=.env sdk/demo.ts --no-pause
 
 If a step reports a capability is unconfigured, you can activate it in the Control Plane Dashboard (**Settings**):
 
-1. **AI Model:** Select Claude (`claude-sonnet-4-5`) or OpenAI (`gpt-4o-mini`) and provide an API key. Enables natural language driving.
+1. **AI Model:** Pick a Claude or OpenAI model and provide its API key. Enables natural language driving.
 2. **Browser Providers:** Configure keys for Browserbase, Steel, Anchor, or Browser Use. Enables multi-vendor fleet spreading.
 3. **CAPTCHA Solvers:** Configure CapSolver or 2Captcha keys for providers without native challenge solving.
 4. **Two-Factor Login:** Uncomment the test credentials in `.env` (provided in `.env.example`) to run the live MFA verification step.

@@ -9,7 +9,7 @@ const persona = (await oya.personas.list()).find((p) => p.name === 'us-shopper')
     proxy: { geo: 'US' },
   });
 
-await using browser = await oya.browser.start({ persona: persona.id }); // or persona: 'auto' to rotate
+await using browser = await oya.browser.start({ provider: 'oya-cloud', persona: persona.id }); // or persona: 'auto' to rotate
 await browser.goto('https://www.amazon.com');
 console.log(persona.name, persona.fingerprint); // identical on the next run
 
