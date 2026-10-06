@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { inlineOf, parseChangelog } from '@/app/release-notes/changelog';
+import { hasNews, inlineOf, parseChangelog } from '@/app/release-notes/changelog';
 
 const SAMPLE = `# Changelog
 
@@ -42,6 +42,20 @@ describe('parseChangelog', () => {
     const releases = parseChangelog(file);
     expect(releases.length).toBeGreaterThan(0);
     expect(releases.some((r) => r.groups.some((g) => g.items.length))).toBe(true);
+  });
+});
+
+describe('hasNews', () => {
+  const release = (items: string[]) => ({ title: '1.0.2', notes: [], groups: [{ title: 'Changed', items }] });
+
+  it('leaves out an empty release and one carrying only the placeholder note', () => {
+    expect(hasNews({ title: 'Unreleased', notes: [], groups: [] })).toBe(false);
+    expect(hasNews(release(['Maintenance and fixes.']))).toBe(false);
+  });
+
+  it('keeps a release with a real change or a note', () => {
+    expect(hasNews(release(['A fix.']))).toBe(true);
+    expect(hasNews({ title: '1.0.2', notes: ['A note.'], groups: [] })).toBe(true);
   });
 });
 

@@ -233,3 +233,24 @@ export const COMPARE = [
     rivals: ['Enterprise plan', 'Enterprise plan', 'Scale plan'],
   },
 ];
+
+/** From download to a first task in the desktop app, the steps its welcome screen walks through. */
+export const START_STEPS = [
+  { n: '1', title: 'Download', body: 'Pick your computer. The desktop app is free.' },
+  {
+    n: '2',
+    title: 'Install and open',
+    body: 'Mac: drag it to Applications. Windows: run the .exe. Linux: chmod +x the AppImage.',
+  },
+  {
+    n: '3',
+    title: 'Sign in with Oya',
+    body: 'It opens your web browser. Sign in or sign up free, then click Connect.',
+  },
+  { n: '4', title: 'Log in to your sites', body: 'In Oya Browser, as usual. Your agents reuse those sessions.' },
+  {
+    n: '5',
+    title: 'Give Oya a task',
+    body: 'Type it on the start page, or drive the browser from the SDK, MCP or Playwright.',
+  },
+];

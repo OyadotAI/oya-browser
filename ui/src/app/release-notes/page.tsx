@@ -9,7 +9,7 @@ import styles from '../page.module.css';
 import notes from './release-notes.module.css';
 import { SiteHeader } from '../_home/site-header';
 import { SiteFooter } from '../_home/site-footer';
-import { inlineOf, parseChangelog, type Inline, type Release } from './changelog';
+import { hasNews, inlineOf, parseChangelog, type Inline, type Release } from './changelog';
 
 /** Built once with the site: the changelog is read at build time, not per request. */
 export const dynamic = 'force-static';
@@ -71,9 +71,6 @@ function ReleaseEntry({ release }: { /** The release. */ release: Release }) {
   );
 }
 
-/** Whether a release says anything: an Unreleased with nothing under it yet is left out. */
-const hasContent = (release: Release) => release.notes.length > 0 || release.groups.some((g) => g.items.length > 0);
-
 /** The release notes page. */
 export default function ReleaseNotes() {
   const releases = parseChangelog(readFileSync(CHANGELOG, 'utf8'));
@@ -86,7 +83,7 @@ export default function ReleaseNotes() {
           <p className={notes.lead}>
             The server, the desktop app, the SDK and the CLI ship together under one version.
           </p>
-          {releases.filter(hasContent).map((release) => (
+          {releases.filter(hasNews).map((release) => (
             <ReleaseEntry key={release.title} release={release} />
           ))}
         </main>

@@ -2549,3 +2549,131 @@
     gap: 10px 20px;
   }
 }
+
+/* Get started: the desktop download and the steps to a first task, quiet enough to sit in the page's flow. */
+.founders {
+  gap: 9px;
+}
+.headerDownload {
+  white-space: nowrap;
+  padding: 10px 15px;
+  border-radius: 5px;
+  background: #16733b;
+  color: #fff;
+  font-weight: 600;
+}
+.navigation .headerDownload:hover {
+  background: #105c2e;
+  color: #fff;
+}
+.getStarted {
+  margin-top: 64px;
+  padding: 32px 36px;
+  border: 1px solid #e5e9e1;
+  border-radius: 14px;
+  background: #fafcf8;
+  scroll-margin-top: 96px;
+}
+.getHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px 32px;
+}
+.getStarted h2 {
+  margin-top: 6px;
+  font-size: clamp(22px, 2.2vw, 28px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+.getDownloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.getDownloads a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 18px;
+  border-radius: 6px;
+  background: #16733b;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+.getDownloads a:hover {
+  background: #105c2e;
+  transform: translateY(-1px);
+}
+.getSteps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 24px;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid #e5e9e1;
+  list-style: none;
+}
+.getNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e3f6d4;
+  color: #16733b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.getSteps strong {
+  display: block;
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.getSteps p {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #5a645c;
+}
+.getHelp {
+  margin-top: 20px;
+  font-size: 13px;
+  color: #5a645c;
+}
+.getHelp a {
+  color: #16733b;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .getDownloads a {
+    transition: none;
+  }
+}
+@media (max-width: 960px) {
+  .getSteps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .getStarted {
+    margin-top: 44px;
+    padding: 24px 18px;
+  }
+  .getDownloads a {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .getSteps {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}

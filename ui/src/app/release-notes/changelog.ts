@@ -57,6 +57,16 @@ export function parseChangelog(markdown: string): Release[] {
   return releases;
 }
 
+/** The note a release gets when it was cut with nothing written for it (scripts/changelog.mjs NO_NOTES). */
+const PLACEHOLDER = 'Maintenance and fixes.';
+
+/**
+ * Whether a release tells a reader anything: an empty Unreleased, and a release that
+ * only carries the placeholder note, are left off the page.
+ */
+export const hasNews = (release: Release) =>
+  release.notes.length > 0 || release.groups.some((g) => g.items.some((item) => item !== PLACEHOLDER));
+
 /** **bold**, `code` and [text](url), in that order of appearance. */
 const INLINE = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)/g;
 

@@ -19,7 +19,8 @@ vi.stubGlobal('IntersectionObserver', NoIntersections);
 vi.mock('@/components/ui/syntax-code', () => ({ default: ({ code }: { code: string }) => <code>{code}</code> }));
 
 import Home from '@/app/page';
-import { FAQ, WALKTHROUGH, foundersCall } from '@/app/_home/content';
+import { FAQ, START_STEPS, WALKTHROUGH, foundersCall } from '@/app/_home/content';
+import { browserDownloads } from '@/lib/browser-downloads';
 
 describe('landing page', () => {
   afterEach(() => cleanup());
@@ -30,6 +31,24 @@ describe('landing page', () => {
     expect(founders.length).toBeGreaterThanOrEqual(2);
     expect(founders.every((a) => a.getAttribute('href') === foundersCall)).toBe(true);
     expect(screen.getAllByRole('link', { name: /Start building/ })[0].getAttribute('href')).toBe('/dashboard');
+  });
+
+  it('puts a download button for every platform in the download section, with the header and hero pointing there', () => {
+    render(<Home />);
+    const downloads = screen.getByRole('navigation', { name: 'Browser downloads' });
+    for (const { platform, href } of browserDownloads) {
+      const link = screen.getByRole('link', { name: new RegExp(`Download for ${platform}`) });
+      expect(downloads.contains(link) && link.getAttribute('href')).toBe(href);
+    }
+    expect(screen.getByRole('link', { name: 'Download' }).getAttribute('href')).toBe('/#download');
+    expect(screen.getByRole('link', { name: /Download the app/ }).getAttribute('href')).toBe('#download');
+  });
+
+  it('numbers every step from download to a first task', () => {
+    render(<Home />);
+    const steps = screen.getByRole('list', { name: 'How to start' });
+    expect(steps.querySelectorAll('li')).toHaveLength(START_STEPS.length);
+    for (const { title } of START_STEPS) expect(steps.textContent).toContain(title);
   });
 
   it('says who it is for above the fold', () => {

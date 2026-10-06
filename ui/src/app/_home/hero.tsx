@@ -1,40 +1,16 @@
 /**
  * The landing hero: who Oya is for and what it does in one line, the two next
- * steps, and the figure showing who gets through the bot wall.
+ * steps (the desktop download first), and the figure showing who gets through the bot wall.
  */
 import Link from 'next/link';
 import CopyExample from '@/components/copy-example';
 import { foundersCall, heroExample, installCommand } from './content';
-import { browserDownloads } from '@/lib/browser-downloads';
-import { ArrowRight, ArrowUpRight, Download } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUpRight } from 'lucide-react';
 import { Reveal } from './motion';
 import { ReplayShowcase } from './replay-showcase';
 import styles from '../page.module.css';
 
-/** The desktop build, for the people who sign in by hand. */
-function Downloads() {
-  return (
-    <div id="download" className={styles.downloads}>
-      <p>Desktop app</p>
-      <nav aria-label="Browser downloads">
-        {browserDownloads.map(({ platform, architecture, href }) => (
-          <a
-            key={platform}
-            href={href}
-            download
-            title={`${platform} · ${architecture}`}
-            data-track="download_clicked"
-            data-track-label={platform}
-          >
-            <Download size={14} aria-hidden="true" /> {platform}
-          </a>
-        ))}
-      </nav>
-    </div>
-  );
-}
-
-/** Under the showcase, both ways in for a developer: the SDK install line, and the desktop app. */
+/** Under the showcase, the SDK install line for a developer. */
 function InstallBar() {
   return (
     <div className={styles.installBar}>
@@ -43,16 +19,18 @@ function InstallBar() {
       <code className={styles.installPlay}>
         await browser.play(&quot;eligibility-check&quot;, {'{'} memberId {'}'})
       </code>
-      <Downloads />
     </div>
   );
 }
 
-/** Start building, talk to the founders, or read the docs. */
+/** Download the app, start building, talk to the founders, or read the docs. */
 function HeroActions() {
   return (
     <div className={styles.actions}>
-      <Link href="/dashboard" className={styles.primary} data-track="cta_clicked" data-track-label="hero_start">
+      <a href="#download" className={styles.primary} data-track="cta_clicked" data-track-label="hero_download">
+        Download the app <ArrowDown size={17} aria-hidden="true" />
+      </a>
+      <Link href="/dashboard" className={styles.founders} data-track="cta_clicked" data-track-label="hero_start">
         Start building <ArrowUpRight size={17} aria-hidden="true" />
       </Link>
       <a href={foundersCall} className={styles.founders} data-track="cta_clicked" data-track-label="hero_founders">

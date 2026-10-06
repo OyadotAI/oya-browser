@@ -6,7 +6,7 @@ import { OyaWordmark } from '@/components/oya-logo';
 import { discord, repository } from './content';
 import styles from '../page.module.css';
 
-/** Wordmark and main navigation. */
+/** Wordmark and main navigation, with Download always in reach as the header sticks. */
 export function SiteHeader() {
   return (
     <header className={styles.header}>
@@ -21,6 +21,14 @@ export function SiteHeader() {
         <a href={discord} className={styles.roomy} data-track="cta_clicked" data-track-label="header_discord">
           Discord
         </a>
+        <Link
+          href="/#download"
+          className={styles.headerDownload}
+          data-track="cta_clicked"
+          data-track-label="header_download"
+        >
+          Download
+        </Link>
         <Link href="/dashboard" className={styles.console} data-track="cta_clicked" data-track-label="header_console">
           Open console
         </Link>
