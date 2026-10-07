@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.162](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.162) · 2026-10-07
+
 ### Fixed
 
 - Hosted deployment passes the configured database connection explicitly to the admin billing migration, preventing psql from connecting to a local socket.
