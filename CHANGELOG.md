@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.161](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.161) · 2026-10-07
+
 ### Added
 
 - Admin customer controls to override plan access and grant extra cloud hours or hosted AI dollar credits, with reasons, grant history, and retry protection.
