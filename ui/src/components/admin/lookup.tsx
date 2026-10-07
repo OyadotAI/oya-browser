@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import { Search } from 'lucide-react';
+import { BillingAdjustment } from './billing-adjustment';
 import { Section, Table, Tile } from './parts';
 import { dayOf, hours } from './model';
 import { TopUsers } from './overview-sections';
@@ -73,7 +74,11 @@ function LoginAs({
 function FoundPerson({
   p,
   loginAs,
+  s,
+  changed,
 }: {
+  /** Admin mutations. */ s: AdminState;
+  /** Refreshes the customer. */ changed: () => void;
   /** What the server answered. */ p: Found;
   /** Opens their dashboard. */ loginAs: AdminState['loginAs'];
 }) {
@@ -106,6 +111,7 @@ function FoundPerson({
         head={['Key', 'Label', 'Created', 'Last used']}
         rows={p.keys.map((k) => [`${k.prefix}…`, k.label, dayOf(k.created_at), dayOf(k.last_used_at)])}
       />
+      <BillingAdjustment key={p.profile.id} p={p} s={s} changed={changed} />
     </div>
   );
 }
@@ -125,7 +131,7 @@ export function CustomersTab({
       <Section title="Look up a person">
         {l.error && <p className="text-xs text-red">{l.error}</p>}
         {l.found ? (
-          <FoundPerson p={l.found} loginAs={s.loginAs} />
+          <FoundPerson p={l.found} loginAs={s.loginAs} s={s} changed={() => void l.refresh()} />
         ) : (
           !l.error && <p className="text-xs text-text-dim">Search by email in the bar above, or pick someone below.</p>
         )}

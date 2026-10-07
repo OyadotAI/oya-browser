@@ -87,6 +87,18 @@ export const TABLES: Record<string, Table> = {
       updated_at: 'time',
     },
   },
+  // Administrator adjustments live apart from Stripe's webhook-owned subscription rows.
+  billing_overrides: {
+    key: ['user_id'],
+    columns: { user_id: 'text', plan: 'text', actor: 'text', reason: 'text', updated_at: 'time' },
+  },
+  billing_grants: {
+    key: ['id'],
+    columns: {
+      ...{ id: 'text', user_id: 'text', period_start: 'time', cloud_seconds: 'int', hosted_llm_microusd: 'int' },
+      ...{ actor: 'text', reason: 'text', created_at: 'time' },
+    },
+  },
   // Self-hosted installs as their daily ping last described them (see modules/admin).
   installs: {
     key: ['install_id'],

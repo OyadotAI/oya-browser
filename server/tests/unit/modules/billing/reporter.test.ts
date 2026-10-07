@@ -116,3 +116,38 @@ describe('UsageReporter', () => {
     assert.equal(events.length, 1);
   });
 });
+
+it('subtracts period grants from cloud minutes and hosted model cost before reporting', async () => {
+  const { r, events } = fixture([row()], { P1: { cloud_seconds: 7200, hosted_llm_microusd: 2_000_000 } });
+  r.deps.creditsFor = async (_id, since) => {
+    assert.equal(since, 'P1');
+    return { cloud_seconds: 3600, hosted_llm_microusd: 500_000 };
+  };
+  await r.report();
+  assert.deepEqual(sent(events), [
+    ['oya_cloud_minutes', 60],
+    ['oya_model_cents', 150],
+  ]);
+});
+
+it('does not send negative usage or retract usage already reported when grants exceed it', async () => {
+  const { r, events } = fixture([row({ reported: { period: 'P1', oya_cloud_minutes: 60 } })], {
+    P1: { cloud_seconds: 7200 },
+  });
+  r.deps.creditsFor = async () => ({ cloud_seconds: 10_000 });
+  await r.report();
+  assert.deepEqual(events, []);
+});
+
+it('uses grants from the correct period when settling a rollover', async () => {
+  const { r, events } = fixture([row({ reported: { period: 'P0' } })], {
+    P0: { cloud_seconds: 7200 },
+    P1: { cloud_seconds: 7200 },
+  });
+  r.deps.creditsFor = async (_id, since) => ({ cloud_seconds: since === 'P0' ? 3600 : 0 });
+  await r.report();
+  assert.deepEqual(sent(events), [
+    ['oya_cloud_minutes', 60],
+    ['oya_cloud_minutes', 120],
+  ]);
+});

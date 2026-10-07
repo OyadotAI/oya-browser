@@ -158,6 +158,19 @@ export interface Found {
   used: Record<string, number>;
   /** Their subscription row, if any. */
   subscription: { /** Their Stripe customer. */ stripe_customer_id?: string } | null;
+  /** Complimentary access, independent of Stripe. */
+  override?: { /** Plan, or null to follow Stripe. */ plan: string | null } | null;
+  /** Support grants for the period shown. */
+  grants?: Grant[];
   /** Their keys. */
   keys: KeyShown[];
+}
+
+/** One immutable support grant. */
+export interface Grant {
+  /** Stable request id. */ id: string;
+  /** Extra browser time. */ cloud_seconds: number;
+  /** Hosted model credit, in micro-USD. */ hosted_llm_microusd: number;
+  /** Why support issued it. */ reason: string;
+  /** When it was issued. */ created_at: string;
 }

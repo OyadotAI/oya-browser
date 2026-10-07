@@ -296,3 +296,19 @@ export const mfaVerify = (token: string, factorId: string, code: string) =>
 /** Removes an authenticator app. */
 export const mfaUnenroll = (token: string, factorId: string) =>
   mfaPost(token, 'unenroll', 'Could not remove it', { factor_id: factorId });
+
+/** Changes complimentary plan access without modifying Stripe charges. Admins only. */
+export const adminSetPlan = (token: string, id: string, request: Record<string, unknown>) =>
+  account(`/admin/users/${encodeURIComponent(id)}/plan`, 'Could not change plan access', {
+    method: 'PUT',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+  });
+
+/** Adds hours and hosted AI dollars for this period. Admins only. */
+export const adminGrant = (token: string, id: string, request: Record<string, unknown>) =>
+  account(`/admin/users/${encodeURIComponent(id)}/grants`, 'Could not grant allowance', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+  });

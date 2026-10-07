@@ -6,6 +6,8 @@
 import { getConnection } from '../../platform/storage/index.ts';
 import { currentForPerson, personRow } from '../../platform/usage.ts';
 import { HOUR_CHARS, METERS } from './constants.ts';
+import { overrideFor } from './adjustment-repository.ts';
+export { creditsFor } from './adjustment-repository.ts';
 
 /** The table's name. */
 const TABLE = 'subscriptions';
@@ -19,7 +21,8 @@ export type Subscription = Record<string, any> & {
 /** A person's subscription, or null when they have never subscribed. */
 export async function find(userId: string): Promise<Subscription | null> {
   const [row] = await getConnection().select(TABLE, { user_id: userId });
-  return (row as Subscription) || null;
+  const override = await overrideFor(userId);
+  return row || override ? { ...row, user_id: userId, admin_plan: override?.plan ?? null } : null;
 }
 
 /** Writes what Stripe says of a person's subscription, leaving what was reported to it as it is. */

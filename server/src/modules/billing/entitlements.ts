@@ -9,6 +9,7 @@ import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { hosted } from './config.ts';
 import { MODEL_PRICES, PLANS, SALES_EMAIL, type Plan } from './constants.ts';
+import { includedFor, type CreditReader } from './adjustments.ts';
 import { priced } from './cost.ts';
 import { Reservations, SERVER } from './reservations.ts';
 import { standingOf, type Standing } from './standing.ts';
@@ -16,7 +17,7 @@ import type { Subscription } from './repository.ts';
 import type { Admission } from '../../platform/license/index.ts';
 
 /** What admission needs from the rest of the server. */
-export type EntitlementDeps = {
+export type EntitlementDeps = CreditReader & {
   /** A person's subscription row. */
   find(userId: string): Promise<Subscription | null>;
   /** A person's billed usage since an ISO time. */
@@ -135,7 +136,8 @@ export class Entitlements {
 
   /** Refuses once a plan without overage has used this period's allowance of `field`. */
   async checkAllowance(standing: Standing, field: string, allowance: Allowance, what: string) {
-    const plan = PLANS[standing.plan];
+    const credits = await this.deps.creditsFor?.(standing.userId, standing.since);
+    const plan = includedFor(standing, credits);
     if (plan.overage) return;
     const used = (await this.deps.usageSince(standing.userId, standing.since))[field] || 0;
     if (used >= plan[allowance])

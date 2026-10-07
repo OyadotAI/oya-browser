@@ -7,6 +7,8 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
 import {
   adminImpersonate,
+  adminSetPlan,
+  adminGrant,
   adminIssueLicense,
   adminLicenses,
   adminLookup,
@@ -84,7 +86,9 @@ function useActions(token: string, reload: () => void) {
 export function useAdmin() {
   const { token, user, loading } = useAuth();
   const { data, reload } = useLoaded(token);
-  return { signedIn: Boolean(user), loading, data, ...useActions(token || '', reload) };
+  const setPlan = (id: string, request: Record<string, unknown>) => adminSetPlan(token || '', id, request);
+  const grant = (id: string, request: Record<string, unknown>) => adminGrant(token || '', id, request);
+  return { signedIn: Boolean(user), loading, data, setPlan, grant, ...useActions(token || '', reload) };
 }
 
 /** The admin page's state, as its sections take it. */

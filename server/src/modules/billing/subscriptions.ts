@@ -2,19 +2,20 @@
  * Subscribing and managing a plan, through Stripe's own pages: Checkout to
  * subscribe, the Customer Portal to change card, plan or cancel. Stripe tells
  * the server what changed by webhook, and that is the only way a plan changes
- * here, so a person can never grant themselves one.
+ * here. Admin access overrides are stored separately from the paid subscription.
  */
 import { HttpError, invalid, notFound } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { MS_PER_SECOND } from '../../platform/constants.ts';
 import { portalConfiguration, pricesFor, planOfPrice } from './config.ts';
-import { CHECKOUT_BRANDING, PAID_PLANS, PLANS, type PlanName } from './constants.ts';
-import { standingOf } from './standing.ts';
+import { CHECKOUT_BRANDING, PAID_PLANS, type PlanName } from './constants.ts';
+import { includedFor, type CreditReader } from './adjustments.ts';
+import { standingOf, type Standing } from './standing.ts';
 import type { Stripe } from './stripe.ts';
 import type { Subscription } from './repository.ts';
 
 /** What subscribing needs. */
-export type SubscriptionDeps = {
+export type SubscriptionDeps = CreditReader & {
   /** A person's subscription row. */
   find(userId: string): Promise<Subscription | null>;
   /** Writes what Stripe says of a person's subscription. */
@@ -122,9 +123,11 @@ export class Subscriptions {
   /** The person's plan, its allowances and what they used this period, for the console. */
   async summary(userId: string) {
     const row = await this.deps.find(userId);
-    const { plan, status, since } = standingOf(userId, row, this.deps.now());
+    const standing = standingOf(userId, row, this.deps.now());
+    const { since } = standing;
+    const included = includedFor(standing, await this.deps.creditsFor?.(userId, since));
     const used = await this.deps.usageSince(userId, since);
-    return { enabled: true, plan, status, since, until: row?.period_end ?? null, included: PLANS[plan], used };
+    return { ...summaryFields(standing, row), included, used };
   }
 
   /** The person's plan name alone: one row read, for places that only name the plan. */
@@ -165,3 +168,13 @@ const FOLLOWED: Record<string, boolean> = {
   'customer.subscription.updated': false,
   'customer.subscription.deleted': true,
 };
+
+/** Common summary fields keep payment management separate from complimentary access. */
+function summaryFields(standing: Standing, row: Subscription | null) {
+  const { plan, status, since } = standing;
+  return {
+    ...{ enabled: true, plan, status, since },
+    until: row?.period_end ?? null,
+    canManage: Boolean(row?.stripe_customer_id),
+  };
+}

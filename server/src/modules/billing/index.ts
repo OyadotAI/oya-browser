@@ -50,3 +50,8 @@ export function startReporting(reporter: UsageReporter) {
   timer.unref?.();
   return () => clearInterval(timer);
 }
+
+export { overrideFor, saveOverride, saveGrant, grantById, grantsFor, creditsFor } from './adjustment-repository.ts';
+export { isPlan, includedFor } from './adjustments.ts';
+export { standingOf } from './standing.ts';
+export { find as findSubscription } from './repository.ts';

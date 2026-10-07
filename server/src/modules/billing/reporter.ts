@@ -10,11 +10,12 @@
  */
 import { createHash } from 'node:crypto';
 import { IDENTIFIER_CHARS, METERS, REPORTABLE, type Meter } from './constants.ts';
+import type { CreditReader } from './adjustments.ts';
 import type { Stripe } from './stripe.ts';
 import type { Subscription } from './repository.ts';
 
 /** What reporting needs. */
-export type ReporterDeps = {
+export type ReporterDeps = CreditReader & {
   /** Every subscription. */
   all(): Promise<Subscription[]>;
   /** Records what has been reported for a person. */
@@ -71,8 +72,12 @@ export class UsageReporter {
 
   /** Brings every meter up to the period's usage, one at a time. */
   async reportPeriod(row: Subscription, reported: Reported, used: Record<string, number>) {
+    const credits = (await this.deps.creditsFor?.(row.user_id, reported.period)) || {};
     let now = reported;
-    for (const m of METERS) now = await this.advance(row, now, m, Math.floor((used[m.field] || 0) / m.per));
+    for (const m of METERS) {
+      const total = Math.max(0, Math.floor(((used[m.field] || 0) - (credits[m.field] || 0)) / m.per));
+      now = await this.advance(row, now, m, total);
+    }
     return now;
   }
 

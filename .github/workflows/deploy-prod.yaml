@@ -524,6 +524,16 @@ jobs:
         sed -i "s|newTag: latest|newTag: ${GITHUB_REF_NAME}|g" k8s/overlays/prod/kustomization.yaml
         grep newTag k8s/overlays/prod/kustomization.yaml
 
+    # The hosted image starts the server directly, so create billing adjustment
+    # tables before any new pod can read them. This additive migration is safe to retry.
+    - name: Apply admin billing migration
+      env:
+        PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
+        PGCONNECT_TIMEOUT: '10'
+      run: |
+        : "${PGDATABASE:?Missing database connection for billing migration}"
+        psql -X --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql
+
     - name: Deploy with Kustomize
       run: kubectl apply -k k8s/overlays/prod
 

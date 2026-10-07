@@ -89,3 +89,9 @@ export const apiKeys = () => getConnection().select('api_keys', {});
 
 /** Every self-hosted install, for when each was first seen. */
 export const allInstalls = () => getConnection().select('installs', {});
+
+/** A profile must exist before an administrator can adjust its billing. */
+export async function profileById(id: string) {
+  const [row] = await getConnection().select('profiles', { id });
+  return row || null;
+}

@@ -234,3 +234,12 @@ describe('Subscriptions', () => {
     assert.equal(summary.since, '2026-03-01T00:00:00.000Z');
   });
 });
+
+it('shows actual usage alongside the extended allowance in the customer billing summary', async () => {
+  const { s } = fixture();
+  s.deps.creditsFor = async () => ({ cloud_seconds: 3600, hosted_llm_microusd: 1_000_000 });
+  const summary = await s.summary('u');
+  assert.equal(summary.used.cloud_seconds, 60);
+  assert.equal(summary.included.cloudSeconds, PLANS.free.cloudSeconds + 3600);
+  assert.equal(summary.included.llmMicroUsd, PLANS.free.llmMicroUsd + 1_000_000);
+});

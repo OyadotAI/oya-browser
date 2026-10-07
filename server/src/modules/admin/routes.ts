@@ -8,6 +8,7 @@ import { Status } from '../../platform/http-status.ts';
 import { audit } from '../../platform/audit.ts';
 import { adminOnly } from './access.ts';
 import * as admin from './service.ts';
+import { setPlan, grant } from './billing.ts';
 
 /** The admin routes, mounted on the API router. */
 export const router = Router({ caseSensitive: true });
@@ -50,4 +51,23 @@ router.post('/admin/licenses/:id/revoke', ...guard, async (req, res) => {
   const revoked = await admin.revoke(req.params.id);
   auditAdmin(req, 'admin.license.revoke', 'license', req.params.id);
   res.json(revoked);
+});
+
+/** Records the administrator, target, reason and exact adjustment. */
+function auditBilling(req, action: string, meta: object) {
+  audit({ action, actorUser: req.user.id, targetType: 'account', targetId: req.params.id, meta, req });
+}
+
+/** PUT /admin/users/:id/plan, changes only the customer's access override. */
+router.put('/admin/users/:id/plan', ...guard, async (req, res) => {
+  const result = await setPlan(req.params.id, req.body || {}, req.user.id);
+  auditBilling(req, 'admin.billing.plan', result);
+  res.json(result);
+});
+
+/** POST /admin/users/:id/grants, adds retry-safe hours or hosted model dollars this period. */
+router.post('/admin/users/:id/grants', ...guard, async (req, res) => {
+  const result = await grant(req.params.id, req.body || {}, req.user.id);
+  auditBilling(req, 'admin.billing.grant', result);
+  res.json(result);
 });

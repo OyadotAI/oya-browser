@@ -51,6 +51,26 @@ const paid = (plan: string, status = 'active') => ({
 });
 
 describe('Entitlements', () => {
+  it('uses extra hours and AI credits to admit exhausted Free accounts until the extended cap', async () => {
+    const used = { cloud_seconds: PLANS.free.cloudSeconds, hosted_llm_microusd: PLANS.free.llmMicroUsd };
+    const { e } = fixture({ used });
+    e.deps.creditsFor = async () => ({ cloud_seconds: 3600, hosted_llm_microusd: 1_000_000 });
+    await e.admitCloud('k-u');
+    await e.admitAgent('k-u');
+    used.cloud_seconds += 3600;
+    await assert.rejects(e.admitCloud('k-u'), { code: 'plan_limit' });
+    used.hosted_llm_microusd += 1_000_000;
+    await assert.rejects(e.admitAgent('k-u'), { code: 'plan_limit' });
+  });
+
+  it('limits complimentary paid access to its allowance', async () => {
+    const { e } = fixture({
+      rows: { u: { user_id: 'u', admin_plan: 'developer' } },
+      used: { cloud_seconds: PLANS.developer.cloudSeconds },
+    });
+    await assert.rejects(e.admitCloud('k-u'), { code: 'plan_limit' });
+  });
+
   beforeEach(() => (process.env.STRIPE_SECRET_KEY = 'sk_test'));
   afterEach(() => delete process.env.STRIPE_SECRET_KEY);
 

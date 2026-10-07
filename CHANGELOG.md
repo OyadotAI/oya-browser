@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Admin customer controls to override plan access and grant extra cloud hours or hosted AI dollar credits, with reasons, grant history, and retry protection.
+- Period grants extend usage limits and reduce usage not yet reported to Stripe. Access overrides remain separate from paid subscriptions and their charges.
+
+### Fixed
+
+- Customer billing shows support-granted access and offers Stripe management only when a billing customer exists.
+- Delayed admin searches and adjustment refreshes cannot replace a newer customer selection.
+
 ## [1.0.160](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.160) · 2026-10-06
 
 ### Changed

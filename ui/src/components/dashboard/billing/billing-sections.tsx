@@ -39,11 +39,16 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
           {b.until ? `Renews ${dateOf(b.until)}` : `This month since ${dateOf(b.since)}`}
         </span>
       </div>
+      {b.status === 'admin' && (
+        <p className="text-xs text-text-muted">
+          Plan access granted by support. Any existing paid subscription remains separate.
+        </p>
+      )}
       {late && (
         <p className="text-xs text-red-400">Your last payment failed. Update your card to keep using the cloud.</p>
       )}
       <div className="flex flex-wrap gap-2">
-        {b.plan === 'free' ? (
+        {!(b.canManage ?? b.plan !== 'free') ? (
           UPGRADES.map((p) => (
             <Go key={p.id} primary onClick={() => void s.upgrade(p.id)}>{`${p.label} ${p.price}`}</Go>
           ))

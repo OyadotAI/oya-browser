@@ -34,3 +34,12 @@ export const PERSON_PREFIX = 'u:';
 export const MONTHS_PER_YEAR = 12;
 /** The most Stripe answers in one list call. ponytail: one page only, page through with starting_after past 100 subscriptions or invoices a month. */
 export const STRIPE_PAGE = 100;
+
+/** Largest support note retained with an adjustment. */
+export const BILLING_REASON_MAX = 500;
+/** Micro-USD in one dollar of hosted model credit. */
+export const MICRO_USD_PER_DOLLAR = 1_000_000;
+/** Maximum cloud hours in a single grant, protecting against input mistakes. */
+export const MAX_GRANT_HOURS = 100_000;
+/** Maximum hosted model dollars in a single grant. */
+export const MAX_GRANT_DOLLARS = 100_000;

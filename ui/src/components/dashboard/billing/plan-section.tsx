@@ -33,14 +33,14 @@ function Meter({
 export default function PlanSection({ open }: { /** Whether the dialog is showing. */ open: boolean }) {
   const { billing, error, upgrade, manage } = usePlan(open);
   if (!billing) return null;
-  const free = billing.plan === 'free';
+  const free = !(billing.canManage ?? billing.plan !== 'free');
   return (
     <div id="billing" className="flex flex-col gap-2 rounded-md border border-border bg-bg-elevated/40 p-3">
       <div className="flex items-baseline justify-between">
         <span className="text-xs font-medium text-text-muted">Plan</span>
         <span className="text-xs font-medium capitalize text-text">
           {billing.plan}
-          {billing.status === 'past_due' ? ' (payment failed)' : ''}
+          {billing.status === 'past_due' ? ' (payment failed)' : billing.status === 'admin' ? ' (support access)' : ''}
         </span>
       </div>
       <Meter label="Cloud hours" used={hours(billing.used?.cloud_seconds)} of={hours(billing.included?.cloudSeconds)} />

@@ -72,3 +72,18 @@ describe('PlanSection', () => {
     expect(hours()).toBe(0);
   });
 });
+
+it('shows support access with checkout rather than a nonexistent billing portal', async () => {
+  vi.mocked(getBilling).mockResolvedValue(plan('developer', { status: 'admin', canManage: false }));
+  render(<PlanSection open />);
+  expect(await screen.findByText(/support access/)).toBeTruthy();
+  expect(screen.getByText('Developer $20/mo')).toBeTruthy();
+  expect(screen.queryByText('Manage billing')).toBeNull();
+});
+
+it('keeps Stripe management available when support overrides an existing subscriber to Free', async () => {
+  vi.mocked(getBilling).mockResolvedValue(plan('free', { status: 'admin', canManage: true }));
+  render(<PlanSection open />);
+  expect(await screen.findByText('Manage billing')).toBeTruthy();
+  expect(screen.queryByText('Developer $20/mo')).toBeNull();
+});

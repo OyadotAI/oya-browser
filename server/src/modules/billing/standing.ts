@@ -4,6 +4,7 @@
  * Free's period is the calendar month (UTC).
  */
 import { PAYING, PLANS, type PlanName } from './constants.ts';
+import { isPlan } from './adjustments.ts';
 import type { Subscription } from './repository.ts';
 
 /** A person's plan for admission. */
@@ -31,6 +32,8 @@ const isPaid = (plan: unknown): plan is PlanName =>
 /** A paying or late subscription keeps its plan; anything else, or none, is Free for this month. */
 export function standingOf(userId: string, row: Subscription | null, now: number): Standing {
   const keeps = row && isPaid(row.plan) && (PAYING.has(row.status) || row.status === 'past_due');
+  if (isPlan(row?.admin_plan))
+    return { userId, plan: row.admin_plan, status: 'admin', since: (keeps && row.period_start) || monthStart(now) };
   if (keeps) return { userId, plan: row.plan, status: row.status, since: row.period_start || monthStart(now) };
   return { userId, plan: 'free', status: row?.status ?? null, since: monthStart(now) };
 }

@@ -44,6 +44,8 @@ export interface Billing {
   plan?: string;
   /** The subscription's status, when there is one. */
   status?: string | null;
+  /** Whether a Stripe customer exists to open in the billing portal. */
+  canManage?: boolean;
   /** The plan's allowances. */
   included?: Included;
   /** What was used this period. */

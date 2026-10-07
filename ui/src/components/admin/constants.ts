@@ -33,3 +33,14 @@ export const TABS = [
 ] as const;
 /** One tab's id. */
 export type TabId = (typeof TABS)[number]['id'];
+
+/** Micro-USD in a dollar of hosted model allowance. */
+export const MICRO_USD_PER_DOLLAR = 1_000_000;
+/** Precision for displayed dollar credits. */
+export const CREDIT_DECIMALS = 2;
+/** The longest adjustment explanation the server accepts. */
+export const BILLING_REASON_MAX = 500;
+/** Smallest dollar grant selectable in the form. */
+export const CREDIT_STEP = 0.01;
+/** Smallest cloud-hour grant selectable in the form. */
+export const HOURS_STEP = 0.25;

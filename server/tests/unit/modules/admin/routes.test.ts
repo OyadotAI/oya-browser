@@ -74,3 +74,20 @@ describe('admin routes', () => {
     assert.deepEqual([row.actor_user, row.target_id], ['admin-1', 'nobody@example.com']);
   });
 });
+
+it('records the admin and adjustment details for both guarded billing mutations', async () => {
+  const { getConnection } = await import('../../../../src/platform/storage/index.ts');
+  await getConnection().upsert('profiles', [{ id: 'billing-target', email: 'billing@example.com' }]);
+  const params = { id: 'billing-target' };
+  await call('put', '/admin/users/:id/plan', { params, body: { plan: 'developer', reason: 'Trial' } });
+  await call('post', '/admin/users/:id/grants', {
+    params,
+    body: { requestId: 'acb151d7-e322-4d11-bc22-2d5156a729a0', hours: 2, reason: 'Support' },
+  });
+  for (const action of ['admin.billing.plan', 'admin.billing.grant']) {
+    const [entry] = recent({ action });
+    assert.equal(entry.actor_user, 'admin-1');
+    assert.equal(entry.target_id, 'billing-target');
+    assert.ok(entry.meta.reason);
+  }
+});
