@@ -26,6 +26,23 @@ function toolbar(answers = {}) {
 const active = (extra = {}) => ({ id: 1, title: '', url: '', home: false, favicon: null, active: true, ...extra });
 
 describe('ToolbarViewModel', () => {
+  it('focuses each newly selected start page, not each background loading update', () => {
+    const { fake, vm } = toolbar();
+    fake.emit('onTabsUpdated', [active({ home: true })]);
+    assert.equal(vm.state.focusRequest, 1);
+    fake.emit('onTabsUpdated', [active({ home: true })]);
+    assert.equal(vm.state.focusRequest, 1);
+    fake.emit('onTabsUpdated', [active({ home: true, id: 2 })]);
+    assert.equal(vm.state.focusRequest, 2);
+    fake.emit('onTabsUpdated', [active({ id: 3 })]);
+    assert.equal(vm.state.focusRequest, 2);
+  });
+  it('opens the native library through the shell bridge', () => {
+    const { fake, vm } = toolbar();
+    vm.showLibrary();
+    assert.deepEqual(fake.called('showLibrary'), [[]]);
+  });
+
   it("starts from the main process's address", async () => {
     const { vm } = toolbar({ getStatus: { url: 'https://a.test/' } });
     await settle();

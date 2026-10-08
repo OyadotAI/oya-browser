@@ -28,6 +28,7 @@ export { PAGE_FORMAT } from './constants.ts';
 export { NEEDS_INPUT } from './loop.ts';
 export { requireLlmAllowed, allowedLlm } from './llm-policy.ts';
 export { executeTool } from './executor.ts';
+export { LIBRARY_TOOL_NAMES } from './library-tools.ts';
 export { BROWSER_TOOLS, toolsOn } from './tools.ts';
 export { CHALLENGE_TOOLS, CHALLENGE_HANDLERS } from './challenge-tools.ts';
 

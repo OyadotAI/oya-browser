@@ -8,7 +8,7 @@
   position: fixed;
   top: 52px;
   right: 0;
-  bottom: 0;
+  bottom: var(--footer-height);
   width: 380px;
   background: var(--surface);
   border-left: 1px solid var(--border);

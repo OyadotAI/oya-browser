@@ -1,4 +1,5 @@
 /** IPC: overlays over the page, the dev panel, and the shell's own preferences. */
+import { DefaultBrowser } from '../app/default-browser.ts';
 import type { AppServices } from '../app/services.ts';
 import type { Payload } from '../../shared/ipc.ts';
 import type { HandlersOf } from './handle.ts';
@@ -10,6 +11,7 @@ type Deps = Pick<AppServices, 'overlays' | 'layout' | 'config' | 'shell' | 'elec
 
 /** The channels this group answers. */
 type Channel =
+  | 'make-default-browser'
   | 'backdrop-ready'
   | 'show-overlay'
   | 'hide-overlay'
@@ -29,6 +31,7 @@ const PREFERENCES: Readonly<Record<string, readonly unknown[]>> = {
 export class ShellPageHandlers {
   /** Channel → handler. */
   readonly handlers: HandlersOf<Channel> = {
+    'make-default-browser': () => new DefaultBrowser(this.deps).request(),
     'backdrop-ready': (_e, token) => this.deps.overlays.backdropReady(token),
     'show-overlay': (_e, name) => this.deps.overlays.show(name),
     'hide-overlay': (_e, name) => this.deps.overlays.hide(name),

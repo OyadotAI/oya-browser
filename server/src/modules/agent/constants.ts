@@ -115,3 +115,8 @@ export const WRAP_UP_STEPS = 5;
 
 /** The report a run ends on when its caller stopped it. */
 export const STOPPED_TEXT = 'FAILED: stopped by the user.';
+
+/** Library pagination matches the desktop command boundary. */
+export const LIBRARY_QUERY_MAX = 100;
+/** Maximum title or search input accepted by the local library. */
+export const LIBRARY_QUERY_TEXT_MAX = 500;

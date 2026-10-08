@@ -12,7 +12,7 @@ import { pairFromLink, type Paired } from '../connection/pairing.ts';
 import { LINK_SCHEME } from './constants.ts';
 
 /** The services deep links use. */
-type Deps = Pick<AppServices, 'electron' | 'shell' | 'config' | 'socket' | 'mirror'>;
+type Deps = Pick<AppServices, 'electron' | 'shell' | 'config' | 'socket' | 'mirror' | 'tabs' | 'control'>;
 
 /** Logs a link that could not be applied. */
 const reportLinkFailure = (e: Error): void => console.error('[deeplink]', e.message);
@@ -31,6 +31,7 @@ export class DeepLinks {
 
   /** Pair from an oya:// link (see src/main/connection/pairing.ts), then reconnect as the paired browser. */
   async applyDeepLink(rawUrl: string): Promise<boolean> {
+    if (/^https?:\/\//i.test(rawUrl)) return this.openWebLink(rawUrl);
     const paired = await pairFromLink(rawUrl, (opts) => this.ask(opts));
     if (!paired) return false;
     this.retarget(paired);
@@ -40,6 +41,27 @@ export class DeepLinks {
     this.deps.socket.connect();
     this.deps.shell.window?.show();
     return true;
+  }
+
+  /** External web links open a new protected tab, never replace the person's active page. */
+  private async openWebLink(rawUrl: string): Promise<boolean> {
+    const url = new URL(rawUrl);
+    if (url.username || url.password) return false;
+    if (!this.deps.control.snapshot().interactive) return this.blockedWebLink();
+    if (this.deps.shell.browsingMode) this.deps.tabs.createTab(url.href, true);
+    else this.deps.tabs.enterBrowsingMode(url.href);
+    this.deps.shell.window?.show();
+    return true;
+  }
+
+  /** An OS link must not interrupt an agent-owned tab or bypass the control gate. */
+  private async blockedWebLink(): Promise<false> {
+    await this.ask({
+      message: 'Take control of Oya before opening this link',
+      detail: 'An agent is using the browser. Return to human control, then open the link again.',
+      buttons: ['OK'],
+    });
+    return false;
   }
 
   /** showMessageBox refuses a null parent, and second-instance can arrive before the window exists. */
@@ -66,8 +88,7 @@ export class DeepLinks {
 
   /** Windows and Linux: the link is an argv entry of a second launch. */
   onSecondInstance(argv: string[]): void {
-    const link = argv.find((a) => a.startsWith(LINK_SCHEME));
-    if (link) this.applyDeepLink(link).catch(reportLinkFailure);
+    for (const link of argv.filter(isLaunchLink)) this.onOpenUrl({ preventDefault() {} }, link);
     this.deps.shell.window?.show();
   }
 
@@ -80,7 +101,12 @@ export class DeepLinks {
 
   /** Once the window exists: the links that were waiting, then any on the command line. */
   async drain(argv: string[]): Promise<void> {
-    const queued = this.pending.splice(0).concat(argv.filter((a) => a.startsWith(LINK_SCHEME)));
+    const queued = this.pending.splice(0).concat(argv.filter(isLaunchLink));
     for (const link of queued) await this.applyDeepLink(link).catch(reportLinkFailure);
   }
+}
+
+/** Command-line paths and switches are never treated as web navigation. */
+function isLaunchLink(value: string): boolean {
+  return value.startsWith(LINK_SCHEME) || /^https?:\/\//i.test(value);
 }

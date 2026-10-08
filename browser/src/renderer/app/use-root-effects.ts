@@ -4,6 +4,7 @@
  * variables, whether the window is hidden (so loops pause), and the ready mark
  * the Electron tests wait for.
  */
+import { FOOTER_HEIGHT } from '../../shared/constants.ts';
 import { useEffect } from 'react';
 import { useViewModel } from '../hooks/index.ts';
 import type { ShellViewModel } from './shell-view-model.ts';
@@ -27,6 +28,7 @@ function applyLayout(layout: ShellLayout): void {
   root.style.setProperty('--panel-width', px(layout.panelWidth));
   root.style.setProperty('--panel-height', px(layout.panelHeight));
   root.style.setProperty('--chrome-height', px(layout.chromeHeight));
+  root.style.setProperty('--footer-height', px(FOOTER_HEIGHT));
   root.dataset.panelMoving = String(layout.progress > 0 && layout.progress < 1);
 }
 

@@ -138,6 +138,7 @@ src/
     app/                 services.ts (AppServices), config-store, persona, deep-links, boot (start-up stages), lifecycle (quit), updater
     ipc/                 the shell's channels: one handler class per area, typed against shared/ipc.ts, behind the shell-only guard (handle.ts)
     shell/               the window, menu, shortcuts, panel layout (layout.ts, shell-layout.ts), overlays, the control shield and its narration
+    library/             local history and bookmarks, scoped by persona partition, plus the native Library menu
     tabs/                TabManager, TabEvents, TabProtector (a tab's bounded first-page protection), TabWindows, Protection, AddressBar, context menu, page source, tab order and menu, favicons, workers
     recording/           Recorder, RecordingStart (the stages of a start), channels, moves, PageChecks, FrameSessions, tab names, RecordingPublisher
     connection/          ControlSocket, ServerMessages (the server message map), CommandRunner and TAB_COMMANDS, ServerApi, Chat (Ask), CdpRelay, LiveStream, pairing
@@ -274,6 +275,43 @@ account dialog.
   hides `out/renderer/index.html` and `out/renderer/control-shield/index.html`
   from CDP harnesses; a regression check pins both addresses.
 
+## Everyday browsing
+
+- Closing the selected tab returns to the most recently selected still-open tab,
+  not its neighbor in strip order. Closing a background tab does not move focus.
+- Selecting a new start-page tab focuses the shell and address bar; the agent
+  task box no longer takes focus on arrival.
+- **Library** in the toolbar or native menu opens local bookmarks and recent
+  history. Cmd/Ctrl+D toggles the active page's bookmark; Cmd/Ctrl+Y opens the
+  library. Selecting a saved page opens a new tab.
+- `library/BrowsingLibrary` persists through `ConfigStore`, keyed by the persona's
+  session partition. There is no background library sync; authorized agent tool
+  calls return only the requested results through the normal command transport. History keeps the latest
+  2,000 distinct HTTP(S) addresses; bookmarks remain until explicitly removed.
+  Internal pages and URLs containing credentials are excluded. Clearing history
+  requires confirmation and does not clear bookmarks or website logins.
+- This first native library has paginated menus, not full-text search, folders,
+  or import/export. Passkey behavior is unchanged by these browsing changes.
+
+### Agent access to browser features
+
+The agent loop and per-browser MCP expose `search_history`, `list_bookmarks`,
+`add_bookmark`, `remove_bookmark`, `clear_history`, `list_closed_tabs`, and
+`reopen_closed_tab`. Existing tab and navigation tools open returned URLs.
+Library searches accept `query`, `limit` (default 25, maximum 100), and `offset`,
+and return `entries`, `total`, and `next_offset`. Bookmark adds/removes are
+idempotent; `clear_history` requires `confirm: true` after an explicit user
+request, and leaves bookmarks, cookies and the separate closed-tab stack alone.
+
+`connection/library-commands.ts` dispatches through the same command runner and
+control gate as other tools, never through the human-only native menu. Queries
+resolve the active persona at execution time; there is no cross-profile selector.
+Reopening a closed tab cannot bypass remote restrictions on local files. Library
+results are website data, not instructions, and are not recorded as replayable
+page actions. Generic CDP browsers do not support these tools. The round-robin
+pool MCP endpoint deliberately omits profile-local library tools: use the
+per-browser endpoint to make the target unambiguous.
+
 ## Browser workspace additions
 
 - The Playbooks pane uses `playbooks` IPC to list, rename, delete, transfer and
@@ -345,3 +383,29 @@ move. Never loosen it.
   CSS.
 - **Integration tests** under `tests/` are exempt from the size and number
   rules, as tests are everywhere. They still carry headers and doc comments.
+
+### Keyboard-first shell
+
+`src/shared/shortcuts.ts` is the binding registry used by native keyboard
+handling, palette hints and the searchable Keyboard shortcuts guide. Keep new
+bindings there, with a matching main-process or palette action. Modifiers match
+exactly; physical aliases keep Option chords and tab selection layout-safe.
+The footer opens Commands or Keyboard shortcuts (Cmd/Ctrl+/ or F1); the guide
+uses the existing modal focus trap and hides native page views while open.
+`FOOTER_HEIGHT` in shared constants reserves the same space in native page
+bounds and renderer CSS, including the compact workspace layout.
+
+The read-only `list_keyboard_shortcuts` agent/MCP tool obtains the connected
+browser's live shortcut registry and platform through the normal command path.
+It describes shell shortcuts; it does not execute them or grant shell control.
+
+### Default browser opt-in
+
+The welcome screen, command palette and Help menu expose Make Oya Browser
+default. Shell-only IPC invokes `app/default-browser.ts`; it refuses development
+builds, checks both HTTP and HTTPS, and leaves Windows choice to Default Apps.
+Installation advertises support but never writes Windows UserChoice. The NSIS
+include registers Oya-owned capabilities and removes those on uninstall. Linux
+AppImage users still need an installed desktop entry. OS link delivery (macOS
+open-url and Windows/Linux argv) uses DeepLinks, including startup queuing;
+web links open new protected tabs and cannot interrupt agent control.

@@ -4,6 +4,8 @@
  * fetch, and a way to call an Express router without opening a socket.
  */
 import { mock } from 'node:test';
+import { connectBrowser, disconnectBrowser } from './fakes.ts';
+import { settleResult } from '../../../src/modules/browsers/connection/commands.ts';
 import { registry } from '../../../src/modules/browsers/registry.ts';
 import { keyCache, keyDigest } from '../../../src/modules/auth/keys.ts';
 import { getConnection } from '../../../src/platform/storage/index.ts';
@@ -32,6 +34,19 @@ export function scriptedBrowser(
   };
   registry.add(browserId, { apiKey, name: 'Test', clientType, persona: { id: 'p-1' }, engine: driver });
   return { calls, disconnect: () => registry.remove(browserId), actions: () => calls.map((c) => c.action) };
+}
+
+/** A scripted real Oya transport, including capability reporting and command/result envelopes. */
+export function scriptedOyaBrowser(browserId: string, apiKey = 'key-a', answer: Answer = () => ({ ok: true })) {
+  const ws = connectBrowser(browserId, apiKey);
+  const calls: { action: string; params: any }[] = [];
+  ws.send = (raw) => {
+    const command = JSON.parse(raw);
+    calls.push({ action: command.action, params: command.params });
+    const result = answer(command.action, command.params);
+    queueMicrotask(() => settleResult(browserId, { ...result, id: command.id }, true));
+  };
+  return { calls, disconnect: () => disconnectBrowser(browserId), actions: () => calls.map((call) => call.action) };
 }
 
 /** A chat-completions reply that calls tools, one `[name, args]` pair per call. */

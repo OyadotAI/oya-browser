@@ -7,8 +7,10 @@
  * them, and the browser detail never lists them.
  */
 export const OYA_ACTIONS: readonly string[] = [
+  'add_bookmark',
   'analyze',
   'back',
+  'clear_history',
   'click',
   'click_coordinates',
   'close_tab',
@@ -18,6 +20,9 @@ export const OYA_ACTIONS: readonly string[] = [
   'handle_dialog',
   'hover',
   'keyboard_type',
+  'list_bookmarks',
+  'list_closed_tabs',
+  'list_keyboard_shortcuts',
   'list_tabs',
   'mouse_move',
   'navigate',
@@ -27,8 +32,11 @@ export const OYA_ACTIONS: readonly string[] = [
   'read_network',
   'read_page',
   'reload',
+  'remove_bookmark',
+  'reopen_closed_tab',
   'screenshot',
   'scroll',
+  'search_history',
   'select',
   'switch_tab',
   'type',

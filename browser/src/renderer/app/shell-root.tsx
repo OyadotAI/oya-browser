@@ -4,6 +4,7 @@
  * also order the stylesheets: the design system's, the panel's, then each
  * feature's, after the page-wide ones app/main.tsx loads first.
  */
+import { BrowserFooter } from './browser-footer.tsx';
 import { useViewModel } from '../hooks/index.ts';
 import { IconButton } from '../ui/index.ts';
 import type { ShellViewModels } from './view-models.ts';
@@ -133,6 +134,7 @@ export function ShellRoot({ vms }: ShellRootProps) {
       <StartPage vm={vms.start} />
       <Launch vm={vms.chrome.launch} />
       <Workspace vms={vms} />
+      <BrowserFooter vms={vms} />
       <Dialogs vms={vms} />
     </>
   );

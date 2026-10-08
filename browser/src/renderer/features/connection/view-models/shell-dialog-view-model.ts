@@ -15,7 +15,7 @@ import type { ImportViewModel } from './import-view-model.ts';
 import type { ProfileViewModel } from './profile-view-model.ts';
 
 /** The dialog's pages. */
-export type DialogPage = 'commands' | 'profile';
+export type DialogPage = 'commands' | 'profile' | 'shortcuts';
 
 /** What the dialog shows. */
 export interface ShellDialogState {
@@ -75,6 +75,7 @@ export interface ShellDialogDeps extends AccountParts {
 
 /** What the dialog's header and label say for a page. */
 export function pageLabels(page: DialogPage): PageLabels {
+  if (page === 'shortcuts') return { title: 'Keyboard shortcuts', label: 'Keyboard shortcuts' };
   return page === 'profile'
     ? { title: 'Account', label: 'Account and connection' }
     : { title: 'Commands', label: 'Commands and settings' };
@@ -115,6 +116,13 @@ export class ShellDialogViewModel extends ViewModel<ShellDialogState> {
     await this.bridge.showOverlay(OVERLAYS.shell);
     this.set({ open: true, page: profile ? 'profile' : 'commands' });
     this.parts.account.setVisible(profile);
+  }
+
+  /** Opens the learning guide using the same native-view-safe overlay. */
+  async openShortcuts(): Promise<void> {
+    await this.bridge.showOverlay(OVERLAYS.shell);
+    this.set({ open: true, page: 'shortcuts' });
+    this.parts.account.setVisible(false);
   }
 
   /** Hides the dialog and gives the page back. */

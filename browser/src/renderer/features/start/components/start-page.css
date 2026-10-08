@@ -8,7 +8,7 @@
   position: fixed;
   top: var(--chrome-height);
   right: var(--panel-reveal, 0px);
-  bottom: 0;
+  bottom: var(--footer-height);
   left: 0;
   z-index: 0;
   display: grid;
@@ -23,7 +23,7 @@ body:not(.mode-browsing) .start-page {
 @media (max-width: 959px) {
   .start-page {
     right: 0;
-    bottom: var(--panel-reveal, 0px);
+    bottom: calc(var(--panel-reveal, 0px) + var(--footer-height));
   }
 }
 /* A soft field of Oya light behind the orb. It holds still: the frosted glass over it re-blurs whatever moves behind it on every frame (a sixth of a core on a 120 Hz screen). */

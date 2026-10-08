@@ -433,3 +433,22 @@ body.mode-browsing .toolbar {
     background-size: 100% 100%;
   }
 }
+
+/** The native library entry matches the toolbar, but has room for its explicit label. */
+.library-button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.library-button:hover {
+  background: var(--surface);
+}
+.library-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

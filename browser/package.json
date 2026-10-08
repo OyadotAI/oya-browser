@@ -98,8 +98,11 @@
           {
             "CFBundleURLName": "Oya Browser",
             "CFBundleURLSchemes": [
-              "oya"
-            ]
+              "oya",
+              "http",
+              "https"
+            ],
+            "CFBundleTypeRole": "Viewer"
           }
         ]
       }
@@ -122,7 +125,12 @@
         "AppImage"
       ],
       "category": "Network",
-      "artifactName": "Oya.Browser-${version}-x64.${ext}"
+      "artifactName": "Oya.Browser-${version}-x64.${ext}",
+      "mimeTypes": [
+        "x-scheme-handler/http",
+        "x-scheme-handler/https",
+        "x-scheme-handler/oya"
+      ]
     },
     "dmg": {
       "title": "Oya Browser",
@@ -142,14 +150,18 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/default-browser.nsh"
     },
     "protocols": [
       {
         "name": "Oya Browser",
         "schemes": [
-          "oya"
-        ]
+          "oya",
+          "http",
+          "https"
+        ],
+        "role": "Viewer"
       }
     ],
     "publish": {

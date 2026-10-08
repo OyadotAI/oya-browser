@@ -22,11 +22,37 @@ describe('Protection', () => {
     await ctx.protection.applyPersona(dbg, () => {});
     assert.deepEqual(
       dbg.sent.map((c) => c.method),
-      ['Emulation.setUserAgentOverride', 'Page.addScriptToEvaluateOnNewDocument', 'Target.setAutoAttach'],
+      [
+        'Emulation.setUserAgentOverride',
+        'Emulation.setAutomationOverride',
+        'Page.addScriptToEvaluateOnNewDocument',
+        'Target.setAutoAttach',
+      ],
     );
     const brands = dbg.sent[0].params.userAgentMetadata.brands.map((b) => b.brand);
     assert.ok(brands.includes('Google Chrome'), 'navigator.userAgentData names Chrome, as the headers do');
-    assert.equal(typeof dbg.sent[1].params.source, 'string');
+    assert.deepEqual(dbg.sent[1].params, { enabled: false });
+    assert.equal(typeof dbg.sent[2].params.source, 'string');
+  });
+
+  it('reports a failed native automation identity instead of silently claiming setup worked', async () => {
+    const error = new Error('override refused');
+    const dbg = new FakeDebugger({ 'Emulation.setAutomationOverride': error });
+    const failures = [];
+    await ctx.protection.applyPersona(dbg, (step, cause) => failures.push([step, cause]));
+    assert.deepEqual(failures, [['automation identity', error]]);
+  });
+
+  it('waits for native identity before registering document scripts', async () => {
+    const pending = Promise.withResolvers();
+    const dbg = new FakeDebugger({ 'Emulation.setAutomationOverride': () => pending.promise });
+    const applying = ctx.protection.applyPersona(dbg, () => {});
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.ok(!dbg.methods().includes('Page.addScriptToEvaluateOnNewDocument'));
+    pending.resolve({});
+    await applying;
+    assert.ok(dbg.methods().includes('Page.addScriptToEvaluateOnNewDocument'));
   });
 
   it('attaches cross-site iframes without a persona, never pausing them, so a recording can reach them', async () => {

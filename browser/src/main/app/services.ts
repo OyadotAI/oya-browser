@@ -39,6 +39,8 @@ import type { Governance } from '../identity/governance.ts';
 
 /** The main process's services and the values they share. */
 export interface AppServices {
+  /** Local history and bookmarks for the current persona. */
+  library: import('../library/index.ts').BrowsingLibrary;
   /** Electron's main-process API; only the composition root imports it. */
   electron: typeof Electron;
   /** The app's folder: the package root in development, the asar when packaged. */

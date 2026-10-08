@@ -23,6 +23,7 @@ type Deps = Pick<
   | 'appDir'
   | 'cdpPort'
   | 'relayToken'
+  | 'library'
   | 'config'
   | 'socket'
   | 'persona'

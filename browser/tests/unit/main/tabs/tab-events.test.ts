@@ -157,7 +157,7 @@ describe('tab events', () => {
   it('protects every popup the page creates, and puts it on the tab list', () => {
     const protect = mock.method(ctx.protection, 'protectPopup', () => {});
     const adopt = mock.method(ctx.tabs, 'adoptWindow', () => 2);
-    tab.view.webContents.emit('did-create-window', { id: 'popup' });
+    tab.view.webContents.emit('did-create-window', { id: 'popup' }, { url: 'https://accounts.google.com/' });
     assert.deepEqual(protect.mock.calls[0].arguments, [{ id: 'popup' }]);
     assert.deepEqual(adopt.mock.calls[0].arguments, [{ id: 'popup' }]);
   });
@@ -166,7 +166,7 @@ describe('tab events', () => {
     mock.method(ctx.protection, 'protectPopup', () => {});
     const join = mock.method(ctx.recorder, 'joinIfRecording', async () => {});
     const popup = { webContents: tab.view.webContents, on() {} };
-    tab.view.webContents.emit('did-create-window', popup);
+    tab.view.webContents.emit('did-create-window', popup, { url: 'https://accounts.google.com/' });
     assert.equal(join.mock.calls.at(-1).arguments[0], ctx.tabs.list.at(-1).view);
     assert.equal(ctx.tabs.list.at(-1).window, popup);
   });
@@ -209,9 +209,23 @@ describe('tab events', () => {
     assert.deepEqual(join.mock.calls[0].arguments, [tab.view]);
   });
 
+  it('does not record iframe history changes or replace the tab URL with them', () => {
+    const visit = mock.method(ctx.library, 'visit');
+    tab.view.webContents.emit('did-navigate-in-page', {}, 'https://frame.test/#private', false);
+    assert.equal(tab.url, 'https://a.test/');
+    assert.equal(visit.mock.callCount(), 0);
+  });
+
+  it('records a successful main-frame page in the library', () => {
+    const visit = mock.method(ctx.library, 'visit');
+    tab.view.webContents.url = 'https://a.test/finished';
+    tab.view.webContents.emit('did-finish-load');
+    assert.equal(visit.mock.calls[0].arguments[0], 'https://a.test/finished');
+  });
+
   it('follows navigations and titles', () => {
     tab.view.webContents.emit('did-navigate', {}, 'https://a.test/2');
-    tab.view.webContents.emit('did-navigate-in-page', {}, 'https://a.test/2#x');
+    tab.view.webContents.emit('did-navigate-in-page', {}, 'https://a.test/2#x', true);
     tab.view.webContents.emit('page-title-updated', {}, 'Two');
     assert.equal(tab.url, 'https://a.test/2#x');
     assert.equal(tab.title, 'Two');

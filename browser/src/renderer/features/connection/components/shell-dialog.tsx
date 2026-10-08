@@ -16,6 +16,7 @@ import type { ProfileViewModel } from '../view-models/profile-view-model.ts';
 import type { ReconnectViewModel } from '../view-models/reconnect-view-model.ts';
 import type { PaletteViewModel } from '../view-models/palette-view-model.ts';
 import { CommandPalette } from './command-palette.tsx';
+import { ShortcutGuide } from './shortcut-guide.tsx';
 import { AccountPage } from './account-page.tsx';
 
 /** The ViewModels of the account page. */
@@ -61,7 +62,7 @@ export function ShellDialog({ palette, footer, ...models }: ShellDialogProps) {
       label={labels.label}
       open={s.open}
       onClose={close}
-      focusId={profile ? 'shell-dialog-close' : 'command-search'}
+      focusId={s.page === 'shortcuts' ? 'shortcut-search' : profile ? 'shell-dialog-close' : 'command-search'}
     >
       <div className="shell-dialog">
         <header>
@@ -75,7 +76,8 @@ export function ShellDialog({ palette, footer, ...models }: ShellDialogProps) {
             icon="close"
           />
         </header>
-        <CommandPalette vm={palette} hidden={profile} />
+        <CommandPalette vm={palette} hidden={s.page !== 'commands'} />
+        {s.open && s.page === 'shortcuts' && <ShortcutGuide platform={palette.platform} />}
         <AccountPage {...models} hidden={!profile} />
         {!offer && <footer>{footer}</footer>}
       </div>

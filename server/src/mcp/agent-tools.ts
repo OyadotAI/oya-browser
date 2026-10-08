@@ -27,6 +27,15 @@ import { JSON_INDENT } from './constants.ts';
 
 /** The agent's browser tools served as they are. */
 const PAGE_TOOLS = [
+  // Names stay literal: reading agent exports during module initialization creates an import cycle.
+  'list_keyboard_shortcuts',
+  'search_history',
+  'list_bookmarks',
+  'add_bookmark',
+  'remove_bookmark',
+  'clear_history',
+  'list_closed_tabs',
+  'reopen_closed_tab',
   'select_option',
   'read_console',
   'read_network',

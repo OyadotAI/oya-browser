@@ -10,6 +10,24 @@ import { mainCtx } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
 
 describe('TabManager', () => {
+  it('returns to the last selected tab instead of a neighbor after following a link', () => {
+    const origin = ctx.tabs.createTab('https://origin.test/');
+    ctx.tabs.createTab('https://unrelated.test/');
+    ctx.tabs.activateTab(origin);
+    const child = ctx.tabs.createTab('https://child.test/');
+    ctx.tabs.closeTab(child);
+    assert.equal(ctx.tabs.activeTabId, origin);
+  });
+  it('closing a background tab does not change focus or leave a stale return target', () => {
+    const a = ctx.tabs.createTab('https://a.test/');
+    const b = ctx.tabs.createTab('https://b.test/');
+    const c = ctx.tabs.createTab('https://c.test/');
+    ctx.tabs.closeTab(b);
+    assert.equal(ctx.tabs.activeTabId, c);
+    ctx.tabs.closeTab(c);
+    assert.equal(ctx.tabs.activeTabId, a);
+  });
+
   let ctx;
   beforeEach(() => {
     mock.timers.enable({ apis: ['setTimeout'] });

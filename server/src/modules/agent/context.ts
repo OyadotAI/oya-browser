@@ -12,7 +12,14 @@ import {
 } from './constants.ts';
 
 /** Tools whose long results are logs and lists, not pages: they are never condensed as a page read. */
-const NOT_PAGES = new Set(['read_network', 'read_console', 'list_tabs']);
+const NOT_PAGES = new Set([
+  'read_network',
+  'read_console',
+  'list_tabs',
+  'search_history',
+  'list_bookmarks',
+  'list_closed_tabs',
+]);
 
 /** One message's content size: text as its length, an image as IMAGE_CONTEXT_CHARS. */
 const contentSize = (content) =>

@@ -30,7 +30,7 @@ export interface SetupState extends Record<SetupField, string> {
 /** The parts of the bridge the welcome screen uses. */
 export type SetupBridge = Pick<
   OyaBrowser,
-  'getConfig' | 'saveConfig' | 'openConsole' | 'enterBrowsing' | 'onWsStatus' | 'onModeChanged'
+  'makeDefaultBrowser' | 'getConfig' | 'saveConfig' | 'openConsole' | 'enterBrowsing' | 'onWsStatus' | 'onModeChanged'
 >;
 
 /** Why the entered settings cannot be used, or '' when they can. */
@@ -47,6 +47,11 @@ export interface SetupDeps extends Pick<RendererServices, 'shell'> {
 
 /** The welcome screen. */
 export class SetupViewModel extends ViewModel<SetupState> {
+  /** Explicit opt-in from the welcome screen; native UI handles confirmation and errors. */
+  async makeDefaultBrowser(): Promise<void> {
+    await this.bridge.makeDefaultBrowser();
+  }
+
   /** The main process. */
   private readonly bridge: SetupBridge;
   /** Whether the browser is connected. */

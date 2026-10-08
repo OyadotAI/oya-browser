@@ -4,12 +4,14 @@
  */
 import type { Event as ElectronEvent, Input, WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
+import { LibraryMenu } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo, reopenClosed } from '../tabs/tab-order.ts';
-import { LAST_TAB_DIGIT } from './constants.ts';
+import { resolveShortcut } from '../../shared/shortcuts.ts';
+import { LAST_TAB_DIGIT, ZOOM_STEP } from './constants.ts';
 
 /** The services the shortcuts use. */
-type Deps = Pick<AppServices, 'shell' | 'control' | 'tabs'>;
+type Deps = Pick<AppServices, 'shell' | 'control' | 'tabs' | 'library' | 'electron' | 'persona'>;
 
 /** A command the main process runs itself. */
 type LocalCommand = (deps: Deps) => unknown;
@@ -22,29 +24,6 @@ interface TabRef {
   /** The tab's id. */
   id: number;
 }
-
-/** Cmd/Ctrl + key to shell command. */
-const COMMANDS: Record<string, string> = { l: 'address', k: 'commands', t: 'new-tab', w: 'close-tab' };
-/** Cmd/Ctrl + Shift + key to shell command. */
-const SHIFT_COMMANDS: Record<string, string> = {
-  r: 'reload',
-  d: 'tools',
-  ']': 'next-tab',
-  '[': 'previous-tab',
-  t: 'reopen-tab',
-  pageup: 'move-tab-left',
-  pagedown: 'move-tab-right',
-};
-/**
- * Cmd/Ctrl + Alt + physical key to shell command. Record lives here because
- * Cmd/Ctrl+Shift+R is Chrome's hard reload: people pressed it out of habit and
- * ended their recording. By code, since Alt changes the character on a Mac.
- */
-const ALT_COMMANDS: Record<string, string> = { KeyR: 'record', ArrowRight: 'next-tab', ArrowLeft: 'previous-tab' };
-/** Cmd/Ctrl + 1..8 go to that tab and 9 to the last, by physical key so every layout has them. */
-const DIGIT = /^Digit([1-9])$/;
-/** Bracket keys by physical code, so they work on every keyboard layout. */
-const BRACKETS: Record<string, string> = { BracketRight: ']', BracketLeft: '[' };
 
 /** Shows the `n`th tab (1-based); 9 is always the last, as in Chrome. */
 function goToTab(deps: Deps, n: number): void {
@@ -65,9 +44,21 @@ const DIGIT_COMMANDS: Record<string, LocalCommand> = Object.fromEntries(
   Array.from({ length: LAST_TAB_DIGIT }, (_v, i) => [`tab-${i + 1}`, (deps: Deps) => goToTab(deps, i + 1)]),
 );
 
+/** Zoom only the page: never distort the shell relative to its native view bounds. */
+function zoomPage(deps: Deps, offset: number | null): void {
+  if (!deps.control.snapshot().interactive) return;
+  const contents = deps.tabs.getActiveView()?.webContents;
+  if (contents) contents.setZoomLevel(offset === null ? 0 : contents.getZoomLevel() + offset);
+}
+
 /** Commands the main process runs itself; any other goes to the shell page. */
 const LOCAL_COMMANDS: Record<string, LocalCommand> = {
   ...DIGIT_COMMANDS,
+  'zoom-in': (deps) => zoomPage(deps, ZOOM_STEP),
+  'zoom-out': (deps) => zoomPage(deps, -ZOOM_STEP),
+  'zoom-reset': (deps) => zoomPage(deps, null),
+  library: (deps) => new LibraryMenu(deps).show(),
+  bookmark: (deps) => new LibraryMenu(deps).toggle(),
   'new-tab': (deps) => {
     if (!deps.control.snapshot().interactive) return;
     // The start page loads nothing, so a recording has no navigation to keep.
@@ -82,29 +73,9 @@ const LOCAL_COMMANDS: Record<string, LocalCommand> = {
   'move-tab-right': (deps) => moveActive(deps, 1),
 };
 
-/** Ctrl+Tab and Ctrl+Shift+Tab cycle tabs on every platform, Ctrl even on a Mac, as in every browser. */
-function cycleShortcut(input: KeyInput): string | undefined {
-  if (input.key !== 'Tab' || !input.control || input.meta || input.alt) return undefined;
-  return input.shift ? 'previous-tab' : 'next-tab';
-}
-
-/** The shell command an input event asks for, if any. */
+/** The shared registry is also the guide's source of truth. */
 export function shortcutFor(input: KeyInput): string | undefined {
-  if (input.type !== 'keyDown' || input.isAutoRepeat) return undefined;
-  const modifier = process.platform === 'darwin' ? input.meta : input.control;
-  if (!modifier) return cycleShortcut(input);
-  if (input.alt) return Object.hasOwn(ALT_COMMANDS, input.code) ? ALT_COMMANDS[input.code] : undefined;
-  return keyCommand(input);
-}
-
-/** The command for Cmd/Ctrl (+ Shift) and a key, without Alt. */
-function keyCommand(input: KeyInput): string | undefined {
-  const digit = DIGIT.exec(input.code || '');
-  if (digit && !input.shift) return `tab-${digit[1]}`;
-  if (input.key === 'Tab') return cycleShortcut(input);
-  const key = Object.hasOwn(BRACKETS, input.code) ? BRACKETS[input.code] : input.key.toLowerCase();
-  const table = input.shift ? SHIFT_COMMANDS : COMMANDS;
-  return Object.hasOwn(table, key) ? table[key] : undefined;
+  return resolveShortcut(input, process.platform);
 }
 
 /** Installs the shortcuts on each webContents the shell owns. */

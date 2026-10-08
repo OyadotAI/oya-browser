@@ -72,6 +72,9 @@ export function SetupScreen({ vm }: ViewProps<SetupViewModel>) {
         <div role="alert" className="setup-error" id="setup-error">
           {s.error}
         </div>
+        <Button type="button" variant="secondary" onClick={() => void vm.makeDefaultBrowser()}>
+          Make Oya Browser default…
+        </Button>
         <Button type="button" className="welcome-skip" id="btn-skip" onClick={() => vm.skip()}>
           Just browse for now
         </Button>

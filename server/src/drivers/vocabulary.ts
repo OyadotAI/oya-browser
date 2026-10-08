@@ -29,6 +29,15 @@ const CDP = { oya: false, cdp: true };
 
 /** Every action, by the one spelling the SDK sends. */
 export const VOCABULARY: Record<string, Action> = {
+  list_keyboard_shortcuts: OYA,
+  search_history: OYA,
+  list_bookmarks: OYA,
+  add_bookmark: OYA,
+  remove_bookmark: OYA,
+  clear_history: OYA,
+  list_closed_tabs: OYA,
+  reopen_closed_tab: OYA,
+
   analyze: BOTH,
   click: BOTH,
   click_coordinates: { ...BOTH, cdpName: 'click-coords' },

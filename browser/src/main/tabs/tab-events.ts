@@ -14,7 +14,7 @@ import { TabWindows, joinRecording, type TabWindowsDeps } from './tab-windows.ts
 import type { Tab, TabView } from './types.ts';
 
 /** The services a tab's listeners use. */
-export type TabEventsDeps = TabWindowsDeps & Pick<AppServices, 'shortcuts' | 'shield' | 'observer'>;
+export type TabEventsDeps = TabWindowsDeps & Pick<AppServices, 'shortcuts' | 'shield' | 'observer' | 'library'>;
 
 /**
  * Makes view-source pages readable (forces the light theme). This text runs
@@ -47,6 +47,7 @@ export class TabEvents {
   /** Wires every listener on a new tab; returns the promise that settles once it is protected (or given up on). */
   wire(tab: Tab): Promise<void> {
     this.wireState(tab);
+    this.wireLibrary(tab);
     const tabReady = this.protector.protect(tab);
     this.wirePage(tab, tabReady);
     this.windows.wire(tab);
@@ -106,7 +107,7 @@ export class TabEvents {
     contents.on('did-finish-load', () => this.pageLoaded(tab.view));
     const updateUrl = (_e: unknown, u: string): void => this.deps.tabs.urlChanged(tab, u);
     contents.on('did-navigate', updateUrl);
-    contents.on('did-navigate-in-page', updateUrl);
+    contents.on('did-navigate-in-page', (event, url, mainFrame) => mainFrame && updateUrl(event, url));
     // New tabs join an active recording before the user can interact with them; one never protected has nothing to record.
     tabReady.then(() => tab.protection === 'protected' && joinRecording(this.deps.recorder, tab.view));
     this.wireTitle(tab);
@@ -137,6 +138,14 @@ export class TabEvents {
     const contents = tab.view.webContents;
     contents.on('page-title-updated', (_e, title) => this.deps.tabs.titleChanged(tab, title));
     contents.on('did-finish-load', () => this.deps.tabs.titleChanged(tab, contents.getTitle()));
+  }
+
+  /** Only successful main-frame visits enter the local library; subframes never replace the tab address. */
+  private wireLibrary(tab: Tab): void {
+    const contents = tab.view.webContents;
+    const visit = (): void => this.deps.library.visit(contents.getURL(), contents.getTitle());
+    contents.on('did-finish-load', visit);
+    contents.on('did-navigate-in-page', (_event, _url, mainFrame) => mainFrame && visit());
   }
 
   /** Loads the analyzer, and lightens view-source pages. */

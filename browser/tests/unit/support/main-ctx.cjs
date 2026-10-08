@@ -350,6 +350,14 @@ function fakeShell() {
 /** The main-process context with every service faked; `real` maps a name to a class to build for real. */
 function mainCtx(real = {}) {
   const ctx = {
+    library: {
+      visit() {},
+      snapshot() {
+        return { history: [], bookmarks: [] };
+      },
+      toggle() {},
+      clearHistory() {},
+    },
     electron: fakeElectron(),
     appDir: path.join(__dirname, '..', '..', '..'),
     isolatedWorld: 'w-test',

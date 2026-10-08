@@ -1,0 +1,53 @@
+/** Quiet, grouped reference rows in the shell's existing glass dialog. */
+.shortcut-guide {
+  padding: 0 20px 20px;
+}
+.shortcut-intro {
+  color: var(--secondary);
+  margin: 4px 0 16px;
+}
+#shortcut-search {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+}
+.shortcut-navigation {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--secondary);
+  font-size: 11px;
+  margin: 14px 0;
+}
+.shortcut-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--secondary);
+  margin: 22px 0 8px;
+}
+.shortcut-section dl {
+  margin: 0;
+}
+.shortcut-section dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+  border-bottom: 1px solid var(--border);
+}
+.shortcut-section dt {
+  font-size: 13px;
+}
+.shortcut-section dd {
+  margin: 0;
+  flex-shrink: 0;
+}
+.shortcut-guide kbd {
+  white-space: nowrap;
+}
+.shortcut-empty {
+  color: var(--secondary);
+  padding: 24px 0;
+}

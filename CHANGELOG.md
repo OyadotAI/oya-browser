@@ -6,6 +6,22 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Profile-local browsing history and bookmarks, with agent-loop and MCP tools for searching, saving, removing, clearing, and reopening recent tabs.
+- Keyboard-first navigation and workspace commands, a persistent shortcuts footer, and a searchable platform-aware guide. Agents can read the same live bindings with `list_keyboard_shortcuts`.
+- Explicit Make Oya Browser default options in welcome, Commands, and Help, with OS registration and external HTTP/HTTPS link handling.
+
+### Fixed
+
+- Closing a tab returns to the most recently used tab; new tabs focus the address bar.
+- Google sign-in popups that finish at Gmail hand off to a normal protected tab only after the mailbox loads successfully.
+- Browser identity setup without a persona now applies the same native automation setting as the persona path and reports setup failures.
+
+### Known limitations
+
+- The Gmail sign-in changes have passed automated checks, but successful Google sign-in still requires verification in the installed release. They do not guarantee Google will accept the browser or add native passkey support.
+
 ## [1.0.163](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.163) · 2026-10-08
 
 ### Added

@@ -7,6 +7,8 @@
 export const TEXT = {
   /** The toolbar's name. */
   toolbar: 'Browser navigation',
+  library: 'Library',
+  libraryTitle: 'History and bookmarks (⌘/Ctrl Y)',
   back: 'Back',
   forward: 'Forward',
   reload: 'Reload page',

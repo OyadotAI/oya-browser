@@ -157,6 +157,10 @@ export interface AgentEvent {
  * returns. `toggleDevPanel`'s argument is filled in by the preload.
  */
 export interface ShellCalls {
+  /** Opens the OS default-browser choice only after a person asks. */
+  makeDefaultBrowser(): Promise<void>;
+  /** Opens local bookmarks and browsing history. */
+  showLibrary(): Promise<void>;
   /** Confirms handoff when the person interacts with an agent-owned page. */
   requestTakeover(): Promise<void>;
   /** Lists, manages, imports, exports, and runs project playbooks on this browser. */
@@ -336,6 +340,7 @@ export const CALL_CHANNELS = {
   /** Reloads the active page. */
   reload: 'reload',
   /** The saved settings. */
+  makeDefaultBrowser: 'make-default-browser',
   getConfig: 'get-config',
   /** Saves settings and reconnects. */
   saveConfig: 'save-config',
@@ -372,6 +377,7 @@ export const CALL_CHANNELS = {
   /** Opens or closes the workspace panel. */
   toggleDevPanel: 'toggle-dev-panel',
   /** Opens a tab; answers its id. */
+  showLibrary: 'show-library',
   newTab: 'new-tab',
   /** Closes a tab. */
   closeTab: 'close-tab',

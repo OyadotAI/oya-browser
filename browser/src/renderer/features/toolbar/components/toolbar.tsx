@@ -24,6 +24,20 @@ export interface ToolbarProps extends Pick<RendererServices, 'panel' | 'shell'> 
   children?: ReactNode;
 }
 
+/** A text button keeps the library discoverable without introducing an ambiguous icon. */
+function LibraryButton({ vm }: Pick<ToolbarProps, 'vm'>) {
+  return (
+    <button
+      className="library-button"
+      title={TEXT.libraryTitle}
+      aria-label={TEXT.libraryTitle}
+      onClick={() => vm.showLibrary()}
+    >
+      {TEXT.library}
+    </button>
+  );
+}
+
 /** The navigation toolbar. */
 export function Toolbar({ vm, panel, shell, children }: ToolbarProps) {
   const { nav } = useViewModel(vm);
@@ -57,6 +71,7 @@ export function Toolbar({ vm, panel, shell, children }: ToolbarProps) {
         icon={look.reloadIcon}
       />
       <AddressBar vm={vm} />
+      <LibraryButton vm={vm} />
       {children}
       <AskButton panel={panel} shell={shell} />
       <div id="navigation-progress" hidden={!nav.loading} aria-hidden="true"></div>

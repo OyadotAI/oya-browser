@@ -154,6 +154,7 @@ const FRAME_ATTACH = {
 /** No persona yet: Chrome's identity in place of Electron's, the stealth injection, and its cross-site iframes. */
 async function injectStealthOnly(port: CdpPort, userAgent: UserAgentOverride, fail: Failure): Promise<void> {
   await port.send('Emulation.setUserAgentOverride', userAgent).catch((e) => fail('user agent override', e));
+  await port.send('Emulation.setAutomationOverride', { enabled: false }).catch((e) => fail('automation identity', e));
   const source = buildInjectionScript(null, DESKTOP_INJECTION);
   await port.send('Page.addScriptToEvaluateOnNewDocument', { source }).catch((e) => fail('stealth injection', e));
   await port.send('Target.setAutoAttach', FRAME_ATTACH).catch(() => {});

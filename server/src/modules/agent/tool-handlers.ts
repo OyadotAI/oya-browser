@@ -10,6 +10,7 @@ import { elementOf, rememberHandle, setElements } from './recorder.ts';
 import { analysisText, elementList } from './element-index.ts';
 import { noteAnalysis } from './changes.ts';
 import { ELEMENT_GONE, byId, withControls } from './controls.ts';
+import { LIBRARY_TOOL_HANDLERS } from './library-tool-handlers.ts';
 import { PAGE_TOOL_HANDLERS } from './page-tool-handlers.ts';
 import { NAVIGATE_TIMEOUT_MS, PAGE_FORMAT } from './constants.ts';
 
@@ -42,6 +43,12 @@ async function click(browserId, args) {
   if (!r.ok) return `Error: ${r.error}`;
   rememberHandle(browserId, args.element_id, r.data?.handle);
   return withControls(browserId, `Clicked element ${args.element_id}`, true);
+}
+
+/** Read the desktop registry through the existing capability and control gate. */
+async function listKeyboardShortcuts(browserId: string): Promise<string> {
+  const result = await sendCommand(browserId, 'list_keyboard_shortcuts', {});
+  return result.ok ? JSON.stringify(result.data) : `Error: ${result.error}`;
 }
 
 /** Presses one safe key. */
@@ -255,4 +262,6 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   handle_dialog: handleDialog,
   close_tab: closeTab,
   ...PAGE_TOOL_HANDLERS,
+  ...LIBRARY_TOOL_HANDLERS,
+  list_keyboard_shortcuts: listKeyboardShortcuts,
 };

@@ -15,7 +15,7 @@ describe('the command palette', () => {
   it('writes shortcuts with ⌘ on a Mac and Ctrl elsewhere', () => {
     assert.equal(commandsFor('MacIntel')[0].shortcut, '⌘ L');
     assert.equal(commandsFor('Win32')[0].shortcut, 'Ctrl L');
-    assert.equal(commandsFor('Win32').find((c) => c.id === 'inspect')?.shortcut, '');
+    assert.equal(commandsFor('Win32').find((c) => c.id === 'inspect')?.shortcut, 'Ctrl Alt I');
   });
 
   it('lists the commands whose label holds the search, ignoring case', () => {
@@ -86,4 +86,58 @@ describe('the command palette', () => {
     assert.equal(app.dialog.state.open, true);
     assert.equal(app.fake.called('toggleDevPanel').length, 1);
   });
+});
+
+/** New entry points reuse the palette's existing view models and guarded bridge. */
+describe('keyboard discovery', () => {
+  it('opens help from a command and forwarded key without showing the account page', async () => {
+    const app = build();
+    await app.palette.run('shortcuts');
+    assert.equal(app.dialog.state.page, 'shortcuts');
+    assert.equal(app.dialog.state.open, true);
+    app.dialog.close();
+    app.fake.emit('onShellCommand', 'shortcuts');
+    await settle();
+    assert.equal(app.dialog.state.page, 'shortcuts');
+    assert.equal(app.dialog.state.open, true);
+  });
+  it('opens the Library and navigates through existing IPC', async () => {
+    const app = build();
+    for (const id of ['library', 'back', 'forward'] as const) await app.palette.run(id);
+    for (const method of ['showLibrary', 'goBack', 'goForward']) assert.equal(app.fake.called(method).length, 1);
+  });
+  it('opens workspace panes from forwarded shortcuts', async () => {
+    const app = build();
+    for (const [command, pane] of [
+      ['playbooks', 'playbooks'],
+      ['routines', 'routines'],
+      ['inspect', 'actions'],
+      ['network', 'network'],
+      ['source', 'source'],
+    ]) {
+      app.fake.emit('onShellCommand', command);
+      await settle();
+      assert.equal(app.panel.state.pane, pane);
+    }
+  });
+});
+
+/** A guide must never remain above the workspace selected from the keyboard. */
+it('dismisses shortcut help before focusing Ask Oya', async () => {
+  const app = build();
+  await app.dialog.openShortcuts();
+  app.fake.emit('onShellCommand', 'ask');
+  await settle();
+  assert.equal(app.dialog.state.open, false);
+  assert.equal(app.panel.state.pane, 'chat');
+  assert.deepEqual(app.host, ['chat']);
+});
+
+/** Default-browser setup remains keyboard discoverable after onboarding. */
+it('opens the explicit OS default-browser flow from Commands', async () => {
+  const app = build();
+  await app.dialog.open();
+  await app.palette.run('defaultBrowser');
+  assert.equal(app.dialog.state.open, false);
+  assert.equal(app.fake.called('makeDefaultBrowser').length, 1);
 });

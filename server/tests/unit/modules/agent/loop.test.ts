@@ -11,7 +11,7 @@ ownDataDir();
 const { agentLoop } = await import('../../../../src/modules/agent/loop.ts');
 const recorder = await import('../../../../src/modules/agent/recorder.ts');
 const usage = await import('../../../../src/platform/usage.ts');
-const { scriptedBrowser, stubLlm, toolReply, textReply } = await import('../../support/agent.ts');
+const { scriptedBrowser, scriptedOyaBrowser, stubLlm, toolReply, textReply } = await import('../../support/agent.ts');
 const { WRAP_UP_STEPS, STOPPED_TEXT } = await import('../../../../src/modules/agent/constants.ts');
 
 const BROWSER = 'b-loop';
@@ -47,6 +47,19 @@ describe('agentLoop', () => {
     browser.disconnect();
     mock.restoreAll();
     delete process.env.CHAT_MAX_ITERATIONS;
+  });
+
+  it('offers local library tools to an Oya browser and feeds their results back to the model', async () => {
+    browser.disconnect();
+    const data = { entries: [{ url: 'https://a.test/', title: 'Saved page', time: 1 }], total: 1, next_offset: null };
+    browser = scriptedOyaBrowser(BROWSER, KEY, () => ({ ok: true, data }));
+    const llm = stubLlm([toolReply(['list_bookmarks', { query: 'saved' }]), textReply('DONE: found saved page')]);
+    const result = await agentLoop(ctx(), start());
+    assert.equal(result.failed, false);
+    assert.ok(llm.requests[0].tools.some((tool) => tool.function.name === 'search_history'));
+    const reply = llm.requests[1].messages.find((message) => message.role === 'tool');
+    assert.deepEqual(JSON.parse(reply.content), data);
+    assert.equal(browser.calls[0].action, 'list_bookmarks');
   });
 
   it('returns the model’s text once it stops calling tools', async () => {

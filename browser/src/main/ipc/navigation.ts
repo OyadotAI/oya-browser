@@ -1,15 +1,20 @@
 /** IPC: the address bar, back/forward/reload, and the tab strip (open, close, switch, move, its menu). */
 import type { AppServices } from '../app/services.ts';
 import type { HandlersOf } from './handle.ts';
+import { LibraryMenu } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
 
 /** The services navigation uses. */
-type Deps = Pick<AppServices, 'shield' | 'shell' | 'tabs' | 'recorder' | 'control' | 'electron'>;
+type Deps = Pick<
+  AppServices,
+  'shield' | 'shell' | 'tabs' | 'recorder' | 'control' | 'electron' | 'library' | 'persona'
+>;
 
 /** The channels this group answers. */
 type Channel =
+  | 'show-library'
   | 'navigate'
   | 'go-back'
   | 'go-forward'
@@ -25,6 +30,7 @@ type Channel =
 export class NavigationHandlers {
   /** Channel → handler. */
   readonly handlers: HandlersOf<Channel> = {
+    'show-library': () => new LibraryMenu(this.deps).show(),
     navigate: (_e, url) => this.navigate(url),
     'go-back': () => this.goInHistory('go_back'),
     'go-forward': () => this.goInHistory('go_forward'),

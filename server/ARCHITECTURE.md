@@ -122,3 +122,17 @@ use `node:test` with `mock.timers` for anything time-based, plus the fakes in
   `tests/integration/egress-rules.test.js` compares the two.
 - **`agent/placeholders.ts` `FILTERS.date`** sits inside a lint-disable block.
   Its source text is copied into the Playwright export, so it must not change.
+
+## Desktop library tools
+
+`agent/library-tools.ts` defines history, bookmark and closed-tab tools for the
+agent loop and per-browser MCP. Handlers call the existing `sendCommand` path,
+which owns authorization/control admission and capability reporting. The browser
+owns persistence and profile isolation; no server library copy is introduced.
+Tools are filtered against announced capabilities and are unsupported on generic
+CDP browsers. Destructive history clearing requires an explicit confirmation
+argument; library titles/URLs are untrusted data in the agent prompt.
+
+The read-only `list_keyboard_shortcuts` agent/MCP tool obtains the connected
+browser's live shortcut registry and platform through the normal command path.
+It describes shell shortcuts; it does not execute them or grant shell control.

@@ -12,8 +12,45 @@ describe('DeepLinks', () => {
   let ctx, links;
   beforeEach(() => {
     ctx = mainCtx();
+    ctx.tabs = { createTab() {}, enterBrowsingMode() {} };
     ctx.config.values = { apiKey: 'k1', serverUrl: 'wss://a.test/ws' };
     links = new DeepLinks(ctx);
+  });
+
+  it('opens external HTTP links in new tabs without retargeting the account', async () => {
+    ctx.shell.browsingMode = true;
+    const opened = [];
+    ctx.tabs.createTab = (url) => opened.push(url);
+    assert.equal(await links.applyDeepLink('https://example.test/path'), true);
+    assert.deepEqual(opened, ['https://example.test/path']);
+    assert.ok(!ctx.config.saves);
+  });
+
+  it('enters browsing for an external link on a fresh launch', async () => {
+    ctx.shell.browsingMode = false;
+    const entered = mock.method(ctx.tabs, 'enterBrowsingMode');
+    assert.equal(await links.applyDeepLink('http://example.test'), true);
+    assert.equal(entered.mock.calls[0].arguments[0], 'http://example.test/');
+  });
+
+  it('queues web links before readiness, including Windows second launches', async () => {
+    ctx.shell.window = null;
+    links.onSecondInstance(['app', 'https://first.test', '--flag']);
+    const applied = mock.method(links, 'applyDeepLink', async () => true);
+    await links.drain(['app', 'http://second.test', 'file:///private']);
+    assert.deepEqual(
+      applied.mock.calls.map((call) => call.arguments[0]),
+      ['https://first.test', 'http://second.test'],
+    );
+  });
+
+  it('does not open an OS link while an agent controls the browser', async () => {
+    ctx.control.state.interactive = false;
+    const opened = mock.fn();
+    ctx.tabs.createTab = opened;
+    assert.equal(await links.applyDeepLink('https://example.test'), false);
+    assert.equal(opened.mock.callCount(), 0);
+    assert.equal(await links.applyDeepLink('https://user:secret@example.test'), false);
   });
 
   it("holds a macOS link until the window exists, then applies it with the command line's", async () => {

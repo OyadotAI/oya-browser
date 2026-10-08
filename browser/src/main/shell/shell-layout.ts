@@ -2,6 +2,7 @@
  * Where the page and the dev panel sit in the window. Pure geometry, shared by
  * the main process (it places the page's view) and the shell tests.
  */
+import { FOOTER_HEIGHT } from '../../shared/constants.ts';
 import type { Bounds, ShellLayout } from '../../shared/ipc.ts';
 import {
   CHROME_HEIGHT,
@@ -30,7 +31,7 @@ function pageBounds(width: number, available: number, compact: boolean, reveal: 
 
 /** The layout for a window of `width`×`height` with the panel `open` (0..1, animated). */
 export function shellLayout(width: number, height: number, open: number, preferredWidth = PANEL_WIDTH): ShellLayout {
-  const available = Math.max(0, height - CHROME_HEIGHT);
+  const available = Math.max(0, height - CHROME_HEIGHT - FOOTER_HEIGHT);
   const compact = width < COMPACT_WIDTH;
   const panelWidth = panelWidthFor(width, preferredWidth);
   const panelHeight = open && compact ? Math.round(available * COMPACT_PANEL_SHARE) : 0;

@@ -12,11 +12,19 @@ import { RESULT_CODES } from './constants.ts';
 /** What the commands use: the shell, the tabs and page actions, the socket, and the recorder and studio. */
 export type CommandDeps = Pick<
   AppServices,
-  'shell' | 'tabs' | 'actions' | 'socket' | 'workspace' | 'recorder' | 'observer' | 'dialogs'
+  'shell' | 'tabs' | 'actions' | 'socket' | 'workspace' | 'recorder' | 'observer' | 'dialogs' | 'library'
 >;
 
 /** A command's arguments: a page command's, plus those of the commands answered here. */
 export interface RemoteParams extends CommandParams {
+  /** Local history/bookmark substring search. */
+  query?: string;
+  /** Matching library entries to skip. */
+  offset?: number;
+  /** Saved bookmark title. */
+  title?: string;
+  /** Explicit authorization to clear the current profile's stored history. */
+  confirm?: boolean;
   /** The tab to switch to or close. */
   tab_id?: number;
   /** record: start, stop, pause and the like. */

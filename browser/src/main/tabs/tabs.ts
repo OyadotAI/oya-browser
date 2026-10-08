@@ -11,6 +11,7 @@ import { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } from './constants.ts';
 import * as popups from './popup-tabs.ts';
 import { loadInTab, isUnprotected } from './load.ts';
 import { isHome, shownViewOf, leaveHomeFor, staysHome } from './home.ts';
+import { TabSelection } from './tab-selection.ts';
 import { ClosedTabs } from './tab-order.ts';
 import type { Tab, TabView } from './types.ts';
 
@@ -150,6 +151,20 @@ function stopLoading(tabs: TabManager, tab: Tab): void {
   tabs.sendTabList();
 }
 
+/** A single reload intent either stops the pending load or reloads the settled page. */
+function reloadOrStop(tabs: TabManager, tab: Tab): void {
+  if (tab.navigationPending || tab.view.webContents.isLoading()) stopLoading(tabs, tab);
+  else tabs.reloadTab(tab);
+}
+
+/** Creates a page in the active partition, with white behind sites that paint no background. */
+function createPageView(deps: Deps): BrowserView {
+  const webPreferences = tabPreferences(deps.persona.partitionName());
+  const view = new deps.electron.BrowserView({ webPreferences });
+  view.setBackgroundColor(PAGE_BACKGROUND);
+  return view;
+}
+
 /** The open tabs and which one is showing. */
 export class TabManager {
   /** The main-process services the tabs use. */
@@ -164,6 +179,8 @@ export class TabManager {
   nextTabId = 1;
   /** Tabs a person closed, for Reopen closed tab. */
   readonly closed = new ClosedTabs();
+  /** Recently selected tabs, newest last, independent of strip order. */
+  private readonly selection = new TabSelection();
 
   /** `deps` are the main-process services (see services.ts). */
   constructor(deps: Deps) {
@@ -203,12 +220,7 @@ export class TabManager {
 
   /** A new view in the persona's partition, on the list. */
   private addTab(url: string): Tab {
-    const partition = this.deps.persona.partitionName();
-    const view = new this.deps.electron.BrowserView({ webPreferences: tabPreferences(partition) });
-    // A page that sets no background of its own paints nothing, and the window's colour
-    // shows through, in the dark theme that is dark text on a dark canvas. White is what
-    // every other browser puts under a page; a page with its own background still wins.
-    view.setBackgroundColor(PAGE_BACKGROUND);
+    const view = createPageView(this.deps);
     const home = isHome(url);
     const tab = { id: this.nextTabId++, view, title: home ? 'Oya' : 'New Tab', url: home ? '' : url || '', home };
     this.list.push(tab);
@@ -219,7 +231,7 @@ export class TabManager {
   activateTab(id: number): void {
     const tab = this.find(id);
     if (!tab || this.activeTabId === id) return;
-    this.activeTabId = id;
+    this.activeTabId = this.selection.visit(id);
     if (tab.window) return popups.raiseWindow(this, tab);
     this.showInShell(tab);
   }
@@ -228,17 +240,17 @@ export class TabManager {
   showInShell(tab: Tab): void {
     const shown = shownViewOf(tab) as BrowserView | null; // a tab shown in the window is a BrowserView; popups have windows of their own
     if (!this.deps.overlays.names.size) this.deps.shell.window!.setBrowserView(shown);
+    if (tab.home) this.deps.shell.window!.webContents.focus();
     this.deps.layout.layoutActiveTab();
     this.deps.shell.send('url-changed', tab.url);
     this.deps.shell.send('title-changed', tab.title);
     this.sendTabList();
   }
 
-  /** Moves `offset` tabs along the strip, wrapping. */
+  /** Moves along the strip, independently of the most-recent return order. */
   cycleTab(offset: number): void {
-    const index = this.list.findIndex((tab) => tab.id === this.activeTabId);
-    const target = this.list[(index + offset) % this.list.length];
-    if (target) this.activateTab(target.id);
+    const target = this.selection.cycle(this.list, this.activeTabId, offset);
+    if (target !== undefined) this.activateTab(target);
   }
 
   /** Closes a tab. `keepOne: false` lets a bulk close empty the list. */
@@ -248,6 +260,7 @@ export class TabManager {
     const wasActive = this.list[idx].id === this.activeTabId;
     rememberClosed(this, idx, keepOne);
     this.removeTab(idx);
+    this.selection.forget(id);
     this.afterClose(idx, wasActive, keepOne);
   }
 
@@ -268,7 +281,7 @@ export class TabManager {
     if (this.list.length === 0) return this.closedLast(keepOne);
     if (!wasActive) return this.sendTabList();
     this.activeTabId = null;
-    this.activateTab(this.list[Math.min(idx, this.list.length - 1)].id);
+    this.activateTab(this.selection.previous(this.list) ?? this.list[Math.min(idx, this.list.length - 1)].id);
   }
 
   /** The last tab closed. */
@@ -341,8 +354,7 @@ export class TabManager {
     this.deps.shield.requireHumanControl();
     const tab = this.find(this.activeTabId);
     if (!tab) return;
-    if (tab.navigationPending || tab.view.webContents.isLoading()) stopLoading(this, tab);
-    else this.reloadTab(tab);
+    reloadOrStop(this, tab);
   }
 
   /** Reloads a tab, clearing its error; one that could not be protected keeps saying so (only about:blank reloads). */

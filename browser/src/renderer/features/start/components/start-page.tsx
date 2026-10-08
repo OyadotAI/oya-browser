@@ -3,7 +3,7 @@
  * new tab's page would be. The task box's text is the view's own; Enter or
  * the send button hands it to the agent, Shift+Enter is a new line, and an
  * example runs as if typed. Each arrival replays the page's entrance and puts
- * the cursor in the task box.
+ * the address bar in charge of keyboard focus.
  */
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useViewModel } from '../../../hooks/index.ts';
@@ -18,7 +18,7 @@ export interface StartPageProps {
   vm: StartViewModel;
 }
 
-/** Replays the arrival and focuses the task box on each arrival. */
+/** Replays the arrival without stealing focus from the address bar. */
 function useArrival(arrivals: number) {
   const page = useRef<HTMLElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -27,7 +27,6 @@ function useArrival(arrivals: number) {
     page.current.classList.remove(ARRIVING);
     void page.current.offsetWidth; // a reflow forgets the finished animation
     page.current.classList.add(ARRIVING);
-    input.current?.focus();
   }, [arrivals]);
   return { page, input };
 }
@@ -90,9 +89,6 @@ export function StartPage({ vm }: StartPageProps) {
         </form>
         <StartExamples vm={vm} />
       </div>
-      <footer className="start-foot">
-        <kbd>⌘K</kbd> Commands <span aria-hidden="true">·</span> <kbd>⌘L</kbd> Address
-      </footer>
     </main>
   );
 }

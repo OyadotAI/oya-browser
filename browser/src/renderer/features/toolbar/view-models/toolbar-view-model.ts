@@ -57,7 +57,15 @@ export interface NavLook {
 /** The parts of the bridge the toolbar uses. */
 export type ToolbarBridge = Pick<
   OyaBrowser,
-  'navigate' | 'goBack' | 'goForward' | 'reload' | 'getStatus' | 'onUrlChanged' | 'onTitleChanged' | 'onTabsUpdated'
+  | 'showLibrary'
+  | 'navigate'
+  | 'goBack'
+  | 'goForward'
+  | 'reload'
+  | 'getStatus'
+  | 'onUrlChanged'
+  | 'onTitleChanged'
+  | 'onTabsUpdated'
 >;
 
 /** Before any tab: nothing loading, nowhere to go. */
@@ -92,6 +100,8 @@ export const askClass = (open: boolean, recording: boolean): string =>
 export class ToolbarViewModel extends ViewModel<ToolbarState> {
   /** The main process. */
   private readonly bridge: ToolbarBridge;
+  /** Last selected tab, to focus a new start page only once. */
+  private activeId: number | undefined;
 
   /** Empty, following the active page; the address starts from the main process's status. */
   constructor(bridge: ToolbarBridge) {
@@ -99,8 +109,17 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
     this.bridge = bridge;
     this.own(bridge.onUrlChanged((url) => this.set({ url })));
     this.own(bridge.onTitleChanged((title) => this.set({ title })));
-    this.own(bridge.onTabsUpdated((tabs) => this.set({ nav: navOf(tabs) })));
+    this.own(bridge.onTabsUpdated((tabs) => this.tabsChanged(tabs)));
     void bridge.getStatus().then((status) => status?.url && this.set({ url: status.url }));
+  }
+
+  /** A newly selected start page is ready for an address, not an agent task. */
+  private tabsChanged(tabs: readonly ActiveTab[]): void {
+    const active = tabs.find((tab) => tab.active);
+    const focus = active?.home && active.id !== this.activeId;
+    this.activeId = active?.id;
+    this.set({ nav: navOf(tabs) });
+    if (focus) this.focusAddress();
   }
 
   /** The person typed in the address bar. */
@@ -111,6 +130,11 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   /** Enter in the address bar: loads what it says (an address or a search). */
   submit(): void {
     void this.bridge.navigate(this.state.url.trim());
+  }
+
+  /** Opens the native history and bookmarks menu above the page. */
+  showLibrary(): void {
+    void this.bridge.showLibrary();
   }
 
   /** Back in the active tab. */

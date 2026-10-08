@@ -4,13 +4,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { FOOTER_HEIGHT } from '../../../../src/shared/constants.ts';
 import { shellLayout } from '../../../../src/main/shell/shell-layout.ts';
 import { CHROME_HEIGHT, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH } from '../../../../src/main/shell/constants.ts';
 
 describe('shellLayout', () => {
   it('gives the page the whole window below the toolbar when the panel is closed', () => {
     const layout = shellLayout(1280, 860, 0);
-    assert.deepEqual(layout.page, { x: 0, y: CHROME_HEIGHT, width: 1280, height: 860 - CHROME_HEIGHT });
+    assert.deepEqual(layout.page, { x: 0, y: CHROME_HEIGHT, width: 1280, height: 860 - CHROME_HEIGHT - FOOTER_HEIGHT });
     assert.equal(layout.reveal, 0);
     assert.equal(layout.compact, false);
   });
@@ -30,9 +31,9 @@ describe('shellLayout', () => {
   it('docks the panel at the bottom of a narrow window', () => {
     const layout = shellLayout(800, 600, 1);
     assert.equal(layout.compact, true);
-    assert.equal(layout.panelHeight, Math.round((600 - CHROME_HEIGHT) * 0.45));
+    assert.equal(layout.panelHeight, Math.round((600 - CHROME_HEIGHT - FOOTER_HEIGHT) * 0.45));
     assert.equal(layout.page.width, 800);
-    assert.equal(layout.page.height, 600 - CHROME_HEIGHT - layout.panelHeight);
+    assert.equal(layout.page.height, 600 - CHROME_HEIGHT - FOOTER_HEIGHT - layout.panelHeight);
   });
 
   it('reveals the panel in proportion to the animation progress', () => {

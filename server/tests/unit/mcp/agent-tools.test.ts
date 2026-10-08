@@ -6,6 +6,8 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerBrowserTools } from '../../../src/mcp/browser-tools.ts';
+import { scriptedOyaBrowser } from '../support/agent.ts';
+import { LIBRARY_TOOL_NAMES } from '../../../src/modules/agent/library-tools.ts';
 import { BROWSER_TOOLS } from '../../../src/modules/agent/tools.ts';
 import { disconnectBrowser } from '../support/fakes.ts';
 import { FakeMcpServer, driveBrowser, stubControl } from '../support/browsers.ts';
@@ -25,6 +27,35 @@ describe('agent tools over MCP', () => {
   afterEach(() => {
     mock.restoreAll();
     disconnectBrowser(B);
+  });
+
+  it('exposes the same local library tools on the per-browser MCP server', async () => {
+    const data = { entries: [], total: 0, next_offset: null };
+    const browser = scriptedOyaBrowser(B, 'key-a', () => ({ ok: true, data }));
+    const server = new FakeMcpServer();
+    registerBrowserTools(server as any, { pick: () => B, oneBrowser: true });
+    assert.ok(LIBRARY_TOOL_NAMES.every((name) => server.tools.has(name)));
+    const reply = await server.call('search_history', { query: 'invoice', limit: 1 });
+    assert.deepEqual(JSON.parse(reply.content[0].text), data);
+    assert.equal(browser.calls[0].action, 'search_history');
+    assert.equal(
+      server.tools.get('search_history').description,
+      BROWSER_TOOLS.find((tool) => tool.function.name === 'search_history').function.description,
+    );
+  });
+
+  it('serves keyboard discovery using the same definition as the agent loop', async () => {
+    const data = { platform: 'darwin', shortcuts: [] };
+    const browser = scriptedOyaBrowser(B, 'key-a', () => ({ ok: true, data }));
+    const server = new FakeMcpServer();
+    registerBrowserTools(server as any, { pick: () => B, oneBrowser: true });
+    const reply = await server.call('list_keyboard_shortcuts', {});
+    assert.deepEqual(JSON.parse(reply.content[0].text), data);
+    assert.equal(browser.calls[0].action, 'list_keyboard_shortcuts');
+    assert.equal(
+      server.tools.get('list_keyboard_shortcuts').description,
+      BROWSER_TOOLS.find((tool) => tool.function.name === 'list_keyboard_shortcuts').function.description,
+    );
   });
 
   it('describes each tool in the words the agent is offered', () => {
@@ -50,6 +81,7 @@ describe('agent tools over MCP', () => {
   it('leaves out the tools this browser cannot run', () => {
     // A CDP browser keeps no console or network log.
     const { server } = tools(() => ({ ok: true }));
+    assert.ok(LIBRARY_TOOL_NAMES.every((name) => !server.tools.has(name)));
     assert.ok(!server.tools.has('read_console') && !server.tools.has('read_network'));
     assert.ok(['go_back', 'hover', 'solve_captcha', 'run_playbook', 'run_task'].every((n) => server.tools.has(n)));
   });

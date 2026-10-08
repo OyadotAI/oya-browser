@@ -4,11 +4,13 @@
  */
 import type { MenuItemConstructorOptions } from 'electron';
 import type { AppServices } from '../app/services.ts';
+import { DefaultBrowser } from '../app/default-browser.ts';
+import { LibraryMenu } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { ZOOM_STEP } from './constants.ts';
 
 /** The services the menu uses. */
-type Deps = Pick<AppServices, 'electron' | 'tabs' | 'control'>;
+type Deps = Pick<AppServices, 'electron' | 'tabs' | 'control' | 'library' | 'persona' | 'shell'>;
 
 /** A menu item's id, label and keys. */
 type ItemName = Pick<MenuItemConstructorOptions, 'id' | 'label' | 'accelerator'>;
@@ -83,11 +85,33 @@ function viewMenu(deps: Deps): MenuItemConstructorOptions {
   return { label: 'View', submenu: [reload, ...viewItems(deps)] };
 }
 
+/** Library is reachable from the native menu and keyboard, not just the toolbar. */
+function libraryMenu(deps: Deps): MenuItemConstructorOptions {
+  const menu = new LibraryMenu(deps);
+  return {
+    label: 'Library',
+    submenu: [
+      humanItem(deps, 'browser-library', 'History and Bookmarks', 'CmdOrCtrl+Y', () => menu.show()),
+      humanItem(deps, 'browser-bookmark', 'Toggle Bookmark', 'CmdOrCtrl+D', () => menu.toggle()),
+    ],
+  };
+}
+
 /** Builds and installs the menu. */
 export function installApplicationMenu(deps: Deps): void {
   const { app, Menu } = deps.electron;
   const mac = process.platform === 'darwin';
   app.setAboutPanelOptions({ applicationName: 'Oya Browser', applicationVersion: app.getVersion() });
   const template = [...(mac ? [MAC_APP_MENU] : []), fileMenu(deps, mac), { role: 'editMenu' as const }];
-  Menu.setApplicationMenu(Menu.buildFromTemplate([...template, viewMenu(deps), { role: 'windowMenu' }]));
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([...template, libraryMenu(deps), viewMenu(deps), { role: 'windowMenu' }, defaultMenu(deps)]),
+  );
+}
+
+/** A persistent route after the welcome screen is dismissed. */
+function defaultMenu(deps: Deps): MenuItemConstructorOptions {
+  return {
+    label: 'Help',
+    submenu: [{ label: 'Make Oya Browser Default…', click: () => void new DefaultBrowser(deps).request() }],
+  };
 }

@@ -6,6 +6,7 @@
 import type { BrowserWindow, HandlerDetails, LoadURLOptions, WindowOpenHandlerResponse } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { isAuthPopup, opensNamedWindow } from './auth-popup.ts';
+import { GmailPopup } from './gmail-popup.ts';
 import { ContextMenu } from './context-menu.ts';
 import { AUTH_POPUP_SIZE, LOCAL_FILE } from './constants.ts';
 import type { Tab, TabView } from './types.ts';
@@ -56,7 +57,7 @@ export class TabWindows {
   wire(tab: Tab): void {
     const contents = tab.view.webContents;
     contents.setWindowOpenHandler((details) => this.open(details, tab));
-    contents.on('did-create-window', (childWindow) => this.adoptPopup(childWindow));
+    contents.on('did-create-window', (childWindow, details) => this.adoptPopup(childWindow, tab, details.url));
     contents.on('context-menu', (_e, params) => this.menu.show(tab.view, params));
   }
 
@@ -85,11 +86,15 @@ export class TabWindows {
   }
 
   /** Protects a window the page opened, and puts it on the tab list so it can be driven. */
-  private adoptPopup(childWindow: BrowserWindow): void {
+  private adoptPopup(childWindow: BrowserWindow, opener: Tab, url: string): void {
     this.deps.protection.protectPopup(childWindow);
     this.deps.tabs.adoptWindow?.(childWindow);
     // A sign-in popup is part of the task: what the person types there is recorded too.
     const adopted: Tab | undefined = this.deps.tabs.list.find((t: Tab) => t.window === childWindow);
-    if (adopted) joinRecording(this.deps.recorder, adopted.view);
+    if (adopted) {
+      adopted.openerId = opener.id;
+      joinRecording(this.deps.recorder, adopted.view);
+    }
+    if (adopted) new GmailPopup(this.deps, childWindow, opener.id, url);
   }
 }
