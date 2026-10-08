@@ -394,6 +394,12 @@ function mainCtx(real = {}) {
     protection: { setupTabCDP: async () => true, resetTabCDP() {}, injectScripts: async () => {}, protectPopup() {} },
     dialogs: new Dialogs(),
     // Ungoverned, as a person's own browser is; a test about governance swaps in a configured one.
+    externalApps: {
+      wire() {},
+      request() {
+        return false;
+      },
+    },
     governance: new Governance(null),
     persona: {
       active: null,

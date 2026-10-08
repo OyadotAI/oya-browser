@@ -288,3 +288,14 @@ describe('Protection', () => {
     await ctx.protection.injectScripts();
   });
 });
+
+it('keeps native WebRTC only for direct unmanaged personas', () => {
+  const ctx = mainCtx({ protection: Protection });
+  ctx.persona.active = generateProfile({ seed: 'media', platform: 'MacIntel' });
+  assert.equal(ctx.protection.personaOptions().injection.nativeWebRTC, true);
+  ctx.persona.active.proxy = { host: 'proxy.test', port: 8080, type: 'http' };
+  assert.equal(ctx.protection.personaOptions().injection.nativeWebRTC, false);
+  ctx.persona.active.proxy = null;
+  ctx.governance.configuration = { policies: [] };
+  assert.equal(ctx.protection.personaOptions().injection.nativeWebRTC, false);
+});

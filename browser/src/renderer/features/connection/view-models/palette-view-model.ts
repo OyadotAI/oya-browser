@@ -13,6 +13,8 @@ import type { UpdatesViewModel } from './updates-view-model.ts';
 
 /** What other features do for the palette. */
 export interface PaletteHost {
+  /** Open the session inbox. */
+  openNotifications?(): void;
   /** Focuses and selects the address bar (the navigation toolbar). */
   focusAddress(): void;
   /** Focuses the Ask box (the chat pane), once the panel shows it. */
@@ -25,6 +27,7 @@ export interface PaletteHost {
 
 /** A command's name. */
 export type CommandId =
+  | 'notifications'
   | 'defaultBrowser'
   | 'shortcuts'
   | 'library'
@@ -58,6 +61,7 @@ export interface Command {
 /** The palette's commands: id, label, and keys after the platform modifier ('' for none). */
 const COMMANDS: readonly (readonly [CommandId, string, string])[] = [
   ['address', 'Focus address bar', 'address'],
+  ['notifications', 'Notifications', 'notifications'],
   ['newTab', 'New tab', 'new-tab'],
   ['ask', 'Ask Oya', 'ask'],
   ['record', 'Record a workflow', 'record'],
@@ -171,6 +175,7 @@ export class PaletteViewModel extends ViewModel<PaletteState> {
     const { bridge, dialog, updates } = this.deps;
     return {
       ...Object.assign({}, this.hostActions(), this.paneActions(), this.libraryActions(), this.browsingActions()),
+      notifications: () => this.deps.host.openNotifications?.(),
       newTab: () => bridge.newTab(),
       account: () => dialog.open(true),
       updates: () => updates.check(),

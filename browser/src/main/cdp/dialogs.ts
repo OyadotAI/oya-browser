@@ -89,6 +89,8 @@ interface DialogReply {
 
 /** What Page.javascriptDialogOpening carries. */
 interface OpeningParams {
+  /** Source frame URL supplied by CDP. */
+  url?: string;
   /** The dialog's type. */
   type: string;
   /** Its text. */
@@ -107,6 +109,13 @@ type Waiter = (value: typeof DIALOG_HELD) => void;
  * second one, and only the active tab is driven. Per-view if that stops holding.
  */
 export class Dialogs {
+  /** Receives informational alerts without changing confirmations or prompts. */
+  private readonly notify: (message: string, url?: string) => void;
+  /** The callback is optional for non-shell drivers. */
+  constructor(notify: (message: string, url?: string) => void = () => {}) {
+    this.notify = notify;
+  }
+
   /** The confirm or prompt held open, if any. */
   private pending: Dialog | null = null;
   /** Sentences about dialogs since the last takeNotes(). */
@@ -169,13 +178,13 @@ export class Dialogs {
   /** One CDP event from a watched debugger. */
   private onEvent(dbg: DialogDebugger, method: string, params: OpeningParams): void {
     if (method === 'Page.javascriptDialogClosed') {
-      this.pending = null;
-      return;
+      return void (this.pending = null);
     }
     if (method !== 'Page.javascriptDialogOpening') return;
     const dialog = { dbg, type: params.type, message: params.message || '', defaultPrompt: params.defaultPrompt };
     if (AUTO_ACCEPT_DIALOGS.has(dialog.type)) this.accept(dialog);
     else this.hold(dialog);
+    if (dialog.type === 'alert') this.notify(dialog.message, params.url);
   }
 
   /** A confirm or prompt: keep it open for the driver and wake every command waiting on one. */

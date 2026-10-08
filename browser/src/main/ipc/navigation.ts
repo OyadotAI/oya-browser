@@ -1,7 +1,7 @@
 /** IPC: the address bar, back/forward/reload, and the tab strip (open, close, switch, move, its menu). */
 import type { AppServices } from '../app/services.ts';
 import type { HandlersOf } from './handle.ts';
-import { LibraryMenu } from '../library/index.ts';
+import { LibraryMenu, addressSuggestions } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
@@ -9,11 +9,12 @@ import { TabMenu } from '../tabs/tab-menu.ts';
 /** The services navigation uses. */
 type Deps = Pick<
   AppServices,
-  'shield' | 'shell' | 'tabs' | 'recorder' | 'control' | 'electron' | 'library' | 'persona'
+  'externalApps' | 'shield' | 'shell' | 'tabs' | 'recorder' | 'control' | 'electron' | 'library' | 'persona'
 >;
 
 /** The channels this group answers. */
 type Channel =
+  | 'address-suggestions'
   | 'show-library'
   | 'navigate'
   | 'go-back'
@@ -30,6 +31,7 @@ type Channel =
 export class NavigationHandlers {
   /** Channel → handler. */
   readonly handlers: HandlersOf<Channel> = {
+    'address-suggestions': (_e, query) => addressSuggestions(this.deps.library, query),
     'show-library': () => new LibraryMenu(this.deps).show(),
     navigate: (_e, url) => this.navigate(url),
     'go-back': () => this.goInHistory('go_back'),
@@ -65,6 +67,8 @@ export class NavigationHandlers {
   /** Loads an address in the active tab, or leaves the start screen for it. */
   private async navigate(url: string): Promise<void> {
     this.requireHuman();
+    const contents = this.deps.tabs.getActiveView()?.webContents || this.deps.shell.window?.webContents;
+    if (this.deps.externalApps.request(url, contents)) return;
     if (!this.deps.shell.browsingMode) return void this.deps.tabs.enterBrowsingMode(url);
     await this.deps.tabs.navigateActive(url);
   }

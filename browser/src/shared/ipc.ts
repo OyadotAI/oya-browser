@@ -156,7 +156,25 @@ export interface AgentEvent {
  * Every call the shell page makes. Each returns a promise of what its handler
  * returns. `toggleDevPanel`'s argument is filled in by the preload.
  */
+export interface AddressSuggestion {
+  /** Safe destination from the current profile's library. */
+  url: string;
+  /** Display name supplied by the page or bookmark. */
+  title: string;
+  /** Why this destination is suggested. */
+  source: 'history' | 'bookmark';
+}
+
+/** Calls available only to the trusted browser shell. */
 export interface ShellCalls {
+  /** Read the current profile's session inbox. */
+  listNotifications(): Promise<import('./notifications.ts').BrowserNotification[]>;
+  /** Mark the visible entries read. */
+  readNotifications(ids: string[]): Promise<import('./notifications.ts').BrowserNotification[]>;
+  /** Dismiss one entry, or clear the inbox. */
+  dismissNotification(id?: string): Promise<import('./notifications.ts').BrowserNotification[]>;
+  /** Bounded local history and bookmark matches; never queries a remote search provider. */
+  addressSuggestions(query: string): Promise<AddressSuggestion[]>;
   /** Opens the OS default-browser choice only after a person asks. */
   makeDefaultBrowser(): Promise<void>;
   /** Opens local bookmarks and browsing history. */
@@ -278,6 +296,8 @@ export interface ShellCalls {
 
 /** Every event the shell page hears, with its payload. */
 export interface ShellEvents {
+  /** The session inbox changed; fetch it through the trusted shell bridge. */
+  onNotificationsChanged: null;
   /** A login import moved on. */
   onMirrorStatus: Payload;
   /** Control changed hands. */
@@ -326,6 +346,12 @@ export interface ShellEvents {
 
 /** The IPC channel of each call. */
 export const CALL_CHANNELS = {
+  /** Current-profile session inbox. */
+  listNotifications: 'list-notifications',
+  /** Read only displayed entries. */
+  readNotifications: 'read-notifications',
+  /** Remove notifications. */
+  dismissNotification: 'dismiss-notification',
   /** Confirm a human handoff without replaying blocked page input. */
   requestTakeover: 'request-takeover',
   /** Project playbook library and replay operations. */
@@ -340,6 +366,7 @@ export const CALL_CHANNELS = {
   /** Reloads the active page. */
   reload: 'reload',
   /** The saved settings. */
+  addressSuggestions: 'address-suggestions',
   makeDefaultBrowser: 'make-default-browser',
   getConfig: 'get-config',
   /** Saves settings and reconnects. */
@@ -445,6 +472,8 @@ export const CALL_CHANNELS = {
 
 /** The IPC channel of each event. */
 export const EVENT_CHANNELS = {
+  /** Inbox contents changed. */
+  onNotificationsChanged: 'notifications-changed',
   /** A login import moved on. */
   onMirrorStatus: 'mirror-status',
   /** Control changed hands. */

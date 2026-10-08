@@ -104,7 +104,9 @@
             ],
             "CFBundleTypeRole": "Viewer"
           }
-        ]
+        ],
+        "NSMicrophoneUsageDescription": "Oya Browser lets websites use your microphone for calls only after you allow it.",
+        "NSCameraUsageDescription": "Oya Browser lets websites use your camera for calls only after you allow it."
       }
     },
     "win": {

@@ -4,21 +4,46 @@
  * the machine's real devices by name, and `navigator.permissions` said
  * "granted" to everything, which no browser does and detectors read in one call.
  *
- * There is no permission prompt in this browser, so what Chrome would ask about
- * is refused, and what Chrome allows unasked is allowed. The page injection
+ * Microphone and camera requests use explicit site and OS consent. Other
+ * sensitive permissions remain refused; ordinary unasked permissions are allowed. The page injection
  * reports a refused permission as Chrome's "prompt" (anonymity/stealth.js).
- * ponytail: no prompt, so a site that needs the camera cannot have it; add a prompt in the shell when a customer needs one.
+ * External app requests remain denied here, but may be delegated to a separate
+ * human-confirmed, allowlisted desktop handoff.
  */
-import type { Session } from 'electron';
+import type { Session, WebContents } from 'electron';
+import type { MediaPermissions } from '../app/media-permissions.ts';
 import { UNASKED } from './constants.ts';
 
 /** Whether `permission` is one Chrome grants without asking. */
 export const unasked = (permission: string): boolean => UNASKED.includes(permission);
 
-/** Refuses what Chrome would prompt for, on requests and on checks alike. Governance, where configured, then refuses everything. */
+/** A denied external protocol may be offered to the explicit native confirmation service. */
+export type ExternalAppRequest = (url: string, contents: WebContents) => void;
+
+/** Only the session permission hooks are required. */
+type PermissionSession = Pick<Session, 'setPermissionRequestHandler' | 'setPermissionCheckHandler'>;
+
+/** Media has an explicit consent path; other sensitive permissions remain denied. Governance overrides both. */
 export function installPermissions(
-  ses: Pick<Session, 'setPermissionRequestHandler' | 'setPermissionCheckHandler'>,
+  ses: PermissionSession,
+  externalApp?: ExternalAppRequest,
+  media?: MediaPermissions,
 ): void {
-  ses.setPermissionRequestHandler((_contents, permission, callback) => callback(unasked(permission)));
-  ses.setPermissionCheckHandler((_contents, permission) => unasked(permission));
+  ses.setPermissionRequestHandler(permissionRequest(externalApp, media));
+  ses.setPermissionCheckHandler((contents, permission, origin, details) =>
+    permission === 'media' ? !!media?.check(contents, origin, details) : unasked(permission),
+  );
+}
+
+/** The exact native request callback type, without re-declaring Electron's union. */
+type RequestHandler = NonNullable<Parameters<Session['setPermissionRequestHandler']>[0]>;
+/** Sensitive media uses explicit consent; all other permission rules stay unchanged. */
+function permissionRequest(externalApp?: ExternalAppRequest, media?: MediaPermissions): RequestHandler {
+  return (contents, permission, callback, details) => {
+    if (permission === 'media' && media)
+      return void media.request(contents, details).then(callback, () => callback(false));
+    callback(unasked(permission));
+    if (permission === 'openExternal' && details && 'externalURL' in details && typeof details.externalURL === 'string')
+      externalApp?.(details.externalURL, contents);
+  };
 }

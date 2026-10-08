@@ -18,11 +18,12 @@ const { buildFingerprintBody, buildWorkerBody } = require('./fingerprint');
  * @param {object} [options]
  * @param {boolean} [options.noPasskeyDialog] - the runtime cannot show a passkey dialog (stealth.js)
  * @param {boolean} [options.noPermissionPrompt] - the runtime refuses what Chrome would prompt for (stealth.js)
+ * @param {boolean} [options.nativeWebRTC] - keep native ICE only for direct, unmanaged desktop browsing
  * @returns {string} source for Page.addScriptToEvaluateOnNewDocument
  */
-function buildInjectionScript(profile, { noPasskeyDialog = false, noPermissionPrompt = false } = {}) {
+function buildInjectionScript(profile, { noPasskeyDialog = false, noPermissionPrompt = false, nativeWebRTC = false } = {}) {
   const parts = [buildMaskPreamble()];
-  if (profile) parts.push(buildFingerprintBody(profile));
+  if (profile) parts.push(buildFingerprintBody(profile, { nativeWebRTC }));
   parts.push(buildStealthBody());
   if (noPasskeyDialog) parts.push(buildPasskeyBody());
   if (noPermissionPrompt) parts.push(buildPermissionsBody());

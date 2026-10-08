@@ -2,6 +2,7 @@
  * Browser tool definitions for the chat LLM, maps to MCP tools / sendCommand.
  */
 import { KEYBOARD_TOOLS } from './keyboard-tools.ts';
+import { NOTIFICATION_TOOLS, NOTIFICATION_TOOL_NAMES } from './notification-tools.ts';
 import { LIBRARY_TOOLS, LIBRARY_TOOL_NAMES } from './library-tools.ts';
 import { RUN_SCRIPT_OUTPUT_CHARS, WAIT_FOR_DEFAULT_MS, WAIT_FOR_MAX_MS } from './constants.ts';
 
@@ -442,6 +443,7 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
   },
   ...PAGE_TOOLS,
   ...LIBRARY_TOOLS,
+  ...NOTIFICATION_TOOLS,
   ...KEYBOARD_TOOLS,
 ];
 
@@ -451,6 +453,7 @@ The real <input type="file"> is normally hidden behind a styled "Choose file" / 
  * history moves. Offering a tool the browser refuses only costs the model a turn.
  */
 const NEEDS: Record<string, string> = {
+  ...Object.fromEntries(NOTIFICATION_TOOL_NAMES.map((name) => [name, name])),
   list_keyboard_shortcuts: 'list_keyboard_shortcuts',
   ...Object.fromEntries(LIBRARY_TOOL_NAMES.map((name) => [name, name])),
   read_console: 'read_console',

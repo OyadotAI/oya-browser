@@ -198,7 +198,7 @@ function buildWebGLBody(profile) {
 }
 
 /** Fingerprint patches. Page scope; assumes the mask preamble (_mark, _noise, _patch, _ensure). */
-function buildFingerprintBody(profile) {
+function buildFingerprintBody(profile, { nativeWebRTC = false } = {}) {
   const p = JSON.stringify(profile);
 
   return `
@@ -340,7 +340,7 @@ function buildFingerprintBody(profile) {
   // ── WebRTC leak prevention ──
   // Empty ICE servers and no host/srflx candidates, so STUN cannot reveal the
   // machine's real address behind the persona's proxy.
-  if (typeof RTCPeerConnection !== 'undefined') {
+  if (${!nativeWebRTC} && typeof RTCPeerConnection !== 'undefined') {
     const OrigRTC = RTCPeerConnection;
     const RTC = function RTCPeerConnection(config, constraints) {
       config = Object.assign({}, config || {}, { iceServers: [] });

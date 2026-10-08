@@ -17,6 +17,9 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { applyTelemetryFlags } from '../anonymity/telemetry.ts';
 import { applyDNSLeakPrevention } from '../anonymity/proxy.ts';
+import { MediaPermissions } from './app/media-permissions.ts';
+import { ExternalApps } from './app/external-apps.ts';
+import { Notifications } from './notifications/index.ts';
 import type { AppServices } from './app/services.ts';
 import { ConfigStore } from './app/config-store.ts';
 import { Persona } from './app/persona.ts';
@@ -129,8 +132,14 @@ ctx.shortcuts = new Shortcuts(ctx);
 ctx.shield = new ControlShield(ctx);
 ctx.layout = new PanelLayout(ctx);
 ctx.overlays = new Overlays(ctx);
+ctx.mediaPermissions = new MediaPermissions(ctx);
+ctx.externalApps = new ExternalApps(ctx);
 ctx.tabs = new TabManager(ctx);
-ctx.dialogs = new Dialogs();
+ctx.notifications = new Notifications({
+  partition: () => ctx.persona.partitionName(),
+  changed: () => ctx.shell.send('notifications-changed', null),
+});
+ctx.dialogs = new Dialogs((message, url) => ctx.notifications.add(message, url));
 ctx.protection = new Protection(ctx);
 ctx.workers = new WorkerCoverage(ctx, () => app.getPath('userData'));
 ctx.persona = new Persona(ctx);

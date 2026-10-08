@@ -7,6 +7,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerBrowserTools } from '../../../src/mcp/browser-tools.ts';
 import { scriptedOyaBrowser } from '../support/agent.ts';
+import { NOTIFICATION_TOOL_NAMES } from '../../../src/modules/agent/notification-tools.ts';
 import { LIBRARY_TOOL_NAMES } from '../../../src/modules/agent/library-tools.ts';
 import { BROWSER_TOOLS } from '../../../src/modules/agent/tools.ts';
 import { disconnectBrowser } from '../support/fakes.ts';
@@ -42,6 +43,28 @@ describe('agent tools over MCP', () => {
       server.tools.get('search_history').description,
       BROWSER_TOOLS.find((tool) => tool.function.name === 'search_history').function.description,
     );
+  });
+
+  it('serves notification tools with the same schemas and handlers as the agent loop', async () => {
+    const data = { entries: [], unread_count: 0, total: 0, next_offset: null, session_only: true };
+    const browser = scriptedOyaBrowser(B, 'key-a', () => ({ ok: true, data }));
+    const server = new FakeMcpServer();
+    registerBrowserTools(server as any, { pick: () => B, oneBrowser: true });
+    for (const name of NOTIFICATION_TOOL_NAMES) {
+      assert.equal(
+        server.tools.get(name).description,
+        BROWSER_TOOLS.find((tool) => tool.function.name === name).function.description,
+      );
+      const args =
+        name === 'list_notifications'
+          ? { unread_only: true }
+          : name === 'mark_notifications_read'
+            ? { ids: ['one'] }
+            : { notification_id: 'one', confirm: true };
+      const reply = await server.call(name, args);
+      assert.deepEqual(JSON.parse(reply.content[0].text), data);
+      assert.deepEqual(browser.calls.at(-1), { action: name, params: args });
+    }
   });
 
   it('serves keyboard discovery using the same definition as the agent loop', async () => {
@@ -82,6 +105,7 @@ describe('agent tools over MCP', () => {
     // A CDP browser keeps no console or network log.
     const { server } = tools(() => ({ ok: true }));
     assert.ok(LIBRARY_TOOL_NAMES.every((name) => !server.tools.has(name)));
+    assert.ok(NOTIFICATION_TOOL_NAMES.every((name) => !server.tools.has(name)));
     assert.ok(!server.tools.has('read_console') && !server.tools.has('read_network'));
     assert.ok(['go_back', 'hover', 'solve_captcha', 'run_playbook', 'run_task'].every((n) => server.tools.has(n)));
   });

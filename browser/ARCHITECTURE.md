@@ -409,3 +409,48 @@ include registers Oya-owned capabilities and removes those on uninstall. Linux
 AppImage users still need an installed desktop entry. OS link delivery (macOS
 open-url and Windows/Linux argv) uses DeepLinks, including startup queuing;
 web links open new protected tabs and cannot interrupt agent control.
+
+### Address completion
+
+The shell-only `address-suggestions` IPC reads the current profile's local
+library; it never contacts a search provider. `AddressCompletion` owns result
+ordering fences, selection and the dedicated `address` overlay. Overlay calls
+are serialized so closing a pending screenshot-backed overlay cannot hide the
+native page permanently. The input is an ARIA combobox with a listbox, keeps
+focus while arrow keys select rows, and ignores Enter during IME composition.
+
+### Session notifications
+
+`main/notifications/` retains a bounded, memory-only alert inbox for the current
+profile. CDP alerts are accepted and copied here, while confirm/prompt behavior
+and agent dialog notes remain unchanged. Profile changes discard prior entries.
+The shell-only IPC exposes list/read/dismiss; change events carry no private text.
+The toolbar bell never steals focus. Its explicit inbox uses a separate native
+overlay owner and the shared focus-trapped Dialog. Cmd/Ctrl+Alt+J opens it and
+appears in both the keyboard guide and the agent-readable shortcut registry.
+
+The same inbox is available through `list_notifications` (bounded pagination,
+unread filtering, no read side effects), `mark_notifications_read` (explicit IDs),
+and `dismiss_notification` (one ID plus confirmation). These commands use normal
+socket control admission; neither reads another profile nor opens the inbox UI.
+
+### External meeting app links
+
+`app/external-apps.ts` handles only validated `zoommtg://*.zoom.us/join` links,
+including the apex host. Tab/frame redirects and window-open requests are stopped
+before opening a broken web tab; shell address-bar input uses the same handler.
+A native Cancel-default confirmation is required for every launch. Only the
+active, human-controlled surface in an unmanaged browser can hand off, with
+control and source rechecked after the prompt. The normal remote navigate/open_tab
+HTTP(S) allowlist is unchanged. No meeting credentials enter logs or prompt text.
+
+### Call media permissions
+
+Microphone/camera requests use `app/media-permissions.ts`: explicit native site
+consent, then macOS device consent. Grants are in-memory and document-scoped;
+checks reject other origins, navigation, agent control and governed runtimes.
+Only active HTTPS same-origin requesters can ask. Media capture is never globally
+granted. Existing streams remain under the site's stop/mute controls; these
+checks govern new access, not forced termination of existing calls. Ordinary
+playback/autoplay policy is unchanged. Direct unmanaged desktop personas retain
+native WebRTC ICE; proxies and managed sessions keep the leak-prevention wrapper.

@@ -8,6 +8,7 @@ export type Shortcut = readonly [string, string, string, Modifiers, string, stri
 /** Bindings are ordered with the preferred discoverable chord first. */
 export const SHORTCUTS: readonly Shortcut[] = [
   ['address', 'Focus address bar', 'Browsing', 'primary', 'L'],
+  ['notifications', 'Notifications', 'Workspace', 'primary-alt', 'J', 'KeyJ'],
   ['reload', 'Reload or stop loading', 'Browsing', 'primary', 'R'],
   ['back', 'Go back', 'Browsing', 'alt', 'ArrowLeft'],
   ['forward', 'Go forward', 'Browsing', 'alt', 'ArrowRight'],

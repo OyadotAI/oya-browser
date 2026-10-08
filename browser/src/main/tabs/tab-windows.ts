@@ -14,7 +14,17 @@ import type { Tab, TabView } from './types.ts';
 /** The services a tab's windows and menu use. */
 export type TabWindowsDeps = Pick<
   AppServices,
-  'tabs' | 'persona' | 'protection' | 'recorder' | 'electron' | 'shell' | 'layout' | 'world' | 'control' | 'config'
+  | 'externalApps'
+  | 'tabs'
+  | 'persona'
+  | 'protection'
+  | 'recorder'
+  | 'electron'
+  | 'shell'
+  | 'layout'
+  | 'world'
+  | 'control'
+  | 'config'
 >;
 
 /** Joins a recording in progress; a page that refuses is logged and tried again on its next load. */
@@ -56,6 +66,7 @@ export class TabWindows {
   /** Wires the window-open handler, popup adoption and the context menu on a new tab. */
   wire(tab: Tab): void {
     const contents = tab.view.webContents;
+    this.deps.externalApps.wire(contents);
     contents.setWindowOpenHandler((details) => this.open(details, tab));
     contents.on('did-create-window', (childWindow, details) => this.adoptPopup(childWindow, tab, details.url));
     contents.on('context-menu', (_e, params) => this.menu.show(tab.view, params));
@@ -68,26 +79,38 @@ export class TabWindows {
    * (adoptPopup) so an agent can still list, switch to and drive them.
    */
   private open(details: HandlerDetails, opener: Tab): WindowOpenHandlerResponse {
-    const webPreferences = { partition: this.deps.persona.partitionName() };
-    if (isAuthPopup(details.url, details.features))
-      return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
-    if (opensNamedWindow(details.frameName))
-      return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
+    if (this.deps.externalApps.request(details.url, opener.view.webContents)) return { action: 'deny' };
+    const popup = this.popupOptions(details);
+    if (popup) return popup;
     // A page cannot load a file: address itself, but a tab the app opens for it could: the page must not get one that way.
     if (!LOCAL_FILE.test(details.url))
       this.markOpener(this.deps.tabs.createTab(details.url, true, loadOptionsFor(details)), opener);
     return { action: 'deny' };
   }
 
+  /** Preserve sign-in and named windows with the opener's persona partition. */
+  private popupOptions(details: HandlerDetails): WindowOpenHandlerResponse | null {
+    const webPreferences = { partition: this.deps.persona.partitionName() };
+    if (isAuthPopup(details.url, details.features))
+      return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
+    if (opensNamedWindow(details.frameName))
+      return { action: 'allow', overrideBrowserWindowOptions: { webPreferences } };
+    return null;
+  }
   /** Notes which tab opened a tab, so what a test run's tabs open closes with them. */
   private markOpener(id: number, opener: Tab): void {
     const tab: Tab | undefined = this.deps.tabs.list.find((t: Tab) => t.id === id);
     if (tab && opener) tab.openerId = opener.id;
   }
 
+  /** Protocol interception is installed before a popup can navigate. */
+  private protectPopup(window: BrowserWindow): void {
+    this.deps.externalApps.wire(window.webContents);
+    this.deps.protection.protectPopup(window);
+  }
   /** Protects a window the page opened, and puts it on the tab list so it can be driven. */
   private adoptPopup(childWindow: BrowserWindow, opener: Tab, url: string): void {
-    this.deps.protection.protectPopup(childWindow);
+    this.protectPopup(childWindow);
     this.deps.tabs.adoptWindow?.(childWindow);
     // A sign-in popup is part of the task: what the person types there is recorded too.
     const adopted: Tab | undefined = this.deps.tabs.list.find((t: Tab) => t.window === childWindow);

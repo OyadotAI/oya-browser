@@ -39,6 +39,12 @@ import type { Governance } from '../identity/governance.ts';
 
 /** The main process's services and the values they share. */
 export interface AppServices {
+  /** Explicit microphone and camera permission prompts. */
+  mediaPermissions: import('./media-permissions.ts').MediaPermissions;
+  /** Human-approved desktop app protocol handoff. */
+  externalApps: import('./external-apps.ts').ExternalApps;
+  /** Session-only alert inbox. */
+  notifications: import('../notifications/index.ts').Notifications;
   /** Local history and bookmarks for the current persona. */
   library: import('../library/index.ts').BrowsingLibrary;
   /** Electron's main-process API; only the composition root imports it. */

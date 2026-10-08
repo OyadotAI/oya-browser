@@ -49,3 +49,26 @@ describe('buildFingerprintBody', () => {
     assert.match(buildFingerprintBody(profile), /if \(__fp\.screen\)/);
   });
 });
+
+it('keeps native ICE opt-in and preserves the protected default injection', () => {
+  const { buildInjectionScript } = require('../../../anonymity/inject.js');
+  const { runInNewContext } = require('node:vm');
+  const profile = generateProfile({ seed: 'media-check', platform: 'MacIntel' });
+  for (const nativeWebRTC of [false, true]) {
+    const source = buildInjectionScript(profile, { nativeWebRTC });
+    assert.doesNotThrow(() => new Function(source));
+    const block = source.slice(source.indexOf('// ── WebRTC leak prevention'), source.indexOf('// ── Timezone'));
+    const calls = [];
+    const RTC = function (config) {
+      calls.push(config);
+      this.setLocalDescription = () => {};
+    };
+    const context = { RTCPeerConnection: RTC, _mark: () => {} };
+    context.window = context;
+    runInNewContext(block, context);
+    const config = { iceServers: [{ urls: 'stun:example.test' }] };
+    new context.RTCPeerConnection(config);
+    assert.equal(calls[0].iceServers.length, nativeWebRTC ? 1 : 0);
+    assert.equal(context.RTCPeerConnection === RTC, nativeWebRTC);
+  }
+});

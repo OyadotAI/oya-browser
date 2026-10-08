@@ -2,13 +2,14 @@
  * The persona's Electron session: the user agent and client hints of its
  * identity (identity.ts), the persona's proxy, and governance.
  */
+import type { MediaPermissions } from '../app/media-permissions.ts';
 import type { App, Session } from 'electron';
 import { configureProxy, type LoginApp, type ProxyConfig } from '../../anonymity/proxy.ts';
 import { watchSession } from '../observe/install.ts';
 import type { Observer } from '../observe/observer.ts';
 import { personaIdentity, type PersonaProfile } from './identity.ts';
 import { ClientHints } from './client-hints.ts';
-import { installPermissions } from './permissions.ts';
+import { installPermissions, type ExternalAppRequest } from './permissions.ts';
 import type { Governance } from './governance.ts';
 
 /** A persona as the session reads it: its device, and the proxy it goes out through. */
@@ -22,6 +23,10 @@ type AppFallback = Pick<App, 'userAgentFallback'> & LoginApp;
 
 /** What else a session is set up with, when the app has it. */
 export interface SessionExtras {
+  /** Site and operating-system consent for microphone and camera. */
+  media?: MediaPermissions;
+  /** Explicit human-confirmed native app handoff, while permission itself stays denied. */
+  externalApp?: ExternalAppRequest;
   /** Collects what pages say and fetch, for the agent to read back. */
   observer?: Observer | null;
   /** The managed egress rules; a governed browser's proxy wins over the persona's. */
@@ -36,25 +41,26 @@ export async function configureSession(
   app: AppFallback,
   ses: Session,
   activeProfile: SessionProfile | null,
-  { observer = null, governance = null }: SessionExtras = {},
+  extras: SessionExtras = {},
 ): Promise<void> {
   presentIdentity(app, ses, activeProfile);
-  await routeTraffic(app, ses, activeProfile, governance);
-  if (observer) watchSession(observer, ses);
+  await routeTraffic(app, ses, activeProfile, extras);
+  if (extras.observer) watchSession(extras.observer, ses);
 }
 
-/** The persona's proxy (or governance's, which wins), then governance's egress rules. */
+/** Deny sensitive permissions before proxy setup, then install managed egress and permission rules. */
 async function routeTraffic(
   app: LoginApp,
   ses: Session,
   activeProfile: SessionProfile | null,
-  governance: Governance | null,
+  { governance = null, externalApp, media }: SessionExtras,
 ): Promise<void> {
+  installPermissions(ses, externalApp, media);
   await configureProxy(ses, governance?.configuration?.proxy || activeProfile?.proxy, app);
   governance?.install(ses);
 }
 
-/** The persona's user agent, client hints and permissions on the session (and the app's fallback). */
+/** The persona's user agent and client hints on the session (and the app's fallback). */
 function presentIdentity(app: AppFallback, ses: Session, activeProfile: SessionProfile | null): void {
   // Telemetry blocking is handled by Chromium flags (applyTelemetryFlags).
   // Domain-level blocking via onBeforeRequest was removed, it interfered
@@ -67,5 +73,4 @@ function presentIdentity(app: AppFallback, ses: Session, activeProfile: SessionP
   // service worker and flags the page and worker disagreeing.
   app.userAgentFallback = identity.userAgent;
   new ClientHints(identity.hints).install(ses);
-  installPermissions(ses);
 }

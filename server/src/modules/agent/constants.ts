@@ -120,3 +120,10 @@ export const STOPPED_TEXT = 'FAILED: stopped by the user.';
 export const LIBRARY_QUERY_MAX = 100;
 /** Maximum title or search input accepted by the local library. */
 export const LIBRARY_QUERY_TEXT_MAX = 500;
+
+/** Notification pagination and mutation bounds match the desktop. */
+export const NOTIFICATION_PAGE_MAX = 50;
+/** Maximum explicit IDs in one acknowledgement. */
+export const NOTIFICATION_IDS_MAX = 100;
+/** Maximum length of one notification ID. */
+export const NOTIFICATION_ID_MAX = 128;

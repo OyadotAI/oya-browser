@@ -90,3 +90,15 @@ describe('dialogs', () => {
     assert.ok(!DIALOG_SAFE_ACTIONS.has('click'));
   });
 });
+
+it('sends only informational alerts to the shell inbox and keeps agent notes', () => {
+  const seen = [];
+  const dialogs = new Dialogs((message, url) => seen.push({ message, url }));
+  const dbg = new FakeDebugger();
+  dialogs.watch(dbg);
+  for (const type of ['alert', 'beforeunload', 'confirm', 'prompt'])
+    dbg.event('Page.javascriptDialogOpening', { type, message: 'Reminder', url: 'https://example.test/' });
+  assert.deepEqual(seen, [{ message: 'Reminder', url: 'https://example.test/' }]);
+  assert.equal(dbg.sent.length, 2);
+  assert.match(dialogs.takeNotes(), /Reminder/);
+});

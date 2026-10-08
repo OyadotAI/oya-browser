@@ -5,6 +5,7 @@
  * becoming Stop), and the page's title for the window. Other features ask
  * it to focus the address bar (the command palette's Cmd/Ctrl L).
  */
+import { AddressCompletion } from './address-completion.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { TabSummary } from '../../../../shared/ipc.ts';
@@ -57,6 +58,9 @@ export interface NavLook {
 /** The parts of the bridge the toolbar uses. */
 export type ToolbarBridge = Pick<
   OyaBrowser,
+  | 'addressSuggestions'
+  | 'showOverlay'
+  | 'hideOverlay'
   | 'showLibrary'
   | 'navigate'
   | 'goBack'
@@ -98,6 +102,8 @@ export const askClass = (open: boolean, recording: boolean): string =>
 
 /** The navigation toolbar. */
 export class ToolbarViewModel extends ViewModel<ToolbarState> {
+  /** The local address dropdown, with its own asynchronous lifecycle. */
+  readonly completion: AddressCompletion;
   /** The main process. */
   private readonly bridge: ToolbarBridge;
   /** Last selected tab, to focus a new start page only once. */
@@ -107,6 +113,8 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   constructor(bridge: ToolbarBridge) {
     super({ url: '', title: '', nav: IDLE, focusRequest: 0 });
     this.bridge = bridge;
+    this.completion = new AddressCompletion(bridge);
+    this.own(() => this.completion.dispose());
     this.own(bridge.onUrlChanged((url) => this.set({ url })));
     this.own(bridge.onTitleChanged((title) => this.set({ title })));
     this.own(bridge.onTabsUpdated((tabs) => this.tabsChanged(tabs)));
@@ -117,6 +125,7 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   private tabsChanged(tabs: readonly ActiveTab[]): void {
     const active = tabs.find((tab) => tab.active);
     const focus = active?.home && active.id !== this.activeId;
+    if (active?.id !== this.activeId) this.completion.dismiss();
     this.activeId = active?.id;
     this.set({ nav: navOf(tabs) });
     if (focus) this.focusAddress();
@@ -125,11 +134,13 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   /** The person typed in the address bar. */
   edit(url: string): void {
     this.set({ url });
+    void this.completion.search(url);
   }
 
   /** Enter in the address bar: loads what it says (an address or a search). */
-  submit(): void {
-    void this.bridge.navigate(this.state.url.trim());
+  submit(destination = this.completion.selectedUrl ?? this.state.url): void {
+    this.completion.dismiss();
+    void this.bridge.navigate(destination.trim());
   }
 
   /** Opens the native history and bookmarks menu above the page. */

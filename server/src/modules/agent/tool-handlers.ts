@@ -10,6 +10,7 @@ import { elementOf, rememberHandle, setElements } from './recorder.ts';
 import { analysisText, elementList } from './element-index.ts';
 import { noteAnalysis } from './changes.ts';
 import { ELEMENT_GONE, byId, withControls } from './controls.ts';
+import { NOTIFICATION_TOOL_HANDLERS } from './notification-tool-handlers.ts';
 import { LIBRARY_TOOL_HANDLERS } from './library-tool-handlers.ts';
 import { PAGE_TOOL_HANDLERS } from './page-tool-handlers.ts';
 import { NAVIGATE_TIMEOUT_MS, PAGE_FORMAT } from './constants.ts';
@@ -263,5 +264,6 @@ export const TOOL_HANDLERS: Record<string, ToolHandler> = {
   close_tab: closeTab,
   ...PAGE_TOOL_HANDLERS,
   ...LIBRARY_TOOL_HANDLERS,
+  ...NOTIFICATION_TOOL_HANDLERS,
   list_keyboard_shortcuts: listKeyboardShortcuts,
 };

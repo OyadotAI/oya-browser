@@ -116,7 +116,7 @@ describe('IPC handlers', () => {
   it('enters browsing mode on the first navigation', async () => {
     let entered;
     ctx.shell.browsingMode = false;
-    ctx.tabs = { enterBrowsingMode: (url) => (entered = url) };
+    ctx.tabs = { getActiveView: () => null, enterBrowsingMode: (url) => (entered = url) };
     assert.equal(await call('navigate', 'a.test'), undefined);
     assert.equal(entered, 'a.test');
   });

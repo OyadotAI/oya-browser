@@ -151,3 +151,26 @@ describe('the Ask button', () => {
     assert.equal(askClass(true, true), 'dev-btn agent-button active recording');
   });
 });
+
+/** Completion changes navigation only after deliberate selection. */
+it('submits a selected suggestion and closes the dropdown', async () => {
+  const { fake, vm } = toolbar({
+    addressSuggestions: [{ url: 'https://example.test/', title: 'Example', source: 'history' }],
+  });
+  vm.edit('exam');
+  await settle();
+  vm.completion.move(1);
+  vm.submit();
+  assert.deepEqual(fake.called('navigate'), [['https://example.test/']]);
+  assert.equal(vm.completion.state.open, false);
+});
+it('dismisses suggestions when the active tab changes', async () => {
+  const { fake, vm } = toolbar({
+    addressSuggestions: [{ url: 'https://example.test/', title: 'Example', source: 'history' }],
+  });
+  fake.emit('onTabsUpdated', [active()]);
+  vm.edit('exam');
+  await settle();
+  fake.emit('onTabsUpdated', [active({ id: 2 })]);
+  assert.equal(vm.completion.state.open, false);
+});

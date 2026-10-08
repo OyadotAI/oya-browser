@@ -56,6 +56,8 @@ export interface UserAgentOverride {
 
 /** Options for the page injection (inject.js). */
 export interface InjectionOptions {
+  /** Direct, unmanaged desktop browsing may use native call connectivity. */
+  nativeWebRTC?: boolean;
   /** The runtime cannot show a passkey dialog. */
   noPasskeyDialog?: boolean;
   /** The runtime refuses what Chrome would prompt for. */

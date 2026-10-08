@@ -29,6 +29,9 @@ const CDP = { oya: false, cdp: true };
 
 /** Every action, by the one spelling the SDK sends. */
 export const VOCABULARY: Record<string, Action> = {
+  dismiss_notification: OYA,
+  list_notifications: OYA,
+  mark_notifications_read: OYA,
   list_keyboard_shortcuts: OYA,
   search_history: OYA,
   list_bookmarks: OYA,

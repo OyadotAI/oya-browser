@@ -94,7 +94,7 @@ const popupProtectionFailed: Failure = (what, e) => {
 };
 
 /** Electron has no passkey dialog and no permission prompt: the injection answers both as Chrome would (stealth.js). */
-const DESKTOP_INJECTION = { noPasskeyDialog: true, noPermissionPrompt: true };
+const DESKTOP_INJECTION = { noPasskeyDialog: true, noPermissionPrompt: true, nativeWebRTC: false };
 /** How the persona is applied in the desktop app: the window owns the screen, and the injection is the desktop's. */
 const DESKTOP_APPLIER = { screen: false, injection: DESKTOP_INJECTION };
 
@@ -236,6 +236,17 @@ export class Protection {
     return createPersonaApplier({ ...port, ...persona, onError: fail }).page();
   }
 
+  /** Only direct, unmanaged browsing may expose native ICE connectivity. */
+  private desktopOptions(profile: Profile, active: NonNullable<AppServices['persona']['active']>): PersonaOptions {
+    const nativeWebRTC = !this.deps.governance.configuration && !exitProxy(active, null);
+    return {
+      ...DESKTOP_APPLIER,
+      profile,
+      userAgent: personaIdentity(active).override,
+      injection: { ...DESKTOP_INJECTION, nativeWebRTC },
+    };
+  }
+
   /**
    * How the active persona is applied in this browser, the same for its tabs and
    * its workers (workers.ts), so a page and its service worker agree; null when
@@ -248,7 +259,7 @@ export class Protection {
       atThisExit(active, this.deps.persona.exitZone, this.deps.governance.configuration?.proxy),
       this.deps.config?.values,
     );
-    return { ...DESKTOP_APPLIER, profile, userAgent: personaIdentity(active).override };
+    return this.desktopOptions(profile, active);
   }
 
   /**

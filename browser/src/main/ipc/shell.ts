@@ -7,10 +7,13 @@ import { FORMATS, DEFAULT_FORMAT } from '../../page/render.ts';
 import { THEMES } from './constants.ts';
 
 /** The services the shell handlers use. */
-type Deps = Pick<AppServices, 'overlays' | 'layout' | 'config' | 'shell' | 'electron'>;
+type Deps = Pick<AppServices, 'overlays' | 'layout' | 'config' | 'shell' | 'electron' | 'notifications'>;
 
 /** The channels this group answers. */
 type Channel =
+  | 'list-notifications'
+  | 'read-notifications'
+  | 'dismiss-notification'
   | 'make-default-browser'
   | 'backdrop-ready'
   | 'show-overlay'
@@ -31,6 +34,9 @@ const PREFERENCES: Readonly<Record<string, readonly unknown[]>> = {
 export class ShellPageHandlers {
   /** Channel → handler. */
   readonly handlers: HandlersOf<Channel> = {
+    'list-notifications': () => this.deps.notifications.list(),
+    'read-notifications': (_e, ids) => this.deps.notifications.read(ids),
+    'dismiss-notification': (_e, id) => this.deps.notifications.dismiss(id),
     'make-default-browser': () => new DefaultBrowser(this.deps).request(),
     'backdrop-ready': (_e, token) => this.deps.overlays.backdropReady(token),
     'show-overlay': (_e, name) => this.deps.overlays.show(name),

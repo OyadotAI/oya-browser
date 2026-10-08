@@ -4,6 +4,7 @@
  * also order the stylesheets: the design system's, the panel's, then each
  * feature's, after the page-wide ones app/main.tsx loads first.
  */
+import { NotificationsButton, NotificationsCenter } from '../features/notifications/index.ts';
 import { BrowserFooter } from './browser-footer.tsx';
 import { useViewModel } from '../hooks/index.ts';
 import { IconButton } from '../ui/index.ts';
@@ -66,6 +67,7 @@ function BrowserChrome({ vms }: ShellRootProps) {
       />
       <TabCard vm={tabs.card} />
       <Toolbar vm={vms.toolbar} panel={vms.panel} shell={vms.shell}>
+        <NotificationsButton vm={vms.notifications} />
         <UpdatePill vm={c.updates} />
         <ConnectionPill vm={c.pill} />
         <ControlBar vm={vms.control} />
@@ -116,6 +118,7 @@ function Dialogs({ vms }: ShellRootProps) {
   const models = { dialog: c.dialog, account: c.account, sync: c.sync, imports: c.imports, profile: c.profile };
   return (
     <>
+      <NotificationsCenter vm={vms.notifications} />
       <ReconnectOverlay vm={c.reconnect} />
       <ShellDialog palette={c.palette} reconnect={c.reconnect} footer={footer} {...models} />
     </>

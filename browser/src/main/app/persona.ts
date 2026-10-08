@@ -8,7 +8,7 @@ import type { AppServices } from './services.ts';
 import { addressOf } from '../tabs/home.ts';
 import { LoginState, type Origins } from '../../page/login-state.ts';
 import { ProfileStore } from '../../anonymity/profile-store.ts';
-import { configureSession, type SessionProfile } from '../identity/session.ts';
+import { configureSession, type SessionProfile, type SessionExtras } from '../identity/session.ts';
 import { ExitZone } from '../identity/exit-zone.ts';
 import { exitProxy } from '../tabs/protection.ts';
 import { NOISE_SEED_DIGITS } from './constants.ts';
@@ -16,7 +16,18 @@ import { NOISE_SEED_DIGITS } from './constants.ts';
 /** The services the persona uses. */
 type Deps = Pick<
   AppServices,
-  'config' | 'electron' | 'observer' | 'workers' | 'socket' | 'shell' | 'tabs' | 'cookies' | 'protection' | 'governance'
+  | 'mediaPermissions'
+  | 'externalApps'
+  | 'config'
+  | 'electron'
+  | 'observer'
+  | 'workers'
+  | 'socket'
+  | 'shell'
+  | 'tabs'
+  | 'cookies'
+  | 'protection'
+  | 'governance'
 >;
 
 /** A noise seed, absent on a device mirrored from the real machine. */
@@ -179,10 +190,21 @@ export class Persona {
     await Promise.allSettled([session.cookies.flushStore(), session.flushStorageData()]);
   }
 
+  /** Keep protocol prompting injected through the persona session boundary. */
+  private sessionExtras(): SessionExtras {
+    const { observer, governance, mediaPermissions: media } = this.deps;
+    return {
+      observer,
+      governance,
+      media,
+      externalApp: (url, contents) => void this.deps.externalApps.request(url, contents),
+    };
+  }
+
   /** Configure the persistent browser session, user-agent, cookies, privacy. */
   async setupBrowserSession(): Promise<void> {
-    const { observer, governance } = this.deps;
-    await configureSession(this.deps.electron.app, this.session(), this.active, { observer, governance });
+    const { governance } = this.deps;
+    await configureSession(this.deps.electron.app, this.session(), this.active, this.sessionExtras());
     // Only a proxied persona asks: without one the zone is this machine's own, known already.
     const proxy = exitProxy(this.active, governance.configuration?.proxy);
     this.exitZone = proxy ? await this.zone.timezone(this.session(), proxy) : null;

@@ -12,11 +12,26 @@ import { RESULT_CODES } from './constants.ts';
 /** What the commands use: the shell, the tabs and page actions, the socket, and the recorder and studio. */
 export type CommandDeps = Pick<
   AppServices,
-  'shell' | 'tabs' | 'actions' | 'socket' | 'workspace' | 'recorder' | 'observer' | 'dialogs' | 'library'
+  | 'shell'
+  | 'tabs'
+  | 'actions'
+  | 'socket'
+  | 'workspace'
+  | 'recorder'
+  | 'observer'
+  | 'dialogs'
+  | 'library'
+  | 'notifications'
 >;
 
 /** A command's arguments: a page command's, plus those of the commands answered here. */
 export interface RemoteParams extends CommandParams {
+  /** List unread inbox entries without changing their state. */
+  unread_only?: boolean;
+  /** Explicit inbox entries to mark read. */
+  ids?: string[];
+  /** The one notification to dismiss; omission never clears the inbox. */
+  notification_id?: string;
   /** Local history/bookmark substring search. */
   query?: string;
   /** Matching library entries to skip. */

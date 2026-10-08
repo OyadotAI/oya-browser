@@ -5,6 +5,7 @@
  * record button, the studio's record button goes through the control bar).
  * Views receive these instances; nothing else constructs a ViewModel.
  */
+import { NotificationsViewModel } from '../features/notifications/index.ts';
 import type { OyaBrowser } from '../core/bridge.ts';
 import { ShellViewModel } from './shell-view-model.ts';
 import { PanelViewModel, type FrameClock } from './panel/panel-view-model.ts';
@@ -64,6 +65,8 @@ const focusById = (frames: FrameClock, id: string) => () =>
 
 /** Every ViewModel of the shell page. */
 export class ShellViewModels {
+  /** Session notification inbox. */
+  readonly notifications: NotificationsViewModel;
   /** The page's environment. */
   readonly env: PageEnvironment;
   /** Connected, mode, start page, recording. */
@@ -96,6 +99,7 @@ export class ShellViewModels {
   /** Builds them all over `env`, in the order they need each other. */
   constructor(env: PageEnvironment) {
     this.env = env;
+    this.notifications = new NotificationsViewModel(env.bridge);
     Object.assign(this, coreModels(env));
     Object.assign(this, featureModels(this));
     this.playbooks = new PlaybooksViewModel(env.bridge, this.panel);
@@ -105,7 +109,7 @@ export class ShellViewModels {
   /** Stops every subscription and timer. */
   dispose(): void {
     const all = [this.shell, this.panel, this.control, this.ask, this.studio];
-    const tools = [this.toolbar, this.start, this.routines, this.playbooks];
+    const tools = [this.notifications, this.toolbar, this.start, this.routines, this.playbooks];
     const grouped = [this.chrome, this.tabs, this.inspect, this.connection].flatMap((group) => Object.values(group));
     for (const vm of [...all, ...tools, ...grouped]) vm.dispose();
   }
@@ -250,6 +254,7 @@ function connectImportOffer<T extends { /** Login import invitation. */ imports:
 function paletteHost(root: ShellViewModels) {
   return {
     focusAddress: () => root.toolbar.focusAddress(),
+    openNotifications: () => root.notifications.open(),
     openModels: () => void root.panel.open('chat').then(() => root.ask.model.openCard()),
     focusChat: focusById(root.env.frames, 'chat-input'),
     recordButton: () => void root.studio.actions.recordShortcut(),

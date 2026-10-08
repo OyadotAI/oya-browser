@@ -29,3 +29,6 @@ export const TEXT = {
 
 /** The key that sends the address bar. */
 export const SUBMIT_KEY = 'Enter';
+
+/** A dedicated overlay prevents native page views from covering the suggestions. */
+export const ADDRESS_OVERLAY = 'address';

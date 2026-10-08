@@ -6,6 +6,22 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Agent-loop and MCP notification tools read the toolbar inbox, mark selected entries read, and dismiss a specific notification with explicit confirmation.
+
+- Add a toolbar notification inbox for non-blocking page alerts, unread counts, read/clear controls, and a keyboard shortcut. Confirmations and prompts stay explicit.
+
+- Address-bar autocomplete from the current profile's local history and bookmarks, with prefix ranking, deduplication, arrow-key selection, Enter to open, and Escape to dismiss. Typed queries are not sent to a remote suggestion provider.
+
+### Fixed
+
+- Add explicit microphone/camera permission prompts and macOS capture declarations; restore native WebRTC for direct unmanaged browsing while preserving proxy/managed leak protection.
+
+- Zoom meeting app links now offer an explicit Open Zoom handoff from page navigation, redirects, popups, and the address bar, without replacing the meeting page.
+
+- Fix Windows installer compilation by correctly escaping quotes in the default-browser registration commands, preserving executable paths with spaces and URL arguments.
+
 ## [1.0.164](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.164) · 2026-10-08
 
 ### Added

@@ -1,0 +1,111 @@
+/** Notification center follows the shell's existing surface and typography tokens. */
+.notifications-button {
+  position: relative;
+}
+.notifications-badge {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  border-radius: 12px;
+  padding: 1px 4px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 10px;
+  pointer-events: none;
+}
+.notifications-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.notifications-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: #10191133;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 100px 16px 40px;
+  -webkit-app-region: no-drag;
+}
+.notifications-overlay[hidden] {
+  display: none;
+}
+.notifications-panel {
+  width: min(440px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.notifications-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+}
+.notifications-panel h2 {
+  margin: 0;
+  font-size: 17px;
+}
+.notifications-panel header p,
+.notification-meta time {
+  opacity: 0.65;
+  font-size: 11px;
+}
+.notifications-actions {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 20px 16px;
+}
+.notifications-panel button {
+  font: inherit;
+  cursor: pointer;
+}
+.notifications-panel button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.notifications-panel ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.notifications-panel li {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+.notifications-panel li.unread {
+  border-left-color: currentColor;
+}
+.notification-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.notifications-panel li p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  font-size: 13px;
+  margin: 10px 0;
+}
+.notifications-empty {
+  padding: 32px 24px 44px;
+  text-align: center;
+}
+.notifications-empty p {
+  font-size: 13px;
+  opacity: 0.65;
+  line-height: 1.6;
+}

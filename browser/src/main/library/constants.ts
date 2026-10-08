@@ -25,3 +25,6 @@ export const QUERY_MAX_LIMIT = 100;
 export const QUERY_MAX_LENGTH = 500;
 /** Maximum display title accepted from an agent or returned in search. */
 export const BOOKMARK_TITLE_LENGTH = 500;
+
+/** Keep the omnibox dropdown small enough for short windows. */
+export const ADDRESS_SUGGESTION_LIMIT = 8;

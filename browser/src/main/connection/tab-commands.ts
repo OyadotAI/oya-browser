@@ -3,6 +3,7 @@
  * recording and workflow playback. Command → handler(runner, id, params); each
  * answers through runner.sendResult.
  */
+import { NOTIFICATION_COMMANDS } from './notification-commands.ts';
 import { SHORTCUT_COMMANDS } from './shortcut-commands.ts';
 import { LIBRARY_COMMANDS } from './library-commands.ts';
 import { normalizeDraft } from '../../workflow/index.ts';
@@ -90,6 +91,7 @@ async function openTab(runner: CommandRunner, id: CommandId | undefined, params?
 /** Command → handler, for commands that do not need the active page. */
 export const TAB_COMMANDS: Record<string, TabHandler> = {
   ...LIBRARY_COMMANDS,
+  ...NOTIFICATION_COMMANDS,
   ...SHORTCUT_COMMANDS,
   workflow: playWorkflow,
   record: async (runner, id, params) => {

@@ -16,6 +16,7 @@ const NOT_PAGES = new Set([
   'read_network',
   'read_console',
   'list_tabs',
+  'list_notifications',
   'search_history',
   'list_bookmarks',
   'list_closed_tabs',
