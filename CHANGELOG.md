@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.164](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.164) · 2026-10-08
+
 ### Added
 
 - Profile-local browsing history and bookmarks, with agent-loop and MCP tools for searching, saving, removing, clearing, and reopening recent tabs.
