@@ -8,7 +8,7 @@
 /* global window, document */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -59,13 +59,15 @@ try {
   // The console's move: OpenAI, its own key, GPT-4.1.
   await setConfig({ llm_provider: 'openai', openai_api_key: 'sk-console-1234', chat_model: 'gpt-4.1' });
 
+  const profile = await mkdtemp(join(tmpdir(), 'oya-model-sync-'));
+  await writeFile(join(profile, 'config.json'), JSON.stringify({ ui: { importOffered: true } }));
   app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
     args: [fileURLToPath(new URL('../../', import.meta.url))],
     cwd: fileURLToPath(new URL('../../', import.meta.url)),
     env: {
       ...process.env,
-      OYA_USER_DATA_DIR: await mkdtemp(join(tmpdir(), 'oya-model-sync-')),
+      OYA_USER_DATA_DIR: profile,
       OYA_API_KEY: KEY,
       OYA_SERVER_URL: `ws://127.0.0.1:${PORT}/ws`,
       OYA_REMOTE_DEBUGGING_PORT: '0',

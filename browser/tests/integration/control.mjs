@@ -5,7 +5,7 @@
  */
 /* global window, document, getComputedStyle, innerWidth */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -14,6 +14,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { _electron as electron } from '../../../ui/node_modules/playwright/index.mjs';
 const profile = await mkdtemp(join(tmpdir(), 'oya-control-ui-'));
+await writeFile(join(profile, 'config.json'), JSON.stringify({ ui: { importOffered: true } }));
 const fixture = createServer((_req, res) => res.end('<!doctype html><input id="field" autofocus>'));
 await new Promise((resolve) => fixture.listen(0, '127.0.0.1', resolve));
 const fixtureUrl = `http://127.0.0.1:${fixture.address().port}/`;

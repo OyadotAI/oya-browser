@@ -65,7 +65,7 @@ let app;
 try {
   await until(async () => (await fetch(`${BASE}/health`)).ok, 'the server');
   const profile = await mkdtemp(join(tmpdir(), 'oya-routines-app-'));
-  await writeFile(join(profile, 'config.json'), JSON.stringify({ routines: [LEGACY] }));
+  await writeFile(join(profile, 'config.json'), JSON.stringify({ routines: [LEGACY], ui: { importOffered: true } }));
   app = await electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
     args: [fileURLToPath(new URL('../../', import.meta.url))],

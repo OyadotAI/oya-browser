@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -71,8 +71,9 @@ async function stopServer(child) {
 }
 
 /** Launches the real app, connected to the local server. */
-function launchApp(userData) {
+async function launchApp(userData) {
   const env = { OYA_USER_DATA_DIR: userData, OYA_SERVER_URL: `ws://127.0.0.1:${PORT}/ws`, OYA_API_KEY: KEY };
+  await writeFile(join(env.OYA_USER_DATA_DIR, 'config.json'), JSON.stringify({ ui: { importOffered: true } }));
   return electron.launch({
     executablePath: createRequire(import.meta.url)('electron'),
     args: [BROWSER_DIR],

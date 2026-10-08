@@ -16,6 +16,7 @@ import { _electron as electron } from '../../../ui/node_modules/playwright/index
 import { shellLayout } from '../../src/main/shell/shell-layout.ts';
 
 const profile = await mkdtemp(join(tmpdir(), 'oya-shell-test-'));
+await writeFile(join(profile, 'config.json'), JSON.stringify({ ui: { importOffered: true } }));
 const output = process.env.OYA_SHELL_SCREENSHOTS || join(tmpdir(), 'oya-desktop-redesign');
 await mkdir(output, { recursive: true });
 const fixture = `<!doctype html><meta charset="utf-8"><title>Member lookup · Northline</title><link rel="icon" href="/icon.svg"><style>
@@ -258,6 +259,7 @@ try {
       width,
     );
     await page.waitForFunction((width) => innerWidth === width, width);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.evaluate(() => {
       window.motionFrames = [];
       window.oyaBrowser.onShellLayout((layout) => window.motionFrames.push(layout));
