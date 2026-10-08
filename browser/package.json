@@ -1,6 +1,6 @@
 {
   "name": "oya-browser",
-  "version": "1.0.164",
+  "version": "1.0.165",
   "description": "AI-controlled browser, your real browser as an MCP server",
   "main": "out/main/index.js",
   "author": "Oya <hello@oya.ai>",

@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.165](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.165) · 2026-10-08
+
 ### Added
 
 - Agent-loop and MCP notification tools read the toolbar inbox, mark selected entries read, and dismiss a specific notification with explicit confirmation.
