@@ -24,6 +24,8 @@ export interface ImportNote {
 export interface ImportState {
   /** Whether the server is connected: an import needs somewhere to go. */
   connected: boolean;
+  /** First-login invitation remains until accepted or dismissed. */
+  offer: boolean;
   /** An import is running. */
   running: boolean;
   /** Finished imports, newest first. */
@@ -37,7 +39,10 @@ export interface ImportState {
 }
 
 /** The parts of the bridge imports use. */
-export type ImportBridge = Pick<OyaBrowser, 'importSources' | 'reimportBrowser' | 'onMirrorStatus' | 'onWsStatus'>;
+export type ImportBridge = Pick<
+  OyaBrowser,
+  'importSources' | 'reimportBrowser' | 'onMirrorStatus' | 'onWsStatus' | 'getUiPreferences' | 'saveUiPreferences'
+>;
 
 /** How much one import brought: sites when it counted them, else cookies. */
 export function importAmount(record: ImportRecord): string {
@@ -74,18 +79,35 @@ export function importStatus(state: ImportState): ImportNote {
 export const earlierImports = (state: ImportState): ImportRecord[] =>
   state.history.slice(1, C.EARLIER_IMPORTS_SHOWN + 1);
 
+/** Initial invitation and discovery state before any IPC replies. */
+function initialImportState(): ImportState {
+  const note: ImportNote = { text: '', kind: '' };
+  return { offer: false, connected: false, running: false, history: [], sources: null, chosen: '', note };
+}
+
+/** A partial import says what failed instead of silently claiming complete success. */
+function importResult(status: MirrorStatus): string {
+  if (status.warnings?.length) return `Imported with warnings: ${status.warnings.join(' ')}`;
+  return status.cookies ? TEXT.importDone : 'No logins were found. You may need to sign in to your sites in Oya.';
+}
+
 /** Importing logins from another browser. */
 export class ImportViewModel extends ViewModel<ImportState> {
   /** The main process. */
   private readonly bridge: ImportBridge;
+  /** Opens account settings when the first-login invitation is ready. */
+  onOffer?: () => void;
+  /** A loaded preference prevents reconnects from offering import again. */
+  private offered = true;
 
   /** No history, offline, then lists the browsers on this computer and follows imports and the connection. */
   constructor(bridge: ImportBridge) {
-    super({ connected: false, running: false, history: [], sources: null, chosen: '', note: { text: '', kind: '' } });
+    super(initialImportState());
     this.bridge = bridge;
     this.own(bridge.onWsStatus((status) => this.onStatus(status)));
     this.own(bridge.onMirrorStatus((status) => this.onMirror(shape<MirrorStatus>(status))));
     void this.load();
+    void this.loadOffer();
   }
 
   /** Lists the browsers found on this computer, choosing the first (the person's default). */
@@ -93,6 +115,7 @@ export class ImportViewModel extends ViewModel<ImportState> {
     const listed = await this.bridge.importSources().catch(() => []);
     const sources = (listed ?? []).map((source) => shape<ImportSource>(source));
     this.set({ sources, chosen: sources[0]?.id ?? '' });
+    this.offerIfReady();
   }
 
   /** Takes the import history the main process kept. */
@@ -103,6 +126,7 @@ export class ImportViewModel extends ViewModel<ImportState> {
   /** The connection came or went. A successful import reconnects, and its summary outlives that. */
   onStatus(status: ConnectionStatus): void {
     this.set({ connected: !!status.connected });
+    this.offerIfReady();
   }
 
   /** A browser was chosen in the list. */
@@ -113,6 +137,8 @@ export class ImportViewModel extends ViewModel<ImportState> {
   /** Starts the import of the chosen browser; its progress arrives through onMirrorStatus. */
   async start(): Promise<void> {
     const name = this.state.sources?.find((s) => s.id === this.state.chosen)?.name ?? 'your browser';
+    if (this.state.running) return;
+    void this.dismissOffer();
     this.set({ running: true, note: { text: `Reading your logins from ${name}…`, kind: '' } });
     await this.bridge.reimportBrowser(this.state.chosen).catch((e: unknown) => this.finish(messageOf(e), 'error'));
   }
@@ -124,7 +150,28 @@ export class ImportViewModel extends ViewModel<ImportState> {
     if (status.empty) return this.finish(TEXT.importEmpty);
     const record = { ...status, source: status.source ?? '', at: status.at || Date.now() };
     this.set({ history: [record, ...this.state.history].slice(0, C.EARLIER_IMPORTS_SHOWN + 1) });
-    this.finish(TEXT.importDone);
+    this.finish(importResult(status));
+  }
+
+  /** Load onboarding independently from browser discovery; both can finish in either order. */
+  private async loadOffer(): Promise<void> {
+    const preferences = await this.bridge.getUiPreferences().catch(() => null);
+    this.offered = preferences?.importOffered !== false && preferences?.importOffered !== undefined;
+    if (preferences) this.offerIfReady();
+  }
+
+  /** Offer once after login, when a supported source was actually found. */
+  private offerIfReady(): void {
+    if (this.offered || !this.state.connected || !this.state.sources?.length) return;
+    this.offered = true;
+    this.set({ offer: true });
+    this.onOffer?.();
+  }
+
+  /** Remember the person's choice without reconnecting or changing account settings. */
+  async dismissOffer(): Promise<void> {
+    this.set({ offer: false });
+    await this.bridge.saveUiPreferences({ importOffered: true }).catch(() => false);
   }
 
   /** The import ended: say how, and give the button back. */

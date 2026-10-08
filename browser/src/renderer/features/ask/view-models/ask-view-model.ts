@@ -60,6 +60,8 @@ export type ChatItem = ChatMessage | RunItem;
 
 /** What the Ask pane shows. */
 export interface AskState {
+  /** A bounded continuation is available after a run reaches its limit. */
+  limited: boolean;
   /** The conversation so far. */
   items: ChatItem[];
   /** The Ask box's text. */
@@ -99,7 +101,7 @@ export class AskViewModel extends ViewModel<AskState> {
 
   /** An empty conversation, registered as the Ask pane's Clear; `readFile` reads attachments (FileReader by default). */
   constructor(services: AskServices, readFile: ReadFile = readBase64) {
-    super({ items: [], input: '', sending: false, copied: null });
+    super({ items: [], input: '', sending: false, copied: null, limited: false });
     this.services = services;
     this.run = new RunViewModel(services.bridge);
     this.files = new FilesViewModel(readFile);
@@ -117,6 +119,12 @@ export class AskViewModel extends ViewModel<AskState> {
     this.withdraw();
     this.say('user', this.files.attachTo(task));
     await this.turn();
+  }
+
+  /** Continues the same task with a new bounded run and the existing conversation. */
+  async continueRun(): Promise<void> {
+    if (!this.state.limited || this.state.sending) return;
+    await this.ask(ASK_TEXT.continueTask);
   }
 
   /** Sends what is in the Ask box. */
@@ -144,7 +152,7 @@ export class AskViewModel extends ViewModel<AskState> {
     this.withdraw();
     this.files.clear();
     this.run.reset();
-    this.set({ items: [] });
+    this.set({ items: [], limited: false });
   }
 
   /** Shows the agent's answer, offering to save the run as a playbook (`replayable` from the server, else judged by its tools). */
@@ -174,7 +182,7 @@ export class AskViewModel extends ViewModel<AskState> {
 
   /** Asks with the conversation as it stands, with the input locked until the answer comes; also sends a question again once a model is set. */
   private async turn(): Promise<void> {
-    this.set({ sending: true });
+    this.set({ sending: true, limited: false });
     this.run.begin();
     const epoch = this.epoch;
     const answer = await this.request();
@@ -193,7 +201,9 @@ export class AskViewModel extends ViewModel<AskState> {
 
   /** The answer came: the run's card folds into the conversation, then the answer shows. */
   private answer(data: ChatAnswer): void {
-    const run = this.run.finish(!data.error && !FAILED_REPLY.test(data.text || ''));
+    const limited = !!data.limited || data.text === 'Reached iteration limit.';
+    this.set({ limited });
+    const run = this.run.finish(!data.error && !data.failed && !limited && !FAILED_REPLY.test(data.text || ''));
     if (run) this.set({ items: [...this.state.items, { kind: 'run', id: this.nextId++, run, folded: !!run.summary }] });
     if (data.code && KEY_CODES.includes(data.code)) this.model.needed(data.code === REJECTED_CODE ? data.error : '');
     else if (data.error === ASK_TEXT.stoppedError) this.say('assistant', ASK_TEXT.stopped);

@@ -339,7 +339,7 @@ describe('IPC handlers', () => {
     fetch.mock.restore();
   });
 
-  it('tells Ask the provider, model and catalog the server runs on, and counts an unreachable server as having one', async () => {
+  it('tells Ask the provider, model and catalog the server runs on, and reports unavailable settings explicitly', async () => {
     const fetch = fakeServer();
     assert.deepEqual(await call('model-status'), {
       signedIn: true,
@@ -347,12 +347,16 @@ describe('IPC handlers', () => {
       provider: 'openai',
       model: 'gpt-4.1',
       catalog: SERVER.llm_catalog,
+      baseUrl: SERVER.effective.baseUrl,
     });
     fetch.mock.mockImplementation(async () => ({ ok: false, status: 500 }));
-    assert.deepEqual(await call('model-status'), { signedIn: true, hasLlmKey: true });
+    assert.deepEqual(await call('model-status'), {
+      signedIn: true,
+      error: 'Could not load model settings. Try again.',
+    });
     ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: '' };
     ctx.socket.ready = false;
-    assert.deepEqual(await call('model-status'), { signedIn: false, hasLlmKey: true });
+    assert.deepEqual(await call('model-status'), { signedIn: false, error: 'Reconnect to load model settings.' });
     fetch.mock.restore();
   });
 

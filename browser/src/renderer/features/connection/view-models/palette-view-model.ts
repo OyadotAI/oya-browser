@@ -18,10 +18,24 @@ export interface PaletteHost {
   focusChat(): void;
   /** Presses the studio's record button, through the control guard (the studio). */
   recordButton(): void;
+  /** Opens the shared model editor. */
+  openModels?(): void;
 }
 
 /** A command's name. */
-export type CommandId = 'address' | 'newTab' | 'ask' | 'record' | 'inspect' | 'account' | 'updates';
+export type CommandId =
+  | 'address'
+  | 'newTab'
+  | 'ask'
+  | 'record'
+  | 'inspect'
+  | 'account'
+  | 'updates'
+  | 'playbooks'
+  | 'models'
+  | 'routines'
+  | 'profiles'
+  | 'imports';
 
 /** One command as the palette lists it. */
 export interface Command {
@@ -41,6 +55,11 @@ const COMMANDS: readonly (readonly [CommandId, string, string])[] = [
   ['record', 'Record a workflow', '⌥ R'],
   ['inspect', 'Inspect this page', ''],
   ['account', 'Account and connection', ''],
+  ['playbooks', 'Playbooks — saved workflows', ''],
+  ['models', 'Settings — Models', ''],
+  ['routines', 'Routines', ''],
+  ['profiles', 'Profiles and logins', ''],
+  ['imports', 'Import browser logins', ''],
   ['updates', 'Check for updates', ''],
 ];
 
@@ -132,8 +151,7 @@ export class PaletteViewModel extends ViewModel<PaletteState> {
   private commandActions(): Record<CommandId, () => unknown> {
     const { bridge, dialog, updates } = this.deps;
     return {
-      ...this.hostActions(),
-      ...this.paneActions(),
+      ...Object.assign({}, this.hostActions(), this.paneActions(), this.libraryActions()),
       newTab: () => bridge.newTab(),
       account: () => dialog.open(true),
       updates: () => updates.check(),
@@ -144,6 +162,18 @@ export class PaletteViewModel extends ViewModel<PaletteState> {
   private paneActions(): Record<'ask' | 'inspect', () => unknown> {
     const { panel, host } = this.deps;
     return { ask: () => panel.open('chat').then(() => host.focusChat()), inspect: () => panel.open('actions') };
+  }
+
+  /** Daily workflows are reachable without opening the web console. */
+  private libraryActions(): Record<'playbooks' | 'models' | 'routines' | 'profiles' | 'imports', () => unknown> {
+    const { panel, host, dialog } = this.deps;
+    return {
+      playbooks: () => panel.open('playbooks'),
+      models: () => host.openModels?.(),
+      routines: () => panel.open('routines'),
+      profiles: () => dialog.open(true),
+      imports: () => dialog.open(true),
+    };
   }
 
   /** What each forwarded shortcut does. */

@@ -221,3 +221,31 @@ describe('AskViewModel', () => {
       assert.equal(fake.listeners(event), 0, event);
   });
 });
+
+it('continues a limited task once with the conversation retained and clears the limit on completion', async () => {
+  const { ask, fake, send, answer } = await chatting();
+  await send('Find the report');
+  await answer({ text: 'Reached iteration limit.', limited: true, failed: true });
+  assert.equal(ask.state.limited, true);
+  void ask.continueRun();
+  void ask.continueRun();
+  await settle();
+  assert.equal(fake.called('sendChat').length, 2);
+  const messages = fake.called('sendChat')[1][0] as ChatMessage[];
+  assert.equal(messages[0].content, 'Find the report');
+  assert.match(messages.at(-1)!.content, /do not repeat/);
+  await answer({ text: 'DONE: Found it' });
+  assert.equal(ask.state.limited, false);
+});
+
+it('does not offer a run extension for a monthly billing refusal and reset removes the offer', async () => {
+  const { ask, send, answer } = await chatting();
+  await send('Task');
+  await answer({ error: 'Monthly steps used up', code: 'plan_limit' });
+  assert.equal(ask.state.limited, false);
+  await send('Task');
+  await answer({ text: 'Reached iteration limit.' });
+  assert.equal(ask.state.limited, true);
+  ask.clear();
+  assert.equal(ask.state.limited, false);
+});

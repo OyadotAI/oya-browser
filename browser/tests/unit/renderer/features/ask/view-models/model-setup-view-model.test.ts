@@ -99,7 +99,7 @@ describe('ModelSetupViewModel', () => {
     vm.needed();
     vm.setKey('sk-ant-1');
     await vm.save();
-    assert.deepEqual(fake.called('saveModelKey')[0], [{ provider: '', model: '', key: 'sk-ant-1' }]);
+    assert.deepEqual(fake.called('saveModelKey')[0], [{ provider: '', model: '', key: 'sk-ant-1', baseUrl: '' }]);
     assert.equal(resent.length, 1);
     assert.deepEqual([vm.state.open, vm.state.key], [false, '']);
     await vm.save();
@@ -152,7 +152,9 @@ describe('ModelSetupViewModel', () => {
     vm.picker.search('gpt-4o');
     vm.picker.key('Enter');
     await vm.save();
-    assert.deepEqual(fake.called('saveModelKey')[0], [{ provider: 'openai', model: 'gpt-4o-mini', key: '' }]);
+    assert.deepEqual(fake.called('saveModelKey')[0], [
+      { provider: 'openai', model: 'gpt-4o-mini', key: '', baseUrl: '' },
+    ]);
   });
 
   it('offers a changed provider’s models on its default, and asks for its key', async () => {

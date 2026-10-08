@@ -47,6 +47,11 @@ export function ShellDialog({ palette, footer, ...models }: ShellDialogProps) {
   const { dialog } = models;
   const s = useViewModel(dialog);
   const profile = s.page === 'profile';
+  const offer = useViewModel(models.imports).offer && profile;
+  const close = () => {
+    if (offer) void models.imports.dismissOffer();
+    dialog.close();
+  };
   const labels = pageLabels(s.page);
   return (
     <Dialog
@@ -55,24 +60,24 @@ export function ShellDialog({ palette, footer, ...models }: ShellDialogProps) {
       hidden={!s.open}
       label={labels.label}
       open={s.open}
-      onClose={() => dialog.close()}
+      onClose={close}
       focusId={profile ? 'shell-dialog-close' : 'command-search'}
     >
       <div className="shell-dialog">
         <header>
-          <h2 id="shell-dialog-title">{labels.title}</h2>
+          <h2 id="shell-dialog-title">{offer ? 'Import your logins' : labels.title}</h2>
           <IconButton
             className="nav-btn"
             id="shell-dialog-close"
             aria-label="Close dialog"
             data-icon="close"
-            onClick={() => dialog.close()}
+            onClick={close}
             icon="close"
           />
         </header>
         <CommandPalette vm={palette} hidden={profile} />
         <AccountPage {...models} hidden={!profile} />
-        <footer>{footer}</footer>
+        {!offer && <footer>{footer}</footer>}
       </div>
     </Dialog>
   );

@@ -6,6 +6,9 @@
 
 /** The words the Ask pane shows. */
 export const ASK_TEXT = {
+  /** Explicit permission for another bounded run without repeating completed work. */
+  continueTask:
+    'Continue the unfinished task from the current page. Check what is already done and do not repeat completed actions.',
   /** A reply with no text. */
   noResponse: '(no response)',
   /** What a stopped run says. */

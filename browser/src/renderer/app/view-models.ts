@@ -8,6 +8,7 @@
 import type { OyaBrowser } from '../core/bridge.ts';
 import { ShellViewModel } from './shell-view-model.ts';
 import { PanelViewModel, type FrameClock } from './panel/panel-view-model.ts';
+import { PlaybooksViewModel } from '../features/playbooks/index.ts';
 import { AskViewModel } from '../features/ask/index.ts';
 import {
   ThemeViewModel,
@@ -87,6 +88,8 @@ export class ShellViewModels {
   declare readonly inspect: InspectModels;
   /** The Routines pane. */
   declare readonly routines: RoutinesViewModel;
+  /** Saved project playbooks and replay. */
+  declare readonly playbooks: PlaybooksViewModel;
   /** The welcome screen, connection, account dialog and command palette. */
   declare readonly connection: ConnectionModels;
 
@@ -95,14 +98,16 @@ export class ShellViewModels {
     this.env = env;
     Object.assign(this, coreModels(env));
     Object.assign(this, featureModels(this));
+    this.playbooks = new PlaybooksViewModel(env.bridge, this.panel);
     this.connection = connectionModels(env, this);
   }
 
   /** Stops every subscription and timer. */
   dispose(): void {
-    const all = [this.shell, this.panel, this.control, this.ask, this.studio, this.toolbar, this.start, this.routines];
+    const all = [this.shell, this.panel, this.control, this.ask, this.studio];
+    const tools = [this.toolbar, this.start, this.routines, this.playbooks];
     const grouped = [this.chrome, this.tabs, this.inspect, this.connection].flatMap((group) => Object.values(group));
-    for (const vm of [...all, ...grouped]) vm.dispose();
+    for (const vm of [...all, ...tools, ...grouped]) vm.dispose();
   }
 }
 
@@ -228,13 +233,24 @@ function accountModels({ bridge, clipboard }: PageEnvironment) {
     imports: new ImportViewModel(bridge),
     profile: new ProfileViewModel(bridge),
   };
-  return { ...parts, dialog: new ShellDialogViewModel({ bridge, clipboard, ...parts }) };
+  const dialog = new ShellDialogViewModel({ bridge, clipboard, ...parts });
+  return connectImportOffer(parts, dialog);
+}
+
+/** Wire the first-login offer after both collaborators exist. */
+function connectImportOffer<T extends { /** Login import invitation. */ imports: ImportViewModel }>(
+  parts: T,
+  dialog: ShellDialogViewModel,
+) {
+  parts.imports.onOffer = () => void dialog.open(true);
+  return { ...parts, dialog };
 }
 
 /** What the command palette asks of other features: the address bar, the Ask box, the record button. */
 function paletteHost(root: ShellViewModels) {
   return {
     focusAddress: () => root.toolbar.focusAddress(),
+    openModels: () => void root.panel.open('chat').then(() => root.ask.model.openCard()),
     focusChat: focusById(root.env.frames, 'chat-input'),
     recordButton: () => void root.studio.actions.recordShortcut(),
   };

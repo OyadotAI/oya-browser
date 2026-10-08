@@ -22,6 +22,8 @@ export interface ModelSummary {
   model: string;
   /** Whether a key is set. */
   hasLlmKey: boolean;
+  /** Effective endpoint reported by the server. */
+  baseUrl?: string;
 }
 
 /** What the setup cards show. */
@@ -38,6 +40,8 @@ export interface ModelSetupState {
   picked: string;
   /** The key typed. */
   key: string;
+  /** Custom endpoint edited in this card. */
+  baseUrl: string;
   /** Why saving failed, or ''. */
   error: string;
 }
@@ -57,7 +61,7 @@ export type ModelBridge = Pick<
 >;
 
 /** What an unreadable status counts as: signed in with a key, so nothing nags. */
-const UNSURE: ModelStatus = { signedIn: true, hasLlmKey: true };
+const UNSURE: ModelStatus = { signedIn: true, error: 'Could not load model settings. Try again.' };
 
 /** The key field's placeholder and help: whether the saved key carries over (same provider), or what to paste. */
 export function keyHint(status: ModelSummary, entry: CatalogEntry | undefined): KeyHint {
@@ -80,7 +84,7 @@ export class ModelSetupViewModel extends ViewModel<ModelSetupState> {
   /** Hears the connection and settings changes, and reads the server now; `resend` asks a waiting question again. */
   constructor(bridge: ModelBridge, resend: () => void) {
     const status = { catalog: [], provider: '', model: '', hasLlmKey: true };
-    super({ signedIn: true, open: false, optional: false, status, picked: '', key: '', error: '' });
+    super({ signedIn: true, open: false, optional: false, status, picked: '', key: '', baseUrl: '', error: '' });
     this.bridge = bridge;
     this.resend = resend;
     this.own(bridge.onWsStatus(() => void this.refresh()));
@@ -106,6 +110,7 @@ export class ModelSetupViewModel extends ViewModel<ModelSetupState> {
   /** The "Model" button: re-reads the server first, so the card opens on what it runs now. */
   async openCard(): Promise<void> {
     await this.load();
+    if (!this.state.error) this.render();
     this.show(true);
   }
 
@@ -118,12 +123,20 @@ export class ModelSetupViewModel extends ViewModel<ModelSetupState> {
 
   /** A provider chip was clicked: picks it, on its default model. */
   choose(id: string): void {
-    if (id !== this.state.picked) this.pick(id);
+    if (id !== this.state.picked) {
+      this.pick(id);
+      this.set({ baseUrl: '' });
+    }
   }
 
   /** The key was typed. */
   setKey(key: string): void {
     this.set({ key });
+  }
+
+  /** Edits the optional provider-compatible endpoint. */
+  setEndpoint(baseUrl: string): void {
+    this.set({ baseUrl });
   }
 
   /** Hides the card, forgetting the typed key. */
@@ -133,13 +146,19 @@ export class ModelSetupViewModel extends ViewModel<ModelSetupState> {
 
   /** Saves the provider, model and key to the project, then sends a waiting question again. */
   async save(): Promise<void> {
-    const choice = { provider: this.state.picked, model: this.picker.state.value.trim(), key: this.state.key };
+    const choice = this.choice();
     const saved = await this.bridge.saveModelKey(choice).catch((e: Error) => ({ error: e.message }));
     if (saved?.error) return this.set({ error: saved.error });
     this.hide();
     await this.load();
     if (this.pending) this.resend();
     this.pending = false;
+  }
+
+  /** Build the saved fields without ever returning the stored credential. */
+  private choice() {
+    const { picked: provider, key, baseUrl } = this.state;
+    return { provider, key, baseUrl, model: this.picker.state.value.trim() };
   }
 
   /** Opens the picked provider's key page in a new tab. */
@@ -163,21 +182,28 @@ export class ModelSetupViewModel extends ViewModel<ModelSetupState> {
   /** Reads the project's model from the server; unsure counts as signed in with a key. */
   private async load(): Promise<ModelStatus> {
     const status = ((await this.bridge.modelStatus().catch(() => null)) as ModelStatus | null) ?? UNSURE;
-    const { catalog = [], provider = '', model = '', hasLlmKey = false } = status;
-    this.set({ status: { catalog, provider, model, hasLlmKey } });
+    this.loaded(status);
     return status;
+  }
+
+  /** Apply successful settings or retain the last known selection on failure. */
+  private loaded(status: ModelStatus): void {
+    if (status.error) return this.set({ error: status.error });
+    const { catalog = [], provider = '', model = '', hasLlmKey = false } = status;
+    this.set({ error: '', status: { catalog, provider, model, hasLlmKey, baseUrl: status.baseUrl } });
   }
 
   /** Opens the card on the server's current choice (not while signed out, nor when open); `optional` offers Cancel. */
   private show(optional: boolean): void {
     if (!this.state.signedIn || this.state.open) return;
     this.render();
-    this.set({ open: true, optional, error: '' });
+    this.set({ open: true, optional });
   }
 
   /** Puts the card on the server's choice: its provider, and its model on that provider. */
   private render(): void {
-    const { catalog, provider, model } = this.state.status;
+    const { catalog, provider, model, baseUrl = '' } = this.state.status;
+    this.set({ baseUrl });
     const known = catalog.some((p) => p.id === provider);
     this.pick(known ? provider : catalog[0]?.id || '', known ? model : '');
   }

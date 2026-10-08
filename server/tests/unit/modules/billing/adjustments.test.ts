@@ -29,3 +29,15 @@ it('uses the current month for an override after a subscription was canceled', (
   );
   assert.equal(standing.since, '2026-10-01T00:00:00.000Z');
 });
+
+it('extends monthly steps without resetting metered usage', () => {
+  const included = includedFor({ userId: 'u', plan: 'free', status: null, since: 'p' }, { agent_steps: 750 });
+  assert.equal(included.steps, PLANS.free.steps + 750);
+});
+
+it('does not remove the Free hosted model allowance on a complimentary Startup upgrade', () => {
+  const included = includedFor({ userId: 'u', plan: 'startup', status: 'admin', since: 'p' });
+  assert.equal(included.llmMicroUsd, PLANS.free.llmMicroUsd);
+  assert.equal(included.steps, PLANS.startup.steps);
+  assert.equal(included.overage, false);
+});

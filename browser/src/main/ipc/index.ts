@@ -10,6 +10,7 @@ import { RecordingHandlers } from './recording.ts';
 import { ShellPageHandlers } from './shell.ts';
 import { DevHandlers } from './dev.ts';
 import { RoutineHandlers } from './routines.ts';
+import { PlaybookHandlers } from './playbooks.ts';
 import { UpdateHandlers } from './updates.ts';
 
 export { ShellIpc };
@@ -40,6 +41,7 @@ function appHandlers(deps: IpcDeps) {
     ...new SessionHandlers(deps).handlers,
     ...new RecordingHandlers(deps).handlers,
     ...new RoutineHandlers(deps).handlers,
+    ...new PlaybookHandlers(deps).handlers,
     ...new UpdateHandlers(deps).handlers,
   };
 }

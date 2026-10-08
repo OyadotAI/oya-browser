@@ -19,7 +19,11 @@ type Channel =
   | 'save-ui-preferences';
 
 /** Each preference the shell may save, and the values it accepts. */
-const PREFERENCES: Readonly<Record<string, readonly unknown[]>> = { theme: THEMES, pageFormat: FORMATS };
+const PREFERENCES: Readonly<Record<string, readonly unknown[]>> = {
+  theme: THEMES,
+  pageFormat: FORMATS,
+  importOffered: [true],
+};
 
 /** The shell's overlays, panel and preferences, as it asks for them. */
 export class ShellPageHandlers {

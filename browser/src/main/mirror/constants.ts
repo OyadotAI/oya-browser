@@ -32,3 +32,10 @@ export const LAUNCH_INPUTS = ['Local State'] as const;
 export const PROFILE_INPUTS = ['Cookies', 'Network', 'Preferences'] as const;
 /** How many finished imports the app remembers, newest first, for the profile dialog. */
 export const IMPORTS_KEPT = 5;
+
+/** Bounded retries for Windows releasing profile file handles. */
+export const CLEANUP_RETRIES = 5;
+/** Delay between cleanup attempts. */
+export const CLEANUP_RETRY_MS = 200;
+/** Time allowed for a capture process to exit before leaving its files intact. */
+export const EXIT_TIMEOUT_MS = 5000;

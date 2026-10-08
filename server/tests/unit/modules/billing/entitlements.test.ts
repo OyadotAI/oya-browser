@@ -51,6 +51,21 @@ const paid = (plan: string, status = 'active') => ({
 });
 
 describe('Entitlements', () => {
+  it('rechecks admin upgrades and extra step grants on the next attempt without a reconnect', async () => {
+    const rows: Record<string, any> = {};
+    const used = { agent_steps: PLANS.free.steps };
+    const { e } = fixture({ rows, used });
+    await assert.rejects(e.admitAgent('k-u'), { code: 'plan_limit' });
+    rows.u = { user_id: 'u', admin_plan: 'startup' };
+    await e.admitAgent('k-u');
+    used.agent_steps = PLANS.startup.steps;
+    await assert.rejects(e.admitAgent('k-u'), { code: 'plan_limit' });
+    e.deps.creditsFor = async () => ({ agent_steps: 100 });
+    await e.admitAgent('k-u');
+    used.agent_steps += 100;
+    await assert.rejects(e.admitAgent('k-u'), { code: 'plan_limit' });
+  });
+
   it('uses extra hours and AI credits to admit exhausted Free accounts until the extended cap', async () => {
     const used = { cloud_seconds: PLANS.free.cloudSeconds, hosted_llm_microusd: PLANS.free.llmMicroUsd };
     const { e } = fixture({ used });

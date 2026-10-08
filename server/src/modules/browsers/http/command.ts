@@ -196,7 +196,18 @@ async function converse(req, messages, task) {
   const result = await announced(key, req.params.browserId, live, () =>
     runLive(req.params.browserId, messages, chatOptions(req, task, toolCalls, live), live),
   );
-  const answer = { text: result.text, failed: !!result.failed, toolCalls, replayable: replayableRun(req) };
+  return chatAnswer(result, toolCalls, replayableRun(req));
+}
+
+/** Keeps the limit outcome in the public answer so clients can offer continuation. */
+function chatAnswer(result, toolCalls, replayable: boolean) {
+  const answer = {
+    text: result.text,
+    failed: !!result.failed,
+    ...(result.limited && { limited: true }),
+    toolCalls,
+    replayable,
+  };
   return result.data === undefined ? answer : { ...answer, data: result.data };
 }
 

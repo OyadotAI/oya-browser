@@ -9,13 +9,13 @@
   /* Native checkboxes, radios and ranges take Oya's green, never the system's blue. */
   accent-color: var(--accent);
   /* Oya's paper-and-ink neutrals (ui/src/app/globals.css), with its green as the one accent. */
-  --bg: #f4f3ef;
+  --bg: #f8f9fa;
   --surface: #ffffff;
-  --muted-surface: #ecebe6;
-  --hover: #e5e4de;
-  --text: #1c1c1a;
-  --secondary: #6b6b66;
-  --border: #e0dfd9;
+  --muted-surface: #f1f3f5;
+  --hover: #e9ecef;
+  --text: #202427;
+  --secondary: #626b73;
+  --border: #dde2e6;
   --hairline: #0000001a;
   --logo-green: #157a13;
   --accent: #157a13;
@@ -25,7 +25,7 @@
   --danger: #c23a32;
   --danger-soft: #fbe8e6;
   /* Glass for dialogs and floating surfaces: translucent, blurred behind. */
-  --material: #fbfaf7cc;
+  --material: #ffffff;
   --shadow-xs: 0 1px 1px #0000000a, 0 0 0 0.5px var(--hairline);
   --shadow-sm: 0 1px 2px #00000014, 0 2px 6px #0000000a, 0 0 0 0.5px var(--hairline);
   --shadow: 0 12px 32px #0000001f, 0 2px 8px #00000014, 0 0 0 0.5px var(--hairline);
@@ -63,18 +63,18 @@
   /* The aurora: green into mint, white and a cold cyan, for edge light and the orb's rim. */
   --light: #39ed35, #a6ffc9, #ffffff, #5ef3ff, #39ed35;
   /* Glass, light theme: pearl. Translucent white over a soft blur, a hairline of light on top. */
-  --glass: #ffffffb8;
-  --glass-strong: #ffffffe0;
+  --glass: #ffffff;
+  --glass-strong: #ffffff;
   --glass-edge: inset 0 1px 0 #ffffffcc, 0 0 0 0.5px #0000001a;
-  --glass-blur: blur(28px) saturate(1.7);
+  --glass-blur: blur(12px);
   /* Focus: a thin line of the accent and a soft ring, never a bloom of light. */
   --glow:
     0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
     0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
-  --stage: radial-gradient(120% 90% at 50% 0%, #ffffff 0%, #f1f3ef 55%, #e7ebe6 100%);
+  --stage: #ffffff;
   /* The window's chrome, as in Chrome: a deeper tab strip, and the toolbar the active tab grows out of. */
-  --chrome-strip: #e3e7e1;
-  --chrome-bar: #f9faf8;
+  --chrome-strip: #edf0f2;
+  --chrome-bar: #ffffff;
   /* Type: Oya's own (core/type.css), DM Sans to read and Archivo Black for headings, with a mono for labels. */
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-display: 'Archivo Black', 'DM Sans', 'Arial Black', sans-serif;

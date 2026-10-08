@@ -301,3 +301,18 @@
     animation: none;
   }
 }
+
+/** First-login invitation shares the account modal but focuses on one decision. */
+.import-offer {
+  padding: 8px 0 20px;
+}
+.import-offer h3 {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+.import-offer p {
+  color: var(--secondary);
+  line-height: 1.6;
+  margin: 0 0 12px;
+}

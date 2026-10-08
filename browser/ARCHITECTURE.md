@@ -274,6 +274,22 @@ account dialog.
   hides `out/renderer/index.html` and `out/renderer/control-shield/index.html`
   from CDP harnesses; a regression check pins both addresses.
 
+## Browser workspace additions
+
+- The Playbooks pane uses `playbooks` IPC to list, rename, delete, transfer and
+  replay the current project's saved playbooks. Runs target this desktop and
+  use the existing server API. The main-process replay supervisor owns the
+  Ask/routine exclusion until the run ends, even when the pane is closed.
+- Models remain project settings. The command menu opens the same editor as
+  Ask, including the optional API endpoint; saved credentials are never returned.
+- First-login import is an explicit invitation. The `ui.importOffered`
+  preference remembers acceptance or dismissal without reconnecting. Discovery
+  prefers the default supported browser, including Windows App Paths and system
+  installation directories. Partial profile failures remain visible.
+- The control shield watches human clicks, keyboard input and substantial pointer
+  motion. It offers a native takeover confirmation, deduplicated while open and
+  rate-limited for pointer motion. Blocked input is never replayed after takeover.
+
 ## Tests
 
 | Command                                                       | Runs                                                                                     |

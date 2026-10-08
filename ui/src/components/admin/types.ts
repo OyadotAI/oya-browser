@@ -168,6 +168,7 @@ export interface Found {
 
 /** One immutable support grant. */
 export interface Grant {
+  /** Extra agent steps; absent on older servers. */ agent_steps?: number;
   /** Stable request id. */ id: string;
   /** Extra browser time. */ cloud_seconds: number;
   /** Hosted model credit, in micro-USD. */ hosted_llm_microusd: number;

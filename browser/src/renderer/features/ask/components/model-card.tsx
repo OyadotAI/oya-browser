@@ -91,6 +91,26 @@ function ModelCardHead({ model }: ModelCardProps) {
   );
 }
 
+/** Advanced endpoint configuration shares the project's existing server setting. */
+function EndpointField({ model }: ModelCardProps) {
+  const { baseUrl } = useViewModel(model);
+  return (
+    <details>
+      <summary>Advanced endpoint</summary>
+      <label className="model-field">
+        API base URL
+        <input
+          type="url"
+          value={baseUrl}
+          placeholder="Provider default"
+          onChange={(e) => model.setEndpoint(e.target.value)}
+        />
+        <span className="model-help">Leave empty to use the provider default.</span>
+      </label>
+    </details>
+  );
+}
+
 /** The model card. */
 export function ModelCard({ model }: ModelCardProps) {
   const { open, optional, error } = useViewModel(model);
@@ -115,6 +135,7 @@ export function ModelCard({ model }: ModelCardProps) {
         <ModelPicker picker={model.picker} />
       </div>
       <KeyField model={model} />
+      <EndpointField model={model} />
       <p className="chat-card-error" id="chat-model-error" role="alert" hidden={!error}>
         {error}
       </p>

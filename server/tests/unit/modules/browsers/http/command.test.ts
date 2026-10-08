@@ -124,6 +124,21 @@ describe('chat', () => {
     return res;
   }
 
+  it('preserves the iteration limit outcome for clients offering continuation', async () => {
+    const previous = process.env.CHAT_MAX_ITERATIONS;
+    process.env.CHAT_MAX_ITERATIONS = '0';
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const body = JSON.parse((await talk({ messages: [{ role: 'user', content: 'Task' }] })).ended);
+      assert.equal(body.limited, true);
+      assert.equal(body.failed, true);
+    } finally {
+      if (previous === undefined) delete process.env.CHAT_MAX_ITERATIONS;
+      else process.env.CHAT_MAX_ITERATIONS = previous;
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
   it('answers 422 llm_unconfigured before committing to a 200 when no model is configured', async () => {
     const res = await talk({ messages: [{ role: 'user', content: 'hi' }] });
     assert.equal(res.statusCode, 422);

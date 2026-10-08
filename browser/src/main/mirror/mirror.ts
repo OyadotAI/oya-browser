@@ -94,6 +94,8 @@ export class Mirror {
   private answerTimer: ReturnType<typeof setTimeout> | undefined = undefined;
   /** Set when the person ticked "import my logins" while pairing: import once the new connection signs in. */
   importOnConnect = false;
+  /** Capture and server acknowledgment form one exclusive import operation. */
+  private running = false;
 
   /** `ctx` is the app's services; `steps` replaces the capture and the storage seeding (tests). */
   constructor(ctx: Deps, { capture = captureAll, seed = seedStorage }: MirrorSteps = {}) {
@@ -133,6 +135,8 @@ export class Mirror {
   /** Captures the real browser and sends it to the server. Every way it can end is told to the person. */
   async run(sourceId?: string): Promise<void> {
     if (!this.ctx.socket.ready || !this.ctx.socket.isOpen()) return this.notify({ done: true, error: NOT_CONNECTED });
+    if (this.running) return;
+    this.running = true;
     this.notify({ started: true });
     const captured = await this.capture(this.ctx, sourceId).catch((e: unknown) => e);
     if (captured instanceof Error) return this.failed(captured.message);
@@ -156,6 +160,7 @@ export class Mirror {
 
   /** Forgets the capture in flight and stops waiting for its answer. */
   private settle(): Capture | null {
+    this.running = false;
     clearTimeout(this.answerTimer);
     const captured = this.pending;
     this.pending = null;
@@ -171,7 +176,7 @@ export class Mirror {
     this.ctx.config.merge({ mirroredFrom: captured.source, persona: msg.defaultPersonaId });
     this.ctx.config.save();
     this.reconnect();
-    this.notify({ done: true, ...record });
+    this.notify({ done: true, ...record, ...(captured.warnings?.length ? { warnings: captured.warnings } : {}) });
   }
 
   /** Puts this import at the top of the history the account page shows; answers its record. */
@@ -194,7 +199,7 @@ export class Mirror {
     try {
       this.seed(this.ctx.electron, msg.defaultPersonaId, captured.userDataDir, profile.profile);
     } catch (e) {
-      console.log('[oya] Mirror storage seed failed:', (e as Error).message);
+      (captured.warnings ??= []).push(`Site storage could not be copied: ${(e as Error).message}`);
     }
   }
 
@@ -206,6 +211,7 @@ export class Mirror {
 
   /** Marks the run finished so it does not repeat, and notifies the renderer. */
   private done(mirroredFrom: string, status: Status): void {
+    this.running = false;
     this.ctx.config.merge({ mirroredFrom });
     this.ctx.config.save();
     this.notify({ done: true, ...status });

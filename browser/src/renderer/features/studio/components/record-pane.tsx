@@ -20,6 +20,8 @@ import { CodeTab } from './code-tab.tsx';
 
 /** What the Record pane is drawn from. */
 export interface RecordPaneProps {
+  /** Opens the saved workflow in the project library. */
+  onViewPlaybook?: (name: string) => void;
   /** The studio. */
   vm: StudioViewModel;
   /** The panel shows this pane. */
@@ -37,7 +39,7 @@ export interface StudioPartProps {
 }
 
 /** The Record pane. */
-export function RecordPane({ vm, active = false, controlBlocked = false }: RecordPaneProps) {
+export function RecordPane({ vm, active = false, controlBlocked = false, onViewPlaybook }: RecordPaneProps) {
   const state = useViewModel(vm);
   const hidden = (tab: string) => state.tab !== tab;
   return (
@@ -52,6 +54,9 @@ export function RecordPane({ vm, active = false, controlBlocked = false }: Recor
       <StudioNotes vm={vm} state={state} />
       <SlotStatus slot="record-result" message={state.messages['record-result']} />
       <FinishCard vm={vm} state={state} />
+      {state.snapshot?.saved && onViewPlaybook && (
+        <button onClick={() => onViewPlaybook(state.name)}>View playbook</button>
+      )}
       <StudioTabs vm={vm} state={state} />
       <div className="studio-scroll">
         <section id="studio-steps" role="tabpanel" hidden={hidden('steps')}>

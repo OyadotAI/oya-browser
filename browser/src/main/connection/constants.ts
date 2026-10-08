@@ -74,3 +74,6 @@ export const STREAM_JPEG_QUALITY = 40;
 
 /** How long a pairing claim may take before it is abandoned. */
 export const PAIRING_TIMEOUT_MS = 15_000;
+
+/** Follow background playbook runs without depending on the visible panel. */
+export const PLAYBOOK_POLL_MS = 1000;

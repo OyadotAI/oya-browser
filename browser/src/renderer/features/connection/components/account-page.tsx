@@ -83,6 +83,13 @@ interface AccountPageProps extends AccountModels {
 
 /** The account page. */
 export function AccountPage({ hidden, ...m }: AccountPageProps) {
+  const { offer } = useViewModel(m.imports);
+  if (offer)
+    return (
+      <section id="profile-section" hidden={hidden}>
+        <ImportGroup vm={m.imports} />
+      </section>
+    );
   return (
     <section id="profile-section" hidden={hidden} aria-labelledby="account-name">
       <AccountCardView vm={m.account} />

@@ -1,9 +1,16 @@
 /** Validated, attributed admin billing changes, isolated from Stripe payments. */
-import { invalid, notFound } from '../../platform/errors.ts';
+import { HttpError, invalid, notFound } from '../../platform/errors.ts';
+import { Status } from '../../platform/http-status.ts';
 import { SECONDS_PER_HOUR } from '../../platform/constants.ts';
 import * as billing from '../billing/index.ts';
 import { profileById } from './repository.ts';
-import { BILLING_REASON_MAX, MICRO_USD_PER_DOLLAR, MAX_GRANT_HOURS, MAX_GRANT_DOLLARS } from './constants.ts';
+import {
+  BILLING_REASON_MAX,
+  MICRO_USD_PER_DOLLAR,
+  MAX_GRANT_HOURS,
+  MAX_GRANT_DOLLARS,
+  MAX_GRANT_STEPS,
+} from './constants.ts';
 
 /** A support adjustment always records why it was made. */
 function reasonOf(value: unknown) {
@@ -24,7 +31,15 @@ export async function setPlan(id: string, body: Record<string, unknown>, actor: 
   const reason = reasonOf(body.reason);
   await requireProfile(id);
   await billing.saveOverride(id, body.plan as string | null, actor, reason);
-  return { plan: body.plan, reason };
+  return verifiedPlan(id, body.plan);
+}
+
+/** Confirms persistence before reporting that access changed. */
+async function verifiedPlan(id: string, plan: unknown) {
+  const saved = await billing.overrideFor(id);
+  if (!saved || saved.plan !== plan)
+    throw new HttpError(Status.CONFLICT, 'Plan access could not be verified. Refresh the account and try again.');
+  return { plan: saved.plan, reason: saved.reason };
 }
 
 /** Converts a bounded input to exact integer storage units. */
@@ -51,13 +66,21 @@ function grantFields(body: Record<string, unknown>) {
   const reason = reasonOf(body.reason);
   const cloud_seconds = quantity(body.hours, 'hours', MAX_GRANT_HOURS, SECONDS_PER_HOUR);
   const hosted_llm_microusd = quantity(body.credits, 'credits', MAX_GRANT_DOLLARS, MICRO_USD_PER_DOLLAR);
-  if (!cloud_seconds && !hosted_llm_microusd) throw invalid('grant', 'a positive number of hours or credits', body);
-  return { id, reason, cloud_seconds, hosted_llm_microusd };
+  const agent_steps = stepsOf(body.steps);
+  if (!cloud_seconds && !hosted_llm_microusd && !agent_steps)
+    throw invalid('grant', 'positive hours, credits or steps', body);
+  return { id, reason, cloud_seconds, hosted_llm_microusd, agent_steps };
+}
+
+/** Steps are whole actions; fractional grants would misrepresent the allowance. */
+function stepsOf(value: unknown) {
+  if (value !== undefined && !Number.isInteger(value)) throw invalid('steps', 'a whole number', value);
+  return quantity(value, 'steps', MAX_GRANT_STEPS, 1);
 }
 
 /** Rejects reuse of a request id for another person, amount, reason or administrator. */
 function sameGrant(stored: Record<string, any>, asked: Record<string, any>) {
-  if (Object.keys(asked).some((key) => stored[key] !== asked[key]))
+  if (Object.keys(asked).some((key) => (key === 'agent_steps' ? (stored[key] ?? 0) : stored[key]) !== asked[key]))
     throw invalid('requestId', 'a new UUID for a different grant', asked.id);
   return stored;
 }

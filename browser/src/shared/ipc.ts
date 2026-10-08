@@ -157,6 +157,11 @@ export interface AgentEvent {
  * returns. `toggleDevPanel`'s argument is filled in by the preload.
  */
 export interface ShellCalls {
+  /** Confirms handoff when the person interacts with an agent-owned page. */
+  requestTakeover(): Promise<void>;
+  /** Lists, manages, imports, exports, and runs project playbooks on this browser. */
+  playbooks(command: Payload): Promise<Payload>;
+
   /** Loads an address or search in the active tab (or leaves the start screen for it). */
   navigate(url: string): Promise<void>;
   /** Goes back in the active tab. */
@@ -317,6 +322,11 @@ export interface ShellEvents {
 
 /** The IPC channel of each call. */
 export const CALL_CHANNELS = {
+  /** Confirm a human handoff without replaying blocked page input. */
+  requestTakeover: 'request-takeover',
+  /** Project playbook library and replay operations. */
+  playbooks: 'playbooks',
+
   /** Loads an address or search in the active tab (or leaves the start screen for it). */
   navigate: 'navigate',
   /** Goes back in the active tab. */

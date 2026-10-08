@@ -15,6 +15,7 @@ type Deps = Pick<
 
 /** The channels this group answers. */
 type Channel =
+  | 'request-takeover'
   | 'model-status'
   | 'save-model-key'
   | 'send-chat'
@@ -48,6 +49,23 @@ interface Effective {
   baseUrl?: string;
 }
 
+/** Preserve an existing endpoint unless a provider change or explicit edit overrides it. */
+function modelEndpoint(changed: boolean, value: unknown): Payload {
+  return typeof value === 'string' ? endpointUpdate(value) : changed ? { openai_base_url: null } : {};
+}
+
+/** Validates explicit custom endpoints before saving project model settings. */
+function endpointUpdate(value: string): Payload {
+  if (!value.trim()) return { openai_base_url: null };
+  try {
+    const url = new URL(value.trim());
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error();
+    return { openai_base_url: value.trim() };
+  } catch {
+    return { error: 'Enter an HTTP or HTTPS model endpoint without embedded credentials.' };
+  }
+}
+
 /** A kept analysis, as far as rendering it again goes. */
 /** Whether a kept analysis still has the blocks a renderer needs. */
 const isKeptAnalysis = (analysis: unknown): analysis is Analysis =>
@@ -71,6 +89,8 @@ interface ModelChoice {
   model?: unknown;
   /** The key, when typed. */
   key?: unknown;
+  /** Optional custom API endpoint; empty restores the provider default. */
+  baseUrl?: unknown;
 }
 
 /**
@@ -103,7 +123,13 @@ function currentProvider(config: ServerConfig): string {
 /** What the model card needs from the server's config. */
 function statusOf(config: ServerConfig): Payload {
   const { hasLlmKey, model } = config.effective || {};
-  return { hasLlmKey: !!hasLlmKey, provider: currentProvider(config), model, catalog: catalogOf(config) };
+  return {
+    hasLlmKey: !!hasLlmKey,
+    provider: currentProvider(config),
+    model,
+    baseUrl: config.effective?.baseUrl || '',
+    catalog: catalogOf(config),
+  };
 }
 
 /**
@@ -112,14 +138,14 @@ function statusOf(config: ServerConfig): Payload {
  * typed, and the endpoint is reset only when the provider changes, so saving
  * here never undoes a model or gateway chosen in the console.
  */
-export function modelUpdate(config: ServerConfig, { provider, model, key }: ModelChoice = {}): Payload {
+export function modelUpdate(config: ServerConfig, { provider, model, key, baseUrl }: ModelChoice = {}): Payload {
   const secret = typeof key === 'string' ? key.trim() : '';
   if (!catalogOf(config).some((p) => p.id === provider)) return { error: 'Pick a provider.' };
   const changed = provider !== currentProvider(config);
   if (!secret && (changed || !config.effective?.hasLlmKey)) return { error: 'Paste your API key for this provider.' };
   const body: Payload = { llm_provider: provider, chat_model: (typeof model === 'string' && model.trim()) || null };
   if (secret) body.openai_api_key = secret;
-  if (changed) body.openai_base_url = null;
+  Object.assign(body, modelEndpoint(changed, baseUrl));
   return body;
 }
 
@@ -133,6 +159,7 @@ function renderKeptPage(analysis: unknown, format: string): string {
 export class DevHandlers {
   /** Channel → handler. */
   readonly handlers: HandlersOf<Channel> = {
+    'request-takeover': () => this.deps.shield.takeover.request(),
     'model-status': () => this.modelStatus(),
     'save-model-key': (_e, choice) => this.saveModelKey(choice),
     'send-chat': (_e, messages, data) => this.chat.send(messages, data),
@@ -167,9 +194,11 @@ export class DevHandlers {
   /** Whether this browser has a project, and the project's model as the server has it; unsure counts as having one. */
   private async modelStatus(): Promise<Payload> {
     const signedIn = !!this.deps.config.values.apiKey;
-    if (!this.api.canCall()) return { signedIn, hasLlmKey: true };
+    if (!this.api.canCall()) return { signedIn, error: 'Reconnect to load model settings.' };
     const config = await this.readConfig();
-    return config ? { signedIn, ...statusOf(config) } : { signedIn, hasLlmKey: true };
+    return config
+      ? { signedIn, ...statusOf(config) }
+      : { signedIn, error: 'Could not load model settings. Try again.' };
   }
 
   /** Saves the provider, model and (when given) key chosen in Ask to the project, checked against what the server has now. */

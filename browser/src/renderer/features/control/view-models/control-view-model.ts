@@ -89,7 +89,10 @@ export interface Blocked {
 export type Verdict = 'allow' | 'take' | 'refuse';
 
 /** The parts of the bridge the bar uses. */
-export type ControlBridge = Pick<OyaBrowser, 'getControlState' | 'changeControl' | 'onControlState'>;
+export type ControlBridge = Pick<
+  OyaBrowser,
+  'getControlState' | 'changeControl' | 'onControlState' | 'requestTakeover'
+>;
 
 /** The person holds control, here. */
 const isMine = (c: ControlSnapshot): boolean => c.mode === 'human' && !!c.mine;
@@ -170,6 +173,11 @@ export class ControlViewModel extends ViewModel<ControlState> {
   async acquire(): Promise<boolean> {
     await this.change('acquire', 'action');
     return !!this.state.control?.interactive;
+  }
+
+  /** Blocked navigation asks to take control instead of silently refusing input. */
+  requestTakeover(): void {
+    void this.bridge.requestTakeover().catch(() => {});
   }
 
   /** A click on a page action: allowed, refused, or (Start recording) allowed once control is taken. */

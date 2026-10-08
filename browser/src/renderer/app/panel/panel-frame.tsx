@@ -30,6 +30,7 @@ interface PartProps {
 const TOOL_TABS: readonly PaneTab[] = [
   { pane: 'chat', label: 'Ask' },
   { pane: 'record', label: 'Record' },
+  { pane: 'playbooks', label: 'Playbooks' },
   { pane: 'routines', label: 'Routines' },
   { pane: 'actions', label: 'Inspect' },
 ];

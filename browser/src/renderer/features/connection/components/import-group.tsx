@@ -58,16 +58,34 @@ function Earlier({ vm }: ViewProps<ImportViewModel>) {
   );
 }
 
+/** Explicit first-login invitation, using the default-first browser picker below. */
+function ImportOffer({ vm }: ViewProps<ImportViewModel>) {
+  const { offer, sources } = useViewModel(vm);
+  if (!offer) return null;
+  const source = sources?.find((item) => item.isDefault)?.name || sources?.[0]?.name || 'your browser';
+  return (
+    <section className="import-offer" aria-label="Import your browser logins">
+      <h3>Bring your logins from {source}</h3>
+      <p>
+        Import site sessions and available site storage. Saved passwords, bookmarks, and history are not imported. Oya
+        switches to the imported profile when finished.
+      </p>
+      <Button onClick={() => void vm.dismissOffer()}>Not now</Button>
+    </section>
+  );
+}
+
 /** The import group. */
 export function ImportGroup({ vm }: ViewProps<ImportViewModel>) {
   const s = useViewModel(vm);
   const status = importStatus(s);
   return (
     <div className="profile-group" role="group" aria-labelledby="import-label">
-      <h4 className="profile-label" id="import-label">
+      <ImportOffer vm={vm} />
+      <h4 className="profile-label" id="import-label" hidden={s.offer}>
         Imported logins
       </h4>
-      <div className="profile-row">
+      <div className="profile-row" hidden={s.offer}>
         <div className="row-text">
           <Latest vm={vm} />
           <Earlier vm={vm} />
@@ -87,7 +105,7 @@ export function ImportGroup({ vm }: ViewProps<ImportViewModel>) {
           ))}
         </select>
         <Button
-          variant="secondary"
+          variant={s.offer ? 'primary' : 'secondary'}
           id="import-logins"
           disabled={s.running || !!importBlocked(s)}
           onClick={() => void vm.start()}

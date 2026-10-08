@@ -12,7 +12,7 @@ function fixture() {
   const p: Found = {
     profile: { id: 'u', email: 'u@example.com' },
     standing: { plan: 'free', status: null, since: '2026-10-01' },
-    used: {},
+    used: { agent_steps: 120 },
     subscription: null,
     keys: [],
   };
@@ -70,4 +70,24 @@ describe('admin billing adjustment', () => {
     fireEvent.click(screen.getByText('Grant allowance'));
     await waitFor(() => expect(grant).toHaveBeenCalledOnce());
   });
+});
+
+it('allows a steps-only grant and shows it in the submitted allowance', async () => {
+  const { grant } = fixture();
+  fill('Reason for adjustment', 'Extend trial steps');
+  fill('Extra agent steps', '500');
+  fireEvent.click(screen.getByText('Grant allowance'));
+  await waitFor(() => expect(grant).toHaveBeenCalledOnce());
+  expect(grant.mock.calls[0][1]).toMatchObject({ steps: 500, hours: 0, credits: 0 });
+});
+
+it('prepares restoration of consumed steps but requires an explicit grant', async () => {
+  const { grant } = fixture();
+  fireEvent.click(screen.getByText('Restore used steps'));
+  expect((screen.getByLabelText('Extra agent steps') as HTMLInputElement).value).toBe('120');
+  expect(grant).not.toHaveBeenCalled();
+  fill('Reason for adjustment', 'Reset trial allowance');
+  fireEvent.click(screen.getByText('Grant allowance'));
+  await waitFor(() => expect(grant).toHaveBeenCalledOnce());
+  expect(grant.mock.calls[0][1].steps).toBe(120);
 });

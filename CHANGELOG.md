@@ -6,6 +6,26 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- In-browser playbook library with search, run inputs, progress, rename, delete, and JSON import/export.
+- First-login invitation to import site sessions from the default supported browser.
+- Takeover confirmation when a person clicks, types, or deliberately moves the pointer while an agent controls the page.
+- Admin grants for extra agent steps and restoration of consumed step allowance, with retry protection and usage history preserved.
+- Continue an unfinished task after its per-run step limit without clearing the conversation.
+
+### Changed
+
+- Refined white browser surfaces and made model settings, custom endpoints, profiles, routines, and imports easier to find.
+- Saved playbooks open directly from Ask and Record confirmations.
+
+### Fixed
+
+- Windows browser import discovers Chrome and Edge across per-user and system installations and reports launch, timeout, and partial-import failures.
+- Playbook runs retain the single-run guard when their pane closes and restore prior human control on completion.
+- Complimentary plan upgrades retain the Free hosted AI credit allowance; additional credits remain available through admin grants.
+- Admin plan saves verify the stored override before reporting success.
+
 ## [1.0.162](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.162) · 2026-10-07
 
 ### Fixed

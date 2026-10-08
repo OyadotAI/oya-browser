@@ -96,6 +96,7 @@ export const TABLES: Record<string, Table> = {
     key: ['id'],
     columns: {
       ...{ id: 'text', user_id: 'text', period_start: 'time', cloud_seconds: 'int', hosted_llm_microusd: 'int' },
+      agent_steps: 'int',
       ...{ actor: 'text', reason: 'text', created_at: 'time' },
     },
   },

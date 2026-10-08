@@ -6,6 +6,7 @@
  * the page rather than into it, so the site never sees them.
  */
 import path from 'node:path';
+import { TakeoverPrompt } from './takeover-prompt.ts';
 import type { BrowserView, BrowserWindow } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { drivenElsewhere, type ControlSnapshot } from '../control/control-state.ts';
@@ -150,10 +151,13 @@ export class ControlShield {
   private names: Map<number, string> = new Map();
   /** The main-process services. */
   private readonly deps: Deps;
+  /** Input-triggered, deduplicated handoff confirmation. */
+  readonly takeover: TakeoverPrompt;
 
   /** `deps` is the main-process context (see src/main/main.ts). */
   constructor(deps: Deps) {
     this.deps = deps;
+    this.takeover = new TakeoverPrompt(deps);
   }
 
   /** Throws unless a person holds control; every page-touching IPC call checks this. */
@@ -198,8 +202,14 @@ export class ControlShield {
     view.setBackgroundColor(TRANSPARENT);
     void holdStill(view, inContainer());
     view.webContents.loadFile(path.join(this.deps.appDir, 'out', 'renderer', 'control-shield', 'index.html'));
-    this.deps.shortcuts.install(view.webContents);
+    this.installShieldInput(view);
     return view;
+  }
+
+  /** Install shell shortcuts and input-triggered handoff on the shield alone. */
+  private installShieldInput(view: BrowserView): void {
+    this.deps.shortcuts.install(view.webContents);
+    this.takeover.install(view.webContents);
   }
 
   /** Whether the page should be covered right now. */

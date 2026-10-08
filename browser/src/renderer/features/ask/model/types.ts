@@ -12,6 +12,10 @@ export interface ToolCall {
 
 /** The answer to `sendChat`. */
 export interface ChatAnswer {
+  /** The run exhausted its own step budget, distinct from billing. */
+  limited?: boolean;
+  /** The server classified the run as unfinished. */
+  failed?: boolean;
   /** The agent's reply. */
   text?: string;
   /** Why it failed, in words for the person. */
@@ -52,6 +56,10 @@ export interface CatalogEntry {
 
 /** The answer to `modelStatus`. */
 export interface ModelStatus {
+  /** Configured API endpoint. */
+  baseUrl?: string;
+  /** Failure reading the project settings. */
+  error?: string;
   /** This browser belongs to a project. */
   signedIn?: boolean;
   /** The project has a model key. */

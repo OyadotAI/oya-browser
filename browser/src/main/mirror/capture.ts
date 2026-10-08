@@ -10,10 +10,11 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { sourceBrowser, type ChromiumSource, type SourceProfile } from './locate.ts';
 import { captureDevice, type DeviceElectron } from './device.ts';
+import { CaptureProcess } from './capture-process.ts';
 import { CdpWs } from './cdp-ws.ts';
 import { readVersion, readCookies, type SlimCookie } from './read.ts';
 import { copyIfPresent } from './copy.ts';
-import { LAUNCH_READY_TIMEOUT_MS, LAUNCH_POLL_MS, LAUNCH_INPUTS, PROFILE_INPUTS, PROFILE_STORES } from './constants.ts';
+import { LAUNCH_INPUTS, PROFILE_INPUTS, PROFILE_STORES } from './constants.ts';
 
 /** One captured profile: its identity and its cookies. */
 export interface ProfileCapture {
@@ -41,6 +42,8 @@ export interface Capture {
   device: unknown;
   /** Each profile captured. */
   profiles: ProfileCapture[];
+  /** Profiles that could not be read, for a partial-import summary. */
+  warnings?: string[];
 }
 
 /** What the capture takes from the app: Electron, for the device window. */
@@ -75,40 +78,26 @@ function launch(exe: string, scratch: string, profileDir: string): ChildProcess 
   return spawn(exe, args, { stdio: 'ignore' });
 }
 
-/** The debugging port the launched browser wrote, or null until it has. */
-function readPort(scratch: string): number | null {
+/** A failed snapshot has no child process and can be removed immediately. */
+async function snapshotSafely(source: ChromiumSource, profile: string, scratch: string): Promise<void> {
   try {
-    return Number(fs.readFileSync(path.join(scratch, 'DevToolsActivePort'), 'utf8').split('\n')[0]) || null;
-  } catch {
-    return null;
+    snapshot(source, profile, scratch);
+  } catch (error) {
+    await fs.promises.rm(scratch, { recursive: true, force: true }).catch(() => {});
+    const message = `Could not read ${source.name} profile. Close ${source.name} and retry.`;
+    throw new Error(`${message} ${(error as Error).message}`, { cause: error });
   }
-}
-
-/** Waits for the launched browser to advertise its debugging port. */
-async function waitForPort(scratch: string): Promise<number> {
-  const deadline = Date.now() + LAUNCH_READY_TIMEOUT_MS;
-  do {
-    const port = readPort(scratch);
-    if (port) return port;
-    await sleep(LAUNCH_POLL_MS);
-  } while (Date.now() < deadline);
-  throw new Error('Launched browser never opened its debugging port');
-}
-
-/** Resolves after `ms`, without blocking a timer from letting the process exit. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms).unref?.());
 }
 
 /** Snapshot, launch, read the profile's cookies and the real version, then tear down. */
 async function captureProfile(scratchRoot: string, source: ChromiumSource, profile: SourceProfile) {
   const scratch = fs.mkdtempSync(path.join(scratchRoot, 'oya-mirror-'));
-  snapshot(source, profile.dir, scratch);
-  const child = launch(source.exe, scratch, profile.dir);
+  await snapshotSafely(source, profile.dir, scratch);
+  const child = new CaptureProcess(launch(source.exe, scratch, profile.dir));
   try {
-    return await readOverCdp(await waitForPort(scratch), profile);
+    return await readOverCdp(await child.ready(scratch), profile);
   } finally {
-    teardown(child, scratch);
+    await child.clean(scratch);
   }
 }
 
@@ -130,14 +119,6 @@ async function profileRecord(cdp: CdpWs, profile: SourceProfile): Promise<Profil
   return { profile: profile.dir, name: profile.name, lastUsed: !!profile.lastUsed, chromeVersion, cookies };
 }
 
-/** Kills the launched browser and deletes its scratch copy. */
-function teardown(child: ChildProcess, scratch: string): void {
-  try {
-    child.kill();
-  } catch {}
-  fs.rmSync(scratch, { recursive: true, force: true });
-}
-
 /** The whole capture: the real device once, then each profile's cookies. Null when nothing to mirror. */
 export async function captureAll(ctx: CaptureDeps, sourceId?: string): Promise<Capture | null> {
   const source = sourceBrowser(sourceId);
@@ -146,28 +127,38 @@ export async function captureAll(ctx: CaptureDeps, sourceId?: string): Promise<C
   // Firefox's cookies are read from SQLite; Chromium needs a launch per profile
   // to decrypt them. The persona presents this app's own engine version either
   // way (identity/identity.ts): claiming the source browser's is a detectable lie.
-  const profiles = source.kind === 'firefox' ? source.capture() : await captureProfiles(source);
+  const warnings: string[] = [];
+  const profiles = source.kind === 'firefox' ? source.capture() : await captureProfiles(source, warnings);
   if (!profiles.length) return null;
-  return { source: source.id, name: source.name, userDataDir: source.userDataDir, device, profiles };
+  return { source: source.id, name: source.name, userDataDir: source.userDataDir, device, profiles, warnings };
 }
 
 /** Each profile captured in turn; a profile that fails is logged and skipped, not fatal. */
-async function captureProfiles(source: ChromiumSource): Promise<ProfileCapture[]> {
+async function captureProfiles(source: ChromiumSource, warnings: string[]): Promise<ProfileCapture[]> {
   const scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-mirror-root-'));
   const out: ProfileCapture[] = [];
   try {
-    for (const p of source.profiles) await pushCapture(out, scratchRoot, source, p);
+    for (const p of source.profiles) await pushCapture(out, scratchRoot, source, p, warnings);
   } finally {
-    fs.rmSync(scratchRoot, { recursive: true, force: true });
+    await fs.promises.rmdir(scratchRoot).catch(() => {}); // Retain interrupted captures.
   }
-  return out;
+  return capturedOrError(out, warnings);
 }
 
-/** Captures one profile into `out`; a profile that fails is logged and skipped, never fatal. */
-async function pushCapture(out: ProfileCapture[], scratchRoot: string, source: ChromiumSource, p: SourceProfile) {
+/** Preserve successful profiles but never report all failures as an empty import. */
+export function capturedOrError(profiles: ProfileCapture[], warnings: string[]): ProfileCapture[] {
+  if (!profiles.length && warnings.length) throw new Error(warnings.join('\n'));
+  return profiles;
+}
+
+/** Capture collaborators grouped to keep each per-profile operation readable. */
+type CaptureArguments = [ProfileCapture[], string, ChromiumSource, SourceProfile, string[]];
+
+/** Captures one profile, retaining its error for a partial-import report. */
+async function pushCapture(...[out, scratchRoot, source, p, warnings]: CaptureArguments) {
   try {
     out.push(await captureProfile(scratchRoot, source, p));
   } catch (e) {
-    console.log(`[oya] Mirror skipped profile ${p.dir}: ${(e as Error).message}`);
+    warnings.push(`${p.name}: ${(e as Error).message}`);
   }
 }

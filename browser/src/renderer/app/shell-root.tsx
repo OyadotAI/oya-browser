@@ -22,6 +22,7 @@ import { BrandMark, ThemeSelect, PageBackdrop, Launch, useChromeRoot } from '../
 import { TabBar, TabCard } from '../features/tabs/index.ts';
 import { Toolbar } from '../features/toolbar/index.ts';
 import { StartPage } from '../features/start/index.ts';
+import { PlaybooksPane } from '../features/playbooks/index.ts';
 import { AskPane } from '../features/ask/index.ts';
 import { RecordPane } from '../features/studio/index.ts';
 import { RoutinesPane } from '../features/routines/index.ts';
@@ -79,11 +80,17 @@ function Workspace({ vms }: ShellRootProps) {
   const recordBlocked = useRecordBlocked(vms);
   return (
     <PanelFrame panel={vms.panel} orb={orb}>
-      <AskPane ask={vms.ask} panel={vms.panel} />
+      <AskPane ask={vms.ask} panel={vms.panel} onViewPlaybook={(name) => void vms.playbooks.open(name)} />
+      <PlaybooksPane vm={vms.playbooks} panel={vms.panel} />
       <RoutinesPane routines={vms.routines} panel={vms.panel} />
       <ActionsPane actions={vms.inspect.actions} panel={vms.panel} />
       <NetworkPane log={vms.inspect.netLog} panel={vms.panel} />
-      <RecordPane vm={vms.studio} active={pane === 'record'} controlBlocked={recordBlocked} />
+      <RecordPane
+        vm={vms.studio}
+        active={pane === 'record'}
+        controlBlocked={recordBlocked}
+        onViewPlaybook={(name) => void vms.playbooks.open(name)}
+      />
       <SourcePane source={vms.inspect.source} panel={vms.panel} />
     </PanelFrame>
   );

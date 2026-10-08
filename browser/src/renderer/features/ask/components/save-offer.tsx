@@ -13,6 +13,8 @@ import type { PlaybookOfferViewModel } from '../view-models/playbook-offer-view-
 
 /** What the offer's parts are given. */
 interface OfferProps {
+  /** Opens this saved playbook in the library. */
+  onViewPlaybook?: (name: string) => void;
   /** The offer. */
   offer: PlaybookOfferViewModel;
 }
@@ -84,7 +86,7 @@ function OfferForm({ offer }: OfferProps) {
 }
 
 /** The offer under a reply. */
-export function SaveOffer({ offer }: OfferProps) {
+export function SaveOffer({ offer, onViewPlaybook }: OfferProps) {
   const { stage, savedAs } = useViewModel(offer);
   const box = useRef<HTMLDivElement>(null);
   const formOpen = stage !== 'offer';
@@ -97,6 +99,7 @@ export function SaveOffer({ offer }: OfferProps) {
         <p className="chat-save-done">
           <Icon name="check" />
           <span>{`Saved as playbook “${savedAs}”`}</span>
+          {onViewPlaybook && <button onClick={() => onViewPlaybook(savedAs)}>View playbook</button>}
         </p>
       )}
     </div>

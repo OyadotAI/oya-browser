@@ -1,0 +1,113 @@
+/** Compact, readable library surfaces within the existing workspace. */
+.pb-body {
+  padding: 16px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pb-body h2,
+.pb-body h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pb-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pb-actions h2 {
+  margin-right: auto;
+}
+.pb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+.pb-field input {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.pb-field input:focus-visible,
+.pb-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pb-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  padding: 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.pb-row strong {
+  overflow-wrap: anywhere;
+}
+.pb-row span {
+  white-space: nowrap;
+  color: var(--secondary);
+}
+.pb-row:hover {
+  background: var(--hover);
+}
+.pb-row[aria-pressed='true'] {
+  background: var(--accent-soft);
+}
+.pb-details,
+.pb-run {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pb-inputs {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.pb-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.pb-body pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 280px;
+  overflow: auto;
+  font-size: var(--text-sm);
+  background: var(--muted-surface);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+}
+.pb-body summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.pb-error {
+  color: var(--danger);
+}

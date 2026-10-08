@@ -16,6 +16,8 @@ import { SaveOffer } from './save-offer.tsx';
 
 /** What the conversation's parts are given. */
 interface AskProps {
+  /** Opens a saved workflow in the library. */
+  onViewPlaybook?: (name: string) => void;
   /** The conversation. */
   ask: AskViewModel;
 }
@@ -64,14 +66,14 @@ function CopyButton({ ask, message }: MessageProps) {
  * offer are portalled in after it. A message never changes, so React never
  * resets that HTML under them.
  */
-function AgentMessage({ ask, message }: MessageProps) {
+function AgentMessage({ ask, message, onViewPlaybook }: MessageProps) {
   const [box, setBox] = useState<HTMLDivElement | null>(null);
   const html = useMemo(() => ({ __html: replyHtml(message.content) }), [message.content]);
   const failed = isErrorReply(message.content);
   const extras = (
     <>
       {!failed && <CopyButton ask={ask} message={message} />}
-      {message.offer && <SaveOffer offer={message.offer} />}
+      {message.offer && <SaveOffer offer={message.offer} onViewPlaybook={onViewPlaybook} />}
     </>
   );
   return (
@@ -97,7 +99,7 @@ function useNewestInView(deps: unknown[]) {
 }
 
 /** The conversation. */
-export function Messages({ ask }: AskProps) {
+export function Messages({ ask, onViewPlaybook }: AskProps) {
   const { items } = useViewModel(ask);
   const { card } = useViewModel(ask.run);
   const list = useNewestInView([items, card]);
@@ -112,7 +114,7 @@ export function Messages({ ask }: AskProps) {
             {item.content}
           </div>
         ) : (
-          <AgentMessage key={item.id} ask={ask} message={item} />
+          <AgentMessage key={item.id} ask={ask} message={item} onViewPlaybook={onViewPlaybook} />
         ),
       )}
       <LiveRun run={ask.run} />

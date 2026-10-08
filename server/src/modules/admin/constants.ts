@@ -43,3 +43,6 @@ export const MICRO_USD_PER_DOLLAR = 1_000_000;
 export const MAX_GRANT_HOURS = 100_000;
 /** Maximum hosted model dollars in a single grant. */
 export const MAX_GRANT_DOLLARS = 100_000;
+
+/** Maximum extra agent steps in one support grant. */
+export const MAX_GRANT_STEPS = 1_000_000;

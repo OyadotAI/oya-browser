@@ -14,6 +14,8 @@ import { Composer } from './composer.tsx';
 
 /** What the Ask pane is given. */
 export interface AskPaneProps {
+  /** Opens the saved playbook in the library. */
+  onViewPlaybook?: (name: string) => void;
   /** The conversation and its collaborators. */
   ask: AskViewModel;
   /** The workspace panel: the pane in view, and whether it is open. */
@@ -30,7 +32,7 @@ interface AskPartProps {
 function AskToolbar({ ask }: AskPartProps) {
   const { sending } = useViewModel(ask);
   const persona = useViewModel(ask.persona);
-  const { signedIn } = useViewModel(ask.model);
+  const { signedIn, status } = useViewModel(ask.model);
   return (
     <div className="studio-header chat-toolbar">
       <select
@@ -49,11 +51,13 @@ function AskToolbar({ ask }: AskPartProps) {
       </select>
       <Button
         id="chat-model-open"
-        title="Change the AI model key Ask runs on"
+        title={
+          status.provider ? `${status.provider} · ${status.model}. Change model settings` : 'Change model settings'
+        }
         hidden={!signedIn}
         onClick={() => void ask.model.openCard()}
       >
-        Model
+        {status.model || 'Model'}
       </Button>
       <IconButton id="chat-clear" label="Clear chat" data-icon="trash" onClick={() => ask.clear()} icon="trash" />
     </div>
@@ -74,15 +78,34 @@ function SignInCard({ ask }: AskPartProps) {
   );
 }
 
+/** Explicit continuation retains the conversation while starting another bounded run. */
+function StepLimitCard({ ask }: AskPartProps) {
+  const { limited, sending } = useViewModel(ask);
+  if (!limited) return null;
+  return (
+    <div className="chat-card" role="status">
+      <h2>This run reached its step limit</h2>
+      <p>Continue from the current page with a fresh run budget. Your account’s usage allowance still applies.</p>
+      <Button variant="primary" disabled={sending} onClick={() => void ask.continueRun()}>
+        Continue task
+      </Button>
+      <Button disabled={sending} onClick={() => ask.clear()}>
+        Start new task
+      </Button>
+    </div>
+  );
+}
+
 /** The Ask pane, shown while the panel is on Ask. */
-export function AskPane({ ask, panel }: AskPaneProps) {
+export function AskPane({ ask, panel, onViewPlaybook }: AskPaneProps) {
   const { pane } = useViewModel(panel);
   return (
     <div className={pane === 'chat' ? 'dev-pane active' : 'dev-pane'} id="pane-chat">
       <AskToolbar ask={ask} />
       <SignInCard ask={ask} />
       <ModelCard model={ask.model} />
-      <Messages ask={ask} />
+      <Messages ask={ask} onViewPlaybook={onViewPlaybook} />
+      <StepLimitCard ask={ask} />
       <Composer ask={ask} panel={panel} />
     </div>
   );

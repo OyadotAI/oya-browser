@@ -224,3 +224,16 @@ body:not(.mode-browsing) .start-page {
     animation: none;
   }
 }
+
+/** Light mode keeps the existing composition with quiet white surfaces. */
+:root:not([data-theme='dark']) .start-aura,
+:root:not([data-theme='dark']) .start-lattice {
+  display: none;
+}
+:root:not([data-theme='dark']) .start-title {
+  font-family: var(--font);
+  font-weight: 600;
+}
+:root:not([data-theme='dark']) .start-page {
+  background: var(--surface);
+}

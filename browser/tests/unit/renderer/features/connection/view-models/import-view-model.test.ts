@@ -172,3 +172,28 @@ describe('Import logins', () => {
     assert.equal(noSources(app.imports.state), true);
   });
 });
+
+it('offers import after first login and remembers an explicit dismissal', async () => {
+  const app = build({ importSources: SOURCES, getUiPreferences: {}, saveUiPreferences: true });
+  await settle();
+  app.fake.emit('onWsStatus', { connected: true });
+  assert.equal(app.imports.state.offer, true);
+  await app.imports.dismissOffer();
+  app.fake.emit('onWsStatus', { connected: false });
+  app.fake.emit('onWsStatus', { connected: true });
+  assert.equal(app.imports.state.offer, false);
+  assert.deepEqual(app.fake.called('saveUiPreferences').at(-1), [{ importOffered: true }]);
+});
+it('does not repeat the invitation after it was handled on an earlier launch', async () => {
+  const app = build({ importSources: SOURCES, getUiPreferences: { importOffered: true } });
+  await settle();
+  app.fake.emit('onWsStatus', { connected: true });
+  assert.equal(app.imports.state.offer, false);
+});
+it('reports partial imports and zero-login captures without claiming all logins transferred', async () => {
+  const app = await connected();
+  app.fake.emit('onMirrorStatus', { source: 'Chrome', cookies: 4, warnings: ['Work profile is locked'] });
+  assert.match(app.imports.state.note.text, /Work profile is locked/);
+  app.fake.emit('onMirrorStatus', { source: 'Chrome', cookies: 0 });
+  assert.match(app.imports.state.note.text, /No logins were found/);
+});

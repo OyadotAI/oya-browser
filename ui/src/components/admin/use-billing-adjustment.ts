@@ -8,6 +8,7 @@ type Fields = {
   /** Override selection; empty means follow the subscription. */ plan: string;
   /** Cloud hours typed. */ hours: string;
   /** Hosted model dollars typed. */ credits: string;
+  /** Extra whole agent steps. */ steps: string;
   /** Support explanation. */ reason: string;
 };
 
@@ -40,7 +41,10 @@ async function perform(work: () => Promise<unknown>, done: () => void, set: (val
 
 /** Editable fields and the successful-grant reset. */
 function useFields(p: Found) {
-  const [fields, setFields] = useState<Fields>({ plan: p.override?.plan || '', hours: '', credits: '', reason: '' });
+  const [fields, setFields] = useState<Fields>({
+    plan: p.override?.plan || '',
+    ...{ hours: '', credits: '', steps: '', reason: '' },
+  });
   const set = (patch: Partial<Fields>) => setFields((f) => ({ ...f, ...patch }));
   return { fields, set };
 }
@@ -52,13 +56,18 @@ function cleared(
   changed: () => void,
 ) {
   previous.current = null;
-  set({ hours: '', credits: '', reason: '' });
+  set({ hours: '', credits: '', steps: '', reason: '' });
   changed();
 }
 
 /** Stable identity for the same grant payload; editing fields creates a new request. */
 function grantRequest(fields: Fields, previous: MutableRefObject<Identity | null>) {
-  const body = JSON.stringify({ hours: Number(fields.hours), credits: Number(fields.credits), reason: fields.reason });
+  const body = JSON.stringify({
+    hours: Number(fields.hours),
+    credits: Number(fields.credits),
+    steps: Number(fields.steps),
+    reason: fields.reason,
+  });
   if (previous.current?.body !== body) previous.current = { body, id: crypto.randomUUID() };
   return { ...JSON.parse(body), requestId: previous.current.id };
 }

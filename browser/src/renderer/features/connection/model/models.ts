@@ -72,6 +72,8 @@ export interface ImportSource {
 
 /** A login import's progress (mirror-status). */
 export interface MirrorStatus extends Partial<ImportRecord> {
+  /** Profiles that could not be imported. */
+  warnings?: string[];
   /** The import started. */
   started?: boolean;
   /** Why it failed. */

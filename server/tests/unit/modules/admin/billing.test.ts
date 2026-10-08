@@ -1,5 +1,5 @@
 /** Admin billing changes preserve payment state and reject unsafe or duplicate grants. */
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { ownDataDir } from '../../support/data-dir.ts';
@@ -58,8 +58,13 @@ describe('admin billing', () => {
     assert.equal(first.hosted_llm_microusd, 1_250_000);
     assert.equal(first.actor, 'admin');
     assert.equal(first.reason, 'Support credit');
-    assert.deepEqual(await creditsFor('customer', SINCE), { cloud_seconds: 900, hosted_llm_microusd: 1_250_000 });
+    assert.deepEqual(await creditsFor('customer', SINCE), {
+      cloud_seconds: 900,
+      hosted_llm_microusd: 1_250_000,
+      agent_steps: 0,
+    });
     assert.deepEqual(await creditsFor('customer', '2026-11-01T00:00:00.000Z'), {
+      agent_steps: 0,
       cloud_seconds: 0,
       hosted_llm_microusd: 0,
     });
@@ -85,4 +90,23 @@ describe('admin billing', () => {
     await assert.rejects(grant('customer', request({ hours: 0, credits: 0 }), 'admin', NOW), { status: 400 });
     await assert.rejects(grant('customer', request({ requestId: 'bad' }), 'admin', NOW), { status: 400 });
   });
+});
+
+it('grants whole agent steps once and rejects fractional or excessive grants', async () => {
+  const body = request({ hours: 0, credits: 0, steps: 500 });
+  await grant('customer', body, 'admin', NOW);
+  await grant('customer', body, 'admin', NOW);
+  assert.equal((await creditsFor('customer', SINCE)).agent_steps, 500);
+  for (const steps of [-1, 0.5, '500', NaN, Infinity, 1_000_001])
+    await assert.rejects(grant('customer', request({ steps }), 'admin', NOW), { status: 400 });
+});
+
+it('does not report success when the requested plan was not persisted', async () => {
+  const storage = getConnection();
+  const write = mock.method(storage, 'upsert', async () => {});
+  try {
+    await assert.rejects(setPlan('customer', { plan: 'startup', reason: 'Verify save' }, 'admin'), { status: 409 });
+  } finally {
+    write.mock.restore();
+  }
 });

@@ -33,6 +33,7 @@ export const grantsFor = (userId: string, since: string) =>
 export async function creditsFor(userId: string, since: string): Promise<Credits> {
   const rows = await grantsFor(userId, since);
   return {
+    agent_steps: rows.reduce((sum, row) => sum + (Number(row.agent_steps) || 0), 0),
     cloud_seconds: rows.reduce((sum, row) => sum + Number(row.cloud_seconds), 0),
     hosted_llm_microusd: rows.reduce((sum, row) => sum + Number(row.hosted_llm_microusd), 0),
   };

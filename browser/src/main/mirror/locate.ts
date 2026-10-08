@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { windowsExecutable } from './windows-executable.ts';
 import { firefoxSource, type FirefoxSource } from './firefox.ts';
 
 /** A profile a Chromium browser holds, as Local State lists it. */
@@ -171,18 +172,25 @@ function winSource(id: string): Source | null {
   const local = process.env.LOCALAPPDATA || '';
   const spec = Object.values(WIN_BROWSERS).find((b) => winId(b) === id);
   if (!spec || !local || !fs.existsSync(path.join(local, spec.data))) return null;
-  return describeSource(id, spec.name, path.join(local, spec.exe), path.join(local, spec.data));
+  return describeSource(id, spec.name, windowsExecutable(spec.exe), path.join(local, spec.data));
 }
 
 /** The registry key holding the user's chosen https handler. */
 const HTTPS_USER_CHOICE =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Shell\\Associations\\URLAssociations\\https\\UserChoice';
 
+/** Translate Windows ProgIds, including Edge's MSEdge prefix, to supported source ids. */
+export function windowsDefaultFamily(raw: string): string | undefined {
+  return ['firefox', 'brave', 'edge', 'chrome'].find((family) =>
+    new RegExp(family === 'edge' ? 'MSEdge|MicrosoftEdge' : family, 'i').test(raw),
+  );
+}
+
 /** The family key of the registry https handler, or null. */
 function winDefaultKey(): string | null {
   try {
     const raw = execFileSync('reg', ['query', HTTPS_USER_CHOICE, '/v', 'ProgId'], { encoding: 'utf8' });
-    const family = ['firefox', 'brave', 'edge', 'chrome'].find((f) => new RegExp(f, 'i').test(raw));
+    const family = windowsDefaultFamily(raw);
     return family || null;
   } catch {
     return null;
