@@ -875,10 +875,52 @@ cross-origin frames and all three worker types, malformed/late/conflicting input
 input/readback mutation isolation and a cold service-worker restart. The ordinary
 `test:native-user-agent` still runs independently without installing metadata.
 
-**Remaining scope:** this is native observable metadata, not complete HTTP
-client-hint negotiation. Electron's BrowserContext still has no client-hint
-controller delegate. Native navigation `Accept-CH` persistence, permission-policy
-and header parity require their own implementation and tests; the legacy header
-interceptor has not been replaced. `navigator.platform`, full native persona
-activation and macOS/Windows release validation also remain outstanding. The
+**Scope of this patch alone:** it supplies observable metadata, not HTTP
+client-hint negotiation. The subsequent controller patch below adds native
+navigation negotiation and its own tests; the legacy header interceptor has not
+been replaced on the default path. `navigator.platform`, full native persona
+activation and macOS/Windows release validation remain outstanding. The
 native-policy coordinator still certifies only its existing explicit subset.
+
+## Native UA client-hint negotiation prerequisite
+
+Apply `patches/native-session-client-hints.patch` from the pinned Electron
+checkout after the UA metadata patches. A BrowserContext-owned controller is
+created only for sessions with installed native metadata; unconfigured sessions
+retain their previous behavior. It supplies the immutable native metadata to the
+engine's ordinary client-hint negotiation rather than rewriting requests or using
+a debugger.
+
+Low-entropy UA headers use the configured metadata. High-entropy UA hints require
+origin opt-in through `Accept-CH`; the engine retains its trustworthy-origin,
+JavaScript/WebPreferences, permissions-policy and navigation checks. The controller
+remembers only UA-family opt-ins, keyed by exact origin, in memory for that
+BrowserContext's lifetime. It keeps at most 256 origins and refuses additional
+new opt-ins at the bound; replacing or revoking an existing entry still works.
+Temporary additional-hint lists are deduplicated and restricted to UA hints.
+This is not a disk-backed preference store or a general device/network-hint
+implementation.
+
+An empty `Accept-CH` or native `Clear-Site-Data: "clientHints"` revokes that origin's
+opt-in. Session `clearCache`, `clearStorageData` and valid `clearData` calls also
+forget the entire session's hint cache without changing its immutable identity.
+For these session APIs this deliberately over-clears opt-ins even when their
+storage filters select only some origins or data types. Hint state is not shared
+with other sessions and is not restored after browser restart.
+
+Run `test:native-client-hints` with an explicit patched `OYA_NATIVE_ENGINE`. It
+uses actual HTTP response opt-in and records actual incoming request headers on
+local servers. It covers low/high metadata values, host/port/session isolation,
+same-session reuse, permission-policy denial and cross-origin delegation,
+insecure-origin refusal, redirect recomputation, native critical-hint retry,
+JavaScript-disabled navigation, empty opt-in, Clear-Site-Data and session data
+clearing. Debugger access throws in every test window; there is no header
+interceptor in this fixture.
+
+This is still a prerequisite, not production persona activation. The legacy
+header interceptor remains on the default protection path until the complete
+native identity/lifecycle migration is ready. `navigator.platform`, remaining
+native persona protections, the legacy integration fixtures and the platform
+release matrix remain separate gates. Worker request negotiation, browser-owned
+`session.fetch`, persistence across restart and every non-UA client hint are not
+certified by this navigation/fetch fixture.

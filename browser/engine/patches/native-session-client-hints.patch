@@ -1,0 +1,160 @@
+--- a/shell/browser/electron_browser_context.cc
++++ b/shell/browser/electron_browser_context.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <algorithm>
+ #include <memory>
++#include <map>
+ #include <optional>
+ #include <utility>
+ 
+@@ -33,6 +34,9 @@
+ #include "content/browser/blob_storage/chrome_blob_storage_context.h"  // nogncheck
+ #include "content/browser/network_service_instance_impl.h"  // nogncheck
+ #include "content/public/browser/browser_thread.h"
++#include "content/public/browser/client_hints_controller_delegate.h"
++#include "content/public/browser/oya_session_user_agent.h"
++#include "services/network/public/cpp/is_potentially_trustworthy.h"
+ #include "content/public/browser/cors_origin_pattern_setter.h"
+ #include "content/public/browser/host_zoom_map.h"
+ #include "content/public/browser/page.h"
+@@ -109,6 +113,78 @@
+ 
+ namespace {
+ 
++// Opt-ins live only in their native BrowserContext, never in application globals.
++const char kOyaClientHintsKey = 0;
++constexpr size_t kMaxOyaClientHintOrigins = 256;
++using OyaHint = network::mojom::WebClientHintsType;
++
++bool IsOyaUserAgentHint(OyaHint hint) {
++  constexpr OyaHint allowed[] = {
++      OyaHint::kUA, OyaHint::kUAArch, OyaHint::kUAPlatform, OyaHint::kUAModel,
++      OyaHint::kUAMobile, OyaHint::kUAFullVersion, OyaHint::kUAPlatformVersion,
++      OyaHint::kUABitness, OyaHint::kUAFullVersionList, OyaHint::kUAWoW64,
++      OyaHint::kUAFormFactors};
++  return std::find(std::begin(allowed), std::end(allowed), hint) != std::end(allowed);
++}
++
++class OyaClientHints final : public base::SupportsUserData::Data,
++                            public content::ClientHintsControllerDelegate {
++ public:
++  explicit OyaClientHints(electron::ElectronBrowserContext* context)
++      : context_(context) {}
++  network::NetworkQualityTracker* GetNetworkQualityTracker() override { return nullptr; }
++  blink::UserAgentMetadata GetUserAgentMetadata() override {
++    return content::GetUserAgentMetadataForOyaContext(context_);
++  }
++  bool IsJavaScriptAllowed(const GURL& url, content::RenderFrameHost*) override {
++    // Content additionally enforces per-frame WebPreferences before sending or persisting hints.
++    return url.SchemeIsHTTPOrHTTPS() && network::IsUrlPotentiallyTrustworthy(url);
++  }
++  void GetAllowedClientHintsFromSource(const url::Origin& origin,
++                                      blink::EnabledClientHints* hints) override {
++    if (!IsJavaScriptAllowed(origin.GetURL(), nullptr))
++      return;
++    const auto found = origins_.find(origin);
++    if (found != origins_.end())
++      *hints = found->second;
++    for (auto hint : additional_)
++      hints->SetIsEnabled(hint, true);
++  }
++  void PersistClientHints(const url::Origin& origin, content::RenderFrameHost* parent,
++                          const std::vector<OyaHint>& hints) override {
++    if (parent || origin.opaque() || !IsJavaScriptAllowed(origin.GetURL(), parent))
++      return;
++    blink::EnabledClientHints enabled;
++    for (auto hint : hints)
++      if (IsOyaUserAgentHint(hint)) enabled.SetIsEnabled(hint, true);
++    if (enabled.GetEnabledHints().empty()) {
++      origins_.erase(origin);
++      return;
++    }
++    // Refuse new opt-ins at the bound rather than retaining an unbounded origin history.
++    if (!origins_.contains(origin) && origins_.size() >= kMaxOyaClientHintOrigins)
++      return;
++    origins_[origin] = enabled;
++  }
++  void SetAdditionalClientHints(const std::vector<OyaHint>& hints) override {
++    additional_.clear();
++    for (auto hint : hints)
++      if (IsOyaUserAgentHint(hint) &&
++          std::find(additional_.begin(), additional_.end(), hint) == additional_.end())
++        additional_.push_back(hint);
++  }
++  void ClearAdditionalClientHints() override { additional_.clear(); }
++  void SetMostRecentMainFrameViewportSize(const gfx::Size& size) override { viewport_ = size; }
++  gfx::Size GetMostRecentMainFrameViewportSize() override { return viewport_; }
++  void Clear() { origins_.clear(); additional_.clear(); }
++ private:
++  const raw_ptr<electron::ElectronBrowserContext> context_;
++  std::map<url::Origin, blink::EnabledClientHints> origins_;
++  std::vector<OyaHint> additional_;
++  gfx::Size viewport_;
++};
++
++
+ // Copied from chrome/browser/media/webrtc/desktop_capture_devices_util.cc.
+ media::mojom::CaptureHandlePtr CreateCaptureHandle(
+     content::WebContents* capturer,
+@@ -684,7 +760,22 @@
+ 
+ content::ClientHintsControllerDelegate*
+ ElectronBrowserContext::GetClientHintsControllerDelegate() {
+-  return nullptr;
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  if (!content::GetOyaSessionUserAgentMetadata(this))
++    return nullptr;
++  auto* hints = static_cast<OyaClientHints*>(GetUserData(&kOyaClientHintsKey));
++  if (!hints) {
++    auto owned = std::make_unique<OyaClientHints>(this);
++    hints = owned.get();
++    SetUserData(&kOyaClientHintsKey, std::move(owned));
++  }
++  return hints;
++}
++
++void ElectronBrowserContext::ClearOyaClientHints() {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  if (auto* hints = static_cast<OyaClientHints*>(GetUserData(&kOyaClientHintsKey)))
++    hints->Clear();
+ }
+ 
+ content::StorageNotificationService*
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -163,6 +163,8 @@
+   content::PermissionControllerDelegate* GetPermissionControllerDelegate()
+       override;
+   storage::SpecialStoragePolicy* GetSpecialStoragePolicy() override;
++  // Forget native Accept-CH opt-ins without changing immutable identity.
++  void ClearOyaClientHints();
+   content::ClientHintsControllerDelegate* GetClientHintsControllerDelegate()
+       override;
+   content::StorageNotificationService* GetStorageNotificationService() override;
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -898,6 +898,7 @@
+ }
+ 
+ v8::Local<v8::Promise> Session::ClearCache() {
++  browser_context_->ClearOyaClientHints();
+   gin_helper::Promise<void> promise(isolate_);
+   auto handle = promise.GetHandle();
+ 
+@@ -918,6 +919,7 @@
+   ClearStorageDataOptions options;
+   args->GetNext(&options);
+ 
++  browser_context_->ClearOyaClientHints();
+   if (options.storage_types & StoragePartition::REMOVE_DATA_MASK_COOKIES) {
+     // Reset media device id salt when cookies are cleared.
+     // https://w3c.github.io/mediacapture-main/#dom-mediadeviceinfo-deviceid
+@@ -2027,6 +2029,7 @@
+   gin_helper::Promise<void> promise(isolate);
+   v8::Local<v8::Promise> promise_handle = promise.GetHandle();
+ 
++  browser_context_->ClearOyaClientHints();
+   BrowsingDataRemover* remover = browser_context_->GetBrowsingDataRemover();
+   ClearDataTask::Run(remover, std::move(promise), data_type_mask,
+                      std::move(origins), filter_mode, origin_matching_mode);

@@ -170,8 +170,11 @@ engine are separate concerns; this requirement governs the control architecture.
   with worker-startup and network-context ownership; `test:native-user-agent`
   exercises first-script values and real headers without a debugger. This does
   not activate complete native personas. The metadata prerequisite now binds
-  native low/high-entropy `navigator.userAgentData` to the session; native HTTP
-  client-hint negotiation and `navigator.platform` remain separate work.
+  native low/high-entropy `navigator.userAgentData` to the session. A native
+  UA client-hint controller now handles bounded in-memory origin opt-ins and
+  respects native permission/JavaScript rules; `test:native-client-hints` checks
+  actual headers and revocation. `navigator.platform`, full persona activation
+  and worker request-hint coverage remain separate work.
 - Page protection: persona application, worker coverage and tab startup currently
   rely on debugger commands. Preserve existing isolation and egress guarantees;
   capabilities absent from public Electron APIs may require native engine work.
