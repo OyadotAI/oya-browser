@@ -1,0 +1,179 @@
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by the MIT license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "shell/browser/api/electron_api_session.h"
+ #include "third_party/icu/source/i18n/unicode/timezone.h"
+ #include "third_party/icu/source/common/unicode/locid.h"
+@@ -1255,6 +1256,8 @@
+   result.Set("locale", browser_context_->GetOyaLocale());
+   result.Set("hardwareConcurrency", browser_context_->GetOyaHardwareConcurrency());
+   result.Set("acceptLanguages", browser_context_->GetOyaAcceptLanguages());
++  const auto* user_agent = content::GetOyaSessionUserAgent(browser_context_);
++  result.Set("userAgent", user_agent ? *user_agent : std::string());
+   return result.GetHandle();
+ }
+ 
+@@ -1328,9 +1331,38 @@
+     thrower.ThrowError("Native timezone must be installed before any session renderer and cannot be changed");
+ }
+ 
++// Install a bounded, immutable HTTP field before the first session renderer.
++void Session::SetOyaUserAgent(gin_helper::ErrorThrower thrower,
++                              const std::string& user_agent) {
++  constexpr size_t kMaxNativeUserAgentLength = 1024;
++  if (user_agent.empty() || user_agent.size() > kMaxNativeUserAgentLength ||
++      !std::all_of(user_agent.begin(), user_agent.end(),
++                   [](unsigned char c) { return c >= 32 && c <= 126; })) {
++    thrower.ThrowTypeError("Invalid native user agent");
++    return;
++  }
++  const auto* installed = content::GetOyaSessionUserAgent(browser_context_);
++  if ((!installed && browser_context_->HasOyaRendererStarted()) ||
++      (installed && *installed != user_agent)) {
++    thrower.ThrowError("Native user agent must be installed before any session renderer and cannot be changed");
++    return;
++  }
++  CHECK(content::SetOyaSessionUserAgent(browser_context_, user_agent));
++  browser_context_->SetUserAgent(user_agent);
++  browser_context_->ForEachLoadedStoragePartition(
++      [&user_agent](content::StoragePartition* partition) {
++        partition->GetNetworkContext()->SetUserAgent(user_agent);
++      });
++}
++
+ void Session::SetUserAgent(gin_helper::ErrorThrower thrower,
+                            const std::string& user_agent,
+                            gin::Arguments* args) {
++  const auto* installed = content::GetOyaSessionUserAgent(browser_context_);
++  if (installed && *installed != user_agent) {
++    thrower.ThrowError("Native session owns User-Agent");
++    return;
++  }
+   std::string accept_lang;
+   const bool has_languages = args->GetNext(&accept_lang);
+   const auto policy = browser_context_->GetOyaAcceptLanguages();
+@@ -2142,6 +2174,7 @@
+       .SetMethod("allowNTLMCredentialsForDomains",
+                  &Session::AllowNTLMCredentialsForDomains)
+       .SetMethod("isPersistent", &Session::IsPersistent)
++      .SetMethod("_setOyaUserAgent", &Session::SetOyaUserAgent)
+       .SetMethod("_getOyaSessionPolicy", &Session::GetOyaSessionPolicy)
+       .SetMethod("_setOyaLocale", &Session::SetOyaLocale)
+       .SetMethod("_setOyaHardwareConcurrency", &Session::SetOyaHardwareConcurrency)
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -148,6 +148,7 @@
+   v8::Local<v8::Promise> ClearHostResolverCache(gin::Arguments* args);
+   v8::Local<v8::Promise> ClearAuthCache();
+   void AllowNTLMCredentialsForDomains(const std::string& domains);
++  void SetOyaUserAgent(gin_helper::ErrorThrower thrower, const std::string& user_agent);
+   v8::Local<v8::Value> GetOyaSessionPolicy(v8::Isolate* isolate);
+   void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);
+   void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+--- a/shell/browser/electron_browser_client.cc
++++ b/shell/browser/electron_browser_client.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by the MIT license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "shell/browser/electron_browser_client.h"
+ #include "base/strings/string_number_conversions.h"
+ 
+@@ -1865,7 +1866,8 @@
+     std::optional<
+         content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason>&
+         refused_reason) {
+-  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty() ||
++  if (content::GetOyaSessionUserAgent(browser_context) ||
++      !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty() ||
+       static_cast<ElectronBrowserContext*>(browser_context)->GetOyaHardwareConcurrency() ||
+       !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaLocale().empty()) {
+     refused_reason = content::ContentBrowserClient::
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by the MIT license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "shell/browser/api/electron_api_web_contents.h"
+ #include "shell/browser/oya_drag_controller.h"
+ 
+@@ -3083,8 +3084,15 @@
+   }
+ 
+   std::string user_agent;
+-  if (options.Get("userAgent", &user_agent))
++  if (options.Get("userAgent", &user_agent)) {
++    const auto* installed = content::GetOyaSessionUserAgent(web_contents()->GetBrowserContext());
++    if (installed && *installed != user_agent) {
++      Emit("did-fail-load", static_cast<int>(net::ERR_INVALID_ARGUMENT),
++           "Native session owns User-Agent", url.possibly_invalid_spec(), true);
++      return;
++    }
+     SetUserAgent(user_agent);
++  }
+ 
+   std::string extra_headers;
+   if (options.Get("extraHeaders", &extra_headers))
+@@ -3357,7 +3365,10 @@
+   }
+ 
+   if (!navigation_entries.empty()) {
+-    web_contents()->SetUserAgentOverride(ua_override, false);
++    if (content::GetOyaSessionUserAgent(web_contents()->GetBrowserContext()))
++      SetUserAgent(ua_override.ua_string_override);
++    else
++      web_contents()->SetUserAgentOverride(ua_override, false);
+     web_contents()->GetController().Restore(
+         index, content::RestoreType::kRestored, &navigation_entries);
+     web_contents()->GetController().LoadIfNecessary();
+@@ -3530,10 +3541,22 @@
+   }
+ }
+ 
++// Public overrides must not weaken an immutable native session identity.
++void WebContents::SetUserAgentFromApi(gin_helper::ErrorThrower thrower,
++                                      const std::string& user_agent) {
++  const auto* installed = content::GetOyaSessionUserAgent(web_contents()->GetBrowserContext());
++  if (installed && *installed != user_agent) {
++    thrower.ThrowError("Native session owns User-Agent");
++    return;
++  }
++  SetUserAgent(user_agent);
++}
++
+ void WebContents::SetUserAgent(const std::string& user_agent) {
+   blink::UserAgentOverride ua_override;
+-  ua_override.ua_string_override = user_agent;
+-  if (!user_agent.empty())
++  const auto* installed = content::GetOyaSessionUserAgent(web_contents()->GetBrowserContext());
++  ua_override.ua_string_override = installed ? *installed : user_agent;
++  if (!ua_override.ua_string_override.empty())
+     ua_override.ua_metadata_override = embedder_support::GetUserAgentMetadata();
+ 
+   web_contents()->SetUserAgentOverride(ua_override, false);
+@@ -5400,7 +5423,7 @@
+       .SetMethod("isCrashed", &WebContents::IsCrashed)
+       .SetMethod("forcefullyCrashRenderer",
+                  &WebContents::ForcefullyCrashRenderer)
+-      .SetMethod("setUserAgent", &WebContents::SetUserAgent)
++      .SetMethod("setUserAgent", &WebContents::SetUserAgentFromApi)
+       .SetMethod("getUserAgent", &WebContents::GetUserAgent)
+       .SetMethod("savePage", &WebContents::SavePage)
+       .SetMethod("openDevTools", &WebContents::OpenDevTools)
+--- a/shell/browser/api/electron_api_web_contents.h
++++ b/shell/browser/api/electron_api_web_contents.h
+@@ -240,6 +240,7 @@
+   std::string GetOrCreateDevToolsTargetId();
+   bool IsCrashed() const;
+   void ForcefullyCrashRenderer();
++  void SetUserAgentFromApi(gin_helper::ErrorThrower thrower, const std::string& user_agent);
+   void SetUserAgent(const std::string& user_agent);
+   std::string GetUserAgent();
+   void InsertCSS(const std::string& css);

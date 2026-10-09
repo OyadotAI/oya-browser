@@ -803,3 +803,44 @@ checks late setup, invalid-input non-mutation, native snapshot isolation and
 partial-failure quarantine. The application default is unchanged: full persona
 migration, remaining legacy fixtures and platform release validation still block
 production activation. A successful subset is never a complete protection verdict.
+
+## Native session user-agent string prerequisite
+
+Apply `patches/native-session-user-agent-content.patch` from the pinned Chromium
+`src` checkout, and `patches/native-session-user-agent.patch` from its Electron
+checkout after the policy-state patch. The main-process-only
+`session._setOyaUserAgent(value)` installs one immutable, nonempty printable-ASCII
+user-agent string (maximum 1,024 bytes) before any session renderer starts.
+Identical values are idempotent, including after startup; invalid, late or
+conflicting configuration fails without changing the policy. The version-1
+readback adds `userAgent`; an empty string means unconfigured. This is an additive
+field, not a certification of a complete native persona.
+
+The policy belongs to BrowserContext, not the application-wide fallback. Shared
+and service-worker startup reads the owning context directly, including cold
+service-worker restart without an owning page. Documents and dedicated workers
+inherit the session's native WebContents override. Renderer initialization and
+navigation defaults also read the owning context, so cross-process iframes do not
+fall back to application-wide identity. Initial and already-created
+network contexts use the same session value. Spare renderers are refused for a
+configured session. No debugger, protocol backend, page shim or request-header
+interceptor implements this behavior.
+
+Conflicting public session/WebContents user-agent setters and `loadURL` user-agent
+options fail; history restoration preserves the installed identity. Application
+fallback changes cannot rewrite configured sessions. Unconfigured sessions retain
+legacy behavior. Explicit per-request headers remain subject to normal browser
+rules: this is a default identity policy, not an outbound-header allowlist.
+
+Run `test:native-user-agent` with an explicit patched `OYA_NATIVE_ENGINE`. It
+checks first-script navigator values, actual script-request and fetch headers,
+parallel partitions, cross-origin frames, dedicated/shared/service workers,
+already-created network contexts, invalid/late/conflicting changes, snapshot
+isolation, history restoration and cold service-worker restart.
+
+**Scope:** this installs the user-agent **string only**. UA client-hint metadata,
+`navigator.platform`, full persona consistency and the remaining native protection
+lifecycle are not implemented by this patch. The existing native-policy
+coordinator still certifies only timezone, locale/languages and hardware count.
+Default persona protection remains unchanged. Do not activate this as a complete
+persona, claim internal-CDP-free production, or release on this prerequisite alone.

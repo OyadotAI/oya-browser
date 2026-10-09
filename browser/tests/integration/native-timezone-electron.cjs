@@ -208,6 +208,7 @@ function checkPolicyFailures(late) {
     locale: '',
     hardwareConcurrency: 0,
     acceptLanguages: '',
+    userAgent: '',
   });
   const conflict = session.fromPartition('policy-conflict');
   conflict._setOyaHardwareConcurrency(4);

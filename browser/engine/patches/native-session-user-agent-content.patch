@@ -1,0 +1,156 @@
+--- /dev/null
++++ b/content/public/browser/oya_session_user_agent.h
+@@ -0,0 +1,17 @@
++// Copyright 2026 Oya. All rights reserved.
++// Session-owned native user-agent strings for worker startup, without a debugger.
++#ifndef CONTENT_PUBLIC_BROWSER_OYA_SESSION_USER_AGENT_H_
++#define CONTENT_PUBLIC_BROWSER_OYA_SESSION_USER_AGENT_H_
++#include <string>
++#include "content/common/content_export.h"
++namespace content {
++class BrowserContext;
++// Returns null for an unconfigured context; ownership remains with the context.
++CONTENT_EXPORT const std::string* GetOyaSessionUserAgent(BrowserContext* context);
++// Trusted embedder installs before renderer startup; subsequent changes fail.
++CONTENT_EXPORT bool SetOyaSessionUserAgent(BrowserContext* context,
++                                          const std::string& user_agent);
++// Legacy global behavior remains unchanged for unconfigured contexts.
++CONTENT_EXPORT std::string GetUserAgentForOyaContext(BrowserContext* context);
++}  // namespace content
++#endif  // CONTENT_PUBLIC_BROWSER_OYA_SESSION_USER_AGENT_H_
+--- a/content/browser/browser_context.cc
++++ b/content/browser/browser_context.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "content/public/browser/browser_context.h"
+ 
+ #include <stddef.h>
+@@ -511,4 +512,39 @@
+ }
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
++namespace {
++const char kOyaUserAgentKey = 0;
++// BrowserContext lifetime prevents policy sharing between independent sessions.
++class OyaSessionUserAgent final : public base::SupportsUserData::Data {
++ public:
++  explicit OyaSessionUserAgent(const std::string& value) : value(value) {}
++  const std::string value;
++};
++}  // namespace
++
++const std::string* GetOyaSessionUserAgent(BrowserContext* context) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  if (!context)
++    return nullptr;
++  auto* policy = static_cast<OyaSessionUserAgent*>(
++      context->GetUserData(&kOyaUserAgentKey));
++  return policy ? &policy->value : nullptr;
++}
++
++bool SetOyaSessionUserAgent(BrowserContext* context,
++                            const std::string& user_agent) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  if (const auto* value = GetOyaSessionUserAgent(context))
++    return *value == user_agent;
++  context->SetUserData(&kOyaUserAgentKey,
++                      std::make_unique<OyaSessionUserAgent>(user_agent));
++  return true;
++}
++
++std::string GetUserAgentForOyaContext(BrowserContext* context) {
++  if (const auto* value = GetOyaSessionUserAgent(context))
++    return *value;
++  return GetContentClient()->browser()->GetUserAgent();
++}
++
+ }  // namespace content
+--- a/content/browser/worker_host/shared_worker_host.cc
++++ b/content/browser/worker_host/shared_worker_host.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "content/browser/worker_host/shared_worker_host.h"
+ 
+ #include <algorithm>
+@@ -490,7 +491,7 @@
+       instance_.worker_storage_key().origin(),
+       creator_policy_container_host_ &&
+           creator_policy_container_host_->policies().is_web_secure_context,
+-      GetContentClient()->browser()->GetUserAgent(),
++      GetUserAgentForOyaContext(GetProcessHost()->GetBrowserContext()),
+       GetContentClient()->browser()->GetUserAgentMetadata(),
+       devtools_handle_->pause_on_start(), devtools_handle_->dev_tools_token(),
+       std::move(renderer_preferences), std::move(preference_watcher_receiver),
+--- a/content/browser/service_worker/service_worker_version.cc
++++ b/content/browser/service_worker/service_worker_version.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "content/browser/service_worker/service_worker_version.h"
+ 
+ #include <stddef.h>
+@@ -2685,7 +2686,7 @@
+       outside_fetch_client_settings_object_.Clone();
+ 
+   ContentBrowserClient* browser_client = GetContentClient()->browser();
+-  params->user_agent = browser_client->GetUserAgent();
++  params->user_agent = GetUserAgentForOyaContext(context_->wrapper()->browser_context());
+   params->ua_metadata = browser_client->GetUserAgentMetadata();
+   params->is_installed = IsInstalled(status_);
+   params->script_url_to_skip_throttling = updated_script_url_;
+--- a/content/public/browser/BUILD.gn
++++ b/content/public/browser/BUILD.gn
+@@ -74,6 +74,7 @@
+     "browser_child_process_observer.cc",
+     "browser_child_process_observer.h",
+     "browser_context.h",
++    "oya_session_user_agent.h",
+     "browser_main_parts.cc",
+     "browser_main_parts.h",
+     "browser_main_runner.h",
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -5,6 +5,7 @@
+ // Represents the browser side of the browser <--> renderer communication
+ // channel. There will be one RenderProcessHost per renderer process.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "content/browser/renderer_host/render_process_host_impl.h"
+ 
+ #include <algorithm>
+@@ -2013,7 +2014,7 @@
+   TRACE_EVENT("navigation", "RenderProcessHostImpl::Init",
+               perfetto::Flow::Global(trace_id));
+   GetRendererInterface()->InitializeRenderer(
+-      GetContentClient()->browser()->GetUserAgent(),
++      GetUserAgentForOyaContext(GetBrowserContext()),
+       GetContentClient()->browser()->GetUserAgentMetadata(),
+       storage_partition_impl_->cors_exempt_header_list(),
+       GetContentClient()->browser()->GetOriginTrialsSettings(), cpu_tier,
+--- a/content/browser/renderer_host/navigation_request.cc
++++ b/content/browser/renderer_host/navigation_request.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "content/public/browser/oya_session_user_agent.h"
+ #include "content/browser/renderer_host/navigation_request.h"
+ 
+ #include <algorithm>
+@@ -10995,6 +10996,8 @@
+ }
+ 
+ std::string NavigationRequest::GetUserAgentOverride() {
++  if (const auto* installed = GetOyaSessionUserAgent(GetNavigationController()->GetBrowserContext()))
++    return *installed;
+   return is_overriding_user_agent()
+              ? frame_tree_node_->navigator()
+                    .GetDelegate()

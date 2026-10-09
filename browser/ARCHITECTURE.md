@@ -166,6 +166,10 @@ engine are separate concerns; this requirement governs the control architecture.
   records real native text input without debugger access.
 - Other observation: dialogs, telemetry and before-unload integration still need
   their remaining native lifecycle migrations.
+- The experimental native engine now offers an immutable session user-agent string
+  with worker-startup and network-context ownership; `test:native-user-agent`
+  exercises first-script values and real headers without a debugger. This does
+  not yet configure UA metadata/platform or activate complete native personas.
 - Page protection: persona application, worker coverage and tab startup currently
   rely on debugger commands. Preserve existing isolation and egress guarantees;
   capabilities absent from public Electron APIs may require native engine work.
