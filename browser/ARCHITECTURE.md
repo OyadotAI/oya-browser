@@ -107,13 +107,18 @@ engine are separate concerns; this requirement governs the control architecture.
   the editor's own document. The native input suite exercises these production
   `PageDriver` commands with fresh analyzer IDs and debugger access forbidden.
   This local command-path fixture is not the authenticated end-to-end agent loop.
-- Native dialog engine capability: `main/native/dialogs.ts` now exposes guarded
-  subscriptions to browser-owned dialog callbacks. Patched-engine tests cover
-  prompts, confirms, alerts and stale-reply cancellation without CDP. The existing
-  command-facing decision service now lives in `main/dialogs/`, independent of
-  protocol code. `NativeDialogs` passes real two-window decision tests. Production
-  startup still uses the explicit legacy adapter because Page-domain/login-state
-  dependencies and before-unload handling have not yet migrated.
+- Native dialogs: production startup now installs `main/dialogs/DesktopDialogs`
+  on tabs and sign-in popups using browser-owned callbacks, not debugger events.
+  Alerts become notifications; confirmations, prompts and before-unload decisions
+  route to the live human/agent owner. Human sheets use a sandboxed, isolated
+  private session and exact-frame IPC, with literal text, safe keyboard defaults
+  and no network. Takeovers transfer pending decisions without answering them.
+  Replacement navigation declines obsolete prompts before their modal sheets can
+  block it; same-document navigation and before-unload warnings are preserved.
+  Real Oya tests cover the production router/UI, trusted keyboard input, IPC
+  refusal, navigation, cancellation and unsaved changes. Native tab retry also
+  avoids debugger access. Windows validation and other legacy identity/recording
+  paths remain release gates; this does not make the whole default app CDP-free.
 - Recording transport: an optional sandboxed preload now exposes a bounded,
   fixed-channel sender only in the agent isolated world. `NativeRecordingInbox`
   checks owned web contents, recording epochs and explicitly authorized isolated

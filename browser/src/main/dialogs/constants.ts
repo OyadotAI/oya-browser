@@ -10,3 +10,24 @@ export const DIALOG_SAFE_ACTIONS: ReadonlySet<string> = new Set([
   'record',
   'workflow',
 ]);
+
+import { NATIVE_DIALOG } from '../../shared/native-dialog.ts';
+/** Browser-owned sheets are fixed-size, never styled by the requesting page. */
+export const DIALOG_WINDOW_OPTIONS = {
+  width: NATIVE_DIALOG.WIDTH,
+  height: NATIVE_DIALOG.HEIGHT,
+  show: false,
+  title: 'Oya · Page dialog',
+  resizable: false,
+  minimizable: false,
+  maximizable: false,
+  backgroundColor: '#10120f',
+};
+/** A sheet's own content cannot create another dialog, webview or privileged renderer. */
+export const DIALOG_WEB_PREFERENCES = {
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+  webviewTag: false,
+  disableDialogs: true,
+};

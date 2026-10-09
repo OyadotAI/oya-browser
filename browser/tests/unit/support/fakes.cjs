@@ -60,6 +60,19 @@ class FakeDebugger extends EventEmitter {
 
 /** A webContents: an emitter with the few calls the main process makes. */
 class FakeWebContents extends EventEmitter {
+  /** This test engine supports native before-unload decisions. */
+  _oyaBeforeUnloadDialogs = true;
+  /** Register the private browser-owned native callback. */
+  _setOyaDialogHandler(handler) {
+    this.nativeDialogHandler = handler;
+  }
+  /** Deliver a native callback without involving the debugger fake. */
+  nativeDialog(type, message) {
+    this.nativeDialogHandler(
+      { dialogType: type, messageText: message, defaultPromptText: '', frame: { url: this.url } },
+      () => {},
+    );
+  }
   /** `url` is what getURL() returns. */
   constructor({ url = 'about:blank', debuggerResponses } = {}) {
     super();

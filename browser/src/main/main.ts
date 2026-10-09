@@ -33,7 +33,7 @@ import { Boot } from './app/boot.ts';
 import { Lifecycle } from './app/lifecycle.ts';
 import { Updater } from './app/updater.ts';
 import { KEEP_RENDERING_SWITCHES, RELAY_TOKEN_BYTES, WORLD_NAME_BYTES } from './app/constants.ts';
-import { Dialogs } from './cdp/dialogs.ts';
+import { DesktopDialogs, dialogPresenter } from './dialogs/index.ts';
 import { World } from './native/index.ts';
 import { Observer } from './observe/observer.ts';
 import { DesktopControl } from './control/control-state.ts';
@@ -141,7 +141,11 @@ ctx.notifications = new Notifications({
   partition: () => ctx.persona.partitionName(),
   changed: () => ctx.shell.send('notifications-changed', null),
 });
-ctx.dialogs = new Dialogs((message, url) => ctx.notifications.add(message, url));
+ctx.dialogs = new DesktopDialogs(
+  () => ctx.control.snapshot().interactive,
+  dialogPresenter(ctx),
+  (message, url) => ctx.notifications.add(message, url),
+);
 ctx.protection = new Protection(ctx);
 ctx.workers = new WorkerCoverage(ctx, () => app.getPath('userData'));
 ctx.persona = new Persona(ctx);
@@ -155,7 +159,10 @@ ctx.routines = new Routines(ctx);
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
-  changed: (state) => ctx.shield.controlChanged(state),
+  changed: (state) => {
+    ctx.dialogs.controlChanged();
+    ctx.shield.controlChanged(state);
+  },
 });
 ctx.cookies = new CookieSync({
   mark: cookieSyncMark(ctx),

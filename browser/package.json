@@ -23,7 +23,7 @@
     "test:internet": "node tests/integration/internet-native.mjs",
     "test:native-choosers": "node tests/integration/native-choosers.mjs",
     "test:native-drag": "node tests/integration/native-drag.mjs",
-    "test:native-dialogs": "node tests/integration/native-dialogs.mjs",
+    "test:native-dialogs": "npm run build && node tests/integration/native-dialogs.mjs",
     "test:native-recording-transport": "npm run build && node tests/integration/native-recording-transport.mjs",
     "test:native-front-door": "node tests/integration/native-front-door.mjs",
     "test:native-frames": "node tests/integration/native-frames.mjs",

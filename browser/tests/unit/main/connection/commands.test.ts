@@ -9,7 +9,7 @@ import { CommandRunner } from '../../../../src/main/connection/commands.ts';
 import { resultSummary } from '../../../../src/main/connection/result-summary.ts';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
-import { FakeDebugger, flush } from '../../support/fakes.cjs';
+import { FakeWebContents, flush } from '../../support/fakes.cjs';
 
 describe('CommandRunner', () => {
   let ctx: any;
@@ -118,14 +118,14 @@ describe('CommandRunner', () => {
   });
 
   it("answers a held dialog at once and drops the interrupted command's late answer", async () => {
-    const dbg = new FakeDebugger();
-    ctx.dialogs.watch(dbg);
+    const page = new FakeWebContents();
+    ctx.dialogs.watch(page);
     let finish;
     ctx.tabs.createTab('https://a.test/');
     ctx.actions.runPageAction = (id) => new Promise((r) => (finish = () => r(ctx.commands.sendResult(id, true, {}))));
     const running = ctx.commands.handleCommand({ id: 'd', action: 'click' });
     await flush();
-    dbg.event('Page.javascriptDialogOpening', { type: 'confirm', message: 'Delete?' });
+    page.nativeDialog('confirm', 'Delete?');
     await running;
     assert.match(resultOf('d')[0].error, /A JavaScript confirm dialog is open: "Delete\?"/);
     finish();
@@ -135,11 +135,11 @@ describe('CommandRunner', () => {
   });
 
   it('attaches a dialog that fired during a command to its result', async () => {
-    const dbg = new FakeDebugger();
-    ctx.dialogs.watch(dbg);
+    const page = new FakeWebContents();
+    ctx.dialogs.watch(page);
     ctx.tabs.createTab('https://a.test/');
     ctx.actions.runPageAction = async (id) => {
-      dbg.event('Page.javascriptDialogOpening', { type: 'alert', message: 'Saved' });
+      page.nativeDialog('alert', 'Saved');
       ctx.commands.sendResult(id, true, null);
     };
     await ctx.commands.handleCommand({ id: 'a', action: 'click' });

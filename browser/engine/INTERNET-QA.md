@@ -803,3 +803,64 @@ migration: human prompt presentation and ownership routing remain unwired.
 The four gated server suites, remaining default-path protection/recording work,
 CI engine provisioning, Windows validation and signed production artifacts remain
 release gates. No push or release is claimed.
+
+## Production native dialog ownership and human sheets (2026-10-09)
+
+Production composition now installs `DesktopDialogs` on tabs and sign-in popups
+instead of watching debugger dialog events. Missing native capability refuses
+page setup; popup protection failure closes the unprotected surface. Native
+protection retries do not touch the debugger. Other legacy identity and recording
+paths remain separate migration debt.
+
+Human prompts/confirmations use an Oya-owned modal sheet with a private ephemeral
+session, denied permissions/network, sandboxed context isolation, exact-main-frame
+IPC and text-only site content. No callback, typed reply, or default value enters
+a URL or website bridge. The populated form is ready before display. Prompt text
+starts selected; Escape cancels; Enter on non-prompts selects Cancel/Stay. Long
+messages scroll without covering the controls. The local screenshot was visually
+reviewed in addition to bounds assertions.
+
+The decision router rechecks live human/agent ownership. Handoffs transfer the
+same native decision without answering, and stale human/agent responses cannot
+win. Alerts remain notification-first. The real UI test exposed a navigation
+hang while an old page's modal sheet was open; native navigation now declines and
+closes that obsolete confirmation/prompt. Same-document changes and before-unload
+warnings are not automatically answered. Tests retain both same-address and
+new-address navigation assertions.
+
+Verified against the macOS arm64 Oya engine with debugger access forbidden:
+
+- Real prompt Unicode entry and Enter, Escape/default cancellation, browser-owned
+  unload warnings preserving unsaved work, and explicit keyboard selection to leave.
+- Human/agent transfers, literal malicious-looking markup, private session
+  separation, refused foreign-frame/malformed IPC, navigation cancellation,
+  long-message layout, and modal parenting from a real tab BrowserView.
+- UI unit failure paths: missing asset, renderer failure, loading timeout,
+  user close, ownership cancellation, permission/network refusal and exact sender.
+- All 2,099 desktop unit tests and all desktop integration/13 recorder cases pass;
+  build, types, lint and formatting pass. All nine native server service journeys
+  pass, including dialog, login persistence and native MCP. Root lint/format pass.
+
+One full-suite attempt observed unexpected extra `yth` in the unchanged native
+selector typing fixture. Its assertion was not weakened and input code was not
+changed: three consecutive isolated analyzer runs and the subsequent full-suite
+run passed. The source of that extra input was not established, so this is not
+claimed as a repaired input defect. The initial UI Enter fixture omitted the
+native character event; it now sends the same complete key sequence as Oya's
+production keyboard path. A duplicate helper-name gate and test documentation
+lint failures were also fixed before the final checks.
+
+Evidence: `/private/tmp/oya-desktop-dialog-final-native.log`,
+`/private/tmp/oya-desktop-dialog-final-tests.log`,
+`/private/tmp/oya-desktop-dialog-final-types.log`,
+`/private/tmp/oya-desktop-dialog-final-lint.log`,
+`/private/tmp/oya-desktop-dialog-final-format.log`,
+`/private/tmp/oya-desktop-dialog-server-native.log`,
+`/private/tmp/oya-desktop-dialog-root-lint.log`,
+`/private/tmp/oya-desktop-dialog-root-format.log`, and
+`/private/tmp/oya-dialog-analyzer-check-{1,2,3}.log`.
+
+The server's current native preflight still refuses the four CDP, provider MCP,
+gateway and anonymity fixtures. Native recording/persona migration, complete CI
+engine provisioning, Windows runtime validation and signed production artifacts
+remain unfinished. Nothing is pushed or released on this checkpoint's evidence.

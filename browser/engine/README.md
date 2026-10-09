@@ -197,7 +197,7 @@ pending evaluations, not merely calls made after a frame is already detached.
 The deadline bounds caller waiting; it does not interrupt JavaScript that has
 already started executing in the page.
 
-## Native dialog callbacks (engine capability; application migration pending)
+## Native dialog callbacks and application ownership
 
 `patches/native-agent-dialogs.patch` introduces a browser-process-only
 `webContents._setOyaDialogHandler(handler | null)` capability. The handler receives
@@ -218,16 +218,15 @@ rejects its promise without leaving the document. Replies retain the same
 single-use/cancellation protection. Removing the registration restores the
 original `will-prevent-unload` behavior. The browser adapter and packaging probe
 require the new `_oyaBeforeUnloadDialogs` marker, rather than silently using an
-older engine that bypasses unload decisions. This does not yet wire human dialog
-presentation or agent ownership into the default application lifecycle.
+older engine that bypasses unload decisions. The application routing and human presentation described below now consume this
+capability on actual tabs and popups.
 
 Run `npm run test:native-dialogs` with `OYA_NATIVE_ENGINE` pointing to a separately
 branded, patched Oya executable. macOS native-engine tests cover explicit decisions,
 prompt text, alerts, repeated answers, navigation/destruction cancellation and
 subscription teardown with debugger access forbidden. The unload regression uses
 trusted native pointer input and covers navigation/reload/close accept and cancel,
-stale replies, destruction, and restoration of the original human event path. Windows verification and
-production dialog-service integration remain release gates.
+stale replies, destruction, and restoration of the original human event path. Windows runtime verification remains a release gate.
 
 ### Command-facing native dialog service
 
@@ -238,11 +237,33 @@ source. Alerts are reported to the notification callback without replacing a
 pending confirmation. The real engine regression also drives this service through
 two independent Oya windows.
 
-Production startup still uses the explicitly transitional `main/cdp/dialogs.ts`
-adapter. It is not selected as a fallback by `NativeDialogs`. Removing the adapter
-requires migrating the startup Page-domain/login-state consumers together: merely
-switching the watcher while the old instrumentation intercepts dialogs would not
-prove native end-to-end handling. The browser must not be released as CDP-free yet.
+Production startup now uses `main/dialogs/DesktopDialogs` and installs native
+subscriptions on tabs and sign-in popups before setup succeeds. It does not use
+`main/cdp/dialogs.ts` as a backend or fallback. The legacy adapter remains only for
+unmigrated identity fixtures; other default-path identity/recording dependencies
+still prevent a full internally-CDP-free claim.
+
+The production router reads live human/agent control ownership. A handoff closes
+an obsolete human sheet or removes an obsolete agent queue entry, then routes the
+same pending native decision to its new owner without answering. Late UI events,
+agent answers after human takeover and engine-cancelled callbacks are fenced.
+Alerts retain the notification-first behavior.
+
+Human confirmations and prompts use Oya-owned modal windows, an ephemeral private
+session, denied network/permissions, a sandboxed context-isolated preload and
+exact-main-frame IPC. Site text is never markup; URL credentials/paths/query
+strings are not displayed. The complete form is populated before the window is
+shown. Prompt text is selected on open; Escape cancels; non-prompt Enter defaults
+to Cancel/Stay. Long messages scroll without hiding controls. Navigation away
+closes and declines an old confirmation/prompt, while same-document navigation
+and actual before-unload decisions are not auto-answered.
+
+`test:native-dialogs` now builds the private preload before testing. On the local
+macOS arm64 Oya engine it covers real production UI, native typing and Enter,
+Escape/default cancellation, literal markup, isolated sessions, forged IPC,
+human/agent handoffs, long-message layout, unsaved-work decisions and same/different
+URL cancellation with debugger access forbidden. Windows and the full application
+release gates still require separate verification.
 
 ## Native recording transport and focused text insertion
 

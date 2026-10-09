@@ -145,6 +145,7 @@ async function run() {
   disabled.destroy();
   await checkService(fixture);
   await require('./native-before-unload.cjs')(profile);
+  await require('./native-dialog-ui.cjs')();
   console.log(
     'PASS: Oya native confirm/prompt/alert, exact frame, single-use replies, navigation cancellation and teardown; debugger forbidden',
   );

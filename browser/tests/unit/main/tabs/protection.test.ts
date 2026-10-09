@@ -8,7 +8,7 @@ import { generateProfile } from '../../../../anonymity/fingerprint.js';
 import { EventEmitter } from 'node:events';
 import { Protection } from '../../../../src/main/tabs/protection.ts';
 import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
-import { FakeDebugger } from '../../support/fakes.cjs';
+import { FakeDebugger, FakeWebContents } from '../../support/fakes.cjs';
 
 describe('Protection', () => {
   let ctx;
@@ -173,7 +173,7 @@ describe('Protection', () => {
     await ctx.protection.setupTabCDP(view);
     const methods = view.webContents.debugger.methods();
     assert.equal(methods.filter((m) => m === 'Page.enable').length, 1);
-    assert.equal(view.webContents.debugger.oyaDialogWatcher, true);
+    assert.equal(typeof view.webContents.nativeDialogHandler, 'function');
     assert.equal(view.oyaConfigured, true);
   });
 
@@ -189,7 +189,7 @@ describe('Protection', () => {
     const view = new FakeBrowserView();
     view.webContents.destroyed = true;
     await ctx.protection.setupTabCDP(view);
-    assert.match(errors.mock.calls[0].arguments[0], /debugger attach failed, this attempt did not protect the tab/);
+    assert.match(errors.mock.calls[0].arguments[0], /native dialogs failed, this attempt did not protect the tab/);
   });
 
   it('answers false when the injection is refused, and true for a tab that held', async () => {
@@ -282,13 +282,18 @@ describe('Protection', () => {
 
   it('protects a popup before its scripts run and disables it for agents', () => {
     const adopted = mock.method(ctx.shield, 'adoptPopup', () => {});
-    const child = Object.assign(new EventEmitter(), { webContents: { debugger: new FakeDebugger() } });
+    const child = Object.assign(new EventEmitter(), {
+      webContents: new FakeWebContents(),
+      destroy() {
+        assert.fail('Protected popup must remain open');
+      },
+    });
     ctx.protection.protectPopup(child);
     const dbg = child.webContents.debugger;
     assert.equal(adopted.mock.callCount(), 1);
     assert.equal(dbg.attached, true);
     assert.ok(dbg.methods().includes('Page.enable'));
-    assert.equal(dbg.oyaDialogWatcher, true);
+    assert.equal(typeof child.webContents.nativeDialogHandler, 'function');
   });
 
   it('logs a popup whose debugger cannot attach', () => {
@@ -297,8 +302,17 @@ describe('Protection', () => {
     dbg.attach = () => {
       throw new Error('busy');
     };
-    ctx.protection.protectPopup({ webContents: { debugger: dbg } });
-    assert.match(errors.mock.calls[0].arguments[0], /popup debugger attach failed/);
+    let closed = false;
+    const webContents = new FakeWebContents();
+    webContents.debugger = dbg;
+    ctx.protection.protectPopup({
+      webContents,
+      destroy() {
+        closed = true;
+      },
+    });
+    assert.equal(closed, true);
+    assert.match(errors.mock.calls[0].arguments[0], /popup protection failed/);
   });
 
   it('loads the analyzer into the active tab by default, and survives a missing world', async () => {
@@ -323,4 +337,35 @@ it('keeps native WebRTC only for direct unmanaged personas', () => {
   ctx.persona.active.proxy = null;
   ctx.governance.configuration = { policies: [] };
   assert.equal(ctx.protection.personaOptions().injection.nativeWebRTC, false);
+});
+
+it('native tab setup, retry and popup protection never access a debugger', async () => {
+  const ctx = mainCtx({ protection: Protection });
+  ctx.nativeBrowsing = true;
+  const view = new FakeBrowserView();
+  Object.defineProperty(view.webContents, 'debugger', {
+    get() {
+      assert.fail('Internal CDP forbidden');
+    },
+  });
+  assert.equal(await ctx.protection.setupTabCDP(view), true);
+  ctx.protection.resetTabCDP(view);
+  assert.equal(await ctx.protection.setupTabCDP(view), true);
+  ctx.protection.protectPopup({ webContents: view.webContents });
+  assert.equal(typeof view.webContents.nativeDialogHandler, 'function');
+});
+
+it('native setup refuses an engine missing dialog capability instead of silently loading', async () => {
+  const ctx = mainCtx({ protection: Protection });
+  ctx.nativeBrowsing = true;
+  const view = new FakeBrowserView();
+  view.webContents._oyaBeforeUnloadDialogs = false;
+  Object.defineProperty(view.webContents, 'debugger', {
+    get() {
+      assert.fail('Internal CDP forbidden');
+    },
+  });
+  const errors = mock.method(console, 'error', () => {});
+  assert.equal(await ctx.protection.setupTabCDP(view), false);
+  assert.match(errors.mock.calls[0].arguments[0], /native dialogs failed/);
 });

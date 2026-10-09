@@ -270,6 +270,12 @@ export class Protection {
    * answers what its attempt answers.
    */
   async setupTabCDP(view: TabView): Promise<boolean> {
+    try {
+      this.deps.dialogs.watch(view.webContents);
+    } catch (error) {
+      tabProtectionFailed('native dialogs', error);
+      return false;
+    }
     if (this.deps.nativeBrowsing) return !view.webContents.isDestroyed();
     return this.setupPersonaCDP(view);
   }
@@ -302,6 +308,7 @@ export class Protection {
   resetTabCDP(view: TabView): void {
     if (view.oyaAttempt) view.oyaAttempt.live = false;
     view.oyaConfigured = false;
+    if (this.deps.nativeBrowsing) return;
     this.deps.recorder?.channels?.forget(view);
     try {
       view.webContents.debugger.detach();
@@ -314,7 +321,6 @@ export class Protection {
     const port = fencedPort(dbg, attempt);
     await this.applyPersona(port, criticalIn(attempt));
     port.send('Page.enable').catch((e) => tabStepFailed('Page.enable', e));
-    this.deps.dialogs.watch(dbg);
     const loginState = this.deps.persona.loginState;
     if (loginState) await loginState.attach((method: string, params = {}) => port.send(method, params), port.on);
     this.rebuildWorldOnLoad(view);
@@ -345,11 +351,12 @@ export class Protection {
    */
   protectPopup(childWindow: BrowserWindow): void {
     this.deps.shield.adoptPopup(childWindow);
-    if (this.deps.nativeBrowsing) return;
     try {
+      this.deps.dialogs.watch(childWindow.webContents);
+      if (this.deps.nativeBrowsing) return;
       this.protectPopupDebugger(childWindow.webContents.debugger);
     } catch (e) {
-      console.error('[anonymity] popup debugger attach failed, popup is NOT protected:', (e as Error).message);
+      closeUnprotectedPopup(childWindow, e);
     }
   }
 
@@ -358,7 +365,6 @@ export class Protection {
     if (!dbg.isAttached()) dbg.attach(CDP_VERSION);
     this.applyPersona(dbg, popupProtectionFailed);
     dbg.sendCommand('Page.enable').catch(() => {});
-    this.deps.dialogs.watch(dbg);
     this.syncPopupLogins(dbg);
   }
 
@@ -386,4 +392,10 @@ export class Protection {
       console.error('[anonymity] isolated world unavailable, analyzer not loaded:', (e as Error).message);
     }
   }
+}
+
+/** Refuse to expose a popup whose native decision or persona protections could not be installed. */
+function closeUnprotectedPopup(window: BrowserWindow, error: unknown): void {
+  window.destroy();
+  console.error('[anonymity] popup protection failed; closed unprotected surface:', messageOf(error));
 }

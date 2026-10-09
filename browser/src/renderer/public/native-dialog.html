@@ -1,0 +1,125 @@
+<!-- Oya-owned text-only dialog sheet. Its sandboxed preload owns all interaction. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'"
+    />
+    <title>Oya · Page dialog</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: #eeefe9;
+        background: #10120f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        padding: 26px 28px;
+      }
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        height: 100%;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: #a5aa9e;
+      }
+      header::before {
+        content: '';
+        width: 14px;
+        height: 14px;
+        border: 3px solid #32ed26;
+        border-radius: 50%;
+      }
+      #origin {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      h1 {
+        font-size: 23px;
+        line-height: 1.2;
+        letter-spacing: -0.5px;
+        margin: 0;
+        font-weight: 600;
+      }
+      p {
+        margin: 0;
+        color: #c5c8be;
+        line-height: 1.5;
+        font-size: 14px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        flex: 1;
+        min-height: 24px;
+        overflow: auto;
+      }
+      input {
+        flex-shrink: 0;
+        width: 100%;
+        font: inherit;
+        font-size: 15px;
+        border: 1px solid #51574a;
+        border-radius: 9px;
+        background: #191d16;
+        color: inherit;
+        padding: 10px 12px;
+      }
+      footer {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        padding-top: 4px;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 10px 16px;
+        min-width: 78px;
+        border-radius: 9px;
+        border: 1px solid #42493b;
+        background: #22271d;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid #32ed26;
+        outline-offset: 3px;
+      }
+      #cancel {
+        background: #32ed26;
+        border-color: #32ed26;
+        color: #0c1709;
+      }
+      button:hover {
+        filter: brightness(1.12);
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="content" hidden>
+      <header>Oya <span aria-hidden="true">/</span><span id="origin"></span></header>
+      <h1 id="title"></h1>
+      <p id="message"></p>
+      <label for="value" hidden>Response</label><input id="value" aria-label="Response" autocomplete="off" />
+      <footer><button id="accept" type="submit">OK</button><button id="cancel" type="button">Cancel</button></footer>
+    </form>
+  </body>
+</html>

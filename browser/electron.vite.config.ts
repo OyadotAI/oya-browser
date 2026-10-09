@@ -73,6 +73,9 @@ const renderer = {
 export default defineConfig({
   // out/main/worker.js is the validation worker the main process forks (src/main/app/boot.ts).
   main: entry({ index: 'src/main/main.ts', worker: 'src/worker/index.ts' }, 'out/main'),
-  preload: entry({ index: 'src/preload/index.ts', recording: 'src/preload/recording.ts' }, 'out/preload'),
+  preload: entry(
+    { index: 'src/preload/index.ts', recording: 'src/preload/recording.ts', dialog: 'src/preload/dialog.ts' },
+    'out/preload',
+  ),
   renderer,
 });

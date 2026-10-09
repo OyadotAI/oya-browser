@@ -377,14 +377,12 @@ assert.deepStrictEqual(
 assert.strictEqual(normalizeProxy({ host: 'h', port: 1 }).host, 'h', 'a host/port proxy passes through');
 assert.strictEqual(normalizeProxy(null), null, 'no proxy stays no proxy');
 
-// Native dialogs. Page.enable is on for every tab and popup, so anything that
-// enables it without a watcher wedges that surface on the first alert().
-for (const enable of src.match(/(?:sendCommand|send)\('Page\.enable'\)[\s\S]{0,160}/g) || []) {
-  assert.ok(
-    /\bdialogs\.watch\(dbg\)/.test(enable),
-    'Page.enable without dialogs.watch(dbg) nearby, that surface blocks forever on an alert()',
-  );
-}
+// Native dialog callbacks must be installed on the surface, not a debugging port.
+const protection = fs.readFileSync(path.join(root, 'src/main/tabs/protection.ts'), 'utf8');
+assert.match(protection, /dialogs\.watch\(view\.webContents\)/);
+assert.match(protection, /dialogs\.watch\(childWindow\.webContents\)/);
+assert.doesNotMatch(protection, /dialogs\.watch\(dbg\)/);
+assert.doesNotMatch(fs.readFileSync(path.join(root, 'src/main/main.ts'), 'utf8'), /from ['"]\.\/cdp\/dialogs/);
 // The early answer must go out BEFORE the id is parked, or sendResult drops the
 // very result being sent and the caller waits out the timeout anyway.
 const early = src.match(/if \(outcome !== DIALOG_HELD\) return;[\s\S]*?\n}/);

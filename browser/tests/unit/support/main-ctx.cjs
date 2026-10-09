@@ -7,7 +7,7 @@
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { FakeWebContents } = require('./fakes.cjs');
-const { Dialogs } = require('../../../src/main/cdp/dialogs.ts');
+const { DesktopDialogs } = require('../../../src/main/dialogs/index.ts');
 const { Governance } = require('../../../src/main/identity/governance.ts');
 
 /** A tab's webContents: loads, history and handlers a BrowserView's page has. */
@@ -392,7 +392,10 @@ function mainCtx(real = {}) {
     layout: { layoutActiveTab() {}, reveal() {}, flush() {} },
     overlays: { names: new Set() },
     protection: { setupTabCDP: async () => true, resetTabCDP() {}, injectScripts: async () => {}, protectPopup() {} },
-    dialogs: new Dialogs(),
+    dialogs: new DesktopDialogs(
+      () => false,
+      () => () => {},
+    ),
     // Ungoverned, as a person's own browser is; a test about governance swaps in a configured one.
     externalApps: {
       wire() {},

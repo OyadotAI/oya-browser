@@ -11,7 +11,7 @@
 import type * as Electron from 'electron';
 import type { Workspace } from '../workflow/workspace.ts';
 import type { PageDriver } from '../actions/driver.ts';
-import type { Dialogs } from '../cdp/dialogs.ts';
+import type { DesktopDialogs } from '../dialogs/index.ts';
 import type { World } from '../cdp/world.ts';
 import type { CdpRelay } from '../connection/cdp-relay.ts';
 import type { CommandRunner } from '../connection/commands.ts';
@@ -90,8 +90,8 @@ export interface AppServices {
   protection: Protection;
   /** Service and shared workers' coverage (src/main/tabs/workers.ts). */
   workers: WorkerCoverage;
-  /** Native JavaScript dialogs on every tab and popup (src/main/cdp/dialogs.ts). */
-  dialogs: Dialogs;
+  /** Native JavaScript dialogs with human/agent ownership on every tab and popup. */
+  dialogs: DesktopDialogs;
   /** The active persona (src/main/app/persona.ts). */
   persona: Persona;
   /** Recording demonstrations (src/main/recording/recorder.ts). */
