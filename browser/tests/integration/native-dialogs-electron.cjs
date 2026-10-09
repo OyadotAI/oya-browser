@@ -13,7 +13,7 @@ app.on('window-all-closed', () => {});
 const deadline = setTimeout(() => {
   console.error('Native dialog test timed out');
   app.exit(1);
-}, 30000);
+}, 60000);
 /** Resolve only after a native dialog callback has actually arrived. */
 function receiver() {
   let deliver;
@@ -144,6 +144,7 @@ async function run() {
   assert.equal(await disabled.webContents.executeJavaScript('confirm("Not allowed")'), false);
   disabled.destroy();
   await checkService(fixture);
+  await require('./native-before-unload.cjs')(profile);
   console.log(
     'PASS: Oya native confirm/prompt/alert, exact frame, single-use replies, navigation cancellation and teardown; debugger forbidden',
   );

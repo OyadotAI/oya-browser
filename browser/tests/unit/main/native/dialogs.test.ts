@@ -8,6 +8,7 @@ function fixture() {
   const handlers: unknown[] = [];
   const page = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
+    _oyaBeforeUnloadDialogs: true,
     _setOyaDialogHandler: (handler: unknown) => {
       handlers.push(handler);
     },
@@ -73,5 +74,21 @@ test('pending refusal retains cancellation until disposal can succeed', () => {
   assert.equal(f.page.listenerCount('-oya-dialog-cancelled'), 1);
   f.page.isDestroyed = () => true;
   stop();
+  assert.equal(f.page.listenerCount('-oya-dialog-cancelled'), 0);
+});
+
+test('engines missing unload decisions fail before installing a handler', () => {
+  const f = fixture();
+  f.page._oyaBeforeUnloadDialogs = false;
+  assert.throws(
+    () =>
+      watchNativeDialogs(
+        f.page,
+        () => {},
+        () => {},
+      ),
+    /before-unload/,
+  );
+  assert.deepEqual(f.handlers, []);
   assert.equal(f.page.listenerCount('-oya-dialog-cancelled'), 0);
 });

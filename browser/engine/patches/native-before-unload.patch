@@ -1,0 +1,104 @@
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -4735,6 +4735,23 @@
+                                         content::RenderFrameHost* rfh,
+                                         bool is_reload,
+                                         DialogClosedCallback callback) {
++  CHECK_EQ(web_contents, this->web_contents());
++  if (oya_before_unload_enabled_) {
++    auto* isolate = JavascriptEnvironment::GetIsolate();
++    v8::HandleScope scope(isolate);
++    auto info = gin::DataObjectBuilder(isolate)
++                    .Set("frame", rfh)
++                    .Set("dialogType", "beforeunload")
++                    .Set("messageText", "Changes you made may not be saved.")
++                    .Set("defaultPromptText", "")
++                    .Set("isReload", is_reload)
++                    .Build();
++    EmitWithoutEvent(
++        "-run-dialog", info,
++        base::BindOnce(&WebContents::FinishOyaBeforeUnload, GetWeakPtr(),
++                       pending_unload_url_, std::move(callback)));
++    return;
++  }
+   bool default_prevented = Emit("will-prevent-unload");
+ 
+   if (pending_unload_url_.has_value() && !default_prevented) {
+@@ -4746,6 +4763,30 @@
+ 
+   ResyncFocusAfterDialog(std::move(callback))
+       .Run(default_prevented, std::u16string());
++}
++
++// Only the browser-owned dialog registration enables asynchronous unload decisions.
++void WebContents::SetOyaBeforeUnloadEnabled(bool enabled) {
++  oya_before_unload_enabled_ = enabled;
++}
++
++// Preserve loadURL rejection without attributing an old decision to a new load.
++void WebContents::FinishOyaBeforeUnload(std::optional<GURL> pending_url,
++                                      DialogClosedCallback callback,
++                                      bool accepted,
++                                      const std::u16string& text) {
++  if (pending_url && pending_unload_url_ == pending_url) {
++    pending_unload_url_.reset();
++    if (!accepted) {
++      auto weak_this = GetWeakPtr();
++      Emit("did-fail-load", static_cast<int>(net::ERR_ABORTED),
++           net::ErrorToShortString(net::ERR_ABORTED),
++           pending_url->possibly_invalid_spec(), true);
++      if (!weak_this)
++        return;
++    }
++  }
++  ResyncFocusAfterDialog(std::move(callback)).Run(accepted, std::u16string());
+ }
+ 
+ // While a JavaScript dialog or beforeunload handler blocks the renderer,
+@@ -5456,6 +5497,7 @@
+       .SetMethod("takeHeapSnapshot", &WebContents::TakeHeapSnapshot)
+       .SetMethod("setImageAnimationPolicy",
+                  &WebContents::SetImageAnimationPolicy)
++      .SetMethod("_setOyaBeforeUnloadEnabled", &WebContents::SetOyaBeforeUnloadEnabled)
+       .SetMethod("_setVisualZoomLevelLimits",
+                  &WebContents::SetVisualZoomLevelLimits)
+       .SetMethod("_getProcessMemoryInfo", &WebContents::GetProcessMemoryInfo)
+--- a/shell/browser/api/electron_api_web_contents.h
++++ b/shell/browser/api/electron_api_web_contents.h
+@@ -475,6 +475,12 @@
+                              DialogClosedCallback callback) override;
+   void CancelDialogs(content::WebContents* web_contents,
+                      bool reset_state) override;
++  // Privileged native dialog registration; page JavaScript has no access.
++  void SetOyaBeforeUnloadEnabled(bool enabled);
++  void FinishOyaBeforeUnload(std::optional<GURL> pending_url,
++                            DialogClosedCallback callback,
++                            bool accepted,
++                            const std::u16string& text);
+   DialogClosedCallback ResyncFocusAfterDialog(DialogClosedCallback callback);
+ #if defined(USE_AURA)
+   void ResyncViewFocus();
+@@ -936,6 +942,9 @@
+ 
+   std::optional<GURL> pending_unload_url_ = std::nullopt;
+ 
++  // Unload decisions stay synchronous unless a native Oya owner is registered.
++  bool oya_before_unload_enabled_ = false;
++
+   // Maps url to file path, used by the file requests sent from devtools.
+   typedef std::map<std::string, base::FilePath> PathsMap;
+   PathsMap saved_files_;
+--- a/lib/browser/api/web-contents.ts
++++ b/lib/browser/api/web-contents.ts
+@@ -826,9 +826,11 @@
+       if (handler !== null && typeof handler !== 'function') throw new TypeError('Expected a dialog handler or null');
+       if (oyaDialogCancels.size) throw new Error('Cannot replace a handler while a dialog is pending');
+       if (handler && oyaDialogHandler) throw new Error('A native dialog handler is already registered');
++      (this as any)._setOyaBeforeUnloadEnabled(handler !== null);
+       oyaDialogHandler = handler;
+     }
+   });
++  Object.defineProperty(this, '_oyaBeforeUnloadDialogs', { value: true });
+   const cancelOyaDialogs = () => {
+     for (const cancel of oyaDialogCancels) cancel();
+     oyaDialogCancels.clear();

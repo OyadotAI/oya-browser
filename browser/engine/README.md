@@ -211,12 +211,22 @@ The patch also removes Electron's page-visible throwing `prompt()` override,
 allowing Blink's native prompt to reach the browser handler. Without a registered
 handler, Electron's existing prompt cancellation behavior remains; a full human
 prompt UI is not implemented by this patch. No page-level dialog shim is installed.
-Before-unload decisions are a separate lifecycle and have not been migrated here.
+`patches/native-before-unload.patch` extends that registration to Blink's native
+before-unload callback (apply after `native-agent-dialogs.patch`). Navigation,
+reload and window close wait for an explicit decision; refusing a `loadURL`
+rejects its promise without leaving the document. Replies retain the same
+single-use/cancellation protection. Removing the registration restores the
+original `will-prevent-unload` behavior. The browser adapter and packaging probe
+require the new `_oyaBeforeUnloadDialogs` marker, rather than silently using an
+older engine that bypasses unload decisions. This does not yet wire human dialog
+presentation or agent ownership into the default application lifecycle.
 
 Run `npm run test:native-dialogs` with `OYA_NATIVE_ENGINE` pointing to a separately
 branded, patched Oya executable. macOS native-engine tests cover explicit decisions,
 prompt text, alerts, repeated answers, navigation/destruction cancellation and
-subscription teardown with debugger access forbidden. Windows verification and
+subscription teardown with debugger access forbidden. The unload regression uses
+trusted native pointer input and covers navigation/reload/close accept and cancel,
+stale replies, destruction, and restoration of the original human event path. Windows verification and
 production dialog-service integration remain release gates.
 
 ### Command-facing native dialog service

@@ -8,6 +8,8 @@ app.setPath('userData', profile);
 function capabilities(contents) {
   for (const name of ['_executeJavaScriptInOyaWorld', '_runOyaRuntime'])
     if (typeof contents.mainFrame[name] !== 'function') throw Error('Missing native frame API: ' + name);
+  if (contents._oyaBeforeUnloadDialogs !== true || typeof contents._setOyaDialogHandler !== 'function')
+    throw Error('Missing native unload dialog support');
   if (typeof contents._insertTextOya !== 'function') throw Error('Missing native text acknowledgement');
   const requests = contents.session.webRequest;
   if (!requests._supportsOyaRequestErrors?.() || !contents._supportsOyaFrameLifecycle?.())

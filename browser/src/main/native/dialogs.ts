@@ -4,12 +4,14 @@ import type { WebContents, WebFrameMain } from 'electron';
 export type NativeDialogReply = (accept: boolean, text?: string) => void;
 /** Native dialog metadata, including its actual originating frame. */
 export interface NativeDialogInfo {
-  /** A native alert, confirmation or prompt. */
+  /** A native alert, confirmation, prompt or before-unload decision. */
   dialogType: string;
   /** Untrusted page-provided text, to display as text only. */
   messageText: string;
   /** Initial prompt value; never an implicit answer. */
   defaultPromptText: string;
+  /** Present for unload decisions so presenters can distinguish reload from leaving. */
+  isReload?: boolean;
   /** Native originating frame, not a URL-based lookup. */
   frame: Pick<WebFrameMain, 'url'>;
 }
@@ -21,6 +23,8 @@ export interface NativeDialogPage extends Pick<WebContents, 'isDestroyed'> {
   on(event: '-oya-dialog-cancelled', listener: (reply: NativeDialogReply) => void): unknown;
   /** Remove only this subscription when it is disposed. */
   off(event: '-oya-dialog-cancelled', listener: (reply: NativeDialogReply) => void): unknown;
+  /** Explicit marker prevents older engines silently bypassing unload decisions. */
+  _oyaBeforeUnloadDialogs?: boolean;
   /** Null restores ordinary human dialogs, but only when no agent dialog is pending. */
   _setOyaDialogHandler?: (handler: NativeDialogHandler | null) => void;
 }
@@ -48,5 +52,7 @@ function unsubscribe(page: NativeDialogPage, cancelled: (reply: NativeDialogRepl
 function register(page: NativeDialogPage, handler: NativeDialogHandler): void {
   if (page.isDestroyed()) throw new Error('View is destroyed');
   if (!page._setOyaDialogHandler) throw new Error('This Oya engine does not support native dialog handling');
+  if (page._oyaBeforeUnloadDialogs !== true)
+    throw new Error('This Oya engine does not support native before-unload dialogs');
   page._setOyaDialogHandler(handler);
 }

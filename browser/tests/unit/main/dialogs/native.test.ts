@@ -9,6 +9,7 @@ function page() {
   let handler: NativeDialogHandler | null = null;
   const wc = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
+    _oyaBeforeUnloadDialogs: true,
     _setOyaDialogHandler: (next: NativeDialogHandler | null) => {
       handler = next;
     },
@@ -90,4 +91,15 @@ test('alerts notify once and never overwrite a pending decision', () => {
   assert.equal(dialogs.current()?.type, 'confirm');
   assert.equal(alert.answers.length, 1);
   assert.deepEqual(notes, [{ text: 'Saved', url: 'https://fixture.test/' }]);
+});
+
+test('before-unload waits for an explicit decision instead of accepting data loss', async () => {
+  const dialogs = new NativeDialogs();
+  const a = page();
+  dialogs.watch(a.wc);
+  const decision = a.open('beforeunload', 'Unsaved changes');
+  assert.deepEqual(decision.answers, []);
+  assert.equal(dialogs.current()?.type, 'beforeunload');
+  await dialogs.answer(false);
+  assert.deepEqual(decision.answers, [{ accept: false, text: undefined }]);
 });

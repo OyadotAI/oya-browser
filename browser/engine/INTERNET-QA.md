@@ -761,3 +761,45 @@ outbound-provider MCP lifecycle, gateway and anonymity. Default-path native
 migration, remaining native protection/lifecycle work, CI engine provisioning and
 macOS/Windows production artifacts are not complete. No all-CI, internally
 CDP-free default, cross-platform release, push or publication claim is made.
+
+## Native before-unload lifecycle (2026-10-09)
+
+The rebuilt native engine now includes `native-before-unload.patch`. A registered
+Oya dialog owner receives Blink's actual before-unload callback for navigation,
+reload and close. Refusal preserves the document and rejects the matching
+`loadURL`; accepted navigation clears its pending bookkeeping. Native cancellation
+and one-shot replies prevent a stale answer from deciding a later navigation.
+Unregistering restores the existing human `will-prevent-unload` event. Older
+engines without the explicit unload marker fail registration and packaging.
+
+Verified on the local macOS arm64 Oya build:
+
+- All 55 incremental engine build steps completed; the committed patch reverse
+  checks against the engine sources.
+- Actual trusted pointer input activated unload protection. Navigation, reload
+  and close accept/refuse, stale answers, pending unsubscribe refusal, destruction
+  cancellation and human-event restoration passed with debugger access forbidden.
+- All 2,077 desktop unit tests, desktop build/typecheck/lint/format, integration,
+  analyzer and all 13 native recorder cases passed.
+- Native storage/production Persona regression and the packaging capability probe
+  passed against the rebuilt engine.
+
+The first overlapping GUI runs failed focus/hover assertions; rerunning the
+fixtures sequentially passed without weakening assertions. The unload fixture
+now explicitly activates its application before requesting window focus.
+The initial sandboxed unit run stalled on a local front-door socket; the complete
+socket-permitted rerun passed. No sandboxed run is counted as a pass.
+
+Evidence: `/private/tmp/oya-before-unload-build.log`,
+`/private/tmp/oya-before-unload-unit-native.log`,
+`/private/tmp/oya-before-unload-app-build.log`,
+`/private/tmp/oya-before-unload-native-final.log`,
+`/private/tmp/oya-before-unload-integration-final.log`,
+`/private/tmp/oya-before-unload-storage-final.log`, and
+`/private/tmp/oya-before-unload-packaging-final.log`.
+
+This completes an engine lifecycle capability, not default application dialog
+migration: human prompt presentation and ownership routing remain unwired.
+The four gated server suites, remaining default-path protection/recording work,
+CI engine provisioning, Windows validation and signed production artifacts remain
+release gates. No push or release is claimed.
