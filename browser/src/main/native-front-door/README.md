@@ -53,6 +53,19 @@ returned `sessionId`. No Chromium debugging endpoint is required or permitted.
   focused frame, including Unicode behind Oya's control shield. Requires the
   `native-text-acknowledgement.patch` engine capability; no legacy fallback.
   It does not generate keydown/keyup events or turn arbitrary nodes into editors.
+- `Input.dispatchMouseEvent`: native press/release/move/wheel, CSS coordinates
+  adjusted for the exact page's zoom, left/right/middle buttons and explicit
+  held-button/modifier masks. Wheel deltas retain CSS direction and magnitude.
+  Pen/touch, back/forward buttons, timestamps and pressure metadata are rejected.
+- `Input.dispatchKeyEvent`: native keyDown/rawKeyDown/keyUp/char for ASCII
+  letters/digits and supported editing/navigation keys. Physical code metadata
+  must match the key. A keyDown with text also commits one character; rawKeyDown
+  and keyUp reject text. Character events accept one printable ASCII character
+  or carriage return; use `Input.insertText` for Unicode/composed text.
+  Layout overrides, repeat, system/keypad flags and arbitrary physical keys are
+  not supported. Dispatch completion is not proof a website accepted the input.
+  Both input methods retain exact-target ownership and human-control admission;
+  neither activates another tab nor grants access to browser shell shortcuts.
 - `Runtime.enable` / `disable`: native default main-world context identities for the main frame
   and cross-process child frames. Contexts share frame IDs with `Page.getFrameTree`;
   native readiness/removal events drive creation and destruction notifications.
@@ -193,7 +206,7 @@ contexts. None of these operations use CDP internally.
 
 - Full standard Network event semantics, response interception and fulfillment.
 - Debugger events, frame-specific sessions and worker/frame automatic attachment.
-- Runtime worker/isolated contexts and the unsupported options listed above.
+- Runtime worker contexts and the unsupported options listed above.
 - Governed/proxied private contexts with complete native policy composition.
 - Windows compilation/runtime verification of the new engine capabilities.
 

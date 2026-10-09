@@ -8,7 +8,7 @@ import {
   watchNativeLog,
   watchNativePage,
   nativePageCommand,
-  insertNativeText,
+  dispatchNativeInput,
   type NativeEventSink,
 } from '../native/index.ts';
 import { AppNativeBrowser } from './native-browser.ts';
@@ -191,7 +191,7 @@ export class AppNativeBackend implements NativeBackend {
   /** Route supported operations without retargeting after protection settles. */
   private native(tab: Tab, target: string, action: string, params: Record<string, unknown>): Promise<unknown> | object {
     if (action.startsWith('history:')) return this.historyCommand(tab, action, params);
-    if (action === 'input:text') return insertNativeText(tab.view, params.text as string);
+    if (action.startsWith('input:')) return dispatchNativeInput(tab.view, action, params);
     if (action.startsWith('page:')) return nativePageCommand(tab.view, action, params);
     if (action === 'metrics:set') return this.metrics.set(tab.view, params);
     if (action === 'metrics:clear') return this.metrics.clear(tab.view);

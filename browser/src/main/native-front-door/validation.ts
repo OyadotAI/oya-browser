@@ -2,7 +2,7 @@
 import { COOKIE_PARAMS, validateCookies } from './validation-cookies.ts';
 import { NETWORK_PARAMS, validateNetwork } from './validation-network.ts';
 import { BROWSER_PARAMS, validateBrowser } from './validation-browser.ts';
-import { metricParameters } from '../native/index.ts';
+import { metricParameters, validatePointer, validateKey } from '../native/index.ts';
 import { RUNTIME_PARAMS, validateRuntime } from './validation-runtime.ts';
 import { validateTargets } from './validation-targets.ts';
 import { validateDom } from './validation-dom.ts';
@@ -29,6 +29,8 @@ const PARAMS: Record<string, readonly string[]> = {
   'DOM.focus': ['nodeId'],
   'DOM.scrollIntoViewIfNeeded': ['nodeId'],
   'Input.insertText': ['text'],
+  'Input.dispatchKeyEvent': ['type', 'key', 'code', 'text', 'windowsVirtualKeyCode', 'modifiers'],
+  'Input.dispatchMouseEvent': ['type', 'x', 'y', 'button', 'buttons', 'clickCount', 'modifiers', 'deltaX', 'deltaY'],
   'Target.setAutoAttach': ['autoAttach', 'flatten', 'waitForDebuggerOnStart', 'filter'],
   'Target.setDiscoverTargets': ['discover'],
   'Target.activateTarget': ['targetId'],
@@ -80,19 +82,28 @@ function validateValue(key: string, value: unknown): void {
   throw Error(`Invalid parameter: ${key}`);
 }
 
+/** These methods validate their own structured fields rather than generic primitive arguments. */
+const STRUCTURED_METHODS = [
+  'Target.setAutoAttach',
+  'Oya.navigateToHistoryEntry',
+  'Page.createIsolatedWorld',
+  'Input.dispatchMouseEvent',
+  'Input.dispatchKeyEvent',
+];
 /** Structured method arguments have their own validators rather than primitive coercion. */
 function validatePrimitive(method: string, key: string, value: unknown): void {
   if (
     !Object.hasOwn(COOKIE_PARAMS, method) &&
     !Object.hasOwn(BROWSER_PARAMS, method) &&
     !Object.hasOwn(NETWORK_PARAMS, method) &&
-    !['Target.setAutoAttach', 'Oya.navigateToHistoryEntry', 'Page.createIsolatedWorld'].includes(method) &&
+    !STRUCTURED_METHODS.includes(method) &&
     !/^(DOM|Emulation|Runtime)\./.test(method)
   )
     validateValue(key, value);
 }
 /** Required structured arguments cannot disappear through an empty parameter object. */
 function validateRequired(command: NativeCommand): void {
+  validateInput(command);
   validateHistoryCommand(command);
   validateCookies(command);
   validateTargets(command);
@@ -113,4 +124,9 @@ function validateHistoryCommand({ method, params }: NativeCommand): void {
 export function nativeParameterNames(method: string): string[] {
   if (!Object.hasOwn(PARAMS, method)) throw Error('Missing native method parameter contract');
   return [...PARAMS[method]];
+}
+/** Input validation is shared with the native implementation so accepted fields cannot drift. */
+function validateInput(command: NativeCommand): void {
+  if (command.method === 'Input.dispatchMouseEvent') validatePointer(command.params);
+  if (command.method === 'Input.dispatchKeyEvent') validateKey(command.params);
 }

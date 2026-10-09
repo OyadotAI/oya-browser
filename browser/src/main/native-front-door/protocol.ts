@@ -62,6 +62,8 @@ const PAGE_ACTIONS: Record<string, string> = {
   'DOM.focus': 'dom:focus',
   'DOM.scrollIntoViewIfNeeded': 'dom:scroll',
   'Input.insertText': 'input:text',
+  'Input.dispatchMouseEvent': 'input:pointer',
+  'Input.dispatchKeyEvent': 'input:key',
   'Oya.getNavigationHistory': 'history:read',
   'Oya.navigateToHistoryEntry': 'history:navigate',
   'Oya.analyze': 'analyze',

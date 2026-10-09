@@ -1054,3 +1054,28 @@ This closes the isolated-world adapter gap, not the release gate. The four legac
 server integration suites remain refused, and default persona/worker protection,
 remaining protocol semantics, signed passkey acceptance and production macOS/
 Windows artifacts still require completion. No push or release was made.
+
+## Native external pointer and keyboard input (2026-10-09)
+
+The external front door now translates supported `Input.dispatchMouseEvent` and
+`Input.dispatchKeyEvent` requests to browser-owned input APIs. Exact-page zoom
+conversion preserves fractional CSS coordinates. Held-button and modifier masks
+are validated before dispatch; unsupported physical metadata is rejected rather
+than ignored. Unicode composition continues through acknowledged `Input.insertText`.
+
+Patched macOS arm64 checks, with debugger access forbidden, verify trusted clicks,
+held-button movement, wheel direction and actual scrolling at 100% and 200% zoom,
+physical key events, single-character commits, Backspace editing, Unicode insertion
+and refusal during human control. The production PageDriver input regression also
+passes, including overlay refusal, iframe editing and shell-focus/control-shield
+isolation. These are hermetic local-page checks, not new public-site benchmarks.
+
+Final browser unit run: 2,143 passed, no skips or failures. Browser integration
+passes, including all 13 native recorder DOM cases. Browser typecheck and build
+pass. The initial sandboxed unit attempt could not bind required loopback sockets;
+the successful run used explicit permission, without changing or skipping tests.
+
+This is limited native input compatibility, not arbitrary key layouts, touch/pen,
+system keys or full CDP compatibility. The remaining server fixture migrations,
+native persona/worker protection, production platform artifacts and signed passkey
+acceptance remain release gates. No push or release is justified by this checkpoint.

@@ -81,6 +81,7 @@ async function run() {
     await require('./native-runtime-properties-checks.cjs')(a);
     await require('./native-runtime-frames-checks.cjs')(a, b, wc);
     await require('./native-runtime-worlds-checks.cjs')(a, b, wc, control);
+    await require('./native-protocol-input-checks.cjs')(a, wc, control);
     await discovery(`ws://127.0.0.1:${door.address().port}/devtools/browser`, token, target, tabEvents, wc, control);
     await require('./native-history-checks.cjs')(a, b, wc);
     await require('./native-cookie-sync-checks.cjs')(wc.session);

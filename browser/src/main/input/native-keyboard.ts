@@ -17,7 +17,7 @@ function nativeModifiers(bits: number): KeyboardInputEvent['modifiers'] {
   return modifiers;
 }
 /** Native key names differ from DOM arrow and space names. */
-function nativeKeyName(def: KeyDef): string {
+export function nativeKeyName(def: KeyDef): string {
   return Object.hasOwn(NATIVE_KEY_NAMES, def.key) ? NATIVE_KEY_NAMES[def.key] : def.key;
 }
 /** Refuse a gone renderer before dispatching input or committing composed text. */

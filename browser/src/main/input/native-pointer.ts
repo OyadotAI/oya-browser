@@ -7,9 +7,13 @@ export interface NativePointerView {
 }
 /** Reject invalid coordinates before they enter the native event system. */
 export function nativePointer(view: NativePointerView, event: MouseInputEvent | MouseWheelInputEvent): void {
+  nativePointerExact(view, { ...event, x: Math.round(event.x), y: Math.round(event.y) });
+}
+/** Protocol clients may supply fractional CSS coordinates; preserve native float precision after zoom conversion. */
+export function nativePointerExact(view: NativePointerView, event: MouseInputEvent | MouseWheelInputEvent): void {
   if (view.webContents.isDestroyed()) throw new Error('View is destroyed');
   if (![event.x, event.y].every(Number.isFinite)) throw new Error('Pointer coordinates must be finite');
-  view.webContents.sendInputEvent({ ...event, x: Math.round(event.x), y: Math.round(event.y) });
+  view.webContents.sendInputEvent(event);
 }
 /** Browser actions express positive deltas as right/down; native wheel deltas use the opposite sign. */
 export function nativeWheel(view: NativePointerView, x: number, y: number, deltaX: number, deltaY: number): void {

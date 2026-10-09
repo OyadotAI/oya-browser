@@ -16,3 +16,7 @@ export { insertNativeText } from './text-input.ts';
 export { NativeRuntime } from './runtime.ts';
 export { NativeNavigationHistory } from './navigation-history.ts';
 export { recordingDocumentIsCurrent } from './recording-document.ts';
+
+export { validatePointer } from './pointer-input.ts';
+export { validateKey } from './keyboard-input.ts';
+export { dispatchNativeInput } from './input-commands.ts';
