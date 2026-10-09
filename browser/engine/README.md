@@ -659,3 +659,32 @@ universal-origin access and never uses the internal recorder world. Run
 `test:native-front-door` for the public adapter regression. This is still partial
 compatibility: worker contexts, persona/worker migration and other release gates
 remain; the primitive is not proof of full CDP driver parity.
+
+## Native session timezone prerequisite
+
+`patches/native-session-timezone.patch` adds the experimental main-process-only
+`session._setOyaTimeZone(zone)` primitive to the pinned Electron checkout. Apply
+it after the existing engine patches. It is not wired into the default persona
+path yet and does not replace the complete persona/worker policy.
+
+The zone must be a bounded, ASCII ICU system timezone. It is immutable once set;
+repeating the identical setting is allowed. First renderer launch locks an
+unconfigured session too, so late installation fails instead of letting early
+page or worker scripts observe another zone. A different persona must use a
+different session partition. No clear/reset operation is exposed.
+
+The browser supplies the zone from the exact renderer's BrowserContext after
+processing web preferences, not from page-selected renderer arguments. Configured
+sessions refuse spare renderer reuse. At renderer startup, before any document
+script, Oya acquires Blink's native timezone-controller override for that process's
+lifetime. This updates actual ICU/V8 Date behavior and worker isolates; it is not
+a JavaScript `Intl` shim or an inspector-protocol call. Native installation failure
+terminates that renderer rather than allowing unprotected execution.
+
+`OYA_NATIVE_ENGINE=/absolute/patched/executable npm run test:native-timezone`
+checks first-script Date/Intl values in three simultaneous session partitions,
+cross-origin frames, dedicated/shared/service workers, navigation, invalid/late
+configuration and renderer-argument override refusal. The launcher owns cleanup
+after Electron exits. Full persona migration still requires native locale,
+hardware/UA metadata and pre-document/pre-worker protection, plus production
+platform validation; this prerequisite alone must not enable native mode by default.

@@ -42,7 +42,8 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
     "test:native-contexts": "node tests/integration/native-contexts.mjs",
-    "test:native-storage": "node tests/integration/native-storage.mjs"
+    "test:native-storage": "node tests/integration/native-storage.mjs",
+    "test:native-timezone": "node tests/integration/native-timezone.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",

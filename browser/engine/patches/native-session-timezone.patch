@@ -1,0 +1,165 @@
+diff --git a/shell/browser/api/electron_api_session.cc b/shell/browser/api/electron_api_session.cc
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "shell/browser/api/electron_api_session.h"
++#include "third_party/icu/source/i18n/unicode/timezone.h"
++
+ 
+ #include <algorithm>
+ #include <ranges>
+@@ -1240,6 +1242,26 @@
+       std::move(auth_dynamic_params));
+ }
+ 
++void Session::SetOyaTimeZone(gin_helper::ErrorThrower thrower,
++                           const std::string& zone) {
++  if (zone.empty() || zone.size() > 128 || !base::IsStringASCII(zone) ||
++      zone.find('\0') != std::string::npos) {
++    thrower.ThrowTypeError("Invalid native session timezone");
++    return;
++  }
++  UErrorCode status = U_ZERO_ERROR;
++  UBool system_id = false;
++  icu::UnicodeString canonical;
++  icu::TimeZone::getCanonicalID(icu::UnicodeString::fromUTF8(zone), canonical,
++                              system_id, status);
++  if (U_FAILURE(status) || !system_id) {
++    thrower.ThrowTypeError("Invalid native session timezone");
++    return;
++  }
++  if (!browser_context_->SetOyaTimeZone(zone))
++    thrower.ThrowError("Native timezone must be installed before any session renderer and cannot be changed");
++}
++
+ void Session::SetUserAgent(const std::string& user_agent,
+                            gin::Arguments* args) {
+   browser_context_->SetUserAgent(user_agent);
+@@ -2047,6 +2069,7 @@
+       .SetMethod("allowNTLMCredentialsForDomains",
+                  &Session::AllowNTLMCredentialsForDomains)
+       .SetMethod("isPersistent", &Session::IsPersistent)
++      .SetMethod("_setOyaTimeZone", &Session::SetOyaTimeZone)
+       .SetMethod("setUserAgent", &Session::SetUserAgent)
+       .SetMethod("getUserAgent", &Session::GetUserAgent)
+       .SetMethod("setSSLConfig", &Session::SetSSLConfig)
+diff --git a/shell/browser/api/electron_api_session.h b/shell/browser/api/electron_api_session.h
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -148,6 +148,7 @@
+   v8::Local<v8::Promise> ClearHostResolverCache(gin::Arguments* args);
+   v8::Local<v8::Promise> ClearAuthCache();
+   void AllowNTLMCredentialsForDomains(const std::string& domains);
++  void SetOyaTimeZone(gin_helper::ErrorThrower thrower, const std::string& zone);
+   void SetUserAgent(const std::string& user_agent, gin::Arguments* args);
+   std::string GetUserAgent();
+   void SetSSLConfig(network::mojom::SSLConfigPtr config);
+diff --git a/shell/browser/electron_browser_client.cc b/shell/browser/electron_browser_client.cc
+--- a/shell/browser/electron_browser_client.cc
++++ b/shell/browser/electron_browser_client.cc
+@@ -463,6 +463,8 @@
+ 
+ void ElectronBrowserClient::RenderProcessWillLaunch(
+     content::RenderProcessHost* host) {
++  static_cast<ElectronBrowserContext*>(host->GetBrowserContext())
++      ->LockOyaRendererPolicy();
+   // Remove in case the host is reused after a crash, otherwise noop.
+   host->RemoveObserver(this);
+ 
+@@ -689,6 +691,17 @@
+       // Launched like a sandboxed window's renderer, which is the only kind
+       // ShouldUseSpareRenderProcessHost() hands it to.
+       command_line->AppendSwitch(switches::kEnableSandbox);
++    }
++
++    // Preferences append raw arguments. Parse exactly as the child will before
++    // removing every duplicate, so those arguments cannot override session policy.
++    *command_line = base::CommandLine(command_line->argv());
++    command_line->RemoveSwitch("oya-session-timezone");
++    if (render_process_host) {
++      const auto& zone = static_cast<ElectronBrowserContext*>(
++          render_process_host->GetBrowserContext())->GetOyaTimeZone();
++      if (!zone.empty())
++        command_line->AppendSwitchASCII("oya-session-timezone", zone);
+     }
+ 
+     renderer_process_sandboxed_[unsafe_process_id] =
+@@ -1828,6 +1841,11 @@
+     std::optional<
+         content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason>&
+         refused_reason) {
++  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty()) {
++    refused_reason = content::ContentBrowserClient::
++        SpareProcessRefusedByEmbedderReason::DefaultDisabled;
++    return false;
++  }
+   // Extension and WebUI (chrome://, devtools://) frames get renderer switches
+   // and bindings of their own, whatever WebContents hosts them.
+   if (
+diff --git a/shell/browser/electron_browser_context.h b/shell/browser/electron_browser_context.h
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -89,6 +89,16 @@
+ 
+   static void DestroyAllContexts();
+ 
++  // Session policy is immutable after first renderer launch, including workers.
++  bool SetOyaTimeZone(const std::string& zone) {
++    if (oya_time_zone_ == zone) return true;
++    if (oya_renderer_started_ || !oya_time_zone_.empty()) return false;
++    oya_time_zone_ = zone;
++    return true;
++  }
++  void LockOyaRendererPolicy() { oya_renderer_started_ = true; }
++  const std::string& GetOyaTimeZone() const { return oya_time_zone_; }
++
+   void SetUserAgent(const std::string& user_agent);
+   std::string GetUserAgent() const;
+   bool can_use_http_cache() const { return use_cache_; }
+@@ -182,6 +192,9 @@
+                              blink::PermissionType permissionType);
+ 
+  private:
++  bool oya_renderer_started_ = false;
++  std::string oya_time_zone_;
++
+   using DevicePermissionMap = std::map<
+       blink::PermissionType,
+       std::map<url::Origin, std::vector<std::unique_ptr<base::Value>>>>;
+diff --git a/shell/renderer/renderer_client_base.cc b/shell/renderer/renderer_client_base.cc
+--- a/shell/renderer/renderer_client_base.cc
++++ b/shell/renderer/renderer_client_base.cc
+@@ -10,6 +10,8 @@
+ #include <vector>
+ 
+ #include "base/command_line.h"
++#include "base/no_destructor.h"
++#include "third_party/blink/renderer/core/timezone/timezone_controller.h"  // nogncheck
+ #include "base/functional/callback_helpers.h"
+ #include "base/strings/string_split.h"
+ #include "components/network_hints/renderer/web_prescient_networking_impl.h"
+@@ -228,7 +230,22 @@
+          !IsWebViewFrame(isolate, context, render_frame);
+ }
+ 
++// Hold the native override for the renderer lifetime. No page-world shim or
++// inspector session is involved; Blink propagates the zone to worker isolates.
++void ApplyOyaSessionTimeZone() {
++  const auto zone = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++      "oya-session-timezone");
++  if (zone.empty()) return;
++  auto result = blink::TimeZoneController::SetTimeZoneOverride(
++      blink::String::FromUtf8(zone));
++  CHECK(result.status == blink::TimeZoneController::TimeZoneOverrideStatus::kSuccess);
++  CHECK(result.handle);
++  static base::NoDestructor<std::unique_ptr<blink::TimeZoneController::TimeZoneOverride>>
++      owner(std::move(result.handle));
++}
++
+ void RendererClientBase::RenderThreadStarted() {
++  ApplyOyaSessionTimeZone();
+   auto* command_line = base::CommandLine::ForCurrentProcess();
+ 
+   // Enable MessagePort close event by default.

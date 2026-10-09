@@ -1113,3 +1113,39 @@ Full external client lifecycle/recording/network semantics and authenticated
 driver setup also remain. CI still needs validated native artifacts; production
 macOS x64 and Windows builds have not been produced or tested here. These checks
 must not be represented as release acceptance or as internally CDP-free operation.
+
+## Native session timezone engine prerequisite (2026-10-09)
+
+Built `native-session-timezone.patch` against the pinned macOS arm64 engine.
+The main process can install an immutable timezone on an exact session before
+its first renderer launches. Renderer startup acquires the actual Blink timezone
+controller, covering V8 Date calculations and worker isolates without CDP or
+page-world property patches. First renderer launch locks unconfigured sessions
+too, and configured sessions refuse spare renderer reuse.
+
+The explicit-engine fixture passed with debugger access forbidden. UTC, Tokyo
+and New York sessions simultaneously retain distinct first-script timezone,
+offset and local-hour values in main documents, cross-origin frames, dedicated
+workers, shared workers and service workers. Native renderer process IDs are
+distinct across the three partitions. Navigation retains policy; invalid,
+conflicting and late configuration is rejected, while identical configuration
+is idempotent.
+
+The first adversarial test exposed raw `additionalArguments` overriding a native
+switch. The corrected browser path reparses the actual child argument vector,
+removes every duplicate and writes only the session-owned setting. The same
+attack now fails for configured and unconfigured sessions; the unconfigured
+session retains the host timezone instead of accepting the supplied argument.
+
+Evidence: `/private/tmp/oya-native-timezone-build-verified.log` and
+`/private/tmp/oya-native-timezone-test-verified.log`. This is a prerequisite,
+not completed persona migration: no application default or legacy protection
+guard was changed. Native locale, hardware/UA metadata and remaining pre-script
+policy still need implementation and validation. Windows and macOS x64 builds
+are not proven by this macOS arm64 result.
+
+Regression validation on the rebuilt engine passed: native front-door and
+isolated-world suites, browser integration including all 13 recorder DOM cases,
+all 11 native server service tests, and 2,147 browser unit tests with no skips.
+Repository lint/format, browser typecheck and reverse patch-application checks
+also passed. Logs: `/private/tmp/oya-timezone-{front-door,worlds,integration,services,unit}.log`.
