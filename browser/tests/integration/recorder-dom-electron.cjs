@@ -94,7 +94,10 @@ async function hover(selector) {
 }
 /** Native clickCount creates two clicks followed by a real DOM double-click. */
 async function doubleClick(selector) {
-  const p = await point(selector);
+  let p = await point(selector);
+  nativePointer(view, { type: 'mouseMove', ...p });
+  // Leaving the hover-only fixture can collapse it and move the intended text.
+  p = await point(selector);
   nativePointer(view, { type: 'mouseMove', ...p });
   for (const clickCount of [1, 2]) {
     for (const type of ['mouseDown', 'mouseUp'])

@@ -533,3 +533,41 @@ approval, native-mode rollout validation, or Windows/Linux execution tests. CI
 still needs the corresponding pinned native engine artifacts and migration of
 legacy integration fixtures before a release tag is safe. The local arm64
 Testing build is not a universal production artifact.
+
+## Native localStorage engine primitives (experimental)
+
+`patches/native-local-storage.patch` adds session-owned read, restore and change
+observation through the storage service's Mojo interfaces, without a debugger,
+renderer injection or a CDP transport. Apply it to the same pinned Electron
+checkout as the other native engine patches, using `git apply --check` first.
+
+- `_readOyaLocalStorage(origin)` returns key/value pairs from that session's
+  first-party storage key.
+- `_restoreOyaLocalStorage(origin, pairs)` initializes an empty store; a nonempty
+  store is returned unchanged. **Use only before exposing the partition to page
+  navigation.** The empty check and writes are not a transaction against other
+  writers. The production integration must serialize restoration and exclude
+  active pages; partial write failures are explicit, not rolled back.
+- `_watchOyaLocalStorage(origin)` resolves after native observation starts.
+  `oya-local-storage-changed` carries the origin and an availability boolean, not
+  stored values. A false value reports loss of the native observer.
+- `_unwatchOyaLocalStorage(origin)` closes the observer. Cancelling an unready
+  watch rejects its readiness promise.
+
+Only canonical HTTP(S) origins are accepted; partitioned third-party and opaque
+storage keys are not supported. Snapshots/imports are limited to 4,096 entries
+and 1,048,576 UTF-16 code units, with no lossy UTF-8 round trip. Operations and
+watch initialization have 15-second deadlines; a session has at most 1,024
+watches. These are privileged main-process APIs, not renderer exports.
+
+`OYA_NATIVE_ENGINE=/path/to/patched/Oya npm run test:native-storage` checks real
+pre-script hydration, Unicode/NUL/unpaired-surrogate preservation, profile
+isolation, rejected imports, unchanged existing data, native change/clear events
+and watcher cancellation. It runs in a disposable parent-owned profile with
+debugger access forbidden.
+
+**Not yet wired into production persona sync.** Do not claim the SDK login
+journey is migrated: startup ordering, native-origin discovery, dirty snapshots,
+reconnect and stop/flush acknowledgment still need integration and regression
+coverage. The current validation is a local macOS arm64 testing build, not a
+Windows/macOS release artifact.

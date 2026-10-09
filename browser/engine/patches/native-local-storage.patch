@@ -1,0 +1,302 @@
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -5,6 +5,16 @@
+ #include "shell/browser/api/electron_api_session.h"
+ 
+ #include <algorithm>
++#include <ranges>
++#include "base/memory/ref_counted.h"
++#include "base/timer/timer.h"
++#include "components/services/storage/public/mojom/local_storage_control.mojom.h"
++#include "mojo/public/cpp/bindings/remote.h"
++#include "mojo/public/cpp/bindings/receiver.h"
++#include "third_party/blink/public/common/storage_key/storage_key.h"
++#include "third_party/blink/public/mojom/dom_storage/storage_area.mojom.h"
++#include "url/origin.h"
++
+ #include <memory>
+ #include <set>
+ #include <string>
+@@ -473,6 +483,79 @@
+ 
+ namespace electron::api {
+ 
++/** A session-owned observer is tied to one first-party storage key, never a renderer world. */
++class OyaStorageWatch final : public blink::mojom::StorageAreaObserver {
++ public:
++  OyaStorageWatch(v8::Isolate* isolate, content::StoragePartition* partition, const url::Origin& origin,
++                  base::RepeatingCallback<void(bool)> changed)
++      : ready_(isolate), changed_(std::move(changed)), receiver_(this) {
++    partition->GetLocalStorageControl()->BindStorageArea(
++        blink::StorageKey::CreateFirstParty(origin), area_.BindNewPipeAndPassReceiver());
++    area_.set_disconnect_handler(base::BindOnce(&OyaStorageWatch::Disconnected,
++                                               base::Unretained(this)));
++    area_->GetAll(receiver_.BindNewPipeAndPassRemote(), base::BindOnce(&OyaStorageWatch::Ready, base::Unretained(this)));
++    receiver_.set_disconnect_handler(base::BindOnce(&OyaStorageWatch::Disconnected,
++                                                   base::Unretained(this)));
++    timer_.Start(FROM_HERE, base::Seconds(15), base::BindOnce(&OyaStorageWatch::Disconnected,
++                                                          base::Unretained(this)));
++  }
++  ~OyaStorageWatch() override { if (!initialized_) ready_.RejectWithErrorMessage("Native storage watch closed"); }
++  v8::Local<v8::Promise> handle() { return ready_.GetHandle(); }
++  void KeyChanged(const std::vector<uint8_t>&, const std::vector<uint8_t>&,
++                  const std::optional<std::vector<uint8_t>>&,
++                  blink::mojom::StorageAreaSourcePtr) override { changed_.Run(true); }
++  void KeyChangeFailed(const std::vector<uint8_t>&,
++                       blink::mojom::StorageAreaSourcePtr) override {}
++  void KeyDeleted(const std::vector<uint8_t>&,
++                  const std::optional<std::vector<uint8_t>>&,
++                  blink::mojom::StorageAreaSourcePtr) override { changed_.Run(true); }
++  void AllDeleted(bool, blink::mojom::StorageAreaSourcePtr) override { changed_.Run(true); }
++  void ShouldSendOldValueOnMutations(bool) override {}
++ private:
++  void Ready(std::vector<blink::mojom::KeyValuePtr>) { initialized_ = true; timer_.Stop(); ready_.Resolve(); }
++  void Disconnected() {
++    initialized_ = true;
++    timer_.Stop();
++    ready_.RejectWithErrorMessage("Native storage observer disconnected");
++    auto notify = changed_;
++    area_.reset(); receiver_.reset();
++    notify.Run(false);
++  }
++  bool initialized_ = false;
++  base::OneShotTimer timer_;
++  gin_helper::Promise<void> ready_;
++  base::RepeatingCallback<void(bool)> changed_;
++  mojo::Remote<blink::mojom::StorageArea> area_;
++  mojo::Receiver<blink::mojom::StorageAreaObserver> receiver_;
++};
++
++/** Notifications carry only an origin; the authorized owner reads a bounded snapshot separately. */
++v8::Local<v8::Promise> Session::WatchOyaLocalStorage(const std::string& origin) {
++  const auto parsed = url::Origin::Create(GURL(origin));
++  if (oya_storage_watches_.contains(origin)) return oya_storage_watches_[origin]->handle();
++  if (parsed.opaque() || !GURL(origin).SchemeIsHTTPOrHTTPS() || parsed.Serialize() != origin ||
++      oya_storage_watches_.size() >= 1024) {
++    gin_helper::Promise<void> failed(isolate_);
++    auto handle = failed.GetHandle();
++    failed.RejectWithErrorMessage("Invalid or excessive native storage watch");
++    return handle;
++  }
++  auto watch = std::make_unique<OyaStorageWatch>(isolate_,
++      browser_context_->GetDefaultStoragePartition(), parsed,
++      base::BindRepeating([](Session* self, const std::string& origin, bool available) {
++        self->Emit("oya-local-storage-changed", origin, available);
++      }, base::Unretained(this), origin));
++  auto handle = watch->handle();
++  oya_storage_watches_[origin] = std::move(watch);
++  return handle;
++}
++
++/** Removing the watcher closes both Mojo pipes and stops further notifications for that origin. */
++void Session::UnwatchOyaLocalStorage(const std::string& origin) {
++  oya_storage_watches_.erase(origin);
++}
++
++
+ namespace {
+ 
+ const char kPersistPrefix[] = "persist:";
+@@ -588,6 +671,7 @@
+ }
+ 
+ void Session::Dispose() {
++  oya_storage_watches_.clear();
+   if (!keep_alive_)
+     return;
+ 
+@@ -746,6 +830,142 @@
+       base::BindOnce(gin_helper::Promise<void>::ResolvePromise,
+                      std::move(promise)));
+   return handle;
++}
++
++/** Native session-local storage operations; no renderer scripts or debugging protocol. */
++namespace {
++using OyaStorageEntries = std::vector<std::vector<std::u16string>>;
++constexpr size_t kOyaStorageMaxEntries = 4096;
++constexpr size_t kOyaStorageMaxUnits = 1024 * 1024;
++constexpr auto kOyaStorageTimeout = base::Seconds(15);
++
++/** Match Blink's localStorage encoding, retaining NUL and unpaired UTF-16 code units. */
++std::vector<uint8_t> EncodeOyaStorage(const std::u16string& text) {
++  bool latin = std::ranges::all_of(text, [](char16_t c) { return c <= 255; });
++  std::vector<uint8_t> bytes;
++  bytes.reserve(1 + text.size() * (latin ? 1 : 2));
++  bytes.push_back(latin ? 1 : 0);
++  for (char16_t c : text) {
++    bytes.push_back(c & 255);
++    if (!latin) bytes.push_back(c >> 8);
++  }
++  return bytes;
++}
++
++/** Refuse unknown/corrupt formats rather than returning a fabricated empty value. */
++std::optional<std::u16string> DecodeOyaStorage(const std::vector<uint8_t>& bytes) {
++  if (bytes.empty()) return std::u16string();
++  if (bytes[0] > 1 || (bytes[0] == 0 && bytes.size() % 2 != 1)) return std::nullopt;
++  std::u16string text;
++  for (size_t i = 1; i < bytes.size(); i += bytes[0] ? 1 : 2) {
++    char16_t c = bytes[i];
++    if (!bytes[0]) c |= static_cast<char16_t>(bytes[i + 1]) << 8;
++    text.push_back(c);
++  }
++  return text;
++}
++
++/** Bound imports before any mutation and reject duplicate keys or malformed pairs. */
++bool ValidOyaStorage(const OyaStorageEntries& entries) {
++  if (entries.size() > kOyaStorageMaxEntries) return false;
++  size_t units = 0;
++  std::set<std::u16string> keys;
++  for (const auto& pair : entries) {
++    if (pair.size() != 2 || !keys.insert(pair[0]).second) return false;
++    units += pair[0].size() + pair[1].size();
++    if (units > kOyaStorageMaxUnits) return false;
++  }
++  return true;
++}
++
++/** One bounded Mojo request owns its storage area until all native replies settle. */
++class OyaStorageOperation : public base::RefCounted<OyaStorageOperation> {
++ public:
++  OyaStorageOperation(v8::Isolate* isolate, OyaStorageEntries restore)
++      : promise_(isolate), restore_(std::move(restore)) {}
++  v8::Local<v8::Promise> handle() { return promise_.GetHandle(); }
++  void Start(content::StoragePartition* partition, const std::string& origin) {
++    const auto parsed = url::Origin::Create(GURL(origin));
++    if (parsed.opaque() || !GURL(origin).SchemeIsHTTPOrHTTPS() || parsed.Serialize() != origin ||
++        !ValidOyaStorage(restore_)) {
++      Fail("Invalid native localStorage origin or entries");
++      return;
++    }
++    partition->GetLocalStorageControl()->BindStorageArea(
++        blink::StorageKey::CreateFirstParty(parsed), area_.BindNewPipeAndPassReceiver());
++    area_.set_disconnect_handler(base::BindOnce(&OyaStorageOperation::Fail,
++        base::RetainedRef(this), "Native localStorage service disconnected"));
++    timer_.Start(FROM_HERE, kOyaStorageTimeout, base::BindOnce(&OyaStorageOperation::Fail,
++        base::RetainedRef(this), "Native localStorage operation timed out"));
++    area_->GetAll(mojo::NullRemote(), base::BindOnce(&OyaStorageOperation::Read,
++                                                   base::RetainedRef(this)));
++  }
++ private:
++  friend class base::RefCounted<OyaStorageOperation>;
++  ~OyaStorageOperation() = default;
++  void Read(std::vector<blink::mojom::KeyValuePtr> values) {
++    if (!values.empty() || restore_.empty()) return Resolve(std::move(values));
++    PutNext();
++  }
++  void PutNext() {
++    if (next_ == restore_.size()) {
++      area_->GetAll(mojo::NullRemote(), base::BindOnce(&OyaStorageOperation::Resolve,
++                                                     base::RetainedRef(this)));
++      return;
++    }
++    const auto& entry = restore_[next_++];
++    area_->Put(EncodeOyaStorage(entry[0]), EncodeOyaStorage(entry[1]), std::nullopt, nullptr,
++               base::BindOnce(&OyaStorageOperation::Written, base::RetainedRef(this)));
++  }
++  void Written(bool success) {
++    if (!success) return Fail("Native localStorage restore was rejected");
++    PutNext();
++  }
++  void Resolve(std::vector<blink::mojom::KeyValuePtr> values) {
++    if (settled_) return;
++    if (values.size() > kOyaStorageMaxEntries) return Fail("Native localStorage snapshot exceeds limit");
++    OyaStorageEntries result;
++    size_t units = 0;
++    for (const auto& value : values) {
++      auto key = DecodeOyaStorage(value->key), text = DecodeOyaStorage(value->value);
++      if (!key || !text) return Fail("Native localStorage encoding is unsupported");
++      units += key->size() + text->size();
++      if (units > kOyaStorageMaxUnits) return Fail("Native localStorage snapshot exceeds limit");
++      result.push_back({std::move(*key), std::move(*text)});
++    }
++    settled_ = true;
++    timer_.Stop();
++    area_.reset();
++    promise_.Resolve(result);
++  }
++  void Fail(const std::string& message) {
++    if (settled_) return;
++    settled_ = true;
++    timer_.Stop();
++    area_.reset();
++    promise_.RejectWithErrorMessage(message);
++  }
++  gin_helper::Promise<OyaStorageEntries> promise_;
++  OyaStorageEntries restore_;
++  mojo::Remote<blink::mojom::StorageArea> area_;
++  base::OneShotTimer timer_;
++  size_t next_ = 0;
++  bool settled_ = false;
++};
++}  // namespace
++
++/** Browser-owned first-party storage is restored before navigation, never injected into page code. */
++v8::Local<v8::Promise> Session::RestoreOyaLocalStorage(
++    const std::string& origin, const OyaStorageEntries& entries) {
++  auto operation = base::MakeRefCounted<OyaStorageOperation>(isolate_, entries);
++  auto promise = operation->handle();
++  operation->Start(browser_context_->GetDefaultStoragePartition(), origin);
++  return promise;
++}
++
++/** An empty import reads the native store without changing it. */
++v8::Local<v8::Promise> Session::ReadOyaLocalStorage(const std::string& origin) {
++  return RestoreOyaLocalStorage(origin, {});
+ }
+ 
+ void Session::FlushStorageData() {
+@@ -1799,6 +2019,10 @@
+       .SetMethod("getCacheSize", &Session::GetCacheSize)
+       .SetMethod("clearCache", &Session::ClearCache)
+       .SetMethod("clearStorageData", &Session::ClearStorageData)
++      .SetMethod("_watchOyaLocalStorage", &Session::WatchOyaLocalStorage)
++      .SetMethod("_unwatchOyaLocalStorage", &Session::UnwatchOyaLocalStorage)
++      .SetMethod("_readOyaLocalStorage", &Session::ReadOyaLocalStorage)
++      .SetMethod("_restoreOyaLocalStorage", &Session::RestoreOyaLocalStorage)
+       .SetMethod("flushStorageData", &Session::FlushStorageData)
+       .SetMethod("setProxy", &Session::SetProxy)
+       .SetMethod("forceReloadProxyConfig", &Session::ForceReloadProxyConfig)
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -6,6 +6,7 @@
+ #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_SESSION_H_
+ 
+ #include <optional>
++#include <map>
+ #include <string>
+ #include <vector>
+ 
+@@ -48,6 +49,7 @@
+ 
+ namespace api {
+ 
++class OyaStorageWatch;
+ class Cookies;
+ class Extensions;
+ class NetLog;
+@@ -119,6 +121,13 @@
+   v8::Local<v8::Promise> GetCacheSize();
+   v8::Local<v8::Promise> ClearCache();
+   v8::Local<v8::Promise> ClearStorageData(gin::Arguments* args);
++  v8::Local<v8::Promise> WatchOyaLocalStorage(const std::string& origin);
++  void UnwatchOyaLocalStorage(const std::string& origin);
++  // Native first-party localStorage access, never a debugging transport.
++  v8::Local<v8::Promise> ReadOyaLocalStorage(const std::string& origin);
++  v8::Local<v8::Promise> RestoreOyaLocalStorage(
++      const std::string& origin,
++      const std::vector<std::vector<std::u16string>>& entries);
+   void FlushStorageData();
+   v8::Local<v8::Promise> SetProxy(gin::Arguments* args);
+   v8::Local<v8::Promise> ForceReloadProxyConfig();
+@@ -211,6 +220,8 @@
+   cppgc::Member<api::ServiceWorkerContext> service_worker_context_;
+   cppgc::Member<api::WebRequest> web_request_;
+ 
++  std::map<std::string, std::unique_ptr<OyaStorageWatch>> oya_storage_watches_;
++
+   raw_ptr<v8::Isolate> isolate_;
+ 
+   // The profile id to enable the network throttler.

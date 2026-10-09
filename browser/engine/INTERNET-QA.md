@@ -649,3 +649,37 @@ typecheck, lint and build passed. Evidence:
 `/private/tmp/oya-cookie-reconnect-all.log` and
 `/private/tmp/oya-cookie-reconnect-build.log`. Native localStorage synchronization
 and the remaining release gates are still outstanding.
+
+## Native localStorage engine foundation — 2026-10-09
+
+Built and linked new browser-owned session APIs for first-party localStorage
+read, empty-store restoration and native change observation. They call the
+storage service directly, not CDP or injected renderer scripts. Origin validation,
+bounded UTF-16 snapshots, initialization deadlines and observer cancellation are
+explicit. Restore is for exclusive partition initialization before navigation;
+it is not a transaction against concurrent page writers.
+
+The real-engine regression passes: state is available to the first page script,
+Arabic/emoji/NUL/unpaired surrogates and `__proto__` keys survive, other partitions
+cannot see it, invalid/oversized imports fail without mutation, existing state is
+not overwritten, and native observers report writes and clearing. Cancelling an
+unready watcher rejects rather than hanging. Debugger access is forbidden.
+
+The first desktop run exposed hover-dependent target movement in the recorder's
+double-click fixture. Re-resolving its coordinates after the hover change fixed
+the fixture without deleting assertions. The complete rerun passed all 2,037
+unit tests, desktop integration tests and 13 recorder cases. Native front-door
+and private-context/network suites also passed on the rebuilt engine. Typecheck,
+lint and touched-file formatting passed; the patch reverse-applies cleanly to
+the compiled checkout.
+
+Evidence: `/private/tmp/oya-native-storage-watch-build.log`,
+`/private/tmp/oya-native-storage-final.log`, `/private/tmp/oya-storage-desktop-final.log`,
+`/private/tmp/oya-storage-front-door.log`, `/private/tmp/oya-storage-contexts.log`.
+The isolated test bundle is `node_modules/.cache/oya-native-storage/Oya Browser.app`
+under `browser/`; the manual browser profile was not touched.
+
+This foundation is **not yet wired into persona synchronization**. Startup
+serialization, origin discovery, dirty snapshot delivery, reconnect and final
+stop/flush acknowledgment remain before migrating the SDK login journey. No
+Windows validation, production native distribution, push or release is claimed.

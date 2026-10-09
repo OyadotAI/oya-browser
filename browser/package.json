@@ -40,7 +40,8 @@
     "test:recorder": "node tests/integration/recorder-dom.mjs",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",
-    "test:native-contexts": "node tests/integration/native-contexts.mjs"
+    "test:native-contexts": "node tests/integration/native-contexts.mjs",
+    "test:native-storage": "node tests/integration/native-storage.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",
