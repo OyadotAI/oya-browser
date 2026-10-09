@@ -47,12 +47,33 @@ class ContextSetup {
     this.resources.downloads.install(session);
     this.resources.network.install(session);
   }
-  /** Cancel private work first, then close all exact-session tabs including adopted popups. */
+  /** Cancel every private resource even if one cancellation fails; errors never imply successful disposal. */
   close(session: Session): void {
-    this.resources.network.remove(session);
-    this.resources.downloads.remove(session);
-    for (const tab of this.deps.windows?.allTabs() || [])
-      if (tab.view.webContents.session === session)
-        this.deps.windows?.owner(tab.id)?.tabs.closeTab(tab.id, { keepOne: false });
+    retirePrivateResources([
+      () => this.resources.network.remove(session),
+      () => this.resources.downloads.remove(session),
+      () => this.closeOwnedTabs(session),
+    ]);
   }
+  /** A failure closing one exact-session tab must not strand its siblings or touch another session. */
+  private closeOwnedTabs(session: Session): void {
+    const tabs = (this.deps.windows?.allTabs() || []).filter((tab) => tab.view.webContents.session === session);
+    retirePrivateResources(
+      tabs.map((tab) => () => this.deps.windows?.owner(tab.id)?.tabs.closeTab(tab.id, { keepOne: false })),
+    );
+  }
+}
+/** Attempt a synchronous resource without preventing later native cleanup steps. */
+function attemptPrivateResource(step: () => void, failures: unknown[]): void {
+  try {
+    step();
+  } catch (error) {
+    failures.push(error);
+  }
+}
+/** Preserve every cancellation failure after all independent resources have been attempted. */
+function retirePrivateResources(steps: Array<() => void>): void {
+  const failures: unknown[] = [];
+  for (const step of steps) attemptPrivateResource(step, failures);
+  if (failures.length) throw new AggregateError(failures, 'Private context resources could not all be retired');
 }

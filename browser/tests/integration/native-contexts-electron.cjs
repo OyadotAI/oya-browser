@@ -106,6 +106,7 @@ const payload = Buffer.from('Oya native download 日本語\n'.repeat(1000));
 /** Exercise browser-context and download commands through authenticated external sessions. */
 async function run() {
   await app.whenReady();
+  await require('./native-context-readiness.cjs')(electron);
   const hits = { bytes: 0, large: 0, paused: 0, blocked: 0 };
   const server = http.createServer((req, res) => {
     if (req.url.startsWith('/filter/')) {

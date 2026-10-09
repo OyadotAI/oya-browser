@@ -31,6 +31,16 @@ engine are separate concerns; this requirement governs the control architecture.
 
 ### Migration inventory
 
+- Native private contexts reserve their quota and ownership immediately, but stay
+  absent from discovery, session lookup and target visibility until asynchronous
+  setup completes. Cancellation/disconnect is checked again before publication;
+  late setup cannot resurrect a revoked id. Retirement revokes access first and
+  attempts network, downloads, each exact-session tab, connections, storage and
+  cache cleanup even when another step fails. Failures propagate rather than
+  claiming successful disposal. Late setup is cleaned again, and private-session
+  tombstones remain. Unit and real Oya context tests cover the readiness boundary
+  and late native-cookie writes; this does not enable production persona mode.
+
 - External `Page.createIsolatedWorld` terminates in native owner-scoped V8 worlds,
   separate from the internal analyzer/recorder. Context tokens, value arguments,
   lifecycle notifications and release groups preserve exact tab/frame/world
