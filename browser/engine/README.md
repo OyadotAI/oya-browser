@@ -507,3 +507,29 @@ and retains current tab/frame/control/egress authorization. MacOS integration te
 exercise all 14 advertised reasons, asserting the actual native error notification,
 zero server delivery, invalid-reason preservation and one-shot callback behavior.
 Windows compilation and runtime verification remain outstanding.
+
+## Fail-closed desktop packaging
+
+Desktop packaging now requires `OYA_NATIVE_DISTRIBUTIONS`, with unpacked
+Electron-compatible distribution directories named `darwin-arm64`, `darwin-x64`,
+`win32-x64`, and `linux-x64`. A macOS directory contains `Electron.app`; Windows
+contains `electron.exe`; Linux contains `electron`. These must be built patched
+Oya engines, not renamed stock downloads. Do not point the directory at the whole
+compiler output tree, which contains build intermediates unrelated to shipping.
+
+The before-pack hook launches the selected executable in a disposable profile,
+requires native frame/runtime/text/network capabilities, and executes a native
+isolated-world calculation with debugger access forbidden. It checks the actual
+process architecture against the target before calling the existing signing hook.
+The distribution hook selects the identical platform/architecture directory for
+unpacking. Validation deliberately runs in before-pack: the installed builder
+catches errors from its distribution hook and otherwise downloads stock Electron.
+Missing distributions, cross-OS packaging, failed probes, and wrong architectures
+must fail before that fallback can occur.
+
+This is a packaging capability gate, not release certification. It does not
+replace full native suites, signed/notarized artifact tests, macOS entitlement
+approval, native-mode rollout validation, or Windows/Linux execution tests. CI
+still needs the corresponding pinned native engine artifacts and migration of
+legacy integration fixtures before a release tag is safe. The local arm64
+Testing build is not a universal production artifact.

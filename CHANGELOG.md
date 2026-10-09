@@ -8,6 +8,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Require an explicitly selected native Oya runtime during desktop packaging, with per-architecture capability checks before unpacking. Missing native engines fail rather than silently shipping stock Electron.
+
 - Multiple full browser windows with live tab tear-out and transfers onto another window's tab strip, preserving page state and navigation history. Added Cmd/Ctrl+N, Cmd/Ctrl+Alt+W, and Move Tab to New Window in the tab menu. Window-scoped controls and independent shields retain agent access through globally unique tab ids and `list_tabs.window_id`.
 
 ### Fixed

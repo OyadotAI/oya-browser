@@ -71,7 +71,7 @@
   },
   "build": {
     "appId": "ai.oya.browser",
-    "beforePack": "build/webauthn.cjs",
+    "beforePack": "build/native-before-pack.cjs",
     "productName": "Oya Browser",
     "artifactName": "Oya.Browser-${version}-${arch}.${ext}",
     "directories": {
@@ -181,6 +181,7 @@
       "provider": "generic",
       "url": "https://oyabrowser.com/downloads",
       "channel": "latest"
-    }
+    },
+    "electronDist": "./build/native-electron-dist.cjs"
   }
 }
