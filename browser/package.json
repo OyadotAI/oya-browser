@@ -15,6 +15,7 @@
     "test:unit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test 'tests/unit/**/*.test.{js,cjs,mjs,ts}'",
     "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs && npm run test:analyzer && npm run test:recorder",
     "test:coverage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-test-coverage 'tests/unit/**/*.test.{js,cjs,mjs,ts}'",
+    "test:native-worlds": "node tests/integration/native-runtime-worlds.mjs",
     "test:recording": "npm run build && node tests/integration/recording.mjs",
     "test:identity": "electron tests/integration/identity-electron.cjs",
     "test:sync": "npm run build && node tests/integration/sync-e2e.mjs",

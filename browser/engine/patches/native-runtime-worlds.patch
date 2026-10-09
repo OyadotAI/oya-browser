@@ -1,0 +1,125 @@
+--- a/shell/renderer/oya_runtime.cc
++++ b/shell/renderer/oya_runtime.cc
+@@ -25,6 +25,11 @@
+ namespace electron {
+ namespace {
+ constexpr size_t kOwners = 64;
++// Never reuse renderer world IDs: globals must not leak to a later connection.
++// This reserved range excludes Electron's preload and Oya's internal world 1004.
++constexpr int kFirstAgentWorld = 1 << 20;
++constexpr int kLastAgentWorld = 1 << 21;
++int next_agent_world = kFirstAgentWorld;
+ constexpr size_t kHandles = 2048;
+ constexpr uint32_t kProperties = 512;
+ constexpr uint32_t kPrototypeDepth = 32;
+@@ -38,6 +43,8 @@
+ /** Shared ownership lets asynchronous page promises outlive the IPC service safely. */
+ struct Owner {
+   bool closed = false;
++  int world = 0;
++  std::string context;
+   std::map<std::string, StoredValue> handles;
+ };
+ /** Errors are distinct from page-thrown values, never silently converted to undefined. */
+@@ -304,7 +311,7 @@
+ /** Document identity and value owners are native-only; navigating never aliases a previous registry. */
+ struct OyaRuntimeState {
+   std::string document = base::UnguessableToken::Create().ToString();
+-  std::map<std::string, std::shared_ptr<Owner>> owners;
++  std::map<std::pair<std::string, std::string>, std::shared_ptr<Owner>> owners;
+ };
+ OyaRuntime::OyaRuntime(content::RenderFrame* frame) : content::RenderFrameObserver(frame), state_(std::make_shared<OyaRuntimeState>()) {
+   frame->GetAssociatedInterfaceRegistry()->AddInterface<mojom::OyaRuntime>(
+@@ -320,7 +327,10 @@
+   state_ = std::make_shared<OyaRuntimeState>();
+ }
+ void OyaRuntime::WillReleaseScriptContext(v8::Isolate*, v8::Local<v8::Context>, int32_t world) {
+-  if (world == 0) Clear();
++  if (world == 0) return Clear();
++  for (auto& [key, owner] : state_->owners) {
++    if (owner->world == world) { owner->closed = true; owner->handles.clear(); }
++  }
+ }
+ /** Perform fixed native operations; no protocol method names or debugger connection enter the engine. */
+ void OyaRuntime::Perform(const std::string& id, const std::string& expected,
+@@ -329,24 +339,55 @@
+   auto* isolate = frame->GetAgentGroupScheduler()->Isolate();
+   v8::Isolate::Scope isolate_scope(isolate);
+   v8::HandleScope handles(isolate);
+-  auto context = frame->MainWorldScriptContext();
+-  if (context.IsEmpty() || !render_frame()->GetBlinkPreferences().javascript_enabled)
+-    return std::move(callback).Run(Failure("Native main-world context is unavailable"));
++  if (!render_frame()->GetBlinkPreferences().javascript_enabled)
++    return std::move(callback).Run(Failure("Native runtime JavaScript is disabled"));
++  if (id.empty() || id.size() > 128 || !parameters.is_dict())
++    return std::move(callback).Run(Failure("Invalid native runtime request"));
++  const auto& p = parameters.GetDict();
++  const auto world_key = Param(p, "world");
++  if ((p.contains("world") && !p.FindString("world")) || world_key.size() > 128)
++    return std::move(callback).Run(Failure("Invalid native runtime world"));
++  const auto key = std::make_pair(id, world_key);
++  if (operation == "context" && world_key.empty()) {
++    if (frame->MainWorldScriptContext().IsEmpty())
++      return std::move(callback).Run(Failure("Native main-world context is unavailable"));
++    return std::move(callback).Run(base::Value(base::DictValue().Set("context", state_->document)));
++  }
++  const bool creating_world = operation == "isolatedContext";
++  if (creating_world && (world_key.empty() || expected != state_->document))
++    return std::move(callback).Run(Failure("Native execution context was replaced or world is invalid"));
++  if (!state_->owners.contains(key)) {
++    if (!world_key.empty() && !creating_world)
++      return std::move(callback).Run(Failure("Stale or foreign native runtime world"));
++    if (expected != state_->document)
++      return std::move(callback).Run(Failure("Native execution context was replaced"));
++    if (state_->owners.size() >= kOwners)
++      return std::move(callback).Run(Failure("Native runtime owner limit exceeded"));
++    if (creating_world && next_agent_world >= kLastAgentWorld)
++      return std::move(callback).Run(Failure("Native isolated world identity space exhausted"));
++    auto fresh = std::make_shared<Owner>();
++    fresh->world = creating_world ? next_agent_world++ : 0;
++    fresh->context = creating_world ? base::UnguessableToken::Create().ToString() : state_->document;
++    state_->owners[key] = std::move(fresh);
++  }
++  auto owner = state_->owners.at(key);
++  if (owner->closed || (!creating_world && expected != owner->context))
++    return std::move(callback).Run(Failure("Native execution context was replaced"));
++  if (operation == "close") {
++    owner->closed = true; owner->handles.clear();
++    // Isolated worlds cannot be recreated under a closed identity. Main-world
++    // owners keep their established lifecycle; browser-side leases fence reuse.
++    if (owner->world == 0) state_->owners.erase(key);
++    return std::move(callback).Run(base::Value(base::DictValue()));
++  }
++  auto context = owner->world == 0 ? frame->MainWorldScriptContext()
++      : frame->GetScriptContextFromWorldId(isolate, owner->world);
++  if (context.IsEmpty())
++    return std::move(callback).Run(Failure("Native execution context is unavailable"));
++  if (creating_world || operation == "context")
++    return std::move(callback).Run(base::Value(base::DictValue().Set("context", owner->context)));
+   v8::Context::Scope scope(context);
+   v8::MicrotasksScope microtasks(isolate, context->GetMicrotaskQueue(), v8::MicrotasksScope::kRunMicrotasks);
+-  if (operation == "context") return std::move(callback).Run(base::Value(base::DictValue().Set("context", state_->document)));
+-  if (expected != state_->document) return std::move(callback).Run(Failure("Native execution context was replaced"));
+-  if (id.empty() || id.size() > 128 || !parameters.is_dict()) return std::move(callback).Run(Failure("Invalid native runtime request"));
+-  if (operation == "close") {
+-    auto owner = state_->owners.find(id);
+-    if (owner != state_->owners.end()) { owner->second->closed = true; owner->second->handles.clear(); state_->owners.erase(owner); }
+-    return std::move(callback).Run(base::Value(base::DictValue()));
+-  }
+-  if (!state_->owners.contains(id)) {
+-    if (state_->owners.size() >= kOwners) return std::move(callback).Run(Failure("Native runtime owner limit exceeded"));
+-    state_->owners[id] = std::make_shared<Owner>();
+-  }
+-  auto owner = state_->owners[id]; const auto& p = parameters.GetDict();
+   if (operation == "drop") {
+     if (!owner->handles.erase(Param(p, "object"))) return std::move(callback).Run(Failure("Stale or foreign runtime object"));
+     return std::move(callback).Run(base::Value(base::DictValue()));
+@@ -372,7 +413,7 @@
+   if (code.size() > kTextBytes) return std::move(callback).Run(Failure("Native source limit exceeded"));
+   if (operation == "invoke") code = "(" + code + "\n)";
+   blink::WebScriptSource source(blink::WebString::FromUtf8(code));
+-  frame->RequestExecuteScript(0, base::span_from_ref(source),
++  frame->RequestExecuteScript(owner->world, base::span_from_ref(source),
+       blink::mojom::UserActivationOption::kDoNotActivate,
+       blink::mojom::EvaluationTiming::kSynchronous,
+       blink::mojom::LoadEventBlockingOption::kDoNotBlock, base::NullCallback(),

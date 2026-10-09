@@ -1001,3 +1001,29 @@ This corrects a native-mode regression, not the still-unfinished default persona
 and worker migration. Native engine artifact provisioning, the remaining server
 integration migrations and cross-platform release validation remain open. No
 release is justified by this checkpoint alone.
+
+## Native isolated-world engine prerequisite (2026-10-09)
+
+Compiled the pinned macOS arm64 engine with `native-runtime-worlds.patch`.
+The new browser-owned runtime operation allocates distinct V8 worlds and native
+context tokens per owner/world pair. It does not grant universal origin access,
+expose preload capabilities or use a debugging endpoint.
+
+The explicit-engine `test:native-worlds` fixture passed with debugger access
+forbidden. It verifies stable owned identities, main/page/internal-recorder and
+other-agent global isolation, shared DOM access, cross-origin access rejection,
+child-frame token and handle isolation, native invocation, promises and exceptions,
+malformed world rejection, closed-world tombstones, navigation invalidation and
+clean replacement globals. Seventy sequential ordinary main-world clients also
+pass, protecting the pre-existing cleanup path from lifetime quota exhaustion.
+
+Validation passed: 2,122 browser unit tests (no failures/skips), browser integration
+including analyzer and all 13 recorder DOM cases, existing native front-door
+main/child Runtime, DOM, input, history and ownership regressions, browser types,
+repository-wide lint/format, and reverse application check of the engine patch.
+
+This is an engine prerequisite, not completed public protocol support:
+`Page.createIsolatedWorld` remains unsupported until application context/handle
+routing, lifecycle events and disposal are world-aware. The four server migration
+gates, native persona/worker work, production platform builds and passkey signing
+requirements remain. Nothing was pushed or released.

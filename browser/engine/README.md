@@ -629,3 +629,32 @@ anonymity integration suites remain gated. The default-path migration, native
 persona/worker protection and cross-platform release validation remain separate
 requirements. Current engine evidence is local macOS arm64, not a Windows or
 universal macOS production distribution.
+
+## Native isolated runtime worlds (engine primitive only)
+
+Apply `patches/native-runtime-worlds.patch` after the runtime property/frame
+patches. This adds browser-process-only `isolatedContext` creation to
+`_runOyaRuntime`; it does not attach a debugger or expose a renderer API.
+An opaque owner/world pair receives its own V8 context identity and handle
+registry. Numeric world IDs are allocated only inside the renderer from a
+reserved monotonic range, excluding Electron preload and Oya's internal world.
+No universal-access security origin or preload bridge is installed.
+
+Calls in a world must carry its exact native context token. Different owners
+using the same world key do not share globals, intrinsic prototypes or handles.
+Contexts still share the page DOM subject to normal origin checks. Closing an isolated world revokes
+its value handles and leaves a bounded tombstone until navigation, so delayed calls
+cannot resurrect the context. It does not cancel arbitrary timers or DOM effects
+previously installed by agent scripts. Native document replacement invalidates
+all its worlds. Allocation limits fail explicitly rather than reusing identities.
+
+Run `OYA_NATIVE_ENGINE=/absolute/patched/executable npm run test:native-worlds`
+from `browser/`. The fixture forbids debugger access and checks stable owned
+identities, page/recorder/agent-global separation, DOM sharing, child-frame and
+handle isolation, native invocation/promises/exceptions, close and navigation.
+
+**Not public compatibility support yet:** the application context registry and
+external `Page.createIsolatedWorld` adapter still need world-aware ownership,
+lifecycle events, disposal and regression tests. Existing callers continue to get
+an explicit unsupported response. Do not advertise this primitive as complete
+CDP driver parity or enable release on that basis.

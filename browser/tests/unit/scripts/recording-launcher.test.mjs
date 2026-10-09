@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 /** Absolute test entry survives running from the repository, package or an unrelated folder. */
-const launchers = ['recording', 'windows'];
+const launchers = ['recording', 'windows', 'native-runtime-worlds'];
 /** Replace only the process seam in a separate Node process; no browser is launched by these unit tests. */
 const source = (launcher) => `
   import cp from 'node:child_process';
