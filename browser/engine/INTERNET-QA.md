@@ -520,3 +520,25 @@ running production Oya front door: a native click reached a different nonempty
 Dynamic Content document. The initial page itself needed a bounded readiness
 wait. Evidence: `/private/tmp/oya-dynamic-refresh-ready.log`. This targeted pass
 does not rewrite the earlier 41/45 full-audit result or clear upstream failures.
+
+## Full desktop suite on native Oya — 2026-10-09
+
+Migrated the recorder DOM fixture off Playwright/Chromium to a disposable patched
+Oya window. All 13 original case names and behavioral assertions remain: double
+clicks, hover-revealed actions, menus, wheel recording, unlabelled controls,
+popups, disclosures, code-editor naming, Tab, rich text, shadow-root fields and
+repeated test ids. Pointer/key events use native input; debugger access throws.
+Deterministic pointer movement isolates recorder assertions from human-cadence
+path variations that can open unrelated hover menus on the way to a control.
+
+Both analyzer and recorder launchers now require `OYA_NATIVE_ENGINE` without a
+stock fallback. Removed the desktop CI step that installed Chromium for these
+fixtures. CI must still provision the patched engine; this does not supply a
+missing Linux or Windows artifact or migrate the server browser fixtures.
+
+Verified the complete desktop `npm test` command with the patched macOS engine:
+2,028 unit tests plus source/control-state/release/workflow/analyzer/recorder
+integration suites all passed. Typecheck and lint passed. Evidence:
+`/private/tmp/oya-native-full-desktop.log`. This supersedes the earlier statement
+that the desktop aggregate could not be run under the native-only rule; the
+server aggregate remains blocked by its legacy fixtures.

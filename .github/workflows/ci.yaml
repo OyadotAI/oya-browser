@@ -84,9 +84,7 @@ jobs:
           cache-dependency-path: browser/package-lock.json
       # Native analyzer regressions require Oya's Electron runtime and a display.
       - run: npm ci --prefix browser
-      # Legacy recorder fixtures still await native migration; analyzer fixtures use Oya.
-      - run: npx playwright install chromium
-        working-directory: browser
+      # Analyzer and recorder fixtures require an explicitly supplied patched Oya engine.
       - run: xvfb-run -a npm test --prefix browser
       # The main process and preload ship bundled (out/); both must type-check and build.
       - run: npm run typecheck --prefix browser
