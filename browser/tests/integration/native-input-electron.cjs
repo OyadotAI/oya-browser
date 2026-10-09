@@ -1,7 +1,6 @@
 /** Oya-native pointer regression: all debugger access is fatal, including implicit attachment. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
 const { Keyboard } = require('../../src/main/input/keyboard.ts');
@@ -11,7 +10,8 @@ const { Mouse } = require('../../src/main/input/mouse.ts');
 const { stillWhileAway } = require('../../src/main/shell/hold-still.ts');
 const { pathToFileURL } = require('node:url');
 const { POINTER_COMMANDS } = require('../../src/main/actions/pointer-commands.ts');
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-native-input-'));
+const profile = process.env.OYA_NATIVE_INPUT_PROFILE;
+if (!profile) throw new Error('Run native-input.mjs so the parent owns profile cleanup after Electron exits');
 app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
@@ -204,4 +204,3 @@ function finish(code) {
   clearTimeout(deadline);
   app.exit(code);
 }
-app.on('quit', () => fs.rmSync(profile, { recursive: true, force: true }));

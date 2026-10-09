@@ -1079,3 +1079,10 @@ This is limited native input compatibility, not arbitrary key layouts, touch/pen
 system keys or full CDP compatibility. The remaining server fixture migrations,
 native persona/worker protection, production platform artifacts and signed passkey
 acceptance remain release gates. No push or release is justified by this checkpoint.
+
+Follow-up: the input fixture's Electron `quit` handler could race profile writers
+and raise `ENOTEMPTY` after its assertions passed. The launcher now owns the
+temporary profile, removes it only after the child closes with bounded retries,
+and reports cleanup failure as a failed run. Its fixture path is absolute, so
+launching from the repository root also works. The patched-engine rerun completed
+with exit status zero and without the cleanup exception.

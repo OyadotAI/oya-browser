@@ -1,13 +1,28 @@
 /** Launch only Oya's runtime for the native input regression, with no browser automation provider. */
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 const executable = process.env.OYA_NATIVE_ENGINE;
 if (!executable) throw new Error('Set OYA_NATIVE_ENGINE to the patched Oya executable; no fallback is allowed');
-const child = spawn(executable, ['tests/integration/native-input-electron.cjs'], { stdio: 'inherit' });
+const profile = await mkdtemp(join(tmpdir(), 'oya-native-input-'));
+const fixture = fileURLToPath(new URL('./native-input-electron.cjs', import.meta.url));
+const child = spawn(executable, [fixture], {
+  stdio: 'inherit',
+  env: { ...process.env, OYA_NATIVE_INPUT_PROFILE: profile },
+});
 child.on('error', (error) => {
   console.error(error);
   process.exitCode = 1;
 });
-child.on('exit', (code) => {
+child.on('close', async (code) => {
   process.exitCode = code ?? 1;
+  try {
+    await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) {
+    console.error('Native input profile cleanup failed after Electron exited:', error);
+    process.exitCode = 1;
+  }
 });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
