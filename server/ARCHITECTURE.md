@@ -154,8 +154,8 @@ profile and removes it only after the engine exits.
 These exercise the existing service scripts on real pages; they do not claim to
 replace the native file-chooser or native trusted-keyboard suites. Existing
 service assertions remain, and missing engines or unsupported fixture commands
-fail explicitly. The server aggregate still refuses the remaining five legacy
-browser suites: CDP driver, MCP lifecycle, gateway, anonymity and login journey.
+fail explicitly. The server aggregate still refuses the remaining four legacy
+browser suites: CDP driver, outbound-provider MCP lifecycle, gateway and anonymity.
 Do not remove that gate or equate the migrated subset with full CI.
 
 The native MCP suite starts the real server, admits a private native fixture over
@@ -164,3 +164,13 @@ analysis, trusted clicks, human-control handoff, cross-key refusal and stop.
 The fixture advertises only its supported actions, with CDP disabled and engine
 debugger access forbidden. It does not replace cloud provisioning or validate
 persona application; the legacy provider lifecycle suite remains gated.
+
+The SDK login journey now uses disposable native Oya engines. It retains encrypted
+profile/MFA reload and tenant-isolation checks, first-script cookie/storage
+hydration, trusted typing/clicking, a returned public CDP gateway URL terminating
+at the native front door, logout, stop/save and fresh-engine restore. No debugging
+endpoint backs these operations. Explicit stop of a native client requests
+`profile_capture`, waits for its correlated result after ordered state messages,
+and drains encrypted persistence before disconnecting. Failed capture leaves the
+browser connected. Borrowing a desktop finishes only the unused provisioning
+reservation, preserving the desktop and avoiding a fictitious live fleet entry.

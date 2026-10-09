@@ -191,6 +191,24 @@ function cookieHostFor(url: string): string | null {
   return URL.parse(/^https?:\/\//i.test(url) ? url : 'https://' + url)?.hostname ?? null;
 }
 
+/** Read native cookies without allowing a late result to cross persona boundaries. */
+async function cookieSnapshot(deps: CookieSyncDeps): Promise<boolean> {
+  try {
+    return await readCookieSnapshot(deps);
+  } catch {
+    return false;
+  }
+}
+
+/** Publish only if the same native cookie store is still selected after the read. */
+async function readCookieSnapshot(deps: CookieSyncDeps): Promise<boolean> {
+  if (!deps.open() || !deps.ready()) return false;
+  const jar = deps.session().cookies;
+  const cookies = await jar.get({});
+  if (deps.session().cookies !== jar || !deps.open() || !deps.ready()) return false;
+  return deps.send({ type: 'cookie_dump', cookies: cookies.map(slimCookie) }) !== false;
+}
+
 /** One persona's cookie traffic with the server. Wired in as ctx.cookies. */
 export class CookieSync {
   /** The persona's session, the socket and the sync mark. */
@@ -222,15 +240,19 @@ export class CookieSync {
   }
 
   /** Dump all cookies to the server for pool sync. */
-  async dumpCookies(): Promise<void> {
-    if (!this.deps.open()) return;
-    try {
-      const cookies = await this.deps.session().cookies.get({});
-      if (this.trySend({ type: 'cookie_dump', cookies: cookies.map(slimCookie) }) === false) return;
-      this.sentAt = Date.now();
-    } catch (e) {
-      console.log('[oya] Cookie dump failed:', (e as Error).message);
-    }
+  async dumpCookies(): Promise<boolean> {
+    const accepted = await cookieSnapshot(this.deps);
+    if (accepted) this.sentAt = Date.now();
+    return accepted;
+  }
+
+  /** Strict final capture: deletion batches and the native snapshot must both reach the transport. */
+  async captureProfile(): Promise<void> {
+    if (!this.deps.open() || !this.deps.ready()) throw Error('Profile capture requires an authenticated connection');
+    this.flushCookieChanges();
+    if (!(await this.dumpCookies())) throw Error('Native cookies could not be synchronized');
+    this.flushCookieChanges();
+    if (this.batch.size) throw Error('Native cookie changes could not be synchronized');
   }
 
   /**

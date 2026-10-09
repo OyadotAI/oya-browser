@@ -467,3 +467,63 @@ describe('CookieSync', () => {
     assert.equal(cookies.listenerCount('changed'), 1);
   });
 });
+
+it('strict profile capture refuses a failed native snapshot instead of acknowledging a stop', async () => {
+  const { sync, cookies } = syncWith();
+  cookies.get = async () => {
+    throw Error('private cookie value');
+  };
+  await assert.rejects(sync.captureProfile(), /could not be synchronized/);
+});
+it('strict profile capture refuses an offline or refusing transport', async () => {
+  const f = syncWith({ sendResult: false });
+  await assert.rejects(f.sync.captureProfile(), /could not be synchronized/);
+  f.link.ready = false;
+  await assert.rejects(f.sync.captureProfile(), /authenticated connection/);
+});
+it('a native cookie read cannot publish after a persona changes its cookie store', async () => {
+  let resolve;
+  const first = fakeCookies(),
+    second = fakeCookies(),
+    sent: any[] = [];
+  first.get = () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  let cookies = first;
+  const sync = new CookieSync({
+    session: () => ({ cookies }),
+    open: () => true,
+    ready: () => true,
+    send: (message) => sent.push(message),
+  });
+  const dump = sync.dumpCookies();
+  cookies = second;
+  resolve([{ name: 'old', value: 'private' }]);
+  assert.equal(await dump, false);
+  assert.deepEqual(sent, []);
+});
+
+it('final capture forwards a logout deletion that arrives during the native snapshot read', async () => {
+  const f = syncWith();
+  f.sync.startCookieChangeListener();
+  f.cookies.get = async () => {
+    f.cookies.emit('changed', {}, { name: 'account', value: '', domain: 'example.test', path: '/' }, 'explicit', true);
+    return [];
+  };
+  await f.sync.captureProfile();
+  assert.deepEqual(
+    f.sent.map((message) => message.type),
+    ['cookie_dump', 'cookie_changed'],
+  );
+  assert.equal(f.sent[1].changes[0].removed, true);
+});
+it('a native cookie read cannot publish while a new identity is still authenticating', async () => {
+  const f = syncWith();
+  f.cookies.get = async () => {
+    f.link.ready = false;
+    return [{ name: 'account', value: 'private' }];
+  };
+  assert.equal(await f.sync.dumpCookies(), false);
+  assert.deepEqual(f.sent, []);
+});

@@ -29,8 +29,12 @@ function failedState(x, status) {
   return status >= Status.INTERNAL && !attachOnly.has(x.provider) ? 'unknown_outcome' : 'failed';
 }
 
-/** Where a successful provisioning call leaves a session: ready, unless the browser is still starting. */
-const startedState = (x, body) => (x.state === 'ready' || body.status !== 'starting' ? 'ready' : 'provisioning');
+/** A borrowed desktop already owns its own slot; finish the unused start reservation, not the desktop. */
+function startedState(x, body) {
+  const borrowed = body.reused === true && typeof body.id === 'string' && body.id !== x.id;
+  if (borrowed && !x.cleanup && !x.runtime) return 'stopped';
+  return x.state === 'ready' || body.status !== 'starting' ? 'ready' : 'provisioning';
+}
 
 /** The state a provisioning response implies. */
 const stateAfter = (x, status, body) => (status < Status.BAD_REQUEST ? startedState(x, body) : failedState(x, status));

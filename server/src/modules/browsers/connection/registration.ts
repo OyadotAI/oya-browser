@@ -124,6 +124,7 @@ function announcedActions(announced: unknown): string[] | null {
 function addToRegistry({ apiKey, browserId, persona, ws, authToken }: Registration, provider: string, msg) {
   const name = msg.browser_name || 'Browser';
   const actions = announcedActions(msg.actions);
-  registry.add(browserId, { ws, apiKey, name, clientType: 'oya', persona, provider, cdp: msg.cdp === true, actions });
+  const offered = { cdp: msg.cdp === true, profileSync: msg.profile_sync === true, actions };
+  registry.add(browserId, { ws, apiKey, name, clientType: 'oya', persona, provider, ...offered });
   registry.get(browserId).authToken = authToken;
 }

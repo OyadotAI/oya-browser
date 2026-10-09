@@ -7,7 +7,7 @@ const profile = process.env.OYA_SERVER_FIXTURE_PROFILE;
 if (!profile) throw Error('Launch through the parent-owned native fixture bridge');
 app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
-let window, actions;
+let window, actions, profileState;
 /** Refuse stock engines even though ordinary main-world execution alone is also available there. */
 async function ready() {
   await app.whenReady();
@@ -39,7 +39,12 @@ async function navigate(url) {
 async function send({ action, params = {} }) {
   if (action === 'navigate') return navigate(params.url);
   if (action === 'evaluate_raw') return { ok: true, data: { result: await evaluate(params.expression) } };
-  if (['analyze', 'click', 'handle_dialog'].includes(action)) {
+  if (profileState && action === 'list_tabs')
+    return {
+      ok: true,
+      data: { tabs: [{ id: 1, active: true, url: window.webContents.getURL(), title: window.webContents.getTitle() }] },
+    };
+  if (['analyze', 'click', 'handle_dialog'].includes(action) || (profileState && action === 'type')) {
     actions ||= require('./server-fixture-actions.cjs')(window);
     return actions(action, params);
   }
@@ -57,7 +62,28 @@ async function evaluate(expression) {
   if (reply.result?.unserializableValue) throw Error('Fixture result cannot be represented as JSON');
   return reply.result?.value;
 }
-const methods = { ready, send, evaluate: (params) => evaluate(params.expression) };
+/** Switch from the blank diagnostic surface to a cold authenticated native partition. */
+async function initializeProfile(auth) {
+  if (profileState) throw Error('Fixture profile is already initialized');
+  const next = await require('./server-fixture-profile.cjs')(require('electron'), auth, local);
+  window.destroy();
+  profileState = next;
+  window = next.window;
+  actions = null;
+  return true;
+}
+const methods = {
+  ready,
+  send,
+  evaluate: (params) => evaluate(params.expression),
+  profile_init: initializeProfile,
+  profile_capture: (params) => profileState.capture(params.id),
+  profile_cookies: () => profileState.cookies(),
+  native_front_door: () => {
+    if (!profileState) throw Error('Native fixture front door requires an initialized profile');
+    return require('./server-fixture-front-door.cjs')(window, local);
+  },
+};
 /** Responses contain only requested fixture results; no source code or credentials are logged. */
 async function dispatch(line) {
   const request = JSON.parse(line);

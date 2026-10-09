@@ -17,6 +17,7 @@ describe('server messages', () => {
     order = [];
     ctx.persona = {
       active: null,
+      flushStorage: async () => true,
       ensureLoginState: () => order.push('login'),
       applyServerFingerprint: async (fp, cookies, now) => order.push(['fingerprint', fp.id, cookies.length, now]),
     };
@@ -47,6 +48,26 @@ describe('server messages', () => {
     assert.equal(ctx.config.values.profileName, 'Work');
     assert.deepEqual(ctx.socket.sent.at(-1), { type: 'profile_flush' });
     assert.equal(ctx.socket.pinging, true);
+  });
+
+  it('awaits native storage readiness before opening tabs or marking the socket ready', async () => {
+    let done;
+    ctx.persona.ensureLoginState = () =>
+      new Promise((resolve) => {
+        done = resolve;
+      });
+    const auth = handleServerMessage(ctx, { type: 'auth_ok', fingerprint: { id: 'p' } });
+    assert.equal(ctx.socket.ready, false);
+    assert.deepEqual(order, []);
+    done();
+    await auth;
+    assert.equal(ctx.socket.ready, true);
+  });
+
+  it('refuses a save acknowledgment request if native storage could not be delivered', async () => {
+    ctx.persona.flushStorage = async () => false;
+    await assert.rejects(handleServerMessage(ctx, { type: 'auth_ok' }), /storage could not be sent/);
+    assert.deepEqual(ctx.socket.ofType('profile_flush'), []);
   });
 
   it('answers pings and counts pongs as life', async () => {

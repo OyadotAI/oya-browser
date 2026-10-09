@@ -51,7 +51,6 @@ engine are separate concerns; this requirement governs the control architecture.
   MacOS integration and live-app tests cover HttpOnly delivery, scope and isolated
   clearing. Unsupported partition semantics fail explicitly; Windows is unverified.
 
-
 - External Runtime context routing now includes native cross-process child frames.
   `main/native/runtime-contexts.ts` binds opaque context IDs to exact native
   document tokens, while `runtime-values.ts` routes engine handles without a
@@ -60,7 +59,6 @@ engine are separate concerns; this requirement governs the control architecture.
   child replacement/removal preserves surviving siblings. The macOS front-door
   test verifies these behaviors with debugger access forbidden. Worker contexts,
   full Debugger semantics and Windows validation remain unfinished.
-
 
 - Pointer input: `main/input/mouse.ts` and pointer dispatch in
   `main/actions/pointer-commands.ts` now use native `sendInputEvent`, with no
@@ -741,3 +739,26 @@ DOM ids cannot alias replacement documents, subscriptions stop on disconnect,
 and viewport overrides restore native defaults. This is partial compatibility,
 not full CDP parity or proof that the entire application is CDP-free. See its
 README for supported methods and outstanding native-engine work.
+
+### Native persona storage and final capture
+
+In the native-browsing path, `main/sync/PersonaStorage` owns one immutable native
+session binding per authenticated persona. It validates all imports before
+mutation and only hydrates a cold partition before any surface is exposed. Warm
+partitions (even empty ones) keep their local state rather than resurrecting a
+logged-out token. Application-owned native navigation events discover first-party
+origins across windows and popups; subframe origins are not exported as
+first-party storage. Switching persona retires observers and fences late reads.
+
+Native mutations are coalesced and delivered in batches without page scanning.
+Offline/refused sends retain the newest snapshot, including empty logout state.
+Reconnect and manual save await capture before requesting profile persistence.
+Native clients advertise `profile_sync`; the authenticated server may request a
+correlated `profile_capture`. It receives ordered cookie and storage updates
+before the result. Server Stop waits for that result and encrypted persistence;
+failure does not silently stop the browser. This protocol is storage-only and
+never grants agent control of a page. The packaging probe verifies actual native
+storage operations, not just the presence of function names.
+
+This is integrated in the native-browsing path, not evidence that the default
+legacy path, native worker/persona protection, or platform release matrix is done.

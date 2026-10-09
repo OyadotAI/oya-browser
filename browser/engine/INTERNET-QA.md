@@ -706,3 +706,58 @@ Evidence: `/private/tmp/oya-storage-lifecycle-verified.log`,
 `/private/tmp/oya-storage-lifecycle-build.log`. These are local macOS arm64
 results, not evidence of Windows readiness or completion of the five gated
 server integration suites. No push or release is claimed.
+
+## Native persona integration and SDK login journey (2026-10-09)
+
+The native-browsing path now binds storage to the authenticated native session,
+awaits cold hydration before navigation, discovers first-party origins across
+windows/popups, batches captured mutations without rescanning unchanged stores,
+and retains offline logout clears. Exposed partitions are never restored late;
+persona switches and disposal fence pending native operations. Authentication
+suspends publication before changing identities. Cookie reads also recheck the
+selected store and authenticated state before sending a late snapshot.
+
+Native clients advertise a final profile-capture capability. An explicit operator
+Stop waits for its correlated reply after ordered cookie/storage updates, then
+waits for encrypted persistence before disconnecting. A rejected capture leaves
+the browser alive. The real SDK journey exposed unused reservations left live
+when borrowing a desktop; those reservations now finish without stopping the
+borrowed browser or discarding a reservation that owns a cleanup resource.
+
+`server/tests/integration/login-flow.test.js` has been migrated from the Chrome
+launcher to disposable Oya engines. Retained/expanded assertions cover encrypted
+login and MFA reload, tenant isolation, cold first-script hydration, SDK element
+IDs with native trusted input, gateway target discovery terminating at Oya's native
+front door, logout across navigation, failed final capture, durable save, fresh
+engine restoration, and an empty fleet. The fixture's debugger getter throws.
+The first expanded run found the reservation leak; the complete rerun passes
+without weakening its empty-fleet assertion.
+
+Final validation:
+
+- Browser: 2,075 unit tests, desktop integration and all 13 recorder cases passed;
+  native engine storage + production Persona regression and desktop build passed.
+- Server: all nine native service tests passed, including the migrated journey.
+  Coverage passed with 3,307 tests passed, one existing conditional skip, zero
+  failures; lines 98.10%, branches 94.55%, functions 93.85%.
+- Console: typecheck, all 742 tests and coverage passed.
+- SDK/CLI/scripts builds, tests and SDK package compatibility passed.
+- Root lint and format passed. Formatting the edited browser architecture document
+  fixed the format gate's initial failure. Browser/server typechecks passed.
+- The packaging probe executed native isolated runtime and native storage
+  read/restore/watch operations against the actual macOS arm64 engine build.
+
+Evidence: `/private/tmp/oya-native-profile-desktop-final.log`,
+`/private/tmp/oya-native-profile-storage-final.log`,
+`/private/tmp/oya-native-profile-build-final.log`,
+`/private/tmp/oya-native-services-profile-final.log`,
+`/private/tmp/oya-native-profile-server-coverage.log`,
+`/private/tmp/oya-native-profile-ui-coverage.log`,
+`/private/tmp/oya-native-profile-lint.log`, and
+`/private/tmp/oya-native-profile-format-final.log`.
+
+The aggregate server preflight still refuses four legacy suites: CDP driver,
+outbound-provider MCP lifecycle, gateway and anonymity. Default-path native
+migration, remaining native protection/lifecycle work, CI engine provisioning and
+macOS/Windows production artifacts are not complete. No all-CI, internally
+CDP-free default, cross-platform release, push or publication claim is made.

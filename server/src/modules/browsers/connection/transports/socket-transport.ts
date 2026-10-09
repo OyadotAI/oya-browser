@@ -18,20 +18,20 @@ export class SocketTransport implements CommandTransport {
   }
 
   /** Sends the call and waits for its result (or its timeout); a failed write fails it at once. */
-  send(call: Call): Promise<CommandResult> {
+  send(call: Call, type: 'cmd' | 'profile_capture' = 'cmd'): Promise<CommandResult> {
     const id = randomUUID();
     const answer = pendingCommands.wait(id, call);
     console.log(`[ws] → cmd to ${call.browserId}: id=${id} action=${call.action}`);
-    const failed = this.post(id, call);
+    const failed = this.post(id, call, type);
     if (!failed) return answer;
     pendingCommands.abandon(id);
     return Promise.reject(failed);
   }
 
   /** Writes the `cmd` message; returns the write error, if any. */
-  private post(id: string, call: Call): Error | null {
+  private post(id: string, call: Call, type: 'cmd' | 'profile_capture'): Error | null {
     try {
-      this.ws.send(JSON.stringify({ type: 'cmd', id, action: call.action, params: call.params }));
+      this.ws.send(JSON.stringify({ type, id, action: call.action, params: call.params }));
       return null;
     } catch (err) {
       return err;

@@ -147,8 +147,9 @@ export class SessionHandlers {
     const { socket, cookies } = this.deps;
     if (!socket.ready || !socket.isOpen()) throw new Error('Connect the desktop before saving your profile.');
     cookies.flushCookieChanges();
-    await cookies.dumpCookies();
+    if ((await cookies.dumpCookies()) === false) throw Error('Profile cookies could not be sent');
     await this.deps.persona.flushJar();
+    if (!(await this.deps.persona.flushStorage())) throw Error('Profile storage could not be sent');
     socket.send({ type: 'profile_flush' });
   }
 

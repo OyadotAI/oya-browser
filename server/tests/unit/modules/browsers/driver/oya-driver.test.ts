@@ -66,3 +66,35 @@ describe('OyaDriver', () => {
     assert.equal(ws.closed, null);
   });
 });
+
+it('native profile capture is correlated and cannot be acknowledged by another browser', async () => {
+  const { pendingCommands } =
+    await import('../../../../../src/modules/browsers/connection/transports/pending-commands.ts');
+  const ws = new FakeSocket();
+  const capture = new OyaDriver({ ws, profileSync: true }, 'native-profile').cookies();
+  const [request] = ws.ofType('profile_capture');
+  assert.equal(request.action, 'profile_capture');
+  assert.equal(pendingCommands.settle(request.id, 'other-browser', { ok: true }), false);
+  assert.equal(pendingCommands.settle(request.id, 'native-profile', { ok: true }), true);
+  assert.equal(await capture, null);
+});
+it('native capture failure refuses stop without copying credential-bearing error text', async () => {
+  const { pendingCommands } =
+    await import('../../../../../src/modules/browsers/connection/transports/pending-commands.ts');
+  const ws = new FakeSocket();
+  const capture = new OyaDriver({ ws, profileSync: true }, 'native-failed').cookies();
+  pendingCommands.settle(ws.ofType('profile_capture')[0].id, 'native-failed', {
+    ok: false,
+    error: 'credential-secret',
+  });
+  await assert.rejects(capture, /^Error: Native profile capture failed$/);
+});
+it('native profile capture fails promptly when its connection is replaced', async () => {
+  const { pendingCommands } =
+    await import('../../../../../src/modules/browsers/connection/transports/pending-commands.ts');
+  const ws = new FakeSocket();
+  const capture = new OyaDriver({ ws, profileSync: true }, 'native-replaced').cookies();
+  const rejected = assert.rejects(capture, /replaced/);
+  pendingCommands.failBrowser('native-replaced', 'disconnect', 'Connection replaced');
+  await rejected;
+});

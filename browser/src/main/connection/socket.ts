@@ -13,7 +13,7 @@ import * as constants from './constants.ts';
 const { CloseCode } = constants;
 
 /** What the socket uses: the message map's services, the window for its version, and the CDP port it offers. */
-type Deps = ServerMessageDeps & Pick<AppServices, 'electron' | 'cdpPort'>;
+type Deps = ServerMessageDeps & Pick<AppServices, 'electron' | 'cdpPort' | 'nativeBrowsing'>;
 
 /** The calls made on a socket: the `ws` client's, or a test's stand-in. */
 export interface SocketLike {
@@ -220,7 +220,8 @@ export class ControlSocket {
     const config = this.deps.config.values;
     this.deps.shell.devLog('out', 'auth', { browser_id: this.browserId, browser_name: config.browserName });
     const version = this.deps.electron.app.getVersion();
-    socket.send(JSON.stringify(authMessage(config, this.browserId, this.deps.cdpPort, version)));
+    const message = authMessage(config, this.browserId, this.deps.cdpPort, version);
+    socket.send(JSON.stringify({ ...message, ...(this.deps.nativeBrowsing ? { profile_sync: true } : {}) }));
   }
 
   /** The socket closed: go offline, and reconnect unless the server said not to. */

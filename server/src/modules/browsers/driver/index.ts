@@ -19,6 +19,8 @@ type DriverSpec = {
   ws?: any;
   /** Whether that Oya browser offers CDP over a relay. */
   cdp?: boolean;
+  /** The native client can flush its profile before an operator stops the connection. */
+  profileSync?: boolean;
   /** The actions that Oya browser said it does, already checked. */
   actions?: readonly string[] | null;
 };
@@ -31,5 +33,5 @@ type DriverSpec = {
 export function driverFor(spec: DriverSpec, browserId: string): BrowserDriver {
   if (spec.engine) return new CdpDriver(spec.engine);
   if (spec.clientType === 'cdp') throw new Error('A cdp browser needs the engine that drives it');
-  return new OyaDriver({ ws: spec.ws, cdp: spec.cdp, actions: spec.actions }, browserId);
+  return new OyaDriver({ ws: spec.ws, cdp: spec.cdp, actions: spec.actions, profileSync: spec.profileSync }, browserId);
 }

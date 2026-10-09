@@ -73,3 +73,6 @@ export const DEFAULT_PROVIDER = 'oya-desktop';
 export const CLOUD_PROVIDER = 'oya-cloud';
 /** Providers whose browsers this server runs, and pays for: what plans and the self-hosted license count. */
 export const SERVER_RUN = new Set([CLOUD_PROVIDER, 'oya-selfhosted']);
+
+/** Native capture includes bounded storage reads; stopping must await its correlated answer. */
+export const PROFILE_CAPTURE_TIMEOUT_MS = 30_000;

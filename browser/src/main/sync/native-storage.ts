@@ -127,6 +127,16 @@ export class NativeStorageSync {
     if (this.failure) throw this.failure;
     return this.deliver();
   }
+  /** Deliver captured mutations without periodically rescanning every unchanged origin. */
+  async flushPending(): Promise<boolean> {
+    this.assertOpen();
+    await this.initialization;
+    await Promise.all(this.watching.values());
+    await Promise.all(this.reading.values());
+    this.assertOpen();
+    if (this.failure) throw this.failure;
+    return this.deliver();
+  }
   /** A refused or throwing send retains the latest state for reconnect, including empty dictionaries. */
   private deliver(): boolean {
     if (!this.deps.ready()) return false;

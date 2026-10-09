@@ -5,7 +5,8 @@
  */
 import type { Call } from '../connection/reporter.ts';
 import { SocketTransport } from '../connection/transports/socket-transport.ts';
-import { LIVE_VIEW_FPS } from '../connection/constants.ts';
+import { describeCall } from '../connection/reporter.ts';
+import { PROFILE_CAPTURE_TIMEOUT_MS, LIVE_VIEW_FPS } from '../connection/constants.ts';
 import { openRelay } from '../cdp-relay.ts';
 import { actionsFor } from '../../../drivers/vocabulary.ts';
 import type { BrowserDriver, CdpEndpoint } from './port.ts';
@@ -19,6 +20,8 @@ type OyaLink = {
   };
   /** Whether the browser relays CDP over that socket. */
   cdp?: boolean;
+  /** The native client can flush its profile before an operator stops the connection. */
+  profileSync?: boolean;
   /** The actions the browser said it does when it registered; absent from an older app. */
   actions?: readonly string[] | null;
 };
@@ -62,7 +65,16 @@ export class OyaDriver implements BrowserDriver {
 
   /** Null: an Oya browser syncs its own cookie jar to its persona as it goes. */
   async cookies() {
+    if (this.link.profileSync) await this.captureProfile();
     return null;
+  }
+
+  /** A correlated result arrives only after the browser's ordered storage/cookie updates. */
+  private async captureProfile(): Promise<void> {
+    const call = describeCall(this.browserId, 'profile_capture', {}, PROFILE_CAPTURE_TIMEOUT_MS);
+    call.visible = false;
+    const result = await new SocketTransport(this.link.ws).send(call, 'profile_capture');
+    if (!result.ok) throw Error('Native profile capture failed');
   }
 
   /** CDP over a relay on the control socket, when the browser said it offers one. */

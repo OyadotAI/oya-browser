@@ -409,6 +409,9 @@ function mainCtx(real = {}) {
         return ctx.electron.session.fromPartition(this.partitionName());
       },
       /** As the real one: the jar's cookies and storage to disk. */
+      async flushStorage() {
+        return true;
+      },
       async flushJar() {
         const session = this.session();
         await Promise.allSettled([session.cookies.flushStore(), session.flushStorageData()]);

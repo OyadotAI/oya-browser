@@ -26,3 +26,6 @@ export const STORAGE_CAPTURE_TIMEOUT_MS = 20_000;
 
 /** A storage entry contains exactly a key and a value. */
 export const STORAGE_PAIR_LENGTH = 2;
+
+/** Batch native storage mutations without repeatedly scanning unchanged origins. */
+export const STORAGE_FLUSH_MS = 2000;

@@ -98,6 +98,7 @@ async function run() {
     await assert.rejects(watching, /watch closed/);
     assert.deepEqual(await other._readOyaLocalStorage(origin), []);
     await require('./native-storage-sync-checks.cjs')({ jar, win, origin, mutation });
+    await require('./native-persona-storage-checks.cjs')(require('electron'), origin, mutation);
     console.log(
       'PASS: native storage hydration before scripts, Unicode/NUL/surrogates, isolation, validation, non-overwrite, mutation and clear events; debugger forbidden',
     );

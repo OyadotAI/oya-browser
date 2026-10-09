@@ -576,8 +576,25 @@ exclusively own the partition during initialization, register discovered origins
 and arrange periodic/reconnect/final flushing; observer events capture state but
 do not themselves send it.
 
-**Not yet wired into production persona sync.** Do not claim the SDK login
-journey is migrated: exclusive startup ordering, native-origin discovery,
-reconnect and stop/flush acknowledgment still need production integration and
-regression coverage. The current validation is a local macOS arm64 testing build, not a
-Windows/macOS release artifact.
+The native-browsing path now wires this through `PersonaStorage`: cold partitions
+are initialized before tab creation, already exposed partitions are never restored
+late, native main-frame navigations discover origins (including popups), and
+periodic delivery uses captured changes instead of rescanning unchanged stores.
+Reconnect and manual save flush the native state. A server-requested final capture
+uses a correlated reply after ordered cookie/storage messages; server Stop awaits
+that reply and durable encrypted persistence before dropping the connection.
+A failed capture leaves the browser connected unless the operator explicitly
+forces stop. Borrowed SDK desktop handles remain non-destructive.
+
+The migrated `server/tests/integration/login-flow.test.js` exercises encrypted
+login/MFA reload, cold first-script hydration, native trusted input, public gateway
+discovery terminating at the native front door, logout, refused final capture,
+durable save, and a fresh-engine restart. The packaging probe now also executes
+native storage read/restore/watch operations; a stock engine cannot satisfy it.
+
+**This does not complete the overall native migration or enable production
+releases.** The legacy CDP driver, outbound-provider MCP lifecycle, gateway and
+anonymity integration suites remain gated. The default-path migration, native
+persona/worker protection and cross-platform release validation remain separate
+requirements. Current engine evidence is local macOS arm64, not a Windows or
+universal macOS production distribution.

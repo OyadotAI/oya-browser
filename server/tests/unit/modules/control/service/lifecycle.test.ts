@@ -206,3 +206,21 @@ describe('adopt', () => {
     await assert.rejects(service.adopt(A, { id: 'theirs', provider: 'cdp' }), { status: 404 });
   });
 });
+
+it('borrowing a desktop releases only the unused provisioning reservation', async () => {
+  await service.reserve(A, { id: 'desktop', provider: 'oya-desktop' });
+  await service.update(A, 'desktop', { state: 'ready' });
+  await service.reserve(A, { id: 'borrow-request', provider: 'cdp' });
+  const body = { id: 'desktop', reused: true, status: 'ready' };
+  const result = await service.complete(A, 'borrow-request', 201, body);
+  assert.equal(result.state, 'stopped');
+  assert.equal((await stored('desktop')).state, 'ready');
+  assert.deepEqual((await stored('borrow-request')).response, { status: 201, body });
+  assert.equal((await stored('borrow-request')).provisioningActive, false);
+});
+it('a reused response cannot discard a reservation that owns a cleanup resource', async () => {
+  await service.reserve(A, { id: 'resource', provider: 'cdp' });
+  await patchRow(service, 'session', 'resource', { cleanup: { provider: 'test' } });
+  const result = await service.complete(A, 'resource', 201, { id: 'other', reused: true });
+  assert.equal(result.state, 'ready');
+});

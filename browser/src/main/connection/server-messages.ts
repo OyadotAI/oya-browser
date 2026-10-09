@@ -2,6 +2,7 @@
  * Message type → handler: everything the server can say to this browser. The
  * socket looks the type up here; an unknown type is ignored.
  */
+import { captureProfile } from './profile-capture.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import type { AppServices } from '../app/services.ts';
 import type { CommandParams } from '../actions/types.ts';
@@ -97,6 +98,7 @@ const SERVER_MESSAGES: Record<string, Handler> = {
     if (msg.state) deps.governance.setMode(deps.control.snapshot().mode);
   },
   auth_ok: (router, msg) => router.acceptAuth(msg),
+  profile_capture: ({ deps }, msg) => captureProfile(deps, msg.id),
   // A save the person asked for: how many sites the server now keeps, remembered for the profile dialog.
   profile_saved: ({ deps }, msg) => {
     if (!msg.error) deps.config.merge({ lastSync: { at: Date.now(), sites: msg.sites?.length || 0 } });
@@ -148,10 +150,9 @@ export class ServerMessages {
 
   /** The server accepted us: take the persona it sent, go online, and share our cookies. */
   async acceptAuth(msg: ServerMessage): Promise<void> {
-    const { socket, persona, shell, tabs } = this.deps;
-    socket.reconnectAttempts = 0;
-    if (msg.browser_id) socket.browserId = msg.browser_id;
-    persona.ensureLoginState(msg);
+    const { persona, shell, tabs } = this.deps;
+    this.beginAuth(msg);
+    await persona.ensureLoginState(msg);
     // Apply fingerprint from the server, the server is the single source of truth.
     // Same API key = same fingerprint on every browser, guaranteed.
     if (msg.fingerprint) await persona.applyServerFingerprint(msg.fingerprint, msg.cookies || [], msg.now);
@@ -160,11 +161,20 @@ export class ServerMessages {
     await this.shareProfile();
   }
 
+  /** Suspend publication before any new identity's asynchronous initialization starts. */
+  private beginAuth(msg: ServerMessage): void {
+    const socket = this.deps.socket;
+    socket.ready = false;
+    socket.reconnectAttempts = 0;
+    if (msg.browser_id) socket.browserId = msg.browser_id;
+  }
+
   /** Sends our cookies to the pool, then, on first sign-in only, mirrors the user's real browser. */
   private async shareProfile(): Promise<void> {
     // Changes made while the socket was down go first: a dump cannot say that a cookie was deleted.
     this.deps.cookies.flushCookieChanges();
-    await this.deps.cookies.dumpCookies();
+    if ((await this.deps.cookies.dumpCookies()) === false) throw Error('Profile cookies could not be sent');
+    if (!(await this.deps.persona.flushStorage())) throw Error('Profile storage could not be sent');
     this.deps.socket.send({ type: 'profile_flush' });
     // A no-op once done; it reconnects as the mirrored persona itself.
     void this.deps.mirror.maybeRun();

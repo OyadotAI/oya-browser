@@ -145,6 +145,7 @@ ctx.dialogs = new Dialogs((message, url) => ctx.notifications.add(message, url))
 ctx.protection = new Protection(ctx);
 ctx.workers = new WorkerCoverage(ctx, () => app.getPath('userData'));
 ctx.persona = new Persona(ctx);
+app.once('will-quit', () => ctx.persona.disposeStorage());
 ctx.library = new BrowsingLibrary(ctx);
 ctx.recorder = new Recorder(ctx);
 ctx.socket = new ControlSocket(ctx);

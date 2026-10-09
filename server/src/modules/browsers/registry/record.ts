@@ -26,6 +26,8 @@ export type BrowserSpec = {
   persona?: any;
   /** An inbound Oya browser that also offers CDP through the relay. */
   cdp?: boolean;
+  /** The native client can flush its profile before an operator stops the connection. */
+  profileSync?: boolean;
   /** The actions an inbound Oya browser said it does, already checked; absent from an older app. */
   actions?: readonly string[] | null;
 };

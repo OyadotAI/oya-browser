@@ -11,6 +11,7 @@ import { ProfileStore } from '../../anonymity/profile-store.ts';
 import { configureSession, type SessionProfile, type SessionExtras } from '../identity/session.ts';
 import { ExitZone } from '../identity/exit-zone.ts';
 import { exitProxy } from '../tabs/protection.ts';
+import { PersonaStorage } from '../sync/persona-storage.ts';
 import { NOISE_SEED_DIGITS } from './constants.ts';
 
 /** The services the persona uses. */
@@ -158,11 +159,36 @@ export class Persona {
   private readonly deps: Deps;
   /** Asks a proxied session where it comes out. */
   private readonly zone: ExitZone;
+  /** Native session-bound login synchronization, absent only in the legacy development path. */
+  private readonly storage: PersonaStorage | null;
 
   /** `deps` is the main-process services (see src/main/main.ts). */
   constructor(deps: Deps) {
     this.deps = deps;
     this.zone = new ExitZone({ net: deps.electron.net });
+    this.storage = deps.nativeBrowsing ? this.createStorage() : null;
+  }
+
+  /** Discover all application-owned native surfaces, including OAuth popups and background windows. */
+  private createStorage(): PersonaStorage {
+    const deps = this.deps;
+    return new PersonaStorage({
+      app: deps.electron.app,
+      contents: () => deps.electron.webContents.getAllWebContents(),
+      online: () => deps.socket.ready && deps.socket.isOpen(),
+      send: (message) => deps.socket.send(message),
+      report: (error) => deps.shell.send('profile-saved', { error }),
+    });
+  }
+
+  /** Release native observers only after final profile capture and local persistence are complete. */
+  disposeStorage(): void {
+    this.storage?.dispose();
+  }
+
+  /** Publish native snapshots before asking the server to persist this persona's profile. */
+  flushStorage(): Promise<boolean> {
+    return this.storage?.flush() || Promise.resolve(true);
   }
 
   /** Loads the saved profile store and the profile last in use. */
@@ -222,13 +248,21 @@ export class Persona {
   }
 
   /** A new LoginState for a new persona; the same persona keeps the one it has. */
-  ensureLoginState(msg: LoginStateMessage): void {
+  ensureLoginState(msg: LoginStateMessage): void | Promise<void> {
+    if (this.storage) return this.prepareNativeStorage(msg);
     if (this.loginState && this.active?.id === msg.fingerprint?.id) return;
     const changed = (origins: Origins): void => {
       const socket = this.deps.socket;
       if (socket.ready && socket.isOpen()) socket.send({ type: 'storage_changed', origins });
     };
     this.loginState = new LoginState(msg.origins || {}, changed);
+  }
+
+  /** Resolve the authenticated identity explicitly; the old active persona must never receive its import. */
+  private prepareNativeStorage(msg: LoginStateMessage): Promise<void> {
+    if (!msg.fingerprint?.id) throw Error('Native profile storage requires an authenticated persona');
+    const session = this.deps.electron.session.fromPartition(`persist:oya-${msg.fingerprint.id}`);
+    return this.storage!.activate(session, msg.origins || {});
   }
 
   /**
