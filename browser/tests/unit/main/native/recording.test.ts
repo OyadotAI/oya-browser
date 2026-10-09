@@ -147,3 +147,20 @@ test('an unavailable native sender frame cannot deliver an authorized document',
   f.page.emit('ipc-message', { sender: f.page, senderFrame: null }, NATIVE_RECORDING.CHANNEL, epoch, '{}', 'document');
   assert.deepEqual(f.received, []);
 });
+
+test('bounds retained document authorizations without evicting final-unload attribution', async () => {
+  const f = fixture();
+  const epoch = f.inbox.start();
+  await f.inbox.authorize(f.frame as never);
+  for (let index = 1; index < NATIVE_RECORDING.MAX_DOCUMENTS; index++) {
+    f.frame._executeJavaScriptInOyaWorld = async () => String(index);
+    await f.inbox.authorize(f.frame as never);
+  }
+  f.frame._executeJavaScriptInOyaWorld = async () => 'overflow';
+  await assert.rejects(f.inbox.authorize(f.frame as never), /document limit exceeded/);
+  f.emit(epoch);
+  assert.equal(f.received.length, 1);
+  f.inbox.stop();
+  f.inbox.start();
+  await f.inbox.authorize(f.frame as never);
+});

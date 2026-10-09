@@ -13,7 +13,7 @@ app.on('window-all-closed', () => {});
 const deadline = setTimeout(() => {
   console.error('Native recording transport timed out');
   app.exit(1);
-}, 30000);
+}, 60000);
 const server = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'text/html');
   res.end(
@@ -149,6 +149,7 @@ async function run() {
   await assertIsolated(wc.mainFrame);
   inbox.stop();
   win.destroy();
+  await require('./native-recording-channel.cjs')(`http://127.0.0.1:${server.address().port}`, analyzer);
   console.log(
     'PASS: Oya native isolated recording IPC, cross-process frames, no page/Node exposure, document-scoped lifecycle, navigation flush and final stop drain',
   );

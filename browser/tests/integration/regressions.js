@@ -198,8 +198,8 @@ for (const [re, msg] of [
 ])
   assert.ok(re.test(analyzer), msg);
 
-// Both desktop and CDP clients must deliver events before a document disappears.
-assert.ok(/new RecordingChannel\(/.test(src), 'desktop recording must use the navigation-safe event channel');
+// Desktop delivery must use the native navigation-safe channel, never the legacy CDP transport.
+assert.ok(/new NativeRecordingChannel\(/.test(src), 'desktop recording must use the native event channel');
 assert.ok(
   /steps: recordedSteps\.map\(\(\{ t, \.\.\.step \}\) => step\)/.test(src),
   'capture timestamps are being sent to the server as part of the steps',

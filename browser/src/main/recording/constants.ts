@@ -16,3 +16,7 @@ export const PAGE_CHECK_SETTLE_MS = 500;
 export const DOUBLE_CLICK_MS = 1000;
 /** The playbook format the server is sent. */
 export const PLAYBOOK_SCHEMA_VERSION = 2;
+/** Bound native document authorization and quiescence without a protocol fallback. */
+export const NATIVE_RECORDING_SETTLE_MS = 5000;
+/** Missing native capture is represented explicitly rather than claiming a complete demonstration. */
+export const NATIVE_CAPTURE_ISSUE = 'Native recording could not capture a document. Review this part of the workflow.';

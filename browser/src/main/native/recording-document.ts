@@ -32,3 +32,13 @@ export async function captureDocument(page: WebContents, frame: WebFrameMain): P
     throw new Error('Recording document changed while arming');
   return Object.freeze({ documentId, frame, frames, url });
 }
+
+/** Only the original document may be drained or stopped; a reused frame wrapper is not sufficient. */
+export async function recordingDocumentIsCurrent(
+  page: WebContents,
+  document: NativeRecordingDocument,
+): Promise<boolean> {
+  if (page.isDestroyed() || document.frame.detached || !page.mainFrame.framesInSubtree.includes(document.frame))
+    return false;
+  return (await documentIdentity(document.frame)) === document.documentId;
+}

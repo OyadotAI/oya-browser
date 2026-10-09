@@ -15,13 +15,14 @@ import { initialTab, mountTab, updateTabTitle, updateTabUrl } from './tab-lifecy
 import { TabSelection } from './tab-selection.ts';
 import { ClosedTabs } from './tab-order.ts';
 import { privateSession } from '../native-contexts/index.ts';
+import { recordingPreferences } from '../recording/preload.ts';
 import type { Tab, TabView } from './types.ts';
 
 export { normalizeAddress } from './navigation.ts';
 
 /** The services the tabs use, their listeners' included. */
 type Deps = TabEventsDeps &
-  Pick<AppServices, 'electron' | 'layout' | 'overlays' | 'cookies' | 'windows' | 'nativeBrowsing'>;
+  Pick<AppServices, 'electron' | 'layout' | 'overlays' | 'cookies' | 'windows' | 'nativeBrowsing' | 'appDir'>;
 
 /** Optional native session is application-owned, never chosen by page-supplied partition strings. */
 type CreateTabArguments = [url: string, activate?: boolean, loadOptions?: LoadURLOptions, session?: Session];
@@ -136,9 +137,8 @@ function openFirstPage(tab: Tab, tabReady: Promise<void>, url: string, loadOptio
  * the window is hidden or covered, and an agent's click is not left waiting for a
  * frame (see KEEP_RENDERING_SWITCHES in src/main/app/constants.ts).
  */
-const tabPreferences = (partition: string): WebPreferences => ({
-  contextIsolation: true,
-  sandbox: true,
+const tabPreferences = (partition: string, appDir: string): WebPreferences => ({
+  ...recordingPreferences(appDir),
   partition,
   backgroundThrottling: false,
 });
@@ -170,7 +170,9 @@ function reloadOrStop(tabs: TabManager, tab: Tab): void {
 
 /** Creates a page in the active partition, with white behind sites that paint no background. */
 function createPageView(deps: Deps, session?: Session): BrowserView {
-  const webPreferences = session ? { ...tabPreferences(''), session } : tabPreferences(deps.persona.partitionName());
+  const webPreferences = session
+    ? { ...tabPreferences('', deps.appDir), session }
+    : tabPreferences(deps.persona.partitionName(), deps.appDir);
   const view = new deps.electron.BrowserView({ webPreferences });
   view.setBackgroundColor(PAGE_BACKGROUND);
   return view;

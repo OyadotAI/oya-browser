@@ -15,3 +15,4 @@ export { watchNativePage, nativePageCommand } from './page-events.ts';
 export { insertNativeText } from './text-input.ts';
 export { NativeRuntime } from './runtime.ts';
 export { NativeNavigationHistory } from './navigation-history.ts';
+export { recordingDocumentIsCurrent } from './recording-document.ts';

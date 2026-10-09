@@ -14,4 +14,6 @@ export const NATIVE_RECORDING = {
   MAX_EPOCH_CHARS: 128,
   /** Bound native CSS selector parsing from the isolated recording world. */
   MAX_SELECTOR_CHARS: 4096,
+  /** Bound retained document authorizations and live frame subscriptions per recording. */
+  MAX_DOCUMENTS: 1024,
 } as const;

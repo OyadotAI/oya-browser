@@ -4,15 +4,13 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { AppServices } from '../app/services.ts';
-import { RecordingChannel as UntypedChannel } from '../../page/recording.ts';
-import { withinTime } from '../../shared/within-time.ts';
-import { cdpAttach, cdp, type PageView } from '../cdp/cdp.ts';
-import { framePorts } from './frame-sessions.ts';
-import { ANALYZER_ATTR_BYTES, RECORDING_CDP_MS } from './constants.ts';
+import { NativeRecordingChannel } from './native-channel.ts';
+import type { NativePage as PageView } from '../native/index.ts';
+import { ANALYZER_ATTR_BYTES } from './constants.ts';
 import type { PageOutput, RecordingTab } from './types.ts';
 
 /** The services the channels use; the recorder receives what each channel delivers. */
-type Deps = Pick<AppServices, 'tabs' | 'isolatedWorld' | 'analyzerScript' | 'recorder'>;
+type Deps = Pick<AppServices, 'tabs' | 'analyzerScript' | 'recorder'>;
 
 /** One view's channel, as the channels use it. */
 interface Channel {
@@ -20,49 +18,17 @@ interface Channel {
   ready?: Promise<unknown>;
   /** Arms the page's recorder. */
   start(): Promise<unknown>;
-  /** Disarms it, collecting nothing more. */
+  /** Disarms it after collecting final buffered typing. */
   stop(): Promise<unknown>;
   /** Collects what the page buffered; `final` takes even unfinished typing. */
   drain(final?: boolean): Promise<unknown>;
 }
 
-/** What a channel is built with: its transport, the iframes it can arm, and where its steps go. */
-interface ChannelOptions {
-  /** Sends one CDP command to the view's page. */
-  send: (method: string, params?: object) => Promise<unknown>;
-  /** Subscribes to one CDP event of the view's page; returns the unsubscribe. */
-  on: (method: string, fn: (params: unknown) => void) => () => void;
-  /** Turns the Runtime domain off again on stop. */
-  disableRuntimeOnStop: boolean;
-  /** The view's cross-site iframes, or null when untracked. */
-  frames: ReturnType<typeof framePorts>;
-  /** The isolated world the recorder runs in. */
-  worldName: string;
-  /** The analyzer's source, tagged and not yet recording. */
-  analyzer: string;
-  /** Hands on what the page delivered. */
-  receive: (out: PageOutput) => void;
-}
-
-/** The page channel (src/page/recording.ts, shared with the server), typed for how it is built here. */
-const RecordingChannel = UntypedChannel as unknown as new (options: ChannelOptions) => Channel;
-
-/** Subscribes to one CDP event of the view's own page, not its iframes' sessions; returns the unsubscribe. */
-function listenOnView(view: PageView, method: string, fn: (params: unknown) => void): () => void {
-  const dbg = cdpAttach(view);
-  if (!dbg) throw new Error('View is destroyed');
-  const listener = (_event: unknown, name: string, params: unknown, sessionId?: string) => {
-    if (name === method && !sessionId) fn(params);
-  };
-  dbg.on('message', listener);
-  return () => dbg.off('message', listener);
-}
-
 /** Stops one channel; resolves to a live tab's failure, or null. */
 async function stopOne(view: PageView, channel: Channel): Promise<unknown> {
-  await channel.ready?.catch(() => {});
   try {
     await channel.stop();
+    await channel.ready?.catch(() => {});
     return null;
   } catch (err) {
     return view.webContents.isDestroyed() ? null : err;
@@ -95,7 +61,7 @@ export class RecordingChannels {
     try {
       await channel.ready;
     } catch (err) {
-      this.channels.delete(view);
+      if (this.channels.get(view) === channel) this.channels.delete(view);
       throw err;
     }
   }
@@ -104,19 +70,8 @@ export class RecordingChannels {
   private createChannel(view: PageView): Channel {
     const startingUrl = view.webContents.getURL();
     const tabId = this.deps.tabs.list.find((t: RecordingTab) => t.view === view)?.id;
-    return new RecordingChannel(this.channelOptions(view, startingUrl, tabId));
-  }
-
-  /** How the channel talks to the view (never waiting forever) and where its steps go. */
-  private channelOptions(view: PageView, startingUrl: string, tabId?: number): ChannelOptions {
-    return {
-      send: (method: string, params?: object) =>
-        withinTime(cdp(view, method, params), RECORDING_CDP_MS, 'The page did not answer'),
-      on: (method: string, fn: (params: unknown) => void) => listenOnView(view, method, fn),
-      ...{ disableRuntimeOnStop: true, frames: framePorts(view) },
-      ...{ worldName: this.deps.isolatedWorld, analyzer: this.analyzer() },
-      receive: (out: PageOutput) => this.deps.recorder.receive(view, startingUrl, out, tabId),
-    };
+    const receive = (out: PageOutput) => this.deps.recorder.receive(view, startingUrl, out, tabId);
+    return new NativeRecordingChannel(view.webContents, this.analyzer(), receive);
   }
 
   /** The analyzer with a fresh tag attribute, not yet recording. */

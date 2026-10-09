@@ -4,6 +4,7 @@
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { HOME_URL, PAGE_BACKGROUND } from '../../../../src/main/tabs/constants.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
@@ -39,6 +40,11 @@ describe('TabManager', () => {
     const id = ctx.tabs.createTab('https://a.test/');
     const tab = ctx.tabs.find(id);
     assert.equal(tab.view.options.webPreferences.partition, 'persist:oya-browser');
+    assert.equal(tab.view.options.webPreferences.preload, path.join(ctx.appDir, 'out', 'preload', 'recording.js'));
+    assert.equal(tab.view.options.webPreferences.sandbox, true);
+    assert.equal(tab.view.options.webPreferences.contextIsolation, true);
+    assert.equal(tab.view.options.webPreferences.nodeIntegration, false);
+    assert.equal(tab.view.options.webPreferences.nodeIntegrationInSubFrames, true);
     assert.equal(tab.view.background, PAGE_BACKGROUND);
     assert.equal(ctx.tabs.activeTabId, id);
     assert.deepEqual(ctx.shell.window.views, [tab.view]);

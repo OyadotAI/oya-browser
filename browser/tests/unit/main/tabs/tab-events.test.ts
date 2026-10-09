@@ -4,6 +4,7 @@
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { VIEW_SOURCE_LIGHT } from '../../../../src/main/tabs/tab-events.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
@@ -112,7 +113,14 @@ describe('tab events', () => {
     assert.deepEqual(popup.overrideBrowserWindowOptions, {
       width: 500,
       height: 700,
-      webPreferences: { session: tab.view.webContents.session },
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        nodeIntegrationInSubFrames: true,
+        preload: path.join(ctx.appDir, 'out', 'preload', 'recording.js'),
+        session: tab.view.webContents.session,
+      },
     });
   });
 

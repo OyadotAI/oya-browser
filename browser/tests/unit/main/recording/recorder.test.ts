@@ -287,9 +287,9 @@ describe('Recorder', () => {
 
   it('stops a failed start and reports why', async () => {
     ctx.recorder.channels.armRecordingView = async () => {
-      throw new Error('no debugger');
+      throw new Error('native recording unavailable');
     };
-    await assert.rejects(ctx.recorder.startRecording(), /no debugger/);
+    await assert.rejects(ctx.recorder.startRecording(), /native recording unavailable/);
     assert.equal(ctx.recorder.recording, false);
   });
 

@@ -119,7 +119,7 @@ engine are separate concerns; this requirement governs the control architecture.
   refusal, navigation, cancellation and unsaved changes. Native tab retry also
   avoids debugger access. Windows validation and other legacy identity/recording
   paths remain release gates; this does not make the whole default app CDP-free.
-- Recording transport: an optional sandboxed preload now exposes a bounded,
+- Recording transport: production tabs and popups install a sandboxed preload with a bounded,
   fixed-channel sender only in the agent isolated world. `NativeRecordingInbox`
   checks owned web contents, recording epochs and explicitly authorized isolated
   preload document identities. Immutable URL/owner-path snapshots keep final unload
@@ -131,9 +131,14 @@ engine are separate concerns; this requirement governs the control architecture.
   asynchronous ancestry walk. `NativeDocumentRecorder` now owns document-guarded
   start/drain/stop, bounded readiness and cancellation before DOM-ready. Its stop
   returns final typing directly, avoiding a final IPC race with inbox teardown.
-  Production channel wiring, pre-script arming and automatic navigation re-arming
-  still need migration.
-  This preload is not yet enabled in production tabs.
+  Production RecordingChannels now uses NativeRecordingChannel, with native
+  frame readiness and removal subscriptions for navigation and dynamically added
+  cross-process frames. Final drain retains the originating tab identity after
+  removal. Admission retains at most 1,024 document authorizations per recording;
+  overflow reports an explicit capture issue rather than evicting unload attribution.
+  The bridge loads before website scripts; analyzer capture starts at DOM-ready,
+  not before website execution. The legacy server recording channel and its
+  integration fixture remain migration debt.
 - Focused text: the patched engine routes `insertText` to the focused native
   widget, fixing a renderer crash with cross-process frame focus. The regression
   records real native text input without debugger access.

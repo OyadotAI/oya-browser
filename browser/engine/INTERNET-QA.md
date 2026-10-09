@@ -864,3 +864,45 @@ The server's current native preflight still refuses the four CDP, provider MCP,
 gateway and anonymity fixtures. Native recording/persona migration, complete CI
 engine provisioning, Windows runtime validation and signed production artifacts
 remain unfinished. Nothing is pushed or released on this checkpoint's evidence.
+
+## Production native recorder checkpoint — October 9, 2026
+
+Production RecordingChannels now constructs NativeRecordingChannel rather than
+the legacy CDP RecordingChannel. Tabs and native popups install the sandboxed
+isolated recording preload while preserving the exact opener/persona session.
+Native frame-ready/removal events re-arm navigation and new cross-process frames;
+document identities and immutable owner paths fence replacement documents.
+Final typing drains before admission closes, including when the tab list no
+longer contains its originating tab. Stop cancels a pending DOM-ready start.
+Authorization retention is bounded without evicting old unload attribution.
+
+Verified on the patched macOS arm64 Oya engine with debugger access forbidden:
+
+- Cross-process final typing on navigation and automatically armed replacement.
+- Dynamically inserted and removed cross-process frames, exact owner attribution.
+- Final stop drain, idempotent stop, fresh restart and no leaked IPC subscriptions.
+- Production manager's final drain retains the original URL and tab ID.
+- Production preload settings keep the website world free of its bridge and Node.
+- Unit failure/race coverage includes missing native support, stalled identity
+  lookup, document replacement, stale start failure, bounded authorization,
+  malformed output and forged payload paths.
+- All 2,110 browser unit tests, browser integration and 13 native recorder DOM
+  cases pass. Native recording integration and its application build pass.
+  Browser types, lint and formatting pass. All nine native server service
+  journeys and root lint/format checks also pass.
+
+Evidence: `/private/tmp/oya-native-recorder-final-tests.log`,
+`/private/tmp/oya-native-recorder-final-engine.log`,
+`/private/tmp/oya-native-recorder-final-types.log`,
+`/private/tmp/oya-native-recorder-final-lint.log`, and
+`/private/tmp/oya-native-recorder-final-format.log`,
+`/private/tmp/oya-native-recorder-final-unit.log`, and
+`/private/tmp/oya-native-recorder-server-native2.log`. The initial server run
+correctly refused an omitted OYA_NATIVE_ENGINE; the configured rerun passed.
+
+Analyzer capture begins at DOM-ready, not before website execution. The legacy
+server recorder and recording integration fixture are still migration debt.
+Persona/worker protection, the remaining native server preflight journeys,
+cross-platform native artifact provisioning and Windows runtime validation remain
+release gates. This checkpoint is not evidence of an internally CDP-free browser
+or a completed release.

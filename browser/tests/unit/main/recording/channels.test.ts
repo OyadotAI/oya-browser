@@ -5,10 +5,9 @@
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { RecordingChannels } from '../../../../src/main/recording/channels.ts';
-import { RecordingChannel } from '../../../../src/page/recording.ts';
+import { NativeRecordingChannel as RecordingChannel } from '../../../../src/main/recording/native-channel.ts';
 import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
-import { RECORDING_CDP_MS } from '../../../../src/main/recording/constants.ts';
 
 describe('RecordingChannels', () => {
   let ctx: any, channels: any, view: any;
@@ -25,7 +24,7 @@ describe('RecordingChannels', () => {
     await channels.armRecordingView(view);
     assert.equal(start.mock.callCount(), 1);
     const channel = channels.channels.get(view);
-    assert.match(channel.options?.analyzer ?? channels.analyzer(), /^analyzer\(data-[0-9a-f]{8}, false\)$/);
+    assert.match(channel.analyzer, /^analyzer\(data-[0-9a-f]{8}, false\)$/);
     start.mock.restore();
   });
 
@@ -36,6 +35,24 @@ describe('RecordingChannels', () => {
     await assert.rejects(channels.armRecordingView(view), /no page/);
     assert.equal(channels.channels.size, 0);
     start.mock.restore();
+  });
+
+  it('a failed old start cannot erase a replacement channel', async () => {
+    let rejectOld: (error: Error) => void;
+    const first = new Promise<void>((_resolve, reject) => {
+      rejectOld = reject;
+    });
+    const start = mock.method(RecordingChannel.prototype, 'start', () => first);
+    mock.method(RecordingChannel.prototype, 'stop', async () => {});
+    const old = assert.rejects(channels.armRecordingView(view), /old start/);
+    channels.forget(view);
+    start.mock.mockImplementation(async () => {});
+    await channels.armRecordingView(view);
+    const replacement = channels.channels.get(view);
+    rejectOld!(Error('old start'));
+    await old;
+    assert.equal(channels.channels.get(view), replacement);
+    await channels.stopAll();
   });
 
   it('tolerates a stop failing on a closed tab, but not on a live one', async () => {
@@ -65,22 +82,6 @@ describe('RecordingChannels', () => {
     assert.deepEqual(stopped, ['next']);
   });
 
-  it('gives up on a page that never answers a recording command', async () => {
-    mock.timers.enable({ apis: ['setTimeout'] });
-    view.webContents.debugger.sendCommand = () => new Promise(() => {});
-    const answer = channels.channelOptions(view, 'https://a.test/').send('Runtime.evaluate', {});
-    mock.timers.tick(RECORDING_CDP_MS);
-    await assert.rejects(answer, /did not answer/);
-    mock.timers.reset();
-  });
-
-  it("hands a channel's steps on with the tab it was made for", () => {
-    const got: any[] = [];
-    ctx.recorder = { receive: (...args: any[]) => got.push(args) };
-    channels.channelOptions(view, 'https://a.test/', 7).receive({ steps: [] });
-    assert.deepEqual(got[0].slice(1), ['https://a.test/', { steps: [] }, 7]);
-  });
-
   it("forgets a closed tab's channel", async () => {
     let stopped = false;
     channels.channels.set(view, { ready: Promise.resolve(), stop: async () => (stopped = true) });
@@ -90,15 +91,17 @@ describe('RecordingChannels', () => {
     assert.equal(stopped, true);
   });
 
-  it('listens for protocol events through the view debugger and can unsubscribe', () => {
-    const options = channels.channelOptions(view, 'https://a.test/');
-    const got: any[] = [];
-    const off = options.on('Runtime.bindingCalled', (p: any) => got.push(p));
-    view.webContents.debugger.event('Runtime.bindingCalled', { n: 1 });
-    view.webContents.debugger.event('Other', {});
-    off();
-    view.webContents.debugger.event('Runtime.bindingCalled', { n: 2 });
-    assert.deepEqual(got, [{ n: 1 }]);
-    assert.equal(options.worldName, 'w-test');
+  it('arming and disposal never access a debugger transport', async () => {
+    Object.defineProperty(view.webContents, 'debugger', {
+      get() {
+        assert.fail('Internal CDP forbidden');
+      },
+    });
+    const start = mock.method(RecordingChannel.prototype, 'start', async () => {});
+    const stop = mock.method(RecordingChannel.prototype, 'stop', async () => {});
+    await channels.armRecordingView(view);
+    await channels.stopAll();
+    assert.equal(start.mock.callCount(), 1);
+    assert.equal(stop.mock.callCount(), 1);
   });
 });

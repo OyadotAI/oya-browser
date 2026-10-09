@@ -64,6 +64,8 @@ export class NativeRecordingInbox {
     const previous = this.documents.get(document.documentId);
     if (previous && previous.frame !== document.frame) throw new Error('Recording document identity collision');
     if (previous) return previous;
+    if (this.documents.size >= NATIVE_RECORDING.MAX_DOCUMENTS)
+      throw new Error('Native recording document limit exceeded');
     this.documents.set(document.documentId, document);
     return document;
   }
