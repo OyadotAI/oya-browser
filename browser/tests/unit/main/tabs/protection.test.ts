@@ -46,12 +46,7 @@ describe('Protection', () => {
     await ctx.protection.applyPersona(dbg, () => {});
     assert.deepEqual(
       dbg.sent.map((c) => c.method),
-      [
-        'Emulation.setUserAgentOverride',
-        'Emulation.setAutomationOverride',
-        'Page.addScriptToEvaluateOnNewDocument',
-        'Target.setAutoAttach',
-      ],
+      ['Emulation.setUserAgentOverride', 'Emulation.setAutomationOverride', 'Page.addScriptToEvaluateOnNewDocument'],
     );
     const brands = dbg.sent[0].params.userAgentMetadata.brands.map((b) => b.brand);
     assert.ok(brands.includes('Google Chrome'), 'navigator.userAgentData names Chrome, as the headers do');
@@ -80,14 +75,11 @@ describe('Protection', () => {
     assert.ok(dbg.methods().includes('Page.addScriptToEvaluateOnNewDocument'));
   });
 
-  it('attaches cross-site iframes without a persona, never pausing them, so a recording can reach them', async () => {
+  it('does not auto-attach debugger targets solely for native recording', async () => {
     const dbg = new FakeDebugger();
     await ctx.protection.applyPersona(dbg, () => {});
-    const attach = dbg.sent.find((c) => c.method === 'Target.setAutoAttach').params;
-    assert.deepEqual(
-      [attach.autoAttach, attach.waitForDebuggerOnStart, attach.flatten, attach.filter[0].type],
-      [true, false, true, 'iframe'],
-    );
+    assert.ok(!dbg.methods().includes('Target.setAutoAttach'));
+    assert.ok(dbg.methods().includes('Page.addScriptToEvaluateOnNewDocument'));
   });
 
   it("keeps this machine's timezone for a persona that leaves by this machine's own connection", async () => {

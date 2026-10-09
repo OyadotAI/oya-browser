@@ -140,6 +140,9 @@ engine are separate concerns; this requirement governs the control architecture.
   not before website execution. The complete desktop recording integration
   fixture now exercises native input, analyzer coexistence, secret masking,
   clear/discard, hidden controls, native file selection and same-origin frames.
+  Tab creation no longer reads a debugger to track recording frames, and
+  no-persona setup no longer auto-attaches targets just for recording. Native
+  multi-window tests forbid debugger access on every application renderer.
   The legacy server recording channel remains migration debt.
 - Focused text: the patched engine routes `insertText` to the focused native
   widget, fixing a renderer crash with cross-process frame focus. The regression

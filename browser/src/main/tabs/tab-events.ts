@@ -6,7 +6,6 @@
 import { privateSession } from '../native-contexts/index.ts';
 import type { AppServices } from '../app/services.ts';
 import { watchContents } from '../observe/install.ts';
-import { trackFrameSessions } from '../recording/frame-sessions.ts';
 import { ERR_ABORTED } from './constants.ts';
 import { wireHome } from './home.ts';
 import { wireFavicon } from './favicon.ts';
@@ -115,13 +114,8 @@ export class TabEvents {
     if (this.deps.observer) watchContents(this.deps.observer, contents);
   }
 
-  /**
-   * What a recording needs from the tab: its cross-site iframes, tracked before
-   * protection attaches to them so a later recording finds them, and a page check
-   * when a person's action moves the page (recording/outcomes.ts).
-   */
+  /** Native navigation drives outcome checks; each active recorder owns its native frame subscriptions. */
   private wireRecording(tab: Tab): void {
-    trackFrameSessions(tab.view);
     const contents = tab.view.webContents;
     contents.on('did-navigate', (_e, u) => this.deps.recorder.pageReached?.(tab.id, u));
     contents.on(

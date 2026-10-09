@@ -953,3 +953,51 @@ The CI runners still need native-engine artifact provisioning. This fixture
 migration does not validate Windows, retire the server's legacy recorder,
 migrate persona/worker protection or make the default browser internally
 CDP-free. Release remains gated on those remaining capabilities and evidence.
+
+## Native tab lifecycle debugger boundary — October 9, 2026
+
+The production tab lifecycle still called the old recording FrameSessions
+tracker before protection, including in native browsing mode. It accessed
+webContents.debugger even though recording now owns native frame subscriptions.
+That call is removed. Main-document navigation outcome checks remain; child
+history updates still cannot replace the tab URL or produce main-page outcomes.
+No-persona setup also no longer auto-attaches debugger iframe targets solely for
+recording. Existing persona injection and its protected child-target coverage
+are unchanged pending their complete native replacement.
+
+The multi-window fixture now rejects any debugger property access on every
+application-created webContents before the main app loads. Its launcher requires
+the explicit native engine, resolves the fixture independently of the caller's
+directory and forwards CI arguments. The legacy persona fixture flag is refused
+before launching an engine rather than silently bypassing this boundary.
+
+Verified on macOS arm64 (not Windows OS certification):
+
+- The full app's native-mode pointer tab tear-off, new-window shortcut, live
+  page/form/history transfer, return transfer, independent closing, global tab
+  IDs, renderer isolation and sender-scoped IPC pass with no debugger access.
+- The forbidden cross-window detach emits the expected refusal and cannot move
+  another window's tab.
+- All 2,120 browser unit tests pass, including fatal-debugger tab construction,
+  retained navigation outcomes and native-only launcher failure paths.
+- Browser integration, 13 recorder DOM cases and full native recording pass.
+- The native external CDP front-door integration passes: frame trees, runtime
+  contexts, handles, history, trusted input, ownership and cleanup still operate
+  without an internal debugging backend.
+- Application build, types, lint and format checks pass; root lint/format pass.
+
+Evidence: /private/tmp/oya-native-tab-final-windows.log,
+/private/tmp/oya-native-tab-final-unit2.log,
+/private/tmp/oya-native-tab-final-tests.log,
+/private/tmp/oya-native-tab-final-recording.log,
+/private/tmp/oya-native-tab-front-door.log,
+/private/tmp/oya-native-tab-final-types.log,
+/private/tmp/oya-native-tab-final-lint.log,
+/private/tmp/oya-native-tab-final-format.log,
+/private/tmp/oya-native-tab-root-lint.log and
+/private/tmp/oya-native-tab-root-format.log.
+
+This corrects a native-mode regression, not the still-unfinished default persona
+and worker migration. Native engine artifact provisioning, the remaining server
+integration migrations and cross-platform release validation remain open. No
+release is justified by this checkpoint alone.

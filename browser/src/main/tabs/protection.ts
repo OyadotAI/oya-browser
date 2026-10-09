@@ -139,25 +139,12 @@ const onDebuggerEvent =
       if (event === method) fn(params);
     });
 
-/**
- * Cross-site iframes attached without pausing them, so a recording can arm them
- * through their own sessions (recording/frame-sessions.ts). A persona attaches
- * them itself, paused until covered; without one nothing else would.
- */
-const FRAME_ATTACH = {
-  autoAttach: true,
-  waitForDebuggerOnStart: false,
-  flatten: true,
-  filter: [{ type: 'iframe' }, { exclude: true }],
-};
-
-/** No persona yet: Chrome's identity in place of Electron's, the stealth injection, and its cross-site iframes. */
+/** No persona yet: retain identity and pre-document protection while recording uses native frame events. */
 async function injectStealthOnly(port: CdpPort, userAgent: UserAgentOverride, fail: Failure): Promise<void> {
   await port.send('Emulation.setUserAgentOverride', userAgent).catch((e) => fail('user agent override', e));
   await port.send('Emulation.setAutomationOverride', { enabled: false }).catch((e) => fail('automation identity', e));
   const source = buildInjectionScript(null, DESKTOP_INJECTION);
   await port.send('Page.addScriptToEvaluateOnNewDocument', { source }).catch((e) => fail('stealth injection', e));
-  await port.send('Target.setAutoAttach', FRAME_ATTACH).catch(() => {});
 }
 
 /** The persona applier's view of a debugger, sessions included. */

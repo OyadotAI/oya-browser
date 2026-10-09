@@ -10,7 +10,9 @@ const root = path.resolve(__dirname, '../..');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-windows-test-'));
 process.env.OYA_USER_DATA_DIR = profile;
 process.env.OYA_AUTO_CONNECT = 'false';
-if (!process.env.OYA_WINDOWS_PERSONA_TEST) process.argv.push('--oya-native-browsing');
+if (process.env.OYA_WINDOWS_PERSONA_TEST)
+  throw Error('Persona window coverage requires native protection; the legacy CDP fixture is not allowed');
+process.argv.push('--oya-native-browsing');
 app.getAppPath = () => root;
 fs.writeFileSync(path.join(profile, 'config.json'), JSON.stringify({ ui: { importOffered: true } }));
 const handlers = new Map();
@@ -47,6 +49,14 @@ app.on('browser-window-created', (_event, win) => {
     }
     return show();
   };
+});
+// Every app-created renderer must remain usable without a debugger backend.
+app.on('web-contents-created', (_event, contents) => {
+  Object.defineProperty(contents, 'debugger', {
+    get() {
+      throw Error('Native application lifecycle accessed internal CDP');
+    },
+  });
 });
 require('../../out/main/index.js');
 

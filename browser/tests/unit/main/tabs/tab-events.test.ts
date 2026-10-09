@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { VIEW_SOURCE_LIGHT } from '../../../../src/main/tabs/tab-events.ts';
-import { mainCtx } from '../../support/main-ctx.cjs';
+import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
 import { TAB_UNPROTECTED_DESKTOP } from '../../../../src/main/tabs/constants.ts';
 
@@ -19,6 +19,32 @@ describe('tab events', () => {
     tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
   });
   afterEach(() => mock.timers.reset());
+
+  it('creates tabs without reading a debugger and retains native navigation outcome checks', async () => {
+    ctx.nativeBrowsing = true;
+    ctx.electron.BrowserView = class extends FakeBrowserView {
+      constructor(options) {
+        super(options);
+        Object.defineProperty(this.webContents, 'debugger', {
+          get() {
+            assert.fail('Tab lifecycle must not access internal CDP');
+          },
+        });
+      }
+    };
+    const reached = [];
+    ctx.recorder.pageReached = (...args) => reached.push(args);
+    const native = ctx.tabs.find(ctx.tabs.createTab('https://native.test/'));
+    await native.ready;
+    native.view.webContents.emit('did-navigate', {}, 'https://native.test/next');
+    native.view.webContents.emit('did-navigate-in-page', {}, 'https://native.test/frame', false);
+    native.view.webContents.emit('did-navigate-in-page', {}, 'https://native.test/next#section', true);
+    assert.deepEqual(reached, [
+      [native.id, 'https://native.test/next'],
+      [native.id, 'https://native.test/next#section'],
+    ]);
+    assert.equal(native.view.frameSessions, undefined);
+  });
 
   /** A tab whose setup answers each of `answers` in turn. */
   function tabWith(answers) {
