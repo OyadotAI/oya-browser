@@ -173,8 +173,10 @@ engine are separate concerns; this requirement governs the control architecture.
   native low/high-entropy `navigator.userAgentData` to the session. A native
   UA client-hint controller now handles bounded in-memory origin opt-ins and
   respects native permission/JavaScript rules; `test:native-client-hints` checks
-  actual headers and revocation. `navigator.platform`, full persona activation
-  and worker request-hint coverage remain separate work.
+  actual headers and revocation. Worker traffic tests preserve the engine's
+  intentional hint denial, including module workers and cold service restart.
+  A separate native platform prerequisite now covers page and worker
+  `navigator.platform`; full persona activation remains separate work.
 - Page protection: persona application, worker coverage and tab startup currently
   rely on debugger commands. Preserve existing isolation and egress guarantees;
   capabilities absent from public Electron APIs may require native engine work.

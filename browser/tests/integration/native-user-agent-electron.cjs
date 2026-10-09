@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { once } = require('node:events');
 const metadata = require('./native-user-agent-metadata.cjs');
+const platform = require('./native-platform.cjs');
 const profile = process.env.OYA_USER_AGENT_PROFILE;
 if (!profile) throw Error('Launch with native-user-agent.mjs for parent-owned cleanup');
 app.setPath('userData', profile);
 app.commandLine.appendSwitch('site-per-process');
+if (platform.enabled) app.commandLine.appendSwitch('oya-session-platform', 'Win32');
 app.on('window-all-closed', () => {});
 const windows = [];
 const deadline = setTimeout(() => {
@@ -21,7 +23,7 @@ function serve(req, res) {
     return res.end(JSON.stringify(req.headers['user-agent'] ?? ''));
   }
   res.setHeader('Content-Type', req.url.endsWith('.js') ? 'application/javascript' : 'text/html');
-  const first = `${metadata.capture}const first={ua:navigator.userAgent,header:${JSON.stringify(req.headers['user-agent'] ?? '')}};`;
+  const first = `${metadata.capture}const first={ua:navigator.userAgent,header:${JSON.stringify(req.headers['user-agent'] ?? '')}${platform.snapshot}};`;
   const reply = `fetch('/echo').then(r=>r.json()).then(fetchHeader=>({...first,fetchHeader})).then(withMetadata)`;
   if (req.url === '/dedicated.js') return res.end(first + reply + '.then(value=>postMessage(value));');
   if (req.url === '/shared.js')
@@ -39,7 +41,12 @@ function serve(req, res) {
 function windowFor(jar) {
   const window = new BrowserWindow({
     show: false,
-    webPreferences: { session: jar, sandbox: true, contextIsolation: true },
+    webPreferences: {
+      session: jar,
+      sandbox: true,
+      contextIsolation: true,
+      additionalArguments: platform.additionalArguments,
+    },
   });
   Object.defineProperty(window.webContents, 'debugger', {
     get() {
@@ -74,7 +81,11 @@ async function snapshots(window, url) {
 /** Every native surface and its network request must agree on this exact session, not another partition. */
 async function check(window, url, ua, index) {
   for (const [surface, actual] of Object.entries(await snapshots(window, url)))
-    assert.deepEqual(actual, { ua, header: ua, fetchHeader: ua, ...metadata.expected(index) }, surface);
+    assert.deepEqual(
+      actual,
+      { ua, header: ua, fetchHeader: ua, ...metadata.expected(index), ...platform.expected(index) },
+      surface,
+    );
 }
 /** Reject control characters, unbounded input and changing a frozen identity without mutating state. */
 function validate(jar, ua) {
@@ -97,6 +108,7 @@ function validate(jar, ua) {
 /** Public setters, per-navigation options and restored history cannot escape native ownership. */
 async function protectedOverrides(window, jar, url, ua, index) {
   metadata.frozen(jar, index);
+  platform.frozen(jar, index);
   jar.setUserAgent(ua);
   jar._setOyaUserAgent(ua);
   assert.throws(() => window.webContents.setUserAgent('Different/1'), /owns User-Agent/);
@@ -124,11 +136,14 @@ async function run() {
   const fallback = app.userAgentFallback;
   try {
     await metadata.checkLifecycle(session, windowFor, url);
+    await platform.lifecycle({ session, windowFor, snapshots, url });
     const host = session.fromPartition('ua-host');
     const hostWindow = windowFor(host);
     const baseline = await snapshots(hostWindow, url);
     assert.throws(() => host._setOyaUserAgent('Late/1'), /before any session renderer/);
+    platform.late(host);
     hostWindow.destroy();
+    platform.late(host);
     assert.throws(() => host._setOyaUserAgent('Late/1'), /before any session renderer/);
     const bounded = session.fromPartition('ua-maximum');
     bounded._setOyaUserAgent('x'.repeat(1024));
@@ -139,6 +154,7 @@ async function run() {
       await (await jar.fetch(url + 'echo')).json();
       validate(jar, values[index]);
       metadata.configure(jar, index);
+      platform.configure(jar, index);
       assert.equal(await (await jar.fetch(url + 'echo')).json(), values[index]);
     }
     const surfaces = jars.map(windowFor);
@@ -156,12 +172,17 @@ async function run() {
         header: values[index],
         fetchHeader: values[index],
         ...metadata.expected(index),
+        ...platform.expected(index),
       });
       await check(resumed, url, values[index], index);
     }
     app.userAgentFallback = fallback;
     const unchanged = windowFor(session.fromPartition('ua-unchanged'));
     assert.deepEqual(await snapshots(unchanged, url), baseline, 'unconfigured host behavior preserved');
+    if (platform.enabled)
+      console.log(
+        'PASS native session platform: renderer isolation, first page/frame/worker scripts, frozen lifecycle, navigation and cold restart',
+      );
     if (metadata.enabled)
       console.log(
         'PASS native user-agent metadata: low/high entropy, first scripts, all worker types, immutable lifecycle, snapshot isolation and cold restart',

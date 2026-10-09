@@ -1,0 +1,115 @@
+--- /dev/null
++++ b/third_party/blink/renderer/core/frame/oya_navigator_platform.h
+@@ -0,0 +1,14 @@
++// Copyright 2026 Oya. All rights reserved.
++// Immutable native legacy platform policy shared by document and worker navigators.
++#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_OYA_NAVIGATOR_PLATFORM_H_
++#define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_OYA_NAVIGATOR_PLATFORM_H_
++#include <string_view>
++#include "third_party/blink/renderer/core/core_export.h"
++#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
++namespace blink {
++// Called once by the renderer embedder before any document or worker script.
++CORE_EXPORT void SetOyaNavigatorPlatform(std::string_view platform);
++// Empty means unconfigured: callers retain the engine's existing host behavior.
++CORE_EXPORT String GetOyaNavigatorPlatform();
++}  // namespace blink
++#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_OYA_NAVIGATOR_PLATFORM_H_
+--- a/third_party/blink/renderer/core/frame/build.gni
++++ b/third_party/blink/renderer/core/frame/build.gni
+@@ -127,6 +127,7 @@
+   "navigator_device_memory.h",
+   "navigator_id.cc",
+   "navigator_id.h",
++  "oya_navigator_platform.h",
+   "navigator_language.cc",
+   "navigator_language.h",
+   "navigator_on_line.h",
+--- a/third_party/blink/renderer/core/frame/navigator_id.cc
++++ b/third_party/blink/renderer/core/frame/navigator_id.cc
+@@ -29,8 +29,13 @@
+  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#include "third_party/blink/renderer/core/frame/oya_navigator_platform.h"
+ #include "third_party/blink/renderer/core/frame/navigator_id.h"
+ 
++#include <algorithm>
++#include <array>
++#include <atomic>
++#include "base/check.h"
+ #include "base/feature_list.h"
+ #include "build/build_config.h"
+ #include "third_party/blink/public/common/features.h"
+@@ -43,6 +48,24 @@
+ #endif
+ 
+ namespace blink {
++namespace {
++constexpr std::array kOyaPlatforms = {std::string_view(), std::string_view("MacIntel"),
++                                     std::string_view("Win32"), std::string_view("Linux x86_64")};
++std::atomic<unsigned> oya_platform_index{0};
++}  // namespace
++
++void SetOyaNavigatorPlatform(std::string_view platform) {
++  const auto found = std::find(kOyaPlatforms.begin(), kOyaPlatforms.end(), platform);
++  CHECK(found != kOyaPlatforms.end() && found != kOyaPlatforms.begin());
++  unsigned empty = 0;
++  CHECK(oya_platform_index.compare_exchange_strong(
++      empty, static_cast<unsigned>(found - kOyaPlatforms.begin()), std::memory_order_relaxed));
++}
++
++String GetOyaNavigatorPlatform() {
++  return String::FromUtf8(kOyaPlatforms[oya_platform_index.load(std::memory_order_relaxed)]);
++}
++
+ 
+ String NavigatorID::appCodeName() {
+   return "Mozilla";
+@@ -59,6 +82,8 @@
+ }
+ 
+ String NavigatorID::platform() const {
++  const auto policy = GetOyaNavigatorPlatform();
++  if (!policy.empty()) return policy;
+ #if BUILDFLAG(IS_MAC)
+   // Match Safari and Mozilla on Mac x86.
+   return "MacIntel";
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "third_party/blink/renderer/core/frame/oya_navigator_platform.h"
+ #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
+ 
+ #include "base/feature_list.h"
+@@ -52,6 +53,8 @@
+ }
+ 
+ String NavigatorBase::platform() const {
++  const auto policy = GetOyaNavigatorPlatform();
++  if (!policy.empty()) return policy;
+ #if BUILDFLAG(IS_ANDROID)
+   // We need to check the ReduceUserAgentMinorVersion feature flag for
+   // Android WebView, which does not currently ship a reduced User-Agent.
+--- a/third_party/blink/renderer/core/frame/navigator.cc
++++ b/third_party/blink/renderer/core/frame/navigator.cc
+@@ -21,6 +21,7 @@
+  *  MA 02110-1301, USA
+  */
+ 
++#include "third_party/blink/renderer/core/frame/oya_navigator_platform.h"
+ #include "third_party/blink/renderer/core/frame/navigator.h"
+ 
+ #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
+@@ -56,6 +57,8 @@
+ }
+ 
+ String Navigator::platform() const {
++  const auto policy = GetOyaNavigatorPlatform();
++  if (!policy.empty()) return policy;
+   // TODO(955620): Consider changing devtools overrides to only allow overriding
+   // the platform with a frozen platform to distinguish between
+   // mobile and desktop when ReduceUserAgent is enabled.

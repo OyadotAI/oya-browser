@@ -1,0 +1,133 @@
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -110,6 +110,13 @@
+     return true;
+   }
+   const std::string& GetOyaLocale() const { return oya_locale_; }
++  bool SetOyaPlatform(const std::string& platform) {
++    if (oya_platform_ == platform) return true;
++    if (oya_renderer_started_ || !oya_platform_.empty()) return false;
++    oya_platform_ = platform;
++    return true;
++  }
++  const std::string& GetOyaPlatform() const { return oya_platform_; }
+   // Locale policy owns the preferred language and its primary-language fallback.
+   std::string GetOyaAcceptLanguages() const {
+     if (oya_locale_.empty()) return {};
+@@ -219,6 +226,7 @@
+   std::string oya_time_zone_;
+   unsigned oya_hardware_concurrency_ = 0;
+   std::string oya_locale_;
++  std::string oya_platform_;
+ 
+   using DevicePermissionMap = std::map<
+       blink::PermissionType,
+--- a/shell/browser/electron_browser_client.cc
++++ b/shell/browser/electron_browser_client.cc
+@@ -714,6 +714,7 @@
+     command_line->RemoveSwitch("oya-session-timezone");
+     command_line->RemoveSwitch("oya-session-hardware-concurrency");
+     command_line->RemoveSwitch("oya-session-locale");
++    command_line->RemoveSwitch("oya-session-platform");
+     if (render_process_host) {
+       const auto& zone = static_cast<ElectronBrowserContext*>(
+           render_process_host->GetBrowserContext())->GetOyaTimeZone();
+@@ -727,6 +728,9 @@
+       const auto& locale = static_cast<ElectronBrowserContext*>(
+           render_process_host->GetBrowserContext())->GetOyaLocale();
+       if (!locale.empty()) command_line->AppendSwitchASCII("oya-session-locale", locale);
++      const auto& platform = static_cast<ElectronBrowserContext*>(
++          render_process_host->GetBrowserContext())->GetOyaPlatform();
++      if (!platform.empty()) command_line->AppendSwitchASCII("oya-session-platform", platform);
+     }
+ 
+     renderer_process_sandboxed_[unsafe_process_id] =
+@@ -1866,7 +1870,8 @@
+     std::optional<
+         content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason>&
+         refused_reason) {
+-  if (content::GetOyaSessionUserAgent(browser_context) ||
++  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaPlatform().empty() ||
++      content::GetOyaSessionUserAgent(browser_context) ||
+       !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty() ||
+       static_cast<ElectronBrowserContext*>(browser_context)->GetOyaHardwareConcurrency() ||
+       !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaLocale().empty()) {
+--- a/shell/renderer/renderer_client_base.cc
++++ b/shell/renderer/renderer_client_base.cc
+@@ -2,6 +2,7 @@
+ // Use of this source code is governed by the MIT license that can be
+ // found in the LICENSE file.
+ 
++#include "third_party/blink/renderer/core/frame/oya_navigator_platform.h"
+ #include "shell/renderer/renderer_client_base.h"
+ 
+ #include <memory>
+@@ -249,6 +250,13 @@
+       owner(std::move(result.handle));
+ }
+ 
++// The child receives only the sanitized, exact owning BrowserContext's policy.
++void ApplyOyaNavigatorPlatform() {
++  const auto value = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++      "oya-session-platform");
++  if (!value.empty()) blink::SetOyaNavigatorPlatform(value);
++}
++
+ // One browser-owned value covers both Navigator and WorkerNavigator natively.
+ void ApplyOyaHardwareConcurrency() {
+   auto* command_line = base::CommandLine::ForCurrentProcess();
+@@ -280,6 +288,7 @@
+ void RendererClientBase::RenderThreadStarted() {
+   ApplyOyaSessionLocale();
+   ApplyOyaHardwareConcurrency();
++  ApplyOyaNavigatorPlatform();
+   ApplyOyaSessionTimeZone();
+   auto* command_line = base::CommandLine::ForCurrentProcess();
+ 
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -1350,6 +1350,8 @@
+   result.Set("rendererStarted", browser_context_->HasOyaRendererStarted());
+   result.Set("timeZone", browser_context_->GetOyaTimeZone());
+   result.Set("locale", browser_context_->GetOyaLocale());
++  if (!browser_context_->GetOyaPlatform().empty())
++    result.Set("platform", browser_context_->GetOyaPlatform());
+   result.Set("hardwareConcurrency", browser_context_->GetOyaHardwareConcurrency());
+   result.Set("acceptLanguages", browser_context_->GetOyaAcceptLanguages());
+   const auto* user_agent = content::GetOyaSessionUserAgent(browser_context_);
+@@ -1357,6 +1359,17 @@
+   if (const auto* metadata = content::GetOyaSessionUserAgentMetadata(browser_context_))
+     result.Set("userAgentMetadata", OyaMetadataSnapshot(*metadata));
+   return result.GetHandle();
++}
++
++// This controls the legacy navigator string, not the host operating system.
++void Session::SetOyaPlatform(gin_helper::ErrorThrower thrower,
++                             const std::string& platform) {
++  if (platform != "MacIntel" && platform != "Win32" && platform != "Linux x86_64") {
++    thrower.ThrowTypeError("Invalid native navigator platform");
++    return;
++  }
++  if (!browser_context_->SetOyaPlatform(platform))
++    thrower.ThrowError("Native platform must be installed before any session renderer and cannot be changed");
+ }
+ 
+ void Session::SetOyaLocale(gin_helper::ErrorThrower thrower,
+@@ -2297,6 +2310,7 @@
+       .SetMethod("_setOyaUserAgentMetadata", &Session::SetOyaUserAgentMetadata)
+       .SetMethod("_setOyaUserAgent", &Session::SetOyaUserAgent)
+       .SetMethod("_getOyaSessionPolicy", &Session::GetOyaSessionPolicy)
++      .SetMethod("_setOyaPlatform", &Session::SetOyaPlatform)
+       .SetMethod("_setOyaLocale", &Session::SetOyaLocale)
+       .SetMethod("_setOyaHardwareConcurrency", &Session::SetOyaHardwareConcurrency)
+       .SetMethod("_setOyaTimeZone", &Session::SetOyaTimeZone)
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -151,6 +151,7 @@
+   void SetOyaUserAgentMetadata(gin_helper::ErrorThrower thrower, base::DictValue input);
+   void SetOyaUserAgent(gin_helper::ErrorThrower thrower, const std::string& user_agent);
+   v8::Local<v8::Value> GetOyaSessionPolicy(v8::Isolate* isolate);
++  void SetOyaPlatform(gin_helper::ErrorThrower thrower, const std::string& platform);
+   void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);
+   void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+   void SetOyaTimeZone(gin_helper::ErrorThrower thrower, const std::string& zone);

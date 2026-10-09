@@ -878,8 +878,9 @@ input/readback mutation isolation and a cold service-worker restart. The ordinar
 **Scope of this patch alone:** it supplies observable metadata, not HTTP
 client-hint negotiation. The subsequent controller patch below adds native
 navigation negotiation and its own tests; the legacy header interceptor has not
-been replaced on the default path. `navigator.platform`, full native persona
-activation and macOS/Windows release validation remain outstanding. The
+been replaced on the default path. The later platform prerequisite covers
+`navigator.platform`; full native persona activation and macOS/Windows release
+validation remain outstanding. The
 native-policy coordinator still certifies only its existing explicit subset.
 
 ## Native UA client-hint negotiation prerequisite
@@ -919,8 +920,54 @@ interceptor in this fixture.
 
 This is still a prerequisite, not production persona activation. The legacy
 header interceptor remains on the default protection path until the complete
-native identity/lifecycle migration is ready. `navigator.platform`, remaining
-native persona protections, the legacy integration fixtures and the platform
-release matrix remain separate gates. Worker request negotiation, browser-owned
-`session.fetch`, persistence across restart and every non-UA client hint are not
-certified by this navigation/fetch fixture.
+native identity/lifecycle migration is ready. The platform prerequisite below
+covers the remaining legacy navigator string; other native persona protections,
+the legacy integration fixtures and the platform release matrix remain separate
+gates. Worker request negotiation, browser-owned `session.fetch`, persistence
+across restart and every non-UA client hint are not certified by this
+navigation/fetch fixture; separate worker privacy coverage is described below.
+
+## Worker request privacy coverage
+
+`test:native-worker-client-hints` records real script-request and same-/cross-origin
+fetch headers for classic and module dedicated, shared and service workers. It
+checks first-script native identity in distinct sessions, parent opt-in and denial,
+cold service-worker restart without an owning window, and storage clearing.
+
+The pinned engine intentionally gives worker requests an all-blocking permissions
+policy while worker permission-policy propagation is unsupported. Its worker fetch
+context does not append UA client hints. The test therefore requires **no UA hint
+headers**, rather than manufacturing headers or relaxing that protection. Native
+user-agent strings and `navigator.userAgentData` still belong to the correct
+session. This verifies the current guarded behavior; it does not implement worker
+client-hint negotiation or certify browser-owned `session.fetch` hint behavior.
+
+## Native legacy navigator platform prerequisite
+
+Apply `patches/native-session-platform-blink.patch` from Chromium `src` and
+`patches/native-session-platform.patch` from Electron after the preceding native
+identity prerequisites. `_setOyaPlatform(value)` accepts the desktop profile
+values `MacIntel`, `Win32` and `Linux x86_64`. It installs before any session
+renderer; identical reuse is allowed, but late installation, malformed values and
+conflicting changes fail. Readback adds `platform` only when installed.
+
+BrowserContext owns the immutable value. Child launch sanitizes duplicate/raw
+platform switches before forwarding only the owning context's value, and a
+platform-only session refuses spare renderer reuse. Renderer startup installs a
+one-time native atomic index before website/worker execution. Native Navigator
+and WorkerNavigator getters read that index, preserving the original getter and
+unconfigured host behavior; no page shim or debugger implements it. A native
+policy takes precedence over inspector/page-setting platform overrides.
+
+Run `test:native-platform` against the explicit patched engine. It checks all
+supported platform-only values, forged launch arguments, unconfigured host
+behavior, invalid/late/conflicting installation, snapshot isolation, first-script
+page/cross-origin-frame/worker values, independent sessions, navigation and cold
+service-worker restart. This changes the web-exposed legacy string, not the OS,
+keyboard conventions, UA metadata, renderer architecture or hardware.
+
+Full persona consistency still requires the application lifecycle to install all
+native fields together before exposure; the current native-policy coordinator
+continues to certify only its previous explicit subset. Default persona protection
+is not migrated by these prerequisites. Remaining native protections, legacy test
+migration and the signed macOS/Windows release matrix are still outstanding.

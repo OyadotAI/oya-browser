@@ -3,6 +3,7 @@ const { app, BrowserWindow, session } = require('electron');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { once } = require('node:events');
+const workers = require('./native-worker-client-hints.cjs');
 const profile = process.env.OYA_CLIENT_HINTS_PROFILE;
 if (!profile) throw Error('Launch with native-client-hints.mjs for parent-owned profile cleanup');
 app.setPath('userData', profile);
@@ -46,8 +47,10 @@ function serve(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (path === '/echo') {
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.end(JSON.stringify(req.headers));
   }
+  if (workers.serve(req, res, path)) return;
   if (path === '/opt' || path === '/disabled' || path === '/critical')
     res.setHeader('Accept-CH', Object.keys(high).join(', '));
   if (path === '/critical') res.setHeader('Critical-CH', 'Sec-CH-UA-Arch');
@@ -201,6 +204,7 @@ async function run() {
     const unconfigured = windowFor(session.fromPartition('hints-legacy'));
     const legacy = await visit(unconfigured, url + '/legacy');
     for (const key of [...Object.keys(low), ...Object.keys(high)]) assert.equal(legacy[key], undefined, key);
+    await workers.verify({ jarFor, windowFor, visit, url, metadata });
     console.log(
       'PASS native client hints: low/high metadata headers, origin opt-in, host/port/session isolation, permissions-policy denial/delegation, insecure origins, redirects, Critical-CH retry, JavaScript disabled, empty Accept-CH, Clear-Site-Data and native data clearing',
     );
