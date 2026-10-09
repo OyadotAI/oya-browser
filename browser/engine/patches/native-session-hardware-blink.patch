@@ -1,0 +1,59 @@
+diff --git a/third_party/blink/renderer/core/execution_context/navigator_base.cc b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+--- a/third_party/blink/renderer/core/execution_context/navigator_base.cc
++++ b/third_party/blink/renderer/core/execution_context/navigator_base.cc
+@@ -73,6 +73,8 @@
+   unsigned int hardware_concurrency =
+       NavigatorConcurrentHardware::hardwareConcurrency();
+ 
++  // An installed browser policy cannot be replaced by an inspector override.
++  if (OyaHardwareConcurrency()) return hardware_concurrency;
+   probe::ApplyHardwareConcurrencyOverride(
+       probe::ToCoreProbeSink(GetExecutionContext()), hardware_concurrency);
+   return hardware_concurrency;
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.cc
+@@ -4,11 +4,30 @@
+ 
+ #include "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h"
+ 
++#include <atomic>
++#include "base/check.h"
+ #include "base/system/sys_info.h"
+ 
+ namespace blink {
++namespace {
++constexpr unsigned kMaxOyaHardwareConcurrency = 256;
++std::atomic<unsigned> oya_hardware_concurrency{0};
++}  // namespace
++
++void NavigatorConcurrentHardware::SetOyaHardwareConcurrency(unsigned count) {
++  CHECK(count > 0 && count <= kMaxOyaHardwareConcurrency);
++  unsigned expected = 0;
++  CHECK(oya_hardware_concurrency.compare_exchange_strong(
++      expected, count, std::memory_order_relaxed));
++}
++
++unsigned NavigatorConcurrentHardware::OyaHardwareConcurrency() {
++  return oya_hardware_concurrency.load(std::memory_order_relaxed);
++}
++
+ 
+ unsigned NavigatorConcurrentHardware::hardwareConcurrency() const {
++  if (const auto count = OyaHardwareConcurrency()) return count;
+   return static_cast<unsigned>(base::SysInfo::NumberOfProcessors());
+ }
+ 
+diff --git a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h
+--- a/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h
++++ b/third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h
+@@ -11,6 +11,9 @@
+ 
+ class CORE_EXPORT NavigatorConcurrentHardware {
+  public:
++  // Browser-owned immutable renderer policy, installed before page/worker code.
++  static void SetOyaHardwareConcurrency(unsigned count);
++  static unsigned OyaHardwareConcurrency();
+   virtual unsigned hardwareConcurrency() const;
+ };
+ 

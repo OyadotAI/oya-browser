@@ -12,7 +12,9 @@ const deadline = setTimeout(() => {
   console.error('Native timezone fixture timed out');
   app.exit(1);
 }, 60000);
-const snapshot = `({zone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:new Date('2020-01-01T00:00:00Z').getTimezoneOffset(),hour:new Date('2020-01-01T00:00:00Z').getHours()})`;
+const hardware = process.env.OYA_CHECK_NATIVE_HARDWARE === '1';
+const extraSnapshot = hardware ? ',cores:navigator.hardwareConcurrency' : '';
+const snapshot = `({zone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:new Date('2020-01-01T00:00:00Z').getTimezoneOffset(),hour:new Date('2020-01-01T00:00:00Z').getHours()${extraSnapshot}})`;
 /** Every snapshot is captured before the first message or other page action can change worker state. */
 function serve(req, res) {
   res.setHeader('Content-Type', req.url.endsWith('.js') ? 'application/javascript' : 'text/html');
@@ -22,19 +24,22 @@ function serve(req, res) {
   if (req.url === '/sw.js')
     return res.end(
       start +
-        `oninstall=()=>self.skipWaiting();onactivate=e=>e.waitUntil(clients.claim());onmessage=e=>e.ports[0].postMessage(first);`,
+        `oninstall=()=>self.skipWaiting();onactivate=e=>e.waitUntil(clients.claim());onmessage=e=>e.ports[0].postMessage(first);onfetch=e=>{if(new URL(e.request.url).pathname==='/worker-first')e.respondWith(Response.json(first))};`,
     );
   res.end(`<!doctype html><script>globalThis.first=${snapshot};</script><title>Native timezone</title>`);
 }
 /** Each surface refuses any implicit debugger access. */
-function windowFor(jar) {
+function windowFor(
+  jar,
+  additionalArguments = ['--oya-session-timezone=Pacific/Honolulu', '--oya-session-hardware-concurrency=99'],
+) {
   const window = new BrowserWindow({
     show: false,
     webPreferences: {
       session: jar,
       sandbox: true,
       contextIsolation: true,
-      additionalArguments: ['--oya-session-timezone=Pacific/Honolulu'],
+      additionalArguments,
     },
   });
   Object.defineProperty(window.webContents, 'debugger', {
@@ -75,6 +80,42 @@ async function check(window, url, expected) {
     expected,
   );
 }
+/** Invalid input never mutates policy; only an identical count may be repeated. */
+function configureHardware(jar, cores) {
+  assert.equal(typeof jar._setOyaHardwareConcurrency, 'function', 'patched native hardware API required');
+  for (const invalid of [0, -1, 1.5, 257, NaN, Infinity, -Infinity])
+    assert.throws(() => jar._setOyaHardwareConcurrency(invalid), /Invalid native hardware/);
+  for (const invalid of ['8', true, null, undefined, {}]) assert.throws(() => jar._setOyaHardwareConcurrency(invalid));
+  jar._setOyaHardwareConcurrency(cores);
+  jar._setOyaHardwareConcurrency(cores);
+  assert.throws(() => jar._setOyaHardwareConcurrency(cores === 1 ? 2 : 1), /cannot be changed/);
+}
+/** Unconfigured sessions preserve the host value and reject late installation, even after workers exist. */
+async function unconfiguredHardware(jar, window, url, windows) {
+  const baseline = windowFor(session.fromPartition('hardware-baseline'), []);
+  windows.push(baseline);
+  await baseline.loadURL(url);
+  const host = await baseline.webContents.executeJavaScript('navigator.hardwareConcurrency');
+  assert.ok(Number.isInteger(host) && host > 0);
+  assert.equal(await window.webContents.executeJavaScript('navigator.hardwareConcurrency'), host);
+  assert.throws(() => jar._setOyaHardwareConcurrency(8), /before any session renderer/);
+  const own = session.fromPartition('hardware-only');
+  own._setOyaHardwareConcurrency(4);
+  const isolated = windowFor(own);
+  windows.push(isolated);
+  await check(isolated, url, { ...(await baseline.webContents.executeJavaScript('first')), cores: 4 });
+  assert.throws(() => own._setOyaTimeZone('UTC'), /before any session renderer/);
+  isolated.destroy();
+  await own.serviceWorkers._stopAllWorkers();
+  await own.serviceWorkers.startWorkerForScope(url);
+  const resumed = windowFor(own);
+  windows.push(resumed);
+  await resumed.loadURL(url);
+  assert.deepEqual(await resumed.webContents.executeJavaScript('fetch("/worker-first").then(reply=>reply.json())'), {
+    ...(await baseline.webContents.executeJavaScript('first')),
+    cores: 4,
+  });
+}
 /** First-script policy must apply to cross-origin child frames without page-world shims. */
 async function run() {
   await app.whenReady();
@@ -93,11 +134,11 @@ async function run() {
   const windows = [];
   try {
     const zones = [
-      ['UTC', 0, 0],
-      ['Asia/Tokyo', -540, 9],
-      ['America/New_York', 300, 19],
+      ['UTC', 0, 0, 1],
+      ['Asia/Tokyo', -540, 9, 8],
+      ['America/New_York', 300, 19, 256],
     ];
-    for (const [zone, offset, hour] of zones) {
+    for (const [zone, offset, hour, cores] of zones) {
       const jar = session.fromPartition('timezone-' + zone);
       assert.equal(typeof jar._setOyaTimeZone, 'function', 'patched native timezone API required');
       for (const invalid of ['', 'Not/AZone', 'UTC\0hidden', 'x'.repeat(129)])
@@ -105,9 +146,14 @@ async function run() {
       jar._setOyaTimeZone(zone);
       jar._setOyaTimeZone(zone);
       assert.throws(() => jar._setOyaTimeZone(zone === 'UTC' ? 'Asia/Tokyo' : 'UTC'), /cannot be changed/);
+      if (hardware) configureHardware(jar, cores);
       const window = windowFor(jar);
       windows.push(window);
-      await check(window, url, { zone, offset, hour });
+      await check(window, url, { zone, offset, hour, ...(hardware ? { cores } : {}) });
+      if (hardware) {
+        jar._setOyaHardwareConcurrency(cores);
+        assert.throws(() => jar._setOyaHardwareConcurrency(cores === 1 ? 2 : 1), /cannot be changed/);
+      }
       jar._setOyaTimeZone(zone);
       assert.throws(() => jar._setOyaTimeZone('Europe/London'), /cannot be changed/);
     }
@@ -119,6 +165,7 @@ async function run() {
       zone: 'Asia/Tokyo',
       offset: -540,
       hour: 9,
+      ...(hardware ? { cores: 8 } : {}),
     });
     const late = session.fromPartition('timezone-late');
     const window = windowFor(late);
@@ -129,11 +176,13 @@ async function run() {
       Intl.DateTimeFormat().resolvedOptions().timeZone,
     );
     assert.throws(() => late._setOyaTimeZone('Asia/Tokyo'), /before any session renderer/);
+    if (hardware) await unconfiguredHardware(late, window, url, windows);
     console.log(
-      'PASS native session timezone: first scripts, native Date arithmetic, cross-origin frames, dedicated/shared/service workers, partition isolation and immutable lifecycle',
+      (hardware ? 'PASS native session hardware and timezone' : 'PASS native session timezone') +
+        ': first scripts, native Date arithmetic, cross-origin frames, dedicated/shared/service workers, partition isolation and immutable lifecycle',
     );
   } finally {
-    for (const window of windows) window.destroy();
+    for (const window of windows) if (!window.isDestroyed()) window.destroy();
     await new Promise((resolve) => site.close(resolve));
   }
 }

@@ -1,0 +1,144 @@
+diff --git a/shell/browser/api/electron_api_session.cc b/shell/browser/api/electron_api_session.cc
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -7,6 +7,7 @@
+ 
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <ranges>
+ #include "base/memory/ref_counted.h"
+ #include "base/timer/timer.h"
+@@ -1242,6 +1243,18 @@
+       std::move(auth_dynamic_params));
+ }
+ 
++void Session::SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower,
++                                      double count) {
++  constexpr double kMaxNativeHardwareConcurrency = 256;
++  if (!std::isfinite(count) || count < 1 || count > kMaxNativeHardwareConcurrency ||
++      std::floor(count) != count) {
++    thrower.ThrowTypeError("Invalid native hardware concurrency");
++    return;
++  }
++  if (!browser_context_->SetOyaHardwareConcurrency(static_cast<unsigned>(count)))
++    thrower.ThrowError("Native hardware concurrency must be installed before any session renderer and cannot be changed");
++}
++
+ void Session::SetOyaTimeZone(gin_helper::ErrorThrower thrower,
+                            const std::string& zone) {
+   if (zone.empty() || zone.size() > 128 || !base::IsStringASCII(zone) ||
+@@ -2069,6 +2082,7 @@
+       .SetMethod("allowNTLMCredentialsForDomains",
+                  &Session::AllowNTLMCredentialsForDomains)
+       .SetMethod("isPersistent", &Session::IsPersistent)
++      .SetMethod("_setOyaHardwareConcurrency", &Session::SetOyaHardwareConcurrency)
+       .SetMethod("_setOyaTimeZone", &Session::SetOyaTimeZone)
+       .SetMethod("setUserAgent", &Session::SetUserAgent)
+       .SetMethod("getUserAgent", &Session::GetUserAgent)
+diff --git a/shell/browser/api/electron_api_session.h b/shell/browser/api/electron_api_session.h
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -148,6 +148,7 @@
+   v8::Local<v8::Promise> ClearHostResolverCache(gin::Arguments* args);
+   v8::Local<v8::Promise> ClearAuthCache();
+   void AllowNTLMCredentialsForDomains(const std::string& domains);
++  void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+   void SetOyaTimeZone(gin_helper::ErrorThrower thrower, const std::string& zone);
+   void SetUserAgent(const std::string& user_agent, gin::Arguments* args);
+   std::string GetUserAgent();
+diff --git a/shell/browser/electron_browser_client.cc b/shell/browser/electron_browser_client.cc
+--- a/shell/browser/electron_browser_client.cc
++++ b/shell/browser/electron_browser_client.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "shell/browser/electron_browser_client.h"
++#include "base/strings/string_number_conversions.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+ #include <shlobj.h>
+@@ -697,11 +698,17 @@
+     // removing every duplicate, so those arguments cannot override session policy.
+     *command_line = base::CommandLine(command_line->argv());
+     command_line->RemoveSwitch("oya-session-timezone");
++    command_line->RemoveSwitch("oya-session-hardware-concurrency");
+     if (render_process_host) {
+       const auto& zone = static_cast<ElectronBrowserContext*>(
+           render_process_host->GetBrowserContext())->GetOyaTimeZone();
+       if (!zone.empty())
+         command_line->AppendSwitchASCII("oya-session-timezone", zone);
++      const auto count = static_cast<ElectronBrowserContext*>(
++          render_process_host->GetBrowserContext())->GetOyaHardwareConcurrency();
++      if (count)
++        command_line->AppendSwitchASCII("oya-session-hardware-concurrency",
++                                       base::NumberToString(count));
+     }
+ 
+     renderer_process_sandboxed_[unsafe_process_id] =
+@@ -1841,7 +1848,8 @@
+     std::optional<
+         content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason>&
+         refused_reason) {
+-  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty()) {
++  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty() ||
++      static_cast<ElectronBrowserContext*>(browser_context)->GetOyaHardwareConcurrency()) {
+     refused_reason = content::ContentBrowserClient::
+         SpareProcessRefusedByEmbedderReason::DefaultDisabled;
+     return false;
+diff --git a/shell/browser/electron_browser_context.h b/shell/browser/electron_browser_context.h
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -96,6 +96,13 @@
+     oya_time_zone_ = zone;
+     return true;
+   }
++  bool SetOyaHardwareConcurrency(unsigned count) {
++    if (oya_hardware_concurrency_ == count) return true;
++    if (oya_renderer_started_ || oya_hardware_concurrency_) return false;
++    oya_hardware_concurrency_ = count;
++    return true;
++  }
++  unsigned GetOyaHardwareConcurrency() const { return oya_hardware_concurrency_; }
+   void LockOyaRendererPolicy() { oya_renderer_started_ = true; }
+   const std::string& GetOyaTimeZone() const { return oya_time_zone_; }
+ 
+@@ -194,6 +201,7 @@
+  private:
+   bool oya_renderer_started_ = false;
+   std::string oya_time_zone_;
++  unsigned oya_hardware_concurrency_ = 0;
+ 
+   using DevicePermissionMap = std::map<
+       blink::PermissionType,
+diff --git a/shell/renderer/renderer_client_base.cc b/shell/renderer/renderer_client_base.cc
+--- a/shell/renderer/renderer_client_base.cc
++++ b/shell/renderer/renderer_client_base.cc
+@@ -11,6 +11,8 @@
+ 
+ #include "base/command_line.h"
+ #include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
++#include "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h"  // nogncheck
+ #include "third_party/blink/renderer/core/timezone/timezone_controller.h"  // nogncheck
+ #include "base/functional/callback_helpers.h"
+ #include "base/strings/string_split.h"
+@@ -244,7 +246,18 @@
+       owner(std::move(result.handle));
+ }
+ 
++// One browser-owned value covers both Navigator and WorkerNavigator natively.
++void ApplyOyaHardwareConcurrency() {
++  auto* command_line = base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch("oya-session-hardware-concurrency")) return;
++  unsigned count = 0;
++  CHECK(base::StringToUint(command_line->GetSwitchValueASCII(
++      "oya-session-hardware-concurrency"), &count));
++  blink::NavigatorConcurrentHardware::SetOyaHardwareConcurrency(count);
++}
++
+ void RendererClientBase::RenderThreadStarted() {
++  ApplyOyaHardwareConcurrency();
+   ApplyOyaSessionTimeZone();
+   auto* command_line = base::CommandLine::ForCurrentProcess();
+ 

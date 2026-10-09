@@ -43,7 +43,8 @@
     "typecheck": "tsc --noEmit",
     "test:native-contexts": "node tests/integration/native-contexts.mjs",
     "test:native-storage": "node tests/integration/native-storage.mjs",
-    "test:native-timezone": "node tests/integration/native-timezone.mjs"
+    "test:native-timezone": "node tests/integration/native-timezone.mjs",
+    "test:native-hardware": "node tests/integration/native-hardware.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",

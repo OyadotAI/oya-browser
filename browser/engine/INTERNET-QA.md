@@ -1149,3 +1149,40 @@ isolated-world suites, browser integration including all 13 recorder DOM cases,
 all 11 native server service tests, and 2,147 browser unit tests with no skips.
 Repository lint/format, browser typecheck and reverse patch-application checks
 also passed. Logs: `/private/tmp/oya-timezone-{front-door,worlds,integration,services,unit}.log`.
+
+## Native session hardware-concurrency prerequisite (2026-10-09)
+
+Compiled the Electron and Blink hardware-policy patches on the pinned macOS arm64
+engine. A main-process session setter validates integer counts from 1 through 256
+before mutation. The session's first-renderer lock prevents late installation or
+replacement, and renderer startup installs the browser-owned count into a native
+atomic value. Navigator and WorkerNavigator read that value directly; configured
+policy takes precedence over inspector emulation. No CDP command or JavaScript
+navigator shim installs it. Unconfigured sessions retain the host count.
+
+The live fixture passes with 1, 8 and 256 reported cores across simultaneous
+partitions, main documents, cross-origin frames and dedicated/shared/service
+workers. It rejects fractions, zero, negatives, excessive values, NaN, infinities,
+strings and other non-numeric inputs, plus conflicting/late changes. Identical
+settings remain idempotent. Forged renderer arguments cannot replace configured
+policy or configure an otherwise unconfigured session.
+
+A hardware-only partition reports four cores without changing its host timezone.
+Its service worker is stopped and restarted through native APIs after its owning
+window closes; a subsequent controlled fetch confirms the worker's first-script
+snapshot retains the policy. The unchanged timezone-only mode also passes.
+Debugger access is forbidden throughout these fixtures.
+
+Build evidence: `/private/tmp/oya-native-hardware-build.log`. Live evidence:
+`/private/tmp/oya-native-hardware-test.log` and
+`/private/tmp/oya-hardware-timezone-regression.log`. This controls the web-exposed
+logical processor count, not actual OS CPU allocation. Full native persona
+activation, locale/UA metadata and other pre-script protections remain unfinished;
+no production default, legacy migration gate or release validation was bypassed.
+
+Regression validation passed on this rebuilt engine: native front-door tests,
+browser integration (including all 13 recorder DOM cases), all 11 native server
+service tests and 2,147 browser unit tests with no skips. Browser build/types,
+repository lint/format and reverse application checks for both source patches
+also passed. Evidence: `/private/tmp/oya-hardware-{front-door,integration,services,unit}.log`.
+This remains a macOS arm64 validation, not Windows or macOS x64 acceptance.

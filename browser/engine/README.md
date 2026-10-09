@@ -688,3 +688,31 @@ configuration and renderer-argument override refusal. The launcher owns cleanup
 after Electron exits. Full persona migration still requires native locale,
 hardware/UA metadata and pre-document/pre-worker protection, plus production
 platform validation; this prerequisite alone must not enable native mode by default.
+
+## Native session hardware-concurrency prerequisite
+
+After the timezone prerequisite, apply `patches/native-session-hardware-blink.patch`
+from the pinned Chromium `src` checkout, then `patches/native-session-hardware.patch`
+from `src/electron`. Both patches are required; they do not introduce a CDP
+transport or a page-world navigator shim.
+
+The experimental main-process-only `session._setOyaHardwareConcurrency(count)`
+accepts integer counts from 1 through 256. It shares the timezone policy's
+first-renderer lock: configure before any renderer, never change an installed
+count, and use a separate session for another persona. Repeating the same count
+is idempotent. Invalid input is rejected before mutation. Hardware-only sessions
+also refuse spare renderer reuse, and renderer arguments cannot supply or replace
+the browser-owned value.
+
+At renderer startup, a native atomic value is installed before document or worker
+scripts. Blink's Navigator/WorkerNavigator getter reads it directly, with native
+session policy taking precedence over inspector emulation. Unconfigured sessions
+retain the engine's host processor count. This changes the web-exposed logical
+processor count, not OS scheduling, CPU quotas, GPU identity or device memory.
+
+Run `test:native-hardware` with an explicit `OYA_NATIVE_ENGINE`. It reuses the
+timezone first-script fixture with hardware checks enabled, including independent
+counts across partitions, invalid/fractional/non-numeric input, late/conflicting
+configuration, argument injection, a hardware-only partition, and a service-worker
+restart with its owning window closed. It does not enable full native persona
+mode; native locale, UA metadata and remaining pre-script policy are still required.
