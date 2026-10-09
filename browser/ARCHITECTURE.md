@@ -169,7 +169,9 @@ engine are separate concerns; this requirement governs the control architecture.
 - The experimental native engine now offers an immutable session user-agent string
   with worker-startup and network-context ownership; `test:native-user-agent`
   exercises first-script values and real headers without a debugger. This does
-  not yet configure UA metadata/platform or activate complete native personas.
+  not activate complete native personas. The metadata prerequisite now binds
+  native low/high-entropy `navigator.userAgentData` to the session; native HTTP
+  client-hint negotiation and `navigator.platform` remain separate work.
 - Page protection: persona application, worker coverage and tab startup currently
   rely on debugger commands. Preserve existing isolation and egress guarantees;
   capabilities absent from public Electron APIs may require native engine work.

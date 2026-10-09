@@ -844,3 +844,41 @@ lifecycle are not implemented by this patch. The existing native-policy
 coordinator still certifies only timezone, locale/languages and hardware count.
 Default persona protection remains unchanged. Do not activate this as a complete
 persona, claim internal-CDP-free production, or release on this prerequisite alone.
+
+## Native session observable UA metadata prerequisite
+
+Apply `patches/native-session-ua-metadata-content.patch` from Chromium `src` and
+`patches/native-session-ua-metadata.patch` from Electron, after the user-agent
+string patches. `_setOyaUserAgentMetadata(value)` installs copied, immutable
+metadata after `_setOyaUserAgent()` and before any session renderer. Identical
+reinstallation is allowed; late installation or conflicting values fail.
+
+The required fields are `brands`, `fullVersionList`, `fullVersion`, `platform`,
+`platformVersion`, `architecture`, `model`, `mobile`, `bitness`, `wow64`, and
+`formFactors`. Strings are printable ASCII, at most 128 bytes. Brand lists contain
+one to eight unique names, matching in order between major/full-version lists.
+Both flags must be booleans; form factors must be unique native-supported values.
+Malformed input is rejected before mutation. Native readback adds a fresh
+`userAgentMetadata` object only when installed; changing the input or snapshot
+does not mutate the policy. This validates shape and bounds, not the semantic
+consistency of an entire device persona or its version claims.
+
+Renderer startup, WebContents overrides, and dedicated/shared/service-worker
+startup use BrowserContext-owned native metadata, never application-wide metadata
+for a configured session. Native `navigator.userAgentData` exposes the configured
+low- and high-entropy values. Navigation, history restoration and worker restart
+retain the same policy. Unconfigured sessions preserve existing behavior.
+
+`test:native-ua-metadata` extends the real user-agent fixture with distinct
+synthetic Oya test identities, first-script low/high-entropy snapshots in pages,
+cross-origin frames and all three worker types, malformed/late/conflicting input,
+input/readback mutation isolation and a cold service-worker restart. The ordinary
+`test:native-user-agent` still runs independently without installing metadata.
+
+**Remaining scope:** this is native observable metadata, not complete HTTP
+client-hint negotiation. Electron's BrowserContext still has no client-hint
+controller delegate. Native navigation `Accept-CH` persistence, permission-policy
+and header parity require their own implementation and tests; the legacy header
+interceptor has not been replaced. `navigator.platform`, full native persona
+activation and macOS/Windows release validation also remain outstanding. The
+native-policy coordinator still certifies only its existing explicit subset.

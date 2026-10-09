@@ -1,0 +1,169 @@
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -3557,7 +3557,7 @@
+   const auto* installed = content::GetOyaSessionUserAgent(web_contents()->GetBrowserContext());
+   ua_override.ua_string_override = installed ? *installed : user_agent;
+   if (!ua_override.ua_string_override.empty())
+-    ua_override.ua_metadata_override = embedder_support::GetUserAgentMetadata();
++    ua_override.ua_metadata_override = content::GetUserAgentMetadataForOyaContext(web_contents()->GetBrowserContext());
+ 
+   web_contents()->SetUserAgentOverride(ua_override, false);
+ }
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -147,6 +147,100 @@
+ 
+ namespace {
+ 
++// Metadata validates the entire copied value before any session mutation.
++bool OyaMetadataString(const std::string& value) {
++  constexpr size_t kMaxOyaMetadataString = 128;
++  return value.size() <= kMaxOyaMetadataString &&
++         std::all_of(value.begin(), value.end(),
++                     [](unsigned char c) { return c >= 32 && c <= 126; });
++}
++
++bool OyaMetadataBrands(const base::ListValue* list, blink::UserAgentBrandList* result) {
++  constexpr size_t kMaxOyaBrands = 8;
++  if (!list || list->empty() || list->size() > kMaxOyaBrands)
++    return false;
++  for (const auto& entry : *list) {
++    const auto* pair = entry.GetIfDict();
++    if (!pair || pair->size() != 2)
++      return false;
++    const auto* brand = pair->FindString("brand");
++    const auto* version = pair->FindString("version");
++    if (!brand || !version || brand->empty() || version->empty() ||
++        !OyaMetadataString(*brand) || !OyaMetadataString(*version))
++      return false;
++    if (std::any_of(result->begin(), result->end(),
++                    [&brand](const auto& value) { return value.brand == *brand; }))
++      return false;
++    result->emplace_back(*brand, *version);
++  }
++  return true;
++}
++
++bool ReadOyaMetadata(const base::DictValue& input, blink::UserAgentMetadata* metadata) {
++  constexpr size_t kOyaMetadataFields = 11;
++  constexpr size_t kMaxOyaFormFactors = 7;
++  if (input.size() != kOyaMetadataFields)
++    return false;
++  for (const auto& [key, output] : {
++       std::pair{"fullVersion", &metadata->full_version},
++       std::pair{"platform", &metadata->platform},
++       std::pair{"platformVersion", &metadata->platform_version},
++       std::pair{"architecture", &metadata->architecture},
++       std::pair{"model", &metadata->model},
++       std::pair{"bitness", &metadata->bitness}}) {
++    const auto* value = input.FindString(key);
++    if (!value || !OyaMetadataString(*value))
++      return false;
++    *output = *value;
++  }
++  const auto mobile = input.FindBool("mobile");
++  const auto wow64 = input.FindBool("wow64");
++  const auto* factors = input.FindList("formFactors");
++  if (!mobile.has_value() || !wow64.has_value() || !factors ||
++      factors->empty() || factors->size() > kMaxOyaFormFactors ||
++      metadata->platform.empty() || metadata->full_version.empty())
++    return false;
++  metadata->mobile = *mobile;
++  metadata->wow64 = *wow64;
++  for (const auto& entry : *factors) {
++    const auto* factor = entry.GetIfString();
++    if (!factor || !blink::UserAgentMetadata::IsValidFormFactor(*factor) ||
++        std::find(metadata->form_factors.begin(), metadata->form_factors.end(), *factor) != metadata->form_factors.end())
++      return false;
++    metadata->form_factors.push_back(*factor);
++  }
++  if (!OyaMetadataBrands(input.FindList("brands"), &metadata->brand_version_list) ||
++      !OyaMetadataBrands(input.FindList("fullVersionList"), &metadata->brand_full_version_list) ||
++      metadata->brand_version_list.size() != metadata->brand_full_version_list.size())
++    return false;
++  for (size_t i = 0; i < metadata->brand_version_list.size(); ++i)
++    if (metadata->brand_version_list[i].brand != metadata->brand_full_version_list[i].brand)
++      return false;
++  return true;
++}
++
++base::ListValue OyaMetadataBrandSnapshot(const blink::UserAgentBrandList& brands) {
++  base::ListValue result;
++  for (const auto& brand : brands)
++    result.Append(base::DictValue().Set("brand", brand.brand).Set("version", brand.version));
++  return result;
++}
++
++base::DictValue OyaMetadataSnapshot(const blink::UserAgentMetadata& metadata) {
++  base::ListValue factors;
++  for (const auto& factor : metadata.form_factors)
++    factors.Append(factor);
++  return base::DictValue()
++      .Set("brands", OyaMetadataBrandSnapshot(metadata.brand_version_list))
++      .Set("fullVersionList", OyaMetadataBrandSnapshot(metadata.brand_full_version_list))
++      .Set("fullVersion", metadata.full_version).Set("platform", metadata.platform)
++      .Set("platformVersion", metadata.platform_version).Set("architecture", metadata.architecture)
++      .Set("model", metadata.model).Set("mobile", metadata.mobile)
++      .Set("bitness", metadata.bitness).Set("wow64", metadata.wow64)
++      .Set("formFactors", std::move(factors));
++}
++
++
+ struct ClearStorageDataOptions {
+   blink::StorageKey storage_key;
+   uint32_t storage_types = StoragePartition::REMOVE_DATA_MASK_ALL;
+@@ -1258,6 +1352,8 @@
+   result.Set("acceptLanguages", browser_context_->GetOyaAcceptLanguages());
+   const auto* user_agent = content::GetOyaSessionUserAgent(browser_context_);
+   result.Set("userAgent", user_agent ? *user_agent : std::string());
++  if (const auto* metadata = content::GetOyaSessionUserAgentMetadata(browser_context_))
++    result.Set("userAgentMetadata", OyaMetadataSnapshot(*metadata));
+   return result.GetHandle();
+ }
+ 
+@@ -1329,6 +1425,27 @@
+   }
+   if (!browser_context_->SetOyaTimeZone(zone))
+     thrower.ThrowError("Native timezone must be installed before any session renderer and cannot be changed");
++}
++
++// Validate completely before installing immutable browser-owned metadata.
++void Session::SetOyaUserAgentMetadata(gin_helper::ErrorThrower thrower,
++                                     base::DictValue input) {
++  blink::UserAgentMetadata metadata;
++  if (!ReadOyaMetadata(input, &metadata)) {
++    thrower.ThrowTypeError("Invalid native user-agent metadata");
++    return;
++  }
++  if (!content::GetOyaSessionUserAgent(browser_context_)) {
++    thrower.ThrowError("Native user-agent string must be installed before metadata");
++    return;
++  }
++  const auto* installed = content::GetOyaSessionUserAgentMetadata(browser_context_);
++  if ((!installed && browser_context_->HasOyaRendererStarted()) ||
++      (installed && *installed != metadata)) {
++    thrower.ThrowError("Native user-agent metadata must be installed before any session renderer and cannot be changed");
++    return;
++  }
++  CHECK(content::SetOyaSessionUserAgentMetadata(browser_context_, metadata));
+ }
+ 
+ // Install a bounded, immutable HTTP field before the first session renderer.
+@@ -2174,6 +2291,7 @@
+       .SetMethod("allowNTLMCredentialsForDomains",
+                  &Session::AllowNTLMCredentialsForDomains)
+       .SetMethod("isPersistent", &Session::IsPersistent)
++      .SetMethod("_setOyaUserAgentMetadata", &Session::SetOyaUserAgentMetadata)
+       .SetMethod("_setOyaUserAgent", &Session::SetOyaUserAgent)
+       .SetMethod("_getOyaSessionPolicy", &Session::GetOyaSessionPolicy)
+       .SetMethod("_setOyaLocale", &Session::SetOyaLocale)
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -148,6 +148,7 @@
+   v8::Local<v8::Promise> ClearHostResolverCache(gin::Arguments* args);
+   v8::Local<v8::Promise> ClearAuthCache();
+   void AllowNTLMCredentialsForDomains(const std::string& domains);
++  void SetOyaUserAgentMetadata(gin_helper::ErrorThrower thrower, base::DictValue input);
+   void SetOyaUserAgent(gin_helper::ErrorThrower thrower, const std::string& user_agent);
+   v8::Local<v8::Value> GetOyaSessionPolicy(v8::Isolate* isolate);
+   void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);

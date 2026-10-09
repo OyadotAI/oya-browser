@@ -1,0 +1,97 @@
+--- a/content/public/browser/oya_session_user_agent.h
++++ b/content/public/browser/oya_session_user_agent.h
+@@ -4,6 +4,7 @@
+ #define CONTENT_PUBLIC_BROWSER_OYA_SESSION_USER_AGENT_H_
+ #include <string>
+ #include "content/common/content_export.h"
++#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
+ namespace content {
+ class BrowserContext;
+ // Returns null for an unconfigured context; ownership remains with the context.
+@@ -13,5 +14,10 @@
+                                           const std::string& user_agent);
+ // Legacy global behavior remains unchanged for unconfigured contexts.
+ CONTENT_EXPORT std::string GetUserAgentForOyaContext(BrowserContext* context);
++// Metadata is independently frozen before renderer startup by the embedder.
++CONTENT_EXPORT const blink::UserAgentMetadata* GetOyaSessionUserAgentMetadata(BrowserContext* context);
++CONTENT_EXPORT bool SetOyaSessionUserAgentMetadata(BrowserContext* context,
++                                                  const blink::UserAgentMetadata& metadata);
++CONTENT_EXPORT blink::UserAgentMetadata GetUserAgentMetadataForOyaContext(BrowserContext* context);
+ }  // namespace content
+ #endif  // CONTENT_PUBLIC_BROWSER_OYA_SESSION_USER_AGENT_H_
+--- a/content/browser/browser_context.cc
++++ b/content/browser/browser_context.cc
+@@ -547,4 +547,40 @@
+   return GetContentClient()->browser()->GetUserAgent();
+ }
+ 
++namespace {
++const char kOyaUserAgentMetadataKey = 0;
++// Immutable native metadata shares the owning BrowserContext's exact lifetime.
++class OyaSessionUserAgentMetadata final : public base::SupportsUserData::Data {
++ public:
++  explicit OyaSessionUserAgentMetadata(const blink::UserAgentMetadata& value)
++      : value(value) {}
++  const blink::UserAgentMetadata value;
++};
++}  // namespace
++
++const blink::UserAgentMetadata* GetOyaSessionUserAgentMetadata(BrowserContext* context) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  if (!context)
++    return nullptr;
++  auto* policy = static_cast<OyaSessionUserAgentMetadata*>(
++      context->GetUserData(&kOyaUserAgentMetadataKey));
++  return policy ? &policy->value : nullptr;
++}
++
++bool SetOyaSessionUserAgentMetadata(BrowserContext* context,
++                                  const blink::UserAgentMetadata& metadata) {
++  DCHECK_CURRENTLY_ON(BrowserThread::UI);
++  if (const auto* value = GetOyaSessionUserAgentMetadata(context))
++    return *value == metadata;
++  context->SetUserData(&kOyaUserAgentMetadataKey,
++                      std::make_unique<OyaSessionUserAgentMetadata>(metadata));
++  return true;
++}
++
++blink::UserAgentMetadata GetUserAgentMetadataForOyaContext(BrowserContext* context) {
++  if (const auto* value = GetOyaSessionUserAgentMetadata(context))
++    return *value;
++  return GetContentClient()->browser()->GetUserAgentMetadata();
++}
++
+ }  // namespace content
+--- a/content/browser/worker_host/shared_worker_host.cc
++++ b/content/browser/worker_host/shared_worker_host.cc
+@@ -492,7 +492,7 @@
+       creator_policy_container_host_ &&
+           creator_policy_container_host_->policies().is_web_secure_context,
+       GetUserAgentForOyaContext(GetProcessHost()->GetBrowserContext()),
+-      GetContentClient()->browser()->GetUserAgentMetadata(),
++      GetUserAgentMetadataForOyaContext(GetProcessHost()->GetBrowserContext()),
+       devtools_handle_->pause_on_start(), devtools_handle_->dev_tools_token(),
+       std::move(renderer_preferences), std::move(preference_watcher_receiver),
+       std::move(content_settings), std::move(container_info),
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -2015,7 +2015,7 @@
+               perfetto::Flow::Global(trace_id));
+   GetRendererInterface()->InitializeRenderer(
+       GetUserAgentForOyaContext(GetBrowserContext()),
+-      GetContentClient()->browser()->GetUserAgentMetadata(),
++      GetUserAgentMetadataForOyaContext(GetBrowserContext()),
+       storage_partition_impl_->cors_exempt_header_list(),
+       GetContentClient()->browser()->GetOriginTrialsSettings(), cpu_tier,
+       trace_id);
+--- a/content/browser/service_worker/service_worker_version.cc
++++ b/content/browser/service_worker/service_worker_version.cc
+@@ -2687,7 +2687,7 @@
+ 
+   ContentBrowserClient* browser_client = GetContentClient()->browser();
+   params->user_agent = GetUserAgentForOyaContext(context_->wrapper()->browser_context());
+-  params->ua_metadata = browser_client->GetUserAgentMetadata();
++  params->ua_metadata = GetUserAgentMetadataForOyaContext(context_->wrapper()->browser_context());
+   params->is_installed = IsInstalled(status_);
+   params->script_url_to_skip_throttling = updated_script_url_;
+   params->main_script_load_params = std::move(main_script_load_params_);

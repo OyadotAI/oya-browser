@@ -47,7 +47,8 @@
     "test:native-hardware": "node tests/integration/native-hardware.mjs",
     "test:native-locale": "node tests/integration/native-locale.mjs",
     "test:native-policy": "node tests/integration/native-policy.mjs",
-    "test:native-user-agent": "node tests/integration/native-user-agent.mjs"
+    "test:native-user-agent": "node tests/integration/native-user-agent.mjs",
+    "test:native-ua-metadata": "node tests/integration/native-ua-metadata.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",
