@@ -1,20 +1,24 @@
 # Native session policy subset
 
 `NativeSessionPolicies` is the preparation/verification boundary for the native
-**timezone, locale/language and processor-count subset**. It is not a replacement
-for the complete persona protector and does not enable native browsing by default.
+**timezone, locale/language, processor-count and legacy platform subset**. It is
+not a replacement for the complete persona protector and does not enable native
+browsing by default.
 
 One owner must live for the application lifecycle. Before creating any surface:
 
-1. Pass exactly `timeZone`, `locale`, `hardwareConcurrency` and `languages` to
-   `configure(session, policy)`. Unsupported fields fail instead of being ignored.
+1. Pass exactly `timeZone`, `locale`, `hardwareConcurrency`, `languages` and
+   `platform` to `configure(session, policy)`. Unsupported fields fail instead of being ignored.
+   Platform is required and must be exactly `MacIntel`, `Win32` or `Linux x86_64`;
+   no implicit host default or string coercion is accepted.
 2. Preflight canonicalizes bounded input and requires the engine's versioned native
-   state readback plus all setters. An already-started session is rejected.
+   state readback plus all setters, including `_setOyaPlatform`. An already-started
+   session is rejected.
 3. Native setters install the immutable values. Readback must match every value
    while the session is still cold before the binding is published as installed.
 4. Call `assertConfigured(session)` at the exposure boundary. This certifies only
-   this subset; UA metadata, other pre-script protections and egress/permissions
-   must independently succeed before any protected browsing surface is exposed.
+   this subset; UA strings/metadata coherence, other pre-script protections and
+   egress/permissions must independently succeed before any protected browsing surface is exposed.
 
 Native setters are **not transactional**. An engine error or mismatched readback
 can leave partial native state. The owner permanently rejects reuse of that exact
@@ -35,3 +39,9 @@ against first-script page/frame/worker fixtures, actual request headers, native
 first-renderer locks and a real partially failed installation. Unit tests cover
 preflight, immutable snapshots, reentrancy, missing capabilities, native readback
 mismatches and failure at each setter.
+
+Platform readback may be absent before installation, but must match the requested
+value after the final setter. A missing, malformed or different result quarantines
+the session just like a native exception. Private-context integration also verifies
+that final-setter failure never publishes a context and clears its cookies without
+pretending to roll back immutable engine identity.

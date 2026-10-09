@@ -37,6 +37,7 @@ async function configured(electron) {
   const fixture = owner(electron, async (session) => {
     await paused.promise;
     policies.configure(session, {
+      platform: 'Win32',
       timeZone: 'UTC',
       locale: 'de-DE',
       languages: ['de-DE', 'de'],
@@ -71,9 +72,10 @@ async function configured(electron) {
       },
     });
     const script =
-      'globalThis.first={zone:Intl.DateTimeFormat().resolvedOptions().timeZone,locale:Intl.NumberFormat().resolvedOptions().locale,languages:[...navigator.languages],cores:navigator.hardwareConcurrency}';
+      'globalThis.first={platform:navigator.platform,zone:Intl.DateTimeFormat().resolvedOptions().timeZone,locale:Intl.NumberFormat().resolvedOptions().locale,languages:[...navigator.languages],cores:navigator.hardwareConcurrency}';
     await window.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><script>' + script + '</script>'));
     assert.deepEqual(await window.webContents.executeJavaScript('first'), {
+      platform: 'Win32',
       zone: 'UTC',
       locale: 'de-DE',
       languages: ['de-DE', 'de'],
@@ -122,9 +124,40 @@ async function revoked(electron, disconnect) {
     await fixture.contexts.dispose();
   }
 }
+/** A failed final platform setter retires the unpublished partition and clears its sensitive state. */
+async function platformFailure(electron) {
+  const policies = new NativeSessionPolicies();
+  const fixture = owner(electron, async (session) => {
+    session._setOyaPlatform('MacIntel');
+    await session.cookies.set({ url: 'http://127.0.0.1/', name: 'partial', value: 'private' });
+    policies.configure(session, {
+      timeZone: 'UTC',
+      locale: 'de-DE',
+      languages: ['de-DE', 'de'],
+      hardwareConcurrency: 3,
+      platform: 'Win32',
+    });
+  });
+  try {
+    await assert.rejects(fixture.contexts.create(), /installation failed/);
+    const session = fixture.sessions[0];
+    assert.deepEqual(fixture.contexts.list(), []);
+    assert.throws(() => fixture.contexts.get(fixture.ids[0]), /Unknown or foreign/);
+    assert.equal(fixture.contexts.visible(session), false);
+    assert.equal(fixture.contexts.id(session), undefined);
+    assert.deepEqual(await session.cookies.get({}), []);
+    assert.equal(session._getOyaSessionPolicy().platform, 'MacIntel');
+    assert.equal(session._getOyaSessionPolicy().locale, 'de-DE');
+    assert.equal(session._getOyaSessionPolicy().rendererStarted, false);
+    assert.throws(() => policies.assertConfigured(session), /retire this session/);
+  } finally {
+    await fixture.contexts.dispose();
+  }
+}
 /** Run native readiness and both cancellation paths before broader protocol/context coverage. */
 module.exports = async function nativeContextReadiness(electron) {
   await configured(electron);
+  await platformFailure(electron);
   await revoked(electron, false);
   await revoked(electron, true);
   console.log(

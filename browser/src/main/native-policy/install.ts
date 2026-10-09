@@ -23,6 +23,7 @@ function installValues(engine: PolicyEngine, policy: NativePolicy): void {
   engine._setOyaTimeZone(policy.timeZone);
   engine._setOyaHardwareConcurrency(policy.hardwareConcurrency);
   engine._setOyaLocale(policy.locale);
+  engine._setOyaPlatform(policy.platform);
 }
 /** Publish completion only after native readback agrees with every requested value. */
 function installed(binding: PolicyBinding): NativePolicy {

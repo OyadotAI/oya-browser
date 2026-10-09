@@ -5,7 +5,7 @@ import { NativeSessionPolicies } from '../../../../src/main/native-policy/index.
 
 /** Fresh caller-owned input lets each rule verify copying and mutation safety independently. */
 function policy() {
-  return { timeZone: 'UTC', locale: 'en-US', hardwareConcurrency: 8, languages: ['en-US', 'en'] };
+  return { platform: 'Win32', timeZone: 'UTC', locale: 'en-US', hardwareConcurrency: 8, languages: ['en-US', 'en'] };
 }
 /** The native seam records ordering and enforces receiver identity, with injected failure points. */
 function fixture(fail = '') {
@@ -17,11 +17,13 @@ function fixture(fail = '') {
     locale: '',
     hardwareConcurrency: 0,
     acceptLanguages: '',
+    platform: undefined as string | undefined,
   };
   const session = {
     _getOyaSessionPolicy() {
       assert.equal(this, session);
-      return { ...state };
+      const { platform, ...rest } = state;
+      return platform === undefined ? rest : { ...rest, platform };
     },
     _setOyaTimeZone(value: string) {
       step(this, 'zone');
@@ -30,6 +32,10 @@ function fixture(fail = '') {
     _setOyaHardwareConcurrency(value: number) {
       step(this, 'cores');
       state.hardwareConcurrency = value;
+    },
+    _setOyaPlatform(value: string) {
+      step(this, 'platform');
+      state.platform = value;
     },
     _setOyaLocale(value: string) {
       step(this, 'locale');
@@ -51,10 +57,10 @@ test('installs the complete subset once and retains each native method receiver'
     { session, calls } = fixture();
   assert.throws(() => owner.assertConfigured(session), /not been configured/);
   const result = owner.configure(session, policy());
-  assert.deepEqual(calls, ['zone', 'cores', 'locale']);
+  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'platform']);
   assert.equal(owner.assertConfigured(session), result);
   assert.equal(owner.configure(session, policy()), result);
-  assert.deepEqual(calls, ['zone', 'cores', 'locale']);
+  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'platform']);
 });
 
 test('canonical aliases reuse one immutable snapshot without retaining caller objects', () => {
@@ -90,6 +96,10 @@ test('primary-only locales require no duplicate fallback', () => {
 });
 
 const invalid = [
+  ...[undefined, null, 1, true, {}, [], '', 'macintel', 'Windows', 'Linux', 'Win32\0hidden'].map((platform) => ({
+    ...policy(),
+    platform,
+  })),
   null,
   [],
   {},
@@ -118,7 +128,13 @@ for (const [i, input] of invalid.entries())
     assert.equal(owner.assertConfigured(session).locale, 'en-US');
   });
 
-for (const method of ['_getOyaSessionPolicy', '_setOyaTimeZone', '_setOyaHardwareConcurrency', '_setOyaLocale'])
+for (const method of [
+  '_getOyaSessionPolicy',
+  '_setOyaTimeZone',
+  '_setOyaHardwareConcurrency',
+  '_setOyaLocale',
+  '_setOyaPlatform',
+])
   test('missing ' + method + ' rejects the engine before any setter', () => {
     const { session, calls } = fixture();
     delete (session as any)[method];
@@ -141,7 +157,7 @@ test('an already-started renderer fails before any immutable setter is called', 
   assert.deepEqual(calls, []);
 });
 
-for (const stage of ['zone', 'cores', 'locale'])
+for (const stage of ['zone', 'cores', 'locale', 'platform'])
   test('failure during ' + stage + ' permanently retires that session for its owner', () => {
     const owner = new NativeSessionPolicies(),
       { session, calls } = fixture(stage);
@@ -161,7 +177,7 @@ test('a changed policy cannot repurpose a session or invalidate its original ins
   const installed = owner.configure(session, policy());
   assert.throws(() => owner.configure(session, { ...policy(), hardwareConcurrency: 4 }), /cannot change/);
   assert.equal(owner.assertConfigured(session), installed);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
 });
 
 test('readback mismatch quarantines apparently successful setters', () => {
@@ -186,6 +202,7 @@ test('reentrant exposure or configuration cannot observe an installing session a
 });
 
 for (const [field, value] of Object.entries({
+  platform: 'MacIntel',
   timeZone: 'Asia/Tokyo',
   locale: 'fr-FR',
   hardwareConcurrency: 4,
@@ -213,5 +230,50 @@ test('a native readback exception after setter completion permanently quarantine
   };
   assert.throws(() => owner.configure(session, policy()), /installation failed/);
   assert.throws(() => owner.configure(session, policy()), /retire this session/);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
+});
+
+for (const platform of ['MacIntel', 'Win32', 'Linux x86_64'])
+  test('canonical native platform ' + platform + ' is retained as an immutable snapshot', () => {
+    const owner = new NativeSessionPolicies(),
+      { session, calls } = fixture();
+    const input = { ...policy(), platform };
+    const result = owner.configure(session, input);
+    input.platform = 'Changed by caller';
+    assert.equal(result.platform, platform);
+    assert.ok(Object.isFrozen(result));
+    assert.equal(owner.configure(session, { ...policy(), platform }), result);
+    assert.equal(calls.length, 4);
+    assert.throws(
+      () => owner.configure(session, { ...policy(), platform: platform === 'Win32' ? 'MacIntel' : 'Win32' }),
+      /cannot change/,
+    );
+    assert.equal(owner.assertConfigured(session), result);
+  });
+
+test('missing platform cannot certify an implicit host identity', () => {
+  const { platform, ...input } = policy();
+  const { session, calls } = fixture();
+  assert.equal(platform, 'Win32');
+  assert.throws(() => new NativeSessionPolicies().configure(session, input));
+  assert.deepEqual(calls, []);
+});
+
+for (const platform of [undefined, null, '', 'Windows', 'Win32\0hidden', 1])
+  test('malformed native platform readback ' + String(platform) + ' fails before mutation', () => {
+    const { session, calls } = fixture();
+    const read = session._getOyaSessionPolicy;
+    (session as any)._getOyaSessionPolicy = () => ({ ...read.call(session), platform });
+    assert.throws(() => new NativeSessionPolicies().configure(session, policy()), /Unsupported native policy readback/);
+    assert.deepEqual(calls, []);
+  });
+
+test('a platform setter that silently does nothing permanently quarantines the session', () => {
+  const owner = new NativeSessionPolicies(),
+    { session, calls } = fixture();
+  session._setOyaPlatform = () => {};
+  assert.throws(() => owner.configure(session, policy()), /installation failed/);
+  assert.throws(() => owner.assertConfigured(session), /retire this session/);
+  assert.throws(() => owner.configure(session, policy()), /retire this session/);
+  assert.deepEqual(calls, ['zone', 'cores', 'locale']);
 });

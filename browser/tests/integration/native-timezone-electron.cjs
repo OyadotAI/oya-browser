@@ -20,7 +20,8 @@ const localeFields = locale
   : '';
 const hardware = process.env.OYA_CHECK_NATIVE_HARDWARE === '1';
 const extraSnapshot = hardware ? ',cores:navigator.hardwareConcurrency' : '';
-const snapshot = `({zone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:new Date('2020-01-01T00:00:00Z').getTimezoneOffset(),hour:new Date('2020-01-01T00:00:00Z').getHours()${extraSnapshot}${localeFields}})`;
+const platformFields = policyOwner ? ',platform:navigator.platform' : '';
+const snapshot = `({zone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:new Date('2020-01-01T00:00:00Z').getTimezoneOffset(),hour:new Date('2020-01-01T00:00:00Z').getHours()${extraSnapshot}${localeFields}${platformFields}})`;
 /** Capture the real script request header alongside the first native getter values. */
 function snapshotFor(req) {
   return locale ? `({...${snapshot},header:${JSON.stringify(req.headers['accept-language'] ?? '')}})` : snapshot;
@@ -196,7 +197,13 @@ async function unconfiguredLocale(jar, window, url, windows) {
 }
 /** A failed partial native install stays unavailable; preflight failures never mutate engine state. */
 function checkPolicyFailures(late) {
-  const requested = { timeZone: 'UTC', locale: 'en-US', hardwareConcurrency: 8, languages: ['en-US', 'en'] };
+  const requested = {
+    platform: 'Win32',
+    timeZone: 'UTC',
+    locale: 'en-US',
+    hardwareConcurrency: 8,
+    languages: ['en-US', 'en'],
+  };
   assert.throws(() => policyOwner.configure(late, requested), /before any renderer/);
   assert.equal(late._getOyaSessionPolicy().locale, '');
   const invalid = session.fromPartition('policy-invalid');
@@ -240,11 +247,11 @@ async function run() {
   const windows = [];
   try {
     const zones = [
-      ['UTC', 0, 0, 1, 'en-US'],
-      ['Asia/Tokyo', -540, 9, 8, 'de-DE'],
-      ['America/New_York', 300, 19, 256, 'tr-TR'],
+      ['UTC', 0, 0, 1, 'en-US', 'Win32'],
+      ['Asia/Tokyo', -540, 9, 8, 'de-DE', 'Linux x86_64'],
+      ['America/New_York', 300, 19, 256, 'tr-TR', 'MacIntel'],
     ];
-    for (const [zone, offset, hour, cores, tag] of zones) {
+    for (const [zone, offset, hour, cores, tag, platform] of zones) {
       const jar = session.fromPartition('timezone-' + zone);
       assert.equal(typeof jar._setOyaTimeZone, 'function', 'patched native timezone API required');
       if (locale) {
@@ -253,6 +260,7 @@ async function run() {
       }
       if (policyOwner) {
         const configured = policyOwner.configure(jar, {
+          platform,
           timeZone: zone,
           locale: tag,
           hardwareConcurrency: cores,
@@ -276,7 +284,14 @@ async function run() {
       }
       const window = windowFor(jar);
       windows.push(window);
-      await check(window, url, { zone, offset, hour, ...(hardware ? { cores } : {}), ...localeExpected(tag) });
+      await check(window, url, {
+        zone,
+        offset,
+        hour,
+        ...(hardware ? { cores } : {}),
+        ...localeExpected(tag),
+        ...(policyOwner ? { platform } : {}),
+      });
       if (policyOwner) assert.equal(jar._getOyaSessionPolicy().rendererStarted, true);
       if (hardware) {
         jar._setOyaHardwareConcurrency(cores);
@@ -291,13 +306,14 @@ async function run() {
       assert.throws(() => jar._setOyaTimeZone('Europe/London'), /cannot be changed/);
     }
     for (let i = 0; i < windows.length; i++) {
-      const [zone, offset, hour, cores, tag] = zones[i];
+      const [zone, offset, hour, cores, tag, platform] = zones[i];
       assert.deepEqual(await windows[i].webContents.executeJavaScript('first'), {
         zone,
         offset,
         hour,
         ...(hardware ? { cores } : {}),
         ...localeExpected(tag),
+        ...(policyOwner ? { platform } : {}),
       });
     }
     assert.equal(new Set(windows.map((window) => window.webContents.getOSProcessId())).size, zones.length);
@@ -308,7 +324,23 @@ async function run() {
       hour: 9,
       ...(hardware ? { cores: 8 } : {}),
       ...localeExpected('de-DE'),
+      ...(policyOwner ? { platform: 'Linux x86_64' } : {}),
     });
+    if (policyOwner) {
+      const jar = windows[1].webContents.session;
+      const expected = await windows[1].webContents.executeJavaScript('first');
+      windows[1].destroy();
+      await jar.serviceWorkers._stopAllWorkers();
+      await jar.serviceWorkers.startWorkerForScope(url);
+      windows[1] = windowFor(jar);
+      await windows[1].loadURL(url);
+      assert.deepEqual(
+        await windows[1].webContents.executeJavaScript('fetch("/worker-first").then(r=>r.json())'),
+        expected,
+      );
+      await check(windows[1], url, expected);
+      assert.equal(policyOwner.assertConfigured(jar).platform, 'Linux x86_64');
+    }
     const late = session.fromPartition('timezone-late');
     const window = windowFor(late);
     windows.push(window);

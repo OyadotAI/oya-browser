@@ -176,7 +176,10 @@ engine are separate concerns; this requirement governs the control architecture.
   actual headers and revocation. Worker traffic tests preserve the engine's
   intentional hint denial, including module workers and cold service restart.
   A separate native platform prerequisite now covers page and worker
-  `navigator.platform`; full persona activation remains separate work.
+  `navigator.platform`. The native policy coordinator requires and verifies that
+  platform alongside timezone, locale/languages and processor count before
+  publishing a context; final-setter failure retires the session. Full persona
+  activation remains separate work.
 - Page protection: persona application, worker coverage and tab startup currently
   rely on debugger commands. Preserve existing isolation and egress guarantees;
   capabilities absent from public Electron APIs may require native engine work.

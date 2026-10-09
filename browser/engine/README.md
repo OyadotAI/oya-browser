@@ -967,7 +967,8 @@ service-worker restart. This changes the web-exposed legacy string, not the OS,
 keyboard conventions, UA metadata, renderer architecture or hardware.
 
 Full persona consistency still requires the application lifecycle to install all
-native fields together before exposure; the current native-policy coordinator
-continues to certify only its previous explicit subset. Default persona protection
+native fields together before exposure; the native-policy coordinator now
+requires the platform alongside timezone, locale/languages and processor count,
+but does not yet certify UA string/metadata coherence or full persona coverage. Default persona protection
 is not migrated by these prerequisites. Remaining native protections, legacy test
 migration and the signed macOS/Windows release matrix are still outstanding.

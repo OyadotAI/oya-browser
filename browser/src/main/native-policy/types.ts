@@ -1,6 +1,10 @@
 /** Explicit policy subset and browser-owned engine seam; never a full-persona protection verdict. */
+import type { NATIVE_PLATFORMS } from './constants.ts';
+
 /** Immutable settings that the currently implemented native primitives can enforce. */
 export interface NativePolicy {
+  /** Web-exposed legacy desktop string, not the host operating system. */
+  readonly platform: (typeof NATIVE_PLATFORMS)[number];
   /** Canonical ICU system timezone, not a numeric UTC offset. */
   readonly timeZone: string;
   /** Canonical BCP47 locale used by native ICU and language preferences. */
@@ -12,6 +16,8 @@ export interface NativePolicy {
 }
 /** Optional capabilities allow explicit rejection of older engines before mutation. */
 export interface PolicySession {
+  /** Install the legacy platform before any document or worker renderer starts. */
+  _setOyaPlatform?: (platform: string) => void;
   /** Read authoritative native values and the first-renderer lock. */
   _getOyaSessionPolicy?: () => unknown;
   /** Install the timezone before the first renderer. */
@@ -33,6 +39,8 @@ export interface PolicyBinding {
 
 /** Native readback used to reject old engines and verify installation, never a full protection verdict. */
 export interface PolicyState {
+  /** Absent before installation; exact native desktop token once configured. */
+  platform?: string;
   /** Exact supported engine contract revision. */
   version: number;
   /** True after any session renderer has started, including worker renderers. */

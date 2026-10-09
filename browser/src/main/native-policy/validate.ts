@@ -1,5 +1,5 @@
 /** Validate the entire supported policy subset before calling any immutable engine setter. */
-import { MAX_POLICY_TEXT, MIN_PROCESSORS, MAX_PROCESSORS, POLICY_FIELDS } from './constants.ts';
+import { MAX_POLICY_TEXT, MIN_PROCESSORS, MAX_PROCESSORS, POLICY_FIELDS, NATIVE_PLATFORMS } from './constants.ts';
 import type { NativePolicy } from './types.ts';
 
 /** Reject hidden unsupported fields instead of silently claiming full persona coverage. */
@@ -7,7 +7,7 @@ function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Native policy must be an object');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== POLICY_FIELDS.length || keys.some((key) => !POLICY_FIELDS.includes(key as never)))
-    throw new Error('Native policy supports only timezone, locale, hardwareConcurrency and languages');
+    throw new Error('Native policy supports only timezone, locale, hardwareConcurrency, languages and platform');
   return value as Record<string, unknown>;
 }
 /** Bound strings before ICU parsing and reject control characters or embedded NULs. */
@@ -50,6 +50,11 @@ function languagesOf(value: unknown, locale: string): readonly string[] {
     throw new Error('Native languages must match the locale and its primary fallback');
   return Object.freeze(expected);
 }
+/** Reject unsupported or coerced platform values before the first irreversible native mutation. */
+function platformOf(value: unknown): NativePolicy['platform'] {
+  if (!NATIVE_PLATFORMS.includes(value as never)) throw new Error('Invalid native platform');
+  return value as NativePolicy['platform'];
+}
 /** Return an immutable snapshot; validation alone does not mutate or certify an engine session. */
 export function validatePolicy(value: unknown): NativePolicy {
   const input = record(value);
@@ -57,5 +62,6 @@ export function validatePolicy(value: unknown): NativePolicy {
   const timeZone = nativePolicyZone(input.timeZone);
   const hardwareConcurrency = processors(input.hardwareConcurrency);
   const languages = languagesOf(input.languages, locale);
-  return Object.freeze({ timeZone, locale, hardwareConcurrency, languages });
+  const platform = platformOf(input.platform);
+  return Object.freeze({ timeZone, locale, hardwareConcurrency, languages, platform });
 }
