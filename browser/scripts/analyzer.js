@@ -123,6 +123,8 @@
     '[role="option"]',
     '[role="treeitem"]',
     '[onclick]',
+    '[oncontextmenu]',
+    '[draggable="true"]',
     '[ng-click]',
     '[data-action]',
     '[jsaction]',
@@ -134,6 +136,10 @@
     '[data-tracking-control-name]', // LinkedIn
   ].join(', ');
 
+  // Text-locator ambiguity is indexed once per synchronous analysis, never across DOM updates.
+  let analysisTextMatches = null;
+  let analyzing = false;
+
   let elementCounter = 0;
   let elementMap = [];
   const elementRefs = new Map(); // id → DOM node (survives React re-renders)
@@ -142,7 +148,14 @@
     // Bypass ClientRects noise from fingerprint spoofing during analysis
     // Runs in an isolated world, so the page's patched getBoundingClientRect
     // does not apply here and measurements are already unnoised.
-    return _analyzePageInner(options);
+    analyzing = true;
+    analysisTextMatches = null;
+    try {
+      return _analyzePageInner(options);
+    } finally {
+      analyzing = false;
+      analysisTextMatches = null;
+    }
   };
 
   function _analyzePageInner(options = {}) {
@@ -203,7 +216,8 @@
     flush(top);
 
     for (const el of elementMap) {
-      const dom = queryShadow(el.selector);
+      const ref = elementRefs.get(el.id);
+      const dom = ref?.isConnected ? ref : queryShadow(el.selector);
       if (dom) {
         const rect = dom.getBoundingClientRect();
         const off = getIframeOffset(dom);
@@ -441,6 +455,7 @@
   /** Elements rendered their own way; each returns true once handled. */
   const SPECIAL = {
     IFRAME: (node, ctx) => walkFrame(node, ctx),
+    FRAME: (node, ctx) => walkFrame(node, ctx),
     PRE: (node, ctx) => {
       flush(ctx);
       // innerText keeps the lines a <br> or a block inside the <pre> makes; textContent runs them together.
@@ -488,7 +503,9 @@
     } catch {}
     if (doc?.body) {
       const inner = { ...ctx, region: 'iframe' };
-      for (const c of doc.body.childNodes) walk(c, inner);
+      // Rich-text editors often make the iframe body itself the editing surface.
+      if (getInteractiveType(doc.body) === 'editable') addElement(doc.body, 'editable', inner);
+      else for (const c of doc.body.childNodes) walk(c, inner);
       flush(inner);
     } else if (node.src) {
       blocks.push({ region: ctx.region, kind: 'iframe', target: node.src.slice(0, 120) });
@@ -509,7 +526,14 @@
         if (i) buffer += ' | ';
         // A | inside a cell is escaped, so it is never read as a cell boundary.
         const start = buffer.length;
-        for (const c of childrenOf(cell)) walk(c, row);
+        // Sortable headers can own the listener; walking only their children loses the target.
+        // Headers remain addressable even when a library installs listeners with
+        // addEventListener, which an isolated analyzer cannot introspect. A
+        // semantic header target does not claim that a plain header is a button.
+        const type = getInteractiveType(cell) ||
+          (cell.tagName === 'TH' ? (cell.getAttribute('scope') === 'row' ? 'rowheader' : 'columnheader') : null);
+        if (type && !hasInteractiveChild(cell)) addElement(cell, type, row);
+        else for (const c of childrenOf(cell)) walk(c, row);
         buffer = buffer.slice(0, start) + buffer.slice(start).replace(/\|/g, '\\|');
       });
       flush(row);
@@ -695,6 +719,9 @@
     if (tag === 'SUMMARY') return 'button';
     if (tag === 'SELECT') return 'select';
     if (tag === 'TEXTAREA') return 'textarea';
+    // Expose non-click pointer actions without mislabelling them as buttons.
+    if (node.getAttribute('draggable') === 'true') return 'draggable';
+    if (node.hasAttribute('oncontextmenu')) return 'contextmenu';
 
     if (tag === 'INPUT') {
       const t = (node.type || 'text').toLowerCase();
@@ -709,7 +736,7 @@
     // (e.g. LinkedIn post editor: div[role="textbox"][contenteditable])
     // are typed as 'editable' instead of 'input'.
     // Only match the element with the attribute, NOT inherited children.
-    if (node.getAttribute('contenteditable') === 'true') {
+    if (node.hasAttribute('contenteditable') && node.isContentEditable) {
       return 'editable';
     }
 
@@ -872,21 +899,35 @@
    * where it is unique, as a Playwright selector. Positions shift as a page
    * builds itself; a container named by its own attribute does not.
    */
+  /** The same whitespace normalization used by replay's exact-text locator. */
+  const normalizedText = (node) => (node.textContent || '').replace(/\s+/g, ' ').trim();
+
+  /** Index innermost exact-text matches once, instead of scanning the entire DOM for every control. */
+  function exactTextMatches() {
+    if (analyzing && analysisTextMatches) return analysisTextMatches;
+    const nodes = [...document.getElementsByTagName('*')];
+    const labels = new Map(nodes.map((node) => [node, normalizedText(node)]));
+    const matches = new Map();
+    for (const node of nodes) {
+      const text = labels.get(node);
+      if (!text || text.length > 80 || [...node.children].some((child) => labels.get(child) === text)) continue;
+      if (!matches.has(text)) matches.set(text, []);
+      matches.get(text).push(node);
+    }
+    if (analyzing) analysisTextMatches = matches;
+    return matches;
+  }
+
   function scopedText(node, text) {
     if (!text || text.length > 80 || !node.isConnected || node.getRootNode() !== document) return {};
     const tag = node.localName;
-    // Counted the way a replay's text locator counts: any element whose own text is
-    // exactly this (the innermost one), not just elements of the clicked tag. The
-    // admin menu's "Content" makes a section title "Content" ambiguous.
-    const norm = (n) => (n.textContent || '').replace(/\s+/g, ' ').trim();
-    const own = (n) => norm(n) === text && ![...n.children].some((c) => norm(c) === text);
-    const matches = (root) => [...root.getElementsByTagName('*')].filter(own).length;
-    if (matches(document) <= 1) return {};
-    // :text-is matches the element's whole text: a contents link that also holds its number never matches its name.
-    if (norm(node) !== text) return { repeats: true };
+    // Replay counts innermost matches of any tag, including headings and hidden text.
+    const matches = exactTextMatches().get(text) || [];
+    if (matches.length <= 1) return {};
+    if (normalizedText(node) !== text) return { repeats: true };
     for (let a = node.parentElement, i = 0; a && a !== document.body && i < SCOPE_WALK; a = a.parentElement, i++) {
       const anchor = anchorOf(a);
-      if (anchor && matches(a) === 1)
+      if (anchor && matches.filter((match) => match !== a && a.contains(match)).length === 1)
         return { repeats: true, selector: `${anchor} ${tag}:text-is(${JSON.stringify(text)})` };
     }
     return { repeats: true };
@@ -1108,6 +1149,9 @@
       const labelText = parentLabel.textContent.replace(node.textContent || '', '').trim();
       if (labelText) return labelText.slice(0, 80);
     }
+    // Input buttons render their value as their label; they have no text child nodes.
+    if (node.tagName === 'INPUT' && ['submit', 'reset', 'button'].includes(node.type) && node.value)
+      return node.value.trim().slice(0, 80);
     // X/Twitter: data-testid often has a semantic name
     const testId = node.getAttribute('data-testid');
     if (testId && !node.textContent?.trim()) return testId.replace(/[-_]/g, ' ').slice(0, 80);
@@ -1277,20 +1321,23 @@
     }
   }
 
-  /** Return {x, y} offset if element lives inside a same-origin iframe. */
+  /** Resolve every same-origin frame owner, including framesets and shadow-root owners. */
   function getIframeOffset(el) {
-    const ownerDoc = el.ownerDocument;
-    if (ownerDoc === document) return { x: 0, y: 0 };
-    for (const iframe of document.querySelectorAll('iframe')) {
-      try {
-        if (iframe.contentDocument === ownerDoc) {
-          const r = iframe.getBoundingClientRect();
-          return { x: r.left, y: r.top };
-        }
-      } catch {}
+    let owner = el.ownerDocument;
+    let x = 0;
+    let y = 0;
+    while (owner !== document) {
+      const frame = owner.defaultView?.frameElement;
+      if (!frame) throw new Error('Frame owner is unavailable');
+      const rect = frame.getBoundingClientRect();
+      x += rect.left + frame.clientLeft;
+      y += rect.top + frame.clientTop;
+      owner = frame.ownerDocument;
     }
-    return { x: 0, y: 0 };
+    return { x, y };
   }
+  // Action targeting uses the same ancestry calculation as analysis and highlights.
+  window.__acFrameOffset = getIframeOffset;
 
   function queryShadow(selector, root = document) {
     const el = root.querySelector(selector);
@@ -1300,7 +1347,7 @@
         const f = queryShadow(selector, h.shadowRoot);
         if (f) return f;
       }
-      if (h.tagName === 'IFRAME') {
+      if (h.tagName === 'IFRAME' || h.tagName === 'FRAME') {
         try {
           const iframeDoc = h.contentDocument;
           if (iframeDoc) {
@@ -1320,12 +1367,14 @@
 
   // Element lookup: ID-only. Never falls back to CSS selectors.
   window.__acFindElement = function (selector) {
-    // Accepts a number, or any selector carrying one, the attribute name is
-    // per-document now, so the id identifies the element, not the name.
-    const match = typeof selector === 'number' ? [null, String(selector)] : String(selector).match(/(\d+)/);
+    // Read the whole numeric reference or the quoted attribute VALUE. Random
+    // attribute names can contain digits and must never choose another control.
+    const reference = String(selector).trim();
+    const match = reference.match(/^([1-9]\d*)$/) || reference.match(/^\[data-[\w-]+=(["'])([1-9]\d*)\1\]$/);
     if (!match) return null;
 
-    const id = parseInt(match[1], 10);
+    const id = Number(match[2] || match[1]);
+    if (!Number.isSafeInteger(id)) return null;
 
     // 1. Live reference from elementRefs map
     const ref = elementRefs.get(id);

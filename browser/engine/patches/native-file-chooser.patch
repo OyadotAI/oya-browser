@@ -1,0 +1,99 @@
+--- a/shell/browser/file_select_helper.h
++++ b/shell/browser/file_select_helper.h
+@@ -68,6 +68,8 @@
+   void RunFileChooser(content::RenderFrameHost* render_frame_host,
+                       scoped_refptr<content::FileSelectListener> listener,
+                       blink::mojom::FileChooserParamsPtr params);
++  // Optional browser-process selection; exact document and one-shot callback only.
++  bool MaybeHandleOyaFileChooser(const blink::mojom::FileChooserParams& params);
+   void GetFileTypesInThreadPool(blink::mojom::FileChooserParamsPtr params);
+   void GetSanitizedFilenameOnUIThread(
+       blink::mojom::FileChooserParamsPtr params);
+--- a/shell/browser/file_select_helper.cc
++++ b/shell/browser/file_select_helper.cc
+@@ -11,6 +11,11 @@
+ #include <utility>
+ 
+ #include "base/files/file_util.h"
++#include "content/public/browser/weak_document_ptr.h"
++#include "gin/dictionary.h"
++#include "shell/browser/javascript_environment.h"
++#include "shell/common/gin_converters/callback_converter.h"
++#include "shell/common/gin_converters/file_path_converter.h"
+ #include "base/functional/bind.h"
+ #include "base/memory/ptr_util.h"
+ #include "base/strings/string_util.h"
+@@ -388,10 +393,73 @@
+   RunFileChooserOnUIThread(default_file_path, std::move(params));
+ }
+ 
++bool FileSelectHelper::MaybeHandleOyaFileChooser(const FileChooserParams& params) {
++  if (params.mode != FileChooserParams::Mode::kOpen &&
++      params.mode != FileChooserParams::Mode::kOpenMultiple)
++    return false;
++  if (!render_frame_host_ || !web_contents_)
++    return false;
++  auto* contents = electron::api::WebContents::From(web_contents_);
++  if (!contents)
++    return false;
++  auto document = render_frame_host_->GetWeakDocumentPtr();
++  // first: browser claimed the request, second: already completed/cancelled.
++  auto state = std::make_shared<std::pair<bool, bool>>(false, false);
++  auto self = scoped_refptr<FileSelectHelper>(this);
++  auto reply = base::BindOnce(
++      [](scoped_refptr<FileSelectHelper> self, content::WeakDocumentPtr document,
++         std::shared_ptr<std::pair<bool, bool>> state, FileChooserParams::Mode mode,
++         std::vector<base::FilePath> paths) {
++        content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE, base::BindOnce(
++          [](scoped_refptr<FileSelectHelper> self, content::WeakDocumentPtr document,
++             std::shared_ptr<std::pair<bool, bool>> state, FileChooserParams::Mode mode,
++             std::vector<base::FilePath> paths) {
++            if (!state->first || state->second) return;
++            state->second = true;
++            if (!document.AsRenderFrameHostIfValid() || !self->render_frame_host_ ||
++                !self->web_contents_ || paths.empty() ||
++                (mode == FileChooserParams::Mode::kOpen && paths.size() != 1)) {
++              self->FileSelectionCanceled();
++              return;
++            }
++            for (const auto& path : paths) {
++              if (!path.IsAbsolute() || path.ReferencesParent()) {
++                self->FileSelectionCanceled();
++                return;
++              }
++            }
++            self->MultiFilesSelected(ui::FilePathListToSelectedFileInfoList(paths));
++          }, self, document, state, mode, std::move(paths)));
++      }, self, document, state, params.mode);
++  auto* isolate = electron::JavascriptEnvironment::GetIsolate();
++  v8::HandleScope handle_scope(isolate);
++  auto details = gin::Dictionary::CreateEmpty(isolate);
++  details.Set("url", render_frame_host_->GetLastCommittedURL().spec());
++  details.Set("processId", render_frame_host_->GetProcess()->GetDeprecatedID());
++  details.Set("routingId", render_frame_host_->GetRoutingID());
++  details.Set("multiple", params.mode == FileChooserParams::Mode::kOpenMultiple);
++  state->first = contents->Emit("-oya-file-chooser", details, std::move(reply));
++  if (state->first) {
++    // A disconnected agent must not leave a renderer waiting or retain this request forever.
++    content::GetUIThreadTaskRunner({})->PostDelayedTask(FROM_HERE, base::BindOnce(
++        [](scoped_refptr<FileSelectHelper> self,
++           std::shared_ptr<std::pair<bool, bool>> state) {
++          if (state->second) return;
++          state->second = true;
++          self->FileSelectionCanceled();
++        }, self, state), base::Seconds(30));
++  }
++  return state->first;
++}
++
+ void FileSelectHelper::RunFileChooserOnUIThread(
+     const base::FilePath& default_file_path,
+     FileChooserParamsPtr params) {
+   DCHECK(params);
++
++  dialog_mode_ = params->mode;
++  if (MaybeHandleOyaFileChooser(*params))
++    return;
+ 
+   select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
+   if (!select_file_dialog_.get())

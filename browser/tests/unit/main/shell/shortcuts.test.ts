@@ -6,6 +6,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Shortcuts, shortcutFor } from '../../../../src/main/shell/shortcuts.ts';
+import { sendNativeKey } from '../../../../src/main/input/native-key-dispatch.ts';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
 
@@ -77,6 +78,13 @@ describe('Shortcuts', () => {
     contents.emit('before-input-event', event, input);
     return event.prevented;
   };
+
+  it('allows native agent keys without triggering shell shortcuts, then fences human keys again', () => {
+    ctx.control.state.interactive = false;
+    contents.sendInputEvent = () => assert.equal(press(key('l')), false);
+    sendNativeKey(contents, { type: 'keyDown', keyCode: 'l' });
+    assert.equal(press({ type: 'keyDown', key: 'a' }), true);
+  });
 
   it('keeps page keys from the page while an agent has control', () => {
     ctx.control.state.interactive = false;

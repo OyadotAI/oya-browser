@@ -34,6 +34,14 @@ describe('PanelViewModel', () => {
     assert.deepEqual(vm.state.layout, layout);
   });
 
+  it('restores interaction from layout even when the earlier open event was missed', () => {
+    const { fake, vm } = panel();
+    fake.emit('onShellLayout', { panelOpen: true, progress: 1 });
+    assert.equal(vm.state.open, true);
+    fake.emit('onShellLayout', { panelOpen: false, progress: 0.8 });
+    assert.equal(vm.state.open, false);
+  });
+
   it('remembers the Inspect pane last shown, for the Inspect tab', () => {
     const { vm } = panel();
     vm.show('network');

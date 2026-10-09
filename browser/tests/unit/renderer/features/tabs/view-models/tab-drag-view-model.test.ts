@@ -133,3 +133,62 @@ describe('TabDragViewModel', () => {
     assert.equal(frames.waiting, 0);
   });
 });
+
+describe('tab tear-off gestures', () => {
+  /** A measured two-dimensional strip, with the press inside its tab row. */
+  function drag() {
+    const fake = fakeBridge();
+    const frames = manualFrames();
+    const vm = new TabDragViewModel({ bridge: fake.bridge, frames, card: new TabCardViewModel() });
+    const { port: p } = port();
+    p.edges = () => ({ left: 0, right: 300, top: 0, bottom: 44 });
+    vm.start({ id: 1, pointerId: 7, x: 50, y: 20, slots: SLOTS, index: 0 }, p);
+    return vm;
+  }
+  it('tears off on a vertical drag even when the strip index never changes', () => {
+    const vm = drag();
+    vm.move(7, 50, 140);
+    assert.equal(vm.release(7)?.detached, true);
+  });
+  it('cancels a pending tear-off with Escape without a transfer', () => {
+    const vm = drag();
+    vm.move(7, 50, 140);
+    assert.equal(vm.cancel(), true);
+    assert.equal(vm.release(7), null);
+  });
+  it('keeps a horizontal drop inside the strip as a reorder', () => {
+    const vm = drag();
+    vm.move(7, 180, 20);
+    assert.equal(vm.release(7)?.detached, undefined);
+  });
+  it('does not tear off for a stray pointer or a small vertical wobble', () => {
+    const vm = drag();
+    vm.move(8, 50, 140);
+    vm.move(7, 50, 22);
+    assert.equal(vm.release(7), null);
+  });
+});
+
+it('lifts native feedback once per gesture and cancels it on Escape', () => {
+  const { fake, vm } = pressed();
+  vm.move(7, 70);
+  vm.move(7, 90);
+  assert.deepEqual(fake.called('beginTabDrag'), [[1]]);
+  assert.equal(vm.cancel(), true);
+  assert.deepEqual(fake.called('endTabDrag'), [[]]);
+});
+it('keeps native feedback through a detached drop until main-process handoff finishes', () => {
+  const { fake, vm } = pressed();
+  vm.start(
+    { id: 1, pointerId: 7, x: 50, y: 20, slots: SLOTS, index: 0 },
+    { ...port().port, edges: () => ({ left: 0, right: 300, top: 0, bottom: 44 }) },
+  );
+  vm.move(7, 500);
+  assert.equal(vm.release(7)?.detached, true);
+  assert.deepEqual(fake.called('endTabDrag'), []);
+});
+it('a click never starts the native drag surface', () => {
+  const { fake, vm } = pressed();
+  vm.release(7);
+  assert.deepEqual(fake.called('beginTabDrag'), []);
+});

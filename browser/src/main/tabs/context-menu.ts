@@ -80,7 +80,7 @@ export class ContextMenu {
   /** Shows the menu for a right-click at `params` on `view`'s page. */
   show(view: PageView, params: ContextMenuParams): void {
     const template = [
-      ...this.linkItems(params),
+      ...this.linkItems(params, view),
       ...this.navigationItems(view),
       ...editItems(params),
       ...this.toolItems(view, params),
@@ -90,10 +90,13 @@ export class ContextMenu {
   }
 
   /** "Open Link in New Tab", when a link was clicked. */
-  private linkItems(params: ContextMenuParams): MenuItemConstructorOptions[] {
+  private linkItems(params: ContextMenuParams, view: PageView): MenuItemConstructorOptions[] {
     if (!params.linkURL) return [];
     return [
-      { label: 'Open Link in New Tab', click: () => this.deps.tabs.createTab(params.linkURL, true) },
+      {
+        label: 'Open Link in New Tab',
+        click: () => this.deps.tabs.createTab(params.linkURL, true, undefined, view.webContents.session),
+      },
       { type: 'separator' },
     ];
   }

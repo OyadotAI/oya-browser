@@ -57,7 +57,12 @@ export interface OrderedTabs extends TabStrip {
   /** The tab with this id, if open. */
   find(id: number | null): Tab | undefined;
   /** Opens a tab on `url`; returns its id. */
-  createTab(url: string, activate?: boolean): number;
+  createTab(
+    url: string,
+    activate?: boolean,
+    options?: import('electron').LoadURLOptions,
+    session?: import('electron').Session,
+  ): number;
   /** Closes a tab. */
   closeTab(id: number): void;
   /** Shows a tab. */
@@ -86,7 +91,7 @@ export function moveTabTo(tabs: TabStrip, id: number, toIndex: unknown): boolean
 /** Opens `url` in a new tab just right of tab `id`, and shows it; returns the new id. */
 export function openBeside(tabs: OrderedTabs, id: number, url: string): number {
   const index = tabs.list.findIndex((t) => t.id === id);
-  const created = tabs.createTab(url, true);
+  const created = tabs.createTab(url, true, undefined, tabs.list[index]?.view.webContents.session);
   if (index !== -1) moveTabTo(tabs, created, index + 1);
   return created;
 }

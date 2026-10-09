@@ -2,7 +2,12 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { GmailPopup, isGmailMailbox, isGoogleSignIn } from '../../../../src/main/tabs/gmail-popup.ts';
+import {
+  GmailPopup,
+  isGmailMailbox,
+  isGoogleSignIn,
+  isGoogleAppDestination,
+} from '../../../../src/main/tabs/gmail-popup.ts';
 
 /** Resolve microtasks without live web access or OS windows. */
 const settle = async () => {
@@ -26,7 +31,7 @@ function setup(initial = 'https://accounts.google.com/verify') {
     id: 2,
     ready: ready.promise,
     protection: 'protected',
-    view: { webContents: { getURL: () => destination } },
+    view: { webContents: Object.assign(new EventEmitter(), { getURL: () => destination }) },
   };
   const tabs = {
     list: [{ id: 1, window: win }],
@@ -137,4 +142,71 @@ it('requires exact HTTPS origins and a mailbox path', () => {
     assert.equal(isGmailMailbox(url), false);
   assert.equal(isGoogleSignIn('https://accounts.google.com.evil.test/'), false);
   assert.equal(isGoogleSignIn('https://accounts.google.com/'), true);
+});
+
+it('returns a completed Calendar login to a normal tab without losing its account or date', async () => {
+  const t = setup();
+  const calendar = 'https://calendar.google.com/calendar/u/1/r/week/2026/10/8';
+  t.destination(calendar);
+  t.load(calendar);
+  assert.equal(t.closed(), false);
+  assert.deepEqual(t.tabs.created, [{ url: calendar, activate: false }]);
+  t.ready.resolve();
+  await settle();
+  assert.equal(t.closed(), true);
+  assert.equal(t.tabs.activeTabId, 2);
+});
+it('does not hand off ordinary Calendar popups without observed sign-in', () => {
+  const calendar = 'https://calendar.google.com/calendar/u/0/r';
+  const t = setup(calendar);
+  t.load(calendar);
+  assert.equal(t.tabs.created.length, 0);
+});
+it('keeps the popup if the staged app redirects to another Google product', async () => {
+  const t = setup();
+  t.load('https://calendar.google.com/calendar/u/0/r');
+  t.ready.resolve();
+  await settle();
+  assert.equal(t.closed(), false);
+  assert.deepEqual(t.tabs.removed, [2]);
+});
+it('recognizes Calendar documents but rejects callbacks, insecure URLs and lookalikes', () => {
+  assert.equal(isGoogleAppDestination('https://calendar.google.com/calendar'), true);
+  assert.equal(isGoogleAppDestination('https://calendar.google.com/calendar/u/0/r'), true);
+  for (const url of [
+    'https://calendar.google.com.evil.test/calendar/',
+    'http://calendar.google.com/calendar/',
+    'https://user:pass@calendar.google.com/calendar/',
+    'https://calendar.google.com/oauth/callback',
+    'https://calendar.google.com/calendar-callback',
+    'https://accounts.google.com/',
+    'https://app.test/oauth/callback',
+    'garbage',
+  ])
+    assert.equal(isGoogleAppDestination(url), false, url);
+});
+
+it('hands off on main-document readiness even when loadURL is still waiting on frames', async () => {
+  const t = setup();
+  t.load('https://mail.google.com/mail/u/0/#inbox');
+  t.staged.view.webContents.emit('dom-ready');
+  await settle();
+  assert.equal(t.closed(), true);
+  assert.equal(t.tabs.activeTabId, 2);
+  assert.equal(t.staged.view.webContents.listenerCount('dom-ready'), 0);
+  t.ready.reject(new Error('late aborted subframe'));
+  await settle();
+  assert.deepEqual(t.tabs.removed, []);
+});
+it('ignores the staged blank document and waits for the actual app document', async () => {
+  const t = setup();
+  t.load('https://mail.google.com/mail/u/0/#inbox');
+  t.destination('about:blank');
+  t.staged.view.webContents.emit('dom-ready');
+  await settle();
+  assert.equal(t.closed(), false);
+  t.destination('https://mail.google.com/mail/u/0/#inbox');
+  t.staged.view.webContents.emit('dom-ready');
+  await settle();
+  assert.equal(t.closed(), true);
 });

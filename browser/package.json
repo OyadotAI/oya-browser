@@ -20,6 +20,15 @@
     "test:sync": "npm run build && node tests/integration/sync-e2e.mjs",
     "test:model-sync": "npm run build && node tests/integration/model-sync.mjs",
     "test:routines-sync": "npm run build && node tests/integration/routines-sync.mjs",
+    "test:internet": "node tests/integration/internet-native.mjs",
+    "test:native-choosers": "node tests/integration/native-choosers.mjs",
+    "test:native-drag": "node tests/integration/native-drag.mjs",
+    "test:native-dialogs": "node tests/integration/native-dialogs.mjs",
+    "test:native-recording-transport": "npm run build && node tests/integration/native-recording-transport.mjs",
+    "test:native-front-door": "node tests/integration/native-front-door.mjs",
+    "test:native-frames": "node tests/integration/native-frames.mjs",
+    "test:native-input": "node tests/integration/native-input.mjs",
+    "test:windows": "npm run build && node tests/integration/windows.mjs",
     "test:shell": "npm run build && node tests/integration/shell.mjs",
     "test:control": "npm run build && node tests/integration/control.mjs",
     "test:agent": "npm run build && node tests/integration/agent-commands.mjs",
@@ -30,7 +39,8 @@
     "test:analyzer": "node tests/integration/analyzer-dom.mjs",
     "test:recorder": "node tests/integration/recorder-dom.mjs",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:native-contexts": "node tests/integration/native-contexts.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.63.0",
@@ -61,6 +71,7 @@
   },
   "build": {
     "appId": "ai.oya.browser",
+    "beforePack": "build/webauthn.cjs",
     "productName": "Oya Browser",
     "artifactName": "Oya.Browser-${version}-${arch}.${ext}",
     "directories": {

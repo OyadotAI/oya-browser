@@ -8,3 +8,6 @@
 /** The theme the address carries, if it is one the shell draws. */
 const FIRST_THEME = new URLSearchParams(location.search).get('theme');
 if (FIRST_THEME === 'dark' || FIRST_THEME === 'light') document.documentElement.dataset.theme = FIRST_THEME;
+
+/** Shell-only motion policy is established before styles or application code run. */
+document.documentElement.dataset.oyaStill = String(new URLSearchParams(location.search).get('still') === 'true');

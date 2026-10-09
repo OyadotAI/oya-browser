@@ -17,6 +17,30 @@ describe('Protection', () => {
     ctx.world = { ensure: async () => 1 };
   });
 
+  it('native browsing never attaches or applies identity emulation during ordinary page setup', async () => {
+    ctx.nativeBrowsing = true;
+    const view = new FakeBrowserView();
+    assert.equal(await ctx.protection.setupTabCDP(view), true);
+    assert.equal(view.webContents.debugger.isAttached(), false);
+    assert.deepEqual(view.webContents.debugger.methods(), []);
+    await ctx.protection.applyPersona(view.webContents.debugger, () => assert.fail('unexpected failure'));
+    assert.deepEqual(view.webContents.debugger.methods(), []);
+    assert.equal(ctx.protection.personaOptions(), null);
+  });
+
+  it('native browsing defers page analysis until explicitly requested', async () => {
+    ctx.nativeBrowsing = true;
+    let calls = 0;
+    ctx.world.ensure = async () => {
+      calls += 1;
+    };
+    const view = new FakeBrowserView();
+    await ctx.protection.injectScripts(view, true);
+    assert.equal(calls, 0);
+    await ctx.protection.injectScripts(view);
+    assert.equal(calls, 1);
+  });
+
   it("presents Chrome's identity and injects the stealth script before a persona arrives", async () => {
     const dbg = new FakeDebugger();
     await ctx.protection.applyPersona(dbg, () => {});
@@ -33,6 +57,7 @@ describe('Protection', () => {
     assert.ok(brands.includes('Google Chrome'), 'navigator.userAgentData names Chrome, as the headers do');
     assert.deepEqual(dbg.sent[1].params, { enabled: false });
     assert.equal(typeof dbg.sent[2].params.source, 'string');
+    assert.ok(!dbg.sent[2].params.source.includes('const _dismissed'), 'native credentials must not be auto-cancelled');
   });
 
   it('reports a failed native automation identity instead of silently claiming setup worked', async () => {

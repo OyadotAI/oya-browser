@@ -1,0 +1,207 @@
+diff --git a/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc b/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc
+index bd4c42a452..da3d2c8ca5 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc
++++ b/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc
+@@ -38,6 +38,13 @@
+ #include "device/fido/virtual_fido_device_authenticator.h"
+ #endif
+ 
++#if BUILDFLAG(IS_MAC)
++#include "base/command_line.h"
++#include "device/fido/fido_discovery_factory.h"
++#include "device/fido/mac/icloud_keychain.h"
++#include "shell/browser/native_window.h"
++#endif
++
+ namespace electron {
+ 
+ namespace {
+@@ -59,6 +66,34 @@ std::string CredentialIdFor(
+   return {};
+ }
+ 
++#if BUILDFLAG(IS_MAC)
++// Bind Apple's sheet only to a live foreground native owner.
++NativeWindow* NativePasskeyWindow(content::GlobalRenderFrameHostId id) {
++  auto* frame = content::RenderFrameHost::FromID(id);
++  auto* contents =
++      frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
++  auto* relay = contents ? NativeWindowRelay::FromWebContents(contents) : nullptr;
++  auto* window = relay ? relay->GetNativeWindow() : nullptr;
++  if (!window || !window->IsFocused() || !window->IsVisible() ||
++      contents->GetVisibility() != content::Visibility::VISIBLE)
++    return nullptr;
++  return window;
++}
++
++// Never replace test devices or open a modal sheet for an autofill request.
++bool NativePasskeysEnabled(
++    device::FidoDiscoveryFactory* factory,
++    content::AuthenticatorRequestClientDelegate::UIPresentation presentation,
++    content::AuthenticatorRequestClientDelegate::RequestSource source) {
++  using Delegate = content::AuthenticatorRequestClientDelegate;
++  return factory && !factory->IsTestOverride() &&
++         presentation == Delegate::UIPresentation::kModal &&
++         source == Delegate::RequestSource::kWebAuthentication &&
++         base::CommandLine::ForCurrentProcess()->HasSwitch("oya-native-passkeys") &&
++         device::fido::icloud_keychain::IsSupported();
++}
++#endif
++
+ #if DCHECK_IS_ON()
+ bool g_simulate_uv_locked_pin_security_key = false;
+ 
+@@ -122,6 +157,35 @@ ElectronAuthenticatorRequestClientDelegate::
+ ElectronAuthenticatorRequestClientDelegate::
+     ~ElectronAuthenticatorRequestClientDelegate() = default;
+ 
++#if BUILDFLAG(IS_MAC)
++void ElectronAuthenticatorRequestClientDelegate::SetUIPresentation(
++    UIPresentation presentation) {
++  presentation_ = presentation;
++}
++
++void ElectronAuthenticatorRequestClientDelegate::ConfigureDiscoveries(
++    const url::Origin& origin,
++    const std::string& rp_id,
++    RequestSource request_source,
++    device::FidoRequestType request_type,
++    std::optional<device::ResidentKeyRequirement> resident_key_requirement,
++    device::UserVerificationRequirement user_verification_requirement,
++    bool cmtg_key_requested,
++    std::optional<std::string_view> user_name,
++    bool is_enclave_authenticator_available,
++    device::FidoDiscoveryFactory* factory) {
++  if (!NativePasskeysEnabled(factory, presentation_, request_source))
++    return;
++  auto* window = NativePasskeyWindow(render_frame_host_id_);
++  if (!window)
++    return;
++  // Apple owns consent, biometric verification, key material and cancellation.
++  // Do not race a second device-local Touch ID dialog against the Apple sheet.
++  factory->set_mac_touch_id_info(std::nullopt);
++  factory->set_nswindow(window->GetNativeWindow());
++}
++#endif
++
+ void ElectronAuthenticatorRequestClientDelegate::SetRelyingPartyId(
+     const std::string& rp_id) {
+   relying_party_id_ = rp_id;
+diff --git a/shell/browser/webauthn/electron_authenticator_request_client_delegate.h b/shell/browser/webauthn/electron_authenticator_request_client_delegate.h
+index 2655851199..9b0dd91a3c 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_client_delegate.h
++++ b/shell/browser/webauthn/electron_authenticator_request_client_delegate.h
+@@ -6,12 +6,15 @@
+ #define ELECTRON_SHELL_BROWSER_WEBAUTHN_ELECTRON_AUTHENTICATOR_REQUEST_CLIENT_DELEGATE_H_
+ 
+ #include <memory>
++#include <optional>
+ #include <string>
++#include <string_view>
+ #include <vector>
+ 
+ #include "base/dcheck_is_on.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/scoped_observation.h"
++#include "build/build_config.h"
+ #include "content/public/browser/authenticator_request_client_delegate.h"
+ #include "content/public/browser/global_routing_id.h"
+ #include "device/fido/fido_discovery_base.h"
+@@ -49,6 +52,21 @@ class ElectronAuthenticatorRequestClientDelegate
+ 
+   // content::AuthenticatorRequestClientDelegate:
+   void SetRelyingPartyId(const std::string& rp_id) override;
++#if BUILDFLAG(IS_MAC)
++  // Only explicit modal requests may launch Apple's authorization sheet.
++  void SetUIPresentation(UIPresentation presentation) override;
++  void ConfigureDiscoveries(
++      const url::Origin& origin,
++      const std::string& rp_id,
++      RequestSource request_source,
++      device::FidoRequestType request_type,
++      std::optional<device::ResidentKeyRequirement> resident_key_requirement,
++      device::UserVerificationRequirement user_verification_requirement,
++      bool cmtg_key_requested,
++      std::optional<std::string_view> user_name,
++      bool is_enclave_authenticator_available,
++      device::FidoDiscoveryFactory* factory) override;
++#endif
+   void StartObserving(device::FidoRequestHandlerBase* request_handler) override;
+   void StopObserving(device::FidoRequestHandlerBase* request_handler) override;
+   void RegisterActionCallbacks(
+@@ -78,6 +96,10 @@ class ElectronAuthenticatorRequestClientDelegate
+   void CancelPendingAccountSelection();
+   void CancelRequest();
+ 
++#if BUILDFLAG(IS_MAC)
++  // Default closed until Chromium supplies the request's presentation mode.
++  UIPresentation presentation_ = UIPresentation::kDisabled;
++#endif
+   const content::GlobalRenderFrameHostId render_frame_host_id_;
+   std::string relying_party_id_;
+   base::OnceClosure cancel_callback_;
+diff --git a/shell/browser/webauthn/electron_authenticator_request_delegate.cc b/shell/browser/webauthn/electron_authenticator_request_delegate.cc
+index 2bfff46811..595266b098 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_delegate.cc
++++ b/shell/browser/webauthn/electron_authenticator_request_delegate.cc
+@@ -6,11 +6,14 @@
+ 
+ #if BUILDFLAG(IS_MAC)
+ #include "base/base64.h"
++#include "base/command_line.h"
++#include "base/functional/bind.h"
+ #include "base/containers/span.h"
+ #include "base/no_destructor.h"
+ #include "components/prefs/pref_service.h"
+ #include "content/public/browser/browser_thread.h"
+ #include "device/fido/mac/credential_metadata.h"
++#include "device/fido/mac/icloud_keychain.h"
+ #include "shell/browser/electron_browser_context.h"
+ #include "shell/common/electron_constants.h"
+ #endif
+@@ -26,6 +29,30 @@ bool ElectronWebAuthenticationDelegate::SupportsResidentKeys(
+ }
+ 
+ #if BUILDFLAG(IS_MAC)
++namespace {
++// Nullopt retains Electron's device-local Touch ID availability fallback.
++void ResolvePlatformAvailability(
++    base::OnceCallback<void(std::optional<bool>)> callback,
++    std::optional<bool> testing_override) {
++  if (!testing_override.has_value() &&
++      base::CommandLine::ForCurrentProcess()->HasSwitch("oya-native-passkeys") &&
++      device::fido::icloud_keychain::IsSupported()) {
++    testing_override = true;
++  }
++  std::move(callback).Run(testing_override);
++}
++}  // namespace
++
++void ElectronWebAuthenticationDelegate::
++    IsUserVerifyingPlatformAuthenticatorAvailableOverride(
++        content::RenderFrameHost* render_frame_host,
++        base::OnceCallback<void(std::optional<bool>)> callback) {
++  content::WebAuthenticationDelegate::
++      IsUserVerifyingPlatformAuthenticatorAvailableOverride(
++          render_frame_host,
++          base::BindOnce(&ResolvePlatformAvailability, std::move(callback)));
++}
++
+ // static
+ std::string&
+ ElectronWebAuthenticationDelegate::touch_id_keychain_access_group() {
+diff --git a/shell/browser/webauthn/electron_authenticator_request_delegate.h b/shell/browser/webauthn/electron_authenticator_request_delegate.h
+index cf9586370c..954f55f6c8 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_delegate.h
++++ b/shell/browser/webauthn/electron_authenticator_request_delegate.h
+@@ -31,6 +31,10 @@ class ElectronWebAuthenticationDelegate
+   bool SupportsResidentKeys(
+       content::RenderFrameHost* render_frame_host) override;
+ #if BUILDFLAG(IS_MAC)
++  // Preserve DevTools overrides before reporting native iCloud availability.
++  void IsUserVerifyingPlatformAuthenticatorAvailableOverride(
++      content::RenderFrameHost* render_frame_host,
++      base::OnceCallback<void(std::optional<bool>)> callback) override;
+   std::optional<TouchIdAuthenticatorConfig> GetTouchIdAuthenticatorConfig(
+       content::BrowserContext* browser_context) override;
+ #endif

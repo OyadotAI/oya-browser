@@ -2,7 +2,7 @@
  * Commands from the server (`cmd` messages): run each one, answer it once, and
  * race it against a JavaScript dialog that would otherwise block it forever.
  */
-import { DIALOG_SAFE_ACTIONS, DIALOG_HELD, describeDialog } from '../cdp/dialogs.ts';
+import { DIALOG_SAFE_ACTIONS, DIALOG_HELD, describeDialog } from '../dialogs/index.ts';
 import type { AppServices } from '../app/services.ts';
 import type { CommandId, CommandParams } from '../actions/types.ts';
 import { resultSummary } from './result-summary.ts';
@@ -12,6 +12,7 @@ import { RESULT_CODES } from './constants.ts';
 /** What the commands use: the shell, the tabs and page actions, the socket, and the recorder and studio. */
 export type CommandDeps = Pick<
   AppServices,
+  | 'windows'
   | 'shell'
   | 'tabs'
   | 'actions'

@@ -1,9 +1,9 @@
-/** Keyboard input over CDP: key definitions, presses, and typing with a human cadence. */
-import { cdp, type PageView } from '../cdp/cdp.ts';
+/** Native keyboard input: key definitions, presses, and typing with a human cadence. */
+import { nativeKeyDown, nativeKeyUp, type NativeKeyboardView as PageView } from './native-keyboard.ts';
 import { KEY_DEFS, Modifier, KEY_HOLD, CLEAR_PAUSE, type KeyDef } from './constants.ts';
 import { sleep, jitter, typingDelay } from './timing.ts';
 
-/** The CDP key event fields for a named key or a single character. */
+/** The logical key definition for a named key or a single character. */
 export function keyDef(ch: string): KeyDef {
   // A line break is the Enter key, not a character with no key code behind it: a
   // textarea takes the break either way, but a form watching for Enter sees nothing.
@@ -17,46 +17,18 @@ export function keyDef(ch: string): KeyDef {
   return { key: ch, code, keyCode, text: ch, shift: ch !== ch.toLowerCase() && ch === upper };
 }
 
-/** The fields a key's down and up events share. */
-const keyFields = (def: KeyDef, modifiers: number) => ({
-  modifiers,
-  windowsVirtualKeyCode: def.keyCode,
-  nativeVirtualKeyCode: def.keyCode,
-  key: def.key,
-  code: def.code,
-});
-
 /** Types and presses keys on a view, as a person at a keyboard would. */
 export class Keyboard {
-  /** The OS, which picks the select-all modifier. */
-  private readonly platform: NodeJS.Platform;
+  /** Keep the existing construction contract; native editing no longer depends on OS accelerator mappings. */
+  constructor(_platform: NodeJS.Platform) {}
 
-  /** `platform` is the OS the shortcuts follow (process.platform). */
-  constructor(platform: NodeJS.Platform) {
-    this.platform = platform;
+  /** Send a physical key and its character through the native input surface. */
+  private down(view: PageView, def: KeyDef, modifiers = 0): Promise<void> {
+    return nativeKeyDown(view, def, modifiers);
   }
-
-  /**
-   * Sends a key down. `keyDown` for every key, text or not: a `rawKeyDown`, which is
-   * what a raw key event is called and what other drivers send for a key with no text,
-   * arrives through Electron's debugger without ever becoming a DOM keydown. A page
-   * that echoes `$(document).keydown` showed nothing for ArrowLeft, Tab, PageDown or
-   * Escape while a typed character came straight back. Chrome raises no keypress for a
-   * key carrying no text, so nothing is gained by the raw form and a key press is lost.
-   */
-  private async down(view: PageView, def: KeyDef, modifiers = 0): Promise<void> {
-    const text = def.text || undefined;
-    await cdp(view, 'Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      ...keyFields(def, modifiers),
-      text,
-      unmodifiedText: text,
-    });
-  }
-
-  /** Sends the matching key up. */
-  private async up(view: PageView, def: KeyDef, modifiers = 0): Promise<void> {
-    await cdp(view, 'Input.dispatchKeyEvent', { type: 'keyUp', ...keyFields(def, modifiers) });
+  /** Release a physical key; composed Unicode text has no invented key-up. */
+  private up(view: PageView, def: KeyDef, modifiers = 0): void {
+    nativeKeyUp(view, def, modifiers);
   }
 
   /** Presses and releases one key, held for a human-length moment. */
@@ -85,9 +57,10 @@ export class Keyboard {
     }
   }
 
-  /** Empties the focused field: select everything with the platform's modifier, then Backspace. */
+  /** Empties the focused field: use native select-all, then Backspace. */
   async clear(view: PageView): Promise<void> {
-    await this.press(view, 'a', this.platform === 'darwin' ? Modifier.META : Modifier.CTRL);
+    if (view.webContents.isDestroyed()) throw new Error('View is destroyed');
+    view.webContents.selectAll();
     await sleep(jitter(CLEAR_PAUSE));
     await this.press(view, 'Backspace');
     await sleep(jitter(CLEAR_PAUSE));

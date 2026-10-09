@@ -49,3 +49,19 @@ export const OPEN_EXTERNAL_APP_CHOICE = 1;
 
 /** Explicit approval, with Block as the default media permission response. */
 export const ALLOW_MEDIA_CHOICE = 1;
+/** Bound native passkey chooser size and untrusted account labels. */
+export const PASSKEY_ACCOUNT_LIMIT = 20;
+/** Keep account buttons readable without control characters. */
+export const PASSKEY_LABEL_LIMIT = 100;
+/** Cancel abandoned account selection rather than retaining an authentication request indefinitely. */
+export const PASSKEY_PROMPT_TIMEOUT_MS = 60_000;
+
+/** Native chooser never makes credential use the default action. */
+export const PASSKEY_DIALOG = { message: 'Sign in with a passkey', defaultId: 0, cancelId: 0, noLink: true };
+
+/** Explicit development-only isolation test; never a production sign-in bypass. */
+export const NATIVE_SIGNIN_TEST_SWITCH = '--oya-native-signin-test';
+/** Same starting page for each fresh, human-driven compatibility experiment. */
+export const NATIVE_SIGNIN_TEST_URL = 'https://mail.google.com/';
+/** Native test window dimensions, independent of persona screen emulation. */
+export const NATIVE_SIGNIN_TEST_SIZE = { width: 1100, height: 800 };

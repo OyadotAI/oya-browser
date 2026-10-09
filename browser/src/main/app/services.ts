@@ -39,6 +39,13 @@ import type { Governance } from '../identity/governance.ts';
 
 /** The main process's services and the values they share. */
 export interface AppServices {
+  /** Native window ownership, absent only in isolated unit-test contexts. */
+  windows?: import('../windows/index.ts').BrowserWindows;
+  /** Native desktop compatibility trial: no persona emulation or eager page instrumentation. */
+  nativeBrowsing?: boolean;
+
+  /** Native passkey account selection, never exposed to agent tools. */
+  passkeys: import('./passkeys.ts').Passkeys;
   /** Explicit microphone and camera permission prompts. */
   mediaPermissions: import('./media-permissions.ts').MediaPermissions;
   /** Human-approved desktop app protocol handoff. */

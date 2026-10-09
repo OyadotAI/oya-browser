@@ -1,46 +1,42 @@
-/**
- * In a container the shell's own pages hold still. There is no GPU there, so
- * Chromium paints every frame on the CPU, and the app keeps rendering while no
- * one watches (KEEP_RENDERING_SWITCHES); the start page's looping animations
- * alone kept an idle container at several CPUs. Each shell page is told to
- * prefer reduced motion, which its stylesheets already honour. Only the
- * shell's pages: visited pages keep the persona's own setting, so the
- * fingerprint does not change.
- *
- * On a desktop the same switch holds the shell still while the window is not
- * the app in front: KEEP_RENDERING_SWITCHES keep it reporting "visible", so
- * visibility never pauses anything, and the start page's loops under its
- * frosted glass cost a third of a core behind other apps.
- */
-import { cdp, type PageView } from '../cdp/cdp.ts';
-
-/** The media the shell's pages are told they are on. */
-const STILL = { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] };
-
-/** No emulated media: the page follows the system's own motion setting again. */
-const MOVING = { features: [] };
-
-/** The window events that move the shell, or hold it still. */
+/** Pause only Oya-owned UI motion through native page execution, never a debugger or site media override. */
+import type { WebContents } from 'electron';
+/** Only trusted shell surfaces are passed to this helper. */
+interface ShellPage {
+  /** Native execution and document lifecycle, without debugger capabilities. */
+  webContents: Pick<WebContents, 'on' | 'isDestroyed' | 'executeJavaScript'>;
+}
+/** Window focus determines whether decorative shell motion is useful. */
 interface FocusEvents {
-  /** Subscribes to the window's focus and blur. */
+  /** Subscribes for this window's lifetime. */
   on(event: 'focus' | 'blur', listener: () => void): unknown;
 }
-
-/** Whether this browser runs in a container (the image sets OYA_DOCKER). */
+/** The container always conserves animation work. */
 export const inContainer = (env: NodeJS.ProcessEnv = process.env): boolean => env.OYA_DOCKER === 'true';
-
-/** Tells one of the shell's pages to prefer reduced motion, when `still`; a failure only leaves it animating. */
-export async function holdStill(view: PageView, still: boolean): Promise<void> {
+/** Set the local UI policy; never modify matchMedia or a visited page's fingerprint. */
+async function apply(view: ShellPage, still: boolean): Promise<void> {
+  try {
+    if (!view.webContents.isDestroyed()) {
+      await view.webContents.executeJavaScript(`document.documentElement.dataset.oyaStill = '${still}';`);
+    }
+  } catch {
+    /* Closing or replacing a shell document is harmless; dom-ready reapplies its policy. */
+  }
+}
+/** Containers retain their policy across shell reloads; the URL carries it before first paint. */
+export async function holdStill(view: ShellPage, still: boolean): Promise<void> {
   if (!still) return;
-  await cdp(view, 'Emulation.setEmulatedMedia', STILL).catch(() => {});
+  view.webContents.on('dom-ready', () => void apply(view, true));
+  await apply(view, true);
 }
-
-/** Holds the window's shell page still while another app is in front, and lets it move when the window comes back. */
-export function stillWhileAway(win: PageView & FocusEvents): void {
-  win.on('blur', () => void emulate(win, STILL));
-  win.on('focus', () => void emulate(win, MOVING));
+/** Latest focus state survives document replacement without a global theme/media override. */
+export function stillWhileAway(win: ShellPage & FocusEvents): void {
+  let still = false;
+  /** Focus changes update the policy before sending it to the current document. */
+  const update = (value: boolean) => {
+    still = value;
+    void apply(win, still);
+  };
+  win.on('blur', () => update(true));
+  win.on('focus', () => update(false));
+  win.webContents.on('dom-ready', () => void apply(win, still));
 }
-
-/** Sends one media emulation; a failure only leaves the page as it was. */
-const emulate = (view: PageView, media: typeof STILL | typeof MOVING) =>
-  cdp(view, 'Emulation.setEmulatedMedia', media).catch(() => {});

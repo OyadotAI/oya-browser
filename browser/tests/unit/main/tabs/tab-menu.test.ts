@@ -32,6 +32,7 @@ describe('tab menu', () => {
       'New Tab to the Right',
       'Reload',
       'Duplicate',
+      'Move Tab to New Window',
       'Close Tab',
       'Close Other Tabs',
       'Close Tabs to the Right',

@@ -6,4 +6,5 @@
 import { REDUCED_MOTION_QUERY } from './constants.ts';
 
 /** True when the system asks for reduced motion. */
-export const reducedMotion = (): boolean => !!window.matchMedia?.(REDUCED_MOTION_QUERY).matches;
+export const reducedMotion = (): boolean =>
+  document.documentElement.dataset.oyaStill === 'true' || !!window.matchMedia?.(REDUCED_MOTION_QUERY).matches;

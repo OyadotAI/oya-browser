@@ -1,63 +1,74 @@
-/**
- * Unit tests for holding the shell's pages still in a container: the media
- * emulation is sent only there, and a refused command does not throw.
- */
+/** Native shell motion policy never obtains a debugger or changes website media settings. */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { FakeView } from '../../support/fakes.cjs';
 import { holdStill, inContainer, stillWhileAway } from '../../../../src/main/shell/hold-still.ts';
-
-/** A CDP command the fake debugger recorded. */
-interface Sent {
-  /** What the command was sent with. */
-  params: unknown;
+/** A native-only page whose forbidden debugger accessor fails immediately. */
+function fixture() {
+  const events = new EventEmitter();
+  const scripts: string[] = [];
+  let destroyed = false;
+  const webContents = Object.assign(new EventEmitter(), {
+    isDestroyed: () => destroyed,
+    executeJavaScript: async (code: string) => {
+      scripts.push(code);
+    },
+  });
+  Object.defineProperty(webContents, 'debugger', {
+    get() {
+      assert.fail('No internal CDP');
+    },
+  });
+  const view = { webContents, on: (event: string, listener: () => void) => events.on(event, listener) };
+  return {
+    view,
+    events,
+    scripts,
+    destroy: () => {
+      destroyed = true;
+    },
+  };
 }
-
-/** A sent CDP command's parameters. */
-function paramsOf(sent: Sent) {
-  return sent.params;
-}
-
-describe('holdStill', () => {
-  it('tells the page to prefer reduced motion in a container', async () => {
-    const view = new FakeView();
-    await holdStill(view, true);
-    const [sent] = view.webContents.debugger.sent;
-    assert.equal(sent.method, 'Emulation.setEmulatedMedia');
-    assert.deepEqual(sent.params, { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+describe('native shell motion', () => {
+  it('holds containers still and reapplies after reload', async () => {
+    const f = fixture();
+    await holdStill(f.view, true);
+    f.view.webContents.emit('dom-ready');
+    assert.deepEqual(f.scripts, Array(2).fill("document.documentElement.dataset.oyaStill = 'true';"));
   });
-
-  it('leaves the page alone outside a container', async () => {
-    const view = new FakeView();
-    await holdStill(view, false);
-    assert.equal(view.webContents.debugger.sent.length, 0);
+  it('leaves non-container pages alone', async () => {
+    const f = fixture();
+    await holdStill(f.view, false);
+    f.view.webContents.emit('dom-ready');
+    assert.deepEqual(f.scripts, []);
   });
-
-  it('does not throw when the page is gone', async () => {
-    const view = new FakeView();
-    view.webContents.destroy();
-    await holdStill(view, true);
+  it('does not execute on destroyed pages', async () => {
+    const f = fixture();
+    f.destroy();
+    await holdStill(f.view, true);
+    assert.deepEqual(f.scripts, []);
   });
-
-  it('knows a container by OYA_DOCKER', () => {
+  it('recovers after a document replacement rejects execution', async () => {
+    const f = fixture();
+    f.view.webContents.executeJavaScript = async () => {
+      throw new Error('document replaced');
+    };
+    await holdStill(f.view, true);
+  });
+  it('remembers the latest window focus state across reloads', () => {
+    const f = fixture();
+    stillWhileAway(f.view);
+    f.events.emit('blur');
+    f.view.webContents.emit('dom-ready');
+    f.events.emit('focus');
+    f.view.webContents.emit('dom-ready');
+    assert.deepEqual(
+      f.scripts,
+      [true, true, false, false].map((still) => `document.documentElement.dataset.oyaStill = '${still}';`),
+    );
+  });
+  it('recognizes only the explicit container environment', () => {
     assert.equal(inContainer({ OYA_DOCKER: 'true' }), true);
     assert.equal(inContainer({}), false);
-  });
-
-  it('holds still while another app is in front, and moves again on return', async () => {
-    const events = new EventEmitter();
-    const win = Object.assign(new FakeView(), {
-      /** The window's focus events, as Electron's. */
-      on: (name: string, fn: () => void) => events.on(name, fn),
-    });
-    stillWhileAway(win);
-    events.emit('blur');
-    events.emit('focus');
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(win.webContents.debugger.sent.map(paramsOf), [
-      { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] },
-      { features: [] },
-    ]);
   });
 });

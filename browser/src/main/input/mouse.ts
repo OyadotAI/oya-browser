@@ -1,5 +1,5 @@
-/** Mouse input over CDP along human-like Bézier paths. */
-import { cdp, type PageView } from '../cdp/cdp.ts';
+/** Mouse input through native input along human-like Bézier paths. */
+import { nativePointer, nativeWheel, type NativePointerView as PageView } from './native-pointer.ts';
 import * as c from './constants.ts';
 import { sleep, jitter } from './timing.ts';
 
@@ -59,7 +59,7 @@ export function mousePath(from: Point, to: Point): Point[] {
 }
 
 /**
- * The pointer, moved over CDP. It remembers where it was left: only the active
+ * The pointer, moved through native input. It remembers where it was left: only the active
  * tab is driven, so a path always starts where the last one ended.
  */
 export class Mouse {
@@ -69,7 +69,7 @@ export class Mouse {
   /** Moves the pointer to (x, y) along a curved, easing path. */
   async move(view: PageView, x: number, y: number): Promise<void> {
     for (const pt of mousePath(this.at, { x, y })) {
-      await cdp(view, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: pt.x, y: pt.y });
+      nativePointer(view, { type: 'mouseMove', x: pt.x, y: pt.y });
       await sleep(jitter(c.MOVE_PAUSE));
     }
     this.at = { x, y };
@@ -81,18 +81,18 @@ export class Mouse {
     const iy = Math.round(y);
     await this.move(view, ix, iy);
     await sleep(jitter(c.CLICK_PAUSE)); // a brief hover before the press
-    await this.button(view, 'mousePressed', { x: ix, y: iy }, { buttons: 1 });
+    this.button(view, 'mouseDown', { x: ix, y: iy });
     await sleep(jitter(c.CLICK_PAUSE)); // a brief hold before the release
-    await this.button(view, 'mouseReleased', { x: ix, y: iy });
+    this.button(view, 'mouseUp', { x: ix, y: iy });
   }
 
-  /** Presses or releases the left button at `at`; `extra` adds fields after the shared ones. */
-  private button(view: PageView, type: string, at: Point, extra: object = {}): Promise<unknown> {
-    return cdp(view, 'Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1, ...extra });
+  /** Presses or releases the left button at the native page coordinate. */
+  private button(view: PageView, type: 'mouseDown' | 'mouseUp', at: Point): void {
+    nativePointer(view, { type, ...at, button: 'left', clickCount: 1 });
   }
 
   /** One wheel event at (x, y). */
   async scroll(view: PageView, x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
-    await cdp(view, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX, deltaY });
+    nativeWheel(view, x, y, deltaX, deltaY);
   }
 }

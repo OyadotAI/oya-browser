@@ -21,6 +21,13 @@ import { lineFor, namesFrom, idOf, changesPage, type ActionParams, type Analyzed
 import { pageTone } from './page-tone.ts';
 import { holdStill, inContainer } from './hold-still.ts';
 
+/** Carry container motion policy to the shield before its first paint. */
+function loadShield(view: BrowserView, appDir: string): void {
+  view.webContents.loadFile(path.join(appDir, 'out', 'renderer', 'control-shield', 'index.html'), {
+    query: { still: String(inContainer()) },
+  });
+}
+
 /** The services the shield uses. */
 type Deps = Pick<
   AppServices,
@@ -201,7 +208,7 @@ export class ControlShield {
     const view = (this.view = new this.deps.electron.BrowserView({ webPreferences }));
     view.setBackgroundColor(TRANSPARENT);
     void holdStill(view, inContainer());
-    view.webContents.loadFile(path.join(this.deps.appDir, 'out', 'renderer', 'control-shield', 'index.html'));
+    loadShield(view, this.deps.appDir);
     this.installShieldInput(view);
     return view;
   }

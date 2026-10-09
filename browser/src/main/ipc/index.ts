@@ -24,7 +24,7 @@ export type IpcDeps = ConstructorParameters<typeof NavigationHandlers>[0] &
   ConstructorParameters<typeof DevHandlers>[0] &
   ConstructorParameters<typeof RoutineHandlers>[0] &
   ConstructorParameters<typeof UpdateHandlers>[0] &
-  Pick<AppServices, 'electron' | 'shell'>;
+  Pick<AppServices, 'electron' | 'shell' | 'windows'>;
 
 /** The page's own channels: navigation and tabs, the shell's overlays and panel, and the dev panel. */
 function pageHandlers(deps: IpcDeps) {
@@ -53,5 +53,11 @@ export function shellHandlers(deps: IpcDeps): ShellHandlers {
 
 /** Registers every channel on ipcMain, behind the shell-only guard. */
 export function registerIpc(deps: IpcDeps): void {
-  new ShellIpc(deps).register(shellHandlers(deps));
+  const handlers = new WeakMap<AppServices, ShellHandlers>();
+  new ShellIpc(deps, (event, channel) => {
+    const scope = deps.windows?.fromContents(event.sender);
+    if (!scope) return shellHandlers(deps)[channel] as never;
+    if (!handlers.has(scope)) handlers.set(scope, shellHandlers(scope));
+    return handlers.get(scope)![channel] as never;
+  }).register(shellHandlers(deps));
 }

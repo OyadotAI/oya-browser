@@ -157,6 +157,7 @@ describe('cdp front door', () => {
     assert.equal(isUi(UI), true);
     assert.equal(isUi({ type: 'page', url: 'file:///x/out/renderer/control-shield/index.html' }), true);
     assert.equal(isUi({ type: 'page', url: 'file:///x/renderer/index.html.html' }), false);
+    assert.equal(isUi({ type: 'page', url: 'file:///x/out/renderer/tab-preview/index.html' }), true);
     assert.equal(isUi(PAGE), false);
   });
 

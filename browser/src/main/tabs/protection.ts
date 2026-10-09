@@ -15,7 +15,7 @@ import type { Attempt, TabView } from './types.ts';
 /** The services protection uses. */
 type Deps = Pick<
   AppServices,
-  'persona' | 'config' | 'recorder' | 'world' | 'shield' | 'tabs' | 'dialogs' | 'governance'
+  'persona' | 'config' | 'recorder' | 'world' | 'shield' | 'tabs' | 'dialogs' | 'governance' | 'nativeBrowsing'
 >;
 
 /** Hears one CDP event's parameters, and the session it came from. */
@@ -93,8 +93,8 @@ const popupProtectionFailed: Failure = (what, e) => {
   console.error(`[anonymity] popup ${what} failed, popup is NOT protected:`, messageOf(e));
 };
 
-/** Electron has no passkey dialog and no permission prompt: the injection answers both as Chrome would (stealth.js). */
-const DESKTOP_INJECTION = { noPasskeyDialog: true, noPermissionPrompt: true, nativeWebRTC: false };
+/** Native WebAuthn owns credential requests; the page must never synthesize their cancellation. */
+const DESKTOP_INJECTION = { noPasskeyDialog: false, noPermissionPrompt: true, nativeWebRTC: false };
 /** How the persona is applied in the desktop app: the window owns the screen, and the injection is the desktop's. */
 const DESKTOP_APPLIER = { screen: false, injection: DESKTOP_INJECTION };
 
@@ -230,6 +230,7 @@ export class Protection {
    * reaches navigator.userAgentData, which the session's string cannot.
    */
   applyPersona(dbg: Debugger | CdpPort, fail: Failure): Promise<unknown> {
+    if (this.deps.nativeBrowsing) return Promise.resolve();
     const port = portOf(dbg);
     const persona = this.personaOptions();
     if (!persona) return injectStealthOnly(port, personaIdentity(null).override, fail);
@@ -253,6 +254,7 @@ export class Protection {
    * there is no persona yet.
    */
   personaOptions(): PersonaOptions | null {
+    if (this.deps.nativeBrowsing) return null;
     const active = this.deps.persona.active;
     if (!active) return null;
     const profile = onThisMachine(
@@ -268,6 +270,12 @@ export class Protection {
    * answers what its attempt answers.
    */
   async setupTabCDP(view: TabView): Promise<boolean> {
+    if (this.deps.nativeBrowsing) return !view.webContents.isDestroyed();
+    return this.setupPersonaCDP(view);
+  }
+
+  /** Persona mode retains the existing fail-closed bounded protection attempt. */
+  private async setupPersonaCDP(view: TabView): Promise<boolean> {
     if (!cdpAttach(view)) return notAttached();
     // Main world: only what the page itself must see, as one script in one
     // scope so the toString mask covers the fingerprint patches too. The
@@ -337,6 +345,7 @@ export class Protection {
    */
   protectPopup(childWindow: BrowserWindow): void {
     this.deps.shield.adoptPopup(childWindow);
+    if (this.deps.nativeBrowsing) return;
     try {
       this.protectPopupDebugger(childWindow.webContents.debugger);
     } catch (e) {
@@ -367,7 +376,8 @@ export class Protection {
   }
 
   /** Ensure the analyzer is loaded in this view's isolated world (fallback, CDP auto-inject is primary). */
-  async injectScripts(view?: TabView | null): Promise<void> {
+  async injectScripts(view?: TabView | null, eager = false): Promise<void> {
+    if (eager && this.deps.nativeBrowsing) return;
     if (!view) view = this.deps.tabs.getActiveView();
     if (!view) return;
     try {

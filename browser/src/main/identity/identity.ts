@@ -2,9 +2,9 @@
  * The browser a persona says it is, from one place: the User-Agent string, the
  * page-side override (navigator.userAgent and navigator.userAgentData) and the
  * client-hint headers. They used to be built apart, and only the headers claimed
- * Google Chrome: a page's JavaScript still saw Electron's own brands and the
- * host's OS. Google's sign-in compares the two and refused the browser as "may
- * not be secure". Built together, they cannot disagree.
+ * Google Chrome while page JavaScript saw Electron's own brands and the host OS.
+ * Building them together avoids that inconsistency; it does not establish why
+ * Google rejects a sign-in or guarantee that Google accepts an embedded browser.
  *
  * The version is always the engine's own. Claiming a newer Chrome than the one
  * running (a mirrored profile's, say) is caught by testing for features that

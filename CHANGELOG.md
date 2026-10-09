@@ -6,6 +6,18 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Multiple full browser windows with live tab tear-out and transfers onto another window's tab strip, preserving page state and navigation history. Added Cmd/Ctrl+N, Cmd/Ctrl+Alt+W, and Move Tab to New Window in the tab menu. Window-scoped controls and independent shields retain agent access through globally unique tab ids and `list_tabs.window_id`.
+
+### Fixed
+
+- Keep the agent panel interactive after startup or shell reload, including its close button.
+- Show a floating page preview during tab tear-out and prepare destination tabs and toolbars before revealing new windows, preserving the live source page if preparation fails.
+- Hand completed Gmail and Calendar sign-ins back to browser tabs instead of leaving the app inside an authentication dialog.
+
+- Stop auto-cancelling desktop WebAuthn requests; add native account selection and provisioning-bound macOS Touch ID setup. Native-capability packaging now requires an explicit Apple provisioning profile instead of producing an app macOS rejects. Existing iCloud passkeys, phone/QR authentication and security-key PIN entry are not supported by the current Electron integration; real-device verification is still required.
+
 ## [1.0.165](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.165) · 2026-10-08
 
 ### Added

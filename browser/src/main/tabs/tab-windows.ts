@@ -25,6 +25,7 @@ export type TabWindowsDeps = Pick<
   | 'world'
   | 'control'
   | 'config'
+  | 'windows'
 >;
 
 /** Joins a recording in progress; a page that refuses is logged and tried again on its next load. */
@@ -80,17 +81,21 @@ export class TabWindows {
    */
   private open(details: HandlerDetails, opener: Tab): WindowOpenHandlerResponse {
     if (this.deps.externalApps.request(details.url, opener.view.webContents)) return { action: 'deny' };
-    const popup = this.popupOptions(details);
+    const popup = this.popupOptions(details, opener);
     if (popup) return popup;
     // A page cannot load a file: address itself, but a tab the app opens for it could: the page must not get one that way.
-    if (!LOCAL_FILE.test(details.url))
-      this.markOpener(this.deps.tabs.createTab(details.url, true, loadOptionsFor(details)), opener);
+    if (!LOCAL_FILE.test(details.url)) this.openSibling(details, opener);
     return { action: 'deny' };
   }
 
+  /** Ordinary links inherit the exact opener session, including ephemeral contexts. */
+  private openSibling(details: HandlerDetails, opener: Tab): void {
+    const id = this.deps.tabs.createTab(details.url, true, loadOptionsFor(details), opener.view.webContents.session);
+    this.markOpener(id, opener);
+  }
   /** Preserve sign-in and named windows with the opener's persona partition. */
-  private popupOptions(details: HandlerDetails): WindowOpenHandlerResponse | null {
-    const webPreferences = { partition: this.deps.persona.partitionName() };
+  private popupOptions(details: HandlerDetails, opener: Tab): WindowOpenHandlerResponse | null {
+    const webPreferences = { session: opener.view.webContents.session };
     if (isAuthPopup(details.url, details.features))
       return { action: 'allow', overrideBrowserWindowOptions: { ...AUTH_POPUP_SIZE, webPreferences } };
     if (opensNamedWindow(details.frameName))
@@ -105,8 +110,17 @@ export class TabWindows {
 
   /** Protocol interception is installed before a popup can navigate. */
   private protectPopup(window: BrowserWindow): void {
+    this.followPopupFocus(window);
     this.deps.externalApps.wire(window.webContents);
     this.deps.protection.protectPopup(window);
+  }
+  /** Keep app-level permission prompts and agent discovery on the focused popup's browser window. */
+  private followPopupFocus(window: BrowserWindow): void {
+    if (!this.deps.windows) return;
+    window.on('focus', () => {
+      const owner = this.deps.windows?.ownerOfContents(window.webContents);
+      if (owner && this.deps.control.snapshot().interactive) this.deps.windows?.select(owner);
+    });
   }
   /** Protects a window the page opened, and puts it on the tab list so it can be driven. */
   private adoptPopup(childWindow: BrowserWindow, opener: Tab, url: string): void {

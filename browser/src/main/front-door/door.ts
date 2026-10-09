@@ -12,7 +12,8 @@ type DoorOptions = FrontDoorOptions & Required<Pick<FrontDoorOptions, 'beginComm
 
 /** The browser's own UI pages (the shell, out/renderer/index.html, and the input shield, out/renderer/control-shield/index.html): never an agent target. */
 export const isUi = (info: TargetInfo | null | undefined): boolean =>
-  info?.type === 'page' && /^file:.*\/renderer\/(?:control-shield\/)?index\.html(?:[?#]|$)/.test(info.url || '');
+  info?.type === 'page' &&
+  /^file:.*\/renderer\/(?:(?:control-shield|tab-preview)\/)?index\.html(?:[?#]|$)/.test(info.url || '');
 
 /** Waits for the tab's first load, but no longer than FRONT_DOOR_TAB_WAIT_MS: one that never settles is not waited out. */
 async function untilFirstLoad(tab: DoorTab): Promise<void> {

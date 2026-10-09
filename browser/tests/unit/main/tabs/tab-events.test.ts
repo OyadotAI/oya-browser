@@ -103,6 +103,7 @@ describe('tab events', () => {
   });
 
   it('opens target=_blank links as tabs and lets sign-in popups be windows in the same partition', () => {
+    tab.view.webContents.session = { privateContext: true };
     const handler = tab.view.webContents.openHandler;
     assert.deepEqual(handler({ url: 'https://b.test/', features: '' }), { action: 'deny' });
     assert.equal(ctx.tabs.list.length, 2);
@@ -111,7 +112,7 @@ describe('tab events', () => {
     assert.deepEqual(popup.overrideBrowserWindowOptions, {
       width: 500,
       height: 700,
-      webPreferences: { partition: 'persist:oya-browser' },
+      webPreferences: { session: tab.view.webContents.session },
     });
   });
 

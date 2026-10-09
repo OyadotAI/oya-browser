@@ -2,6 +2,7 @@
 import type { BrowserWindow } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import type { Tab } from './types.ts';
+import { GoogleAppLoad } from './google-app-load.ts';
 
 /** The normal tab path supplies the same persona, cookies and protection as every other page. */
 type Deps = Pick<AppServices, 'tabs' | 'shell' | 'control'>;
@@ -21,6 +22,20 @@ export function isGmailMailbox(raw: string): boolean {
     !url.password
   );
 }
+/** Completed first-party app documents, not arbitrary Google or OAuth callback pages. */
+export function isGoogleAppDestination(raw: string): boolean {
+  if (isGmailMailbox(raw)) return true;
+  const url = URL.parse(raw);
+  if (!url || url.username || url.password) return false;
+  return (
+    url.origin === 'https://calendar.google.com' &&
+    (url.pathname === '/calendar' || url.pathname.startsWith('/calendar/'))
+  );
+}
+/** A staged app must remain on the same approved product as its verified popup. */
+function matchesDestination(destination: string, source: string): boolean {
+  return isGoogleAppDestination(destination) && new URL(destination).origin === new URL(source).origin;
+}
 /** A single popup's completion watcher; a failed handoff leaves the original login intact. */
 export class GmailPopup {
   /** Browser services, not page-provided callbacks. */
@@ -39,33 +54,42 @@ export class GmailPopup {
     this.window = window;
     this.openerId = openerId;
     this.signingIn = isGoogleSignIn(initialUrl);
+    this.observe();
+  }
+  /** Observe the popup without cancelling or replaying its navigation. */
+  private observe(): void {
+    const window = this.window;
     window.webContents.on('did-navigate', (_event, url) => {
       this.signingIn ||= isGoogleSignIn(url);
     });
+    window.webContents.on('dom-ready', () => void this.loaded());
     window.webContents.on('did-finish-load', () => void this.loaded());
   }
-  /** Verification remains a real window until a Gmail document has finished loading. */
+  /** Verification remains a real window until a supported Google app document has finished loading. */
   private async loaded(): Promise<void> {
     if (this.window.isDestroyed() || this.attempted || !this.deps.control.snapshot().interactive) return;
     const url = this.window.webContents.getURL();
     this.signingIn ||= isGoogleSignIn(url);
-    if (!this.signingIn || !isGmailMailbox(url)) return;
+    if (!this.signingIn || !isGoogleAppDestination(url)) return;
     this.attempted = true;
     await this.handoff(url).catch(() => {});
   }
-  /** Stage the mailbox in the background; a failure must not destroy the verified session. */
+  /** Stage the app in the background; a failure must not destroy the verified session. */
   private async handoff(url: string): Promise<void> {
-    const { tabs } = this.deps;
-    const tab = tabs.find(tabs.createTab(url, false));
+    const tab = this.deps.tabs.find(this.deps.tabs.createTab(url, false, undefined, this.window.webContents.session));
     if (!tab) return;
     tab.openerId = this.openerId;
-    await tab.ready?.then(() => this.finish(tab, url)).catch(() => this.discard(tab));
+    const load = new GoogleAppLoad(tab, () => this.canFinish(tab, url));
+    await load
+      .wait()
+      .then(() => this.finish(tab, url))
+      .catch(() => this.discard(tab));
   }
   /** A staged failure is disposable; the original verified popup is not. */
   private discard(tab: Tab): void {
     if (this.deps.tabs.find(tab.id)) this.deps.tabs.closeTab(tab.id, { keepOne: false });
   }
-  /** Only a protected, loaded mailbox can replace the popup; changed or closed windows are left alone. */
+  /** Only a protected, loaded app can replace the popup; changed or closed windows are left alone. */
   private finish(tab: Tab, source: string): void {
     const { tabs, control, shell } = this.deps;
     if (!this.canFinish(tab, source) || !control.snapshot().interactive) return this.discard(tab);
@@ -82,7 +106,7 @@ export class GmailPopup {
       this.deps.tabs.find(tab.id) === tab &&
       tab.protection === 'protected' &&
       !tab.loadError &&
-      isGmailMailbox(tab.view.webContents.getURL())
+      matchesDestination(tab.view.webContents.getURL(), source)
     );
   }
 }

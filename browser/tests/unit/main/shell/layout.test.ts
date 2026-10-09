@@ -21,7 +21,21 @@ describe('PanelLayout', () => {
   it('places the page below the toolbar, beside the closed panel', () => {
     ctx.layout.layoutActiveTab();
     assert.deepEqual(view.bounds, shellLayout(1280, 800, 0, 360).page);
-    assert.deepEqual(ctx.shell.sentOn('shell-layout')[0], shellLayout(1280, 800, 0, 360));
+    assert.deepEqual(ctx.shell.sentOn('shell-layout')[0], { ...shellLayout(1280, 800, 0, 360), panelOpen: false });
+  });
+
+  it('replays the open interaction state with geometry after shell load or resize', () => {
+    ctx.layout.reveal();
+    ctx.layout.layoutActiveTab();
+    assert.equal(ctx.shell.sentOn('shell-layout').at(-1).panelOpen, true);
+  });
+
+  it('closing disables interaction while the panel is still animating onscreen', () => {
+    ctx.layout.reveal();
+    ctx.layout.toggle();
+    const snapshot = ctx.shell.sentOn('shell-layout').at(-1);
+    assert.equal(snapshot.panelOpen, false);
+    assert.ok(snapshot.progress > 0);
   });
 
   it('leaves the page alone outside browsing mode', () => {

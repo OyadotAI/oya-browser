@@ -1,5 +1,5 @@
 /**
- * Unit tests for CDP keyboard input: key definitions, key events, typing with
+ * Unit tests for native keyboard input: key definitions, key events, typing with
  * Shift, and clearing a field with the platform's select-all.
  */
 import { describe, it, afterEach, mock } from 'node:test';
@@ -13,9 +13,9 @@ const keyboard = (platform: NodeJS.Platform = 'darwin') => new Keyboard(platform
 
 /** The Input.dispatchKeyEvent params sent, in order. */
 const keyEvents = (view: any) =>
-  view.webContents.debugger.sent
-    .filter((call: any) => call.method === 'Input.dispatchKeyEvent')
-    .map((call: any) => call.params);
+  view.webContents.calls
+    .filter((c: any) => c[0] === 'input' && ['keyDown', 'keyUp'].includes(c[1].type))
+    .map((c: any) => c[1]);
 
 describe('keyDef', () => {
   it('named keys come from the table, as copies', () => {
@@ -42,7 +42,7 @@ describe('keyDef', () => {
   });
 });
 
-describe('CDP keyboard', () => {
+describe('native keyboard', () => {
   afterEach(() => mock.restoreAll());
 
   it('a press is a down then an up, held for a moment', async () => {
@@ -51,12 +51,12 @@ describe('CDP keyboard', () => {
     const view = pageView();
     await keyboard().press(view, 'Tab', Modifier.CTRL);
     assert.deepEqual(
-      keyEvents(view).map((e: any) => [e.type, e.key, e.modifiers]),
+      keyEvents(view).map((e: any) => [e.type, e.keyCode, e.modifiers]),
       // keyDown, not rawKeyDown: a raw down never became a DOM keydown through
       // Electron's debugger, so no key with no text of its own reached the page.
       [
-        ['keyDown', 'Tab', Modifier.CTRL],
-        ['keyUp', 'Tab', Modifier.CTRL],
+        ['keyDown', 'Tab', ['control']],
+        ['keyUp', 'Tab', ['control']],
       ],
     );
     assert.deepEqual(delays, [20]);
@@ -68,8 +68,8 @@ describe('CDP keyboard', () => {
     await keyboard().press(view, 'x');
     const [down] = keyEvents(view);
     assert.equal(down.type, 'keyDown');
-    assert.equal(down.text, 'x');
-    assert.equal(down.unmodifiedText, 'x');
+    assert.equal(down.keyCode, 'x');
+    assert.deepEqual(view.webContents.calls[1], ['input', { type: 'char', keyCode: 'x', modifiers: [] }]);
   });
 
   it('typing sends each character with Shift where needed', async () => {
@@ -79,29 +79,25 @@ describe('CDP keyboard', () => {
     await keyboard().type(view, 'aB');
     const downs = keyEvents(view).filter((e: any) => e.type === 'keyDown');
     assert.deepEqual(
-      downs.map((e: any) => [e.key, e.modifiers]),
+      downs.map((e: any) => [e.keyCode, e.modifiers]),
       [
-        ['a', 0],
-        ['B', Modifier.SHIFT],
+        ['a', []],
+        ['B', ['shift']],
       ],
     );
   });
 
-  for (const [platform, modifier] of [
-    ['darwin', Modifier.META],
-    ['win32', Modifier.CTRL],
-  ] as const) {
+  for (const platform of ['darwin', 'win32'] as const) {
     it(`clearing selects all with ${platform}'s modifier, then deletes`, async () => {
       instantTimers();
       const view = pageView();
       await keyboard(platform).clear(view);
+      assert.deepEqual(view.webContents.calls[0], ['selectAll']);
       assert.deepEqual(
-        keyEvents(view).map((e: any) => [e.type, e.key, e.modifiers]),
+        keyEvents(view).map((e: any) => [e.type, e.keyCode, e.modifiers]),
         [
-          ['keyDown', 'a', modifier],
-          ['keyUp', 'a', modifier],
-          ['keyDown', 'Backspace', 0],
-          ['keyUp', 'Backspace', 0],
+          ['keyDown', 'Backspace', []],
+          ['keyUp', 'Backspace', []],
         ],
       );
     });

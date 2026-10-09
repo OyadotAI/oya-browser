@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- Local-only drag surface. No preload, page content scripts or network resources. -->
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src data:" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <article>
+      <header><span class="mark">↗</span><strong id="title">Moving tab</strong></header>
+      <div class="thumbnail">
+        <img id="thumbnail" alt="" />
+        <div class="fallback">Your page stays open</div>
+      </div>
+      <footer><span>Move to a window or release</span><kbd>esc</kbd></footer>
+    </article>
+  </body>
+</html>

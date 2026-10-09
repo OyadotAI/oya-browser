@@ -1,0 +1,233 @@
+--- /dev/null
++++ b/shell/browser/net/oya_body_tee.h
+@@ -0,0 +1,17 @@
++/** Bounded native response copying without refetching, page instrumentation, or debugger access. */
++#ifndef ELECTRON_SHELL_BROWSER_NET_OYA_BODY_TEE_H_
++#define ELECTRON_SHELL_BROWSER_NET_OYA_BODY_TEE_H_
++#include <memory>
++#include <string>
++#include "base/functional/callback.h"
++#include "mojo/public/cpp/system/data_pipe.h"
++namespace electron {
++/** Shared quota survives session disposal until its native pipes finish. */
++struct OyaBodyQuota { size_t active = 0; };
++/** Transfer the original pipe unchanged when a bounded tee cannot be allocated. */
++mojo::ScopedDataPipeConsumerHandle CaptureOyaBody(
++    mojo::ScopedDataPipeConsumerHandle body,
++    std::shared_ptr<OyaBodyQuota> quota,
++    base::OnceCallback<void(std::string, std::string)> done);
++}
++#endif
+--- /dev/null
++++ b/shell/browser/net/oya_body_tee.cc
+@@ -0,0 +1,93 @@
++/** Native bounded tee preserves streaming backpressure; capture overflow never truncates the page's response. */
++#include "shell/browser/net/oya_body_tee.h"
++#include <array>
++#include "base/functional/bind.h"
++#include "base/location.h"
++#include "mojo/public/cpp/system/simple_watcher.h"
++namespace electron {
++namespace {
++constexpr size_t kChunk = 65536;
++constexpr size_t kCapture = 524288;
++constexpr size_t kConcurrent = 8;
++/** Self-owned until EOF or either pipe closes; no renderer/browser wrapper pointer is retained. */
++class BodyTee {
++ public:
++  BodyTee(mojo::ScopedDataPipeConsumerHandle source,
++          mojo::ScopedDataPipeProducerHandle sink,
++          std::shared_ptr<OyaBodyQuota> quota,
++          base::OnceCallback<void(std::string, std::string)> done)
++      : source_(std::move(source)), sink_(std::move(sink)), quota_(std::move(quota)), done_(std::move(done)),
++        readable_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL),
++        writable_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::MANUAL),
++        closed_(FROM_HERE, mojo::SimpleWatcher::ArmingPolicy::AUTOMATIC) {
++    ++quota_->active;
++    readable_.Watch(source_.get(), MOJO_HANDLE_SIGNAL_READABLE,
++        base::BindRepeating(&BodyTee::Read, base::Unretained(this)));
++    writable_.Watch(sink_.get(), MOJO_HANDLE_SIGNAL_WRITABLE,
++        base::BindRepeating(&BodyTee::Write, base::Unretained(this)));
++    closed_.Watch(sink_.get(), MOJO_HANDLE_SIGNAL_PEER_CLOSED,
++        base::BindRepeating(&BodyTee::Closed, base::Unretained(this)));
++    readable_.ArmOrNotify();
++  }
++ private:
++  /** One chunk per notification bounds work and lets the normal browser event loop run. */
++  void Read(MojoResult signal) {
++    size_t count = 0;
++    const auto result = source_->ReadData(MOJO_READ_DATA_FLAG_NONE, base::span(buffer_), count);
++    if (result == MOJO_RESULT_SHOULD_WAIT) return readable_.ArmOrNotify();
++    if (result == MOJO_RESULT_FAILED_PRECONDITION) return Finish(overflow_ ? "Native response body exceeds capture limit" : "");
++    if (result != MOJO_RESULT_OK) return Finish("Native response pipe failed");
++    if (!overflow_ && bytes_.size() + count <= kCapture)
++      bytes_.append(reinterpret_cast<const char*>(buffer_.data()), count);
++    else { overflow_ = true; bytes_.clear(); }
++    offset_ = 0; size_ = count;
++    Write(MOJO_RESULT_OK);
++  }
++  /** A full downstream pipe stops upstream reads instead of accumulating unbounded chunks. */
++  void Write(MojoResult signal) {
++    size_t written = 0;
++    const auto data = base::span(buffer_).subspan(offset_, size_ - offset_);
++    const auto result = sink_->WriteData(data, MOJO_WRITE_DATA_FLAG_NONE, written);
++    if (result == MOJO_RESULT_SHOULD_WAIT) return writable_.ArmOrNotify();
++    if (result != MOJO_RESULT_OK) return Finish("Native response consumer closed");
++    offset_ += written;
++    if (offset_ < size_) writable_.ArmOrNotify();
++    else readable_.ArmOrNotify();
++  }
++  /** A canceled renderer cannot strand a tee waiting forever for its network peer. */
++  void Closed(MojoResult result) { Finish("Native response consumer closed"); }
++  /** Cancel callbacks before closing handles or invoking application code. */
++  void Finish(const std::string& error) {
++    readable_.Cancel(); writable_.Cancel(); closed_.Cancel();
++    source_.reset(); sink_.reset();
++    --quota_->active;
++    std::move(done_).Run(error.empty() ? std::move(bytes_) : std::string(), error);
++    delete this;
++  }
++  mojo::ScopedDataPipeConsumerHandle source_;
++  mojo::ScopedDataPipeProducerHandle sink_;
++  std::shared_ptr<OyaBodyQuota> quota_;
++  base::OnceCallback<void(std::string, std::string)> done_;
++  mojo::SimpleWatcher readable_, writable_, closed_;
++  std::array<uint8_t, kChunk> buffer_;
++  size_t size_ = 0, offset_ = 0;
++  bool overflow_ = false;
++  std::string bytes_;
++};
++}
++mojo::ScopedDataPipeConsumerHandle CaptureOyaBody(
++    mojo::ScopedDataPipeConsumerHandle body, std::shared_ptr<OyaBodyQuota> quota,
++    base::OnceCallback<void(std::string, std::string)> done) {
++  if (!body.is_valid()) { std::move(done).Run("", ""); return body; }
++  if (quota->active >= kConcurrent) {
++    std::move(done).Run("", "Native response capture concurrency limit exceeded"); return body;
++  }
++  mojo::ScopedDataPipeProducerHandle producer;
++  mojo::ScopedDataPipeConsumerHandle consumer;
++  if (mojo::CreateDataPipe(nullptr, producer, consumer) != MOJO_RESULT_OK) {
++    std::move(done).Run("", "Native response capture pipe unavailable"); return body;
++  }
++  new BodyTee(std::move(body), std::move(producer), std::move(quota), std::move(done));
++  return consumer;
++}
++}
+--- a/filenames.gni
++++ b/filenames.gni
+@@ -471,6 +471,8 @@
+     "shell/browser/net/network_context_service.h",
+     "shell/browser/net/network_context_service_factory.cc",
+     "shell/browser/net/network_context_service_factory.h",
++    "shell/browser/net/oya_body_tee.cc",
++    "shell/browser/net/oya_body_tee.h",
+     "shell/browser/net/node_stream_loader.cc",
+     "shell/browser/net/node_stream_loader.h",
+     "shell/browser/net/proxying_url_loader_factory.cc",
+--- a/shell/browser/api/electron_api_web_request.h
++++ b/shell/browser/api/electron_api_web_request.h
+@@ -6,6 +6,7 @@
+ #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_WEB_REQUEST_H_
+ 
+ #include <map>
++#include "shell/browser/net/oya_body_tee.h"
+ #include <set>
+ #include <string>
+ 
+@@ -102,6 +103,8 @@
+   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
+       v8::Isolate* isolate) override;
+ 
++  /** Native copy of the original response pipe; only explicit private-session capture opts in. */
++  mojo::ScopedDataPipeConsumerHandle CaptureBody(extensions::WebRequestInfo* info, mojo::ScopedDataPipeConsumerHandle body);
+   bool HasListener() const;
+   int OnBeforeRequest(extensions::WebRequestInfo* info,
+                       const network::ResourceRequest& request,
+@@ -282,6 +285,11 @@
+     ~ResponseListenerInfo();
+   };
+ 
++  void SetOyaBodyListener(gin::Arguments* args);
++  void OyaBodyReady(uint64_t epoch, uint64_t request, std::string body, std::string error);
++  SimpleListener oya_body_listener_;
++  uint64_t oya_body_epoch_ = 0;
++  std::shared_ptr<electron::OyaBodyQuota> oya_body_quota_ = std::make_shared<electron::OyaBodyQuota>();
+   std::map<SimpleEvent, SimpleListenerInfo> simple_listeners_;
+   std::map<ResponseEvent, ResponseListenerInfo> response_listeners_;
+   std::map<uint64_t, BlockedRequest> blocked_requests_;
+--- a/shell/browser/api/electron_api_web_request.cc
++++ b/shell/browser/api/electron_api_web_request.cc
+@@ -5,6 +5,8 @@
+ #include "shell/browser/api/electron_api_web_request.h"
+ 
+ #include <memory>
++#include "base/base64.h"
++#include "base/task/bind_post_task.h"
+ #include <optional>
+ #include <string>
+ #include <string_view>
+@@ -148,6 +150,7 @@
+ void ToDictionary(gin_helper::Dictionary* details,
+                   const network::ResourceRequest& request) {
+   details->Set("referrer", request.referrer);
++  details->Set("requestHeaders", request.headers);
+   if (request.request_body)
+     details->Set("uploadData", *request.request_body);
+ }
+@@ -351,6 +354,7 @@
+ gin::ObjectTemplateBuilder WebRequest::GetObjectTemplateBuilder(
+     v8::Isolate* isolate) {
+   return gin::Wrappable<WebRequest>::GetObjectTemplateBuilder(isolate)
++      .SetMethod("_setOyaBodyListener", &WebRequest::SetOyaBodyListener)
+       .SetMethod(
+           "onBeforeRequest",
+           &WebRequest::SetResponseListener<ResponseEvent::kOnBeforeRequest>)
+@@ -373,6 +377,37 @@
+                  &WebRequest::SetSimpleListener<SimpleEvent::kOnCompleted>);
+ }
+ 
++/** A separate native callback cannot overwrite the session's ordinary request observers. */
++void WebRequest::SetOyaBodyListener(gin::Arguments* args) {
++  ++oya_body_epoch_;
++  v8::Local<v8::Value> value;
++  if (!args->GetNext(&value)) return args->ThrowTypeError("Native body listener required");
++  if (value->IsNull()) { oya_body_listener_.Reset(); return; }
++  SimpleListener listener;
++  if (!gin::ConvertFromV8(args->isolate(), value, &listener)) return args->ThrowTypeError("Native body listener must be a function or null");
++  oya_body_listener_ = std::move(listener);
++}
++/** Per-request callbacks carry no page state and cannot deliver into a later listener epoch. */
++mojo::ScopedDataPipeConsumerHandle WebRequest::CaptureBody(extensions::WebRequestInfo* info, mojo::ScopedDataPipeConsumerHandle body) {
++  if (!oya_body_listener_) return body;
++  auto* isolate = JavascriptEnvironment::GetIsolate();
++  v8::HandleScope handles(isolate);
++  auto& allocation = isolate->GetCppHeap()->GetAllocationHandle();
++  return electron::CaptureOyaBody(std::move(body), oya_body_quota_, base::BindPostTaskToCurrentDefault(base::BindOnce(
++      &WebRequest::OyaBodyReady, gin::WrapPersistent(weak_factory_.GetWeakCell(allocation)), oya_body_epoch_, info->id)));
++}
++/** Body bytes are opaque base64; the external adapter owns target authorization and bounded retention. */
++void WebRequest::OyaBodyReady(uint64_t epoch, uint64_t request, std::string body, std::string error) {
++  if (!oya_body_listener_ || epoch != oya_body_epoch_) return;
++  auto* isolate = JavascriptEnvironment::GetIsolate();
++  v8::HandleScope handles(isolate);
++  gin_helper::Dictionary details(isolate, v8::Object::New(isolate));
++  details.Set("id", request);
++  details.Set("body", base::Base64Encode(body));
++  details.Set("error", error);
++  oya_body_listener_.Run(gin::ConvertToV8(isolate, details));
++}
++
+ const gin::WrapperInfo* WebRequest::wrapper_info() const {
+   return &kWrapperInfo;
+ }
+--- a/shell/browser/net/proxying_url_loader_factory.cc
++++ b/shell/browser/net/proxying_url_loader_factory.cc
+@@ -709,6 +709,7 @@
+   proxied_client_receiver_.Resume();
+ 
+   factory_->web_request_->OnResponseStarted(&info_.value(), request_);
++  current_body_ = factory_->web_request_->CaptureBody(&info_.value(), std::move(current_body_));
+   target_client_->OnReceiveResponse(current_response_.Clone(),
+                                     std::move(current_body_),
+                                     std::move(current_cached_metadata_));

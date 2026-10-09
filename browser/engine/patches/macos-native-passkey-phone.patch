@@ -1,0 +1,150 @@
+diff --git a/device/fido/mac/icloud_keychain.h b/device/fido/mac/icloud_keychain.h
+index d315a7c702..2cca79eddb 100644
+--- a/device/fido/mac/icloud_keychain.h
++++ b/device/fido/mac/icloud_keychain.h
+@@ -17,9 +17,14 @@ static_assert(BUILDFLAG(IS_MAC));
+ namespace device {
+ 
+ class FidoDiscoveryBase;
++struct CtapGetAssertionRequest;
+ 
+ namespace fido::icloud_keychain {
+ 
++// Oya's opt-in native sheet may offer nearby phones only when the RP permits it.
++COMPONENT_EXPORT(DEVICE_FIDO)
++bool ShouldOfferHybrid(const CtapGetAssertionRequest& request);
++
+ // IsSupported returns true if iCloud Keychain can be used. This is constant for
+ // the lifetime of the process.
+ COMPONENT_EXPORT(DEVICE_FIDO) bool IsSupported();
+diff --git a/device/fido/mac/icloud_keychain.mm b/device/fido/mac/icloud_keychain.mm
+index 99d1f70105..f29a59ef6b 100644
+--- a/device/fido/mac/icloud_keychain.mm
++++ b/device/fido/mac/icloud_keychain.mm
+@@ -12,6 +12,7 @@
+ #include <utility>
+ 
+ #include "base/apple/foundation_util.h"
++#include "base/command_line.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback.h"
+ #include "base/memory/scoped_refptr.h"
+@@ -615,6 +616,17 @@ void AddAuthenticator() {
+ 
+ }  // namespace
+ 
++// Keep stock Chromium behavior unless Oya explicitly enables its native sheet.
++bool ShouldOfferHybrid(const CtapGetAssertionRequest& request) {
++  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("oya-native-passkeys"))
++    return false;
++  return request.allow_list.empty() ||
++         std::ranges::any_of(request.allow_list, [](const auto& credential) {
++           return credential.transports.empty() ||
++                  credential.transports.contains(FidoTransportProtocol::kHybrid);
++         });
++}
++
+ bool IsSupported() {
+   // Here, and in `NewDiscovery`, macOS 13.5 is required. But the rest of the
+   // version tests in this code are only for 13.3. That's because the
+diff --git a/device/fido/mac/icloud_keychain_sys.mm b/device/fido/mac/icloud_keychain_sys.mm
+index 28aac59e09..4261104dbe 100644
+--- a/device/fido/mac/icloud_keychain_sys.mm
++++ b/device/fido/mac/icloud_keychain_sys.mm
+@@ -13,6 +13,7 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "components/device_event_log/device_event_log.h"
+ #include "device/fido/large_blob.h"
++#include "device/fido/mac/icloud_keychain.h"
+ #include "device/fido/mac/icloud_keychain_internals.h"
+ #include "device/fido/public/features.h"
+ 
+@@ -399,7 +400,7 @@ void GetAssertion(
+                         alloc] initWithCredentialID:ToNSData(cred.id)]];
+     }
+     get_request.allowedCredentials = allowedCredentials;
+-    [get_request setShouldShowHybridTransport:false];
++    [get_request setShouldShowHybridTransport:ShouldOfferHybrid(request)];
+     get_request.userVerificationPreference = Convert(request.user_verification);
+     if (@available(macOS 15.0, *)) {
+       if (!request.prf_inputs.empty()) {
+diff --git a/device/fido/mac/icloud_keychain_unittest.mm b/device/fido/mac/icloud_keychain_unittest.mm
+index 12fb0ef7d3..46480084dd 100644
+--- a/device/fido/mac/icloud_keychain_unittest.mm
++++ b/device/fido/mac/icloud_keychain_unittest.mm
+@@ -23,9 +23,11 @@
+ #include "base/test/bind.h"
+ #include "base/test/metrics/histogram_tester.h"
+ #include "base/test/task_environment.h"
++#include "base/test/scoped_command_line.h"
+ #include "base/test/test_future.h"
+ #include "device/fido/authenticator_get_assertion_response.h"
+ #include "device/fido/authenticator_make_credential_response.h"
++#include "device/fido/ctap_get_assertion_request.h"
+ #include "device/fido/ctap_make_credential_request.h"
+ #include "device/fido/fido_authenticator.h"
+ #include "device/fido/fido_discovery_base.h"
+@@ -144,6 +146,63 @@
+     0x69, 0x71, 0xB3, 0x4E, 0xD3, 0x27, 0xFE, 0x7A, 0x4C,
+ };
+ 
++// Phone availability is opt-in, independent of real credentials or OS dialogs.
++TEST(OyaNativePasskeyPhone, DisabledWithoutOptIn) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->RemoveSwitch("oya-native-passkeys");
++  EXPECT_FALSE(ShouldOfferHybrid(CtapGetAssertionRequest("example.com", "{}")));
++}
++
++// Discoverable credentials can live on a nearby phone.
++TEST(OyaNativePasskeyPhone, DiscoverableRequestAllowsPhone) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->AppendSwitch("oya-native-passkeys");
++  EXPECT_TRUE(ShouldOfferHybrid(CtapGetAssertionRequest("example.com", "{}")));
++}
++
++// Missing transport hints must not hide a valid phone credential.
++TEST(OyaNativePasskeyPhone, UnspecifiedTransportAllowsPhone) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->AppendSwitch("oya-native-passkeys");
++  CtapGetAssertionRequest request("example.com", "{}");
++  request.allow_list.emplace_back(CredentialType::kPublicKey,
++                                  std::vector(std::begin(kCredentialID), std::end(kCredentialID)));
++  EXPECT_TRUE(ShouldOfferHybrid(request));
++}
++
++// An explicit hybrid hint is eligible for the native phone option.
++TEST(OyaNativePasskeyPhone, HybridTransportAllowsPhone) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->AppendSwitch("oya-native-passkeys");
++  CtapGetAssertionRequest request("example.com", "{}");
++  request.allow_list.emplace_back(CredentialType::kPublicKey,
++      std::vector(std::begin(kCredentialID), std::end(kCredentialID)),
++      base::flat_set<FidoTransportProtocol>{FidoTransportProtocol::kHybrid});
++  EXPECT_TRUE(ShouldOfferHybrid(request));
++}
++
++// A request constrained to this device must not offer cross-device sign-in.
++TEST(OyaNativePasskeyPhone, InternalOnlyDoesNotOfferPhone) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->AppendSwitch("oya-native-passkeys");
++  CtapGetAssertionRequest request("example.com", "{}");
++  request.allow_list.emplace_back(CredentialType::kPublicKey,
++      std::vector(std::begin(kCredentialID), std::end(kCredentialID)),
++      base::flat_set<FidoTransportProtocol>{FidoTransportProtocol::kInternal});
++  EXPECT_FALSE(ShouldOfferHybrid(request));
++}
++
++// A USB-only credential must not be routed to a phone.
++TEST(OyaNativePasskeyPhone, UsbOnlyDoesNotOfferPhone) {
++  base::test::ScopedCommandLine command_line;
++  command_line.GetProcessCommandLine()->AppendSwitch("oya-native-passkeys");
++  CtapGetAssertionRequest request("example.com", "{}");
++  request.allow_list.emplace_back(CredentialType::kPublicKey,
++      std::vector(std::begin(kCredentialID), std::end(kCredentialID)),
++      base::flat_set<FidoTransportProtocol>{FidoTransportProtocol::kUsbHumanInterfaceDevice});
++  EXPECT_FALSE(ShouldOfferHybrid(request));
++}
++
+ class iCloudKeychainTest : public testing::Test,
+                            public FidoDiscoveryBase::Observer {
+  public:

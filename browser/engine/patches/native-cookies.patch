@@ -1,0 +1,14 @@
+--- a/shell/browser/api/electron_api_cookies.cc
++++ b/shell/browser/api/electron_api_cookies.cc
+@@ -71,6 +71,11 @@
+     if (val.IsPersistent())
+       dict.Set("expirationDate", val.ExpiryDate().InSecondsFSinceUnixEpoch());
+     dict.Set("sameSite", val.SameSite());
++    // Native metadata, not inferred protocol defaults.
++    dict.Set("_oyaPriority", static_cast<int>(val.Priority()));
++    dict.Set("_oyaSourceScheme", static_cast<int>(val.SourceScheme()));
++    dict.Set("_oyaSourcePort", val.SourcePort());
++    dict.Set("_oyaPartitioned", val.IsPartitioned());
+     return ConvertToV8(isolate, dict).As<v8::Object>();
+   }
+ };

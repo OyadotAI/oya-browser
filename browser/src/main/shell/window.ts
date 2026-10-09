@@ -4,6 +4,8 @@
  * the shell goes through send().
  */
 import path from 'node:path';
+import type { Tab } from '../tabs/types.ts';
+import { waitForChrome } from '../windows/index.ts';
 import type { BrowserWindow, BrowserWindowConstructorOptions, LoadFileOptions, WebPreferences } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { redact } from '../../workflow/index.ts';
@@ -12,11 +14,19 @@ import { WINDOW_SIZE, TRAFFIC_LIGHTS, SHELL_BACKGROUND, PANEL_WIDTH, DEV_LOG_MAX
 import { holdStill, inContainer, stillWhileAway } from './hold-still.ts';
 
 /** The services the shell window uses. */
-type Deps = Pick<AppServices, 'electron' | 'appDir' | 'config' | 'layout' | 'shortcuts' | 'shield' | 'tabs'>;
+type Deps = Pick<
+  AppServices,
+  'electron' | 'appDir' | 'config' | 'layout' | 'shortcuts' | 'shield' | 'tabs' | 'windows'
+>;
 
 /** The shell page's preload bridge (built to out/preload/), isolated from the page's own scripts. */
 function shellWebPreferences(appDir: string): WebPreferences {
-  return { preload: path.join(appDir, 'out', 'preload', 'index.js'), contextIsolation: true, nodeIntegration: false };
+  return {
+    preload: path.join(appDir, 'out', 'preload', 'index.js'),
+    contextIsolation: true,
+    nodeIntegration: false,
+    backgroundThrottling: false,
+  };
 }
 
 /** macOS gets an inset title bar with the traffic lights drawn over the toolbar. */
@@ -36,6 +46,14 @@ export class ShellWindow {
   window: BrowserWindow | null = null;
   /** False on the setup screen; true once pages are shown. */
   browsingMode = false;
+  /** Metadata painted before a transfer; the live page still belongs to its source. */
+  stagedTab?: Tab;
+  /** Settles when the trusted shell document is loaded. */
+  private loaded: Promise<unknown> = Promise.resolve();
+  /** Wait for this window's real tab and toolbar, not an arbitrary animation delay. */
+  painted(id: number): Promise<void> {
+    return waitForChrome(this.window!, this.loaded, id);
+  }
   /** The main-process services. */
   private readonly deps: Deps;
 
@@ -74,12 +92,20 @@ export class ShellWindow {
     void holdStill(win, inContainer()); // before the page loads, so its loops never start
     if (!inContainer()) stillWhileAway(win);
     const page = path.join(this.deps.appDir, 'out', 'renderer', 'index.html');
-    win.loadFile(page, this.firstPaint()).then(() => this.deps.shield.prepare());
+    this.loaded = win
+      .loadFile(page, this.firstPaint())
+      .then(() => this.alive() && this.deps.shield.prepare())
+      .catch((error: Error) => this.loadFailed(error));
+  }
+
+  /** Closing a just-opened shell may abort its load; real startup failures remain visible in logs. */
+  private loadFailed(error: Error): void {
+    if (this.alive()) console.error('[oya] Shell could not load:', error.message);
   }
 
   /** The shell page's address options: its theme rides in the query so the very first paint is already in it (src/renderer/public/first-paint.js). */
   private firstPaint(): LoadFileOptions {
-    return { query: { theme: this.dark() ? 'dark' : 'light' } };
+    return { query: { theme: this.dark() ? 'dark' : 'light', still: String(inContainer()) } };
   }
 
   /** Whether the shell is dark: chosen so, or following a dark system. */
@@ -89,20 +115,21 @@ export class ShellWindow {
   }
 
   /** Opens the window and wires what it listens to. */
-  create(): void {
+  create(hidden = false): void {
     this.deps.layout.width = Number(this.deps.config.values.ui?.panelWidth) || PANEL_WIDTH;
-    const win = (this.window = new this.deps.electron.BrowserWindow(this.options()));
+    const win = (this.window = new this.deps.electron.BrowserWindow({ ...this.options(), show: !hidden }));
+    this.deps.windows?.watch(this.deps as AppServices);
     this.loadShellPage(win);
     this.deps.shortcuts.install(win.webContents);
     this.lockToShellPage(win);
     this.followTheme();
     this.fitContainer(win);
-    win.on('resize', () => this.deps.layout.layoutActiveTab());
   }
 
   /** In a container the window fills the virtual screen. */
   private fitContainer(win: BrowserWindow): void {
     if (inContainer()) win.maximize();
+    win.on('resize', () => this.deps.layout.layoutActiveTab());
   }
 
   /** The window's construction options. */
@@ -137,10 +164,12 @@ export class ShellWindow {
   /** Repaints the window and tells the page when the system theme changes. */
   private followTheme(): void {
     const { nativeTheme } = this.deps.electron;
-    nativeTheme.on('updated', () => {
+    const update = (): void => {
       if (!this.alive()) return;
       this.window.setBackgroundColor(this.background());
       this.send('shell-appearance', nativeTheme.shouldUseDarkColors);
-    });
+    };
+    nativeTheme.on('updated', update);
+    this.window?.once('closed', () => nativeTheme.removeListener('updated', update));
   }
 }

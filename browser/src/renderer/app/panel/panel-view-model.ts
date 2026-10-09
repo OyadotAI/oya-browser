@@ -67,7 +67,7 @@ export class PanelViewModel extends ViewModel<PanelState> {
     this.bridge = bridge;
     this.frames = frames;
     this.own(bridge.onDevPanelState((open) => this.set({ open })));
-    this.own(bridge.onShellLayout((layout) => this.set({ layout })));
+    this.own(bridge.onShellLayout((layout) => this.set({ layout, open: layout.panelOpen ?? this.state.open })));
   }
 
   /** Shows `pane`; an Inspect pane is remembered for the Inspect tab. */

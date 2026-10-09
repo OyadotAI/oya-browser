@@ -3,8 +3,9 @@
  * moves, double clicks, drags, scrolls and typing without a target. Command
  * map: action → handler(driver, id, params); each answers through sendResult.
  */
-import { cdp, cdpEval, type PageView } from '../cdp/cdp.ts';
-import type { Mouse, Point } from '../input/mouse.ts';
+import { nativePointer, nativeDrag } from '../input/index.ts';
+import type { TabView } from '../tabs/types.ts';
+import type { Mouse } from '../input/mouse.ts';
 import { sleep, jitter } from '../input/timing.ts';
 import { VIEWPORT_JS, scrollResultJs } from './scripts.ts';
 import { renderedAnalysis } from './page-format.ts';
@@ -12,6 +13,9 @@ import * as c from './constants.ts';
 import type { PageDriver } from './driver.ts';
 import type { PageHandler } from './page-commands.ts';
 import type { CommandId, CommandParams, Viewport } from './types.ts';
+
+/** Existing native page surface; the command boundary retains authorization. */
+type PageView = TabView;
 
 /** A scroll from live control, which knows where the pointer is. */
 interface LiveScroll extends CommandParams {
@@ -36,16 +40,12 @@ function noTarget(driver: PageDriver, id: CommandId): null {
 }
 
 /** Presses the left button at (x, y) as click number `clickCount`. */
-const pressLeft = (view: PageView, x: number, y: number, clickCount: number): Promise<unknown> =>
-  cdp(view, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount });
+const pressLeft = (view: PageView, x: number, y: number, clickCount: number): void =>
+  nativePointer(view, { type: 'mouseDown', x, y, button: 'left', clickCount });
 
 /** Releases the left button at (x, y) as click number `clickCount`. */
-const releaseLeft = (view: PageView, x: number, y: number, clickCount: number): Promise<unknown> =>
-  cdp(view, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount });
-
-/** Presses and holds the left button at `point` to start a drag. */
-const holdLeft = (view: PageView, point: Point): Promise<unknown> =>
-  cdp(view, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', buttons: 1 });
+const releaseLeft = (view: PageView, x: number, y: number, clickCount: number): void =>
+  nativePointer(view, { type: 'mouseUp', x, y, button: 'left', clickCount });
 
 /** Whether a scroll comes from live control: a known pointer and no smoothing. */
 const isLiveScroll = (params: CommandParams | undefined): params is LiveScroll =>
@@ -54,35 +54,16 @@ const isLiveScroll = (params: CommandParams | undefined): params is LiveScroll =
 /** Loads the analyzer and reads the viewport's size. */
 async function viewportOf(driver: PageDriver, view: PageView): Promise<Viewport | null> {
   await driver.deps.injectScripts(view);
-  return cdpEval<Viewport | null>(view, VIEWPORT_JS);
+  return view.webContents.executeJavaScript(VIEWPORT_JS);
 }
 
-/** Moves to `from`, pauses, and presses the left button there. */
-async function startDrag(mouse: Mouse, view: PageView, from: Point): Promise<void> {
-  await mouse.move(view, from.x, from.y);
-  await sleep(jitter(c.BEFORE_PRESS));
-  await holdLeft(view, from);
-  await sleep(c.DRAG_PRESS_MS);
-}
-
-/** Two CDP clicks at (x, y), the second counted as a double click. */
+/** Two native clicks at (x, y), the second counted as a double click. */
 async function clickTwice(view: PageView, x: number, y: number): Promise<void> {
   await pressLeft(view, x, y, 1);
   await releaseLeft(view, x, y, 1);
   await sleep(jitter(c.DOUBLE_CLICK_GAP));
   await pressLeft(view, x, y, c.DOUBLE_CLICK);
   await releaseLeft(view, x, y, c.DOUBLE_CLICK);
-}
-
-/** Moves the held button along a straight line from `from` to `to`. */
-async function dragAlong(view: PageView, from: Point, to: Point): Promise<void> {
-  for (let i = 1; i <= c.DRAG_STEPS; i++) {
-    const t = i / c.DRAG_STEPS;
-    const x = Math.round(from.x + (to.x - from.x) * t);
-    const y = Math.round(from.y + (to.y - from.y) * t);
-    await cdp(view, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
-    await sleep(c.DRAG_STEP_MS);
-  }
 }
 
 /**
@@ -128,7 +109,7 @@ async function sendAnalysis(driver: PageDriver, id: CommandId, view: PageView, p
 
 /** The handler for each pointer and raw keyboard command. */
 export const POINTER_COMMANDS: Readonly<Record<string, PageHandler>> = {
-  /** A CDP click at page coordinates. */
+  /** A native click at page coordinates. */
   async click_coordinates(driver, id, params) {
     const view = driver.activeView();
     const x = params?.x ?? 0;
@@ -140,7 +121,7 @@ export const POINTER_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { clicked: true, x, y, url, title });
   },
 
-  /** Moves the CDP mouse to page coordinates. */
+  /** Moves the native mouse to page coordinates. */
   async mouse_move(driver, id, params) {
     const view = driver.activeView();
     const x = params?.x ?? 0;
@@ -161,7 +142,7 @@ export const POINTER_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { double_clicked: true, x: point.x, y: point.y });
   },
 
-  /** Types raw text with the CDP keyboard, whatever has focus. */
+  /** Types raw text with the keyboard, whatever has focus. */
   async keyboard_type(driver, id, params) {
     const view = driver.activeView();
     const text = params?.text || '';
@@ -170,15 +151,13 @@ export const POINTER_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { typed: true, text });
   },
 
-  /** Presses at one point, moves in a straight line, releases at another. */
+  /** Run one acknowledged native gesture without handing HTML drags to an uncontrolled OS session. */
   async drag(driver, id, params) {
     const view = driver.activeView();
     const from = { x: params?.from_x ?? 0, y: params?.from_y ?? 0 };
     const to = { x: params?.to_x ?? 0, y: params?.to_y ?? 0 };
-    await startDrag(driver.mouse, view, from);
-    await dragAlong(view, from, to);
-    await cdp(view, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: to.x, y: to.y, button: 'left' });
-    driver.deps.sendResult(id, true, { dragged: true, from, to });
+    const kind = await nativeDrag(view, from, to);
+    driver.deps.sendResult(id, true, { dragged: true, kind, from, to });
   },
 
   /** Scrolls: once at a given point for live control, otherwise smoothly, then analyses the page. */

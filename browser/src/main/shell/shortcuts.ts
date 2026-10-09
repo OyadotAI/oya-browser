@@ -1,9 +1,11 @@
 /**
  * Keyboard shortcuts that work wherever focus is: in the shell, in a tab, or
- * on the control shield. While an agent has control, keys never reach a page.
+ * on the control shield. While an agent has control, human keys cannot reach a
+ * page; browser-owned native key dispatch bypasses shortcuts, not ownership.
  */
 import type { Event as ElectronEvent, Input, WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
+import { isNativeKeyDispatch } from '../input/index.ts';
 import { LibraryMenu } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo, reopenClosed } from '../tabs/tab-order.ts';
@@ -11,7 +13,7 @@ import { resolveShortcut } from '../../shared/shortcuts.ts';
 import { LAST_TAB_DIGIT, ZOOM_STEP } from './constants.ts';
 
 /** The services the shortcuts use. */
-type Deps = Pick<AppServices, 'shell' | 'control' | 'tabs' | 'library' | 'electron' | 'persona'>;
+type Deps = Pick<AppServices, 'shell' | 'control' | 'tabs' | 'library' | 'electron' | 'persona' | 'windows'>;
 
 /** A command the main process runs itself. */
 type LocalCommand = (deps: Deps) => unknown;
@@ -54,6 +56,8 @@ function zoomPage(deps: Deps, offset: number | null): void {
 /** Commands the main process runs itself; any other goes to the shell page. */
 const LOCAL_COMMANDS: Record<string, LocalCommand> = {
   ...DIGIT_COMMANDS,
+  'new-window': (deps) => deps.control.snapshot().interactive && deps.windows?.newWindow(),
+  'detach-tab': (deps) => deps.control.snapshot().interactive && deps.windows?.detach(deps.tabs.activeTabId!),
   'zoom-in': (deps) => zoomPage(deps, ZOOM_STEP),
   'zoom-out': (deps) => zoomPage(deps, -ZOOM_STEP),
   'zoom-reset': (deps) => zoomPage(deps, null),
@@ -90,11 +94,15 @@ export class Shortcuts {
 
   /** Listens to one webContents' keys. */
   install(contents: WebContents): void {
-    contents.on('before-input-event', (event, input) => this.onInput(contents, event, input));
+    contents.on('before-input-event', (event, input) => {
+      if (!isNativeKeyDispatch(contents)) this.onInput(contents, event, input);
+    });
   }
 
   /** Blocks page input while an agent drives, then runs any shortcut. */
   private onInput(contents: WebContents, event: ElectronEvent, input: KeyInput): void {
+    const owner = this.deps.windows?.ownerOfContents(contents);
+    if (owner && owner.shortcuts !== this) return owner.shortcuts.onInput(contents, event, input);
     const shell = this.deps.shell.window;
     if (contents !== shell?.webContents && !this.deps.control.snapshot().interactive) event.preventDefault();
     const command = shortcutFor(input);

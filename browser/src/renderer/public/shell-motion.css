@@ -1,0 +1,8 @@
+/** Oya's background/container policy does not override the person's system motion preference. */
+:root[data-oya-still='true'] *,
+:root[data-oya-still='true'] *::before,
+:root[data-oya-still='true'] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}

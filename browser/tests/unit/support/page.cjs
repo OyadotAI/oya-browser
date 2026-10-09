@@ -40,6 +40,19 @@ function pageView({ evalValue = { w: 1000, h: 700 }, loading = false, load } = {
   Object.assign(wc, { calls: [], getTitle: () => 'Title', isLoading: () => loading });
   wc.loadURL = load || (async (url) => wc.calls.push(['loadURL', url]));
   wc.sendInputEvent = (event) => wc.calls.push(['input', event]);
+  wc.executeJavaScript = async (expression) => {
+    wc.calls.push(['evaluate', expression]);
+    return evalValue;
+  };
+  wc.capturePage = async () => ({
+    isEmpty: () => false,
+    toPNG: () => Buffer.from('PNG'),
+    toJPEG: (quality) => {
+      wc.calls.push(['jpeg', quality]);
+      return Buffer.from('JPEG');
+    },
+  });
+  wc.selectAll = () => wc.calls.push(['selectAll']);
   wc.insertText = async (text) => wc.calls.push(['insert', text]);
   wc.reload = () => wc.calls.push(['reload']);
   return view;
@@ -81,10 +94,10 @@ const results = (ctx) => ctx.calls.filter((c) => c[0] === 'result').map((c) => c
 
 /** The Input.dispatchMouseEvent params sent, in order. */
 const mouseEvents = (view) =>
-  view.webContents.debugger.sent.filter((c) => c.method === 'Input.dispatchMouseEvent').map((c) => c.params);
+  view.webContents.calls.filter((c) => c[0] === 'input' && c[1].type.startsWith('mouse')).map((c) => c[1]);
 
 /** The CDP key events a view was sent, in order. */
 const keyEvents = (view) =>
-  view.webContents.debugger.sent.filter((c) => c.method === 'Input.dispatchKeyEvent').map((c) => c.params);
+  view.webContents.calls.filter((c) => c[0] === 'input' && ['keyDown', 'keyUp'].includes(c[1].type)).map((c) => c[1]);
 
 module.exports = { instantTimers, fixedRandom, pageView, pageCtx, results, mouseEvents, keyEvents };

@@ -91,3 +91,20 @@ describe('configureSession', () => {
     assert.deepEqual(direct.proxy, { mode: 'direct' });
   });
 });
+
+it('native browsing keeps the engine identity and headers without weakening permission checks', async () => {
+  const ses = fakeSession();
+  const app = { userAgentFallback: ELECTRON_UA };
+  await configure(app, ses, null, { nativeBrowsing: true });
+  assert.equal(ses.ua, ELECTRON_UA);
+  assert.equal(app.userAgentFallback, ELECTRON_UA);
+  assert.equal(ses.webRequest.rewrite, undefined);
+  assert.equal(ses.permissionCheck(null, 'geolocation', 'https://example.com', {}), false);
+});
+it('native browsing refuses proxied profiles rather than exposing their native identity', async () => {
+  const ses = fakeSession();
+  await assert.rejects(
+    configure({ userAgentFallback: '' }, ses, { proxy: { host: 'proxy.example' } }, { nativeBrowsing: true }),
+  );
+  assert.equal(ses.proxy, null);
+});

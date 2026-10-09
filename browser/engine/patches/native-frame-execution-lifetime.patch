@@ -1,0 +1,151 @@
+--- a/shell/browser/api/electron_api_web_frame_main.cc
++++ b/shell/browser/api/electron_api_web_frame_main.cc
+@@ -9,6 +9,12 @@
+ #include <vector>
+ 
+ #include "base/containers/map_util.h"
++#include "base/memory/ref_counted.h"
++#include "base/timer/timer.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/weak_document_ptr.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "mojo/public/cpp/bindings/callback_helpers.h"
+ #include "base/feature_list.h"
+ #include "base/logging.h"
+ #include "base/no_destructor.h"
+@@ -56,6 +62,100 @@
+ 
+ namespace {
+ 
++// One native request owns one document, never a future document in its frame slot.
++class OyaFrameExecution : public content::WebContentsObserver,
++                          public base::RefCounted<OyaFrameExecution> {
++ public:
++  // A timeout lease keeps the request alive until a reply or explicit cancellation.
++  OyaFrameExecution(content::RenderFrameHost* frame,
++                    gin_helper::Promise<base::Value> promise)
++      : content::WebContentsObserver(content::WebContents::FromRenderFrameHost(frame)),
++        document_(frame->GetWeakDocumentPtr()), node_(frame->GetFrameTreeNodeId()),
++        frame_id_(frame->GetGlobalId()), promise_(std::move(promise)) {}
++
++  // Native execution honors page settings; no debugger or global page API is installed.
++  void Execute(const std::u16string& code, bool gesture) {
++    auto* frame = document_.AsRenderFrameHostIfValid();
++    if (!frame || !frame->IsActive()) { Cancel(kContextGone); return; }
++    deadline_.Start(FROM_HERE, kDeadline, base::BindOnce(
++        &OyaFrameExecution::Cancel, base::WrapRefCounted(this), "Native isolated execution timed out"));
++    static_cast<content::RenderFrameHostImpl*>(frame)->ExecuteJavaScriptForTests(
++        code, gesture, true, true, kAgentWorldId, mojo::WrapCallbackWithDropHandler(
++            base::BindOnce(&OyaFrameExecution::Complete, weak_factory_.GetWeakPtr()),
++            base::BindOnce(&OyaFrameExecution::Cancel, weak_factory_.GetWeakPtr(), kContextGone)));
++  }
++
++ private:
++  friend class base::RefCounted<OyaFrameExecution>;
++  ~OyaFrameExecution() override = default;
++  static constexpr int kAgentWorldId = 1004;
++  static constexpr auto kDeadline = base::Seconds(10);
++  static constexpr char kContextGone[] = "Execution context was destroyed during native evaluation";
++
++  // Ignore late replies and detach the observer before settling JavaScript callbacks.
++  bool Settle() {
++    if (settled_) return false;
++    settled_ = true;
++    deadline_.Stop();
++    weak_factory_.InvalidateWeakPtrs();
++    Observe(nullptr);
++    return true;
++  }
++  // The local lease permits stopping the timer to release its last external reference.
++  void Cancel(std::string_view message) {
++    scoped_refptr<OyaFrameExecution> keep_alive(this);
++    if (Settle()) promise_.RejectWithErrorMessage(message);
++  }
++  // A result from a replaced or cached document is never reported against its successor.
++  void Complete(blink::mojom::JavaScriptExecutionResultType type, base::Value value) {
++    scoped_refptr<OyaFrameExecution> keep_alive(this);
++    auto* frame = document_.AsRenderFrameHostIfValid();
++    if (!frame || !frame->IsActive()) { Cancel(kContextGone); return; }
++    if (!Settle()) return;
++    if (type == blink::mojom::JavaScriptExecutionResultType::kSuccess) promise_.Resolve(value);
++    else RejectValue(value);
++  }
++  // Preserve page-thrown values rather than translating application errors into retries.
++  void RejectValue(const base::Value& value) {
++    v8::Isolate* isolate = electron::JavascriptEnvironment::GetIsolate();
++    v8::HandleScope scope(isolate);
++    promise_.Reject(gin::ConvertToV8(isolate, value));
++  }
++  // Cross-document commits invalidate requests even if the old frame enters back/forward cache.
++  void DidFinishNavigation(content::NavigationHandle* navigation) override {
++    if (navigation->HasCommitted() && !navigation->IsSameDocument() &&
++        navigation->GetFrameTreeNodeId() == node_) Cancel(kContextGone);
++  }
++  // Deletion can invalidate the document weak pointer before this observer is called.
++  void RenderFrameDeleted(content::RenderFrameHost* frame) override {
++    if (frame->GetGlobalId() == frame_id_) Cancel(kContextGone);
++  }
++  // Replacement is sufficient to reject, without waiting for renderer garbage collection.
++  void RenderFrameHostChanged(content::RenderFrameHost* old_frame,
++                             content::RenderFrameHost*) override {
++    if (old_frame && old_frame->GetGlobalId() == frame_id_) Cancel(kContextGone);
++  }
++  // Process exit must settle pending promises even if the renderer cannot send a final reply.
++  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override { Cancel(kContextGone); }
++  // Destroying a tab cancels all outstanding native executions it owns.
++  void WebContentsDestroyed() override { Cancel(kContextGone); }
++
++  // Exact document identity, independent of a reusable frame-tree node.
++  content::WeakDocumentPtr document_;
++  // The node identifies a replacement navigation, including cached outgoing documents.
++  content::FrameTreeNodeId node_;
++  // The renderer identity identifies deletion notifications after weak invalidation.
++  content::GlobalRenderFrameHostId frame_id_;
++  // The sole caller completion, settled at most once.
++  gin_helper::Promise<base::Value> promise_;
++  // Bounds deliberately never-settling page promises and lost transport replies.
++  base::OneShotTimer deadline_;
++  // Prevents cancellation and late replies from settling twice.
++  bool settled_ = false;
++  // Renderer callbacks never prolong the lifetime of a cancelled operation.
++  base::WeakPtrFactory<OyaFrameExecution> weak_factory_{this};
++};
++
+ using LifecycleState = content::RenderFrameHostImpl::LifecycleStateImpl;
+ 
+ // RenderFrameCreated is called for speculative frames which may not be
+@@ -325,7 +425,6 @@
+   // This browser-process-only API deliberately exposes no debugger or protocol.
+   // The same reserved world is used by Oya's main-frame analyzer. Keeping the id
+   // fixed prevents callers from reaching the main world or Electron's preload.
+-  constexpr int kOyaAgentWorldId = 1004;
+   gin_helper::Promise<base::Value> promise(args->isolate());
+   v8::Local<v8::Promise> handle = promise.GetHandle();
+ 
+@@ -346,24 +445,8 @@
+     return handle;
+   }
+ 
+-  static_cast<content::RenderFrameHostImpl*>(render_frame_host())
+-      ->ExecuteJavaScriptForTests(
+-          code, user_gesture, true /* resolve_promises */,
+-          /*honor_js_content_settings=*/true, kOyaAgentWorldId,
+-          base::BindOnce(
+-              [](gin_helper::Promise<base::Value> promise,
+-                 blink::mojom::JavaScriptExecutionResultType type,
+-                 base::Value value) {
+-                if (type ==
+-                    blink::mojom::JavaScriptExecutionResultType::kSuccess) {
+-                  promise.Resolve(value);
+-                } else {
+-                  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
+-                  v8::HandleScope scope(isolate);
+-                  promise.Reject(gin::ConvertToV8(isolate, value));
+-                }
+-              },
+-              std::move(promise)));
++  auto execution = base::MakeRefCounted<OyaFrameExecution>(render_frame_host(), std::move(promise));
++  execution->Execute(code, user_gesture);
+ 
+   return handle;
+ }

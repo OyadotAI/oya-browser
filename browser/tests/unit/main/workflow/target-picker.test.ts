@@ -1,117 +1,125 @@
-/**
- * Unit tests for src/main/workflow/target-picker.ts: picking an element with the
- * inspect overlay, and every way a pick can end.
- */
+/** Native picker behavior with debugger access forbidden and explicit lifecycle events. */
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { pickTarget } from '../../../../src/main/workflow/target-picker.ts';
-import { FakeView, flush } from '../../support/fakes.cjs';
-
-/** A view whose page describes the picked node as `element` (or throws `exception`). */
-function viewWith(element, { exception, inspectError } = {}) {
-  return new FakeView({
-    debuggerResponses: {
-      'DOM.resolveNode': { object: { objectId: 'o1' } },
-      'Runtime.callFunctionOn': exception ? { result: {}, exceptionDetails: {} } : { result: { value: element } },
-      'Overlay.setInspectMode': (p) => (p.mode !== 'none' && inspectError ? inspectError : {}),
+/** Native surface seam records only isolated script execution. */
+function viewWith(element = { type: 'button', role: 'button', text: 'Save' }, error?: Error) {
+  const scripts: string[] = [];
+  const webContents = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false,
+    getZoomFactor: () => 1,
+    executeJavaScriptInIsolatedWorld: async (
+      _world: number,
+      entries: { /** Trusted isolated source captured by the fixture. */ code: string }[],
+    ) => {
+      const code = entries[0].code;
+      scripts.push(code);
+      if (error && code !== 'globalThis.__oyaPicker?.stop();') throw error;
+      return code.includes('?.pick(') ? element : undefined;
     },
   });
+  Object.defineProperty(webContents, 'debugger', {
+    get() {
+      assert.fail('Internal CDP is forbidden');
+    },
+  });
+  return { webContents, scripts };
 }
-
-/** Starts a pick and waits until the overlay is on; the pending pick is wrapped so awaiting this does not wait for it. */
-async function begin(view) {
-  const pick = pickTarget(view);
-  pick.catch(() => {});
-  await flush();
-  return { pick };
+/** Flush native promise continuations without a real timeout. */
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+/** Native events carry a cancelable dispatch gate before website event delivery. */
+function mouse(view, type = 'mouseUp', button = 'left', x = 20, y = 30) {
+  let prevented = false;
+  view.webContents.emit(
+    'before-mouse-event',
+    {
+      preventDefault() {
+        prevented = true;
+      },
+    },
+    { type, button, x, y },
+  );
+  return prevented;
 }
-
-describe('pickTarget', () => {
+describe('native pickTarget', () => {
   afterEach(() => mock.timers.reset());
-
-  it('attaches, turns on the overlay, and resolves to the picked element’s locators', async () => {
-    const view = viewWith({ type: 'button', role: 'button', text: 'Save' });
-    const { pick } = await begin(view);
-    const dbg = view.webContents.debugger;
-    assert.ok(dbg.attached);
-    const inspect = dbg.sent.find((c) => c.method === 'Overlay.setInspectMode').params;
-    assert.equal(inspect.mode, 'searchForNode');
-    assert.deepEqual(inspect.highlightConfig.borderColor, { r: 70, g: 180, b: 160, a: 1 });
-    dbg.event('Overlay.inspectNodeRequested', { backendNodeId: 5 });
+  it('selects without forwarding the click or attaching a debugger', async () => {
+    const view = viewWith();
+    const pick = pickTarget(view);
+    assert.equal(mouse(view, 'mouseDown'), true);
+    assert.equal(mouse(view), true);
     assert.deepEqual((await pick)[0], { kind: 'role', role: 'button', value: 'Save' });
-    assert.ok(dbg.methods().includes('Runtime.releaseObject'));
-    assert.deepEqual(dbg.sent.at(-1).params, { mode: 'none' });
-    assert.equal(dbg.listenerCount('message'), 0);
+    await flush();
+    assert.equal(view.webContents.listenerCount('before-mouse-event'), 0);
+    assert.equal(view.scripts.at(-1), 'globalThis.__oyaPicker?.stop();');
   });
-
-  it('describes the node with a function that climbs to the interactive element', async () => {
-    const view = viewWith({ type: 'button', text: 'x' });
-    const { pick } = await begin(view);
-    view.webContents.debugger.event('Overlay.inspectNodeRequested', { backendNodeId: 5 });
+  it('maps zoomed native input to CSS hit-test coordinates', async () => {
+    const view = viewWith();
+    view.webContents.getZoomFactor = () => 2;
+    const pick = pickTarget(view);
+    mouse(view, 'mouseUp', 'left', 40, 60);
     await pick;
-    const call = view.webContents.debugger.sent.find((c) => c.method === 'Runtime.callFunctionOn').params;
-    assert.match(
-      call.functionDeclaration,
-      /this\.closest\('button,a,input,textarea,select,\[role\],\[contenteditable\]'\)/,
+    assert.ok(view.scripts.includes('globalThis.__oyaPicker?.pick(20,30)'));
+  });
+  it('cancels with Escape and removes every listener', async () => {
+    const view = viewWith();
+    const pick = pickTarget(view);
+    let prevented = false;
+    view.webContents.emit(
+      'before-input-event',
+      {
+        preventDefault() {
+          prevented = true;
+        },
+      },
+      { key: 'Escape' },
     );
-    assert.equal(call.returnByValue, true);
-  });
-
-  it('ignores other debugger events', async () => {
-    const view = viewWith({ type: 'button', text: 'x' });
-    const { pick } = await begin(view);
-    view.webContents.debugger.event('Page.loadEventFired');
-    view.webContents.debugger.event('Overlay.inspectNodeRequested', { backendNodeId: 5 });
-    assert.equal((await pick).length, 1);
-  });
-
-  it('rejects when the person cancels', async () => {
-    const view = viewWith({});
-    const { pick } = await begin(view);
-    view.webContents.debugger.event('Overlay.inspectModeCanceled');
     await assert.rejects(pick, /canceled/);
+    assert.equal(prevented, true);
+    assert.equal(view.webContents.listenerCount('destroyed'), 0);
+    assert.equal(view.webContents.listenerCount('did-start-loading'), 0);
   });
-
-  it('rejects an element inside a frame', async () => {
-    const view = viewWith({ unsupported: true });
-    const { pick } = await begin(view);
-    view.webContents.debugger.event('Overlay.inspectNodeRequested', { backendNodeId: 5 });
+  it('refuses frames rather than creating an incorrect top-level locator', async () => {
+    const view = viewWith({ unsupported: true } as never);
+    const pick = pickTarget(view);
+    mouse(view);
     await assert.rejects(pick, /top-level targets/);
   });
-
-  it('rejects when the page throws while describing', async () => {
-    const view = viewWith(null, { exception: true });
-    const { pick } = await begin(view);
-    view.webContents.debugger.event('Overlay.inspectNodeRequested', { backendNodeId: 5 });
-    await assert.rejects(pick, /top-level targets/);
-  });
-
-  it('rejects an element with no stable locator', async () => {
-    const view = viewWith({ type: 'div' });
-    const { pick } = await begin(view);
-    view.webContents.debugger.event('Overlay.inspectNodeRequested', { backendNodeId: 5 });
+  it('refuses elements without stable locators', async () => {
+    const view = viewWith({ type: 'div' } as never);
+    const pick = pickTarget(view);
+    mouse(view);
     await assert.rejects(pick, /no stable target/);
   });
-
-  it('rejects when the page closes', async () => {
-    const view = viewWith({});
-    const { pick } = await begin(view);
-    view.webContents.emit('destroyed');
-    await assert.rejects(pick, /page closed/);
+  for (const event of ['destroyed', 'did-start-loading'])
+    it(`cancels on ${event}`, async () => {
+      const view = viewWith();
+      const pick = pickTarget(view);
+      view.webContents.emit(event);
+      await assert.rejects(pick, /closed|navigated/);
+    });
+  it('propagates initialization failure', async () => {
+    await assert.rejects(pickTarget(viewWith(undefined, new Error('No native world'))), /No native world/);
   });
-
-  it('rejects when the overlay cannot start', async () => {
-    const view = viewWith({}, { inspectError: new Error('no overlay') });
-    await assert.rejects(pickTarget(view), /no overlay/);
+  it('refuses overlapping picks and permits a new pick after cleanup', async () => {
+    const view = viewWith();
+    const first = pickTarget(view);
+    await assert.rejects(pickTarget(view), /already active/);
+    mouse(view);
+    await first;
+    await flush();
+    const second = pickTarget(view);
+    mouse(view);
+    await second;
   });
-
-  it('times out after a minute, settling only once', async () => {
+  it('times out and settles only once', async () => {
     mock.timers.enable({ apis: ['setTimeout'] });
-    const view = viewWith({ type: 'button', text: 'x' });
-    const { pick } = await begin(view);
+    const view = viewWith();
+    const pick = pickTarget(view);
     mock.timers.tick(60000);
-    view.webContents.debugger.event('Overlay.inspectModeCanceled');
     await assert.rejects(pick, /timed out/);
-    assert.equal(view.webContents.debugger.sent.filter((c) => c.params?.mode === 'none').length, 1);
+    await flush();
+    assert.equal(view.scripts.filter((code) => code === 'globalThis.__oyaPicker?.stop();').length, 1);
   });
 });

@@ -50,6 +50,33 @@ describe('Persona', () => {
     ctx.persona.setupBrowserSession = async () => order.push('session');
   });
 
+  it('switching persona closes each tab once when the multi-window router returns snapshots', async () => {
+    const live = ctx.tabs.list;
+    const close = ctx.tabs.closeTab;
+    Object.defineProperty(ctx.tabs, 'list', { get: () => [...live] });
+    let attempts = 0;
+    ctx.tabs.closeTab = (id, options) => {
+      assert.ok(++attempts <= 3, 'a closed tab must never be retried from a stale snapshot');
+      return close(id, options);
+    };
+    await ctx.persona.applyServerFingerprint(PROFILE, [], 9000);
+    assert.deepEqual(
+      order
+        .filter(Array.isArray)
+        .filter((item) => item[0] === 'close')
+        .map((item) => item[1]),
+      [1, 2, 3],
+    );
+    assert.equal(live.length, 0);
+    assert.deepEqual(
+      order
+        .filter(Array.isArray)
+        .filter((item) => item[0] === 'open')
+        .map((item) => item[1]),
+      ['https://a.test/', 'about:blank', 'oya:home'],
+    );
+  });
+
   it('keeps each persona in its own partition', () => {
     assert.equal(ctx.persona.partitionName(), 'persist:oya-browser');
     ctx.persona.active = PROFILE;

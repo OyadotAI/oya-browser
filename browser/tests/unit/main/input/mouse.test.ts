@@ -1,5 +1,5 @@
 /**
- * Unit tests for CDP mouse input: paths start where the pointer was left and
+ * Unit tests for native mouse input: paths start where the pointer was left and
  * end on the target, clicks press and release there, and wheel events pass
  * their deltas through.
  */
@@ -9,7 +9,7 @@ import * as c from '../../../../src/main/input/constants.ts';
 import { Mouse } from '../../../../src/main/input/mouse.ts';
 import { instantTimers, fixedRandom, pageView, mouseEvents } from '../../support/page.cjs';
 
-describe('CDP mouse', () => {
+describe('native mouse', () => {
   afterEach(() => mock.restoreAll());
 
   it('a move eases along a path that ends on the target', async () => {
@@ -18,9 +18,9 @@ describe('CDP mouse', () => {
     const view = pageView();
     await new Mouse().move(view, 300, 400);
     const moves = mouseEvents(view);
-    assert.ok(moves.every((e: any) => e.type === 'mouseMoved'));
-    assert.deepEqual(moves.at(-1), { type: 'mouseMoved', x: 300, y: 400 });
-    assert.deepEqual(moves[0], { type: 'mouseMoved', x: 0, y: 0 });
+    assert.ok(moves.every((e: any) => e.type === 'mouseMove'));
+    assert.deepEqual(moves.at(-1), { type: 'mouseMove', x: 300, y: 400 });
+    assert.deepEqual(moves[0], { type: 'mouseMove', x: 0, y: 0 });
   });
 
   it('path length grows with distance, within its bounds', async () => {
@@ -51,14 +51,14 @@ describe('CDP mouse', () => {
     const view = pageView();
     await new Mouse().click(view, 10.4, 20.6);
     const [pressed, released] = mouseEvents(view).slice(-2);
-    assert.deepEqual(pressed, { type: 'mousePressed', x: 10, y: 21, button: 'left', clickCount: 1, buttons: 1 });
-    assert.deepEqual(released, { type: 'mouseReleased', x: 10, y: 21, button: 'left', clickCount: 1 });
+    assert.deepEqual(pressed, { type: 'mouseDown', x: 10, y: 21, button: 'left', clickCount: 1 });
+    assert.deepEqual(released, { type: 'mouseUp', x: 10, y: 21, button: 'left', clickCount: 1 });
     assert.deepEqual(delays.slice(-2), [c.CLICK_PAUSE.base, c.CLICK_PAUSE.base]);
   });
 
   it('a scroll is one wheel event', async () => {
     const view = pageView();
     await new Mouse().scroll(view, 1, 2, 3, 4);
-    assert.deepEqual(mouseEvents(view), [{ type: 'mouseWheel', x: 1, y: 2, deltaX: 3, deltaY: 4 }]);
+    assert.deepEqual(mouseEvents(view), [{ type: 'mouseWheel', x: 1, y: 2, deltaX: -3, deltaY: -4 }]);
   });
 });

@@ -93,10 +93,12 @@ describe('dev commands', () => {
       { element_id: 4, text: 'x' },
       { world: { ok: true, data: { x: 1, y: 2 } } },
     );
-    const keys = view.webContents.debugger.sent.filter((call) => call.method === 'Input.dispatchKeyEvent');
+    const keys = view.webContents.calls
+      .filter((call) => call[0] === 'input' && ['keyDown', 'keyUp'].includes(call[1].type))
+      .map((call) => call[1]);
     assert.deepEqual(
-      keys.filter((k) => k.params.type !== 'keyUp').map((k) => k.params.key),
-      ['a', 'Backspace', 'x'],
+      keys.filter((k) => k.type !== 'keyUp').map((k) => k.keyCode),
+      ['Backspace', 'x'],
     );
     assert.deepEqual(answer, { ok: true, data: { typed: true } });
   });
@@ -107,7 +109,7 @@ describe('dev commands', () => {
 
   it('hover moves onto the element', async () => {
     const { answer, view } = await dev('hover', { element_id: 1 }, { world: { ok: true, data: { x: 7.4, y: 8.6 } } });
-    assert.deepEqual(mouseEvents(view).at(-1), { type: 'mouseMoved', x: 7, y: 9 });
+    assert.deepEqual(mouseEvents(view).at(-1), { type: 'mouseMove', x: 7, y: 9 });
     assert.deepEqual(answer, { ok: true, data: { hovered: true } });
   });
 
@@ -122,9 +124,9 @@ describe('dev commands', () => {
     const down = await dev('scroll-down', {});
     const up = await dev('scroll-up', {});
     assert.deepEqual(mouseEvents(down.view), [
-      { type: 'mouseWheel', x: 500, y: 350, deltaX: 0, deltaY: c.DEV_SCROLL_AMOUNT },
+      { type: 'mouseWheel', x: 500, y: 350, deltaX: 0, deltaY: -c.DEV_SCROLL_AMOUNT },
     ]);
-    assert.equal(mouseEvents(up.view)[0].deltaY, -c.DEV_SCROLL_AMOUNT);
+    assert.equal(mouseEvents(up.view)[0].deltaY, c.DEV_SCROLL_AMOUNT);
     assert.deepEqual(down.answer, { ok: true });
   });
 
@@ -135,7 +137,10 @@ describe('dev commands', () => {
   });
 
   it('screenshot answers a PNG data URL', async () => {
-    assert.deepEqual((await dev('screenshot')).answer, { ok: true, data: { screenshot: 'data:image/png;base64,PNG' } });
+    assert.deepEqual((await dev('screenshot')).answer, {
+      ok: true,
+      data: { screenshot: 'data:image/png;base64,UE5H' },
+    });
   });
 
   it('wait answers the script result', async () => {

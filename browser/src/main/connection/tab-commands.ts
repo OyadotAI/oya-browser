@@ -31,6 +31,11 @@ interface ListedTab {
   url: string;
 }
 
+/** Existing tab result fields stay stable when window ownership is added. */
+function tSummary(tab: ListedTab, active: number | null) {
+  return { id: tab.id, title: tab.title, url: tab.url, active: tab.id === active };
+}
+
 /** Loads the server's draft into the workspace as the one to play. */
 function loadWorkflowDraft(deps: CommandDeps, params: RemoteParams | undefined): void {
   const workspace = deps.workspace!; // assertCanPlay saw it
@@ -101,7 +106,10 @@ export const TAB_COMMANDS: Record<string, TabHandler> = {
   },
   list_tabs: (runner, id) => {
     const { list, activeTabId } = runner.deps.tabs;
-    const tabs = list.map((t: ListedTab) => ({ id: t.id, title: t.title, url: t.url, active: t.id === activeTabId }));
+    const tabs = list.map((t: ListedTab) => ({
+      ...tSummary(t, activeTabId),
+      window_id: runner.deps.windows?.owner(t.id)?.shell.window?.id,
+    }));
     runner.sendResult(id, true, { tabs });
   },
   read_console: (runner, id, params) => {

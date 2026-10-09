@@ -1,0 +1,20 @@
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -2314,6 +2314,9 @@
+   auto* web_frame = WebFrameMain::FromFrameTreeNodeId(frame_tree_node_id);
+   if (web_frame)
+     web_frame->Destroyed();
++  // Notify native observers after the wrapper has been revoked.
++  base::AutoReset<bool> resetter(&is_emitting_event_, true);
++  Emit("oya-frame-tree-changed");
+ }
+ 
+ void WebContents::RenderViewDeleted(content::RenderViewHost* render_view_host) {
+@@ -5395,6 +5398,7 @@
+       .SetMethod("focus", &WebContents::Focus)
+       .SetMethod("isFocused", &WebContents::IsFocused)
+       .SetMethod("insertText", &WebContents::InsertText)
++      .SetMethod("_supportsOyaFrameLifecycle", []() { return true; })
+       .SetMethod("_insertTextOya", &WebContents::InsertText)
+       .SetMethod("_dragOya", &WebContents::DragOya)
+       .SetMethod("sendInputEvent", &WebContents::SendInputEvent)

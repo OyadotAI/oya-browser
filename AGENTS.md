@@ -81,3 +81,13 @@ server, CLI and package suites.
   trailer, no "Generated with Claude Code" line, no claude.ai session link, and
   never commit as `Claude <noreply@anthropic.com>`. Commits are authored by the
   maintainer alone.
+
+## Native agent-control boundary (required)
+
+- Oya's internal browser and agent operations must use browser-owned native APIs, not CDP.
+- CDP is permitted only as an external front-door compatibility protocol for agents connecting to Oya.
+- The front door must translate supported requests into native Oya operations. It must not proxy requests to a Chromium debugging endpoint or use Electron's debugger as its backend.
+- Do not rename or wrap CDP helpers and describe them as native. Do not fall back to CDP when a native capability is unavailable; return an explicit unsupported-capability error.
+- Retain authorization, human/agent control ownership, tab/frame isolation, persona and egress protections throughout migration. Do not remove safety checks to eliminate CDP calls.
+- Test through Oya and its native APIs. Do not launch Chrome, Chromium, Playwright, or another browser as a substitute.
+- Existing internal CDP dependencies are migration debt, not an exception to this requirement. Do not claim Oya is internally CDP-free or release it on that basis until enforcement and native integration tests prove it.

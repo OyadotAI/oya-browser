@@ -1,0 +1,24 @@
+--- a/content/browser/web_contents/web_contents_view_mac.mm
++++ b/content/browser/web_contents/web_contents_view_mac.mm
+@@ -687,11 +687,19 @@
+         screen_point, dragStartViewBase, &transformed_screen_point);
+   }
+ 
++  // AppKit can report Generic/Private/Every, none of which is a valid Mojo
++  // operation. A cancelled or unsupported native drag must not disconnect the
++  // renderer by serializing an unknown enum value.
++  auto operation = static_cast<ui::mojom::DragOperation>(drag_operation);
++  if (operation != ui::mojom::DragOperation::kNone &&
++      operation != ui::mojom::DragOperation::kCopy &&
++      operation != ui::mojom::DragOperation::kLink &&
++      operation != ui::mojom::DragOperation::kMove)
++    operation = ui::mojom::DragOperation::kNone;
+   web_contents_->DragSourceEndedAt(
+       transformed_point.x(), transformed_point.y(),
+       transformed_screen_point.x(), transformed_screen_point.y(),
+-      static_cast<ui::mojom::DragOperation>(drag_operation),
+-      drag_source_start_rwh_.get());
++      operation, drag_source_start_rwh_.get());
+ 
+   drag_source_start_rwh_.reset();
+ }

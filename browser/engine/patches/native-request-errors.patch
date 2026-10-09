@@ -1,0 +1,43 @@
+--- a/shell/browser/api/electron_api_web_request.cc
++++ b/shell/browser/api/electron_api_web_request.cc
+@@ -354,6 +354,7 @@
+ gin::ObjectTemplateBuilder WebRequest::GetObjectTemplateBuilder(
+     v8::Isolate* isolate) {
+   return gin::Wrappable<WebRequest>::GetObjectTemplateBuilder(isolate)
++      .SetMethod("_supportsOyaRequestErrors", []() { return true; })
+       .SetMethod("_setOyaBodyListener", &WebRequest::SetOyaBodyListener)
+       .SetMethod(
+           "onBeforeRequest",
+@@ -465,6 +466,23 @@
+   return net::ERR_IO_PENDING;
+ }
+ 
++/** Explicit native error names select existing net errors, never numeric codes supplied by a renderer. */
++static int OyaRequestFailure(gin::Dictionary& response) {
++  static constexpr std::pair<std::string_view, int> errors[] = {
++    {"Failed", net::ERR_FAILED}, {"Aborted", net::ERR_ABORTED},
++    {"TimedOut", net::ERR_TIMED_OUT}, {"AccessDenied", net::ERR_ACCESS_DENIED},
++    {"ConnectionClosed", net::ERR_CONNECTION_CLOSED}, {"ConnectionReset", net::ERR_CONNECTION_RESET},
++    {"ConnectionRefused", net::ERR_CONNECTION_REFUSED}, {"ConnectionAborted", net::ERR_CONNECTION_ABORTED},
++    {"ConnectionFailed", net::ERR_CONNECTION_FAILED}, {"NameNotResolved", net::ERR_NAME_NOT_RESOLVED},
++    {"InternetDisconnected", net::ERR_INTERNET_DISCONNECTED}, {"AddressUnreachable", net::ERR_ADDRESS_UNREACHABLE},
++    {"BlockedByClient", net::ERR_BLOCKED_BY_CLIENT}, {"BlockedByResponse", net::ERR_BLOCKED_BY_RESPONSE},
++  };
++  std::string reason;
++  response.Get("_oyaErrorReason", &reason);
++  for (const auto& [name, code] : errors) if (name == reason) return code;
++  return net::ERR_BLOCKED_BY_CLIENT;
++}
++
+ void WebRequest::OnBeforeRequestListenerResult(uint64_t id,
+                                                v8::Local<v8::Value> response) {
+   auto nh = blocked_requests_.extract(id);
+@@ -481,7 +499,7 @@
+     bool cancel = false;
+     dict.Get("cancel", &cancel);
+     if (cancel) {
+-      result = net::ERR_BLOCKED_BY_CLIENT;
++      result = OyaRequestFailure(dict);
+     } else {
+       dict.Get("redirectURL", request.new_url.get());
+     }

@@ -24,21 +24,26 @@ export type HandlersOf<C extends CallChannel> = Pick<ShellHandlers, C>;
 type Untyped = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 
 /** The services the guard reads: Electron's ipcMain and the shell window. */
-type Deps = Pick<AppServices, 'electron' | 'shell'>;
+type Deps = Pick<AppServices, 'electron' | 'shell' | 'windows'>;
 
 /** Registers the shell's handlers on ipcMain, each behind the check that the shell page called it. */
 export class ShellIpc {
   /** The main-process services. */
   private readonly deps: Deps;
+  /** Resolves a window-scoped handler after the sender guard has succeeded. */
+  private readonly resolve?: (event: IpcMainInvokeEvent, channel: CallChannel) => Untyped;
 
   /** `deps` gives ipcMain and the shell window. */
-  constructor(deps: Deps) {
+  constructor(deps: Deps, resolve?: (event: IpcMainInvokeEvent, channel: CallChannel) => Untyped) {
     this.deps = deps;
+    this.resolve = resolve;
   }
 
   /** Throws unless the call came from the shell page's main frame. */
   requireShell(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>): void {
-    const shell = this.deps.shell.window;
+    const shell = this.deps.windows
+      ? this.deps.windows.fromContents(event.sender)?.shell.window
+      : this.deps.shell.window;
     if (event.sender !== shell?.webContents || event.senderFrame !== shell.webContents.mainFrame) {
       throw new Error('Only the Oya workspace can use this command');
     }
@@ -53,7 +58,7 @@ export class ShellIpc {
   private handle(channel: CallChannel, fn: Untyped): void {
     this.deps.electron.ipcMain.handle(channel, (event, ...args: unknown[]) => {
       this.requireShell(event);
-      return fn(event, ...args);
+      return (this.resolve?.(event, channel) ?? fn)(event, ...args);
     });
   }
 }

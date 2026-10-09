@@ -38,3 +38,6 @@ export const CLOSED_TABS_MAX = 25;
 export const FAVICON_MAX_BYTES = 262_144;
 /** Favicon addresses the strip fetches through the tab's own session. */
 export const FAVICON_URL = /^(https?|data):/i;
+
+/** A staged sign-in destination must become usable within this bounded wait. */
+export const GOOGLE_APP_HANDOFF_TIMEOUT = 30000;

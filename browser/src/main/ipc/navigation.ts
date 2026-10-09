@@ -9,7 +9,7 @@ import { TabMenu } from '../tabs/tab-menu.ts';
 /** The services navigation uses. */
 type Deps = Pick<
   AppServices,
-  'externalApps' | 'shield' | 'shell' | 'tabs' | 'recorder' | 'control' | 'electron' | 'library' | 'persona'
+  'externalApps' | 'shield' | 'shell' | 'tabs' | 'recorder' | 'control' | 'electron' | 'library' | 'persona' | 'windows'
 >;
 
 /** The channels this group answers. */
@@ -22,6 +22,10 @@ type Channel =
   | 'reload'
   | 'enter-browsing'
   | 'new-tab'
+  | 'new-window'
+  | 'detach-tab'
+  | 'begin-tab-drag'
+  | 'end-tab-drag'
   | 'close-tab'
   | 'activate-tab'
   | 'move-tab'
@@ -39,6 +43,10 @@ export class NavigationHandlers {
     reload: () => this.deps.tabs.reloadActivePage(),
     'enter-browsing': () => this.deps.tabs.enterBrowsingMode(HOME_URL),
     'new-tab': (_e, url) => this.newTab(url),
+    'new-window': () => this.deps.windows?.newWindow(),
+    'detach-tab': (_e, id) => this.detach(id),
+    'begin-tab-drag': (_e, id) => this.deps.windows?.drag.begin(this.deps as AppServices, id),
+    'end-tab-drag': () => this.deps.windows?.drag.stop(this.deps as AppServices),
     'close-tab': (_e, id) => {
       this.requireHuman();
       this.deps.tabs.closeTab(id);
@@ -57,6 +65,17 @@ export class NavigationHandlers {
   /** `deps` is the main-process services (see src/main/main.ts). */
   constructor(deps: Deps) {
     this.deps = deps;
+  }
+
+  /** The sender can only transfer a tab that still belongs to its own window. */
+  private async detach(id: number): Promise<void> {
+    this.requireHuman();
+    if (!Number.isSafeInteger(id) || !this.deps.tabs.find(id)) throw new Error('Tab is not in this window');
+    try {
+      await this.deps.windows?.detach(id, this.deps.electron.screen.getCursorScreenPoint());
+    } finally {
+      this.deps.windows?.drag.stop(this.deps as AppServices);
+    }
   }
 
   /** Throws unless a person holds control. */

@@ -4,7 +4,8 @@
  * handler(driver, id, params, view); each answers through sendResult.
  * Pointer and raw keyboard commands are in pointer-commands.cjs.
  */
-import { cdp, cdpEval, type PageView } from '../cdp/cdp.ts';
+import { capturePage, evaluatePage, type NativePage as PageView } from '../native/index.ts';
+import { actionNavigation } from './action-navigation.ts';
 import { sleep, jitter } from '../input/timing.ts';
 import * as s from './scripts.ts';
 import * as c from './constants.ts';
@@ -15,7 +16,7 @@ import { isDateInput, dateInputValue, unreadableDate } from '../../page/date-val
 import { isWebAddress, NOT_A_WEB_ADDRESS } from '../tabs/navigation.ts';
 import { loadInTab, isUnprotected } from '../tabs/load.ts';
 import type { PageDriver, TabView } from './driver.ts';
-import type { CommandId, CommandParams, ElementSpot, Landed, Located, Screenshot, ScriptResult } from './types.ts';
+import type { CommandId, CommandParams, ElementSpot, Landed, Located, ScriptResult } from './types.ts';
 
 /** A server command: answers through sendResult, given the view it targets. */
 export type PageHandler = (
@@ -98,16 +99,12 @@ async function loadWithRetries(tab: TabView, url: string): Promise<Error | null>
   }
 }
 
-/**
- * The click itself. A covered element (an ad over the button) is clicked on the element,
- * since the mouse would land on the cover; an element inside an iframe gets the mouse
- * and the events too, as CDP mouse events may not reach framework handlers there.
- */
-async function pressOn(driver: PageDriver, view: PageView, selector: string, data: ElementSpot): Promise<unknown> {
-  const onElement = () => driver.deps.worldEval(view, s.iframeClickJs(selector)).catch(() => {});
-  if (data.covered) return onElement();
-  await driver.mouse.click(view, data.x, data.y);
-  if (data.inIframe) await onElement();
+/** Refuse obscured targets instead of bypassing page UI or sending input to an overlay. */
+async function reachable(driver: PageDriver, id: CommandId, view: PageView, selector: string): Promise<Located | null> {
+  const info = await driver.find(id, view, selector);
+  if (!info?.data.covered) return info;
+  driver.deps.sendResult(id, false, null, c.COVERED_TARGET_ERROR, 'element_covered');
+  return null;
 }
 
 /**
@@ -118,17 +115,8 @@ async function pressOn(driver: PageDriver, view: PageView, selector: string, dat
 const withHandle = (info: Located): Pick<ElementSpot, 'handle'> =>
   info?.data?.handle ? { handle: info.data.handle } : {};
 
-/** Gives a click or Enter time to start a navigation and waits it out; true when there was one. */
-async function settleNavigation(driver: PageDriver, view: PageView): Promise<boolean> {
-  await sleep(c.NAVIGATION_START_MS);
-  if (!view.webContents.isLoading()) return false;
-  await driver.waitForLoad(view);
-  return true;
-}
-
-/** Waits out any navigation a click started, then reads where the page landed and reloads the analyzer. */
+/** Read the page after the action-owned native navigation watcher settles. */
 async function landedPage(driver: PageDriver, view: PageView): Promise<Landed> {
-  await settleNavigation(driver, view);
   const url = view.webContents.getURL();
   const title = view.webContents.getTitle();
   await driver.deps.injectScripts(view);
@@ -141,7 +129,7 @@ async function landedPage(driver: PageDriver, view: PageView): Promise<Landed> {
  * missing one is answered.
  */
 async function focusField(driver: PageDriver, id: CommandId, view: PageView, selector: string) {
-  const info = await driver.find(id, view, selector);
+  const info = await reachable(driver, id, view, selector);
   if (!info) return null;
   await driver.mouse.click(view, info.data.x, info.data.y);
   await sleep(jitter(c.FOCUS_PAUSE));
@@ -172,17 +160,7 @@ async function clearField(driver: PageDriver, view: PageView, selector: string, 
   await sleep(c.CLEAR_SETTLE_MS);
 }
 
-/**
- * Clear existing content, use JS to target the specific element instead of
- * CDP Cmd+A which can select the entire page, then type with human cadence.
- *
- * One path for the page and for a frame inside it. A second path existed for
- * iframes, on the belief that CDP keyboard events do not reach them; they do,
- * clicking an input inside an iframe and typing through CDP puts the characters in
- * it and fires the frame's own keydown. What the frame path actually did was
- * nothing, in a frame or out of it, so typing into an iframe silently did nothing
- * at all. Real key events still matter for masked fields, and these are real ones.
- */
+/** Selects only the intended field, then clears and types with native keyboard input. */
 async function typeIntoField(driver: PageDriver, view: PageView, selector: string, text: string): Promise<void> {
   await clearField(driver, view, selector, (v, key) => driver.keyboard.press(v, key));
   await driver.keyboard.type(view, text);
@@ -250,21 +228,20 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { url: view.webContents.getURL(), title: view.webContents.getTitle() });
   },
 
-  /** A PNG of the active tab over CDP, or a JPEG when asked (a model reads it). */
+  /** A native PNG of the active tab, or a JPEG when asked (a model reads it). */
   async screenshot(driver, id, params) {
     const jpeg = params?.format === 'jpeg';
-    const shot = jpeg ? { format: 'jpeg', quality: c.SCREENSHOT_JPEG_QUALITY } : { format: 'png' };
-    const result = await cdp<Screenshot>(driver.deps.getActiveView(), 'Page.captureScreenshot', shot);
-    driver.deps.sendResult(id, true, { screenshot: `data:image/${shot.format};base64,` + result.data });
+    const screenshot = await capturePage(driver.deps.getActiveView(), jpeg ? c.SCREENSHOT_JPEG_QUALITY : undefined);
+    driver.deps.sendResult(id, true, { screenshot });
   },
 
-  /** Clicks an element with the CDP mouse (or on the element itself when covered) and follows any navigation it starts. */
+  /** Clicks an unobscured element with native input and follows any navigation it starts. */
   async click(driver, id, params) {
     const view = driver.activeView();
     const selector = params?.selector || '';
-    const info = await driver.find(id, view, selector);
+    const info = await reachable(driver, id, view, selector);
     if (!info) return;
-    await pressOn(driver, view, selector, info.data);
+    await actionNavigation(view, () => driver.mouse.click(view, info.data.x, info.data.y));
     const { url, title } = await landedPage(driver, view);
     driver.deps.sendResult(id, true, { clicked: true, url, title, ...withHandle(info) });
   },
@@ -287,12 +264,11 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
     const key = params?.key || 'Enter';
     if (BLOCKED_KEYS.has(key))
       return driver.deps.sendResult(id, false, null, `Key "${key}" is blocked, it can change browser state`);
-    await driver.keyboard.press(view, key);
-    if (key === 'Enter' && (await settleNavigation(driver, view))) await driver.deps.injectScripts(view);
+    await pressAndSettle(driver, view, key);
     driver.deps.sendResult(id, true, { key });
   },
 
-  /** Moves the CDP mouse onto an element. */
+  /** Moves the native pointer onto an element. */
   async hover(driver, id, params) {
     const view = driver.activeView();
     const info = await driver.find(id, view, params?.selector || '');
@@ -334,6 +310,12 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
    * and only captcha.js and mfa.js reach it.
    */
   async evaluate_raw(driver, id, params, view) {
-    driver.deps.sendResult(id, true, { result: await cdpEval(view, String(params?.expression || '')) });
+    driver.deps.sendResult(id, true, { result: await evaluatePage(view, String(params?.expression || '')) });
   },
 };
+
+/** Only Enter can initiate a document wait; other keys preserve their immediate native dispatch contract. */
+async function pressAndSettle(driver: PageDriver, view: PageView, key: string): Promise<void> {
+  if (key !== 'Enter') return driver.keyboard.press(view, key);
+  if (await actionNavigation(view, () => driver.keyboard.press(view, key))) await driver.deps.injectScripts(view);
+}

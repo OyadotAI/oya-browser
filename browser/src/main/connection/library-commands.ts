@@ -13,7 +13,7 @@ function reopenWebTab(tabs: Parameters<typeof reopenClosed>[0]): number | undefi
 /** Reopen through the tab manager, so protection and normal tab ordering still apply. */
 const reopen: TabHandler = async (runner, id) => {
   const { tabs, actions } = runner.deps;
-  const tabId = reopenWebTab(tabs);
+  const tabId = reopenWebTab(runner.deps.windows?.current.tabs ?? tabs);
   if (tabId === undefined) return runner.sendResult(id, true, { reopened: false });
   const tab = tabs.find(tabId);
   await whenProtected(tab);

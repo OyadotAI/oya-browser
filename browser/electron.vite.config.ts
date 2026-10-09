@@ -9,6 +9,10 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
+import { createRequire } from 'node:module';
+
+/** Load the packaging hook as CommonJS rather than bundling its Node filesystem imports. */
+const { configuredAccessGroup } = createRequire(import.meta.url)('./build/webauthn.cjs');
 
 /** The JavaScript the main process loads (anonymity/) is CommonJS, so the CommonJS transform covers it. */
 const COMMONJS = { include: [/\.c?js$/], strictRequires: true, ignoreDynamicRequires: true };
@@ -44,6 +48,7 @@ const keepWorkerImports = { name: 'keep-worker-imports', renderDynamicImport: re
 /** Bundled entries, each written to `<outDir>/<name>.js`. */
 const entry = (input: Record<string, string>, outDir: string) => ({
   plugins: [keepWorkerImports],
+  define: { __OYA_WEBAUTHN_GROUP__: JSON.stringify(configuredAccessGroup()) },
   build: { outDir, commonjsOptions: COMMONJS, rollupOptions: { input, output: OUTPUT } },
 });
 
@@ -56,7 +61,11 @@ const renderer = {
   build: {
     outDir: resolve('out/renderer'),
     rollupOptions: {
-      input: { index: resolve('src/renderer/index.html'), shield: resolve('src/renderer/control-shield/index.html') },
+      input: {
+        index: resolve('src/renderer/index.html'),
+        shield: resolve('src/renderer/control-shield/index.html'),
+        preview: resolve('src/renderer/tab-preview/index.html'),
+      },
     },
   },
 };
@@ -64,6 +73,6 @@ const renderer = {
 export default defineConfig({
   // out/main/worker.js is the validation worker the main process forks (src/main/app/boot.ts).
   main: entry({ index: 'src/main/main.ts', worker: 'src/worker/index.ts' }, 'out/main'),
-  preload: entry({ index: 'src/preload/index.ts' }, 'out/preload'),
+  preload: entry({ index: 'src/preload/index.ts', recording: 'src/preload/recording.ts' }, 'out/preload'),
   renderer,
 });

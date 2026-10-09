@@ -22,6 +22,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   ['source', 'Page source', 'Workspace', 'primary-alt', 'S', 'KeyS'],
   ['library', 'History and bookmarks', 'Library', 'primary', 'Y'],
   ['bookmark', 'Toggle bookmark', 'Library', 'primary', 'D'],
+  ['new-window', 'New window', 'Windows', 'primary', 'N'],
+  ['detach-tab', 'Move tab to a new window', 'Windows', 'primary-alt', 'W', 'KeyW'],
   ['new-tab', 'New tab', 'Tabs', 'primary', 'T'],
   ['close-tab', 'Close tab', 'Tabs', 'primary', 'W'],
   ['reopen-tab', 'Reopen closed tab', 'Tabs', 'primary-shift', 'T'],

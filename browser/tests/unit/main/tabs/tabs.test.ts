@@ -111,6 +111,21 @@ describe('TabManager', () => {
     assert.deepEqual(ctx.shell.sentOn('tabs-updated').at(-1), []);
   });
 
+  it('native tab disposal never reads the debugger API', () => {
+    ctx.nativeBrowsing = true;
+    const tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
+    let reads = 0;
+    Object.defineProperty(tab.view.webContents, 'debugger', {
+      get() {
+        reads++;
+        throw new Error('Forbidden');
+      },
+    });
+    ctx.tabs.closeTab(tab.id, { keepOne: false });
+    assert.equal(reads, 0);
+    assert.equal(tab.view.webContents.isDestroyed(), true);
+  });
+
   it('destroys a closed tab and detaches its debugger', () => {
     const tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
     tab.view.webContents.debugger.attach();

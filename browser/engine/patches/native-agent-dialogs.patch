@@ -1,0 +1,83 @@
+diff --git a/lib/browser/api/web-contents.ts b/lib/browser/api/web-contents.ts
+index 841b358cb9..fbb8cd5f7f 100644
+--- a/lib/browser/api/web-contents.ts
++++ b/lib/browser/api/web-contents.ts
+@@ -817,6 +817,25 @@ WebContents.prototype._init = function () {
+     }
+   });
+ 
++  // Oya owns agent dialog decisions through native renderer callbacks, not CDP.
++  type OyaDialogInfo = { dialogType: string; messageText: string; defaultPromptText: string; frame: Electron.WebFrameMain };
++  type OyaDialogReply = (accept: boolean, text?: string) => void;
++  let oyaDialogHandler: ((info: OyaDialogInfo, reply: OyaDialogReply) => void) | null = null;
++  const oyaDialogCancels = new Set<() => void>();
++  Object.defineProperty(this, '_setOyaDialogHandler', {
++    value: (handler: typeof oyaDialogHandler) => {
++      if (handler !== null && typeof handler !== 'function') throw new TypeError('Expected a dialog handler or null');
++      if (oyaDialogCancels.size) throw new Error('Cannot replace a handler while a dialog is pending');
++      if (handler && oyaDialogHandler) throw new Error('A native dialog handler is already registered');
++      oyaDialogHandler = handler;
++    }
++  });
++  const cancelOyaDialogs = () => {
++    for (const cancel of oyaDialogCancels) cancel();
++    oyaDialogCancels.clear();
++  };
++  this.on('destroyed', cancelOyaDialogs);
++
+   const originCounts = new Map<string, number>();
+   const openDialogs = new Set<AbortController>();
+   this.on('-run-dialog', async (info, callback) => {
+@@ -826,6 +845,27 @@ WebContents.prototype._init = function () {
+     const prefs = this.getLastWebPreferences();
+     if (!prefs || prefs.disableDialogs) return callback(false, '');
+ 
++    if (oyaDialogHandler) {
++      let settled = false;
++      const cancel = () => {
++        settled = true;
++        this.emit('-oya-dialog-cancelled' as any, reply);
++      };
++      const reply: OyaDialogReply = (accept, text = '') => {
++        if (settled || this.isDestroyed()) return;
++        if (typeof accept !== 'boolean' || typeof text !== 'string') throw new TypeError('Invalid dialog answer');
++        settled = true;
++        oyaDialogCancels.delete(cancel);
++        callback(accept, text);
++      };
++      oyaDialogCancels.add(cancel);
++      try { oyaDialogHandler(info, reply); } catch (error) {
++        reply(false);
++        console.error('[oya] Native dialog handler failed:', error);
++      }
++      return;
++    }
++
+     // We don't support prompt() for some reason :)
+     if (info.dialogType === 'prompt') return callback(false, '');
+ 
+@@ -868,6 +908,7 @@ WebContents.prototype._init = function () {
+   });
+ 
+   this.on('-cancel-dialogs', () => {
++    cancelOyaDialogs();
+     for (const controller of openDialogs) {
+       controller.abort();
+     }
+diff --git a/lib/renderer/window-setup.ts b/lib/renderer/window-setup.ts
+index 6abf595da5..b390426c94 100644
+--- a/lib/renderer/window-setup.ts
++++ b/lib/renderer/window-setup.ts
+@@ -14,11 +14,7 @@ export const windowSetup = (isWebView: boolean, isHiddenPage: boolean) => {
+     if (contextIsolationEnabled) internalContextBridge.overrideGlobalValueFromIsolatedWorld(['close'], window.close);
+   }
+ 
+-  // But we do not support prompt().
+-  window.prompt = function () {
+-    throw new Error('prompt() is not supported.');
+-  };
+-  if (contextIsolationEnabled) internalContextBridge.overrideGlobalValueFromIsolatedWorld(['prompt'], window.prompt);
++  // Oya keeps Blink's native prompt; the browser-owned dialog callback answers it.
+ 
+   if (isWebView) {
+     // Webview `document.visibilityState` tracks window visibility (and ignores

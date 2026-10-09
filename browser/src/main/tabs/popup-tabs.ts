@@ -30,9 +30,9 @@ export function windowTab(id: number, win: BrowserWindow): Tab {
 }
 
 /** Puts `win` on the manager's list and returns its tab id, or null if it is already there. */
-export function adoptWindow(manager: WindowHost, win: BrowserWindow | null | undefined): number | null {
+export function adoptWindow(manager: WindowHost, win: BrowserWindow | null | undefined, id?: number): number | null {
   if (!win?.webContents || manager.list.some((t) => t.window === win)) return null;
-  const tab = windowTab(manager.nextTabId++, win);
+  const tab = windowTab(id ?? manager.nextTabId++, win);
   manager.list.push(tab);
   win.webContents.on('page-title-updated', (_e, title) => manager.titleChanged(tab, title));
   win.on('closed', () => forgetWindow(manager, win));

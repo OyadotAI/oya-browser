@@ -1,146 +1,149 @@
-/**
- * Target picker: lets a person click an element in the page (Chrome's inspect
- * overlay) and turns it into locator candidates for a workflow step.
- */
-import type { Debugger } from 'electron';
+/** Native workflow target picking: intercept selection input before the website receives it. */
+import type { WebContents, Event, MouseInputEvent, Input } from 'electron';
 import { candidates, type Candidate } from '../../workflow/index.ts';
-import { PICKER } from './constants.ts';
-
-/** The view a pick runs on: its page's debugger, and the page closing. */
+import { PICKER, PICKER_WORLD_ID } from './constants.ts';
+import { PICKER_START, PICKER_STOP } from './picker-scripts.ts';
+/** Only browser-owned native execution and input/lifecycle events are needed. */
 export interface PickerView {
-  /** The page. */
-  webContents: {
-    /** The page's debugger. */
-    debugger: Pick<Debugger, 'attach' | 'isAttached' | 'sendCommand' | 'on' | 'off'>;
-    /** Subscribes once to the page closing. */
-    once(event: 'destroyed', listener: () => void): unknown;
-    /** Unsubscribes from the page closing. */
-    off(event: 'destroyed', listener: () => void): unknown;
+  /** Surface selected by the user's authorized workflow action. */
+  webContents: Pick<
+    WebContents,
+    'on' | 'off' | 'isDestroyed' | 'executeJavaScriptInIsolatedWorld' | 'getZoomFactor'
+  > & {
+    /** One picker owns input on a surface at a time. */
+    oyaTargetPicking?: boolean;
   };
 }
-
-/** The view's debugger. */
-type PickerDebugger = PickerView['webContents']['debugger'];
-
-/** The CDP event params a pick reads: the node the person picked. */
-interface PickParams {
-  /** The picked node. */
-  backendNodeId: number;
-}
-
-/** Answers a pick with its candidates. */
-type Answer = (value: Candidate[]) => void;
-
-/** Fails a pick. */
-type Fail = (error: Error) => void;
-
-/** The picked element as the page describes it. */
-type Described = Record<string, unknown>;
-
-/**
- * Runs on the picked node in the page: climbs to the nearest interactive
- * element and describes it. Its text is what the page runs, so it keeps its
- * exact shape.
- */
-const DESCRIBE_ELEMENT = `function() {
-          const n = this.closest('button,a,input,textarea,select,[role],[contenteditable]') || this;
-          if (n.ownerDocument.defaultView !== n.ownerDocument.defaultView.top) return { unsupported: true };
-          return { tag: n.tagName.toLowerCase(), type: n.tagName === 'INPUT' ? 'input' : n.tagName.toLowerCase(), text: (n.labels?.[0]?.textContent || (n.matches('input,textarea,[contenteditable]') ? '' : n.textContent) || '').trim().slice(0, 160), domId: n.id, name: n.getAttribute('name'), placeholder: n.getAttribute('placeholder'), ariaLabel: n.getAttribute('aria-label'), testId: n.getAttribute('data-testid'), role: n.getAttribute('role') || (n.tagName === 'BUTTON' ? 'button' : n.tagName === 'A' ? 'link' : undefined) };
-        }`;
-
-/** The inspect overlay's highlight: the brand teal, translucent inside, solid border. */
-const HIGHLIGHT = {
-  showInfo: true,
-  contentColor: { ...PICKER.HIGHLIGHT, a: PICKER.CONTENT_ALPHA },
-  borderColor: { ...PICKER.HIGHLIGHT, a: 1 },
-};
-
-/** Describes the picked node in the page, releasing the remote object afterwards. */
-async function describePicked(dbg: PickerDebugger, backendNodeId: number): Promise<Described> {
-  const { object } = await dbg.sendCommand('DOM.resolveNode', { backendNodeId });
-  const call = { objectId: object.objectId, returnByValue: true, functionDeclaration: DESCRIBE_ELEMENT };
-  const { result, exceptionDetails } = await dbg.sendCommand('Runtime.callFunctionOn', call);
-  await dbg.sendCommand('Runtime.releaseObject', { objectId: object.objectId });
-  if (exceptionDetails || result.value?.unsupported) {
+/** A descriptor can be refused without inventing a fragile target. */
+function choicesFor(element: Record<string, unknown>): Candidate[] {
+  if (element.unsupported)
     throw new Error('This picker supports top-level targets. Enter the frame selector for embedded targets.');
-  }
-  return result.value;
-}
-
-/** Locator candidates for a described element; an element with none is refused. */
-function choicesFor(element: Described): Candidate[] {
   const choices = candidates(element);
   if (!choices.length) throw new Error('This element has no stable target. Add a test ID or enter a CSS selector.');
   return choices;
 }
-
-/** One pick in progress: settles once, on a choice, a cancel, a closed page or the timeout. */
+/** One native selection owns its event listeners and always releases them when it settles. */
 class TargetPick {
-  /** The page's debugger. */
-  private readonly dbg: PickerDebugger;
-  /** The view picked on. */
+  /** Native surface, never a debugger session. */
   private readonly view: PickerView;
-  /** Answers the pick. */
-  private readonly resolve: Answer;
-  /** Fails the pick. */
-  private readonly reject: Fail;
-  /** Set once the pick has settled. */
+  /** One result promise, settled by selection or cancellation. */
+  private readonly result = Promise.withResolvers<Candidate[]>();
+  /** Selection and teardown are single-use. */
   private settled = false;
-  /** The pick's time limit. */
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  /** The debugger listener. */
-  private readonly listener = (_event: unknown, method: string, params: PickParams): void => {
-    void this.onMessage(method, params);
+  /** Suppress additional selections while descriptor evaluation is in flight. */
+  private selecting = false;
+  /** Avoid accumulating renderer work on high-frequency mouse movement. */
+  private hovering = false;
+  /** Coalesce movement to the newest point instead of dropping the final hover. */
+  private hoverArgs: string | null = null;
+  /** A picker cannot monopolize input indefinitely. */
+  private timer?: ReturnType<typeof setTimeout>;
+  /** Native input callbacks are stable so they can be removed exactly. */
+  private readonly mouse = (event: Event, input: MouseInputEvent): void => this.onMouse(event, input);
+  /** Escape cancels without reaching the page. */
+  private readonly key = (event: Event, input: Input): void => {
+    event.preventDefault();
+    if (input.key === 'Escape') this.finish(new Error('Target selection canceled'));
   };
-  /** The page closed mid-pick. */
-  private readonly destroyed = (): void => void this.finish(new Error('The page closed while picking a target'));
-
-  /** Picks on `view` through its debugger `dbg`, settling through `resolve`/`reject`. */
-  constructor(dbg: PickerDebugger, view: PickerView, resolve: Answer, reject: Fail) {
-    this.dbg = dbg;
+  /** A navigation invalidates the document being inspected. */
+  private readonly navigated = (): void => this.finish(new Error('The page navigated while picking a target'));
+  /** Destruction must not leave the caller waiting until timeout. */
+  private readonly destroyed = (): void => this.finish(new Error('The page closed while picking a target'));
+  /** The selected view is supplied by the existing authorized workflow handler. */
+  constructor(view: PickerView) {
     this.view = view;
-    this.resolve = resolve;
-    this.reject = reject;
   }
-
-  /** Starts listening and turns on the inspect overlay. */
-  start(): void {
+  /** Install input interception before awaiting the renderer overlay. */
+  start(): Promise<Candidate[]> {
+    this.wire();
     this.timer = setTimeout(() => this.finish(new Error('Target selection timed out')), PICKER.TIMEOUT_MS);
-    this.dbg.on('message', this.listener);
-    this.view.webContents.once('destroyed', this.destroyed);
-    const inspect = { mode: 'searchForNode', highlightConfig: HIGHLIGHT };
-    this.dbg.sendCommand('Overlay.setInspectMode', inspect).catch((error: Error) => this.finish(error));
+    void this.run(PICKER_START).catch((error) => this.finish(error));
+    return this.result.promise;
   }
-
-  /** Settles the pick once: stops listening, turns the overlay off, then answers. */
-  private async finish(error: Error | null, value?: Candidate[]): Promise<void> {
+  /** Native event listeners prevent clicks from activating the underlying website. */
+  private wire(): void {
+    const wc = this.view.webContents;
+    wc.on('before-mouse-event', this.mouse);
+    wc.on('before-input-event', this.key);
+    wc.on('did-start-loading', this.navigated);
+    wc.on('destroyed', this.destroyed);
+  }
+  /** Release every interception path, including Escape and closed-page failures. */
+  private unwire(): void {
+    const wc = this.view.webContents;
+    wc.off('before-mouse-event', this.mouse);
+    wc.off('before-input-event', this.key);
+    wc.off('did-start-loading', this.navigated);
+    wc.off('destroyed', this.destroyed);
+  }
+  /** Prevent both halves of selection; only left-button release selects a target. */
+  private onMouse(event: Event, input: MouseInputEvent): void {
+    event.preventDefault();
+    if (this.settled || this.selecting || !Number.isFinite(input.x) || !Number.isFinite(input.y)) return;
+    const zoom = this.view.webContents.getZoomFactor();
+    const args = `${input.x / zoom},${input.y / zoom}`;
+    if (input.type === 'mouseMove') this.hover(args);
+    if (input.type === 'mouseUp' && input.button === 'left') void this.select(args);
+  }
+  /** Keep the latest point while at most one hover evaluation is in flight. */
+  private hover(args: string): void {
+    this.hoverArgs = args;
+    if (!this.hovering) this.flushHover();
+  }
+  /** A stationary pointer still receives the last coalesced highlight. */
+  private flushHover(): void {
+    if (this.settled || !this.hoverArgs) return;
+    const args = this.hoverArgs;
+    this.hoverArgs = null;
+    this.hovering = true;
+    void this.run(`globalThis.__oyaPicker?.hover(${args});`)
+      .catch((error) => this.finish(error))
+      .finally(() => this.hovered());
+  }
+  /** Continue only when a newer pointer point arrived during evaluation. */
+  private hovered(): void {
+    this.hovering = false;
+    if (this.hoverArgs) this.flushHover();
+  }
+  /** Describe through the isolated world, never a remote object handle. */
+  private async select(args: string): Promise<void> {
+    this.selecting = true;
+    try {
+      const element = (await this.run(`globalThis.__oyaPicker?.pick(${args})`)) as Record<string, unknown> | undefined;
+      if (!element) throw new Error('The picker document is no longer available');
+      this.finish(null, choicesFor(element));
+    } catch (error) {
+      this.finish(error as Error);
+    }
+  }
+  /** Teardown is queued after prior native evaluations; no late hover can reinstall the overlay. */
+  private finish(error: Error | null, value?: Candidate[]): void {
     if (this.settled) return;
     this.settled = true;
     clearTimeout(this.timer);
-    this.dbg.off('message', this.listener);
-    this.view.webContents.off('destroyed', this.destroyed);
-    await this.dbg.sendCommand('Overlay.setInspectMode', { mode: 'none' }).catch(() => {});
-    if (error) this.reject(error);
-    else this.resolve(value ?? []);
+    this.unwire();
+    this.cleanup();
+    if (error) this.result.reject(error);
+    else this.result.resolve(value ?? []);
   }
-
-  /** A debugger event: a cancel ends the pick, a picked node is described and answered. */
-  private async onMessage(method: string, params: PickParams): Promise<void> {
-    if (method === 'Overlay.inspectModeCanceled') return this.finish(new Error('Target selection canceled'));
-    if (method !== 'Overlay.inspectNodeRequested') return;
-    try {
-      await this.finish(null, choicesFor(await describePicked(this.dbg, params.backendNodeId)));
-    } catch (error) {
-      await this.finish(error as Error);
-    }
+  /** Release ownership after the native overlay cleanup has been dispatched. */
+  private cleanup(): void {
+    void this.run(PICKER_STOP)
+      .catch(() => {})
+      .finally(() => {
+        this.view.webContents.oyaTargetPicking = false;
+      });
+  }
+  /** Refuse dead targets without attempting a debugger fallback. */
+  private async run(code: string): Promise<unknown> {
+    const wc = this.view.webContents;
+    if (wc.isDestroyed()) throw new Error('The page closed while picking a target');
+    return wc.executeJavaScriptInIsolatedWorld(PICKER_WORLD_ID, [{ code }]);
   }
 }
-
-/** Lets the person pick an element on `view`'s page; resolves to its locator candidates. */
+/** Start one native picker; overlapping requests never steal its input ownership. */
 export async function pickTarget(view: PickerView): Promise<Candidate[]> {
-  const dbg = view.webContents.debugger;
-  if (!dbg.isAttached()) dbg.attach('1.3');
-  await dbg.sendCommand('DOM.enable');
-  await dbg.sendCommand('Overlay.enable');
-  return new Promise((resolve, reject) => new TargetPick(dbg, view, resolve, reject).start());
+  if (view.webContents.oyaTargetPicking) throw new Error('Target selection is already active');
+  view.webContents.oyaTargetPicking = true;
+  return new TargetPick(view).start();
 }

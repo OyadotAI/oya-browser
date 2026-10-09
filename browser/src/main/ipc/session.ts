@@ -9,7 +9,7 @@ import { pairingServer } from '../connection/pairing.ts';
 /** The services the session handlers use. */
 type Deps = Pick<
   AppServices,
-  'config' | 'socket' | 'cookies' | 'persona' | 'tabs' | 'shell' | 'control' | 'mirror' | 'electron'
+  'config' | 'socket' | 'cookies' | 'persona' | 'tabs' | 'shell' | 'control' | 'mirror' | 'electron' | 'windows'
 >;
 
 /** The channels this group answers. */
@@ -163,7 +163,8 @@ export class SessionHandlers {
     this.deps.socket.browserId = null;
     this.deps.config.merge({ apiKey: '', signedOut: true, keyFromApp: false, account: null });
     this.deps.config.save();
-    this.deps.tabs.leaveBrowsingMode();
+    if (this.deps.windows) this.deps.windows.each((scope) => scope.tabs.leaveBrowsingMode());
+    else this.deps.tabs.leaveBrowsingMode();
   }
 
   /** What is known of the account when the server cannot say: nothing, or what it said last time. */

@@ -16,6 +16,165 @@ The shared standards (size limits, doc comments, no magic numbers) are in the
 root [ARCHITECTURE.md](../ARCHITECTURE.md), and `npm run lint` enforces them.
 This file covers what is specific to the browser.
 
+## Required native agent-control architecture
+
+**Target requirement; not yet satisfied by the current implementation.**
+
+External agents may speak CDP to Oya's front door. That compatibility adapter
+must terminate the protocol and dispatch browser-owned native operations:
+
+`agent → CDP front-door adapter → authorized Oya operations → native browser APIs`
+
+There must be no internal CDP transport, Electron debugger attachment, upstream
+Chromium debugging endpoint, or CDP fallback. Engine reuse and the V8 JavaScript
+engine are separate concerns; this requirement governs the control architecture.
+
+### Migration inventory
+
+- The external native adapter provides machine-readable `Oya.getCapabilities`
+  from its dispatch/validation tables; it explicitly reports partial compatibility
+  with native availability checked at execution, not universal CDP support.
+- Native tab-history snapshots use connection-owned capabilities and actual native
+  navigation history. Traversal verifies unchanged state and destination policy;
+  serialized page state is never exported. These are Oya extension commands.
+- Native inherited property inspection uses V8 prototype descriptors, not an
+  inspector: bounded walks, shadowing/symbol identity, uncalled accessors and proxy
+  rejection. The new opcode fails explicitly on engines lacking the patch.
+- Native request failures map supported names to actual net errors on the original
+  held continuation. Engine capability, exact frame ownership, human control and
+  egress remain checked before consumption. This does not add response fulfillment.
+
+- Native cookie management (`main/native-cookies/`) uses the cookie manager of an
+  explicitly owned private session. Browser-level Storage commands and the
+  URL/name deletion extension recheck ownership/control around native awaits.
+  Engine-provided canonical metadata prevents fabricated priority/source fields.
+  MacOS integration and live-app tests cover HttpOnly delivery, scope and isolated
+  clearing. Unsupported partition semantics fail explicitly; Windows is unverified.
+
+
+- External Runtime context routing now includes native cross-process child frames.
+  `main/native/runtime-contexts.ts` binds opaque context IDs to exact native
+  document tokens, while `runtime-values.ts` routes engine handles without a
+  page-global registry. Frame identities are shared with the native frame-tree
+  service. Native readiness/navigation/removal events drive context lifecycle;
+  child replacement/removal preserves surviving siblings. The macOS front-door
+  test verifies these behaviors with debugger access forbidden. Worker contexts,
+  full Debugger semantics and Windows validation remain unfinished.
+
+
+- Pointer input: `main/input/mouse.ts` and pointer dispatch in
+  `main/actions/pointer-commands.ts` now use native `sendInputEvent`, with no
+  debugger fallback. `npm run test:native-input` launches Oya and makes debugger
+  access fatal while testing trusted clicks, double-clicks, held drags and scroll
+  direction. This does not yet make the full application CDP-free.
+- HTML drag/drop: `main/input/native-drag.ts` uses the patched engine's `_dragOya`
+  operation, not a sequence that leaves an uncontrolled OS drag active. The engine
+  owns renderer-filtered payloads and native drop acknowledgements. Focus loss,
+  navigation, destruction and concurrent gestures fail closed. Unsupported
+  child-frame/file drags are explicit errors; no CDP or DOM-event fallback exists.
+  `test:native-drag` covers trusted events, payload delivery, refusal, cancellation,
+  and ordinary slider dragging. Patched macOS runtime tested; Windows is unverified.
+- Keyboard: `main/input/keyboard.ts` now uses native key events, text composition
+  and select-all editing. Real Oya tests cover Unicode, Enter submission and
+  focused iframe input with debugger access forbidden. Windows runtime validation
+  is still required.
+- Page execution and inspection: `main/native/world.ts` now uses native isolated
+  execution for the main-frame analyzer. The old `main/cdp/world.ts` is only a
+  compatibility export, not a protocol implementation. Tests verify that the real
+  analyzer is hidden from the page's global and reinstalls after navigation.
+  Explicit main-world evaluation and PNG/JPEG capture are native as well.
+  The patched engine now provides native isolated execution in cross-process
+  frames through `main/native/frames.ts`; its real Oya regression forbids debugger
+  access and covers duplicate frame URLs, isolation and disposed-frame rejection.
+  Pending native evaluations are document-scoped too: removal, replacement and
+  tab destruction cancel them, and unresolved promises have a ten-second engine
+  deadline. Native lifecycle errors remain distinguishable from page exceptions.
+  This is a prerequisite, not a migrated recording transport.
+  Cross-origin frame recording and pre-script worker protection remain separate,
+  unmigrated capabilities; main-frame isolation does not replace them.
+- Shell motion: background/container animation control now uses a local UI policy
+  and native execution, not debugger media emulation. First-paint styles and reload
+  handling preserve the policy without changing system or website media queries.
+- Native keyboard provenance: the production shortcut fence distinguishes a
+  synchronous browser-owned key dispatch from human input on the exact target
+  contents. The grant is revoked before native dispatch returns, including
+  exceptions and nested calls; it never spans an async typing run. Native keys
+  do not trigger shell shortcuts. The native input suite now uses a layered
+  BrowserView, shell focus, the real shortcut fence, and an overlaid shield;
+  it verifies agent field entry and that unmarked keys remain blocked. Earlier
+  single-window tests did not cover this production ownership interaction.
+- Element commands: production click/type refuse covered targets rather than
+  using synthetic click replay or typing into an overlay. Hit testing checks the
+  target document and containing frames; iframe contenteditable selection uses
+  the editor's own document. The native input suite exercises these production
+  `PageDriver` commands with fresh analyzer IDs and debugger access forbidden.
+  This local command-path fixture is not the authenticated end-to-end agent loop.
+- Native dialog engine capability: `main/native/dialogs.ts` now exposes guarded
+  subscriptions to browser-owned dialog callbacks. Patched-engine tests cover
+  prompts, confirms, alerts and stale-reply cancellation without CDP. The existing
+  command-facing decision service now lives in `main/dialogs/`, independent of
+  protocol code. `NativeDialogs` passes real two-window decision tests. Production
+  startup still uses the explicit legacy adapter because Page-domain/login-state
+  dependencies and before-unload handling have not yet migrated.
+- Recording transport: an optional sandboxed preload now exposes a bounded,
+  fixed-channel sender only in the agent isolated world. `NativeRecordingInbox`
+  checks owned web contents, recording epochs and explicitly authorized isolated
+  preload document identities. Immutable URL/owner-path snapshots keep final unload
+  batches attributed to the original document; unarmed replacements are refused.
+  Real Oya tests verify that the
+  analyzer flushes final typing from cross-process frames during navigation.
+  Engine-owned local/remote frame tokens now resolve ordinary and open-shadow
+  owner paths without index or URL guesses, with token checks across the entire
+  asynchronous ancestry walk. `NativeDocumentRecorder` now owns document-guarded
+  start/drain/stop, bounded readiness and cancellation before DOM-ready. Its stop
+  returns final typing directly, avoiding a final IPC race with inbox teardown.
+  Production channel wiring, pre-script arming and automatic navigation re-arming
+  still need migration.
+  This preload is not yet enabled in production tabs.
+- Focused text: the patched engine routes `insertText` to the focused native
+  widget, fixing a renderer crash with cross-process frame focus. The regression
+  records real native text input without debugger access.
+- Other observation: dialogs, telemetry and before-unload integration still need
+  their remaining native lifecycle migrations.
+- Page protection: persona application, worker coverage and tab startup currently
+  rely on debugger commands. Preserve existing isolation and egress guarantees;
+  capabilities absent from public Electron APIs may require native engine work.
+- Workflow target selection now uses native pre-dispatch mouse/key interception
+  and a dedicated isolated world, without debugger attachment. Real Oya tests
+  cover hover, selection without click-through, Escape cleanup and 200% zoom.
+  The highlight intentionally adds a temporary DOM element while the user picks;
+  frame targets remain explicitly unsupported, as before. Validation automation
+  workers still need migration to the authorized native operation surface.
+- Front door: the current implementation proxies an upstream debug endpoint.
+  Replace it with an explicit supported-method adapter, Oya-owned target/session
+  identifiers and native events. Reject unsupported methods rather than forwarding.
+- Tests: `test:analyzer` now runs real DOM checks in Oya, including nested frameset
+  reading and a trusted click through the production page command. The opt-in
+  `OYA_NATIVE_ENGINE=/path/to/Oya npm run test:internet` exercises the public
+  the-internet.herokuapp.com site, saves native screenshots and reports, inventories
+  every example, and fails on missing behavioral coverage as well as failed checks.
+  Behavioral cases now exist for all 44 catalog entries; defined coverage is not a
+  passing live result. Reports retain completion status, screenshots, and native
+  network statuses so upstream failures are visible. `OYA_AUDIT_PROFILE` may reuse
+  only a previous disposable audit profile (never the person's normal profile).
+  It is not a substitute for full agent-loop or Windows testing. Remaining
+  Chrome/Playwright-backed browser fixtures still need migration. Keep compatibility
+  protocol tests at the front door, separate from native core integration tests.
+  The server's aggregate integration command now fails its preflight while its
+  configured fixtures contain known non-Oya executable launchers. This is an
+  explicit migration blocker, not a skip or proof of complete boundary enforcement.
+
+### Acceptance gates
+
+Exercise normal browsing and the agent loop with debugger attachment and debugger
+command dispatch made fatal in tests. Cover input, isolated page inspection,
+recording, frames/workers, navigation, dialogs, downloads, screenshots, permissions,
+profile isolation and human-control handoff. Run the native desktop integration
+matrix on macOS and Windows. Add static dependency enforcement against internal
+CDP and tests proving that the front door has no upstream debugging connection.
+Existing behavior must not silently disappear during this migration. Passing the
+old CDP-backed tests alone does not satisfy these gates.
+
 ## Code conventions (TypeScript)
 
 **Files and modules**
@@ -454,3 +613,131 @@ granted. Existing streams remain under the site's stop/mute controls; these
 checks govern new access, not forced termination of existing calls. Ordinary
 playback/autoplay policy is unchanged. Direct unmanaged desktop personas retain
 native WebRTC ICE; proxies and managed sessions keep the leak-prevention wrapper.
+
+### Native passkeys
+
+Desktop page protection no longer installs the synthetic WebAuthn cancellation
+shim. Chromium owns RP validation, registration, assertion and abort handling.
+`app/passkeys.ts` supplies a Cancel-default native account chooser for Electron's
+`select-webauthn-account` event. Choices are limited to the current human-controlled
+surface and cancelled on navigation, destruction or timeout. Credentials and
+private keys are never exposed through renderer IPC, notifications or agent tools.
+
+Provisioned macOS builds use `APPLE_TEAM_ID` and `OYA_WEBAUTHN_PROFILE` to configure one stable keychain access group.
+The build embeds it for `app.configureWebAuthn` and the packaging hook adds the
+matching main-app entitlement without granting it to helper processes. Builds without a supplied provisioning profile do not configure signing-bound Touch ID. Electron owns the per-session
+metadata secret, so credentials stay partition-scoped and device-bound.
+
+**Not Chrome parity:** Stock Electron 44's native implementation does not expose iCloud
+Keychain or phone/QR authentication, and security-key PIN entry remains unsupported.
+The native identity test uses a disposable CDP virtual authenticator in Oya for
+registration and assertion; it does not certify physical Touch ID, iCloud or Gmail.
+Those require a signed build and real-device verification before claiming a fix.
+
+`engine/` carries an opt-in, version-pinned macOS iCloud discovery patch and its
+build/verification checklist. The full native engine now builds and is signed, but macOS rejects the restricted-entitlement test app without a matching provisioning profile; real-credential verification remains blocked. `OYA_NATIVE_PASSKEYS=1` adds the main-app browser credential
+entitlement at packaging time; it does not activate a stock runtime. The patched
+engine separately requires `--oya-native-passkeys`. Release defaults stay off.
+
+All six native phone-policy tests pass; this is not physical-device verification.
+The second experimental Chromium patch permits the native nearby-phone option
+only for hybrid-eligible assertions, with six native policy tests. This targets
+phone-held Google Password Manager credentials, not desktop vault synchronization.
+Opted-in macOS packaging includes a Bluetooth usage explanation; permission stays
+with the OS. Hybrid-only discovery, real-device success and Windows phone behavior
+remain unverified; see the engine checklist before enabling either patch.
+
+### Isolated native sign-in diagnostic (development only)
+
+`--oya-native-signin-test` starts a human-only Oya window at Gmail, not the
+normal desktop boot. It uses a fresh temporary user-data directory and an
+in-memory session. No persona, user-agent override, page injection, CDP port,
+agent connection, renderer IPC, cookie sync, or recording is installed. The
+window is sandboxed, denies permissions and popups, and displays the actual
+origin in its title. Closing it discards the in-memory login; this is not a
+way to import Gmail cookies into the normal browser.
+
+Packaged, governed, Docker, and explicitly debug-enabled launches refuse this
+mode. It is an experiment to separate Google browser rejection from Oya's
+identity emulation, **not a Gmail fix or native passkey validation**. The normal
+browser and experimental engine patches remain unchanged by the flag. Google
+rejected the normal development build on 2026-10-08 before a passkey ceremony;
+its support article (https://support.google.com/accounts/answer/7675428) lists
+embedded and automated browsers among possible causes, not an exact diagnosis.
+
+The separate development flag `--oya-native-browsing` exercises the **normal
+Oya shell and persistent profile** with native engine identity. It skips eager
+CDP attachment, persona/worker emulation, main-world injection and automatic
+analyzer startup. Explicit agent analysis still uses the existing control gate
+and isolated-world analyzer on demand. The browser session keeps its permission
+checks and ordinary profile-local storage; no diagnostic cookies are copied.
+Governed, Docker, debug-port and packaged launches refuse this trial, and a
+proxied persona fails session setup rather than silently exposing native identity.
+
+This flag is not a default or a Gmail acceptance claim. The user successfully
+signed in through an authenticator alternative in the isolated diagnostic;
+normal-shell login and session persistence need separate verification. Native
+mode does not eagerly install the CDP dialog-to-notification observer or remote
+localStorage mirroring. Agent/recording use can attach instrumentation later;
+repeat sign-in after agent use needs testing before production enablement.
+
+### Multiple browser windows and live tab transfer
+
+`main/windows/BrowserWindows` owns a per-window dependency graph: a concrete
+ShellWindow, TabManager, PanelLayout, Overlays, Shortcuts and ControlShield.
+`WindowContext` forwards shared task/session writes to the application root;
+there is still one profile, cookie jar, recorder, control socket and control gate.
+The application-level service router is an explicit multi-window dispatch boundary:
+agent tab enumeration is global, id-based selection/close finds the owning window,
+shared shell events/control state broadcast, and other commands use the selected
+application target. Window-scoped IPC never uses a mutable global focus variable.
+Only a registered shell's exact main frame can invoke shell commands.
+
+A tab keeps its id, BrowserView, webContents and once-installed event listeners.
+Transfer removes/adds that same view, without navigating, detaching CDP or forgetting
+recording. Tab callbacks and keyboard input resolve the current owner after a move.
+Browser windows have independent tab selection, overlays and panel layout. A native
+close cannot destroy an agent-controlled window; application quit still uses the
+existing flush lifecycle. Closing a window closes only its own tabs and shield.
+Moving its last tab closes the empty source window. OAuth popups remain real windows
+and cannot be torn off during verification.
+
+Dragging out of the strip creates a full browser window. Dropping on another visible
+Oya tab strip appends the live tab there. Screen coordinates come from Electron, in
+DIPs, and new windows are clamped to the destination display's work area. Escape
+cancels the gesture. Transfers are refused while either window has an open overlay
+or the agent owns control. Cmd/Ctrl+N opens a window; Cmd/Ctrl+Alt+W moves the selected
+tab to a new window. Both are in the footer guide and `list_keyboard_shortcuts`.
+`list_tabs` adds `window_id` while existing tab ids and switch/close tools keep working.
+
+`npm run test:windows` launches only the Oya runtime with a disposable local profile
+and localhost pages. It exercises real pointer tear-off, Cmd/Ctrl+N, form/session
+storage/history preservation, transfer back, independent close and IPC isolation.
+The native test has been run on macOS; Windows GUI/mixed-DPI smoke testing remains
+required before claiming Windows end-to-end verification. Window layouts are not
+persisted/restored across application restarts by this change.
+
+Window presentation is transactional: a new destination remains hidden while its
+real shell fonts, selected tab, and URL field become measurable and cross a paint
+boundary. A metadata-only staged tab never becomes a second owner of the page.
+The source retains its mounted BrowserView until readiness succeeds; failure
+removes the hidden destination instead of consuming the original tab.
+
+Tab tear-out has a separate sandboxed, non-focusable native preview surface. It
+uses no preload or IPC bridge, shows a local in-memory page thumbnail, follows
+native screen coordinates across displays, and is excluded from agent targets.
+Cancel/reorder removes it immediately; drop keeps it until the destination is
+presented. The real Oya windows regression checks preview focus/cleanup and chrome
+readiness at the destination's first native show call, alongside live page preservation.
+
+### Experimental native CDP compatibility listener
+
+`main/native-front-door/` is a separate, explicitly enabled native-only external
+adapter (`OYA_NATIVE_CDP_PORT` plus a bearer credential). `app/native-cdp.ts`
+composes it with existing protected tabs and control admission. It does not use
+the legacy front-door proxy or require an engine debugging port. DOM inspection,
+frame-tree snapshots, native console logs and device metrics are connection-scoped;
+DOM ids cannot alias replacement documents, subscriptions stop on disconnect,
+and viewport overrides restore native defaults. This is partial compatibility,
+not full CDP parity or proof that the entire application is CDP-free. See its
+README for supported methods and outstanding native-engine work.

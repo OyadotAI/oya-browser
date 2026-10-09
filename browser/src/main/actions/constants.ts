@@ -46,13 +46,6 @@ export const DOUBLE_CLICK_GAP: Range = { base: 60, spread: 40 };
 /** Gap between smooth-scroll increments. */
 export const SCROLL_PAUSE: Range = { base: 30, spread: 30 };
 
-/** Hold after pressing the button before a drag starts moving. */
-export const DRAG_PRESS_MS = 30;
-/** Points a drag passes through. */
-export const DRAG_STEPS = 10;
-/** Gap between drag points. */
-export const DRAG_STEP_MS = 10;
-
 /** Viewport assumed when the page does not report one. */
 export const FALLBACK_VIEWPORT = { w: 800, h: 600 } as const;
 /** The centre of a length is its half. */
@@ -73,3 +66,6 @@ export const MIN_SCROLL_STEPS = 3;
 export const ELEMENT_WAIT_MS = 10000;
 /** JPEG quality of a screenshot taken for a model: a retina PNG is megabytes. */
 export const SCREENSHOT_JPEG_QUALITY = 70;
+
+/** Recovery guidance when native input would land on another element. */
+export const COVERED_TARGET_ERROR = 'Element is covered. Dismiss the overlay and analyze again.';

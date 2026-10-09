@@ -3,6 +3,7 @@
  * it tries to open, and its right-click menu. Wired once, when the tab is made,
  * along with its protection before the first page (tab-protector.ts).
  */
+import { privateSession } from '../native-contexts/index.ts';
 import type { AppServices } from '../app/services.ts';
 import { watchContents } from '../observe/install.ts';
 import { trackFrameSessions } from '../recording/frame-sessions.ts';
@@ -142,6 +143,7 @@ export class TabEvents {
 
   /** Only successful main-frame visits enter the local library; subframes never replace the tab address. */
   private wireLibrary(tab: Tab): void {
+    if (privateSession(tab.view.webContents.session)) return;
     const contents = tab.view.webContents;
     const visit = (): void => this.deps.library.visit(contents.getURL(), contents.getTitle());
     contents.on('did-finish-load', visit);
@@ -150,7 +152,7 @@ export class TabEvents {
 
   /** Loads the analyzer, and lightens view-source pages. */
   private pageLoaded(view: TabView): void {
-    this.deps.protection.injectScripts(view);
+    this.deps.protection.injectScripts(view, true);
     // A tab that could not be armed, or whose renderer died, joins the recording again here.
     joinRecording(this.deps.recorder, view);
     const currentUrl = view.webContents.getURL();

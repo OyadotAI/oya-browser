@@ -1,0 +1,77 @@
+/** A quiet, floating page card; native positioning follows the pointer without animation lag. */
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: light-dark(#252724, #f3f4ef);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 10px;
+  overflow: hidden;
+  background: transparent;
+}
+article {
+  overflow: hidden;
+  border-radius: 14px;
+  background: light-dark(#f8f9f6, #222621);
+  border: 1px solid light-dark(#d2d8cc, #485043);
+  box-shadow: 0 5px 9px #0004;
+}
+header {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+.mark {
+  color: light-dark(#276020, #97e481);
+  font-size: 18px;
+}
+strong {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thumbnail {
+  position: relative;
+  height: 132px;
+  background: light-dark(#e9ece5, #161a15);
+  overflow: hidden;
+}
+img {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+  visibility: hidden;
+}
+.fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  opacity: 0.5;
+}
+footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+kbd {
+  font: inherit;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 1px 4px;
+}

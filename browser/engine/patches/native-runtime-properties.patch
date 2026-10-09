@@ -1,0 +1,94 @@
+--- a/shell/renderer/oya_runtime.cc
++++ b/shell/renderer/oya_runtime.cc
+@@ -27,6 +27,7 @@
+ constexpr size_t kOwners = 64;
+ constexpr size_t kHandles = 2048;
+ constexpr uint32_t kProperties = 512;
++constexpr uint32_t kPrototypeDepth = 32;
+ constexpr size_t kTextBytes = 1048576;
+ constexpr size_t kArguments = 128;
+ /** Values belong to a single external connection and carry their release group. */
+@@ -221,22 +222,54 @@
+     return std::move(callback).Run(Exception(context, owner, caught.Exception(), Param(effective, "group")));
+   ReturnValue(context, owner, effective, result, std::move(callback));
+ }
+-/** Enumerate own descriptors only, without invoking getters or proxy traps. */
+-base::Value Properties(v8::Local<v8::Context> context, const std::shared_ptr<Owner>& owner, const base::DictValue& p) {
++/** A descriptor retains its real defining object and property identity, including symbols. */
++struct PropertySlot {
++  v8::Local<v8::Object> object;
++  v8::Local<v8::Name> key;
++  bool own;
++};
++/** Bound all native keys visited, including shadowed names, before allocating remote value handles. */
++std::string CollectProperties(v8::Local<v8::Context> context, v8::Local<v8::Object> object,
++                              bool inherited, std::vector<PropertySlot>* slots) {
++  uint32_t visited = 0;
++  for (uint32_t depth = 0; ; ++depth) {
++    if (depth >= kPrototypeDepth) return "Native prototype depth limit exceeded";
++    if (object->IsProxy()) return "Native property inspection rejects proxy prototypes";
++    v8::Local<v8::Array> keys;
++    if (!object->GetOwnPropertyNames(context, v8::ALL_PROPERTIES, v8::KeyConversionMode::kConvertToString).ToLocal(&keys))
++      return "Cannot enumerate native properties";
++    if (keys->Length() > kProperties - visited) return "Native property limit exceeded";
++    visited += keys->Length();
++    for (uint32_t i = 0; i < keys->Length(); ++i) {
++      v8::Local<v8::Value> key;
++      if (!keys->Get(context, i).ToLocal(&key) || !key->IsName()) return "Cannot read native property key";
++      bool seen = false;
++      for (const auto& slot : *slots) if (slot.key->StrictEquals(key)) { seen = true; break; }
++      if (!seen) slots->push_back({object, key.As<v8::Name>(), depth == 0});
++    }
++    if (!inherited) return "";
++    auto prototype = object->GetPrototype();
++    if (prototype->IsNull()) return "";
++    if (!prototype->IsObject()) return "Invalid native prototype";
++    object = prototype.As<v8::Object>();
++  }
++}
++/** Own and inherited descriptors never invoke JavaScript getters or walk through proxy traps. */
++base::Value Properties(v8::Local<v8::Context> context, const std::shared_ptr<Owner>& owner,
++                       const base::DictValue& p, bool inherited) {
+   auto* isolate = v8::Isolate::GetCurrent(); v8::Local<v8::Value> value;
+   if (!Resolve(isolate, owner, Param(p, "object")).ToLocal(&value)) return Failure("Stale or foreign runtime object");
+   if (!value->IsObject() || value->IsProxy()) return Failure("Native property inspection requires a non-proxy object");
+   const auto group = owner->handles.at(Param(p, "object")).group;
+   v8::TryCatch caught(isolate);
+-  auto object = value.As<v8::Object>(); v8::Local<v8::Array> keys;
+-  if (!object->GetOwnPropertyNames(context, v8::ALL_PROPERTIES, v8::KeyConversionMode::kConvertToString).ToLocal(&keys))
+-    return Failure("Cannot enumerate native properties");
+-  if (keys->Length() > kProperties) return Failure("Native property limit exceeded");
++  std::vector<PropertySlot> slots;
++  auto error = CollectProperties(context, value.As<v8::Object>(), inherited, &slots);
++  if (!error.empty()) return Failure(error);
+   base::ListValue result;
+-  for (uint32_t i = 0; i < keys->Length(); ++i) {
+-    v8::Local<v8::Value> key, descriptor;
+-    if (!keys->Get(context, i).ToLocal(&key) || !key->IsName() ||
+-        !object->GetOwnPropertyDescriptor(context, key.As<v8::Name>()).ToLocal(&descriptor) || !descriptor->IsObject())
++  for (const auto& slot : slots) {
++    auto key = slot.key;
++    v8::Local<v8::Value> descriptor;
++    if (!slot.object->GetOwnPropertyDescriptor(context, key).ToLocal(&descriptor) || !descriptor->IsObject())
+       return Failure("Native property disappeared");
+     auto desc = descriptor.As<v8::Object>();
+     base::DictValue entry;
+@@ -246,7 +279,7 @@
+       entry.Set("symbol", std::move(symbol));
+       entry.Set("name", "Symbol(" + String(isolate, key.As<v8::Symbol>()->Description(isolate)) + ")");
+     } else entry.Set("name", String(isolate, key));
+-    entry.Set("isOwn", true);
++    entry.Set("isOwn", slot.own);
+     for (const char* flag : {"configurable", "enumerable", "writable"}) {
+       v8::Local<v8::Value> v;
+       if (desc->HasOwnProperty(context, Key(isolate, flag)).FromMaybe(false) &&
+@@ -324,7 +357,8 @@
+     }
+     return std::move(callback).Run(base::Value(base::DictValue()));
+   }
+-  if (operation == "inspect") return std::move(callback).Run(Properties(context, owner, p));
++  if (operation == "inspect" || operation == "inspectChain")
++    return std::move(callback).Run(Properties(context, owner, p, operation == "inspectChain"));
+   if (operation == "await") {
+     v8::Local<v8::Value> value;
+     if (!Resolve(isolate, owner, Param(p, "object")).ToLocal(&value) || !value->IsPromise())

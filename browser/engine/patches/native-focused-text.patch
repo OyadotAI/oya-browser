@@ -1,0 +1,67 @@
+diff --git a/shell/browser/api/electron_api_web_contents.cc b/shell/browser/api/electron_api_web_contents.cc
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -4091,6 +4091,29 @@
+ }
+ #endif
+ 
++// Deliver text to the focused widget, including an out-of-process child frame.
++// The renderer webFrame helper can have no active input controller in the main
++// process when focus belongs to another renderer and must not be dereferenced.
++v8::Local<v8::Promise> WebContents::InsertText(
++    v8::Isolate* isolate, const std::u16string& text) {
++  gin_helper::Promise<void> promise(isolate);
++  auto handle = promise.GetHandle();
++  auto* frame = web_contents()->GetFocusedFrame();
++  if (!frame || !frame->IsRenderFrameLive()) {
++    promise.RejectWithErrorMessage("No live focused frame for text insertion");
++    return handle;
++  }
++  auto* widget = static_cast<content::RenderWidgetHostImpl*>(
++      frame->GetRenderWidgetHost());
++  if (!widget) {
++    promise.RejectWithErrorMessage("No focused widget for text insertion");
++    return handle;
++  }
++  widget->ImeCommitText(text, {}, gfx::Range::InvalidRange(), 0);
++  promise.Resolve();
++  return handle;
++}
++
+ void WebContents::SendInputEvent(v8::Isolate* isolate,
+                                  v8::Local<v8::Value> input_event) {
+   content::RenderWidgetHostView* view =
+@@ -5273,6 +5296,7 @@
+       .SetMethod("stopFindInPage", &WebContents::StopFindInPage)
+       .SetMethod("focus", &WebContents::Focus)
+       .SetMethod("isFocused", &WebContents::IsFocused)
++      .SetMethod("insertText", &WebContents::InsertText)
+       .SetMethod("sendInputEvent", &WebContents::SendInputEvent)
+       .SetMethod("beginFrameSubscription", &WebContents::BeginFrameSubscription)
+       .SetMethod("endFrameSubscription", &WebContents::EndFrameSubscription)
+diff --git a/shell/browser/api/electron_api_web_contents.h b/shell/browser/api/electron_api_web_contents.h
+--- a/shell/browser/api/electron_api_web_contents.h
++++ b/shell/browser/api/electron_api_web_contents.h
+@@ -306,6 +306,8 @@
+   bool IsFocused() const;
+ 
+   // Send WebInputEvent to the page.
++  // Native IME delivery follows focused frame ownership across renderer processes.
++  v8::Local<v8::Promise> InsertText(v8::Isolate* isolate, const std::u16string& text);
+   void SendInputEvent(v8::Isolate* isolate, v8::Local<v8::Value> input_event);
+ 
+   // Subscribe to the frame updates.
+diff --git a/lib/browser/api/web-contents.ts b/lib/browser/api/web-contents.ts
+--- a/lib/browser/api/web-contents.ts
++++ b/lib/browser/api/web-contents.ts
+@@ -156,9 +156,8 @@
+ };
+ 
+ // Following methods are mapped to webFrame.
+-const webFrameMethods = ['insertCSS', 'insertText', 'removeInsertedCSS'] as (
++const webFrameMethods = ['insertCSS', 'removeInsertedCSS'] as (
+   | 'insertCSS'
+-  | 'insertText'
+   | 'removeInsertedCSS'
+ )[];
+ 

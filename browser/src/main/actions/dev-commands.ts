@@ -3,7 +3,7 @@
  * params), each answering `{ ok, data?, error? }` by return value. Elements are
  * addressed by the analyzer's `data-ac-id`.
  */
-import { cdp, cdpEval, type PageView } from '../cdp/cdp.ts';
+import { capturePage, evaluatePage, type NativePage as PageView } from '../native/index.ts';
 import type { Point } from '../input/mouse.ts';
 import { sleep } from '../input/timing.ts';
 import { VIEWPORT_JS, DEV_ANALYZE_JS, devWaitJs } from './scripts.ts';
@@ -11,7 +11,7 @@ import { HOME_URL } from '../tabs/constants.ts';
 import { renderedAnalysis } from './page-format.ts';
 import * as c from './constants.ts';
 import type { DevAnswer, PageDriver } from './driver.ts';
-import type { CommandParams, Screenshot, Viewport } from './types.ts';
+import type { CommandParams, Viewport } from './types.ts';
 
 /** A dev panel action: answers `{ ok, data?, error? }` by return value. */
 type DevHandler = (driver: PageDriver, view: PageView, params?: CommandParams) => Promise<DevAnswer>;
@@ -43,7 +43,7 @@ async function focusAndClear(driver: PageDriver, view: PageView, point: Point): 
 
 /** One wheel event of `delta` at the viewport's centre. */
 async function devScroll(driver: PageDriver, view: PageView, delta: number): Promise<DevAnswer> {
-  const vp = await cdpEval<Viewport | null>(view, VIEWPORT_JS);
+  const vp = await evaluatePage<Viewport | null>(view, VIEWPORT_JS);
   const x = (vp?.w || c.FALLBACK_VIEWPORT.w) / c.HALF;
   await driver.mouse.scroll(view, x, (vp?.h || c.FALLBACK_VIEWPORT.h) / c.HALF, 0, delta);
   return { ok: true };
@@ -59,8 +59,7 @@ export const DEV_COMMANDS: Readonly<Record<string, DevHandler>> = {
 
   /** A PNG of the active tab. */
   async screenshot(driver, view) {
-    const r = await cdp<Screenshot>(view, 'Page.captureScreenshot', { format: 'png' });
-    return { ok: true, data: { screenshot: 'data:image/png;base64,' + r.data } };
+    return { ok: true, data: { screenshot: await capturePage(view) } };
   },
 
   /** Scrolls down by `amount` pixels. */
@@ -82,7 +81,7 @@ export const DEV_COMMANDS: Readonly<Record<string, DevHandler>> = {
     return { ok: true, data: { url: view.webContents.getURL(), title: view.webContents.getTitle() } };
   },
 
-  /** Clicks an element by id with the CDP mouse. */
+  /** Clicks an element by id with native pointer input. */
   async click(driver, view, params) {
     const problem = elementIdProblem(params);
     if (problem) return { ok: false, error: problem };

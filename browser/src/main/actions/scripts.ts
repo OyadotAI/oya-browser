@@ -1,7 +1,7 @@
 /**
  * The scripts page commands evaluate, in the analyzer's isolated world unless
- * a command says otherwise. Their text is kept exactly as it was: each is the
- * CDP payload a command sends.
+ * a command says otherwise. Selection and hit testing stay scoped to the
+ * target document; interaction is dispatched by the native input commands.
  */
 import { ELEMENT_WAIT_MS } from './constants.ts';
 import { presentJs, readElementsJs } from '../../page/queries.ts';
@@ -32,13 +32,28 @@ const FIND_ELEMENT_JS = `(() => {
     window.scrollBy(0, rect.top - 100);
     rect = el.getBoundingClientRect();
   }
-  // Something drawn over the element (an ad, a cookie bar) takes a click aimed at its
-  // centre. Scroll it clear once; if it is still covered, say so, and the click is
-  // sent to the element itself rather than to whatever sits on top of it.
+  // Check the target document and every containing frame. Never bypass an
+  // overlay using synthetic events, including an overlay outside an iframe.
   const reaches = (r) => {
-    if (el.ownerDocument !== document) return true;
-    const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-    return !!top && (top === el || el.contains(top) || top.contains(el));
+    let target = el, x = r.x + r.width / 2, y = r.y + r.height / 2;
+    while (target) {
+      const doc = target.ownerDocument;
+      let top = doc.elementFromPoint(x, y);
+      while (top !== target && !target.contains(top) && top?.shadowRoot?.elementFromPoint) {
+        const inner = top.shadowRoot.elementFromPoint(x, y);
+        if (!inner || inner === top) break;
+        top = inner;
+      }
+      if (!top || (top !== target && !target.contains(top))) return false;
+      if (doc === document) return true;
+      const frame = doc.defaultView.frameElement;
+      if (!frame) return false;
+      const bounds = frame.getBoundingClientRect();
+      x += bounds.x + frame.clientLeft;
+      y += bounds.y + frame.clientTop;
+      target = frame;
+    }
+    return false;
   };
   if (!reaches(rect)) {
     el.scrollIntoView({ behavior: 'instant', block: 'start' });
@@ -46,19 +61,11 @@ const FIND_ELEMENT_JS = `(() => {
     rect = el.getBoundingClientRect();
   }
   const covered = !reaches(rect);
-  let offsetX = 0, offsetY = 0;
-  // If element is inside an iframe, offset by the iframe's position in the parent page
   const ownerDoc = el.ownerDocument;
-  if (ownerDoc !== document) {
-    for (const iframe of document.querySelectorAll('iframe')) {
-      try { if (iframe.contentDocument === ownerDoc) {
-        const iframeRect = iframe.getBoundingClientRect();
-        offsetX = iframeRect.x;
-        offsetY = iframeRect.y;
-        break;
-      }} catch {}
-    }
-  }
+  const offset = ownerDoc === document ? { x: 0, y: 0 } : window.__acFrameOffset?.(el);
+  if (!offset) return { ok: false, error: 'Native frame coordinates are unavailable' };
+  const offsetX = offset.x;
+  const offsetY = offset.y;
   // The handles a replay finds this element by again, read here because here is
   // the only place the element is unambiguous: an id from an earlier analysis may
   // name nothing by the time the action is recorded, and a step recorded without
@@ -125,7 +132,7 @@ const SELECT_FIELD_JS = `(() => {
             el.select();
             return 'select';
           } else if (el.isContentEditable) {
-            const sel = window.getSelection();
+            const sel = el.ownerDocument.defaultView.getSelection();
             sel.selectAllChildren(el);
             return 'select';
           }

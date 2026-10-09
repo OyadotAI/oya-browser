@@ -1,9 +1,9 @@
 /**
  * Real Electron regression for the identity a persona presents: what a page's
  * JavaScript reads (navigator.userAgent, navigator.userAgentData) must be what
- * the request headers say. Google's sign-in compares the two, and a browser
- * whose headers claim Google Chrome while its JavaScript reports Electron's own
- * brands is refused as "This browser or app may not be secure".
+ * the request headers say. This checks consistency, not Google's acceptance.
+ * Native browsing separately retains the engine's real identity without eager
+ * debugger attachment; real-account and physical-passkey checks are separate.
  * npm run test:identity --prefix browser (Linux CI uses xvfb-run).
  */
 const { app, BrowserWindow, BrowserView, session } = require('electron');
@@ -97,6 +97,29 @@ async function personaTab(win, profile) {
   return view;
 }
 
+/** Native desktop setup leaves both the page and wire identity untouched, without attaching CDP. */
+async function checkNativeBrowsing(win, site) {
+  const partition = 'native-desktop-identity';
+  const ses = session.fromPartition(partition);
+  const original = ses.getUserAgent();
+  await configureSession(app, ses, null, { nativeBrowsing: true });
+  const view = new BrowserView({ webPreferences: { contextIsolation: true, sandbox: true, partition } });
+  win.setBrowserView(view);
+  view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+  const protection = new Protection({ nativeBrowsing: true });
+  await view.webContents.loadURL('about:blank');
+  assert.equal(await protection.setupTabCDP(view), true);
+  await view.webContents.loadURL(site.url('/page?native'));
+  await protection.injectScripts(view, true);
+  assert.equal(view.webContents.debugger.isAttached(), false, 'ordinary native browsing must not attach CDP');
+  const ua = await view.webContents.executeJavaScript('navigator.userAgent', true);
+  assert.equal(ua, original, 'page keeps the native engine identity');
+  assert.equal(site.seen.at(-1)['user-agent'], original, 'requests keep the native engine identity');
+  assert.equal(view.webContents.debugger.isAttached(), false);
+  win.removeBrowserView(view);
+  view.webContents.close();
+}
+
 /** Everything a page says about itself must be what its request said. */
 function assertConsistent(platform, page, headers) {
   const where = `${platform}: `;
@@ -123,26 +146,56 @@ function assertHighEntropy(where, high, headers) {
   assert.equal(chrome, process.versions.chrome, where + 'the claimed Chrome is the engine that is running');
 }
 
-/** A passkey request as a sign-in page makes it, timed; a page in Electron used to wait on it for ever. */
-const PASSKEY_REQUEST = `(async () => {
-  const started = Date.now();
-  const publicKey = { challenge: new Uint8Array(32), timeout: 300000, userVerification: 'preferred' };
-  const error = await navigator.credentials.get({ publicKey }).then(() => null, (e) => e.name);
-  return { error, ms: Date.now() - started, source: Function.prototype.toString.call(navigator.credentials.get) };
+/** Exercise native WebAuthn with an isolated virtual authenticator, never a real user's credentials. */
+const PASSKEY_ROUNDTRIP = `(async () => {
+  const created = await navigator.credentials.create({ publicKey: {
+    challenge: new Uint8Array(32), rp: { name: 'Oya test', id: 'localhost' },
+    user: { id: new Uint8Array([1]), name: 'test', displayName: 'Test account' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 5000,
+    authenticatorSelection: { residentKey: 'required', userVerification: 'required' }
+  }});
+  const signed = await navigator.credentials.get({ publicKey: {
+    challenge: new Uint8Array(32), rpId: 'localhost', timeout: 5000,
+    allowCredentials: [{ type: 'public-key', id: created.rawId }], userVerification: 'required'
+  }});
+  const rejected = (promise) => promise.then(() => 'accepted', (error) => error.name);
+  const invalidRP = await rejected(navigator.credentials.get({ publicKey: {
+    challenge: new Uint8Array(32), rpId: 'https://localhost', timeout: 5000
+  }}));
+  const controller = new AbortController();
+  const pending = navigator.credentials.get({ signal: controller.signal, publicKey: {
+    challenge: new Uint8Array(32), rpId: 'localhost', timeout: 5000,
+    allowCredentials: [{ type: 'public-key', id: created.rawId }]
+  }});
+  controller.abort();
+  return { same: created.id === signed.id, signature: signed.response.signature.byteLength,
+    invalidRP, aborted: await rejected(pending) };
 })()`;
-/** How long a person takes to dismiss Chrome's passkey dialog, at most. */
-const PASSKEY_DISMISS_MS = 6000;
 
-/**
- * There is no passkey dialog here, so a request is answered as Chrome answers a
- * dismissed one: NotAllowedError, soon. Google's sign-in then offers the password
- * instead of sitting on "Verifying it's you…".
- */
-async function assertPasskeyDismissed(view, where) {
-  const pending = new Promise((resolve) => setTimeout(() => resolve({ error: 'still pending' }), PASSKEY_DISMISS_MS));
-  const result = await Promise.race([view.webContents.executeJavaScript(PASSKEY_REQUEST, true), pending]);
-  assert.equal(result.error, 'NotAllowedError', where + 'a passkey request is dismissed, not left hanging');
-  assert.match(result.source, /\[native code\]/, where + 'and the method still reads as native');
+/** Registration and assertion must reach Chromium instead of the old forced NotAllowedError. */
+async function assertNativePasskeys(view, where) {
+  const dbg = view.webContents.debugger;
+  await dbg.sendCommand('WebAuthn.enable');
+  const { authenticatorId } = await dbg.sendCommand('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'internal',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+  try {
+    const result = await view.webContents.executeJavaScript(PASSKEY_ROUNDTRIP, true);
+    assert.equal(result.same, true, where + 'native registration and assertion use the same credential');
+    assert.ok(result.signature > 0, where + 'native assertion returns a cryptographic signature');
+    assert.equal(result.invalidRP, 'SecurityError', where + 'invalid RP identifiers remain rejected');
+    assert.equal(result.aborted, 'AbortError', where + 'aborting an assertion reaches native cancellation');
+  } finally {
+    await dbg.sendCommand('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
+    await dbg.sendCommand('WebAuthn.disable');
+  }
 }
 
 /** What a page and its worker can learn without asking the person anything, as a fresh Chrome answers it. */
@@ -202,7 +255,7 @@ async function checkPlatform(win, site, platform) {
   await view.webContents.loadURL(site.url(`/page?${platform}`));
   const page = await view.webContents.executeJavaScript(READ_IDENTITY, true);
   assertConsistent(platform, page, site.seen.at(-1));
-  await assertPasskeyDismissed(view, `${platform}: `);
+  await assertNativePasskeys(view, `${platform}: `);
   const surface = await view.webContents.executeJavaScript(READ_SURFACE, true);
   assertFreshChromeSurface(`${platform}: `, surface, profile, site.seen.at(-1));
   win.removeBrowserView(view);
@@ -214,10 +267,11 @@ async function checkPlatform(win, site, platform) {
   setTimeout(() => (console.error('Electron identity test timed out'), app.exit(1)), TIMEOUT_MS).unref();
   const site = await hintServer();
   const win = new BrowserWindow({ show: true, width: 820, height: 640 });
+  await checkNativeBrowsing(win, site);
   for (const platform of ['Win32', 'MacIntel', 'Linux x86_64']) await checkPlatform(win, site, platform);
   site.server.close();
   console.log(
-    'Electron identity: identity agrees between page and headers; passkeys dismissed; permissions, languages and devices read as a fresh Chrome',
+    'Oya identity: native browsing preserves page/request identity without CDP; persona identity stays consistent; virtual WebAuthn registration/assertion pass (not physical passkey verification)',
   );
   app.exit(0);
 })().catch((error) => {

@@ -102,3 +102,18 @@ it('sends only informational alerts to the shell inbox and keeps agent notes', (
   assert.equal(dbg.sent.length, 2);
   assert.match(dialogs.takeNotes(), /Reminder/);
 });
+
+it('closing one legacy surface does not discard a different surface decision', async () => {
+  const dialogs = new Dialogs();
+  const first = new FakeDebugger();
+  const second = new FakeDebugger();
+  dialogs.watch(first);
+  dialogs.watch(second);
+  first.event('Page.javascriptDialogOpening', { type: 'confirm', message: 'First' });
+  second.event('Page.javascriptDialogOpening', { type: 'confirm', message: 'Second' });
+  second.event('Page.javascriptDialogClosed');
+  assert.equal(dialogs.current()?.message, 'First');
+  await dialogs.answer(false);
+  assert.equal(first.sent.length, 1);
+  assert.equal(second.sent.length, 0);
+});

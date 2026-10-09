@@ -17,6 +17,11 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { applyTelemetryFlags } from '../anonymity/telemetry.ts';
 import { applyDNSLeakPrevention } from '../anonymity/proxy.ts';
+import { startAppNativeCdp } from './app/native-cdp.ts';
+import { nativeSigninTestEnabled, startNativeSigninTest } from './app/native-signin-test.ts';
+import { Passkeys, configurePasskeys } from './app/passkeys.ts';
+/** Signing-bound WebAuthn group embedded by the build, empty for unsigned development. */
+declare const __OYA_WEBAUTHN_GROUP__: string;
 import { MediaPermissions } from './app/media-permissions.ts';
 import { ExternalApps } from './app/external-apps.ts';
 import { Notifications } from './notifications/index.ts';
@@ -28,9 +33,8 @@ import { Boot } from './app/boot.ts';
 import { Lifecycle } from './app/lifecycle.ts';
 import { Updater } from './app/updater.ts';
 import { KEEP_RENDERING_SWITCHES, RELAY_TOKEN_BYTES, WORLD_NAME_BYTES } from './app/constants.ts';
-import { cdp } from './cdp/cdp.ts';
 import { Dialogs } from './cdp/dialogs.ts';
-import { World } from './cdp/world.ts';
+import { World } from './native/index.ts';
 import { Observer } from './observe/observer.ts';
 import { DesktopControl } from './control/control-state.ts';
 import { CookieSync, cookieSyncMark } from './sync/cookie-sync.ts';
@@ -43,14 +47,10 @@ import { CdpRelay } from './connection/cdp-relay.ts';
 import { ControlSocket } from './connection/socket.ts';
 import { CommandRunner } from './connection/commands.ts';
 import { Mirror } from './mirror/mirror.ts';
-import { ShellWindow } from './shell/window.ts';
-import { Shortcuts } from './shell/shortcuts.ts';
-import { ControlShield, type AnalysisResult } from './shell/control-shield.ts';
+import { BrowserWindows } from './windows/index.ts';
+import { type AnalysisResult } from './shell/control-shield.ts';
 import type { ActionParams } from './shell/narration.ts';
-import { PanelLayout } from './shell/layout.ts';
-import { Overlays } from './shell/overlays.ts';
 import { BrowsingLibrary } from './library/index.ts';
-import { TabManager } from './tabs/tabs.ts';
 import { Protection } from './tabs/protection.ts';
 import { WorkerCoverage } from './tabs/workers.ts';
 import { Recorder } from './recording/recorder.ts';
@@ -61,12 +61,15 @@ import { Governance, readGovernance } from './identity/governance.ts';
 const governance = new Governance(readGovernance(process.env.OYA_GOVERNANCE));
 
 const { app, nativeImage } = electron;
+const NATIVE_BROWSING = nativeSigninTestEnabled(app.isPackaged, process.argv, process.env);
+const NATIVE_SIGNIN_TEST = NATIVE_BROWSING && process.argv.includes('--oya-native-signin-test');
 // Branding must not move existing cookies, profiles, or saved settings.
 const desktopUserDataPath = app.getPath('userData');
 app.setName('Oya Browser');
 app.setPath('userData', desktopUserDataPath);
 
 if (process.env.OYA_USER_DATA_DIR) app.setPath('userData', path.resolve(process.env.OYA_USER_DATA_DIR));
+if (NATIVE_SIGNIN_TEST) app.setPath('userData', fs.mkdtempSync(path.join(app.getPath('temp'), 'oya-native-signin-')));
 // CDP for automation harnesses. Off unless asked for: whoever reaches this port
 // owns the browser. Chromium listens one port up on loopback; the CDP front door
 // (src/main/front-door/) owns the public port and shows harnesses only real,
@@ -74,7 +77,7 @@ if (process.env.OYA_USER_DATA_DIR) app.setPath('userData', path.resolve(process.
 // allowing one would let any web page on the machine drive it.
 const CDP_PORT = Number(process.env.OYA_REMOTE_DEBUGGING_PORT) || 0;
 const CDP_RELAY_TOKEN = crypto.randomBytes(RELAY_TOKEN_BYTES).toString('hex');
-app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT ? String(CDP_PORT + 1) : '0');
+if (!NATIVE_BROWSING) app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT ? String(CDP_PORT + 1) : '0');
 
 // Prevent crashes from unhandled errors
 process.on('uncaughtException', (err) => {
@@ -85,8 +88,10 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // Apply telemetry + DNS leak prevention flags before app is ready
-applyTelemetryFlags(app);
-applyDNSLeakPrevention(app);
+if (!NATIVE_BROWSING) {
+  applyTelemetryFlags(app);
+  applyDNSLeakPrevention(app);
+}
 
 // Pages keep rendering while the window is hidden or covered (see KEEP_RENDERING_SWITCHES).
 for (const name of KEEP_RENDERING_SWITCHES) app.commandLine.appendSwitch(name);
@@ -113,6 +118,7 @@ const ISOLATED_WORLD = 'w' + crypto.randomBytes(WORLD_NAME_BYTES).toString('hex'
 // come first; each service is added in turn, in the order the next one needs it.
 const ctx = {
   electron,
+  nativeBrowsing: NATIVE_BROWSING,
   appDir: APP_DIR,
   analyzerScript,
   isolatedWorld: ISOLATED_WORLD,
@@ -127,14 +133,10 @@ const ctx = {
   validationTabs: undefined,
 } as AppServices;
 ctx.config = new ConfigStore({ dir: () => app.getPath('userData'), safe: electron.safeStorage });
-ctx.shell = new ShellWindow(ctx);
-ctx.shortcuts = new Shortcuts(ctx);
-ctx.shield = new ControlShield(ctx);
-ctx.layout = new PanelLayout(ctx);
-ctx.overlays = new Overlays(ctx);
+ctx.windows = new BrowserWindows(ctx);
+ctx.passkeys = new Passkeys(ctx);
 ctx.mediaPermissions = new MediaPermissions(ctx);
 ctx.externalApps = new ExternalApps(ctx);
-ctx.tabs = new TabManager(ctx);
 ctx.notifications = new Notifications({
   partition: () => ctx.persona.partitionName(),
   changed: () => ctx.shell.send('notifications-changed', null),
@@ -149,7 +151,7 @@ ctx.socket = new ControlSocket(ctx);
 ctx.commands = new CommandRunner(ctx);
 ctx.deepLinks = new DeepLinks(ctx);
 ctx.routines = new Routines(ctx);
-ctx.world = new World({ cdp, analyzerScript, worldName: ISOLATED_WORLD });
+ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
   changed: (state) => ctx.shield.controlChanged(state),
@@ -191,13 +193,22 @@ ctx.actions = new PageDriver({
 // Windows and Linux deliver the link as an argv entry to a second launch;
 // without the single-instance lock that launch becomes a second browser with
 // its own session, and the cookies land in the wrong place.
-if (!app.requestSingleInstanceLock()) app.quit();
-else app.on('second-instance', (_event, argv) => ctx.deepLinks.onSecondInstance(argv));
-app.on('open-url', (event, url) => ctx.deepLinks.onOpenUrl(event, url));
+if (NATIVE_SIGNIN_TEST) {
+  app.whenReady().then(() => startNativeSigninTest(electron));
+  app.on('window-all-closed', () => app.quit());
+} else {
+  if (!app.requestSingleInstanceLock()) app.quit();
+  else app.on('second-instance', (_event, argv) => ctx.deepLinks.onSecondInstance(argv));
+  app.on('open-url', (event, url) => ctx.deepLinks.onOpenUrl(event, url));
 
-const lifecycle = new Lifecycle(ctx);
-ctx.updater = new Updater({ electron, shell: ctx.shell, beforeInstall: () => lifecycle.flushJar() });
-registerIpc(ctx);
+  const lifecycle = new Lifecycle(ctx);
+  ctx.updater = new Updater({ electron, shell: ctx.shell, beforeInstall: () => lifecycle.flushJar() });
+  registerIpc(ctx);
 
-app.whenReady().then(() => new Boot(ctx).run());
-lifecycle.install();
+  app.whenReady().then(async () => {
+    configurePasskeys(app, __OYA_WEBAUTHN_GROUP__);
+    await new Boot(ctx).run();
+    startAppNativeCdp(ctx);
+  });
+  lifecycle.install();
+}

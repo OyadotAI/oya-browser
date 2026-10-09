@@ -10,7 +10,7 @@ import { HOME_URL } from '../tabs/constants.ts';
 import { ZOOM_STEP } from './constants.ts';
 
 /** The services the menu uses. */
-type Deps = Pick<AppServices, 'electron' | 'tabs' | 'control' | 'library' | 'persona' | 'shell'>;
+type Deps = Pick<AppServices, 'electron' | 'tabs' | 'control' | 'library' | 'persona' | 'shell' | 'windows'>;
 
 /** A menu item's id, label and keys. */
 type ItemName = Pick<MenuItemConstructorOptions, 'id' | 'label' | 'accelerator'>;
@@ -76,7 +76,8 @@ function fileMenu(deps: Deps, mac: boolean): MenuItemConstructorOptions {
   );
   const close = (): unknown => deps.tabs.closeTab(deps.tabs.activeTabId!);
   const closeTab = humanItem(deps, 'browser-close-tab', 'Close Tab', 'CmdOrCtrl+W', close);
-  return { label: 'File', submenu: [newTab, closeTab, ...(mac ? [] : [QUIT])] };
+  const newWindow = humanItem(deps, 'browser-new-window', 'New Window', 'CmdOrCtrl+N', () => deps.windows?.newWindow());
+  return { label: 'File', submenu: [newWindow, newTab, closeTab, ...(mac ? [] : [QUIT])] };
 }
 
 /** View: reload, zoom and full screen. */

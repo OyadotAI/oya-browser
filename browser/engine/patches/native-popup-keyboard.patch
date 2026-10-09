@@ -1,0 +1,88 @@
+--- a/shell/browser/api/electron_api_web_contents.h
++++ b/shell/browser/api/electron_api_web_contents.h
+@@ -579,6 +579,11 @@
+   void UpdateTargetURL(content::WebContents* source, const GURL& url) override;
+   bool HandleKeyboardEvent(content::WebContents* source,
+                            const input::NativeWebKeyboardEvent& event) override;
++#if BUILDFLAG(IS_MAC)
++  // Route only this contents' active HTML select menu through AppKit input.
++  bool SendOyaPopupKey(v8::Isolate* isolate,
++                       const input::NativeWebKeyboardEvent& event);
++#endif
+   bool PlatformHandleKeyboardEvent(content::WebContents* source,
+                                    const input::NativeWebKeyboardEvent& event);
+   bool PreHandleMouseEvent(content::WebContents* source,
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -4142,6 +4142,10 @@
+       // For backwards compatibility, convert `kKeyDown` to `kRawKeyDown`.
+       if (keyboard_event.GetType() == blink::WebKeyboardEvent::Type::kKeyDown)
+         keyboard_event.SetType(blink::WebKeyboardEvent::Type::kRawKeyDown);
++#if BUILDFLAG(IS_MAC)
++      if (SendOyaPopupKey(isolate, keyboard_event))
++        return;
++#endif
+       rwh->ForwardKeyboardEvent(keyboard_event);
+       return;
+     }
+--- a/shell/browser/api/electron_api_web_contents_mac.mm
++++ b/shell/browser/api/electron_api_web_contents_mac.mm
+@@ -3,6 +3,8 @@
+ // found in the LICENSE file.
+ 
+ #include "content/public/browser/render_widget_host_view.h"
++#import "content/app_shim_remote_cocoa/web_menu_runner_mac.h"
++#include "ui/events/keycodes/keyboard_code_conversion_mac.h"
+ #include "shell/browser/api/electron_api_web_contents.h"
+ #include "shell/browser/ui/cocoa/event_dispatching_window.h"
+ #include "ui/base/cocoa/command_dispatcher.h"
+@@ -32,6 +34,49 @@
+   }
+ 
+   return view->HasFocus();
++}
++
++bool WebContents::SendOyaPopupKey(
++    v8::Isolate* isolate,
++    const input::NativeWebKeyboardEvent& event) {
++  auto* host_view = web_contents()->GetRenderWidgetHostView();
++  NSView* view = host_view ? host_view->GetNativeView().GetNativeNSView() : nil;
++  if (!view || ![WebMenuRunner oyaMenuIsRunningForView:view])
++    return false;
++  if (!view.window.isKeyWindow || !IsFocused()) {
++    isolate->ThrowException(v8::Exception::Error(
++        gin::StringToV8(isolate, "Native popup does not own keyboard focus")));
++    return true;
++  }
++  // AppKit derives text from keyDown; the separate renderer char would duplicate it.
++  if (event.GetType() == blink::WebInputEvent::Type::kChar)
++    return true;
++  NSUInteger flags = 0;
++  const int mods = event.GetModifiers();
++  if (mods & blink::WebInputEvent::kShiftKey) flags |= NSEventModifierFlagShift;
++  if (mods & blink::WebInputEvent::kControlKey) flags |= NSEventModifierFlagControl;
++  if (mods & blink::WebInputEvent::kAltKey) flags |= NSEventModifierFlagOption;
++  if (mods & blink::WebInputEvent::kMetaKey) flags |= NSEventModifierFlagCommand;
++  unichar shifted = 0, character = 0;
++  int code = ui::MacKeyCodeForWindowsKeyCode(
++      static_cast<ui::KeyboardCode>(event.windows_key_code), flags,
++      &shifted, &character);
++  if (code < 0) {
++    isolate->ThrowException(v8::Exception::Error(
++        gin::StringToV8(isolate, "Unsupported native popup key")));
++    return true;
++  }
++  const auto type = event.GetType() == blink::WebInputEvent::Type::kKeyUp
++                        ? NSEventTypeKeyUp : NSEventTypeKeyDown;
++  NSEvent* native = [NSEvent keyEventWithType:type
++      location:NSZeroPoint modifierFlags:flags
++      timestamp:NSProcessInfo.processInfo.systemUptime
++      windowNumber:view.window.windowNumber context:nil
++      characters:[NSString stringWithCharacters:&character length:1]
++      charactersIgnoringModifiers:[NSString stringWithCharacters:&shifted length:1]
++      isARepeat:NO keyCode:code];
++  [NSApp postEvent:native atStart:NO];
++  return true;
+ }
+ 
+ bool WebContents::PlatformHandleKeyboardEvent(

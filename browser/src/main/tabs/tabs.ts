@@ -3,22 +3,28 @@
  * their first page loads. Opening, closing, switching, and the tab strip the
  * shell draws.
  */
-import type { BrowserView, BrowserWindow, LoadURLOptions, NavigationHistory, WebPreferences } from 'electron';
+import type { BrowserView, BrowserWindow, LoadURLOptions, NavigationHistory, WebPreferences, Session } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { TabEvents, type TabEventsDeps } from './tab-events.ts';
 import { AddressBar } from './navigation.ts';
 import { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } from './constants.ts';
 import * as popups from './popup-tabs.ts';
 import { loadInTab, isUnprotected } from './load.ts';
-import { isHome, shownViewOf, leaveHomeFor, staysHome } from './home.ts';
+import { isHome, shownViewOf } from './home.ts';
+import { initialTab, mountTab, updateTabTitle, updateTabUrl } from './tab-lifecycle.ts';
 import { TabSelection } from './tab-selection.ts';
 import { ClosedTabs } from './tab-order.ts';
+import { privateSession } from '../native-contexts/index.ts';
 import type { Tab, TabView } from './types.ts';
 
 export { normalizeAddress } from './navigation.ts';
 
 /** The services the tabs use, their listeners' included. */
-type Deps = TabEventsDeps & Pick<AppServices, 'electron' | 'layout' | 'overlays' | 'cookies'>;
+type Deps = TabEventsDeps &
+  Pick<AppServices, 'electron' | 'layout' | 'overlays' | 'cookies' | 'windows' | 'nativeBrowsing'>;
+
+/** Optional native session is application-owned, never chosen by page-supplied partition strings. */
+type CreateTabArguments = [url: string, activate?: boolean, loadOptions?: LoadURLOptions, session?: Session];
 
 /** How a close treats the last tab. */
 interface CloseOptions {
@@ -81,11 +87,16 @@ function historySummary(history: NavigationHistory | undefined): Pick<TabSummary
   return { canGoBack: history.canGoBack(), canGoForward: history.canGoForward() };
 }
 
-/** Detach debugger before destroying. */
-function destroyTabView(view: TabView): void {
+/** Legacy cleanup is never entered by native browsing. */
+function detachLegacyDebugger(view: TabView): void {
   try {
     if (view.webContents.debugger.isAttached()) view.webContents.debugger.detach();
   } catch {}
+}
+
+/** Destroy the native page without opening a debugging backend. */
+function destroyTabView(view: TabView, nativeBrowsing: boolean): void {
+  if (!nativeBrowsing) detachLegacyDebugger(view);
   try {
     // destroy() is on every webContents, though Electron's types leave it out.
     if (!view.webContents.isDestroyed()) (view.webContents as unknown as { destroy(): void }).destroy();
@@ -140,7 +151,7 @@ const tabPreferences = (partition: string): WebPreferences => ({
 function rememberClosed(tabs: TabManager, idx: number, keepOne: boolean): void {
   const tab = tabs.list[idx];
   if (!keepOne) return tabs.closed.clear();
-  if (!tab.home && !tab.window) tabs.closed.push(tab.url, idx);
+  if (!tab.home && !tab.window && !privateSession(tab.view.webContents.session)) tabs.closed.push(tab.url, idx);
 }
 
 /** Stops a load and forgets the navigation it was for. */
@@ -158,13 +169,18 @@ function reloadOrStop(tabs: TabManager, tab: Tab): void {
 }
 
 /** Creates a page in the active partition, with white behind sites that paint no background. */
-function createPageView(deps: Deps): BrowserView {
-  const webPreferences = tabPreferences(deps.persona.partitionName());
+function createPageView(deps: Deps, session?: Session): BrowserView {
+  const webPreferences = session ? { ...tabPreferences(''), session } : tabPreferences(deps.persona.partitionName());
   const view = new deps.electron.BrowserView({ webPreferences });
   view.setBackgroundColor(PAGE_BACKGROUND);
   return view;
 }
 
+/** Hidden transfer shells render metadata without owning a second copy of the page. */
+function windowTabSummaries(tabs: TabManager, staged?: Tab) {
+  const visible = tabs.list.length ? tabs.list : staged ? [staged] : [];
+  return visible.map((tab) => tabSummary(tab, tabs.activeTabId ?? staged?.id ?? null));
+}
 /** The open tabs and which one is showing. */
 export class TabManager {
   /** The main-process services the tabs use. */
@@ -205,13 +221,15 @@ export class TabManager {
 
   /** Puts a window the page opened on the tab list, so an agent can drive it. */
   adoptWindow(win: BrowserWindow): number | null {
-    return popups.adoptWindow(this, win);
+    return popups.adoptWindow(this, win, this.deps.windows?.allocateTabId());
   }
 
   /** Opens a tab on `url`, loaded with Electron's `loadOptions` (a referrer, a POST body); returns its id. */
-  createTab(url: string, activate = true, loadOptions: LoadURLOptions | undefined = undefined): number {
-    const tab = this.addTab(url);
-    const tabReady = this.events.wire(tab);
+  createTab(...args: CreateTabArguments): number {
+    const [url, activate = true, loadOptions, session] = args;
+    const tab = this.addTab(url, session);
+    const scope = this.deps.windows?.forTab(tab, this.deps as AppServices);
+    const tabReady = (scope ? new TabEvents(scope) : this.events).wire(tab);
     openFirstPage(tab, tabReady, url, loadOptions);
     if (activate) this.activateTab(tab.id);
     this.sendTabList();
@@ -219,10 +237,9 @@ export class TabManager {
   }
 
   /** A new view in the persona's partition, on the list. */
-  private addTab(url: string): Tab {
-    const view = createPageView(this.deps);
-    const home = isHome(url);
-    const tab = { id: this.nextTabId++, view, title: home ? 'Oya' : 'New Tab', url: home ? '' : url || '', home };
+  private addTab(url: string, session?: Session): Tab {
+    const id = this.deps.windows?.allocateTabId() ?? this.nextTabId++;
+    const tab = initialTab(id, createPageView(this.deps, session), url);
     this.list.push(tab);
     return tab;
   }
@@ -238,13 +255,23 @@ export class TabManager {
 
   /** Mounts a tab's view on the shell window (unless an overlay holds it) and tells the strip what is showing. */
   showInShell(tab: Tab): void {
-    const shown = shownViewOf(tab) as BrowserView | null; // a tab shown in the window is a BrowserView; popups have windows of their own
-    if (!this.deps.overlays.names.size) this.deps.shell.window!.setBrowserView(shown);
-    if (tab.home) this.deps.shell.window!.webContents.focus();
-    this.deps.layout.layoutActiveTab();
-    this.deps.shell.send('url-changed', tab.url);
-    this.deps.shell.send('title-changed', tab.title);
-    this.sendTabList();
+    mountTab(this.deps, tab);
+  }
+
+  /** Remove ownership without destroying the live page or touching its recording channel. */
+  releaseTab(id: number): void {
+    const index = this.list.findIndex((tab) => tab.id === id);
+    if (index < 0) return;
+    const [tab] = this.list.splice(index, 1);
+    this.deps.shell.window?.removeBrowserView(tab.view as BrowserView);
+    this.selection.forget(id);
+    this.afterClose(index, this.activeTabId === id, false);
+  }
+
+  /** Adopt the same view and id into this window, preserving history, forms and renderer state. */
+  receiveTab(tab: Tab): void {
+    this.list.push(tab);
+    this.activateTab(tab.id);
   }
 
   /** Moves along the strip, independently of the most-recent return order. */
@@ -273,7 +300,7 @@ export class TabManager {
     try {
       this.deps.shell.window!.removeBrowserView(tab.view as BrowserView);
     } catch {}
-    destroyTabView(tab.view);
+    destroyTabView(tab.view, !!this.deps.nativeBrowsing);
   }
 
   /** Picks what shows after a close. */
@@ -294,26 +321,18 @@ export class TabManager {
 
   /** Sends the tab strip to the shell. */
   sendTabList(): void {
-    const summaries = this.list.map((t) => tabSummary(t, this.activeTabId));
-    this.deps.shell.send('tabs-updated', summaries);
+    this.deps.shell.send('tabs-updated', windowTabSummaries(this, this.deps.shell.stagedTab));
+    this.deps.windows?.tabEvents?.changed();
   }
 
   /** A tab's address changed. */
   urlChanged(tab: Tab, url: string): void {
-    if (staysHome(tab, url)) return;
-    tab.url = url;
-    const shown = tab.id === this.activeTabId;
-    if (leaveHomeFor(tab, url) && shown) return this.showInShell(tab);
-    if (shown) this.deps.shell.send('url-changed', url);
-    this.sendTabList();
+    updateTabUrl(this, this.deps.shell, tab, url);
   }
 
   /** A tab's title changed. */
   titleChanged(tab: Tab, title: string): void {
-    if (tab.home) return;
-    tab.title = title;
-    if (tab.id === this.activeTabId) this.deps.shell.send('title-changed', title);
-    this.sendTabList();
+    updateTabTitle(this, this.deps.shell, tab, title);
   }
 
   /** Leaves the setup screen and starts showing pages, on `url`: a site opens with Ask beside it, the start page with only its own task box (the panel opens with the first task). */

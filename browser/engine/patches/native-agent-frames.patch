@@ -1,0 +1,84 @@
+diff --git a/shell/browser/api/electron_api_web_frame_main.cc b/shell/browser/api/electron_api_web_frame_main.cc
+index 6e6c08adab..7d9f0fd4e0 100644
+--- a/shell/browser/api/electron_api_web_frame_main.cc
++++ b/shell/browser/api/electron_api_web_frame_main.cc
+@@ -315,6 +315,56 @@ v8::Local<v8::Promise> WebFrameMain::ExecuteJavaScript(
+   return handle;
+ }
+ 
++// Native isolated execution also reaches cross-process child frames.
++v8::Local<v8::Promise> WebFrameMain::ExecuteJavaScriptInOyaWorld(
++    gin::Arguments* args,
++    const std::u16string& code) {
++  // This browser-process-only API deliberately exposes no debugger or protocol.
++  // The same reserved world is used by Oya's main-frame analyzer. Keeping the id
++  // fixed prevents callers from reaching the main world or Electron's preload.
++  constexpr int kOyaAgentWorldId = 1004;
++  gin_helper::Promise<base::Value> promise(args->isolate());
++  v8::Local<v8::Promise> handle = promise.GetHandle();
++
++  // Optional userGesture parameter
++  bool user_gesture = false;
++  if (!args->PeekNext().IsEmpty()) {
++    if (args->PeekNext()->IsBoolean()) {
++      args->GetNext(&user_gesture);
++    } else {
++      args->ThrowTypeError("userGesture must be a boolean");
++      return handle;
++    }
++  }
++
++  if (render_frame_disposed_) {
++    promise.RejectWithErrorMessage(
++        "Render frame was disposed before WebFrameMain could be accessed");
++    return handle;
++  }
++
++  static_cast<content::RenderFrameHostImpl*>(render_frame_host())
++      ->ExecuteJavaScriptForTests(
++          code, user_gesture, true /* resolve_promises */,
++          /*honor_js_content_settings=*/true, kOyaAgentWorldId,
++          base::BindOnce(
++              [](gin_helper::Promise<base::Value> promise,
++                 blink::mojom::JavaScriptExecutionResultType type,
++                 base::Value value) {
++                if (type ==
++                    blink::mojom::JavaScriptExecutionResultType::kSuccess) {
++                  promise.Resolve(value);
++                } else {
++                  v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
++                  v8::HandleScope scope(isolate);
++                  promise.Reject(gin::ConvertToV8(isolate, value));
++                }
++              },
++              std::move(promise)));
++
++  return handle;
++}
++
+ #if BUILDFLAG(ENABLE_PRINTING)
+ v8::Local<v8::Promise> WebFrameMain::PrintToPDF(const base::Value& settings) {
+   if (!HasRenderFrame()) {
+@@ -710,6 +760,8 @@ void WebFrameMain::FillObjectTemplate(v8::Isolate* isolate,
+                                       v8::Local<v8::ObjectTemplate> templ) {
+   gin_helper::ObjectTemplateBuilder(isolate, templ)
+       .SetMethod("executeJavaScript", &WebFrameMain::ExecuteJavaScript)
++      .SetMethod("_executeJavaScriptInOyaWorld",
++                 &WebFrameMain::ExecuteJavaScriptInOyaWorld)
+       .SetMethod("collectJavaScriptCallStack",
+                  &WebFrameMain::CollectDocumentJSCallStack)
+ #if BUILDFLAG(ENABLE_PRINTING)
+diff --git a/shell/browser/api/electron_api_web_frame_main.h b/shell/browser/api/electron_api_web_frame_main.h
+index b6025ad774..571029ed17 100644
+--- a/shell/browser/api/electron_api_web_frame_main.h
++++ b/shell/browser/api/electron_api_web_frame_main.h
+@@ -116,6 +116,9 @@ class WebFrameMain final : public gin::Wrappable<WebFrameMain>,
+ 
+   v8::Local<v8::Promise> ExecuteJavaScript(gin::Arguments* args,
+                                            const std::u16string& code);
++  // Oya's isolated agent world, including out-of-process child frames.
++  v8::Local<v8::Promise> ExecuteJavaScriptInOyaWorld(
++      gin::Arguments* args, const std::u16string& code);
+ #if BUILDFLAG(ENABLE_PRINTING)
+   v8::Local<v8::Promise> PrintToPDF(const base::Value& settings);
+ #endif

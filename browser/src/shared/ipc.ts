@@ -53,6 +53,8 @@ export interface Bounds {
 
 /** Where the page and the dev panel sit in the window (src/main/shell/shell-layout.ts). */
 export interface ShellLayout {
+  /** Target interaction state, sent with geometry so a reloaded shell cannot remain inert while visible. */
+  panelOpen?: boolean;
   /** Whether the window is narrow, so the panel slides up instead of in. */
   compact: boolean;
   /** The panel's width beside the page. */
@@ -230,6 +232,14 @@ export interface ShellCalls {
   toggleDevPanel(reducedMotion?: boolean): Promise<void>;
   /** Opens a tab; answers its id. */
   newTab(url?: string): Promise<number>;
+  /** Open a full browser window in the same profile. */
+  newWindow(): Promise<void>;
+  /** Move this shell's live tab into another window or a new window at the pointer. */
+  detachTab(id: number): Promise<void>;
+  /** Begin native drag feedback for a tab owned by this shell. */
+  beginTabDrag(id: number): Promise<void>;
+  /** Cancel visual feedback without moving a page. */
+  endTabDrag(): Promise<void>;
   /** Closes a tab. */
   closeTab(id: number): Promise<void>;
   /** Shows a tab. */
@@ -406,6 +416,10 @@ export const CALL_CHANNELS = {
   /** Opens a tab; answers its id. */
   showLibrary: 'show-library',
   newTab: 'new-tab',
+  newWindow: 'new-window',
+  detachTab: 'detach-tab',
+  beginTabDrag: 'begin-tab-drag',
+  endTabDrag: 'end-tab-drag',
   /** Closes a tab. */
   closeTab: 'close-tab',
   /** Shows a tab. */

@@ -82,16 +82,12 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: browser/package-lock.json
-      # The desktop regression suite reads source and needs no Electron binary,
-      # which is the only reason installing browser/ here is cheap.
+      # Native analyzer regressions require Oya's Electron runtime and a display.
       - run: npm ci --prefix browser
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      # The analyzer DOM checks run the injected script in a real page, so this
-      # one browser binary is the exception to "no Electron binary needed".
+      # Legacy recorder fixtures still await native migration; analyzer fixtures use Oya.
       - run: npx playwright install chromium
         working-directory: browser
-      - run: npm test --prefix browser
+      - run: xvfb-run -a npm test --prefix browser
       # The main process and preload ship bundled (out/); both must type-check and build.
       - run: npm run typecheck --prefix browser
       - run: npm run build --prefix browser

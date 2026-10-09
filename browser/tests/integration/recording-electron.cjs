@@ -75,7 +75,6 @@ let lastStep = 'startup';
   await send('Page.enable');
   await new LoginState().attach(send, on);
   const context = new World({
-    cdp: (_view, method, params) => send(method, params),
     analyzerScript,
     worldName: ISOLATED_WORLD,
   });

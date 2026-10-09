@@ -42,7 +42,7 @@ export interface StripLayout {
 /** The parts of the bridge the strip uses. */
 export type TabStripBridge = Pick<
   OyaBrowser,
-  'onTabsUpdated' | 'newTab' | 'closeTab' | 'activateTab' | 'moveTab' | 'showTabMenu'
+  'onTabsUpdated' | 'newTab' | 'closeTab' | 'activateTab' | 'moveTab' | 'showTabMenu' | 'detachTab'
 >;
 
 /** What the strip uses. */
@@ -150,6 +150,7 @@ export class TabStripViewModel extends ViewModel<TabStripState> {
   endPress(pointerId: number): void {
     const drop = this.deps.drag.release(pointerId);
     if (!drop) return;
+    if (drop.detached) return void this.deps.bridge.detachTab(drop.id).catch(() => this.update(this.state.tabs));
     this.set({ items: moveItem(this.state.items, drop.id, drop.to), drop });
     // Refused (an agent took control): the strip goes back to the main process's order.
     this.deps.bridge.moveTab(drop.id, drop.to).catch(() => this.update(this.state.tabs));

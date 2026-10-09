@@ -1,0 +1,135 @@
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -33,6 +33,10 @@
+ #include "base/task/current_thread.h"
+ #include "base/threading/scoped_blocking_call.h"
+ #include "base/timer/elapsed_timer.h"
++#include "base/timer/timer.h"
++#include "base/memory/ref_counted.h"
++#include "content/public/browser/weak_document_ptr.h"
++#include "mojo/public/cpp/bindings/callback_helpers.h"
+ #include "base/unguessable_token.h"
+ #include "base/values.h"
+ #include "chrome/browser/browser_process.h"
+@@ -454,6 +458,97 @@
+ 
+ namespace {
+ 
++// Acknowledged native composition holds one document and never moves OS focus.
++class OyaTextInsertion : public content::WebContentsObserver,
++                         public base::RefCounted<OyaTextInsertion> {
++ public:
++  OyaTextInsertion(content::RenderFrameHost* frame, gin_helper::Promise<void> promise)
++      : content::WebContentsObserver(content::WebContents::FromRenderFrameHost(frame)),
++        document_(frame->GetWeakDocumentPtr()), frame_id_(frame->GetGlobalId()),
++        promise_(std::move(promise)) {}
++
++  void Execute(const std::u16string& text) {
++    auto* frame = document_.AsRenderFrameHostIfValid();
++    if (!frame || !frame->IsActive()) { Cancel("Text input document is unavailable"); return; }
++    if (!Pending().insert(frame_id_).second) { Cancel("Native text insertion already pending"); return; }
++    owns_slot_ = true;
++    auto* widget = static_cast<content::RenderWidgetHostImpl*>(frame->GetRenderWidgetHost());
++    was_focused_ = widget->is_focused();
++    deadline_.Start(FROM_HERE, base::Seconds(10), base::BindOnce(
++        &OyaTextInsertion::Cancel, base::WrapRefCounted(this), "Native text insertion timed out"));
++    // Blink needs widget focus for IME; this does not focus a native window,
++    // dismiss Oya's control shield, or forward human keyboard input.
++    widget->Focus();
++    widget->GetWidgetInputHandler()->ImeCommitText(
++        text, {}, gfx::Range::InvalidRange(), 0, blink::DOMNodeIdType(),
++        mojo::WrapCallbackWithDropHandler(
++            base::BindOnce(&OyaTextInsertion::Complete, weak_factory_.GetWeakPtr()),
++            base::BindOnce(&OyaTextInsertion::Cancel, weak_factory_.GetWeakPtr(),
++                           "Native text input channel closed")));
++  }
++
++ private:
++  friend class base::RefCounted<OyaTextInsertion>;
++  ~OyaTextInsertion() override = default;
++  static std::set<content::GlobalRenderFrameHostId>& Pending() {
++    static base::NoDestructor<std::set<content::GlobalRenderFrameHostId>> pending;
++    return *pending;
++  }
++  bool Settle() {
++    if (settled_) return false;
++    settled_ = true;
++    deadline_.Stop();
++    weak_factory_.InvalidateWeakPtrs();
++    RestoreFocus();
++    if (owns_slot_) Pending().erase(frame_id_);
++    Observe(nullptr);
++    return true;
++  }
++  // Never blur a real native focus gained while the renderer was acknowledging.
++  void RestoreFocus() {
++    auto* frame = document_.AsRenderFrameHostIfValid();
++    if (!owns_slot_ || was_focused_ || !frame || !frame->IsActive()) return;
++    auto* widget = static_cast<content::RenderWidgetHostImpl*>(frame->GetRenderWidgetHost());
++    auto* view = widget->GetView();
++    if (view && !view->HasFocus()) widget->Blur();
++  }
++  void Complete() {
++    scoped_refptr<OyaTextInsertion> keep_alive(this);
++    auto* frame = document_.AsRenderFrameHostIfValid();
++    if (!frame || !frame->IsActive()) { Cancel("Text input document was replaced"); return; }
++    if (Settle()) promise_.Resolve();
++  }
++  void Cancel(std::string_view error) {
++    scoped_refptr<OyaTextInsertion> keep_alive(this);
++    if (Settle()) promise_.RejectWithErrorMessage(error);
++  }
++  void RenderFrameDeleted(content::RenderFrameHost* frame) override {
++    if (frame->GetGlobalId() == frame_id_) Cancel("Text input frame was deleted");
++  }
++  void RenderFrameHostChanged(content::RenderFrameHost* old_frame,
++                             content::RenderFrameHost*) override {
++    if (old_frame && old_frame->GetGlobalId() == frame_id_) Cancel("Text input frame was replaced");
++  }
++  void DidFinishNavigation(content::NavigationHandle* navigation) override {
++    if (navigation->HasCommitted() && !navigation->IsSameDocument() &&
++        !document_.AsRenderFrameHostIfValid()) Cancel("Text input document was replaced");
++  }
++  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
++    Cancel("Text input renderer exited");
++  }
++  void WebContentsDestroyed() override { Cancel("Text input tab was closed"); }
++  content::WeakDocumentPtr document_;
++  content::GlobalRenderFrameHostId frame_id_;
++  gin_helper::Promise<void> promise_;
++  base::OneShotTimer deadline_;
++  bool owns_slot_ = false;
++  bool was_focused_ = false;
++  bool settled_ = false;
++  base::WeakPtrFactory<OyaTextInsertion> weak_factory_{this};
++};
++
++
++
+ // Global toggle for disabling draggable regions checks.
+ bool g_disable_draggable_regions = false;
+ 
+@@ -4104,14 +4199,7 @@
+     promise.RejectWithErrorMessage("No live focused frame for text insertion");
+     return handle;
+   }
+-  auto* widget = static_cast<content::RenderWidgetHostImpl*>(
+-      frame->GetRenderWidgetHost());
+-  if (!widget) {
+-    promise.RejectWithErrorMessage("No focused widget for text insertion");
+-    return handle;
+-  }
+-  widget->ImeCommitText(text, {}, gfx::Range::InvalidRange(), 0);
+-  promise.Resolve();
++  base::MakeRefCounted<OyaTextInsertion>(frame, std::move(promise))->Execute(text);
+   return handle;
+ }
+ 
+@@ -5307,6 +5395,7 @@
+       .SetMethod("focus", &WebContents::Focus)
+       .SetMethod("isFocused", &WebContents::IsFocused)
+       .SetMethod("insertText", &WebContents::InsertText)
++      .SetMethod("_insertTextOya", &WebContents::InsertText)
+       .SetMethod("_dragOya", &WebContents::DragOya)
+       .SetMethod("sendInputEvent", &WebContents::SendInputEvent)
+       .SetMethod("beginFrameSubscription", &WebContents::BeginFrameSubscription)

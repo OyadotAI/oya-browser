@@ -1,0 +1,400 @@
+--- /dev/null
++++ b/shell/browser/oya_drag_controller.h
+@@ -0,0 +1,80 @@
++/** Browser-owned, document-scoped native drag transport; no protocol or DOM event synthesis. */
++#ifndef ELECTRON_SHELL_BROWSER_OYA_DRAG_CONTROLLER_H_
++#define ELECTRON_SHELL_BROWSER_OYA_DRAG_CONTROLLER_H_
++
++#include <optional>
++#include <string>
++#include "base/memory/weak_ptr.h"
++#include "base/supports_user_data.h"
++#include "base/timer/timer.h"
++#include "content/public/browser/weak_document_ptr.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/common/drop_data.h"
++#include "shell/common/gin_helper/promise.h"
++#include "third_party/blink/public/common/input/web_mouse_event.h"
++#include "third_party/blink/public/common/page/drag_operation.h"
++#include "ui/base/dragdrop/mojom/drag_drop_types.mojom.h"
++#include "ui/gfx/geometry/point_f.h"
++
++namespace content {
++class RenderWidgetHostImpl;
++class RenderWidgetHostViewBase;
++}
++
++namespace electron {
++/** Owns one gesture in one visible document; unsupported frame targets fail closed. */
++class OyaDragController : public content::WebContentsObserver,
++                          public base::SupportsUserData::Data {
++ public:
++  static v8::Local<v8::Promise> Start(v8::Isolate* isolate,
++      content::WebContents* contents, const gfx::PointF& from,
++      const gfx::PointF& to);
++  OyaDragController(content::WebContents* contents,
++      gin_helper::Promise<std::string> promise, const gfx::PointF& from,
++      const gfx::PointF& to);
++  ~OyaDragController() override;
++
++ private:
++  void Begin();
++  bool Valid();
++  bool Capture(content::RenderFrameHost& source, const content::DropData& data,
++               blink::DragOperationsMask operations);
++  void HitTest(base::OnceClosure continuation);
++  void HitTestDone(base::OnceClosure continuation,
++      base::WeakPtr<content::RenderWidgetHostViewBase> target,
++      std::optional<gfx::PointF> point);
++  void Press();
++  void Advance();
++  void Move();
++  void Entered(ui::mojom::DragOperation operation, bool handled);
++  void Over();
++  void Moved(ui::mojom::DragOperation operation, bool handled);
++  void Next();
++  void Release();
++  void Dropped();
++  void Ended();
++  void SendMouse(blink::WebInputEvent::Type type, bool held);
++  gfx::PointF ScreenPoint() const;
++  void Finish(const std::string& error);
++  void DidStartNavigation(content::NavigationHandle* navigation) override;
++  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus status) override;
++  void WebContentsDestroyed() override;
++
++  gin_helper::Promise<std::string> promise_;
++  content::WeakDocumentPtr document_;
++  base::WeakPtr<content::RenderWidgetHostImpl> widget_;
++  gfx::PointF from_, to_, point_;
++  std::optional<content::DropData> data_;
++  blink::DragOperationsMask operations_ = blink::kDragOperationNone;
++  ui::mojom::DragOperation operation_ = ui::mojom::DragOperation::kNone;
++  int step_ = 0;
++  bool active_ = true;
++  bool pressed_ = false;
++  bool entered_ = false;
++  bool ended_ = false;
++  bool registered_ = false;
++  base::OneShotTimer deadline_;
++  base::WeakPtrFactory<OyaDragController> weak_factory_{this};
++};
++}  // namespace electron
++#endif
+--- /dev/null
++++ b/shell/browser/oya_drag_controller.cc
+@@ -0,0 +1,263 @@
++/** Native drag lifecycle: renderer-owned payload, native hit testing and acknowledged drop delivery. */
++#include "shell/browser/oya_drag_controller.h"
++
++#include <cmath>
++#include <utility>
++#include "base/functional/bind.h"
++#include "base/functional/callback_helpers.h"
++#include "base/task/single_thread_task_runner.h"
++#include "content/browser/renderer_host/render_widget_host_impl.h"
++#include "content/browser/renderer_host/render_widget_host_view_base.h"
++#include "content/browser/web_contents/web_contents_impl.h"
++#include "content/public/browser/oya_drag_handler.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents_delegate.h"
++#include "ui/events/base_event_utils.h"
++
++namespace electron {
++namespace {
++const int kControllerKey = 0;
++constexpr int kSteps = 24;
++constexpr auto kStepTime = base::Milliseconds(16);
++constexpr auto kDeadline = base::Seconds(10);
++}
++
++v8::Local<v8::Promise> OyaDragController::Start(v8::Isolate* isolate,
++    content::WebContents* contents, const gfx::PointF& from,
++    const gfx::PointF& to) {
++  gin_helper::Promise<std::string> promise(isolate);
++  auto result = promise.GetHandle();
++  auto* prior = static_cast<OyaDragController*>(contents->GetUserData(&kControllerKey));
++  if (prior && prior->active_) {
++    promise.RejectWithErrorMessage("A native drag is already active in this tab");
++    return result;
++  }
++  auto controller = std::make_unique<OyaDragController>(contents, std::move(promise), from, to);
++  auto* owned = controller.get();
++  contents->SetUserData(&kControllerKey, std::move(controller));
++  owned->Begin();
++  return result;
++}
++
++OyaDragController::OyaDragController(content::WebContents* contents,
++    gin_helper::Promise<std::string> promise, const gfx::PointF& from,
++    const gfx::PointF& to)
++    : content::WebContentsObserver(contents), promise_(std::move(promise)),
++      from_(from), to_(to), point_(from) {}
++
++OyaDragController::~OyaDragController() {
++  if (active_) Finish("Native drag owner was destroyed");
++}
++
++void OyaDragController::Begin() {
++  auto* frame = web_contents()->GetPrimaryMainFrame();
++  document_ = frame->GetWeakDocumentPtr();
++  widget_ = content::RenderWidgetHostImpl::From(frame->GetRenderWidgetHost())->GetWeakPtr();
++  if (!Valid()) return;
++  auto bounds = widget_->GetView()->GetViewBounds();
++  gfx::RectF viewport(0, 0, bounds.width(), bounds.height());
++  if (!std::isfinite(from_.x()) || !std::isfinite(from_.y()) ||
++      !std::isfinite(to_.x()) || !std::isfinite(to_.y()) ||
++      !viewport.Contains(from_) || !viewport.Contains(to_)) {
++    Finish("Native drag coordinates must be finite and inside the owning viewport");
++    return;
++  }
++  registered_ = content::SetOyaDragHandler(web_contents(),
++      base::BindRepeating([](base::WeakPtr<OyaDragController> owner,
++          content::RenderFrameHost& source, const content::DropData& data,
++          blink::DragOperationsMask operations) {
++        return owner ? owner->Capture(source, data, operations) : true;
++      }, weak_factory_.GetWeakPtr()));
++  if (!registered_) { Finish("Native drag owner is already registered"); return; }
++  deadline_.Start(FROM_HERE, kDeadline, base::BindOnce(&OyaDragController::Finish,
++      weak_factory_.GetWeakPtr(), "Native drag timed out"));
++  HitTest(base::BindOnce(&OyaDragController::Press, weak_factory_.GetWeakPtr()));
++}
++
++bool OyaDragController::Valid() {
++  if (!active_) return false;
++  auto* frame = document_.AsRenderFrameHostIfValid();
++  auto* contents = web_contents();
++  if (!contents || contents->IsBeingDestroyed() || !frame ||
++      frame != contents->GetPrimaryMainFrame() || !widget_ || !widget_->GetView() ||
++      !widget_->GetView()->IsShowing() || !widget_->GetView()->AccessibilityHasFocus()) {
++    Finish("Native drag lost its focused document");
++    return false;
++  }
++  return true;
++}
++
++bool OyaDragController::Capture(content::RenderFrameHost& source,
++    const content::DropData& data, blink::DragOperationsMask operations) {
++  if (!Valid()) return true;
++  if (&source != document_.AsRenderFrameHostIfValid() || data_ ||
++      !data.filenames.empty() || !data.file_system_files.empty() ||
++      !data.file_contents.empty() || data.download_metadata) {
++    source.GetRenderWidgetHost()->DragSourceSystemDragEnded();
++    Finish("Unsupported native drag source: only this tab's main-document non-file payload is supported");
++    return true;
++  }
++  data_ = data;
++  operations_ = operations;
++  widget_->FilterDropData(&*data_);
++  auto* delegate = web_contents()->GetDelegate();
++  if (delegate && !delegate->CanDragEnter(web_contents(), *data_, operations_))
++    Finish("Native drag was refused by the browser delegate");
++  return true;
++}
++
++void OyaDragController::HitTest(base::OnceClosure continuation) {
++  if (!Valid()) return;
++  auto* contents = static_cast<content::WebContentsImpl*>(web_contents());
++  auto* view = static_cast<content::RenderWidgetHostViewBase*>(widget_->GetView());
++  contents->GetRenderWidgetHostAtPointAsynchronously(view, point_,
++      base::BindOnce(&OyaDragController::HitTestDone, weak_factory_.GetWeakPtr(),
++                    std::move(continuation)));
++}
++
++void OyaDragController::HitTestDone(base::OnceClosure continuation,
++    base::WeakPtr<content::RenderWidgetHostViewBase> target,
++    std::optional<gfx::PointF> point) {
++  if (!Valid()) return;
++  if (!target || !point || target->GetRenderWidgetHost() != widget_.get()) {
++    Finish("Unsupported native drag target: crossing renderer widgets is not supported");
++    return;
++  }
++  std::move(continuation).Run();
++}
++
++void OyaDragController::Press() {
++  if (!Valid()) return;
++  SendMouse(blink::WebInputEvent::Type::kMouseMove, false);
++  pressed_ = true;
++  SendMouse(blink::WebInputEvent::Type::kMouseDown, true);
++  widget_->WaitForInputProcessed(base::BindOnce(&OyaDragController::Advance,
++                                               weak_factory_.GetWeakPtr()));
++}
++
++void OyaDragController::Advance() {
++  if (!Valid()) return;
++  if (step_ == kSteps) { Release(); return; }
++  const float fraction = static_cast<float>(++step_) / kSteps;
++  point_ = gfx::PointF(from_.x() + (to_.x() - from_.x()) * fraction,
++                      from_.y() + (to_.y() - from_.y()) * fraction);
++  HitTest(base::BindOnce(&OyaDragController::Move, weak_factory_.GetWeakPtr()));
++}
++
++void OyaDragController::Move() {
++  if (!Valid()) return;
++  if (!data_) {
++    SendMouse(blink::WebInputEvent::Type::kMouseMove, true);
++    widget_->WaitForInputProcessed(base::BindOnce(&OyaDragController::Next,
++                                                 weak_factory_.GetWeakPtr()));
++  } else if (!entered_) {
++    entered_ = true;
++    widget_->DragTargetDragEnter(*data_, point_, ScreenPoint(), operations_, 0,
++        base::BindOnce(&OyaDragController::Entered, weak_factory_.GetWeakPtr()));
++  } else { Over(); }
++}
++
++void OyaDragController::Entered(ui::mojom::DragOperation operation, bool handled) {
++  if (!Valid()) return;
++  Over();
++}
++
++void OyaDragController::Over() {
++  if (!Valid()) return;
++  widget_->DragTargetDragOver(point_, ScreenPoint(), operations_, 0,
++      base::BindOnce(&OyaDragController::Moved, weak_factory_.GetWeakPtr()));
++}
++
++void OyaDragController::Moved(ui::mojom::DragOperation operation, bool handled) {
++  if (!Valid()) return;
++  operation_ = operation;
++  data_->operation = operation;
++  data_->document_is_handling_drag = handled;
++  Next();
++}
++
++void OyaDragController::Next() {
++  if (!Valid()) return;
++  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
++      base::BindOnce(&OyaDragController::Advance, weak_factory_.GetWeakPtr()), kStepTime);
++}
++
++void OyaDragController::Release() {
++  if (!Valid()) return;
++  if (!data_) {
++    SendMouse(blink::WebInputEvent::Type::kMouseUp, false);
++    pressed_ = false;
++    widget_->WaitForInputProcessed(base::BindOnce(&OyaDragController::Ended,
++                                                 weak_factory_.GetWeakPtr()));
++  } else if (operation_ == ui::mojom::DragOperation::kNone ||
++             !(static_cast<int>(operation_) & static_cast<int>(operations_))) {
++    Finish("Native drop target did not accept the drag");
++  } else {
++    widget_->DragTargetDrop(*data_, point_, ScreenPoint(), 0,
++        base::BindOnce(&OyaDragController::Dropped, weak_factory_.GetWeakPtr()));
++  }
++}
++
++void OyaDragController::Dropped() {
++  if (!Valid()) return;
++  entered_ = false;
++  widget_->DragSourceEndedAt(point_, ScreenPoint(), operation_,
++      base::BindOnce(&OyaDragController::Ended, weak_factory_.GetWeakPtr()));
++}
++
++void OyaDragController::Ended() {
++  if (!Valid()) return;
++  if (data_) widget_->DragSourceSystemDragEnded();
++  ended_ = true;
++  pressed_ = false;
++  Finish("");
++}
++
++void OyaDragController::SendMouse(blink::WebInputEvent::Type type, bool held) {
++  blink::WebMouseEvent event(type, held ? blink::WebInputEvent::kLeftButtonDown : 0,
++                            ui::EventTimeForNow());
++  event.button = type == blink::WebInputEvent::Type::kMouseMove && !held
++                     ? blink::WebPointerProperties::Button::kNoButton
++                     : blink::WebPointerProperties::Button::kLeft;
++  event.click_count = type == blink::WebInputEvent::Type::kMouseMove ? 0 : 1;
++  event.SetPositionInWidget(point_);
++  event.SetPositionInScreen(ScreenPoint());
++  widget_->ForwardMouseEvent(event);
++}
++
++gfx::PointF OyaDragController::ScreenPoint() const {
++  const auto bounds = widget_->GetView()->GetViewBounds();
++  return gfx::PointF(bounds.x() + point_.x(), bounds.y() + point_.y());
++}
++
++void OyaDragController::Finish(const std::string& error) {
++  if (!active_) return;
++  active_ = false;
++  weak_factory_.InvalidateWeakPtrs();
++  deadline_.Stop();
++  if (registered_ && web_contents()) content::ClearOyaDragHandler(web_contents());
++  if (!ended_ && widget_ && widget_->GetView() && document_.AsRenderFrameHostIfValid()) {
++    if (entered_) widget_->DragTargetDragLeave(point_, ScreenPoint());
++    if (data_) {
++      widget_->DragSourceEndedAt(point_, ScreenPoint(), ui::mojom::DragOperation::kNone,
++                                 base::DoNothing());
++      widget_->DragSourceSystemDragEnded();
++    } else if (pressed_) {
++      point_ = gfx::PointF(-1, -1);
++      SendMouse(blink::WebInputEvent::Type::kMouseUp, false);
++    }
++  }
++  if (error.empty()) promise_.Resolve(std::string(data_ ? "html" : "pointer"));
++  else promise_.RejectWithErrorMessage(error);
++}
++
++void OyaDragController::DidStartNavigation(content::NavigationHandle*) {
++  Finish("Native drag cancelled by navigation");
++}
++void OyaDragController::PrimaryMainFrameRenderProcessGone(base::TerminationStatus) {
++  Finish("Native drag renderer exited");
++}
++void OyaDragController::WebContentsDestroyed() {
++  Finish("Native drag tab was destroyed");
++}
++}  // namespace electron
+--- a/filenames.gni
++++ b/filenames.gni
+@@ -415,6 +415,8 @@
+     "shell/browser/feature_list.cc",
+     "shell/browser/feature_list.h",
+     "shell/browser/feature_list_mac.mm",
++    "shell/browser/oya_drag_controller.cc",
++    "shell/browser/oya_drag_controller.h",
+     "shell/browser/file_select_helper.cc",
+     "shell/browser/file_select_helper.h",
+     "shell/browser/file_select_helper_mac.mm",
+--- a/shell/browser/api/electron_api_web_contents.h
++++ b/shell/browser/api/electron_api_web_contents.h
+@@ -308,6 +308,7 @@
+   // Send WebInputEvent to the page.
+   // Native IME delivery follows focused frame ownership across renderer processes.
+   v8::Local<v8::Promise> InsertText(v8::Isolate* isolate, const std::u16string& text);
++  v8::Local<v8::Promise> DragOya(v8::Isolate* isolate, const gfx::PointF& from, const gfx::PointF& to);
+   void SendInputEvent(v8::Isolate* isolate, v8::Local<v8::Value> input_event);
+ 
+   // Subscribe to the frame updates.
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ #include "shell/browser/api/electron_api_web_contents.h"
++#include "shell/browser/oya_drag_controller.h"
+ 
+ #include <algorithm>
+ #include <limits>
+@@ -4114,6 +4115,11 @@
+   return handle;
+ }
+ 
++v8::Local<v8::Promise> WebContents::DragOya(v8::Isolate* isolate,
++    const gfx::PointF& from, const gfx::PointF& to) {
++  return OyaDragController::Start(isolate, web_contents(), from, to);
++}
++
+ void WebContents::SendInputEvent(v8::Isolate* isolate,
+                                  v8::Local<v8::Value> input_event) {
+   content::RenderWidgetHostView* view =
+@@ -5301,6 +5307,7 @@
+       .SetMethod("focus", &WebContents::Focus)
+       .SetMethod("isFocused", &WebContents::IsFocused)
+       .SetMethod("insertText", &WebContents::InsertText)
++      .SetMethod("_dragOya", &WebContents::DragOya)
+       .SetMethod("sendInputEvent", &WebContents::SendInputEvent)
+       .SetMethod("beginFrameSubscription", &WebContents::BeginFrameSubscription)
+       .SetMethod("endFrameSubscription", &WebContents::EndFrameSubscription)

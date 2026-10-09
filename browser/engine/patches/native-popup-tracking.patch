@@ -1,0 +1,50 @@
+--- a/content/app_shim_remote_cocoa/web_menu_runner_mac.h
++++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.h
+@@ -34,6 +34,9 @@
+            withBounds:(NSRect)bounds
+          initialIndex:(int)index;
+ 
++// Whether this exact renderer view owns a currently tracking native menu.
+++ (BOOL)oyaMenuIsRunningForView:(NSView*)view;
++
+ // Cancels the display of a menu if it is shown. This is called in situations
+ // where Blink is asking for the cancellation (e.g. the page closed or the
+ // contents of the menu changed so the menu has to be rebuilt). Because this is
+--- a/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
++++ b/content/app_shim_remote_cocoa/web_menu_runner_mac.mm
+@@ -19,6 +19,8 @@
+ 
+ // A key to attach a MenuWasRunCallbackHolder to the NSView*.
+ static const char kMenuWasRunCallbackKey = 0;
++// View-local ownership prevents input intended for another tab reaching a menu.
++static const char kOyaRunningMenuKey = 0;
+ 
+ }  // namespace
+ 
+@@ -139,6 +141,10 @@
+ 
+ - (std::optional<int>)selectedMenuItemIndex {
+   return _selectedMenuItemIndex;
++}
++
+++ (BOOL)oyaMenuIsRunningForView:(NSView*)view {
++  return objc_getAssociatedObject(view, &kOyaRunningMenuKey) != nil;
+ }
+ 
+ - (void)menuItemSelected:(id)sender {
+@@ -221,7 +227,14 @@
+ 
+   // Display the menu.
+   [cell attachPopUpWithFrame:fakeControlView.bounds inView:fakeControlView];
+-  [cell performClickWithFrame:fakeControlView.bounds inView:fakeControlView];
++  objc_setAssociatedObject(view, &kOyaRunningMenuKey, self,
++                           OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++  @try {
++    [cell performClickWithFrame:fakeControlView.bounds inView:fakeControlView];
++  } @finally {
++    objc_setAssociatedObject(view, &kOyaRunningMenuKey, nil,
++                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++  }
+ 
+   [fakeControlView removeFromSuperview];
+ }

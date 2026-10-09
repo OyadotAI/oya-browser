@@ -39,3 +39,6 @@ export const WORKSPACE = {
   REPAIR_NAME_LENGTH: 45,
   SUPPORT_SCHEMA: 1,
 } as const;
+
+/** Native picker globals never share the page, preload or analyzer world. */
+export const PICKER_WORLD_ID = 1005;

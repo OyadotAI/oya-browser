@@ -1,0 +1,101 @@
+diff --git a/shell/browser/api/electron_api_web_frame_main.cc b/shell/browser/api/electron_api_web_frame_main.cc
+--- a/shell/browser/api/electron_api_web_frame_main.cc
++++ b/shell/browser/api/electron_api_web_frame_main.cc
+@@ -15,6 +15,9 @@
+ #include "content/browser/renderer_host/frame_tree_node.h"         // nogncheck
+ #include "content/browser/renderer_host/render_frame_host_impl.h"  // nogncheck
+ #include "content/browser/renderer_host/render_process_host_impl.h"  // nogncheck
++#include "content/browser/renderer_host/browsing_context_state.h"  // nogncheck
++#include "content/browser/renderer_host/render_frame_proxy_host.h"  // nogncheck
++#include "content/browser/site_instance_impl.h"  // nogncheck
+ #include "content/public/browser/frame_tree_node_id.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/web_contents.h"
+@@ -586,6 +589,23 @@
+   if (!CheckRenderFrame())
+     return nullptr;
+   return render_frame_host()->GetParent();
++}
++
++// The parent's renderer sees a remote proxy token for cross-process children.
++// Returning that exact identity avoids window.frames indices, which omit shadow
++// frame owners and cannot establish a trustworthy owner relationship.
++std::string WebFrameMain::OyaOwnerFrameToken() const {
++  if (!CheckRenderFrame())
++    return "";
++  auto* child = static_cast<content::RenderFrameHostImpl*>(render_frame_host());
++  auto* parent = child->GetParent();
++  if (!parent)
++    return "";
++  auto* parent_group = parent->GetSiteInstance()->group();
++  if (child->GetSiteInstance()->group() == parent_group)
++    return child->GetFrameToken().ToString();
++  auto* proxy = child->browsing_context_state()->GetRenderFrameProxyHost(parent_group);
++  return proxy ? proxy->GetFrameToken().ToString() : "";
+ }
+ 
+ std::vector<content::RenderFrameHost*> WebFrameMain::Frames() const {
+@@ -759,6 +779,7 @@
+ void WebFrameMain::FillObjectTemplate(v8::Isolate* isolate,
+                                       v8::Local<v8::ObjectTemplate> templ) {
+   gin_helper::ObjectTemplateBuilder(isolate, templ)
++      .SetMethod("_oyaOwnerFrameToken", &WebFrameMain::OyaOwnerFrameToken)
+       .SetMethod("executeJavaScript", &WebFrameMain::ExecuteJavaScript)
+       .SetMethod("_executeJavaScriptInOyaWorld",
+                  &WebFrameMain::ExecuteJavaScriptInOyaWorld)
+diff --git a/shell/browser/api/electron_api_web_frame_main.h b/shell/browser/api/electron_api_web_frame_main.h
+--- a/shell/browser/api/electron_api_web_frame_main.h
++++ b/shell/browser/api/electron_api_web_frame_main.h
+@@ -114,6 +114,9 @@
+   // prior to accessing it.
+   bool CheckRenderFrame() const;
+ 
++  // Identity of this child as represented in its parent renderer.
++  std::string OyaOwnerFrameToken() const;
++
+   v8::Local<v8::Promise> ExecuteJavaScript(gin::Arguments* args,
+                                            const std::u16string& code);
+   // Oya's isolated agent world, including out-of-process child frames.
+diff --git a/shell/renderer/api/electron_api_web_frame.cc b/shell/renderer/api/electron_api_web_frame.cc
+--- a/shell/renderer/api/electron_api_web_frame.cc
++++ b/shell/renderer/api/electron_api_web_frame.cc
+@@ -382,6 +382,7 @@
+                    &WebFrameRenderer::SetSpellCheckProvider)
+         // Frame navigators
+         .SetMethod("findFrameByToken", &WebFrameRenderer::FindFrameByToken)
++        .SetMethod("_oyaFrameTokenForSelector", &WebFrameRenderer::OyaFrameTokenForSelector)
+         .SetMethod("getFrameForSelector",
+                    &WebFrameRenderer::GetFrameForSelector)
+         .SetMethod("findFrameByName", &WebFrameRenderer::FindFrameByName)
+@@ -944,6 +945,31 @@
+     return CreateWebFrameRenderer(isolate, frame);
+   }
+ 
++  // Search author shadow roots as well as light DOM; ambiguity fails closed.
++  std::string OyaFrameTokenForSelector(v8::Isolate* isolate,
++                                       const std::string& selector) {
++    content::RenderFrame* render_frame;
++    if (!MaybeGetRenderFrame(isolate, "oyaFrameTokenForSelector", &render_frame))
++      return "";
++    std::vector<blink::WebNode> roots{render_frame->GetWebFrame()->GetDocument()};
++    std::string token;
++    size_t matches = 0;
++    for (size_t i = 0; i < roots.size(); ++i) {
++      for (const auto& element : roots[i].QuerySelectorAll(blink::WebString::FromUtf8(selector))) {
++        ++matches;
++        auto* frame = blink::WebFrame::FromFrameOwnerElement(element);
++        if (frame)
++          token = frame->GetFrameToken().ToString();
++      }
++      for (const auto& element : roots[i].QuerySelectorAll(blink::WebString::FromUtf8("*"))) {
++        auto shadow = element.ShadowRoot();
++        if (!shadow.IsNull())
++          roots.push_back(shadow);
++      }
++    }
++    return matches == 1 ? token : "";
++  }
++
+   v8::Local<v8::Value> GetFrameForSelector(v8::Isolate* isolate,
+                                            const std::string& selector) {
+     content::RenderFrame* render_frame;

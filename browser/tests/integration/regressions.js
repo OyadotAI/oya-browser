@@ -26,7 +26,11 @@ const src = sources(path.join('src', 'main'), '.ts')
 const has = (re, msg) => assert.ok(re.test(src), msg);
 
 // The bulk close must opt out of the "always keep one tab" rule.
-const bulk = src.match(/while \(tabs\.length\) [\w.]*closeTab\([^\n]*\)/g) || [];
+assert.ok(
+  !/while \(tabs\.length\) [\w.]*closeTab\(/.test(src),
+  'cached aggregate tab lists are snapshots, never a live bulk-close loop',
+);
+const bulk = src.match(/for \(const tab of \[\.\.\.tabs\]\) [\w.]*closeTab\([^\n]*\)/g) || [];
 assert.ok(bulk.length, 'bulk close loop not found, did closeTab move?');
 for (const call of bulk) {
   assert.ok(/keepOne: false/.test(call), `bulk close would never terminate: ${call}`);
@@ -248,7 +252,17 @@ assert.ok(
 
 // Every page a tab loads goes through loadInTab, which refuses a tab that is
 // not protected. A second loadURL of a real address would be a way around it.
-const pageLoads = src.match(/\.loadURL\((?!'about:blank')/g) || [];
+// The explicit development-only diagnostic is deliberately not a protected tab.
+// Keep the production single-load rule and separately pin the diagnostic's entry.
+const nativeDiagnostic = fs.readFileSync(path.join(__dirname, '../../src/main/app/native-signin-test.ts'), 'utf8');
+const pageLoads = src.replace(nativeDiagnostic, '').match(/\.loadURL\((?!'about:blank')/g) || [];
+assert.equal((nativeDiagnostic.match(/\.loadURL\(/g) || []).length, 1);
+assert.match(nativeDiagnostic, /\.loadURL\(NATIVE_SIGNIN_TEST_URL\)/);
+assert.match(
+  src,
+  /if \(NATIVE_SIGNIN_TEST\) \{\s*app.whenReady\(\).then\(\(\) => startNativeSigninTest\(electron\)\);\s*app.on\('window-all-closed', \(\) => app.quit\(\)\);\s*\} else \{/,
+);
+assert.match(src, /if \(!NATIVE_BROWSING\) app.commandLine.appendSwitch\('remote-debugging-port'/);
 assert.strictEqual(
   pageLoads.length,
   1,
@@ -276,7 +290,7 @@ assert.ok(
 // socket already authenticated as the new one, that files one identity's
 // session in another's jar, and the site then demands a fresh login.
 assert.ok(
-  /dropPendingCookieChanges\(\);\n\s*while \(tabs\.length\) [\w.]*closeTab/.test(src),
+  /dropPendingCookieChanges\(\);\n\s*for \(const tab of \[\.\.\.tabs\]\) [\w.]*closeTab/.test(src),
   'persona switch must drop queued cookie changes, not flush them into the new persona',
 );
 

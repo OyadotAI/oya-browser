@@ -54,7 +54,7 @@ export class PanelLayout {
   private apply(view: BrowserView | null, progress: number): void {
     const bounds = this.deps.shell.window!.getContentBounds(); // layoutActiveTab checked it
     const layout = shellLayout(bounds.width, bounds.height, progress, this.width);
-    this.deps.shell.send('shell-layout', layout);
+    this.deps.shell.send('shell-layout', { ...layout, panelOpen: this.open });
     if (view && this.deps.shell.browsingMode) view.setBounds(layout.page);
     this.deps.shield.sync();
   }

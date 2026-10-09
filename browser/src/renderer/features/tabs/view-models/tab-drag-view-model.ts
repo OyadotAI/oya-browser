@@ -6,6 +6,7 @@
  * reorders and tells the main process. Escape puts it back. The view measures
  * the strip at the press and hands it over as a `StripPort`.
  */
+import { outsideStrip } from '../model/tear-off.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import { RendererConstants as C } from '../../../core/constants.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
@@ -18,7 +19,7 @@ export interface StripPort {
   /** How far the strip is scrolled. */
   scrollLeft(): number;
   /** The strip's left and right edges in the window. */
-  edges(): Pick<DOMRectReadOnly, 'left' | 'right'>;
+  edges(): Pick<DOMRectReadOnly, 'left' | 'right'> & Partial<Pick<DOMRectReadOnly, 'top' | 'bottom'>>;
   /** Scrolls the strip by `px`. */
   scrollBy(px: number): void;
 }
@@ -31,6 +32,8 @@ export interface Press {
   pointerId: number;
   /** The pointer's x in the window. */
   x: number;
+  /** Vertical position detects a tear-off even without horizontal reordering. */
+  y?: number;
   /** Where every open tab sits at the press, in order. */
   slots: Slot[];
   /** The pressed tab's index among them. */
@@ -39,6 +42,8 @@ export interface Press {
 
 /** A finished drag: the tab, where it lands, and how far off its new place it was let go (for the glide home). */
 export interface Drop {
+  /** Leaving the strip moves the live tab to another native window. */
+  detached?: boolean;
   /** The tab moved. */
   id: number;
   /** Its new index among the open tabs. */
@@ -62,7 +67,7 @@ export interface TabDragState {
 /** What a drag uses. */
 export interface TabDragDeps extends Pick<RendererServices, 'frames'> {
   /** Shows a pressed tab at once. */
-  bridge: Pick<OyaBrowser, 'activateTab'>;
+  bridge: Pick<OyaBrowser, 'activateTab'> & Partial<Pick<OyaBrowser, 'beginTabDrag' | 'endTabDrag'>>;
   /** Hidden when a drag lifts. */
   card: Pick<TabCardViewModel, 'hide'>;
 }
@@ -80,6 +85,8 @@ export class TabDragViewModel extends ViewModel<TabDragState> {
   private strip: StripPort | null = null;
   /** The pointer's latest x. */
   private x = 0;
+  /** Latest vertical pointer position, for a drag out of the strip. */
+  private y = 0;
   /** The strip's scroll at the press. */
   private startScroll = 0;
   /** Where the tab would land now. */
@@ -91,21 +98,24 @@ export class TabDragViewModel extends ViewModel<TabDragState> {
   constructor(deps: TabDragDeps) {
     super(REST);
     this.deps = deps;
-    this.own(() => this.stopFrames());
+    this.own(() => this.end());
   }
 
   /** A primary-button press on a tab (not its close button): it shows now, and may become a drag. */
   start(press: Press, strip: StripPort): void {
     void this.deps.bridge.activateTab(press.id);
-    Object.assign(this, { press, strip, x: press.x, to: press.index, startScroll: strip.scrollLeft() });
+    Object.assign(this, { press, strip, x: press.x, y: press.y ?? 0 });
+    this.to = press.index;
+    this.startScroll = strip.scrollLeft();
     this.set({ ...REST, id: press.id });
   }
 
   /** The pointer moved: past the threshold the tab lifts, then follows. */
-  move(pointerId: number, x: number): void {
+  move(pointerId: number, x: number, y?: number): void {
     if (!this.press || pointerId !== this.press.pointerId) return;
     this.x = x;
-    if (!this.state.lifted && Math.abs(x - this.press.x) < C.TAB_DRAG_THRESHOLD) return;
+    this.y = y ?? this.y;
+    if (!this.state.lifted && Math.hypot(x - this.press.x, this.y - (this.press.y ?? 0)) < C.TAB_DRAG_THRESHOLD) return;
     if (!this.state.lifted) this.lift();
     this.follow();
   }
@@ -113,9 +123,16 @@ export class TabDragViewModel extends ViewModel<TabDragState> {
   /** The button came up: a drag answers where the tab lands (null for a plain click, or no move). */
   release(pointerId: number): Drop | null {
     if (!this.press || pointerId !== this.press.pointerId) return null;
-    const drop = this.state.lifted && this.to !== this.press.index ? this.drop(this.press) : null;
-    this.end();
+    const outside = this.state.lifted && this.outside();
+    const drop = this.state.lifted && (outside || this.to !== this.press.index) ? this.drop(this.press) : null;
+    if (drop && outside) drop.detached = true;
+    this.end(Boolean(drop?.detached));
     return drop;
+  }
+
+  /** A small margin prevents an accidental tear-off while reordering near strip edges. */
+  private outside(): boolean {
+    return outsideStrip(this.x, this.y, this.strip?.edges());
   }
 
   /** Escape during a drag puts every tab back; answers whether it took the key. */
@@ -126,7 +143,8 @@ export class TabDragViewModel extends ViewModel<TabDragState> {
   }
 
   /** Drops the press without moving anything (the system took the pointer away). */
-  end(): void {
+  end(transferring = false): void {
+    if (!transferring) void this.deps.bridge.endTabDrag?.().catch(() => {});
     this.press = null;
     this.strip = null;
     this.stopFrames();
@@ -135,6 +153,7 @@ export class TabDragViewModel extends ViewModel<TabDragState> {
 
   /** The press becomes a drag: the card goes and the strip starts following the pointer near its edges. */
   private lift(): void {
+    void this.deps.bridge.beginTabDrag?.(this.press!.id).catch(() => this.end());
     this.deps.card.hide();
     this.set({ lifted: true });
     this.frame = this.deps.frames.request(() => this.scroll());

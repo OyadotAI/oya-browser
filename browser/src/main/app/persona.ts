@@ -16,6 +16,8 @@ import { NOISE_SEED_DIGITS } from './constants.ts';
 /** The services the persona uses. */
 type Deps = Pick<
   AppServices,
+  | 'nativeBrowsing'
+  | 'passkeys'
   | 'mediaPermissions'
   | 'externalApps'
   | 'config'
@@ -194,6 +196,7 @@ export class Persona {
   private sessionExtras(): SessionExtras {
     const { observer, governance, mediaPermissions: media } = this.deps;
     return {
+      nativeBrowsing: this.deps.nativeBrowsing,
       observer,
       governance,
       media,
@@ -204,6 +207,7 @@ export class Persona {
   /** Configure the persistent browser session, user-agent, cookies, privacy. */
   async setupBrowserSession(): Promise<void> {
     const { governance } = this.deps;
+    this.deps.passkeys?.install(this.session());
     await configureSession(this.deps.electron.app, this.session(), this.active, this.sessionExtras());
     // Only a proxied persona asks: without one the zone is this machine's own, known already.
     const proxy = exitProxy(this.active, governance.configuration?.proxy);
@@ -258,7 +262,7 @@ export class Persona {
     // that a different device will replay, which is what makes a site demand a
     // fresh login. The old jar keeps them; its partition is untouched.
     this.deps.cookies.dropPendingCookieChanges();
-    while (tabs.length) this.deps.tabs.closeTab(tabs[0].id, { keepOne: false });
+    for (const tab of [...tabs]) this.deps.tabs.closeTab(tab.id, { keepOne: false });
     this.deps.cookies.forgetPulls();
     return reopen;
   }

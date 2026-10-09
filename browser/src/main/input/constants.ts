@@ -4,7 +4,7 @@
  * A range is `base + Math.random() * spread` milliseconds.
  */
 
-/** A key as CDP's Input.dispatchKeyEvent describes it. */
+/** A logical key shared by native input and existing callers. */
 export interface KeyDef {
   /** The DOM `key` value. */
   key: string;
@@ -26,7 +26,7 @@ export interface Range {
   spread: number;
 }
 
-/** Named keys in CDP Input.dispatchKeyEvent format. */
+/** Named DOM keys and their stable physical-key metadata. */
 export const KEY_DEFS: Readonly<Record<string, KeyDef>> = {
   Enter: { key: 'Enter', code: 'Enter', keyCode: 13 },
   Tab: { key: 'Tab', code: 'Tab', keyCode: 9 },
@@ -44,8 +44,10 @@ export const KEY_DEFS: Readonly<Record<string, KeyDef>> = {
   Space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
 };
 
-/** CDP modifier bits. */
+/** Stable Oya modifier flags, translated only at the native input boundary. */
 export const Modifier = {
+  /** Alt/Option for native accelerators. */
+  ALT: 1,
   /** Ctrl, the select-all modifier off macOS. */
   CTRL: 2,
   /** Cmd, the select-all modifier on macOS. */
@@ -93,3 +95,13 @@ export const RANDOM_CENTRE = 0.5;
 export const EASE_POWER = 2;
 /** The Bernstein coefficient of a cubic Bézier's inner terms. */
 export const CUBIC_INNER_WEIGHT = 3;
+
+/** Electron native accelerator spellings for named DOM keys. */
+export const NATIVE_KEY_NAMES: Readonly<Record<string, string>> = {
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  ' ': 'Space',
+  '+': 'Plus',
+};

@@ -38,7 +38,7 @@ describe('pointer commands', () => {
   it('mouse_move ends on the point', async () => {
     const view = pageView();
     const ctx = await run(view, 'mouse_move', { x: 30, y: 40 });
-    assert.deepEqual(mouseEvents(view).at(-1), { type: 'mouseMoved', x: 30, y: 40 });
+    assert.deepEqual(mouseEvents(view).at(-1), { type: 'mouseMove', x: 30, y: 40 });
     assert.deepEqual(results(ctx), [['c1', true, { moved: true, x: 30, y: 40 }]]);
   });
 
@@ -55,14 +55,14 @@ describe('pointer commands', () => {
   it('double_click clicks once, then again as click two', async () => {
     const view = pageView();
     const ctx = await run(view, 'double_click', { selector: 'q' }, { world: { ok: true, data: { x: 3, y: 4 } } });
-    const presses = mouseEvents(view).filter((e) => e.type !== 'mouseMoved');
+    const presses = mouseEvents(view).filter((e) => e.type !== 'mouseMove');
     assert.deepEqual(
       presses.map((e) => [e.type, e.clickCount]),
       [
-        ['mousePressed', 1],
-        ['mouseReleased', 1],
-        ['mousePressed', c.DOUBLE_CLICK],
-        ['mouseReleased', c.DOUBLE_CLICK],
+        ['mouseDown', 1],
+        ['mouseUp', 1],
+        ['mouseDown', c.DOUBLE_CLICK],
+        ['mouseUp', c.DOUBLE_CLICK],
       ],
     );
     assert.ok(delays.includes(c.DOUBLE_CLICK_GAP.base));
@@ -81,23 +81,32 @@ describe('pointer commands', () => {
     assert.deepEqual(results(ctx), [['c1', true, { typed: true, text: 'ok' }]]);
   });
 
-  it('drag holds the button along a straight line and releases at the end', async () => {
+  it('drag waits for the owning native gesture acknowledgement', async () => {
     const view = pageView();
+    const calls = [];
+    view.webContents._dragOya = async (from, to) => {
+      calls.push({ from, to });
+      return 'html';
+    };
     const ctx = await run(view, 'drag', { from_x: 0, from_y: 0, to_x: 100, to_y: 50 });
-    const events = mouseEvents(view);
-    const pressed = events.findIndex((e) => e.type === 'mousePressed');
-    const held = events.slice(pressed + 1, -1);
-    assert.equal(held.length, c.DRAG_STEPS);
-    assert.ok(held.every((e) => e.buttons === 1));
-    assert.deepEqual(held.at(-1), { type: 'mouseMoved', x: 100, y: 50, button: 'left', buttons: 1 });
-    assert.deepEqual(events.at(-1), { type: 'mouseReleased', x: 100, y: 50, button: 'left' });
-    assert.deepEqual(results(ctx)[0][2], { dragged: true, from: { x: 0, y: 0 }, to: { x: 100, y: 50 } });
+    assert.deepEqual(calls, [{ from: { x: 0, y: 0 }, to: { x: 100, y: 50 } }]);
+    assert.deepEqual(mouseEvents(view), []);
+    assert.deepEqual(results(ctx)[0][2], { dragged: true, kind: 'html', from: { x: 0, y: 0 }, to: { x: 100, y: 50 } });
+  });
+
+  it('drag refuses an engine without native drag rather than reporting a false success', async () => {
+    const view = pageView();
+    await assert.rejects(
+      run(view, 'drag', { from_x: 0, from_y: 0, to_x: 100, to_y: 50 }),
+      /Unsupported native capability/,
+    );
+    assert.deepEqual(mouseEvents(view), []);
   });
 
   it('a live-control scroll is one wheel event at the pointer, with no analysis', async () => {
     const view = pageView();
     const ctx = await run(view, 'scroll', { smooth: false, x: 5, y: 6, amount: 40, direction: 'up' });
-    assert.deepEqual(mouseEvents(view), [{ type: 'mouseWheel', x: 5, y: 6, deltaX: 0, deltaY: -40 }]);
+    assert.deepEqual(mouseEvents(view), [{ type: 'mouseWheel', x: 5, y: 6, deltaX: 0, deltaY: 40 }]);
     assert.deepEqual(results(ctx), [['c1', true, { direction: 'up', amount: 40 }]]);
   });
 
@@ -112,7 +121,7 @@ describe('pointer commands', () => {
     const ctx = await run(view, 'scroll', { amount: 600 }, { world: { ok: true, data: { d: 1 } } });
     const wheels = mouseEvents(view);
     assert.equal(wheels.length, 600 / c.SCROLL_STEP_PX);
-    assert.ok(wheels.every((e) => e.x === 500 && e.y === 350 && e.deltaY === c.SCROLL_STEP_PX));
+    assert.ok(wheels.every((e) => e.x === 500 && e.y === 350 && e.deltaY === -c.SCROLL_STEP_PX));
     assert.deepEqual(results(ctx), [['c1', true, { d: 1 }, undefined]]);
   });
 
@@ -138,6 +147,6 @@ describe('pointer commands', () => {
     const wheels = mouseEvents(view);
     assert.equal(wheels.length, c.MIN_SCROLL_STEPS);
     assert.deepEqual([wheels[0].x, wheels[0].y], [c.FALLBACK_VIEWPORT.w / c.HALF, c.FALLBACK_VIEWPORT.h / c.HALF]);
-    assert.ok(wheels.every((e) => e.deltaY < 0));
+    assert.ok(wheels.every((e) => e.deltaY > 0));
   });
 });

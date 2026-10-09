@@ -72,7 +72,7 @@ describe('page commands', () => {
         (e) => e,
       );
     assert.equal(failed?.code, 'tab_unprotected');
-    assert.deepEqual(view.webContents.calls, []);
+    assert.ok(view.webContents.calls.every((call) => call[0] === 'input'));
     assert.equal(delays.filter((ms) => ms === c.NAVIGATE_RETRY_MS).length, 0);
   });
 
@@ -102,15 +102,14 @@ describe('page commands', () => {
 
   it('screenshot answers a PNG data URL', async () => {
     const ctx = await run(pageView(), 'screenshot', {});
-    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,PNG' }]]);
+    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,UE5H' }]]);
   });
 
   it('screenshot answers a JPEG when asked for one', async () => {
     const view = pageView();
     const ctx = await run(view, 'screenshot', { format: 'jpeg' });
-    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/jpeg;base64,PNG' }]]);
-    const sent = view.webContents.debugger.sent.find((s) => s.method === 'Page.captureScreenshot');
-    assert.equal(sent.params.format, 'jpeg');
+    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/jpeg;base64,SlBFRw==' }]]);
+    assert.deepEqual(view.webContents.calls.at(-1), ['jpeg', c.SCREENSHOT_JPEG_QUALITY]);
   });
 
   it('click answers a missing element with its error', async () => {
@@ -124,27 +123,45 @@ describe('page commands', () => {
     const view = pageView();
     const ctx = await run(view, 'click', { selector: 'a' }, { world: FOUND });
     assert.deepEqual(mouseEvents(view).at(-2), {
-      type: 'mousePressed',
+      type: 'mouseDown',
       x: 10,
       y: 20,
       button: 'left',
       clickCount: 1,
-      buttons: 1,
     });
     assert.deepEqual(results(ctx), [['c1', true, { clicked: true, url: 'https://a.test/', title: 'Title' }]]);
   });
 
-  it('click inside an iframe also replays the DOM event sequence', async () => {
+  for (const action of ['click', 'type']) {
+    it(`${action} refuses covered targets without input or synthetic page events`, async () => {
+      const view = pageView();
+      const ctx = await run(
+        view,
+        action,
+        { selector: 'a', text: 'secret' },
+        { world: { ...FOUND, data: { ...FOUND.data, covered: true } } },
+      );
+      assert.deepEqual(results(ctx), [
+        ['c1', false, null, 'Element is covered. Dismiss the overlay and analyze again.', 'element_covered'],
+      ]);
+      assert.deepEqual(mouseEvents(view), []);
+      assert.deepEqual(keyEvents(view), []);
+      assert.equal(ctx.calls.filter((call) => call[0] === 'world').length, 1);
+    });
+  }
+
+  it('click inside an iframe sends native input once without synthetic DOM replay', async () => {
     const ctx = await run(pageView(), 'click', { selector: 'a' }, { world: IN_IFRAME });
-    assert.ok(ctx.calls.some((call) => call[0] === 'world' && call[1].includes("new PointerEvent('pointerdown'")));
+    assert.ok(!ctx.calls.some((call) => call[0] === 'world' && call[1].includes("new PointerEvent('pointerdown'")));
   });
 
   it('click waits for a navigation it started', async () => {
     const view = pageView({ loading: true });
+    navigateOnInput(view, 'mouseUp');
     const waiting = run(view, 'click', { selector: 'a' }, { world: FOUND });
     await new Promise((resolve) => setImmediate(resolve));
     await waiting;
-    assert.ok(delays.includes(c.LOAD_TIMEOUT_MS));
+    assert.ok(!delays.includes(c.LOAD_TIMEOUT_MS));
   });
 
   it('type with no text only focuses the field', async () => {
@@ -157,9 +174,11 @@ describe('page commands', () => {
     const view = pageView();
     const world = (expr) => (expr.includes('el.select()') ? 'select' : expr.includes('listbox') ? true : FOUND);
     const ctx = await run(view, 'type', { selector: 'i', text: 'hi' }, { world });
-    const keys = view.webContents.debugger.sent.filter((call) => call.method === 'Input.dispatchKeyEvent');
+    const keys = view.webContents.calls
+      .filter((call) => call[0] === 'input' && ['keyDown', 'keyUp'].includes(call[1].type))
+      .map((call) => call[1]);
     assert.deepEqual(
-      keys.filter((k) => k.params.type !== 'keyUp').map((k) => k.params.key),
+      keys.filter((k) => k.type !== 'keyUp').map((k) => k.keyCode),
       ['Backspace', 'h', 'i'],
     );
     assert.deepEqual(results(ctx), [['c1', true, { typed: true, suggestions_visible: true }]]);
@@ -173,8 +192,10 @@ describe('page commands', () => {
       { selector: 'i', text: 'h' },
       { world: (expr) => (expr.includes('el.select()') ? false : FOUND) },
     );
-    const keys = view.webContents.debugger.sent.filter((call) => call.method === 'Input.dispatchKeyEvent');
-    assert.ok(!keys.some((k) => k.params.key === 'Backspace'));
+    const keys = view.webContents.calls
+      .filter((call) => call[0] === 'input' && ['keyDown', 'keyUp'].includes(call[1].type))
+      .map((call) => call[1]);
+    assert.ok(!keys.some((k) => k.keyCode === 'Backspace'));
   });
 
   it('type sets a native date input to its value instead of typing into its segments', async () => {
@@ -184,7 +205,9 @@ describe('page commands', () => {
     const ctx = await run(view, 'type', { selector: 'd', text: '01/15/2024' }, { world });
     const set = ctx.calls.find((call) => call[0] === 'world' && call[1].includes('el.value ='));
     assert.ok(set[1].includes('"2024-01-15"'), "the value is set in the input's own format");
-    const keys = view.webContents.debugger.sent.filter((call) => call.method === 'Input.dispatchKeyEvent');
+    const keys = view.webContents.calls
+      .filter((call) => call[0] === 'input' && ['keyDown', 'keyUp'].includes(call[1].type))
+      .map((call) => call[1]);
     assert.equal(keys.length, 0, 'nothing is typed');
     assert.deepEqual(results(ctx), [['c1', true, { typed: true, value: '2024-01-15' }]]);
   });
@@ -204,20 +227,18 @@ describe('page commands', () => {
     assert.deepEqual(results(ctx), [['c1', false, null, 'The date field did not accept 2024-01-15']]);
   });
 
-  it('type into an iframe goes through CDP, the same as anywhere else', async () => {
+  it('type into an iframe uses native input after focusing the field', async () => {
     const view = pageView();
-    // A second path existed for iframes, on the belief that CDP keyboard events do
-    // not reach them. They do; what that path did was nothing, so typing into an
-    // iframe silently dropped every character.
+    // Native input targets the focused frame rather than synthesizing DOM keystrokes.
     const ctx = await run(
       view,
       'type',
       { selector: 'i', text: 'a/' },
       { world: (e) => (e.includes('listbox') ? false : IN_IFRAME) },
     );
-    assert.deepEqual(view.webContents.calls, []);
+    assert.ok(view.webContents.calls.every((call) => call[0] === 'input'));
     assert.deepEqual(
-      keyEvents(view).map((e) => [e.type, e.key]),
+      keyEvents(view).map((e) => [e.type, e.keyCode]),
       [
         ['keyDown', 'a'],
         ['keyUp', 'a'],
@@ -233,7 +254,7 @@ describe('page commands', () => {
     const world = (e) => (e.includes('el.select()') ? 'select' : e.includes('listbox') ? false : IN_IFRAME);
     await run(view, 'type', { selector: 'i', text: '1' }, { world });
     assert.deepEqual(
-      keyEvents(view).map((e) => [e.type, e.key]),
+      keyEvents(view).map((e) => [e.type, e.keyCode]),
       [
         ['keyDown', 'Backspace'],
         ['keyUp', 'Backspace'],
@@ -252,7 +273,7 @@ describe('page commands', () => {
       { world: (e) => (e.includes('listbox') ? false : IN_IFRAME) },
     );
     assert.deepEqual(
-      keyEvents(view).map((e) => e.key),
+      keyEvents(view).map((e) => e.keyCode),
       ['Enter', 'Enter'],
     );
   });
@@ -292,7 +313,7 @@ describe('page commands', () => {
     const view = pageView();
     const ctx = await run(view, 'press_key', { key: 'F5' });
     assert.deepEqual(results(ctx), [['c1', false, null, 'Key "F5" is blocked, it can change browser state']]);
-    assert.deepEqual(view.webContents.calls, []);
+    assert.ok(view.webContents.calls.every((call) => call[0] === 'input'));
   });
 
   it('press_key reaches the page through CDP, Enter by default', async () => {
@@ -301,13 +322,13 @@ describe('page commands', () => {
     // echoes the key it was given stayed unchanged through Enter, Tab and the arrows.
     const ctx = await run(view, 'press_key', {}, { world: false });
     assert.deepEqual(
-      keyEvents(view).map((e) => [e.type, e.key]),
+      keyEvents(view).map((e) => [e.type, e.keyCode]),
       [
         ['keyDown', 'Enter'],
         ['keyUp', 'Enter'],
       ],
     );
-    assert.deepEqual(view.webContents.calls, []);
+    assert.ok(view.webContents.calls.every((call) => call[0] === 'input'));
     assert.deepEqual(results(ctx), [['c1', true, { key: 'Enter' }]]);
   });
 
@@ -315,17 +336,19 @@ describe('page commands', () => {
     const view = pageView();
     await run(view, 'press_key', { key: 'ArrowDown' }, { world: IN_IFRAME });
     assert.deepEqual(
-      keyEvents(view).map((e) => [e.type, e.key]),
+      keyEvents(view).map((e) => [e.type, e.keyCode]),
       [
-        ['keyDown', 'ArrowDown'],
-        ['keyUp', 'ArrowDown'],
+        ['keyDown', 'Down'],
+        ['keyUp', 'Down'],
       ],
     );
-    assert.deepEqual(view.webContents.calls, []);
+    assert.ok(view.webContents.calls.every((call) => call[0] === 'input'));
   });
 
   it('Enter that starts a navigation reloads the analyzer', async () => {
-    const ctx = await run(pageView({ loading: true }), 'press_key', { key: 'Enter' }, { world: false });
+    const view = pageView({ loading: true });
+    navigateOnInput(view, 'keyDown');
+    const ctx = await run(view, 'press_key', { key: 'Enter' }, { world: false });
     assert.ok(ctx.calls.some(([name]) => name === 'inject'));
   });
 
@@ -337,7 +360,7 @@ describe('page commands', () => {
   it('hover moves to the rounded element centre', async () => {
     const view = pageView();
     const ctx = await run(view, 'hover', { selector: 'h' }, { world: { ok: true, data: { x: 4.6, y: 5.4 } } });
-    assert.deepEqual(mouseEvents(view).at(-1), { type: 'mouseMoved', x: 5, y: 5 });
+    assert.deepEqual(mouseEvents(view).at(-1), { type: 'mouseMove', x: 5, y: 5 });
     assert.deepEqual(results(ctx), [['c1', true, { hovered: true }]]);
   });
 
@@ -355,7 +378,7 @@ describe('page commands', () => {
     const view = pageView({ evalValue: 42 });
     const ctx = pageCtx(null);
     await driverFor(ctx).runPageAction('c1', 'evaluate_raw', { expression: '6*7' }, view);
-    assert.equal(view.webContents.debugger.sent[0].params.expression, '6*7');
+    assert.deepEqual(view.webContents.calls.at(-1), ['evaluate', '6*7']);
     assert.deepEqual(results(ctx), [['c1', true, { result: 42 }]]);
   });
 
@@ -365,3 +388,14 @@ describe('page commands', () => {
     await assert.rejects(run(view, 'screenshot', {}), /destroyed/);
   });
 });
+
+/** Reproduce native navigation events during dispatch rather than unrelated resource loading. */
+function navigateOnInput(view, type) {
+  const original = view.webContents.sendInputEvent;
+  view.webContents.sendInputEvent = (event) => {
+    original(event);
+    if (event.type !== type) return;
+    view.webContents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+    view.webContents.emit('dom-ready');
+  };
+}

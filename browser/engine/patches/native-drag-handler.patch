@@ -1,0 +1,84 @@
+--- /dev/null
++++ b/content/public/browser/oya_drag_handler.h
+@@ -0,0 +1,16 @@
++/** Browser-owned drag capture after renderer payload security filtering. */
++#ifndef CONTENT_PUBLIC_BROWSER_OYA_DRAG_HANDLER_H_
++#define CONTENT_PUBLIC_BROWSER_OYA_DRAG_HANDLER_H_
++#include "base/functional/callback.h"
++#include "content/common/content_export.h"
++#include "third_party/blink/public/common/page/drag_operation.h"
++namespace content {
++class WebContents;
++class RenderFrameHost;
++struct DropData;
++using OyaDragHandler = base::RepeatingCallback<bool(RenderFrameHost&, const DropData&, blink::DragOperationsMask)>;
++// One owner per contents; callbacks are never visible in a renderer or protocol.
++CONTENT_EXPORT bool SetOyaDragHandler(WebContents*, OyaDragHandler);
++CONTENT_EXPORT void ClearOyaDragHandler(WebContents*);
++}  // namespace content
++#endif
+--- a/content/browser/renderer_host/render_widget_host_impl.cc
++++ b/content/browser/renderer_host/render_widget_host_impl.cc
+@@ -3,6 +3,9 @@
+ // found in the LICENSE file.
+ 
+ #include "content/browser/renderer_host/render_widget_host_impl.h"
++#include "content/public/browser/oya_drag_handler.h"
++#include "content/public/browser/web_contents.h"
++#include "base/supports_user_data.h"
+ 
+ #include <math.h>
+ 
+@@ -186,6 +189,25 @@
+ using blink::WebMouseWheelEvent;
+ 
+ namespace content {
++
++namespace {
++const int kOyaDragHandlerKey = 0;
++class OyaDragHandlerData : public base::SupportsUserData::Data {
++ public:
++  explicit OyaDragHandlerData(OyaDragHandler callback) : handler(std::move(callback)) {}
++  OyaDragHandler handler;
++};
++}  // namespace
++
++bool SetOyaDragHandler(WebContents* contents, OyaDragHandler handler) {
++  if (contents->GetUserData(&kOyaDragHandlerKey)) return false;
++  contents->SetUserData(&kOyaDragHandlerKey,
++      std::make_unique<OyaDragHandlerData>(std::move(handler)));
++  return true;
++}
++void ClearOyaDragHandler(WebContents* contents) {
++  contents->RemoveUserData(&kOyaDragHandlerKey);
++}
+ namespace {
+ 
+ constexpr gfx::Rect kInvalidScreenRect(std::numeric_limits<int>::max(),
+@@ -3121,6 +3143,16 @@
+     }
+   }
+ 
++  // The browser-owned native path receives only the same sanitized payload
++  // as an OS drag. It does not call or configure DevTools interception.
++  if (auto* contents = WebContents::FromRenderFrameHost(&source_rfh)) {
++    auto* owner = static_cast<OyaDragHandlerData*>(contents->GetUserData(&kOyaDragHandlerKey));
++    if (owner) {
++      auto handler = owner->handler;  // Owner may clear its registration in the callback.
++      if (handler.Run(source_rfh, filtered_data, drag_operations_mask)) return;
++    }
++  }
++
+   if (frame_tree_) {
+     bool intercepted = false;
+     devtools_instrumentation::WillStartDragging(
+--- a/content/public/browser/BUILD.gn
++++ b/content/public/browser/BUILD.gn
+@@ -502,6 +502,7 @@
+     "web_authentication_delegate.h",
+     "web_authentication_request_proxy.h",
+     "web_contents.cc",
++    "oya_drag_handler.h",
+     "web_contents.h",
+     "web_contents_capability_type.h",
+     "web_contents_delegate.cc",

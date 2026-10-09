@@ -23,6 +23,8 @@ type AppFallback = Pick<App, 'userAgentFallback'> & LoginApp;
 
 /** What else a session is set up with, when the app has it. */
 export interface SessionExtras {
+  /** Preserve the engine's real identity in the explicit desktop compatibility trial. */
+  nativeBrowsing?: boolean;
   /** Site and operating-system consent for microphone and camera. */
   media?: MediaPermissions;
   /** Explicit human-confirmed native app handoff, while permission itself stays denied. */
@@ -43,7 +45,7 @@ export async function configureSession(
   activeProfile: SessionProfile | null,
   extras: SessionExtras = {},
 ): Promise<void> {
-  presentIdentity(app, ses, activeProfile);
+  configureIdentity(app, ses, activeProfile, extras);
   await routeTraffic(app, ses, activeProfile, extras);
   if (extras.observer) watchSession(extras.observer, ses);
 }
@@ -73,4 +75,16 @@ function presentIdentity(app: AppFallback, ses: Session, activeProfile: SessionP
   // service worker and flags the page and worker disagreeing.
   app.userAgentFallback = identity.userAgent;
   new ClientHints(identity.hints).install(ses);
+}
+
+/** Native desktop mode must never silently ignore persona proxy or governance requirements. */
+function configureIdentity(
+  app: AppFallback,
+  ses: Session,
+  profile: SessionProfile | null,
+  extras: SessionExtras,
+): void {
+  if (extras.nativeBrowsing && (profile?.proxy || extras.governance?.configuration))
+    throw new Error('Native browsing cannot use a proxied or governed persona.');
+  if (!extras.nativeBrowsing) presentIdentity(app, ses, profile);
 }
