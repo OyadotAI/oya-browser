@@ -86,7 +86,7 @@ function validatePrimitive(method: string, key: string, value: unknown): void {
     !Object.hasOwn(COOKIE_PARAMS, method) &&
     !Object.hasOwn(BROWSER_PARAMS, method) &&
     !Object.hasOwn(NETWORK_PARAMS, method) &&
-    !['Target.setAutoAttach', 'Oya.navigateToHistoryEntry'].includes(method) &&
+    !['Target.setAutoAttach', 'Oya.navigateToHistoryEntry', 'Page.createIsolatedWorld'].includes(method) &&
     !/^(DOM|Emulation|Runtime)\./.test(method)
   )
     validateValue(key, value);

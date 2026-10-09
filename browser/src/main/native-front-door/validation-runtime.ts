@@ -2,9 +2,11 @@
 import type { NativeCommand } from './types.ts';
 /** Native boundary limits mirror the engine's own independent bounds. */
 const MAX_SOURCE = 1_048_576,
-  MAX_ARGUMENTS = 128;
+  MAX_ARGUMENTS = 128,
+  MAX_WORLD_NAME = 1024;
 /** Supported argument names by method, deliberately excluding inspector/debugger options. */
 export const RUNTIME_PARAMS: Record<string, readonly string[]> = {
+  'Page.createIsolatedWorld': ['frameId', 'worldName', 'grantUniveralAccess'],
   'Runtime.enable': [],
   'Runtime.disable': [],
   'Runtime.evaluate': [
@@ -50,6 +52,7 @@ const REQUIRED: Record<string, string> = {
 };
 /** Reject the whole request before allocating native handles or executing any script. */
 export function validateRuntime({ method, params }: NativeCommand): void {
+  if (method === 'Page.createIsolatedWorld') return validateWorld(params);
   if (!Object.hasOwn(RUNTIME_PARAMS, method)) return;
   if (Object.hasOwn(REQUIRED, method)) requireString(params[REQUIRED[method]]);
   for (const [key, value] of Object.entries(params)) validateField(key, value);
@@ -99,4 +102,19 @@ function validateRepresentation(key: string, item: unknown): void {
   if (key !== 'value') requireString(item);
   if (key === 'unserializableValue' && !/^(NaN|-?Infinity|-0|-?\d+n)$/.test(String(item)))
     throw Error('Invalid unserializable value');
+}
+
+/** Creation never grants universal origin access or accepts native world numbers. */
+function validateWorld(params: Record<string, unknown>): void {
+  requireString(params.frameId);
+  if (!params.frameId) throw Error('frameId is required');
+  validateWorldName(params.worldName);
+  if (params.grantUniveralAccess !== undefined && params.grantUniveralAccess !== false)
+    throw Error('Unsupported universal access for native isolated worlds');
+}
+
+/** World labels are display metadata, not unbounded storage or engine world IDs. */
+function validateWorldName(name: unknown): void {
+  if (name !== undefined && (typeof name !== 'string' || name.length > MAX_WORLD_NAME))
+    throw Error('Expected a bounded isolated world name');
 }

@@ -48,3 +48,16 @@ test('document replacement prunes the old frame handles without affecting siblin
   values.clear();
   assert.throws(() => values.owner('tab', { objectId: 'new' }), /foreign/);
 });
+
+test('sibling isolated worlds retain independent handles until their common document is replaced', () => {
+  const values = new RuntimeValues(),
+    main = context('main');
+  const one = { ...main, uniqueId: 'one', document: 'world-one', mainDocument: 'main', world: 'one' };
+  const two = { ...main, uniqueId: 'two', document: 'world-two', mainDocument: 'main', world: 'two' };
+  for (const c of [one, main, two]) values.remember(c, 'all', { result: { objectId: c.uniqueId } });
+  for (const c of [one, main, two]) assert.equal(values.owner('tab', { objectId: c.uniqueId })?.context, c);
+  assert.throws(() => values.validate(one, { arguments: [{ objectId: 'two' }] }), /foreign/);
+  const replacement = { ...main, uniqueId: 'replacement', document: 'replacement' };
+  values.remember(replacement, '', { result: { objectId: 'new' } });
+  for (const c of [one, main, two]) assert.throws(() => values.owner('tab', { objectId: c.uniqueId }), /foreign/);
+});

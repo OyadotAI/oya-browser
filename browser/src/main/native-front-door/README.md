@@ -69,14 +69,23 @@ returned `sessionId`. No Chromium debugging endpoint is required or permitted.
   require `native-runtime-properties.patch`; old engines fail explicitly.
 - `Runtime.releaseObject` / `releaseObjectGroup`: connection-owned native cleanup;
   navigation and disconnect invalidate values. Foreign/stale handles are rejected.
-  Requires `native-runtime.patch` and `native-runtime-frames.patch`; no isolated-world
-  or debugger fallback. Context IDs and object handles route to the exact native
+  Requires `native-runtime.patch` and `native-runtime-frames.patch`; no debugger fallback. Context IDs and object handles route to the exact native
   document, and cross-frame handle arguments are rejected before invocation. Group
   release covers known documents on the selected target, not other tabs.
-  Inspector previews, side-effect checks, user gestures, isolated/worker contexts,
+  Inspector previews, side-effect checks, user gestures, worker contexts,
   console argument events and custom timeouts remain unsupported.
   Raw script exceptions report generic failure metadata rather than fabricated
   exception objects or stack traces; function/promise thrown values are preserved.
+- `Page.createIsolatedWorld`: native connection-owned worlds in an issued frame,
+  requiring `native-runtime-worlds.patch`. Named worlds are reused only inside the
+  same connection and exact document; unnamed worlds are distinct. Names are
+  bounded to 1,024 characters and at most 32 worlds may be retained per connection.
+  `grantUniveralAccess` must be absent or false: origin protections are not relaxed.
+  Context selection, values, exceptions, invocation, promises and group release
+  use the exact native world, never Oya's internal recorder/analyzer world.
+  Enabled Runtime observers receive isolated context creation/destruction events;
+  disable stops events without deleting worlds, and disconnect revokes resources.
+  Old engines fail explicitly rather than executing the request in the main world.
 - `Log.enable` / `Log.disable`: native console text as `Log.entryAdded`, not
   `Runtime.consoleAPICalled` or structured JavaScript argument objects.
 - `Emulation.setDeviceMetricsOverride` / `clearDeviceMetricsOverride`: width,

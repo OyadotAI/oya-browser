@@ -31,6 +31,13 @@ engine are separate concerns; this requirement governs the control architecture.
 
 ### Migration inventory
 
+- External `Page.createIsolatedWorld` terminates in native owner-scoped V8 worlds,
+  separate from the internal analyzer/recorder. Context tokens, value arguments,
+  lifecycle notifications and release groups preserve exact tab/frame/world
+  ownership. Named reuse is document-local, universal-origin access is rejected,
+  and old engines fail explicitly. This does not supply worker contexts or
+  replace the remaining persona/worker migration.
+
 - The external native adapter provides machine-readable `Oya.getCapabilities`
   from its dispatch/validation tables; it explicitly reports partial compatibility
   with native availability checked at execution, not universal CDP support.

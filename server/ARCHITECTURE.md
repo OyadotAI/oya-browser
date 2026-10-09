@@ -180,6 +180,6 @@ for Oya's native compatibility front door. Tokens are kept outside enumerable
 connection state and endpoint URLs, are sent only over WSS or literal-loopback
 WS, and are never forwarded through redirects. The native transport integration
 checks unauthenticated/wrong-token refusal, target attachment and native runtime
-evaluation with engine debugger access forbidden. Unsupported isolated-world
-creation remains an explicit error; this transport coverage does not replace
-the gated full CDP driver or outbound-provider lifecycle suites.
+evaluation with engine debugger access forbidden. The transport also verifies
+native isolated-world creation and separation from page globals; this coverage
+does not replace the gated full CDP driver or outbound-provider lifecycle suites.

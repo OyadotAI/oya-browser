@@ -44,10 +44,26 @@ test('external connection authenticates, attaches and evaluates through the nati
       sessionId,
     );
     assert.deepEqual(result.result.value, { answer: 42, node: 'undefined' });
-    await assert.rejects(
-      conn.send('Page.createIsolatedWorld', { frameId: 'unsupported' }, sessionId),
-      /unsupported|not supported|not implemented|Unknown/i,
+    const { frameTree } = await conn.send('Page.getFrameTree', {}, sessionId);
+    const world = await conn.send(
+      'Page.createIsolatedWorld',
+      { frameId: frameTree.frame.id, worldName: 'server-agent' },
+      sessionId,
     );
+    await conn.send(
+      'Runtime.evaluate',
+      { contextId: world.executionContextId, expression: 'globalThis.privateAgentValue=42' },
+      sessionId,
+    );
+    const isolated = await conn.send(
+      'Runtime.evaluate',
+      { contextId: world.executionContextId, expression: 'privateAgentValue' },
+      sessionId,
+    );
+    assert.equal(isolated.result.value, 42);
+    const main = await conn.send('Runtime.evaluate', { expression: 'typeof privateAgentValue' }, sessionId);
+    assert.equal(main.result.value, 'undefined');
+    await assert.rejects(conn.send('Page.createIsolatedWorld', { frameId: 'unsupported' }, sessionId), /foreign/i);
   } finally {
     for (const conn of connections) conn.close();
     await browser.close();

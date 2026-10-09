@@ -54,7 +54,8 @@ export class RuntimeValues {
     for (const [id, owner] of this.values)
       if (
         owner.context.frame.detached ||
-        (owner.context.frame === context.frame && owner.context.document !== context.document)
+        (owner.context.frame === context.frame &&
+          (owner.context.mainDocument ?? owner.context.document) !== (context.mainDocument ?? context.document))
       )
         this.values.delete(id);
   }

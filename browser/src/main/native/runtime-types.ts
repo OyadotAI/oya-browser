@@ -23,7 +23,7 @@ export interface RuntimeReply {
     exception: object;
   };
 }
-/** One public main-world context is associated with one exact native document. */
+/** One public context is associated with one exact native document and execution world. */
 export interface RuntimeContext {
   /** Monotonically allocated connection-local public context id. */
   id: number;
@@ -35,11 +35,21 @@ export interface RuntimeContext {
   frameId: string;
   /** Browser-owned exact frame. */
   frame: RuntimeFrame;
+  /** Opaque native world key, absent for the main world; never supplied by the external caller. */
+  world?: string;
+  /** Display name from creation, not an execution capability. */
+  name?: string;
+  /** Exact main context identity that owns this isolated world. */
+  parent?: string;
+  /** Main document token used to prune values without confusing sibling worlds. */
+  mainDocument?: string;
   /** Exact protected target. */
   target: string;
 }
 /** Native runtime limits bound handles, frame wrappers, source and argument allocation. */
 export const RUNTIME = {
+  /** Bound connection-owned worlds below the engine's per-frame owner limit. */
+  worlds: 32,
   /** Maximum owned frame wrappers per external connection. */
   frames: 128,
   /** Maximum tracked native value identities across this connection. */

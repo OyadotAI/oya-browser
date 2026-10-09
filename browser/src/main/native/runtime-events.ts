@@ -1,4 +1,4 @@
-/** Main-world context events are native lifecycle observations, not inspector notifications. */
+/** Context events are native lifecycle observations, not inspector notifications. */
 import type { NativePage } from './page.ts';
 import type { NativeEventSink } from './log-stream.ts';
 import { RUNTIME, type RuntimeContext, type RuntimeFrame } from './runtime-types.ts';
@@ -10,17 +10,19 @@ export interface RuntimeWatch {
   current(): Promise<RuntimeContext[]>;
   /** Recheck human ownership before every event, including delayed replies. */
   allowed(): boolean;
+  /** Optional creation notifications from the owned context registry. */
+  subscribe?(changed: () => void): () => void;
   /** Authenticated event sink. */
   emit: NativeEventSink;
 }
-/** Serialize only the native default main context; no preload or agent-world contexts are advertised. */
+/** Serialize main and connection-owned isolated contexts; internal preload/recorder worlds remain private. */
 function describe(context: RuntimeContext): object {
   return {
     id: context.id,
     uniqueId: context.uniqueId,
     origin: context.frame.origin,
-    name: '',
-    auxData: { isDefault: true, type: 'default', frameId: context.frameId },
+    name: context.name ?? '',
+    auxData: { isDefault: !context.world, type: context.world ? 'isolated' : 'default', frameId: context.frameId },
   };
 }
 /** Each enable owns its watcher; closing it invalidates asynchronous context reads. */
@@ -33,6 +35,8 @@ export class RuntimeEvents {
   private readonly frames = new Set<RuntimeFrame>();
   /** A disconnect prevents late replies from emitting anything. */
   private closed = false;
+  /** Release registry notifications together with native frame observers. */
+  private unsubscribe?: () => void;
   /** Increasing read epoch prevents out-of-order lifecycle replies. */
   private epoch = 0;
   /** Store dependencies without starting asynchronous observation implicitly. */
@@ -63,6 +67,7 @@ export class RuntimeEvents {
   };
   /** Observe actual native graph and navigation signals, never a polling timer. */
   private listenFrames(): void {
+    this.unsubscribe = this.deps.subscribe?.(this.refresh);
     const wc = this.deps.page.webContents;
     wc.on('dom-ready', this.refresh);
     wc.on('did-frame-navigate', this.refresh);
@@ -148,6 +153,7 @@ export class RuntimeEvents {
   }
   /** Dispose every child listener and prevent future native creation/removal signals. */
   private unwatchFrames(): void {
+    this.unsubscribe?.();
     const wc = this.deps.page.webContents;
     wc.off('did-frame-navigate', this.refresh);
     wc.off('frame-created', this.created);

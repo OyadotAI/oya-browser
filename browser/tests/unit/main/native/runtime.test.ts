@@ -106,3 +106,33 @@ test('older engines reject inherited inspection without falling back to own-only
   assert.equal(f.calls.at(-1)[2], 'inspectChain');
   assert.ok(!f.calls.some((c) => c[2] === 'inspect'));
 });
+
+test('isolated-world validation rejects universal access and opaque engine keys at the front door', () => {
+  for (const params of [
+    {},
+    { frameId: '' },
+    { frameId: 4 },
+    { frameId: 'owned', worldName: [] },
+    { frameId: 'owned', worldName: 'x'.repeat(1025) },
+    { frameId: 'owned', grantUniveralAccess: true },
+    { frameId: 'owned', grantUniveralAccess: 'false' },
+    { frameId: 'owned', world: 'engine-key' },
+  ])
+    assert.throws(() => validateParams({ id: 1, method: 'Page.createIsolatedWorld', params }));
+  for (const params of [{ frameId: 'owned' }, { frameId: 'owned', worldName: '', grantUniveralAccess: false }])
+    assert.doesNotThrow(() => validateParams({ id: 1, method: 'Page.createIsolatedWorld', params }));
+});
+
+test('an older engine cannot silently execute isolated requests in its main world', async () => {
+  const f = fixture();
+  (f.frame as any).framesInSubtree = [f.frame];
+  await assert.rejects(
+    f.runtime.execute(f.page, 'target', 'createWorld', { frameId: 'target', worldName: 'private' }),
+    /lacks isolated/,
+  );
+  assert.deepEqual(
+    f.calls.map((c) => c[2]),
+    ['context', 'isolatedContext'],
+  );
+  f.runtime.dispose();
+});

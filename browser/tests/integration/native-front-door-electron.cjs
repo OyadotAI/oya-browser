@@ -55,7 +55,16 @@ async function run() {
     governance: { allowed: (url) => !url.endsWith('/blocked') },
   });
   const token = randomBytes(32).toString('hex');
-  const door = startNativeFrontDoor({ port: 0, token, backend, beginCommand: () => () => {}, clientChanged() {} });
+  const door = startNativeFrontDoor({
+    port: 0,
+    token,
+    backend,
+    beginCommand: () => {
+      if (control.localHeld) throw Error('human control is held');
+      return () => {};
+    },
+    clientChanged() {},
+  });
   await once(door, 'listening');
   const target = backend.targets()[0].targetId;
   const url = `ws://127.0.0.1:${door.address().port}/devtools/page/${target}`;
@@ -71,6 +80,7 @@ async function run() {
     await require('./native-runtime-checks.cjs')(a, b, wc, control);
     await require('./native-runtime-properties-checks.cjs')(a);
     await require('./native-runtime-frames-checks.cjs')(a, b, wc);
+    await require('./native-runtime-worlds-checks.cjs')(a, b, wc, control);
     await discovery(`ws://127.0.0.1:${door.address().port}/devtools/browser`, token, target, tabEvents, wc, control);
     await require('./native-history-checks.cjs')(a, b, wc);
     await require('./native-cookie-sync-checks.cjs')(wc.session);
@@ -192,7 +202,7 @@ async function discovery(url, token, target, tabEvents, wc, control) {
     control.localHeld = true;
     await wc.executeJavaScript('document.title="Private human title"');
     tabEvents.changed();
-    await browser.call('Browser.getVersion');
+    await assert.rejects(browser.call('Browser.getVersion'), /human/);
     assert.equal(browser.events.length, count);
     control.localHeld = false;
     await browser.call('Target.setDiscoverTargets', { discover: false });

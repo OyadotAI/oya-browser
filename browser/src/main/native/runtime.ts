@@ -1,4 +1,4 @@
-/** Main-world evaluation and object lifecycles backed by Oya's native per-frame V8 registry. */
+/** Main and isolated-world evaluation and object lifecycles backed by Oya's native per-frame V8 registry. */
 import type { NativePage } from './page.ts';
 import type { NativeEventSink } from './log-stream.ts';
 import type { RuntimeContext, RuntimeReply, RuntimeFrame } from './runtime-types.ts';
@@ -20,12 +20,13 @@ export class NativeRuntime {
   }
   /** Exceptions are correlated without pretending unknown source locations are known. */
   private exception = 0;
-  /** Execute only on the exact tab's main-world document; context selectors are validated. */
+  /** Execute only on the exact tab's owned document and world; context selectors are validated. */
   async execute(page: NativePage, target: string, op: string, params: Params): Promise<object> {
+    if (op === 'createWorld') return { executionContextId: (await this.contexts.create(page, target, params)).id };
     if (op === 'dropGroup') return this.dropGroup(page, target, params);
     const owner = this.values.owner(target, params);
     const selected = owner?.context || this.contexts.selected(target, params);
-    const context = await this.contexts.current(page, target, selected?.frame);
+    const context = await this.contexts.resolve(page, target, selected);
     if (selected && context.uniqueId !== selected.uniqueId) throw Error('Stale or foreign native execution context');
     this.contexts.validate(context, params);
     return this.run(context, op, params, owner?.group || '');
@@ -35,7 +36,7 @@ export class NativeRuntime {
     if (op === 'context') return {};
     this.values.validate(context, params);
     const nativeOp = runtimeOperation(op, params);
-    const reply = await this.contexts.call(context.frame, context.document, nativeOp, runtimeParameters(op, params));
+    const reply = await this.contexts.perform(context, nativeOp, runtimeParameters(op, params));
     this.values.remember(context, String(params.objectGroup ?? group), reply);
     if (op === 'drop') this.values.release(context.target, params);
     return this.response(reply, context);
@@ -44,7 +45,7 @@ export class NativeRuntime {
   private async dropGroup(page: NativePage, target: string, params: Params): Promise<object> {
     const tasks = this.contexts.forTarget(target).map(async (context) => {
       this.contexts.requireOwned(page, context.frame);
-      await this.contexts.call(context.frame, context.document, 'dropGroup', runtimeParameters('dropGroup', params));
+      await this.contexts.perform(context, 'dropGroup', runtimeParameters('dropGroup', params));
     });
     const results = await Promise.allSettled(tasks);
     this.values.release(target, params);
@@ -54,7 +55,13 @@ export class NativeRuntime {
 
   /** Context notifications come from actual native readiness and document identities. */
   watch(page: NativePage, target: string, allowed: () => boolean, emit: NativeEventSink): () => void {
-    return new RuntimeEvents({ page, allowed, emit, current: () => this.contexts.all(page, target) }).start();
+    return new RuntimeEvents({
+      page,
+      allowed,
+      emit,
+      current: () => this.contexts.all(page, target),
+      subscribe: (changed) => this.contexts.subscribe(changed),
+    }).start();
   }
   /** Preserve page exceptions separately from native cancellation and unsupported capabilities. */
   private response(reply: RuntimeReply, context: RuntimeContext): object {

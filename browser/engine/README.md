@@ -630,7 +630,7 @@ persona/worker protection and cross-platform release validation remain separate
 requirements. Current engine evidence is local macOS arm64, not a Windows or
 universal macOS production distribution.
 
-## Native isolated runtime worlds (engine primitive only)
+## Native isolated runtime worlds
 
 Apply `patches/native-runtime-worlds.patch` after the runtime property/frame
 patches. This adds browser-process-only `isolatedContext` creation to
@@ -653,8 +653,9 @@ from `browser/`. The fixture forbids debugger access and checks stable owned
 identities, page/recorder/agent-global separation, DOM sharing, child-frame and
 handle isolation, native invocation/promises/exceptions, close and navigation.
 
-**Not public compatibility support yet:** the application context registry and
-external `Page.createIsolatedWorld` adapter still need world-aware ownership,
-lifecycle events, disposal and regression tests. Existing callers continue to get
-an explicit unsupported response. Do not advertise this primitive as complete
-CDP driver parity or enable release on that basis.
+The external `Page.createIsolatedWorld` adapter now uses this primitive through
+connection-owned context/value routing, lifecycle events and disposal. It rejects
+universal-origin access and never uses the internal recorder world. Run
+`test:native-front-door` for the public adapter regression. This is still partial
+compatibility: worker contexts, persona/worker migration and other release gates
+remain; the primitive is not proof of full CDP driver parity.

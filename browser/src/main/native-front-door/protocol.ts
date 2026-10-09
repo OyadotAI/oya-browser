@@ -50,6 +50,7 @@ const PAGE_ACTIONS: Record<string, string> = {
   'Runtime.awaitPromise': 'runtime:await',
   'Runtime.releaseObject': 'runtime:drop',
   'Runtime.releaseObjectGroup': 'runtime:dropGroup',
+  'Page.createIsolatedWorld': 'runtime:createWorld',
   'Page.reload': 'page:reload',
   'Page.stopLoading': 'page:stop',
   'DOM.getDocument': 'dom:document',

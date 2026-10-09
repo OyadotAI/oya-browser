@@ -1027,3 +1027,30 @@ This is an engine prerequisite, not completed public protocol support:
 routing, lifecycle events and disposal are world-aware. The four server migration
 gates, native persona/worker work, production platform builds and passkey signing
 requirements remain. Nothing was pushed or released.
+
+## Native isolated-world external adapter (2026-10-09)
+
+The public `Page.createIsolatedWorld` method now terminates in the compiled native
+primitive. Context/value routing distinguishes main documents from their worlds;
+world metadata is browser-owned and cannot be supplied as a raw engine ID.
+The adapter supports named reuse, distinct unnamed worlds, exact child frames,
+Runtime creation/destruction events, invocation, exceptions, promises and group
+release. Universal-origin access is explicitly rejected.
+
+Regression checks cover other-connection/frame/world rejection, page and internal
+recorder isolation, normal cross-origin policy, native DOM sharing, simultaneous
+handles from sibling worlds, human command admission, Runtime disable/re-enable,
+child removal, navigation, quotas and late-response cleanup. A disconnect or
+frame removal during world creation revokes the native allocation rather than
+publishing a revived context. No internal CDP backend or world fallback is used.
+
+Passed on the patched macOS arm64 engine: native front-door regression, all 11
+native server service tests (including authenticated isolated evaluation), browser
+integration/analyzer and 13 recorder DOM cases. Unit results: 2,132 browser passed,
+3,311 server passed with 1 existing skip. Browser build, browser/server types and
+repository lint/format checks passed.
+
+This closes the isolated-world adapter gap, not the release gate. The four legacy
+server integration suites remain refused, and default persona/worker protection,
+remaining protocol semantics, signed passkey acceptance and production macOS/
+Windows artifacts still require completion. No push or release was made.

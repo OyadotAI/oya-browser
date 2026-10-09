@@ -63,3 +63,77 @@ test('disconnect rejects an already-pending native reply without restoring owner
   await assert.rejects(pending, /closed/);
   assert.deepEqual(f.contexts.forTarget('tab'), []);
 });
+
+test('isolated creation after disconnect closes the exact late native token and key', async () => {
+  const f = fixture(),
+    calls: any[] = [];
+  let allocated!: () => void, reply!: (value: any) => void;
+  const started = new Promise<void>((r) => {
+    allocated = r;
+  });
+  f.top._runOyaRuntime = (async (...args: any[]) => {
+    calls.push(args);
+    if (args[2] === 'isolatedContext') {
+      allocated();
+      return new Promise((r) => {
+        reply = r;
+      });
+    }
+    return args[2] === 'context' ? { context: 'top' } : {};
+  }) as any;
+  const pending = f.contexts.create(f.page, 'tab', { frameId: 'tab', worldName: 'private' });
+  await started;
+  f.contexts.dispose();
+  reply({ context: 'late-world' });
+  await assert.rejects(pending, /closed/);
+  const closed = calls.find((c) => c[2] === 'close' && c[1] === 'late-world');
+  assert.ok(closed);
+  assert.equal(closed[3].world, calls.find((c) => c[2] === 'isolatedContext')[3].world);
+  assert.deepEqual(f.contexts.forTarget('tab'), []);
+});
+
+test('world creation on a removed frame revokes the native allocation without announcing it', async () => {
+  const f = fixture(),
+    calls: any[] = [];
+  f.child._runOyaRuntime = (async (...args: any[]) => {
+    calls.push(args);
+    if (args[2] === 'isolatedContext') {
+      f.top.framesInSubtree = [f.top];
+      return { context: 'removed-world' };
+    }
+    return { context: 'child' };
+  }) as any;
+  let changes = 0;
+  f.contexts.subscribe(() => {
+    changes++;
+  });
+  await assert.rejects(f.contexts.create(f.page, 'tab', { frameId: 'child-frame', worldName: 'private' }), /foreign/);
+  assert.equal(changes, 0);
+  assert.ok(calls.some((c) => c[2] === 'close' && c[1] === 'removed-world'));
+  assert.ok(!f.contexts.forTarget('tab').some((c) => c.world));
+  f.contexts.dispose();
+});
+
+test('disconnect releases both main and isolated tokens using their exact native world keys', async () => {
+  const f = fixture(),
+    calls: any[] = [];
+  f.top._runOyaRuntime = (async (...args: any[]) => {
+    calls.push(args);
+    if (args[2] === 'isolatedContext') return { context: 'owned-world' };
+    if (args[2] === 'context') return { context: args[3].world ? 'owned-world' : 'top' };
+    return {};
+  }) as any;
+  const context = await f.contexts.create(f.page, 'tab', { frameId: 'tab', worldName: 'owned' });
+  f.contexts.dispose();
+  const closed = calls.filter((c) => c[2] === 'close');
+  assert.equal(closed.length, 2);
+  assert.deepEqual(
+    closed.map((c) => [c[1], c[3].world]),
+    [
+      ['top', undefined],
+      ['owned-world', context.world],
+    ],
+  );
+  assert.ok(closed.every((c) => c[0] === f.contexts.owner));
+  await assert.rejects(f.contexts.resolve(f.page, 'tab', context), /closed/);
+});
