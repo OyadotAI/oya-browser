@@ -3,6 +3,8 @@ const { app, BrowserWindow, session } = require('electron');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
 const { once } = require('node:events');
+const { NativeSessionPolicies } = require('../../src/main/native-policy/index.ts');
+const policyOwner = process.env.OYA_CHECK_NATIVE_POLICY === '1' ? new NativeSessionPolicies() : null;
 const profile = process.env.OYA_TIMEZONE_PROFILE;
 if (!profile) throw Error('Launch through native-timezone.mjs so cleanup happens after Electron exits');
 app.setPath('userData', profile);
@@ -192,6 +194,33 @@ async function unconfiguredLocale(jar, window, url, windows) {
   );
   assert.deepEqual(await baseline.webContents.executeJavaScript('first'), host);
 }
+/** A failed partial native install stays unavailable; preflight failures never mutate engine state. */
+function checkPolicyFailures(late) {
+  const requested = { timeZone: 'UTC', locale: 'en-US', hardwareConcurrency: 8, languages: ['en-US', 'en'] };
+  assert.throws(() => policyOwner.configure(late, requested), /before any renderer/);
+  assert.equal(late._getOyaSessionPolicy().locale, '');
+  const invalid = session.fromPartition('policy-invalid');
+  assert.throws(() => policyOwner.configure(invalid, { ...requested, languages: ['fr'] }));
+  assert.deepEqual(invalid._getOyaSessionPolicy(), {
+    version: 1,
+    rendererStarted: false,
+    timeZone: '',
+    locale: '',
+    hardwareConcurrency: 0,
+    acceptLanguages: '',
+  });
+  const conflict = session.fromPartition('policy-conflict');
+  conflict._setOyaHardwareConcurrency(4);
+  assert.throws(() => policyOwner.configure(conflict, requested), /installation failed/);
+  assert.equal(conflict._getOyaSessionPolicy().timeZone, 'UTC');
+  assert.equal(conflict._getOyaSessionPolicy().hardwareConcurrency, 4);
+  assert.equal(conflict._getOyaSessionPolicy().locale, '');
+  assert.throws(() => policyOwner.assertConfigured(conflict), /retire this session/);
+  assert.throws(() => policyOwner.configure(conflict, { ...requested, hardwareConcurrency: 4 }), /retire this session/);
+  console.log(
+    'PASS native policy owner: preflight, native readback, first-renderer lock and partial-failure quarantine',
+  );
+}
 /** First-script policy must apply to cross-origin child frames without page-world shims. */
 async function run() {
   await app.whenReady();
@@ -217,6 +246,23 @@ async function run() {
     for (const [zone, offset, hour, cores, tag] of zones) {
       const jar = session.fromPartition('timezone-' + zone);
       assert.equal(typeof jar._setOyaTimeZone, 'function', 'patched native timezone API required');
+      if (locale) {
+        jar.setUserAgent(jar.getUserAgent(), 'fr-FR,fr');
+        assert.equal(await (await jar.fetch(url + 'echo')).json(), 'fr-FR,fr;q=0.9');
+      }
+      if (policyOwner) {
+        const configured = policyOwner.configure(jar, {
+          timeZone: zone,
+          locale: tag,
+          hardwareConcurrency: cores,
+          languages: [tag, tag.split('-')[0]],
+        });
+        assert.equal(policyOwner.assertConfigured(jar), configured);
+        const snapshot = jar._getOyaSessionPolicy();
+        assert.equal(snapshot.rendererStarted, false);
+        snapshot.locale = 'fr-FR';
+        assert.equal(jar._getOyaSessionPolicy().locale, tag);
+      }
       for (const invalid of ['', 'Not/AZone', 'UTC\0hidden', 'x'.repeat(129)])
         assert.throws(() => jar._setOyaTimeZone(invalid), /Invalid/);
       jar._setOyaTimeZone(zone);
@@ -224,14 +270,13 @@ async function run() {
       assert.throws(() => jar._setOyaTimeZone(zone === 'UTC' ? 'Asia/Tokyo' : 'UTC'), /cannot be changed/);
       if (hardware) configureHardware(jar, cores);
       if (locale) {
-        jar.setUserAgent(jar.getUserAgent(), 'fr-FR,fr');
-        assert.equal(await (await jar.fetch(url + 'echo')).json(), 'fr-FR,fr;q=0.9');
         configureLocale(jar, tag);
         await checkLanguagePolicy(jar, url, tag);
       }
       const window = windowFor(jar);
       windows.push(window);
       await check(window, url, { zone, offset, hour, ...(hardware ? { cores } : {}), ...localeExpected(tag) });
+      if (policyOwner) assert.equal(jar._getOyaSessionPolicy().rendererStarted, true);
       if (hardware) {
         jar._setOyaHardwareConcurrency(cores);
         assert.throws(() => jar._setOyaHardwareConcurrency(cores === 1 ? 2 : 1), /cannot be changed/);
@@ -272,6 +317,7 @@ async function run() {
       Intl.DateTimeFormat().resolvedOptions().timeZone,
     );
     assert.throws(() => late._setOyaTimeZone('Asia/Tokyo'), /before any session renderer/);
+    if (policyOwner) checkPolicyFailures(late);
     if (hardware) await unconfiguredHardware(late, window, url, windows);
     if (locale) {
       await unconfiguredLocale(late, window, url, windows);

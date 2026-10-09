@@ -1,0 +1,50 @@
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -1245,6 +1245,19 @@
+       std::move(auth_dynamic_params));
+ }
+ 
++// Read browser-owned policy state, not page claims or inspector emulation.
++v8::Local<v8::Value> Session::GetOyaSessionPolicy(v8::Isolate* isolate) {
++  constexpr int kOyaPolicyVersion = 1;
++  auto result = gin_helper::Dictionary::CreateEmpty(isolate);
++  result.Set("version", kOyaPolicyVersion);
++  result.Set("rendererStarted", browser_context_->HasOyaRendererStarted());
++  result.Set("timeZone", browser_context_->GetOyaTimeZone());
++  result.Set("locale", browser_context_->GetOyaLocale());
++  result.Set("hardwareConcurrency", browser_context_->GetOyaHardwareConcurrency());
++  result.Set("acceptLanguages", browser_context_->GetOyaAcceptLanguages());
++  return result.GetHandle();
++}
++
+ void Session::SetOyaLocale(gin_helper::ErrorThrower thrower,
+                            const std::string& locale) {
+   constexpr size_t kMaxNativeLocaleLength = 128;
+@@ -2129,6 +2142,7 @@
+       .SetMethod("allowNTLMCredentialsForDomains",
+                  &Session::AllowNTLMCredentialsForDomains)
+       .SetMethod("isPersistent", &Session::IsPersistent)
++      .SetMethod("_getOyaSessionPolicy", &Session::GetOyaSessionPolicy)
+       .SetMethod("_setOyaLocale", &Session::SetOyaLocale)
+       .SetMethod("_setOyaHardwareConcurrency", &Session::SetOyaHardwareConcurrency)
+       .SetMethod("_setOyaTimeZone", &Session::SetOyaTimeZone)
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -148,6 +148,7 @@
+   v8::Local<v8::Promise> ClearHostResolverCache(gin::Arguments* args);
+   v8::Local<v8::Promise> ClearAuthCache();
+   void AllowNTLMCredentialsForDomains(const std::string& domains);
++  v8::Local<v8::Value> GetOyaSessionPolicy(v8::Isolate* isolate);
+   void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);
+   void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+   void SetOyaTimeZone(gin_helper::ErrorThrower thrower, const std::string& zone);
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -116,6 +116,7 @@
+     const auto primary = oya_locale_.substr(0, oya_locale_.find('-'));
+     return primary == oya_locale_ ? primary : oya_locale_ + "," + primary;
+   }
++  bool HasOyaRendererStarted() const { return oya_renderer_started_; }
+   void LockOyaRendererPolicy() { oya_renderer_started_ = true; }
+   const std::string& GetOyaTimeZone() const { return oya_time_zone_; }
+ 

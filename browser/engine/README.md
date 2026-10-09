@@ -780,3 +780,26 @@ context; conflicting/idempotent user-agent updates before and after startup;
 and primary-language-only configuration. The cold service-worker restart and
 independent-partition tests still apply. Production activation and platform
 release validation remain separate gates.
+
+## Native session policy readback and preparation
+
+Apply `patches/native-session-policy-state.patch` after the language-policy patch.
+The main-process-only `_getOyaSessionPolicy()` returns a fresh snapshot containing
+contract `version: 1`, `rendererStarted`, `timeZone`, `locale`,
+`hardwareConcurrency` and comma-separated `acceptLanguages`. Empty strings and a
+zero processor count denote unconfigured fields. Mutating this snapshot cannot
+change browser-owned state; it offers no reset or unlock operation.
+
+`src/main/native-policy/` validates the entire supported subset before mutation,
+requires the versioned readback contract and every setter, rejects warm sessions,
+and verifies native results before publishing an installed binding. Partial
+native failure permanently quarantines that session **within its lifecycle
+owner**; it is not an engine rollback, nor permission to reuse it through another
+owner. All future consumers must use the same owner and check its exposure guard.
+
+Run `test:native-policy` against the explicit patched engine. It exercises the
+coordinator in the same real first-script page/worker and HTTP fixtures, and
+checks late setup, invalid-input non-mutation, native snapshot isolation and
+partial-failure quarantine. The application default is unchanged: full persona
+migration, remaining legacy fixtures and platform release validation still block
+production activation. A successful subset is never a complete protection verdict.
