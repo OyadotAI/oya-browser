@@ -10,15 +10,14 @@
  *  - A recorded upload survives into a playbook as a variable and comes back out of the
  *    Playwright export as setInputFiles.
  *
- * The browser half is skipped when no Chrome binary is present.
+ * The browser half requires the patched Oya engine; no assertions are skipped.
  *
  * Usage: node test-upload.js
  */
 
 import assert from 'node:assert/strict';
 import { createServer } from 'http';
-import { spawn } from 'child_process';
-import { mkdtempSync, existsSync } from 'fs';
+import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -30,7 +29,7 @@ const { validData, MAX_FILE_BYTES } = await import('../../src/app/api.ts');
 const { UPLOAD_FILE_JS, dataKey } = await import('../../src/modules/agent/chat.ts');
 const { sanitizeSteps, variablesOf, missingVariables, renderPlaywright } =
   await import('../../src/modules/playbooks/service.ts');
-const { CDPDriver } = await import('../../src/drivers/cdp.ts');
+const { openNativeFixture } = await import('../support/native-browser.mjs');
 
 const b64 = (s) => Buffer.from(s).toString('base64');
 const resume = { file: 'cv.pdf', type: 'application/pdf', b64: b64('%PDF-1.4 pretend') };
@@ -85,20 +84,6 @@ console.log('  ✅ an upload records as a variable, replays, and exports as setI
 
 // ── 3. The hidden input, in a real browser ───────────────────────────────────
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-
-if (!CHROME) {
-  console.log('  ⏭  No Chrome binary found, skipping the page half');
-  console.log('\n✅ test-upload passed');
-  process.exit(0);
-}
-
-// The shape every upload widget uses: a styled button, the real input hidden behind it.
 const PAGE = `<!doctype html><title>Upload fixture</title>
 <form>
   <div class="field">
@@ -118,37 +103,6 @@ const site = createServer((req, res) => {
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
 
-const profile = mkdtempSync(join(tmpdir(), 'oya-upload-chrome-'));
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    '--remote-debugging-port=0',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  const timer = setTimeout(() => reject(new Error('Chrome did not report a DevTools endpoint')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(timer);
-      resolve(m[0]);
-    }
-  });
-  chrome.on('exit', () => {
-    clearTimeout(timer);
-    reject(new Error('Chrome exited early'));
-  });
-});
-
 let driver;
 let failed = false;
 const run = async (el, f = resume) => {
@@ -157,7 +111,7 @@ const run = async (el, f = resume) => {
 };
 
 try {
-  driver = await new CDPDriver({ wsUrl, provider: 'chrome' }).connect();
+  driver = await openNativeFixture();
   await driver.send('navigate', { url: siteUrl });
 
   // The whole point: the agent can only see the button, and the input is display:none.
@@ -202,9 +156,8 @@ try {
   console.error(`  ❌ ${err.message}`);
 } finally {
   try {
-    driver?.close();
+    await driver?.close();
   } catch {}
-  chrome.kill();
   site.close();
 }
 

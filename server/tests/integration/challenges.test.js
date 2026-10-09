@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CAPTCHA and MFA against real pages in a real Chrome.
+ * CAPTCHA and MFA against real pages in the patched Oya engine.
  *
  * Detection and code entry are tested for real; the external solver is not
  * called (that costs money and needs a key), so solving is asserted through
@@ -8,30 +8,14 @@
  */
 
 import { createServer } from 'http';
-import { spawn } from 'child_process';
-import { mkdtempSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { removeScratch } from '../support/scratch.js';
 
 process.env.OYA_PROFILE_SECRET = 'd'.repeat(64);
 delete process.env.OYA_CAPTCHA_API_KEY;
 
-const { CDPConnection } = await import('../../src/drivers/cdp.ts');
+const { openNativeFixture } = await import('../support/native-browser.mjs');
 const loginPage = await import('../../src/modules/challenges/login-page.ts');
 const captcha = await import('../../src/modules/challenges/captcha.ts');
 const mfa = await import('../../src/modules/challenges/mfa.ts');
-
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-if (!CHROME) {
-  console.log('⏭  No Chrome binary, skipping challenge test');
-  process.exit(0);
-}
 
 let passed = 0,
   failed = 0;
@@ -84,39 +68,12 @@ const site = createServer((req, res) => {
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${site.address().port}`;
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'oya-chal-'));
-const chrome = spawn(
-  CHROME,
-  ['--headless=new', '--remote-debugging-port=0', '--no-first-run', `--user-data-dir=${userDataDir}`, 'about:blank'],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  const t = setTimeout(() => reject(new Error('Chrome did not start')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(t);
-      resolve(m[0]);
-    }
-  });
-});
-
 let conn;
 try {
-  conn = await new CDPConnection(wsUrl).connect();
-  const { targetId } = await conn.send('Target.createTarget', { url: 'about:blank' });
-  const { sessionId } = await conn.send('Target.attachToTarget', { targetId, flatten: true });
-  await conn.send('Page.enable', {}, sessionId);
-
-  const evaluate = async (expression) => {
-    const r = await conn.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || 'eval failed');
-    return r.result?.value;
-  };
+  conn = await openNativeFixture();
+  const evaluate = (expression) => conn.evaluateMain(expression);
   const goto = async (path) => {
-    await conn.send('Page.navigate', { url: base + path }, sessionId);
+    await conn.send('navigate', { url: base + path });
     await new Promise((r) => setTimeout(r, 350));
   };
 
@@ -215,11 +172,8 @@ try {
   console.log(`  ❌ threw: ${e.message}`);
   failed++;
 } finally {
-  conn?.close();
-  chrome.kill('SIGKILL');
-  await new Promise((r) => setTimeout(r, 300));
+  await conn?.close();
   await new Promise((r) => site.close(r));
-  removeScratch(userDataDir);
 }
 
 console.log('\n──────────────────────────────────────────────────');

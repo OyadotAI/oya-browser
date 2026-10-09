@@ -542,3 +542,31 @@ integration suites all passed. Typecheck and lint passed. Evidence:
 `/private/tmp/oya-native-full-desktop.log`. This supersedes the earlier statement
 that the desktop aggregate could not be run under the native-only rule; the
 server aggregate remains blocked by its legacy fixtures.
+
+## Native server service fixtures — 2026-10-09
+
+Migrated automatic login, TOTP login, upload and challenge/MFA suites to an
+isolated patched Oya engine. Retained all 118 original assertion call sites
+(44 login-auto, 13 TOTP, 35 upload, 26 challenges), including loops that execute
+multiple assertions. Removed installed-Chrome detection, silent browser skips
+and debugging-port launches from these four files.
+
+The private test-only pipe bridge uses Oya NativeRuntime with debugger access
+forbidden, blocks non-loopback requests/redirects, propagates evaluation failures,
+refuses unsupported operations, bounds requests and engine shutdown, and cleans
+profiles only after child exit. It is not a replacement production transport or
+a claim that the server's legacy CDP driver has been migrated. Existing upload
+service scripts are tested through native evaluation; native file-chooser tests
+remain separate.
+
+`npm run test:native-services` passed all six top-level test results, zero skips,
+with real Oya and localhost fixture servers. This includes missing-engine refusal,
+real evaluation/exception behavior, unsupported-action rejection, loopback-only
+navigation, no page Node access and closed-bridge rejection. Server unit tests:
+3,301 passed, zero failures, one existing standalone-UI-build conditional skip.
+Server typecheck/lint and fixture formatting passed. Evidence:
+`/private/tmp/oya-native-services-verified.log`, `/private/tmp/oya-server-native-unit.log`.
+
+Six legacy aggregate entries still require migration; the existing guard remains
+unchanged and still blocks release. No release artifact or Windows validation is
+claimed by these local macOS passes.

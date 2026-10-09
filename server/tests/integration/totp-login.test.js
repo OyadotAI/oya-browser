@@ -14,10 +14,8 @@
  */
 
 import { createServer } from 'http';
-import { spawn } from 'child_process';
-import { once } from 'events';
 import { createHmac } from 'crypto';
-import { mkdtempSync, existsSync } from 'fs';
+import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -28,7 +26,7 @@ process.env.OYA_ALLOW_PRIVATE_TARGETS = 'true';
 const credentials = await import('../../src/modules/personas/credentials.ts');
 const mfa = await import('../../src/modules/challenges/mfa.ts');
 const login = await import('../../src/modules/challenges/login.ts');
-const { CDPDriver } = await import('../../src/drivers/cdp.ts');
+const { openNativeFixture } = await import('../support/native-browser.mjs');
 const { removeScratch } = await import('../support/scratch.js');
 const { getConnection } = await import('../../src/platform/storage/index.ts');
 
@@ -115,45 +113,9 @@ assert(
   'and the seed is nowhere in mfa.json as plaintext',
 );
 
-const chromePath = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-].find(existsSync);
-if (!chromePath) {
-  console.log('\n⏭  No Chrome binary; the live half is skipped.');
-  await new Promise((r) => site.close(r));
-  removeScratch(process.env.OYA_DATA_DIR);
-  process.exit(failed ? 1 : 0);
-}
-
-const profile = mkdtempSync(join(tmpdir(), 'oya-totp-chrome-'));
-const chrome = spawn(
-  chromePath,
-  [
-    '--headless=new',
-    '--remote-debugging-port=0',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-const wsUrl = await new Promise((resolve, reject) => {
-  let out = '';
-  const timer = setTimeout(() => reject(new Error('Chrome did not start')), 20_000);
-  chrome.stderr.on('data', (d) => {
-    out += d;
-    const m = out.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) (clearTimeout(timer), resolve(m[0]));
-  });
-  chrome.once('error', reject);
-});
-
 let driver;
 try {
-  driver = await new CDPDriver({ wsUrl, provider: 'chrome' }).connect();
+  driver = await openNativeFixture();
   const evaluate = (expr) => driver.evaluateMain(expr);
   const title = () => driver.evaluateMain('document.title');
 
@@ -180,13 +142,9 @@ try {
   console.log(`  ❌ threw: ${e.message}`);
   failed++;
 } finally {
-  driver?.close();
-  const exited = once(chrome, 'exit');
-  chrome.kill('SIGTERM');
-  await exited;
+  await driver?.close();
   await new Promise((r) => site.close(r));
   removeScratch(process.env.OYA_DATA_DIR);
-  removeScratch(profile);
 }
 
 console.log(`\n${failed ? '❌' : '✅'} ${passed} passed, ${failed} failed`);

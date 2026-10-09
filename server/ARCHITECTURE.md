@@ -45,7 +45,7 @@ src/
   types/               ambient types (Express request fields)
 tests/
   unit/                unit tests; mirrors src/ (src/a/b.ts → tests/unit/a/b.test.ts)
-  integration/         end-to-end suites that boot routers, sockets and real Chrome
+  integration/         end-to-end routers/sockets and native Oya fixtures; legacy browser suites remain gated
   support/             hermetic.js (test preload), fakes, cluster helpers
 ```
 
@@ -136,3 +136,22 @@ argument; library titles/URLs are untrusted data in the agent prompt.
 The read-only `list_keyboard_shortcuts` agent/MCP tool obtains the connected
 browser's live shortcut registry and platform through the normal command path.
 It describes shell shortcuts; it does not execute them or grant shell control.
+
+## Native service integration fixtures
+
+`npm run test:native-services` runs automatic login, TOTP login, task-file upload,
+challenge detection/MFA, and native fixture failure-path checks against an explicit
+`OYA_NATIVE_ENGINE`. The fixture launcher has no installed-browser search and no
+skip-on-missing-engine path. Its private parent/child stdio channel has no network
+listener and supports only native main-world evaluation and loopback navigation.
+The Oya child uses the production NativeRuntime for exception-preserving,
+document-scoped evaluation; accessing its debugger throws. External requests and
+redirects are blocked by the native session. The parent owns the temporary
+profile and removes it only after the engine exits.
+
+These exercise the existing service scripts on real pages; they do not claim to
+replace the native file-chooser or native trusted-keyboard suites. Existing
+service assertions remain, and missing engines or unsupported fixture commands
+fail explicitly. The server aggregate still refuses the remaining six legacy
+browser suites: CDP driver, dialogs, MCP lifecycle, gateway, anonymity and login
+journey. Do not remove that gate or equate the migrated subset with full CI.

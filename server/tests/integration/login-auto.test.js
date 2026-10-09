@@ -8,13 +8,11 @@
  * second time (that is how a real clinical account gets locked), a factor is
  * chosen per site, and a code from a previous run is never reused.
  *
- * The live half is skipped when no Chrome binary is present.
+ * The live half requires the patched Oya engine; no assertions are skipped.
  */
 
 import { createServer } from 'http';
-import { spawn } from 'child_process';
-import { once } from 'events';
-import { mkdtempSync, existsSync } from 'fs';
+import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -27,7 +25,7 @@ const credentials = await import('../../src/modules/personas/credentials.ts');
 const mfa = await import('../../src/modules/challenges/mfa.ts');
 const login = await import('../../src/modules/challenges/login.ts');
 const inbox = await import('../../src/modules/challenges/inbox.ts');
-const { CDPDriver } = await import('../../src/drivers/cdp.ts');
+const { openNativeFixture } = await import('../support/native-browser.mjs');
 const { removeScratch } = await import('../support/scratch.js');
 const { getConnection } = await import('../../src/platform/storage/index.ts');
 
@@ -252,20 +250,6 @@ console.log('\n6️⃣  A code from the previous run is never reused...');
   await new Promise((r2) => relay.close(r2));
 }
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-
-if (!CHROME) {
-  console.log('\n⏭  No Chrome binary found, skipping the live sign-in test');
-  removeScratch(process.env.OYA_DATA_DIR);
-  console.log(`\n  ${passed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
-}
-
 // ── Live fixtures ────────────────────────────────────────────────────────────
 
 let posts = 0;
@@ -321,39 +305,9 @@ const site = createServer((req, res) => {
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
 
-const profile = mkdtempSync(join(tmpdir(), 'oya-login-'));
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    '--remote-debugging-port=0',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  const timer = setTimeout(() => reject(new Error('Chrome did not report a DevTools endpoint')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(timer);
-      resolve(m[0]);
-    }
-  });
-  chrome.on('exit', () => {
-    clearTimeout(timer);
-    reject(new Error('Chrome exited early'));
-  });
-});
-
 let driver;
 try {
-  driver = await new CDPDriver({ wsUrl, provider: 'chrome' }).connect();
+  driver = await openNativeFixture();
   const evaluate = (expr) => driver.evaluateMain(expr);
   await credentials.set(PERSONA, '127.0.0.1', { username: 'alice', password: 'hunter2-secret' });
 
@@ -412,12 +366,8 @@ try {
   console.log(`  ❌ threw: ${e.message}`);
   failed++;
 } finally {
-  driver?.close();
-  const exited = once(chrome, 'exit');
-  chrome.kill('SIGTERM');
-  await exited;
+  await driver?.close();
   await new Promise((r) => site.close(r));
-  removeScratch(profile);
   removeScratch(process.env.OYA_DATA_DIR);
 }
 
