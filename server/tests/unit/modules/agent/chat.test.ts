@@ -54,6 +54,22 @@ describe('runChat', () => {
     }
   });
 
+  it('reports provider credit failures without retrying or exposing the upstream body', async () => {
+    const fetch = mock.method(
+      globalThis,
+      'fetch',
+      async () => new Response('private provider billing details', { status: 402 }),
+    );
+    await assert.rejects(runChat(BROWSER, [{ role: 'user', content: 'x' }], { apiKey: 'credit-key' }), (err: any) => {
+      assert.equal(err.status, 402);
+      assert.equal(err.code, 'llm_payment_required');
+      assert.match(err.message, /AI provider requires payment or more credits/);
+      assert.doesNotMatch(err.message, /private provider billing details|Something went wrong/);
+      return true;
+    });
+    assert.equal(fetch.mock.callCount(), 1);
+  });
+
   it('refuses with 429 once the deployment’s hourly token budget is spent', async () => {
     usage.record('spent-key', 'chat_input_tokens', QUOTAS.chatTokensPerHour);
     await assert.rejects(runChat(BROWSER, [{ role: 'user', content: 'x' }], { apiKey: 'spent-key' }), {

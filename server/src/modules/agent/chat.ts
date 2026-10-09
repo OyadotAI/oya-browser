@@ -175,22 +175,32 @@ export async function runChat(browserId, messages, options: any = {}) {
   const system = { role: 'system', content: systemFor(messages, values, scalars, files, secrets) };
   const allMessages = [system, ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) }))];
   const run = { ...options, browserId, llm, budget, ...checkFor(options, messages, secrets), files, values, secrets };
-  return agentLoop(run, allMessages).catch(rejectedKey);
+  return agentLoop(run, allMessages).catch(rejectedProvider);
 }
 
 /** Provider answers that mean the key or model is wrong, not that the provider is down. */
 const KEY_PROBLEMS: number[] = [Status.BAD_REQUEST, Status.UNAUTHORIZED, Status.FORBIDDEN, Status.NOT_FOUND];
 
 /**
- * A provider that refused the key or model becomes an error the caller can act on (Ask
- * reopens its key card on the code), not an anonymous 500. The provider's own words stay
+ * Provider billing failures get a distinct actionable code; key/model refusals reopen
+ * Ask's key card rather than becoming anonymous 500s. The provider's own words stay
  * in the log: the base URL is tenant-set, so echoing them would be a read primitive.
  */
-function rejectedKey(err): never {
+function rejectedProvider(err): never {
+  if (err instanceof LlmError && err.status === Status.PAYMENT_REQUIRED) throw providerPaymentRequired();
   if (!(err instanceof LlmError) || !KEY_PROBLEMS.includes(err.status as number)) throw err;
   throw new HttpError(
     Status.UNPROCESSABLE,
     `Your AI provider refused the request (${err.status}). Check the API key and model under Ask > Model.`,
     { code: 'llm_rejected' },
+  );
+}
+
+/** Explain exhausted upstream credit without exposing provider response bodies or implying an Oya subscription failure. */
+function providerPaymentRequired() {
+  return new HttpError(
+    Status.PAYMENT_REQUIRED,
+    'The AI provider requires payment or more credits for this request. Check its billing or spending limit; if you use a shared provider, contact your administrator.',
+    { code: 'llm_payment_required' },
   );
 }
