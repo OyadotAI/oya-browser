@@ -1,0 +1,158 @@
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -4,6 +4,8 @@
+ 
+ #include "shell/browser/api/electron_api_session.h"
+ #include "third_party/icu/source/i18n/unicode/timezone.h"
++#include "third_party/icu/source/common/unicode/locid.h"
++#include "third_party/icu/source/common/unicode/uloc.h"
+ 
+ 
+ #include <algorithm>
+@@ -1243,6 +1245,35 @@
+       std::move(auth_dynamic_params));
+ }
+ 
++void Session::SetOyaLocale(gin_helper::ErrorThrower thrower,
++                           const std::string& locale) {
++  constexpr size_t kMaxNativeLocaleLength = 128;
++  if (locale.empty() || locale.size() > kMaxNativeLocaleLength ||
++      !base::IsStringASCII(locale) || locale.find('\0') != std::string::npos) {
++    thrower.ThrowTypeError("Invalid native locale tag");
++    return;
++  }
++  char id[ULOC_FULLNAME_CAPACITY];
++  int32_t parsed = 0;
++  UErrorCode status = U_ZERO_ERROR;
++  const int32_t length =
++      uloc_forLanguageTag(locale.c_str(), id, sizeof(id), &parsed, &status);
++  if (U_FAILURE(status) || length <= 0 ||
++      length >= static_cast<int32_t>(sizeof(id)) ||
++      parsed != static_cast<int32_t>(locale.size())) {
++    thrower.ThrowTypeError("Invalid native locale tag");
++    return;
++  }
++  const auto value = icu::Locale::createCanonical(id);
++  const auto canonical = value.toLanguageTag<std::string>(status);
++  if (U_FAILURE(status) || value.isBogus() || !*value.getLanguage()) {
++    thrower.ThrowTypeError("Native locale must specify a language");
++    return;
++  }
++  if (!browser_context_->SetOyaLocale(canonical))
++    thrower.ThrowError("Native locale must be installed before any session renderer and cannot be changed");
++}
++
+ void Session::SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower,
+                                       double count) {
+   constexpr double kMaxNativeHardwareConcurrency = 256;
+@@ -2082,6 +2113,7 @@
+       .SetMethod("allowNTLMCredentialsForDomains",
+                  &Session::AllowNTLMCredentialsForDomains)
+       .SetMethod("isPersistent", &Session::IsPersistent)
++      .SetMethod("_setOyaLocale", &Session::SetOyaLocale)
+       .SetMethod("_setOyaHardwareConcurrency", &Session::SetOyaHardwareConcurrency)
+       .SetMethod("_setOyaTimeZone", &Session::SetOyaTimeZone)
+       .SetMethod("setUserAgent", &Session::SetUserAgent)
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -148,6 +148,7 @@
+   v8::Local<v8::Promise> ClearHostResolverCache(gin::Arguments* args);
+   v8::Local<v8::Promise> ClearAuthCache();
+   void AllowNTLMCredentialsForDomains(const std::string& domains);
++  void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);
+   void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+   void SetOyaTimeZone(gin_helper::ErrorThrower thrower, const std::string& zone);
+   void SetUserAgent(const std::string& user_agent, gin::Arguments* args);
+--- a/shell/browser/electron_browser_client.cc
++++ b/shell/browser/electron_browser_client.cc
+@@ -699,6 +699,7 @@
+     *command_line = base::CommandLine(command_line->argv());
+     command_line->RemoveSwitch("oya-session-timezone");
+     command_line->RemoveSwitch("oya-session-hardware-concurrency");
++    command_line->RemoveSwitch("oya-session-locale");
+     if (render_process_host) {
+       const auto& zone = static_cast<ElectronBrowserContext*>(
+           render_process_host->GetBrowserContext())->GetOyaTimeZone();
+@@ -709,6 +710,9 @@
+       if (count)
+         command_line->AppendSwitchASCII("oya-session-hardware-concurrency",
+                                        base::NumberToString(count));
++      const auto& locale = static_cast<ElectronBrowserContext*>(
++          render_process_host->GetBrowserContext())->GetOyaLocale();
++      if (!locale.empty()) command_line->AppendSwitchASCII("oya-session-locale", locale);
+     }
+ 
+     renderer_process_sandboxed_[unsafe_process_id] =
+@@ -1849,7 +1853,8 @@
+         content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason>&
+         refused_reason) {
+   if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty() ||
+-      static_cast<ElectronBrowserContext*>(browser_context)->GetOyaHardwareConcurrency()) {
++      static_cast<ElectronBrowserContext*>(browser_context)->GetOyaHardwareConcurrency() ||
++      !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaLocale().empty()) {
+     refused_reason = content::ContentBrowserClient::
+         SpareProcessRefusedByEmbedderReason::DefaultDisabled;
+     return false;
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -103,6 +103,13 @@
+     return true;
+   }
+   unsigned GetOyaHardwareConcurrency() const { return oya_hardware_concurrency_; }
++  bool SetOyaLocale(const std::string& locale) {
++    if (oya_locale_ == locale) return true;
++    if (oya_renderer_started_ || !oya_locale_.empty()) return false;
++    oya_locale_ = locale;
++    return true;
++  }
++  const std::string& GetOyaLocale() const { return oya_locale_; }
+   void LockOyaRendererPolicy() { oya_renderer_started_ = true; }
+   const std::string& GetOyaTimeZone() const { return oya_time_zone_; }
+ 
+@@ -202,6 +209,7 @@
+   bool oya_renderer_started_ = false;
+   std::string oya_time_zone_;
+   unsigned oya_hardware_concurrency_ = 0;
++  std::string oya_locale_;
+ 
+   using DevicePermissionMap = std::map<
+       blink::PermissionType,
+--- a/shell/renderer/renderer_client_base.cc
++++ b/shell/renderer/renderer_client_base.cc
+@@ -11,6 +11,9 @@
+ 
+ #include "base/command_line.h"
+ #include "base/no_destructor.h"
++#include "third_party/icu/source/common/unicode/locid.h"
++#include "third_party/blink/renderer/platform/scheduler/public/main_thread.h"  // nogncheck
++#include "third_party/blink/renderer/platform/scheduler/public/main_thread_scheduler.h"  // nogncheck
+ #include "base/strings/string_number_conversions.h"
+ #include "third_party/blink/renderer/core/frame/navigator_concurrent_hardware.h"  // nogncheck
+ #include "third_party/blink/renderer/core/timezone/timezone_controller.h"  // nogncheck
+@@ -256,7 +259,26 @@
+   blink::NavigatorConcurrentHardware::SetOyaHardwareConcurrency(count);
+ }
+ 
++// Set ICU before any web script or worker isolate starts; existing main isolates
++// discard their cached defaults through V8's native notification APIs.
++void ApplyOyaSessionLocale() {
++  const auto tag = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
++      "oya-session-locale");
++  if (tag.empty()) return;
++  UErrorCode status = U_ZERO_ERROR;
++  const auto locale = icu::Locale::forLanguageTag(tag, status);
++  CHECK(U_SUCCESS(status) && !locale.isBogus() && *locale.getLanguage());
++  icu::Locale::setDefault(locale, status);
++  CHECK(U_SUCCESS(status));
++  blink::Thread::MainThread()->Scheduler()->ToMainThreadScheduler()
++      ->ForEachMainThreadIsolate([](v8::Isolate* isolate) {
++        isolate->LocaleConfigurationChangeNotification();
++        isolate->DateTimeConfigurationChangeNotification();
++      });
++}
++
+ void RendererClientBase::RenderThreadStarted() {
++  ApplyOyaSessionLocale();
+   ApplyOyaHardwareConcurrency();
+   ApplyOyaSessionTimeZone();
+   auto* command_line = base::CommandLine::ForCurrentProcess();

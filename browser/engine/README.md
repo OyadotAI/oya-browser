@@ -716,3 +716,37 @@ counts across partitions, invalid/fractional/non-numeric input, late/conflicting
 configuration, argument injection, a hardware-only partition, and a service-worker
 restart with its owning window closed. It does not enable full native persona
 mode; native locale, UA metadata and remaining pre-script policy are still required.
+
+## Native session ICU locale prerequisite
+
+Apply `patches/native-session-locale.patch` from the pinned Electron checkout
+after the timezone and hardware patches, and apply
+`patches/native-session-locale-v8.patch` from the Chromium `src` checkout.
+The V8 patch routes omitted-locale case operations through the native runtime
+so Turkish/Azeri casing uses the isolate default instead of root-locale casing.
+Explicit fast-path locales remain unchanged. Both patches are required.
+The experimental main-process-only
+`session._setOyaLocale(tag)` installs a canonical BCP47 locale before any session
+renderer starts. Empty, malformed, partially parsed, non-ASCII, overlong and
+language-less tags are rejected. An identical canonical tag is idempotent;
+changing a configured locale or installing one after renderer startup fails.
+Syntactically valid languages may still use ICU's ordinary fallback behavior.
+
+The browser strips caller-supplied locale switches and supplies only the owning
+BrowserContext's policy. Locale-only sessions also refuse spare renderer reuse.
+Renderer startup sets ICU's process default and invalidates native V8 locale/date
+caches before document or worker execution. Workers inherit that native default;
+this is neither a JavaScript shim nor an inspector helper/protocol operation.
+
+Run `test:native-locale` with an explicit `OYA_NATIVE_ENGINE`. It checks default
+Intl formatting and locale-sensitive casing in first scripts of pages,
+cross-origin frames, dedicated/shared/service workers, three simultaneous
+partitions, replacement navigation and a cold service-worker restart. It also
+checks argument injection, invalid/late/conflicting configuration and a
+locale-only partition that retains host timezone and hardware behavior.
+
+This controls ICU/Intl defaults, **not** navigator.language, navigator.languages
+or Accept-Language. Those surfaces, UA metadata and the remaining pre-script
+protections must be implemented coherently before the production persona path
+can adopt these primitives. Native mode remains disabled by default; this is not
+completion of the persona migration or macOS/Windows release validation.

@@ -1,0 +1,26 @@
+--- a/v8/src/builtins/builtins-intl-gen.cc
++++ b/v8/src/builtins/builtins-intl-gen.cc
+@@ -139,7 +139,9 @@
+   if (kind == ToLowerCaseKind::kToLocaleLowerCase) {
+     Label fast(this), check_locale(this);
+     // Check for fast locales.
+-    GotoIf(IsUndefined(maybe_locales), &fast);
++    // The native session locale can require locale-sensitive casing. Resolve
++    // an omitted locale through the isolate default, not the root fast path.
++    GotoIf(IsUndefined(maybe_locales), &runtime);
+     // Passing a Smi as locales requires performing a ToObject conversion
+     // followed by reading the length property and the "indexed" properties of
+     // it until a valid locale is found.
+--- a/v8/src/builtins/builtins-intl.cc
++++ b/v8/src/builtins/builtins-intl.cc
+@@ -1045,7 +1045,9 @@
+   HandleScope scope(isolate);
+   DirectHandle<Object> maybe_locale = args.atOrUndefined(isolate, 1);
+   TO_THIS_STRING(string, "String.prototype.toLocaleUpperCase");
+-  if (IsUndefined(*maybe_locale) || IsFastLocale(*maybe_locale)) {
++  // Omitted locales must resolve the native isolate default, just like an
++  // empty locale list; a root-locale fast path is not valid for Turkish/Azeri.
++  if (IsFastLocale(*maybe_locale)) {
+     string = String::Flatten(isolate, string);
+     RETURN_RESULT_OR_FAILURE(isolate, Intl::ConvertToUpper(isolate, string));
+   } else {
