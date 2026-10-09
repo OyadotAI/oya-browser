@@ -174,3 +174,12 @@ endpoint backs these operations. Explicit stop of a native client requests
 and drains encrypted persistence before disconnecting. Failed capture leaves the
 browser connected. Borrowing a desktop finishes only the unused provisioning
 reservation, preserving the desktop and avoiding a fictitious live fleet entry.
+
+The external CDP connection transport accepts an explicit ephemeral bearer token
+for Oya's native compatibility front door. Tokens are kept outside enumerable
+connection state and endpoint URLs, are sent only over WSS or literal-loopback
+WS, and are never forwarded through redirects. The native transport integration
+checks unauthenticated/wrong-token refusal, target attachment and native runtime
+evaluation with engine debugger access forbidden. Unsupported isolated-world
+creation remains an explicit error; this transport coverage does not replace
+the gated full CDP driver or outbound-provider lifecycle suites.

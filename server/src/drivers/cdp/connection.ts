@@ -3,6 +3,7 @@
  * request/response by id, events by method name.
  */
 import WebSocket from 'ws';
+import { connectionHeaders, type ConnectionCredentials } from './connection-auth.ts';
 import { CONNECT_TIMEOUT_MS, MAX_PAYLOAD_BYTES, COMMAND_TIMEOUT_MS } from './constants.ts';
 
 /**
@@ -26,7 +27,11 @@ export class CDPConnection {
   declare url: any;
   /** The underlying socket, set by connect(). */
   declare ws: WebSocket;
-  constructor(url) {
+  /** Handshake credentials never appear in enumerable connection state. */
+  #headers: Record<string, string>;
+  /** Configure an external protocol connection, optionally to Oya’s authenticated front door. */
+  constructor(url, credentials: ConnectionCredentials = {}) {
+    this.#headers = connectionHeaders(url, credentials);
     this.url = url;
     this.nextId = 1;
     this.pending = new Map();
@@ -39,8 +44,18 @@ export class CDPConnection {
     return new Promise((resolve, reject) => {
       const finish = settleOnce(resolve, reject, this, () => clearTimeout(timer));
       const timer = setTimeout(() => finish(new Error('CDP connect timed out')), timeoutMs);
-      this.ws = new WebSocket(this.url, { maxPayload: MAX_PAYLOAD_BYTES, handshakeTimeout: timeoutMs });
+      this.ws = this.openSocket(timeoutMs);
       watchSocket(this, finish);
+    });
+  }
+
+  /** Never forward front-door credentials through HTTP redirects. */
+  private openSocket(timeoutMs: number) {
+    return new WebSocket(this.url, {
+      maxPayload: MAX_PAYLOAD_BYTES,
+      handshakeTimeout: timeoutMs,
+      followRedirects: false,
+      headers: this.#headers,
     });
   }
 

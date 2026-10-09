@@ -52,3 +52,6 @@ export const IDLE_FRAME_GAP_MS = 1200;
 export const IDLE_FILL_TIMEOUT_MS = 5000;
 /** How long dialling a browser's CDP endpoint for the gateway may take. */
 export const UPSTREAM_CONNECT_MS = 20_000;
+
+/** Bound authentication header size before allocating an outbound handshake. */
+export const MAX_BEARER_TOKEN_LENGTH = 4096;
