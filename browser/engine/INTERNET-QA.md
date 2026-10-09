@@ -1086,3 +1086,30 @@ temporary profile, removes it only after the child closes with bounded retries,
 and reports cleanup failure as a failed run. Its fixture path is absolute, so
 launching from the repository root also works. The patched-engine rerun completed
 with exit status zero and without the cleanup exception.
+
+## External client migration and release world probe (2026-10-09)
+
+The older server client now creates origin-restricted native worlds without
+requesting universal-origin access or synthetic user activation. Analyzer setup
+must succeed before caching a context, and a failed forced rebuild revokes the
+previous cached context. CSS selectors no longer enter the analyzer's ID-only
+lookup; missing analyzer references never fall back to page-selected attributes.
+Enter carries text only on its character event, and drag moves carry an explicit
+held-left-button mask with a release attempt on failure.
+
+The real authenticated Oya front-door fixture exercises the production client's
+world initialization, Unicode field replacement, exactly one trusted Enter
+submission and trusted held-button movement. Internal debugger access is fatal.
+All 11 native server service tests and 2,147 browser unit tests pass. The packaging
+probe now executes an agent-owned isolated world, checks its globals against the
+main world and rejects older engines or a main-world fallback. The patched local
+macOS arm64 engine passes this probe.
+
+This does not complete the requested four release workstreams. Default persona
+and dedicated/shared/service-worker protection still need native engine-owned
+policy installation before first script execution. The four legacy integration
+suites retain their migration gate; their assertions have not been dropped.
+Full external client lifecycle/recording/network semantics and authenticated
+driver setup also remain. CI still needs validated native artifacts; production
+macOS x64 and Windows builds have not been produced or tested here. These checks
+must not be represented as release acceptance or as internally CDP-free operation.

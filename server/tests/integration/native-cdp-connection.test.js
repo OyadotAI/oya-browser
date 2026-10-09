@@ -4,10 +4,16 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CDPConnection } from '../../src/drivers/cdp/connection.ts';
+import { CDPDriver } from '../../src/drivers/cdp/driver.ts';
 import { openNativeFixture } from '../support/native-browser.mjs';
 
 test('external connection authenticates, attaches and evaluates through the native front door', async () => {
-  const site = createServer((_req, res) => res.end('<!doctype html><title>Native connection</title>'));
+  const site = createServer((_req, res) =>
+    res.end(`<!doctype html><title>Native connection</title>
+    <form onsubmit="event.preventDefault();window.submissions=(window.submissions||0)+1">
+    <input id="search" aria-label="Search"><button>Search</button></form>
+    <script>window.keyEvents=[];document.addEventListener('keydown',e=>keyEvents.push({key:e.key,trusted:e.isTrusted}))</script>`),
+  );
   site.listen(0, '127.0.0.1');
   await once(site, 'listening');
   const browser = await openNativeFixture().catch((error) => {
@@ -64,6 +70,22 @@ test('external connection authenticates, attaches and evaluates through the nati
     const main = await conn.send('Runtime.evaluate', { expression: 'typeof privateAgentValue' }, sessionId);
     assert.equal(main.result.value, 'undefined');
     await assert.rejects(conn.send('Page.createIsolatedWorld', { frameId: 'unsupported' }, sessionId), /foreign/i);
+    const driver = new CDPDriver();
+    Object.assign(driver, { conn, sessionId, targetId: targetInfos[0].targetId, tagAttr: 'data-native-test' });
+    assert.equal(await driver.evaluate('6 * 7'), 42);
+    assert.equal(await driver.evaluateMain('typeof analyzePage'), 'undefined');
+    assert.equal((await driver.dispatch('type', { selector: '#search', text: 'Jordans 日本' })).ok, true);
+    assert.equal(await driver.evaluateMain('document.querySelector("#search").value'), 'Jordans 日本');
+    assert.equal((await driver.dispatch('press-key', { key: 'Enter' })).ok, true);
+    assert.equal(await driver.evaluateMain('window.submissions'), 1);
+    const keys = await driver.evaluateMain('keyEvents');
+    assert.deepEqual(keys, [{ key: 'Enter', trusted: true }]);
+    await driver.evaluateMain(
+      'window.moves=[];document.addEventListener("mousemove",e=>moves.push({buttons:e.buttons,trusted:e.isTrusted}))',
+    );
+    await driver.dispatch('drag', { from_x: 20, from_y: 100, to_x: 200, to_y: 120 });
+    const moves = await driver.evaluateMain('moves');
+    assert.ok(moves.some((move) => move.buttons === 1 && move.trusted));
   } finally {
     for (const conn of connections) conn.close();
     await browser.close();

@@ -15,18 +15,19 @@ const WORLD_LOST = /context|Cannot find/i;
  */
 export async function ensureWorld(driver: CDPDriver, { force = false } = {}) {
   if (!force && driver.worldContext) return driver.worldContext;
+  driver.worldContext = null;
   const analyzer = getAnalyzer();
   if (!analyzer) throw new Error('Analyzer unavailable for this client');
   const executionContextId = await createWorld(driver);
-  driver.worldContext = executionContextId;
   await loadAnalyzer(driver, analyzer, executionContextId);
+  driver.worldContext = executionContextId;
   return executionContextId;
 }
 
 /** Creates the isolated world in the page's main frame and returns its context id. */
 async function createWorld(driver: CDPDriver) {
   const { frameTree } = await driver.conn.send('Page.getFrameTree', {}, driver.sessionId);
-  const world = { frameId: frameTree.frame.id, worldName: driver.worldName, grantUniveralAccess: true };
+  const world = { frameId: frameTree.frame.id, worldName: driver.worldName };
   const { executionContextId } = await driver.conn.send('Page.createIsolatedWorld', world, driver.sessionId);
   return executionContextId;
 }
@@ -34,7 +35,9 @@ async function createWorld(driver: CDPDriver) {
 /** Runs the analyzer in the new world. RecordingChannel arms new documents while a recording is active. */
 async function loadAnalyzer(driver: CDPDriver, analyzer, contextId) {
   const expression = analyzerSource(analyzer, driver.tagAttr);
-  await driver.conn.send('Runtime.evaluate', { expression, contextId, returnByValue: true }, driver.sessionId);
+  resultValue(
+    await driver.conn.send('Runtime.evaluate', { expression, contextId, returnByValue: true }, driver.sessionId),
+  );
 }
 
 /** Everything the analyzer needs runs here, never in the page's own world. */
@@ -72,7 +75,7 @@ export async function evaluateInMain(driver: CDPDriver, expression, { awaitPromi
 
 /** One Runtime.evaluate in the attached target: in a given world, or the main one when contextId is absent. */
 function runtimeEvaluate(driver: CDPDriver, expression, awaitPromise, contextId?) {
-  const params = { expression, contextId, returnByValue: true, awaitPromise, userGesture: true };
+  const params = { expression, returnByValue: true, awaitPromise, ...(contextId === undefined ? {} : { contextId }) };
   return driver.conn.send('Runtime.evaluate', params, driver.sessionId);
 }
 

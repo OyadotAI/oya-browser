@@ -65,12 +65,17 @@ async function fillDate(driver: CDPDriver, selector: string, type: string, text:
 export const pressKey: Handler = async (driver, params) => {
   const spec = KEY_CODES[params.key];
   if (!spec) return typeCharacter(driver, params.key);
-  const keyEvent = (type) => driver.conn.send('Input.dispatchKeyEvent', { type, ...spec }, driver.sessionId);
-  await keyEvent('keyDown');
-  if (spec.text) await keyEvent('char');
-  await keyEvent('keyUp');
+  const { text, ...physical } = spec;
+  await keyEvent(driver, 'keyDown', physical);
+  if (text) await keyEvent(driver, 'char', spec);
+  await keyEvent(driver, 'keyUp', physical);
   return { ok: true };
 };
+
+/** Only the character event carries text; down/up preserve the physical key identity. */
+function keyEvent(driver: CDPDriver, type: string, payload: object) {
+  return driver.conn.send('Input.dispatchKeyEvent', { type, ...payload }, driver.sessionId);
+}
 
 /**
  * A single printable character is a keypress too; the table only lists the

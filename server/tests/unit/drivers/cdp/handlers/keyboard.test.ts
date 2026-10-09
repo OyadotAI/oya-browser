@@ -93,6 +93,10 @@ describe('press-key', () => {
       ['keyUp', 'Enter'],
     ]);
     assert.equal(conn.sent('Input.dispatchKeyEvent')[0].params.windowsVirtualKeyCode, 13);
+    const events = conn.sent('Input.dispatchKeyEvent');
+    assert.equal(Object.hasOwn(events[0].params, 'text'), false);
+    assert.equal(events[1].params.text, '\r');
+    assert.equal(Object.hasOwn(events[2].params, 'text'), false);
   });
 
   it('presses a key without text as keyDown and keyUp only', async () => {

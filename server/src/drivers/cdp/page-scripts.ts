@@ -3,10 +3,16 @@
  * caller-supplied value goes in through JSON.stringify, never raw.
  */
 
+/** Analyzer references never fall through to CSS; explicit selectors use the document's normal lookup. */
+const FIND = String.raw`((s) => {
+  if (/^\d+$|^\[data-[\w-]+=["']\d+["']\]$/.test(s)) return window.__acFindElement?.(s) || null;
+  return document.querySelector(s);
+})`;
+
 /** FIND_ELEMENT_JS's source; __SELECTOR__ stands for the selector. */
 const FIND_ELEMENT_SOURCE = `(() => {
   {
-    const f = window.__acFindElement || ((s) => document.querySelector(s));
+    const f = ${FIND};
     const el = f(__SELECTOR__);
     if (!el) return { ok: false, error: 'Element not found' };
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -22,15 +28,15 @@ export const FIND_ELEMENT_JS = (selector) =>
 
 /** Selects an element's existing contents, so typed text replaces them. */
 export const SELECT_CONTENTS_JS = (selector) =>
-  `(() => { const el = (window.__acFindElement || ((s) => document.querySelector(s)))(${JSON.stringify(selector)}); if (el?.isContentEditable) { const range = document.createRange(); range.selectNodeContents(el); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); } else el?.select?.(); })()`;
+  `(() => { const el = (${FIND})(${JSON.stringify(selector)}); if (el?.isContentEditable) { const range = document.createRange(); range.selectNodeContents(el); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); } else el?.select?.(); })()`;
 
 /** An element's input type, or null when it is not an <input>. */
 export const INPUT_TYPE_JS = (selector) =>
-  `(() => { const el = (window.__acFindElement || ((s) => document.querySelector(s)))(${JSON.stringify(selector)}); return el && el.tagName === 'INPUT' ? el.type : null; })()`;
+  `(() => { const el = (${FIND})(${JSON.stringify(selector)}); return el && el.tagName === 'INPUT' ? el.type : null; })()`;
 
 /** Sets a date or time input's value as its picker would, firing input and change; answers the value it kept. */
 export const SET_DATE_VALUE_JS = (selector, value) => `(() => {
-          const el = (window.__acFindElement || ((s) => document.querySelector(s)))(${JSON.stringify(selector)});
+          const el = (${FIND})(${JSON.stringify(selector)});
           if (!el) return null;
           el.focus();
           el.value = ${JSON.stringify(value)};
@@ -41,7 +47,7 @@ export const SET_DATE_VALUE_JS = (selector, value) => `(() => {
 
 /** Sets a form control's value and fires change; answers whether the element was found. */
 export const SET_VALUE_JS = (selector, value) => `(() => {
-          const f = window.__acFindElement || ((s) => document.querySelector(s));
+          const f = ${FIND};
           const el = f(${JSON.stringify(selector)});
           if (!el) return false;
           el.value = ${JSON.stringify(value)};

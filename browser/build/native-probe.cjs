@@ -24,6 +24,7 @@ async function inspect(window) {
   capabilities(contents);
   const result = await contents.mainFrame._executeJavaScriptInOyaWorld('6 * 7', false);
   if (result !== 42) throw Error('Native isolated execution failed');
+  await require('./native-world-probe.cjs').inspectWorld(contents.mainFrame);
 }
 /** Exercise the session-owned native storage APIs required by persona synchronization. */
 async function inspectStorage() {

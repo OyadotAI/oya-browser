@@ -61,8 +61,9 @@ export class CDPDriver extends CDPDriverState {
   }
 
   /** Dispatches one mouse event to the page. */
-  async mouse(type, x, y, button = 'left', clickCount = 1) {
-    await this.conn.send('Input.dispatchMouseEvent', { type, x, y, button, clickCount }, this.sessionId);
+  async mouse(type, x, y, button = 'left', clickCount = 1, buttons?: number) {
+    const held = buttons === undefined ? {} : { buttons };
+    await this.conn.send('Input.dispatchMouseEvent', { type, x, y, button, clickCount, ...held }, this.sessionId);
   }
 
   /** A left click at viewport coordinates. */

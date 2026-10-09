@@ -55,3 +55,5 @@ export const UPSTREAM_CONNECT_MS = 20_000;
 
 /** Bound authentication header size before allocating an outbound handshake. */
 export const MAX_BEARER_TOKEN_LENGTH = 4096;
+/** The external input protocol's explicit held-left-button mask during a drag. */
+export const LEFT_BUTTON_MASK = 1;

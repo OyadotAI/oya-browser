@@ -4,7 +4,7 @@
  * which kind it is.
  */
 import { elementSelector } from '../browser-scripts.ts';
-import { DOUBLE_CLICK, DRAG_STEPS, SCROLL_PAGE_FRACTION, WHEEL_ORIGIN } from '../constants.ts';
+import { DOUBLE_CLICK, DRAG_STEPS, LEFT_BUTTON_MASK, SCROLL_PAGE_FRACTION, WHEEL_ORIGIN } from '../constants.ts';
 import type { CDPDriver } from '../driver.ts';
 import type { Handler } from './types.ts';
 
@@ -60,10 +60,18 @@ export const drag: Handler = async (driver, params) => {
   const to = { x: Number(params.to_x) || 0, y: Number(params.to_y) || 0 };
   await driver.mouse('mouseMoved', from.x, from.y);
   await driver.mouse('mousePressed', from.x, from.y);
-  await dragPath(driver, from, to);
-  await driver.mouse('mouseReleased', to.x, to.y);
+  await dragHeld(driver, from, to);
   return { ok: true };
 };
+
+/** Release the held button even when an intermediate move fails, without bypassing admission checks. */
+async function dragHeld(driver: CDPDriver, from, to) {
+  try {
+    await dragPath(driver, from, to);
+  } finally {
+    await driver.mouse('mouseReleased', to.x, to.y);
+  }
+}
 
 /**
  * A few intermediate moves, or drag handlers that watch for movement
@@ -72,7 +80,9 @@ export const drag: Handler = async (driver, params) => {
 async function dragPath(driver: CDPDriver, from, to) {
   for (let i = 1; i <= DRAG_STEPS; i++) {
     const t = i / DRAG_STEPS;
-    await driver.mouse('mouseMoved', from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+    const x = from.x + (to.x - from.x) * t;
+    const y = from.y + (to.y - from.y) * t;
+    await driver.mouse('mouseMoved', x, y, 'left', 1, LEFT_BUTTON_MASK);
   }
 }
 

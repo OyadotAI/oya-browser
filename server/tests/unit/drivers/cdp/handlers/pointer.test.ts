@@ -113,6 +113,21 @@ describe('coordinate gestures', () => {
       ]),
       ['mouseReleased', 40, 80, 1],
     ]);
+    const moves = conn
+      .sent('Input.dispatchMouseEvent')
+      .filter((c) => c.params.type === 'mouseMoved')
+      .slice(1);
+    assert.ok(moves.every((c) => c.params.buttons === 1));
+  });
+
+  it('attempts a native release if a held drag move fails', async () => {
+    const { driver, conn } = fakeDriver();
+    conn.replies['Input.dispatchMouseEvent'] = (params) => {
+      if (params.type === 'mouseMoved' && params.buttons === 1) throw Error('move failed');
+      return {};
+    };
+    await assert.rejects(driver.dispatch('drag', { from_x: 1, from_y: 2, to_x: 3, to_y: 4 }), /move failed/);
+    assert.equal(conn.sent('Input.dispatchMouseEvent').at(-1).params.type, 'mouseReleased');
   });
 
   it('hovers over an element or coordinates', async () => {
