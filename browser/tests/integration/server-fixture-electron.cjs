@@ -7,7 +7,7 @@ const profile = process.env.OYA_SERVER_FIXTURE_PROFILE;
 if (!profile) throw Error('Launch through the parent-owned native fixture bridge');
 app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
-let window;
+let window, actions;
 /** Refuse stock engines even though ordinary main-world execution alone is also available there. */
 async function ready() {
   await app.whenReady();
@@ -39,6 +39,10 @@ async function navigate(url) {
 async function send({ action, params = {} }) {
   if (action === 'navigate') return navigate(params.url);
   if (action === 'evaluate_raw') return { ok: true, data: { result: await evaluate(params.expression) } };
+  if (['analyze', 'click', 'handle_dialog'].includes(action)) {
+    actions ||= require('./server-fixture-actions.cjs')(window);
+    return actions(action, params);
+  }
   throw Error('Unsupported native fixture action: ' + action);
 }
 /** Existing service scripts execute in the exact owned frame using its native API. */

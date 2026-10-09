@@ -570,3 +570,18 @@ Server typecheck/lint and fixture formatting passed. Evidence:
 Six legacy aggregate entries still require migration; the existing guard remains
 unchanged and still blocks release. No release artifact or Windows validation is
 claimed by these local macOS passes.
+
+## Native server dialog fixtures — 2026-10-09
+
+Migrated the dialog regression suite to the same isolated Oya fixture, retaining
+all 20 assertion call sites. Its analysis, trusted clicks and dialog answers now
+use the production native World, PageDriver, NativeDialogs and CommandRunner.
+Debugger access remains forbidden. Alert auto-accept, held confirm detection,
+prompt-aware analysis rejection, explicit dialog answers and repeat-answer
+failure all passed against the real native engine.
+
+The expanded `npm run test:native-services` passed all seven top-level results,
+zero failures and zero skips. Server typecheck/lint and fixture lint passed.
+Evidence: `/private/tmp/oya-native-services-dialogs.log` and
+`/private/tmp/oya-native-server-dialog.log`. Five legacy server aggregate entries
+remain blocked by the unchanged guard. This is not a full CI or release pass.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Native JavaScript dialogs against a real Chrome.
+ * Native JavaScript dialogs against the patched Oya engine.
  *
  * With the Page domain enabled and nobody answering
  * Page.javascriptDialogOpening, Chromium blocks the renderer until the client
@@ -10,18 +10,12 @@
  * a confirm is held and reported instead of hanging, and handle_dialog
  * unblocks the page.
  *
- * Skipped when no Chrome binary is present.
+ * Requires OYA_NATIVE_ENGINE; missing engines fail rather than skipping assertions.
  */
 
 import { createServer } from 'http';
-import { spawn } from 'child_process';
-import { once } from 'events';
-import { mkdtempSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { CDPDriver } from '../../src/drivers/cdp.ts';
+import { openNativeFixture } from '../support/native-browser.mjs';
 import { AUTO_ACCEPT, describe } from '../../src/drivers/dialogs.ts';
-import { removeScratch } from '../support/scratch.js';
 
 let passed = 0,
   failed = 0;
@@ -56,19 +50,6 @@ assert(
   'a prompt reports its default value',
 );
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-
-if (!CHROME) {
-  console.log('\n⏭  No Chrome binary found, skipping the live dialog test');
-  console.log(`\n  ${passed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
-}
-
 // The shape of the reported bug: a button whose handler alerts, like the login
 // on a payer portal. Plus a confirm, which must not be answered for the agent.
 const PAGE = `<!doctype html><title>dialog fixture</title>
@@ -82,40 +63,9 @@ const site = createServer((req, res) => {
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
 
-const profile = mkdtempSync(join(tmpdir(), 'oya-dialog-'));
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    '--remote-debugging-port=0',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  const timer = setTimeout(() => reject(new Error('Chrome did not report a DevTools endpoint')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(timer);
-      resolve(m[0]);
-    }
-  });
-  chrome.on('exit', () => {
-    clearTimeout(timer);
-    reject(new Error('Chrome exited early'));
-  });
-});
-
 let driver;
 try {
-  driver = await new CDPDriver({ wsUrl, provider: 'chrome' }).connect();
+  driver = await openNativeFixture();
   await driver.send('navigate', { url: siteUrl });
 
   console.log('\n2️⃣  An alert is answered and its text comes back...');
@@ -174,12 +124,8 @@ try {
   console.log(`  ❌ threw: ${e.message}`);
   failed++;
 } finally {
-  driver?.close();
-  const exited = once(chrome, 'exit');
-  chrome.kill('SIGTERM');
-  await exited;
+  await driver?.close();
   await new Promise((r) => site.close(r));
-  removeScratch(profile);
 }
 
 console.log('\n──────────────────────────────────────────────────');
