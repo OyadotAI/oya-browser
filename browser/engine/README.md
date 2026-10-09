@@ -566,8 +566,18 @@ isolation, rejected imports, unchanged existing data, native change/clear events
 and watcher cancellation. It runs in a disposable parent-owned profile with
 debugger access forbidden.
 
+`src/main/sync/native-storage.ts` now provides a tested, session-bound lifecycle:
+complete import validation before mutation, serialized initialization, observer
+readiness, coalesced snapshots, offline/refused-send retention (including empty
+logout state), bounded native waits, and disposal fencing. The native storage
+integration also exercises this service against the real engine. Its `flush()`
+means transport acceptance, **not durable server persistence**. The caller must
+exclusively own the partition during initialization, register discovered origins,
+and arrange periodic/reconnect/final flushing; observer events capture state but
+do not themselves send it.
+
 **Not yet wired into production persona sync.** Do not claim the SDK login
-journey is migrated: startup ordering, native-origin discovery, dirty snapshots,
-reconnect and stop/flush acknowledgment still need integration and regression
-coverage. The current validation is a local macOS arm64 testing build, not a
+journey is migrated: exclusive startup ordering, native-origin discovery,
+reconnect and stop/flush acknowledgment still need production integration and
+regression coverage. The current validation is a local macOS arm64 testing build, not a
 Windows/macOS release artifact.

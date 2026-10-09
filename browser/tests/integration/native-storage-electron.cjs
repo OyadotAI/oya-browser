@@ -97,6 +97,7 @@ async function run() {
     jar._unwatchOyaLocalStorage(cancelledOrigin);
     await assert.rejects(watching, /watch closed/);
     assert.deepEqual(await other._readOyaLocalStorage(origin), []);
+    await require('./native-storage-sync-checks.cjs')({ jar, win, origin, mutation });
     console.log(
       'PASS: native storage hydration before scripts, Unicode/NUL/surrogates, isolation, validation, non-overwrite, mutation and clear events; debugger forbidden',
     );

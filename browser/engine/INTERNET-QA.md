@@ -683,3 +683,26 @@ This foundation is **not yet wired into persona synchronization**. Startup
 serialization, origin discovery, dirty snapshot delivery, reconnect and final
 stop/flush acknowledgment remain before migrating the SDK login journey. No
 Windows validation, production native distribution, push or release is claimed.
+
+## Native storage synchronization lifecycle (2026-10-09)
+
+Added a native-session-bound service with whole-import validation, serialized
+initialization, observer readiness, coalesced capture, bounded native waits,
+offline/refused/throwing-send retention, and disposal fencing. Empty dictionaries
+preserve logout rather than replaying an old import. Errors are sanitized; no
+CDP or renderer evaluation capability is accepted by the service. Callers must
+own initialization exclusively and schedule flushing; this is not yet wired to
+production persona startup or server durable acknowledgments.
+
+All 2,054 browser unit tests and the desktop integration suite (including all
+13 recorder cases) passed. Typecheck, lint, formatting and desktop build passed.
+The real patched-Oya storage test also passed service hydration before page
+scripts, offline logout, reconnect delivery and disposal checks. A sandboxed
+unit run could not bind its localhost fixtures and was stopped; the complete
+rerun with the required permissions passed, without suppressing assertions.
+
+Evidence: `/private/tmp/oya-storage-lifecycle-verified.log`,
+`/private/tmp/oya-storage-lifecycle-native-final.log`, and
+`/private/tmp/oya-storage-lifecycle-build.log`. These are local macOS arm64
+results, not evidence of Windows readiness or completion of the five gated
+server integration suites. No push or release is claimed.
