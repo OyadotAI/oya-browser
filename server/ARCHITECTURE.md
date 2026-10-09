@@ -140,9 +140,10 @@ It describes shell shortcuts; it does not execute them or grant shell control.
 ## Native service integration fixtures
 
 `npm run test:native-services` runs automatic login, TOTP login, task-file upload,
-challenge detection/MFA, native dialogs, and fixture failure-path checks against
-an explicit `OYA_NATIVE_ENGINE`. The fixture launcher has no installed-browser search and no
-skip-on-missing-engine path. Its private parent/child stdio channel has no network
+challenge detection/MFA, native dialogs, MCP desktop lifecycle and fixture
+failure-path checks against an explicit `OYA_NATIVE_ENGINE`. The fixture launcher
+has no installed-browser search and no skip-on-missing-engine path. Its private
+parent/child stdio channel has no network
 listener and supports native main-world evaluation, loopback navigation, and
 analysis, clicks and dialog answers through the production native command runner.
 The Oya child uses the production NativeRuntime for exception-preserving,
@@ -156,3 +157,10 @@ service assertions remain, and missing engines or unsupported fixture commands
 fail explicitly. The server aggregate still refuses the remaining five legacy
 browser suites: CDP driver, MCP lifecycle, gateway, anonymity and login journey.
 Do not remove that gate or equate the migrated subset with full CI.
+
+The native MCP suite starts the real server, admits a private native fixture over
+the authenticated Oya control socket, and exercises public MCP start/adopt,
+analysis, trusted clicks, human-control handoff, cross-key refusal and stop.
+The fixture advertises only its supported actions, with CDP disabled and engine
+debugger access forbidden. It does not replace cloud provisioning or validate
+persona application; the legacy provider lifecycle suite remains gated.

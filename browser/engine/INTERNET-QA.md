@@ -585,3 +585,27 @@ zero failures and zero skips. Server typecheck/lint and fixture lint passed.
 Evidence: `/private/tmp/oya-native-services-dialogs.log` and
 `/private/tmp/oya-native-server-dialog.log`. Five legacy server aggregate entries
 remain blocked by the unchanged guard. This is not a full CI or release pass.
+
+## Native MCP desktop lifecycle — 2026-10-09
+
+Added a real-server MCP integration suite using an authenticated inbound Oya
+control socket and the private native engine fixture. All 22 assertions pass:
+empty pool guidance, native desktop adoption/navigation/analysis, trusted native
+clicks, unsupported action refusal, human takeover blocking agent actions before
+they reach the page, explicit handback, cross-key read/stop denial and owner stop.
+Engine debugger access is forbidden. The fixture is not a production launcher;
+this does not replace the still-gated outbound-provider lifecycle tests or claim
+cloud provisioning/persona application coverage.
+
+The expanded native service command passed eight top-level results, no failures
+or skips. The final MCP rerun additionally verifies trusted input and unsupported
+actions. Evidence: `/private/tmp/oya-native-services-mcp.log` and
+`/private/tmp/oya-native-mcp-final.log`. Full release gates remain outstanding.
+
+Server verification after the MCP addition and provider-credit error handling:
+typecheck, lint, touched-file formatting and all 3,302 unit tests passed, with
+one existing conditional skip (3,303 total). Evidence:
+`/private/tmp/oya-server-final-unit.log`. Provider HTTP 402 now becomes a safe
+`llm_payment_required` error, not a generic 500; its regression verifies one
+request, no retries and no upstream response-body disclosure. No provider credit
+was purchased or changed, and this server fix has not been deployed.
