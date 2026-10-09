@@ -64,6 +64,23 @@ describe('server messages', () => {
     ]);
   });
 
+  it('does not acknowledge a pull whose native cookie restore failed', async () => {
+    ctx.cookies.applyCookieSync = async () => {
+      throw new Error('Cookie sync incomplete');
+    };
+    await assert.rejects(handleServerMessage(ctx, { type: 'cookie_sync', cookies: [], pullId: 'p1' }), /incomplete/);
+    assert.deepEqual(order, []);
+  });
+
+  it('does not go online or share a jar when restoring the persona fails', async () => {
+    ctx.persona.applyServerFingerprint = async () => {
+      throw new Error('Cookie sync incomplete');
+    };
+    await assert.rejects(handleServerMessage(ctx, { type: 'auth_ok', fingerprint: { id: 'p' } }), /incomplete/);
+    assert.equal(ctx.socket.ready, false);
+    assert.deepEqual(order, ['login']);
+  });
+
   it('takes the control state and sets the egress mode from it', async () => {
     const setMode = mock.method(ctx.governance, 'setMode', () => {});
     ctx.control.state = { mode: 'human' };

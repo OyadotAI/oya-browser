@@ -609,3 +609,25 @@ one existing conditional skip (3,303 total). Evidence:
 `llm_payment_required` error, not a generic 500; its regression verifies one
 request, no retries and no upstream response-body disclosure. No provider credit
 was purchased or changed, and this server fix has not been deployed.
+
+## Native cookie restoration failure handling — 2026-10-09
+
+CookieSync previously treated partially rejected native cookie writes as a
+successful restore and advanced its freshness timestamp. It now waits for every
+write, retains successful writes, rejects the incomplete sync without disclosing
+cookie values, leaves freshness unchanged and always re-enables local change
+forwarding. Authentication does not go online/share the jar after this failure;
+cookie pulls are not acknowledged as successfully applied.
+
+The actual patched Oya cookie store rejected a malformed cookie in a mixed batch,
+retained the valid HttpOnly cookie, left the sync timestamp unchanged, and accepted
+a subsequent valid batch. The native front-door suite passed with debugger access
+forbidden. All 2,032 desktop unit tests and the complete desktop integration
+command passed, including all 13 native recorder DOM cases. Typecheck, lint and
+build passed. Evidence: `/private/tmp/oya-native-cookie-sync.log`,
+`/private/tmp/oya-cookie-sync-desktop-all.log`, `/private/tmp/oya-cookie-sync-build.log`.
+
+The SDK login journey is not yet migrated: its localStorage hydration before the
+first page script still relies on the legacy LoginState CDP transport, bypassed
+in native browsing. This cookie fix does not provide native localStorage sync or
+clear the remaining five server integration gates.

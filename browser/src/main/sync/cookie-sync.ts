@@ -177,6 +177,15 @@ const FORWARDED_CAUSES = ['explicit', 'inserted', 'inserted-no-value-change-over
 /** A sync mark for a caller that keeps none: never synced, nothing remembered. */
 const NO_MARK: SyncMark = { get: () => 0, set: () => {} };
 
+/** Await every native write, but never report a partially restored login as synchronized. */
+async function writeJar(jar: Cookies, cookies: ServerCookie[], offered: number): Promise<void> {
+  const results = await Promise.allSettled(cookies.map(async (c) => jar.set(electronCookie(c))));
+  const applied = results.filter((r) => r.status === 'fulfilled').length;
+  console.log(`[oya] Cookie sync applied: ${applied}/${offered}`);
+  if (applied !== cookies.length)
+    throw new Error('Cookie sync incomplete: the native cookie store rejected saved cookies');
+}
+
 /** The hostname a navigation to `url` will reach, or null. */
 function cookieHostFor(url: string): string | null {
   return URL.parse(/^https?:\/\//i.test(url) ? url : 'https://' + url)?.hostname ?? null;
@@ -247,13 +256,11 @@ export class CookieSync {
   /** Writes cookies to the jar without echoing them back to the server. */
   private async writeCookies(cookies: ServerCookie[], offered: number): Promise<void> {
     this.applying = true;
-    const jar = this.deps.session().cookies;
-    // One at a time meant a round trip per cookie, and auth_ok awaits this from
-    // inside the serialized message queue, a real jar froze the app on sign-in.
-    const results = await Promise.allSettled(cookies.map(async (c) => jar.set(electronCookie(c))));
-    const applied = results.filter((r) => r.status === 'fulfilled').length;
-    this.applying = false;
-    console.log(`[oya] Cookie sync applied: ${applied}/${offered}`);
+    try {
+      await writeJar(this.deps.session().cookies, cookies, offered);
+    } finally {
+      this.applying = false;
+    }
   }
 
   /** In step with the server as of `now`: for one pulled host, or (the full jar) for everything. */

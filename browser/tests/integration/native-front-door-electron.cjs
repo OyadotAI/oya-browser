@@ -73,6 +73,7 @@ async function run() {
     await require('./native-runtime-frames-checks.cjs')(a, b, wc);
     await discovery(`ws://127.0.0.1:${door.address().port}/devtools/browser`, token, target, tabEvents, wc, control);
     await require('./native-history-checks.cjs')(a, b, wc);
+    await require('./native-cookie-sync-checks.cjs')(wc.session);
     await a.call('Page.bringToFront');
     assert.equal(win.isVisible(), true);
   } finally {

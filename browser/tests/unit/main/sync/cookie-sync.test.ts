@@ -139,14 +139,40 @@ describe('CookieSync', () => {
     ]);
   });
 
-  it('applies the rest of the jar when one cookie is refused', async () => {
-    const { sync, cookies } = syncWith();
-    await sync.applyCookieSync([cookie('bad'), cookie('good')]);
+  it('applies the rest of the jar but rejects a partial restore without advancing freshness', async () => {
+    const { sync, cookies, mark } = syncWith({ syncedAt: 123 });
+    await assert.rejects(sync.applyCookieSync([cookie('bad'), cookie('good')], { now: 456 }), /Cookie sync incomplete/);
     assert.deepEqual(
       cookies.written.map((c) => c.name),
       ['good'],
     );
     assert.equal((console.log as any).mock.calls.at(-1).arguments[0], '[oya] Cookie sync applied: 1/2');
+    assert.equal(mark.value, 123);
+  });
+
+  it('can retry refused cookies and still forwards local changes after a failed restore', async () => {
+    const { sync, cookies, mark, sent } = syncWith();
+    sync.startCookieChangeListener();
+    await assert.rejects(sync.applyCookieSync([cookie('bad')], { now: 456 }), /Cookie sync incomplete/);
+    cookies.emit('changed', {}, cookie('local'), 'explicit', false);
+    sync.flushCookieChanges();
+    assert.equal(sent[0].changes[0].cookie.name, 'local');
+    cookies.set = async (value) => cookies.written.push(value);
+    await sync.applyCookieSync([cookie('bad')], { now: 789 });
+    assert.equal(mark.value, 789);
+    assert.equal(cookies.written[0].name, 'bad');
+  });
+
+  it('does not disclose cookie values or native rejection details in restore errors', async () => {
+    const { sync, cookies } = syncWith();
+    cookies.set = async () => {
+      throw new Error('private-session-token');
+    };
+    await assert.rejects(sync.applyCookieSync([cookie('a', { value: 'private-session-token' })]), (error: Error) => {
+      assert.match(error.message, /Cookie sync incomplete/);
+      assert.doesNotMatch(error.message, /private-session-token/);
+      return true;
+    });
   });
 
   it('ignores a jar that is not a list', async () => {
