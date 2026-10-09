@@ -745,8 +745,38 @@ partitions, replacement navigation and a cold service-worker restart. It also
 checks argument injection, invalid/late/conflicting configuration and a
 locale-only partition that retains host timezone and hardware behavior.
 
-This controls ICU/Intl defaults, **not** navigator.language, navigator.languages
-or Accept-Language. Those surfaces, UA metadata and the remaining pre-script
-protections must be implemented coherently before the production persona path
-can adopt these primitives. Native mode remains disabled by default; this is not
+The locale patches alone control ICU/Intl defaults. The language-policy extension
+below binds those defaults to native navigator values and default request headers.
+UA metadata and remaining pre-script protections still block production persona
+adoption. Native mode remains disabled by default; these prerequisites are not
 completion of the persona migration or macOS/Windows release validation.
+
+## Native session language-policy prerequisite
+
+Apply `patches/native-session-languages.patch` from the pinned Electron checkout
+**after** the locale prerequisite. `_setOyaLocale(tag)` now also owns the preferred
+language list: the canonical tag followed by its primary language when different
+(for example, `de-DE,de`; a bare `de` is not duplicated). Native language-reduction
+features remain untouched. This is not an arbitrary independently mutable list.
+
+BrowserContext supplies document renderer preferences, worker preferences even
+without an owning window, and initial network-context parameters. Installing the
+policy also updates already-created network contexts before the first renderer.
+Network-context recreation reads the same immutable session value. No page-world
+getter replacement, request-interception workaround or internal CDP is involved.
+
+`session.setUserAgent()` preserves native language policy. A conflicting optional
+language argument fails before either the user agent or headers are changed;
+an omitted language or the exact policy list is accepted. Unconfigured sessions
+retain their existing behavior, including platform-dependent differences between
+page and worker language lists. Explicit per-request headers remain subject to
+normal browser rules; this controls defaults, not request interception. This does
+not implement native UA metadata.
+
+`test:native-locale` additionally checks first-script navigator language/list and
+actual HTTP request headers for pages, cross-origin frames and all worker script
+types; renderer fetches; browser-owned requests with a pre-existing network
+context; conflicting/idempotent user-agent updates before and after startup;
+and primary-language-only configuration. The cold service-worker restart and
+independent-partition tests still apply. Production activation and platform
+release validation remain separate gates.

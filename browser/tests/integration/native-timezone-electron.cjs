@@ -1,4 +1,4 @@
-/** Native session timezones must precede first page/worker execution and remain isolated across partitions. */
+/** Native session policies must precede first page/worker execution and remain isolated across partitions. */
 const { app, BrowserWindow, session } = require('electron');
 const assert = require('node:assert/strict');
 const { createServer } = require('node:http');
@@ -14,15 +14,23 @@ const deadline = setTimeout(() => {
 }, 60000);
 const locale = process.env.OYA_CHECK_NATIVE_LOCALE === '1';
 const localeFields = locale
-  ? ',locale:Intl.DateTimeFormat().resolvedOptions().locale,numberLocale:Intl.NumberFormat().resolvedOptions().locale,collatorLocale:Intl.Collator().resolvedOptions().locale,number:Intl.NumberFormat().format(1234.5),lower:"I".toLocaleLowerCase(),lowerEmpty:"I".toLocaleLowerCase([]),lowerEnglish:"I".toLocaleLowerCase("en-US"),upper:"i".toLocaleUpperCase(),upperEmpty:"i".toLocaleUpperCase([]),upperEnglish:"i".toLocaleUpperCase("en-US")'
+  ? ',language:navigator.language,languages:[...navigator.languages],locale:Intl.DateTimeFormat().resolvedOptions().locale,numberLocale:Intl.NumberFormat().resolvedOptions().locale,collatorLocale:Intl.Collator().resolvedOptions().locale,number:Intl.NumberFormat().format(1234.5),lower:"I".toLocaleLowerCase(),lowerEmpty:"I".toLocaleLowerCase([]),lowerEnglish:"I".toLocaleLowerCase("en-US"),upper:"i".toLocaleUpperCase(),upperEmpty:"i".toLocaleUpperCase([]),upperEnglish:"i".toLocaleUpperCase("en-US")'
   : '';
 const hardware = process.env.OYA_CHECK_NATIVE_HARDWARE === '1';
 const extraSnapshot = hardware ? ',cores:navigator.hardwareConcurrency' : '';
 const snapshot = `({zone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:new Date('2020-01-01T00:00:00Z').getTimezoneOffset(),hour:new Date('2020-01-01T00:00:00Z').getHours()${extraSnapshot}${localeFields}})`;
+/** Capture the real script request header alongside the first native getter values. */
+function snapshotFor(req) {
+  return locale ? `({...${snapshot},header:${JSON.stringify(req.headers['accept-language'] ?? '')}})` : snapshot;
+}
 /** Every snapshot is captured before the first message or other page action can change worker state. */
 function serve(req, res) {
+  if (req.url === '/echo') {
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify(req.headers['accept-language'] ?? ''));
+  }
   res.setHeader('Content-Type', req.url.endsWith('.js') ? 'application/javascript' : 'text/html');
-  const start = `const first=${snapshot};`;
+  const start = `const first=${snapshotFor(req)};`;
   if (req.url === '/dedicated.js') return res.end(start + 'postMessage(first);');
   if (req.url === '/shared.js') return res.end(start + 'onconnect=e=>e.ports[0].postMessage(first);');
   if (req.url === '/sw.js')
@@ -30,7 +38,7 @@ function serve(req, res) {
       start +
         `oninstall=()=>self.skipWaiting();onactivate=e=>e.waitUntil(clients.claim());onmessage=e=>e.ports[0].postMessage(first);onfetch=e=>{if(new URL(e.request.url).pathname==='/worker-first')e.respondWith(Response.json(first))};`,
     );
-  res.end(`<!doctype html><script>globalThis.first=${snapshot};</script><title>Native timezone</title>`);
+  res.end(`<!doctype html><script>globalThis.first=${snapshotFor(req)};</script><title>Native timezone</title>`);
 }
 /** Each surface refuses any implicit debugger access. */
 function windowFor(
@@ -57,36 +65,31 @@ function windowFor(
   });
   return window;
 }
-/** Actual native Date arithmetic and first-script Intl values must agree in all worker types. */
-async function check(window, url, expected) {
+/** Read first-script state independently from every native document and worker surface. */
+async function surfaceSnapshots(window, url) {
   await window.loadURL(url);
   const evaluate = (source) => window.webContents.executeJavaScript(source);
-  assert.deepEqual(await evaluate('first'), expected);
-  assert.deepEqual(
-    await evaluate(
-      `new Promise((resolve,reject)=>{const w=new Worker('/dedicated.js');w.onmessage=e=>{w.terminate();resolve(e.data)};w.onerror=reject})`,
-    ),
-    expected,
+  const page = await evaluate('first');
+  if (locale) assert.equal(await evaluate('fetch("/echo").then(reply=>reply.json())'), page.header);
+  const dedicated = await evaluate(
+    `new Promise((resolve,reject)=>{const w=new Worker('/dedicated.js');w.onmessage=e=>{w.terminate();resolve(e.data)};w.onerror=reject})`,
   );
-  assert.deepEqual(
-    await evaluate(
-      `new Promise((resolve,reject)=>{const w=new SharedWorker('/shared.js');w.port.onmessage=e=>{w.port.close();resolve(e.data)};w.onerror=reject})`,
-    ),
-    expected,
+  const shared = await evaluate(
+    `new Promise((resolve,reject)=>{const w=new SharedWorker('/shared.js');w.port.onmessage=e=>{w.port.close();resolve(e.data)};w.onerror=reject})`,
   );
-  assert.deepEqual(
-    await evaluate(
-      `(async()=>{await navigator.serviceWorker.register('/sw.js');const registration=await navigator.serviceWorker.ready;return new Promise(resolve=>{const channel=new MessageChannel();channel.port1.onmessage=e=>{channel.port1.close();resolve(e.data)};registration.active.postMessage('read',[channel.port2])})})()`,
-    ),
-    expected,
+  const service = await evaluate(
+    `(async()=>{await navigator.serviceWorker.register('/sw.js');const registration=await navigator.serviceWorker.ready;return new Promise(resolve=>{const channel=new MessageChannel();channel.port1.onmessage=e=>{channel.port1.close();resolve(e.data)};registration.active.postMessage('read',[channel.port2])})})()`,
   );
   const child = url.replace('127.0.0.1', 'localhost');
-  assert.deepEqual(
-    await evaluate(
-      `new Promise(resolve=>{const f=document.createElement('iframe');f.src=${JSON.stringify(child)};window.addEventListener('message',e=>{if(e.source===f.contentWindow)resolve(e.data)},{once:true});f.onload=()=>f.contentWindow.postMessage('read','*');document.body.append(f)})`,
-    ),
-    expected,
+  const frame = await evaluate(
+    `new Promise(resolve=>{const f=document.createElement('iframe');f.src=${JSON.stringify(child)};window.addEventListener('message',e=>{if(e.source===f.contentWindow)resolve(e.data)},{once:true});f.onload=()=>f.contentWindow.postMessage('read','*');document.body.append(f)})`,
   );
+  return { page, dedicated, shared, service, frame };
+}
+/** Configured native policy must agree across every first-script surface. */
+async function check(window, url, expected) {
+  for (const [surface, actual] of Object.entries(await surfaceSnapshots(window, url)))
+    assert.deepEqual(actual, expected, surface);
 }
 /** Invalid input never mutates policy; only an identical count may be repeated. */
 function configureHardware(jar, cores) {
@@ -102,8 +105,8 @@ function configureHardware(jar, cores) {
 async function unconfiguredHardware(jar, window, url, windows) {
   const baseline = windowFor(session.fromPartition('hardware-baseline'), []);
   windows.push(baseline);
-  await baseline.loadURL(url);
-  const host = await baseline.webContents.executeJavaScript('navigator.hardwareConcurrency');
+  const baselineSurfaces = await surfaceSnapshots(baseline, url);
+  const host = baselineSurfaces.page.cores;
   assert.ok(Number.isInteger(host) && host > 0);
   assert.equal(await window.webContents.executeJavaScript('navigator.hardwareConcurrency'), host);
   assert.throws(() => jar._setOyaHardwareConcurrency(8), /before any session renderer/);
@@ -111,7 +114,8 @@ async function unconfiguredHardware(jar, window, url, windows) {
   own._setOyaHardwareConcurrency(4);
   const isolated = windowFor(own);
   windows.push(isolated);
-  await check(isolated, url, { ...(await baseline.webContents.executeJavaScript('first')), cores: 4 });
+  for (const [surface, actual] of Object.entries(await surfaceSnapshots(isolated, url)))
+    assert.deepEqual(actual, { ...baselineSurfaces[surface], cores: 4 }, 'host ' + surface);
   assert.throws(() => own._setOyaTimeZone('UTC'), /before any session renderer/);
   isolated.destroy();
   await own.serviceWorkers._stopAllWorkers();
@@ -120,7 +124,7 @@ async function unconfiguredHardware(jar, window, url, windows) {
   windows.push(resumed);
   await resumed.loadURL(url);
   assert.deepEqual(await resumed.webContents.executeJavaScript('fetch("/worker-first").then(reply=>reply.json())'), {
-    ...(await baseline.webContents.executeJavaScript('first')),
+    ...baselineSurfaces.service,
     cores: 4,
   });
 }
@@ -128,6 +132,9 @@ async function unconfiguredHardware(jar, window, url, windows) {
 function localeExpected(tag) {
   if (!locale) return {};
   return {
+    language: tag,
+    languages: [tag, tag.split('-')[0]],
+    header: tag + ',' + tag.split('-')[0] + ';q=0.9',
     locale: tag,
     numberLocale: tag,
     collatorLocale: tag,
@@ -149,6 +156,15 @@ function configureLocale(jar, tag) {
   jar._setOyaLocale(tag.toUpperCase());
   jar._setOyaLocale(tag);
   assert.throws(() => jar._setOyaLocale('ja-JP'), /cannot be changed/);
+}
+/** User-agent updates must neither replace nor reset a session-owned language policy. */
+async function checkLanguagePolicy(jar, url, tag) {
+  const agent = jar.getUserAgent();
+  assert.throws(() => jar.setUserAgent('must-not-apply', 'fr-FR'), /Native locale owns Accept-Language/);
+  assert.equal(jar.getUserAgent(), agent);
+  jar.setUserAgent(agent, tag + ',' + tag.split('-')[0]);
+  jar.setUserAgent(agent);
+  assert.equal(await (await jar.fetch(url + 'echo')).json(), localeExpected(tag).header);
 }
 /** Locale-only policy survives cold worker restart without borrowing another session's timezone or CPU count. */
 async function unconfiguredLocale(jar, window, url, windows) {
@@ -183,7 +199,7 @@ async function run() {
     if (req.headers.host.startsWith('localhost')) {
       res.setHeader('Content-Type', 'text/html');
       return res.end(
-        `<!doctype html><script>const first=${snapshot};onmessage=()=>parent.postMessage(first,'*')</script>`,
+        `<!doctype html><script>const first=${snapshotFor(req)};onmessage=()=>parent.postMessage(first,'*')</script>`,
       );
     }
     serve(req, res);
@@ -207,7 +223,12 @@ async function run() {
       jar._setOyaTimeZone(zone);
       assert.throws(() => jar._setOyaTimeZone(zone === 'UTC' ? 'Asia/Tokyo' : 'UTC'), /cannot be changed/);
       if (hardware) configureHardware(jar, cores);
-      if (locale) configureLocale(jar, tag);
+      if (locale) {
+        jar.setUserAgent(jar.getUserAgent(), 'fr-FR,fr');
+        assert.equal(await (await jar.fetch(url + 'echo')).json(), 'fr-FR,fr;q=0.9');
+        configureLocale(jar, tag);
+        await checkLanguagePolicy(jar, url, tag);
+      }
       const window = windowFor(jar);
       windows.push(window);
       await check(window, url, { zone, offset, hour, ...(hardware ? { cores } : {}), ...localeExpected(tag) });
@@ -216,6 +237,7 @@ async function run() {
         assert.throws(() => jar._setOyaHardwareConcurrency(cores === 1 ? 2 : 1), /cannot be changed/);
       }
       if (locale) {
+        await checkLanguagePolicy(jar, url, tag);
         jar._setOyaLocale(tag.toUpperCase());
         assert.throws(() => jar._setOyaLocale('ja-JP'), /cannot be changed/);
       }
@@ -251,7 +273,16 @@ async function run() {
     );
     assert.throws(() => late._setOyaTimeZone('Asia/Tokyo'), /before any session renderer/);
     if (hardware) await unconfiguredHardware(late, window, url, windows);
-    if (locale) await unconfiguredLocale(late, window, url, windows);
+    if (locale) {
+      await unconfiguredLocale(late, window, url, windows);
+      const primary = session.fromPartition('locale-primary-only');
+      primary._setOyaLocale('de');
+      assert.equal(await (await primary.fetch(url + 'echo')).json(), 'de');
+      const primaryWindow = windowFor(primary);
+      windows.push(primaryWindow);
+      await primaryWindow.loadURL(url);
+      assert.deepEqual(await primaryWindow.webContents.executeJavaScript('navigator.languages'), ['de']);
+    }
     console.log(
       (locale
         ? 'PASS native session locale, hardware and timezone'

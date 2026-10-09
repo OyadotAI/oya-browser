@@ -1,0 +1,148 @@
+--- a/shell/browser/api/electron_api_session.cc
++++ b/shell/browser/api/electron_api_session.cc
+@@ -1270,8 +1270,17 @@
+     thrower.ThrowTypeError("Native locale must specify a language");
+     return;
+   }
+-  if (!browser_context_->SetOyaLocale(canonical))
++  if (!browser_context_->SetOyaLocale(canonical)) {
+     thrower.ThrowError("Native locale must be installed before any session renderer and cannot be changed");
++    return;
++  }
++  // Update already-created network contexts; future ones read BrowserContext.
++  const auto languages = net::HttpUtil::GenerateAcceptLanguageHeader(
++      browser_context_->GetOyaAcceptLanguages());
++  browser_context_->ForEachLoadedStoragePartition(
++      [&languages](content::StoragePartition* partition) {
++        partition->GetNetworkContext()->SetAcceptLanguage(languages);
++      });
+ }
+ 
+ void Session::SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower,
+@@ -1306,17 +1315,24 @@
+     thrower.ThrowError("Native timezone must be installed before any session renderer and cannot be changed");
+ }
+ 
+-void Session::SetUserAgent(const std::string& user_agent,
++void Session::SetUserAgent(gin_helper::ErrorThrower thrower,
++                           const std::string& user_agent,
+                            gin::Arguments* args) {
++  std::string accept_lang;
++  const bool has_languages = args->GetNext(&accept_lang);
++  const auto policy = browser_context_->GetOyaAcceptLanguages();
++  if (has_languages && !policy.empty() && accept_lang != policy) {
++    thrower.ThrowError("Native locale owns Accept-Language");
++    return;
++  }
+   browser_context_->SetUserAgent(user_agent);
+   auto* network_context =
+       browser_context_->GetDefaultStoragePartition()->GetNetworkContext();
+   network_context->SetUserAgent(user_agent);
+ 
+-  std::string accept_lang;
+-  if (args->GetNext(&accept_lang)) {
+-    network_context->SetAcceptLanguage(
+-        net::HttpUtil::GenerateAcceptLanguageHeader(accept_lang));
++  if (!policy.empty() || has_languages) {
++    network_context->SetAcceptLanguage(net::HttpUtil::GenerateAcceptLanguageHeader(
++        policy.empty() ? accept_lang : policy));
+   }
+ }
+ 
+--- a/shell/browser/api/electron_api_session.h
++++ b/shell/browser/api/electron_api_session.h
+@@ -151,7 +151,8 @@
+   void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);
+   void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+   void SetOyaTimeZone(gin_helper::ErrorThrower thrower, const std::string& zone);
+-  void SetUserAgent(const std::string& user_agent, gin::Arguments* args);
++  void SetUserAgent(gin_helper::ErrorThrower thrower,
++                    const std::string& user_agent, gin::Arguments* args);
+   std::string GetUserAgent();
+   void SetSSLConfig(network::mojom::SSLConfigPtr config);
+   bool IsPersistent();
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -1198,7 +1198,9 @@
+     accept_languages += language + ",";
+   }
+   accept_languages.pop_back();
+-  prefs->accept_languages = accept_languages;
++  const auto policy_languages = browser_context->GetOyaAcceptLanguages();
++  prefs->accept_languages =
++      policy_languages.empty() ? accept_languages : policy_languages;
+ 
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+   // Update font settings.
+--- a/shell/browser/electron_browser_client.cc
++++ b/shell/browser/electron_browser_client.cc
+@@ -482,6 +482,16 @@
+   return nullptr;
+ }
+ 
++// Shared/service workers can start without an owning WebContents.
++void ElectronBrowserClient::UpdateRendererPreferencesForWorker(
++    content::BrowserContext* browser_context,
++    blink::RendererPreferences* out_prefs) {
++  if (!browser_context) return;
++  const auto languages = static_cast<ElectronBrowserContext*>(
++      browser_context)->GetOyaAcceptLanguages();
++  if (!languages.empty()) out_prefs->accept_languages = languages;
++}
++
+ void ElectronBrowserClient::OverrideWebPreferences(
+     content::WebContents* web_contents,
+     content::SiteInstance& main_frame_site,
+@@ -506,6 +516,9 @@
+   blink::RendererPreferences* renderer_prefs =
+       web_contents->GetMutableRendererPrefs();
+   renderer_prefs->can_accept_load_drops = false;
++  const auto languages = static_cast<ElectronBrowserContext*>(
++      web_contents->GetBrowserContext())->GetOyaAcceptLanguages();
++  if (!languages.empty()) renderer_prefs->accept_languages = languages;
+ 
+   ui::NativeTheme* native_theme = ui::NativeTheme::GetInstanceForNativeUi();
+   prefs->in_forced_colors = native_theme->forced_colors() !=
+--- a/shell/browser/electron_browser_client.h
++++ b/shell/browser/electron_browser_client.h
+@@ -177,6 +177,9 @@
+   CreateSpeechRecognitionManagerDelegate() override;
+   content::TtsPlatform* GetTtsPlatform() override;
+ 
++  void UpdateRendererPreferencesForWorker(
++      content::BrowserContext* browser_context,
++      blink::RendererPreferences* out_prefs) override;
+   void OverrideWebPreferences(content::WebContents* web_contents,
+                               content::SiteInstance& main_frame_site,
+                               blink::web_pref::WebPreferences* prefs) override;
+--- a/shell/browser/electron_browser_context.h
++++ b/shell/browser/electron_browser_context.h
+@@ -110,6 +110,12 @@
+     return true;
+   }
+   const std::string& GetOyaLocale() const { return oya_locale_; }
++  // Locale policy owns the preferred language and its primary-language fallback.
++  std::string GetOyaAcceptLanguages() const {
++    if (oya_locale_.empty()) return {};
++    const auto primary = oya_locale_.substr(0, oya_locale_.find('-'));
++    return primary == oya_locale_ ? primary : oya_locale_ + "," + primary;
++  }
+   void LockOyaRendererPolicy() { oya_renderer_started_ = true; }
+   const std::string& GetOyaTimeZone() const { return oya_time_zone_; }
+ 
+--- a/shell/browser/net/network_context_service.cc
++++ b/shell/browser/net/network_context_service.cc
+@@ -68,9 +68,12 @@
+           ->GetOriginAccessList()
+           .CreateCorsOriginAccessPatternsList();
+ 
++  const auto policy_languages = browser_context_->GetOyaAcceptLanguages();
+   network_context_params->accept_language =
+       net::HttpUtil::GenerateAcceptLanguageHeader(
+-          ElectronBrowserClient::Get()->GetApplicationLocale());
++          policy_languages.empty()
++              ? ElectronBrowserClient::Get()->GetApplicationLocale()
++              : policy_languages);
+ 
+   // Enable the HTTP cache.
+   network_context_params->http_cache_enabled =
