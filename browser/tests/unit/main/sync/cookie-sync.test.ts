@@ -37,7 +37,7 @@ function syncWith({ jar, link = { open: true, ready: true }, sendResult = true, 
     session: () => ({ cookies }),
     send: (message: any) => {
       sent.push(message);
-      return sendResult;
+      return typeof sendResult === 'function' ? sendResult(message) : sendResult;
     },
     open: () => link.open,
     ready: () => link.ready,
@@ -302,6 +302,78 @@ describe('CookieSync', () => {
     assert.deepEqual(
       sent[0].changes.map((c) => c.cookie.name),
       ['a'],
+    );
+  });
+
+  it('retains a refused batch and retries only the newest local value', async () => {
+    let accepted = false;
+    const { sync, sent, cookies } = syncWith({ jar: [cookie('sid')], sendResult: () => accepted });
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('sid', { value: 'first' }), 'explicit', false);
+    sync.flushCookieChanges();
+    assert.equal(sync.syncedAt(), 0);
+    await sync.applyCookieSync([cookie('sid', { value: 'stale', t: 9999 })]);
+    assert.equal(cookies.written.length, 0, 'unsent local changes still defeat a stale server jar');
+    cookies.emit('changed', {}, cookie('sid', { value: 'latest' }), 'explicit', false);
+    accepted = true;
+    sync.flushCookieChanges();
+    assert.equal(sent[1].changes[0].cookie.value, 'latest');
+    assert.equal(sync.syncedAt(), 1_000_000);
+    sync.flushCookieChanges();
+    assert.equal(sent.length, 2, 'a successful send drains the batch exactly once');
+  });
+
+  it('retains logout removals when the socket send throws', () => {
+    let broken = true;
+    const { sync, sent, cookies } = syncWith({
+      sendResult: () => {
+        if (broken) throw new Error('socket closed');
+        return true;
+      },
+    });
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('sid'), 'explicit', true);
+    assert.doesNotThrow(() => sync.flushCookieChanges());
+    assert.equal(sync.syncedAt(), 0);
+    broken = false;
+    sync.flushCookieChanges();
+    assert.equal(sent[1].changes[0].removed, true);
+    assert.equal(sent[1].changes[0].cookie.name, 'sid');
+  });
+
+  it('does not mark a refused cookie dump as sent', async () => {
+    const { sync } = syncWith({ jar: [cookie('sid')], sendResult: false });
+    await sync.dumpCookies();
+    assert.equal(sync.syncedAt(), 0);
+  });
+
+  it('does not mark a throwing cookie dump as sent', async () => {
+    const { sync } = syncWith({
+      sendResult: () => {
+        throw new Error('socket closed');
+      },
+    });
+    await sync.dumpCookies();
+    assert.equal(sync.syncedAt(), 0);
+  });
+
+  it('keeps a newer change queued while its previous value is being sent', () => {
+    let duringSend = () => {};
+    const { sync, sent, cookies } = syncWith({
+      sendResult: () => {
+        duringSend();
+        return true;
+      },
+    });
+    sync.startCookieChangeListener();
+    cookies.emit('changed', {}, cookie('sid', { value: 'old' }), 'explicit', false);
+    duringSend = () => cookies.emit('changed', {}, cookie('sid', { value: 'new' }), 'explicit', false);
+    sync.flushCookieChanges();
+    duringSend = () => {};
+    sync.flushCookieChanges();
+    assert.deepEqual(
+      sent.map((m) => m.changes[0].cookie.value),
+      ['old', 'new'],
     );
   });
 

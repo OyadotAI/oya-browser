@@ -631,3 +631,21 @@ The SDK login journey is not yet migrated: its localStorage hydration before the
 first page script still relies on the legacy LoginState CDP transport, bypassed
 in native browsing. This cookie fix does not provide native localStorage sync or
 clear the remaining five server integration gates.
+
+## Cookie reconnect send-race regression — 2026-10-09
+
+Queued cookie changes now leave the pending batch only when the socket accepts
+the send. A false return or thrown send preserves login updates and logout
+removals for retry, leaves the sent timestamp unchanged, and keeps unsent local
+values protected from stale server restoration. Successful sends remove only
+the exact versions they sent, preserving newer queued values. Cookie dumps also
+check send acceptance before advancing their timestamp. This is local send
+acceptance, not a server durability acknowledgment.
+
+Five new unit regressions cover refused/throwing sends, newest-value retry,
+logout retention, stale-jar resistance and changes arriving during a send.
+All 2,037 desktop unit tests and the full desktop integration command passed;
+typecheck, lint and build passed. Evidence:
+`/private/tmp/oya-cookie-reconnect-all.log` and
+`/private/tmp/oya-cookie-reconnect-build.log`. Native localStorage synchronization
+and the remaining release gates are still outstanding.

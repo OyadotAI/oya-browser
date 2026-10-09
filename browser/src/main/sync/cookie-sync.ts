@@ -226,7 +226,7 @@ export class CookieSync {
     if (!this.deps.open()) return;
     try {
       const cookies = await this.deps.session().cookies.get({});
-      this.deps.send({ type: 'cookie_dump', cookies: cookies.map(slimCookie) });
+      if (this.trySend({ type: 'cookie_dump', cookies: cookies.map(slimCookie) }) === false) return;
       this.sentAt = Date.now();
     } catch (e) {
       console.log('[oya] Cookie dump failed:', (e as Error).message);
@@ -345,9 +345,9 @@ export class CookieSync {
   flushCookieChanges(): void {
     this.stopFlushTimer();
     if (!this.batch.size || !this.deps.open() || !this.deps.ready()) return;
-    const changes = [...this.batch.values()];
-    this.batch = new Map();
-    this.deps.send({ type: 'cookie_changed', changes });
+    const pending = new Map(this.batch);
+    if (this.trySend({ type: 'cookie_changed', changes: [...pending.values()] }) === false) return;
+    for (const [key, change] of pending) if (this.batch.get(key) === change) this.batch.delete(key);
     this.sentAt = Date.now();
   }
 
