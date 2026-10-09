@@ -118,3 +118,19 @@ test('a stalled native identity lookup refuses startup within its deadline and r
   assert.equal(f.page.listenerCount('ipc-message'), 0);
   assert.equal(f.frame.listenerCount('dom-ready'), 0);
 });
+
+test('clear targets the current document and leaves the channel armed', async () => {
+  const f = fixture();
+  f.context.__acRecordClear = () => {
+    f.context.cleared = true;
+  };
+  await f.channel.start();
+  await f.channel.clear();
+  assert.equal(f.context.cleared, true);
+  assert.equal(f.context.stops, 0);
+  f.replace('replacement');
+  f.context.__acRecordClear = () => assert.fail('Stale controller must not clear a replacement');
+  await f.channel.clear();
+  await f.channel.stop();
+  await assert.rejects(f.channel.clear(), /stopped/);
+});

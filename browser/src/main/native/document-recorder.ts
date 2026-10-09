@@ -58,6 +58,13 @@ export class NativeDocumentRecorder {
     if (this.closed) throw new Error('Document recorder is stopped');
     return this.command(`return window.__acRecordDrain(${!!final});`);
   }
+  /** Discard unfinished edits and secret names without stopping this authorized document. */
+  async clear(): Promise<void> {
+    if (!this.ready || this.closed) throw new Error('Document recorder is not running');
+    await this.ready;
+    if (this.closed) throw new Error('Document recorder is stopped');
+    await this.command('window.__acRecordClear();');
+  }
   /** Scope commands to this lifecycle even if another recorder has since started in the same document. */
   private command(script: string): Promise<unknown> {
     return this.execute(recorderCommandScript(this.document.documentId, this.owner, script));

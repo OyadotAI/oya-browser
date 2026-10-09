@@ -127,3 +127,36 @@ test('readiness timeout cancels pending arming without leaving a future DOM list
   assert.equal(f.context.starts, 0);
   assert.equal(f.context.__oyaDocumentRecorder, undefined);
 });
+
+test('clear discards unfinished data without stopping or changing the authorized recorder owner', async () => {
+  const f = fixture();
+  f.context.__acRecordClear = () => {
+    f.context.cleared = true;
+  };
+  await assert.rejects(f.recorder.clear(), /not running/);
+  await f.recorder.start();
+  const owner = f.context.__oyaDocumentRecorder.owner;
+  await f.recorder.clear();
+  assert.equal(f.context.cleared, true);
+  assert.equal(f.context.__oyaDocumentRecorder.owner, owner);
+  assert.equal(f.context.stops, 0);
+  await f.recorder.stop();
+  await assert.rejects(f.recorder.clear(), /not running/);
+});
+
+test('a stale clear never discards data belonging to a replacement document', async () => {
+  const f = fixture();
+  f.context.__acRecordClear = () => assert.fail('Replacement must not be cleared');
+  await f.recorder.start();
+  f.bridge.documentId = 'replacement';
+  await assert.rejects(f.recorder.clear(), /document changed/);
+});
+
+test('clear waiting for readiness cannot run after stop cancels the pending recorder', async () => {
+  const f = fixture(true);
+  f.context.__acRecordClear = () => assert.fail('Stopped recorder must not be cleared');
+  const starting = assert.rejects(f.recorder.start(), /cancelled/);
+  const clearing = assert.rejects(f.recorder.clear(), /cancelled/);
+  await f.recorder.stop();
+  await Promise.all([starting, clearing]);
+});

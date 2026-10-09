@@ -1,5 +1,5 @@
 /**
- * Real Electron regression for the dashboard's cloud/desktop browser transport.
+ * Real Oya regression for the production native desktop recording transport.
  * npm run test:recording --prefix browser (Linux CI uses xvfb-run).
  */
 const { app, BrowserWindow, BrowserView } = require('electron');
@@ -8,9 +8,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createServer } = require('node:http');
-const { RecordingChannel } = require('../../src/page/recording.ts');
+const { NativeRecordingChannel } = require('../../src/main/recording/native-channel.ts');
+const { recordingPreferences } = require('../../src/main/recording/preload.ts');
+const { Keyboard } = require('../../src/main/input/keyboard.ts');
+const { World, evaluateFrame } = require('../../src/main/native/index.ts');
+const keyboard = new Keyboard(process.platform);
 const { candidates } = require('../../src/workflow/index.ts');
-const { LoginState } = require('../../src/page/login-state.ts');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-recorder-electron-'));
 app.setPath('userData', profile);
 app.commandLine.appendSwitch('disable-gpu');
@@ -20,17 +23,24 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.once('quit', () => fs.rmSync(profile, { recursive: true, force: true }));
 const analyzerScript = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts/analyzer.js'), 'utf8');
 // The app's own analyzer context creation/recreation, alongside recording.
-const { World } = require('../../src/main/cdp/world.ts');
 const ISOLATED_WORLD = 'test-recording-world';
 let server, win, channel;
 // The last step started, so a CI timeout names where it hung.
 let lastStep = 'startup';
+/** Await observable native readiness with a bounded fixture deadline. */
+async function until(read) {
+  for (let attempt = 0; attempt < 150; attempt++) {
+    if (await read()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw Error('Native recording fixture readiness timed out');
+}
 (async () => {
   await app.whenReady();
   setTimeout(() => {
     console.error(`Electron recording test timed out during: ${lastStep}`);
     app.exit(1);
-  }, 20000).unref();
+  }, 60000).unref();
   server = createServer((req, res) => {
     if (req.url === '/redirect') {
       res.writeHead(302, { Location: `http://localhost:${server.address().port}/login` });
@@ -51,29 +61,19 @@ let lastStep = 'startup';
   // cloud app runs under Xvfb. No user's browser profile or accounts are used.
   win = new BrowserWindow({ show: true, width: 920, height: 740 });
   const view = new BrowserView({
-    webPreferences: { contextIsolation: true, sandbox: true, partition: 'recorder-test' },
+    webPreferences: { ...recordingPreferences(path.resolve(__dirname, '../..')), partition: 'recorder-test' },
   });
   win.setBrowserView(view);
   view.setBounds({ x: 0, y: 0, width: 900, height: 700 });
   await view.webContents.loadURL('about:blank');
-  const dbg = view.webContents.debugger;
-  dbg.attach('1.3');
-  const sent = [];
-  const send = (method, params) => {
-    sent.push(method);
-    lastStep = method;
-    return dbg.sendCommand(method, params);
-  };
-  const on = (method, fn) => {
-    const listener = (_e, event, params) => {
-      if (method === event) fn(params);
-    };
-    dbg.on('message', listener);
-    return () => dbg.off('message', listener);
-  };
-  // Do not enable Runtime here: the production Electron setup doesn't.
-  await send('Page.enable');
-  await new LoginState().attach(send, on);
+  Object.defineProperty(view.webContents, 'debugger', {
+    get() {
+      throw Error('Internal CDP forbidden');
+    },
+  });
+  app.focus({ steal: true });
+  win.focus();
+  view.webContents.focus();
   const context = new World({
     analyzerScript,
     worldName: ISOLATED_WORLD,
@@ -83,17 +83,14 @@ let lastStep = 'startup';
   const steps = [],
     secrets = new Set();
   const start = async () => {
-    channel = new RecordingChannel({
-      send,
-      on,
-      worldName: ISOLATED_WORLD,
-      disableRuntimeOnStop: true,
-      analyzer: analyzerScript.replace('__OYA_ATTR__', 'data-test-recorder').replace('__OYA_RECORD__', 'false'),
-      receive: (out) => {
+    channel = new NativeRecordingChannel(
+      view.webContents,
+      analyzerScript.replace('__OYA_ATTR__', 'data-test-recorder').replace('__OYA_RECORD__', 'false'),
+      (out) => {
         steps.push(...(out.steps || []));
         for (const name of out.secrets || []) secrets.add(name);
       },
-    });
+    );
     await channel.start();
   };
   const click = async (id) => {
@@ -101,8 +98,20 @@ let lastStep = 'startup';
     const point = await view.webContents.executeJavaScript(
       `(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
     );
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+    view.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+      button: 'left',
+      clickCount: 1,
+    });
+    view.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+      button: 'left',
+      clickCount: 1,
+    });
   };
   await start();
   await view.webContents.loadURL(`http://127.0.0.1:${server.address().port}/redirect`);
@@ -111,16 +120,21 @@ let lastStep = 'startup';
   await context.evaluate(view, 'analyzePage()');
   await channel.drain();
   await click('username');
-  await send('Input.insertText', { text: 'fixture-user' });
+  await view.webContents.insertText('fixture-user');
   await click('password');
-  await send('Input.insertText', { text: 'fixture-secret' });
+  await view.webContents.insertText('fixture-secret');
   const loaded = new Promise((resolve) => view.webContents.once('did-finish-load', resolve));
   await click('submit');
   await loaded;
-  await send('Page.captureScreenshot', { format: 'png' });
+  lastStep = 'paint after form navigation';
+  await view.webContents.executeJavaScript(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  );
+  assert.equal((await view.webContents.capturePage()).isEmpty(), false);
+  await until(() => evaluateFrame(view.webContents.mainFrame, 'globalThis.__oyaDocumentRecorder?.armed === true'));
   // Stop while the next page's field is still focused (no change/blur event).
   await click('message');
-  await send('Input.insertText', { text: 'final-field-value' });
+  await view.webContents.insertText('final-field-value');
   await channel.stop();
   channel = null;
   assert(
@@ -141,14 +155,14 @@ let lastStep = 'startup';
   );
   assert(!JSON.stringify(steps).includes('fixture-secret'), 'raw password never exported');
   assert(secrets.has('password'));
-  assert.equal(sent.at(-1), 'Runtime.disable', 'desktop event reporting ends with recording');
+  assert.equal(view.webContents.listenerCount('ipc-message'), 0, 'native event admission ends with recording');
   const count = steps.length;
-  await send('Input.insertText', { text: 'not-recorded' });
+  await view.webContents.insertText('not-recorded');
   await click('message');
   assert.equal(steps.length, count, 'stop disarms the page listeners');
   await start();
   await click('message');
-  await send('Input.insertText', { text: 'discard-me' });
+  await view.webContents.insertText('discard-me');
   await channel.clear();
   steps.length = 0;
   secrets.clear();
@@ -179,7 +193,7 @@ let lastStep = 'startup';
   // Browser-generated focus events are trusted, even when script focuses an invisible field.
   for (const id of ['transparent', 'invisible', 'ancestorHidden', 'hidden']) {
     await view.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(id)}).focus()`);
-    await send('Input.insertText', { text: 'ignored' });
+    await view.webContents.insertText('ignored');
   }
   await channel.drain(true);
   assert.equal(steps.length, 0, 'hidden targets do not produce edits');
@@ -187,28 +201,16 @@ let lastStep = 'startup';
   await click('checkLabel');
   await click('nativeLabel');
   await view.webContents.executeJavaScript(`document.getElementById('choice').focus()`);
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    windowsVirtualKeyCode: 40,
-  });
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    windowsVirtualKeyCode: 40,
-  });
+  await keyboard.press(view, 'ArrowDown');
   await click('visible');
   await view.webContents.executeJavaScript(`document.getElementById('visible').select()`);
-  await send('Input.insertText', { text: 'real edit' });
+  await view.webContents.insertText('real edit');
   await click('vanishing');
-  await send('Input.insertText', { text: 'keep this edit' });
+  await view.webContents.insertText('keep this edit');
   await view.webContents.executeJavaScript(
     `document.getElementById('vanishing').remove(); document.getElementById('keyboardButton').focus()`,
   );
-  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+  await keyboard.press(view, 'Enter');
   await channel.stop();
   channel = null;
   assert.equal(
@@ -269,18 +271,7 @@ let lastStep = 'startup';
   await new Promise((resolve) => setTimeout(resolve, 400));
   await click('iconButton');
   await view.webContents.executeJavaScript(`document.getElementById('menu').focus()`);
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    windowsVirtualKeyCode: 40,
-  });
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    windowsVirtualKeyCode: 40,
-  });
+  await keyboard.press(view, 'ArrowDown');
   await click('menuSpan');
   await click('secondCancel');
   await click('id_912');
@@ -289,29 +280,19 @@ let lastStep = 'startup';
   await click('switchLabel');
   // Keys on something that is not a widget (the page, a plain block) scroll; they are not steps.
   await view.webContents.executeJavaScript(`document.getElementById('plain').focus()`);
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: ' ',
-    code: 'Space',
-    windowsVirtualKeyCode: 32,
-    text: ' ',
-  });
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    windowsVirtualKeyCode: 40,
-  });
-  await send('Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'ArrowDown',
-    code: 'ArrowDown',
-    windowsVirtualKeyCode: 40,
-  });
-  const { root } = await send('DOM.getDocument', {});
-  const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: '#upload' });
-  await send('DOM.setFileInputFiles', { nodeId, files: [__filename] });
+  await keyboard.press(view, ' ');
+  await keyboard.press(view, 'ArrowDown');
+  const chosen = new Promise((resolve) =>
+    view.webContents.once('-oya-file-chooser', (event, details, reply) => {
+      event.preventDefault();
+      assert.equal(details.processId, view.webContents.mainFrame.processId);
+      reply([__filename]);
+      resolve();
+    }),
+  );
+  await view.webContents.executeJavaScript('document.getElementById("upload").click()', true);
+  await chosen;
+  await until(() => view.webContents.executeJavaScript('document.getElementById("upload").files.length === 1'));
   await channel.stop();
   channel = null;
   const clicked = (id) => steps.filter((s) => s.action === 'click' && s.el?.domId === id).length;
@@ -366,18 +347,25 @@ let lastStep = 'startup';
   await view.webContents.executeJavaScript(
     `document.getElementById('payment').contentDocument.getElementById('reference').focus()`,
   );
-  await send('Input.insertText', { text: 'frame entry' });
+  await view.webContents.insertText('frame entry');
   await channel.stop();
   channel = null;
   const frameStep = steps.find((step) => step.action === 'type' && step.text === 'frame entry');
   assert(frameStep, 'trusted input inside a frame is captured');
-  assert.deepEqual(frameStep.frames, ['iframe[id="payment"]']);
+  assert.deepEqual(frameStep.frames, ['iframe[id=payment]']);
+  assert.equal(
+    await view.webContents.executeJavaScript(
+      `document.querySelector(${JSON.stringify(frameStep.frames[0])}).contentDocument.getElementById('reference').value`,
+    ),
+    'frame entry',
+    'the native owner path resolves the exact recorded frame',
+  );
   console.log(
-    'Electron recording: navigation, secrets, hidden/synthetic events, custom controls, labels, selection, field removal, keyboard submission, stop, clear and frame context passed',
+    'Oya native recording: navigation, secrets, hidden/synthetic events, custom controls, labels, selection, field removal, keyboard submission, stop, clear and frame context passed',
   );
 })()
   .catch((err) => {
-    console.error(err);
+    console.error('Failed during ' + lastStep, err);
     process.exitCode = 1;
   })
   .finally(async () => {

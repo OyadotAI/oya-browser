@@ -146,6 +146,13 @@ export class NativeRecordingChannel {
     await withinTime(this.settled(), NATIVE_RECORDING_SETTLE_MS, 'Native recording did not settle');
     for (const entry of [...this.armed.values()]) await this.visit(entry, false, final);
   }
+  /** Discard buffered and unfinished edits in every current document without switching recorder worlds. */
+  async clear(): Promise<void> {
+    if (this.closed) throw Error('Native recording channel is stopped');
+    await withinTime(this.settled(), NATIVE_RECORDING_SETTLE_MS, 'Native recording did not settle');
+    for (const entry of [...this.armed.values()])
+      if (await recordingDocumentIsCurrent(this.page, entry.document)) await entry.recorder.clear();
+  }
   /** Readiness received during an in-flight authorization must finish before draining its replacement. */
   private async settled(): Promise<void> {
     while (this.pending.size && !this.closed) await Promise.all([...this.pending.values()]);

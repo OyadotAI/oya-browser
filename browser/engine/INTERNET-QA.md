@@ -906,3 +906,50 @@ Persona/worker protection, the remaining native server preflight journeys,
 cross-platform native artifact provisioning and Windows runtime validation remain
 release gates. This checkpoint is not evidence of an internally CDP-free browser
 or a completed release.
+
+## Full desktop recording fixture migration — October 9, 2026
+
+The existing recording integration flow now uses NativeRecordingChannel and
+Oya's native input, analyzer, screenshot and file-chooser APIs. Accessing the
+fixture page's debugger throws. Its behavioral assertions remain: cross-site
+navigation, password placeholders without plaintext export, final focused typing,
+clear/discard, rejection of synthetic and invisible-field edits, custom controls,
+labels, keyboard selection/submission, edits on removed fields, hidden uploads,
+widget naming and exact same-origin frame attribution. A native clear command
+is document/owner guarded and cannot run after a cancelled start or stop.
+
+The launcher requires OYA_NATIVE_ENGINE, resolves its fixture relative to its own
+module, and forwards CI engine arguments. Unit regressions cover invocation from
+the repository, browser directory and temporary directory, and refusal without
+the configured engine. The incorrect relative launcher used during development
+has been replaced, not worked around by requiring a particular working directory.
+
+Verified on macOS arm64 with the patched Oya engine:
+
+- All 2,116 browser unit tests pass.
+- Browser integration and all 13 native recorder DOM cases pass.
+- The complete migrated recording flow passes.
+- Native recording transport, navigation, cross-process frame and manager
+  attribution integration passes.
+- Application build, types, browser and root lint/format checks pass.
+
+The first migrated run exposed capture before the new surface painted; the
+fixture now awaits two actual animation frames before capturing. The native
+owner selector serializes an identifier without quotes; the regression both
+pins that native selector and resolves it to the exact edited child document.
+No behavioral assertion was dropped to accommodate either difference.
+
+Evidence: /private/tmp/oya-recorder-fixture-final-tests.log,
+/private/tmp/oya-recorder-fixture-final-unit.log,
+/private/tmp/oya-recorder-fixture-final-recording.log,
+/private/tmp/oya-recorder-fixture-final-transport.log,
+/private/tmp/oya-recorder-fixture-final-types.log,
+/private/tmp/oya-recorder-fixture-final-lint.log,
+/private/tmp/oya-recorder-fixture-final-format.log,
+/private/tmp/oya-recorder-fixture-final-browser-lint.log and
+/private/tmp/oya-recorder-fixture-final-browser-format.log.
+
+The CI runners still need native-engine artifact provisioning. This fixture
+migration does not validate Windows, retire the server's legacy recorder,
+migrate persona/worker protection or make the default browser internally
+CDP-free. Release remains gated on those remaining capabilities and evidence.

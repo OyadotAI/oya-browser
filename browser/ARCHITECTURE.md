@@ -137,8 +137,10 @@ engine are separate concerns; this requirement governs the control architecture.
   removal. Admission retains at most 1,024 document authorizations per recording;
   overflow reports an explicit capture issue rather than evicting unload attribution.
   The bridge loads before website scripts; analyzer capture starts at DOM-ready,
-  not before website execution. The legacy server recording channel and its
-  integration fixture remain migration debt.
+  not before website execution. The complete desktop recording integration
+  fixture now exercises native input, analyzer coexistence, secret masking,
+  clear/discard, hidden controls, native file selection and same-origin frames.
+  The legacy server recording channel remains migration debt.
 - Focused text: the patched engine routes `insertText` to the focused native
   widget, fixing a renderer crash with cross-process frame focus. The regression
   records real native text input without debugger access.
@@ -497,18 +499,18 @@ per-browser endpoint to make the target unambiguous.
 
 ## Tests
 
-| Command                                                       | Runs                                                                                     |
-| :------------------------------------------------------------ | :--------------------------------------------------------------------------------------- |
-| `npm test`                                                    | unit, then the node-only integration suites                                              |
-| `npm run test:unit`                                           | `tests/unit/**/*.test.{js,cjs,mjs,ts}`                                                   |
-| `npm run test:integration`                                    | regressions, control state, release guard, workflow model, the analyzer and recorder DOM |
-| `npm run test:coverage`                                       | unit tests with a coverage report                                                        |
-| `npm run typecheck`, `npm run build`                          | `tsc --noEmit`; electron-vite into `out/`                                                |
-| `npm run test:shell`, `test:control`                          | the shell and the control handoff in real Electron; `test:shell` saves screenshots       |
-| `npm run test:recording`, `test:workflow`                     | recording and workflow validation in real Electron                                       |
-| `npm run test:identity`                                       | page identity vs request headers, passkeys, permissions, in real Electron                |
-| `npm run test:agent`, `test:model-sync`, `test:routines-sync` | server commands, model settings and routines against a local or fake server              |
-| `npm run test:sync`                                           | a login survives a server outage: real app and real local server                         |
+| Command                                                       | Runs                                                                                             |
+| :------------------------------------------------------------ | :----------------------------------------------------------------------------------------------- |
+| `npm test`                                                    | unit, then the node-only integration suites                                                      |
+| `npm run test:unit`                                           | `tests/unit/**/*.test.{js,cjs,mjs,ts}`                                                           |
+| `npm run test:integration`                                    | regressions, control state, release guard, workflow model, the analyzer and recorder DOM         |
+| `npm run test:coverage`                                       | unit tests with a coverage report                                                                |
+| `npm run typecheck`, `npm run build`                          | `tsc --noEmit`; electron-vite into `out/`                                                        |
+| `npm run test:shell`, `test:control`                          | the shell and the control handoff in real Electron; `test:shell` saves screenshots               |
+| `npm run test:recording`, `test:workflow`                     | recording requires explicit Oya native engine; legacy workflow validation remains migration debt |
+| `npm run test:identity`                                       | page identity vs request headers, passkeys, permissions, in real Electron                        |
+| `npm run test:agent`, `test:model-sync`, `test:routines-sync` | server commands, model settings and routines against a local or fake server                      |
+| `npm run test:sync`                                           | a login survives a server outage: real app and real local server                                 |
 
 The Electron suites that launch the app build first (`npm run build`) and
 launch the browser folder, so they run what ships. Unit tests use `node:test`
