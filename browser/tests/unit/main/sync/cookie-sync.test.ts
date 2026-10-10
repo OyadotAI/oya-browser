@@ -150,6 +150,43 @@ describe('CookieSync', () => {
     assert.equal(mark.value, 123);
   });
 
+  it('keeps stronger local secure and HttpOnly cookies while completing authentication freshness', async () => {
+    const { sync, cookies, mark } = syncWith({ syncedAt: 123 });
+    const original = cookies.set;
+    cookies.set = async (details) => {
+      if (details.name === 'secure') throw Error('Failed to set cookie - EXCLUDE_OVERWRITE_SECURE');
+      if (details.name === 'httpOnly') throw Error('Failed to set cookie - EXCLUDE_OVERWRITE_HTTP_ONLY');
+      return original(details);
+    };
+    await sync.applyCookieSync([cookie('secure'), cookie('httpOnly'), cookie('good')], { now: 456 });
+    assert.deepEqual(
+      cookies.written.map((item) => item.name),
+      ['good'],
+    );
+    assert.equal(mark.value, 456);
+  });
+
+  it('a protected local-cookie conflict never hides a real native store failure', async () => {
+    const { sync, cookies, mark } = syncWith({ syncedAt: 123 });
+    cookies.set = async (details) => {
+      const code = details.name === 'secure' ? 'EXCLUDE_OVERWRITE_SECURE' : 'EXCLUDE_FAILURE_TO_STORE';
+      throw Error('Failed to set cookie - ' + code);
+    };
+    await assert.rejects(
+      sync.applyCookieSync([cookie('secure'), cookie('bad')], { now: 456 }),
+      /EXCLUDE_FAILURE_TO_STORE/,
+    );
+    assert.equal(mark.value, 123);
+  });
+
+  it('unknown exclusions accompanying overwrite refusal remain fatal', async () => {
+    const { sync, cookies } = syncWith();
+    cookies.set = async () => {
+      throw Error('Failed to set cookie - EXCLUDE_OVERWRITE_SECURE EXCLUDE_NEW_REASON');
+    };
+    await assert.rejects(sync.applyCookieSync([cookie('secure')]), /unclassified/);
+  });
+
   it('can retry refused cookies and still forwards local changes after a failed restore', async () => {
     const { sync, cookies, mark, sent } = syncWith();
     sync.startCookieChangeListener();

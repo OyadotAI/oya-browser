@@ -11,6 +11,7 @@ import { metrics } from '../../platform/metrics.ts';
 import { dataPath } from '../../platform/paths.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
+import { nativeRecording } from './recording-native.ts';
 import { openPage } from './cdp-page.ts';
 import {
   FRAME_NAME_DIGITS,
@@ -57,17 +58,40 @@ export function isRecording(sessionId) {
 export async function start(session) {
   if (active.has(session.id)) return false;
   await assertRecordable(session);
-  const attached = await openPage(session.endpoint);
+  const native = await nativeRecording(session);
+  const attached = native ? { native } : await openPage(session.endpoint);
   if (!attached) return false;
-  await beginScreencast(await track(session, attached));
+  await beginCapture(await track(session, attached));
   metrics.recordings.inc({ event: 'start' });
   return true;
 }
 
-/** Asks Chrome to start streaming the page. */
+/** Failed startup retires capture resources instead of leaving a false active recording. */
+async function beginCapture(state) {
+  try {
+    await beginScreencast(state);
+  } catch (error) {
+    active.delete(state.id);
+    await endScreencast(state);
+    throw error;
+  }
+}
+
+/** Native Oya capture never opens or sends commands to a protocol connection. */
 async function beginScreencast(state) {
+  if (state.native)
+    return state.native.start(
+      (data) => storeFrame(state, { data }),
+      (error) => captureFailed(state, error),
+    );
   await state.conn.send('Page.enable', {}, state.sessionId).catch(() => {});
   await state.conn.send('Page.startScreencast', SCREENCAST_OPTIONS, state.sessionId);
+}
+
+/** A failed native sampler ends recording and keeps its diagnostic in the sealed manifest. */
+function captureFailed(state, error) {
+  state.captureError = String(error);
+  void stop(state.id).catch((cause) => console.error('[recording] native capture cleanup failed:', cause.message));
 }
 
 /** Refuses (422) a session whose policy forbids recording, or a replica that cannot share recordings. */
@@ -81,13 +105,25 @@ async function assertRecordable(session) {
 }
 
 /** Creates the spool directory and starts collecting the page's screencast frames. */
-async function track(session, { conn, sessionId }) {
+async function track(session, transport) {
   const dir = join(DIR, session.id);
   await mkdir(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  const state = { conn, sessionId, id: session.id, dir, ...emptySpool(), ...ownership(session) };
+  const state = spoolState(session, transport, dir);
   active.set(session.id, state);
-  conn.on('Page.screencastFrame', async (params) => onFrame(state, params));
+  transport.conn?.on('Page.screencastFrame', async (params) => onFrame(state, params));
   return state;
+}
+
+/** Transport-independent encrypted spool state preserves ownership and pending writes. */
+function spoolState(session, transport, dir) {
+  return {
+    ...transport,
+    id: session.id,
+    dir,
+    writes: new Set<Promise<void>>(),
+    ...emptySpool(),
+    ...ownership(session),
+  };
 }
 
 /** A recording with nothing spooled yet, and no failed write to report. */
@@ -104,7 +140,12 @@ function onFrame(state, params) {
   // slow disk must not stall the recorded browser. A failed ack means the wire
   // is gone, and teardown closes the recording.
   state.conn.send('Page.screencastFrameAck', { sessionId: params.sessionId }, state.sessionId).catch(() => {});
-  if (isFull(state)) return;
+  storeFrame(state, params);
+}
+
+/** Admit only live bounded recordings; late protocol events cannot race manifest publication. */
+function storeFrame(state, params) {
+  if (active.get(state.id) !== state || isFull(state)) return;
   const buf = Buffer.from(params.data, 'base64');
   const index = state.frames.length;
   state.frames.push(frameEntry(state, index, params, buf));
@@ -119,11 +160,13 @@ function onFrame(state, params) {
  * frame after it and one line says as much as a thousand.
  */
 function spool(state, index, buf) {
-  writeFile(join(state.dir, frameFile(index)), sealFrame(state.id, index, buf)).catch((e) => {
+  const write = writeFile(join(state.dir, frameFile(index)), sealFrame(state.id, index, buf)).catch((e) => {
     if (state.writeFailed) return;
     state.writeFailed = true;
     console.error(`[gateway] recording frames not written to ${state.dir}:`, e.message);
   });
+  state.writes.add(write);
+  void write.finally(() => state.writes.delete(write));
 }
 
 /** The manifest's record of one frame: index, offset, viewport and size. */
@@ -142,6 +185,7 @@ export async function stop(sessionId) {
   if (!state) return false;
   active.delete(sessionId);
   await endScreencast(state);
+  await Promise.all(state.writes);
   await saveManifest(manifestOf(sessionId, state), state.dir);
   metrics.recordings.inc({ event: 'stop' });
   return true;
@@ -149,6 +193,7 @@ export async function stop(sessionId) {
 
 /** Stops the screencast and closes the recording connection. */
 async function endScreencast(state) {
+  if (state.native) return state.native.stop();
   try {
     await state.conn.send('Page.stopScreencast', {}, state.sessionId);
   } catch {
@@ -180,5 +225,11 @@ function timing(state) {
 
 /** Its frames, and whether a cap cut it short. */
 function contents(state) {
-  return { frameCount: state.frames.length, bytes: state.bytes, truncated: isFull(state), frames: state.frames };
+  return {
+    frameCount: state.frames.length,
+    bytes: state.bytes,
+    truncated: isFull(state),
+    captureError: state.captureError || null,
+    frames: state.frames,
+  };
 }

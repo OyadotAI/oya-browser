@@ -132,12 +132,12 @@ describe('TabManager', () => {
     assert.equal(tab.view.webContents.isDestroyed(), true);
   });
 
-  it('destroys a closed tab and detaches its debugger', () => {
+  it('destroys a closed tab without entering debugger cleanup', () => {
     const tab = ctx.tabs.find(ctx.tabs.createTab('https://a.test/'));
     tab.view.webContents.debugger.attach();
     ctx.tabs.closeTab(tab.id, { keepOne: false });
     assert.equal(tab.view.webContents.isDestroyed(), true);
-    assert.equal(tab.view.webContents.debugger.isAttached(), false);
+    assert.equal(tab.view.webContents.debugger.isAttached(), true);
   });
 
   it('shows the neighbour when the active tab closes', () => {

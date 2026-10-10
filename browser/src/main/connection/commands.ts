@@ -5,6 +5,7 @@
 import { DIALOG_SAFE_ACTIONS, DIALOG_HELD, describeDialog } from '../dialogs/index.ts';
 import type { AppServices } from '../app/services.ts';
 import type { CommandId, CommandParams } from '../actions/types.ts';
+import { captureSpecifiedTab } from './native-screenshot.ts';
 import { resultSummary } from './result-summary.ts';
 import { TAB_COMMANDS } from './tab-commands.ts';
 import { RESULT_CODES } from './constants.ts';
@@ -12,6 +13,7 @@ import { RESULT_CODES } from './constants.ts';
 /** What the commands use: the shell, the tabs and page actions, the socket, and the recorder and studio. */
 export type CommandDeps = Pick<
   AppServices,
+  | 'control'
   | 'windows'
   | 'shell'
   | 'tabs'
@@ -159,6 +161,10 @@ export class CommandRunner {
 
   /** Tab-level commands here; everything else acts on the active page. */
   private async dispatch(id: CommandId | undefined, action: string, params: RemoteParams | undefined) {
+    if (action === 'screenshot' && params?.tab_id !== undefined)
+      return this.sendResult(id, true, {
+        screenshot: await captureSpecifiedTab(this.deps, params.tab_id, params.format),
+      });
     if (Object.hasOwn(TAB_COMMANDS, action)) return TAB_COMMANDS[action](this, id, params);
     // All remaining actions need an active tab
     const view = this.deps.tabs.getActiveView();

@@ -23,6 +23,14 @@ async function accountPage(answers: Record<string, unknown> = {}) {
 }
 
 describe('the account card', () => {
+  it('shows terminal failure instead of promising endless reconnection', async () => {
+    const failure = 'Session setup failed. Restart Oya to retry.';
+    const app = await accountPage({ getStatus: { connected: false, failure } });
+    assert.equal(accountCard(app.account.state).connection, 'offline');
+    assert.equal(accountCard(app.account.state).connectionText, failure);
+    app.account.onStatus({ connected: true });
+    assert.equal(app.account.state.failure, undefined);
+  });
   it('names the person, their email, project and plan, with their initial', async () => {
     const app = await accountPage({ getStatus: { connected: true } });
     const card = accountCard(app.account.state);

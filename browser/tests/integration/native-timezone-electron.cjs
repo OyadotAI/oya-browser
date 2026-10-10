@@ -227,6 +227,7 @@ function checkPolicyFailures(late) {
   assert.throws(() => policyOwner.configure(invalid, { ...requested, languages: ['fr'] }));
   assert.deepEqual(invalid._getOyaSessionPolicy(), {
     version: 1,
+    preScriptPolicyVersion: 1,
     rendererStarted: false,
     timeZone: '',
     locale: '',

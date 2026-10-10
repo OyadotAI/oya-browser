@@ -68,9 +68,5 @@ export const LAST_TAB_DIGIT = 9;
 /** Named overlays the renderer may raise over the page. */
 export const OVERLAYS: readonly string[] = ['legacy', 'shell', 'address', 'notifications'];
 
-/** Suppress repeated motion prompts after declining a takeover. */
-export const TAKEOVER_COOLDOWN_MS = 15000;
-/** Pointer travel indicating deliberate interaction rather than small accidental motion. */
-export const TAKEOVER_MOVE_DISTANCE = 120;
 /** Native dialog response selecting an explicit takeover. */
 export const TAKEOVER_CHOICE = 1;

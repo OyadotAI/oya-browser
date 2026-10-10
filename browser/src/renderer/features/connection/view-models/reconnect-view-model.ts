@@ -3,6 +3,7 @@
  * while browsing: edit the server, key and name, then save and wait for the
  * connection to report back. A connection closes it.
  */
+import type { ConnectionStatus } from '../../../../shared/ipc.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import { RendererConstants as C } from '../../../core/constants.ts';
 import type { RendererServices } from '../../../app/services.ts';
@@ -55,7 +56,15 @@ export class ReconnectViewModel extends ViewModel<ReconnectState> {
     super({ open: false, server: '', apiKey: '', name: '', error: '', saving: false, button: TEXT.reconnectIdle });
     this.deps = deps;
     this.own(() => clearTimeout(this.timer));
-    this.own(deps.bridge.onWsStatus((status) => status.connected && this.connected()));
+    this.own(deps.bridge.onWsStatus((status) => this.connectionStatus(status)));
+  }
+
+  /** A terminal failure enables retry immediately, without replacing its reason with a timeout. */
+  private connectionStatus(status: ConnectionStatus): void {
+    if (status.connected) return this.connected();
+    if (!status.failure) return;
+    clearTimeout(this.timer);
+    this.set({ error: status.failure, ...this.idle(TEXT.reconnectRetry) });
   }
 
   /** "Connection settings…": closes the account dialog and opens this one. */

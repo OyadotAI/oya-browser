@@ -18,7 +18,7 @@ This file covers what is specific to the browser.
 
 ## Required native agent-control architecture
 
-**Target requirement; not yet satisfied by the current implementation.**
+**Production control uses native browser APIs. Release validation is platform-specific.**
 
 External agents may speak CDP to Oya's front door. That compatibility adapter
 must terminate the protocol and dispatch browser-owned native operations:
@@ -39,14 +39,15 @@ engine are separate concerns; this requirement governs the control architecture.
   cache cleanup even when another step fails. Failures propagate rather than
   claiming successful disposal. Late setup is cleaned again, and private-session
   tombstones remain. Unit and real Oya context tests cover the readiness boundary
-  and late native-cookie writes; this does not enable production persona mode.
+  and late native-cookie writes. Production persona policy is installed before
+  private context resources become visible.
 
 - External `Page.createIsolatedWorld` terminates in native owner-scoped V8 worlds,
   separate from the internal analyzer/recorder. Context tokens, value arguments,
   lifecycle notifications and release groups preserve exact tab/frame/world
   ownership. Named reuse is document-local, universal-origin access is rejected,
-  and old engines fail explicitly. This does not supply worker contexts or
-  replace the remaining persona/worker migration.
+  and old engines fail explicitly. External Runtime worker contexts remain
+  unsupported; worker persona protection is installed separately at engine startup.
 
 - The external native adapter provides machine-readable `Oya.getCapabilities`
   from its dispatch/validation tables; it explicitly reports partial compatibility
@@ -81,7 +82,8 @@ engine are separate concerns; this requirement governs the control architecture.
   `main/actions/pointer-commands.ts` now use native `sendInputEvent`, with no
   debugger fallback. `npm run test:native-input` launches Oya and makes debugger
   access fatal while testing trusted clicks, double-clicks, held drags and scroll
-  direction. This does not yet make the full application CDP-free.
+  direction. Production dependency tests separately enforce the complete shipped
+  control graph, including persona and workflow operations.
 - HTML drag/drop: `main/input/native-drag.ts` uses the patched engine's `_dragOya`
   operation, not a sequence that leaves an uncontrolled OS drag active. The engine
   owns renderer-filtered payloads and native drop acknowledgements. Focus loss,
@@ -160,12 +162,17 @@ engine are separate concerns; this requirement governs the control architecture.
   Tab creation no longer reads a debugger to track recording frames, and
   no-persona setup no longer auto-attaches targets just for recording. Native
   multi-window tests forbid debugger access on every application renderer.
-  The legacy server recording channel remains migration debt.
+  Registry-backed Oya fleet recordings now sample authorized native screenshots
+  of one explicit tab at 2 fps. Capture rechecks the exact tab and agent ownership
+  before returning pixels; the server rechecks the browser instance and tenant.
+  Encrypted spooling, caps, retention and archival remain in the existing pipeline.
+  Oya sessions without a native registry binding reject recording rather than
+  falling back to protocol capture. External-provider screencasts remain separate.
 - Focused text: the patched engine routes `insertText` to the focused native
   widget, fixing a renderer crash with cross-process frame focus. The regression
   records real native text input without debugger access.
-- Other observation: dialogs, telemetry and before-unload integration still need
-  their remaining native lifecycle migrations.
+- Session request and page-console observation use browser-owned events.
+  Production persona and worker startup use immutable native session protection.
 - The experimental native engine now offers an immutable session user-agent string
   with worker-startup and network-context ownership; `test:native-user-agent`
   exercises first-script values and real headers without a debugger. This does
@@ -180,20 +187,59 @@ engine are separate concerns; this requirement governs the control architecture.
   platform plus UA/metadata alongside timezone, locale/languages and processor
   count before publishing a context; partial installation retires the session.
   Metadata is deeply copied, frozen and compared against normalized native
-  readback. This certifies installation, not semantic persona coherence. Full persona
-  activation remains separate work.
-- Page protection: persona application, worker coverage and tab startup currently
-  rely on debugger commands. Preserve existing isolation and egress guarantees;
-  capabilities absent from public Electron APIs may require native engine work.
+  readback. `nativePolicyForPersona` now derives coherent UA, metadata and legacy
+  platform from the existing deterministic persona identity and the actual engine
+  version. Scalar installation alone is not a full protection verdict.
+- Page protection: production installs the existing page and worker scripts through
+  the immutable native session pre-script API before any renderer starts. Native
+  readback verifies both exact sources; missing capabilities or partial failures
+  quarantine the partition. Tabs and popups require the exact configured owner,
+  and private contexts receive the same protections. Reconnect reuses the original
+  randomized source strings. A changed live persona or egress requires restart.
+  Engine first-script and partition-isolation tests remain mandatory release gates.
 - Workflow target selection now uses native pre-dispatch mouse/key interception
   and a dedicated isolated world, without debugger attachment. Real Oya tests
   cover hover, selection without click-through, Escape cleanup and 200% zoom.
   The highlight intentionally adds a temporary DOM element while the user picks;
-  frame targets remain explicitly unsupported, as before. Validation automation
-  workers still need migration to the authorized native operation surface.
-- Front door: the current implementation proxies an upstream debug endpoint.
-  Replace it with an explicit supported-method adapter, Oya-owned target/session
-  identifiers and native events. Reject unsupported methods rather than forwarding.
+  frame targets remain explicitly unsupported, as before. Production workflow
+  validation now uses `main/workflow/native-validation.ts`, with immutable draft
+  snapshots, run-owned tabs and control admission around every native operation.
+  All workflow action kinds now have native implementations: navigation/history,
+  click/double-click/hover, type/key chords/scroll, select/upload, waits/assertions
+  and checkpoints. CSS, test-ID, placeholder, role, label and text locators resolve
+  to exact run-owned isolated DOM node capabilities. Role names use the bundled
+  MIT `dom-accessibility-api` implementation. Frame locators follow native owner
+  tokens across processes, including nested duplicate-URL frames; pointer routing
+  hit-tests every parent and respects page zoom. Rotated/non-invertible frame
+  transforms fail explicitly rather than guessing coordinates.
+  Empty replacements clear fields; stop/takeover/document replacement fences
+  further input. Assertions may retry, but uncertain input never replays. Upload
+  files are explicit absolute regular-file paths snapshotted before browser side
+  effects, capped at 16 MiB each and 32 MiB per run. Only file bytes/basenames/MIME
+  metadata reach the selected input, never local paths. Upload and option selection
+  use native isolated DOM FileList/value assignment with **synthetic input/change
+  events**, not a claimed native file-chooser gesture. Folder inputs are refused.
+  Native editing supplies platform Select All behavior; other key chords use native
+  key modifiers. Safe screenshot masking remains unavailable; evidence requests
+  report omission. The real Oya regression forbids debugger access and exercises
+  accessibility locators, trusted pointer/text input, Unicode, empty replacement,
+  chords, option/file assignment, nested cross-origin frames, history and ownership.
+  Exported standalone Playwright modules remain a separate external compatibility
+  format; production validation starts no worker or debugging proxy.
+- Front door: the production loopback listener and authenticated control-socket
+  relay terminate external protocol frames in native Oya operations. Neither
+  connects to an upstream debugging endpoint. The listener requires a bearer
+  token, refuses browser origins and binds loopback only. Remote sessions preserve
+  separate native handles, bounded command ordering and human-control checks;
+  remote download destinations are refused. Managed browsers need no listener.
+  Compatibility is explicitly partial; unsupported methods never fall back.
+  Static tests enforce migrated native module boundaries, and real patched-Oya
+  tests exercise the production relay with debugger access forbidden. The old
+  proxy module remains only as legacy code pending removal of old fixtures.
+  Both entry points require the native session lifecycle, now the production
+  default. Startup never opens a Chromium debugging port. The shipped dependency
+  graph excludes retired protocol workers, proxy backends and debugger protection.
+  Actual engine and platform acceptance reports govern release readiness.
 - Tests: `test:analyzer` now runs real DOM checks in Oya, including nested frameset
   reading and a trusted click through the production page command. The opt-in
   `OYA_NATIVE_ENGINE=/path/to/Oya npm run test:internet` exercises the public
@@ -535,18 +581,18 @@ per-browser endpoint to make the target unambiguous.
 
 ## Tests
 
-| Command                                                       | Runs                                                                                             |
-| :------------------------------------------------------------ | :----------------------------------------------------------------------------------------------- |
-| `npm test`                                                    | unit, then the node-only integration suites                                                      |
-| `npm run test:unit`                                           | `tests/unit/**/*.test.{js,cjs,mjs,ts}`                                                           |
-| `npm run test:integration`                                    | regressions, control state, release guard, workflow model, the analyzer and recorder DOM         |
-| `npm run test:coverage`                                       | unit tests with a coverage report                                                                |
-| `npm run typecheck`, `npm run build`                          | `tsc --noEmit`; electron-vite into `out/`                                                        |
-| `npm run test:shell`, `test:control`                          | the shell and the control handoff in real Electron; `test:shell` saves screenshots               |
-| `npm run test:recording`, `test:workflow`                     | recording requires explicit Oya native engine; legacy workflow validation remains migration debt |
-| `npm run test:identity`                                       | page identity vs request headers, passkeys, permissions, in real Electron                        |
-| `npm run test:agent`, `test:model-sync`, `test:routines-sync` | server commands, model settings and routines against a local or fake server                      |
-| `npm run test:sync`                                           | a login survives a server outage: real app and real local server                                 |
+| Command                                                       | Runs                                                                                          |
+| :------------------------------------------------------------ | :-------------------------------------------------------------------------------------------- |
+| `npm test`                                                    | unit, then the node-only integration suites                                                   |
+| `npm run test:unit`                                           | `tests/unit/**/*.test.{js,cjs,mjs,ts}`                                                        |
+| `npm run test:integration`                                    | regressions, control state, release guard, workflow model, the analyzer and recorder DOM      |
+| `npm run test:coverage`                                       | unit tests with a coverage report                                                             |
+| `npm run typecheck`, `npm run build`                          | `tsc --noEmit`; electron-vite into `out/`                                                     |
+| `npm run test:shell`, `test:control`                          | the shell and the control handoff in real Electron; `test:shell` saves screenshots            |
+| `npm run test:recording`, `test:workflow`                     | both require explicit Oya native engine; workflow runs the native supported-subset regression |
+| `npm run test:identity`                                       | page identity vs request headers, passkeys, permissions, in real Electron                     |
+| `npm run test:agent`, `test:model-sync`, `test:routines-sync` | server commands, model settings and routines against a local or fake server                   |
+| `npm run test:sync`                                           | a login survives a server outage: real app and real local server                              |
 
 The Electron suites that launch the app build first (`npm run build`) and
 launch the browser folder, so they run what ships. Unit tests use `node:test`
@@ -711,21 +757,14 @@ rejected the normal development build on 2026-10-08 before a passkey ceremony;
 its support article (https://support.google.com/accounts/answer/7675428) lists
 embedded and automated browsers among possible causes, not an exact diagnosis.
 
-The separate development flag `--oya-native-browsing` exercises the **normal
-Oya shell and persistent profile** with native engine identity. It skips eager
-CDP attachment, persona/worker emulation, main-world injection and automatic
-analyzer startup. Explicit agent analysis still uses the existing control gate
-and isolated-world analyzer on demand. The browser session keeps its permission
-checks and ordinary profile-local storage; no diagnostic cookies are copied.
-Governed, Docker, debug-port and packaged launches refuse this trial, and a
-proxied persona fails session setup rather than silently exposing native identity.
-
-This flag is not a default or a Gmail acceptance claim. The user successfully
-signed in through an authenticator alternative in the isolated diagnostic;
-normal-shell login and session persistence need separate verification. Native
-mode does not eagerly install the CDP dialog-to-notification observer or remote
-localStorage mirroring. Agent/recording use can attach instrumentation later;
-repeat sign-in after agent use needs testing before production enablement.
+Normal Oya startup now requires the complete native session lifecycle in both
+development and packaged builds. The former `--oya-native-browsing` switch is no
+longer necessary to activate it. Persona scalar policy and original protection
+scripts are installed before renderers start; native dialogs, recording, storage
+sync and explicit analyzer operations use browser-owned APIs. Proxy, governance,
+permissions and human control remain enforced. The separate human sign-in diagnostic
+still uses its isolated development-only mode; it is not a Gmail acceptance or
+platform-passkey guarantee.
 
 ### Multiple browser windows and live tab transfer
 
@@ -808,5 +847,5 @@ failure does not silently stop the browser. This protocol is storage-only and
 never grants agent control of a page. The packaging probe verifies actual native
 storage operations, not just the presence of function names.
 
-This is integrated in the native-browsing path, not evidence that the default
-legacy path, native worker/persona protection, or platform release matrix is done.
+This is integrated in the default native lifecycle. Platform release readiness
+still requires the corresponding engine build and native acceptance report.

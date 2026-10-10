@@ -26,6 +26,7 @@ const PAGES: Entry[] = [
   { path: '/docs.md', changeFrequency: 'weekly', priority: 0.8 },
   ...DOC_PAGES.map(({ slug }): Entry => ({ path: `/docs/${slug}.md`, changeFrequency: 'weekly', priority: 0.6 })),
   { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
+  { path: '/trust', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
   { path: '/llms-full.txt', changeFrequency: 'weekly', priority: 0.6 },
   { path: '/openapi.json', changeFrequency: 'weekly', priority: 0.5 },

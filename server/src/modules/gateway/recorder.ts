@@ -1,9 +1,11 @@
 /**
  * Session recording.
  *
- * Frames come from CDP Page.startScreencast on a second connection to the same
- * browser, nothing is injected into the page, and the client's own wire is
- * untouched, so a client using screencast itself is unaffected.
+ * Oya fleet attachments sample an exact protected tab through authorized native
+ * screenshot commands. External providers retain their separate screencast
+ * connection. Nothing is injected and the client's compatibility wire is untouched.
+ * Native sampling stops on ownership/control loss; a sealed captureError explains
+ * interruption. Frame writes settle before the sealed manifest is archived.
  *
  * Recording is opt-in per session (?record=1) because storage scales with
  * fleet size: at 1k-5k sessions, recording everything by default would be the

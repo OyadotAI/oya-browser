@@ -34,6 +34,8 @@ const OFFLINE: Partial<ShellStatus> & ConnectionStatus = { connected: false };
 
 /** The pill for a connection status. */
 export function pillFor(status: ConnectionStatus): ConnectionPillState {
+  if (!status.connected && status.failure)
+    return { className: 'conn-pill', label: 'Connection failed', title: status.failure };
   if (!status.connected)
     return { className: 'conn-pill', label: 'Offline', title: 'Not connected, click to configure' };
   const id = status.browserId ? `, ${status.browserId}` : '';

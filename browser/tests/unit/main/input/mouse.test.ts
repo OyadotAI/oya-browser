@@ -61,4 +61,14 @@ describe('native mouse', () => {
     await new Mouse().scroll(view, 1, 2, 3, 4);
     assert.deepEqual(mouseEvents(view), [{ type: 'mouseWheel', x: 1, y: 2, deltaX: -3, deltaY: -4 }]);
   });
+
+  it('human takeover during a path prevents every subsequent native event', async () => {
+    instantTimers();
+    const view = pageView();
+    const guard = (): void => {
+      if (mouseEvents(view).length) throw Error('Human control');
+    };
+    await assert.rejects(new Mouse().move(view, 300, 400, guard), /Human control/);
+    assert.equal(mouseEvents(view).length, 1);
+  });
 });

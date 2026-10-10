@@ -84,6 +84,12 @@ function render(rows, when) {
   ].join('\n');
 }
 
+/** One control as the trust page reads it: what it is, its verdict and what the check found. */
+function summary(control, result) {
+  const { id, title, requirement } = control;
+  return { id, title, requirement, verdict: verdict(control, result), detail: result?.detail };
+}
+
 /** Writes both artifacts and exits non-zero when a control fails outright. */
 async function main() {
   const results = await runChecks();
@@ -92,7 +98,7 @@ async function main() {
   await writeFile(REPORT_PATH, render(rows, when));
   await writeFile(
     RESULT_PATH,
-    JSON.stringify({ generated: when, controls: rows.map(({ control, result }) => ({ id: control.id, verdict: verdict(control, result), detail: result?.detail })) }, null, 2),
+    JSON.stringify({ generated: when, controls: rows.map(({ control, result }) => summary(control, result)) }, null, 2),
   );
   const failing = rows.filter(({ control, result }) => verdict(control, result) === 'FAIL');
   console.log(`${REPORT_PATH}: ${rows.length} controls, ${failing.length} failing`);

@@ -38,8 +38,8 @@ module.exports = async function personaStorageChecks(electron, origin, mutation)
     await win.webContents.loadURL(origin);
     assert.equal(win.webContents.getTitle(), 'Native Persona');
     assert.equal(
-      persona.loginState,
-      null,
+      Object.hasOwn(persona, 'loginState'),
+      false,
       'native profile initialization never constructs the CDP LoginState transport',
     );
     await mutation(jar, origin, () => win.webContents.executeJavaScript('localStorage.clear()'));

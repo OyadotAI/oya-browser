@@ -2,6 +2,7 @@
 import { POLICY_METHODS } from './constants.ts';
 import type { NativePolicy, PolicyBinding, PolicyEngine, PolicySession } from './types.ts';
 import { validatePolicy } from './validate.ts';
+import { nativePolicyForPersona } from './persona.ts';
 import { readState, verifyInstalled } from './state.ts';
 
 /** Detect an incomplete engine before making even the first irreversible setter call. */
@@ -57,6 +58,11 @@ export class NativeSessionPolicies {
     const binding: PolicyBinding = { policy, state: 'installing' };
     this.bindings.set(session, binding);
     return commitNativePolicy(engine, binding);
+  }
+
+  /** Derive coherent identity before installing only the supported native subset. */
+  configurePersonaSubset(session: PolicySession, persona: unknown, actualEngineUserAgent?: string): NativePolicy {
+    return this.configure(session, nativePolicyForPersona(persona, actualEngineUserAgent));
   }
 
   /** Refuse exposure until this owner has installed the complete supported subset. */

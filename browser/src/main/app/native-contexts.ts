@@ -3,6 +3,7 @@ import type { NativeDownloads } from '../native-downloads/index.ts';
 import type { Session } from 'electron';
 import type { AppServices } from './services.ts';
 import { NativeContexts } from '../native-contexts/index.ts';
+import { capturePersonaPolicy } from './persona-policy.ts';
 import { configureSession } from '../identity/session.ts';
 /** Exclusively owned session resources are installed after policy and revoked before tab disposal. */
 interface Resources {
@@ -40,10 +41,22 @@ class ContextSetup {
   async configure(session: Session): Promise<void> {
     const d = this.deps;
     if (!d.nativeBrowsing) throw Error('Browser contexts require native browsing mode');
-    await configureSession(d.electron.app, session, d.persona.active, {
+    const assertCurrent = capturePersonaPolicy(d.persona, d.governance);
+    await this.routeSession(session);
+    assertCurrent();
+    d.protection.configureSession(session);
+    this.installResources(session);
+  }
+  /** Install permissions and proxy before any private renderer exists. */
+  private routeSession(session: Session): Promise<void> {
+    const d = this.deps;
+    return configureSession(d.electron.app, session, d.persona.active, {
       nativeBrowsing: true,
       governance: d.governance,
     });
+  }
+  /** Resource activation follows complete native identity installation. */
+  private installResources(session: Session): void {
     this.resources.downloads.install(session);
     this.resources.network.install(session);
   }

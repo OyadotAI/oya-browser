@@ -1,15 +1,26 @@
 # Native external CDP compatibility
 
-**Development-only, partial compatibility. Not a complete CDP implementation.**
+**Partial compatibility. Not a complete CDP implementation.**
 
 The listener terminates external CDP requests and invokes Oya-owned native APIs.
 It never forwards to a debugging endpoint, attaches Electron's debugger, or falls
-back to internal CDP. Existing legacy adapters elsewhere are separate migration debt.
+back to internal CDP. Retired adapters are excluded from the shipped dependency graph.
 
 ## Activation
 
-In `--oya-native-browsing` mode, set `OYA_NATIVE_CDP_PORT` and
+The adapter uses the production native session lifecycle. The patched engine must
+install and verify immutable persona policy and page/worker pre-script sources
+before any tab or private context becomes visible. A missing capability fails
+startup; there is no legacy fallback. Native workflow validation uses the same
+protected sessions and human-control admission checks.
+
+Set `OYA_NATIVE_CDP_PORT` (or the legacy `OYA_REMOTE_DEBUGGING_PORT` alias) and
 `OYA_NATIVE_CDP_TOKEN` (at least 32 characters; generate a random secret).
+Legacy port `0` disables the listener; explicit native port `0` requests an
+ephemeral authenticated listener. Managed cloud browsers use the authenticated
+control-socket relay and require no local listener.
+Conflicting port aliases and explicit hosts other than `127.0.0.1` fail at startup.
+The legacy port selects this native adapter, never the old upstream proxy.
 The listener binds only `127.0.0.1`. Both HTTP discovery and WebSocket upgrades
 require `Authorization: Bearer <token>`. Browser Origin headers are rejected;
 credentials cannot be provided in URLs. Never publish a token in logs or screenshots.
@@ -17,7 +28,9 @@ credentials cannot be provided in URLs. Never publish a token in logs or screens
 Discovery: `/json/version`, `/json/list`. WebSockets: `/devtools/browser` and
 `/devtools/page/<targetId>`. A browser connection attaches using
 `Target.attachToTarget` with `flatten:true`; page commands then include its
-returned `sessionId`. No Chromium debugging endpoint is required or permitted.
+returned `sessionId`. This adapter never requires or accesses a Chromium debugging
+endpoint. Release evidence includes production dependency enforcement and actual
+patched-engine integration, not merely adapter-level checks.
 
 ## Implemented subset
 

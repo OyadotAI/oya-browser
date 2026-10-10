@@ -234,10 +234,9 @@ assert.ok(
 );
 assert.ok(/Promise\.race\(\[tab\.ready\.catch/.test(src), 'waitForTabReady must bound the wait');
 
-// setupTabCDP must run after the view has a renderer (before one, CDP's Page
-// domain never answers), and each attempt must be bounded so a hung command
-// cannot strand the tab. Since move 7 a tab that is still not protected after
-// two attempts fails closed rather than loading its page unprotected.
+// Session protection precedes construction. The compatibility-named tab readiness
+// check remains bounded after about:blank so dialog/world initialization cannot
+// strand a tab or expose a destination whose native setup failed.
 assert.ok(
   /const blank = tab\.view\.webContents\.loadURL\('about:blank'\)/.test(src) &&
     /withinTime\(\s*blank\.then\(\(\) => this\.deps\.protection\.setupTabCDP\(view\)\),\s*CDP_SETUP_TIMEOUT,?\s*\)/.test(
@@ -262,7 +261,8 @@ assert.match(
   src,
   /if \(NATIVE_SIGNIN_TEST\) \{\s*app.whenReady\(\).then\(\(\) => startNativeSigninTest\(electron\)\);\s*app.on\('window-all-closed', \(\) => app.quit\(\)\);\s*\} else \{/,
 );
-assert.match(src, /if \(!NATIVE_BROWSING\) app.commandLine.appendSwitch\('remote-debugging-port'/);
+assert.doesNotMatch(src, /app\.commandLine\.appendSwitch\(['"]remote-debugging-port/);
+assert.match(src, /deps\.protection\.assertSession\(session \|\| deps\.persona\.session\(\)\)/);
 assert.strictEqual(
   pageLoads.length,
   1,

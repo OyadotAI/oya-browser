@@ -29,3 +29,27 @@ export const STORAGE_PAIR_LENGTH = 2;
 
 /** Batch native storage mutations without repeatedly scanning unchanged origins. */
 export const STORAGE_FLUSH_MS = 2000;
+
+/** Native rejection labels safe to count without exposing cookie names, domains or values. */
+export const COOKIE_REJECTION_CODES = [
+  'EXCLUDE_UNKNOWN_ERROR',
+  'EXCLUDE_FAILURE_TO_STORE',
+  'EXCLUDE_INVALID_DOMAIN',
+  'EXCLUDE_INVALID_PREFIX',
+  'EXCLUDE_INVALID_PATH',
+  'EXCLUDE_SAMESITE_NONE_INSECURE',
+  'EXCLUDE_NAME_VALUE_PAIR_EXCEEDS_MAX_SIZE',
+  'EXCLUDE_ATTRIBUTE_VALUE_EXCEEDS_MAX_SIZE',
+  'EXCLUDE_DOMAIN_NON_ASCII',
+  'EXCLUDE_DISALLOWED_CHARACTER',
+  'EXCLUDE_NO_COOKIE_CONTENT',
+  'EXCLUDE_AMBIGUOUS_SERIALIZATION',
+  'EXCLUDE_OVERWRITE_SECURE',
+  'EXCLUDE_OVERWRITE_HTTP_ONLY',
+  'EXCLUDE_USER_PREFERENCES',
+  'EXCLUDE_DOMAIN_MISMATCH',
+  'EXCLUDE_NOT_ON_PATH',
+] as const;
+
+/** Native refusal preserves an existing stronger local cookie instead of importing a weaker server copy. */
+export const COOKIE_LOCAL_CONFLICT_CODES = ['EXCLUDE_OVERWRITE_SECURE', 'EXCLUDE_OVERWRITE_HTTP_ONLY'] as const;

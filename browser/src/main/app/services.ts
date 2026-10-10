@@ -41,7 +41,7 @@ import type { Governance } from '../identity/governance.ts';
 export interface AppServices {
   /** Native window ownership, absent only in isolated unit-test contexts. */
   windows?: import('../windows/index.ts').BrowserWindows;
-  /** Native desktop compatibility trial: no persona emulation or eager page instrumentation. */
+  /** Native session lifecycle; production requires complete engine-owned persona protection. */
   nativeBrowsing?: boolean;
 
   /** Native passkey account selection, never exposed to agent tools. */

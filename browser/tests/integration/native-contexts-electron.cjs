@@ -8,6 +8,7 @@ const { once } = require('node:events');
 const { randomBytes } = require('node:crypto');
 const electron = require('electron');
 const { WebSocket } = require('ws');
+const { Protection } = require('../../src/main/tabs/protection.ts');
 const { AppNativeBackend } = require('../../src/main/app/native-cdp.ts');
 const { startNativeFrontDoor } = require('../../src/main/native-front-door/index.ts');
 const { WindowTabEvents } = require('../../src/main/windows/tab-events.ts');
@@ -37,6 +38,7 @@ function dependencies() {
       createTab(url, activate, _options, session) {
         assert.ok(session, 'fixture only creates explicitly private tabs');
         assert.equal(activate, true, 'private targets must mount before agent readiness and input');
+        deps.protection.assertSession(session);
         const win = new BrowserWindow({
           show: false,
           webPreferences: { session, sandbox: true, contextIsolation: true, nodeIntegration: false },
@@ -64,6 +66,7 @@ function dependencies() {
     },
     windows: { allTabs: () => tabs, tabEvents, owner: () => deps },
   };
+  deps.protection = new Protection(deps);
   return deps;
 }
 /** Authenticated external client owns only its own context and flat-session namespace. */

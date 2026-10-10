@@ -8,6 +8,7 @@ const { startNativeFrontDoor } = require('../../src/main/native-front-door/index
 module.exports = async function fixtureFrontDoor(window, local) {
   const tab = { id: 1, home: false, protection: 'protected', view: { webContents: window.webContents } };
   const backend = new AppNativeBackend({
+    nativeBrowsing: true,
     windows: { allTabs: () => [tab], tabEvents: new WindowTabEvents(), owner: () => ({ shell: { window } }) },
     tabs: { activateTab() {} },
     control: { busy: false, localHeld: false, connected: false, state: { mode: 'offline' } },

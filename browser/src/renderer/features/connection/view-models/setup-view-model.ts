@@ -4,6 +4,7 @@
  * pairing link), waiting (for that sign-in to finish) and manual (server
  * address, API key and browser name, for self-hosters).
  */
+import type { ConnectionStatus } from '../../../../shared/ipc.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import { RendererConstants as C } from '../../../core/constants.ts';
 import type { RendererServices } from '../../../app/services.ts';
@@ -65,9 +66,16 @@ export class SetupViewModel extends ViewModel<SetupState> {
     this.bridge = deps.bridge;
     this.shell = deps.shell;
     this.own(() => clearTimeout(this.timer));
-    this.own(this.bridge.onWsStatus((s) => s.connected && this.set({ busy: false, error: '' })));
+    this.own(this.bridge.onWsStatus((s) => this.connectionStatus(s)));
     this.own(this.bridge.onModeChanged((mode) => mode !== 'browsing' && this.loggedOut()));
     void this.load();
+  }
+
+  /** Terminal setup failures stop the spinner immediately and preserve the recovery instruction. */
+  private connectionStatus(status: ConnectionStatus): void {
+    if (!status.connected && !status.failure) return;
+    clearTimeout(this.timer);
+    this.set({ busy: false, error: status.failure || '' });
   }
 
   /** Fills the form from the saved settings. */

@@ -251,6 +251,7 @@ function fakeElectron() {
         this.handlers.set(channel, fn);
       },
     },
+    webContents: { getAllWebContents: () => [] },
     session: { fromPartition: (name) => ({ name, cookies: { flushStore: async () => {} }, flushStorageData() {} }) },
     app: Object.assign(new EventEmitter(), {
       quit() {
@@ -391,7 +392,14 @@ function mainCtx(real = {}) {
     },
     layout: { layoutActiveTab() {}, reveal() {}, flush() {} },
     overlays: { names: new Set() },
-    protection: { setupTabCDP: async () => true, resetTabCDP() {}, injectScripts: async () => {}, protectPopup() {} },
+    protection: {
+      assertSession() {},
+      configureSession() {},
+      setupTabCDP: async () => true,
+      resetTabCDP() {},
+      injectScripts: async () => {},
+      protectPopup() {},
+    },
     dialogs: new DesktopDialogs(
       () => false,
       () => () => {},

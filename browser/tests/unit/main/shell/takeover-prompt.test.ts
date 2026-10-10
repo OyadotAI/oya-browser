@@ -1,4 +1,4 @@
-/** Input-triggered takeover never grants control without an explicit confirmation. */
+/** Explicit takeover never grants control without an explicit confirmation. */
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -40,7 +40,7 @@ it('accepting acquires control once', async () => {
   await f.prompt.request();
   assert.deepEqual(f.changes, ['acquire']);
 });
-it('deduplicates simultaneous input and rechecks ownership before accepting', async () => {
+it('deduplicates simultaneous requests and rechecks ownership before accepting', async () => {
   let settle!: (answer: { /** Native dialog button index. */ response: number }) => void;
   const f = fixture(
     () =>
@@ -56,15 +56,25 @@ it('deduplicates simultaneous input and rechecks ownership before accepting', as
   await first;
   assert.deepEqual(f.changes, []);
 });
-it('ignores small pointer motion and suppresses repeated motion prompts after decline', async () => {
-  const f = fixture();
+it('passive movement, clicks and typing never prompt or acquire control', async () => {
+  const f = fixture(async () => ({ response: 1 }));
   const contents = new EventEmitter();
+  let blocked = false;
   f.prompt.install(contents as any);
   contents.emit('before-mouse-event', {}, { type: 'mouseMove', x: 0, y: 0 });
-  contents.emit('before-mouse-event', {}, { type: 'mouseMove', x: 2, y: 0 });
-  assert.equal(f.count(), 0);
-  contents.emit('before-mouse-event', {}, { type: 'mouseMove', x: 200, y: 0 });
-  await new Promise((resolve) => setImmediate(resolve));
   contents.emit('before-mouse-event', {}, { type: 'mouseMove', x: 500, y: 0 });
-  assert.equal(f.count(), 1);
+  contents.emit('before-mouse-event', {}, { type: 'mouseDown', x: 500, y: 0 });
+  contents.emit(
+    'before-input-event',
+    {
+      preventDefault: () => {
+        blocked = true;
+      },
+    },
+    { type: 'keyDown', key: 'a' },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.count(), 0);
+  assert.deepEqual(f.changes, []);
+  assert.equal(blocked, true);
 });

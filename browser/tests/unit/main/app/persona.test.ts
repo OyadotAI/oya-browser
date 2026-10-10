@@ -150,17 +150,98 @@ describe('Persona', () => {
     assert.deepEqual(order, []);
   });
 
-  it('keeps the login state for the same persona and forwards storage changes only when online', () => {
-    ctx.persona.ensureLoginState({ origins: {}, fingerprint: { id: 'p1' } });
-    const first = ctx.persona.loginState;
-    ctx.persona.active = PROFILE;
-    ctx.persona.ensureLoginState({ fingerprint: { id: 'p1' } });
-    assert.equal(ctx.persona.loginState, first);
-    first.onChange({ 'https://a.test': { k: 'v' } });
-    ctx.socket.ready = false;
-    first.onChange({});
-    assert.deepEqual(ctx.socket.ofType('storage_changed'), [
-      { type: 'storage_changed', origins: { 'https://a.test': { k: 'v' } } },
-    ]);
+  it('binds login imports to the authenticated native partition and refuses missing identity', async () => {
+    const imports = [];
+    ctx.persona.storage.dispose();
+    ctx.persona.storage = { activate: async (session, origins) => imports.push([session.name, origins]) };
+    await ctx.persona.ensureLoginState({ origins: { 'https://a.test': { k: 'v' } }, fingerprint: { id: 'p1' } });
+    assert.deepEqual(imports, [['persist:oya-p1', { 'https://a.test': { k: 'v' } }]]);
+    assert.throws(() => ctx.persona.ensureLoginState({}), /authenticated persona/);
   });
+});
+
+/** A cold native session with observable egress and protection installation. */
+function nativePersonaFixture() {
+  const ctx = mainCtx();
+  const events = [];
+  const session = {
+    setPermissionRequestHandler() {},
+    setPermissionCheckHandler() {},
+    async setProxy() {
+      events.push('proxy');
+    },
+  };
+  ctx.electron.session.fromPartition = () => session;
+  ctx.protection = {
+    configureSession() {
+      events.push('protection');
+    },
+    assertSession() {
+      events.push('assert');
+    },
+  };
+  ctx.persona = new Persona(ctx);
+  return { ctx, events };
+}
+it('native reconnect reuses identity and egress without changing a live session', async () => {
+  const { ctx, events } = nativePersonaFixture();
+  await ctx.persona.setupBrowserSession();
+  await ctx.persona.setupBrowserSession();
+  assert.deepEqual(events, ['proxy', 'protection', 'assert']);
+  ctx.persona.disposeStorage();
+});
+it('changed native egress is refused before changing proxy or protection', async () => {
+  const { ctx, events } = nativePersonaFixture();
+  await ctx.persona.setupBrowserSession();
+  ctx.persona.active = PROFILE;
+  await assert.rejects(ctx.persona.setupBrowserSession(), /restart Oya/);
+  assert.deepEqual(events, ['proxy', 'protection']);
+  ctx.persona.disposeStorage();
+});
+it('a refused same-persona update retains the previous active and persisted identity', async () => {
+  const ctx = mainCtx({ persona: Persona });
+  ctx.persona.active = PROFILE;
+  ctx.persona.setupBrowserSession = async () => {
+    throw Error('native policy changed');
+  };
+  await assert.rejects(ctx.persona.applyServerFingerprint({ ...PROFILE, locale: 'fr-FR' }), /policy changed/);
+  assert.equal(ctx.persona.active, PROFILE);
+  assert.equal(ctx.config.values.activeProfileId, undefined);
+  ctx.persona.disposeStorage();
+});
+
+it('a persona change during proxy setup never protects the wrong partition', async () => {
+  const { ctx, events } = nativePersonaFixture();
+  const pending = ctx.persona.setupBrowserSession();
+  ctx.persona.active = PROFILE;
+  await assert.rejects(pending, /changed during session setup/);
+  assert.deepEqual(events, ['proxy']);
+  ctx.persona.disposeStorage();
+});
+it('overlapping cold configuration is refused before a second proxy mutation', async () => {
+  const { ctx, events } = nativePersonaFixture();
+  const pending = ctx.persona.setupBrowserSession();
+  await assert.rejects(ctx.persona.setupBrowserSession(), /already in progress/);
+  await pending;
+  assert.deepEqual(events, ['proxy', 'protection']);
+  ctx.persona.disposeStorage();
+});
+it('switching away and back during proxy setup invalidates its generation', async () => {
+  const { ctx, events } = nativePersonaFixture();
+  const pending = ctx.persona.setupBrowserSession();
+  ctx.persona.policyEpoch = Symbol();
+  await assert.rejects(pending, /changed during session setup/);
+  assert.deepEqual(events, ['proxy']);
+  ctx.persona.disposeStorage();
+});
+
+it('partial native setup cannot change proxy on retry after protection installation fails', async () => {
+  const { ctx, events } = nativePersonaFixture();
+  ctx.protection.configureSession = () => {
+    throw Error('installation failed');
+  };
+  await assert.rejects(ctx.persona.setupBrowserSession(), /installation failed/);
+  await assert.rejects(ctx.persona.setupBrowserSession(), /incomplete; restart Oya/);
+  assert.deepEqual(events, ['proxy']);
+  ctx.persona.disposeStorage();
 });

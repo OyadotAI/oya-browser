@@ -7,8 +7,7 @@ import type { App, Session } from 'electron';
 import { configureProxy, type LoginApp, type ProxyConfig } from '../../anonymity/proxy.ts';
 import { watchSession } from '../observe/install.ts';
 import type { Observer } from '../observe/observer.ts';
-import { personaIdentity, type PersonaProfile } from './identity.ts';
-import { ClientHints } from './client-hints.ts';
+import type { PersonaProfile } from './identity.ts';
 import { installPermissions, type ExternalAppRequest } from './permissions.ts';
 import type { Governance } from './governance.ts';
 
@@ -45,7 +44,6 @@ export async function configureSession(
   activeProfile: SessionProfile | null,
   extras: SessionExtras = {},
 ): Promise<void> {
-  configureIdentity(app, ses, activeProfile, extras);
   await routeTraffic(app, ses, activeProfile, extras);
   if (extras.observer) watchSession(extras.observer, ses);
 }
@@ -60,31 +58,4 @@ async function routeTraffic(
   installPermissions(ses, externalApp, media);
   await configureProxy(ses, governance?.configuration?.proxy || activeProfile?.proxy, app);
   governance?.install(ses);
-}
-
-/** The persona's user agent and client hints on the session (and the app's fallback). */
-function presentIdentity(app: AppFallback, ses: Session, activeProfile: SessionProfile | null): void {
-  // Telemetry blocking is handled by Chromium flags (applyTelemetryFlags).
-  // Domain-level blocking via onBeforeRequest was removed, it interfered
-  // with normal page loads and handler stacking on session reuse.
-  const identity = personaIdentity(activeProfile, ses.getUserAgent());
-  ses.setUserAgent(identity.userAgent, identity.override.acceptLanguage);
-  // Service workers never read the session's user agent: they take the app-wide
-  // fallback, which is Electron's own ("OyaBrowser/… Electron/…"), in
-  // navigator.userAgent and on every request they send. CreepJS reads it off its
-  // service worker and flags the page and worker disagreeing.
-  app.userAgentFallback = identity.userAgent;
-  new ClientHints(identity.hints).install(ses);
-}
-
-/** Native desktop mode must never silently ignore persona proxy or governance requirements. */
-function configureIdentity(
-  app: AppFallback,
-  ses: Session,
-  profile: SessionProfile | null,
-  extras: SessionExtras,
-): void {
-  if (extras.nativeBrowsing && (profile?.proxy || extras.governance?.configuration))
-    throw new Error('Native browsing cannot use a proxied or governed persona.');
-  if (!extras.nativeBrowsing) presentIdentity(app, ses, profile);
 }

@@ -8,8 +8,18 @@ import { pageGuide } from './element-index.ts';
 /** How to read analyze_page's output, in the configured format. */
 const PAGE_GUIDE = pageGuide();
 
-/** How the agent works a task: act, fill forms, handle blockers, report. */
+/**
+ * How the agent works a task: clarify consequential gaps, act, handle blockers, report.
+ * A request such as finding a cheap flight from Indiana to San Francisco lacks dates,
+ * trip type and acceptable airports; invented values would make its prices meaningless.
+ * The clarification rule applies to missing constraints generally, not to travel keywords.
+ */
 const SYSTEM_PROMPT = `You are a web automation agent, not a chat assistant. You carry out one task end to end in a real browser that belongs to the user (their cookies, logins and sessions). Every action you take is recorded as a playbook that is later replayed without you, so act the way a careful operator would and in a way that can be repeated.
+
+BEFORE ACTING
+- Check whether missing constraints would materially change the answer, price, eligibility or scope. Do not invent dates, locations, quantities or service options, or accept a site's defaults as the user's choices.
+- If those constraints are missing, call request_human with one concise question grouping the essential missing details. Wait for the answer before dependent searches, form filling or other browser actions; do not batch those actions with the question.
+- Honor explicit flexibility or permission to choose. Do not ask again for details already supplied, or ask about optional preferences that do not prevent a useful answer.
 
 HOW TO ACT
 1. Call analyze_page (or find, when you know what you are looking for) before your first click or type on a page. Element ids exist only in the latest analysis and reset on every call: never guess them or reuse old ones.
@@ -173,7 +183,7 @@ export const REQUEST_HUMAN = {
   function: {
     name: 'request_human',
     description:
-      'Ask a person for help when you are stuck: a question only the user can answer, a login you cannot pass, or something the tools cannot do. Waits for their reply.',
+      'Ask for essential missing task constraints before dependent browser actions, or help with a login or other blocker. Group essential questions into one concise message and wait for the reply.',
     parameters: {
       type: 'object',
       properties: { message: { type: 'string', description: 'What you need and why' } },

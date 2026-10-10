@@ -80,19 +80,19 @@ describe('the control status', () => {
 });
 
 describe('taking and handing back control', () => {
-  it('takes control, then releases it', async () => {
-    const { fake, vm } = await bar({
-      changeControl: (action: string) => ({ state: action === 'acquire' ? MINE : AGENT }),
-    });
+  it('header takeover asks for confirmation without acquiring implicitly, then releases human control', async () => {
+    const { fake, vm } = await bar({ changeControl: { state: AGENT } });
     await vm.toggle();
+    assert.equal(fake.called('requestTakeover').length, 1);
+    assert.deepEqual(fake.called('changeControl'), []);
+    fake.emit('onControlState', MINE);
     await vm.toggle();
-    assert.deepEqual(fake.called('changeControl'), [['acquire'], ['return']]);
-    assert.equal(vm.state.control?.mode, 'agent');
+    assert.deepEqual(fake.called('changeControl'), [['return']]);
   });
 
   it('shows why a takeover failed until the state moves on', async () => {
     const { fake, vm, look } = await bar({ changeControl: { error: 'Another operator has control', state: AGENT } });
-    await vm.toggle();
+    await vm.acquire();
     assert.deepEqual([look().label, look().title], ['Another operator has control', 'Another operator has control']);
     fake.emit('onControlState', AGENT);
     assert.equal(look().label, 'Another operator has control', 'the same state keeps the error');
@@ -101,7 +101,7 @@ describe('taking and handing back control', () => {
   });
 
   it('says so when the change could not be asked for', async () => {
-    const { vm } = await bar({ changeControl: () => Promise.reject(new Error('gone')) });
+    const { vm } = await bar({ requestTakeover: () => Promise.reject(new Error('gone')) });
     await vm.toggle();
     assert.equal(vm.state.error, 'Could not change control.');
     assert.equal(vm.state.pending, '');
@@ -109,7 +109,7 @@ describe('taking and handing back control', () => {
 
   it('disables the button while its change is under way', async () => {
     let answer: (v: unknown) => void = () => {};
-    const { vm, look } = await bar({ changeControl: () => new Promise((resolve) => (answer = resolve)) });
+    const { vm, look } = await bar({ requestTakeover: () => new Promise((resolve) => (answer = resolve)) });
     const change = vm.toggle();
     assert.equal(look().action.disabled, true);
     answer({ state: MINE });

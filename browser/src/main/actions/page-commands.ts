@@ -228,10 +228,10 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { url: view.webContents.getURL(), title: view.webContents.getTitle() });
   },
 
-  /** A native PNG of the active tab, or a JPEG when asked (a model reads it). */
-  async screenshot(driver, id, params) {
+  /** Capture the command's exact native view, or a JPEG when asked (a model reads it). */
+  async screenshot(driver, id, params, view) {
     const jpeg = params?.format === 'jpeg';
-    const screenshot = await capturePage(driver.deps.getActiveView(), jpeg ? c.SCREENSHOT_JPEG_QUALITY : undefined);
+    const screenshot = await capturePage(view, jpeg ? c.SCREENSHOT_JPEG_QUALITY : undefined);
     driver.deps.sendResult(id, true, { screenshot });
   },
 

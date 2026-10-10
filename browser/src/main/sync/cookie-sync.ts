@@ -17,6 +17,7 @@
  * of the fleet size. Outbound changes are batched for the same reason.
  */
 import type { Cookie, Cookies, CookiesSetDetails, Session } from 'electron';
+import { checkCookieRejections } from './cookie-rejections.ts';
 import type { AppServices } from '../app/services.ts';
 import {
   COOKIE_PULL_TTL_MS,
@@ -177,13 +178,12 @@ const FORWARDED_CAUSES = ['explicit', 'inserted', 'inserted-no-value-change-over
 /** A sync mark for a caller that keeps none: never synced, nothing remembered. */
 const NO_MARK: SyncMark = { get: () => 0, set: () => {} };
 
-/** Await every native write, but never report a partially restored login as synchronized. */
+/** Await native writes; preserve stronger local cookies and reject every other incomplete restore. */
 async function writeJar(jar: Cookies, cookies: ServerCookie[], offered: number): Promise<void> {
   const results = await Promise.allSettled(cookies.map(async (c) => jar.set(electronCookie(c))));
   const applied = results.filter((r) => r.status === 'fulfilled').length;
   console.log(`[oya] Cookie sync applied: ${applied}/${offered}`);
-  if (applied !== cookies.length)
-    throw new Error('Cookie sync incomplete: the native cookie store rejected saved cookies');
+  checkCookieRejections(results);
 }
 
 /** The hostname a navigation to `url` will reach, or null. */

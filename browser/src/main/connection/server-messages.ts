@@ -84,7 +84,7 @@ export interface ServerMessage {
 }
 
 /** Runs one message type. */
-type Handler = (router: ServerMessages, msg: ServerMessage) => unknown;
+type Handler = (router: ServerMessages, msg: ServerMessage, current: () => void) => unknown;
 
 /** The handler for each message type. */
 const SERVER_MESSAGES: Record<string, Handler> = {
@@ -97,7 +97,7 @@ const SERVER_MESSAGES: Record<string, Handler> = {
     deps.control.result(msg as ControlResult);
     if (msg.state) deps.governance.setMode(deps.control.snapshot().mode);
   },
-  auth_ok: (router, msg) => router.acceptAuth(msg),
+  auth_ok: (router, msg, current) => router.acceptAuth(msg, current),
   profile_capture: ({ deps }, msg) => captureProfile(deps, msg.id),
   // A save the person asked for: how many sites the server now keeps, remembered for the profile dialog.
   profile_saved: ({ deps }, msg) => {
@@ -143,22 +143,35 @@ export class ServerMessages {
   }
 
   /** Runs the handler for `msg.type`, if there is one. */
-  handle(msg: ServerMessage): unknown {
+  handle(msg: ServerMessage, current: () => void = () => {}): unknown {
     if (!Object.hasOwn(SERVER_MESSAGES, msg.type)) return undefined;
-    return SERVER_MESSAGES[msg.type](this, msg);
+    return SERVER_MESSAGES[msg.type](this, msg, current);
   }
 
   /** The server accepted us: take the persona it sent, go online, and share our cookies. */
-  async acceptAuth(msg: ServerMessage): Promise<void> {
-    const { persona, shell, tabs } = this.deps;
-    this.beginAuth(msg);
-    await persona.ensureLoginState(msg);
+  async acceptAuth(msg: ServerMessage, current: () => void = () => {}): Promise<void> {
+    const { persona } = this.deps;
+    await this.prepareAuthenticatedStorage(msg, current);
     // Apply fingerprint from the server, the server is the single source of truth.
     // Same API key = same fingerprint on every browser, guaranteed.
     if (msg.fingerprint) await persona.applyServerFingerprint(msg.fingerprint, msg.cookies || [], msg.now);
+    current();
     this.goOnline(msg);
-    if (!shell.browsingMode) tabs.enterBrowsingMode(this.deps.governance.configuration ? 'about:blank' : HOME_URL);
-    await this.shareProfile();
+    this.enterAuthenticatedBrowsing();
+    await this.shareProfile(current);
+  }
+
+  /** Suspend publication and fence the asynchronous native storage import. */
+  private async prepareAuthenticatedStorage(msg: ServerMessage, current: () => void): Promise<void> {
+    this.beginAuth(msg);
+    await this.deps.persona.ensureLoginState(msg);
+    current();
+  }
+
+  /** Expose the ordinary shell only after the current connection has authenticated its persona. */
+  private enterAuthenticatedBrowsing(): void {
+    const { shell, tabs, governance } = this.deps;
+    if (!shell.browsingMode) tabs.enterBrowsingMode(governance.configuration ? 'about:blank' : HOME_URL);
   }
 
   /** Suspend publication before any new identity's asynchronous initialization starts. */
@@ -170,11 +183,13 @@ export class ServerMessages {
   }
 
   /** Sends our cookies to the pool, then, on first sign-in only, mirrors the user's real browser. */
-  private async shareProfile(): Promise<void> {
+  private async shareProfile(current: () => void): Promise<void> {
     // Changes made while the socket was down go first: a dump cannot say that a cookie was deleted.
     this.deps.cookies.flushCookieChanges();
     if ((await this.deps.cookies.dumpCookies()) === false) throw Error('Profile cookies could not be sent');
+    current();
     if (!(await this.deps.persona.flushStorage())) throw Error('Profile storage could not be sent');
+    current();
     this.deps.socket.send({ type: 'profile_flush' });
     // A no-op once done; it reconnects as the mirrored persona itself.
     void this.deps.mirror.maybeRun();

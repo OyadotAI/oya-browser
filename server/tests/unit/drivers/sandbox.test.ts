@@ -67,7 +67,8 @@ describe('createSandbox', () => {
     assert.equal(spec.envVars.OYA_API_KEY, 'user-key');
     assert.equal(spec.envVars.OYA_SERVER_URL, 'wss://oya.example/ws');
     assert.equal(spec.envVars.OYA_PERSONA, 'p-1');
-    assert.equal(spec.envVars.OYA_REMOTE_DEBUGGING_HOST, '127.0.0.1', 'the CDP port never leaves the sandbox');
+    assert.equal(spec.envVars.OYA_REMOTE_DEBUGGING_HOST, undefined, 'native relay needs no local listener');
+    assert.equal(spec.envVars.OYA_REMOTE_DEBUGGING_PORT, undefined, 'native relay needs no debugging port');
     assert.ok(!JSON.stringify(spec.labels).includes('user-key'), 'labels carry a digest of the key, never the key');
     assert.ok(options.timeout > 0);
     assert.equal(box.setTtl.mock.callCount(), 1);

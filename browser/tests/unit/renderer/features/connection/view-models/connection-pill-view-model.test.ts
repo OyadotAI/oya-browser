@@ -9,6 +9,11 @@ import { pillFor } from '../../../../../../src/renderer/features/connection/view
 import { build, settle } from '../harness.ts';
 
 describe('the connection pill', () => {
+  it('shows connection failure with the safe recovery instruction', () => {
+    const status = pillFor({ connected: false, failure: 'Restart Oya to retry.' });
+    assert.equal(status.label, 'Connection failed');
+    assert.equal(status.title, 'Restart Oya to retry.');
+  });
   it('shows connected, with the browser id on hover', () => {
     assert.deepEqual(pillFor({ connected: true, browserId: 'b-1' }), {
       className: 'conn-pill ok',

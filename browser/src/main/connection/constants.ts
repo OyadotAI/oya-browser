@@ -62,6 +62,8 @@ export const RESULT_CODES: ReadonlySet<unknown> = new Set(['tab_unprotected', 'a
 const MIB = 1_048_576;
 /** Largest CDP message the relay accepts (256 MiB): a full-page screenshot is big. */
 export const MAX_CDP_PAYLOAD = 268_435_456;
+/** Bound native resource ownership across remote gateway connections. */
+export const MAX_NATIVE_RELAYS = 128;
 
 /** The fastest the live view streams: one frame per this many ms. */
 export const STREAM_MIN_FRAME_MS = 200;

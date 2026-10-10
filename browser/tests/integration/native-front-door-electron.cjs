@@ -49,6 +49,7 @@ async function run() {
   const control = { busy: false, localHeld: false, connected: false, state: { mode: 'offline' } };
   const tabEvents = new WindowTabEvents();
   const backend = new AppNativeBackend({
+    nativeBrowsing: true,
     windows: { allTabs: () => [tab], tabEvents, owner: () => ({ shell: { window: win } }) },
     tabs: { activateTab: (id) => assert.equal(id, tab.id) },
     control,
@@ -75,6 +76,7 @@ async function run() {
     assert.equal(capabilities.compatibility, 'partial');
     assert.ok(capabilities.methods.some((m) => m.method === 'Oya.navigateToHistoryEntry'));
     assert.ok(!capabilities.methods.some((m) => m.method === 'Fetch.fulfillRequest'));
+    await require('./native-relay-checks.cjs')(backend, wc, control);
     await inspect(a, b, wc, control);
     await pageOperations(a, b, wc, control);
     await require('./native-runtime-checks.cjs')(a, b, wc, control);

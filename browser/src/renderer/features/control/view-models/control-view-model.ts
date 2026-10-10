@@ -161,6 +161,8 @@ export class ControlViewModel extends ViewModel<ControlState> {
   /** Take control, or release it if it is already yours. */
   async toggle(): Promise<void> {
     const c = this.state.control;
+    if (!takeable(this.state)) return;
+    if (c?.mode === 'agent') return this.requestTakeover();
     await this.change(c && isMine(c) ? 'return' : 'acquire', 'action');
   }
 
@@ -175,9 +177,11 @@ export class ControlViewModel extends ViewModel<ControlState> {
     return !!this.state.control?.interactive;
   }
 
-  /** Blocked navigation asks to take control instead of silently refusing input. */
-  requestTakeover(): void {
-    void this.bridge.requestTakeover().catch(() => {});
+  /** Only the explicit header action opens the native confirmation; ownership updates arrive as events. */
+  async requestTakeover(): Promise<void> {
+    this.set({ pending: 'action', error: '' });
+    await this.bridge.requestTakeover().catch(() => this.set({ error: TEXT.failed }));
+    this.set({ pending: '' });
   }
 
   /** A click on a page action: allowed, refused, or (Start recording) allowed once control is taken. */

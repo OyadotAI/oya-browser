@@ -71,15 +71,15 @@ export const CONTROLS = [
     title: 'Business associate contracts',
     requirement: 'A BAA with every subprocessor that handles ePHI.',
     implements: [],
-    gap: 'Any third-party network on the ePHI path is a subprocessor needing a BAA. A residential proxy vendor cannot give one, so healthcare deployments must egress directly or through customer-owned infrastructure.',
+    gap: 'Every hosted subprocessor on the ePHI path needs a signed BAA, recorded with its date in compliance/baas.json. A residential proxy vendor cannot give one, so healthcare deployments must egress directly or through customer-owned infrastructure.',
     check: 'subprocessor.egress',
   },
   {
     id: '164.316(b)(2)',
     title: 'Documentation retention',
     requirement: 'Retain required documentation for six years.',
-    implements: [],
-    gap: 'No retention floor is enforced on the audit trail and no purge job exists for artifacts past their window. Needs a retention policy per artifact class with a six-year floor for audit records.',
+    implements: ['server/src/modules/control/service/constants.ts', 'server/src/modules/control/worker/maintenance.ts'],
+    gap: 'Audit records have an enforced retention floor and expired recordings are purged, but the default floor is one year. HIPAA documentation retention is six years, so the floor must default to 2190 days, or be raised to it for HIPAA projects.',
     check: 'retention.policy',
   },
 ];

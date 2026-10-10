@@ -51,7 +51,7 @@ module.exports = async function cookieChecks(a, b, context, second, session, ses
   assert.ok((await read()).cookies.some((c) => c.name === 'persistent'));
   control.localHeld = true;
   try {
-    await assert.rejects(read(), /authorized/);
+    await assert.rejects(read(), /Native control is unavailable/);
   } finally {
     control.localHeld = false;
   }

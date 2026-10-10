@@ -18,6 +18,7 @@ export const VALIDATION = {
   TOKEN_BYTES: 32,
   PORT_POLLS: 50,
   PORT_POLL_MS: 100,
+  FOCUS_MS: 1000,
   STOP_GRACE_MS: 5000,
   /** Longest a validation tab may take to open and report its target before the run fails. */
   TAB_OPEN_MS: 15000,
@@ -42,3 +43,16 @@ export const WORKSPACE = {
 
 /** Native picker globals never share the page, preload or analyzer world. */
 export const PICKER_WORLD_ID = 1005;
+
+/** Native validation retries only read-only inspection at this bounded cadence. */
+export const NATIVE_VALIDATION = {
+  POLL_MS: 100,
+  FOCUS_MS: 1000,
+  CSS_RADIX: 16,
+  DOUBLE_CLICK: 2,
+  POINT_TOLERANCE: 1,
+  CHOOSER_MS: 10000,
+  FILE_BYTES: 16777216,
+  FILE_TOTAL_BYTES: 33554432,
+  VALUE_INPUTS: ['date', 'datetime-local', 'month', 'time', 'week', 'color', 'range'],
+} as const;

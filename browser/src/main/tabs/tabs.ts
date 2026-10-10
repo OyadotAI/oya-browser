@@ -88,16 +88,8 @@ function historySummary(history: NavigationHistory | undefined): Pick<TabSummary
   return { canGoBack: history.canGoBack(), canGoForward: history.canGoForward() };
 }
 
-/** Legacy cleanup is never entered by native browsing. */
-function detachLegacyDebugger(view: TabView): void {
-  try {
-    if (view.webContents.debugger.isAttached()) view.webContents.debugger.detach();
-  } catch {}
-}
-
 /** Destroy the native page without opening a debugging backend. */
-function destroyTabView(view: TabView, nativeBrowsing: boolean): void {
-  if (!nativeBrowsing) detachLegacyDebugger(view);
+function destroyTabView(view: TabView, _nativeBrowsing: boolean): void {
   try {
     // destroy() is on every webContents, though Electron's types leave it out.
     if (!view.webContents.isDestroyed()) (view.webContents as unknown as { destroy(): void }).destroy();
@@ -170,6 +162,7 @@ function reloadOrStop(tabs: TabManager, tab: Tab): void {
 
 /** Creates a page in the active partition, with white behind sites that paint no background. */
 function createPageView(deps: Deps, session?: Session): BrowserView {
+  deps.protection.assertSession(session || deps.persona.session());
   const webPreferences = session
     ? { ...tabPreferences('', deps.appDir), session }
     : tabPreferences(deps.persona.partitionName(), deps.appDir);

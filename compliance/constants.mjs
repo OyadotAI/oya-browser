@@ -16,3 +16,12 @@ export const REPORT_PATH = resolve(REPO_ROOT, 'compliance', 'EVIDENCE.md');
 
 /** Where the machine-readable result is written, for CI to gate on. */
 export const RESULT_PATH = resolve(REPO_ROOT, 'compliance', 'evidence.json');
+
+/** HIPAA's documentation retention, §164.316(b)(2): six years, in days. */
+export const SIX_YEARS_DAYS = 2190;
+
+/** The server file that sets the audit retention floor. */
+export const RETENTION_SOURCE = 'server/src/modules/control/service/constants.ts';
+
+/** Each hosted subprocessor on the ePHI path and the date its BAA was signed, null until it is. */
+export const BAAS_PATH = 'compliance/baas.json';

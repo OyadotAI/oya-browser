@@ -1,55 +1,75 @@
 {
-  "generated": "2026-09-20T16:26:12.283Z",
+  "generated": "2026-10-07T13:44:37.127Z",
   "controls": [
     {
       "id": "164.312(b)",
+      "title": "Audit controls",
+      "requirement": "Record and examine activity in systems that contain or use ePHI.",
       "verdict": "PASS",
-      "detail": "11 passed, 0 failed; audit_log carries who/what/outcome/source: true"
+      "detail": "27 passed, 0 failed; audit_log carries who/what/outcome/source: true"
     },
     {
       "id": "164.312(c)(1)",
+      "title": "Integrity",
+      "requirement": "Protect ePHI from improper alteration or destruction.",
       "verdict": "PASS",
-      "detail": "11 passed, 0 failed"
+      "detail": "17 passed, 0 failed"
     },
     {
       "id": "164.312(c)(2)",
+      "title": "Mechanism to authenticate ePHI",
+      "requirement": "Corroborate that ePHI has not been altered or destroyed.",
       "verdict": "PASS",
       "detail": "update refused: true; delete refused: true; service_role holds INSERT,SELECT"
     },
     {
       "id": "164.312(d)",
+      "title": "Person or entity authentication",
+      "requirement": "Verify that a person seeking access is the one claimed.",
       "verdict": "PASS",
-      "detail": "36 passed, 0 failed"
+      "detail": "40 passed, 0 failed"
     },
     {
       "id": "164.312(e)(1)",
+      "title": "Transmission security",
+      "requirement": "Guard against unauthorised access to ePHI in transit.",
       "verdict": "PASS",
       "detail": "11 passed, 0 failed"
     },
     {
       "id": "164.308(a)(4)",
+      "title": "Information access management",
+      "requirement": "Authorise access to ePHI only as appropriate, minimum necessary.",
       "verdict": "PASS",
       "detail": "11 passed, 0 failed"
     },
     {
       "id": "164.312(a)(2)(iv)",
+      "title": "Encryption and decryption",
+      "requirement": "Encrypt and decrypt ePHI, including credentials at rest.",
       "verdict": "PASS",
-      "detail": "8 passed, 0 failed; api keys stored as sha256: true"
+      "detail": "19 passed, 0 failed; api keys stored as sha256: true"
     },
     {
       "id": "164.502(b)",
+      "title": "Minimum necessary, recordings and logs",
+      "requirement": "Limit PHI in what is stored to the minimum necessary.",
       "verdict": "GAP",
-      "detail": "redaction exists in 10 files but targets secrets and placeholders, not PHI"
+      "detail": "redaction exists in 14 files but targets secrets and placeholders, not PHI"
     },
     {
       "id": "164.308(b)(1)",
-      "verdict": "PASS",
-      "detail": "no third-party proxy configured: egress is direct or customer-owned"
+      "title": "Business associate contracts",
+      "requirement": "A BAA with every subprocessor that handles ePHI.",
+      "verdict": "GAP",
+      "detail": "no BAA with Google Cloud; no BAA with Supabase; no BAA with Model provider (OpenAI, Anthropic or Vertex AI)"
     },
     {
       "id": "164.316(b)(2)",
+      "title": "Documentation retention",
+      "requirement": "Retain required documentation for six years.",
       "verdict": "GAP",
-      "detail": "no audit retention floor and no purge job found in server/src"
+      "detail": "default audit retention floor is 365 days; six years is 2190"
     }
   ]
 }

@@ -9,6 +9,7 @@ import type { AppServices } from '../app/services.ts';
 import { OYA_ACTIONS } from '../actions/vocabulary.ts';
 import { ServerMessages, type ServerMessage, type ServerMessageDeps } from './server-messages.ts';
 import * as constants from './constants.ts';
+import { ConnectionMessages } from './message-queue.ts';
 
 const { CloseCode } = constants;
 
@@ -110,15 +111,33 @@ const HOST_PLATFORMS: Record<string, string> = { darwin: 'MacIntel', win32: 'Win
  * key's first default persona this machine's kind of device: a random one made
  * a Mac present as Linux, which sites read as an inconsistent fingerprint.
  */
-export function authMessage(config: AuthConfig, browserId: string | null, cdpPort: number, appVersion: string) {
+export function authMessage(config: AuthConfig, id: string | null, native: number | boolean, version: string) {
   const provider = config.provider || (process.env.OYA_DOCKER ? 'oya-selfhosted' : 'oya-desktop');
   const host_platform = Object.hasOwn(HOST_PLATFORMS, process.platform) ? HOST_PLATFORMS[process.platform] : undefined;
-  const who = { api_key: config.apiKey, browser_id: browserId, browser_name: config.browserName, host_platform };
+  const who = { api_key: config.apiKey, browser_id: id, browser_name: config.browserName, host_platform };
   // So the server can count which versions run, and see an update land.
-  const identity = { type: 'auth', ...who, app_version: appVersion };
+  const identity = { type: 'auth', ...who, app_version: version };
   // The server may relay CDP to our front door over this socket, and checks each command against what we do.
-  const offer = { provider, enrollment_token: process.env.OYA_ENROLLMENT_TOKEN, cdp: !!cdpPort, actions: OYA_ACTIONS };
+  const cdp = native === true;
+  const offer = { provider, enrollment_token: process.env.OYA_ENROLLMENT_TOKEN, cdp, actions: OYA_ACTIONS };
   return { ...identity, persona: config.persona, ...offer };
+}
+
+/** Report setup failure only for the current connection selected by the ordered message queue. */
+function messageSetupFailed(owner: ControlSocket, socket: SocketLike, msg: ServerMessage, err: unknown): void {
+  console.error(`[oya] Could not handle "${msg.type}" from the server:`, (err as Error | undefined)?.stack || err);
+  owner.connectionFailure = 'Session setup failed. Restart Oya to retry; if it persists, contact support.';
+  socket.close(CloseCode.REJECTED, 'Session setup failed');
+}
+
+/** Share one guarded message stream across all connection generations. */
+function orderedConnectionMessages(owner: ControlSocket, deps: Deps): ConnectionMessages {
+  return new ConnectionMessages({
+    current: () => owner.ws,
+    open: () => owner.isOpen(),
+    messages: new ServerMessages(deps),
+    failed: (socket, msg, error) => messageSetupFailed(owner, socket, msg, error),
+  });
 }
 
 /** The connection, its heartbeat and its reconnects. */
@@ -127,6 +146,8 @@ export class ControlSocket {
   ws: SocketLike | null = null;
   /** True once the server has accepted our auth. */
   ready = false;
+  /** Safe terminal failure shown until the next explicit connection attempt. */
+  connectionFailure?: string;
   /** This browser's id, kept across reconnects. */
   browserId: string | null = null;
   /** The pending reconnect. */
@@ -141,8 +162,8 @@ export class ControlSocket {
   proxyBytesUnsent = 0;
   /** The main-process services. */
   private readonly deps: Deps;
-  /** Where each server message goes. */
-  private readonly messages: ServerMessages;
+  /** Ordered routing and connection-scoped asynchronous publication. */
+  private readonly messages: ConnectionMessages;
   /** The WebSocket class. */
   private readonly WebSocket: SocketClass;
   /** Where residential proxy byte counts come from. */
@@ -151,7 +172,7 @@ export class ControlSocket {
   /** `deps` is the main-process services (see src/main/main.ts); the seams are for tests. */
   constructor(deps: Deps, { WebSocketImpl = WebSocket, takeBytes = takeProxyBytes }: SocketSeams = {}) {
     this.deps = deps;
-    this.messages = new ServerMessages(deps);
+    this.messages = orderedConnectionMessages(this, deps);
     this.WebSocket = WebSocketImpl;
     this.takeProxyBytes = takeBytes;
   }
@@ -169,7 +190,7 @@ export class ControlSocket {
    */
   send(payload: unknown): boolean {
     const ws = this.ws;
-    if (!ws || !this.isOpen()) return false;
+    if (!ws || !this.isOpen() || !this.messages.maySend(ws)) return false;
     try {
       ws.send(JSON.stringify(payload));
       return true;
@@ -182,7 +203,7 @@ export class ControlSocket {
   connect(): void {
     if (!this.deps.config.values.apiKey && process.env.OYA_AUTO_CONNECT !== 'true') return;
     if (this.ws) this.disconnect();
-    this.browserId = this.browserId || randomId();
+    beginConnection(this);
     try {
       this.ws = this.open();
     } catch {
@@ -193,40 +214,36 @@ export class ControlSocket {
   /** A new socket with its handlers; messages are handled one at a time, in order. */
   private open(): SocketLike {
     const socket = new this.WebSocket(this.deps.config.values.serverUrl);
-    let messageQueue: Promise<unknown> = Promise.resolve();
     socket.on('open', () => this.authenticate(socket));
-    socket.on('message', (raw: Buffer) => (messageQueue = this.enqueue(messageQueue, socket, raw)));
-    socket.on('close', (code: number) => this.closed(code));
+    socket.on('message', (raw: Buffer) => this.enqueue(socket, raw));
+    socket.on('close', (code: number) => {
+      if (this.ws === socket) this.closed(code);
+    });
     socket.on('error', () => {});
     return socket;
   }
 
   /** Queues one message behind the last; a failed one ends a session that could not be set up. */
-  private enqueue(queue: Promise<unknown>, socket: SocketLike, raw: Buffer): Promise<unknown> {
+  private enqueue(socket: SocketLike, raw: Buffer): void {
     const msg = parseServerMessage(raw);
-    if (msg === UNPARSEABLE) return queue;
+    if (msg === UNPARSEABLE) return;
     logIncoming(this.deps.shell, msg);
-    return queue.then(() => this.messages.handle(msg)).catch((err) => this.setupFailed(socket, msg, err));
-  }
-
-  /** A message could not be handled: say which and why (it used to end the session without a word), then close. */
-  private setupFailed(socket: SocketLike, msg: ServerMessage, err: unknown): void {
-    console.error(`[oya] Could not handle "${msg.type}" from the server:`, (err as Error | undefined)?.stack || err);
-    socket.close(CloseCode.REJECTED, 'Session setup failed');
+    this.messages.enqueue(socket, msg);
   }
 
   /** The auth message. */
   private authenticate(socket: SocketLike): void {
+    if (this.ws !== socket) return;
     const config = this.deps.config.values;
     this.deps.shell.devLog('out', 'auth', { browser_id: this.browserId, browser_name: config.browserName });
     const version = this.deps.electron.app.getVersion();
-    const message = authMessage(config, this.browserId, this.deps.cdpPort, version);
+    const message = authMessage(config, this.browserId, !!this.deps.nativeBrowsing, version);
     socket.send(JSON.stringify({ ...message, ...(this.deps.nativeBrowsing ? { profile_sync: true } : {}) }));
   }
 
   /** The socket closed: go offline, and reconnect unless the server said not to. */
   private closed(code: number): void {
-    this.ready = false;
+    endConnection(this, code);
     this.deps.control.disconnect();
     this.deps.relay.closeCdpRelays();
     clearInterval(this.pingInterval);
@@ -250,6 +267,7 @@ export class ControlSocket {
 
   /** Stops the heartbeat and any reconnect, and forgets the backoff. */
   private resetTimers(): void {
+    this.connectionFailure = undefined;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     clearInterval(this.pingInterval);
     this.reconnectTimer = null;
@@ -281,7 +299,7 @@ export class ControlSocket {
   /** Tells the shell whether we are connected, and as whom. */
   sendStatus(): void {
     const profileName = this.deps.config.values.profileName || 'Default';
-    this.deps.shell.send('ws-status', { connected: this.ready, browserId: this.browserId, profileName });
+    this.deps.shell.send('ws-status', connectionStatus(this, profileName));
   }
 
   /** Starts the heartbeat. */
@@ -320,4 +338,40 @@ export class ControlSocket {
   heard(): void {
     this.missedPongs = 0;
   }
+}
+
+/** Terminal close messages are fixed application text, never raw server reasons or credential-bearing errors. */
+function terminalFailure(code: number): string | undefined {
+  const reasons: Record<number, string> = {
+    [CloseCode.REPLACED]: 'This connection was replaced. Restart Oya to reconnect.',
+    [CloseCode.AUTH_TIMEOUT]: 'Sign-in timed out. Restart Oya to retry.',
+    [CloseCode.REJECTED]: 'Sign-in was rejected. Check your account or API key in connection settings.',
+  };
+  return Object.hasOwn(reasons, code) ? reasons[code] : undefined;
+}
+/** Omit absent failures to preserve the ordinary status wire shape. */
+export function failureStatus(socket: Pick<ControlSocket, 'connectionFailure'>): {
+  /** Safe terminal reason. */ failure?: string;
+} {
+  return socket.connectionFailure ? { failure: socket.connectionFailure } : {};
+}
+
+/** A deliberate retry resets the terminal diagnostic and retains the browser identity. */
+function beginConnection(owner: ControlSocket): void {
+  owner.connectionFailure = undefined;
+  owner.browserId ||= randomId();
+  owner.sendStatus();
+}
+/** Retain a safe terminal diagnostic before publishing the disconnected state. */
+function endConnection(owner: ControlSocket, code: number): void {
+  owner.ws = null;
+  owner.connectionFailure ||= terminalFailure(code);
+  owner.ready = false;
+}
+/** Both initial IPC reads and live status events carry the same terminal failure. */
+export function connectionStatus(
+  socket: Pick<ControlSocket, 'ready' | 'browserId' | 'connectionFailure'>,
+  profileName?: string,
+) {
+  return { connected: socket.ready, browserId: socket.browserId, profileName, ...failureStatus(socket) };
 }

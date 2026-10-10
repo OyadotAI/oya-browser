@@ -28,7 +28,7 @@ guides), `examples/` (runnable SDK and Playwright samples), `k8s/` and the
                         ▼                                      ▼                             ▼
           Oya Browser (desktop or cloud)          third-party providers (CDP)         Supabase / Postgres
           control socket: commands, frames,        driven by the server's                / SQLite (local)
-          cookies, relayed CDP                     CDP driver
+          cookies, native protocol adapter        CDP driver
 ```
 
 - **Browsers connect to the server**, never the other way round. An Oya
@@ -41,7 +41,13 @@ guides), `examples/` (runnable SDK and Playwright samples), `k8s/` and the
 - **The console is a client like any other**: it calls the REST API with a
   project credential. It does not share code with the server.
 - **Playwright and Puppeteer** reach a browser through the server's CDP
-  gateway (`/connect`), which relays to the browser.
+  gateway (`/connect`). For Oya browsers, external protocol frames terminate in
+  the browser-owned native adapter; unsupported methods fail explicitly. This
+  is partial compatibility, not a complete Playwright/Puppeteer backend. The
+  optional authenticated loopback listener uses the same native operations.
+  Both use the production native persona lifecycle, which requires the patched
+  engine pre-script hooks and immutable session readback. Native workflow
+  validation uses the same browser-owned operations and ownership gate.
 
 ## Engineering standards (all parts)
 

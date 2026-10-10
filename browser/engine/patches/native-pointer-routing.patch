@@ -1,0 +1,61 @@
+--- a/electron/shell/browser/api/electron_api_web_contents.cc
++++ b/electron/shell/browser/api/electron_api_web_contents.cc
+@@ -48,6 +48,7 @@
+ #include "chrome/common/pref_names.h"
+ #include "components/embedder_support/user_agent_utils.h"
+ #include "components/input/input_constants.h"
++#include "components/input/render_widget_host_input_event_router.h"
+ #include "components/input/native_web_keyboard_event.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/prefs/scoped_user_pref_update.h"
+@@ -4252,7 +4253,12 @@
+       if (IsOffScreen()) {
+         GetOffScreenRenderWidgetHostView()->SendMouseEvent(mouse_event);
+       } else {
+-        rwh->ForwardMouseEvent(mouse_event);
++        auto* router = static_cast<content::WebContentsImpl*>(web_contents())
++                           ->GetInputEventRouter();
++        CHECK(router);
++        router->RouteMouseEvent(
++            static_cast<content::RenderWidgetHostViewBase*>(view),
++            &mouse_event, ui::LatencyInfo());
+       }
+       return;
+     }
+@@ -4268,7 +4274,11 @@
+       if (SendOyaPopupKey(isolate, keyboard_event))
+         return;
+ #endif
+-      rwh->ForwardKeyboardEvent(keyboard_event);
++      auto* focused = static_cast<content::WebContentsImpl*>(web_contents())
++                          ->GetFocusedRenderWidgetHost(
++                              static_cast<content::RenderWidgetHostImpl*>(rwh));
++      if (focused)
++        focused->ForwardKeyboardEvent(keyboard_event);
+       return;
+     }
+   } else if (type == blink::WebInputEvent::Type::kMouseWheel) {
+@@ -4283,7 +4293,10 @@
+         mouse_wheel_event.phase = blink::WebMouseWheelEvent::kPhaseBegan;
+         mouse_wheel_event.dispatch_type =
+             blink::WebInputEvent::DispatchType::kBlocking;
+-        rwh->ForwardWheelEvent(mouse_wheel_event);
++        static_cast<content::WebContentsImpl*>(web_contents())
++            ->GetInputEventRouter()->RouteMouseWheelEvent(
++                static_cast<content::RenderWidgetHostViewBase*>(view),
++                &mouse_wheel_event, ui::LatencyInfo());
+ 
+         // Send a synthetic wheel event with phaseEnded to finish scrolling.
+         mouse_wheel_event.has_synthetic_phase = true;
+@@ -4292,7 +4305,10 @@
+         mouse_wheel_event.phase = blink::WebMouseWheelEvent::kPhaseEnded;
+         mouse_wheel_event.dispatch_type =
+             blink::WebInputEvent::DispatchType::kEventNonBlocking;
+-        rwh->ForwardWheelEvent(mouse_wheel_event);
++        static_cast<content::WebContentsImpl*>(web_contents())
++            ->GetInputEventRouter()->RouteMouseWheelEvent(
++                static_cast<content::RenderWidgetHostViewBase*>(view),
++                &mouse_wheel_event, ui::LatencyInfo());
+       }
+       return;
+     }

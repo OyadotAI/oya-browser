@@ -17,6 +17,8 @@ export interface AccountState {
   config: Config;
   /** Whether the control socket is connected. */
   connected: boolean;
+  /** Terminal setup/authentication failure, with the next action. */
+  failure?: string;
   /** The account last shown, or null when only a key is known. */
   account: Account | null;
   /** Whether the account page is on screen (it learns the account once the server can answer). */
@@ -75,6 +77,7 @@ function who(account: Account | null): Pick<AccountCard, 'title' | 'email' | 'in
 function connection(state: AccountState): Pick<AccountCard, 'connection' | 'connectionText'> {
   const host = hostOf(state.config.serverUrl);
   if (state.connected) return { connection: 'connected', connectionText: `Connected to ${host}` };
+  if (state.failure) return { connection: 'offline', connectionText: state.failure };
   if (state.config.apiKey) return { connection: 'reconnecting', connectionText: `Reconnecting to ${host}…` };
   return { connection: 'offline', connectionText: 'Offline' };
 }
@@ -109,7 +112,7 @@ export class AccountViewModel extends ViewModel<AccountState> {
 
   /** Takes the settings and the live status, and asks who this browser is signed in as. */
   async load(config: Config, status: ConnectionStatus): Promise<void> {
-    this.set({ config, connected: !!status.connected });
+    this.set({ config, connected: !!status.connected, failure: status.failure });
     this.set({ account: await this.fetch() });
   }
 
@@ -125,7 +128,7 @@ export class AccountViewModel extends ViewModel<AccountState> {
 
   /** The connection came or went: learn the account once the server can answer. */
   onStatus(status: ConnectionStatus): void {
-    this.set({ connected: !!status.connected });
+    this.set({ connected: !!status.connected, failure: status.failure });
     if (!status.connected || this.state.account || !this.state.visible) return;
     void this.fetch().then((account) => this.set({ account }));
   }

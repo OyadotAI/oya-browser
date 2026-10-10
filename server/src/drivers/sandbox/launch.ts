@@ -12,17 +12,11 @@ import { PREFIX, ownerTag, displayName } from './names.ts';
 import { SANDBOX_TTL_GRACE_MINUTES } from '../constants.ts';
 import type { SandboxSpec } from './worker.ts';
 
-/**
- * CDP front door for Playwright and friends, reached only through the
- * control socket relay (cdp-relay.js). Loopback: no port leaves the sandbox.
- */
-const CDP_FRONT_DOOR = { OYA_REMOTE_DEBUGGING_PORT: '9222', OYA_REMOTE_DEBUGGING_HOST: '127.0.0.1' };
-
 /** Environment every cloud browser gets. */
 const CLOUD_ENV = {
   // So the control plane knows a Stop must destroy this sandbox.
   OYA_PROVIDER: 'oya-cloud',
-  ...CDP_FRONT_DOOR,
+  // External compatibility requests terminate natively over the authenticated control socket.
 };
 
 /** Reserves a new browser id in the control plane, within the key's quotas. */

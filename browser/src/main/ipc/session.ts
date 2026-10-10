@@ -1,4 +1,5 @@
 /** IPC: settings, connection status, control handoff, the saved profile and the fingerprint. */
+import { connectionStatus } from '../connection/socket.ts';
 import type { AppServices } from '../app/services.ts';
 import type { ConfigValues } from '../app/config-store.ts';
 import type { ControlChange, PersonaList, ShellStatus } from '../../shared/ipc.ts';
@@ -129,9 +130,7 @@ export class SessionHandlers {
   /** The connection, the active address and when cookies last synced. */
   private status(): ShellStatus {
     return {
-      connected: this.deps.socket.ready,
-      browserId: this.deps.socket.browserId,
-      profileName: this.deps.config.values.profileName,
+      ...connectionStatus(this.deps.socket, this.deps.config.values.profileName),
       url: this.deps.tabs.getActiveView()?.webContents.getURL() || '',
       // The renderer asks for this after it loads. `mode-changed` is sent once, and
       // a shell that was still loading when the server accepted the browser would

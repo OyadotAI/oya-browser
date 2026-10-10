@@ -23,6 +23,7 @@ function setup(failure: string) {
   tabs.push({ id: 3, view: { webContents: { session: {} } } });
   const deps: any = {
     nativeBrowsing: true,
+    protection: { configureSession() {} },
     persona: { active: null },
     governance: null,
     electron: { app: {}, session: { fromPartition: () => session } },
@@ -43,7 +44,7 @@ function setup(failure: string) {
     network: { install() {}, remove: () => step('network') },
     downloads: { install() {}, remove: () => step('downloads') },
   };
-  return { contexts: appNativeContexts(deps, resources), calls, session };
+  return { contexts: appNativeContexts(deps, resources), calls, session, deps };
 }
 
 for (const failure of ['', 'network', 'downloads', 'tab1', 'tab2'])
@@ -56,3 +57,22 @@ for (const failure of ['', 'network', 'downloads', 'tab1', 'tab2'])
     assert.deepEqual(f.contexts.list(), []);
     assert.equal(f.contexts.visible(f.session), false);
   });
+
+test('private context refuses a changed persona before installing scripts or exposing the context', async () => {
+  const f = setup('');
+  f.deps.protection.configureSession = () => {
+    throw Error('must not install scripts');
+  };
+  const pending = f.contexts.create();
+  f.deps.persona.active = { id: 'replacement' };
+  await assert.rejects(pending, /changed during session setup/);
+  assert.deepEqual(f.contexts.list(), []);
+});
+test('private context refuses governance changes while proxy setup is pending', async () => {
+  const f = setup('');
+  f.deps.governance = { configuration: null, install() {} };
+  const pending = f.contexts.create();
+  f.deps.governance.configuration = { proxy: { host: 'new-proxy' } };
+  await assert.rejects(pending, /changed during session setup/);
+  assert.deepEqual(f.contexts.list(), []);
+});

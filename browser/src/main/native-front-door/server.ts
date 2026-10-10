@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { NativeProtocol, ProtocolError } from './protocol.ts';
+import { nativeCommand } from './command.ts';
 import { NATIVE_DOOR } from './constants.ts';
 import type { NativeCommand, NativeDoorOptions } from './types.ts';
 
@@ -43,17 +44,6 @@ function discoveryData(req: IncomingMessage, options: NativeDoorOptions): unknow
       .map((t) => ({ ...t, id: t.targetId, webSocketDebuggerUrl: `${base}/page/${t.targetId}` }));
   return null;
 }
-/** Parse only flat JSON-RPC commands; arrays and invalid id/session/params shapes are rejected. */
-function command(raw: string): NativeCommand {
-  const msg = JSON.parse(raw);
-  if (!msg || Array.isArray(msg) || !Number.isSafeInteger(msg.id) || typeof msg.method !== 'string')
-    throw new ProtocolError('Invalid command', NATIVE_DOOR.invalid);
-  if (msg.sessionId !== undefined && typeof msg.sessionId !== 'string')
-    throw new ProtocolError('Invalid session', NATIVE_DOOR.invalid);
-  if (msg.params !== undefined && (!msg.params || typeof msg.params !== 'object' || Array.isArray(msg.params)))
-    throw new ProtocolError('Invalid params', NATIVE_DOOR.invalid);
-  return { ...msg, params: msg.params || {} };
-}
 /** Replies never outlive their requesting connection. */
 function send(socket: WebSocket, data: unknown): void {
   if (socket.bufferedAmount > NATIVE_DOOR.maxPayload) return socket.terminate();
@@ -84,7 +74,7 @@ class CommandQueue {
   enqueue(socket: WebSocket, protocol: NativeProtocol, raw: string): void {
     let msg: NativeCommand;
     try {
-      msg = command(raw);
+      msg = nativeCommand(raw);
     } catch (error) {
       return failure(socket, error);
     }

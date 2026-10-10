@@ -19,6 +19,12 @@ async function filled(server: string, answers: Record<string, unknown> = {}) {
 }
 
 describe('the manual setup form', () => {
+  it('shows a terminal session failure immediately', async () => {
+    const app = await filled('wss://oya.test');
+    app.fake.emit('onWsStatus', { connected: false, failure: 'Restart Oya to retry.' });
+    assert.equal(app.setup.state.busy, false);
+    assert.equal(app.setup.state.error, 'Restart Oya to retry.');
+  });
   it('accepts wss:// to any host', () => {
     assert.equal(setupProblem('wss://oya.example.com/ws', 'oya_key'), '');
   });

@@ -11,18 +11,15 @@ import type { App } from 'electron';
 import type { AppServices } from './services.ts';
 import { Workspace } from '../workflow/workspace.ts';
 import { DraftStore } from '../workflow/draft-store.ts';
-import { validate, type ValidationDeps, type ValidationSession } from '../workflow/validation.ts';
+import type { ValidationSession } from '../workflow/validation.ts';
+import { validateNative, type NativeValidationDeps } from '../workflow/native-validation.ts';
 import { installApplicationMenu } from '../shell/menu.ts';
-import { start as startFrontDoor, type FrontDoorOptions } from '../front-door/cdp-front-door.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 
 /** The services start-up uses. */
 type Deps = Pick<
   AppServices,
   | 'electron'
-  | 'appDir'
-  | 'cdpPort'
-  | 'relayToken'
   | 'library'
   | 'config'
   | 'socket'
@@ -38,13 +35,12 @@ type Deps = Pick<
   | 'control'
   | 'validationTabs'
   | 'governance'
+  | 'actions'
+  | 'nativeBrowsing'
 >;
 
 /** What a validation run is started with: the draft, its options and where its events go. */
-type ValidationRequest = Pick<ValidationDeps, 'draft' | 'options' | 'event'>;
-
-/** The validation worker, built by electron-vite beside the main bundle (electron.vite.config.ts). */
-const WORKER_BUNDLE = ['out', 'main', 'worker.js'];
+type ValidationRequest = Pick<NativeValidationDeps, 'draft' | 'options' | 'event'>;
 
 /**
  * Registering in dev needs the interpreter and script path, or the OS
@@ -56,11 +52,6 @@ function registerProtocolClient(app: Pick<App, 'setAsDefaultProtocolClient'>): v
   } else {
     app.setAsDefaultProtocolClient('oya');
   }
-}
-
-/** The address the front door listens on: every interface in Docker, loopback otherwise. */
-function frontDoorHost(env: NodeJS.ProcessEnv): string {
-  return env.OYA_REMOTE_DEBUGGING_HOST || (env.OYA_DOCKER === 'true' ? '0.0.0.0' : '127.0.0.1');
 }
 
 /** The draft store in `folder` of the user-data folder, encrypted with the keychain. */
@@ -126,67 +117,28 @@ export class Boot {
     });
   }
 
-  /** Runs a draft against the real site (src/main/workflow/validation.ts) in the built worker. */
+  /** Execute supported recorded steps through the existing authorized native page driver. */
   private runValidation(run: ValidationRequest): Promise<ValidationSession> {
-    const { app, utilityProcess } = this.deps.electron;
-    const workerPath = path.join(this.deps.appDir, ...WORKER_BUNDLE);
-    return validate({ ...run, app, utilityProcess, workerPath, startFrontDoor, ...this.validationHooks() });
-  }
-
-  /** How a validation run and the front door list, open and close the desktop's tabs. */
-  private tabHooks(): Pick<FrontDoorOptions, 'tabs' | 'createTab' | 'closeTab'> {
-    const tabs = this.deps.tabs;
-    return {
-      tabs: () => tabs.list,
-      // Entering browsing mode opens the tab and makes it the active one, so there is always an id.
-      createTab: (url) => tabs.openForAutomation(url)!,
-      closeTab: (id, options) => tabs.closeTab(id, options),
-    };
-  }
-
-  /** The validation run's tab hooks: the front door's, with createTab's automation flag dropped. */
-  private validationTabHooks(): Pick<ValidationDeps, 'tabs' | 'createTab' | 'closeTab'> {
-    const { tabs, createTab } = this.tabHooks();
-    return {
-      tabs,
-      createTab: (url) => createTab(url, true),
-      closeTab: (id, options) => this.deps.tabs.closeTab(id, options),
-    };
-  }
-
-  /** What a validation run may do with the desktop: its tabs, the control gate and Chromium's own port. */
-  private validationHooks(): Pick<
-    ValidationDeps,
-    'control' | 'tabs' | 'createTab' | 'closeTab' | 'leftOpen' | 'cdpPort'
-  > {
     const deps = this.deps;
-    // The last run's tabs stay open to show where it ended, until the next run starts.
-    const leftOpen = (deps.validationTabs ??= new Set());
-    const cdpPort = deps.cdpPort ? deps.cdpPort + 1 : 0;
-    return { control: deps.control, ...this.validationTabHooks(), leftOpen, cdpPort };
+    if (!deps.nativeBrowsing)
+      throw Error('Native workflow validation requires native browsing; legacy persona lifecycle is unsupported');
+    return validateNative({ ...run, driver: deps.actions, control: deps.control, ...this.validationHooks() });
   }
 
-  /** The CDP front door's view of the tabs and the control gate. */
-  private frontDoorOptions(): FrontDoorOptions {
-    return { ...this.frontDoorAddress(), ...this.tabHooks(), ...this.gateHooks() };
+  /** Fresh validation tabs retain the normal protection path and remain visible after completion. */
+  private validationHooks(): Pick<NativeValidationDeps, 'tabs' | 'createTab' | 'closeTab' | 'leftOpen'> {
+    const deps = this.deps;
+    return {
+      tabs: () => deps.tabs.list,
+      createTab: (url) => deps.tabs.openForAutomation(url)!,
+      closeTab: (id) => deps.tabs.closeTab(id),
+      leftOpen: (deps.validationTabs ??= new Set()),
+    };
   }
 
-  /** Where the front door listens, Chromium's own port one up, and the relay's secret. */
-  private frontDoorAddress(): Pick<FrontDoorOptions, 'port' | 'upstream' | 'host' | 'relayToken'> {
-    const { cdpPort, relayToken } = this.deps;
-    return { port: cdpPort, upstream: cdpPort + 1, host: frontDoorHost(process.env), relayToken };
-  }
-
-  /** How the front door takes the automation gate and counts its clients. */
-  private gateHooks(): Pick<FrontDoorOptions, 'beginCommand' | 'clientChanged'> {
-    const control = this.deps.control;
-    return { beginCommand: () => control.beginLocalCommand(), clientChanged: (delta) => control.localClient(delta) };
-  }
-
-  /** The window, the front door, cookie sync, the connection, routines and updates. */
+  /** The window, cookie sync, the connection, routines and updates. */
   private services(): void {
     this.deps.shell.create();
-    if (this.deps.cdpPort) startFrontDoor(this.frontDoorOptions());
     this.deps.cookies.startCookieChangeListener();
     if (this.deps.config.values.apiKey || process.env.OYA_AUTO_CONNECT === 'true') this.deps.socket.connect();
     this.resumeSignedIn();

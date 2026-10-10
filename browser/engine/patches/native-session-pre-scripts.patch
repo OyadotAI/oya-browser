@@ -1,0 +1,295 @@
+--- a/electron/shell/renderer/renderer_client_base.cc
++++ b/electron/shell/renderer/renderer_client_base.cc
+@@ -3,6 +3,9 @@
+ // found in the LICENSE file.
+ 
+ #include "third_party/blink/renderer/core/frame/oya_navigator_platform.h"
++#include "third_party/blink/renderer/core/frame/oya_pre_script.h"  // nogncheck
++#include "shell/common/api/api.mojom.h"
++#include "mojo/public/cpp/bindings/remote.h"
+ #include "shell/renderer/renderer_client_base.h"
+ 
+ #include <memory>
+@@ -285,7 +288,19 @@
+       });
+ }
+ 
++// Block renderer startup until the exact owning BrowserContext's immutable
++// snapshot arrives. Failure cannot release unprotected document or worker code.
++void ApplyOyaPreScripts() {
++  mojo::Remote<mojom::OyaPreScripts> scripts;
++  content::RenderThread::Get()->BindHostReceiver(scripts.BindNewPipeAndPassReceiver());
++  std::string page;
++  std::string worker;
++  CHECK(scripts->Get(&page, &worker));
++  blink::SetOyaPreScripts(std::move(page), std::move(worker));
++}
++
+ void RendererClientBase::RenderThreadStarted() {
++  ApplyOyaPreScripts();
+   ApplyOyaSessionLocale();
+   ApplyOyaHardwareConcurrency();
+   ApplyOyaNavigatorPlatform();
+--- a/electron/shell/browser/electron_browser_client.cc
++++ b/electron/shell/browser/electron_browser_client.cc
+@@ -280,6 +280,19 @@
+   NetworkHintsHandlerImpl::Create(frame_host, std::move(receiver));
+ }
+ 
++// Immutable copies outlive a browser context only until this renderer pipe closes.
++class OyaPreScriptBootstrap final : public mojom::OyaPreScripts {
++ public:
++  explicit OyaPreScriptBootstrap(ElectronBrowserContext* context)
++      : page_(context->GetOyaPageScript()), worker_(context->GetOyaWorkerScript()) {}
++  void Get(GetCallback callback) override {
++    std::move(callback).Run(page_, worker_);
++  }
++ private:
++  const std::string page_;
++  const std::string worker_;
++};
++
+ // On-device speech recognition is not supported; bind a stub that says so, as
+ // an unbound frame interface is a bad message that kills the renderer.
+ class OnDeviceSpeechRecognitionStub final
+@@ -1870,7 +1883,8 @@
+     std::optional<
+         content::ContentBrowserClient::SpareProcessRefusedByEmbedderReason>&
+         refused_reason) {
+-  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaPlatform().empty() ||
++  if (!static_cast<ElectronBrowserContext*>(browser_context)->GetOyaPageScript().empty() ||
++      !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaPlatform().empty() ||
+       content::GetOyaSessionUserAgent(browser_context) ||
+       !static_cast<ElectronBrowserContext*>(browser_context)->GetOyaTimeZone().empty() ||
+       static_cast<ElectronBrowserContext*>(browser_context)->GetOyaHardwareConcurrency() ||
+@@ -1952,6 +1966,11 @@
+ void ElectronBrowserClient::BindHostReceiverForRenderer(
+     content::RenderProcessHost* render_process_host,
+     mojo::GenericPendingReceiver receiver) {
++  if (auto scripts = receiver.As<mojom::OyaPreScripts>()) {
++    auto* context = static_cast<ElectronBrowserContext*>(render_process_host->GetBrowserContext());
++    mojo::MakeSelfOwnedReceiver(std::make_unique<OyaPreScriptBootstrap>(context), std::move(scripts));
++    return;
++  }
+ #if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+   if (auto host_receiver =
+           receiver.As<spellcheck::mojom::SpellCheckInitializationHost>()) {
+--- a/electron/shell/browser/electron_browser_context.h
++++ b/electron/shell/browser/electron_browser_context.h
+@@ -117,6 +117,15 @@
+     return true;
+   }
+   const std::string& GetOyaPlatform() const { return oya_platform_; }
++  bool SetOyaPreScripts(const std::string& page, const std::string& worker) {
++    if (oya_page_script_ == page && oya_worker_script_ == worker) return true;
++    if (oya_renderer_started_ || !oya_page_script_.empty()) return false;
++    oya_page_script_ = page;
++    oya_worker_script_ = worker;
++    return true;
++  }
++  const std::string& GetOyaPageScript() const { return oya_page_script_; }
++  const std::string& GetOyaWorkerScript() const { return oya_worker_script_; }
+   // Locale policy owns the preferred language and its primary-language fallback.
+   std::string GetOyaAcceptLanguages() const {
+     if (oya_locale_.empty()) return {};
+@@ -227,6 +236,8 @@
+   unsigned oya_hardware_concurrency_ = 0;
+   std::string oya_locale_;
+   std::string oya_platform_;
++  std::string oya_page_script_;
++  std::string oya_worker_script_;
+ 
+   using DevicePermissionMap = std::map<
+       blink::PermissionType,
+--- a/electron/shell/common/api/api.mojom
++++ b/electron/shell/common/api/api.mojom
+@@ -6,6 +6,12 @@
+ import "mojo/public/mojom/base/string16.mojom";
+ import "ui/gfx/geometry/mojom/geometry.mojom";
+ import "third_party/blink/public/mojom/messaging/transferable_message.mojom";
++
++// Renderer-start bootstrap is bound to the requesting RenderProcessHost's
++// BrowserContext. No page-supplied partition or script selection exists.
++interface OyaPreScripts {
++  [Sync] Get() => (string page, string worker);
++};
+ 
+ // A preload script and its contents, pushed to the renderer ahead of the
+ // document that needs it.
+--- a/electron/shell/browser/api/electron_api_session.cc
++++ b/electron/shell/browser/api/electron_api_session.cc
+@@ -1347,6 +1347,13 @@
+   constexpr int kOyaPolicyVersion = 1;
+   auto result = gin_helper::Dictionary::CreateEmpty(isolate);
+   result.Set("version", kOyaPolicyVersion);
++  result.Set("preScriptPolicyVersion", 1);
++  if (!browser_context_->GetOyaPageScript().empty()) {
++    auto scripts = gin_helper::Dictionary::CreateEmpty(isolate);
++    scripts.Set("page", browser_context_->GetOyaPageScript());
++    scripts.Set("worker", browser_context_->GetOyaWorkerScript());
++    result.Set("preScriptPolicy", scripts.GetHandle());
++  }
+   result.Set("rendererStarted", browser_context_->HasOyaRendererStarted());
+   result.Set("timeZone", browser_context_->GetOyaTimeZone());
+   result.Set("locale", browser_context_->GetOyaLocale());
+@@ -1359,6 +1366,37 @@
+   if (const auto* metadata = content::GetOyaSessionUserAgentMetadata(browser_context_))
+     result.Set("userAgentMetadata", OyaMetadataSnapshot(*metadata));
+   return result.GetHandle();
++}
++
++// Validate both sources before freezing the BrowserContext. No source executes
++// in the browser process, and syntax failures cannot partially install a policy.
++void Session::SetOyaPreScriptPolicy(gin_helper::ErrorThrower thrower,
++                                    base::DictValue input) {
++  constexpr size_t kMaxOyaScriptBytes = 1024 * 1024;
++  const auto* page = input.FindString("page");
++  const auto* worker = input.FindString("worker");
++  if (input.size() != 2 || !page || !worker || page->empty() ||
++      page->size() > kMaxOyaScriptBytes || worker->size() > kMaxOyaScriptBytes) {
++    thrower.ThrowTypeError("Native pre-script policy requires bounded page and worker sources");
++    return;
++  }
++  auto* isolate = v8::Isolate::GetCurrent();
++  const auto valid = [isolate](const std::string& text) {
++    v8::TryCatch caught(isolate);
++    v8::Local<v8::String> source;
++    if (!v8::String::NewFromUtf8(isolate, text.data(), v8::NewStringType::kNormal,
++                               static_cast<int>(text.size())).ToLocal(&source))
++      return false;
++    v8::ScriptCompiler::Source script(source);
++    v8::Local<v8::UnboundScript> compiled;
++    return v8::ScriptCompiler::CompileUnboundScript(isolate, &script).ToLocal(&compiled);
++  };
++  if (!valid(*page) || !valid(*worker)) {
++    thrower.ThrowTypeError("Invalid native pre-script syntax");
++    return;
++  }
++  if (!browser_context_->SetOyaPreScripts(*page, *worker))
++    thrower.ThrowError("Native pre-script policy must precede all session renderers and cannot change");
+ }
+ 
+ // This controls the legacy navigator string, not the host operating system.
+@@ -2310,6 +2348,7 @@
+       .SetMethod("_setOyaUserAgentMetadata", &Session::SetOyaUserAgentMetadata)
+       .SetMethod("_setOyaUserAgent", &Session::SetOyaUserAgent)
+       .SetMethod("_getOyaSessionPolicy", &Session::GetOyaSessionPolicy)
++      .SetMethod("_setOyaPreScriptPolicy", &Session::SetOyaPreScriptPolicy)
+       .SetMethod("_setOyaPlatform", &Session::SetOyaPlatform)
+       .SetMethod("_setOyaLocale", &Session::SetOyaLocale)
+       .SetMethod("_setOyaHardwareConcurrency", &Session::SetOyaHardwareConcurrency)
+--- a/electron/shell/browser/api/electron_api_session.h
++++ b/electron/shell/browser/api/electron_api_session.h
+@@ -151,6 +151,7 @@
+   void SetOyaUserAgentMetadata(gin_helper::ErrorThrower thrower, base::DictValue input);
+   void SetOyaUserAgent(gin_helper::ErrorThrower thrower, const std::string& user_agent);
+   v8::Local<v8::Value> GetOyaSessionPolicy(v8::Isolate* isolate);
++  void SetOyaPreScriptPolicy(gin_helper::ErrorThrower thrower, base::DictValue input);
+   void SetOyaPlatform(gin_helper::ErrorThrower thrower, const std::string& platform);
+   void SetOyaLocale(gin_helper::ErrorThrower thrower, const std::string& locale);
+   void SetOyaHardwareConcurrency(gin_helper::ErrorThrower thrower, double count);
+--- a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
++++ b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+@@ -79,8 +79,51 @@
+ #include "third_party/blink/renderer/platform/weborigin/reporting_disposition.h"
+ #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+ #include "v8/include/v8.h"
++#include "base/no_destructor.h"
++#include "third_party/blink/renderer/core/frame/oya_pre_script.h"
+ 
+ namespace blink {
++namespace {
++struct OyaPreScripts {
++  bool initialized = false;
++  std::string page;
++  std::string worker;
++};
++OyaPreScripts& OyaScripts() {
++  static base::NoDestructor<OyaPreScripts> scripts;
++  return *scripts;
++}
++}  // namespace
++
++void SetOyaPreScripts(std::string page, std::string worker) {
++  auto& scripts = OyaScripts();
++  CHECK(!scripts.initialized);
++  scripts.page = std::move(page);
++  scripts.worker = std::move(worker);
++  scripts.initialized = true;
++}
++
++// This is an embedder initialization operation, not eval supplied by a page.
++// Sources are immutable before worker threads start; no page-world registry,
++// debugging endpoint or inspector is involved. Runtime failure kills this
++// renderer before author code can observe a partially protected context.
++void RunOyaPreScript(v8::Local<v8::Context> context, bool worker) {
++  const auto& policy = OyaScripts();
++  const auto& text = worker ? policy.worker : policy.page;
++  if (text.empty()) return;
++  auto* isolate = v8::Isolate::GetCurrent();
++  v8::HandleScope handles(isolate);
++  v8::Context::Scope scope(context);
++  v8::MicrotasksScope microtasks(isolate, context->GetMicrotaskQueue(),
++                               v8::MicrotasksScope::kDoNotRunMicrotasks);
++  v8::Local<v8::String> source;
++  CHECK(v8::String::NewFromUtf8(isolate, text.data(), v8::NewStringType::kNormal,
++                               static_cast<int>(text.size())).ToLocal(&source));
++  v8::Local<v8::Script> script;
++  CHECK(v8::Script::Compile(context, source).ToLocal(&script));
++  CHECK(!script->Run(context).IsEmpty());
++}
++
+ 
+ namespace {
+ 
+@@ -301,6 +344,7 @@
+   }
+ 
+   InstallConditionalFeatures();
++  if (World().IsMainWorld()) RunOyaPreScript(context, false);
+   GetFrame()->Client()->DidInstallConditionalFeatures(context, world_->GetWorldId());
+ 
+   if (World().IsMainWorld()) {
+--- a/third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
++++ b/third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
+@@ -29,6 +29,7 @@
+  */
+ 
+ #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
++#include "third_party/blink/renderer/core/frame/oya_pre_script.h"
+ 
+ #include <memory>
+ #include <tuple>
+@@ -299,6 +300,7 @@
+   // and V8 can extend the context with origin trial features.
+   isolate_->InstallConditionalFeatures(script_state_->GetContext());
+   ExtensionsRegistry::GetInstance().InstallExtensions(script_state_);
++  if (global_scope_->IsWorkerGlobalScope()) RunOyaPreScript(script_state_->GetContext(), true);
+ }
+ 
+ void WorkerOrWorkletScriptController::DisableEvalInternal(
+--- a/third_party/blink/renderer/core/frame/oya_pre_script.h
++++ b/third_party/blink/renderer/core/frame/oya_pre_script.h
+@@ -0,0 +1,12 @@
++// Copyright 2026 Oya. All rights reserved.
++// Browser-owned immutable sources run before document and worker author scripts.
++#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_OYA_PRE_SCRIPT_H_
++#define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_OYA_PRE_SCRIPT_H_
++#include <string>
++#include "third_party/blink/renderer/core/core_export.h"
++#include "v8/include/v8-forward.h"
++namespace blink {
++CORE_EXPORT void SetOyaPreScripts(std::string page, std::string worker);
++CORE_EXPORT void RunOyaPreScript(v8::Local<v8::Context> context, bool worker);
++}  // namespace blink
++#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_OYA_PRE_SCRIPT_H_
+--- a/third_party/blink/renderer/core/frame/build.gni
++++ b/third_party/blink/renderer/core/frame/build.gni
+@@ -128,6 +128,7 @@
+   "navigator_id.cc",
+   "navigator_id.h",
+   "oya_navigator_platform.h",
++  "oya_pre_script.h",
+   "navigator_language.cc",
+   "navigator_language.h",
+   "navigator_on_line.h",

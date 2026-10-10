@@ -20,6 +20,13 @@ async function opened(answers: Record<string, unknown> = {}) {
 }
 
 describe('the reconnect dialog', () => {
+  it('stops waiting immediately when session setup fails', async () => {
+    const app = await opened();
+    await app.reconnect.save();
+    app.fake.emit('onWsStatus', { connected: false, failure: 'Restart Oya to retry.' });
+    assert.equal(app.reconnect.state.saving, false);
+    assert.equal(app.reconnect.state.error, 'Restart Oya to retry.');
+  });
   it('closes the account dialog and opens filled with the saved settings', async () => {
     const app = await opened();
     assert.equal(app.dialog.state.open, false);

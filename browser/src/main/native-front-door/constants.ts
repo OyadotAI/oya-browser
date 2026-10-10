@@ -29,11 +29,22 @@ export const NATIVE_DOOR = {
   /** HTTP method is not read-only discovery. */
   method: 405,
 } as const;
-/** Environment is read once at the native composition root, not by page commands. */
+/** Reject conflicting aliases and wildcard legacy bindings instead of silently changing exposure. */
+function configuredPort(env: NodeJS.ProcessEnv): string | undefined {
+  const native = env.OYA_NATIVE_CDP_PORT,
+    legacy = env.OYA_REMOTE_DEBUGGING_PORT === '0' ? undefined : env.OYA_REMOTE_DEBUGGING_PORT;
+  if (native && legacy && Number(native) !== Number(legacy)) throw Error('Conflicting native CDP listener ports');
+  if ((native || legacy) && env.OYA_REMOTE_DEBUGGING_HOST && env.OYA_REMOTE_DEBUGGING_HOST !== NATIVE_DOOR.host)
+    throw Error('Native CDP listener requires 127.0.0.1; wildcard and remote hosts are unsupported');
+  return native || legacy;
+}
+/** Environment is read once; the legacy listener alias never enables an upstream proxy. */
 export function nativeDoorConfig(env: NodeJS.ProcessEnv): NativeConfig | null {
-  if (!env.OYA_NATIVE_CDP_PORT) return null;
-  const port = Number(env.OYA_NATIVE_CDP_PORT);
-  if (!Number.isInteger(port) || port < 0 || port > NATIVE_DOOR.maxPort) throw Error('Invalid OYA_NATIVE_CDP_PORT');
+  const configured = configuredPort(env);
+  if (!configured) return null;
+  const port = Number(configured);
+  if (!/^\d+$/.test(configured) || !Number.isInteger(port) || port > NATIVE_DOOR.maxPort)
+    throw Error('Invalid native CDP port');
   const token = env.OYA_NATIVE_CDP_TOKEN || '';
   if (token.length < NATIVE_DOOR.tokenLength) throw Error('OYA_NATIVE_CDP_TOKEN must contain at least 32 characters');
   return { port, token };

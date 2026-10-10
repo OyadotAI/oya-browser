@@ -1,0 +1,140 @@
+/* The trust center: status cards, then readable sections and tables, in the release notes' column style. */
+.main {
+  max-width: 960px;
+  padding: 64px 0 96px;
+}
+.main h1 {
+  font-size: 44px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.lead {
+  max-width: 640px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 40px;
+}
+.card {
+  padding: 20px;
+  border: 1px solid #e5e9e1;
+  border-radius: 12px;
+  background: #fff;
+}
+.card h3 {
+  margin-top: 10px;
+  font-size: 17px;
+  font-weight: 500;
+}
+.card p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.state {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.section {
+  margin-top: 56px;
+  padding-top: 32px;
+  border-top: 1px solid #e5e9e1;
+}
+.section h2 {
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.section p {
+  margin-top: 12px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+.section a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 32px;
+  margin-top: 8px;
+}
+.grid h3 {
+  margin-top: 16px;
+  font-size: 16px;
+  font-weight: 500;
+}
+.grid p {
+  margin-top: 6px;
+  font-size: 15px;
+}
+.note {
+  font-size: 15px;
+}
+.table {
+  width: 100%;
+  margin-top: 20px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.table th {
+  padding: 8px 12px 8px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.table td {
+  padding: 12px 12px 12px 0;
+  border-top: 1px solid #e5e9e1;
+  line-height: 1.5;
+  vertical-align: top;
+}
+.table strong {
+  font-weight: 500;
+}
+.ref {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace), monospace;
+  font-size: 12px;
+}
+.pass {
+  color: var(--primary);
+  font-weight: 600;
+}
+.gap {
+  color: #92400e;
+  font-weight: 600;
+}
+@media (max-width: 760px) {
+  .main {
+    padding: 40px 0 64px;
+  }
+  .main h1 {
+    font-size: 34px;
+  }
+  .cards,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+  .table th:nth-child(2),
+  .table td:nth-child(2) {
+    display: none;
+  }
+}

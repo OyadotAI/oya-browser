@@ -3,8 +3,8 @@
  * Users run this on their machines. Connects to a deployed Oya server.
  * Multi-tab, persistent cookies, real browser, no extension install needed.
  *
- * All user input (click, type, key press, scroll) goes through Chrome DevTools
- * Protocol for full native control. Human-like timing and mouse paths.
+ * Agent input uses browser-owned native keyboard and pointer operations.
+ * External protocol connections terminate in Oya's native compatibility adapter.
  *
  * This file is the composition root and the only one that imports Electron at
  * runtime: it sets the process-wide flags that must precede `ready`, builds
@@ -17,7 +17,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { applyTelemetryFlags } from '../anonymity/telemetry.ts';
 import { applyDNSLeakPrevention } from '../anonymity/proxy.ts';
-import { startAppNativeCdp } from './app/native-cdp.ts';
+import { AppNativeBackend, startAppNativeCdp } from './app/native-cdp.ts';
+import { nativeDoorConfig } from './native-front-door/index.ts';
 import { nativeSigninTestEnabled, startNativeSigninTest } from './app/native-signin-test.ts';
 import { Passkeys, configurePasskeys } from './app/passkeys.ts';
 /** Signing-bound WebAuthn group embedded by the build, empty for unsigned development. */
@@ -59,10 +60,14 @@ import { Governance, readGovernance } from './identity/governance.ts';
 
 // First, as governance.js's import was: a malformed OYA_GOVERNANCE stops the browser before anything starts.
 const governance = new Governance(readGovernance(process.env.OYA_GOVERNANCE));
+/** Reject invalid listener credentials and bindings before opening windows or authenticating to a server. */
+const nativeListener = nativeDoorConfig(process.env);
 
 const { app, nativeImage } = electron;
-const NATIVE_BROWSING = nativeSigninTestEnabled(app.isPackaged, process.argv, process.env);
-const NATIVE_SIGNIN_TEST = NATIVE_BROWSING && process.argv.includes('--oya-native-signin-test');
+const NATIVE_SIGNIN_TEST =
+  process.argv.includes('--oya-native-signin-test') &&
+  nativeSigninTestEnabled(app.isPackaged, process.argv, process.env);
+const NATIVE_BROWSING = true;
 // Branding must not move existing cookies, profiles, or saved settings.
 const desktopUserDataPath = app.getPath('userData');
 app.setName('Oya Browser');
@@ -70,14 +75,9 @@ app.setPath('userData', desktopUserDataPath);
 
 if (process.env.OYA_USER_DATA_DIR) app.setPath('userData', path.resolve(process.env.OYA_USER_DATA_DIR));
 if (NATIVE_SIGNIN_TEST) app.setPath('userData', fs.mkdtempSync(path.join(app.getPath('temp'), 'oya-native-signin-')));
-// CDP for automation harnesses. Off unless asked for: whoever reaches this port
-// owns the browser. Chromium listens one port up on loopback; the CDP front door
-// (src/main/front-door/) owns the public port and shows harnesses only real,
-// protected tabs. No remote-allow-origins, CDP clients send no Origin, and
-// allowing one would let any web page on the machine drive it.
+// Compatibility listeners terminate in browser-owned native operations.
 const CDP_PORT = Number(process.env.OYA_REMOTE_DEBUGGING_PORT) || 0;
 const CDP_RELAY_TOKEN = crypto.randomBytes(RELAY_TOKEN_BYTES).toString('hex');
-if (!NATIVE_BROWSING) app.commandLine.appendSwitch('remote-debugging-port', CDP_PORT ? String(CDP_PORT + 1) : '0');
 
 // Prevent crashes from unhandled errors
 process.on('uncaughtException', (err) => {
@@ -88,7 +88,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // Apply telemetry + DNS leak prevention flags before app is ready
-if (!NATIVE_BROWSING) {
+if (!NATIVE_SIGNIN_TEST) {
   applyTelemetryFlags(app);
   applyDNSLeakPrevention(app);
 }
@@ -171,7 +171,18 @@ ctx.cookies = new CookieSync({
   open: () => ctx.socket.isOpen(),
   ready: () => ctx.socket.ready,
 });
-ctx.relay = new CdpRelay(ctx);
+ctx.relay = new CdpRelay({
+  backend: new AppNativeBackend(ctx),
+  socket: ctx.socket,
+  allowed: () =>
+    !!ctx.nativeBrowsing &&
+    ctx.socket.ready &&
+    ctx.socket.isOpen() &&
+    ctx.control.connected &&
+    !ctx.control.busy &&
+    !ctx.control.localHeld &&
+    ctx.control.state.mode === 'agent',
+});
 ctx.mirror = new Mirror(ctx);
 ctx.stream = new LiveStream(ctx);
 ctx.actions = new PageDriver({
@@ -216,7 +227,7 @@ if (NATIVE_SIGNIN_TEST) {
   app.whenReady().then(async () => {
     configurePasskeys(app, __OYA_WEBAUTHN_GROUP__);
     await new Boot(ctx).run();
-    startAppNativeCdp(ctx);
+    startAppNativeCdp(ctx, nativeListener);
   });
   lifecycle.install();
 }

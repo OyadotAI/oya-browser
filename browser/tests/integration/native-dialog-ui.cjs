@@ -154,14 +154,7 @@ async function cancellation(window) {
 /** Actual tab BrowserViews resolve the sheet's parent independently of standalone OAuth windows. */
 async function tabSurface() {
   const parent = new electron.BrowserWindow({ show: true, width: 520, height: 400 });
-  const view = new electron.BrowserView({ webPreferences: { sandbox: true, contextIsolation: true } });
-  parent.addBrowserView(view);
-  view.setBounds({ x: 0, y: 0, width: 520, height: 350 });
-  Object.defineProperty(view.webContents, 'debugger', {
-    get() {
-      throw Error('Internal CDP forbidden');
-    },
-  });
+  let view;
   const windows = {
     ownerOfContents: (page) => (page === view.webContents ? { shell: { window: parent } } : undefined),
   };
@@ -169,7 +162,24 @@ async function tabSurface() {
     () => true,
     dialogPresenter({ electron, windows, appDir: path.resolve(__dirname, '../..') }),
   );
-  const protection = new Protection({ nativeBrowsing: true, dialogs });
+  const protection = new Protection({
+    nativeBrowsing: true,
+    dialogs,
+    persona: { active: null },
+    governance: { configuration: null },
+    config: { values: {} },
+  });
+  const session = electron.session.fromPartition(`native-dialog-tab-${Date.now()}`);
+  protection.configureSession(session);
+  protection.assertSession(session);
+  view = new electron.BrowserView({ webPreferences: { session, sandbox: true, contextIsolation: true } });
+  parent.addBrowserView(view);
+  view.setBounds({ x: 0, y: 0, width: 520, height: 350 });
+  Object.defineProperty(view.webContents, 'debugger', {
+    get() {
+      throw Error('Internal CDP forbidden');
+    },
+  });
   try {
     assert.equal(await protection.setupTabCDP(view), true);
     protection.resetTabCDP(view);

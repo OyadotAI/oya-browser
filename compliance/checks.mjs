@@ -9,7 +9,8 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
-import { REPO_ROOT, SCRATCH_PG } from './constants.mjs';
+import { resolve } from 'node:path';
+import { BAAS_PATH, REPO_ROOT, RETENTION_SOURCE, SCRATCH_PG, SIX_YEARS_DAYS } from './constants.mjs';
 
 const run = promisify(execFile);
 
@@ -114,24 +115,30 @@ async function phiRedaction() {
 
 /** A third party on the ePHI path needs a BAA; a residential proxy vendor will not sign one. */
 async function subprocessorEgress() {
-  const configured = Boolean(process.env.OYA_RESIDENTIAL_PROXY_URL || process.env.BENCH_PROXY_URL);
+  const proxied = Boolean(process.env.OYA_RESIDENTIAL_PROXY_URL || process.env.BENCH_PROXY_URL);
+  const unsigned = await unsignedBaas();
+  const problems = [...(proxied ? ['a third-party proxy is configured'] : []), ...unsigned.map((v) => `no BAA with ${v}`)];
   return {
-    ok: !configured,
-    detail: configured
-      ? 'a third-party proxy is configured in this environment: not permissible on an ePHI path without a BAA'
-      : 'no third-party proxy configured: egress is direct or customer-owned',
-    command: 'inspect OYA_RESIDENTIAL_PROXY_URL / BENCH_PROXY_URL',
+    ok: problems.length === 0,
+    detail: problems.join('; ') || 'BAAs signed with every hosted subprocessor; no third-party proxy configured',
+    command: `inspect OYA_RESIDENTIAL_PROXY_URL / BENCH_PROXY_URL, and ${BAAS_PATH}`,
   };
 }
 
-/** Retention needs a floor for audit records and a purge for everything else. */
+/** Hosted subprocessors in compliance/baas.json with no signing date recorded. */
+async function unsignedBaas() {
+  const baas = JSON.parse(await readFile(resolve(REPO_ROOT, BAAS_PATH), 'utf8'));
+  return Object.keys(baas).filter((vendor) => !baas[vendor]);
+}
+
+/** Passes only when the audit floor the server enforces by default is at least six years. */
 async function retentionPolicy() {
-  const floor = await attempt('grep', ['-rEn', 'AUDIT_RETENTION|RETENTION_YEARS', 'server/src']);
-  const found = floor.ok && floor.output.length > 0;
+  const source = await readFile(resolve(REPO_ROOT, RETENTION_SOURCE), 'utf8');
+  const days = Number(source.match(/DEFAULT_AUDIT_RETENTION_FLOOR_DAYS = (\d+)/)?.[1] ?? 0);
   return {
-    ok: found,
-    detail: found ? floor.output.split('\n')[0] : 'no audit retention floor and no purge job found in server/src',
-    command: 'grep -rEn "AUDIT_RETENTION|RETENTION_YEARS" server/src',
+    ok: days >= SIX_YEARS_DAYS,
+    detail: `default audit retention floor is ${days} days; six years is ${SIX_YEARS_DAYS}`,
+    command: `read DEFAULT_AUDIT_RETENTION_FLOOR_DAYS in ${RETENTION_SOURCE}`,
   };
 }
 

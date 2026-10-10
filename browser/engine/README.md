@@ -974,3 +974,65 @@ identity shape and bounds but does not yet certify semantic persona coherence or
 full persona coverage. Default persona protection
 is not migrated by these prerequisites. Remaining native protections, legacy test
 migration and the signed macOS/Windows release matrix are still outstanding.
+
+## Native session pre-script policy
+
+`patches/native-session-pre-scripts.patch` applies from the pinned Chromium `src`
+root after the identity prerequisites above. It includes the Electron and Blink
+changes together. Apply it with
+`sh browser/engine/tools/apply-native-pre-scripts.sh /path/to/oya-electron/src`.
+Build the existing `PasskeyTesting` target with at most four jobs; put the pinned
+`buildtools/mac` directory on PATH so Node's generated config can find GN.
+
+The synchronous `_setOyaPreScriptPolicy({page, worker})` session API accepts two
+source strings, each bounded to one MiB. The page source must be nonempty; an
+empty worker source explicitly requests no additional worker script (the
+no-persona lifecycle still installs native scalar identity). Both compile successfully
+before the session commits either. A different policy or installation after any
+renderer starts is rejected; identical installed sources can be reused.
+`_getOyaSessionPolicy()` exposes `preScriptPolicyVersion: 1` and, once configured,
+a copied `preScriptPolicy: {page, worker}` snapshot. This capability must be
+required before enabling the native persona lifecycle.
+
+Sources remain owned by the exact BrowserContext. A renderer bootstrap Mojo
+interface resolves the requesting RenderProcessHost's context, never a
+renderer-selected partition, and synchronously returns its immutable sources.
+Configured sessions refuse spare renderer reuse. Blink installs the page source
+in each main-world context after its native interfaces are initialized, and the
+worker source in `PrepareForEvaluation` for dedicated, shared and service workers
+before their author scripts. Worklets are not worker-navigator contexts and are
+excluded. Isolated worlds are not modified. A failed bootstrap or runtime source
+exception stops the renderer before unprotected author code can run.
+
+This executes the existing persona injection sources through a browser-owned
+engine hook. It does not convert their fingerprint getter wrappers into native
+Blink getters, change those source bytes, or claim that injected wrappers are
+undetectable. Native scalar policy remains responsible for UA/metadata, platform,
+timezone, locale/languages and hardware concurrency.
+
+`test:native-pre-scripts` explicitly selects `OYA_NATIVE_ENGINE` and checks the
+unchanged production builders against first-author-script page, cross-process
+frame, popup, classic/module dedicated and shared workers, service workers,
+parallel partitions, reload and cold service restart. The fixture throws on
+Electron debugger access. Passing macOS coverage does not certify a Windows
+runtime, signed distribution, or real passkey credential.
+
+### Native cross-process input routing
+
+`patches/native-pointer-routing.patch` routes onscreen mouse and wheel input
+through Chromium's browser-owned hit-test router for the exact WebContents.
+Keyboard input follows its focused render widget, including an out-of-process
+child frame, after native popup handling. Offscreen input retains its existing
+native path. Apply it with `tools/apply-native-pointer-routing.sh /path/to/src`
+after the existing Oya engine patches. The native workflow fixture exercises
+nested cross-process pointer focus and typing; no debugger transport is involved.
+
+### Opaque-origin WebAuthn availability
+
+`patches/native-webauthn-opaque-origin.patch` rejects opaque-origin platform
+and conditional authenticator availability with `false` before consulting
+origin-bound delegates or request proxies. The proxy invariant assertion and
+credential creation/assertion origin validation stay intact. Apply with
+`tools/apply-native-webauthn-opaque-origin.sh /path/to/src`. The isolated native
+`tests/integration/native-webauthn-opaque.mjs` regression covers secure sandboxed
+opaque frames, all three capability probes, and ordinary-origin availability.

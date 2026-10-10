@@ -82,7 +82,7 @@ describe('ControlSocket', () => {
   });
 
   it('describes this browser in the auth message', () => {
-    const msg = authMessage({ apiKey: 'k', browserName: 'n', persona: 'p', provider: 'oya-cloud' }, 'b', 9222, '2.3.4');
+    const msg = authMessage({ apiKey: 'k', browserName: 'n', persona: 'p', provider: 'oya-cloud' }, 'b', true, '2.3.4');
     assert.deepEqual(msg, {
       type: 'auth',
       api_key: 'k',
@@ -109,6 +109,15 @@ describe('ControlSocket', () => {
     assert.equal(ctx.socket.send({ type: 'x' }), false);
   });
 
+  it('offers native remote protocol access without opening a local debugging listener', () => {
+    const message = authMessage({ apiKey: 'k' }, 'browser', true, '1.0.0');
+    assert.equal(message.cdp, true);
+  });
+
+  it('does not offer a native protocol backend for legacy persona lifecycle', () => {
+    assert.equal(authMessage({ apiKey: 'k' }, 'browser', 9222, '1.0.0').cdp, false);
+  });
+
   it('handles messages one at a time, in order, skipping garbage', async () => {
     const seen = [];
     ctx.shell.browsingMode = true;
@@ -122,6 +131,88 @@ describe('ControlSocket', () => {
     assert.deepEqual(seen, [5, 2]);
   });
 
+  it('serializes reconnect messages and discards queued messages from the retired socket', async () => {
+    const seen = [];
+    let release;
+    ctx.cookies.applyCookieSync = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    ctx.cookies.answerPull = () => seen.push('old-finished');
+    ctx.stream.startStream = (fps) => seen.push(fps);
+    ctx.socket.connect();
+    const old = FakeWs.made[0];
+    old.emit('message', Buffer.from(JSON.stringify({ type: 'cookie_sync' })));
+    old.emit('message', Buffer.from(JSON.stringify({ type: 'stream_start', fps: 3 })));
+    await flush();
+    ctx.socket.connect();
+    FakeWs.made[1].emit('message', Buffer.from(JSON.stringify({ type: 'stream_start', fps: 9 })));
+    await flush();
+    assert.deepEqual(seen, []);
+    release();
+    await flush();
+    assert.deepEqual(seen, ['old-finished', 9]);
+  });
+
+  it('a replaced auth cannot apply its persona or make the replacement socket ready', async () => {
+    let release;
+    let applied = false;
+    ctx.persona.ensureLoginState = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    ctx.persona.applyServerFingerprint = async () => {
+      applied = true;
+    };
+    ctx.socket.connect();
+    FakeWs.made[0].emit('message', Buffer.from(JSON.stringify({ type: 'auth_ok', fingerprint: { id: 'old' } })));
+    await flush();
+    ctx.socket.connect();
+    release();
+    await flush();
+    assert.equal(applied, false);
+    assert.equal(ctx.socket.ready, false);
+    assert.deepEqual(FakeWs.made[1].closes, []);
+  });
+
+  it('an auth replaced during persona installation cannot publish readiness afterward', async () => {
+    let release;
+    ctx.persona.ensureLoginState = async () => {};
+    ctx.persona.applyServerFingerprint = () =>
+      new Promise((resolve) => {
+        release = resolve;
+      });
+    ctx.socket.connect();
+    FakeWs.made[0].emit('message', Buffer.from(JSON.stringify({ type: 'auth_ok', fingerprint: { id: 'old' } })));
+    await flush();
+    ctx.socket.connect();
+    release();
+    await flush();
+    assert.equal(ctx.socket.ready, false);
+    assert.deepEqual(FakeWs.made[1].sent, []);
+    assert.deepEqual(FakeWs.made[1].closes, []);
+  });
+
+  it('an old asynchronous handler cannot send profile data over the replacement socket', async () => {
+    let release;
+    let sent;
+    ctx.cookies.applyCookieSync = async () => {
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+      sent = ctx.socket.send({ type: 'cookies', cookies: ['old-persona'] });
+    };
+    ctx.cookies.answerPull = () => {};
+    ctx.socket.connect();
+    FakeWs.made[0].emit('message', Buffer.from(JSON.stringify({ type: 'cookie_sync' })));
+    await flush();
+    ctx.socket.connect();
+    release();
+    await flush();
+    assert.equal(sent, false);
+    assert.deepEqual(FakeWs.made[1].sent, []);
+  });
+
   it('closes a session whose setup failed', async () => {
     ctx.control.result = () => {
       throw new Error('bad');
@@ -130,6 +221,11 @@ describe('ControlSocket', () => {
     FakeWs.made[0].emit('message', Buffer.from(JSON.stringify({ type: 'desktop_control_result' })));
     await flush();
     assert.deepEqual(FakeWs.made[0].closes, [[4003, 'Session setup failed']]);
+    FakeWs.made[0].emit('close', 4003);
+    assert.equal(
+      ctx.shell.sentOn('ws-status').at(-1).failure,
+      'Session setup failed. Restart Oya to retry; if it persists, contact support.',
+    );
   });
 
   it('reconnects with backoff after an ordinary close', () => {
@@ -150,6 +246,15 @@ describe('ControlSocket', () => {
       FakeWs.made.at(-1).emit('close', code);
       assert.equal(ctx.socket.reconnectTimer, null);
     }
+  });
+
+  it('publishes terminal failure and clears it on a new connection attempt', () => {
+    ctx.socket.connect();
+    FakeWs.made.at(-1).emit('close', 4003);
+    assert.match(ctx.shell.sentOn('ws-status').at(-1).failure, /API key/);
+    assert.equal(ctx.socket.reconnectTimer, null);
+    ctx.socket.connect();
+    assert.equal(ctx.socket.connectionFailure, undefined);
   });
 
   it('caps the backoff and adds jitter', () => {

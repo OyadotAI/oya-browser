@@ -213,7 +213,7 @@ export class ControlShield {
     return view;
   }
 
-  /** Install shell shortcuts and input-triggered handoff on the shield alone. */
+  /** Install shell shortcuts and quiet input blocking on the shield alone. */
   private installShieldInput(view: BrowserView): void {
     this.deps.shortcuts.install(view.webContents);
     this.takeover.install(view.webContents);

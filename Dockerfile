@@ -7,6 +7,8 @@ RUN npm ci
 COPY ui/ ./
 # The release notes page is built from the changelog at the repository root.
 COPY CHANGELOG.md /CHANGELOG.md
+# The trust page is built from the generated HIPAA evidence pack.
+COPY compliance/evidence.json /compliance/evidence.json
 RUN npm run build
 
 # ── Stage 2: Production server ──

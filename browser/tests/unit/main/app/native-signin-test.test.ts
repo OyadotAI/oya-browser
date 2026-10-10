@@ -18,6 +18,14 @@ it('refuses managed, cloud and remote debugging environments', () => {
   for (const key of ['OYA_GOVERNANCE', 'OYA_DOCKER', 'OYA_REMOTE_DEBUGGING_PORT'])
     assert.throws(() => nativeSigninTestEnabled(false, args, { [key]: '1' }));
 });
+it('allows the authenticated legacy listener alias only for native browsing', () => {
+  const env = { OYA_REMOTE_DEBUGGING_PORT: '9222', OYA_NATIVE_CDP_TOKEN: 't'.repeat(32) };
+  assert.equal(nativeSigninTestEnabled(false, ['--oya-native-browsing'], env), true);
+  assert.throws(() => nativeSigninTestEnabled(false, args, env));
+});
+it('keeps the human sign-in diagnostic free of native protocol listeners', () => {
+  assert.throws(() => nativeSigninTestEnabled(false, args, { OYA_NATIVE_CDP_PORT: '0' }));
+});
 it('refuses debugging and automation arguments', () => {
   for (const arg of [
     '--remote-debugging-port=9222',

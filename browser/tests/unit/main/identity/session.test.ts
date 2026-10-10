@@ -39,48 +39,9 @@ function fakeSession(ua = ELECTRON_UA): any {
   };
 }
 
-/** The headers the session's rewriter sends for `headers`. */
-function rewritten(ses: any, headers: any) {
-  let out: any;
-  const details = { url: 'https://site.test/', resourceType: 'mainFrame', requestHeaders: headers };
-  ses.webRequest.rewrite(details, ({ requestHeaders }: any) => (out = requestHeaders));
-  return out;
-}
-
 describe('configureSession', () => {
   const app = { userAgentFallback: '' };
-  /** Configures `ses` for `profile`, with the fake app taking the fallback user agent. */
   const configureSession = (ses: any, profile: any) => configure(app, ses, profile);
-
-  it('presents Chrome with no Electron or app token when there is no persona', async () => {
-    const ses = fakeSession();
-    await configureSession(ses, null);
-    assert.ok(!/Electron|oya-browser/i.test(ses.ua));
-    assert.match(ses.ua, /Chrome\/134\.0\.0\.0 Safari/);
-  });
-
-  it('presents the persona platform in the user agent and in the client hints it sends', async () => {
-    const ses = fakeSession();
-    await configureSession(ses, { navigator: { platform: 'Win32' } });
-    assert.match(ses.ua, /\(Windows NT 10\.0; Win64; x64\).*Chrome\/134\.0\.0\.0/);
-    const headers = rewritten(ses, { Accept: '*/*' });
-    assert.equal(headers['sec-ch-ua-platform'], '"Windows"');
-    assert.match(headers['sec-ch-ua'], /"Google Chrome";v="134"/);
-  });
-
-  it("sends the persona's languages with the session, and stops pages being granted the camera unasked", async () => {
-    const ses = fakeSession();
-    await configureSession(ses, { navigator: { platform: 'Win32', languages: ['fr-FR', 'fr'] } });
-    assert.equal(ses.languages, 'fr-FR,fr');
-    assert.equal(ses.permissionCheck(null, 'media'), false);
-  });
-
-  it("gives service workers the persona's user agent, not Electron's", async () => {
-    const ses = fakeSession();
-    await configureSession(ses, { navigator: { platform: 'Win32' } });
-    assert.equal(app.userAgentFallback, ses.ua);
-    assert.ok(!/Electron|oya-browser/i.test(app.userAgentFallback));
-  });
 
   it('applies the persona proxy, or goes direct without one', async () => {
     const withProxy = fakeSession();
@@ -101,10 +62,23 @@ it('native browsing keeps the engine identity and headers without weakening perm
   assert.equal(ses.webRequest.rewrite, undefined);
   assert.equal(ses.permissionCheck(null, 'geolocation', 'https://example.com', {}), false);
 });
-it('native browsing refuses proxied profiles rather than exposing their native identity', async () => {
+it('native sessions install proxy and governance without a header-rewriting identity fallback', async () => {
   const ses = fakeSession();
-  await assert.rejects(
-    configure({ userAgentFallback: '' }, ses, { proxy: { host: 'proxy.example' } }, { nativeBrowsing: true }),
+  let installed = false;
+  const governance: any = {
+    configuration: { proxy: { host: 'managed.test', port: 8080 } },
+    install(actual: any) {
+      assert.equal(actual, ses);
+      installed = true;
+    },
+  };
+  await configure(
+    { userAgentFallback: '' },
+    ses,
+    { proxy: { host: 'persona.test' } },
+    { nativeBrowsing: true, governance },
   );
-  assert.equal(ses.proxy, null);
+  assert.equal(ses.proxy.proxyRules, 'http://managed.test:8080');
+  assert.equal(installed, true);
+  assert.equal(ses.webRequest.rewrite, undefined);
 });

@@ -105,3 +105,6 @@ export const PROFILE_SUFFIX = '.enc';
 export const PRIVATE_DIR_MODE = 0o700;
 /** File mode for a sealed profile: owner read/write only. */
 export const PRIVATE_FILE_MODE = 0o600;
+
+/** Native recordings sample at two frames per second without overlapping commands. */
+export const NATIVE_RECORD_INTERVAL_MS = 500;

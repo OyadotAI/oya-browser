@@ -132,12 +132,14 @@ export class AppNativeBackend implements NativeBackend {
   }
   /** Recheck tab authorization immediately before every native operation. */
   private tab(target: string): Tab {
+    requireNativeControl(this.deps);
     const tab = this.tabs().find((candidate) => this.id(candidate) === target);
     if (!tab) throw Error('Target is unavailable or unprotected');
     return tab;
   }
   /** Tab creation keeps the existing persona/egress/protection setup path. */
   async open(url: string, context?: string): Promise<string> {
+    requireNativeControl(this.deps);
     if (!isWebAddress(url)) throw Error(NOT_A_WEB_ADDRESS);
     const id = context
       ? this.deps.tabs.createTab(url, true, undefined, this.browser.contexts.get(context))
@@ -165,6 +167,7 @@ export class AppNativeBackend implements NativeBackend {
   }
   /** Browser context commands retain connection ownership and normal native setup. */
   async manage(action: string, params: Record<string, unknown>, emit: NativeEventSink): Promise<object> {
+    requireNativeControl(this.deps);
     return this.browser.manage(action, params, emit);
   }
   /** Only native paused continuations can bypass the serial command queue; ownership is rechecked. */
@@ -226,11 +229,10 @@ export class AppNativeBackend implements NativeBackend {
     });
   }
 }
-/** This explicit native-only endpoint cannot start in the legacy debugging/proxy mode. */
-export function startAppNativeCdp(deps: AppServices): void {
-  const config = nativeDoorConfig(process.env);
+/** The external protocol always terminates in native operations; tab protection remains mandatory. */
+export function startAppNativeCdp(deps: AppServices, config = nativeDoorConfig(process.env)): void {
   if (!config) return;
-  if (!deps.nativeBrowsing) throw Error('Native CDP requires the native browser mode; legacy proxy is not a fallback');
+  if (!deps.nativeBrowsing) throw Error('Native CDP requires native browsing; legacy persona lifecycle is unsupported');
   const server = startNativeFrontDoor({ ...config, ...nativeServices(deps) });
   observeServer(server, deps);
 }
@@ -268,6 +270,13 @@ function nativeServices(deps: AppServices) {
 function nativeCanObserve(deps: AppServices): boolean {
   const c = deps.control;
   return !c.busy && !c.localHeld && (!c.connected || c.state.mode === 'agent');
+}
+
+/** Native mutations recheck ownership after asynchronous protection and before dispatch. */
+function requireNativeControl(deps: AppServices): void {
+  if (!deps.nativeBrowsing)
+    throw Error('Native operations require native browsing; legacy persona lifecycle is unsupported');
+  if (!nativeCanObserve(deps)) throw Error('Native control is unavailable');
 }
 
 /** Inputs keep the policy builder independent from private backend implementation details. */

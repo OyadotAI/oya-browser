@@ -141,7 +141,8 @@ run is configuration rather than a rewrite.
 
 AI tools (Claude Code, Claude Desktop, Cursor, Windsurf, any MCP client) connect
 over MCP. Scripts use REST, a JavaScript SDK, or the CLI. The server is hosted at
-oyabrowser.com; each user creates an API key from the dashboard.
+oyabrowser.com; each user creates an API key from the dashboard. Security,
+HIPAA status and subprocessors are on the trust center: https://oyabrowser.com/trust
 
 Architecture:
 - Browser (cloud sandbox, provider, or desktop app) → WebSocket → Oya Server

@@ -1,0 +1,5 @@
+Contact: https://github.com/OyadotAI/oya-browser/security/advisories/new
+Expires: 2027-10-07T00:00:00.000Z
+Policy: https://github.com/OyadotAI/oya-browser/blob/main/SECURITY.md
+Preferred-Languages: en
+Canonical: https://oyabrowser.com/.well-known/security.txt

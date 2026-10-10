@@ -9,11 +9,17 @@ import { NATIVE_SIGNIN_TEST_SWITCH, NATIVE_SIGNIN_TEST_URL, NATIVE_SIGNIN_TEST_S
 /** Refuse diagnostics where they could bypass a managed policy or expose debugging. */
 export function nativeSigninTestEnabled(packaged: boolean, args: string[], env: NodeJS.ProcessEnv): boolean {
   if (!args.includes(NATIVE_SIGNIN_TEST_SWITCH) && !args.includes('--oya-native-browsing')) return false;
-  if (packaged || env.OYA_GOVERNANCE || env.OYA_DOCKER || env.OYA_REMOTE_DEBUGGING_PORT)
+  if (packaged || env.OYA_GOVERNANCE || env.OYA_DOCKER || forbiddenListener(args, env))
     throw new Error('Native sign-in diagnostics require an unmanaged development launch without remote debugging.');
   if (args.some((arg) => /^--(?:remote-debugging|inspect|enable-automation)/.test(arg)))
     throw new Error('Native sign-in diagnostics cannot run with debugging or automation switches.');
   return true;
+}
+
+/** Human sign-in diagnostics prohibit all listeners; native browsing may use the authenticated compatibility alias. */
+function forbiddenListener(args: string[], env: NodeJS.ProcessEnv): boolean {
+  if (args.includes(NATIVE_SIGNIN_TEST_SWITCH)) return !!(env.OYA_REMOTE_DEBUGGING_PORT || env.OYA_NATIVE_CDP_PORT);
+  return !!env.OYA_REMOTE_DEBUGGING_PORT && !env.OYA_NATIVE_CDP_TOKEN;
 }
 
 /** Native browser security defaults, without a persistent credential partition. */

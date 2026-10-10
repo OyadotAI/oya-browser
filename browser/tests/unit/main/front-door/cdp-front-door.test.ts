@@ -264,9 +264,10 @@ describe('cdp front door', () => {
       assert.deepEqual([app.admitted, app.finished], [1, 1]);
     } finally {
       sock.close();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      assert.equal(app.clients, 0);
+      for (let attempt = 0; app.clients && attempt < 100; attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
       door.close();
+      assert.equal(app.clients, 0);
     }
   });
 

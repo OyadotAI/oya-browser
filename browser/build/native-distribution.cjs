@@ -30,7 +30,9 @@ function verify(platform, arch, directory, run = execFileSync) {
 async function beforePack(context) {
   const platform = context.electronPlatformName;
   const arch = Arch[context.arch];
-  verify(platform, arch, distribution(platform, arch));
+  const directory = distribution(platform, arch);
+  verify(platform, arch, directory);
+  context.packager.config.electronDist = directory;
   await require('./webauthn.cjs')(context);
 }
 /** The same selection is used by validation and unpacking; return no optional stock-engine path. */

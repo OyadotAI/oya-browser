@@ -66,10 +66,12 @@ export class Mouse {
   /** Where the pointer was left. */
   private at: Point = { x: 0, y: 0 };
 
-  /** Moves the pointer to (x, y) along a curved, easing path. */
-  async move(view: PageView, x: number, y: number): Promise<void> {
+  /** Move along a curved path; an optional ownership fence runs before every emitted event. */
+  async move(view: PageView, x: number, y: number, guard?: () => void): Promise<void> {
     for (const pt of mousePath(this.at, { x, y })) {
+      guard?.();
       nativePointer(view, { type: 'mouseMove', x: pt.x, y: pt.y });
+      this.at = pt;
       await sleep(jitter(c.MOVE_PAUSE));
     }
     this.at = { x, y };

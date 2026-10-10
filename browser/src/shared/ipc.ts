@@ -83,6 +83,8 @@ export interface ControlState extends Payload {
 
 /** The connection as the status pill shows it. */
 export interface ConnectionStatus {
+  /** Safe terminal failure; automatic reconnection has stopped. */
+  failure?: string;
   /** Whether the control socket is up and authenticated. */
   connected: boolean;
   /** This browser's id on the server, once known. */
