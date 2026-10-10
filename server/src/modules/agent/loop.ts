@@ -206,6 +206,7 @@ const NO_SCRIPTS =
 /** Runs a call: a local tool here, anything else in the browser. */
 async function invoke(ctx: LoopContext, name, args) {
   try {
+    if (stopRequested(ctx)) return `Error: tool not run. ${ctx.stop}`;
     if (isLocal(ctx, name)) return await runLocal(ctx, name, args);
     if (name === 'run_script' && Object.keys(ctx.secrets || {}).length) return NO_SCRIPTS;
     return await executeTool(ctx.browserId, name, filled(args, ctx.values), ctx.files);
@@ -217,7 +218,7 @@ async function invoke(ctx: LoopContext, name, args) {
 /** Records a call that worked, from the element as it was before it acted, and checkpoints when it may have changed the page. */
 async function afterSuccess(ctx: LoopContext, name, args, acted) {
   await recordStep(ctx.browserId, name, args, ctx.values, acted);
-  if (PAGE_CHANGING.has(name)) await ctx.checkpoint?.();
+  if (!stopRequested(ctx) && PAGE_CHANGING.has(name)) await ctx.checkpoint?.();
 }
 
 /** The call's arguments with its element id read in the list the model saw (batch.ts); null when that element is gone. */
@@ -293,8 +294,20 @@ const assistantTurn = (msg, toolCalls) => ({
 async function runCalls(ctx: LoopContext, toolCalls) {
   const results = [];
   const batch = batchOf(ctx.browserId);
-  for (const tc of toolCalls) results.push({ tool_call_id: tc.id, content: await callTool(ctx, tc, batch) });
+  for (const tc of toolCalls) results.push({ tool_call_id: tc.id, content: await nextCall(ctx, tc, batch) });
   return results;
+}
+
+/** Once stopped, retain protocol-matching results without dispatching the remainder of a tool batch. */
+async function nextCall(ctx: LoopContext, tc, batch: Batch): Promise<string> {
+  if (stopRequested(ctx)) return `Error: tool not run. ${ctx.stop}`;
+  return callTool(ctx, tc, batch);
+}
+
+/** Cancellation wins over completion and clarification, and persists through the remaining batch. */
+function stopRequested(ctx: LoopContext): string | undefined {
+  if (ctx.signal?.aborted) ctx.stop = STOPPED_TEXT;
+  return ctx.stop;
 }
 
 /** Runs the model's tool calls in order and appends them and their results to the conversation. */
@@ -347,6 +360,7 @@ async function accepted(ctx: LoopContext, allMessages, text: string) {
 async function iterate(ctx: LoopContext, allMessages) {
   trimContext(allMessages);
   const choice = (await complete(ctx, allMessages)).choices?.[0];
+  if (stopRequested(ctx)) return ctx.stop;
   if (!choice) throw new Error('No completion in response');
   const msg = choice.message;
   if (msg.tool_calls?.length) return (await handleToolCalls(ctx, allMessages, msg), ctx.stop);
@@ -401,7 +415,7 @@ export async function agentLoop(ctx: LoopContext, allMessages): Promise<AgentRes
   ctx.guard ??= newGuard();
   for (let iterations = 0; iterations < maxIterations; iterations++) {
     wrapUp(allMessages, maxIterations - iterations, maxIterations);
-    const text = ctx.signal?.aborted ? STOPPED_TEXT : await iterate(ctx, allMessages);
+    const text = stopRequested(ctx) || (await iterate(ctx, allMessages));
     if (text) return { text, toolCalls: [], failed: failed(text), ...(ctx.data !== undefined && { data: ctx.data }) };
   }
   return { text: 'Reached iteration limit.', toolCalls: [], limited: true, failed: true };
