@@ -41,6 +41,8 @@ jobs:
       - run: npm ci --prefix browser
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      # Server native recording fixtures load the browser-owned isolated preload.
+      - run: npm run build --prefix browser
       # The server's vendored runtime file must ship with every release.
       - run: test -s server/vendor/oya-license.js
       - run: npm run build:sdk

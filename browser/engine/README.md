@@ -591,7 +591,8 @@ Installation checks the checksum before extraction, runs the existing native
 packaging capability probe under Xvfb, then exports `OYA_NATIVE_ENGINE` for the
 job. Missing configuration, failed downloads, checksum mismatches and failed
 native probes fail the job. Server integration also installs the browser's
-dependencies because its native fixture loads browser modules directly.
+dependencies and builds its isolated recording preload because the native
+fixtures load browser modules and generated preload assets directly.
 On Ubuntu runners that restrict unprivileged user namespaces, installation loads
 an AppArmor rule for only the verified executable's temporary path. The native
 probe and subsequent fixtures retain renderer sandboxing.

@@ -206,6 +206,9 @@ Linux cloud workers require the complete checksum-pinned Oya distribution in
 [native engine provisioning](../browser/engine/README.md#ci-engine-provisioning).
 The cloud image and server integration fixtures use that same runtime; an npm
 Electron download cannot supply the native storage and profile-capture contract.
+Before running server integration tests from a fresh checkout, install the browser
+dependencies and run `npm run build --prefix browser` from the repository root.
+The recording fixtures require the generated isolated preload in `browser/out`.
 
 Gateway profile hydration fails closed: missing pages, refused cookie replay,
 or refused storage hooks prevent the client upgrade and release its lock and
