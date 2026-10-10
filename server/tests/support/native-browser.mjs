@@ -82,6 +82,7 @@ async function connect(child, profile) {
     evaluate: (expression) => request('evaluate', { expression }),
     send: (action, params) => request('send', { action, params }),
     prepareProfile: (auth) => request('profile_init', auth),
+    preparePersona: (auth) => request('profile_init', { ...auth, nativePersona: true }),
     captureProfile: (id) => request('profile_capture', { id }),
     cookies: () => request('profile_cookies'),
     frontDoor: () => request('native_front_door'),

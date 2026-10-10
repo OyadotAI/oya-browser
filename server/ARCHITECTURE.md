@@ -154,8 +154,10 @@ profile and removes it only after the engine exits.
 These exercise the existing service scripts on real pages; they do not claim to
 replace the native file-chooser or native trusted-keyboard suites. Existing
 service assertions remain, and missing engines or unsupported fixture commands
-fail explicitly. The server aggregate still refuses the remaining four legacy
-browser suites: CDP driver, outbound-provider MCP lifecycle, gateway and anonymity.
+fail explicitly. The anonymity suite now installs the production native persona
+policy before creating its page and retains its 34 surface/isolation assertions.
+The server aggregate still refuses the remaining three legacy browser suites:
+CDP driver, outbound-provider MCP lifecycle and gateway.
 Do not remove that gate or equate the migrated subset with full CI.
 
 The native MCP suite starts the real server, admits a private native fixture over

@@ -49,9 +49,13 @@ it('before-pack fails before the builder can swallow a distribution-hook error',
   const previous = process.env.OYA_NATIVE_DISTRIBUTIONS;
   delete process.env.OYA_NATIVE_DISTRIBUTIONS;
   try {
-    await assert.rejects(beforePack({ electronPlatformName: process.platform, arch: Arch[process.arch] }), /OYA_NATIVE_DISTRIBUTIONS/);
+    await assert.rejects(beforePack({ electronPlatformName: 'darwin', arch: Arch.arm64 }), /OYA_NATIVE_DISTRIBUTIONS/);
     assert.throws(() => electronDist({ platformName: process.platform, arch: process.arch }), /OYA_NATIVE_DISTRIBUTIONS/);
   } finally {
     if (previous !== undefined) process.env.OYA_NATIVE_DISTRIBUTIONS = previous;
   }
+});
+it('refuses Linux desktop packaging while retaining the Linux cloud engine probe', async () => {
+  await assert.rejects(beforePack({ electronPlatformName: 'linux', arch: Arch.x64 }), /only macOS and Windows/);
+  assert.equal(executable('linux', '/native'), path.join('/native', 'electron'));
 });

@@ -10,7 +10,6 @@
     "dist": "npm run build && electron-builder --publish never",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "dist:win": "npm run build && electron-builder --win --publish never",
-    "dist:linux": "npm run build && electron-builder --linux --publish never",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test 'tests/unit/**/*.test.{js,cjs,mjs,ts}'",
     "test:integration": "node tests/integration/regressions.js && node tests/integration/control-state.cjs && node tests/integration/release.cjs && node tests/integration/workflow.cjs && npm run test:analyzer && npm run test:recorder",
@@ -148,19 +147,6 @@
         }
       ],
       "artifactName": "Oya.Browser-${version}-x64.${ext}"
-    },
-    "linux": {
-      "icon": "build/icon.png",
-      "target": [
-        "AppImage"
-      ],
-      "category": "Network",
-      "artifactName": "Oya.Browser-${version}-x64.${ext}",
-      "mimeTypes": [
-        "x-scheme-handler/http",
-        "x-scheme-handler/https",
-        "x-scheme-handler/oya"
-      ]
     },
     "dmg": {
       "title": "Oya Browser",

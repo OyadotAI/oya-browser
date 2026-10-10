@@ -656,9 +656,9 @@ The welcome screen, command palette and Help menu expose Make Oya Browser
 default. Shell-only IPC invokes `app/default-browser.ts`; it refuses development
 builds, checks both HTTP and HTTPS, and leaves Windows choice to Default Apps.
 Installation advertises support but never writes Windows UserChoice. The NSIS
-include registers Oya-owned capabilities and removes those on uninstall. Linux
-AppImage users still need an installed desktop entry. OS link delivery (macOS
-open-url and Windows/Linux argv) uses DeepLinks, including startup queuing;
+include registers Oya-owned capabilities and removes those on uninstall. Desktop
+packages support macOS and Windows; Linux is retained for cloud browsers. OS link
+delivery (macOS open-url and Windows argv) uses DeepLinks, including startup queuing;
 web links open new protected tabs and cannot interrupt agent control.
 
 ### Address completion

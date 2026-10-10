@@ -168,7 +168,6 @@ else
   done
   log_ok "Update feed ready: $(basename "$SRC_ZIP") + latest-mac.yml"
 
-  log_info "Linux AppImage will be built by GitHub Actions"
 
   # ── Update download links in UI ──
 

@@ -103,7 +103,7 @@ const STRUCTURED_DATA = {
       name: SITE_NAME,
       applicationCategory: 'DeveloperApplication',
       applicationSubCategory: 'Browser automation',
-      operatingSystem: 'macOS, Windows, Linux',
+      operatingSystem: 'macOS, Windows',
       url: SITE_URL,
       downloadUrl: `${SITE_URL}/docs#download`,
       softwareHelp: `${SITE_URL}/docs`,

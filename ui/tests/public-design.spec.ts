@@ -103,7 +103,6 @@ test('download choices and walkthrough work without contacting external services
   for (const [platform, extension] of [
     ['macOS', '.dmg'],
     ['Windows', '.exe'],
-    ['Linux', '.AppImage'],
   ]) {
     await expect(downloads.getByRole('link', { name: `Download for ${platform}` })).toHaveAttribute(
       'href',

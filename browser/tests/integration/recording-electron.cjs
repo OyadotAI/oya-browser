@@ -267,8 +267,17 @@ async function until(read) {
   await start();
   await click('styledCheck');
   await click('combo');
+  await until(() =>
+    view.webContents.executeJavaScript('document.getElementById("france").getClientRects().length > 0'),
+  );
+  // Native input routing needs the newly shown menu in the compositor's hit-test data.
+  await view.webContents.executeJavaScript(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  );
   await click('france');
-  await new Promise((resolve) => setTimeout(resolve, 400));
+  await until(() => view.webContents.executeJavaScript('!document.getElementById("list")'));
+  // Removed targets use a delayed recorder fallback; the next press must not cancel it.
+  await until(() => steps.some((step) => step.action === 'click' && step.el?.domId === 'france'));
   await click('iconButton');
   await view.webContents.executeJavaScript(`document.getElementById('menu').focus()`);
   await keyboard.press(view, 'ArrowDown');

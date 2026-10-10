@@ -29,6 +29,7 @@ function verify(platform, arch, directory, run = execFileSync) {
 /** Validate before unpacking: electron-builder otherwise catches distribution-hook errors and downloads stock Electron. */
 async function beforePack(context) {
   const platform = context.electronPlatformName;
+  if (!['darwin', 'win32'].includes(platform)) throw Error('Desktop packaging supports only macOS and Windows');
   const arch = Arch[context.arch];
   const directory = distribution(platform, arch);
   verify(platform, arch, directory);

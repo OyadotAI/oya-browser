@@ -33,50 +33,6 @@ jobs:
       contents: read
       id-token: write
 
-  build-linux:
-    name: Build Linux AppImage
-    needs: ci
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-    - uses: actions/checkout@v7
-
-    - uses: actions/setup-node@v7
-      with:
-        node-version: 24
-
-    - name: Install browser dependencies
-      run: cd browser && npm ci
-
-    - name: Build Linux AppImage
-      run: cd browser && npm run dist:linux -- --x64
-
-    - name: Upload AppImage as artifact
-      uses: actions/upload-artifact@v7
-      with:
-        name: linux-appimage
-        path: browser/dist/*.AppImage
-
-    - name: Upload to GitHub release
-      run: |
-        VERSION="${GITHUB_REF_NAME#v}"
-        # build.linux.artifactName pins this name, and latest-linux.yml refers
-        # to it, renaming the asset here would 404 every Linux update.
-        APP="browser/dist/Oya.Browser-${VERSION}-x64.AppImage"
-        if [ ! -f "$APP" ]; then
-          echo "::error::$APP missing, check build.linux.artifactName"
-          exit 1
-        fi
-        if [ ! -f browser/dist/latest-linux.yml ]; then
-          echo "::error::latest-linux.yml missing, Linux auto-update would silently stop"
-          exit 1
-        fi
-        gh release upload "${GITHUB_REF_NAME}" "$APP" browser/dist/latest-linux.yml --clobber
-        echo "Uploaded $(basename "$APP") and latest-linux.yml"
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   build-windows:
     name: Build Windows installer
     needs: ci
@@ -204,10 +160,10 @@ jobs:
   build-image:
     name: Build & push Docker image
     # Ordered after the desktop builds so their binaries are on the release to
-    # be bundled, but not gated on them: a broken AppImage used to skip this
+    # be bundled, but not gated on them: a broken desktop build used to skip this
     # job and with it the entire prod deploy, no server update, no snapshot
     # repoint, over a download link. The desktop job still goes red on its own.
-    needs: [ci, build-linux, build-windows, build-mac]
+    needs: [ci, build-windows, build-mac]
     # !cancelled() deliberately lets a broken desktop build through, but not a
     # red suite, which is why ci is checked explicitly: a skipped dependency
     # does not make !cancelled() false.
@@ -235,7 +191,7 @@ jobs:
         # "${GITHUB_REF_NAME}", not ${{ github.ref_name }}: the expression form
         # is pasted into the script before the shell sees it, so a tag named
         # v1.0.0$(...) would run on the runner.
-        for pattern in '*.dmg' '*.zip' '*.exe' '*.AppImage' 'latest*.yml'; do
+        for pattern in '*.dmg' '*.zip' '*.exe' 'latest-mac.yml' 'latest.yml'; do
           gh release download "${GITHUB_REF_NAME}" --pattern "$pattern" --dir server/downloads --clobber || true
         done
 
@@ -261,8 +217,6 @@ jobs:
         carry 'latest-mac.yml'   'latest-mac.yml'
         carry '*-x64.exe'        '*.exe'
         carry 'latest.yml'       'latest.yml'
-        carry '*-x64.AppImage'   '*.AppImage'
-        carry 'latest-linux.yml' 'latest-linux.yml'
 
         # build.artifactName has emitted dotted names since v1.0.50; this only
         # still matters for assets carried over from older releases.
@@ -275,10 +229,8 @@ jobs:
     - name: Update download URLs in UI
       run: |
         # Per platform, from the file that is really in server/downloads, the
-        # three are not always the same version. A --no-desktop release carries
-        # the previous macOS build forward while CI builds Linux and Windows
-        # fresh for this tag, and a single version across all three links would
-        # then 404 two of them.
+        # platforms may have different versions when a desktop build is carried
+        # forward. Each link must match its own packaged asset.
         link() {                        # $1 = filename suffix, $2 = label
           local file version
           file=$(ls server/downloads/Oya.Browser-*"$1" 2>/dev/null | head -1)
@@ -294,7 +246,6 @@ jobs:
         }
         link '-universal.dmg' macOS
         link '-x64.exe'       Windows
-        link '-x64.AppImage'  Linux
         grep -o 'Oya\.Browser-[0-9.]*-[a-zA-Z0-9.]*' ui/src/lib/browser-downloads.ts | sort -u
 
     - uses: docker/setup-buildx-action@v4
@@ -664,7 +615,7 @@ jobs:
   # events channel.
   notify:
     name: Slack notify (prod)
-    needs: [ci, build-linux, build-windows, build-mac, build-image, build-browser, register-snapshot, deploy]
+    needs: [ci, build-windows, build-mac, build-image, build-browser, register-snapshot, deploy]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
@@ -702,7 +653,7 @@ jobs:
             echo "emoji=🎉" >> "$GITHUB_OUTPUT"; echo "status=Release deployed" >> "$GITHUB_OUTPUT"
           elif [[ "${{ needs.ci.result }}" == "failure" ]]; then
             echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Tests failed" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ needs.build-mac.result }}" == "failure" || "${{ needs.build-windows.result }}" == "failure" || "${{ needs.build-linux.result }}" == "failure" ]]; then
+          elif [[ "${{ needs.build-mac.result }}" == "failure" || "${{ needs.build-windows.result }}" == "failure" ]]; then
             echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Desktop build failed" >> "$GITHUB_OUTPUT"
           elif [[ "${{ needs.build-image.result }}" == "failure" || "${{ needs.build-browser.result }}" == "failure" ]]; then
             echo "emoji=❌" >> "$GITHUB_OUTPUT"; echo "status=Image build failed" >> "$GITHUB_OUTPUT"
@@ -851,7 +802,6 @@ jobs:
           # Fail closed if extraction lost the production update feeds.
           test -s server/downloads/latest-mac.yml
           test -s server/downloads/latest.yml
-          test -s server/downloads/latest-linux.yml
           echo 'Retained the production desktop binaries and update feeds without publishing new ones.'
 
       - uses: docker/setup-buildx-action@v4

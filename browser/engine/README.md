@@ -543,8 +543,9 @@ Windows compilation and runtime verification remain outstanding.
 
 Desktop packaging now requires `OYA_NATIVE_DISTRIBUTIONS`, with unpacked
 Electron-compatible distribution directories named `darwin-arm64`, `darwin-x64`,
-`win32-x64`, and `linux-x64`. A macOS directory contains `Electron.app`; Windows
-contains `electron.exe`; Linux contains `electron`. These must be built patched
+and `win32-x64`. A macOS directory contains `Electron.app`; Windows contains
+`electron.exe`. Linux desktop packaging is unsupported. Linux cloud validation
+still uses a `linux-x64` distribution containing `electron`. These must be built patched
 Oya engines, not renamed stock downloads. Do not point the directory at the whole
 compiler output tree, which contains build intermediates unrelated to shipping.
 
@@ -582,7 +583,8 @@ native probes fail the job. Server integration also installs the browser's
 dependencies because its native fixture loads browser modules directly.
 
 Provisioning alone does not complete the migration: the server aggregate still
-rejects the legacy CDP, provider MCP lifecycle, gateway and anonymity fixtures.
+rejects the legacy CDP, provider MCP lifecycle and gateway fixtures. The anonymity
+fixture now uses the native persona policy and authenticated external adapter.
 The identity suite also retains debugger-based virtual-authenticator checks that
 need a native replacement. Those assertions must be migrated before CI can pass;
 do not remove the integration gate or claim the pipeline is validated from a

@@ -45,9 +45,6 @@ browser-build: ## Build browser for current platform
 browser-dist-mac: ## Build macOS DMG (universal)
 	cd browser && npm run dist:mac
 
-browser-dist-linux: ## Build Linux AppImage
-	cd browser && npm run dist:linux
-
 # ── Docker ──
 
 docker-build: ## Build server Docker image

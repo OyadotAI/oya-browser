@@ -240,7 +240,7 @@ export const START_STEPS = [
   {
     n: '2',
     title: 'Install and open',
-    body: 'Mac: drag it to Applications. Windows: run the .exe. Linux: chmod +x the AppImage.',
+    body: 'Mac: drag it to Applications. Windows: run the .exe.',
   },
   {
     n: '3',

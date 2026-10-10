@@ -173,7 +173,7 @@ already signed in, including flows that use passkeys and WebAuthn.
 
 1. Get an API key: a person clicks Generate at https://oyabrowser.com/dashboard,
    or an agent signs itself up with no person at all (see Agent self-signup below)
-2. Download Oya Browser: macOS .dmg, Windows .exe, or Linux .AppImage, https://oyabrowser.com/docs#download
+2. Download Oya Browser: macOS .dmg or Windows .exe, https://oyabrowser.com/docs#download
 3. macOS builds are signed and notarized, so they open normally. To run a second instance: `open -n "/Applications/Oya Browser.app" --args --user-data-dir=/tmp/oya-2`
 4. Open the app, enter `wss://oyabrowser.com/ws` as server URL and paste your API key
 5. Your browser appears in the dashboard, connect AI tools via MCP

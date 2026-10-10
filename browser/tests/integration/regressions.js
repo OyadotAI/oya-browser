@@ -97,8 +97,8 @@ const prodwf = fs.readFileSync(
 // carried forward from the last release that had them. Miss either and mac
 // clients 404 on the feed and quietly stop updating.
 assert.ok(
-  /for pattern in [^\n]*'latest\*\.yml'/.test(prodwf),
-  'deploy must ship latest*.yml to /downloads or updates 404',
+  /for pattern in [^\n]*'latest-mac\.yml' 'latest\.yml'/.test(prodwf),
+  'deploy must ship both supported desktop update feeds to /downloads or updates 404',
 );
 assert.ok(
   /carry 'latest-mac\.yml'/.test(prodwf),
@@ -125,16 +125,16 @@ assert.ok(pkg.dependencies?.['electron-updater'], 'electron-updater must be a ru
 // electron-builder publishes implicitly on a tag build once a publish config
 // exists. No CI job has GH_TOKEN, so v1.0.50 died with "GitHub Personal Access
 // Token is not set" and took the whole prod deploy with it.
-for (const script of ['dist', 'dist:mac', 'dist:win', 'dist:linux']) {
+for (const script of ['dist', 'dist:mac', 'dist:win']) {
   assert.ok(
     /--publish never/.test(pkg.scripts[script] || ''),
     `${script} must pass --publish never or a tag build tries to publish itself`,
   );
 }
 
-// Each platform's feed names its artifact, so the asset must keep that exact
-// name. ${arch} renders as x86_64 for AppImage, which matched neither.
-assert.strictEqual(build.linux?.artifactName, 'Oya.Browser-${version}-x64.${ext}');
+// Only macOS and Windows desktop packages ship; Linux remains a cloud runtime.
+assert.strictEqual(build.linux, undefined);
+assert.strictEqual(pkg.scripts['dist:linux'], undefined);
 assert.strictEqual(build.win?.artifactName, 'Oya.Browser-${version}-x64.${ext}');
 
 const release = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'k8s', 'scripts', 'release.sh'), 'utf8');

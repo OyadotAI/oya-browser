@@ -2,6 +2,7 @@
 const { Persona } = require('../../src/main/app/persona.ts');
 const { CookieSync } = require('../../src/main/sync/cookie-sync.ts');
 const { captureProfile } = require('../../src/main/connection/profile-capture.ts');
+const { Protection } = require('../../src/main/tabs/protection.ts');
 /** Initialize the exact authenticated partition before creating its first page. */
 module.exports = async function profileFixture(electron, auth, local) {
   const sent = [];
@@ -31,6 +32,14 @@ module.exports = async function profileFixture(electron, auth, local) {
   try {
     await deps.persona.ensureLoginState(auth);
     deps.persona.active = auth.fingerprint;
+    if (auth.nativePersona) {
+      const protection = new Protection({
+        persona: deps.persona,
+        governance: { configuration: {} },
+        config: { values: { provider: 'oya-cloud' } },
+      });
+      protection.configureSession(jar);
+    }
     await deps.cookies.applyCookieSync(auth.cookies, { now: auth.now });
     jar.webRequest.onBeforeRequest((details, reply) => reply({ cancel: !local(details.url) }));
     const window = new electron.BrowserWindow({

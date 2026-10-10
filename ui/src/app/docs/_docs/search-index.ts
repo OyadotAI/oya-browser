@@ -72,7 +72,6 @@ const ITEMS: [string, string, string][] = [
   ["Save your key somewhere safe. If you lose it, you'll need to generate a new one.", 'create-key', 'P'],
   ['Download Browser', 'download', 'H2'],
   ['macOS (Intel + Apple Silicon)', 'download', 'TD'],
-  ['Linux (arm64)', 'download', 'TD'],
   ['Running multiple instances', 'download', 'H3'],
   ['Connect', 'connect', 'H2'],
   ['Open Oya Browser. The setup screen appears on first launch.', 'connect', 'P'],

@@ -1,37 +1,14 @@
-#!/usr/bin/env node
-/**
- * Anti-detection unit checks against a real Chrome.
- *
- * These are the signals a detector reads first. Each assertion is written as
- * "what a real browser does", so a regression shows up as a lie rather than a
- * missing feature.
- *
- * Skipped when no Chrome binary is present.
- */
-
-import { spawn } from 'child_process';
-import { mkdtempSync, existsSync, readFileSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { createRequire } from 'module';
+/** Preserve persona and analyzer isolation checks on Oya's native session and authenticated external adapter. */
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { CDPConnection } from '../../src/drivers/cdp.ts';
-import { removeScratch } from '../support/scratch.js';
+import { openNativeFixture } from '../support/native-browser.mjs';
 
 const require = createRequire(import.meta.url);
-const { buildInjectionScript } = require('../../../browser/anonymity/inject.js');
 const { generateProfile } = require('../../../browser/anonymity/fingerprint.js');
 const profile = generateProfile({ id: 'test-persona' });
-
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-if (!CHROME) {
-  console.log('⏭  No Chrome binary, skipping anonymity test');
-  process.exit(0);
-}
 
 const profilePlatform = profile.navigator.platform;
 let passed = 0,
@@ -46,35 +23,25 @@ const assert = (c, label) => {
   }
 };
 
-const userDataDir = mkdtempSync(join(tmpdir(), 'oya-anon-'));
-const chrome = spawn(
-  CHROME,
-  ['--headless=new', '--remote-debugging-port=0', '--no-first-run', `--user-data-dir=${userDataDir}`, 'about:blank'],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  const t = setTimeout(() => reject(new Error('Chrome did not report an endpoint')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(t);
-      resolve(m[0]);
-    }
-  });
+/** Loopback documents keep the fixture hermetic, including redirected and nested requests. */
+const site = createServer((_req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.end(
+    '<!doctype html><div id=d style="width:200px;height:50px">x</div><canvas id=c width=64 height=64></canvas><button>Press me</button><input placeholder=name>',
+  );
 });
-
-let conn;
+site.listen(0, '127.0.0.1');
+await once(site, 'listening');
+const url = `http://127.0.0.1:${site.address().port}/`;
+let conn, browser;
 try {
-  conn = await new CDPConnection(wsUrl).connect();
-  const { targetId } = await conn.send('Target.createTarget', { url: 'about:blank' });
-  const { sessionId } = await conn.send('Target.attachToTarget', { targetId, flatten: true });
-  await conn.send('Page.enable', {}, sessionId);
-  await conn.send('Runtime.enable', {}, sessionId);
-  await conn.send('Page.addScriptToEvaluateOnNewDocument', { source: buildInjectionScript(profile) }, sessionId);
-  await conn.send('Page.navigate', { url: 'about:blank' }, sessionId);
-  await new Promise((r) => setTimeout(r, 400));
+  browser = await openNativeFixture();
+  await browser.preparePersona({ fingerprint: profile, origins: {}, cookies: [], now: Date.now() });
+  await browser.send('navigate', { url });
+  const endpoint = await browser.frontDoor();
+  conn = await new CDPConnection(endpoint.url, { bearerToken: endpoint.token }).connect();
+  const { targetInfos } = await conn.send('Target.getTargets');
+  const { sessionId } = await conn.send('Target.attachToTarget', { targetId: targetInfos[0].targetId, flatten: true });
 
   const evaluate = async (expr) => {
     const res = await conn.send(
@@ -86,10 +53,10 @@ try {
     return res.result?.value;
   };
 
-  /** Waits for a data: page to finish loading; a fixed sleep raced slow CI runners. */
+  /** Waits for the loopback page to finish loading; a fixed sleep raced slow CI runners. */
   const loaded = async (selector) => {
     const deadline = Date.now() + 10000;
-    const ready = `location.protocol === 'data:' && document.readyState === 'complete' && !!document.querySelector('${selector}')`;
+    const ready = `location.protocol === 'http:' && document.readyState === 'complete' && !!document.querySelector('${selector}')`;
     while (!(await evaluate(ready).catch(() => false))) {
       if (Date.now() > deadline) throw new Error(`page with ${selector} did not load`);
       await new Promise((r) => setTimeout(r, 50));
@@ -165,13 +132,7 @@ try {
   // An advancing RNG made these differ between consecutive calls. No real
   // browser does that, and it is exactly the "lies that lie inconsistently"
   // class CreepJS tests for.
-  await conn.send(
-    'Page.navigate',
-    {
-      url: 'data:text/html,<div id=d style="width:200px;height:50px">x</div><canvas id=c width=64 height=64></canvas>',
-    },
-    sessionId,
-  );
+  await browser.send('navigate', { url });
   await loaded('#c');
 
   assert(
@@ -214,14 +175,8 @@ try {
   assert((await evaluate('navigator.platform')) === profilePlatform, 'the profile platform is applied');
 
   console.log('\n8️⃣  The analyzer works from an isolated world, invisibly...');
-  // This is the mechanism browser/src/main/main.ts now uses: Page.createIsolatedWorld
-  // returns the context id directly, so it needs no Runtime.enable, that
-  // domain is itself a detection vector.
-  await conn.send(
-    'Page.navigate',
-    { url: 'data:text/html,<button>Press me</button><input placeholder=name>' },
-    sessionId,
-  );
+  // External protocol requests terminate in owner-scoped native isolated worlds.
+  await browser.send('navigate', { url });
   await loaded('input');
   const { frameTree } = await conn.send('Page.getFrameTree', {}, sessionId);
   const { executionContextId } = await conn.send(
@@ -229,7 +184,6 @@ try {
     {
       frameId: frameTree.frame.id,
       worldName: 'w' + Math.random().toString(16).slice(2),
-      grantUniveralAccess: true,
     },
     sessionId,
   );
@@ -294,11 +248,8 @@ try {
   failed++;
 } finally {
   conn?.close();
-  chrome.kill('SIGKILL');
-  // Chrome holds the profile briefly after SIGKILL; retry rather than throw
-  // over a temp directory and mask the test result.
-  await new Promise((r) => setTimeout(r, 300));
-  removeScratch(userDataDir);
+  await browser?.close();
+  await new Promise((resolve) => site.close(resolve));
 }
 
 console.log('\n──────────────────────────────────────────────────');

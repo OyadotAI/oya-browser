@@ -47,19 +47,6 @@ const DOWNLOAD_ROWS_1: ReactNode[][] = [
       Oya Browser.exe
     </a>,
   ],
-  [
-    'Linux (x64)',
-    <a
-      key="linux"
-      data-track="download_clicked"
-      data-track-label="Linux"
-      data-track-place="docs"
-      href={browserDownloads[2].href}
-      className="text-accent hover:text-accent-hover transition-colors"
-    >
-      Oya Browser.AppImage
-    </a>,
-  ],
 ];
 
 /** Rows of a table in the Connect section. */
@@ -283,7 +270,7 @@ function DownloadPart2() {
   return (
     <>
       <p className="mb-3 text-[15px] leading-relaxed">
-        <strong>Linux:</strong> <InlineCode>chmod +x</InlineCode> the AppImage and run it.
+        <strong>Windows:</strong> Run the .exe installer and follow the setup prompts.
       </p>
 
       <h3 className="text-base font-semibold mt-6 mb-2 text-text">Running multiple instances</h3>
@@ -295,10 +282,7 @@ open -n "/Applications/Oya Browser.app"
 
 # With separate sessions (own cookies, own config)
 open -n "/Applications/Oya Browser.app" --args --user-data-dir=/tmp/oya-2
-open -n "/Applications/Oya Browser.app" --args --user-data-dir=/tmp/oya-3
-
-# Linux
-./Oya-Browser.AppImage --user-data-dir=/tmp/oya-2`}</CodeBlock>
+open -n "/Applications/Oya Browser.app" --args --user-data-dir=/tmp/oya-3`}</CodeBlock>
       <p className="mb-3 text-[15px] leading-relaxed">
         Each <InlineCode>--user-data-dir</InlineCode> gets its own cookies, logins, and config, fully isolated sessions.
       </p>
