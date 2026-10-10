@@ -968,7 +968,9 @@ keyboard conventions, UA metadata, renderer architecture or hardware.
 
 Full persona consistency still requires the application lifecycle to install all
 native fields together before exposure; the native-policy coordinator now
-requires the platform alongside timezone, locale/languages and processor count,
-but does not yet certify UA string/metadata coherence or full persona coverage. Default persona protection
+requires platform, UA and metadata alongside timezone, locale/languages and
+processor count, and verifies the native readback before publication. It validates
+identity shape and bounds but does not yet certify semantic persona coherence or
+full persona coverage. Default persona protection
 is not migrated by these prerequisites. Remaining native protections, legacy test
 migration and the signed macOS/Windows release matrix are still outstanding.

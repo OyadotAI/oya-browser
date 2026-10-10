@@ -1,11 +1,19 @@
 /** Native policy installation fails closed without mutating on invalid input or using a protocol fallback. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import identity from '../../../support/native-policy-identity.cjs';
 import { NativeSessionPolicies } from '../../../../src/main/native-policy/index.ts';
 
 /** Fresh caller-owned input lets each rule verify copying and mutation safety independently. */
 function policy() {
-  return { platform: 'Win32', timeZone: 'UTC', locale: 'en-US', hardwareConcurrency: 8, languages: ['en-US', 'en'] };
+  return {
+    ...identity(),
+    platform: 'Win32',
+    timeZone: 'UTC',
+    locale: 'en-US',
+    hardwareConcurrency: 8,
+    languages: ['en-US', 'en'],
+  };
 }
 /** The native seam records ordering and enforces receiver identity, with injected failure points. */
 function fixture(fail = '') {
@@ -18,11 +26,14 @@ function fixture(fail = '') {
     hardwareConcurrency: 0,
     acceptLanguages: '',
     platform: undefined as string | undefined,
+    userAgent: '',
+    userAgentMetadata: undefined as unknown,
   };
   const session = {
     _getOyaSessionPolicy() {
       assert.equal(this, session);
-      const { platform, ...rest } = state;
+      const { platform, userAgentMetadata, ...base } = state;
+      const rest = userAgentMetadata === undefined ? base : { ...base, userAgentMetadata };
       return platform === undefined ? rest : { ...rest, platform };
     },
     _setOyaTimeZone(value: string) {
@@ -32,6 +43,14 @@ function fixture(fail = '') {
     _setOyaHardwareConcurrency(value: number) {
       step(this, 'cores');
       state.hardwareConcurrency = value;
+    },
+    _setOyaUserAgent(value: string) {
+      step(this, 'ua');
+      state.userAgent = value;
+    },
+    _setOyaUserAgentMetadata(value: unknown) {
+      step(this, 'metadata');
+      state.userAgentMetadata = structuredClone(value);
     },
     _setOyaPlatform(value: string) {
       step(this, 'platform');
@@ -57,10 +76,10 @@ test('installs the complete subset once and retains each native method receiver'
     { session, calls } = fixture();
   assert.throws(() => owner.assertConfigured(session), /not been configured/);
   const result = owner.configure(session, policy());
-  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'platform']);
+  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'platform', 'ua', 'metadata']);
   assert.equal(owner.assertConfigured(session), result);
   assert.equal(owner.configure(session, policy()), result);
-  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'platform']);
+  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'platform', 'ua', 'metadata']);
 });
 
 test('canonical aliases reuse one immutable snapshot without retaining caller objects', () => {
@@ -103,7 +122,7 @@ const invalid = [
   null,
   [],
   {},
-  { ...policy(), userAgent: 'unsupported' },
+  { ...policy(), unsupported: true },
   { ...policy(), [Symbol('hidden')]: true },
   ...['', 'und', 'x-private', 'en_US', 'en-US-!', 'en\0US', 'é', 'x'.repeat(129), 1].map((locale) => ({
     ...policy(),
@@ -134,6 +153,8 @@ for (const method of [
   '_setOyaHardwareConcurrency',
   '_setOyaLocale',
   '_setOyaPlatform',
+  '_setOyaUserAgent',
+  '_setOyaUserAgentMetadata',
 ])
   test('missing ' + method + ' rejects the engine before any setter', () => {
     const { session, calls } = fixture();
@@ -157,7 +178,7 @@ test('an already-started renderer fails before any immutable setter is called', 
   assert.deepEqual(calls, []);
 });
 
-for (const stage of ['zone', 'cores', 'locale', 'platform'])
+for (const stage of ['zone', 'cores', 'locale', 'platform', 'ua', 'metadata'])
   test('failure during ' + stage + ' permanently retires that session for its owner', () => {
     const owner = new NativeSessionPolicies(),
       { session, calls } = fixture(stage);
@@ -177,7 +198,7 @@ test('a changed policy cannot repurpose a session or invalidate its original ins
   const installed = owner.configure(session, policy());
   assert.throws(() => owner.configure(session, { ...policy(), hardwareConcurrency: 4 }), /cannot change/);
   assert.equal(owner.assertConfigured(session), installed);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 6);
 });
 
 test('readback mismatch quarantines apparently successful setters', () => {
@@ -202,6 +223,8 @@ test('reentrant exposure or configuration cannot observe an installing session a
 });
 
 for (const [field, value] of Object.entries({
+  userAgent: 'Other/1',
+  userAgentMetadata: { invalid: true },
   platform: 'MacIntel',
   timeZone: 'Asia/Tokyo',
   locale: 'fr-FR',
@@ -230,20 +253,20 @@ test('a native readback exception after setter completion permanently quarantine
   };
   assert.throws(() => owner.configure(session, policy()), /installation failed/);
   assert.throws(() => owner.configure(session, policy()), /retire this session/);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 6);
 });
 
 for (const platform of ['MacIntel', 'Win32', 'Linux x86_64'])
   test('canonical native platform ' + platform + ' is retained as an immutable snapshot', () => {
     const owner = new NativeSessionPolicies(),
       { session, calls } = fixture();
-    const input = { ...policy(), platform };
+    const input = { ...policy(), ...identity(platform), platform };
     const result = owner.configure(session, input);
     input.platform = 'Changed by caller';
     assert.equal(result.platform, platform);
     assert.ok(Object.isFrozen(result));
-    assert.equal(owner.configure(session, { ...policy(), platform }), result);
-    assert.equal(calls.length, 4);
+    assert.equal(owner.configure(session, { ...policy(), ...identity(platform), platform }), result);
+    assert.equal(calls.length, 6);
     assert.throws(
       () => owner.configure(session, { ...policy(), platform: platform === 'Win32' ? 'MacIntel' : 'Win32' }),
       /cannot change/,
@@ -275,5 +298,159 @@ test('a platform setter that silently does nothing permanently quarantines the s
   assert.throws(() => owner.configure(session, policy()), /installation failed/);
   assert.throws(() => owner.assertConfigured(session), /retire this session/);
   assert.throws(() => owner.configure(session, policy()), /retire this session/);
-  assert.deepEqual(calls, ['zone', 'cores', 'locale']);
+  assert.deepEqual(calls, ['zone', 'cores', 'locale', 'ua', 'metadata']);
+});
+
+const badMetadata = [
+  undefined,
+  null,
+  true,
+  [],
+  {},
+  { ...identity().userAgentMetadata, unknown: true },
+  { ...identity().userAgentMetadata, [Symbol('hidden')]: true },
+  ...['mobile', 'wow64'].map((key) => ({ ...identity().userAgentMetadata, [key]: 1 })),
+  ...['fullVersion', 'platform'].map((key) => ({ ...identity().userAgentMetadata, [key]: '' })),
+  ...['fullVersion', 'platform', 'platformVersion', 'architecture', 'model', 'bitness'].flatMap((key) =>
+    [null, 1, 'x\0y', 'é', 'x'.repeat(129)].map((value) => ({ ...identity().userAgentMetadata, [key]: value })),
+  ),
+  ...['brands', 'fullVersionList'].flatMap((key) =>
+    [
+      null,
+      [],
+      new Array(1),
+      Array(9).fill({ brand: 'x', version: '1' }),
+      [{ brand: '', version: '1' }],
+      [{ brand: 'x', version: '' }],
+      [{ brand: 'x', version: 1 }],
+      [{ brand: 'x', version: '1', extra: true }],
+      [
+        { brand: 'x', version: '1' },
+        { brand: 'x', version: '2' },
+      ],
+      [{ brand: 'Mismatch', version: '1' }],
+      [
+        { brand: 'x', version: '1' },
+        { brand: 'y', version: '2' },
+      ],
+    ].map((value) => ({ ...identity().userAgentMetadata, [key]: value })),
+  ),
+  ...[null, [], new Array(1), Array(8).fill('Desktop'), ['Invalid'], ['Desktop', 'Desktop'], [1]].map(
+    (formFactors) => ({ ...identity().userAgentMetadata, formFactors }),
+  ),
+];
+for (const [index, userAgentMetadata] of badMetadata.entries())
+  test('invalid metadata case ' + index + ' never starts native installation', () => {
+    const { session, calls } = fixture();
+    assert.throws(() => new NativeSessionPolicies().configure(session, { ...policy(), userAgentMetadata }));
+    assert.deepEqual(calls, []);
+  });
+
+for (const [index, userAgent] of [
+  undefined,
+  null,
+  true,
+  1,
+  '',
+  'x\0y',
+  'x\ry',
+  'x\ny',
+  'é',
+  'x'.repeat(1025),
+].entries())
+  test('invalid UA case ' + index + ' never starts native installation', () => {
+    const { session, calls } = fixture();
+    assert.throws(() => new NativeSessionPolicies().configure(session, { ...policy(), userAgent }));
+    assert.deepEqual(calls, []);
+  });
+
+test('metadata snapshot deeply freezes copies and ignores input property ordering on reuse', () => {
+  const owner = new NativeSessionPolicies(),
+    { session } = fixture(),
+    input = policy();
+  const result = owner.configure(session, input);
+  input.userAgentMetadata.brands[0].brand = 'Caller mutation';
+  input.userAgentMetadata.fullVersionList[0].version = '9';
+  input.userAgentMetadata.formFactors.push('Watch');
+  assert.deepEqual(result.userAgentMetadata, owner.assertConfigured(session).userAgentMetadata);
+  for (const value of [
+    result.userAgentMetadata,
+    result.userAgentMetadata.brands,
+    result.userAgentMetadata.brands[0],
+    result.userAgentMetadata.fullVersionList,
+    result.userAgentMetadata.fullVersionList[0],
+    result.userAgentMetadata.formFactors,
+  ])
+    assert.ok(Object.isFrozen(value));
+  assert.equal(result.userAgentMetadata.brands[0].brand, identity().userAgentMetadata.brands[0].brand);
+  const reversed = Object.fromEntries(Object.entries(identity().userAgentMetadata).reverse());
+  assert.equal(owner.configure(session, { ...policy(), userAgentMetadata: reversed }), result);
+});
+
+test('native metadata readback field order does not falsely retire a matching session', () => {
+  const { session, state } = fixture();
+  const read = session._getOyaSessionPolicy;
+  session._getOyaSessionPolicy = function () {
+    const value = read.call(this);
+    return state.userAgentMetadata
+      ? { ...value, userAgentMetadata: Object.fromEntries(Object.entries(state.userAgentMetadata as object).reverse()) }
+      : value;
+  };
+  assert.equal(new NativeSessionPolicies().configure(session, policy()).userAgent, identity().userAgent);
+});
+
+for (const field of ['userAgent', 'userAgentMetadata'])
+  test('native ' + field + ' no-op setter cannot expose a partially installed identity', () => {
+    const owner = new NativeSessionPolicies(),
+      { session } = fixture();
+    if (field === 'userAgent') session._setOyaUserAgent = () => {};
+    else session._setOyaUserAgentMetadata = () => {};
+    assert.throws(() => owner.configure(session, policy()), /installation failed/);
+    assert.throws(() => owner.assertConfigured(session), /retire this session/);
+  });
+
+test('all native metadata bounds are accepted without retaining input arrays', () => {
+  const { session } = fixture(),
+    input = policy();
+  input.userAgent = 'x'.repeat(1024);
+  input.userAgentMetadata.model = 'x'.repeat(128);
+  input.userAgentMetadata.brands = Array.from({ length: 8 }, (_, i) => ({ brand: 'Brand' + i, version: '1' }));
+  input.userAgentMetadata.fullVersionList = input.userAgentMetadata.brands.map(({ brand }) => ({
+    brand,
+    version: '1.0.0.0',
+  }));
+  input.userAgentMetadata.formFactors = ['Desktop', 'Automotive', 'Mobile', 'Tablet', 'XR', 'EInk', 'Watch'];
+  const result = new NativeSessionPolicies().configure(session, input);
+  assert.deepEqual(result.userAgentMetadata.formFactors, input.userAgentMetadata.formFactors);
+  assert.notEqual(result.userAgentMetadata.formFactors, input.userAgentMetadata.formFactors);
+});
+
+for (const field of ['userAgent', 'userAgentMetadata'])
+  test('changed ' + field + ' cannot repurpose an installed native session', () => {
+    const owner = new NativeSessionPolicies(),
+      { session, calls } = fixture();
+    const installed = owner.configure(session, policy());
+    const input = policy();
+    if (field === 'userAgent') input.userAgent = 'Different/2';
+    else input.userAgentMetadata.formFactors = ['Tablet'];
+    assert.throws(() => owner.configure(session, input), /cannot change/);
+    assert.equal(owner.assertConfigured(session), installed);
+    assert.equal(calls.length, 6);
+  });
+
+for (const value of [undefined, null, 'x\0y'])
+  test('malformed UA native readback ' + String(value) + ' fails before any setter', () => {
+    const { session, calls } = fixture();
+    const read = session._getOyaSessionPolicy;
+    (session as any)._getOyaSessionPolicy = () => ({ ...read.call(session), userAgent: value });
+    assert.throws(() => new NativeSessionPolicies().configure(session, policy()));
+    assert.deepEqual(calls, []);
+  });
+
+test('malformed existing native metadata is rejected before any setter', () => {
+  const { session, calls } = fixture();
+  const read = session._getOyaSessionPolicy;
+  session._getOyaSessionPolicy = () => ({ ...read.call(session), userAgentMetadata: {} });
+  assert.throws(() => new NativeSessionPolicies().configure(session, policy()));
+  assert.deepEqual(calls, []);
 });

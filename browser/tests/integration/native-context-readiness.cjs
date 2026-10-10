@@ -1,5 +1,6 @@
 /** Real private Oya sessions cannot be exposed while policy is pending or survive late setup after revocation. */
 const assert = require('node:assert/strict');
+const identity = require('../support/native-policy-identity.cjs');
 const { NativeContexts, privateSession } = require('../../src/main/native-contexts/index.ts');
 const { NativeSessionPolicies } = require('../../src/main/native-policy/index.ts');
 /** Advance asynchronous setup deterministically without sleeps or inspector instrumentation. */
@@ -37,6 +38,7 @@ async function configured(electron) {
   const fixture = owner(electron, async (session) => {
     await paused.promise;
     policies.configure(session, {
+      ...identity(),
       platform: 'Win32',
       timeZone: 'UTC',
       locale: 'de-DE',
@@ -72,7 +74,7 @@ async function configured(electron) {
       },
     });
     const script =
-      'globalThis.first={platform:navigator.platform,zone:Intl.DateTimeFormat().resolvedOptions().timeZone,locale:Intl.NumberFormat().resolvedOptions().locale,languages:[...navigator.languages],cores:navigator.hardwareConcurrency}';
+      'globalThis.first={ua:navigator.userAgent,metadata:navigator.userAgentData?.toJSON(),platform:navigator.platform,zone:Intl.DateTimeFormat().resolvedOptions().timeZone,locale:Intl.NumberFormat().resolvedOptions().locale,languages:[...navigator.languages],cores:navigator.hardwareConcurrency}';
     await window.loadURL('data:text/html,' + encodeURIComponent('<!doctype html><script>' + script + '</script>'));
     assert.deepEqual(await window.webContents.executeJavaScript('first'), {
       platform: 'Win32',
@@ -80,6 +82,8 @@ async function configured(electron) {
       locale: 'de-DE',
       languages: ['de-DE', 'de'],
       cores: 3,
+      ua: identity().userAgent,
+      metadata: undefined,
     });
     await fixture.contexts.remove(id);
     assert.ok(window.isDestroyed());
@@ -124,13 +128,18 @@ async function revoked(electron, disconnect) {
     await fixture.contexts.dispose();
   }
 }
-/** A failed final platform setter retires the unpublished partition and clears its sensitive state. */
-async function platformFailure(electron) {
+/** A failed identity setter retires the unpublished partition and clears its sensitive state. */
+async function installationFailure(electron, stage) {
   const policies = new NativeSessionPolicies();
   const fixture = owner(electron, async (session) => {
-    session._setOyaPlatform('MacIntel');
+    if (stage === 'platform') session._setOyaPlatform('MacIntel');
+    else {
+      session._setOyaUserAgent(identity().userAgent);
+      session._setOyaUserAgentMetadata({ ...identity().userAgentMetadata, fullVersion: '9.0.0.0' });
+    }
     await session.cookies.set({ url: 'http://127.0.0.1/', name: 'partial', value: 'private' });
     policies.configure(session, {
+      ...identity(),
       timeZone: 'UTC',
       locale: 'de-DE',
       languages: ['de-DE', 'de'],
@@ -146,7 +155,8 @@ async function platformFailure(electron) {
     assert.equal(fixture.contexts.visible(session), false);
     assert.equal(fixture.contexts.id(session), undefined);
     assert.deepEqual(await session.cookies.get({}), []);
-    assert.equal(session._getOyaSessionPolicy().platform, 'MacIntel');
+    assert.equal(session._getOyaSessionPolicy().platform, stage === 'platform' ? 'MacIntel' : 'Win32');
+    if (stage === 'metadata') assert.equal(session._getOyaSessionPolicy().userAgentMetadata.fullVersion, '9.0.0.0');
     assert.equal(session._getOyaSessionPolicy().locale, 'de-DE');
     assert.equal(session._getOyaSessionPolicy().rendererStarted, false);
     assert.throws(() => policies.assertConfigured(session), /retire this session/);
@@ -157,7 +167,8 @@ async function platformFailure(electron) {
 /** Run native readiness and both cancellation paths before broader protocol/context coverage. */
 module.exports = async function nativeContextReadiness(electron) {
   await configured(electron);
-  await platformFailure(electron);
+  await installationFailure(electron, 'platform');
+  await installationFailure(electron, 'metadata');
   await revoked(electron, false);
   await revoked(electron, true);
   console.log(

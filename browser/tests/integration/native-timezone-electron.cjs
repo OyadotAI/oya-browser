@@ -1,6 +1,7 @@
 /** Native session policies must precede first page/worker execution and remain isolated across partitions. */
 const { app, BrowserWindow, session } = require('electron');
 const assert = require('node:assert/strict');
+const identity = require('../support/native-policy-identity.cjs');
 const { createServer } = require('node:http');
 const { once } = require('node:events');
 const { NativeSessionPolicies } = require('../../src/main/native-policy/index.ts');
@@ -20,11 +21,14 @@ const localeFields = locale
   : '';
 const hardware = process.env.OYA_CHECK_NATIVE_HARDWARE === '1';
 const extraSnapshot = hardware ? ',cores:navigator.hardwareConcurrency' : '';
-const platformFields = policyOwner ? ',platform:navigator.platform' : '';
+const platformFields = policyOwner
+  ? ',platform:navigator.platform,ua:navigator.userAgent,metadata:navigator.userAgentData.toJSON()'
+  : '';
 const snapshot = `({zone:Intl.DateTimeFormat().resolvedOptions().timeZone,offset:new Date('2020-01-01T00:00:00Z').getTimezoneOffset(),hour:new Date('2020-01-01T00:00:00Z').getHours()${extraSnapshot}${localeFields}${platformFields}})`;
 /** Capture the real script request header alongside the first native getter values. */
 function snapshotFor(req) {
-  return locale ? `({...${snapshot},header:${JSON.stringify(req.headers['accept-language'] ?? '')}})` : snapshot;
+  const value = locale ? `({...${snapshot},header:${JSON.stringify(req.headers['accept-language'] ?? '')}})` : snapshot;
+  return policyOwner ? `({...${value},uaHeader:${JSON.stringify(req.headers['user-agent'] ?? '')}})` : value;
 }
 /** Every snapshot is captured before the first message or other page action can change worker state. */
 function serve(req, res) {
@@ -131,6 +135,15 @@ async function unconfiguredHardware(jar, window, url, windows) {
     cores: 4,
   });
 }
+/** Verify the installed identity in the first script, before any fixture interaction. */
+function identityExpected(platform) {
+  if (!policyOwner) return {};
+  const {
+    userAgent: ua,
+    userAgentMetadata: { brands, mobile, platform: os },
+  } = identity(platform);
+  return { platform, ua, uaHeader: ua, metadata: { brands, mobile, platform: os } };
+}
 /** Expected ICU formatting is checked alongside resolved metadata, not just a claimed locale. */
 function localeExpected(tag) {
   if (!locale) return {};
@@ -163,7 +176,10 @@ function configureLocale(jar, tag) {
 /** User-agent updates must neither replace nor reset a session-owned language policy. */
 async function checkLanguagePolicy(jar, url, tag) {
   const agent = jar.getUserAgent();
-  assert.throws(() => jar.setUserAgent('must-not-apply', 'fr-FR'), /Native locale owns Accept-Language/);
+  assert.throws(
+    () => jar.setUserAgent(policyOwner ? agent : 'must-not-apply', 'fr-FR'),
+    /Native locale owns Accept-Language/,
+  );
   assert.equal(jar.getUserAgent(), agent);
   jar.setUserAgent(agent, tag + ',' + tag.split('-')[0]);
   jar.setUserAgent(agent);
@@ -198,6 +214,7 @@ async function unconfiguredLocale(jar, window, url, windows) {
 /** A failed partial native install stays unavailable; preflight failures never mutate engine state. */
 function checkPolicyFailures(late) {
   const requested = {
+    ...identity(),
     platform: 'Win32',
     timeZone: 'UTC',
     locale: 'en-US',
@@ -260,6 +277,7 @@ async function run() {
       }
       if (policyOwner) {
         const configured = policyOwner.configure(jar, {
+          ...identity(platform),
           platform,
           timeZone: zone,
           locale: tag,
@@ -290,7 +308,7 @@ async function run() {
         hour,
         ...(hardware ? { cores } : {}),
         ...localeExpected(tag),
-        ...(policyOwner ? { platform } : {}),
+        ...identityExpected(platform),
       });
       if (policyOwner) assert.equal(jar._getOyaSessionPolicy().rendererStarted, true);
       if (hardware) {
@@ -313,7 +331,7 @@ async function run() {
         hour,
         ...(hardware ? { cores } : {}),
         ...localeExpected(tag),
-        ...(policyOwner ? { platform } : {}),
+        ...identityExpected(platform),
       });
     }
     assert.equal(new Set(windows.map((window) => window.webContents.getOSProcessId())).size, zones.length);
@@ -324,7 +342,7 @@ async function run() {
       hour: 9,
       ...(hardware ? { cores: 8 } : {}),
       ...localeExpected('de-DE'),
-      ...(policyOwner ? { platform: 'Linux x86_64' } : {}),
+      ...identityExpected('Linux x86_64'),
     });
     if (policyOwner) {
       const jar = windows[1].webContents.session;

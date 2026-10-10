@@ -24,6 +24,8 @@ function installValues(engine: PolicyEngine, policy: NativePolicy): void {
   engine._setOyaHardwareConcurrency(policy.hardwareConcurrency);
   engine._setOyaLocale(policy.locale);
   engine._setOyaPlatform(policy.platform);
+  engine._setOyaUserAgent(policy.userAgent);
+  engine._setOyaUserAgentMetadata(policy.userAgentMetadata);
 }
 /** Publish completion only after native readback agrees with every requested value. */
 function installed(binding: PolicyBinding): NativePolicy {

@@ -1,8 +1,13 @@
 /** Explicit policy subset and browser-owned engine seam; never a full-persona protection verdict. */
+import type { NativeMetadata } from './metadata-types.ts';
 import type { NATIVE_PLATFORMS } from './constants.ts';
 
 /** Immutable settings that the currently implemented native primitives can enforce. */
 export interface NativePolicy {
+  /** Immutable native UA string shared by network, pages and workers. */
+  readonly userAgent: string;
+  /** Deep-frozen native low/high entropy metadata. */
+  readonly userAgentMetadata: NativeMetadata;
   /** Web-exposed legacy desktop string, not the host operating system. */
   readonly platform: (typeof NATIVE_PLATFORMS)[number];
   /** Canonical ICU system timezone, not a numeric UTC offset. */
@@ -16,6 +21,10 @@ export interface NativePolicy {
 }
 /** Optional capabilities allow explicit rejection of older engines before mutation. */
 export interface PolicySession {
+  /** Install the UA before metadata and before any renderer starts. */
+  _setOyaUserAgent?: (value: string) => void;
+  /** Install native UA metadata without request interception or page shims. */
+  _setOyaUserAgentMetadata?: (value: NativeMetadata) => void;
   /** Install the legacy platform before any document or worker renderer starts. */
   _setOyaPlatform?: (platform: string) => void;
   /** Read authoritative native values and the first-renderer lock. */
@@ -39,6 +48,10 @@ export interface PolicyBinding {
 
 /** Native readback used to reject old engines and verify installation, never a full protection verdict. */
 export interface PolicyState {
+  /** Empty before native installation. */
+  userAgent: string;
+  /** Absent before installation; validated separately when present. */
+  userAgentMetadata?: unknown;
   /** Absent before installation; exact native desktop token once configured. */
   platform?: string;
   /** Exact supported engine contract revision. */

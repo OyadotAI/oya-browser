@@ -177,8 +177,10 @@ engine are separate concerns; this requirement governs the control architecture.
   intentional hint denial, including module workers and cold service restart.
   A separate native platform prerequisite now covers page and worker
   `navigator.platform`. The native policy coordinator requires and verifies that
-  platform alongside timezone, locale/languages and processor count before
-  publishing a context; final-setter failure retires the session. Full persona
+  platform plus UA/metadata alongside timezone, locale/languages and processor
+  count before publishing a context; partial installation retires the session.
+  Metadata is deeply copied, frozen and compared against normalized native
+  readback. This certifies installation, not semantic persona coherence. Full persona
   activation remains separate work.
 - Page protection: persona application, worker coverage and tab startup currently
   rely on debugger commands. Preserve existing isolation and egress guarantees;

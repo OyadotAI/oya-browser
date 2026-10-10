@@ -1,5 +1,6 @@
 /** Validate the entire supported policy subset before calling any immutable engine setter. */
 import { MAX_POLICY_TEXT, MIN_PROCESSORS, MAX_PROCESSORS, POLICY_FIELDS, NATIVE_PLATFORMS } from './constants.ts';
+import { userAgentOf, metadataOf } from './metadata.ts';
 import type { NativePolicy } from './types.ts';
 
 /** Reject hidden unsupported fields instead of silently claiming full persona coverage. */
@@ -7,7 +8,7 @@ function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Native policy must be an object');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== POLICY_FIELDS.length || keys.some((key) => !POLICY_FIELDS.includes(key as never)))
-    throw new Error('Native policy supports only timezone, locale, hardwareConcurrency, languages and platform');
+    throw new Error('Native policy requires exactly the supported identity fields');
   return value as Record<string, unknown>;
 }
 /** Bound strings before ICU parsing and reject control characters or embedded NULs. */
@@ -63,5 +64,6 @@ export function validatePolicy(value: unknown): NativePolicy {
   const hardwareConcurrency = processors(input.hardwareConcurrency);
   const languages = languagesOf(input.languages, locale);
   const platform = platformOf(input.platform);
-  return Object.freeze({ timeZone, locale, hardwareConcurrency, languages, platform });
+  const identity = { userAgent: userAgentOf(input.userAgent), userAgentMetadata: metadataOf(input.userAgentMetadata) };
+  return Object.freeze({ timeZone, locale, hardwareConcurrency, languages, platform, ...identity });
 }
