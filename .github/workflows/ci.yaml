@@ -118,10 +118,10 @@ jobs:
         with:
           archive-url: ${{ vars.OYA_NATIVE_LINUX_URL }}
           archive-sha256: ${{ vars.OYA_NATIVE_LINUX_SHA256 }}
-      - run: xvfb-run -a npm run test:recording --prefix browser -- --no-sandbox
+      - run: xvfb-run -a npm run test:recording --prefix browser
       # What a page's JavaScript reads must be what the request headers say (Google's sign-in
       # compares them), and a passkey request must not hang. Needs openssl, which the runner has.
-      - run: xvfb-run -a npm run test:identity --prefix browser -- --no-sandbox
+      - run: xvfb-run -a npm run test:identity --prefix browser
 
   lint:
     name: Lint and format
