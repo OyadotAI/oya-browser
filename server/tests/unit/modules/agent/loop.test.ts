@@ -96,6 +96,48 @@ describe('agentLoop', () => {
     ]);
   });
 
+  it('does not dispatch tools returned after cancellation while the model was answering', async () => {
+    const abort = new AbortController();
+    mock.method(globalThis, 'fetch', async () => {
+      abort.abort();
+      return new Response(JSON.stringify(toolReply(['navigate', { url: 'https://a.test' }])));
+    });
+    const result = await agentLoop(ctx({ signal: abort.signal }), start());
+    assert.equal(result.text, STOPPED_TEXT);
+    assert.deepEqual(browser.calls, []);
+  });
+
+  it('stops the rest of a batch when the user cancels during its first action', async () => {
+    const abort = new AbortController();
+    let checkpoints = 0;
+    answer = () => (abort.abort(), { ok: true, data: {} });
+    stubLlm([toolReply(['press_key', { key: 'Enter' }], ['navigate', { url: 'https://a.test' }])]);
+    const result = await agentLoop(ctx({ signal: abort.signal, checkpoint: () => checkpoints++ }), start());
+    assert.equal(result.text, STOPPED_TEXT);
+    assert.deepEqual(browser.actions(), ['press_key']);
+    assert.equal(checkpoints, 0);
+  });
+
+  it('asking for missing information prevents later tools in the same batch from browsing', async () => {
+    stubLlm([
+      toolReply(
+        ['request_human', { message: 'What dates and departure airport?' }],
+        ['navigate', { url: 'https://a.test' }],
+      ),
+    ]);
+    const result = await agentLoop(ctx(), start());
+    assert.equal(result.text, 'NEEDS INPUT: What dates and departure airport?');
+    assert.deepEqual(browser.calls, []);
+  });
+
+  it('a repetition stop prevents later actions in that same model response', async () => {
+    const repeat = Array.from({ length: 12 }, () => ['press_key', { key: 'Enter' }]);
+    stubLlm([toolReply(...repeat, ['navigate', { url: 'https://a.test' }])]);
+    const result = await agentLoop(ctx(), start());
+    assert.match(result.text, /kept repeating press_key/);
+    assert.equal(browser.actions().includes('navigate'), false);
+  });
+
   it('shows a screenshot to the model as an image after the tool results, keeping only the latest', async () => {
     answer = (action, params) => ({ ok: true, data: { screenshot: `data:image/${params.format};base64,SHOT` } });
     const llm = stubLlm([toolReply(['screenshot', {}]), toolReply(['screenshot', {}]), textReply('DONE')]);

@@ -1,0 +1,165 @@
+# Server-only hotfixes retain the live desktop downloads and require the normal production approval.
+name: Deploy Server Prod (no desktop release)
+
+on:
+  push:
+    branches: [fix/agent-stop-boundaries]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-production-hotfix
+  cancel-in-progress: false
+
+env:
+  IMAGE_SERVER: ghcr.io/oyadotai/oya-browser-server
+  NAMESPACE: oya-browser
+
+jobs:
+  ci:
+    name: Server checks without browser launches
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix server
+      - run: test -s server/vendor/oya-license.js
+      - run: npm run build:sdk
+      - run: npm run typecheck --prefix server
+      - run: npm run lint --prefix server
+      - run: npm run format:check --prefix server
+      - run: npm run test:coverage --prefix server
+      # Explicit hermetic server fixtures only. The legacy integration script discovers and launches Chrome.
+      - name: Server integration checks
+        working-directory: server
+        run: |
+          node --import ./tests/support/hermetic.js --test --test-concurrency=1 \
+            tests/integration/flow-recorder.test.js tests/integration/workflow-v2.test.js \
+            tests/integration/playbook.test.js tests/integration/playbook-cleanup.test.js \
+            tests/integration/control-lock.test.js tests/integration/desktop-control.test.js \
+            tests/integration/durable-control.test.js tests/integration/control-api.test.js \
+            tests/integration/control-worker.test.js tests/integration/control-cluster.test.js \
+            tests/integration/security.test.js tests/integration/pool.test.js \
+            tests/integration/sandbox.test.js tests/integration/providers.test.js \
+            tests/integration/provider-flow.test.js tests/integration/persona-persistence.test.js \
+            tests/integration/persona-repository.test.js tests/integration/key-storage.test.js \
+            tests/integration/slack.test.js tests/integration/egress-rules.test.js \
+            tests/integration/llm.test.js
+
+  deploy:
+    name: Build and deploy server only
+    needs: ci
+    runs-on: ubuntu-24.04
+    # Only the reviewed hotfix branch is eligible; CI and build use the same immutable event SHA.
+    if: github.ref == 'refs/heads/fix/agent-stop-boundaries'
+    environment:
+      name: production
+      url: https://oyabrowser.com
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: google-github-actions/auth@v3
+        if: ${{ vars.GCP_WIF_PROVIDER != '' }}
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/auth@v3
+        if: ${{ vars.GCP_WIF_PROVIDER == '' }}
+        with:
+          credentials_json: ${{ secrets.GKE_SA_KEY }}
+
+      - uses: google-github-actions/get-gke-credentials@v3
+        with:
+          cluster_name: ${{ secrets.GKE_CLUSTER }}
+          location: ${{ secrets.GKE_ZONE }}
+          project_id: ${{ secrets.GKE_PROJECT }}
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preserve currently served desktop downloads
+        id: current
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployment=$(kubectl get deployment/server -n "$NAMESPACE" -o json)
+          image=$(jq -r '.spec.template.spec.containers[] | select(.name == "server") | .image' <<< "$deployment")
+          case "$image" in
+            "$IMAGE_SERVER":*|"$IMAGE_SERVER"@sha256:*) ;;
+            *) echo '::error::Unexpected production server image; refusing to copy downloads.'; exit 1 ;;
+          esac
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          docker pull "$image"
+          container=$(docker create --entrypoint /bin/true "$image")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          mkdir -p server/downloads
+          docker cp "$container:/app/downloads/." server/downloads/
+          # Fail closed if extraction lost the production update feeds.
+          test -s server/downloads/latest-mac.yml
+          test -s server/downloads/latest.yml
+          test -s server/downloads/latest-linux.yml
+          echo 'Retained the production desktop binaries and update feeds without publishing new ones.'
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build and push the tested server image
+        id: image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_SERVER }}:server-${{ github.sha }}
+          platforms: linux/amd64
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: |
+            type=gha,scope=server-prod
+            type=gha,scope=server-dev
+          cache-to: type=gha,mode=max,scope=server-hotfix
+
+      - name: Roll out only the server container by immutable digest
+        env:
+          PREVIOUS_IMAGE: ${{ steps.current.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          deployment=$(kubectl get deployment/server -n "$NAMESPACE" -o json)
+          index=$(jq -r '.spec.template.spec.containers | to_entries[] | select(.value.name == "server") | .key' <<< "$deployment")
+          [[ "$index" =~ ^[0-9]+$ ]]
+          image_path="/spec/template/spec/containers/$index/image"
+          name_path="/spec/template/spec/containers/$index/name"
+          # Atomic tests prevent overwriting a release that changed the image while this image was building.
+          patch=$(jq -cn --arg path "$image_path" --arg name "$name_path" --arg old "$PREVIOUS_IMAGE" --arg new "$IMAGE_SERVER@$IMAGE_DIGEST" \
+            '[{op:"test",path:$name,value:"server"},{op:"test",path:$path,value:$old},{op:"replace",path:$path,value:$new}]')
+          kubectl patch deployment/server -n "$NAMESPACE" --type=json -p "$patch"
+          kubectl rollout status deployment/server -n "$NAMESPACE" --timeout=600s
+          deployed=$(kubectl get deployment/server -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="server")].image}')
+          test "$deployed" = "$IMAGE_SERVER@$IMAGE_DIGEST"
+          printf 'Deployed server commit %s as %s\n' "$GITHUB_SHA" "$deployed" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Diagnose a failed rollout
+        if: failure()
+        run: |
+          kubectl get pods -n "$NAMESPACE" -l app=server
+          kubectl get events -n "$NAMESPACE" --field-selector type=Warning --sort-by=.lastTimestamp | tail -20
