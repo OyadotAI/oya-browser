@@ -38,6 +38,9 @@ jobs:
             server/package-lock.json
       - run: npm ci
       - run: npm ci --prefix server
+      - run: npm ci --prefix browser
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       # The server's vendored runtime file must ship with every release.
       - run: test -s server/vendor/oya-license.js
       - run: npm run build:sdk
@@ -54,7 +57,11 @@ jobs:
           fail_ci_if_error: false
           # Codecov refuses tokenless uploads from pushes and tags; those log in by OIDC.
           use_oidc: ${{ github.event_name != 'pull_request' }}
-      - run: npm run test:integration --prefix server
+      - uses: ./.github/actions/setup-native-engine
+        with:
+          archive-url: ${{ vars.OYA_NATIVE_LINUX_URL }}
+          archive-sha256: ${{ vars.OYA_NATIVE_LINUX_SHA256 }}
+      - run: xvfb-run -a npm run test:integration --prefix server
 
   packages:
     name: SDK, CLI and scripts
@@ -84,11 +91,17 @@ jobs:
           cache-dependency-path: browser/package-lock.json
       # Native analyzer regressions require Oya's Electron runtime and a display.
       - run: npm ci --prefix browser
-      # Analyzer and recorder fixtures require an explicitly supplied patched Oya engine.
-      - run: xvfb-run -a npm test --prefix browser
-      # The main process and preload ship bundled (out/); both must type-check and build.
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - run: npm run test:unit --prefix browser
       - run: npm run typecheck --prefix browser
       - run: npm run build --prefix browser
+      - uses: ./.github/actions/setup-native-engine
+        with:
+          archive-url: ${{ vars.OYA_NATIVE_LINUX_URL }}
+          archive-sha256: ${{ vars.OYA_NATIVE_LINUX_SHA256 }}
+      # Analyzer and recorder fixtures require an explicitly supplied patched Oya engine.
+      - run: xvfb-run -a npm run test:integration --prefix browser
 
   recording:
     name: Electron recording
@@ -99,6 +112,12 @@ jobs:
         with:
           node-version: 24
       - run: npm ci --prefix browser
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - uses: ./.github/actions/setup-native-engine
+        with:
+          archive-url: ${{ vars.OYA_NATIVE_LINUX_URL }}
+          archive-sha256: ${{ vars.OYA_NATIVE_LINUX_SHA256 }}
       - run: xvfb-run -a npm run test:recording --prefix browser -- --no-sandbox
       # What a page's JavaScript reads must be what the request headers say (Google's sign-in
       # compares them), and a passkey request must not hang. Needs openssl, which the runner has.

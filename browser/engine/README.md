@@ -565,6 +565,29 @@ still needs the corresponding pinned native engine artifacts and migration of
 legacy integration fixtures before a release tag is safe. The local arm64
 Testing build is not a universal production artifact.
 
+### CI engine provisioning
+
+The shared CI workflow installs the Linux x64 runtime through
+`.github/actions/setup-native-engine`. Set the repository variables
+`OYA_NATIVE_LINUX_URL` and `OYA_NATIVE_LINUX_SHA256` to an HTTPS archive URL and
+the exact archive's SHA-256 digest. The gzip-compressed tar archive must contain
+the complete unpacked patched distribution at its root, including executable
+`electron`, its libraries and resources. A packaged AppImage or a macOS build
+cannot replace this distribution.
+
+Installation checks the checksum before extraction, runs the existing native
+packaging capability probe under Xvfb, then exports `OYA_NATIVE_ENGINE` for the
+job. Missing configuration, failed downloads, checksum mismatches and failed
+native probes fail the job. Server integration also installs the browser's
+dependencies because its native fixture loads browser modules directly.
+
+Provisioning alone does not complete the migration: the server aggregate still
+rejects the legacy CDP, provider MCP lifecycle, gateway and anonymity fixtures.
+The identity suite also retains debugger-based virtual-authenticator checks that
+need a native replacement. Those assertions must be migrated before CI can pass;
+do not remove the integration gate or claim the pipeline is validated from a
+successful runtime installation alone.
+
 ## Native localStorage engine primitives (experimental)
 
 `patches/native-local-storage.patch` adds session-owned read, restore and change

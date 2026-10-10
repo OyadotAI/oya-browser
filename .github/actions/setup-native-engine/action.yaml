@@ -1,0 +1,19 @@
+# Provision the patched Oya runtime before any native integration fixture runs.
+name: Set up native Oya engine
+description: Verify and install a pinned Linux Oya distribution, with no stock-engine fallback.
+inputs:
+  archive-url:
+    description: HTTPS URL of a tar.gz containing the patched linux-x64 distribution at its root.
+    required: true
+  archive-sha256:
+    description: SHA-256 of the exact distribution archive.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install pinned native distribution
+      shell: bash
+      env:
+        OYA_ENGINE_URL: ${{ inputs.archive-url }}
+        OYA_ENGINE_SHA256: ${{ inputs.archive-sha256 }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
