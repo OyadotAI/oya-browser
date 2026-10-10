@@ -14,12 +14,16 @@ function fixture(t, overrides = {}) {
   mkdirSync(bin);
   const output = join(root, 'env');
   const trace = join(root, 'trace');
+  const policy = join(root, 'policy');
   writeFileSync(output, '');
   writeFileSync(trace, '');
+  writeFileSync(policy, '');
   for (const [name, body] of Object.entries({
     curl: 'exit 0',
     sha256sum: 'cat >/dev/null; exit "${CHECKSUM_STATUS:-0}"',
     tar: 'for arg in "$@"; do if [[ "$arg" == */distribution ]]; then touch "$arg/electron"; chmod +x "$arg/electron"; fi; done',
+    sysctl: 'echo "${APPARMOR_RESTRICTED:-0}"',
+    sudo: 'test "$1" = apparmor_parser && test "$2" = --replace || exit 2; cat "$3" > "$POLICY"; exit "${APPARMOR_STATUS:-0}"',
     'xvfb-run': 'exit "${PROBE_STATUS:-0}"',
   })) {
     writeFileSync(join(bin, name), '#!/bin/bash\necho ' + name + ' >> "$TRACE"\n' + body + '\n', { mode: 0o755 });
@@ -34,12 +38,18 @@ function fixture(t, overrides = {}) {
       RUNNER_TEMP: root,
       GITHUB_ENV: output,
       TRACE: trace,
+      POLICY: policy,
       OYA_ENGINE_URL: 'https://example.invalid/oya.tar.gz',
       OYA_ENGINE_SHA256: 'a'.repeat(64),
       ...overrides,
     },
   });
-  return { ...result, exported: readFileSync(output, 'utf8'), calls: readFileSync(trace, 'utf8') };
+  return {
+    ...result,
+    exported: readFileSync(output, 'utf8'),
+    calls: readFileSync(trace, 'utf8'),
+    policy: readFileSync(policy, 'utf8'),
+  };
 }
 
 test('missing pins, insecure URLs and wrong platforms fail before downloading', (t) => {
@@ -68,8 +78,24 @@ test('a checksum mismatch prevents extraction and native execution', (t) => {
 test('a failed native capability probe never publishes an executable', (t) => {
   const result = fixture(t, { PROBE_STATUS: '1' });
   assert.notEqual(result.status, 0);
-  assert.equal(result.calls, 'curl\nsha256sum\ntar\nxvfb-run\n');
+  assert.equal(result.calls, 'curl\nsha256sum\ntar\nsysctl\nxvfb-run\n');
   assert.equal(result.exported, '');
+});
+
+test('restricted Ubuntu permits namespaces only for the verified engine before probing it', (t) => {
+  const result = fixture(t, { APPARMOR_RESTRICTED: '1' });
+  assert.equal(result.status, 0, result.stderr);
+  const binary = result.exported.trim().slice('OYA_NATIVE_ENGINE='.length);
+  assert.ok(result.policy.includes(`"${binary}" flags=(unconfined)`));
+  assert.match(result.policy, /\n  userns,\n/);
+  assert.equal(result.calls, 'curl\nsha256sum\ntar\nsysctl\nsudo\nxvfb-run\n');
+});
+
+test('a failed namespace policy installation prevents probing or publishing the engine', (t) => {
+  const result = fixture(t, { APPARMOR_RESTRICTED: '1', APPARMOR_STATUS: '1' });
+  assert.notEqual(result.status, 0);
+  assert.equal(result.exported, '');
+  assert.equal(result.calls, 'curl\nsha256sum\ntar\nsysctl\nsudo\n');
 });
 
 test('only successful checksum and capability verification publishes the engine', (t) => {

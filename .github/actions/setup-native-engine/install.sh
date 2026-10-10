@@ -17,6 +17,18 @@ mkdir "$engine_dir/distribution"
 tar --extract --gzip --file "$engine_dir/runtime.tar.gz" \
   --directory "$engine_dir/distribution" --no-same-owner
 test -x "$engine_dir/distribution/electron"
+# Ubuntu 24.04 restricts unprivileged namespaces for binaries without a profile.
+# Allow only this checksum-verified Oya executable; keep the renderer sandbox on.
+if [[ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true)" == 1 ]]; then
+  cat > "$engine_dir/apparmor.profile" <<EOF
+abi <abi/4.0>,
+include <tunables/global>
+profile oya-native-${engine_dir##*/} "$engine_dir/distribution/electron" flags=(unconfined) {
+  userns,
+}
+EOF
+  sudo apparmor_parser --replace "$engine_dir/apparmor.profile"
+fi
 OYA_ENGINE_DIRECTORY="$engine_dir/distribution" xvfb-run -a node -e \
   'require("./browser/build/native-distribution.cjs").verify("linux", "x64", process.env.OYA_ENGINE_DIRECTORY)'
 echo "OYA_NATIVE_ENGINE=$engine_dir/distribution/electron" >> "$GITHUB_ENV"

@@ -592,6 +592,9 @@ packaging capability probe under Xvfb, then exports `OYA_NATIVE_ENGINE` for the
 job. Missing configuration, failed downloads, checksum mismatches and failed
 native probes fail the job. Server integration also installs the browser's
 dependencies because its native fixture loads browser modules directly.
+On Ubuntu runners that restrict unprivileged user namespaces, installation loads
+an AppArmor rule for only the verified executable's temporary path. The native
+probe and subsequent fixtures retain renderer sandboxing.
 
 Both cloud-image deployment jobs use that same verified distribution as Docker's
 `native-engine` named build context. The image copies it to `/opt/oya-engine` and
