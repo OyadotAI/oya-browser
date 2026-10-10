@@ -9,6 +9,15 @@ The standards every part shares (size limits, documentation, no magic numbers)
 are in the root [ARCHITECTURE.md](../ARCHITECTURE.md) and enforced by
 `npm run lint`. This file covers what is specific to the server.
 
+## Cloud browser images
+
+Oya Cloud starts browser sandboxes from a Daytona snapshot; deploying the
+browser Docker image alone does not change the runtime used by new sessions.
+The dev workflow registers a snapshot from each new dev browser image, writes
+that snapshot name into the dev deployment secret, and restarts the server so
+new sessions use it. Production keeps its separately versioned release
+snapshot. Compare the image digest and snapshot name when testing a rollout.
+
 ## Layout
 
 ```

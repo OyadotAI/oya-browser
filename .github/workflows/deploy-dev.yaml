@@ -55,6 +55,9 @@ jobs:
             - 'Dockerfile'
           browser:
             - 'browser/**'
+            # Changes to the deployment workflow can change which cloud runtime
+            # snapshot dev launches, so validate the browser image path too.
+            - '.github/workflows/deploy-dev.yaml'
           k8s:
             - 'k8s/**'
 
@@ -138,6 +141,34 @@ jobs:
         cache-from: type=gha,scope=browser-dev
         cache-to: type=gha,mode=max,scope=browser-dev
 
+  publish-browser-snapshot:
+    name: Register Daytona dev snapshot
+    needs: [changes, build-browser]
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      snapshot: ${{ steps.snapshot.outputs.name }}
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: server/package-lock.json
+    - name: Install Daytona snapshot publisher
+      run: npm ci --prefix server
+    - name: Publish snapshot from the dev browser image
+      id: snapshot
+      env:
+        DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
+        DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
+        IMAGE_BROWSER: ${{ env.IMAGE_BROWSER }}
+      run: |
+        NAME="oya-browser-dev-${GITHUB_SHA:0:12}"
+        node server/publish-snapshot.js --image "${IMAGE_BROWSER}:dev" --name "$NAME"
+        echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
   deploy:
     name: Deploy to GKE (dev)
     # Named so the repo's Deployments panel lists dev beside production, with a link.
@@ -147,7 +178,7 @@ jobs:
     # ci is named here as well as in the build jobs: a failed gate only *skips*
     # those, and `!failure()` does not count a skipped dependency, so without it
     # a red suite would still deploy.
-    needs: [ci, changes, build, build-browser]
+    needs: [ci, changes, build, build-browser, publish-browser-snapshot]
     if: always() && !failure() && !cancelled() && !startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-24.04
     permissions:
@@ -195,7 +226,8 @@ jobs:
         # Signs the audit trail; one key per environment, kept in the Keychain too. Empty falls back to a key derived from OYA_PROFILE_SECRET.
         OYA_AUDIT_HMAC_KEY: ${{ secrets.OYA_AUDIT_HMAC_KEY }}
         DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-        # Last resort only: dev runs the snapshot prod runs, read from the prod namespace below.
+        # Keep the current dev snapshot for server-only deploys; browser builds provide an override.
+        DAYTONA_SNAPSHOT_OVERRIDE: ${{ needs.publish-browser-snapshot.outputs.snapshot }}
         DAYTONA_SNAPSHOT_FALLBACK: ${{ secrets.DAYTONA_SNAPSHOT }}
         DAYTONA_API_URL: ${{ secrets.DAYTONA_API_URL }}
         DAYTONA_TARGET: ${{ secrets.DAYTONA_TARGET }}
@@ -221,12 +253,13 @@ jobs:
         : "${OYA_PROFILE_SECRET:?Missing OYA_PROFILE_SECRET deployment secret}"
         # Without it the server refuses to start: Supabase sign-in needs OYA_STORAGE=postgres and DATABASE_URL.
         : "${DATABASE_URL:?Missing DATABASE_URL deployment secret (the Supabase project Postgres connection string)}"
-        # The latest release's snapshot is the one prod deployed; the prod workflow keeps it
-        # current, so nothing has to copy it into a repository secret after each release.
-        DAYTONA_SNAPSHOT=$(kubectl get secret app-secrets -n oya-browser \
-          -o jsonpath='{.data.DAYTONA_SNAPSHOT}' 2>/dev/null | base64 -d || true)
+        DAYTONA_SNAPSHOT="$DAYTONA_SNAPSHOT_OVERRIDE"
+        if [ -z "$DAYTONA_SNAPSHOT" ]; then
+          DAYTONA_SNAPSHOT=$(kubectl get secret app-secrets -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.data.DAYTONA_SNAPSHOT}' 2>/dev/null | base64 -d || true)
+        fi
         DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT:-$DAYTONA_SNAPSHOT_FALLBACK}"
-        : "${DAYTONA_SNAPSHOT:?No snapshot deployed in prod and no DAYTONA_SNAPSHOT secret}"
+        : "${DAYTONA_SNAPSHOT:?No Daytona snapshot is available for dev}"
         kubectl create secret generic app-secrets \
           --from-literal=API_KEYS="${API_KEYS}" \
           --from-literal=SUPABASE_URL="${SUPABASE_URL}" \
@@ -280,7 +313,7 @@ jobs:
       run: kubectl apply -k k8s/overlays/dev
 
     - name: Rolling restart server
-      if: needs.changes.outputs.server == 'true' || needs.changes.outputs.k8s == 'true'
+      if: needs.changes.outputs.server == 'true' || needs.changes.outputs.k8s == 'true' || needs.publish-browser-snapshot.result == 'success'
       run: |
         kubectl patch deployment server -n ${{ env.NAMESPACE }} \
           -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"rollout\":\"$(date +%s)\"}}}}}" || true
