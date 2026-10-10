@@ -45,6 +45,10 @@ export class Session {
   declare profileConn: any;
   /** Cleanup cannot capture state until profile hydration has succeeded. */
   profileCaptureBlocked = false;
+  /** Native worker owned by this session, unlike a borrowed fleet attachment. */
+  declare nativeBrowserId?: string;
+  /** Flush and seal this exact worker through its native control transport. */
+  declare nativeProfileCapture?: () => Promise<void>;
   /** Name of the provider the browser came from. */
   declare provider: any;
   /** Hands the browser back when the session ends. */

@@ -127,9 +127,9 @@ async function persist(owner, name, scope, payload) {
 
 /** Replay a stored profile into a fresh browser before the client uses it. */
 export async function restore(owner, name, session) {
-  const scope = scopeOf(owner, name);
-  const payload = await load(owner, name, scope);
+  const payload = await loadProfile(owner, name);
   if (payload === null) return false; // first use of this profile
+  if (payload.nativePersona) throw new HttpError(Status.UNPROCESSABLE, 'This profile requires a native Oya provider');
   const attached = await attach(session);
   if (!attached) throw new HttpError(Status.UNAVAILABLE, 'Profile restore requires a page');
   await replayOrClose(payload, attached, session);
@@ -218,3 +218,12 @@ export async function removeOwners(owners: Set<string>) {
 
 /** Exposed for tests: prove a profile cannot be opened under another name. */
 export const _internals = { seal, open, timingSafeEqual };
+
+/** Read one owner-scoped snapshot before native worker allocation. */
+export function loadProfile(owner, name) {
+  return load(owner, name, scopeOf(owner, name));
+}
+/** Persist an already captured native snapshot using the gateway profile encryption boundary. */
+export function saveProfile(owner, name, payload) {
+  return persist(owner, name, scopeOf(owner, name), payload);
+}

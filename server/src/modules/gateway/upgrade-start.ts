@@ -80,10 +80,17 @@ function openSession(start: Start, acquired) {
   const session = newSession(start, acquired);
   session.authToken = start.authToken;
   session.profileCaptureBlocked = Boolean(start.profileName);
-  session.endpoint = endpointAt(acquired.session.target.wsUrl);
+  configureTarget(session, acquired.session.target);
   session.bindUpstream();
   sessions.set(session.id, session);
   return session;
+}
+
+/** Native worker hydration is complete before its endpoint can be handed to a client. */
+function configureTarget(session, target) {
+  session.endpoint = target.endpoint || endpointAt(target.wsUrl);
+  session.nativeBrowserId = target.nativeBrowserId;
+  session.nativeProfileCapture = target.capture;
 }
 
 /** The session object; its release hands the browser and the provider slot back and unlocks the profile. */
@@ -118,7 +125,7 @@ async function prepare(start: Start, session) {
 /** Refuse a failed restore without capturing the incomplete browser over the saved profile. */
 async function restoreProfile(start: Start, session) {
   try {
-    await profiles.restore(start.owner, start.profileName, session);
+    if (!session.nativeBrowserId) await profiles.restore(start.owner, start.profileName, session);
     session.profileCaptureBlocked = false;
     return true;
   } catch (error) {

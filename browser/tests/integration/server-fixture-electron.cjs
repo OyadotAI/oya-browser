@@ -48,7 +48,10 @@ async function send({ action, params = {} }) {
       ok: true,
       data: { tabs: [{ id: 1, active: true, url: window.webContents.getURL(), title: window.webContents.getTitle() }] },
     };
-  if (['analyze', 'click', 'handle_dialog'].includes(action) || (profileState && action === 'type')) {
+  if (
+    ['analyze', 'click', 'handle_dialog'].includes(action) ||
+    (profileState && ['type', 'screenshot'].includes(action))
+  ) {
     actions ||= require('./server-fixture-actions.cjs')(window);
     return actions(action, params);
   }

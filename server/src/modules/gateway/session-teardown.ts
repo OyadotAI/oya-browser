@@ -61,15 +61,22 @@ function logged<T>(what: string, err, value?: T): T {
 /** Saves the profile's cookies and storage, then closes the connection restore held open. */
 async function captureProfile(session) {
   if (session.profile && !session.profileCaptureBlocked) {
-    await profiles
-      .capture(session.owner, session.profile, session)
-      .catch((e) => console.error(`[gateway] profile capture failed for ${session.profile}:`, e.message));
+    await saveProfile(session).catch((e) =>
+      console.error(`[gateway] profile capture failed for ${session.profile}:`, e.message),
+    );
   }
   // Held open since restore so its on-new-document hook stays registered.
   // An already-closed socket throws on close; the session is ending regardless.
   try {
     session.profileConn?.close();
   } catch {}
+}
+
+/** Native workers flush their owned persona; external providers use their separate profile transport. */
+function saveProfile(session) {
+  return session.nativeProfileCapture
+    ? session.nativeProfileCapture()
+    : profiles.capture(session.owner, session.profile, session);
 }
 
 /** Closes the client and the browser connection. Either may already be closed, which throws and changes nothing. */

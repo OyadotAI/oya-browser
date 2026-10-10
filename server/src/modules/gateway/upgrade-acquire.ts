@@ -10,6 +10,7 @@ import { metrics } from '../../platform/metrics.ts';
 import { QUOTAS } from '../../platform/limits.ts';
 import { Status } from '../../platform/http-status.ts';
 import * as profiles from './profiles.ts';
+import { acquireNative } from './native-provider.ts';
 import { pool } from './routing.ts';
 import { dial, opened } from './upstream.ts';
 import { auditAs, denyUpstream, type Upgrade } from './upgrade-context.ts';
@@ -77,7 +78,8 @@ async function providerFailed(start: Start, err) {
   await closeReservation(start, err);
   metrics.gatewayConnects.inc({ outcome: 'no_provider' });
   auditAs(start, { action: 'gateway.connect', outcome: 'error', meta: { error: err.message } });
-  denyUpstream(start, err.status);
+  if (err.code === 'native_profile_unavailable') start.deny(err.status, 'Native profile unavailable');
+  else denyUpstream(start, err.status);
   return null;
 }
 
@@ -91,6 +93,7 @@ async function closeReservation(start: Start, err) {
 
 /** Gets a browser from the provider and opens its CDP socket. */
 async function connectProvider(start: Start, provider) {
+  if (provider.type === 'oya-cloud') return acquireNative(start);
   return dialTarget(await targetFor(start, provider));
 }
 

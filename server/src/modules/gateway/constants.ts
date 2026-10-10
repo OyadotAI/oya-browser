@@ -108,3 +108,11 @@ export const PRIVATE_FILE_MODE = 0o600;
 
 /** Native recordings sample at two frames per second without overlapping commands. */
 export const NATIVE_RECORD_INTERVAL_MS = 500;
+
+/** Bound cold native worker enrollment before refusing a gateway upgrade. */
+export const NATIVE_ENROLL_TIMEOUT_MS = 90000;
+/** Poll only the reserved worker while it connects to this replica. */
+export const NATIVE_ENROLL_POLL_MS = 100;
+
+/** Native snapshots bind an immutable persona and all visited localStorage origins. */
+export const NATIVE_PROFILE_VERSION = 2;

@@ -1,33 +1,15 @@
 #!/usr/bin/env node
-/**
- * CDP gateway end to end against a real Chrome.
- *
- * Proves the thing that matters: a plain CDP client (what Playwright,
- * Puppeteer, Stagehand and browser-use all are underneath) can point at this
- * control plane and drive a browser, with routing, profiles, reconnection and
- * recording layered on without the client knowing.
- */
+/** Gateway profiles, routing, resume, recording and tenant isolation against cold native Oya workers. */
 
 import { createServer } from 'http';
 import express from 'express';
-import { spawn } from 'child_process';
-import { mkdtempSync, existsSync } from 'fs';
+import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { createHash } from 'crypto';
+import { nativeProvider } from '../support/native-provider.mjs';
 import { removeScratch } from '../support/scratch.js';
-
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-if (!CHROME) {
-  console.log('⏭  No Chrome binary, skipping gateway test');
-  process.exit(0);
-}
 
 const DATA = mkdtempSync(join(tmpdir(), 'oya-gw-'));
 process.env.OYA_DATA_DIR = DATA;
@@ -38,6 +20,9 @@ process.env.FLEET_TOKEN = 'tenant-key';
 process.env.OYA_PROFILE_SECRET = 'a'.repeat(64);
 process.env.OYA_SESSION_GRACE_MS = '10000';
 process.env.OYA_RECORD_EVERY_NTH = '1';
+process.env.OYA_ALLOW_PRIVATE_TARGETS = 'true';
+process.env.OYA_CLOUD_RUNTIME = 'docker';
+process.env.OYA_CLOUD_IMAGE = 'native-test-fixture';
 // The CDP client here dials a bare URL with no headers, so it uses the opt-in ?token= form.
 process.env.OYA_ALLOW_LEGACY_QUERY_KEYS = 'true';
 
@@ -61,47 +46,38 @@ const assert = (c, label) => {
 };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── A page to drive, and a real Chrome to drive it with ──
+// A hermetic page; every allocation is a separate native engine and cold partition.
 const site = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end('<!doctype html><title>Gateway fixture</title><h1>hello</h1><div style="height:2000px"></div>');
+  res.end(`<!doctype html><title>Gateway fixture</title><script>
+    document.documentElement.dataset.firstCookie = document.cookie;
+    document.documentElement.dataset.firstWho = localStorage.getItem('who') || '';
+  </script><h1>hello</h1><div style="height:2000px"></div>`);
 });
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
 
-const profile = join(DATA, 'chrome');
-const chrome = spawn(
-  CHROME,
-  ['--headless=new', '--remote-debugging-port=0', '--no-first-run', `--user-data-dir=${profile}`, 'about:blank'],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-const chromeWs = await new Promise((resolve, reject) => {
-  let buf = '';
-  const t = setTimeout(() => reject(new Error('Chrome did not report an endpoint')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(t);
-      resolve(m[0]);
-    }
-  });
-});
-
-pool.register({ name: 'local-chrome', type: 'cdp', wsUrl: chromeWs, maxConcurrent: 4, priority: 1 });
+pool.register({ name: 'local-oya', type: 'oya-cloud', maxConcurrent: 4, priority: 1 });
 
 const app = express();
 app.use(express.json());
 app.get('/json/version', handleJsonVersion);
 app.get('/json/list', handleJsonList);
 const server = createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+const { handleConnection } = await import('../../src/modules/browsers/socket.ts');
+wss.on('connection', handleConnection);
 server.on('upgrade', (req, socket, head) => {
   if (new URL(req.url, 'http://x').pathname === '/connect') {
     handleUpgrade(req, socket, head).catch(() => socket.destroy());
+  } else if (new URL(req.url, 'http://x').pathname === '/ws') {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   } else socket.destroy();
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const origin = `127.0.0.1:${server.address().port}`;
+process.env.OYA_PUBLIC_WS_URL = `ws://${origin}/ws`;
+const provider = await nativeProvider({ initialUrl: siteUrl });
 const gwUrl = (qs = '') => `ws://${origin}/connect?token=tenant-key${qs}`;
 
 /** Minimal CDP client, the same thing Playwright is underneath. */
@@ -119,24 +95,6 @@ const evaluate = (c, expr) =>
   c.conn
     .send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }, c.sessionId)
     .then((r) => r.result?.value);
-
-/**
- * All sessions in this test share one Chrome, so browser state carries over
- * between them. Any assertion about what a profile restored has to start from
- * a clean browser or it passes for the wrong reason.
- */
-async function wipeBrowser() {
-  const c = await client();
-  await c.conn.send('Network.clearBrowserCookies', {}, c.sessionId);
-  await c.conn.send('Page.navigate', { url: siteUrl }, c.sessionId);
-  await wait(500);
-  await evaluate(c, 'localStorage.clear(); sessionStorage.clear(); true');
-  const id = [...sessions.values()].filter((s) => s.client).slice(-1)[0].id;
-  c.conn.close();
-  await wait(200);
-  await sessions.get(id)?.destroy('wipe');
-  await wait(200);
-}
 
 try {
   console.log('\n1️⃣  CDP discovery, this is what makes clients work unchanged...');
@@ -172,7 +130,7 @@ try {
   const shot = await c1.conn.send('Page.captureScreenshot', { format: 'jpeg', quality: 40 }, c1.sessionId);
   assert(shot.data?.length > 1000, 'binary-ish payloads survive the pipe (screenshot)');
 
-  const routed = pool.get(null, 'local-chrome'); // shared host provider
+  const routed = pool.get(null, 'local-oya'); // shared host provider
   assert(routed.active === 1, 'the provider shows one active session');
   assert(routed.totalSessions === 1, 'the routing pool counted it');
 
@@ -188,8 +146,17 @@ try {
   await sessions.get(sessionId)?.destroy('test'); // capture on end
   await wait(400);
 
-  await wipeBrowser();
+  const allocated = provider.counts.created;
   const p2 = await client('&profile=acme');
+  assert(provider.counts.created === allocated + 1, 'restore uses a fresh native process, not leftover browser state');
+  assert(
+    (await evaluate(p2, 'document.documentElement.dataset.firstWho')) === 'acme',
+    'localStorage is restored before the first page script',
+  );
+  assert(
+    /sid=profile-value/.test(await evaluate(p2, 'document.documentElement.dataset.firstCookie')),
+    'cookies are restored before the first page script',
+  );
   await p2.conn.send('Page.navigate', { url: siteUrl }, p2.sessionId);
   await wait(800);
   const cookie = await evaluate(p2, 'document.cookie');
@@ -212,6 +179,10 @@ try {
   const p2Id = [...sessions.values()].find((s) => s.profile === 'acme')?.id;
   p2.conn.close();
   await wait(200);
+  assert(
+    profiles.isLocked(createHash('sha256').update('tenant-key').digest('hex').slice(0, 16), 'acme'),
+    'the profile remains locked throughout the resume grace period',
+  );
   if (p2Id) await sessions.get(p2Id)?.destroy('profile test done');
   await wait(200);
 
@@ -267,7 +238,6 @@ try {
   console.log('\n9️⃣  Tenant isolation...');
   // Profile names are chosen by callers and are not secrets. Naming another
   // tenant's profile must not hand over their session.
-  await wipeBrowser();
   const other = `ws://${origin}/connect?token=admin-key&profile=acme`;
   const thief = await new CDPConnection(other).connect();
   const tTargets = await thief.send('Target.getTargets');
@@ -291,7 +261,6 @@ try {
     'the owner still lists its own profile',
   );
 
-  await wipeBrowser();
   const back = await client('&profile=acme');
   await back.conn.send('Page.navigate', { url: siteUrl }, back.sessionId);
   await wait(700);
@@ -304,12 +273,63 @@ try {
   await wait(200);
   await sessions.get(backId)?.destroy('isolation done');
 
+  const logout = await client('&profile=acme');
+  await evaluate(logout, 'localStorage.clear(); document.cookie="sid=; max-age=0; path=/"; true');
+  const logoutSession = [...sessions.values()].find((entry) => entry.profile === 'acme');
+  logout.conn.close();
+  await logoutSession.destroy('logout');
+  const fresh = await client('&profile=acme');
+  assert(
+    (await evaluate(fresh, 'document.documentElement.dataset.firstWho')) === '',
+    'cold restore does not resurrect cleared localStorage',
+  );
+  assert(
+    !/sid=profile-value/.test(await evaluate(fresh, 'document.documentElement.dataset.firstCookie')),
+    'cold restore does not resurrect a deleted cookie',
+  );
+  const freshSession = [...sessions.values()].find((entry) => entry.profile === 'acme');
+  fresh.conn.close();
+  const beforeRelease = provider.counts.released;
+  process.env.OYA_CLOUD_RUNTIME = 'daytona';
+  try {
+    await freshSession.destroy('runtime changed');
+    assert(provider.counts.released === beforeRelease + 1, 'cleanup uses the runtime that created the worker');
+    assert(!profiles.isLocked(freshSession.owner, 'acme'), 'runtime changes do not strand the profile lock');
+  } finally {
+    process.env.OYA_CLOUD_RUNTIME = 'docker';
+  }
+
+  const legacyOwner = createHash('sha256').update('tenant-key').digest('hex').slice(0, 16);
+  const legacySaved = { version: 1, cookies: [], storage: { origin: siteUrl, session: { token: 'keep' } } };
+  await profiles.saveProfile(legacyOwner, 'legacy-session', legacySaved);
+  const beforeRefused = provider.counts.created;
+  const unsupported = await new Promise((resolve) => {
+    const socket = new WebSocket(gwUrl('&profile=legacy-session'));
+    socket.once('unexpected-response', (_, response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    socket.once('error', () => resolve('error'));
+    socket.once('open', () => {
+      socket.close();
+      resolve('opened');
+    });
+  });
+  assert(unsupported === 422, 'unsupported legacy sessionStorage is refused explicitly');
+  assert(provider.counts.created === beforeRefused, 'a refused profile never allocates a worker');
+  assert(pool.get(null, 'local-oya').healthy, 'profile refusal does not mark the native provider unhealthy');
+  assert(!profiles.isLocked(legacyOwner, 'legacy-session'), 'profile refusal releases the caller lock');
+  assert(
+    JSON.stringify(await profiles.loadProfile(legacyOwner, 'legacy-session')) === JSON.stringify(legacySaved),
+    'profile refusal preserves the original encrypted snapshot',
+  );
+  await profiles.remove(legacyOwner, 'legacy-session');
+
   console.log('\n🔟  Providers belong to the key that registered them...');
   const fpOf = (k) => createHash('sha256').update(k).digest('hex').slice(0, 16);
   pool.register({
     name: 'mine',
-    type: 'cdp',
-    wsUrl: chromeWs,
+    type: 'oya-cloud',
     owner: fpOf('tenant-key'),
     maxConcurrent: 2,
     priority: 5,
@@ -320,14 +340,14 @@ try {
   assert(tenantSees.includes('mine'), 'the registering key sees its own provider');
   assert(!otherSees.includes('mine'), 'another key does not see it');
   assert(
-    tenantSees.includes('local-chrome') && otherSees.includes('local-chrome'),
+    tenantSees.includes('local-oya') && otherSees.includes('local-oya'),
     'both still see the shared host provider',
   );
 
   // Two keys can use the same provider name without colliding.
   pool.register({ name: 'mine', type: 'cdp', wsUrl: 'ws://127.0.0.1:1/x', owner: fpOf('admin-key'), maxConcurrent: 1 });
-  assert(pool.get(fpOf('tenant-key'), 'mine').wsUrl === chromeWs, 'same name, different owner, different provider');
-  assert(pool.get(fpOf('admin-key'), 'mine').wsUrl !== chromeWs, 'the other key has its own');
+  assert(pool.get(fpOf('tenant-key'), 'mine').type === 'oya-cloud', 'same name, different owner, different provider');
+  assert(pool.get(fpOf('admin-key'), 'mine').type === 'cdp', 'the other key has its own');
 
   pool.remove(fpOf('tenant-key'), 'mine');
   pool.remove(fpOf('admin-key'), 'mine');
@@ -340,37 +360,32 @@ try {
   const c2 = await client(); // priority 0 is tried first, fails, fails over
   assert(c2.conn, 'a dead provider is failed over rather than failing the client');
   assert(pool.get(null, 'broken').healthy === false, 'the dead provider is put in cooldown');
-  assert(pool.get(null, 'local-chrome').active >= 1, 'the session landed on the healthy provider');
+  assert(pool.get(null, 'local-oya').active >= 1, 'the session landed on the healthy provider');
   c2.conn.close();
   c1.conn.close();
 
   console.log('\n9\ufe0f\u20e3  Attach to a browser already in the fleet (?browser=<id>)...');
   {
     const { registry } = await import('../../src/modules/browsers/registry.ts');
-    const { CDPDriver } = await import('../../src/drivers/cdp.ts');
-    // A fleet browser, as POST /browsers/start would register it.
-    const driver = await new CDPDriver({ wsUrl: chromeWs, provider: 'cdp' }).connect();
-    registry.add('fleet-1', {
-      apiKey: 'tenant-key',
-      name: 'Fleet 1',
-      clientType: 'cdp',
-      provider: 'cdp',
-      engine: driver,
-    });
-    await driver.send('navigate', { url: siteUrl + '?fleet=one' });
-
-    const attached = await client('&browser=fleet-1');
+    const fleetSession =
+      [...sessions.values()].find((entry) => entry.client === c1.conn.ws) ||
+      [...sessions.values()].find((entry) => entry.nativeBrowserId && registry.get(entry.nativeBrowserId));
+    const fleetId = fleetSession.nativeBrowserId;
+    const fleetClient = await client(`&browser=${fleetId}`);
+    await fleetClient.conn.send('Page.navigate', { url: siteUrl + '?fleet=one' }, fleetClient.sessionId);
+    fleetClient.conn.close();
+    const attached = await client(`&browser=${fleetId}`);
     const where = await evaluate(attached, 'location.search');
     assert(where === '?fleet=one', `a Playwright-style client lands on that exact browser (at "${where}")`);
     assert(
-      sessions.size >= 1 && [...sessions.values()].some((x) => x.attachedTo === 'fleet-1'),
+      sessions.size >= 1 && [...sessions.values()].some((x) => x.attachedTo === fleetId),
       'the session records what it is attached to',
     );
     attached.conn.close();
     await new Promise((r) => setTimeout(r, 200));
-    assert(registry.isConnected('fleet-1'), 'closing the client does not stop the fleet browser');
+    assert(registry.isConnected(fleetId), 'closing the client does not stop the fleet browser');
 
-    const foreign = new WebSocket(`ws://${origin}/connect?token=admin-key&browser=fleet-1`);
+    const foreign = new WebSocket(`ws://${origin}/connect?token=admin-key&browser=${fleetId}`);
     const foreignResult = await new Promise((resolve) => {
       foreign.once('unexpected-response', (_req, res) => resolve(res.statusCode));
       foreign.once('error', () => resolve('error'));
@@ -396,72 +411,52 @@ try {
       `an Oya client with its front door off has nothing to attach to (got ${notCdpResult})`,
     );
 
-    // An Oya client with its front door on: CDP rides its control socket. This
-    // stands in for main.js's relay, bridging to the real Chrome.
-    const { onBrowserMessage } = await import('../../src/modules/browsers/cdp-relay.ts');
-    const local = new Map(),
-      told = [];
-    const control = {
-      close() {},
-      send(text) {
-        const m = JSON.parse(text);
-        told.push(m.type);
-        if (m.type === 'cdp_open') {
-          const sock = new WebSocket(chromeWs);
-          local.set(m.sid, sock);
-          sock.on('open', () => onBrowserMessage('oya-2', { type: 'cdp_opened', sid: m.sid }));
-          sock.on('message', (d) => onBrowserMessage('oya-2', { type: 'cdp', sid: m.sid, data: d.toString() }));
-        }
-        if (m.type === 'cdp') local.get(m.sid).send(m.data);
-        if (m.type === 'cdp_close') local.get(m.sid).close();
-      },
-    };
-    registry.add('oya-2', {
-      apiKey: 'tenant-key',
-      name: 'Oya 2',
-      clientType: 'oya',
-      provider: 'oya-cloud',
-      cdp: true,
-      ws: control,
-    });
-    const relayed = await client('&browser=oya-2');
-    const relayedWhere = await evaluate(relayed, 'location.search');
-    assert(relayedWhere === '?fleet=one', `a CDP client drives an Oya client through the relay (at "${relayedWhere}")`);
+    // The native worker's real authenticated control socket carries the relay.
+    const relayed = await client(`&browser=${fleetId}`);
+    assert(
+      (await evaluate(relayed, 'location.search')) === '?fleet=one',
+      'the authenticated relay drives that exact native browser',
+    );
     relayed.conn.close();
-    // The session outlives its client for the grace period, so end it the way expiry would.
-    await [...sessions.values()].find((x) => x.attachedTo === 'oya-2').destroy('grace expired');
-    assert(told.includes('cdp_close'), 'ending the session closes the relay in the browser');
-    assert(registry.isConnected('oya-2'), 'and the Oya browser stays in the fleet');
-
-    // A profile is read from an Oya browser through its relay, the way capture on an attached one does.
-    const relayEndpoint = registry.get('oya-2').driver.cdpEndpoint();
-    const relayOwner = createHash('sha256').update('relay-owner').digest('hex').slice(0, 16);
-    const captured = await profiles.capture(relayOwner, 'relayed', { endpoint: relayEndpoint });
-    assert(captured === true, 'a profile is captured from an Oya browser over its relay');
-    await profiles.remove(relayOwner, 'relayed');
+    await [...sessions.values()]
+      .find((entry) => entry.attachedTo === fleetId && !entry.client)
+      ?.destroy('grace expired');
+    assert(registry.isConnected(fleetId), 'ending an attachment keeps the native worker in the fleet');
+    const profileClient = await client('&profile=relay-capture');
+    const capturedSession = [...sessions.values()].find((entry) => entry.profile === 'relay-capture');
+    await capturedSession.nativeProfileCapture();
+    const relayOwner = createHash('sha256').update('tenant-key').digest('hex').slice(0, 16);
+    assert(
+      (await profiles.loadProfile(relayOwner, 'relay-capture')).version === 2,
+      'native profile capture persists an encrypted native snapshot',
+    );
+    profileClient.conn.close();
+    await capturedSession.destroy('capture checked');
+    await profiles.remove(relayOwner, 'relay-capture');
 
     // Stopping a fleet browser ends every client attached to it, so a Playwright script exits.
-    const watcher = await client('&browser=fleet-1');
+    const watcher = await client(`&browser=${fleetId}`);
     const closedIn = await new Promise((resolve) => {
       const began = Date.now();
       watcher.conn.ws.once('close', (code) => resolve({ code, ms: Date.now() - began }));
-      registry.remove('fleet-1');
+      registry.remove(fleetId);
       setTimeout(() => resolve(null), 2000);
     });
     assert(
       closedIn?.code === 1001 && closedIn.ms < 1000,
       `an attached client is closed with 1001 when its browser stops (got ${JSON.stringify(closedIn)})`,
     );
-    registry.remove('fleet-1');
+    registry.remove(fleetId);
     registry.remove('oya-1');
-    registry.remove('oya-2');
   }
 } catch (e) {
   console.log(`  ❌ threw: ${e.message}\n${e.stack?.split('\n').slice(0, 4).join('\n')}`);
   failed++;
 } finally {
   for (const s of [...sessions.values()]) await s.destroy('teardown').catch(() => {});
-  chrome.kill('SIGKILL');
+  await provider.close();
+  wss.close();
+  server.closeAllConnections();
   await new Promise((r) => server.close(r));
   await new Promise((r) => site.close(r));
   removeScratch(DATA);

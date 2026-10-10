@@ -4,6 +4,7 @@
  * CDP URL, then save it (and the vendor API key, when one came with it).
  */
 import { available as availableProviders } from '../../drivers/providers.ts';
+import { isConfigured as nativeConfigured } from '../../drivers/sandbox.ts';
 import { assertSafeTarget } from '../../platform/net-guard.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
@@ -34,12 +35,19 @@ function storableCredential(cfg, body) {
 
 /** The vendor must be known and configured (with the key's saved or supplied credential), and the name free. */
 function assertSupported(key, cfg, credential) {
+  if (cfg.type === 'oya-cloud') return assertNativeSupported(key, cfg);
   const env = keyConfig.envFor(key);
   if (credential) env[`${cfg.type.toUpperCase()}_API_KEY`] = credential;
   const supported = availableProviders(env).find((p) => p.name === cfg.type);
   if (!supported) throw new HttpError(Status.BAD_REQUEST, 'Unknown browser provider.');
   if (!supported.configured)
     throw new HttpError(Status.CONFLICT, 'Add an API key for this provider, or save one in Settings → Browsers.');
+  assertNameFree(cfg);
+}
+
+/** Native gateway providers use the tenant's configured cloud runtime, not a vendor CDP credential. */
+function assertNativeSupported(key, cfg) {
+  if (!nativeConfigured(key)) throw new HttpError(Status.CONFLICT, 'Configure an Oya Cloud runtime first.');
   assertNameFree(cfg);
 }
 

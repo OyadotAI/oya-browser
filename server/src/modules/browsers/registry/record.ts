@@ -36,6 +36,7 @@ export type BrowserSpec = {
 const reach = (spec: BrowserSpec, browserId: string) => ({
   ws: spec.ws,
   cdp: spec.cdp ?? false,
+  profileSync: spec.profileSync ?? false,
   driver: driverFor(spec, browserId) as BrowserDriver,
   clientType: spec.clientType ?? 'oya',
 });

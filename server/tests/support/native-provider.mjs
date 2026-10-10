@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { openNativeFixture } from './native-browser.mjs';
 
 /** Install a hermetic worker at the cloud-runtime seam, with real native persona setup and shutdown. */
-export async function nativeProvider() {
+export async function nativeProvider({ initialUrl } = {}) {
   const { WORKERS } = await import('../../src/drivers/sandbox/worker.ts');
   const original = WORKERS.docker;
   const instances = new Map();
@@ -12,7 +12,7 @@ export async function nativeProvider() {
   WORKERS.docker = {
     ...original,
     async create(_config, spec) {
-      const fixture = await enroll(spec);
+      const fixture = await enroll(spec, initialUrl);
       const instance = {
         labels: spec.labels,
         state: 'running',
@@ -43,10 +43,12 @@ export async function nativeProvider() {
 }
 
 /** Use the production sandbox enrollment contract, not a preconnected desktop that MCP merely borrows. */
-async function enroll(spec) {
+async function enroll(spec, initialUrl) {
   const browser = await openNativeFixture();
   const socket = new WebSocket(spec.env.OYA_SERVER_URL);
   let queue = Promise.resolve();
+  let endpoint;
+  const relays = new Map();
   try {
     await new Promise((resolve, reject) => {
       const deadline = setTimeout(() => reject(Error('Native cloud enrollment timed out')), 15000);
@@ -60,14 +62,19 @@ async function enroll(spec) {
             const msg = JSON.parse(raw);
             if (msg.type === 'auth_ok') {
               await browser.preparePersona(msg);
+              if (initialUrl) await browser.send('navigate', { url: initialUrl });
+              endpoint = await browser.frontDoor();
               clearTimeout(deadline);
               resolve();
             }
+            if (msg.type.startsWith('cdp')) await relayNative(socket, msg, endpoint, relays);
             if (msg.type === 'ping') socket.send(JSON.stringify({ type: 'pong' }));
             if (msg.type === 'profile_capture')
               for (const reply of await browser.captureProfile(msg.id)) socket.send(JSON.stringify(reply));
             if (msg.type === 'cmd') {
-              const result = await browser.send(msg.action, msg.params);
+              const result = await browser
+                .send(msg.action, msg.params)
+                .catch((error) => ({ ok: false, error: error.message }));
               socket.send(JSON.stringify({ ...result, type: 'cmd_result', id: msg.id }));
             }
           })
@@ -84,9 +91,9 @@ async function enroll(spec) {
             browser_name: spec.env.OYA_BROWSER_NAME,
             persona: spec.env.OYA_PERSONA,
             provider: spec.env.OYA_PROVIDER,
-            cdp: false,
+            cdp: true,
             profile_sync: true,
-            actions: ['navigate', 'analyze', 'click', 'type', 'list_tabs'],
+            actions: ['navigate', 'analyze', 'click', 'type', 'list_tabs', 'screenshot'],
           }),
         ),
       );
@@ -94,6 +101,7 @@ async function enroll(spec) {
     return {
       async close() {
         const closed = socket.readyState === WebSocket.CLOSED ? Promise.resolve() : once(socket, 'close');
+        for (const peer of relays.values()) peer.terminate();
         socket.terminate();
         await closed;
         await queue;
@@ -105,4 +113,21 @@ async function enroll(spec) {
     await browser.close();
     throw error;
   }
+}
+
+/** Relay external agent frames only to the authenticated browser-owned native adapter. */
+async function relayNative(socket, msg, endpoint, relays) {
+  if (msg.type === 'cdp_open') {
+    const peer = new WebSocket(endpoint.url, { headers: { authorization: `Bearer ${endpoint.token}` } });
+    relays.set(msg.sid, peer);
+    peer.on('message', (data) => socket.send(JSON.stringify({ type: 'cdp', sid: msg.sid, data: data.toString() })));
+    peer.on('close', () => {
+      relays.delete(msg.sid);
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'cdp_closed', sid: msg.sid }));
+    });
+    await once(peer, 'open');
+    socket.send(JSON.stringify({ type: 'cdp_opened', sid: msg.sid }));
+  }
+  if (msg.type === 'cdp') relays.get(msg.sid)?.send(msg.data);
+  if (msg.type === 'cdp_close') relays.get(msg.sid)?.close();
 }

@@ -11,6 +11,7 @@ const { Mouse } = require('../../src/main/input/mouse.ts');
 /** Fixture-only composition; command behavior and dialog arbitration are production implementations. */
 module.exports = function fixtureActions(window) {
   const view = { webContents: window.webContents };
+  const tab = { id: 1, view, home: false, protection: 'protected' };
   const world = new World({
     analyzerScript: fs.readFileSync(path.resolve(__dirname, '../../scripts/analyzer.js'), 'utf8'),
     worldName: 'server-native-fixture',
@@ -28,7 +29,7 @@ module.exports = function fixtureActions(window) {
     keyboard: new Keyboard(process.platform),
     mouse: new Mouse(),
     getActiveView: () => view,
-    tabs: () => [{ id: 1, view, protection: 'protected' }],
+    tabs: () => [tab],
     injectScripts: (v) => world.ensure(v),
     worldEval: (v, source) => world.evaluate(v, source),
     sendResult: (...args) => runner.sendResult(...args),
@@ -39,7 +40,8 @@ module.exports = function fixtureActions(window) {
   runner = new CommandRunner({
     actions,
     dialogs,
-    tabs: { getActiveView: () => view },
+    tabs: { getActiveView: () => view, list: [tab] },
+    control: { snapshot: () => ({ mode: 'agent', mine: false, revision: 0 }) },
     shell: { browsingMode: true, devLog() {} },
     socket: {
       isOpen: () => true,

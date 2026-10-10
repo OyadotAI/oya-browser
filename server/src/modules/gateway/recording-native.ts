@@ -9,14 +9,14 @@ export async function nativeRecording(session) {
   if (!browser || browser.driver.kind !== 'oya') return null;
   const check = () => assertOwner(session, browser);
   check();
-  const answer = await sendCommand(session.attachedTo, 'list_tabs');
+  const answer = await sendCommand(session.nativeBrowserId || session.attachedTo, 'list_tabs');
   check();
   const tab = firstTab(answer);
   return new NativeRecording(() => capture(session, tab.id, check));
 }
 /** A relay endpoint without its exact browser cannot fall back to protocol recording. */
 function browserFor(session) {
-  const browser = session.attachedTo && registry.get(session.attachedTo);
+  const browser = registry.get(session.nativeBrowserId || session.attachedTo);
   const native = /^oya(?:-|$)/.test(session.provider || '') || !session.endpoint?.url;
   if (native && browser?.driver.kind !== 'oya') throw Error('Native recording browser is unavailable');
   return browser;
@@ -29,13 +29,18 @@ function firstTab(answer) {
 }
 /** Reconnects, ownership changes and destroyed gateway sessions cannot retarget an existing recording. */
 function assertOwner(session, browser): void {
-  if (session.closed || registry.get(session.attachedTo) !== browser || browser.apiKey !== session.apiKey)
+  if (
+    session.closed ||
+    registry.get(session.nativeBrowserId || session.attachedTo) !== browser ||
+    browser.apiKey !== session.apiKey
+  )
     throw Error('Native recording owner is no longer available');
 }
 /** Native screenshot selection is exact and rechecks browser ownership after the asynchronous command. */
 async function capture(session, tabId, check): Promise<string> {
   check();
-  const answer = await sendCommand(session.attachedTo, 'screenshot', { tab_id: tabId, format: 'jpeg' });
+  const params = { tab_id: tabId, format: 'jpeg' };
+  const answer = await sendCommand(session.nativeBrowserId || session.attachedTo, 'screenshot', params);
   check();
   if (!answer.ok || typeof answer.data?.screenshot !== 'string') throw Error(answer.error || 'Native capture failed');
   const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/]+={0,2})$/.exec(answer.data.screenshot);

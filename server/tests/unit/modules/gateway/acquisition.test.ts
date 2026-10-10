@@ -67,6 +67,24 @@ describe('Acquisition', () => {
     assert.equal(control$.of('releaseProvider')[0].args[0], 'hold-1');
   });
 
+  it('returns profile refusals without cooling down or failing over from a healthy provider', async () => {
+    const pool = poolOf('first', 'second');
+    const failure = new HttpError(422, 'Unsupported stored profile', { code: 'native_profile_unavailable' });
+    await assert.rejects(
+      new Acquisition(pool, {
+        owner: 'a',
+        connect: async () => {
+          throw failure;
+        },
+      }).run(),
+      { status: 422 },
+    );
+    assert.equal(pool.get('a', 'first').active, 0);
+    assert.equal(pool.get('a', 'first').healthy, true);
+    assert.equal(pool.get('a', 'second').totalSessions, 0);
+    assert.equal(control$.of('releaseProvider').length, 1);
+  });
+
   it('answers 502 naming the last error once every attempt has failed', async () => {
     const pool = poolOf('a1', 'a2');
     const connect = async (p) => Promise.reject(new Error(`${p.name} down`));

@@ -100,8 +100,15 @@ export class Acquisition {
     try {
       return this.connected(provider, holdId, await this.dial(provider), started);
     } catch (err) {
+      if (err.code === 'native_profile_unavailable') return this.refused(provider, holdId, err);
       await this.failed(provider, holdId, err);
     }
+  }
+
+  /** Profile refusals release capacity without marking healthy infrastructure as failed. */
+  private async refused(provider, holdId, error): Promise<never> {
+    await this.releaser(provider, holdId)();
+    throw error;
   }
 
   /** Calls the caller's connect function, unbound as it was given. */

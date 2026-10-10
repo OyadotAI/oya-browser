@@ -27,6 +27,24 @@ describe('registerProvider', () => {
     for (const p of pool.visible(OWNER)) if (p.owner === OWNER) pool.remove(OWNER, p.name);
   });
 
+  it('registers a native cloud provider through the public registration service', async () => {
+    const values = {
+      OYA_CLOUD_RUNTIME: 'docker',
+      OYA_CLOUD_IMAGE: 'native-fixture',
+      OYA_PUBLIC_WS_URL: 'ws://127.0.0.1/ws',
+    };
+    const saved = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, values);
+    try {
+      const provider = await registerProvider(KEY, OWNER, { name: 'native', type: 'oya-cloud' });
+      assert.equal(provider.type, 'oya-cloud');
+      assert.equal(provider.wsUrl, null);
+      assert.equal(provider.owner, OWNER);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) restoreEnv(key, value);
+    }
+  });
+
   it("registers a CDP provider under the key's owner", async () => {
     const p = await registerProvider(KEY, OWNER, { name: 'home', wsUrl: 'ws://8.8.8.8:9222/devtools' });
     assert.deepEqual([p.name, p.owner, p.wsUrl], ['home', OWNER, 'ws://8.8.8.8:9222/devtools']);

@@ -180,3 +180,19 @@ OYA_TEST_IMAGE=oya-browser:managed node server/tests/managed-runtime.test.js
 ```
 
 The normal suite covers local persistence, concurrent admission, idempotency, role boundaries, control leases, revocation, and cross-replica HTTP/CDP routing alongside existing provider and browser tests. Docker and Postgres contracts are separate so ordinary tests do not require those services.
+
+### Native gateway profiles
+
+Register a gateway provider with `POST /api/gateway/providers` and
+`{"name":"native","type":"oya-cloud","maxConcurrent":4}` after configuring
+an Oya Cloud runtime. `/connect?profile=work` then allocates a fresh native worker
+when routed to that provider. The profile's owner-checked persona, cookies and
+localStorage are restored before worker creation and before the first page
+script. Final capture uses the authenticated native profile channel; the gateway
+never sends cookie-replay or script-injection protocol commands to Oya.
+
+Named profiles retain their identity and encryption boundary across processes.
+They stay locked during the reconnect grace period. Native recordings sample an
+exact protected tab. Unnamed workers receive disposable personas. Saved legacy
+sessionStorage is refused with 422 rather than silently omitted; native snapshots
+require a native provider and cannot fall back to external CDP replay.

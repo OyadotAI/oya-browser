@@ -156,8 +156,8 @@ replace the native file-chooser or native trusted-keyboard suites. Existing
 service assertions remain, and missing engines or unsupported fixture commands
 fail explicitly. The anonymity suite now installs the production native persona
 policy before creating its page and retains its 34 surface/isolation assertions.
-The server aggregate still refuses the remaining legacy gateway suite.
-Do not remove that gate or equate the migrated subset with full CI.
+The gateway suite also uses cold native Oya workers. The integration gate remains
+enabled to prevent new stock-browser launchers from entering these suites.
 
 The native MCP suite starts the real server, admits a private native fixture over
 the authenticated Oya control socket, and exercises public MCP start/adopt,
@@ -195,10 +195,15 @@ recording assertions now use the production native recorder, and persona setup
 uses the production native session policy. Direct native sessions keep the host
 timezone to match unproxied egress. This is not protocol parity for generic CDP
 recording, profile replay or persona emulation; those provider paths retain unit
-coverage, and the gateway migration remains unfinished.
+coverage. Gateway providers of type `oya-cloud` restore named cookie/localStorage
+profiles through native persona enrollment before exposing a client connection.
+The encrypted snapshot binds the same owner-checked persona across restarts;
+recording and final profile capture use native commands. Legacy sessionStorage
+snapshots are explicitly refused, and native snapshots cannot be replayed into
+an external CDP provider.
 
 Gateway profile hydration fails closed: missing pages, refused cookie replay,
 or refused storage hooks prevent the client upgrade and release its lock and
 provider slot. Cleanup never captures the partially restored browser over the
 saved profile. Capture transport/evaluation failures preserve the prior saved
-state. These safeguards do not add native gateway profile restore support.
+state. The native provider bypasses protocol replay entirely.
