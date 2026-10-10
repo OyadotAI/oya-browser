@@ -110,10 +110,28 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: browser/package-lock.json
+    - name: Install native verification dependencies
+      run: npm ci --prefix browser
+      env:
+        ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    - uses: ./.github/actions/setup-native-engine
+      with:
+        archive-url: ${{ vars.OYA_NATIVE_LINUX_URL }}
+        archive-sha256: ${{ vars.OYA_NATIVE_LINUX_SHA256 }}
+    - name: Supply the verified cloud runtime to Docker
+      id: native-runtime
+      run: echo "directory=$(dirname "$OYA_NATIVE_ENGINE")" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@v4
     - uses: docker/build-push-action@v7
       with:
         context: browser
+        build-contexts: |
+          native-engine=${{ steps.native-runtime.outputs.directory }}
         push: true
         tags: ${{ env.IMAGE_BROWSER }}:${{ env.TAG }}
         platforms: linux/amd64

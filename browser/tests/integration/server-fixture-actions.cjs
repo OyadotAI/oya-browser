@@ -50,7 +50,7 @@ module.exports = function fixtureActions(window) {
       },
     },
   });
-  return (action, params) =>
+  const send = (action, params) =>
     new Promise((resolve, reject) => {
       const id = ++sequence;
       pending.set(id, resolve);
@@ -60,4 +60,6 @@ module.exports = function fixtureActions(window) {
         reject(error);
       });
     });
+  send.driver = actions;
+  return send;
 };

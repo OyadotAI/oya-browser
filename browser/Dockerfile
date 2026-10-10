@@ -51,9 +51,13 @@ RUN fc-cache -f
 
 WORKDIR /app
 
-# Install dependencies
+# The named build context must contain the checksum-verified Linux Oya runtime.
+# No npm Electron binary is allowed to substitute for missing native APIs.
+COPY --from=native-engine / /opt/oya-engine/
+
+# Install dependencies without downloading stock Electron.
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 
 # Copy browser source
 COPY src/ ./src/

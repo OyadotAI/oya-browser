@@ -156,8 +156,7 @@ replace the native file-chooser or native trusted-keyboard suites. Existing
 service assertions remain, and missing engines or unsupported fixture commands
 fail explicitly. The anonymity suite now installs the production native persona
 policy before creating its page and retains its 34 surface/isolation assertions.
-The server aggregate still refuses the remaining three legacy browser suites:
-CDP driver, outbound-provider MCP lifecycle and gateway.
+The server aggregate still refuses the remaining legacy gateway suite.
 Do not remove that gate or equate the migrated subset with full CI.
 
 The native MCP suite starts the real server, admits a private native fixture over
@@ -165,7 +164,13 @@ the authenticated Oya control socket, and exercises public MCP start/adopt,
 analysis, trusted clicks, human-control handoff, cross-key refusal and stop.
 The fixture advertises only its supported actions, with CDP disabled and engine
 debugger access forbidden. It does not replace cloud provisioning or validate
-persona application; the legacy provider lifecycle suite remains gated.
+persona application. Separately, `mcp-lifecycle.test.js` provisions a fresh Oya
+Cloud worker through the real reservation, enrollment and MCP paths, installs
+the authenticated native persona before navigation, and captures its profile
+before destroying the worker. Only the cloud allocator is replaced with a local
+native process. It retains the original MCP lifecycle assertions and checks
+creation/release counts; it does not validate a Docker image or outbound CDP
+provider compatibility.
 
 The SDK login journey now uses disposable native Oya engines. It retains encrypted
 profile/MFA reload and tenant-isolation checks, first-script cookie/storage
@@ -184,4 +189,16 @@ WS, and are never forwarded through redirects. The native transport integration
 checks unauthenticated/wrong-token refusal, target attachment and native runtime
 evaluation with engine debugger access forbidden. The transport also verifies
 native isolated-world creation and separation from page globals; this coverage
-does not replace the gated full CDP driver or outbound-provider lifecycle suites.
+is supplemented by `cdp.test.js`, which retains driver navigation, input, analyzer,
+tab and isolation assertions against the authenticated native adapter. Its
+recording assertions now use the production native recorder, and persona setup
+uses the production native session policy. Direct native sessions keep the host
+timezone to match unproxied egress. This is not protocol parity for generic CDP
+recording, profile replay or persona emulation; those provider paths retain unit
+coverage, and the gateway migration remains unfinished.
+
+Gateway profile hydration fails closed: missing pages, refused cookie replay,
+or refused storage hooks prevent the client upgrade and release its lock and
+provider slot. Cleanup never captures the partially restored browser over the
+saved profile. Capture transport/evaluation failures preserve the prior saved
+state. These safeguards do not add native gateway profile restore support.

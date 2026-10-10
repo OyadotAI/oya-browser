@@ -2,7 +2,7 @@
 import { COOKIE_PARAMS, validateCookies } from './validation-cookies.ts';
 import { NETWORK_PARAMS, validateNetwork } from './validation-network.ts';
 import { BROWSER_PARAMS, validateBrowser } from './validation-browser.ts';
-import { metricParameters, validatePointer, validateKey } from '../native/index.ts';
+import { metricParameters, validatePointer, validateKey, screenshotOptions } from '../native/index.ts';
 import { RUNTIME_PARAMS, validateRuntime } from './validation-runtime.ts';
 import { validateTargets } from './validation-targets.ts';
 import { validateDom } from './validation-dom.ts';
@@ -48,7 +48,7 @@ const PARAMS: Record<string, readonly string[]> = {
   'Target.attachToTarget': ['targetId', 'flatten'],
   'Target.detachFromTarget': ['sessionId'],
   'Page.navigate': ['url'],
-  'Page.captureScreenshot': ['format'],
+  'Page.captureScreenshot': ['format', 'quality'],
   'Oya.getCapabilities': [],
   'Oya.getNavigationHistory': [],
   'Oya.navigateToHistoryEntry': ['snapshot', 'index'],
@@ -84,6 +84,7 @@ function validateValue(key: string, value: unknown): void {
 
 /** These methods validate their own structured fields rather than generic primitive arguments. */
 const STRUCTURED_METHODS = [
+  'Page.captureScreenshot',
   'Target.setAutoAttach',
   'Oya.navigateToHistoryEntry',
   'Page.createIsolatedWorld',
@@ -103,6 +104,7 @@ function validatePrimitive(method: string, key: string, value: unknown): void {
 }
 /** Required structured arguments cannot disappear through an empty parameter object. */
 function validateRequired(command: NativeCommand): void {
+  if (command.method === 'Page.captureScreenshot') screenshotOptions(command.params);
   validateInput(command);
   validateHistoryCommand(command);
   validateCookies(command);
@@ -110,7 +112,6 @@ function validateRequired(command: NativeCommand): void {
   validateBrowser(command);
   validateNetwork(command);
   validateRuntime(command);
-  if (command.method === 'Input.insertText' && typeof command.params.text !== 'string') throw Error('text is required');
 }
 
 /** History traversal requires an explicit snapshot and nonnegative native entry position. */
@@ -127,6 +128,7 @@ export function nativeParameterNames(method: string): string[] {
 }
 /** Input validation is shared with the native implementation so accepted fields cannot drift. */
 function validateInput(command: NativeCommand): void {
+  if (command.method === 'Input.insertText' && typeof command.params.text !== 'string') throw Error('text is required');
   if (command.method === 'Input.dispatchMouseEvent') validatePointer(command.params);
   if (command.method === 'Input.dispatchKeyEvent') validateKey(command.params);
 }

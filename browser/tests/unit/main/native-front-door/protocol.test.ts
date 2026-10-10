@@ -1,7 +1,27 @@
 /** The compatibility boundary dispatches only explicit native capabilities within one connection’s target scope. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mock } from 'node:test';
 import { NativeProtocol } from '../../../../src/main/native-front-door/protocol.ts';
+test('JPEG quality is forwarded to native capture and invalid quality never reaches the backend', async () => {
+  const f = fixture();
+  const execute = mock.method(f.backend, 'execute', async () => ({
+    /** Encoded fixture pixels returned by the native backend. */
+    screenshot: 'data:image/jpeg;base64,SlBFRw==',
+  }));
+  const { sessionId } = (await f.run('Target.attachToTarget', { targetId: 'a', flatten: true })) as {
+    /** Connection-owned target session returned by attachment. */
+    sessionId: string;
+  };
+  assert.deepEqual(await f.run('Page.captureScreenshot', { format: 'jpeg', quality: 40 }, sessionId), {
+    data: 'SlBFRw==',
+  });
+  assert.deepEqual(execute.mock.calls[0].arguments, ['a', 'screenshot', { format: 'jpeg', quality: 40 }]);
+  for (const quality of [-1, 101, 1.5, '40', null])
+    await assert.rejects(f.run('Page.captureScreenshot', { format: 'jpeg', quality }, sessionId), /quality/);
+  await assert.rejects(f.run('Page.captureScreenshot', { format: 'png', quality: 40 }, sessionId), /quality/);
+  assert.equal(execute.mock.callCount(), 1);
+});
 /** Mutable fake capability adapter, without a protocol transport. */
 function fixture() {
   const calls: unknown[] = [],

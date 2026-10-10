@@ -60,7 +60,7 @@ function logged<T>(what: string, err, value?: T): T {
 
 /** Saves the profile's cookies and storage, then closes the connection restore held open. */
 async function captureProfile(session) {
-  if (session.profile) {
+  if (session.profile && !session.profileCaptureBlocked) {
     await profiles
       .capture(session.owner, session.profile, session)
       .catch((e) => console.error(`[gateway] profile capture failed for ${session.profile}:`, e.message));

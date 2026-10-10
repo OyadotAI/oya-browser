@@ -112,6 +112,25 @@ describe('page commands', () => {
     assert.deepEqual(view.webContents.calls.at(-1), ['jpeg', c.SCREENSHOT_JPEG_QUALITY]);
   });
 
+  it('screenshot passes an explicit JPEG quality to the native encoder, including zero', async () => {
+    for (const quality of [0, 40, 100]) {
+      const view = pageView();
+      await run(view, 'screenshot', { format: 'jpeg', quality });
+      assert.deepEqual(view.webContents.calls.at(-1), ['jpeg', quality]);
+    }
+  });
+
+  it('screenshot rejects invalid JPEG quality and PNG quality before native capture', async () => {
+    for (const params of [
+      { format: 'png', quality: 40 },
+      ...[-1, 101, 1.5, '40'].map((quality) => ({ format: 'jpeg', quality })),
+    ]) {
+      const view = pageView();
+      await assert.rejects(run(view, 'screenshot', params), /quality/);
+      assert.equal(view.webContents.calls.length, 0);
+    }
+  });
+
   it('click answers a missing element with its error', async () => {
     const view = pageView();
     const ctx = await run(view, 'click', { selector: 'a' }, { world: { ok: false, error: 'Element not found: a' } });

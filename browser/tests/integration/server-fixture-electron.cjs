@@ -7,7 +7,7 @@ const profile = process.env.OYA_SERVER_FIXTURE_PROFILE;
 if (!profile) throw Error('Launch through the parent-owned native fixture bridge');
 app.setPath('userData', profile);
 app.on('window-all-closed', () => {});
-let window, actions, profileState;
+let window, actions, profileState, recording;
 /** Refuse stock engines even though ordinary main-world execution alone is also available there. */
 async function ready() {
   await app.whenReady();
@@ -37,6 +37,10 @@ async function navigate(url) {
 }
 /** Preserve the server command result shape without creating a general protocol proxy. */
 async function send({ action, params = {} }) {
+  if (action === 'record' && profileState) {
+    recording ||= require('./server-fixture-recording.cjs')(window);
+    return { ok: true, data: await recording(params.mode) };
+  }
   if (action === 'navigate') return navigate(params.url);
   if (action === 'evaluate_raw') return { ok: true, data: { result: await evaluate(params.expression) } };
   if (profileState && action === 'list_tabs')
@@ -81,7 +85,8 @@ const methods = {
   profile_cookies: () => profileState.cookies(),
   native_front_door: () => {
     if (!profileState) throw Error('Native fixture front door requires an initialized profile');
-    return require('./server-fixture-front-door.cjs')(window, local);
+    actions ||= require('./server-fixture-actions.cjs')(window);
+    return require('./server-fixture-front-door.cjs')(window, local, actions.driver);
   },
 };
 /** Responses contain only requested fixture results; no source code or credentials are logged. */

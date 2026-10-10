@@ -8,12 +8,14 @@
 import { describe, it, before, after, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { WebSocket } from 'ws';
 import { ownDataDir, restoreEnv } from '../../support/data-dir.ts';
 
-ownDataDir('oya-upgrade-');
+const dataDir = ownDataDir('oya-upgrade-');
 process.env.OYA_LIMIT_CONNECT_BURST = '5';
 process.env.OYA_QUOTA_MAX_BROWSERS = '1';
 // Most rules below are easiest to state with ?token=; the default (refused) has its own test.
@@ -242,6 +244,46 @@ describe('a new session', () => {
     assert.equal(profiles.isLocked(fingerprint(key), 'shop'), true);
     await [...sessions.values()][0].destroy('done');
     assert.equal(profiles.isLocked(fingerprint(key), 'shop'), false);
+  });
+
+  it('refuses failed profile hydration without overwriting state or retaining locks and slots', async () => {
+    const key = newKey(),
+      owner = fingerprint(key);
+    const source = await fakeCdp(
+      pageBrowser((method) => {
+        if (method === 'Network.getAllCookies') return { cookies: [{ name: 'sid', value: 'keep' }] };
+        if (method === 'Runtime.evaluate')
+          return { result: { value: { origin: 'https://shop.test', local: { who: 'owner' }, session: {} } } };
+        return {};
+      }),
+    );
+    try {
+      const { endpointAt } = await import('../../../../src/drivers/cdp.ts');
+      await profiles.capture(owner, 'shop', { endpoint: endpointAt(source.url) });
+      const file = join(dataDir, 'profiles', `${owner}__shop.enc`),
+        saved = readFileSync(file);
+      const failing = await fakeCdp(
+        pageBrowser((method) => {
+          if (method === 'Page.addScriptToEvaluateOnNewDocument') throw Error('unsupported capability');
+          return {};
+        }),
+      );
+      pool.register({ name: 'refuse-restore', wsUrl: failing.url, priority: 0 });
+      try {
+        assert.equal((await connect(`token=${key}&profile=shop`)).status, 503);
+        assert.equal(sessions.size, 0);
+        assert.equal(profiles.isLocked(owner, 'shop'), false);
+        assert.equal(pool.get(null, 'refuse-restore').active, 0);
+        assert.deepEqual(readFileSync(file), saved);
+        assert.ok(!failing.commands.some((entry) => entry.method === 'Network.getAllCookies'));
+        await until(() => failing.clients() === 0);
+      } finally {
+        pool.remove(null, 'refuse-restore');
+        await failing.close();
+      }
+    } finally {
+      await source.close();
+    }
   });
 
   it('records the session when asked', async () => {

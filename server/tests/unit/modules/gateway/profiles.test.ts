@@ -113,13 +113,17 @@ describe('capture and restore', () => {
     );
   });
 
-  it('captures nothing from a browser without a page', async () => {
+  it('refuses capture from a browser without a page', async () => {
     const browser = await fakeCdp(() => ({ targetInfos: [] }));
     opened.push(browser);
-    assert.equal(await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) }), false);
+    await assert.rejects(profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) }), /requires a page/);
   });
 
-  it('saves cookies alone when the page will not give its storage', async () => {
+  it('preserves saved state when reading storage fails', async () => {
+    const source = await loggedIn();
+    opened.push(source);
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(source.url) });
+    const saved = readFileSync(fileOf(OWNER, 'shop'));
     const browser = await fakeCdp(
       pageBrowser((method) => {
         if (method === 'Runtime.evaluate') throw new Error('no page');
@@ -127,12 +131,38 @@ describe('capture and restore', () => {
       }),
     );
     opened.push(browser);
-    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) });
-    const replay = await fakeCdp(pageBrowser());
-    opened.push(replay);
-    const session: any = { endpoint: endpointAt(replay.url) };
-    assert.equal(await profiles.restore(OWNER, 'shop', session), true);
-    assert.equal(session.profileConn, undefined, 'nothing to replay into a page, so the connection is closed');
+    await assert.rejects(profiles.capture(OWNER, 'shop', { endpoint: endpointAt(browser.url) }), /no page/);
+    assert.deepEqual(readFileSync(fileOf(OWNER, 'shop')), saved);
+  });
+
+  for (const failedMethod of ['Network.setCookies', 'Page.addScriptToEvaluateOnNewDocument']) {
+    it(`refuses restore and closes its connection when ${failedMethod} fails`, async () => {
+      const source = await loggedIn();
+      opened.push(source);
+      await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(source.url) });
+      const browser = await fakeCdp(
+        pageBrowser((method) => {
+          if (method === failedMethod) throw new Error('unsupported capability');
+          return {};
+        }),
+      );
+      opened.push(browser);
+      const session: any = { endpoint: endpointAt(browser.url) };
+      await assert.rejects(profiles.restore(OWNER, 'shop', session), /unsupported capability/);
+      assert.equal(session.profileConn, undefined);
+      for (let attempt = 0; attempt < 100 && browser.clients(); attempt++)
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal(browser.clients(), 0);
+    });
+  }
+
+  it('refuses a stored profile when the new browser has no page', async () => {
+    const source = await loggedIn();
+    opened.push(source);
+    await profiles.capture(OWNER, 'shop', { endpoint: endpointAt(source.url) });
+    const browser = await fakeCdp(() => ({ targetInfos: [] }));
+    opened.push(browser);
+    await assert.rejects(profiles.restore(OWNER, 'shop', { endpoint: endpointAt(browser.url) }), /requires a page/);
   });
 
   it('replays the cookies, and registers the storage for its origin, into the next browser', async () => {

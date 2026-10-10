@@ -44,6 +44,14 @@ test('external connection authenticates, attaches and evaluates through the nati
       targetId: targetInfos[0].targetId,
       flatten: true,
     });
+    const navigation = await conn.send(
+      'Page.navigate',
+      { url: `http://127.0.0.1:${site.address().port}/?native-navigation=1` },
+      sessionId,
+    );
+    assert.ok(navigation.frameId);
+    const location = await conn.send('Runtime.evaluate', { expression: 'location.search' }, sessionId);
+    assert.equal(location.result.value, '?native-navigation=1');
     const result = await conn.send(
       'Runtime.evaluate',
       { expression: '({answer:6*7,node:typeof process})', returnByValue: true },

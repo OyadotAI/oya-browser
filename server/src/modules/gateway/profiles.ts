@@ -91,7 +91,7 @@ const attach = (session) => openPage(session.endpoint);
 export async function capture(owner, name, session) {
   const scope = scopeOf(owner, name);
   const attached = await attach(session);
-  if (!attached) return false;
+  if (!attached) throw new HttpError(Status.UNAVAILABLE, 'Profile capture requires a page');
   return saveFrom(owner, name, scope, attached);
 }
 
@@ -112,13 +112,11 @@ async function snapshot(conn, sessionId) {
   return { version: 1, savedAt: new Date().toISOString(), cookies, storage: storage?.result?.value || null };
 }
 
-/** The current origin's storage; null when the page will not say. */
+/** Read storage without treating a transport failure as an empty profile. */
 async function originStorage(conn, sessionId) {
-  try {
-    return await conn.send('Runtime.evaluate', { expression: ORIGIN_STORAGE_JS, returnByValue: true }, sessionId);
-  } catch {
-    return null;
-  }
+  const result = await conn.send('Runtime.evaluate', { expression: ORIGIN_STORAGE_JS, returnByValue: true }, sessionId);
+  if (result.exceptionDetails) throw new Error('Profile storage capture failed');
+  return result;
 }
 
 /** Seals the payload and writes it, owner-only. */
@@ -133,9 +131,19 @@ export async function restore(owner, name, session) {
   const payload = await load(owner, name, scope);
   if (payload === null) return false; // first use of this profile
   const attached = await attach(session);
-  if (!attached) return false;
-  await replay(payload, attached, session);
+  if (!attached) throw new HttpError(Status.UNAVAILABLE, 'Profile restore requires a page');
+  await replayOrClose(payload, attached, session);
   return true;
+}
+
+/** Failed cookie or storage hydration releases its private connection before refusing the session. */
+async function replayOrClose(payload, attached, session) {
+  try {
+    await replay(payload, attached, session);
+  } catch (error) {
+    attached.conn.close();
+    throw error;
+  }
 }
 
 /** The saved profile, or null when there is none yet. */
@@ -168,9 +176,7 @@ async function replayStorage(conn, sessionId, storage) {
   // Best effort: the script hook below works without it on current Chromium.
   await conn.send('Page.enable', {}, sessionId).catch(() => {});
   const source = `if (location.origin === ${JSON.stringify(storage.origin)}) ${restoreStorageJS(storage)};`;
-  await conn
-    .send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId)
-    .catch((e) => console.error('[gateway] profile storage not registered:', e.message));
+  await conn.send('Page.addScriptToEvaluateOnNewDocument', { source }, sessionId);
 }
 
 /** Only this owner's profiles. Names are caller-chosen and must not leak. */

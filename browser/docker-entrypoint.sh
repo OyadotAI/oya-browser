@@ -59,7 +59,7 @@ echo "[oya-docker] Starting Oya Browser (${SCREEN_WIDTH:-1920}x${SCREEN_HEIGHT:-
 # deprecated for security and also reports an 8192 max texture size no Mac
 # has (llvmpipe reports 16384, as an M1 does). The persona's renderer strings
 # are patched over it (anonymity/fingerprint.js).
-./node_modules/.bin/electron . --no-sandbox --use-gl=angle --use-angle=gl --ignore-gpu-blocklist --disable-dev-shm-usage &
+/opt/oya-engine/electron . --no-sandbox --use-gl=angle --use-angle=gl --ignore-gpu-blocklist --disable-dev-shm-usage &
 ELECTRON_PID=$!
 
 # ── Hard lifetime ──

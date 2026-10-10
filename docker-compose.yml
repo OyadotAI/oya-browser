@@ -28,7 +28,11 @@ services:
     restart: unless-stopped
 
   browser:
-    build: browser
+    platform: linux/amd64
+    build:
+      context: browser
+      additional_contexts:
+        native-engine: ${OYA_NATIVE_LINUX_DIRECTORY:-./missing-native-linux-runtime}
     # Deliberately no `env_file: .env` here. This is the container that renders
     # whatever page an agent is pointed at, and .env holds SUPABASE_SERVICE_KEY,
     # OPENAI_API_KEY, DAYTONA_API_KEY and OYA_PROFILE_SECRET — the KEK for every

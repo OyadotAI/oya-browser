@@ -60,7 +60,8 @@ docker-down: ## Stop docker compose
 	docker compose down
 
 docker-browser: ## Build browser Docker image
-	docker build -t oya-browser browser
+	@test -n "$(OYA_NATIVE_LINUX_DIRECTORY)" || (echo 'Set OYA_NATIVE_LINUX_DIRECTORY to the verified Linux x64 distribution'; exit 1)
+	docker build --platform linux/amd64 --build-context "native-engine=$(OYA_NATIVE_LINUX_DIRECTORY)" -t oya-browser browser
 
 docker-scale: ## Scale browser instances (usage: make docker-scale N=5)
 	docker compose up -d --scale browser=$(N)

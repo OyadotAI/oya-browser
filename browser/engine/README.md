@@ -582,8 +582,22 @@ job. Missing configuration, failed downloads, checksum mismatches and failed
 native probes fail the job. Server integration also installs the browser's
 dependencies because its native fixture loads browser modules directly.
 
+Both cloud-image deployment jobs use that same verified distribution as Docker's
+`native-engine` named build context. The image copies it to `/opt/oya-engine` and
+launches its executable directly; npm installs JavaScript dependencies with the
+stock Electron download disabled. For a local Linux x64 image build, first run
+the native distribution verifier on a Linux x64 host, then supply the verified
+directory with `docker buildx build --platform linux/amd64 --build-context native-engine=/path/to/verified/linux-x64 -f browser/Dockerfile browser`.
+The context must contain the complete runtime, not just its executable. This
+keeps Linux cloud support separate from macOS/Windows desktop packaging.
+For Compose, `make docker-browser`, the CLI installer and `update.sh`, export
+`OYA_NATIVE_LINUX_DIRECTORY` with the absolute path to that same verified directory.
+
 Provisioning alone does not complete the migration: the server aggregate still
-rejects the legacy CDP, provider MCP lifecycle and gateway fixtures. The anonymity
+rejects the legacy gateway fixture. The driver suite now uses the native adapter
+for supported external actions and browser-owned native recording/persona paths.
+It does not certify generic CDP recording or profile replay. The MCP lifecycle fixture now
+exercises native Oya Cloud provisioning with a local allocator seam. The anonymity
 fixture now uses the native persona policy and authenticated external adapter.
 The identity suite also retains debugger-based virtual-authenticator checks that
 need a native replacement. Those assertions must be migrated before CI can pass;
@@ -649,8 +663,8 @@ durable save, and a fresh-engine restart. The packaging probe now also executes
 native storage read/restore/watch operations; a stock engine cannot satisfy it.
 
 **This does not complete the overall native migration or enable production
-releases.** The legacy CDP driver, outbound-provider MCP lifecycle, gateway and
-anonymity integration suites remain gated. The default-path migration, native
+releases.** The legacy gateway integration suite remains gated.
+The default-path migration, native
 persona/worker protection and cross-platform release validation remain separate
 requirements. Current engine evidence is local macOS arm64, not a Windows or
 universal macOS production distribution.

@@ -283,10 +283,10 @@ export class NativeProtocol {
   }
   /** Return only native rendered PNG/JPEG data, with no unsupported clipping silently ignored. */
   async screenshot(command: NativeCommand): Promise<object> {
-    onlyParams(command, ['format']);
+    onlyParams(command, ['format', 'quality']);
     const format = command.params.format || 'png';
     if (format !== 'png' && format !== 'jpeg') throw new ProtocolError('Unsupported screenshot format');
-    const data = (await this.backend.execute(this.targetId(command), 'screenshot', { format })) as {
+    const data = (await this.backend.execute(this.targetId(command), 'screenshot', { ...command.params, format })) as {
       /** Native capture data URL. */
       screenshot: string;
     };

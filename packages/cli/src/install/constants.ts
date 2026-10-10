@@ -46,3 +46,5 @@ export const Status = {
   /** The key may not use this endpoint. */
   FORBIDDEN: 403,
 } as const;
+/** Explicitly supplied Linux cloud runtime; there is no stock Electron fallback. */
+export const NATIVE_LINUX_DIRECTORY = process.env.OYA_NATIVE_LINUX_DIRECTORY || '';

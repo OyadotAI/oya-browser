@@ -4,19 +4,41 @@
  */
 import { capture, run } from './shell.ts';
 import type { Answers } from './types.ts';
-import { READY_POLL_MS, READY_TIMEOUT_MS } from './constants.ts';
+import { NATIVE_LINUX_DIRECTORY, READY_POLL_MS, READY_TIMEOUT_MS } from './constants.ts';
 
 /** The internal bridge and image governed browsers need, and how to give the server Docker access. */
 async function provisionGoverned(root: string): Promise<void> {
+  const context = nativeContext();
   // verifyRuntime() refuses anything but an internal bridge, so create it that way.
   const exists = await capture('docker', ['network', 'inspect', 'oya-browsers']);
   if (!exists)
     await run('docker', ['network', 'create', '--internal', '--driver', 'bridge', 'oya-browsers'], { cwd: root });
+  await buildGoverned(root, context);
+  governedInstructions();
+}
+
+/** Build the cloud image with the explicitly selected native runtime. */
+async function buildGoverned(root: string, context: string): Promise<void> {
   console.log('  building the governed browser image…');
-  await run('docker', ['build', '-t', 'oya-browser:local', 'browser'], { cwd: root });
+  await run(
+    'docker',
+    ['build', '--platform', 'linux/amd64', '--build-context', context, '-t', 'oya-browser:local', 'browser'],
+    { cwd: root },
+  );
+}
+
+/** Explain the existing Docker access requirement after the image is ready. */
+function governedInstructions(): void {
   console.log('\n  Governed browsers need Docker daemon access from the server container.');
   console.log('  Add this to the server service in docker-compose.yml, then re-run `docker compose up -d`:');
   console.log('    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock');
+}
+
+/** Refuse a governed build before creating resources when the patched cloud engine is missing. */
+function nativeContext(): string {
+  if (!NATIVE_LINUX_DIRECTORY)
+    throw new Error('Set OYA_NATIVE_LINUX_DIRECTORY to the verified Linux x64 Oya distribution.');
+  return `native-engine=${NATIVE_LINUX_DIRECTORY}`;
 }
 
 /** Brings the stack up, with as many browser workers as asked for. */

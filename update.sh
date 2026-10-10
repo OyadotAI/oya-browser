@@ -72,8 +72,9 @@ fi
 workers="$(docker compose ps --quiet browser 2>/dev/null | grep -c . || true)"
 
 if docker image inspect "$GOVERNED_IMAGE" >/dev/null 2>&1; then
+  [ -n "${OYA_NATIVE_LINUX_DIRECTORY:-}" ] || die 'Set OYA_NATIVE_LINUX_DIRECTORY to the verified Linux x64 distribution.'
   say "Rebuilding the governed browser image"
-  docker build --quiet -t "$GOVERNED_IMAGE" browser >/dev/null
+  docker build --platform linux/amd64 --build-context "native-engine=$OYA_NATIVE_LINUX_DIRECTORY" --quiet -t "$GOVERNED_IMAGE" browser >/dev/null
 fi
 
 say "Rebuilding and restarting (browser workers: $workers)"

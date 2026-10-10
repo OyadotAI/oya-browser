@@ -53,7 +53,7 @@ patched-engine integration, not merely adapter-level checks.
   No fabricated frame, network-idle or SPA-render-complete events.
 - `Page.reload` (optional boolean `ignoreCache`) and `Page.stopLoading`: exact
   native target only. Reload returns command acceptance; await load events.
-- `Page.navigate`, `captureScreenshot` (PNG/JPEG), `getFrameTree`.
+- `Page.navigate`, `captureScreenshot` (PNG/JPEG, integer JPEG quality 0–100), `getFrameTree`.
   Activate a background tab before capture; invisible capture is not guaranteed.
 - `DOM.getDocument`, `querySelector`, `querySelectorAll`, `describeNode`,
   `getAttributes`, `getOuterHTML`: read-only, main-document nodes. Depth 0–32;

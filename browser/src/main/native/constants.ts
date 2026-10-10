@@ -1,5 +1,7 @@
 /** Isolated-world ids above Electron's reserved main and preload worlds. */
 import { NATIVE_RECORDING } from '../../shared/native-recording.ts';
+/** Electron's native JPEG encoder accepts integer quality percentages. */
+export const JPEG_MAX_QUALITY = 100;
 /** Keep preload delivery and browser evaluation in the same reserved world. */
 export const ANALYZER_WORLD_ID = NATIVE_RECORDING.WORLD_ID;
 /** Random bytes in an analyzer's per-document DOM marker. */

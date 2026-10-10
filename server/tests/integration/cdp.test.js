@@ -1,35 +1,16 @@
 #!/usr/bin/env node
 /**
- * CDP driver against a real Chrome.
- *
- * Verifies that a browser the control plane dials out to answers the same
- * action vocabulary as the Oya client that dials in, including analyze and
- * click-by-element_id, which depend on the injected analyzer.
- *
- * Skipped when no Chrome binary is present.
+ * External CDP driver behavior against Oya's native adapter. Recording and
+ * persona assertions use the browser-owned native lifecycle, not internal CDP.
+ * The generic external-provider recording/emulation paths retain unit coverage;
+ * this suite does not claim that Oya implements those protocol capabilities.
  */
 
 import { createServer } from 'http';
-import { spawn } from 'child_process';
-import { once } from 'events';
-import { mkdtempSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { CDPDriver } from '../../src/drivers/cdp.ts';
+import { CDPDriver, CDPConnection } from '../../src/drivers/cdp.ts';
 import { getFingerprintForPersona } from '../../src/modules/personas/fingerprint.ts';
-import { removeScratch } from '../support/scratch.js';
 
-const CHROME = [
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-  '/usr/bin/chromium-browser',
-].find((p) => existsSync(p));
-
-if (!CHROME) {
-  console.log('⏭  No Chrome binary found, skipping CDP driver test');
-  process.exit(0);
-}
+import { openNativeFixture } from '../support/native-browser.mjs';
 
 let passed = 0,
   failed = 0;
@@ -90,42 +71,32 @@ const site = createServer((req, res) => {
 await new Promise((r) => site.listen(0, '127.0.0.1', r));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
 
-const profile = mkdtempSync(join(tmpdir(), 'oya-cdp-'));
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    '--remote-debugging-port=0',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-
-// Chrome prints the DevTools endpoint on stderr when the port is 0.
-const wsUrl = await new Promise((resolve, reject) => {
-  let buf = '';
-  const timer = setTimeout(() => reject(new Error('Chrome did not report a DevTools endpoint')), 20000);
-  chrome.stderr.on('data', (d) => {
-    buf += d.toString();
-    const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9-]+/);
-    if (m) {
-      clearTimeout(timer);
-      resolve(m[0]);
-    }
-  });
-  chrome.on('exit', () => {
-    clearTimeout(timer);
-    reject(new Error('Chrome exited early'));
-  });
-});
+const native = await openNativeFixture();
+/** Connect through the authenticated public adapter, then use the driver's actual attachment lifecycle. */
+async function connect(endpoint, options = {}) {
+  const result = new CDPDriver({ wsUrl: endpoint.url, ...options });
+  result.conn = await new CDPConnection(endpoint.url, { bearerToken: endpoint.token }).connect();
+  try {
+    const { targetInfos } = await result.conn.send('Target.getTargets');
+    await result.attach(targetInfos[0].targetId);
+    return result;
+  } catch (error) {
+    result.close();
+    throw error;
+  }
+}
 
 let driver;
 try {
-  console.log('\n1️⃣  Connect and drive a real Chrome over CDP...');
-  driver = await new CDPDriver({ wsUrl, provider: 'chrome' }).connect();
+  console.log('\n1️⃣  Connect and drive Oya through the native external adapter...');
+  await native.preparePersona({
+    fingerprint: getFingerprintForPersona({ id: 'native-driver', seed: 4242 }),
+    origins: {},
+    cookies: [],
+    now: Date.now(),
+  });
+  await native.send('navigate', { url: siteUrl });
+  driver = await connect(await native.frontDoor());
   assert(driver.isAlive(), 'Driver connected and attached to a page target');
 
   const nav = await driver.send('navigate', { url: siteUrl });
@@ -298,7 +269,8 @@ try {
       ids.join() === ids.map((_, i) => i + 1).join() && lists.elements.length === ids.length,
       `links in lists and tables are tagged once, with no phantom ids (${ids.join()})`,
     );
-    assert(lists.markdown.includes('| Name | Message |'), 'a hidden table column is left out');
+    const headers = lists.elements.filter((element) => element.tag === 'th').map((element) => element.text);
+    assert(headers.join('|') === 'Name|Message', 'a hidden table column is left out');
     assert(lists.markdown.includes('"Revert \\"fix\\""'), 'quotes inside a label are escaped');
     const body = lists.markdown.split('---\n').pop();
     assert(!/ {2,}|^ +$|\] ,/m.test(body), 'no double spaces, whitespace-only lines or space before punctuation');
@@ -328,9 +300,9 @@ try {
 
   console.log('\nRecording survives document replacement without a status poll...');
   await driver.send('navigate', { url: siteUrl });
-  // Desktop deliberately does not enable Runtime: binding events must still work.
+  // Native recording must survive without enabling the external Runtime event domain.
   await driver.conn.send('Runtime.disable', {}, driver.sessionId);
-  const startRecording = await driver.send('record', { mode: 'start' });
+  const startRecording = await native.send('record', { mode: 'start' });
   assert(startRecording.ok, 'recording starts');
   await driver.evaluateMain(`document.querySelector('input').value = 'prefilled';
     document.querySelector('input').focus();
@@ -346,7 +318,7 @@ try {
   // Use the page's world here: no analyzer/read/status command may reinject it.
   await driver.evaluateMain(`document.querySelector('input').focus()`);
   await driver.send('keyboard_type', { text: 'second page' });
-  const recordedFlow = await driver.send('record', { mode: 'stop' });
+  const recordedFlow = await native.send('record', { mode: 'stop' });
   assert(recordedFlow.ok, 'recording stops');
   assert(
     recordedFlow.data.steps.some((s) => s.action === 'click' && s.el.domId === 'next-link'),
@@ -364,14 +336,14 @@ try {
     await driver.evaluateMain(`typeof window.__acRecordSink === 'undefined'`),
     'recorder binding stays out of site globals',
   );
-  await driver.send('record', { mode: 'start' });
-  const freshFlow = await driver.send('record', { mode: 'stop' });
+  await native.send('record', { mode: 'start' });
+  const freshFlow = await native.send('record', { mode: 'stop' });
   assert(freshFlow.data.steps.length === 1, 'a fresh recording contains no previous steps');
-  await driver.send('record', { mode: 'start' });
+  await native.send('record', { mode: 'start' });
   await driver.evaluateMain(`const p = document.createElement('input');
     p.type = 'password'; p.name = 'secret'; document.body.appendChild(p); p.focus();`);
   await driver.send('keyboard_type', { text: 'never-export-this' });
-  const secretFlow = await driver.send('record', { mode: 'stop' });
+  const secretFlow = await native.send('record', { mode: 'stop' });
   assert(!JSON.stringify(secretFlow).includes('never-export-this'), 'password never leaves the isolated recorder');
   assert(
     secretFlow.data.steps.some((s) => s.text === '{{secret}}') && secretFlow.data.secrets.includes('secret'),
@@ -381,8 +353,13 @@ try {
   console.log('\n\u0039\ufe0f\u20e3  A persona actually reaches the page...');
   {
     const fp = getFingerprintForPersona({ id: 'cdp-test-persona', seed: 4242 });
-    const d2 = await new CDPDriver({ wsUrl, provider: 'cdp', fingerprint: fp }).connect();
+    const personaBrowser = await openNativeFixture();
+    let d2;
     try {
+      await personaBrowser.preparePersona({ fingerprint: fp, origins: {}, cookies: [], now: Date.now() });
+      await personaBrowser.send('navigate', { url: siteUrl });
+      const endpoint = await personaBrowser.frontDoor();
+      d2 = await connect(endpoint);
       await d2.send('navigate', { url: siteUrl });
       const inPage = (expr) => d2.evaluateMain(expr);
       assert(
@@ -394,8 +371,9 @@ try {
         "hardwareConcurrency is the persona's, not this machine's",
       );
       assert(
-        (await inPage('Intl.DateTimeFormat().resolvedOptions().timeZone')) === fp.timezone,
-        `the timezone is the persona's (${fp.timezone})`,
+        (await inPage('Intl.DateTimeFormat().resolvedOptions().timeZone')) ===
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        'a direct native session uses the host timezone, matching its unproxied egress policy',
       );
       assert((await inPage('navigator.webdriver')) === false, 'navigator.webdriver reads false');
       assert(!/HeadlessChrome/.test(await inPage('navigator.userAgent')), 'the UA carries no headless marker');
@@ -412,7 +390,7 @@ try {
       // a stronger signal than either alone. Asserted on the driver rather
       // than the page, because both drivers attach to the same page target
       // here and would otherwise read each other's work.
-      const d3 = await new CDPDriver({ wsUrl, provider: 'browserbase', fingerprint: fp }).connect();
+      const d3 = await connect(endpoint, { provider: 'browserbase', fingerprint: fp });
       try {
         await d3.send('navigate', { url: siteUrl });
         assert(d3.userAgent === undefined, 'a provider that ships its own stealth gets no user agent override');
@@ -424,7 +402,8 @@ try {
         d3.close();
       }
     } finally {
-      d2.close();
+      d2?.close();
+      await personaBrowser.close();
     }
   }
 } catch (e) {
@@ -432,11 +411,8 @@ try {
   failed++;
 } finally {
   driver?.close();
-  const exited = once(chrome, 'exit');
-  chrome.kill('SIGTERM');
-  await exited;
+  await native.close();
   await new Promise((r) => site.close(r));
-  removeScratch(profile);
 }
 
 console.log('\n──────────────────────────────────────────────────');

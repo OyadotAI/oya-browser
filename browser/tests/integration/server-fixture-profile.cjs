@@ -3,6 +3,8 @@ const { Persona } = require('../../src/main/app/persona.ts');
 const { CookieSync } = require('../../src/main/sync/cookie-sync.ts');
 const { captureProfile } = require('../../src/main/connection/profile-capture.ts');
 const { Protection } = require('../../src/main/tabs/protection.ts');
+const { recordingPreferences } = require('../../src/main/recording/preload.ts');
+const path = require('node:path');
 /** Initialize the exact authenticated partition before creating its first page. */
 module.exports = async function profileFixture(electron, auth, local) {
   const sent = [];
@@ -44,7 +46,7 @@ module.exports = async function profileFixture(electron, auth, local) {
     jar.webRequest.onBeforeRequest((details, reply) => reply({ cancel: !local(details.url) }));
     const window = new electron.BrowserWindow({
       show: false,
-      webPreferences: { session: jar, sandbox: true, contextIsolation: true },
+      webPreferences: { ...recordingPreferences(path.resolve(__dirname, '../..')), session: jar },
     });
     Object.defineProperty(window.webContents, 'debugger', {
       get() {

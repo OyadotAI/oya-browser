@@ -26,10 +26,12 @@ Provider configurations and other legacy file-backed settings should be provisio
 
 Strict governance is available for `oya-selfhosted` browsers created by the managed Docker runtime. External providers and manually attached CDP browsers remain available with limited guarantees; requests requiring managed policy or hard budgets are rejected when the runtime cannot enforce them.
 
-Build the browser image:
+Build the browser image with a verified patched Linux x64 Oya distribution
+(see [native engine provisioning](../browser/engine/README.md#ci-engine-provisioning)):
 
 ```sh
-docker build -t oya-browser:managed browser
+export OYA_NATIVE_LINUX_DIRECTORY=/path/to/verified/linux-x64
+docker build --platform linux/amd64 --build-context "native-engine=$OYA_NATIVE_LINUX_DIRECTORY" -t oya-browser:managed browser
 ```
 
 Create an internal Docker bridge network. Put the control service and its egress proxy on that network, with a separate uplink for the trusted control service. Browser containers must have only the internal network. The operator must give the control service access to the Docker daemon; the server image includes the Docker CLI but does not mount a Docker socket automatically.

@@ -43,6 +43,8 @@ export class Session {
   declare profile: any;
   /** The CDP connection profile restore opened, closed on destroy. */
   declare profileConn: any;
+  /** Cleanup cannot capture state until profile hydration has succeeded. */
+  profileCaptureBlocked = false;
   /** Name of the provider the browser came from. */
   declare provider: any;
   /** Hands the browser back when the session ends. */

@@ -79,6 +79,7 @@ async function launch(start: Start) {
 function openSession(start: Start, acquired) {
   const session = newSession(start, acquired);
   session.authToken = start.authToken;
+  session.profileCaptureBlocked = Boolean(start.profileName);
   session.endpoint = endpointAt(acquired.session.target.wsUrl);
   session.bindUpstream();
   sessions.set(session.id, session);
@@ -109,12 +110,29 @@ async function releaseAll(start: Start, acquired) {
  * the profile's cookies; then start recording if asked. False once refused.
  */
 async function prepare(start: Start, session) {
-  if (start.profileName)
-    await profiles
-      .restore(start.owner, start.profileName, session)
-      .catch((e) => console.error('[gateway] profile restore:', e.message));
+  if (start.profileName && !(await restoreProfile(start, session))) return false;
   if (start.url.searchParams.get('record') !== '1') return true;
   return startRecording(start, session);
+}
+
+/** Refuse a failed restore without capturing the incomplete browser over the saved profile. */
+async function restoreProfile(start: Start, session) {
+  try {
+    await profiles.restore(start.owner, start.profileName, session);
+    session.profileCaptureBlocked = false;
+    return true;
+  } catch (error) {
+    return refuseProfile(start, session, error);
+  }
+}
+
+/** Cleanup retains the old saved state and releases the reservation before answering the client. */
+async function refuseProfile(start: Start, session, error) {
+  session.profileCaptureBlocked = true;
+  console.error('[gateway] profile restore:', error.message);
+  await session.destroy('Profile restore unavailable');
+  start.deny(Status.UNAVAILABLE, 'Profile restore unavailable');
+  return false;
 }
 
 /** Starts recording; a session that cannot be recorded is ended and refused. */

@@ -4,7 +4,7 @@
  * handler(driver, id, params, view); each answers through sendResult.
  * Pointer and raw keyboard commands are in pointer-commands.cjs.
  */
-import { capturePage, evaluatePage, type NativePage as PageView } from '../native/index.ts';
+import { capturePage, evaluatePage, screenshotOptions, type NativePage as PageView } from '../native/index.ts';
 import { actionNavigation } from './action-navigation.ts';
 import { sleep, jitter } from '../input/timing.ts';
 import * as s from './scripts.ts';
@@ -230,8 +230,8 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
 
   /** Capture the command's exact native view, or a JPEG when asked (a model reads it). */
   async screenshot(driver, id, params, view) {
-    const jpeg = params?.format === 'jpeg';
-    const screenshot = await capturePage(view, jpeg ? c.SCREENSHOT_JPEG_QUALITY : undefined);
+    const { format, quality } = screenshotOptions(params || {});
+    const screenshot = await capturePage(view, format === 'jpeg' ? (quality ?? c.SCREENSHOT_JPEG_QUALITY) : undefined);
     driver.deps.sendResult(id, true, { screenshot });
   },
 
