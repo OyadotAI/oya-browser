@@ -12,6 +12,7 @@ const SUITES = [
   'native-policy',
   'native-platform',
   'native-worker-client-hints',
+  'identity',
   'native-contexts',
   'native-storage',
   'native-runtime-worlds',

@@ -1,0 +1,54 @@
+diff --git a/tools/generate_config_gypi.py b/tools/generate_config_gypi.py
+--- a/tools/generate_config_gypi.py
++++ b/tools/generate_config_gypi.py
+@@ -27,10 +27,12 @@
+ def bool_string_to_number(v):
+   return bool_to_number(v == 'true')
+
+-def get_gn_config(out_dir):
++def get_gn_config(out_dir, root_dir=None):
+   # Read args from GN configurations.
+-  gn_args = subprocess.check_output(
+-      [GN, 'args', '--list', '--short', '-C', out_dir])
++  command = [GN, 'args', os.path.abspath(out_dir), '--list', '--short']
++  if root_dir:
++    command.append('--root=' + os.path.abspath(root_dir))
++  gn_args = subprocess.check_output(command)
+   config = dict(re.findall(GN_RE, gn_args.decode()))
+   # Get napi_build_version from Node, which is not part of GN args.
+   config['napi_build_version'] = getnapibuildversion.get_napi_version()
+@@ -66,7 +68,7 @@
+       'node_use_node_snapshot': config['node_use_node_snapshot'],
+       'v8_enable_inspector':  # this is actually a node misnomer
+           bool_string_to_number(config['node_enable_inspector']),
+-      'shlib_suffix': 'dylib' if sys.platform == 'darwin' else 'so',
++      'shlib_suffix': 'dylib' if json.loads(config['target_os']) == 'mac' else 'so',
+       'tsan': bool_string_to_number(config['is_tsan']),
+       # TODO(zcbenz): Shared components are not supported in GN config yet.
+       'node_shared': 'false',
+@@ -91,13 +93,14 @@
+   parser.add_argument('target', help='path to generated config.gypi file')
+   parser.add_argument('--out-dir', help='path to the output directory',
+                       default='out/Release')
++  parser.add_argument('--root-dir', help='GN source root for separate output directories')
+   parser.add_argument('--node-gn-path', help='path of the node target in GN',
+                       default='//node')
+   parser.add_argument('--dep-file', help='path to an optional dep file',
+                       default=None)
+   args, _unknown_args = parser.parse_known_args()
+
+-  config = get_gn_config(args.out_dir)
++  config = get_gn_config(args.out_dir, args.root_dir)
+   v8_config = get_v8_config(args.out_dir, args.node_gn_path)
+
+   # Write output.
+diff --git a/unofficial.gni b/unofficial.gni
+--- a/unofficial.gni
++++ b/unofficial.gni
+@@ -502,5 +502,6 @@
+       "--out-dir", rebase_path(root_build_dir, root_build_dir),
+       "--dep-file", rebase_path(depfile, root_build_dir),
+       "--node-gn-path", node_path,
++      "--root-dir", rebase_path("//", root_build_dir),
+     ]
+   }

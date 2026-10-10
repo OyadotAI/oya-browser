@@ -202,7 +202,7 @@ jobs:
         # updating, which is the failure this pipeline has always guarded.
         carry() {                       # $1 = glob to look for, $2 = gh pattern
           ls server/downloads/$1 >/dev/null 2>&1 && return 0
-          for tag in $(gh release list --limit 20 --json tagName --jq '.[].tagName'); do
+          for tag in $(gh release list --exclude-pre-releases --exclude-drafts --limit 20 --json tagName --jq '.[].tagName'); do
             [ "$tag" = "${GITHUB_REF_NAME}" ] && continue
             gh release download "$tag" --pattern "$2" --dir server/downloads --clobber >/dev/null 2>&1 || continue
             if ls server/downloads/$1 >/dev/null 2>&1; then

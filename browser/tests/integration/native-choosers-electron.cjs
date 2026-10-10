@@ -87,9 +87,13 @@ async function run() {
   await click(view, 'select');
   await new Promise((r) => setTimeout(r, 150));
   await keyboard.press(view, 'Home');
-  await keyboard.press(view, 'Escape');
+  await wc.capturePage();
   assert.equal(await world.evaluate(view, 'document.querySelector("select").value'), '2');
-  console.log('PASS: native popup Escape cancels without changing the selection');
+  await keyboard.press(view, 'Escape');
+  // AppKit discards the highlight; Blink's internal popup commits its provisional choice on cancellation.
+  const cancelledValue = process.platform === 'darwin' ? '2' : '1';
+  await until(async () => (await world.evaluate(view, 'document.querySelector("select").value')) === cancelledValue);
+  console.log('PASS: native popup keys preserve the uncommitted value and Escape follows platform selection behavior');
   let info, reply;
   const handler = (event, details, answer) => {
     event.preventDefault();

@@ -11,6 +11,7 @@ const { PageDriver } = require('../../src/main/actions/driver.ts');
 const { World } = require('../../src/main/native/index.ts');
 const { Mouse } = require('../../src/main/input/mouse.ts');
 const { Keyboard } = require('../../src/main/input/keyboard.ts');
+const { nativePointer } = require('../../src/main/input/native-pointer.ts');
 if (!process.env.OYA_NATIVE_WORKFLOW_PROFILE) throw Error('Run native-workflow.mjs for parent-owned profile cleanup');
 app.setPath('userData', process.env.OYA_NATIVE_WORKFLOW_PROFILE);
 app.on('window-all-closed', () => {});
@@ -98,10 +99,11 @@ const driver = new PageDriver({
 });
 /** Retain fixture-only pointer diagnostics for cross-process input failures. */
 const pointerTrace = [];
-const nativeMove = driver.mouse.move.bind(driver.mouse);
-driver.mouse.move = async (view, x, y) => {
+driver.mouse.move = async (view, x, y, guard) => {
+  guard?.();
   pointerTrace.push({ x, y, url: view.webContents.getURL() });
-  return nativeMove(view, x, y);
+  // A random curved path can leave a hover menu; this fixture tests exact native dispatch.
+  nativePointer(view, { type: 'mouseMove', x, y });
 };
 /** Observe completion through the workspace's public event contract. */
 async function start(steps, event = () => {}) {

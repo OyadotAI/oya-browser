@@ -56,11 +56,14 @@ export class NativeScope {
   /** Cleanup never reinstalls the analyzer or reads website data after run ownership ends. */
   async release(key: string): Promise<void> {
     if (!this.frame || this.frame.detached) return;
-    await evaluateFrame(this.frame, `delete globalThis[${JSON.stringify(key)}]`);
+    await evaluateFrame(
+      this.frame,
+      `(()=>{const key=${JSON.stringify(key)};globalThis[key]?.pointerCleanup?.();delete globalThis[key];})()`,
+    );
   }
   /** Translate a child hit through every exact owner and refuse parent overlays. */
-  async point(point: NativePoint): Promise<NativePoint> {
-    for (const hop of [...this.hops].reverse()) point = await parentPoint(hop, point);
+  async point(point: NativePoint, scroll = false): Promise<NativePoint> {
+    for (const hop of [...this.hops].reverse()) point = await parentPoint(hop, point, scroll);
     this.check();
     const zoom = this.tab.view.webContents.getZoomFactor();
     if (!Number.isFinite(zoom) || zoom <= 0) throw Error('Native workflow zoom unavailable');
@@ -88,15 +91,15 @@ export async function workflowScope(driver: PageDriver, tab: DriverTab, selector
   return new NativeScope(driver, tab, hops);
 }
 /** Parent-coordinate projection checks the owner still maps to the same native document. */
-async function parentPoint(hop: Hop, point: NativePoint): Promise<NativePoint> {
-  const params = JSON.stringify({ selector: hop.selector, token: hop.token, point });
+async function parentPoint(hop: Hop, point: NativePoint, scroll: boolean): Promise<NativePoint> {
+  const params = JSON.stringify({ selector: hop.selector, token: hop.token, point, scroll });
   return evaluateFrame(hop.parent, `(${PROJECT})(${params})`) as Promise<NativePoint>;
 }
 /** Axis-aligned CSS scaling is accounted for; non-invertible or rotated surfaces are explicitly refused. */
-const PROJECT = `({selector,token,point})=>{
+const PROJECT = `({selector,token,point,scroll})=>{
   if(globalThis.__oyaNativeRecording?.ownerToken(selector)!==token)throw Error('Workflow frame owner changed');
   const owner=document.querySelector(selector); if(!owner)throw Error('Workflow frame removed');
-  owner.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+  if(scroll)owner.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
   for(let n=owner;n;n=n.parentElement){const t=getComputedStyle(n).transform;if(t!=='none'){const m=new DOMMatrix(t);if(!m.is2D || m.b || m.c || m.a<=0 || m.d<=0)throw Error('Unsupported rotated native frame input');}}
   const r=owner.getBoundingClientRect(), sx=r.width/owner.offsetWidth, sy=r.height/owner.offsetHeight;
   const x=r.left+(owner.clientLeft+point.x)*sx, y=r.top+(owner.clientTop+point.y)*sy;

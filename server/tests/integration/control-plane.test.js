@@ -9,6 +9,18 @@ import express from 'express';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join as joinPath } from 'path';
+import dns from 'node:dns';
+import { syncBuiltinESMExports } from 'node:module';
+import { mock } from 'node:test';
+
+// Proxy registration validates DNS but never connects to this example endpoint.
+// Keep that validation hermetic, including when the runner has no external network.
+mock.method(dns.promises, 'lookup', async (hostname) => {
+  if (hostname === 'example.com') return [{ address: '93.184.216.34', family: 4 }];
+  if (hostname === 'localhost') return [{ address: '127.0.0.1', family: 4 }];
+  throw new Error(`Unexpected DNS lookup in control-plane fixture: ${hostname}`);
+});
+syncBuiltinESMExports();
 
 process.env.OYA_DATA_DIR = mkdtempSync(joinPath(tmpdir(), 'oya-test-'));
 delete process.env.SUPABASE_URL;

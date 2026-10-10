@@ -71,20 +71,28 @@ async function recordingPage() {
   window.focus();
   view.webContents.focus();
   await evaluate(ANALYZER);
+  await view.webContents.capturePage();
 }
 /** Locate fixture geometry in the native isolated world; no synthetic click events. */
 async function point(selector, index = 0) {
   const result = await evaluate(`(()=>{const el=document.querySelectorAll(${JSON.stringify(selector)})[${index}];
     if(!el)throw Error('Missing fixture target'); el.scrollIntoView({block:'center'});
     const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
-  await pause(30);
+  await view.webContents.capturePage();
   return result;
 }
 /** Deterministic native pointer input isolates recorder behavior from human-cadence path variations. */
 async function click(selector, index = 0) {
   const p = await point(selector, index);
+  await evaluate(`(()=>{const node=document.querySelectorAll(${JSON.stringify(selector)})[${index}];
+    window.__fixtureClickDone=new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{node.removeEventListener('click',done);reject(Error('Native fixture click did not arrive'));},3000);
+      function done(event){if(!event.isTrusted)return;clearTimeout(timer);node.removeEventListener('click',done);resolve(true);}
+      node.addEventListener('click',done);
+    });return true;})()`);
   nativePointer(view, { type: 'mouseMove', ...p });
   for (const type of ['mouseDown', 'mouseUp']) nativePointer(view, { type, ...p, button: 'left', clickCount: 1 });
+  await evaluate('window.__fixtureClickDone');
 }
 /** Reveal hover-only content through trusted pointer movement. */
 async function hover(selector) {

@@ -16,7 +16,7 @@
     "test:coverage": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --experimental-test-coverage 'tests/unit/**/*.test.{js,cjs,mjs,ts}'",
     "test:native-worlds": "node tests/integration/native-runtime-worlds.mjs",
     "test:recording": "npm run build && node tests/integration/recording.mjs",
-    "test:identity": "electron tests/integration/identity-electron.cjs",
+    "test:identity": "node tests/integration/identity.mjs",
     "test:sync": "npm run build && node tests/integration/sync-e2e.mjs",
     "test:model-sync": "npm run build && node tests/integration/model-sync.mjs",
     "test:routines-sync": "npm run build && node tests/integration/routines-sync.mjs",

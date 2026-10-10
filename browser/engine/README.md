@@ -576,6 +576,17 @@ the complete unpacked patched distribution at its root, including executable
 `electron`, its libraries and resources. A packaged AppImage or a macOS build
 cannot replace this distribution.
 
+The pinned Linux cloud runtime is
+[`native-engine-44.5.1-linux-x64-20261010`](https://github.com/OyadotAI/oya-browser/releases/tag/native-engine-44.5.1-linux-x64-20261010).
+Use its `oya-native-linux-x64-44.5.1.tar.gz` asset with SHA-256
+`8495b67c0f6dc1b09e479ce69bfe3b43ce6c8af50e9bd0d05c2080b849a122eb`.
+The release includes build provenance and the native acceptance report. Validation
+runs in a Linux amd64 container under Docker Desktop/Rosetta on macOS arm64,
+with no network and a non-root, sandboxed renderer. This is a cloud/CI testing
+distribution; it does not add Linux desktop support or certify Windows/macOS
+release signing and physical authenticators. Desktop download workflows exclude
+runtime prereleases when selecting the latest desktop assets.
+
 Installation checks the checksum before extraction, runs the existing native
 packaging capability probe under Xvfb, then exports `OYA_NATIVE_ENGINE` for the
 job. Missing configuration, failed downloads, checksum mismatches and failed
@@ -593,16 +604,88 @@ keeps Linux cloud support separate from macOS/Windows desktop packaging.
 For Compose, `make docker-browser`, the CLI installer and `update.sh`, export
 `OYA_NATIVE_LINUX_DIRECTORY` with the absolute path to that same verified directory.
 
-Provisioning alone does not complete the migration: the server aggregate still
-rejects the legacy gateway fixture. The driver suite now uses the native adapter
+### Building the Linux cloud distribution on macOS
+
+Start with the pinned, fully native-patched checkout above. Fetch its Linux
+dependencies at the revisions in Chromium's `DEPS`, and install Electron's amd64
+sysroot:
+
+```sh
+python3 build/linux/sysroot_scripts/install-sysroot.py \
+  --sysroots-json-path=electron/script/sysroots.json --arch=x64
+```
+
+Chromium's default sysroot lacks Electron's libnotify headers. Do not resync
+or reset an existing patched checkout to fetch missing dependencies. Cross-linking
+also needs the Linux compiler-rt libraries from the **same pinned LLVM version**;
+keep the macOS compiler executables and add only the Linux target libraries.
+
+Apply `patches/linux-cross-build.patch` in `src/electron`, and
+`patches/linux-cross-pkgconfig.patch` in `src`, checking each with
+`git apply --check` first. The first generates the checksum from the shipped base
+V8 snapshot when the optional Blink context snapshot is disabled, preserving
+runtime integrity validation. The second makes an explicit Linux sysroot
+produce real pkg-config flags on macOS; upstream's graph-emulation shortcut
+otherwise silently drops required headers and libraries. Install `pkgconf` on
+the build host. The Electron patch also resolves its Node filesystem sources
+relative to the generator rather than assuming an output directory under `src/out`.
+Its X11/Wayland detection respects the compiled Ozone platform flags, so the
+cloud build does not reference an unavailable Wayland platform constant.
+
+Apply `patches/linux-cross-v8-host.patch` in `src/v8` as well (the pinned V8
+revision is `77c65af5f4b7145cec663580054251968657fdf5`). It selects WebAssembly
+memory-mapping syscalls by the OS of the V8 binary, rather than the OS of its
+generated code. This keeps the macOS snapshot helper from compiling Linux-only
+syscalls while leaving the Linux runtime's implementation unchanged.
+
+Apply `patches/linux-cross-node-config.patch` in `src/third_party/electron_node`
+(revision `20de6b1149b04b60e6453adcd11e3a7d04eb2ec0`). It passes the GN source
+root explicitly to Node's configuration generator and chooses the shared-library
+suffix from the target OS. A macOS host must not embed `dylib` in Linux's config.
+
+Use a separate output directory and this testing configuration:
+
+```gn
+import("//electron/build/args/testing.gn")
+target_os = "linux"
+target_cpu = "x64"
+symbol_level = 0
+use_thin_lto = false
+chrome_pgo_phase = 0
+use_mold = false
+ozone_platform_wayland = false
+use_v8_context_snapshot = false
+generate_about_credits = true
+pkg_config = "/opt/homebrew/bin/pkg-config"
+mac_sdk_path = "/absolute/output/sdk/MacOSX26.5.sdk"
+```
+
+The SDK path must be inside this output directory; a symlink to the installed
+26.5 SDK works. The pinned linker cannot read the default 27 SDK's TAPI format.
+Disabling the optional Blink context snapshot avoids compiling Blink a second
+time for the host; normal V8 startup data remains enabled. X11 stays enabled for
+the cloud image's Xvfb display.
+
+Build `electron:electron_dist_zip` with at most four Ninja jobs and monitor free
+disk space. Put the checkout's `buildtools/mac` directory on `PATH` for the
+entire Ninja invocation: Node's configuration generator invokes `gn` by name.
+Its `dist.zip` contains the complete runtime. Unpack it, verify the
+native capabilities and integration suites **on Linux x64**, then archive that
+directory's contents as the CI `tar.gz` and compute its SHA-256. A successful
+cross-compile alone is not runtime validation, and this testing configuration
+does not produce a supported Linux desktop release.
+
+Provisioning alone does not complete platform validation. The server gateway
+fixture now provisions cold native Oya workers and tests profile restoration,
+recording, ownership and logout without an engine debugging endpoint. The driver suite now uses the native adapter
 for supported external actions and browser-owned native recording/persona paths.
 It does not certify generic CDP recording or profile replay. The MCP lifecycle fixture now
 exercises native Oya Cloud provisioning with a local allocator seam. The anonymity
 fixture now uses the native persona policy and authenticated external adapter.
-The identity suite also retains debugger-based virtual-authenticator checks that
-need a native replacement. Those assertions must be migrated before CI can pass;
-do not remove the integration gate or claim the pipeline is validated from a
-successful runtime installation alone.
+The identity suite now uses the opt-in native virtual-authenticator test seam
+below; it never attaches an engine debugger or verifies physical passkeys.
+Keep the integration gate enabled, and do not claim platform validation from
+a successful runtime installation alone.
 
 ## Native localStorage engine primitives (experimental)
 
@@ -663,10 +746,11 @@ durable save, and a fresh-engine restart. The packaging probe now also executes
 native storage read/restore/watch operations; a stock engine cannot satisfy it.
 
 **This does not complete the overall native migration or enable production
-releases.** The legacy gateway integration suite remains gated.
+releases.** The gateway integration now covers native cold profile restoration;
+legacy snapshots with sessionStorage remain explicitly unsupported.
 The default-path migration, native
 persona/worker protection and cross-platform release validation remain separate
-requirements. Current engine evidence is local macOS arm64, not a Windows or
+requirements. Platform-specific test results do not certify a Windows or
 universal macOS production distribution.
 
 ## Native isolated runtime worlds
@@ -1075,3 +1159,25 @@ credential creation/assertion origin validation stay intact. Apply with
 `tools/apply-native-webauthn-opaque-origin.sh /path/to/src`. The isolated native
 `tests/integration/native-webauthn-opaque.mjs` regression covers secure sandboxed
 opaque frames, all three capability probes, and ordinary-origin availability.
+
+### Native virtual-authenticator test seam
+
+`patches/native-test-authenticator.patch` applies in `src/electron` after the
+native input patches. `_setOyaTestAuthenticator(true)` creates a resident-key,
+user-verifying CTAP2 test device through Chromium's native authenticator
+environment. It requires the explicit `oya-test-virtual-authenticator` process
+switch and an ephemeral session. The environment belongs to the exact
+WebContents frame tree; duplicate enablement and another WebContents' disable
+request are refused. Disabling or destroying its frame tree discards the device.
+The method is main-process-only and is not exposed by the agent front door.
+The equally owner-checked `_setOyaTestAuthenticatorPresence` holds synthetic
+presence while testing cancellation, avoiding a race with an instant successful
+virtual assertion. It never controls a real authenticator.
+
+`npm run test:identity` requires `OYA_NATIVE_ENGINE`, installs native persona
+policy before renderer creation, and forbids debugger access. It tests page/wire
+identity, native permissions, virtual credential creation and cryptographic
+assertion, invalid relying-party rejection, cancellation, explicit opt-in,
+ephemeral-session admission and ownership. These are virtual credentials, not
+verification of physical authenticators, signed macOS entitlements or Windows
+credential UI.

@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createHash } from 'crypto';
+import { mock } from 'node:test';
 import { nativeProvider } from '../support/native-provider.mjs';
 import { removeScratch } from '../support/scratch.js';
 
@@ -357,11 +358,18 @@ try {
   const before = pool.stats();
   assert(before.capacity === 4, 'pool reports configured capacity');
   pool.register({ name: 'broken', type: 'cdp', wsUrl: 'ws://127.0.0.1:1/nope', priority: 0, maxConcurrent: 5 });
-  const c2 = await client(); // priority 0 is tried first, fails, fails over
-  assert(c2.conn, 'a dead provider is failed over rather than failing the client');
-  assert(pool.get(null, 'broken').healthy === false, 'the dead provider is put in cooldown');
-  assert(pool.get(null, 'local-oya').active >= 1, 'the session landed on the healthy provider');
-  c2.conn.close();
+  // A cold Linux worker may take longer than the provider's five-second cooldown.
+  // Freeze wall time only; real socket/process timers continue driving the native worker.
+  mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  try {
+    const c2 = await client(); // priority 0 is tried first, fails, fails over
+    assert(c2.conn, 'a dead provider is failed over rather than failing the client');
+    assert(pool.get(null, 'broken').healthy === false, 'the dead provider is put in cooldown');
+    assert(pool.get(null, 'local-oya').active >= 1, 'the session landed on the healthy provider');
+    c2.conn.close();
+  } finally {
+    mock.timers.reset();
+  }
   c1.conn.close();
 
   console.log('\n9\ufe0f\u20e3  Attach to a browser already in the fleet (?browser=<id>)...');

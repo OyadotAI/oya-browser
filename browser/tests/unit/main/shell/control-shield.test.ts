@@ -100,10 +100,29 @@ describe('ControlShield', () => {
     assert.equal(ctx.shield.popups.size, 0);
   });
 
-  it('hands focus back to the shell while an agent drives', () => {
+  it('restores the shell focus again after a reentrant native focus callback returns', async () => {
     ctx.control.state.interactive = false;
     ctx.shield.keepFocusOnShell();
     assert.deepEqual(ctx.shell.window.webContents.calls, ['focus']);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(ctx.shell.window.webContents.calls, ['focus', 'focus']);
+  });
+
+  it('does not reclaim focus after a human takes control before the deferred restoration', async () => {
+    ctx.control.state.interactive = false;
+    ctx.shield.keepFocusOnShell();
+    ctx.control.state.interactive = true;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(ctx.shell.window.webContents.calls, ['focus']);
+  });
+
+  it('does not focus an old shell after its owner window changes', async () => {
+    ctx.control.state.interactive = false;
+    const contents = ctx.shell.window.webContents;
+    ctx.shield.keepFocusOnShell();
+    ctx.shell.window = null;
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(contents.calls, ['focus']);
   });
 
   describe('showing an analysis', () => {

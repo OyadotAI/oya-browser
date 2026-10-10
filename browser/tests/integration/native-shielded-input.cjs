@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const { BrowserView } = require('electron');
 const { Shortcuts } = require('../../src/main/shell/shortcuts.ts');
+const { ControlShield } = require('../../src/main/shell/control-shield.ts');
 const { insertNativeText } = require('../../src/main/native/index.ts');
 const checkPageCommands = require('./native-page-commands.cjs');
 
@@ -14,8 +15,10 @@ module.exports = async function checkShieldedInput(win, profile) {
   win.addBrowserView(shield);
   shield.setBounds(page.getBounds());
   await shield.webContents.loadURL('data:text/html,<body>Agent owns the page</body>');
-  page.webContents.on('focus', () => win.webContents.focus());
-  const shortcuts = new Shortcuts({ shell: { window: win }, control: { snapshot: () => ({ interactive: false }) } });
+  const deps = { shell: { window: win }, control: { snapshot: () => ({ interactive: false }) } };
+  const fence = new ControlShield(deps);
+  page.webContents.on('focus', () => fence.keepFocusOnShell());
+  const shortcuts = new Shortcuts(deps);
   shortcuts.install(page.webContents);
   Object.defineProperty(page.webContents, 'debugger', {
     get() {

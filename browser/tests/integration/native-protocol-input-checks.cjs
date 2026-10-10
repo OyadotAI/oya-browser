@@ -21,6 +21,8 @@ module.exports = async function input(a, wc, control) {
   for (const zoom of [1, 2]) {
     wc.setZoomFactor(zoom);
     await wc.executeJavaScript('window.inputEvents=[];scrollTo(0,0)');
+    // Wait for the resized/replaced document's compositor surface before native hit testing.
+    await wc.capturePage();
     await mouse('mouseMoved', { x: 60.25 });
     await click();
     await until(wc, 'inputEvents.some(e=>e.type==="click")');

@@ -1,0 +1,15 @@
+diff --git a/build/config/linux/pkg-config.py b/build/config/linux/pkg-config.py
+--- a/build/config/linux/pkg-config.py
++++ b/build/config/linux/pkg-config.py
+@@ -125,7 +125,7 @@
+-  # If this is run on non-Linux platforms, just return nothing and indicate
+-  # success. This allows us to "kind of emulate" a Linux build from other
+-  # platforms.
+-  if "linux" not in sys.platform:
++  # Cross builds with an explicit Linux sysroot need its real header and
++  # library flags. Only graph emulation without a sysroot may omit them on
++  # non-Linux hosts.
++  if "linux" not in sys.platform and not options.sysroot:
+     if options.dridriverdir or options.libdir:
+       sys.stdout.write("")
+       return 0

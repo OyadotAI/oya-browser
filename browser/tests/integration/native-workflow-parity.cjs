@@ -12,7 +12,7 @@ async function frames(contents, pointerTrace) {
         'Workflow frame:',
         frame.url,
         await frame.executeJavaScript(
-          `JSON.stringify({active:document.activeElement?.outerHTML,frames:[...document.querySelectorAll('iframe')].map(n=>({id:n.id,rect:n.getBoundingClientRect().toJSON()})),inputs:[...document.querySelectorAll('input')].map(n=>({id:n.id,value:n.value,rect:n.getBoundingClientRect().toJSON()}))})`,
+          `JSON.stringify({hits:window.__nativeHits,active:document.activeElement?.outerHTML,frames:[...document.querySelectorAll('iframe')].map(n=>({id:n.id,rect:n.getBoundingClientRect().toJSON()})),inputs:[...document.querySelectorAll('input')].map(n=>({id:n.id,value:n.value,rect:n.getBoundingClientRect().toJSON()}))})`,
         ),
       );
     } catch (error) {
@@ -23,8 +23,9 @@ async function frames(contents, pointerTrace) {
 
 /** Hermetic pages include duplicate frame URLs so routing must use exact owner identities. */
 function page(url, port) {
-  if (url.startsWith('/outer')) return `<iframe id=inner src="http://127.0.0.1:${port}/child"></iframe>`;
-  if (url.startsWith('/child')) return '<label>Frame field<input id=framefield></label>';
+  const trace = `<script>window.__nativeHits=[];addEventListener('mousedown',e=>__nativeHits.push({x:e.clientX,y:e.clientY,target:e.target.outerHTML,trusted:e.isTrusted}));</script>`;
+  if (url.startsWith('/outer')) return trace + `<iframe id=inner src="http://127.0.0.1:${port}/child"></iframe>`;
+  if (url.startsWith('/child')) return trace + '<label>Frame field<input id=framefield></label>';
   return `<style>#hovered{display:none}#hover:hover #hovered{display:block}#blocked{position:absolute;left:20px;top:450px}#cover{position:absolute;left:0;top:430px;width:300px;height:80px;background:#ddd;z-index:9}iframe{height:120px}</style>
   <label for=labelled>Full name</label><input id=labelled>
   <span id=accessible-name>Destination</span><input id=aria aria-labelledby=accessible-name>

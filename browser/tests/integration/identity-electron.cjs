@@ -2,8 +2,9 @@
  * Real Electron regression for the identity a persona presents: what a page's
  * JavaScript reads (navigator.userAgent, navigator.userAgentData) must be what
  * the request headers say. This checks consistency, not Google's acceptance.
- * Native browsing separately retains the engine's real identity without eager
- * debugger attachment; real-account and physical-passkey checks are separate.
+ * Native session policy installs before renderer creation. Virtual passkeys use
+ * an explicitly enabled, ephemeral, browser-owned test authenticator, never CDP;
+ * real-account and physical-passkey checks are separate.
  * npm run test:identity --prefix browser (Linux CI uses xvfb-run).
  */
 const { app, BrowserWindow, BrowserView, session } = require('electron');
@@ -83,39 +84,61 @@ async function personaTab(win, profile) {
   const partition = `identity-${profile.navigator.platform}`;
   // Ungoverned, as a person's own browser is.
   const governance = new Governance(null);
-  await configureSession(app, session.fromPartition(partition), profile, { governance });
-  const view = new BrowserView({ webPreferences: { contextIsolation: true, sandbox: true, partition } });
-  win.setBrowserView(view);
-  view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
-  await view.webContents.loadURL('about:blank');
-  await new Protection({
+  const ses = session.fromPartition(partition);
+  await configureSession(app, ses, profile, { governance });
+  const protection = new Protection({
     persona: { active: profile },
     world: NO_WORLD,
     dialogs: new Dialogs(),
     governance,
-  }).setupTabCDP(view);
+  });
+  protection.configureSession(ses);
+  const view = new BrowserView({ webPreferences: { contextIsolation: true, sandbox: true, partition } });
+  forbidDebugger(view.webContents);
+  win.setBrowserView(view);
+  view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+  await view.webContents.loadURL('about:blank');
+  assert.equal(await protection.setupTabCDP(view), true);
   return view;
 }
 
-/** Native desktop setup leaves both the page and wire identity untouched, without attaching CDP. */
+/** Any debugger access fails this native-only fixture immediately. */
+function forbidDebugger(contents) {
+  Object.defineProperty(contents, 'debugger', {
+    get() {
+      throw Error('Internal CDP is forbidden');
+    },
+  });
+}
+
+/** Host-only native policy preserves the host platform while reducing the engine version consistently. */
 async function checkNativeBrowsing(win, site) {
   const partition = 'native-desktop-identity';
   const ses = session.fromPartition(partition);
   const original = ses.getUserAgent();
+  const expected = original
+    .replace(/Chrome\/[\d.]+/, `Chrome/${process.versions.chrome.split('.')[0]}.0.0.0`)
+    .replace(/ Electron\/[\d.]+/, '');
   await configureSession(app, ses, null, { nativeBrowsing: true });
+  const protection = new Protection({
+    nativeBrowsing: true,
+    persona: { active: null },
+    governance: new Governance(null),
+    dialogs: new Dialogs(),
+  });
+  protection.configureSession(ses);
   const view = new BrowserView({ webPreferences: { contextIsolation: true, sandbox: true, partition } });
+  forbidDebugger(view.webContents);
   win.setBrowserView(view);
   view.setBounds({ x: 0, y: 0, width: 800, height: 600 });
-  const protection = new Protection({ nativeBrowsing: true });
   await view.webContents.loadURL('about:blank');
   assert.equal(await protection.setupTabCDP(view), true);
   await view.webContents.loadURL(site.url('/page?native'));
   await protection.injectScripts(view, true);
-  assert.equal(view.webContents.debugger.isAttached(), false, 'ordinary native browsing must not attach CDP');
+  assert.throws(() => view.webContents._setOyaTestAuthenticator(true), /test opt-in/);
   const ua = await view.webContents.executeJavaScript('navigator.userAgent', true);
-  assert.equal(ua, original, 'page keeps the native engine identity');
-  assert.equal(site.seen.at(-1)['user-agent'], original, 'requests keep the native engine identity');
-  assert.equal(view.webContents.debugger.isAttached(), false);
+  assert.equal(ua, expected, 'page presents the reduced host-native identity');
+  assert.equal(site.seen.at(-1)['user-agent'], expected, 'requests match the native session identity');
   win.removeBrowserView(view);
   view.webContents.close();
 }
@@ -162,40 +185,43 @@ const PASSKEY_ROUNDTRIP = `(async () => {
   const invalidRP = await rejected(navigator.credentials.get({ publicKey: {
     challenge: new Uint8Array(32), rpId: 'https://localhost', timeout: 5000
   }}));
+  return { same: created.id === signed.id, signature: signed.response.signature.byteLength, invalidRP };
+})()`;
+
+/** Keep synthetic user presence pending so cancellation cannot race an instant successful assertion. */
+const PASSKEY_ABORT = `(async () => {
   const controller = new AbortController();
   const pending = navigator.credentials.get({ signal: controller.signal, publicKey: {
-    challenge: new Uint8Array(32), rpId: 'localhost', timeout: 5000,
-    allowCredentials: [{ type: 'public-key', id: created.rawId }]
+    challenge: new Uint8Array(32), rpId: 'localhost', timeout: 5000, userVerification: 'required'
   }});
   controller.abort();
-  return { same: created.id === signed.id, signature: signed.response.signature.byteLength,
-    invalidRP, aborted: await rejected(pending) };
+  return pending.then(() => 'accepted', (error) => error.name);
 })()`;
 
 /** Registration and assertion must reach Chromium instead of the old forced NotAllowedError. */
 async function assertNativePasskeys(view, where) {
-  const dbg = view.webContents.debugger;
-  await dbg.sendCommand('WebAuthn.enable');
-  const { authenticatorId } = await dbg.sendCommand('WebAuthn.addVirtualAuthenticator', {
-    options: {
-      protocol: 'ctap2',
-      transport: 'internal',
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation: true,
-    },
-  });
+  view.webContents._setOyaTestAuthenticator(true);
+  assert.throws(() => view.webContents._setOyaTestAuthenticator(true), /already enabled/);
   try {
+    const foreign = new BrowserView({ webPreferences: { sandbox: true, partition: 'foreign-authenticator-test' } });
+    await foreign.webContents.loadURL('about:blank');
+    assert.throws(() => foreign.webContents._setOyaTestAuthenticator(false), /does not own/);
+    assert.throws(() => foreign.webContents._setOyaTestAuthenticatorPresence(false), /does not own/);
+    foreign.webContents.close();
     const result = await view.webContents.executeJavaScript(PASSKEY_ROUNDTRIP, true);
     assert.equal(result.same, true, where + 'native registration and assertion use the same credential');
     assert.ok(result.signature > 0, where + 'native assertion returns a cryptographic signature');
     assert.equal(result.invalidRP, 'SecurityError', where + 'invalid RP identifiers remain rejected');
-    assert.equal(result.aborted, 'AbortError', where + 'aborting an assertion reaches native cancellation');
+    view.webContents._setOyaTestAuthenticatorPresence(false);
+    assert.equal(
+      await view.webContents.executeJavaScript(PASSKEY_ABORT, true),
+      'AbortError',
+      where + 'aborting a pending assertion reaches native cancellation',
+    );
   } finally {
-    await dbg.sendCommand('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
-    await dbg.sendCommand('WebAuthn.disable');
+    view.webContents._setOyaTestAuthenticator(false);
   }
+  assert.throws(() => view.webContents._setOyaTestAuthenticator(false), /does not own/);
 }
 
 /** What a page and its worker can learn without asking the person anything, as a fresh Chrome answers it. */
@@ -268,10 +294,12 @@ async function checkPlatform(win, site, platform) {
   const site = await hintServer();
   const win = new BrowserWindow({ show: true, width: 820, height: 640 });
   await checkNativeBrowsing(win, site);
+  app.commandLine.appendSwitch('oya-test-virtual-authenticator');
+  assert.throws(() => win.webContents._setOyaTestAuthenticator(true), /ephemeral session/);
   for (const platform of ['Win32', 'MacIntel', 'Linux x86_64']) await checkPlatform(win, site, platform);
   site.server.close();
   console.log(
-    'Oya identity: native browsing preserves page/request identity without CDP; persona identity stays consistent; virtual WebAuthn registration/assertion pass (not physical passkey verification)',
+    'Oya identity: host/persona page and request identity agree without CDP; owned ephemeral native virtual WebAuthn registration/assertion pass (not physical passkey verification)',
   );
   app.exit(0);
 })().catch((error) => {

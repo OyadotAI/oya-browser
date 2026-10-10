@@ -7,7 +7,7 @@
  */
 import path from 'node:path';
 import { TakeoverPrompt } from './takeover-prompt.ts';
-import type { BrowserView, BrowserWindow } from 'electron';
+import type { BrowserView, BrowserWindow, WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { drivenElsewhere, type ControlSnapshot } from '../control/control-state.ts';
 import {
@@ -33,6 +33,12 @@ type Deps = Pick<
   AppServices,
   'electron' | 'appDir' | 'control' | 'shell' | 'recorder' | 'shortcuts' | 'overlays' | 'tabs' | 'world'
 >;
+
+/** Recheck ownership and window identity before restoring focus after a native focus callback. */
+function focusFencedShell(deps: Deps, contents: WebContents): void {
+  if (contents.isDestroyed() || deps.shell.window?.webContents !== contents) return;
+  if (!deps.control.snapshot().interactive) contents.focus();
+}
 
 /** Where one element sits, in the shield's pixels, and the kind of element it is. */
 export interface ShieldBox {
@@ -174,7 +180,11 @@ export class ControlShield {
 
   /** A tab that takes focus while an agent drives hands it back to the shell. */
   keepFocusOnShell(): void {
-    if (!this.deps.control.snapshot().interactive) this.deps.shell.window?.webContents.focus();
+    const contents = this.deps.shell.window?.webContents;
+    if (!contents) return;
+    focusFencedShell(this.deps, contents);
+    // Aura ignores reentrant focus changes until its current focus callback returns.
+    setImmediate(() => focusFencedShell(this.deps, contents));
   }
 
   /** The control state changed: tell the shell, and fence the page accordingly. */

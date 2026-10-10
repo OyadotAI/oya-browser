@@ -12,9 +12,11 @@ export interface NativeSelection {
 const NODE = `const slot=globalThis[p.key];if(!slot||slot.token!==p.token||!slot.node.isConnected)throw Error('Workflow target document or node changed');const node=slot.node;`;
 /** Explicit native DOM commands, independent of page-world overridden functions. */
 const OPERATIONS: Record<string, string> = {
-  point: `node.scrollIntoView({block:'center',inline:'center',behavior:'instant'});const r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;let hit=node.getRootNode().elementFromPoint(x,y);if(!hit||(hit!==node&&!node.contains(hit)))throw Error('Workflow target is covered');if(node.disabled)throw Error('Workflow target disabled');return {x,y};`,
+  point: `if(p.scroll)node.scrollIntoView({block:'center',inline:'center',behavior:'instant'});const r=node.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;let hit=node.getRootNode().elementFromPoint(x,y);if(!hit||(hit!==node&&!node.contains(hit)))throw Error('Workflow target is covered');if(node.disabled)throw Error('Workflow target disabled');return {x,y};`,
   editable: `if(node.disabled||node.readOnly||!(node.isContentEditable||node instanceof HTMLTextAreaElement||node instanceof HTMLInputElement))throw Error('Workflow target is not editable');return {type:node.type||'',editable:node.isContentEditable};`,
   focused: `let active=document.activeElement;while(active?.shadowRoot?.activeElement)active=active.shadowRoot.activeElement;if(active!==node&&!node.contains(active))throw Error('Workflow input focus changed');return true;`,
+  armPointer: `slot.pointerCleanup?.();slot.pointerReached=false;const moved=e=>{if(e.isTrusted){slot.pointerReached=true;slot.pointerCleanup();}};slot.pointerCleanup=()=>node.removeEventListener('mousemove',moved,true);node.addEventListener('mousemove',moved,true);return true;`,
+  pointerReached: `return slot.pointerReached===true;`,
   valid: `return true;`,
   fillValue: `if(!(node instanceof HTMLInputElement)||node.disabled||node.readOnly)throw Error('Workflow field is not editable');node.value=p.value;if(node.value!==p.value)throw Error('Workflow field rejected value');node.dispatchEvent(new Event('input',{bubbles:true,composed:true}));node.dispatchEvent(new Event('change',{bubbles:true}));return true;`,
   select: `if(!(node instanceof HTMLSelectElement)||node.disabled)throw Error('Workflow target is not an enabled select');const options=[...node.options].filter(o=>o.label===p.value);if(options.length!==1||options[0].disabled||options[0].parentElement?.disabled)throw Error('Workflow select option missing, disabled or ambiguous');for(const option of node.options)option.selected=option===options[0];node.dispatchEvent(new Event('input',{bubbles:true,composed:true}));node.dispatchEvent(new Event('change',{bubbles:true}));return node.value;`,
@@ -33,6 +35,6 @@ export function targetOperation<T>(target: NativeSelection, operation: string, p
   return target.scope.evaluate<T>(targetScript(target, operation, params));
 }
 /** Hit-test locally and through the complete frame owner chain before pointer dispatch. */
-export async function targetPoint(target: NativeSelection): Promise<NativePoint> {
-  return target.scope.point(await targetOperation<NativePoint>(target, 'point'));
+export async function targetPoint(target: NativeSelection, scroll = false): Promise<NativePoint> {
+  return target.scope.point(await targetOperation<NativePoint>(target, 'point', { scroll }), scroll);
 }

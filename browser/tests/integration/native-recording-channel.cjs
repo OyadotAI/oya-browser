@@ -61,7 +61,8 @@ module.exports = async function checkChannel(origin, analyzer) {
     await page.executeJavaScript(
       `{const frame=document.createElement('iframe');frame.id='added';frame.src=${JSON.stringify(origin.replace('127.0.0.1', 'localhost') + '/child')};document.body.append(frame);}`,
     );
-    await until(() => page.mainFrame.frames.length === 1);
+    // Frame creation first exposes about:blank; wait for the cross-process document commit.
+    await until(() => page.mainFrame.frames[0]?.url === origin.replace('127.0.0.1', 'localhost') + '/child');
     const added = page.mainFrame.frames[0];
     await until(() => ready(added));
     await type(page, added, 'dynamically added frame');

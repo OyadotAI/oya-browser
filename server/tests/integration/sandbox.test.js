@@ -19,6 +19,18 @@ import express from 'express';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join as joinPath } from 'path';
+import dns from 'node:dns';
+import { syncBuiltinESMExports } from 'node:module';
+import { mock } from 'node:test';
+
+// Exercise public/private destination validation without querying external DNS.
+mock.method(dns.promises, 'lookup', async (hostname) => {
+  if (hostname === 'us-central1-aiplatform.googleapis.com') return [{ address: '203.0.113.10', family: 4 }];
+  if (hostname === 'localhost') return [{ address: '127.0.0.1', family: 4 }];
+  if (hostname === 'redis.internal') return [{ address: '10.0.0.1', family: 4 }];
+  throw new Error(`Unexpected DNS lookup in sandbox fixture: ${hostname}`);
+});
+syncBuiltinESMExports();
 // Never write through to the deployment's real data/ directory.
 process.env.OYA_DATA_DIR = mkdtempSync(joinPath(tmpdir(), 'oya-test-'));
 process.env.API_KEYS = 'admin-key,tenant-key';

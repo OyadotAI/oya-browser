@@ -1,0 +1,72 @@
+diff --git a/BUILD.gn b/BUILD.gn
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -603,8 +603,7 @@
+     "//v8:v8_libplatform",
+   ]
+
+-  if (v8_use_external_startup_data && use_v8_context_snapshot &&
+-      current_toolchain == default_toolchain) {
++  if (v8_use_external_startup_data && current_toolchain == default_toolchain) {
+     deps += [ ":mksnapshot_checksum_gen" ]
+   }
+
+@@ -1103,12 +1102,16 @@
+     script = "build/checksum_header.py"
+
+     outputs = [ "$target_gen_dir/snapshot_checksum.h" ]
+-    inputs = [ "$root_out_dir/$v8_context_snapshot_filename" ]
++    if (use_v8_context_snapshot) {
++      inputs = [ "$root_out_dir/$v8_context_snapshot_filename" ]
++      deps = [ "//tools/v8_context_snapshot" ]
++    } else {
++      inputs = [ "$root_out_dir/snapshot_blob.bin" ]
++      deps = [ "//v8:run_mksnapshot_default" ]
++    }
+     args = rebase_path(inputs)
+
+     args += rebase_path(outputs)
+-
+-    deps = [ "//tools/v8_context_snapshot" ]
+   }
+ }
+
+diff --git a/script/node/generate_original_fs.py b/script/node/generate_original_fs.py
+--- a/script/node/generate_original_fs.py
++++ b/script/node/generate_original_fs.py
+@@ -3,6 +3,7 @@
+ import os
+ import sys
+
+-NODE_ROOT_DIR = "../../third_party/electron_node"
++NODE_ROOT_DIR = os.path.abspath(os.path.join(
++    os.path.dirname(__file__), "..", "..", "..", "third_party", "electron_node"))
+ out_dir = sys.argv[1]
+ fs_files = sys.argv[2:]
+diff --git a/shell/browser/linux/x11_util.cc b/shell/browser/linux/x11_util.cc
+--- a/shell/browser/linux/x11_util.cc
++++ b/shell/browser/linux/x11_util.cc
+@@ -5,12 +5,13 @@
+ #include "shell/browser/linux/x11_util.h"
+
+ #include "build/build_config.h"
++#include "ui/base/ozone_buildflags.h"
+ #include "ui/ozone/platform_selection.h"  // nogncheck
+
+ namespace x11_util {
+
+ bool IsX11() {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) && BUILDFLAG(SUPPORTS_OZONE_X11)
+   static const bool is = ui::GetOzonePlatformId() == ui::kPlatformX11;
+   return is;
+ #else
+@@ -19,7 +20,7 @@
+ }
+
+ bool IsWayland() {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) && BUILDFLAG(SUPPORTS_OZONE_WAYLAND)
+   static const bool is = ui::GetOzonePlatformId() == ui::kPlatformWayland;
+   return is;
+ #else

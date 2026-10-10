@@ -18,6 +18,8 @@ function fixture(steps: unknown[], options = {}) {
   });
   const state = {
     human: false,
+    paint: async () => {},
+    hover: async () => true,
     read: async () => ({ count: 1, recorded: true, editable: true, reference: '7', value: 'hello' }),
     locate: async () => ({ ok: true, data: { x: 5, y: 5 } }),
   };
@@ -27,6 +29,7 @@ function fixture(steps: unknown[], options = {}) {
         calls.push(['read', args[0]]);
         const code = String(args[1]);
         if (code.includes('const strategies')) return state.read();
+        if (code.includes('return slot.pointerReached')) return state.hover();
         if (code.includes('elementFromPoint')) return { x: 5, y: 5 };
         if (code.includes('return {type:')) return { type: 'text' };
         return true;
@@ -65,6 +68,7 @@ function fixture(steps: unknown[], options = {}) {
         isDestroyed: () => false,
         getURL: () => url,
         getZoomFactor: () => 1,
+        capturePage: () => state.paint(),
         sendInputEvent: (event) => calls.push(['input', event.type]),
       });
       Object.defineProperty(webContents, 'debugger', {
@@ -167,6 +171,32 @@ it('replacement tabs cannot inherit an old run tab capability', async () => {
   await validateNative(f.deps);
   assert.equal((await f.done).status, 'failed');
   assert.equal(f.calls.filter((c) => c[0] === 'click').length, 0);
+});
+it('stop while compositor geometry settles prevents all native pointer input', async () => {
+  const f = fixture([{ action: 'click', candidates: [{ kind: 'css', value: '#field' }] }]);
+  let release!: () => void;
+  f.state.paint = () =>
+    new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  const run = await validateNative(f.deps);
+  await turn();
+  assert.equal(typeof release, 'function');
+  run.control('stop');
+  release();
+  assert.equal((await f.done).status, 'outcome-unknown');
+  assert.equal(f.calls.filter((call) => ['move', 'input'].includes(String(call[0]))).length, 0);
+});
+it('never presses a button when native movement has not reached the exact node', async (t) => {
+  const f = fixture([{ action: 'click', candidates: [{ kind: 'css', value: '#field' }] }]);
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  f.state.hover = async () => {
+    t.mock.timers.tick(10000);
+    return false;
+  };
+  await validateNative(f.deps);
+  assert.equal((await f.done).status, 'outcome-unknown');
+  assert.equal(f.calls.filter((call) => call[0] === 'input').length, 0);
 });
 it('resume after human takeover refuses admission without reclaiming control', async () => {
   const f = fixture([

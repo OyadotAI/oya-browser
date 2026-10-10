@@ -1,0 +1,122 @@
+diff --git a/shell/browser/api/electron_api_web_contents.h b/shell/browser/api/electron_api_web_contents.h
+--- a/shell/browser/api/electron_api_web_contents.h
++++ b/shell/browser/api/electron_api_web_contents.h
+@@ -311,6 +311,11 @@
+   v8::Local<v8::Promise> InsertText(v8::Isolate* isolate, const std::u16string& text);
+   v8::Local<v8::Promise> DragOya(v8::Isolate* isolate, const gfx::PointF& from, const gfx::PointF& to);
+   void SendInputEvent(v8::Isolate* isolate, v8::Local<v8::Value> input_event);
++  // Explicit test-only, ephemeral, exact-WebContents virtual authenticator.
++  void SetOyaTestAuthenticator(v8::Isolate* isolate, bool enabled);
++  // Hold synthetic user presence so cancellation tests cannot race instant success.
++  void SetOyaTestAuthenticatorPresence(v8::Isolate* isolate, bool present);
++  bool owns_oya_test_authenticator_ = false;
+
+   // Subscribe to the frame updates.
+   void BeginFrameSubscription(gin::Arguments* args);
+diff --git a/shell/browser/api/electron_api_web_contents.cc b/shell/browser/api/electron_api_web_contents.cc
+--- a/shell/browser/api/electron_api_web_contents.cc
++++ b/shell/browser/api/electron_api_web_contents.cc
+@@ -58,7 +58,9 @@
+ #include "content/browser/renderer_host/navigation_controller_impl.h"  // nogncheck
+ #include "content/browser/renderer_host/render_frame_host_impl.h"  // nogncheck
+ #include "content/browser/renderer_host/render_frame_host_manager.h"  // nogncheck
+-#include "content/browser/renderer_host/render_widget_host_impl.h"  // nogncheck
++#include "content/browser/renderer_host/render_widget_host_impl.h"
++#include "content/browser/webauth/authenticator_environment.h"
++#include "content/browser/webauth/virtual_authenticator_manager_impl.h"  // nogncheck
+ #include "content/browser/renderer_host/render_widget_host_view_base.h"  // nogncheck
+ #include "content/browser/web_contents/web_contents_impl.h"  // nogncheck
+ #include "content/public/browser/browser_thread.h"
+@@ -4237,6 +4239,83 @@
+   return OyaDragController::Start(isolate, web_contents(), from, to);
+ }
+
++// The simulator is a main-process test seam, never a renderer or agent capability.
++void WebContents::SetOyaTestAuthenticator(v8::Isolate* isolate, bool enabled) {
++  auto fail = [isolate](const char* message) {
++    isolate->ThrowException(v8::Exception::Error(gin::StringToV8(isolate, message)));
++  };
++  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
++          "oya-test-virtual-authenticator")) {
++    fail("Native test authenticator requires explicit test opt-in");
++    return;
++  }
++  if (!web_contents()->GetBrowserContext()->IsOffTheRecord()) {
++    fail("Native test authenticator requires an ephemeral session");
++    return;
++  }
++  auto* frame = static_cast<content::RenderFrameHostImpl*>(
++      web_contents()->GetPrimaryMainFrame());
++  if (!frame || !frame->IsActive()) {
++    fail("Native test authenticator requires an active owning document");
++    return;
++  }
++  auto* environment = content::AuthenticatorEnvironment::GetInstance();
++  auto* node = frame->frame_tree_node();
++  if (!enabled) {
++    if (!owns_oya_test_authenticator_) {
++      fail("This WebContents does not own a native test authenticator");
++      return;
++    }
++    environment->DisableVirtualAuthenticatorFor(node);
++    owns_oya_test_authenticator_ = false;
++    return;
++  }
++  if (environment->IsVirtualAuthenticatorEnabledFor(node)) {
++    fail("An authenticator environment is already enabled for this document");
++    return;
++  }
++  environment->EnableVirtualAuthenticatorFor(node, false);
++  auto* manager = environment->MaybeGetVirtualAuthenticatorManager(node);
++  content::VirtualAuthenticator::Options options;
++  options.protocol = device::ProtocolVersion::kCtap2;
++  options.transport = device::FidoTransportProtocol::kInternal;
++  options.attachment = device::AuthenticatorAttachment::kPlatform;
++  options.has_resident_key = true;
++  options.has_user_verification = true;
++  if (!manager || !manager->AddAuthenticatorAndReturnNonOwningPointer(options)) {
++    environment->DisableVirtualAuthenticatorFor(node);
++    fail("Native test authenticator could not be created");
++    return;
++  }
++  owns_oya_test_authenticator_ = true;
++}
++
++void WebContents::SetOyaTestAuthenticatorPresence(v8::Isolate* isolate,
++                                                 bool present) {
++  auto fail = [isolate]() {
++    isolate->ThrowException(v8::Exception::Error(gin::StringToV8(
++        isolate, "This WebContents does not own an opted-in native test authenticator")));
++  };
++  if (!owns_oya_test_authenticator_ ||
++      !base::CommandLine::ForCurrentProcess()->HasSwitch(
++          "oya-test-virtual-authenticator") ||
++      !web_contents()->GetBrowserContext()->IsOffTheRecord()) {
++    fail();
++    return;
++  }
++  auto* frame = static_cast<content::RenderFrameHostImpl*>(
++      web_contents()->GetPrimaryMainFrame());
++  auto* manager = frame && frame->IsActive()
++      ? content::AuthenticatorEnvironment::GetInstance()
++            ->MaybeGetVirtualAuthenticatorManager(frame->frame_tree_node())
++      : nullptr;
++  if (!manager || manager->GetAuthenticators().size() != 1) {
++    fail();
++    return;
++  }
++  manager->GetAuthenticators().front()->SetUserPresence(present);
++}
++
+ void WebContents::SendInputEvent(v8::Isolate* isolate,
+                                  v8::Local<v8::Value> input_event) {
+   content::RenderWidgetHostView* view =
+@@ -5483,6 +5562,8 @@
+       .SetMethod("_supportsOyaFrameLifecycle", []() { return true; })
+       .SetMethod("_insertTextOya", &WebContents::InsertText)
+       .SetMethod("_dragOya", &WebContents::DragOya)
++      .SetMethod("_setOyaTestAuthenticator", &WebContents::SetOyaTestAuthenticator)
++      .SetMethod("_setOyaTestAuthenticatorPresence", &WebContents::SetOyaTestAuthenticatorPresence)
+       .SetMethod("sendInputEvent", &WebContents::SendInputEvent)
+       .SetMethod("beginFrameSubscription", &WebContents::BeginFrameSubscription)
+       .SetMethod("endFrameSubscription", &WebContents::EndFrameSubscription)

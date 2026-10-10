@@ -1,0 +1,35 @@
+--- a/src/wasm/wasm-memory-map-descriptor.cc
++++ b/src/wasm/wasm-memory-map-descriptor.cc
+@@ -4,5 +4,5 @@
+
+-#include "include/v8config.h"  // For V8_TARGET_OS_LINUX.
++#include "include/v8config.h"  // For V8_OS_LINUX.
+
+-#if V8_TARGET_OS_LINUX
++#if V8_OS_LINUX
+ #include <sys/mman.h>
+@@ -14,3 +14,3 @@
+ #undef MAP_TYPE
+-#endif  // V8_TARGET_OS_LINUX
++#endif  // V8_OS_LINUX
+
+@@ -34,3 +34,3 @@
+   mapped_memory_.Reset();
+-#if V8_TARGET_OS_LINUX
++#if V8_OS_LINUX
+   // TODO(crbug.com/339678654): Define a constant somewhere in the platform
+@@ -76,3 +76,3 @@
+   CHECK(v8_flags.wasm_memory_control);
+-#if V8_TARGET_OS_LINUX
++#if V8_OS_LINUX
+   int fd = memfd_create("wasm_memory_map_descriptor", MFD_CLOEXEC);
+@@ -111,3 +111,3 @@
+
+-#if V8_TARGET_OS_LINUX
++#if V8_OS_LINUX
+   uint8_t* target =
+@@ -167,3 +167,3 @@
+
+-#if V8_TARGET_OS_LINUX
++#if V8_OS_LINUX
+   uint8_t* target =

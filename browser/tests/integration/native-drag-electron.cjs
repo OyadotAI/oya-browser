@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const { once } = require('node:events');
 const { app, BrowserWindow } = require('electron');
 const { World, evaluateFrame } = require('../../src/main/native/index.ts');
 const { findElementJs } = require('../../src/main/actions/scripts.ts');
@@ -143,7 +144,9 @@ app
     console.log('PASS: concurrent and out-of-bounds gestures are refused');
 
     qa = await load(win, 'navigate');
+    const replacementLoaded = once(win.webContents, 'did-finish-load');
     await assert.rejects(nativeDrag(qa.view, qa.from, qa.to), /navigation|document/);
+    await replacementLoaded;
     await until(() => win.webContents.getURL().endsWith('replacement.html'));
     assert.equal(await world.evaluate(qa.view, 'document.body.innerText'), 'Replacement document');
     console.log('PASS: navigation cancels the gesture without replaying it in the next document');
