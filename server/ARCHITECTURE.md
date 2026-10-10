@@ -202,6 +202,11 @@ recording and final profile capture use native commands. Legacy sessionStorage
 snapshots are explicitly refused, and native snapshots cannot be replayed into
 an external CDP provider.
 
+Linux cloud workers require the complete checksum-pinned Oya distribution in
+[native engine provisioning](../browser/engine/README.md#ci-engine-provisioning).
+The cloud image and server integration fixtures use that same runtime; an npm
+Electron download cannot supply the native storage and profile-capture contract.
+
 Gateway profile hydration fails closed: missing pages, refused cookie replay,
 or refused storage hooks prevent the client upgrade and release its lock and
 provider slot. Cleanup never captures the partially restored browser over the

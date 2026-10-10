@@ -98,6 +98,13 @@ async function until(read) {
     const point = await view.webContents.executeJavaScript(
       `(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`,
     );
+    await view.webContents.capturePage();
+    await view.webContents.executeJavaScript(`window.__fixtureMouseUp = new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{document.removeEventListener('mouseup',done,true);reject(Error('Native mouse release did not arrive'));},3000);
+      function done(event){if(!event.isTrusted)return;clearTimeout(timer);document.removeEventListener('mouseup',done,true);resolve(true);}
+      document.addEventListener('mouseup',done,true);
+    }); undefined`);
+    const delivered = view.webContents.executeJavaScript('window.__fixtureMouseUp');
     view.webContents.sendInputEvent({
       type: 'mouseDown',
       x: Math.round(point.x),
@@ -112,6 +119,7 @@ async function until(read) {
       button: 'left',
       clickCount: 1,
     });
+    assert.equal(await delivered, true, 'the native release completes before the next fixture action');
   };
   await start();
   await view.webContents.loadURL(`http://127.0.0.1:${server.address().port}/redirect`);
@@ -201,7 +209,9 @@ async function until(read) {
   await click('checkLabel');
   await click('nativeLabel');
   await view.webContents.executeJavaScript(`document.getElementById('choice').focus()`);
+  lastStep = 'native select keyboard change';
   await keyboard.press(view, 'ArrowDown');
+  await until(() => view.webContents.executeJavaScript(`document.getElementById('choice').value === 'Two'`));
   await click('visible');
   await view.webContents.executeJavaScript(`document.getElementById('visible').select()`);
   await view.webContents.insertText('real edit');
