@@ -3,6 +3,11 @@ import type { WebContents, Streams } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { ShareSources } from './sources.ts';
 import { ShareSheet } from './window.ts';
+import { PICKER, DESKTOP_SOURCES } from './constants.ts';
+import { withinTime } from '../../shared/within-time.ts';
+
+/** Fixed macOS recovery destination, never supplied by a website. */
+export const SCREEN_RECORDING_SETTINGS_URL = PICKER.SETTINGS_URL;
 
 /** Native capture, tab policy and private UI services. */
 type Deps = Pick<AppServices, 'electron' | 'appDir' | 'windows' | 'tabs' | 'agentTab'>;
@@ -28,6 +33,13 @@ export class ScreenPicker {
     this.deps = deps;
   }
 
+  /** A first native enumeration lets macOS register the application and ask for Screen Recording access. */
+  async requestOSPermission(): Promise<void> {
+    await withinTime(this.deps.electron.desktopCapturer.getSources(DESKTOP_SOURCES), PICKER.SOURCES_TIMEOUT_MS).catch(
+      () => undefined,
+    );
+  }
+
   /** Ask for a source without selecting the first display or remembering an old choice. */
   pick(page: WebContents, origin: string, current: () => boolean): Promise<Streams | null> {
     if (this.pending || !current()) return Promise.resolve(null);
@@ -46,7 +58,8 @@ export class ScreenPicker {
   private async choose(catalog: ShareSources, { page, origin, current }: PickRequest): Promise<Streams | null> {
     const sources = await catalog.read();
     if (!current()) return null;
-    const sheet = new ShareSheet(this.deps, page, { origin, sources, desktopError: catalog.desktopError }, current);
+    const data = { origin, sources, desktopError: catalog.desktopError, canOpenSettings: catalog.canOpenSettings };
+    const sheet = new ShareSheet(this.deps, page, data, current);
     const selected = await sheet.result;
     const video = current() ? catalog.resolve(selected) : null;
     return video ? { video } : null;

@@ -16,7 +16,19 @@ function fixture(platform = 'darwin') {
   const electron = f.deps.electron as any;
   electron.webContents = { fromFrame: (asked) => (asked === frame ? f.contents : null) };
   const picks = [];
-  const picker = { pick: async (...args) => (picks.push(args), { video: { id: 'screen:0', name: 'Screen 1' } }) };
+  const opened = [];
+  electron.shell = {
+    openExternal: async (url) => {
+      opened.push(url);
+    },
+  };
+  let probes = 0;
+  const picker = {
+    requestOSPermission: async () => {
+      probes++;
+    },
+    pick: async (...args) => (picks.push(args), { video: { id: 'screen:0', name: 'Screen 1' } }),
+  };
   electron.systemPreferences.getMediaAccessStatus = () => 'granted';
   const share = new ScreenShare({ ...f.deps, mediaPermissions: f.service, screenPicker: picker } as any, platform);
   const ses: any = {};
@@ -25,7 +37,7 @@ function fixture(platform = 'darwin') {
   share.install(ses);
   const request = (overrides = {}) =>
     new Promise((resolve) => handler({ frame, securityOrigin: 'https://call.test', ...overrides }, resolve));
-  return { ...f, frame, electron, ses, request, share, picker, picks };
+  return { ...f, frame, electron, ses, request, share, picker, picks, opened, probes: () => probes };
 }
 
 it('requires top-frame screen consent on the native media preflight', async () => {
@@ -79,12 +91,37 @@ it('Block answers null and remembers nothing', async () => {
   assert.equal(await f.request(), null);
   assert.equal(f.deps.sitePermissions.has('persist:one', 'https://call.test', 'screen'), false);
 });
-it('macOS Screen Recording denied explains once and answers null', async () => {
+it('macOS denial requests enumeration before explaining the specific setting, and refuses capture', async () => {
   const f = fixture();
   f.electron.systemPreferences.getMediaAccessStatus = () => 'denied';
   assert.equal(await f.request(), null);
   assert.equal(await f.request(), null);
-  assert.equal(f.prompts.filter((p) => /System Settings/.test(p.detail)).length, 1);
+  assert.equal(f.probes(), 2);
+  assert.equal(f.picks.length, 0);
+  assert.equal(f.prompts.filter((p) => /Screen & System Audio Recording/.test(p.detail)).length, 1);
+  assert.deepEqual(f.opened, ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture']);
+});
+
+it('first-time native enumeration may grant access and proceed to an explicit source choice', async () => {
+  const f = fixture();
+  f.electron.systemPreferences.getMediaAccessStatus = () => 'denied';
+  f.picker.requestOSPermission = async () => {
+    f.electron.systemPreferences.getMediaAccessStatus = () => 'granted';
+  };
+  assert.ok(await f.request());
+  assert.equal(f.picks.length, 1);
+  assert.deepEqual(f.opened, []);
+});
+
+it('navigation while macOS asks for access cannot grant the replacement document', async () => {
+  const f = fixture();
+  f.electron.systemPreferences.getMediaAccessStatus = () => 'denied';
+  f.picker.requestOSPermission = async () => {
+    f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  };
+  assert.equal(await f.request(), null);
+  assert.deepEqual(f.picks, []);
+  assert.deepEqual(f.opened, []);
 });
 it('a page that navigated during the dialog gets null', async () => {
   const f = fixture();
@@ -107,6 +144,13 @@ it('cancelling the picker never falls back to an automatic screen', async () => 
   const f = fixture();
   f.picker.pick = async () => null;
   assert.equal(await f.request(), null);
+  assert.equal(f.service.gate.inCall(f.contents as any), false, 'a cancelled picker is not a call');
+});
+
+it('a chosen screen source marks the tab in a call', async () => {
+  const f = fixture();
+  await f.request();
+  assert.equal(f.service.gate.inCall(f.contents as any), true);
 });
 
 it('refuses a screen source if control, document or profile changes during capture selection', async () => {
@@ -122,4 +166,13 @@ it('refuses a screen source if control, document or profile changes during captu
     };
     assert.equal(await f.request(), null);
   }
+});
+
+it('a prior microphone denial does not suppress Screen Recording recovery', async () => {
+  const f = fixture();
+  const generation = f.service.gate.watch(f.contents as any);
+  await f.service.gate.osDenied(f.contents as any, generation);
+  f.electron.systemPreferences.getMediaAccessStatus = () => 'denied';
+  assert.equal(await f.request(), null);
+  assert.equal(f.opened.length, 1);
 });

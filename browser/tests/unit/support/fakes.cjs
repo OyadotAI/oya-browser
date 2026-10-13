@@ -113,6 +113,11 @@ class FakeWebContents extends EventEmitter {
     return this.destroyed;
   }
 
+  /** As Electron's: whether the page's renderer died. */
+  isCrashed() {
+    return !!this.crashed;
+  }
+
   /** As Electron's. */
   destroy() {
     this.destroyed = true;

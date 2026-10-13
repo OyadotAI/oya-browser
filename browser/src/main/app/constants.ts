@@ -51,6 +51,12 @@ export const OPEN_EXTERNAL_APP_CHOICE = 1;
 
 /** Explicit approval, with Block as the default media permission response. */
 export const ALLOW_MEDIA_CHOICE = 1;
+/** The end-call dialog's "Close Window" or "Quit" button; Cancel is 0, the default. */
+export const END_CALL_CHOICE = 1;
+/** Past this many sites, the end-call dialog names the first and counts the rest. */
+export const END_CALL_NAMED_SITES = 2;
+/** How long after the OS announces a logout or power-off a quit still goes through unasked; past it, another app cancelled and calls are guarded again. */
+export const SHUTDOWN_GRACE_MS = 60_000;
 /** The file in the user-data folder the remembered site permissions live in. */
 export const SITE_PERMISSIONS_FILE = 'site-permissions.json';
 /** Bound native passkey chooser size and untrusted account labels. */

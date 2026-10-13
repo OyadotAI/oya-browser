@@ -45,3 +45,8 @@ export const BUTTON_MODIFIERS = [
   [INPUT_BUTTONS.right, 'rightbuttondown'],
   [INPUT_BUTTONS.middle, 'middlebuttondown'],
 ] as const;
+
+/** Attempts at a page capture while the compositor catches up with a fresh navigation (Xvfb, the cloud runtime). */
+export const CAPTURE_VIZ_TRIES = 5;
+/** The wait before the next capture attempt, times the attempt number. */
+export const CAPTURE_VIZ_BACKOFF_MS = 250;

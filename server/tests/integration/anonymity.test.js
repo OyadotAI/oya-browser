@@ -43,7 +43,8 @@ try {
   const { targetInfos } = await conn.send('Target.getTargets');
   const { sessionId } = await conn.send('Target.attachToTarget', { targetId: targetInfos[0].targetId, flatten: true });
 
-  const evaluate = async (expr) => {
+  /** One evaluation in the page's main world. */
+  const evaluateOnce = async (expr) => {
     const res = await conn.send(
       'Runtime.evaluate',
       { expression: expr, returnByValue: true, awaitPromise: true },
@@ -51,6 +52,20 @@ try {
     );
     if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description || expr);
     return res.result?.value;
+  };
+
+  /**
+   * Under Xvfb the first canvas readback can stall the renderer past the native runtime's deadline
+   * while the GPU process catches up (CI saw it on toDataURL). That is the display, not the persona,
+   * so a timed-out evaluation is tried once more; every check still compares values from one run.
+   */
+  const evaluate = async (expr, retried = false) => {
+    try {
+      return await evaluateOnce(expr);
+    } catch (err) {
+      if (retried || !/Native runtime operation timed out/.test(String(err?.message || err))) throw err;
+      return evaluate(expr, true);
+    }
   };
 
   /** Waits for the loopback page to finish loading; a fixed sleep raced slow CI runners. */

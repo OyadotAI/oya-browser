@@ -7,7 +7,8 @@
  */
 import type { WebContents, MessageBoxOptions, MessageBoxReturnValue } from 'electron';
 import type { AppServices } from './services.ts';
-import { OS_DENIED_PROMPT } from './media-prompts.ts';
+import { SCREEN_RECORDING_SETTINGS_URL } from '../screen-share/index.ts';
+import { OS_DENIED_PROMPT, SCREEN_DENIED_PROMPT } from './media-prompts.ts';
 
 /** Sensitive access uses native dialogs and the normal control boundary. */
 type Deps = Pick<AppServices, 'electron' | 'shell' | 'tabs' | 'agentTab' | 'governance'>;
@@ -26,6 +27,12 @@ export class MediaGate {
   private readonly generations = new WeakMap<WebContents, number>();
   /** The document generation the macOS denial was last explained for: once per page, not once per request. */
   private readonly explained = new WeakMap<WebContents, number>();
+  /** Screen Recording needs its own recovery even if a microphone denial was already explained. */
+  private readonly screenExplained = new WeakMap<WebContents, number>();
+  /** Committed top documents, counted apart: a navigation that never commits (a download, a 204) leaves a call running. */
+  private readonly documents = new WeakMap<WebContents, number>();
+  /** The committed document Oya handed a camera, microphone or screen to: that document counts as in a call. */
+  private readonly live = new WeakMap<WebContents, number>();
   /** Prevents a page from stacking permission dialogs. */
   private pending = false;
 
@@ -54,11 +61,16 @@ export class MediaGate {
 
   /** Keeps a single navigation listener per tab. Only a new top document revokes: a pushState or an iframe loading keeps it. Answers the document's generation. */
   watch(contents: WebContents): number {
-    if (!this.generations.has(contents)) {
-      this.generations.set(contents, 0);
-      contents.on('did-start-navigation', (e) => e.isMainFrame && !e.isSameDocument && this.revoke(contents));
-    }
+    if (!this.generations.has(contents)) this.track(contents);
     return this.generations.get(contents)!;
+  }
+
+  /** Counts navigations as they start (for grants) and top documents as they commit (for calls). */
+  private track(contents: WebContents): void {
+    this.generations.set(contents, 0);
+    this.documents.set(contents, 0);
+    contents.on('did-start-navigation', (e) => e.isMainFrame && !e.isSameDocument && this.revoke(contents));
+    contents.on('did-navigate', () => this.documents.set(contents, this.documents.get(contents)! + 1));
   }
 
   /** A new top document, including a same-URL reload. */
@@ -69,6 +81,19 @@ export class MediaGate {
   /** A prompt cannot grant a replacement document, or a tab an agent took meanwhile. */
   current(contents: WebContents, generation: number): boolean {
     return this.allowed(contents) && this.generations.get(contents) === generation;
+  }
+
+  /** Oya gave this document a device. Electron never says when the page stops the track, so it holds until the document goes. Answers true, the grant. */
+  markLive(contents: WebContents): true {
+    this.watch(contents);
+    this.live.set(contents, this.documents.get(contents)!);
+    return true;
+  }
+
+  /** Whether this tab's current document was given a device and is still running. Not through `allowed()`: an agent taking the tab does not end the stream. */
+  inCall(contents: WebContents): boolean {
+    if (contents.isDestroyed() || contents.isCrashed()) return false;
+    return this.live.has(contents) && this.live.get(contents) === this.documents.get(contents);
   }
 
   /** Runs `prompt` as the one dialog up; a request while one is up is refused, not queued. Always settles to a boolean. */
@@ -86,10 +111,13 @@ export class MediaGate {
   }
 
   /** Explains the OS denial once per document; always answers false. */
-  async osDenied(contents: WebContents, generation: number): Promise<false> {
-    if (this.explained.get(contents) !== generation) {
-      this.explained.set(contents, generation);
-      await this.ask(OS_DENIED_PROMPT);
+  async osDenied(contents: WebContents, generation: number, screen = false): Promise<false> {
+    const explained = screen ? this.screenExplained : this.explained;
+    if (explained.get(contents) !== generation) {
+      explained.set(contents, generation);
+      const answer = await this.ask(screen ? SCREEN_DENIED_PROMPT : OS_DENIED_PROMPT);
+      if (screen && answer.response === SCREEN_DENIED_PROMPT.defaultId && this.current(contents, generation))
+        await this.deps.electron.shell.openExternal(SCREEN_RECORDING_SETTINGS_URL);
     }
     return false;
   }

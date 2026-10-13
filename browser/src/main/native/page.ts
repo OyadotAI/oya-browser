@@ -1,6 +1,6 @@
 /** Browser-owned page execution and capture, with no debugging protocol transport. */
-import type { WebContents } from 'electron';
-import { JPEG_MAX_QUALITY } from './constants.ts';
+import type { NativeImage, WebContents } from 'electron';
+import { CAPTURE_VIZ_BACKOFF_MS, CAPTURE_VIZ_TRIES, JPEG_MAX_QUALITY } from './constants.ts';
 /** Validate explicit capture options before reading pixels or invoking the native encoder. */
 export function screenshotOptions(params: ScreenshotInput): ScreenshotOptions {
   const format = params.format ?? 'png';
@@ -45,9 +45,24 @@ export async function evaluatePage<T = unknown>(view: NativePage, expression: st
 /** Capture rendered page pixels, preserving the existing PNG/JPEG data-URL response contract. */
 export async function capturePage(view: NativePage | null, jpegQuality?: number): Promise<string> {
   if (!view || view.webContents.isDestroyed()) throw new Error('View is destroyed');
-  const image = await view.webContents.capturePage();
+  const image = await compositorFrame(view.webContents);
   if (image.isEmpty()) throw new Error('The page has no rendered pixels to capture');
   const jpeg = jpegQuality !== undefined;
   const bytes = jpeg ? image.toJPEG(jpegQuality) : image.toPNG();
   return `data:image/${jpeg ? 'jpeg' : 'png'};base64,${bytes.toString('base64')}`;
+}
+
+/**
+ * The page's current frame. Under Xvfb, as in the Linux cloud runtime, the first capture after a
+ * navigation can fail with UnknownVizError while the GPU process catches up; that is the display,
+ * not the page, so it is tried again a few times. Any other failure is reported at once.
+ */
+async function compositorFrame(contents: WebContents, attempt = 1): Promise<NativeImage> {
+  try {
+    return await contents.capturePage();
+  } catch (err) {
+    if (attempt >= CAPTURE_VIZ_TRIES || !/UnknownVizError/.test(String(err))) throw err;
+    await new Promise((resolve) => setTimeout(resolve, CAPTURE_VIZ_BACKOFF_MS * attempt));
+    return compositorFrame(contents, attempt + 1);
+  }
 }

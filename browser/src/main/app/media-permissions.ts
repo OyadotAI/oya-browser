@@ -99,7 +99,7 @@ export class MediaPermissions {
   ): Promise<boolean> {
     const allowed = await this.osConsent(types);
     if (!this.gate.current(contents, generation) || this.partition() !== partition) return false;
-    return allowed || this.gate.osDenied(contents, generation);
+    return allowed ? this.gate.markLive(contents) : this.gate.osDenied(contents, generation);
   }
 
   /** Whether this profile already allowed every requested device on this site. */

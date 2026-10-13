@@ -25,8 +25,6 @@ export class BrowserWindows {
   current: AppServices;
   /** Monotonic application-wide id allocation prevents collisions after transfer or close. */
   private nextId = 1;
-  /** An application quit may close windows even while automation owns the session. */
-  private quitting = false;
   /** Hidden preparation and transactional transfer lifetime. */
   private readonly opening: WindowOpening;
   /** Build the first local scope, then expose stable application-level routers. */
@@ -37,13 +35,9 @@ export class BrowserWindows {
     this.opening = new WindowOpening(this);
     new WindowServiceRouter(root, this).install();
   }
-  /** Lets windows close once the app quits, including an update restart, which closes every window before 'before-quit' fires. */
+  /** An update restart closes every window before 'before-quit' fires; it commits the quit first. Lifecycle commits every other quit. */
   private watchQuit(): void {
-    const quitting = (): void => {
-      this.quitting = true;
-    };
-    this.root.electron.app.on('before-quit', quitting);
-    this.root.electron.autoUpdater.on('before-quit-for-update', quitting);
+    this.root.electron.autoUpdater.on('before-quit-for-update', () => this.root.callGuard.commit());
   }
   /** A fresh globally unique tab id. */
   allocateTabId(): number {
@@ -92,10 +86,12 @@ export class BrowserWindows {
     this.scopes.push(scope);
     if (this.root.control.snapshot().interactive) this.select(scope);
   }
-  /** A native close button cannot destroy an agent's page while its task is in flight. */
+  /** A native close button cannot destroy an agent's page while its task is in flight, nor end a call without asking. */
   private beforeClose(scope: AppServices, event: Event): void {
-    if (!this.quitting && scope.tabs.list.some((tab) => !this.root.agentTab.humanMay(tab.id)))
+    const { callGuard } = this.root;
+    if (!callGuard.committed && scope.tabs.list.some((tab) => !this.root.agentTab.humanMay(tab.id)))
       return event.preventDefault();
+    if (callGuard.holdClose(scope.shell.window!, scope.tabs.list, event)) return;
     // The red button closes the window before 'before-quit' fires, and closing empties the strip: save first.
     this.root.sessionTabs?.flush();
     closeWindowTabs(scope);

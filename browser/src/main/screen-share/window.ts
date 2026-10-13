@@ -40,6 +40,15 @@ function pickerPreferences(deps: Deps, file: string) {
   return { ...PICKER_WEB, session, preload };
 }
 
+/** Native owners can disappear midway through window teardown; stale guards must cancel rather than throw. */
+function stillCurrent(current: () => boolean): boolean {
+  try {
+    return current();
+  } catch {
+    return false;
+  }
+}
+
 /** Exactly one result, with renderer failure, Escape, closure and ownership loss all cancelling. */
 export class ShareSheet {
   /** Promise resolver stays entirely inside the main process. */
@@ -63,12 +72,13 @@ export class ShareSheet {
 
   /** Install private IPC before loading any UI. */
   constructor(deps: Deps, page: WebContents, data: SharePresentation, current: () => boolean) {
-    this.current = current;
+    this.current = () => stillCurrent(current);
     const file = path.join(deps.appDir, 'out/renderer/share-picker.html');
     this.window = pickerWindow(deps, page, file);
     this.loadTimer = setTimeout(() => this.answer(null), PICKER.LOAD_TIMEOUT_MS);
     this.ownerTimer = setInterval(this.checkOwner, PICKER.OWNER_CHECK_MS);
     this.wire(data);
+    this.settings(deps, data);
     void this.window.loadFile(file).catch(() => this.answer(null));
   }
 
@@ -81,6 +91,18 @@ export class ShareSheet {
       if (event.senderFrame === wc.mainFrame) this.show();
     });
     this.events();
+  }
+
+  /** Only a live picker may open the fixed macOS pane; opening settings never grants capture. */
+  private settings(deps: Deps, data: SharePresentation): void {
+    const wc = this.window.webContents;
+    wc.ipc.handle(SHARE_PICKER.SETTINGS, async (event) => {
+      this.read(event, data);
+      if (!data.canOpenSettings) return false;
+      await deps.electron.shell.openExternal(PICKER.SETTINGS_URL);
+      this.answer(null);
+      return true;
+    });
   }
 
   /** Preview images are available only to this sheet's exact main frame while its request is live. */

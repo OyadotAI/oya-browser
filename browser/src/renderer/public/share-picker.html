@@ -218,7 +218,8 @@
         cursor: pointer;
         border-radius: 7px;
       }
-      footer button {
+      footer button,
+      #settings {
         border: 1px solid #46503b;
         background: transparent;
         color: #eeefe9;
@@ -267,6 +268,13 @@
       <main class="catalog">
         <div id="sources" role="tabpanel" aria-labelledby="tab"></div>
         <p id="empty" hidden></p>
+        <div id="recovery" hidden>
+          <p>
+            Allow Oya Browser in Screen &amp; System Audio Recording. If it is missing, use + to add Oya Browser from
+            Applications. Then quit and reopen Oya and try sharing again.
+          </p>
+          <button type="button" id="settings">Open Screen Recording settings</button>
+        </div>
       </main>
       <footer>
         <div class="summary">

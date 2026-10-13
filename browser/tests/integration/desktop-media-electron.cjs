@@ -7,7 +7,13 @@ const { ScreenShare } = require('../../src/main/app/screen-share.ts');
 const { SitePermissionStore } = require('../../src/main/app/site-permissions.ts');
 const { JsonFile } = require('../../src/main/app/json-file.ts');
 const { installPermissions } = require('../../src/main/identity/permissions.ts');
-const { installPicker, categories, captureChecks } = require('./desktop-share-picker.cjs');
+const {
+  installPicker,
+  categories,
+  captureChecks,
+  permissionRecovery,
+  brokenPreviews,
+} = require('./desktop-share-picker.cjs');
 
 const profile = process.env.OYA_DESKTOP_MEDIA_PROFILE;
 if (!profile) throw new Error('Run desktop-media.mjs so the parent owns profile cleanup');
@@ -42,7 +48,7 @@ function permissions(window, state) {
       },
     },
     shell: { window },
-    tabs: { activeTabId: 1, getActiveView: () => ({ webContents: window.webContents }) },
+    tabs: { activeTabId: 1, getActiveView: () => (window.isDestroyed() ? null : { webContents: window.webContents }) },
     agentTab: { humanMay: () => state.human },
     governance: { configuration: null },
     persona: { partitionName: () => 'persist:media-test' },
@@ -57,6 +63,12 @@ async function screenPermission(ses, window, state) {
   state.human = true;
   state.os = false;
   const f = permissions(window, state);
+  const opened = [];
+  f.deps.electron.shell = {
+    openExternal: async (url) => {
+      opened.push(url);
+    },
+  };
   f.deps.electron.webContents = webContents;
   f.deps.electron.desktopCapturer = {
     getSources: async () => {
@@ -64,7 +76,7 @@ async function screenPermission(ses, window, state) {
     },
   };
   f.deps.mediaPermissions = f.media;
-  const screen = new ScreenShare(f.deps, 'darwin');
+  const screen = new ScreenShare(f.deps);
   const trace = [];
   const hooks = {
     setPermissionCheckHandler: (handler) =>
@@ -85,27 +97,50 @@ async function screenPermission(ses, window, state) {
       }),
   };
   installPermissions(hooks, undefined, f.media, screen);
+  const sources = await installPicker(f.deps, window);
+  const enumerate = f.deps.electron.desktopCapturer.getSources;
+  let enumerations = 0;
+  f.deps.electron.desktopCapturer.getSources = async () => {
+    enumerations++;
+    return enumerate();
+  };
   const legacy = await capture(window.webContents, {
     video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: window.getMediaSourceId() } },
   });
-  assert.ok(legacy.error, 'legacy desktop constraints cannot bypass the display consent handler');
+  assert.ok(legacy.error, 'legacy desktop constraints cannot bypass OS refusal');
   const request = () =>
     window.webContents.executeJavaScript(
       `navigator.mediaDevices.getDisplayMedia({video:true}).then(
-    stream => { stream.getTracks().forEach(track => track.stop()); return 'captured'; },
+    async stream => {
+      try {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.srcObject = stream;
+        await video.play();
+        return video.videoWidth > 0 && video.videoHeight > 0 ? 'captured' : 'empty capture';
+      } finally { stream.getTracks().forEach(track => track.stop()); }
+    },
     error => error.name + ': ' + error.message
   )`,
       true,
     );
-  const result = await request();
-  assert.match(result, /AbortError|NotAllowedError/);
+  assert.match(await request(), /AbortError|NotAllowedError/);
+  assert.deepEqual(opened, ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture']);
+  assert.equal(enumerations, 2, 'macOS must be asked for sources even when its initial status is denied');
   assert.ok(
     f.prompts.some((prompt) => /Share your screen/.test(prompt.message)),
-    result + JSON.stringify(trace),
+    JSON.stringify(trace),
   );
-  assert.ok(f.prompts.some((prompt) => /Device access is blocked/.test(prompt.message)));
+  assert.equal(
+    f.prompts.some((prompt) => /Device access is blocked/.test(prompt.message)),
+    false,
+  );
+  await permissionRecovery(
+    () => f.deps.screenPicker.pick(window.webContents, 'https://call.test', () => state.human),
+    f.deps,
+  );
   state.os = true;
-  const sources = await installPicker(f.deps, window);
+  await brokenPreviews(f.deps, window);
   await categories(f.deps, window, sources);
   await captureChecks(request, state);
   assert.ok(

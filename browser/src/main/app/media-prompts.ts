@@ -4,6 +4,7 @@
  * and a test can pin it.
  */
 import type { MessageBoxOptions } from 'electron';
+import { END_CALL_NAMED_SITES } from './constants.ts';
 
 /** What a site can ask for in the Allow dialog. */
 export type DeviceKind = 'audio' | 'video';
@@ -44,3 +45,51 @@ export const OS_DENIED_PROMPT: MessageBoxOptions = {
     'Allow Oya Browser in System Settings → Privacy & Security → Microphone, Camera or Screen & System Audio Recording, then rejoin the call.',
   buttons: ['OK'],
 };
+
+/** Screen Recording has its own pane and may require adding the installed application manually. */
+export const SCREEN_DENIED_PROMPT: MessageBoxOptions = {
+  message: 'Allow Oya to share your screen',
+  detail:
+    'In System Settings → Privacy & Security → Screen & System Audio Recording, enable Oya Browser. If it is missing, click + and select Oya Browser in Applications. Then quit and reopen Oya and try sharing again.',
+  buttons: ['Not now', 'Open System Settings'],
+  defaultId: 1,
+  cancelId: 0,
+};
+
+/** What would end the call: closing one window, or quitting the app. */
+export type EndCallKind = 'close' | 'quit';
+
+/** The end-call dialog's words for one way out. */
+interface EndCallCopy {
+  /** The question, in bold. */
+  message: string;
+  /** What ends the call, opening the last sentence of the detail. */
+  ends: string;
+  /** The button that goes ahead. */
+  button: string;
+}
+
+/** The end-call dialog's words for each way out. */
+const END_CALL_COPY: Record<EndCallKind, EndCallCopy> = {
+  close: { message: 'Close this window and end your call?', ends: 'Closing this window', button: 'Close Window' },
+  quit: { message: 'Quit Oya Browser and end your call?', ends: 'Quitting', button: 'Quit' },
+};
+
+/** Sites, not tabs: one, two, or the first and how many others. Hostnames only, since meeting links carry passwords. */
+export function sitesLabel(hosts: string[]): string {
+  if (hosts.length <= END_CALL_NAMED_SITES) return hosts.join(' and ');
+  const others = hosts.length - 1;
+  return `${hosts[0]} and ${others} other sites`;
+}
+
+/** Cancel first, so Return and Escape both keep the call. */
+export function endCallPrompt(kind: EndCallKind, hosts: string[]): MessageBoxOptions {
+  const copy = END_CALL_COPY[kind];
+  return {
+    type: 'warning',
+    message: copy.message,
+    detail: `${sitesLabel(hosts)} ${hosts.length > 1 ? 'are' : 'is'} using your camera, microphone or screen. ${copy.ends} ends the call.`,
+    buttons: ['Cancel', copy.button],
+    ...{ defaultId: 0, cancelId: 0, noLink: true },
+  };
+}

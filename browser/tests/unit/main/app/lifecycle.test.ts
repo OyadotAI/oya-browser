@@ -93,4 +93,47 @@ describe('Lifecycle', () => {
     assert.equal(ctx.socket.disconnects, 1);
     assert.equal(ctx.electron.app.quitted, true);
   });
+
+  /** A tab in a call, in the only window. */
+  const inCall = () => {
+    const contents = {
+      getURL: () => 'https://meet.test/room',
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      on() {},
+    };
+    ctx.mediaPermissions.gate.markLive(contents);
+    ctx.windows = { allTabs: () => [{ id: 1, view: { webContents: contents } }], owner: () => undefined };
+  };
+
+  it('a quit during a call asks first; Cancel leaves the recording running and nothing flushed', async () => {
+    let stopped = false;
+    ctx.recorder = {
+      recording: true,
+      queueRecording: (work) => Promise.resolve(work()),
+      stopRecording: async () => (stopped = true),
+    };
+    inCall();
+    assert.equal(quit(), true);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(ctx.electron.dialog.asked.length, 1);
+    assert.deepEqual([stopped, ctx.sessionTabs.calls, ctx.electron.app.quitted], [false, [], undefined]);
+  });
+
+  it('Quit during a call then finishes the recording without asking again', async () => {
+    let stopped = false;
+    ctx.recorder = {
+      recording: true,
+      queueRecording: (work) => Promise.resolve(work()),
+      stopRecording: async () => (stopped = true),
+    };
+    ctx.electron.app.quit = () => quit();
+    inCall();
+    ctx.electron.dialog.answers.messageBox.push({ response: 1 });
+    quit();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(stopped, true);
+    assert.equal(ctx.electron.dialog.asked.length, 1);
+  });
 });

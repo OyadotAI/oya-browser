@@ -27,6 +27,7 @@ import { startLocalMcp } from './local-mcp/index.ts';
 /** Signing-bound WebAuthn group embedded by the build, empty for unsigned development. */
 declare const __OYA_WEBAUTHN_GROUP__: string;
 import { MediaPermissions } from './app/media-permissions.ts';
+import { CallGuard } from './app/call-guard.ts';
 import { ScreenShare } from './app/screen-share.ts';
 import { ScreenPicker } from './screen-share/index.ts';
 import { SitePermissionStore } from './app/site-permissions.ts';
@@ -156,6 +157,7 @@ ctx.passkeys = new Passkeys(ctx);
 const userFile = (name: string) => () => path.join(app.getPath('userData'), name);
 ctx.sitePermissions = new SitePermissionStore(new JsonFile(userFile(SITE_PERMISSIONS_FILE)));
 ctx.mediaPermissions = new MediaPermissions(ctx);
+ctx.callGuard = new CallGuard(ctx);
 ctx.screenPicker = new ScreenPicker(ctx);
 ctx.screenShare = new ScreenShare(ctx);
 ctx.sessionTabs = new SessionTabs(ctx, new JsonFile(userFile(SESSION_TABS_FILE)));
@@ -267,6 +269,8 @@ if (NATIVE_SIGNIN_TEST) {
 
   app.whenReady().then(async () => {
     configurePasskeys(app, __OYA_WEBAUTHN_GROUP__);
+    // Shutdown and logout arrive here before the quit, so no call dialog ever holds them up.
+    electron.powerMonitor.on('shutdown', () => ctx.callGuard.shutdown());
     await new Boot(ctx).run();
     startAppNativeCdp(ctx, nativeListener);
     ctx.localMcp = await startLocalMcp(ctx);

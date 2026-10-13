@@ -18,8 +18,19 @@ export const details = {
 
 /** The service, its fakes, and what was prompted and asked of the OS. */
 export function fixture(platform = 'darwin', file = memoryFile()) {
-  const state = { url: details.requestingUrl, interactive: true, response: 1, os: true, destroyed: false };
-  const contents = Object.assign(new EventEmitter(), { getURL: () => state.url, isDestroyed: () => state.destroyed });
+  const state = {
+    url: details.requestingUrl,
+    interactive: true,
+    response: 1,
+    os: true,
+    destroyed: false,
+    crashed: false,
+  };
+  const contents = Object.assign(new EventEmitter(), {
+    getURL: () => state.url,
+    isDestroyed: () => state.destroyed,
+    isCrashed: () => state.crashed,
+  });
   const prompts: any[] = [],
     devices: string[] = [];
   const deps = {

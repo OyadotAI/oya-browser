@@ -5,6 +5,7 @@ import { BrowserWindows } from '../../../../src/main/windows/index.ts';
 import { ShellIpc } from '../../../../src/main/ipc/handle.ts';
 import { mainCtx, FakeWindow } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
+import { Lifecycle } from '../../../../src/main/app/lifecycle.ts';
 
 /** Fake native lifecycle and independent screen positions, without any OS windows. */
 class Window extends FakeWindow {
@@ -65,7 +66,7 @@ function setup(t) {
   primary.shell.create();
   primary.shell.browsingMode = true;
   t.after(() => {
-    root.electron.app.emit('before-quit');
+    root.callGuard.commit();
     root.windows.each((scope) => scope.shell.window.close());
   });
   return { root, primary };
@@ -202,7 +203,7 @@ it('a native window close cannot destroy an agent target, but application quit c
   primary.shell.window.close();
   assert.equal(primary.shell.window.isDestroyed(), false);
   assert.equal(root.tabs.find(id)?.id, id);
-  root.electron.app.emit('before-quit');
+  root.callGuard.commit();
   primary.shell.window.close();
   assert.equal(primary.shell.window.isDestroyed(), true);
 });
@@ -291,4 +292,69 @@ it('detaches a human-owned tab in agent mode while retaining the agent tab and i
   assert.equal(root.windows.owner(agent), primary);
   assert.equal(root.agentTab.humanMay(agent), false);
   await assert.rejects(() => root.windows.detach(agent), /Switch to Human Mode/);
+});
+
+/** Marks a tab's document as holding a camera, microphone or screen, as a granted call does. */
+async function joinCall(root, id) {
+  const tab = root.windows.allTabs().find((each) => each.id === id);
+  await tab.ready;
+  const contents = tab.view.webContents;
+  contents.getURL = () => 'https://meet.test/room'; // the fake page never loads its address
+  root.mediaPermissions.gate.markLive(contents);
+}
+
+it('the red button with a call in this window asks; Cancel keeps the window and the call', async (t) => {
+  const { root, primary } = setup(t);
+  const id = primary.tabs.createTab('https://meet.test/room');
+  await joinCall(root, id);
+  primary.shell.window.close();
+  await flush();
+  assert.equal(root.electron.dialog.asked.at(-1)[1].message, 'Close this window and end your call?');
+  assert.equal(primary.shell.window.isDestroyed(), false);
+  assert.equal(primary.tabs.find(id)?.id, id);
+});
+
+it('Close Window closes it, and the quit that follows asks nothing more', async (t) => {
+  const { root, primary } = setup(t);
+  new Lifecycle(root).install();
+  await joinCall(root, primary.tabs.createTab('https://meet.test/room'));
+  root.electron.dialog.answers.messageBox.push({ response: 1 });
+  primary.shell.window.close();
+  await flush();
+  assert.equal(primary.shell.window.isDestroyed(), true);
+  const held = { prevented: false, preventDefault() {} };
+  root.electron.app.emit('before-quit', held);
+  assert.equal(root.electron.dialog.asked.length, 1, 'one dialog');
+});
+
+it('a call in another window does not hold this one', async (t) => {
+  const { root, primary } = setup(t);
+  primary.tabs.createTab('https://idle.test/');
+  const other = root.windows.create();
+  await joinCall(root, other.tabs.createTab('https://meet.test/room'));
+  primary.shell.window.close();
+  assert.equal(primary.shell.window.isDestroyed(), true);
+  assert.deepEqual(root.electron.dialog.asked, []);
+});
+
+it('the agent hold wins and no call dialog stacks on it', async (t) => {
+  const { root, primary } = setup(t);
+  await joinCall(root, primary.tabs.createTab('https://meet.test/room'));
+  root.control.snapshot = () => ({ interactive: false });
+  primary.shell.window.close();
+  await flush();
+  assert.equal(primary.shell.window.isDestroyed(), false);
+  assert.deepEqual(root.electron.dialog.asked, []);
+});
+
+it('a cancelled quit keeps the agent close hold', async (t) => {
+  const { root, primary } = setup(t);
+  new Lifecycle(root).install();
+  await joinCall(root, primary.tabs.createTab('https://meet.test/room'));
+  root.electron.app.emit('before-quit', { preventDefault() {} });
+  await flush();
+  assert.equal(root.callGuard.committed, false);
+  root.control.snapshot = () => ({ interactive: false });
+  primary.shell.window.close();
+  assert.equal(primary.shell.window.isDestroyed(), false);
 });

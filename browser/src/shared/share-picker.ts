@@ -3,6 +3,7 @@ export const SHARE_PICKER = {
   READ: 'oya:share-picker:read',
   READY: 'oya:share-picker:ready',
   ANSWER: 'oya:share-picker:answer',
+  SETTINGS: 'oya:share-picker:settings',
 } as const;
 
 /** Categories offered by the browser-owned picker. */
@@ -30,4 +31,6 @@ export interface SharePresentation {
   sources: ShareOption[];
   /** Explains an unavailable desktop list while still allowing browser tabs. */
   desktopError: string;
+  /** Show a browser-owned macOS recovery action, never a website-supplied URL. */
+  canOpenSettings: boolean;
 }

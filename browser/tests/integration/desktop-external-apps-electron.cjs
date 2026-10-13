@@ -170,6 +170,9 @@ async function run() {
   const deps = setup(window);
   await window.loadURL(url);
   window.focus();
+  await window.webContents.executeJavaScript(
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  );
   await entryPaths(window, deps, url);
   await refusals(window, deps, url);
   console.log(

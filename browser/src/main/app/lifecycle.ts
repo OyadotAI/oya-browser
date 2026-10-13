@@ -1,7 +1,7 @@
 /**
- * Shut-down: what must finish before the app quits. A recording is finished
- * first, a validation is marked interrupted, and the cookie jar is written to
- * disk.
+ * Shut-down: what must finish before the app quits. A live call is asked
+ * about first, so a Cancel touches nothing; then a recording is finished, a
+ * validation is marked interrupted, and the cookie jar is written to disk.
  */
 import type { Event } from 'electron';
 import type { AppServices } from './services.ts';
@@ -9,7 +9,7 @@ import type { AppServices } from './services.ts';
 /** The services quitting uses. */
 type Deps = Pick<
   AppServices,
-  'electron' | 'persona' | 'cookies' | 'socket' | 'recorder' | 'workspace' | 'layout' | 'sessionTabs'
+  'electron' | 'persona' | 'cookies' | 'socket' | 'recorder' | 'workspace' | 'layout' | 'sessionTabs' | 'callGuard'
 >;
 
 /** The workspace, as far as an interrupted validation goes. */
@@ -57,6 +57,7 @@ export class Lifecycle {
 
   /** Runs before the app quits. */
   private beforeQuit(event: Event): void {
+    if (this.deps.callGuard.holdQuit(event)) return;
     if (this.deps.recorder.recording && !this.finishingQuit) return this.finishRecordingFirst(event);
     if (this.deps.workspace?.busy()) interruptValidation(this.deps.workspace);
     this.deps.cookies.flushCookieChanges();

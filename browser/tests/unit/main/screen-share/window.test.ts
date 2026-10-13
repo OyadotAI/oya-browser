@@ -8,7 +8,7 @@ import { SHARE_PICKER } from '../../../../src/shared/share-picker.ts';
 
 /** Native seams retain the security-sensitive session and IPC callbacks for public-contract checks. */
 function fixture(failLoad = false) {
-  const state = { current: true };
+  const state = { current: true, destroyed: false };
   const reads = new Map();
   const ipc = Object.assign(new EventEmitter(), { handle: (name, handler) => reads.set(name, handler) });
   const wc = Object.assign(new EventEmitter(), {
@@ -73,10 +73,25 @@ function fixture(failLoad = false) {
     /** Focus behavior is covered by native integration. */
     focus() {}
   }
-  const deps = { appDir: '/owned/oya', electron: { BrowserWindow: Window, session: { fromPartition: () => ses } } };
-  const data = { origin: 'https://call.test', sources: [], desktopError: '' };
-  const sheet = new ShareSheet(deps as any, {} as any, data, () => state.current);
-  return { state, wc, ipc, reads, ses, win: windows[0], sheet, data };
+  const opened = [];
+  const deps = {
+    appDir: '/owned/oya',
+    electron: {
+      shell: {
+        openExternal: async (url) => {
+          opened.push(url);
+        },
+      },
+      BrowserWindow: Window,
+      session: { fromPartition: () => ses },
+    },
+  };
+  const data = { origin: 'https://call.test', sources: [], desktopError: '', canOpenSettings: false };
+  const sheet = new ShareSheet(deps as any, {} as any, data, () => {
+    if (state.destroyed) throw Error('Object has been destroyed');
+    return state.current;
+  });
+  return { state, wc, ipc, reads, ses, win: windows[0], sheet, data, opened };
 }
 
 it('keeps previews and choices inside the exact picker frame and a private unprivileged session', async () => {
@@ -135,4 +150,40 @@ it('a picker whose preload never becomes ready closes after the load deadline', 
     f.win.destroy();
     mock.timers.reset();
   }
+});
+
+it('only a live main-frame recovery action opens the fixed settings pane and cancels capture', async () => {
+  const f = fixture();
+  const open = (senderFrame = f.wc.mainFrame) => f.reads.get(SHARE_PICKER.SETTINGS)({ senderFrame });
+  try {
+    assert.equal(await open(), false);
+    f.data.canOpenSettings = true;
+    await assert.rejects(open({}), /no longer available/);
+    assert.deepEqual(f.opened, []);
+    await open();
+    assert.deepEqual(f.opened, [PICKER.SETTINGS_URL]);
+    assert.equal(await f.sheet.result, null);
+    await assert.rejects(open(), /no longer available/);
+  } finally {
+    f.win.destroy();
+  }
+});
+
+it('a revoked requester cannot use the settings action', async () => {
+  const f = fixture();
+  try {
+    f.data.canOpenSettings = true;
+    f.state.current = false;
+    await assert.rejects(f.reads.get(SHARE_PICKER.SETTINGS)({ senderFrame: f.wc.mainFrame }), /no longer available/);
+    assert.deepEqual(f.opened, []);
+  } finally {
+    f.win.destroy();
+  }
+});
+
+it('native owner teardown settles the picker even if the owner guard throws', async () => {
+  const f = fixture();
+  f.state.destroyed = true;
+  assert.doesNotThrow(() => f.win.destroy());
+  assert.equal(await f.sheet.result, null);
 });

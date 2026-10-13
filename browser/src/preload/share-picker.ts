@@ -13,14 +13,20 @@ function text(tag: string, className: string, value: string): HTMLElement {
 }
 /** Render browser-produced PNG data only, with a readable placeholder for sleeping tabs. */
 function preview(option: ShareOption): HTMLElement {
-  const box = text('span', 'preview', '');
-  if (!option.thumbnail.startsWith('data:image/png;'))
-    return text('span', 'preview placeholder', 'Preview unavailable');
-  const image = document.createElement('img');
-  image.src = option.thumbnail;
-  image.alt = '';
-  box.append(image);
+  const box = text('span', 'preview placeholder', 'Preview unavailable');
+  if (!option.thumbnail.startsWith('data:image/png;base64,') || option.thumbnail.endsWith(',')) return box;
+  loadPreview(box, option.thumbnail);
   return box;
+}
+/** Keep the placeholder until actual PNG bytes have decoded successfully. */
+function loadPreview(box: HTMLElement, thumbnail: string): void {
+  const image = document.createElement('img');
+  image.alt = '';
+  image.addEventListener('load', () => {
+    box.className = 'preview';
+    box.replaceChildren(image);
+  });
+  image.src = thumbnail;
 }
 /** A real radio input provides keyboard selection and accessible checked state. */
 function sourceCard(option: ShareOption, select: () => void): HTMLLabelElement {
@@ -58,8 +64,16 @@ class PickerView {
       element(kind).addEventListener('keydown', (event) => this.tabKey(event, kind));
     }
     element('cancel').addEventListener('click', () => this.answer(null));
+    element('settings').addEventListener('click', () => this.settings());
     element('content').addEventListener('submit', (event) => this.submit(event));
     document.addEventListener('keydown', (event) => this.escape(event));
+  }
+
+  /** A failed OS handoff leaves a readable manual recovery path in the picker. */
+  private settings(): void {
+    void ipcRenderer.invoke(SHARE_PICKER.SETTINGS).catch(() => {
+      element('empty').textContent = 'Open System Settings → Privacy & Security → Screen & System Audio Recording.';
+    });
   }
 
   /** Escape cancels without preserving a previous source selection. */
@@ -87,6 +101,7 @@ class PickerView {
   /** Empty categories explain an OS failure without blocking the other source categories. */
   private empty(kind: ShareKind, empty: boolean): void {
     element('empty').hidden = !empty;
+    element('recovery').hidden = !empty || kind === 'tab' || !this.data.canOpenSettings;
     element('empty').textContent =
       kind !== 'tab' && this.data.desktopError ? this.data.desktopError : 'No sources available in this category.';
   }

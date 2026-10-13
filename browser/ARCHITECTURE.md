@@ -740,7 +740,18 @@ permissions" in the library menu clears the current profile's grants. Screen
 sharing (`app/screen-share.ts`) goes through the same gate and site consent.
 Every getDisplayMedia request then opens Oya's source picker (`main/screen-share/`):
 Oya tabs, application windows and entire screens have native previews, with no
-default selection. Cancel or Escape returns no stream. A remembered site grant
+default selection. Empty or undecodable captures show a placeholder instead of a
+broken image. Detached macOS/Windows tabs render briefly on an invisible,
+non-interactive native surface so never-shown restored tabs also get previews.
+Capture waits for first paint, preserves live tab owners and existing viewport
+sizes, excludes the temporary surface from the window list, and detaches every
+borrowed view before destroying it. When macOS reports denied access, a bounded native enumeration runs
+before refusal, allowing the OS to register Oya and request permission. Persistent
+denial offers the exact Screen Recording settings pane, including manual-add and
+restart instructions; it never grants a stream. Desktop choices are rechecked for
+OS access before delivery. Picker recovery IPC accepts only its live main frame and
+a fixed settings URL. Native owner teardown cancels even if an ownership guard throws.
+Cancel or Escape returns no stream. A remembered site grant
 never selects a source. The picker is a private sandboxed sheet with exact-frame
 IPC; opaque choice tokens resolve to native sources only in the main process.
 Tabs must belong to the requesting profile and remain human-owned; navigation,

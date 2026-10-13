@@ -11,6 +11,8 @@ const { DesktopDialogs } = require('../../../src/main/dialogs/index.ts');
 const { Governance } = require('../../../src/main/identity/governance.ts');
 const { AgentTab } = require('../../../src/main/control/agent-tab.ts');
 const { SitePermissionStore } = require('../../../src/main/app/site-permissions.ts');
+const { MediaPermissions } = require('../../../src/main/app/media-permissions.ts');
+const { CallGuard } = require('../../../src/main/app/call-guard.ts');
 
 /** A JSON file that lives in memory: what the on-disk stores are tested over. */
 function memoryFile(value = null) {
@@ -494,6 +496,9 @@ function mainCtx(real = {}) {
   };
   // The real claim: it reads the faked control and tabs, so control fakes keep their old meaning.
   ctx.agentTab = new AgentTab(ctx);
+  // The real device gate and call guard, on macOS where the guard asks; they read ctx when asked, so swaps still apply.
+  ctx.mediaPermissions = new MediaPermissions(ctx, 'darwin');
+  ctx.callGuard = new CallGuard(ctx, 'darwin');
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);
   return ctx;
 }
