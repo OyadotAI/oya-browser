@@ -7,6 +7,7 @@
  * ones, which the agent fills forms from.
  */
 import { PAGE_RENDER } from '../constants.ts';
+import { FIELD_TYPES, cutNote, pickBlocks } from './cut.ts';
 import { toonTable } from './toon.ts';
 import type { Analysis, Block, Facts, PageElement } from './types.ts';
 
@@ -32,8 +33,8 @@ interface Last {
 /** Said where the page's markdown was cut to leave room for the index. */
 const CUT = '\n\n⚠ Output truncated to fit context window.';
 
-/** Element kinds a person fills in rather than clicks. */
-const FIELD_TYPES = new Set(['input', 'textarea', 'select', 'checkbox', 'radio', 'editable']);
+/** Stands for blocks left out between two shown ones, so the reader sees the page is not whole. */
+const GAP = '…';
 
 /** The field table's and the visible-element table's columns. */
 const FIELD_COLUMNS = ['id', 'type', 'label', 'value', 'hint', 'state'];
@@ -43,7 +44,8 @@ const VISIBLE_COLUMNS = ['id', 'type', 'label', 'link'];
 const FIELDS_NOTE = 'Form fields (hint is the format the field expects, or a select’s options):\n';
 
 /** Said after the index when the page was cut short. */
-const TRUNCATED = '\n⚠ Page content was truncated (very long page). Scroll down and re-analyze to see more.\n';
+const TRUNCATED =
+  '\n⚠ Page content was truncated (very long page): the part around what is on screen was kept. Scroll and re-analyze to see other parts.\n';
 
 /** How each content kind is written; element rows and table rows are written apart. */
 const KIND_LINES: Record<string, (b: Block) => string | undefined> = {
@@ -108,11 +110,28 @@ function appendBlock(out: string[], b: Block, last: Last): Last {
   return { region: b.region, run };
 }
 
-/** The blocks as markdown: regions as comments, runs of items, rows and elements kept together. */
-function body(blocks: Block[] = []): string {
-  const out: string[] = [];
+/** A gap where blocks were left out: a `…` line, and the run the block before it was in ends there. */
+function writeGap(out: string[]): Last {
+  out.push('', GAP);
+  return { region: null, run: null };
+}
+
+/** Appends the kept blocks in the order given; a gap ends a run, so items and rows never join across it. */
+function appendKept(out: string[], blocks: Block[], kept: number[]): void {
   let last: Last = { region: null, run: null };
-  for (const b of blocks) last = appendBlock(out, b, last);
+  let previous = -1;
+  for (const i of kept) {
+    if (i !== previous + 1) last = writeGap(out);
+    last = appendBlock(out, blocks[i], last);
+    previous = i;
+  }
+}
+
+/** The blocks as markdown: regions as comments, runs of items, rows and elements kept together, a `…` where blocks are left out. */
+function body(blocks: Block[] = [], kept: number[] = blocks.map((_, i) => i)): string {
+  const out: string[] = [];
+  appendKept(out, blocks, kept);
+  if ((kept[kept.length - 1] ?? -1) < blocks.length - 1) writeGap(out);
   return out
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -221,6 +240,94 @@ export function controls(analysis: Analysis, max: number): string {
   return `${header(analysis.facts)}\n${index}`.slice(0, max);
 }
 
+/** One block's size for ranking: its markdown line and its newline. */
+// why: an under-estimate, so the ranked blocks are a superset of what really fits and the search below only shrinks them.
+const markdownSize = (b: Block): number => (blockLine(b).line ?? '').length + 1;
+
+/** The page with the `count` highest-ranked blocks shown, in reading order, and the note giving their count. */
+function pageShowing(analysis: Analysis, ranked: number[], anchored: boolean, count: number): string {
+  const blocks = analysis.blocks || [];
+  const rankOf = new Map(ranked.map((block, rank): [number, number] => [block, rank]));
+  const shown = blocks.map((_, i) => i).filter((i) => (rankOf.get(i) ?? Infinity) < count);
+  const total = analysis.totalBlocks ?? blocks.length;
+  const facts = { ...analysis.facts, truncated: cutNote(count, total, anchored) };
+  return `${header(facts)}\n\n${body(blocks, shown)}`;
+}
+
+/** The largest count of ranked blocks whose page fits `max`, searched from `low` (a count known to fit) up to `most`. */
+// shortcut: the search assumes a longer page is never shorter; a filled gap can drop a `…` line, so the result can under-fill but never exceeds `max`. Upgrade to a scan if under-fill shows up.
+function largestFit(page: (count: number) => string, max: number, most: number, low: number): number {
+  let lo = low;
+  let high = most;
+  while (lo < high) {
+    const middle = (lo + high + 1) >> 1;
+    if (page(middle).length <= max) lo = middle;
+    else high = middle - 1;
+  }
+  return lo;
+}
+
+/** The ranking without the block at `at`. */
+const without = (ranked: number[], at: number): number[] => ranked.filter((_, rank) => rank !== at);
+
+/** The largest count of `ranked` that fits `max`, searched from `low`; see largestFit. */
+function largestFor(analysis: Analysis, ranked: number[], anchored: boolean, max: number, low: number): number {
+  return largestFit((count) => pageShowing(analysis, ranked, anchored, count), max, ranked.length, low);
+}
+
+/** A ranking search: the ranking it ran on (after any dropped blocks), and how many of its blocks fit. */
+interface Search {
+  /** The ranking, most important first. */
+  kept: number[];
+  /** The longest prefix of `kept` that fits. */
+  found: number;
+}
+
+/**
+ * The longest priority prefix of `ranked` whose real markdown fits `max`, and the kept ranking it was
+ * found in. The ranking sizes are an under-estimate, so a block can rank in and still not fit.
+ */
+// why: only an anchored cut skips blocks, so only it drops the block that stops the prefix and searches the rest; that keeps the lower-ranked blocks it kept. An unanchored cut stops at the first miss, so its prefix is the top and must stay unbroken.
+// why: the retries are capped, since each one is a full search and a page could otherwise stall analysis; past the cap the prefix found so far is kept. It fits and its note is true.
+function searchRanked(analysis: Analysis, ranked: number[], anchored: boolean, max: number): Search {
+  const emptyFits = pageShowing(analysis, ranked, anchored, 0).length <= max;
+  let search: Search = { kept: ranked, found: largestFor(analysis, ranked, anchored, max, 0) };
+  for (let retries = 0; canRetry(search, anchored && emptyFits, retries); retries++) {
+    search = dropAndSearch(analysis, search, anchored, max);
+  }
+  return search;
+}
+
+/** Whether a stopped search may drop its stop block and search again: allowed, not at the end, and under the cap. */
+// shortcut: past MAX_CUT_RETRIES an anchored cut can show 0 blocks even if smaller lower-ranked blocks would fit; upgrade if real pages hit it.
+const canRetry = (search: Search, allowed: boolean, retries: number): boolean =>
+  allowed && search.found < search.kept.length && retries < PAGE_RENDER.MAX_CUT_RETRIES;
+
+/** The search again without the block that stopped its prefix, from the count already known to fit. */
+function dropAndSearch(analysis: Analysis, search: Search, anchored: boolean, max: number): Search {
+  const kept = without(search.kept, search.found);
+  return { kept, found: largestFor(analysis, kept, anchored, max, search.found) };
+}
+
+/** The page cut to `max` from its first characters, marked, as a page was cut before ranking: used when no block fits. */
+const topCut = (text: string, max: number): string => text.slice(0, Math.max(max - CUT.length, 0)) + CUT;
+
+/**
+ * The page within `max` characters, without its element index. cut.ts ranks the blocks; the longest
+ * priority prefix whose real markdown fits is shown, so the note's count is exactly the blocks shown.
+ */
+export function cut(analysis: Analysis, max: number): string {
+  const whole = render(analysis);
+  if (whole.length <= max) return whole;
+  const blocks = analysis.blocks || [];
+  const room = max - header(analysis.facts).length - PAGE_RENDER.TRUNCATED_ROOM;
+  const { ranked, anchored } = pickBlocks(blocks, room, markdownSize);
+  const { kept, found } = searchRanked(analysis, ranked, anchored, max);
+  // why: an unanchored cut keeps the top when nothing fits, as before ranking; an anchored one keeps its note, since the top it would show is not the part on screen.
+  if (found === 0 && !anchored) return topCut(whole, max);
+  return fit(pageShowing(analysis, kept, anchored, found), max);
+}
+
 /**
  * What the agent reads. A page that fits is enough on its own: every element is
  * in it already, written as its tag with its value and state, so an index after
@@ -232,12 +339,12 @@ export function forAgent(analysis: Analysis, max: number): string {
   const whole = render(analysis);
   if (whole.length <= max && !analysis.truncated) return whole;
   const index = elementIndex(analysis.elements || [], analysis.truncated);
-  return fit(whole, max - index.length) + index;
+  return cut(analysis, max - index.length) + index;
 }
 
 /** How the agent is told to read this format, for its system prompt. */
 export const guide = [
-  '- analyze_page returns the page as markdown: a header of facts (url, title, scroll; and when they apply: panelScroll, the content scrolls inside a panel so scroll to see more even at 0%; modal, only that dialog was read; covered, something drawn over elements must be closed first; truncated), then the page.',
+  '- analyze_page returns the page as markdown: a header of facts (url, title, scroll; and when they apply: panelScroll, the content scrolls inside a panel so scroll to see more even at 0%; modal, only that dialog was read; covered, something drawn over elements must be closed first; truncated, meaning a long page keeps the part on screen and the form fields, so scroll and analyze again for another part), then the page.',
   '- Elements appear as [#id kind "name" → where a link goes, or = "what a field holds" (state)]; an element with no name has no name. State words: checked/unchecked, disabled, required, readonly, invalid with the page message, expanded/collapsed, selected, current, pressed, covered, off-screen, hint (a field format or a select options).',
   '- The Element Index after the page lists form fields (label, value, hint, state), then other visible elements, then off-screen ones to scroll to.',
 ].join('\n');
