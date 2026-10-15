@@ -240,6 +240,7 @@ async function run() {
   await pointerTargets(win);
   await frameEditor(win);
   await require('./analyzer-text-index.cjs')(win, world, profile);
+  await require('./analyzer-cap.cjs')(win, world, profile);
   await require('./analyzer-selector.cjs')(win, profile);
   console.log('PASS: nested frameset analysis, visibility and trusted native targeting');
   win.destroy();

@@ -14,8 +14,13 @@
   // MutationObserver and identifies the product.
   const ATTR = '__OYA_ATTR__';
 
-  // The most block rows an analysis hands over.
+  // The most block rows an analysis hands over. Past the cap the rows kept are the
+  // part on screen, in the order browser/src/page/render/cut.ts ranks blocks; the
+  // reach and the field kinds below must match that file (pinned by
+  // tests/unit/scripts/analyzer-cut-parity.test.ts).
   const MAX_BLOCKS = 5000;
+  const SCREEN_TEXT_REACH = 3;
+  const FIELD_KINDS = ['input', 'textarea', 'select', 'checkbox', 'radio', 'editable'];
 
   // Text of a clickable card (a link wrapping title, price, rating) shown under
   // its tag when the tag's label cannot hold it.
@@ -266,9 +271,10 @@
         : '',
       focused: focusedId || '',
     };
+    const { rows, anchored } = capRows(blocks);
     const truncated = blocks.length > MAX_BLOCKS;
     if (truncated)
-      facts.truncated = `showing ${MAX_BLOCKS} of ${blocks.length} blocks; scroll and analyze again for the rest`;
+      facts.truncated = `showing ${rows.length} of ${blocks.length} blocks ${anchored ? 'around what is on screen' : 'from the top'}; scroll and analyze again for the rest`;
 
     if (options.highlight === true) addHighlights();
 
@@ -282,11 +288,58 @@
         focusedElement: focusedId,
         modal: activeModal ? activeModal.getAttribute('aria-label') || true : null,
         truncated,
+        totalBlocks: blocks.length,
         facts,
-        blocks: blocks.slice(0, MAX_BLOCKS),
+        blocks: rows,
         elements: elementMap,
       },
     };
+  }
+
+  /** Whether a block row is an element on screen: it has an id, and its state words lack 'off-screen'. */
+  const onScreenRow = (row) => Boolean(row.id) && !(row.state || '').split('; ').includes('off-screen');
+
+  /** Whether a block row is a form field: an element whose kind, before any ':', is a field kind. */
+  const fieldRow = (row) => Boolean(row.id) && FIELD_KINDS.includes(row.kind.split(':')[0]);
+
+  /** Per row: how many rows it is from the nearest on-screen row, and whether that row is above it. */
+  function screenDistances(shown) {
+    const gaps = (flags) => {
+      let last = -Infinity;
+      return flags.map((flag, i) => {
+        if (flag) last = i;
+        return i - last;
+      });
+    };
+    const above = gaps(shown);
+    const below = gaps([...shown].reverse()).reverse();
+    return {
+      dist: above.map((gap, i) => Math.min(gap, below[i])),
+      belowAnchor: above.map((gap, i) => gap <= below[i]),
+    };
+  }
+
+  /**
+   * The block rows the cap keeps, in reading order, and whether anything on screen anchored it.
+   * Nothing on screen: the top, as before. Otherwise the order of cut.ts: on-screen elements,
+   * then content rows within SCREEN_TEXT_REACH of one, then off-screen fields, then the rest
+   * nearest the screen (a tie goes to the row below, then the lower index).
+   */
+  function capRows(rows) {
+    if (rows.length <= MAX_BLOCKS) return { rows, anchored: false };
+    const shown = rows.map(onScreenRow);
+    if (!shown.includes(true)) return { rows: rows.slice(0, MAX_BLOCKS), anchored: false };
+    const { dist, belowAnchor } = screenDistances(shown);
+    const tier = rows.map((row, i) => {
+      if (shown[i]) return 0;
+      if (!row.id && dist[i] <= SCREEN_TEXT_REACH) return 1;
+      return fieldRow(row) ? 2 : 3;
+    });
+    const order = rows
+      .map((_, i) => i)
+      .sort((a, b) => tier[a] - tier[b] || dist[a] - dist[b] || Number(belowAnchor[b]) - Number(belowAnchor[a]) || a - b);
+    const kept = order.slice(0, MAX_BLOCKS).sort((a, b) => a - b);
+    return { rows: kept.map((i) => rows[i]), anchored: true };
   }
 
   /**
