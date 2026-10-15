@@ -38,6 +38,7 @@ import type { Persona } from './persona.ts';
 import type { Updater } from './updater.ts';
 import type { Governance } from '../identity/governance.ts';
 import type { AgentTab } from '../control/agent-tab.ts';
+import type { Translator } from '../translate/index.ts';
 
 /** The main process's services and the values they share. */
 export interface AppServices {
@@ -128,6 +129,8 @@ export interface AppServices {
   control: DesktopControl;
   /** The one tab the agent drives while the rest stay the person's (src/main/control/agent-tab.ts). */
   agentTab: AgentTab;
+  /** Page translation on the person's own tabs (src/main/translate). */
+  translation: Translator;
   /** The cookie pool sync (src/main/sync/cookie-sync.ts). */
   cookies: CookieSync;
   /** CDP relayed over the control socket (src/main/connection/cdp-relay.ts). */

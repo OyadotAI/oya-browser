@@ -6,6 +6,7 @@ import { inLane } from '../control/agent-tab.ts';
 import { DIALOG_SAFE_ACTIONS, DIALOG_HELD, describeDialog } from '../dialogs/index.ts';
 import type { AppServices } from '../app/services.ts';
 import type { CommandId, CommandParams } from '../actions/types.ts';
+import type { PageView } from '../cdp/cdp.ts';
 import { captureSpecifiedTab } from './native-screenshot.ts';
 import { resultSummary } from './result-summary.ts';
 import { TAB_COMMANDS } from './tab-commands.ts';
@@ -28,7 +29,8 @@ export type CommandDeps = Pick<
   | 'dialogs'
   | 'library'
   | 'notifications'
->;
+> &
+  Partial<Pick<AppServices, 'translation'>>;
 
 /** A command's arguments: a page command's, plus those of the commands answered here. */
 export interface RemoteParams extends CommandParams {
@@ -198,7 +200,13 @@ export class CommandRunner {
     // All remaining actions need the agent's page
     const view = this.deps.agentTab.drive();
     if (!view || view.webContents.isDestroyed()) return this.sendResult(id, false, null, noPage(this.deps));
-    await this.deps.actions.runPageAction(id!, action, params, view);
+    await this.runOnPage(id!, action, params, view);
+  }
+
+  /** Runs a page command once the page shows its own text: claiming the tab undid any translation on it. */
+  private async runOnPage(id: CommandId, action: string, params: RemoteParams | undefined, view: PageView) {
+    await this.deps.translation?.released(view);
+    await this.deps.actions.runPageAction(id, action, params, view);
   }
 
   /** Runs one command for a caller on this machine, as agent `lane`, and resolves with its answer. */

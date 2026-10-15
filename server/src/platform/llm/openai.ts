@@ -6,9 +6,22 @@
 import type { ChatRequest, LlmProvider } from './types.ts';
 import { baseOf, postJson } from './transport.ts';
 
+/**
+ * Whether the endpoint takes `reasoning_effort` on every model: Gemini's /openai path
+ * does; OpenAI's own non-reasoning models (gpt-4o, gpt-4.1) refuse it with a 400.
+ */
+const takesEffort = (baseUrl: string) => /^https:\/\/generativelanguage\.googleapis\.com\//.test(baseUrl);
+
 /** The chat-completions body; tool_choice defaults to 'auto' when tools are given. */
-function bodyFor({ model, messages, tools, toolChoice }: ChatRequest) {
-  return { model, messages, ...(tools ? { tools, tool_choice: toolChoice || 'auto' } : {}), stream: false };
+function bodyFor({ model, messages, tools, toolChoice, effort, baseUrl }: ChatRequest) {
+  const reasoning = effort && takesEffort(baseUrl) ? { reasoning_effort: effort } : {};
+  return {
+    model,
+    messages,
+    ...(tools ? { tools, tool_choice: toolChoice || 'auto' } : {}),
+    ...reasoning,
+    stream: false,
+  };
 }
 
 /** Any OpenAI-compatible endpoint. */

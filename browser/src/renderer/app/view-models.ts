@@ -23,7 +23,7 @@ import {
 } from '../features/chrome/index.ts';
 import { reducedMotion } from '../hooks/index.ts';
 import { TabStripViewModel, TabDragViewModel, TabCardViewModel, type TabDragGate } from '../features/tabs/index.ts';
-import { ToolbarViewModel } from '../features/toolbar/index.ts';
+import { ToolbarViewModel, type TranslateHost } from '../features/toolbar/index.ts';
 import { StartViewModel } from '../features/start/index.ts';
 import { ActionsViewModel, NetLogViewModel, SourceViewModel } from '../features/inspect/index.ts';
 import { RoutinesViewModel } from '../features/routines/index.ts';
@@ -157,9 +157,19 @@ function toolModels(root: ShellViewModels): Pick<ShellViewModels, 'ask' | 'studi
 function featureModels(root: ShellViewModels): Pick<ShellViewModels, FeatureKeys> {
   const { env, panel, control } = root;
   const chrome = chromeModels(env);
-  const toolbar = new ToolbarViewModel(env.bridge);
+  const tools = toolModels(root);
+  const toolbar = new ToolbarViewModel(env.bridge, translateHost(root, tools.ask));
   const tabs = tabModels(env, tabDragGate(control, env.frames));
-  return { ...toolModels(root), chrome, toolbar, tabs, inspect: inspectModels(env, panel) };
+  return { ...tools, chrome, toolbar, tabs, inspect: inspectModels(env, panel) };
+}
+
+/** Where the translate chip's setup clicks go: the Assistant panel's sign-in and model cards, and the claim page. */
+function translateHost({ env, panel }: ShellViewModels, ask: ShellViewModels['ask']): TranslateHost {
+  return {
+    openAsk: () => void panel.open('chat'),
+    openModels: () => void panel.open('chat').then(() => ask.state.current.model.openCard()),
+    openClaim: () => void env.bridge.openClaim(),
+  };
 }
 
 /** Theme, the agent's activity, the page backdrop and the launch. */

@@ -1,4 +1,5 @@
 /** Native session protection for tabs, frames, popups and every worker, before website execution. */
+import { desktopRuntime } from '../app/runtime.ts';
 import type { BrowserWindow, Session } from 'electron';
 import { cpus } from 'node:os';
 import type { AppServices } from '../app/services.ts';
@@ -100,7 +101,7 @@ export class Protection {
     const timezone = proxy
       ? this.deps.persona.exitZone || active.timezone
       : Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const desktop = !this.deps.config?.values.provider && !process.env.OYA_DOCKER;
+    const desktop = desktopRuntime(this.deps.config);
     return { ...active, timezone, ...(desktop ? { screen: null, canvas: { ...active.canvas, noiseSeed: null } } : {}) };
   }
   /** Must finish before tab constructors, startup workers or private contexts create renderers. */

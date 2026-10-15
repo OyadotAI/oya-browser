@@ -484,3 +484,62 @@ body.mode-browsing .toolbar {
 .bookmark-star.saved .icon path {
   fill: currentColor;
 }
+
+/* The translate chip: the star's look, stretched to hold a few words. */
+.translate-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  margin-right: 2px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: none;
+  outline: none;
+}
+.translate-chip:focus {
+  box-shadow: none;
+  outline: none;
+}
+.translate-chip:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.translate-chip:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.translate-chip .icon {
+  width: 14px;
+  height: 14px;
+}
+.translate-chip.translated {
+  color: var(--accent);
+}
+.translate-chip.failed {
+  color: var(--danger);
+}
+.translate-chip-text {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Narrow windows: icon only; the text stays for screen readers. */
+@media (max-width: 959px) {
+  .translate-chip-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    border: 0;
+  }
+}

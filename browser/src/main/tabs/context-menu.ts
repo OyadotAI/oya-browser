@@ -9,12 +9,14 @@ import { renderedAnalysis } from '../actions/page-format.ts';
 import type { ScriptResult } from '../actions/types.ts';
 import { agentDriving, AGENT_HOLDS_PAGE } from '../shell/control-shield.ts';
 import { PageSource } from './page-source.ts';
+import { languageName } from '../../shared/language.ts';
 
 /** The services the menu uses. */
 type Deps = Pick<
   AppServices,
   'tabs' | 'recorder' | 'electron' | 'shell' | 'layout' | 'protection' | 'world' | 'control' | 'config' | 'agentTab'
->;
+> &
+  Partial<Pick<AppServices, 'translation'>>;
 
 /** The clicked point, as the inspector needs it. */
 type Point = Pick<ContextMenuParams, 'x' | 'y'>;
@@ -120,9 +122,26 @@ export class ContextMenu {
     ];
   }
 
-  /** View Page Source, Inspect Element, Open DevTools. */
+  /**
+   * "Translate to {language}", or "Show Original" once translated: works whatever the
+   * page declares. Left out where translation does not exist (governed, cloud,
+   * recording, not a web page); disabled, and checked again on click, on an agent's tab.
+   */
+  private translateItems(view: PageView): MenuItemConstructorOptions[] {
+    const { translation, agentTab } = this.deps;
+    const tab = this.deps.tabs.list.find((t) => t.view === view);
+    if (!translation || !tab || !translation.offered(tab)) return [];
+    const undo = translation.translated(tab);
+    const label = undo ? 'Show Original' : `Translate to ${languageName(translation.target(), translation.target())}`;
+    const click = () =>
+      agentTab.humanMay(tab.id) && void (undo ? translation.showOriginal(tab) : translation.translate(tab));
+    return [{ label, enabled: agentTab.humanMay(tab.id), click }, { type: 'separator' }];
+  }
+
+  /** Translate (when it applies), then View Page Source, Inspect Element, Open DevTools. */
   private toolItems(view: PageView, params: ContextMenuParams): MenuItemConstructorOptions[] {
     return [
+      ...this.translateItems(view),
       { label: 'View Page Source', click: () => this.viewPageSource(view) },
       { label: 'Inspect Element', click: () => this.inspectElement(view, params) },
       { label: 'Open DevTools', click: () => view.webContents.openDevTools({ mode: 'detach' }) },

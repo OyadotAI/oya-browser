@@ -7,6 +7,7 @@
  */
 import type { LibraryKind } from '../../../../shared/library.ts';
 import { BookmarksBarViewModel } from './bookmarks-bar-view-model.ts';
+import { TranslateViewModel, type TranslateHost } from './translate-view-model.ts';
 import { AddressCompletion } from './address-completion.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
@@ -77,6 +78,8 @@ export type ToolbarBridge = Pick<
   | 'onUrlChanged'
   | 'onTitleChanged'
   | 'onTabsUpdated'
+  | 'translatePage'
+  | 'showOriginal'
 >;
 
 /** Before any tab: nothing loading, nowhere to go. */
@@ -113,18 +116,21 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   readonly completion: AddressCompletion;
   /** The bookmarks bar under the toolbar. */
   readonly bookmarks: BookmarksBarViewModel;
+  /** The address bar's translate chip. */
+  readonly translate: TranslateViewModel;
   /** The main process. */
   private readonly bridge: ToolbarBridge;
   /** Last selected tab, to focus a new start page only once. */
   private activeId: number | undefined;
 
-  /** Empty, following the active page; the address starts from the main process's status. */
-  constructor(bridge: ToolbarBridge) {
+  /** Empty, following the active page; the address starts from the main process's status. `host` takes the translate chip's setup clicks. */
+  constructor(bridge: ToolbarBridge, host?: TranslateHost) {
     super({ url: '', title: '', nav: IDLE, focusRequest: 0 });
     this.bridge = bridge;
     this.completion = new AddressCompletion(bridge);
     this.bookmarks = new BookmarksBarViewModel(bridge);
-    this.own(() => (this.completion.dispose(), this.bookmarks.dispose()));
+    this.translate = new TranslateViewModel(bridge, host);
+    this.own(() => (this.completion.dispose(), this.bookmarks.dispose(), this.translate.dispose()));
     this.follow(bridge);
   }
 

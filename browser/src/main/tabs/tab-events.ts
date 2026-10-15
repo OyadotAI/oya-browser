@@ -15,7 +15,8 @@ import type { Tab, TabView } from './types.ts';
 
 /** The services a tab's listeners use. */
 export type TabEventsDeps = TabWindowsDeps &
-  Pick<AppServices, 'shortcuts' | 'shield' | 'observer' | 'library' | 'agentTab'>;
+  Pick<AppServices, 'shortcuts' | 'shield' | 'observer' | 'library' | 'agentTab'> &
+  Partial<Pick<AppServices, 'translation'>>;
 
 /**
  * Makes view-source pages readable (forces the light theme). This text runs
@@ -63,6 +64,17 @@ export class TabEvents {
     this.wireRendererLoss(tab);
     wireHome(this.deps.tabs, tab);
     wireFavicon(this.deps.tabs, tab);
+    this.wireTranslation(tab);
+  }
+
+  /** Translation: a new document drops the last one's, dom-ready reads the language, a finished load keeps translating. */
+  private wireTranslation(tab: Tab): void {
+    const translation = this.deps.translation;
+    if (!translation) return;
+    const contents = tab.view.webContents;
+    contents.on('did-navigate', () => translation.navigated(tab));
+    contents.on('dom-ready', () => void translation.detect(tab));
+    contents.on('did-finish-load', () => translation.loaded(tab));
   }
 
   /** Shortcuts, focus, and the loading / failed state the tab strip shows. */

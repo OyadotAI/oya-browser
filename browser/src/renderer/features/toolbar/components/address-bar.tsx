@@ -9,6 +9,7 @@ import { useViewModel } from '../../../hooks/index.ts';
 import { Icon, IconButton } from '../../../ui/index.ts';
 import { navLook, windowTitle, type ToolbarViewModel } from '../view-models/toolbar-view-model.ts';
 import { AddressSuggestions } from './address-suggestions.tsx';
+import { TranslateChip } from './translate-chip.tsx';
 import { TEXT } from '../model/constants.ts';
 
 /** What the address bar is given. */
@@ -118,6 +119,7 @@ export function AddressBar({ vm }: AddressBarProps) {
       >
         {look.status}
       </span>
+      <TranslateChip vm={vm.translate} />
       <BookmarkStar vm={vm} />
       <AddressSuggestions vm={vm} />
     </div>

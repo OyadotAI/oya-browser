@@ -17,6 +17,7 @@ import { ClosedTabs, reopenable } from './tab-order.ts';
 import { recordingPreferences } from '../recording/preload.ts';
 import { isNativeEngine } from '../native-policy/index.ts';
 import type { Tab, TabView } from './types.ts';
+import type { TabTranslation } from '../../shared/ipc.ts';
 
 export { normalizeAddress } from './navigation.ts';
 
@@ -64,6 +65,8 @@ export interface TabSummary {
   canGoBack: boolean;
   /** Whether Forward goes anywhere. */
   canGoForward: boolean;
+  /** The translate chip's state, while the person may translate the page. */
+  translation?: TabTranslation;
 }
 
 /** What the tab strip shows for one tab. */
@@ -88,10 +91,10 @@ const placeSummary = (t: Tab): Pick<TabSummary, 'title' | 'url' | 'home' | 'favi
   pinned: !!t.pinned,
 });
 
-/** Whether the tab is loading, and why it failed if it did. */
-function loadSummary(t: Tab): Pick<TabSummary, 'loading' | 'loadError'> {
+/** Whether the tab is loading, why it failed if it did, and its page's translate chip when it has one. */
+function loadSummary(t: Tab): Pick<TabSummary, 'loading' | 'loadError' | 'translation'> {
   const loading = !!t.navigationPending || Boolean(t.view.webContents.isLoading?.());
-  return { loading, loadError: t.loadError || null };
+  return { loading, loadError: t.loadError || null, ...(t.translation ? { translation: t.translation } : {}) };
 }
 
 /** Whether Back and Forward can go anywhere. */

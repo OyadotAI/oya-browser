@@ -56,6 +56,7 @@ import { DesktopDialogs, dialogPresenter } from './dialogs/index.ts';
 import { World, useFramePages, useStockWorld } from './native/index.ts';
 import { Observer } from './observe/observer.ts';
 import { DesktopControl } from './control/control-state.ts';
+import { Translator } from './translate/index.ts';
 import { AgentTab } from './control/agent-tab.ts';
 import { CookieSync, cookieSyncMark } from './sync/cookie-sync.ts';
 import { Routines } from './routines/routines.ts';
@@ -197,17 +198,21 @@ ctx.socket = new ControlSocket(ctx);
 ctx.commands = new CommandRunner(ctx);
 ctx.deepLinks = new DeepLinks(ctx);
 ctx.routines = new Routines(ctx);
+ctx.translation = new Translator(ctx, () => ctx.windows?.each((scope) => scope.tabs.sendTabList()));
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
-ctx.agentTab = new AgentTab(ctx, () =>
+ctx.agentTab = new AgentTab(ctx, () => {
+  // A claim takes the tab from the person: its translation is undone before the agent reads it.
+  void ctx.translation.sync();
   ctx.windows?.each((scope) => {
     scope.shield.sync();
     scope.tabs.sendTabList();
-  }),
-);
+  });
+});
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
   changed: (state) => {
     ctx.agentTab.sync(state);
+    void ctx.translation.sync();
     ctx.dialogs.controlChanged();
     ctx.shield.controlChanged(state);
   },

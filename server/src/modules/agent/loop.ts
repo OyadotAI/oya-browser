@@ -347,8 +347,8 @@ async function complete(ctx: LoopContext, allMessages) {
   return completion;
 }
 
-/** Counts a model call's tokens against the key. */
-function billUsage(ctx: LoopContext, used) {
+/** Counts a model call's tokens against the key, so the hourly chat cap sees them; on the operator's model, its cost too. */
+export function billUsage(ctx: Pick<LoopContext, 'apiKey' | 'llm'>, used) {
   bill(ctx.apiKey, 'input', 'chat_input_tokens', used?.prompt_tokens || 0);
   bill(ctx.apiKey, 'output', 'chat_output_tokens', used?.completion_tokens || 0);
   if (ctx.llm.hosted) usage.record(ctx.apiKey, 'hosted_llm_microusd', llmCost(ctx.llm.model, used));

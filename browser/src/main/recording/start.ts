@@ -137,6 +137,8 @@ export class RecordingStart {
 
   /** Arms every tab, then keeps the shell's step list fresh. */
   private async goLive(): Promise<RecordingResult> {
+    // The recording reads the DOM: a translated page would record labels the site never served.
+    await this.recorder.deps.translation?.sync();
     await this.armEveryTab();
     this.recorder.drainTimer = setInterval(() => this.safeEmit(), RECORDING_REFRESH_MS);
     this.recorder.emitRecording();

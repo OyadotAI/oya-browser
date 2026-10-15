@@ -5,6 +5,7 @@
  */
 import type { BrowserWindow } from 'electron';
 import type { PageView } from '../cdp/cdp.ts';
+import type { TabTranslation } from '../../shared/ipc.ts';
 
 /** Where a tab's protection stands: still being set up, done, or given up on (nothing loads then). */
 export type ProtectionState = 'pending' | 'protected' | 'failed';
@@ -71,6 +72,28 @@ export interface Tab {
   openerId?: number;
   /** Pinned to the strip's leading block: drawn as its icon, spared by bulk closes, restored pinned. */
   pinned?: boolean;
+  /** What the address bar's translate chip shows for this page; main/translate owns it. */
+  translation?: TabTranslation;
+  /** The page's declared language tag, '' when it declared none (main/translate). */
+  pageLang?: string;
+  /** What this tab keeps translating on its own after the person said yes once; never saved. */
+  translateKeep?: TranslateKeep;
+}
+
+/**
+ * Keep-translating, as one click starts it: later pages in the same language on the
+ * same site, not the one just translated (a reload is not consent), at most
+ * TRANSLATE_KEEP_PAGES of them.
+ */
+export interface TranslateKeep {
+  /** The primary language it translates from. */
+  lang: string;
+  /** The site the person clicked on. */
+  origin: string;
+  /** The last page translated, so reloading it does not translate (and bill) again. */
+  url: string;
+  /** Pages translated on their own since the click. */
+  pages: number;
 }
 
 /** What a collaborator tells when a tab changed: the strip is sent again. */

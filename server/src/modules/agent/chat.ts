@@ -26,7 +26,7 @@ export { selectOptionIn, UPLOAD_FILE_JS, uploadFileIn } from './page-scripts.ts'
 export { lastRun, hasReplayableSteps } from './recorder.ts';
 export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
 export { PAGE_FORMAT } from './constants.ts';
-export { NEEDS_INPUT } from './loop.ts';
+export { NEEDS_INPUT, billUsage } from './loop.ts';
 export { requireLlmAllowed, allowedLlm } from './llm-policy.ts';
 export { executeTool } from './executor.ts';
 export { LIBRARY_TOOL_NAMES } from './library-tools.ts';
@@ -46,6 +46,7 @@ function enforceBudget(apiKey, own) {
   throw new HttpError(
     Status.TOO_MANY_REQUESTS,
     `Chat token quota reached for this hour (${budget.current}/${budget.quota})`,
+    { code: 'llm_quota' },
   );
 }
 
@@ -96,8 +97,11 @@ async function stepAllowed(apiKey, own) {
   await container.billing.entitlements.admitAgent(apiKey);
 }
 
-/** The run's model settings, once the project's model policy and the person's plan admit another agent run. */
-async function admitted(apiKey, browserId?: string) {
+/**
+ * The run's model settings, once the project's model policy and the person's plan admit another agent run.
+ * Exported for one-shot model calls (page translation) that need the same refusals as Ask.
+ */
+export async function admitModel(apiKey, browserId?: string) {
   const settings = await llmFor(apiKey, browserId);
   await requireLlmAllowed(apiKey, settings.llm.baseUrl);
   await settings.budget();
@@ -172,7 +176,7 @@ function systemFor(messages, values, scalars, files, secrets) {
  */
 export async function runChat(browserId, messages, options: any = {}) {
   const { apiKey, data = {}, secrets = {} } = options;
-  const { llm, budget } = await admitted(apiKey, browserId);
+  const { llm, budget } = await admitModel(apiKey, browserId);
   const { files, scalars, values } = taskValues(data, secrets);
   await begin(browserId, messages, values, secrets);
   const system = { role: 'system', content: systemFor(messages, values, scalars, files, secrets) };
@@ -189,7 +193,7 @@ const KEY_PROBLEMS: number[] = [Status.BAD_REQUEST, Status.UNAUTHORIZED, Status.
  * Ask's key card rather than becoming anonymous 500s. The provider's own words stay
  * in the log: the base URL is tenant-set, so echoing them would be a read primitive.
  */
-function rejectedProvider(err): never {
+export function rejectedProvider(err): never {
   if (err instanceof LlmError && err.status === Status.PAYMENT_REQUIRED) throw providerPaymentRequired();
   if (err instanceof LlmError && !KEY_PROBLEMS.includes(err.status as number)) throw modelUnavailable();
   if (!(err instanceof LlmError) || !KEY_PROBLEMS.includes(err.status as number)) throw err;

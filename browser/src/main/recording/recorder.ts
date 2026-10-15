@@ -19,7 +19,8 @@ import { MAX_RECORDED_STEPS } from './constants.ts';
 import type { PageOutput, RecordedStep, RecordingResult, RecordingTab } from './types.ts';
 
 /** The services the recorder uses; its channels reach it back through `recorder`. */
-type Deps = Pick<AppServices, 'tabs' | 'workspace' | 'isolatedWorld' | 'analyzerScript' | 'recorder'>;
+type Deps = Pick<AppServices, 'tabs' | 'workspace' | 'isolatedWorld' | 'analyzerScript' | 'recorder'> &
+  Partial<Pick<AppServices, 'translation'>>;
 
 /** Who started a recording: 'desktop' (the panel) or 'remote' (the server). */
 export type RecordingOrigin = 'desktop' | 'remote';
@@ -206,6 +207,8 @@ export class Recorder {
     this.recording = false;
     this.starter.rememberPausedPages();
     this.emitRecording();
+    // The person has the tabs back: pages in another language are offered again.
+    void this.deps.translation?.sync();
   }
 
   /** Stops refreshing the shell's step list. */

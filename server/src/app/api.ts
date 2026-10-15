@@ -27,6 +27,7 @@ import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
 import { router as gatewayRoutes } from '../modules/gateway/routes.ts';
 import { router as configRoutes } from '../modules/config/routes.ts';
 import { router as runsRoutes } from '../modules/playbooks/routes.ts';
+import { router as translateRoutes } from '../modules/translate/index.ts';
 import { router as routinesRoutes } from '../modules/routines/routes.ts';
 import { router as poolRoutes } from '../modules/browsers/pool-routes.ts';
 import { billingRoutes, hosted } from '../modules/billing/index.ts';
@@ -111,6 +112,8 @@ router.use(gatewayRoutes);
 router.use(configRoutes);
 /** Playbooks and runs. */
 router.use(runsRoutes);
+/** Page translation for the desktop browser. */
+router.use(translateRoutes);
 /** Routines: the project's scheduled prompts, which its desktop apps run. */
 router.use(routinesRoutes);
 /** The shared browser pool and its cookies. */

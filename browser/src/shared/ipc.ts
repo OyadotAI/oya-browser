@@ -31,6 +31,26 @@ export interface Failure {
   error?: string;
 }
 
+/** The address bar's translate chip for one tab, as main/translate sets it. */
+export interface TabTranslation {
+  /** Offered, running, done (in whole or in part), or failed. */
+  state: 'offer' | 'translating' | 'translated' | 'partial' | 'failed';
+  /** The page's declared language tag, '' when it declared none. */
+  lang: string;
+  /** The person's language tag (the OS's, never the persona's). */
+  target: string;
+  /** Why it failed. */
+  error?: TranslateFailure;
+}
+
+/** Why a translation failed. */
+export interface TranslateFailure {
+  /** The code the chip's words are looked up by (signed_out, llm_quota, …). */
+  code: string;
+  /** The server's own message. */
+  message: string;
+}
+
 /** One open tab, as the tab strip draws it. */
 export interface TabSummary {
   /** The tab's id in the main process. */
@@ -59,6 +79,8 @@ export interface TabSummary {
   canGoBack?: boolean;
   /** Whether Forward has somewhere to go. */
   canGoForward?: boolean;
+  /** The translate chip's state; absent when there is nothing to offer or the person may not translate. */
+  translation?: TabTranslation;
 }
 
 /** A rectangle in window pixels. */
@@ -265,6 +287,10 @@ export interface ShellCalls {
   setBookmarksBar(shown: boolean): Promise<void>;
   /** Bookmarks the page in the shown tab, or removes its bookmark (the toolbar's star, Cmd/Ctrl+D). */
   toggleBookmark(): Promise<void>;
+  /** Translates the tab's page into the person's language with the project's model (the translate chip). */
+  translatePage(tabId: number): Promise<void>;
+  /** Stops a translation, or undoes one, and shows the page's own text. */
+  showOriginal(tabId: number): Promise<void>;
   /** Confirms handoff when the person interacts with an agent-owned page. */
   requestTakeover(): Promise<void>;
   /** Lists, manages, imports, exports, and runs project playbooks on this browser. */
@@ -549,6 +575,10 @@ export const CALL_CHANNELS = {
   setBookmarksBar: 'set-bookmarks-bar',
   /** Bookmarks the page in the shown tab, or removes its bookmark (the toolbar's star, Cmd/Ctrl+D). */
   toggleBookmark: 'toggle-bookmark',
+  /** Translates a tab's page. */
+  translatePage: 'translate-page',
+  /** Shows a tab's page untranslated. */
+  showOriginal: 'show-original',
   newTab: 'new-tab',
   newWindow: 'new-window',
   detachTab: 'detach-tab',

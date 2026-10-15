@@ -6,6 +6,7 @@ import { LibraryMenu, addressSuggestions, readLibrary, changeLibrary } from '../
 import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
+import type { Tab } from '../tabs/types.ts';
 
 /** The services navigation uses. */
 type Deps = Pick<
@@ -24,6 +25,7 @@ type Deps = Pick<
   | 'persona'
   | 'windows'
   | 'agentTab'
+  | 'translation'
 >;
 
 /** The channels this group answers. */
@@ -48,7 +50,9 @@ type Channel =
   | 'close-tab'
   | 'activate-tab'
   | 'move-tab'
-  | 'tab-menu';
+  | 'tab-menu'
+  | 'translate-page'
+  | 'show-original';
 
 /** Navigation and the tab strip, as the shell asks for them. */
 export class NavigationHandlers {
@@ -82,6 +86,8 @@ export class NavigationHandlers {
       this.deps.agentTab.requireFor(id);
       new TabMenu(this.deps).show(id);
     },
+    'translate-page': (_e, id) => this.deps.translation.translate(this.ownTab(id)),
+    'show-original': (_e, id) => this.deps.translation.showOriginal(this.ownTab(id)),
   };
   /** The main-process services. */
   private readonly deps: Deps;
@@ -100,6 +106,14 @@ export class NavigationHandlers {
     } finally {
       this.deps.windows?.drag.stop(this.deps as AppServices);
     }
+  }
+
+  /** The person's tab `id` in this window; throws when an agent holds it or it is not here. */
+  private ownTab(id: number): Tab {
+    this.deps.agentTab.requireFor(id);
+    const tab = this.deps.tabs.find(id);
+    if (!tab) throw new Error('Tab is not in this window');
+    return tab;
   }
 
   /** Throws unless the person may use the tab their window shows: under the agent, any tab but the agent's. */
