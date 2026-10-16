@@ -14,13 +14,9 @@
   // MutationObserver and identifies the product.
   const ATTR = '__OYA_ATTR__';
 
-  // The most block rows an analysis hands over. Past the cap the rows kept are the
-  // part on screen, in the order browser/src/page/render/cut.ts ranks blocks; the
-  // reach and the field kinds below must match that file (pinned by
-  // tests/unit/scripts/analyzer-cut-parity.test.ts).
+  // 2026-10-16: the rows kept past the cap are the ones nearest the screen, not the first ones.
+  // why: capOrder must mirror keepOrder in browser/src/page/render/cut.ts (pinned by tests/unit/scripts/analyzer-cut-parity.test.ts).
   const MAX_BLOCKS = 5000;
-  const SCREEN_TEXT_REACH = 3;
-  const FIELD_KINDS = ['input', 'textarea', 'select', 'checkbox', 'radio', 'editable'];
 
   // Text of a clickable card (a link wrapping title, price, rating) shown under
   // its tag when the tag's label cannot hold it.
@@ -51,6 +47,12 @@
   // A fixed strip across the top no taller than this share of the viewport is a
   // sticky header, not an overlay: clicks scroll their target clear of it.
   const HEADER_MAX_SHARE = 0.25;
+
+  // why: a header or sidebar fixed to the viewport shows at every scroll position, so it must not anchor the cut; a full-screen app shell holds the real content, so it still counts.
+  const PINNED_MAX_SHARE = 0.5;
+
+  // why: a sticky box is stuck when its edge sits at its sticky offset; 1px absorbs subpixel rounding in the layout.
+  const STICKY_EDGE_PX = 1;
 
   const COLORS = {
     link: '#22c55e',
@@ -160,6 +162,13 @@
     } finally {
       analyzing = false;
       analysisTextMatches = null;
+      // The caches hold DOM nodes; a finished analysis must not keep detached pages alive.
+      pinnedCache.clear();
+      clipCache.clear();
+      pageBoxCache.clear();
+      frameOffsetCache.clear();
+      rootChain.clear();
+      analysisRoot = null;
     }
   };
 
@@ -199,6 +208,8 @@
     }
 
     if (!root) return { ok: false, error: `Root not found: ${options.selector}` };
+    for (let n = root; n; n = ancestorOf(n)) rootChain.add(n);
+    analysisRoot = root;
 
     const vw = window.innerWidth,
       vh = window.innerHeight;
@@ -216,21 +227,22 @@
 
     blocks = [];
     buffer = '';
+    textFirst = null;
+    textLast = null;
+    pinnedCache = new Map();
+    clipCache = new Map();
     const top = { region: '' };
     walk(root, top);
     flush(top);
 
+    const onScreenIds = new Set();
     for (const el of elementMap) {
       const ref = elementRefs.get(el.id);
       const dom = ref?.isConnected ? ref : queryShadow(el.selector);
       if (dom) {
         const rect = dom.getBoundingClientRect();
-        const off = getIframeOffset(dom);
-        const top = rect.top + off.y,
-          bottom = rect.bottom + off.y;
-        const left = rect.left + off.x,
-          right = rect.right + off.x;
-        el.visible = bottom > 0 && top < vh && right > 0 && left < vw && rect.width > 0 && rect.height > 0;
+        el.visible = inViewport(rect, getIframeOffset(dom));
+        if (el.visible && !pinnedAt(dom) && rectOnScreen(rect, dom)) onScreenIds.add(el.id);
         if (el.visible && isCovered(dom, rect)) {
           el.covered = true;
           el.state = el.state ? el.state + ' covered' : 'covered';
@@ -248,11 +260,14 @@
     const visibleCount = elementMap.filter((e) => e.visible).length;
     const coveredCount = elementMap.filter((e) => e.covered).length;
     // Element rows' state, now that where each element is (on screen, covered) is known.
-    for (const row of blocks)
+    for (const [index, row] of blocks.entries()) {
+      row.index = index;
       if (row.entry) {
         row.state = stateWords(row.entry);
+        if (onScreenIds.has(row.id)) row.screen = true;
         delete row.entry;
       }
+    }
     const panel = scrollPanel(vw, vh);
     const facts = {
       url: location.href,
@@ -296,12 +311,6 @@
     };
   }
 
-  /** Whether a block row is an element on screen: it has an id, and its state words lack 'off-screen'. */
-  const onScreenRow = (row) => Boolean(row.id) && !(row.state || '').split('; ').includes('off-screen');
-
-  /** Whether a block row is a form field: an element whose kind, before any ':', is a field kind. */
-  const fieldRow = (row) => Boolean(row.id) && FIELD_KINDS.includes(row.kind.split(':')[0]);
-
   /** Per row: how many rows it is from the nearest on-screen row, and whether that row is above it. */
   function screenDistances(shown) {
     const gaps = (flags) => {
@@ -320,26 +329,24 @@
   }
 
   /**
-   * The block rows the cap keeps, in reading order, and whether anything on screen anchored it.
-   * Nothing on screen: the top, as before. Otherwise the order of cut.ts: on-screen elements,
-   * then content rows within SCREEN_TEXT_REACH of one, then off-screen fields, then the rest
-   * nearest the screen (a tie goes to the row below, then the lower index).
+   * The order the cap keeps rows in, as positions: nearest the screen first, a tie going to
+   * the row below its anchor, then the lower index. Nothing on screen: reading order, the top.
    */
-  function capRows(rows) {
-    if (rows.length <= MAX_BLOCKS) return { rows, anchored: false };
-    const shown = rows.map(onScreenRow);
-    if (!shown.includes(true)) return { rows: rows.slice(0, MAX_BLOCKS), anchored: false };
+  function capOrder(rows) {
+    const shown = rows.map((row) => row.screen === true);
+    if (!shown.includes(true)) return rows.map((_, i) => i);
     const { dist, belowAnchor } = screenDistances(shown);
-    const tier = rows.map((row, i) => {
-      if (shown[i]) return 0;
-      if (!row.id && dist[i] <= SCREEN_TEXT_REACH) return 1;
-      return fieldRow(row) ? 2 : 3;
-    });
-    const order = rows
+    return rows
       .map((_, i) => i)
-      .sort((a, b) => tier[a] - tier[b] || dist[a] - dist[b] || Number(belowAnchor[b]) - Number(belowAnchor[a]) || a - b);
-    const kept = order.slice(0, MAX_BLOCKS).sort((a, b) => a - b);
-    return { rows: kept.map((i) => rows[i]), anchored: true };
+      .sort((a, b) => dist[a] - dist[b] || Number(belowAnchor[b]) - Number(belowAnchor[a]) || a - b);
+  }
+
+  /** The block rows the cap keeps, in reading order, and whether anything on screen anchored it. */
+  function capRows(rows) {
+    const anchored = rows.some((row) => row.screen === true);
+    if (rows.length <= MAX_BLOCKS) return { rows, anchored };
+    const kept = capOrder(rows).slice(0, MAX_BLOCKS).sort((a, b) => a - b);
+    return { rows: kept.map((i) => rows[i]), anchored };
   }
 
   /**
@@ -443,14 +450,188 @@
 
   let blocks = []; // rows so far, in reading order
   let buffer = ''; // inline text not yet in a row
+  let textFirst = null; // first and last text node in the buffer: a text row's box spans them
+  let textLast = null;
+  let pinnedCache = new Map(); // per analysis: whether an element sits in a pinned box
+  let clipCache = new Map(); // per analysis: the ancestor boxes that clip an element's content
+  const pageBoxCache = new Map(); // per analysis: a clipping box in top-level page coordinates
+  const frameOffsetCache = new Map(); // per analysis: an element's offset within the top-level page
+  const rootChain = new Set(); // the analysis root and its ancestors: they never pin the rows inside
+  let analysisRoot = null; // the element the analysis reads; its own overflow clips its rows
 
   /** Ends the text gathered so far as one row of the context's kind (dropped where the context is muted). */
   function flush(ctx) {
     const text = buffer.replace(/\s+/g, ' ').trim();
+    const first = textFirst;
+    const last = textLast;
     buffer = '';
+    textFirst = null;
+    textLast = null;
     // Punctuation left between inline links ("," ", and") says nothing on its own.
-    if (text && !ctx.mute && /[\p{L}\p{N}]/u.test(text))
-      blocks.push({ region: ctx.region, kind: ctx.kind || 'text', text });
+    if (!text || ctx.mute || !/[\p{L}\p{N}]/u.test(text)) return;
+    const row = { region: ctx.region, kind: ctx.kind || 'text', text };
+    if (spanOnScreen(first, last)) row.screen = true;
+    blocks.push(row);
+  }
+
+  /** Whether a box meets the viewport and has size, once the offset of the frame it sits in is added. */
+  function inViewport(rect, off) {
+    const top = rect.top + off.y,
+      bottom = rect.bottom + off.y;
+    const left = rect.left + off.x,
+      right = rect.right + off.x;
+    return (
+      bottom > 0 &&
+      top < window.innerHeight &&
+      right > 0 &&
+      left < window.innerWidth &&
+      rect.width > 0 &&
+      rect.height > 0
+    );
+  }
+
+  /** A rect moved by a frame offset: the same box in top-level page coordinates. */
+  const shifted = (rect, off) => ({
+    top: rect.top + off.y,
+    bottom: rect.bottom + off.y,
+    left: rect.left + off.x,
+    right: rect.right + off.x,
+  });
+
+  /** Whether two boxes, both in top-level page coordinates, overlap. */
+  const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+
+  /**
+   * Whether a rect is on screen: it meets the viewport, and every box that clips its element (a scrolling
+   * panel above it, up to the page) also holds it. A panel shows only its own box, however far its text runs.
+   */
+  function rectOnScreen(rect, el) {
+    const off = frameOffset(el);
+    const box = shifted(rect, off);
+    return inViewport(rect, off) && clippersOf(el).every((clip) => overlaps(box, pageBox(clip)));
+  }
+
+  /** An element's offset within the top-level page, read once per analysis. */
+  function frameOffset(el) {
+    if (!frameOffsetCache.has(el)) frameOffsetCache.set(el, getIframeOffset(el));
+    return frameOffsetCache.get(el);
+  }
+
+  /** An element's box in top-level page coordinates, read once per analysis. */
+  function pageBox(el) {
+    if (!pageBoxCache.has(el)) pageBoxCache.set(el, shifted(el.getBoundingClientRect(), frameOffset(el)));
+    return pageBoxCache.get(el);
+  }
+
+  /** Whether any client rect of a range is on screen, as seen from the element it sits in. */
+  function rangeOnScreen(range, el) {
+    return [...range.getClientRects()].some((rect) => rectOnScreen(rect, el));
+  }
+
+  /** The offset a range ends at inside a node: after its text, or after its last child for an element. */
+  const endOffset = (node) => (node.nodeType === Node.TEXT_NODE ? node.length : node.childNodes.length);
+
+  /** The two nodes in document order: a span's start comes first even when the slot shows its end first. */
+  const inDocumentOrder = (first, last) =>
+    first.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING ? [first, last] : [last, first];
+
+  /**
+   * Whether the text from one node to another is on screen, and no pinned box holds it. Within one root the
+   * rects of the whole span count; a range across roots (document text, then shadow text) collapses to a point,
+   * so each end is checked alone.
+   */
+  function spanOnScreen(first, last) {
+    if (!first) return false;
+    const [start, end] = inDocumentOrder(first, last);
+    const range = start.ownerDocument.createRange();
+    if (start.getRootNode() !== end.getRootNode())
+      return [start, end].some((node) => {
+        range.selectNodeContents(node);
+        return textOnScreen(range, node.parentElement);
+      });
+    range.setStart(start, 0);
+    range.setEnd(end, endOffset(end));
+    return textOnScreen(range, start.parentElement);
+  }
+
+  /** Whether a range's text is on screen as seen from its holder: the holder is not pinned, and a rect of the text passes. */
+  function textOnScreen(range, holder) {
+    return !!holder && !pinnedAt(holder) && rangeOnScreen(range, holder);
+  }
+
+  /** Adds a row whose box is its node's (a code block, an image, a card, a frame): on screen when that box is. */
+  function nodeRow(row, node) {
+    if (rectOnScreen(node.getBoundingClientRect(), node) && !pinnedAt(node)) row.screen = true;
+    blocks.push(row);
+  }
+
+  /**
+   * Whether an element sits in a fixed or sticky box that covers less than PINNED_MAX_SHARE of the
+   * viewport, itself or through an ancestor. Memoized per analysis: a page has far more rows than boxes.
+   */
+  function pinnedAt(el) {
+    if (!el) return false;
+    if (!pinnedCache.has(el)) {
+      const own = !rootChain.has(el) && isPinnedBox(el);
+      pinnedCache.set(el, own || pinnedAt(ancestorOf(el)));
+    }
+    return pinnedCache.get(el);
+  }
+
+  /** Whether a box is pinned over the page: a small fixed box, or a small sticky box that is stuck now. */
+  function isPinnedBox(el) {
+    const style = window.getComputedStyle(el);
+    if (style.position === 'fixed') return isSmallBox(el);
+    return style.position === 'sticky' && isSmallBox(el) && isStuck(el, style);
+  }
+
+  // shortcut: sticky offsets are compared with the viewport, not a scrolling ancestor; upgrade when a sticky box inside a panel shows up as wrongly pinned.
+  /** Whether a sticky box sits at the edge it sticks to: its top at its top offset, or its bottom at its bottom offset. */
+  function isStuck(el, style) {
+    const box = el.getBoundingClientRect();
+    const top = style.top !== 'auto' && Math.abs(box.top - parseFloat(style.top)) <= STICKY_EDGE_PX;
+    const bottom =
+      style.bottom !== 'auto' &&
+      Math.abs(box.bottom - (window.innerHeight - parseFloat(style.bottom))) <= STICKY_EDGE_PX;
+    return top || bottom;
+  }
+
+  /** The element one level up: the parent, else the shadow host, else the frame element that holds the document. */
+  // 2026-10-16: the climb also leaves a frame's document, so a fixed chat frame is pinned and its text clipped.
+  // why: a shadow root's top element and a frame's top element have no parent element in their own tree.
+  function ancestorOf(el) {
+    return el.parentElement || el.getRootNode().host || el.ownerDocument.defaultView?.frameElement || null;
+  }
+
+  /**
+   * The boxes that clip an element's content: each ancestor up the page, itself included, whose overflow is
+   * not visible. Memoized per analysis; a box is read only when a rect is checked against it.
+   */
+  function clippersOf(el) {
+    if (!el) return [];
+    if (!clipCache.has(el)) {
+      const { overflowX, overflowY } = window.getComputedStyle(el);
+      // why: CSS passes html's and body's overflow to the viewport, so their boxes do not clip the page's rows.
+      const pageRoot = el === document.body || el === document.documentElement;
+      const clips = overflowX !== 'visible' || overflowY !== 'visible';
+      // The analysis root's own panel clips its rows; the ancestors above it do not.
+      const above = rootChain.has(el) && el !== analysisRoot;
+      const own = clips && !pageRoot && !above ? [el] : [];
+      clipCache.set(el, own.concat(clippersOf(ancestorOf(el))));
+    }
+    return clipCache.get(el);
+  }
+
+  /** Whether an element's box covers less than PINNED_MAX_SHARE of the viewport. */
+  function isSmallBox(el) {
+    const box = el.getBoundingClientRect();
+    return box.width * box.height < window.innerWidth * window.innerHeight * PINNED_MAX_SHARE;
+  }
+
+  /** Records a node in the buffer's span: a row's box runs from its first tracked node to its last. */
+  function trackSpan(node) {
+    textFirst = textFirst || node;
+    textLast = node;
   }
 
   /** Whether an element is left out: not content, hidden, the analyzer's own overlay, or aria-hidden and unseen. */
@@ -486,6 +667,7 @@
   function walk(node, ctx) {
     if (node.nodeType === Node.TEXT_NODE) {
       buffer += node.textContent;
+      if (node.textContent.trim()) trackSpan(node);
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE || skipped(node)) return;
@@ -523,7 +705,7 @@
       flush(ctx);
       // innerText keeps the lines a <br> or a block inside the <pre> makes; textContent runs them together.
       const text = (node.innerText || node.textContent).trim();
-      if (text) blocks.push({ region: ctx.region, kind: 'code', text });
+      if (text) nodeRow({ region: ctx.region, kind: 'code', text }, node);
       return true;
     },
     IMG: (node, ctx) => {
@@ -531,7 +713,7 @@
       const alt = (node.getAttribute('alt') || '').trim();
       if (alt) {
         flush(ctx);
-        blocks.push({ region: ctx.region, kind: 'image', text: alt });
+        nodeRow({ region: ctx.region, kind: 'image', text: alt }, node);
       }
       return true;
     },
@@ -548,7 +730,8 @@
       return true;
     },
     TIME: (node) => {
-      buffer += ' ' + (node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim()) + ' ';
+      trackSpan(node);
+      buffer +=' ' + (node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim()) + ' ';
       return true;
     },
     SLOT: (node, ctx) => {
@@ -571,7 +754,7 @@
       else for (const c of doc.body.childNodes) walk(c, inner);
       flush(inner);
     } else if (node.src) {
-      blocks.push({ region: ctx.region, kind: 'iframe', target: node.src.slice(0, 120) });
+      nodeRow({ region: ctx.region, kind: 'iframe', target: node.src.slice(0, 120) }, node);
     }
     return true;
   }
@@ -701,11 +884,14 @@
       .filter(Boolean);
     const full = lines.join(' ');
     if (full.length <= label.length || label.includes(full)) return;
-    blocks.push({
-      region: ctx.region,
-      kind: 'text',
-      text: full.slice(0, MAX_WRAPPED_TEXT) + (full.length > MAX_WRAPPED_TEXT ? '…' : ''),
-    });
+    nodeRow(
+      {
+        region: ctx.region,
+        kind: 'text',
+        text: full.slice(0, MAX_WRAPPED_TEXT) + (full.length > MAX_WRAPPED_TEXT ? '…' : ''),
+      },
+      node,
+    );
   }
 
   /** An element row's state words: what the page says about it now, its expected format, and where it is. */
