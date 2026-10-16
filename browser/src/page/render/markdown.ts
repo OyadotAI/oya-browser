@@ -7,12 +7,15 @@
  * ones, which the agent fills forms from.
  */
 import { PAGE_RENDER } from '../constants.ts';
-import { FIELD_TYPES, cutNote, pickBlocks } from './cut.ts';
+import { cutNote, keepOrder, pickBlocks, refit, totalOf, type Cut, type Priority } from './cut.ts';
 import { toonTable } from './toon.ts';
 import type { Analysis, Block, Facts, PageElement } from './types.ts';
 
 /** The format's name in configuration. */
 export const format = 'markdown';
+
+/** Element kinds a person fills in; these go in the field table. */
+const FIELD_TYPES = new Set(['input', 'textarea', 'select', 'checkbox', 'radio', 'editable']);
 
 /** One block's line, and the kind of run it belongs to. */
 interface Line {
@@ -22,12 +25,14 @@ interface Line {
   run: string;
 }
 
-/** Where the last block left off: its region and its run. */
+/** Where the last block left off: its region, its run, and its index in the page (-1 before the first). */
 interface Last {
   /** The last block's region. */
   region: string | null | undefined;
   /** The last block's run. */
   run: string | null;
+  /** The last block's index in the page. */
+  at: number;
 }
 
 /** Said where the page's markdown was cut to leave room for the index. */
@@ -35,6 +40,9 @@ const CUT = '\n\n⚠ Output truncated to fit context window.';
 
 /** Stands for blocks left out between two shown ones, so the reader sees the page is not whole. */
 const GAP = '…';
+
+/** The lines a gap writes: a blank line, then the gap. */
+const GAP_LINES = ['', GAP];
 
 /** The field table's and the visible-element table's columns. */
 const FIELD_COLUMNS = ['id', 'type', 'label', 'value', 'hint', 'state'];
@@ -45,7 +53,7 @@ const FIELDS_NOTE = 'Form fields (hint is the format the field expects, or a sel
 
 /** Said after the index when the page was cut short. */
 const TRUNCATED =
-  '\n⚠ Page content was truncated (very long page): the part around what is on screen was kept. Scroll and re-analyze to see other parts.\n';
+  '\n⚠ Page content was truncated (very long page); the truncated fact at the top says which part was kept. Scroll and re-analyze to see other parts.\n';
 
 /** How each content kind is written; element rows and table rows are written apart. */
 const KIND_LINES: Record<string, (b: Block) => string | undefined> = {
@@ -100,9 +108,12 @@ const breaksRun = (run: string, previous: string | null): boolean =>
 const startsTable = (run: string, previous: string | null): boolean =>
   run === 'header' || (run === 'row' && previous !== 'row' && previous !== 'header');
 
+/** A block's region comment, which says which part of the page the block is in. */
+const regionComment = (b: Block): string => `<!-- ${b.region || 'page'} -->`;
+
 /** Appends one block's lines: a region comment when the region changes, a blank line between runs. */
-function appendBlock(out: string[], b: Block, last: Last): Last {
-  if (b.region !== last.region) out.push('', `<!-- ${b.region || 'page'} -->`);
+function appendBlock(out: string[], b: Block, last: Last): Pick<Last, 'region' | 'run'> {
+  if (b.region !== last.region) out.push('', regionComment(b));
   const { line, run } = blockLine(b);
   if (breaksRun(run, last.run)) out.push('');
   out.push(line);
@@ -110,28 +121,32 @@ function appendBlock(out: string[], b: Block, last: Last): Last {
   return { region: b.region, run };
 }
 
-/** A gap where blocks were left out: a `…` line, and the run the block before it was in ends there. */
-function writeGap(out: string[]): Last {
-  out.push('', GAP);
-  return { region: null, run: null };
+/** Appends one kept block after the last one written; a gap first when the index jumps past it. */
+// why: the gap is judged on the analyzer's index, not the kept position, so a cap that dropped rows shows as a gap too.
+function appendAt(out: string[], b: Block, position: number, last: Last): Last {
+  const at = b.index ?? position;
+  const from = at === last.at + 1 ? last : writeGap(out, last);
+  return { ...appendBlock(out, b, from), at };
 }
 
-/** Appends the kept blocks in the order given; a gap ends a run, so items and rows never join across it. */
-function appendKept(out: string[], blocks: Block[], kept: number[]): void {
-  let last: Last = { region: null, run: null };
-  let previous = -1;
-  for (const i of kept) {
-    if (i !== previous + 1) last = writeGap(out);
-    last = appendBlock(out, blocks[i], last);
-    previous = i;
-  }
+/** Appends the kept blocks in reading order, and returns the index of the last one shown. */
+function appendKept(out: string[], blocks: Block[], kept: number[]): number {
+  let last: Last = { region: null, run: null, at: -1 };
+  for (const i of kept) last = appendAt(out, blocks[i], i, last);
+  return last.at;
 }
 
-/** The blocks as markdown: regions as comments, runs of items, rows and elements kept together, a `…` where blocks are left out. */
-function body(blocks: Block[] = [], kept: number[] = blocks.map((_, i) => i)): string {
+/** Writes a gap. The region carries on past it, so a run of the same region is not labelled again. */
+function writeGap(out: string[], last: Last): Last {
+  out.push(...GAP_LINES);
+  return { region: last.region, run: null, at: last.at };
+}
+
+/** The blocks as markdown: regions as comments, runs kept together, and a `…` wherever blocks were left out. */
+function body(blocks: Block[], kept: number[], total: number): string {
   const out: string[] = [];
-  appendKept(out, blocks, kept);
-  if ((kept[kept.length - 1] ?? -1) < blocks.length - 1) writeGap(out);
+  const shownTo = appendKept(out, blocks, kept);
+  if (shownTo < total - 1) out.push(...GAP_LINES);
   return out
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -147,16 +162,19 @@ function header(facts: Facts = {}): string {
 }
 
 /** The whole page as markdown. */
-export function render({ facts, blocks }: Analysis): string {
-  return `${header(facts)}\n\n${body(blocks)}`;
+export function render(analysis: Analysis): string {
+  const blocks = analysis.blocks || [];
+  return `${header(analysis.facts)}\n\n${body(
+    blocks,
+    blocks.map((_, i) => i),
+    totalOf(analysis),
+  )}`;
 }
 
-/** The markdown cut at a line end to fit `max`, marked where it was cut. */
-export function fit(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const cut = text.slice(0, Math.max(max - CUT.length, 0));
-  const end = cut.lastIndexOf('\n');
-  return (end > 0 ? cut.slice(0, end) : cut) + CUT;
+/** The markdown trimmed to fit `max`, marked where it was cut. A safety net: the blocks are sized to fit already. */
+// why: it cuts at the budget, not at a line end, since a big block can be one long line that a line-end cut would drop whole.
+function fit(text: string, max: number): string {
+  return text.length <= max ? text : topCut(text, max);
 }
 
 /** A checkbox or radio, whose value is its state rather than text. */
@@ -240,92 +258,78 @@ export function controls(analysis: Analysis, max: number): string {
   return `${header(analysis.facts)}\n${index}`.slice(0, max);
 }
 
-/** One block's size for ranking: its markdown line and its newline. */
-// why: an under-estimate, so the ranked blocks are a superset of what really fits and the search below only shrinks them.
-const markdownSize = (b: Block): number => (blockLine(b).line ?? '').length + 1;
+/** The characters `lines` take in the page: each line, and the newline the join puts after it. */
+const writtenLength = (lines: string[]): number => lines.reduce((sum, text) => sum + text.length + 1, 0);
 
-/** The page with the `count` highest-ranked blocks shown, in reading order, and the note giving their count. */
-function pageShowing(analysis: Analysis, ranked: number[], anchored: boolean, count: number): string {
-  const blocks = analysis.blocks || [];
-  const rankOf = new Map(ranked.map((block, rank): [number, number] => [block, rank]));
-  const shown = blocks.map((_, i) => i).filter((i) => (rankOf.get(i) ?? Infinity) < count);
-  const total = analysis.totalBlocks ?? blocks.length;
-  const facts = { ...analysis.facts, truncated: cutNote(count, total, anchored) };
-  return `${header(facts)}\n\n${body(blocks, shown)}`;
-}
-
-/** The largest count of ranked blocks whose page fits `max`, searched from `low` (a count known to fit) up to `most`. */
-// shortcut: the search assumes a longer page is never shorter; a filled gap can drop a `…` line, so the result can under-fill but never exceeds `max`. Upgrade to a scan if under-fill shows up.
-function largestFit(page: (count: number) => string, max: number, most: number, low: number): number {
-  let lo = low;
-  let high = most;
-  while (lo < high) {
-    const middle = (lo + high + 1) >> 1;
-    if (page(middle).length <= max) lo = middle;
-    else high = middle - 1;
-  }
-  return lo;
-}
-
-/** The ranking without the block at `at`. */
-const without = (ranked: number[], at: number): number[] => ranked.filter((_, rank) => rank !== at);
-
-/** The largest count of `ranked` that fits `max`, searched from `low`; see largestFit. */
-function largestFor(analysis: Analysis, ranked: number[], anchored: boolean, max: number, low: number): number {
-  return largestFit((count) => pageShowing(analysis, ranked, anchored, count), max, ranked.length, low);
-}
-
-/** A ranking search: the ranking it ran on (after any dropped blocks), and how many of its blocks fit. */
-interface Search {
-  /** The ranking, most important first. */
-  kept: number[];
-  /** The longest prefix of `kept` that fits. */
-  found: number;
+/**
+ * A block's size when it follows `previous` on the page: its line, and only the region comment, blank line
+ * and table separator it writes after that block. A gap can add more, so the cut checks the render.
+ */
+function tightSize(previous: Block | undefined, b: Block): number {
+  const previousRegion = previous ? previous.region : null;
+  const previousRun = previous ? blockLine(previous).run : null;
+  const { line, run } = blockLine(b);
+  let size = writtenLength([line ?? '']);
+  if (b.region !== previousRegion) size += writtenLength(['', regionComment(b)]);
+  if (breaksRun(run, previousRun)) size += writtenLength(['']);
+  if (startsTable(run, previousRun)) size += writtenLength([separator(String(b.text ?? ''))]);
+  return size;
 }
 
 /**
- * The longest priority prefix of `ranked` whose real markdown fits `max`, and the kept ranking it was
- * found in. The ranking sizes are an under-estimate, so a block can rank in and still not fit.
+ * The safe size: a block's line, its region comment, its table separator and a gap line, with the newlines
+ * a block can write around them. Never less than what a block writes, so a page of these fits the room.
  */
-// why: only an anchored cut skips blocks, so only it drops the block that stops the prefix and searches the rest; that keeps the lower-ranked blocks it kept. An unanchored cut stops at the first miss, so its prefix is the top and must stay unbroken.
-// why: the retries are capped, since each one is a full search and a page could otherwise stall analysis; past the cap the prefix found so far is kept. It fits and its note is true.
-function searchRanked(analysis: Analysis, ranked: number[], anchored: boolean, max: number): Search {
-  const emptyFits = pageShowing(analysis, ranked, anchored, 0).length <= max;
-  let search: Search = { kept: ranked, found: largestFor(analysis, ranked, anchored, max, 0) };
-  for (let retries = 0; canRetry(search, anchored && emptyFits, retries); retries++) {
-    search = dropAndSearch(analysis, search, anchored, max);
-  }
-  return search;
-}
+const markdownSize = (b: Block): number => {
+  const { line, run } = blockLine(b);
+  const table = run === 'header' || run === 'row' ? separator(String(b.text ?? '')).length : 0;
+  return (line ?? '').length + table + regionComment(b).length + GAP.length + PAGE_RENDER.MARKDOWN_BLOCK_LINES;
+};
 
-/** Whether a stopped search may drop its stop block and search again: allowed, not at the end, and under the cap. */
-// shortcut: past MAX_CUT_RETRIES an anchored cut can show 0 blocks even if smaller lower-ranked blocks would fit; upgrade if real pages hit it.
-const canRetry = (search: Search, allowed: boolean, retries: number): boolean =>
-  allowed && search.found < search.kept.length && retries < PAGE_RENDER.MAX_CUT_RETRIES;
-
-/** The search again without the block that stopped its prefix, from the count already known to fit. */
-function dropAndSearch(analysis: Analysis, search: Search, anchored: boolean, max: number): Search {
-  const kept = without(search.kept, search.found);
-  return { kept, found: largestFor(analysis, kept, anchored, max, search.found) };
+/** The page with the blocks `kept` names, in reading order, and the note giving how many of them it shows. */
+function pageShowing(analysis: Analysis, blocks: Block[], kept: number[], anchored: boolean): string {
+  const total = totalOf(analysis);
+  const facts = { ...analysis.facts, truncated: cutNote(kept.length, total, anchored) };
+  return `${header(facts)}\n\n${body(blocks, kept, total)}`;
 }
 
 /** The page cut to `max` from its first characters, marked, as a page was cut before ranking: used when no block fits. */
 const topCut = (text: string, max: number): string => text.slice(0, Math.max(max - CUT.length, 0)) + CUT;
 
+/** The page for one pick, rendered once with the blocks it kept. */
+function pageFor(analysis: Analysis, whole: string, max: number, picked: Cut): string {
+  // why: a pick that keeps nothing (the room is smaller than a clipped block's line) shows the top, not an empty page.
+  if (!picked.kept.length) return topCut(whole, max);
+  return pageShowing(analysis, picked.blocks, picked.kept, picked.anchored);
+}
+
 /**
- * The page within `max` characters, without its element index. cut.ts ranks the blocks; the longest
- * priority prefix whose real markdown fits is shown, so the note's count is exactly the blocks shown.
+ * The page within `max` characters, without its element index, cut from the page already rendered as `whole`.
+ * The blocks are picked with the size they will be written at, and picked again with less room while gap lines
+ * and region comments overflow (see refit); only then the safe size. The order is worked out once.
  */
-export function cut(analysis: Analysis, max: number): string {
-  const whole = render(analysis);
+function cutRendered(analysis: Analysis, whole: string, max: number): string {
   if (whole.length <= max) return whole;
-  const blocks = analysis.blocks || [];
-  const room = max - header(analysis.facts).length - PAGE_RENDER.TRUNCATED_ROOM;
-  const { ranked, anchored } = pickBlocks(blocks, room, markdownSize);
-  const { kept, found } = searchRanked(analysis, ranked, anchored, max);
-  // why: an unanchored cut keeps the top when nothing fits, as before ranking; an anchored one keeps its note, since the top it would show is not the part on screen.
-  if (found === 0 && !anchored) return topCut(whole, max);
-  return fit(pageShowing(analysis, kept, anchored, found), max);
+  const fullRoom = max - header(analysis.facts).length - PAGE_RENDER.TRUNCATED_ROOM;
+  const priority = keepOrder(analysis.blocks || []);
+  const pageAt = (room: number) => tightPage(analysis, whole, max, room, priority);
+  return refit(max, fullRoom, pageAt, () => fit(safePage(analysis, whole, max, fullRoom, priority), max));
+}
+
+/** The page within `max` characters, without its element index: see cutRendered. */
+export function cut(analysis: Analysis, max: number): string {
+  return cutRendered(analysis, render(analysis), max);
+}
+
+/** The page picked with each block's size as it will be written after the block before it. */
+function tightPage(analysis: Analysis, whole: string, max: number, room: number, priority: Priority): string {
+  const picked = pickBlocks(analysis.blocks || [], room, (b, previous) => tightSize(previous, b), priority);
+  return pageFor(analysis, whole, max, picked);
+}
+
+/** The page picked with the safe size of every block, which fits the room whatever the gaps. */
+function safePage(analysis: Analysis, whole: string, max: number, room: number, priority: Priority): string {
+  return pageFor(analysis, whole, max, pickBlocks(analysis.blocks || [], room, markdownSize, priority));
 }
 
 /**
@@ -339,12 +343,12 @@ export function forAgent(analysis: Analysis, max: number): string {
   const whole = render(analysis);
   if (whole.length <= max && !analysis.truncated) return whole;
   const index = elementIndex(analysis.elements || [], analysis.truncated);
-  return cut(analysis, max - index.length) + index;
+  return cutRendered(analysis, whole, max - index.length) + index;
 }
 
 /** How the agent is told to read this format, for its system prompt. */
 export const guide = [
-  '- analyze_page returns the page as markdown: a header of facts (url, title, scroll; and when they apply: panelScroll, the content scrolls inside a panel so scroll to see more even at 0%; modal, only that dialog was read; covered, something drawn over elements must be closed first; truncated, meaning a long page keeps the part on screen and the form fields, so scroll and analyze again for another part), then the page.',
+  '- analyze_page returns the page as markdown: a header of facts (url, title, scroll; and when they apply: panelScroll, the content scrolls inside a panel so scroll to see more even at 0%; modal, only that dialog was read; covered, something drawn over elements must be closed first; truncated, meaning a long page was cut and it says which part was kept, around what is on screen or from the top; scroll and analyze again for another part), then the page.',
   '- Elements appear as [#id kind "name" → where a link goes, or = "what a field holds" (state)]; an element with no name has no name. State words: checked/unchecked, disabled, required, readonly, invalid with the page message, expanded/collapsed, selected, current, pressed, covered, off-screen, hint (a field format or a select options).',
   '- The Element Index after the page lists form fields (label, value, hint, state), then other visible elements, then off-screen ones to scroll to.',
 ].join('\n');

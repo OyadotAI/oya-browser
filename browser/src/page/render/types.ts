@@ -21,6 +21,10 @@ export interface Block {
   target?: string;
   /** Its state words. */
   state?: string;
+  /** Whether the analyzer found it on screen, not under a fixed or sticky header; the only anchor a cut uses. */
+  screen?: boolean;
+  /** Its position in the page before the analyzer's own cap, so a gap shows where rows were left out. */
+  index?: number;
   /** Anything else the analyzer reported. */
   [field: string]: unknown;
 }
@@ -83,8 +87,6 @@ export interface Renderer {
   readonly format: string;
   /** The page as text. */
   render(analysis: Analysis): string;
-  /** That text cut to `max` characters, still valid, from the top. */
-  fit(text: string, max: number): string;
   /** The page within `max` characters, keeping the part on screen first (see cut.ts); no element index. */
   cut(analysis: Analysis, max: number): string;
   /** What a model reads, within its budget. */

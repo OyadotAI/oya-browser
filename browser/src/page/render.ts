@@ -5,7 +5,6 @@
  * interface:
  *
  *   render(analysis)        the page as text
- *   fit(text, max)          that text cut to `max` characters from the top, still valid
  *   cut(analysis, max)      the page within `max`, keeping the part on screen first (render/cut.ts)
  *   forAgent(analysis, max) what a model reads, within its budget
  *

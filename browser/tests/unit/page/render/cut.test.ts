@@ -1,7 +1,7 @@
 /**
  * Unit tests for src/page/render/cut.ts, the one rule that decides which blocks of a long page a cut
- * keeps: the on-screen elements first, then the text within reach of them, then off-screen form fields,
- * then the blocks nearest the screen; reading order when nothing is on screen. The order is checked through keepOrder and pickBlocks, and the note's words are pinned.
+ * keeps: the rows the analyzer marked on screen first, then the rows nearest them by page position;
+ * reading order when nothing is on screen. The order is checked through keepOrder and pickBlocks, and the note's words are pinned.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,15 +11,23 @@ import type { Block } from '../../../../src/page/render/types.ts';
 /** Every block is one unit of room. */
 const one = () => 1;
 
+/** The size of a block's text, so a test can set each block's size with its text. */
+/** A block of a given size: sizes ride on the block, since a long text is clipped before it is sized. */
+const sized = (sz: number, extra: Partial<Block> = {}): Block => ({ kind: 'text', text: '', sz, ...extra });
+
+/** The size a sized block carries. */
+const bySz = (block: Block) => Number(block.sz);
+
 /** A content row, with no id. */
 const row = (text: string): Block => ({ kind: 'text', text });
 
-/** A link element: on screen when `on`, otherwise carrying the analyzer's off-screen word. */
+/** A link element: on screen when `on` (the analyzer's screen mark), otherwise carrying the off-screen word. */
 const link = (id: number, on: boolean): Block => ({
   id,
   kind: 'link',
   text: `link ${id}`,
   state: on ? '' : 'off-screen',
+  screen: on,
 });
 
 describe('cut rule', () => {
@@ -57,7 +65,8 @@ describe('cut rule', () => {
     assert.deepEqual(keepOrder(blocks).order, [1, 2, 0, 3]);
   });
 
-  it('an off-screen form field is kept before off-screen elements and far rows; near text comes before it', () => {
+  it('an off-screen form field gets no priority: it is ranked by distance like the rows around it', () => {
+    // The field tier is gone: the field at distance 3 is dropped before the nearer row at distance 2.
     const blocks = [
       link(1, false),
       row('far'),
@@ -66,10 +75,10 @@ describe('cut rule', () => {
       link(4, false),
       link(5, true),
     ];
-    assert.deepEqual(pickBlocks(blocks, 3, one).kept, [2, 3, 5]);
+    assert.deepEqual(pickBlocks(blocks, 3, one).kept, [3, 4, 5]);
   });
 
-  it('near text is kept before off-screen fields, and text beyond the reach comes after them', () => {
+  it('ranks by distance alone: the nearest row comes first, whatever its kind', () => {
     const blocks = [
       row('a'),
       row('b'),
@@ -78,39 +87,72 @@ describe('cut rule', () => {
       { id: 2, kind: 'input:email', text: 'Email', state: 'off-screen' },
       link(3, true),
     ];
-    assert.deepEqual(keepOrder(blocks).order, [5, 3, 2, 4, 1, 0]);
+    assert.deepEqual(keepOrder(blocks).order, [5, 4, 3, 2, 1, 0]);
   });
 
   it('on a distance tie the block below its anchor comes first, then the one above', () => {
     const blocks = [row('above'), link(1, false), link(2, true), link(3, false), row('below')];
-    assert.deepEqual(keepOrder(blocks).order, [2, 4, 0, 3, 1]);
+    assert.deepEqual(keepOrder(blocks).order, [2, 3, 1, 4, 0]);
   });
 
-  it('an anchored cut skips a block that does not fit and keeps the next one that does', () => {
-    const blocks = [
-      { id: 1, kind: 'link', text: 'a'.repeat(8), state: '' },
-      { id: 2, kind: 'link', text: 'b', state: '' },
-    ];
-    const size = (block: Block) => (block.text ?? '').length;
-    assert.deepEqual(pickBlocks(blocks, 5, size).kept, [1]);
-    assert.deepEqual(pickBlocks(blocks, 9, size).kept, [0, 1]);
+  // Adapted: the skip rule is gone, so an anchored cut stops at the first miss like an unanchored one (was: skip, keep [1]).
+  it('an anchored cut stops at the first block that does not fit, even a smaller one after it', () => {
+    const blocks = [sized(8, { id: 1, kind: 'link', screen: true }), sized(1, { id: 2, kind: 'link', screen: true })];
+    assert.deepEqual(pickBlocks(blocks, 5, bySz).kept, []);
+    assert.deepEqual(pickBlocks(blocks, 9, bySz).kept, [0, 1]);
   });
 
   it('an unanchored cut stops at the first block that does not fit, keeping the top as before', () => {
-    const blocks = [row('a'.repeat(8)), row('b')];
-    const size = (block: Block) => (block.text ?? '').length;
-    assert.deepEqual(pickBlocks(blocks, 5, size).kept, []);
-    assert.deepEqual(pickBlocks(blocks, 9, size).kept, [0, 1]);
+    const blocks = [sized(8), sized(1)];
+    assert.deepEqual(pickBlocks(blocks, 5, bySz).kept, []);
+    assert.deepEqual(pickBlocks(blocks, 9, bySz).kept, [0, 1]);
   });
 
-  it('the on-screen element comes first, then the text within reach, then the off-screen field', () => {
+  it('the on-screen element comes first, then the rows by distance, the field and the near row alike', () => {
     const blocks = [row('near'), { id: 2, kind: 'input:email', text: 'Email', state: 'off-screen' }, link(3, true)];
-    assert.deepEqual(keepOrder(blocks).order, [2, 0, 1]);
+    assert.deepEqual(keepOrder(blocks).order, [2, 1, 0]);
   });
 
   it('is anchored only when an on-screen element exists', () => {
     assert.equal(pickBlocks([row('a'), link(1, false)], 5, one).anchored, false);
     assert.equal(pickBlocks([row('a'), link(1, true)], 5, one).anchored, true);
+  });
+
+  it('E1 anchors on the screen mark and orders by position when there is no index', () => {
+    const blocks = [row('0'), row('1'), { ...row('2'), screen: true }, row('3'), row('4')];
+    const { order, anchored } = keepOrder(blocks);
+    assert.deepEqual(order, [2, 3, 1, 4, 0]);
+    assert.equal(anchored, true);
+  });
+
+  it('E2 measures distance in the analyzer index, so a capped gap counts as the rows it left out', () => {
+    const blocks: Block[] = [0, 1, 2, 10, 11].map((index) => ({ kind: 'text', text: `${index}`, index }));
+    blocks[3].screen = true;
+    assert.deepEqual(keepOrder(blocks).order, [3, 4, 2, 1, 0]);
+  });
+
+  it('E3 with no screen mark, the order is reading order and not anchored, even with an element', () => {
+    const blocks: Block[] = [row('0'), { id: 1, kind: 'link', text: 'x', state: '' }, row('2')];
+    assert.deepEqual(keepOrder(blocks), { order: [0, 1, 2], anchored: false });
+  });
+
+  it('E4 an element anchors by its screen mark, never by its state words', () => {
+    const marked: Block[] = [{ id: 1, kind: 'input:text', state: 'invalid: x; off-screen', screen: true }];
+    const unmarked: Block[] = [{ id: 1, kind: 'link', state: '' }];
+    assert.equal(keepOrder(marked).anchored, true);
+    assert.equal(keepOrder(unmarked).anchored, false);
+  });
+
+  it('E5 a pick stops at the first block that does not fit the room left', () => {
+    const blocks: Block[] = [sized(1, { id: 1, kind: 'link', screen: true }), sized(2), sized(1)];
+    assert.deepEqual(pickBlocks(blocks, 2, bySz).kept, [0]);
+  });
+
+  // Adapted: was "skips a block bigger than the whole room and keeps going" (kept [0, 2]). The skip rule is removed:
+  // a block bigger than the room left stops the walk. A clipped block never reaches this, since it is at most half the room.
+  it('E6 an anchored pick stops at a block bigger than the room left, it does not skip it', () => {
+    const blocks: Block[] = [sized(1, { id: 1, kind: 'link', screen: true }), sized(5), sized(1)];
+    assert.deepEqual(pickBlocks(blocks, 3, bySz).kept, [0]);
   });
 });
 
