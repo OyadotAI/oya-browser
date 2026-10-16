@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { elementIndex, pageGuide, analysisText } from '../../../../src/modules/agent/element-index.ts';
-import { MAX_OFFSCREEN_LISTED } from '../../../../src/modules/agent/constants.ts';
+import { MAX_ANALYSIS_CHARS, MAX_OFFSCREEN_LISTED } from '../../../../src/modules/agent/constants.ts';
 
 /** The index's lines, trimmed. */
 const lines = (index: string) => index.split('\n').map((l) => l.trim());
@@ -133,6 +133,36 @@ describe('analysisText asked for no content', () => {
 
   it('still answers with the whole page by default', () => {
     assert.match(analysisText(page), /Everything half price today/);
+  });
+});
+
+describe('analysisText of an analyzer-capped page', () => {
+  it('an analyzer-capped page keeps its gap and says it was cut around the screen', () => {
+    // Each row is long, so the 300 rows (about 63k characters) are over the budget.
+    const row = (i: number, screen = false) => ({
+      region: 'main',
+      kind: 'text',
+      text: `Para ${i} ` + 'x'.repeat(200),
+      index: i,
+      screen,
+    });
+    const blocks: any[] = [];
+    for (let i = 0; i < 150; i++) blocks.push(row(i));
+    for (let i = 5000; i < 5150; i++) blocks.push(row(i, i === 5050));
+    const data = {
+      format: 'markdown',
+      facts: { url: 'https://d.test/', title: 'T' },
+      totalBlocks: 9000,
+      truncated: true,
+      elements: [],
+      blocks,
+    };
+    const text = analysisText(data);
+    assert.ok(text.length <= MAX_ANALYSIS_CHARS);
+    assert.ok(text.includes('Para 5050 '), 'the on-screen row is kept');
+    assert.ok(text.split('\n').includes('…'), 'the gap line is there');
+    assert.match(text, /showing \d+ of 9000 blocks around what is on screen/);
+    assert.ok(!text.includes('Para 0 '), 'the top is not kept: the budget went around the screen first');
   });
 });
 
