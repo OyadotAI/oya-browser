@@ -14,8 +14,8 @@
   // MutationObserver and identifies the product.
   const ATTR = '__OYA_ATTR__';
 
-  // 2026-10-16: the rows kept past the cap are the ones nearest the screen, not the first ones.
-  // why: capOrder must mirror keepOrder in browser/src/page/render/cut.ts (pinned by tests/unit/scripts/analyzer-cut-parity.test.ts).
+  // The rows kept past the cap are the ones nearest the screen, not the first ones.
+  // capOrder must mirror keepOrder in browser/src/page/render/cut.ts (pinned by tests/unit/scripts/analyzer-cut-parity.test.ts).
   const MAX_BLOCKS = 5000;
 
   // Text of a clickable card (a link wrapping title, price, rating) shown under
@@ -48,10 +48,10 @@
   // sticky header, not an overlay: clicks scroll their target clear of it.
   const HEADER_MAX_SHARE = 0.25;
 
-  // why: a header or sidebar fixed to the viewport shows at every scroll position, so it must not anchor the cut; a full-screen app shell holds the real content, so it still counts.
+  // A header or sidebar fixed to the viewport shows at every scroll position, so it must not anchor the cut; a full-screen app shell holds the real content, so it still counts.
   const PINNED_MAX_SHARE = 0.5;
 
-  // why: a sticky box is stuck when its edge sits at its sticky offset; 1px absorbs subpixel rounding in the layout.
+  // A sticky box is stuck when its edge sits at its sticky offset; 1px absorbs subpixel rounding in the layout.
   const STICKY_EDGE_PX = 1;
 
   const COLORS = {
@@ -585,7 +585,7 @@
     return style.position === 'sticky' && isSmallBox(el) && isStuck(el, style);
   }
 
-  // shortcut: sticky offsets are compared with the viewport, not a scrolling ancestor; upgrade when a sticky box inside a panel shows up as wrongly pinned.
+  // Sticky offsets are compared with the viewport, not a scrolling ancestor; upgrade when a sticky box inside a panel shows up as wrongly pinned.
   /** Whether a sticky box sits at the edge it sticks to: its top at its top offset, or its bottom at its bottom offset. */
   function isStuck(el, style) {
     const box = el.getBoundingClientRect();
@@ -597,8 +597,8 @@
   }
 
   /** The element one level up: the parent, else the shadow host, else the frame element that holds the document. */
-  // 2026-10-16: the climb also leaves a frame's document, so a fixed chat frame is pinned and its text clipped.
-  // why: a shadow root's top element and a frame's top element have no parent element in their own tree.
+  // The climb also leaves a frame's document, so a fixed chat frame is pinned and its text clipped.
+  // A shadow root's top element and a frame's top element have no parent element in their own tree.
   function ancestorOf(el) {
     return el.parentElement || el.getRootNode().host || el.ownerDocument.defaultView?.frameElement || null;
   }
@@ -611,7 +611,7 @@
     if (!el) return [];
     if (!clipCache.has(el)) {
       const { overflowX, overflowY } = window.getComputedStyle(el);
-      // why: CSS passes html's and body's overflow to the viewport, so their boxes do not clip the page's rows.
+      // CSS passes html's and body's overflow to the viewport, so their boxes do not clip the page's rows.
       const pageRoot = el === document.body || el === document.documentElement;
       const clips = overflowX !== 'visible' || overflowY !== 'visible';
       // The analysis root's own panel clips its rows; the ancestors above it do not.
@@ -731,7 +731,7 @@
     },
     TIME: (node) => {
       trackSpan(node);
-      buffer +=' ' + (node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim()) + ' ';
+      buffer += ' ' + (node.getAttribute('datetime') || node.getAttribute('title') || node.textContent.trim()) + ' ';
       return true;
     },
     SLOT: (node, ctx) => {

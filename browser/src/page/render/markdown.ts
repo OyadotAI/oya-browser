@@ -122,7 +122,7 @@ function appendBlock(out: string[], b: Block, last: Last): Pick<Last, 'region' |
 }
 
 /** Appends one kept block after the last one written; a gap first when the index jumps past it. */
-// why: the gap is judged on the analyzer's index, not the kept position, so a cap that dropped rows shows as a gap too.
+// The gap is judged on the analyzer's index, not the kept position, so a cap that dropped rows shows as a gap too.
 function appendAt(out: string[], b: Block, position: number, last: Last): Last {
   const at = b.index ?? position;
   const from = at === last.at + 1 ? last : writeGap(out, last);
@@ -172,7 +172,7 @@ export function render(analysis: Analysis): string {
 }
 
 /** The markdown trimmed to fit `max`, marked where it was cut. A safety net: the blocks are sized to fit already. */
-// why: it cuts at the budget, not at a line end, since a big block can be one long line that a line-end cut would drop whole.
+// It cuts at the budget, not at a line end, since a big block can be one long line that a line-end cut would drop whole.
 function fit(text: string, max: number): string {
   return text.length <= max ? text : topCut(text, max);
 }
@@ -298,7 +298,7 @@ const topCut = (text: string, max: number): string => text.slice(0, Math.max(max
 
 /** The page for one pick, rendered once with the blocks it kept. */
 function pageFor(analysis: Analysis, whole: string, max: number, picked: Cut): string {
-  // why: a pick that keeps nothing (the room is smaller than a clipped block's line) shows the top, not an empty page.
+  // A pick that keeps nothing (the room is smaller than a clipped block's line) shows the top, not an empty page.
   if (!picked.kept.length) return topCut(whole, max);
   return pageShowing(analysis, picked.blocks, picked.kept, picked.anchored);
 }

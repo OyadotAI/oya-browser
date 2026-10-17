@@ -11,13 +11,13 @@
 export const PAGE_RENDER = {
   MAX_PAGE_CHARS: 80000,
   TRUNCATED_ROOM: 120,
-  // why: one block may take at most this share of the room, so a raw text file or a huge code block shows its start and leaves room for what is around it.
+  // One block may take at most this share of the room, so a raw text file or a huge code block shows its start and leaves room for what is around it.
   MAX_BLOCK_SHARE: 0.5,
-  // why: bounds the renders a markdown cut makes: each re-pick is a full render, so a page of thousands of blocks would otherwise stall the cut.
+  // Bounds the renders a markdown cut makes: each re-pick is a full render, so a page of thousands of blocks would otherwise stall the cut.
   MAX_REFITS: 3,
-  // why: bounds how often a block's text is shrunk to its share: escapes and markup can keep a shrunk text over the share, and each pass is a full size measure.
+  // Bounds how often a block's text is shrunk to its share: escapes and markup can keep a shrunk text over the share, and each pass is a full size measure.
   MAX_SHRINK_PASSES: 3,
-  // why: the blank lines and newlines a markdown block can add around its own line, counted as one character each, so the cut's size never undercounts.
+  // The blank lines and newlines a markdown block can add around its own line, counted as one character each, so the cut's size never undercounts.
   MARKDOWN_BLOCK_LINES: 7,
   MAX_OFFSCREEN_LISTED: 30,
   MAX_INDEX_LINK: 80,

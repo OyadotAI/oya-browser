@@ -41,7 +41,7 @@ function analyzerCap(maxBlocks: number): AnalyzerCap {
   return runInNewContext(`${code}\n({ capOrder, capRows })`, { MAX_BLOCKS: maxBlocks }) as AnalyzerCap;
 }
 
-/** Twelve rows, index 0 to 11. The rows listed in `onScreen` are on screen; row 6 is a field whose state still says off-screen. */
+/** Twelve rows, index 0 to 11. The rows listed in `onScreen` are on screen; row 6 is an email field. */
 function fixture(onScreen: number[]): Block[] {
   const rows: Block[] = [
     { kind: 'text', text: 'Text 0' },

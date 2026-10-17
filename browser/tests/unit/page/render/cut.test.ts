@@ -95,10 +95,9 @@ describe('cut rule', () => {
     assert.deepEqual(keepOrder(blocks).order, [2, 3, 1, 4, 0]);
   });
 
-  // Adapted: the skip rule is gone, so an anchored cut stops at the first miss like an unanchored one (was: skip, keep [1]).
-  it('an anchored cut stops at the first block that does not fit, even a smaller one after it', () => {
+  it('an anchored cut skips a block that does not fit and keeps a smaller one after it', () => {
     const blocks = [sized(8, { id: 1, kind: 'link', screen: true }), sized(1, { id: 2, kind: 'link', screen: true })];
-    assert.deepEqual(pickBlocks(blocks, 5, bySz).kept, []);
+    assert.deepEqual(pickBlocks(blocks, 5, bySz).kept, [1]);
     assert.deepEqual(pickBlocks(blocks, 9, bySz).kept, [0, 1]);
   });
 
@@ -143,16 +142,14 @@ describe('cut rule', () => {
     assert.equal(keepOrder(unmarked).anchored, false);
   });
 
-  it('E5 a pick stops at the first block that does not fit the room left', () => {
+  it('E5 an anchored pick skips a block that does not fit the room left and takes the next one that does', () => {
     const blocks: Block[] = [sized(1, { id: 1, kind: 'link', screen: true }), sized(2), sized(1)];
-    assert.deepEqual(pickBlocks(blocks, 2, bySz).kept, [0]);
+    assert.deepEqual(pickBlocks(blocks, 2, bySz).kept, [0, 2]);
   });
 
-  // Adapted: was "skips a block bigger than the whole room and keeps going" (kept [0, 2]). The skip rule is removed:
-  // a block bigger than the room left stops the walk. A clipped block never reaches this, since it is at most half the room.
-  it('E6 an anchored pick stops at a block bigger than the room left, it does not skip it', () => {
-    const blocks: Block[] = [sized(1, { id: 1, kind: 'link', screen: true }), sized(5), sized(1)];
-    assert.deepEqual(pickBlocks(blocks, 3, bySz).kept, [0]);
+  it('E6 a clipped block near the screen does not leave the rest of the room unused', () => {
+    const blocks: Block[] = [sized(1, { id: 1, kind: 'link', screen: true }), sized(5), sized(1), sized(1)];
+    assert.deepEqual(pickBlocks(blocks, 3, bySz).kept, [0, 2, 3]);
   });
 });
 

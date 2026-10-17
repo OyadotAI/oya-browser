@@ -28,7 +28,7 @@ export const cutNote = (kept: number, total: number, anchored: boolean): string 
 export const totalOf = (analysis: Analysis): number => analysis.totalBlocks ?? (analysis.blocks || []).length;
 
 /** A row the analyzer marked on screen. The only anchor: page text cannot claim to be on screen by its words. */
-// why: an older analyzer sends no screen mark; its state words are page text a page can forge, so such a page is cut from the top, as released builds did.
+// An older analyzer sends no screen mark; its state words are page text a page can forge, so such a page is cut from the top, as released builds did.
 const isAnchor = (block: Block): boolean => block.screen === true;
 
 /** Per block: the distance back to the last anchor at or before it, in page positions (Infinity when there is none). */
@@ -104,11 +104,14 @@ function budget(room: number, sizes: number[]): (i: number) => boolean {
   };
 }
 
-/** The indices taken in `order` while each fits in what is left of `room`; the first one that does not fit stops the walk. */
-// why: the walk stops rather than skipping, so a lower-priority block never takes the room a higher one was refused.
-// shortcut: a clipped block of up to half the room can stop the walk with up to half the room unused; upgrade by lowering MAX_BLOCK_SHARE if real pages show it.
-function takeInOrder(order: number[], sizes: number[], room: number): number[] {
+/**
+ * The indices taken in `order` that fit in what is left of `room`. Around the screen a block that does not fit
+ * is skipped and the walk goes on, so one big block near the screen cannot leave the rest of the room unused.
+ * From the top the first miss stops the walk, so an unanchored cut stays one unbroken run, as before.
+ */
+function takeInOrder(order: number[], sizes: number[], room: number, skip: boolean): number[] {
   const fits = budget(room, sizes);
+  if (skip) return order.filter(fits);
   const miss = order.findIndex((i) => !fits(i));
   return miss < 0 ? order : order.slice(0, miss);
 }
@@ -201,7 +204,7 @@ function showAll(blocks: Block[], cap: number, size: Sizer): Showing {
  */
 export function pickBlocks(blocks: Block[], room: number, size: Sizer, priority = keepOrder(blocks)): Cut {
   const { shown, sizes } = showAll(blocks, Math.floor(room * PAGE_RENDER.MAX_BLOCK_SHARE), size);
-  const kept = [...takeInOrder(priority.order, sizes, room)].sort((a, b) => a - b);
+  const kept = [...takeInOrder(priority.order, sizes, room, priority.anchored)].sort((a, b) => a - b);
   return { kept, anchored: priority.anchored, blocks: shown };
 }
 
@@ -230,7 +233,7 @@ export function refit(max: number, room: number, render: (room: number) => strin
   let page = render(left);
   for (let pass = 0; page.length > max && pass < PAGE_RENDER.MAX_REFITS; pass++) {
     const overflow = page.length - max;
-    // why: the overflow comes off twice, since the lines a pick adds (gaps, region comments) are not in its size.
+    // The overflow comes off twice, since the lines a pick adds (gaps, region comments) are not in its size.
     left -= overflow + overflow;
     page = render(left);
   }
