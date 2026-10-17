@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { trimContext, condenseOldPages } from '../../../../src/modules/agent/context.ts';
-import { MAX_CONTEXT_CHARS, RECALL_TOOL } from '../../../../src/modules/agent/constants.ts';
+import { MAX_CONTEXT_CHARS } from '../../../../src/modules/agent/constants.ts';
 
 const BIG = 'x'.repeat(MAX_CONTEXT_CHARS / 2);
 /** A tool result too short to be a page read: an answer from click or type. */
@@ -47,16 +47,6 @@ describe('condenseOldPages', () => {
     const messages = [...HEAD, ...toolTurn('a', 1, 'Clicked element 3'), ...toolTurn('b', 1, PAGE)];
     condenseOldPages(messages);
     assert.equal(messages.filter((m) => m.role === 'tool')[0].content, 'Clicked element 3');
-  });
-
-  it('never condenses what earlier runs read: it is the chat’s memory, not a page whose ids went stale', () => {
-    const recall = [
-      { role: 'assistant', content: null, tool_calls: [{ id: 'r0', function: { name: RECALL_TOOL } }] },
-      { role: 'tool', tool_call_id: 'r0', content: PAGE },
-    ];
-    const messages = [...HEAD, ...recall, ...toolTurn('b', 1, PAGE), ...toolTurn('c', 1, PAGE)];
-    condenseOldPages(messages);
-    assert.equal(messages.find((m) => m.tool_call_id === 'r0')?.content, PAGE);
   });
 });
 

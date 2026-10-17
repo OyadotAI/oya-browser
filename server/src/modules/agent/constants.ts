@@ -157,9 +157,3 @@ export const MINUTES_PER_HOUR = 60;
 
 /** Hours in a day. */
 export const HOURS_PER_DAY = 24;
-
-/**
- * The tool call a follow-up's digest of earlier runs is handed back as. A tool result, not the person's
- * message, so page text read earlier keeps the authority any page read has and never reads as the person's words.
- */
-export const RECALL_TOOL = 'recall_earlier_results';

@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- A follow-up in a desktop chat on a Gemini model failed with "Your AI provider refused the request (400)" since 1.0.197: what earlier runs read was handed to the model as a tool call it had not made, which Gemini refuses without its thought signature. It now rides on the assistant's side of the conversation instead, which every provider accepts.
+
 ## [1.0.197](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.197) · 2026-10-17
 
 ### Added

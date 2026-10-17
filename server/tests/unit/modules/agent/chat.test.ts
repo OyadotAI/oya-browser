@@ -221,7 +221,7 @@ describe('runChat', () => {
     { role: 'user', content: next },
   ];
 
-  it('what earlier runs read comes back as a tool result after the newest message, never in it or the system prompt', async () => {
+  it('what earlier runs read rides on the assistant’s side before the newest message, never in it or the system prompt', async () => {
     pageSays('Andy Bacon worked on Apple Vision Pro');
     const llm = stubLlm([toolReply(['analyze_page', {}]), textReply('FAILED: stopped'), textReply('DONE')]);
     await inLane('tab-7', async () => {
@@ -236,12 +236,14 @@ describe('runChat', () => {
     });
     const messages = llm.requests.at(-1).messages;
     assert.doesNotMatch(messages[0].content, /Andy Bacon/, 'never in the system prompt');
-    const [asked, call, recall] = messages.slice(-3);
+    const [recall, asked] = messages.slice(-2);
     assert.deepEqual(asked, { role: 'user', content: 'what did you find?' }, 'the person’s message is their own words');
-    assert.equal(call.tool_calls[0].function.name, 'recall_earlier_results');
-    assert.equal(recall.role, 'tool', 'page text comes back as a tool result');
-    assert.equal(recall.tool_call_id, call.tool_calls[0].id);
-    assert.match(recall.content, /^Earlier in this chat[^]*Andy Bacon/);
+    assert.equal(recall.role, 'assistant');
+    assert.match(recall.content, /^Stopped\.\n\nEarlier in this chat[^]*Andy Bacon/);
+    assert.ok(
+      messages.every((m) => !m.tool_calls),
+      'no made-up tool call: Gemini refuses a function call without its thought signature',
+    );
     assert.equal(
       lastRun(BROWSER).prompt,
       'research candidates\n\nwhat did you find?',
@@ -258,7 +260,25 @@ describe('runChat', () => {
       await runChat(BROWSER, followUpChat('sign in', 'what did it say?'), options);
     });
     assert.doesNotMatch(JSON.stringify(llm.requests.at(-1).messages), /hunter22/);
-    assert.match(llm.requests.at(-1).messages.at(-1).content, /Signed in with \{\{pw\}\}/);
+    assert.match(llm.requests.at(-1).messages.at(-2).content, /Signed in with \{\{pw\}\}/);
+  });
+
+  it('a follow-up with no reply before it gets the digest as an assistant turn of its own', async () => {
+    pageSays('Fawaz Hakim, Apple');
+    const llm = stubLlm([toolReply(['analyze_page', {}]), textReply('DONE'), textReply('DONE')]);
+    const chat = [
+      { role: 'user', content: 'go' },
+      { role: 'user', content: 'and?' },
+    ];
+    await inLane('tab-14', async () => {
+      await runChat(BROWSER, [{ role: 'user', content: 'go' }], { apiKey: 'chat-key', remember: true });
+      await runChat(BROWSER, chat, { apiKey: 'chat-key', remember: true });
+    });
+    const [first, recall, asked] = llm.requests.at(-1).messages.slice(-3);
+    assert.deepEqual(first, { role: 'user', content: 'go' });
+    assert.equal(recall.role, 'assistant');
+    assert.match(recall.content, /^Earlier in this chat[^]*Fawaz Hakim/);
+    assert.deepEqual(asked, { role: 'user', content: 'and?' });
   });
 
   it('a secret given only on a later message is redacted from what earlier runs read', async () => {
@@ -283,7 +303,7 @@ describe('runChat', () => {
       await runChat(BROWSER, followUpChat('a', 'b'), { apiKey: 'chat-key', remember: true });
       await runChat(BROWSER, followUpChat('a', 'c'), { apiKey: 'chat-key', remember: true });
     });
-    const idOf = (request) => /marked (\S+)\./.exec(request.messages.at(-1).content)?.[1];
+    const idOf = (request) => /marked (\S+)\./.exec(request.messages.at(-2).content)?.[1];
     const [one, two] = [idOf(llm.requests.at(-2)), idOf(llm.requests.at(-1))];
     assert.ok(one && two && one !== two);
   });
@@ -297,7 +317,7 @@ describe('runChat', () => {
     mock.restoreAll();
     const llm = stubLlm([textReply('DONE')]);
     await inLane('tab-9', () => runChat(BROWSER, followUpChat('go', 'and?'), { apiKey: 'chat-key', remember: true }));
-    assert.match(llm.requests[0].messages.at(-1).content, /\(ended on an error\):[^]*Imaad Remtula/);
+    assert.match(llm.requests[0].messages.at(-2).content, /\(ended on an error\):[^]*Imaad Remtula/);
   });
 
   it('a run the person stops is marked stopped at once', async () => {
@@ -315,7 +335,7 @@ describe('runChat', () => {
     mock.restoreAll();
     const llm = stubLlm([textReply('DONE')]);
     await inLane('tab-10', () => runChat(BROWSER, followUpChat('go', 'and?'), { apiKey: 'chat-key', remember: true }));
-    assert.match(llm.requests[0].messages.at(-1).content, /\(stopped\)/);
+    assert.match(llm.requests[0].messages.at(-2).content, /\(stopped\)/);
   });
 
   it('a chat the caller did not ask to remember keeps nothing for its follow-up', async () => {

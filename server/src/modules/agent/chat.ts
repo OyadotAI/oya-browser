@@ -16,7 +16,7 @@ import { Status } from '../../platform/http-status.ts';
 import { redact, isFileValue } from './placeholders.ts';
 import { startRun, lastRun, markMessage } from './recorder.ts';
 import { forgetPage } from './changes.ts';
-import { AGENT_VERIFY, RECALL_TOOL } from './constants.ts';
+import { AGENT_VERIFY } from './constants.ts';
 import { systemPrompt, FOLLOW_UP_NOTE, todayLine } from './prompt.ts';
 import { agentLoop, type AgentResult } from './loop.ts';
 import { fenced, startFindings, statusOf, type KeptRun, type Started } from './findings.ts';
@@ -208,21 +208,21 @@ const remembering = (browserId, messages, options): Started | null =>
   null;
 
 /**
- * The conversation with what earlier runs read handed back after the newest message, as the result of a
- * recall tool call: page text keeps the authority of a page read and never sits in the person's message or
- * the system prompt. Redacted with this message's secrets too (one given only now was not redacted when
- * read). New objects, so the chat itself (the recorded prompt, the check before done) never sees it.
+ * The conversation with what earlier runs read on the assistant's side, just before the newest message: page
+ * text never sits in the person's message or the system prompt. Not as a made-up tool call: a provider can
+ * refuse one it did not make (Gemini wants a thought signature on every function call). Redacted with this
+ * message's secrets too (one given only now was not redacted when read). New objects, so the chat itself (the
+ * recorded prompt, the check before done) never sees it.
  */
 function withDigest(allMessages: any[], memory: Started | null, secrets) {
-  if (!memory?.digest || allMessages.at(-1)?.role !== 'user') return allMessages;
-  const id = `${RECALL_TOOL}:${randomUUID()}`;
-  const call = { id, type: 'function', function: { name: RECALL_TOOL, arguments: '{}' } };
+  const at = allMessages.length - 1;
+  if (!memory?.digest || allMessages[at]?.role !== 'user') return allMessages;
   const digest = redact(fenced(memory.digest, randomUUID()), secrets);
-  return [...allMessages, { role: 'assistant', content: null, tool_calls: [call] }, recalled(id, digest)];
+  const before = allMessages[at - 1];
+  if (before?.role === 'assistant' && typeof before.content === 'string' && !before.tool_calls)
+    return allMessages.with(at - 1, { ...before, content: `${before.content}\n\n${digest}` });
+  return allMessages.toSpliced(at, 0, { role: 'assistant', content: digest });
 }
-
-/** The recall call's result: what earlier runs read, as a tool result. */
-const recalled = (id: string, digest: string) => ({ role: 'tool', tool_call_id: id, content: digest });
 
 /** Runs the loop and records how it ended for the next message: a Stop at once, since the run finishes its model call first. */
 function settled(work: () => Promise<AgentResult>, kept: KeptRun | undefined, signal?: AbortSignal) {

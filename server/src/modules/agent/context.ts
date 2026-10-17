@@ -9,12 +9,10 @@ import {
   MIN_MESSAGES_KEPT,
   PAGES_KEPT_IN_FULL,
   PAGE_RESULT_CHARS,
-  RECALL_TOOL,
 } from './constants.ts';
 
 /** Tools whose long results are logs and lists, not pages: they are never condensed as a page read. */
 const NOT_PAGES = new Set([
-  RECALL_TOOL,
   'read_network',
   'read_console',
   'list_tabs',
