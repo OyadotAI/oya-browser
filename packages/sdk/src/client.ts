@@ -5,7 +5,7 @@
  * options and the environment.
  */
 import { OyaError, refusal } from './errors.js';
-import { savedConfig } from './cli-config.js';
+import { savedConfig, type SavedConfig } from './cli-config.js';
 import {
   CODE_POINT_DIGITS,
   DEFAULT_BASE_URL,
@@ -192,22 +192,52 @@ function addressOf(options: OyaOptions, saved: string | undefined): Sourced {
 }
 
 /** The key, trimmed of the line break a key file ends with, and refused if fetch could not send it. */
-function keyOf(options: OyaOptions, saved: string | undefined): Sourced {
-  const found = firstOf(options.apiKey, 'OYA_API_KEY', saved, 'apiKey');
-  if (!found.value) throw new Error('No API key. Pass { apiKey }, set OYA_API_KEY, or run `npx @oya-ai/cli login`.');
+function keyOf(options: OyaOptions, saved: SavedConfig, address: string): Sourced {
+  const found = firstOf(options.apiKey, 'OYA_API_KEY', savedKeyFor(saved, address), 'apiKey');
+  if (!found.value) throw new Error(noKey(saved, address));
   return { ...found, value: headerSafe(found.value, 'apiKey', 'Copy the key again.') };
+}
+
+/**
+ * The saved key, only when the call goes to the deployment `oya login` saved it
+ * for. A key is a credential for one control plane: handing it to whatever
+ * `baseUrl` or OYA_BASE_URL names next sends it to another host, which at best
+ * answers "Invalid API key" and at worst keeps it. A file with no address,
+ * which no current writer leaves, keeps the old behaviour.
+ */
+function savedKeyFor(saved: SavedConfig, address: string): string | undefined {
+  if (!saved.baseUrl || deploymentOf(saved.baseUrl) === deploymentOf(address)) return saved.apiKey;
+  return undefined;
+}
+
+/** A deployment's address in one spelling: scheme and host lowercased, default port and trailing slashes dropped. */
+function deploymentOf(url: string): string {
+  try {
+    const { origin, pathname } = new URL(String(url).trim());
+    return `${origin}${pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return String(url).trim().replace(/\/+$/, '');
+  }
+}
+
+/** Why there is no key: none anywhere, or a saved one withheld because it is for another deployment. */
+function noKey(saved: SavedConfig, address: string): string {
+  if (!saved.apiKey) return 'No API key. Pass { apiKey }, set OYA_API_KEY, or run `npx @oya-ai/cli login`.';
+  const why = `the key saved in ~/.oya/config.json is for ${saved.baseUrl} and is only sent there`;
+  return `No API key for ${address}: ${why}. Pass { apiKey }, set OYA_API_KEY, or run \`npx @oya-ai/cli login --url ${address}\`.`;
 }
 
 /** The Http for these options: key and URL from the options, then the environment, then the saved config. */
 export function createHttp(options: OyaOptions): Http {
   const saved = savedConfig();
-  const key = keyOf(options, saved.apiKey);
   const address = addressOf(options, saved.baseUrl);
+  const url = webAddress(address);
+  const key = keyOf(options, saved, url);
   const fetchImpl = options.fetch || globalThis.fetch;
   if (!fetchImpl) throw new Error('No fetch available, pass { fetch } or use Node 18+.');
   const origin = { apiKeyFrom: key.from, baseUrlFrom: address.from, savedKey: !!saved.apiKey };
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return new Http(webAddress(address), key.value!, timeout, fetchImpl.bind(globalThis), origin);
+  return new Http(url, key.value!, timeout, fetchImpl.bind(globalThis), origin);
 }
 
 /** A local address, which is served over plain http. */

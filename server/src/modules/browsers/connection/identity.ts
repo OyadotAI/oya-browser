@@ -21,7 +21,8 @@ export interface Identity {
  * The persona's fingerprint with its proxy: the proxy is part of the identity.
  * The residential gateway is only for sandboxes we run, its credentials are the
  * operator's account, and a desktop could lift them; and only on a plan that
- * includes proxy traffic, which Free does not.
+ * includes proxy traffic, which Free does not. The fingerprint is this
+ * connection's own copy, so the proxy put on it never reaches another browser.
  */
 export function identityFor(apiKey: string, persona, provider: string): Identity {
   const fingerprint = container.personas.fingerprintFor(persona);

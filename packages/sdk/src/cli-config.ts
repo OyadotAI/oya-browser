@@ -9,7 +9,7 @@
  */
 
 /** What the CLI writes to its config file. */
-interface SavedConfig {
+export interface SavedConfig {
   /** The key it saved. */
   apiKey?: string;
   /** The deployment it saved it for. */

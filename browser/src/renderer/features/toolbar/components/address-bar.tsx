@@ -26,7 +26,7 @@ function addressKey(event: KeyboardEvent<HTMLInputElement>, vm: ToolbarViewModel
   }
   if (event.key === 'Escape') {
     event.preventDefault();
-    vm.completion.dismiss();
+    vm.escape();
   }
   if (event.key === 'Enter') {
     event.preventDefault();
@@ -72,8 +72,8 @@ function AddressInput({ vm }: AddressBarProps) {
       spellCheck={false}
       autoComplete="off"
       value={url + inline}
-      onFocus={() => void vm.completion.search(vm.state.url)}
-      onBlur={() => vm.completion.dismiss()}
+      onFocus={() => (vm.focused(), void vm.completion.search(vm.state.url))}
+      onBlur={() => vm.blurred()}
       onChange={(event) => vm.edit(event.target.value, typed(event.nativeEvent))}
       onKeyDown={(event) => addressKey(event, vm)}
     />
@@ -82,10 +82,11 @@ function AddressInput({ vm }: AddressBarProps) {
 
 /** The star at the address bar's end, as in Chrome: filled when the page is bookmarked; a click saves or removes it. */
 function BookmarkStar({ vm }: AddressBarProps) {
-  const { url } = useViewModel(vm);
+  // The page, not the text: the star toggles the page that is open, whatever is being typed.
+  const { page } = useViewModel(vm);
   const { saved } = useViewModel(vm.bookmarks);
-  if (!/^https?:\/\//i.test(url)) return null;
-  const on = saved.includes(url);
+  if (!/^https?:\/\//i.test(page)) return null;
+  const on = saved.includes(page);
   return (
     <IconButton
       className={on ? 'bookmark-star saved' : 'bookmark-star'}

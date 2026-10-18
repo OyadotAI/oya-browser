@@ -14,10 +14,16 @@ export const origin = (flags: Flags): Origin =>
 
 /** A client for this call's key and address. Throws without a key: nothing can be sent. */
 export function client(flags: Flags): Oya {
-  const { apiKey, baseUrl } = origin(flags);
-  if (!apiKey)
-    throw new CliError('No API key.', 'no_api_key', { hint: 'Run oya login, or pass --key, or set OYA_API_KEY.' });
+  const { apiKey, baseUrl, savedKey } = origin(flags);
+  if (!apiKey) throw new CliError('No API key.', 'no_api_key', { hint: noKeyHint(baseUrl, savedKey) });
   return new Oya({ apiKey, baseUrl });
+}
+
+/** What to do without a key; a saved key that went unused is one `oya login` saved for another control plane. */
+function noKeyHint(baseUrl: string, savedKey: boolean): string {
+  if (!savedKey) return 'Run oya login, or pass --key, or set OYA_API_KEY.';
+  const why = 'The key oya login saved is for another control plane, so it is not sent here.';
+  return `${why} Run oya login --url ${baseUrl}, or pass --key, or set OYA_API_KEY.`;
 }
 
 /** Prints a value as indented JSON. */

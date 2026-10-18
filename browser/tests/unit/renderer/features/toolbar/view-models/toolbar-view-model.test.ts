@@ -55,11 +55,10 @@ describe('ToolbarViewModel', () => {
     assert.equal(vm.state.url, '');
   });
 
-  it('shows the address the main process reports', () => {
+  it('shows the address the main process reports while nobody is typing', () => {
     const { fake, vm } = toolbar();
-    vm.edit('half typed');
     fake.emit('onUrlChanged', 'https://b.test/');
-    assert.equal(vm.state.url, 'https://b.test/');
+    assert.deepEqual([vm.state.url, vm.state.page], ['https://b.test/', 'https://b.test/']);
   });
 
   it('loads what the address bar says, trimmed, on Enter', () => {
@@ -173,4 +172,131 @@ it('dismisses suggestions when the active tab changes', async () => {
   await settle();
   fake.emit('onTabsUpdated', [active({ id: 2 })]);
   assert.equal(vm.completion.state.open, false);
+});
+
+/** What the person types survives a page changing its own address, until they are done with it. */
+describe('ToolbarViewModel typing', () => {
+  /** A toolbar on tab 1, showing https://a.test/. */
+  function onPage(answers = {}) {
+    const made = toolbar(answers);
+    made.fake.emit('onTabsUpdated', [active()]);
+    made.fake.emit('onUrlChanged', 'https://a.test/');
+    return made;
+  }
+
+  it('keeps what the person typed when the page changes its own address', () => {
+    const { fake, vm } = onPage();
+    vm.edit('half typed');
+    fake.emit('onUrlChanged', 'https://a.test/#t=12');
+    assert.deepEqual([vm.state.url, vm.state.page], ['half typed', 'https://a.test/#t=12']);
+  });
+
+  it('keeps the typing through the tab list updates the same tab sends', () => {
+    const { fake, vm } = onPage();
+    vm.edit('half typed');
+    fake.emit('onUrlChanged', 'https://a.test/next');
+    fake.emit('onTabsUpdated', [active({ loading: true })]);
+    assert.equal(vm.state.url, 'half typed');
+  });
+
+  it("drops the typing on a tab switch and shows the new tab's address", () => {
+    const { fake, vm } = onPage();
+    vm.edit('half typed');
+    // A switch sends the new tab's address first, then the tab list (tab-lifecycle.ts mountTab).
+    fake.emit('onUrlChanged', 'https://b.test/');
+    fake.emit('onTabsUpdated', [active({ id: 2 })]);
+    assert.equal(vm.state.url, 'https://b.test/');
+  });
+
+  it('ends the typing on Enter, so the loaded address shows', () => {
+    const { fake, vm } = onPage();
+    vm.edit('example.com');
+    vm.submit();
+    fake.emit('onUrlChanged', 'https://example.com/');
+    assert.equal(vm.state.url, 'https://example.com/');
+  });
+
+  it('ends the typing when a suggestion is chosen', () => {
+    const { fake, vm } = onPage();
+    vm.edit('exam');
+    vm.submit('https://example.test/');
+    fake.emit('onUrlChanged', 'https://example.test/');
+    assert.equal(vm.state.url, 'https://example.test/');
+  });
+
+  it('keeps the typed text on blur, until the next address change', () => {
+    const { fake, vm } = onPage();
+    vm.edit('half typed');
+    vm.blurred();
+    assert.equal(vm.state.url, 'half typed');
+    fake.emit('onUrlChanged', 'https://a.test/next');
+    assert.equal(vm.state.url, 'https://a.test/next');
+  });
+
+  it('closes open suggestions on Escape and keeps the typing', async () => {
+    const { vm } = onPage({ addressSuggestions: [{ url: 'https://example.test/', title: 'E', source: 'history' }] });
+    vm.edit('exam');
+    await settle();
+    vm.escape();
+    assert.deepEqual([vm.state.url, vm.completion.state.open], ['exam', false]);
+  });
+
+  it("puts the page's address back, selected, on Escape with no suggestions open", () => {
+    const { fake, vm } = onPage();
+    vm.edit('half typed');
+    fake.emit('onUrlChanged', 'https://a.test/next');
+    const before = vm.state.focusRequest;
+    vm.escape();
+    assert.deepEqual([vm.state.url, vm.state.focusRequest], ['https://a.test/next', before + 1]);
+  });
+
+  it("keeps the address Escape restored, so it stays selected, through the page's next change", () => {
+    const { fake, vm } = onPage();
+    vm.focused();
+    vm.edit('half typed');
+    vm.escape();
+    fake.emit('onUrlChanged', 'https://a.test/later');
+    assert.deepEqual([vm.state.url, vm.state.page], ['https://a.test/', 'https://a.test/later']);
+  });
+
+  it('keeps a focused field and its suggestions when the page changes its address', async () => {
+    const { fake, vm } = onPage({ addressSuggestions: [{ url: 'https://a.test/', title: 'A', source: 'history' }] });
+    vm.focused();
+    await vm.completion.search(vm.state.url);
+    fake.emit('onUrlChanged', 'https://a.test/next');
+    assert.deepEqual([vm.state.url, vm.completion.state.open], ['https://a.test/', true]);
+  });
+
+  it("shows the page's address on blur when the field was only looked at", () => {
+    const { fake, vm } = onPage();
+    vm.focused();
+    fake.emit('onUrlChanged', 'https://a.test/next');
+    vm.blurred();
+    assert.equal(vm.state.url, 'https://a.test/next');
+  });
+
+  it('clears a completion left over when the address is replaced', async () => {
+    const { fake, vm } = onPage({
+      addressSuggestions: [{ url: 'https://example.test/', title: 'E', source: 'history' }],
+    });
+    vm.edit('exam', true);
+    await settle();
+    vm.blurred();
+    fake.emit('onUrlChanged', 'https://a.test/next');
+    assert.deepEqual([vm.state.url, vm.completion.state.inline], ['https://a.test/next', '']);
+  });
+
+  it('does not let the starting status overwrite typing', async () => {
+    const { vm } = toolbar({ getStatus: { url: 'https://a.test/' } });
+    vm.edit('typed early');
+    await settle();
+    assert.deepEqual([vm.state.url, vm.state.page], ['typed early', 'https://a.test/']);
+  });
+
+  it('does not let a late starting status overwrite a newer page', async () => {
+    const { fake, vm } = toolbar({ getStatus: { url: 'https://old.test/' } });
+    fake.emit('onUrlChanged', 'https://new.test/');
+    await settle();
+    assert.equal(vm.state.page, 'https://new.test/');
+  });
 });

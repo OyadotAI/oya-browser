@@ -6,6 +6,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- The address bar no longer replaces what you are typing when the page changes its own address. On YouTube, Gmail and other sites that update their address as you use them, typing a new address or search used to be wiped mid-word. Your text now stays until you press Enter, pick a suggestion, press Escape or switch tabs, and an address you selected to type over stays selected. Escape with no suggestions open puts the page's address back, selected, as in Chrome. The bookmark star always reflects the page that is open, not the text being typed.
+
+- A desktop browser, or a cloud browser on a plan without proxy traffic, could be sent the operator's residential proxy credentials when it ran as a persona that a paid cloud browser had used since the server started. It then used the gateway without its traffic being metered. Each connection now gets its own copy of the persona's fingerprint, so a proxy given to one browser never reaches another. A change to a persona's proxy also applies on its next connect instead of after a restart. Operators who ran a residential gateway should rotate its credentials after upgrading.
+
 ## [1.0.198](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.198) · 2026-10-17
 
 ### Fixed
