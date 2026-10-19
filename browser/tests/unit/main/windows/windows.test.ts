@@ -402,3 +402,116 @@ it('a cancelled quit keeps the agent close hold', async (t) => {
   primary.shell.window.close();
   assert.equal(primary.shell.window.isDestroyed(), false);
 });
+
+/** An incognito session the windows open into, counting how often it retires. */
+function withIncognito(root) {
+  const session = root.electron.session.fromPartition('oya-incognito-test');
+  const state = { retired: 0 };
+  root.incognito = { available: () => true, get: async () => session, retire: async () => void state.retired++ };
+  return { session, state };
+}
+/** Opens an incognito window and answers its scope. */
+async function openIncognito(root) {
+  await root.windows.newIncognitoWindow();
+  let found;
+  root.windows.each((scope) => scope.tabs.privateSession && (found = scope));
+  return found;
+}
+it('an incognito window never becomes the target of root tab calls, even once focused', async (t) => {
+  const { root, primary } = setup(t);
+  withIncognito(root);
+  const incognito = await openIncognito(root);
+  incognito.shell.window.focus();
+  assert.equal(root.windows.current, primary);
+  const id = root.tabs.createTab('https://agent.test/');
+  assert.equal(root.windows.owner(id), primary);
+  assert.equal(root.tabs.getActiveView(), primary.tabs.getActiveView());
+});
+it('agents, session restore and root calls by id never reach an incognito tab', async (t) => {
+  const { root } = setup(t);
+  withIncognito(root);
+  const incognito = await openIncognito(root);
+  const id = incognito.tabs.activeTabId;
+  assert.equal(
+    root.windows.allTabs().some((tab) => tab.id === id),
+    false,
+  );
+  assert.equal(
+    root.tabs.list.some((tab) => tab.id === id),
+    false,
+  );
+  assert.equal(root.tabs.find(id), undefined);
+  root.tabs.closeTab(id);
+  assert.ok(incognito.tabs.find(id));
+});
+it('a tab opened in an incognito window without a session uses the window session', async (t) => {
+  const { root } = setup(t);
+  const { session } = withIncognito(root);
+  const incognito = await openIncognito(root);
+  const id = incognito.tabs.createTab('https://private.test/');
+  assert.equal(incognito.tabs.find(id).view.webContents.session, session);
+  assert.equal(incognito.tabs.find(incognito.tabs.list[0].id).view.webContents.session, session);
+});
+it('tabs never move between incognito and normal windows', async (t) => {
+  const { root, primary } = setup(t);
+  const { session } = withIncognito(root);
+  const normal = primary.tabs.createTab('https://normal.test/');
+  const incognito = await openIncognito(root);
+  const id = incognito.tabs.createTab('https://private.test/');
+  assert.throws(() => root.windows.transfer(primary, incognito, primary.tabs.find(normal)), /in or out of incognito/);
+  primary.shell.window.setPosition(-1200, 100);
+  await root.windows.detach(id, { x: -1100, y: 120 });
+  const target = root.windows.owner(id);
+  assert.notEqual(target, primary);
+  assert.notEqual(target, incognito);
+  assert.equal(target.tabs.privateSession, session);
+  await flush();
+});
+it('the person may always use an incognito tab, even while an agent holds the browser', async (t) => {
+  const { root } = setup(t);
+  withIncognito(root);
+  const incognito = await openIncognito(root);
+  root.control.snapshot = () => ({ interactive: false, owner: 'agent' });
+  assert.equal(root.agentTab.humanMay(incognito.tabs.activeTabId), true);
+});
+it('closing the last incognito window retires the session and leaves normal windows open', async (t) => {
+  const { root, primary } = setup(t);
+  const { state } = withIncognito(root);
+  const incognito = await openIncognito(root);
+  incognito.shell.window.close();
+  assert.equal(state.retired, 1);
+  assert.equal(primary.shell.window.isDestroyed(), false);
+});
+it('closing the last normal window closes every incognito window', async (t) => {
+  const { root, primary } = setup(t);
+  const { state } = withIncognito(root);
+  const first = await openIncognito(root);
+  await root.windows.newIncognitoWindow();
+  primary.shell.window.close();
+  assert.equal(first.shell.window.isDestroyed(), true);
+  root.windows.each((scope) => assert.fail('a window outlived the last normal one: ' + scope));
+  assert.ok(state.retired >= 1, 'the session retired');
+});
+it('refuses an incognito window before the person has signed in', async (t) => {
+  const { root, primary } = setup(t);
+  withIncognito(root);
+  primary.shell.browsingMode = false;
+  await assert.rejects(root.windows.newIncognitoWindow(), /Sign in/);
+});
+it('a sign-out while incognito is being set up leaves no incognito window and retires the session', async (t) => {
+  const { root, primary } = setup(t);
+  const { session, state } = withIncognito(root);
+  root.incognito.get = async () => {
+    primary.shell.browsingMode = false;
+    return session;
+  };
+  await assert.rejects(root.windows.newIncognitoWindow(), /Sign in/);
+  root.windows.each((scope) => assert.equal(scope.tabs.privateSession, undefined));
+  assert.equal(state.retired, 1, 'no session is left for a later window to reuse');
+});
+it('closing incognito retires the session even when no incognito window is open yet', async (t) => {
+  const { root } = setup(t);
+  const { state } = withIncognito(root);
+  root.windows.closeIncognito();
+  assert.equal(state.retired, 1);
+});

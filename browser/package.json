@@ -32,6 +32,7 @@
     "test:shell": "npm run build && node tests/integration/shell.mjs",
     "test:tear-off": "npm run build && node tests/integration/tab-tear-off.mjs agent && node tests/integration/tab-tear-off.mjs human",
     "test:control": "npm run build && node tests/integration/control.mjs",
+    "test:incognito": "npm run build && node tests/integration/incognito.mjs",
     "test:desktop-library": "node tests/integration/desktop-library.mjs",
     "test:desktop-media": "node tests/integration/desktop-media.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",

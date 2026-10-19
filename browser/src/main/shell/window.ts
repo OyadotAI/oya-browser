@@ -17,7 +17,16 @@ import type { SavedWindow } from './window-bounds.ts';
 /** The services the shell window uses. */
 type Deps = Pick<
   AppServices,
-  'electron' | 'appDir' | 'config' | 'layout' | 'shortcuts' | 'shield' | 'tabs' | 'windows' | 'windowBounds'
+  | 'electron'
+  | 'appDir'
+  | 'config'
+  | 'layout'
+  | 'shortcuts'
+  | 'shield'
+  | 'tabs'
+  | 'windows'
+  | 'windowBounds'
+  | 'incognito'
 >;
 
 /** The shell page's preload bridge (built to out/preload/), isolated from the page's own scripts. */
@@ -115,15 +124,22 @@ export class ShellWindow {
     if (this.alive()) console.error('[oya] Shell could not load:', error.message);
   }
 
-  /** The shell page's address options: its theme rides in the query so the very first paint is already in it (src/renderer/public/first-paint.js). */
+  /**
+   * The shell page's address options: its theme and whether it is incognito ride in the query so the very first
+   * paint is already in them (src/renderer/public/first-paint.js). Neither changes for the window's lifetime.
+   */
   private firstPaint(): LoadFileOptions {
-    return {
-      query: { theme: this.dark() ? 'dark' : 'light', still: String(inContainer()), secondary: String(this.secondary) },
+    const theme = this.dark() ? 'dark' : 'light';
+    const incognito = {
+      incognito: String(!!this.deps.tabs.privateSession),
+      incognitoAvailable: String(this.deps.incognito.available()),
     };
+    return { query: { theme, still: String(inContainer()), secondary: String(this.secondary), ...incognito } };
   }
 
-  /** Whether the shell is dark: chosen so, or following a dark system. */
+  /** Whether the shell is dark: chosen so, or following a dark system. An incognito window always is. */
   private dark(): boolean {
+    if (this.deps.tabs.privateSession) return true;
     const ui = this.deps.config.values.ui;
     return ui?.theme === 'dark' || (ui?.theme !== 'light' && this.deps.electron.nativeTheme.shouldUseDarkColors);
   }

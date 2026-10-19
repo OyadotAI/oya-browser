@@ -12,7 +12,7 @@ import { ERROR_PREVIEW_CHARS } from './constants.ts';
 /** The services a chat uses. */
 type Deps = Pick<
   AppServices,
-  'config' | 'socket' | 'control' | 'shield' | 'chatAbort' | 'chatRuns' | 'agentTab' | 'tabs'
+  'config' | 'socket' | 'control' | 'shield' | 'chatAbort' | 'chatRuns' | 'agentTab' | 'tabs' | 'windows'
 >;
 
 /** The lane of tab `tab`'s chat: its agent drives that tab, beside other tabs' agents. */
@@ -43,6 +43,8 @@ const CUT_OFF =
   'The connection to the server dropped mid-run, likely a server restart. Check where the page got to, then ask again.';
 /** What a chat answers without a signed-in socket. */
 const OFFLINE = 'Not connected to server';
+/** What a chat answers from an incognito tab: agents never see or drive incognito pages. */
+const INCOGNITO = "Oya's agents can't use incognito windows";
 
 /** The server's JSON answer, or an error quoting what it sent instead. */
 async function readChatAnswer(res: Response): Promise<ChatAnswer> {
@@ -69,13 +71,14 @@ export class Chat {
 
   /**
    * Sends the chat (and any attached files, as `data`) to the server's agent from tab `tabId` (the active one by
-   * default), with control lent to it; answers its reply or `{ error }`. `remember` false (a routine) asks the
+   * default), with control lent to it; answers its reply or `{ error }`, and refuses an incognito tab outright. `remember` false (a routine) asks the
    * server to leave the tab's chat memory alone: a routine is not a message in the person's chat, and its one
    * message would otherwise start that memory over.
    */
   send(messages: unknown[], data?: unknown, tabId?: unknown, remember = true): Promise<ChatAnswer> {
-    if (!this.api.canCall()) return Promise.resolve({ error: OFFLINE });
     const tab = Number.isSafeInteger(tabId) ? (tabId as number) : (this.deps.tabs.activeTabId ?? 0);
+    if (this.deps.windows?.owner(tab)?.tabs.privateSession) return Promise.resolve({ error: INCOGNITO });
+    if (!this.api.canCall()) return Promise.resolve({ error: OFFLINE });
     const payload = { messages, ...(data ? { data } : {}), lane: tabLane(tab), ...(remember ? {} : { remember }) };
     return this.asOnlyChat(tab, (signal) => this.inTab(tab, () => this.ask('chat', payload, signal)));
   }

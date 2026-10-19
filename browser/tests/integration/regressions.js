@@ -41,7 +41,7 @@ has(
   /^\s+closeTab\(id: number, \{ keepOne = true \}: CloseOptions = \{\}\): void \{/m,
   'closeTab lost its keepOne parameter',
 );
-has(/if \(keepOne\) (?:this\.)?createTab\(/, 'closeTab recreates unconditionally, bulk close loops forever');
+has(/if \(keepOne\) (?:this\.|tabs\.)?createTab\(/, 'closeTab recreates unconditionally, bulk close loops forever');
 
 // The page actions render an analysis in the saved page format, and navigate the
 // way the address bar does; both need what the composition root hands the PageDriver.

@@ -70,6 +70,7 @@ import { CommandRunner } from './connection/commands.ts';
 import { Mirror } from './mirror/mirror.ts';
 import { ChatgptAuth, Onboarding } from './chatgpt/index.ts';
 import { BrowserWindows } from './windows/index.ts';
+import { IncognitoSession } from './incognito/index.ts';
 import { type AnalysisResult } from './shell/control-shield.ts';
 import type { ActionParams } from './shell/narration.ts';
 import { BrowsingLibrary } from './library/index.ts';
@@ -155,6 +156,7 @@ const ctx = {
   validationTabs: undefined,
 } as AppServices;
 ctx.config = new ConfigStore({ dir: () => app.getPath('userData'), safe: electron.safeStorage });
+ctx.incognito = new IncognitoSession(ctx);
 ctx.windows = new BrowserWindows(ctx);
 ctx.passkeys = new Passkeys(ctx);
 // Small per-state files beside config.json, named lazily: userData is reset before the app is ready.

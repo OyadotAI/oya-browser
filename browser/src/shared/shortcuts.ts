@@ -23,6 +23,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   ['library', 'History', 'History', 'primary', 'Y'],
   ['bookmark', 'Toggle bookmark', 'Library', 'primary', 'D'],
   ['new-window', 'New window', 'Windows', 'primary', 'N'],
+  ['new-incognito-window', 'New incognito window', 'Windows', 'primary-shift', 'N'],
   ['detach-tab', 'Move tab to a new window', 'Windows', 'primary-alt', 'W', 'KeyW'],
   ['new-tab', 'New tab', 'Tabs', 'primary', 'T'],
   ['close-tab', 'Close tab', 'Tabs', 'primary', 'W'],

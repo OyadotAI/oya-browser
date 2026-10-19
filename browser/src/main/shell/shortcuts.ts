@@ -24,6 +24,7 @@ type Deps = Pick<
   | 'electron'
   | 'persona'
   | 'windows'
+  | 'incognito'
   | 'agentTab'
   | 'sitePermissions'
 >;
@@ -68,10 +69,17 @@ function zoomPage(deps: Deps, offset: number | null): void {
   if (contents) contents.setZoomLevel(offset === null ? 0 : contents.getZoomLevel() + offset);
 }
 
+/** Opens an incognito window where one is offered; a governed or headless browser ignores the chord. */
+function openIncognito(deps: Deps): void {
+  if (!deps.incognito.available()) return;
+  deps.windows?.newIncognitoWindow().catch((error) => console.error('[incognito]', error));
+}
+
 /** Commands the main process runs itself; any other goes to the shell page. */
 const LOCAL_COMMANDS: Record<string, LocalCommand> = {
   ...DIGIT_COMMANDS,
   'new-window': (deps) => deps.agentTab.humanMay(null) && deps.windows?.newWindow(),
+  'new-incognito-window': (deps) => deps.agentTab.humanMay(null) && openIncognito(deps),
   'detach-tab': (deps) => deps.agentTab.humanMay(deps.tabs.activeTabId) && deps.windows?.detach(deps.tabs.activeTabId!),
   'zoom-in': (deps) => zoomPage(deps, ZOOM_STEP),
   'zoom-out': (deps) => zoomPage(deps, -ZOOM_STEP),

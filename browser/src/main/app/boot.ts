@@ -38,6 +38,7 @@ type Deps = Pick<
   | 'control'
   | 'validationTabs'
   | 'governance'
+  | 'incognito'
   | 'actions'
   | 'nativeBrowsing'
   | 'sitePermissions'

@@ -9,6 +9,7 @@ import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { VIEW_SOURCE_LIGHT } from '../../../../src/main/tabs/tab-events.ts';
 import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 import { TAB_UNPROTECTED_DESKTOP, TAB_PROBE_MS } from '../../../../src/main/tabs/constants.ts';
 
 describe('tab events', () => {
@@ -328,5 +329,27 @@ describe('tab events', () => {
     tab.view.webContents.url = 'about:blank';
     tab.view.webContents.emit('did-finish-load');
     assert.equal(tab.title, 'about:blank');
+  });
+});
+
+describe('incognito tab events', () => {
+  it('an incognito page is never visited, watched for console messages, or joined to a recording', async () => {
+    const ctx = mainCtx();
+    ctx.observer = { addConsole() {}, traces: { remove() {} } };
+    const visited = mock.method(ctx.library, 'visit', () => {});
+    const joined = mock.method(ctx.recorder, 'joinIfRecording', () => {});
+    const reached = [];
+    ctx.recorder.pageReached = (...args) => reached.push(args);
+    ctx.tabs = new TabManager(ctx, await incognitoSession());
+    const tab = ctx.tabs.find(ctx.tabs.createTab('https://private.test/'));
+    await tab.ready;
+    const contents = tab.view.webContents;
+    contents.emit('did-navigate', {}, 'https://private.test/next');
+    contents.emit('did-finish-load');
+    await flush();
+    assert.equal(visited.mock.callCount(), 0);
+    assert.equal(joined.mock.callCount(), 0);
+    assert.deepEqual(reached, []);
+    assert.equal(contents.listenerCount('console-message'), 0);
   });
 });

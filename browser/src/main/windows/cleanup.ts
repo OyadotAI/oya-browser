@@ -4,6 +4,11 @@ import type { AppServices } from '../app/services.ts';
 export function closeWindowTabs(scope: AppServices): void {
   for (const tab of [...scope.tabs.list]) scope.tabs.closeTab(tab.id, { keepOne: false });
 }
+/** Detach owned views, then destroy the native window without its close checks: a failed hidden shell, or an incognito window being shut. */
+export function discardWindow(scope: AppServices): void {
+  closeWindowTabs(scope);
+  if (scope.shell.window && !scope.shell.window.isDestroyed()) scope.shell.window.destroy();
+}
 /** The per-window shield and its polling must not survive the native window. */
 export function disposeWindow(scope: AppServices): void {
   scope.layout.flush();

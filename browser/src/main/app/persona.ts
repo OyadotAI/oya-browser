@@ -19,6 +19,7 @@ import { NOISE_SEED_DIGITS } from './constants.ts';
 type Deps = Pick<
   AppServices,
   | 'nativeBrowsing'
+  | 'windows'
   | 'passkeys'
   | 'mediaPermissions'
   | 'externalApps'
@@ -314,8 +315,9 @@ export class Persona {
     if (this.policyEpoch === epoch) this.active = previous;
   }
 
-  /** Closes every tab of the old jar and returns their addresses to reopen in the new one. */
+  /** Closes every tab of the old jar and returns their addresses to reopen in the new one; incognito windows just close. */
   private leaveJar(): string[] {
+    this.deps.windows?.closeIncognito();
     const tabs = this.deps.tabs.list;
     const reopen = tabs.map(addressOf);
     // Drop the pending batch rather than flushing it. Those changes were seen

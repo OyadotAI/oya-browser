@@ -4,6 +4,7 @@ import type { AppServices } from '../app/services.ts';
 import type { HandlersOf } from './handle.ts';
 import { LibraryMenu, addressSuggestions, readLibrary, changeLibrary } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
+import { isIncognito } from '../incognito/index.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
 
@@ -43,6 +44,7 @@ type Channel =
   | 'enter-browsing'
   | 'new-tab'
   | 'new-window'
+  | 'new-incognito-window'
   | 'detach-tab'
   | 'begin-tab-drag'
   | 'end-tab-drag'
@@ -70,6 +72,7 @@ export class NavigationHandlers {
     'enter-browsing': () => this.deps.tabs.enterBrowsingMode(HOME_URL),
     'new-tab': (_e, url) => this.newTab(url),
     'new-window': () => this.deps.windows?.newWindow(),
+    'new-incognito-window': () => this.deps.windows?.newIncognitoWindow(),
     'detach-tab': (_e, id) => this.detach(id),
     'begin-tab-drag': (_e, id) => this.deps.windows?.drag.begin(this.deps as AppServices, id),
     'end-tab-drag': () => this.deps.windows?.drag.drop(),
@@ -117,23 +120,23 @@ export class NavigationHandlers {
     await this.deps.tabs.navigateActive(url);
   }
 
-  /** Back or forward in the active tab, recorded as a step when a recording is running. */
+  /** Back or forward in the active tab, recorded as a step when a recording is running (never from incognito). */
   private async goInHistory(action: 'go_back' | 'go_forward'): Promise<void> {
     this.requireShownTab();
     const contents = this.deps.tabs.getActiveView()?.webContents;
     const back = action === 'go_back';
     const history = contents?.navigationHistory;
     if (!contents || (history && !(back ? history.canGoBack() : history.canGoForward()))) return;
-    await this.deps.recorder.recordHistory(action);
+    if (!isIncognito(contents.session)) await this.deps.recorder.recordHistory(action);
     if (back) contents.goBack();
     else contents.goForward();
   }
 
-  /** Opens a tab; the start page loads nothing, so a recording keeps only a real address. */
+  /** Opens a tab; the start page loads nothing, so a recording keeps only a real address, and never an incognito one. */
   private newTab(url: string | undefined): number {
     this.deps.agentTab.requireFor(null);
     const id = this.deps.tabs.createTab(url || HOME_URL, true);
-    if (url) this.deps.recorder.recordNavigation(url);
+    if (url && !this.deps.tabs.privateSession) this.deps.recorder.recordNavigation(url);
     return id;
   }
 }

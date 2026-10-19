@@ -53,7 +53,7 @@ export class WindowServiceRouter {
   }
   /** Selecting an agent target switches the application target, while local shell selection stays local. */
   private tabCall(key: string, args: unknown[]): unknown {
-    const scope = this.windows.owner(Number(args[0]));
+    const scope = this.windows.publicOwner(Number(args[0]));
     if (!scope) return undefined;
     if (key === 'activateTab') this.windows.select(scope);
     return this.invoke(scope, 'tabs', key, args);

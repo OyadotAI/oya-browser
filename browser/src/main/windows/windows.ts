@@ -1,15 +1,15 @@
 /** Native browser windows own independent shells while sharing the profile and globally unique tab ids. */
-import type { Event, Point, WebContents } from 'electron';
+import type { Event, Point, Session, WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import type { Tab } from '../tabs/types.ts';
-import { closeWindowTabs, disposeWindow } from './cleanup.ts';
-import { inTabStrip, inWindow } from './geometry.ts';
+import { closeWindowTabs, discardWindow, disposeWindow } from './cleanup.ts';
+import { assertSameKind, isPrivateScope, publicScopes, sameKind } from './kinds.ts';
+import { inTabStrip, inWindow, placeNear } from './geometry.ts';
 import { TabTearOff } from './tear-off.ts';
 import { WindowOpening } from './opening.ts';
 import { WindowContext } from './context.ts';
 import { WindowServiceRouter } from './service-router.ts';
 import { WindowTabEvents } from './tab-events.ts';
-import { WINDOW_DROP_OFFSET } from './constants.ts';
 
 /** One application-level owner for window lifetimes, transfer and agent tab discovery. */
 export class BrowserWindows {
@@ -45,9 +45,9 @@ export class BrowserWindows {
   allocateTabId(): number {
     return this.nextId++;
   }
-  /** All tabs, including real OAuth popups, remain visible to the agent. */
+  /** All tabs, including real OAuth popups, remain visible to the agent; incognito windows' never do. */
   allTabs(): Tab[] {
-    return this.scopes.flatMap((scope) => scope.tabs.list);
+    return publicScopes(this.scopes).flatMap((scope) => scope.tabs.list);
   }
   /** Invoke a shared notification against a snapshot, safe when a callback closes a window. */
   each(run: (scope: AppServices) => unknown): void {
@@ -57,6 +57,10 @@ export class BrowserWindows {
   owner(id: number): AppServices | undefined {
     return this.scopes.find((scope) => scope.tabs.find(id));
   }
+  /** The owner an application-level call by id may reach: an incognito tab's id reads as not found. */
+  publicOwner(id: number): AppServices | undefined {
+    return publicScopes(this.scopes).find((scope) => scope.tabs.find(id));
+  }
   /** Tab input and native permissions resolve moved page ownership without page-provided ids. */
   ownerOfContents(contents: WebContents): AppServices | undefined {
     return this.scopes.find((scope) => scope.tabs.list.some((tab) => tab.view.webContents === contents));
@@ -65,9 +69,9 @@ export class BrowserWindows {
   fromContents(contents: WebContents): AppServices | undefined {
     return this.scopes.find((scope) => scope.shell.window?.webContents === contents && scope.shell.alive());
   }
-  /** Select an application target without remounting any other window's selected page. */
+  /** Select an application target without remounting any other window's selected page; never an incognito window. */
   select(scope: AppServices): void {
-    if (this.scopes.includes(scope)) this.current = scope;
+    if (this.scopes.includes(scope) && !isPrivateScope(scope)) this.current = scope;
   }
   /** A tab's callbacks resolve its current owner even after its view moves to another window. */
   forTab(tab: Tab, fallback: AppServices): AppServices {
@@ -109,18 +113,27 @@ export class BrowserWindows {
     this.quitSaved = quitting;
     this.root.sessionTabs?.flush();
   }
-  /** Open a full browser shell; never create a second profile or duplicate the server connection. */
-  create(point?: Point): AppServices {
+  /** Open a full browser shell; never create a second profile or duplicate the server connection. `session` makes it incognito. */
+  create(point?: Point, session?: Session): AppServices {
     this.root.agentTab.requireFor(null);
-    const scope = this.addScope();
+    const scope = this.addScope(session);
     scope.shell.browsingMode = true;
     scope.shell.create(true);
-    if (point) this.position(scope, point);
+    if (point) placeNear(scope, point);
     return scope;
   }
   /** Keyboard/menu new-window starts on Home, whose address box receives focus. */
   newWindow(): Promise<void> {
     return this.opening.newWindow();
+  }
+  /** A window in the shared incognito session; only for a signed-in person, never governed or headless. */
+  newIncognitoWindow(): Promise<void> {
+    return this.opening.newIncognitoWindow(this.root);
+  }
+  /** Shuts every incognito window (persona switch, sign out, last normal window) and retires the session, even one still being set up, so the next window never reuses one protected for an earlier persona. */
+  closeIncognito(): void {
+    this.scopes.filter(isPrivateScope).forEach(discardWindow);
+    void this.root.incognito.retire();
   }
   /** Move a live tab only after the destination chrome is drawn. */
   async detach(id: number, point?: Point): Promise<void> {
@@ -145,11 +158,14 @@ export class BrowserWindows {
   /**
    * The window whose tab strip is under `point`: the frontmost other window there,
    * so a drop never falls through it into a strip it covers. `source` is skipped,
-   * since a torn-off tab's own window sits under the pointer that carries it.
+   * since a torn-off tab's own window sits under the pointer that carries it. Only
+   * a window of the same kind takes the tab: a normal tab never joins an incognito
+   * window, nor the other way round.
    */
   dropTarget(source: AppServices, point: Point): AppServices | undefined {
     const hit = this.frontmostAt(point, source);
-    return hit && inTabStrip(point, hit.shell.window!.getContentBounds()) ? hit : undefined;
+    if (!hit || !sameKind(hit, source)) return undefined;
+    return inTabStrip(point, hit.shell.window!.getContentBounds()) ? hit : undefined;
   }
   /** The frontmost open window under `point`, other than `skip`. */
   private frontmostAt(point: Point, skip: AppServices): AppServices | undefined {
@@ -158,7 +174,6 @@ export class BrowserWindows {
       .reverse()
       .find((scope) => scope !== skip && open(scope) && inWindow(point, scope.shell.window!.getBounds()));
   }
-
   /**
    * The original tab object, webContents, history and renderer survive the
    * transfer. The tab arrives unpinned: the target appends it, which is the
@@ -167,29 +182,22 @@ export class BrowserWindows {
   transfer(source: AppServices, target: AppServices, tab: Tab): void {
     this.assertMovable(source, tab.id);
     this.assertMovable(target, tab.id);
-    this.assertSource(source, tab);
+    this.assertSource(source, target, tab);
     source.tabs.releaseTab(tab.id);
     target.tabs.receiveTab(Object.assign(tab, { pinned: false }));
     target.shell.stagedTab = undefined;
     this.present(target);
     if (!source.tabs.list.length) source.shell.window?.close();
   }
-  /** Recheck ownership after asynchronous shell preparation. */
-  private assertSource(source: AppServices, tab: Tab): void {
+  /** Recheck ownership after asynchronous shell preparation, and that the tab stays in its own kind of window. */
+  private assertSource(source: AppServices, target: AppServices, tab: Tab): void {
     if (!source.shell.alive() || source.tabs.find(tab.id) !== tab)
       throw new Error('The source tab changed during the move');
-  }
-  /** Keep a new window within the target display's work area, including negative-coordinate monitors. */
-  private position(scope: AppServices, point: Point): void {
-    const area = this.root.electron.screen.getDisplayNearestPoint(point).workArea;
-    const bounds = scope.shell.window!.getBounds();
-    const x = Math.max(area.x, Math.min(point.x - WINDOW_DROP_OFFSET, area.x + area.width - bounds.width));
-    const y = Math.max(area.y, Math.min(point.y - WINDOW_DROP_OFFSET, area.y + area.height - bounds.height));
-    scope.shell.window!.setPosition(Math.round(x), Math.round(y));
+    assertSameKind(source, target);
   }
   /** Register a dependency scope before creating tabs or loading any renderer. */
-  private addScope(): AppServices {
-    const scope = new WindowContext(this.root).services;
+  private addScope(session?: Session): AppServices {
+    const scope = new WindowContext(this.root, session).services;
     this.scopes.push(scope);
     return scope;
   }
@@ -197,6 +205,9 @@ export class BrowserWindows {
   private closed(scope: AppServices): void {
     disposeWindow(scope);
     this.scopes.splice(this.scopes.indexOf(scope), 1);
-    if (this.current === scope && this.scopes.length) this.current = this.scopes.at(-1)!;
+    const normal = publicScopes(this.scopes);
+    if (this.current === scope && normal.length) this.current = normal.at(-1)!;
+    if (!isPrivateScope(scope) && !normal.length) this.closeIncognito();
+    else if (isPrivateScope(scope) && !this.scopes.some(isPrivateScope)) void this.root.incognito.retire();
   }
 }

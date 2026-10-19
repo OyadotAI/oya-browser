@@ -4,6 +4,7 @@
  * along with its protection before the first page (tab-protector.ts).
  */
 import { privateSession } from '../native-contexts/index.ts';
+import { isIncognito } from '../incognito/index.ts';
 import type { AppServices } from '../app/services.ts';
 import { watchContents } from '../observe/install.ts';
 import { ERR_ABORTED } from './constants.ts';
@@ -115,12 +116,14 @@ export class TabEvents {
     // New tabs join an active recording before the user can interact with them; one never protected has nothing to record.
     tabReady.then(() => tab.protection === 'protected' && joinRecording(this.deps.recorder, tab.view));
     this.wireTitle(tab);
-    if (this.deps.observer) watchContents(this.deps.observer, contents);
+    // Agents read the observer (read_console), so an incognito page's console never reaches it.
+    if (this.deps.observer && !isIncognito(contents.session)) watchContents(this.deps.observer, contents);
   }
 
-  /** Native navigation drives outcome checks; each active recorder owns its native frame subscriptions. */
+  /** Native navigation drives outcome checks; each active recorder owns its native frame subscriptions. Not for incognito. */
   private wireRecording(tab: Tab): void {
     const contents = tab.view.webContents;
+    if (isIncognito(contents.session)) return;
     contents.on('did-navigate', (_e, u) => this.deps.recorder.pageReached?.(tab.id, u));
     contents.on(
       'did-navigate-in-page',

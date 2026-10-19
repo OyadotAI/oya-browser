@@ -1,20 +1,22 @@
 /**
  * The navigation toolbar (index.html's nav.toolbar): Back, Forward, Reload,
  * the address bar and its status, then the other features' toolbar parts
- * (update pill, control status) as children, the Ask button, and at its end
+ * (update pill, control status) as children, the Ask button (the Incognito badge in
+ * an incognito window, where no agent works), and at its end
  * notifications and the profile, as in Chrome; and the navigation progress line.
  * History and bookmarks are on the bookmarks bar under it (All bookmarks). Its ids stay: the control guard finds
  * #btn-back, #btn-forward, #btn-reload and #url-bar by id and marks them
  * blocked or read-only while an agent drives.
  */
 import type { ReactNode } from 'react';
-import { useViewModel } from '../../../hooks/index.ts';
+import { incognito, useViewModel } from '../../../hooks/index.ts';
 import { IconButton } from '../../../ui/index.ts';
 import './toolbar.css';
 import type { RendererServices } from '../../../app/services.ts';
 import { navLook, type ToolbarViewModel } from '../view-models/toolbar-view-model.ts';
 import { AddressBar } from './address-bar.tsx';
 import { AskButton } from './ask-button.tsx';
+import { IncognitoBadge } from './incognito-badge.tsx';
 import { LibraryButtons } from './library-buttons.tsx';
 import { TEXT } from '../model/constants.ts';
 
@@ -63,7 +65,7 @@ export function Toolbar({ vm, panel, shell, children, trailing }: ToolbarProps) 
       <AddressBar vm={vm} />
       <ToolbarLibrary vm={vm} />
       {children}
-      <AskButton panel={panel} shell={shell} />
+      {incognito() ? <IncognitoBadge /> : <AskButton panel={panel} shell={shell} />}
       {trailing}
       <div id="navigation-progress" hidden={!nav.loading} aria-hidden="true"></div>
     </nav>

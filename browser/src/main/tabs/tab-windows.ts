@@ -3,6 +3,7 @@
  * target="_blank" becomes a tab; a sign-in popup, a window the page named and a
  * blank one it fills itself stay real windows, protected and adopted onto the tab list.
  */
+import { isIncognito } from '../incognito/index.ts';
 import type { BrowserWindow, HandlerDetails, LoadURLOptions, WindowOpenHandlerResponse } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { isAuthPopup, opensBlankWindow, opensNamedWindow } from './auth-popup.ts';
@@ -33,8 +34,9 @@ export type TabWindowsDeps = Pick<
   | 'windows'
 >;
 
-/** Joins a recording in progress; a page that refuses is logged and tried again on its next load. */
+/** Joins a recording in progress; a page that refuses is logged and tried again on its next load. Incognito pages never join. */
 export function joinRecording(recorder: AppServices['recorder'], view: TabView): Promise<unknown> {
+  if (isIncognito(view.webContents.session)) return Promise.resolve();
   return Promise.resolve(recorder.joinIfRecording(view)).catch((err: Error) =>
     console.error('[recording]', err.message),
   );

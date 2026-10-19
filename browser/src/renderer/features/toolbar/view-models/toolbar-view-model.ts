@@ -13,6 +13,7 @@ import { ViewModel } from '../../../core/view-model.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { TabSummary } from '../../../../shared/ipc.ts';
 import { TEXT } from '../model/constants.ts';
+import { incognito } from '../../../hooks/index.ts';
 
 /** The active tab, as the toolbar reads it. */
 export type ActiveTab = TabSummary & {
@@ -102,8 +103,11 @@ export function navLook({ loading, error }: NavState): NavLook {
   return { status, statusLabel: error || status, statusTitle: error, ...reload };
 }
 
-/** The window's title for a page titled `title`. */
-export const windowTitle = (title: string): string => (title ? title + TEXT.titleJoin + TEXT.app : TEXT.app);
+/** The window's title for a page titled `title`; an incognito window says so in its name. */
+export const windowTitle = (title: string): string => {
+  const app = incognito() ? TEXT.appIncognito : TEXT.app;
+  return title ? title + TEXT.titleJoin + app : app;
+};
 
 /** The Ask button's classes for a panel `open` or not, while `recording` or not. */
 export const askClass = (open: boolean, recording: boolean): string =>

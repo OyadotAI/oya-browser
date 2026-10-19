@@ -152,6 +152,28 @@ describe('application menu', () => {
     assert.doesNotThrow(() => item(ctx, 'zoom-in').click());
   });
 
+  it('offers New Incognito Window only where the browser has incognito', () => {
+    const ctx = mainCtx();
+    installApplicationMenu(ctx);
+    assert.equal(item(ctx, 'browser-new-incognito-window').accelerator, 'CmdOrCtrl+Shift+N');
+    ctx.incognito = { available: () => false };
+    installApplicationMenu(ctx);
+    assert.equal(item(ctx, 'browser-new-incognito-window'), undefined);
+  });
+
+  it('runs a menu command in the window it was clicked in, not the last normal one', () => {
+    const ctx = mainCtx();
+    const opened: string[] = [];
+    const clicked = { webContents: {} };
+    const incognito = { agentTab: ctx.agentTab, tabs: { activeTabId: 1, createTab: () => opened.push('incognito') } };
+    ctx.tabs = { createTab: () => opened.push('normal') };
+    ctx.windows = { fromContents: (contents) => (contents === clicked.webContents ? incognito : undefined) };
+    installApplicationMenu(ctx);
+    item(ctx, 'browser-new-tab').click({}, clicked);
+    item(ctx, 'browser-new-tab').click();
+    assert.deepEqual(opened, ['incognito', 'normal']);
+  });
+
   it('names the product in the menus', () => {
     const ctx = mainCtx();
     installApplicationMenu(ctx);

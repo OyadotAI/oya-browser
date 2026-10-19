@@ -43,6 +43,8 @@ import type { AgentTab } from '../control/agent-tab.ts';
 export interface AppServices {
   /** Native window ownership, absent only in isolated unit-test contexts. */
   windows?: import('../windows/index.ts').BrowserWindows;
+  /** The incognito windows' shared throwaway session (src/main/incognito/). */
+  incognito: import('../incognito/index.ts').IncognitoSession;
   /** Native session lifecycle; production requires complete engine-owned persona protection. */
   nativeBrowsing?: boolean;
 

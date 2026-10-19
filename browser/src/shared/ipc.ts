@@ -365,6 +365,8 @@ export interface ShellCalls {
   newTab(url?: string): Promise<number>;
   /** Open a full browser window in the same profile. */
   newWindow(): Promise<void>;
+  /** Open an incognito window: the shared throwaway session, out of history, restore and agents' reach. */
+  newIncognitoWindow(): Promise<void>;
   /** Move this shell's live tab into another window or a new window at the pointer. */
   detachTab(id: number): Promise<void>;
   /** Begin native drag feedback for a tab owned by this shell. */
@@ -588,6 +590,7 @@ export const CALL_CHANNELS = {
   toggleBookmark: 'toggle-bookmark',
   newTab: 'new-tab',
   newWindow: 'new-window',
+  newIncognitoWindow: 'new-incognito-window',
   detachTab: 'detach-tab',
   beginTabDrag: 'begin-tab-drag',
   endTabDrag: 'end-tab-drag',

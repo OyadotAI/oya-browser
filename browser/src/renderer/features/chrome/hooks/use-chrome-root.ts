@@ -6,7 +6,7 @@
  * Also how the root reads the first paint's appearance.
  */
 import { useEffect } from 'react';
-import { useViewModel } from '../../../hooks/index.ts';
+import { incognito, useViewModel } from '../../../hooks/index.ts';
 import type { ShellViewModel } from '../../../app/shell-view-model.ts';
 import { appliedTheme, type ThemeState, type ThemeViewModel } from '../view-models/theme-view-model.ts';
 import type { AgentActivityViewModel } from '../view-models/activity-view-model.ts';
@@ -21,9 +21,9 @@ export interface ChromeRoot {
   shell: ShellViewModel;
 }
 
-/** Puts the theme on the root element. */
+/** Puts the theme on the root element; an incognito window stays dark whatever the saved preference says. */
 function applyTheme(root: HTMLElement, state: ThemeState): void {
-  root.dataset.theme = appliedTheme(state);
+  root.dataset.theme = incognito() ? 'dark' : appliedTheme(state);
   if (state.platform) root.dataset.platform = state.platform;
   if (state.switching) root.dataset.themeSwitching = 'true';
   else delete root.dataset.themeSwitching;

@@ -7,6 +7,7 @@ import {
   type NativeDialogPage,
 } from '../native/index.ts';
 import { DialogService } from './service.ts';
+import { isIncognito } from '../incognito/index.ts';
 /** Human UI lifetime is independent of the engine reply and may be cancelled during takeover. */
 export type PresentDialog = (page: WebContents, info: NativeDialogInfo, reply: NativeDialogReply) => () => void;
 /** One native decision keeps its exact page and reply across ownership transfers. */
@@ -40,7 +41,8 @@ export class DesktopDialogs extends DialogService {
   }
   /** Unsupported engines fail before the page is marked as subscribed. */
   watch(page: WebContents): void {
-    if (this.watched.has(page)) return;
+    // An incognito page's dialogs stay with the person, as on stock Electron: never queued for an agent or noted.
+    if (this.watched.has(page) || isIncognito(page.session)) return;
     // Stock Electron (desktop) has no dialog hook: the person answers its own dialogs, agents get none.
     if (!(page as unknown as NativeDialogPage)._setOyaDialogHandler) return;
     const open = (info: NativeDialogInfo, reply: NativeDialogReply) => this.open(page, info, reply);

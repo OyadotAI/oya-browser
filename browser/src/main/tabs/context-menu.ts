@@ -10,6 +10,7 @@ import type { ScriptResult } from '../actions/types.ts';
 import { agentDriving, AGENT_HOLDS_PAGE } from '../shell/control-shield.ts';
 import { PageSource } from './page-source.ts';
 import { openLink } from './tab-order.ts';
+import { isIncognito } from '../incognito/index.ts';
 
 /** The services the menu uses. */
 type Deps = Pick<
@@ -102,12 +103,12 @@ export class ContextMenu {
     ];
   }
 
-  /** Goes back or forward once a recording in progress has the step. */
+  /** Goes back or forward once a recording in progress has the step; an incognito page is never a step. */
   private goInHistory(view: PageView, action: 'go_back' | 'go_forward'): () => Promise<unknown> {
-    return () =>
-      this.deps.recorder
-        .recordHistory(action)
-        .finally(() => (action === 'go_back' ? view.webContents.goBack() : view.webContents.goForward()));
+    return () => {
+      const step = isIncognito(view.webContents.session) ? Promise.resolve() : this.deps.recorder.recordHistory(action);
+      return step.finally(() => (action === 'go_back' ? view.webContents.goBack() : view.webContents.goForward()));
+    };
   }
 
   /** Back, Forward, Reload. */

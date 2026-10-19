@@ -112,6 +112,13 @@ describe('ToolbarViewModel', () => {
     assert.equal(windowTitle(''), 'Oya Browser');
   });
 
+  it('names an incognito window in its title', (t) => {
+    (globalThis as any).document = { documentElement: { dataset: { incognito: 'true' } } };
+    t.after(() => delete (globalThis as any).document);
+    assert.equal(windowTitle('Example'), 'Example, Oya Browser (Incognito)');
+    assert.equal(windowTitle(''), 'Oya Browser (Incognito)');
+  });
+
   it('stops following the main process on dispose', () => {
     const { fake, vm } = toolbar();
     vm.dispose();

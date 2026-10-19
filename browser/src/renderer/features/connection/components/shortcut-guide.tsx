@@ -1,6 +1,7 @@
 /** Searchable keyboard reference, generated from the bindings used by the native shell. */
 import { useState } from 'react';
 import { SHORTCUTS, shortcutLabel, type Shortcut } from '../../../../shared/shortcuts.ts';
+import { commandOffered } from '../../../hooks/index.ts';
 import './shortcut-guide.css';
 
 /** The keyboard platform whose modifiers the guide should teach. */
@@ -33,8 +34,10 @@ function ShortcutSection({
 /** Search focuses on opening; the parent dialog traps Tab and restores focus on Escape. */
 export function ShortcutGuide({ platform }: Props) {
   const [query, setQuery] = useState('');
-  const rows = SHORTCUTS.filter((row) =>
-    `${row[1]} ${row[2]} ${shortcutLabel(row, platform)}`.toLowerCase().includes(query.trim().toLowerCase()),
+  const rows = SHORTCUTS.filter(
+    (row) =>
+      commandOffered(row[0]) &&
+      `${row[1]} ${row[2]} ${shortcutLabel(row, platform)}`.toLowerCase().includes(query.trim().toLowerCase()),
   );
   const sections = [...new Set(rows.map((row) => row[2]))];
   return (

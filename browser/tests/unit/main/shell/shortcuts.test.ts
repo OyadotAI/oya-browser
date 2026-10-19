@@ -109,6 +109,19 @@ describe('Shortcuts', () => {
     assert.equal(ctx.tabs.list.length, 1);
   });
 
+  it('shift-primary-N opens an incognito window, only for a person in control and only where offered', () => {
+    let opened = 0;
+    ctx.windows = { ownerOfContents: () => undefined, newIncognitoWindow: async () => void opened++ };
+    press(key('n', { shift: true }));
+    assert.equal(opened, 1);
+    ctx.control.state.interactive = false;
+    press(key('n', { shift: true }));
+    ctx.control.state.interactive = true;
+    ctx.incognito = { available: () => false };
+    press(key('n', { shift: true }));
+    assert.equal(opened, 1);
+  });
+
   it('closes the active tab and moves between tabs', () => {
     ctx.tabs.createTab('https://a.test/');
     ctx.tabs.createTab('https://b.test/');

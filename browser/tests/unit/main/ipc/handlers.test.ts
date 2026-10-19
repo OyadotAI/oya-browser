@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { shellHandlers } from '../../../../src/main/ipc/index.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 describe('IPC handlers', () => {
   let ctx: any, call: any;
@@ -58,6 +59,40 @@ describe('IPC handlers', () => {
     });
     assert.equal(ctx.socket.browserId, null);
     assert.ok(left);
+  });
+
+  it('logging out closes every incognito window before the normal windows leave browsing', async () => {
+    const order: string[] = [];
+    ctx.windows = {
+      closeIncognito: () => order.push('incognito'),
+      each: (run) => run({ tabs: { leaveBrowsingMode: () => order.push('leave') } }),
+    };
+    await call('sign-out');
+    assert.deepEqual(order, ['incognito', 'leave']);
+  });
+
+  it('a new tab or a step back in an incognito window never becomes a recording step', async () => {
+    const recorded: string[] = [];
+    ctx.recorder.recordNavigation = (url) => recorded.push(url);
+    ctx.recorder.recordHistory = async (action) => void recorded.push(action);
+    const page = { session: await incognitoSession(), navigationHistory: { canGoBack: () => true }, goBack() {} };
+    ctx.tabs = {
+      privateSession: page.session,
+      createTab: () => 1,
+      activeTabId: 1,
+      getActiveView: () => ({ webContents: page }),
+    };
+    const handlers: any = shellHandlers(ctx);
+    await handlers['new-tab']({}, 'https://private.test/');
+    await handlers['go-back']({});
+    assert.deepEqual(recorded, []);
+  });
+
+  it('opens an incognito window when the shell asks', async () => {
+    let opened = 0;
+    ctx.windows = { newIncognitoWindow: async () => void opened++ };
+    await call('new-incognito-window');
+    assert.equal(opened, 1);
   });
 
   it('asks the server who this browser is signed in as, with its key, and remembers the answer', async () => {

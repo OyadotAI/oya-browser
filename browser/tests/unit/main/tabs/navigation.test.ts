@@ -8,6 +8,7 @@ import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { normalizeAddress } from '../../../../src/main/tabs/navigation.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 describe('address-bar navigation', () => {
   let ctx, tab;
@@ -78,5 +79,24 @@ describe('address-bar navigation', () => {
   it('does nothing without an active tab', async () => {
     ctx.tabs.closeTab(tab.id, { keepOne: false });
     await ctx.tabs.navigateActive('a.test');
+  });
+});
+
+describe('address-bar navigation in incognito', () => {
+  afterEach(() => mock.timers.reset());
+
+  it('typing an address in incognito pulls no cookies and records nothing, then loads', async () => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const ctx = mainCtx();
+    ctx.tabs = new TabManager(ctx, await incognitoSession());
+    const tab = ctx.tabs.find(ctx.tabs.createTab(''));
+    await tab.ready;
+    const pulled = mock.method(ctx.cookies, 'pullCookiesFor', async () => {});
+    const recorded = mock.method(ctx.recorder, 'recordNavigation', () => {});
+    await ctx.tabs.navigateActive('private.test');
+    await flush();
+    assert.equal(pulled.mock.callCount(), 0);
+    assert.equal(recorded.mock.callCount(), 0);
+    assert.equal(tab.view.webContents.loaded.at(-1), 'https://private.test');
   });
 });

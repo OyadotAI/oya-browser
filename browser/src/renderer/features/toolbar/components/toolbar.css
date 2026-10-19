@@ -484,3 +484,17 @@ body.mode-browsing .toolbar {
 .bookmark-star.saved .icon path {
   fill: currentColor;
 }
+
+/* The incognito badge stands where Ask does; it never collapses, even where the connection pill hides. */
+.incognito-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+  font: 600 var(--text-sm) / 1 var(--font);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

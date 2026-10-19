@@ -1,12 +1,14 @@
 /**
  * Unit tests for what a chat sends the server: the tab's lane, the files when
  * there are any, and remember: false only for a run that is not part of the
- * person's chat (a routine), so the server leaves that tab's chat memory alone.
+ * person's chat (a routine), so the server leaves that tab's chat memory alone;
+ * and no agent is ever handed an incognito tab.
  */
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Chat } from '../../../../src/main/connection/chat.ts';
 import { ServerApi } from '../../../../src/main/connection/server-api.ts';
+import { mainCtx } from '../../support/main-ctx.cjs';
 
 /** A chat whose server calls are recorded instead of sent, with its in-tab and one-at-a-time steps passed through. */
 function recordingChat(t) {
@@ -34,4 +36,13 @@ it('attached files go with the chat', async (t) => {
   const { chat, sent } = recordingChat(t);
   await chat.send([{ role: 'user', content: 'go' }], { cv: 'file' });
   assert.deepEqual(sent, [{ messages: [{ role: 'user', content: 'go' }], data: { cv: 'file' }, lane: 'tab-1' }]);
+});
+
+it('chat from an incognito tab is refused and claims nothing', async () => {
+  const ctx = mainCtx();
+  const incognitoScope = { tabs: { privateSession: {} } };
+  ctx.windows = { owner: (id: number) => (id === 7 ? incognitoScope : undefined) };
+  ctx.agentTab.claim = () => assert.fail('an incognito tab must never be claimed');
+  const answer = await new Chat(ctx).send([{ role: 'user', content: 'hi' }], undefined, 7);
+  assert.match(answer.error, /can't use incognito/);
 });

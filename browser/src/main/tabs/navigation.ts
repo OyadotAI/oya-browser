@@ -3,6 +3,7 @@
  * wait for the tab's protection, then load, unless the person typed another
  * address, closed the tab, or lost control in the meantime.
  */
+import { isIncognito } from '../incognito/index.ts';
 import type { AppServices } from '../app/services.ts';
 import { WEB_URL, SEARCH_URL } from './constants.ts';
 import { loadInTab, isUnprotected, showUnprotected } from './load.ts';
@@ -59,9 +60,18 @@ export class AddressBar {
     const tab = this.deps.tabs.list.find((t: Tab) => t.view === view)!; // the active view is a listed tab's
     const request = this.begin(tab);
     const url = normalizeAddress(typed);
-    // The recording collects the page's typing before the load below replaces the page.
-    await Promise.all([this.deps.recorder.recordNavigation(url), this.deps.cookies.pullCookiesFor(url), tab.setup]);
+    await this.ready(tab, url);
     this.finish(tab, url, request);
+  }
+
+  /**
+   * The recording collects the page's typing before the load replaces the page,
+   * and the profile's cookies for the host are pulled first. An incognito tab
+   * does neither: the server never learns which hosts it visits.
+   */
+  private ready(tab: Tab, url: string): Promise<unknown> {
+    if (isIncognito(tab.view.webContents.session)) return Promise.resolve(tab.setup);
+    return Promise.all([this.deps.recorder.recordNavigation(url), this.deps.cookies.pullCookiesFor(url), tab.setup]);
   }
 
   /** Marks a tab as navigating; returns the request number that must still be current at the end. */

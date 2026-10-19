@@ -9,6 +9,7 @@ import { PageSource } from '../../../../src/main/tabs/page-source.ts';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 const PARAMS = { x: 10, y: 20, linkURL: '', editFlags: { canCopy: true, canPaste: false } };
 
@@ -53,6 +54,19 @@ describe('context menu', () => {
       ctx.tabs.list.map((t) => t.url),
       ['https://a.test/', 'https://b.test/', 'https://c.test/'],
     );
+  });
+
+  it('Back from an incognito page goes back without becoming a recording step', async () => {
+    let recorded = 0;
+    let back = 0;
+    ctx.recorder.recordHistory = async () => void recorded++;
+    view.webContents.session = await incognitoSession();
+    view.webContents.goBack = () => back++;
+    await menuFor(ctx, view, PARAMS)
+      .find((i) => i.label === 'Back')
+      .click();
+    assert.equal(recorded, 0);
+    assert.equal(back, 1);
   });
 
   it('mirrors the clipboard state', () => {

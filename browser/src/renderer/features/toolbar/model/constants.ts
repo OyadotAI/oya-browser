@@ -33,6 +33,10 @@ export const TEXT = {
   /** The window's title, alone and after a page's title. */
   app: 'Oya Browser',
   titleJoin: ', ',
+  /** The window's name in an incognito window. */
+  appIncognito: 'Oya Browser (Incognito)',
+  /** The toolbar's incognito badge, where Ask sits in a normal window. */
+  incognito: 'Incognito',
   /** The Ask button's label and titles. */
   ask: 'Assistant',
   askTitle: 'Open Assistant (⌘/Ctrl Shift D)',

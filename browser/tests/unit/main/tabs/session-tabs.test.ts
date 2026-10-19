@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { SessionTabs } from '../../../../src/main/tabs/session-tabs.ts';
 import { SESSION_SAVE_DELAY_MS, RESTORED_TABS_MAX } from '../../../../src/main/tabs/constants.ts';
 import { memoryFile } from '../../support/main-ctx.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 /** A tab on the strip. */
 const tab = (id: number, url: string, extra = {}) => ({ id, url, view: {}, ...extra });
@@ -63,6 +64,15 @@ describe('SessionTabs', () => {
       active: 1,
       pinned: 0,
     });
+  });
+
+  it('never saves an incognito tab, even one that reached the strip', async () => {
+    const { file, list, session } = setup();
+    session.restore();
+    const view = { webContents: { session: await incognitoSession() } };
+    list.push(tab(2, 'https://private.test/', { view }), tab(3, 'https://a.test/'));
+    session.flush();
+    assert.deepEqual(file.read(), { partition: 'persist:one', urls: ['https://a.test/'], active: 0, pinned: 0 });
   });
 
   it('leaves out the start page, popups, private and blank tabs, and writes an empty session for a start page alone', () => {

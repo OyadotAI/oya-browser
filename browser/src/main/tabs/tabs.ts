@@ -180,7 +180,16 @@ const tabPreferences = (partition: string, appDir: string, owner: Session): WebP
 function rememberClosed(tabs: TabManager, idx: number, keepOne: boolean): void {
   const tab = tabs.list[idx];
   if (!keepOne) return tabs.closed.clear();
-  if (reopenable(tab)) tabs.closed.push(tab.url, idx);
+  // An incognito window remembers its own closes in memory, and reopens them in its own session.
+  if (reopenable(tab) || tab.view.webContents.session === tabs.privateSession) tabs.closed.push(tab.url, idx);
+}
+
+/** The last tab closed. */
+function closedLast(tabs: TabManager, keepOne: boolean): void {
+  tabs.activeTabId = null;
+  // Only a person's close keeps one tab; a bulk close wants the list empty (recreating here looped forever).
+  if (keepOne) tabs.createTab(HOME_URL, true);
+  else tabs.sendTabList();
 }
 
 /** Stops a load and forgets the navigation it was for. */
@@ -254,11 +263,14 @@ export class TabManager {
   readonly closed = new ClosedTabs();
   /** Recently selected tabs, newest last, independent of strip order. */
   private readonly selection = new TabSelection();
+  /** An incognito window's session: every tab it opens without one lands here, never in the profile. */
+  readonly privateSession?: Session;
 
-  /** `deps` are the main-process services (see services.ts). */
-  constructor(deps: Deps) {
+  /** `deps` are the main-process services (see services.ts); `privateSession` makes the window incognito. */
+  constructor(deps: Deps, privateSession?: Session) {
     this.deps = deps;
     this.events = new TabEvents(deps);
+    this.privateSession = privateSession;
   }
 
   /** The tab with this id, if open. */
@@ -284,7 +296,7 @@ export class TabManager {
   /** Opens a tab on `url`, loaded with Electron's `loadOptions` (a referrer, a POST body); returns its id. */
   createTab(...args: CreateTabArguments): number {
     const [url, activate = true, loadOptions, session] = args;
-    const tab = this.addTab(url, session);
+    const tab = this.addTab(url, session ?? this.privateSession);
     const tabReady = eventsFor(this.deps as AppServices, tab, this.events).wire(tab);
     openFirstPage(tab, tabReady, url, loadOptions);
     if (activate) this.deps.layout.inherit(tab.id, url);
@@ -362,18 +374,10 @@ export class TabManager {
 
   /** Picks what shows after a close. */
   private afterClose(idx: number, wasActive: boolean, keepOne: boolean): void {
-    if (this.list.length === 0) return this.closedLast(keepOne);
+    if (this.list.length === 0) return closedLast(this, keepOne);
     if (!wasActive) return this.sendTabList();
     this.activeTabId = null;
     this.activateTab(this.selection.previous(this.list) ?? this.list[Math.min(idx, this.list.length - 1)].id);
-  }
-
-  /** The last tab closed. */
-  private closedLast(keepOne: boolean): void {
-    this.activeTabId = null;
-    // Only a person's close keeps one tab; a bulk close wants the list empty (recreating here looped forever).
-    if (keepOne) this.createTab(HOME_URL, true);
-    else this.sendTabList();
   }
 
   /** Sends the tab strip to the shell. */

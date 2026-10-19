@@ -10,6 +10,7 @@ const { FakeWebContents } = require('./fakes.cjs');
 const { DesktopDialogs } = require('../../../src/main/dialogs/index.ts');
 const { Governance } = require('../../../src/main/identity/governance.ts');
 const { AgentTab } = require('../../../src/main/control/agent-tab.ts');
+const { IncognitoSession } = require('../../../src/main/incognito/index.ts');
 const { SitePermissionStore } = require('../../../src/main/app/site-permissions.ts');
 const { MediaPermissions } = require('../../../src/main/app/media-permissions.ts');
 const { CallGuard } = require('../../../src/main/app/call-guard.ts');
@@ -143,8 +144,9 @@ class FakeBrowserView {
   constructor(options = {}) {
     /** Construction options. */
     this.options = options;
-    /** Its page. */
+    /** Its page, in the app-owned session it was given (an agent context or incognito), as Electron's. */
     this.webContents = new FakePageContents({});
+    if (options.webPreferences?.session) this.webContents.session = options.webPreferences.session;
     /** Last bounds set. */
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     /** Last background colour. */
@@ -560,6 +562,7 @@ function mainCtx(real = {}) {
   ctx.mediaPermissions = new MediaPermissions(ctx, 'darwin');
   ctx.callGuard = new CallGuard(ctx, 'darwin');
   ctx.downloads = new Downloads(ctx, memoryFile());
+  ctx.incognito = new IncognitoSession(ctx);
   for (const [name, Service] of Object.entries(real)) ctx[name] = new Service(ctx);
   return ctx;
 }
