@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- A flow recording whose browser went away (closed, disconnected or torn down) now ends at its 30-minute limit with the steps recorded so far. The stop used to be retried every 5 seconds for as long as the server ran.
+
 ## [1.0.200](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.200) · 2026-10-19
 
 ### Added

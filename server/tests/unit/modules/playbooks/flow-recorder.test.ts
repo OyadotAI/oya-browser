@@ -6,6 +6,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as flows from '../../../../src/modules/playbooks/flow-recorder.ts';
 import { MAX_STEPS, RECORD_MAX_MS, RECORD_POLL_MS } from '../../../../src/modules/playbooks/constants.ts';
+import { HttpError } from '../../../../src/platform/errors.ts';
 
 let n = 0;
 let browserId: string;
@@ -170,6 +171,39 @@ describe('flow recorder', () => {
     assert.equal(flows.isRecording(browserId), false);
     mock.timers.tick(RECORD_MAX_MS);
     assert.deepEqual(await flows.status(browserId), { recording: false, steps: [], secrets: [] });
+  });
+
+  it('ends a recording at its time limit with the steps so far when the stop cannot be delivered', async () => {
+    const { dispatch } = recorderStub([[{ id: 'a', action: 'click' }]]);
+    let gone = false;
+    let sentWhileGone = 0;
+    const paused = new HttpError(409, 'Agent commands are paused for human takeover', { code: 'control_paused' });
+    const send = (action, params) => {
+      if (!gone) return dispatch(action, params);
+      sentWhileGone++;
+      return Promise.reject(paused);
+    };
+    await flows.start(browserId, send);
+    gone = true;
+    mock.timers.tick(RECORD_MAX_MS + RECORD_POLL_MS);
+    await settle();
+    assert.equal(flows.isRecording(browserId), false);
+    const sent = sentWhileGone;
+    mock.timers.tick(RECORD_POLL_MS * 10);
+    await settle();
+    assert.equal(sentWhileGone, sent, 'the stop is not retried every poll');
+    assert.deepEqual((await flows.stop(browserId, send)).steps, [{ id: 'a', action: 'click' }]);
+    assert.deepEqual(await flows.discard(browserId), { ok: true });
+  });
+
+  it('keeps recording when a stop someone sends fails', async () => {
+    await flows.start(browserId, recorderStub().dispatch);
+    const busy = new HttpError(409, 'Another operator has control', { code: 'control_busy' });
+    await assert.rejects(
+      flows.stop(browserId, () => Promise.reject(busy)),
+      { code: 'control_busy' },
+    );
+    assert.equal(flows.isRecording(browserId), true);
   });
 
   it('refuses to discard a recording that is still running', async () => {
