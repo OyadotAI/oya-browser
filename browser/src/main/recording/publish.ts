@@ -11,7 +11,7 @@ import { ServerApi } from '../connection/server-api.ts';
 import { accountOf } from '../app/saved-accounts.ts';
 import { savedAs } from '../workflow/published.ts';
 import { SAVE_TIMEOUT_MS } from '../connection/constants.ts';
-import { NOT_FOUND, PLAYBOOK_SCHEMA_VERSION } from './constants.ts';
+import { CONFLICT, NOT_FOUND, PLAYBOOK_SCHEMA_VERSION } from './constants.ts';
 import type { Recorder } from './recorder.ts';
 
 /** The services a save uses: the recording, the draft, and the server connection. */
@@ -109,6 +109,7 @@ export class RecordingPublisher {
     if (!from) return null;
     const draftId = this.deps.workspace?.draft.id;
     const refused = await this.rename(from, name);
+    if (refused && 'missing' in refused) return (await this.takenRefusal(from, name)) ?? refused;
     if (refused) return refused;
     this.keepName(draftId, name);
     return { from };
@@ -121,6 +122,20 @@ export class RecordingPublisher {
       return null;
     } catch (err) {
       return renameRefusal(from, err);
+    }
+  }
+
+  /**
+   * With the old playbook not found, whether `name` is taken: the save would overwrite that
+   * playbook without a word, so it stops instead. Null when the name is free.
+   */
+  private async takenRefusal(from: string, name: string): Promise<SaveError | null> {
+    try {
+      await this.api.send('GET', `playbooks/${encodeURIComponent(name)}/export`, undefined, SAVE_TIMEOUT_MS);
+      return { error: `A playbook named ${name} already exists`, renameFailed: { from, status: CONFLICT } };
+    } catch (err) {
+      if (statusOf(err) === NOT_FOUND) return null;
+      return { error: failureText(err, 'The server did not answer in time'), renameFailed: { from } };
     }
   }
 
@@ -139,7 +154,10 @@ export class RecordingPublisher {
   private body(name: string, description?: string) {
     const variables = this.deps.workspace?.draft.variables || {};
     return {
-      ...{ schemaVersion: PLAYBOOK_SCHEMA_VERSION, variables, name, prompt: description },
+      schemaVersion: PLAYBOOK_SCHEMA_VERSION,
+      variables,
+      name,
+      prompt: description,
       ...recorded(this.deps.recorder),
     };
   }

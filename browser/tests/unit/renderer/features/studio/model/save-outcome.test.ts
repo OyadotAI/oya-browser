@@ -13,10 +13,11 @@ describe('savedMessage', () => {
     assert.equal(savedMessage({}, 'new'), 'Saved “new” to Oya.');
   });
 
-  it('says a playbook gone from Oya was saved anew', () => {
+  it('says a playbook Oya could not find was saved anew, without claiming it is gone', () => {
     assert.equal(
       savedMessage({ renamed: { from: 'old', missing: true } }, 'new'),
-      'Saved “new” to Oya. “old” was no longer in Oya, so this is a new playbook.',
+      'Saved “new” to Oya as a new playbook: Oya could not find “old” to rename. ' +
+        'If “old” is still in Playbooks, delete it there.',
     );
   });
 

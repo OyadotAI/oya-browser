@@ -205,6 +205,9 @@ export const SAY = {
   nameHint: 'Use letters, numbers, hyphens or underscores, up to 64.',
 } as const;
 
+/** The status a taken playbook name answers. */
+export const CONFLICT = 409;
+
 /** A server reason without its closing full stop, to sit inside a sentence. */
 const reason = (text: string): string => text.replace(/\.\s*$/, '');
 
@@ -213,7 +216,8 @@ export const SAVE_SAY = {
   saved: (to: string) => `Saved “${to}” to Oya.`,
   renamed: (from: string, to: string) => `Renamed “${from}” to “${to}” and saved it to Oya.`,
   missing: (from: string, to: string) =>
-    `Saved “${to}” to Oya. “${from}” was no longer in Oya, so this is a new playbook.`,
+    `Saved “${to}” to Oya as a new playbook: Oya could not find “${from}” to rename. ` +
+    `If “${from}” is still in Playbooks, delete it there.`,
   copy: (from: string, to: string) => `Saved “${to}” to Oya as a copy. “${from}” is unchanged.`,
   taken: (error: string) => `${reason(error)}. Nothing was saved. Choose another name.`,
   renameFailed: (from: string, error: string) => `Could not rename “${from}”: ${reason(error)}. Nothing was saved.`,

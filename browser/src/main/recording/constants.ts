@@ -23,3 +23,5 @@ export const NATIVE_CAPTURE_ISSUE = 'Native recording could not capture a docume
 
 /** The status the server's rename answers when the playbook it names is gone: the save then makes a new one. */
 export const NOT_FOUND = 404;
+/** The status a taken playbook name answers: the save stops rather than overwrite it. */
+export const CONFLICT = 409;

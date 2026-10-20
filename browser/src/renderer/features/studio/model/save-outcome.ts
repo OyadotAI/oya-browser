@@ -5,10 +5,7 @@
  * playbook moved when it did not.
  */
 import type { SaveResult } from '../../../../shared/ipc.ts';
-import { SAVE_SAY, SAY } from './constants.ts';
-
-/** The taken-name status the server's rename answers. */
-const CONFLICT = 409;
+import { CONFLICT, SAVE_SAY, SAY } from './constants.ts';
 
 /** The message for a save that worked; `copyOf` names the playbook a Save as copy left alone. */
 export function savedMessage(result: SaveResult, name: string, copyOf?: string): string {

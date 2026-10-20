@@ -50,13 +50,17 @@ describe('saveRecording', () => {
   });
 
   describe('a draft saved before under another name', () => {
-    /** Answers the rename with `patch` and the save with `post`, recording both. */
-    const answers = (patch: any, post: any = { ok: true, status: 200, json: async () => ({ id: 'p1' }) }) =>
+    /** Answers the rename with `patch`, the save with `post` and the taken-name check with `get`, recording each. */
+    const answers = (
+      patch: any,
+      post: any = { ok: true, status: 200, json: async () => ({ id: 'p1' }) },
+      get: any = { ok: false, status: 404, json: async () => ({ error: 'No playbook named new' }) },
+    ) =>
       (globalThis.fetch as any).mock.mockImplementation(async (url: any, init: any) => {
         requests.push({ url, init });
-        if (init.method !== 'PATCH') return post;
-        if (patch instanceof Error) throw patch;
-        return patch;
+        const answer = { PATCH: patch, GET: get }[init.method as string] ?? post;
+        if (answer instanceof Error) throw answer;
+        return answer;
       });
     const refused = (status: number, error: string) => ({ ok: false, status, json: async () => ({ error }) });
     const methods = () => requests.map((r) => r.init.method);
@@ -137,11 +141,35 @@ describe('saveRecording', () => {
       assert.equal(ctx.workspace.draft.publishedName, 'old');
     });
 
-    it('a playbook already gone is saved anew under the new name', async () => {
+    it('a playbook already gone is saved anew under the new name, once the name is free', async () => {
       answers(refused(404, 'No playbook named old'));
       assert.deepEqual(await saveRecording(ctx, 'new', 'd'), { id: 'p1', renamed: { from: 'old', missing: true } });
-      assert.deepEqual(methods(), ['PATCH', 'POST']);
+      assert.deepEqual(methods(), ['PATCH', 'GET', 'POST']);
+      assert.equal(requests[1].url, 'https://oya.test/api/playbooks/new/export');
       assert.equal(ctx.workspace.draft.publishedName, 'new');
+    });
+
+    it('a playbook already gone never overwrites another under the new name', async () => {
+      answers(refused(404, 'No playbook named old'), undefined, { ok: true, status: 200, json: async () => ({}) });
+      assert.deepEqual(await saveRecording(ctx, 'new', 'd'), {
+        error: 'A playbook named new already exists',
+        renameFailed: { from: 'old', status: 409 },
+      });
+      assert.deepEqual(methods(), ['PATCH', 'GET']);
+      assert.equal(ctx.workspace.draft.publishedName, 'old');
+    });
+
+    it('a playbook already gone stops the save when the name check fails', async () => {
+      answers(refused(404, 'No playbook named old'), undefined, refused(500, 'boom'));
+      assert.deepEqual(await saveRecording(ctx, 'new', 'd'), { error: 'boom', renameFailed: { from: 'old' } });
+      answers(
+        refused(404, 'No playbook named old'),
+        undefined,
+        Object.assign(new Error('x'), { name: 'TimeoutError' }),
+      );
+      const timedOut: any = await saveRecording(ctx, 'new', 'd');
+      assert.deepEqual(timedOut, { error: 'The server did not answer in time', renameFailed: { from: 'old' } });
+      assert.ok(!methods().includes('POST'));
     });
 
     it('any other rename failure stops the save', async () => {
