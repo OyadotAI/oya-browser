@@ -8,6 +8,8 @@
 import type { LibraryKind } from '../../../../shared/library.ts';
 import { BookmarksBarViewModel } from './bookmarks-bar-view-model.ts';
 import { ShareChipViewModel, type ShareChipBridge } from './share-chip-view-model.ts';
+import { FindBarViewModel, type FindBarBridge } from './find-bar-view-model.ts';
+import { ZoomChipViewModel, type ZoomChipBridge } from './zoom-chip-view-model.ts';
 import { AddressCompletion } from './address-completion.ts';
 import { ViewModel } from '../../../core/view-model.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
@@ -80,7 +82,9 @@ export type ToolbarBridge = Pick<
   | 'onTitleChanged'
   | 'onTabsUpdated'
 > &
-  ShareChipBridge;
+  ShareChipBridge &
+  FindBarBridge &
+  ZoomChipBridge;
 
 /** Before any tab: nothing loading, nowhere to go. */
 const IDLE: NavState = { loading: false, error: '', canGoBack: false, canGoForward: false };
@@ -121,6 +125,10 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   readonly bookmarks: BookmarksBarViewModel;
   /** The share chip: what a call is capturing, and the way back to it. */
   readonly share: ShareChipViewModel;
+  /** The find bar under that (Cmd/Ctrl+F). */
+  readonly find: FindBarViewModel;
+  /** The address bar's zoom chip. */
+  readonly zoom: ZoomChipViewModel;
   /** The main process. */
   private readonly bridge: ToolbarBridge;
   /** Last selected tab, to focus a new start page only once. */
@@ -133,12 +141,19 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
     this.completion = new AddressCompletion(bridge);
     this.bookmarks = new BookmarksBarViewModel(bridge);
     this.share = new ShareChipViewModel(bridge);
-    this.own(() => (this.completion.dispose(), this.bookmarks.dispose(), this.share.dispose()));
+    this.find = new FindBarViewModel(bridge);
+    this.zoom = new ZoomChipViewModel(bridge);
     this.follow(bridge);
   }
 
-  /** Follows the active page's address and title, and the tabs; the address starts from the status. */
+  /** The toolbar's own ViewModels, which end with it. */
+  private parts(): { dispose(): void }[] {
+    return [this.completion, this.bookmarks, this.share, this.find, this.zoom];
+  }
+
+  /** Follows the active page's address and title, and the tabs; the address starts from the status. Its parts end with it. */
   private follow(bridge: ToolbarBridge): void {
+    this.own(() => this.parts().forEach((part) => part.dispose()));
     this.own(bridge.onUrlChanged((url) => this.set({ url })));
     this.own(bridge.onTitleChanged((title) => this.set({ title })));
     this.own(bridge.onTabsUpdated((tabs) => this.tabsChanged(tabs)));

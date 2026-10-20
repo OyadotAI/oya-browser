@@ -12,6 +12,7 @@ import { wireHome } from './home.ts';
 import { wireFavicon } from './favicon.ts';
 import { TabProtector } from './tab-protector.ts';
 import { rendererGone } from './tab-recovery.ts';
+import { sendZoom } from '../shell/page-zoom.ts';
 import { TabWindows, joinRecording, type TabWindowsDeps } from './tab-windows.ts';
 import type { Tab, TabView } from './types.ts';
 
@@ -54,6 +55,7 @@ export class TabEvents {
     this.wireLibrary(tab);
     const tabReady = this.protector.protect(tab);
     this.wirePage(tab, tabReady);
+    this.wireZoom(tab);
     this.windows.wire(tab);
     return tabReady;
   }
@@ -118,6 +120,16 @@ export class TabEvents {
     this.wireTitle(tab);
     // Agents read the observer (read_console), so an incognito page's console never reaches it.
     if (this.deps.observer && !isIncognito(contents.session)) watchContents(this.deps.observer, contents);
+  }
+
+  /**
+   * A zoom the page asked for itself (Ctrl+wheel) reaches the address bar's chip.
+   * Electron reports the request before the zoom settles, so the chip reads it a tick later.
+   */
+  private wireZoom(tab: Tab): void {
+    tab.view.webContents.on('zoom-changed', () =>
+      setImmediate(() => tab.id === this.deps.tabs.activeTabId && sendZoom(this.deps, true)),
+    );
   }
 
   /** Native navigation drives outcome checks; each active recorder owns its native frame subscriptions. Not for incognito. */

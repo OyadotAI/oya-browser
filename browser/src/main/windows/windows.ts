@@ -2,7 +2,7 @@
 import type { Event, Point, Session, WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import type { Tab } from '../tabs/types.ts';
-import { closeWindowTabs, discardWindow, disposeWindow } from './cleanup.ts';
+import { closeWindowTabs, discardWindow, disposeWindow, releaseTab } from './cleanup.ts';
 import { assertSameKind, isPrivateScope, publicScopes, sameKind } from './kinds.ts';
 import { inTabStrip, inWindow, placeNear } from './geometry.ts';
 import { TabTearOff } from './tear-off.ts';
@@ -183,7 +183,7 @@ export class BrowserWindows {
     this.assertMovable(source, tab.id);
     this.assertMovable(target, tab.id);
     this.assertSource(source, target, tab);
-    source.tabs.releaseTab(tab.id);
+    releaseTab(source, tab.id);
     target.tabs.receiveTab(Object.assign(tab, { pinned: false }));
     target.shell.stagedTab = undefined;
     this.present(target);

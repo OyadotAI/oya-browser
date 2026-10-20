@@ -6,13 +6,20 @@
 import path from 'node:path';
 import type { Tab } from '../tabs/types.ts';
 import { waitForChrome } from '../windows/index.ts';
-import type { BrowserWindow, BrowserWindowConstructorOptions, LoadFileOptions, WebPreferences } from 'electron';
+import type {
+  BrowserWindow,
+  BrowserWindowConstructorOptions,
+  LoadFileOptions,
+  WebContents,
+  WebPreferences,
+} from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { redact } from '../../workflow/index.ts';
 import { JSON_INDENT } from '../app/constants.ts';
 import { WINDOW_SIZE, TRAFFIC_LIGHTS, SHELL_BACKGROUND, PANEL_WIDTH, DEV_LOG_MAX_CHARS } from './constants.ts';
 import { holdStill, inContainer, stillWhileAway } from './hold-still.ts';
 import type { SavedWindow } from './window-bounds.ts';
+import { sendZoom } from './page-zoom.ts';
 
 /** The services the shell window uses. */
 type Deps = Pick<
@@ -210,12 +217,16 @@ export class ShellWindow {
     const contents = win.webContents;
     contents.on('will-navigate', (event) => event.preventDefault());
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    contents.on('did-finish-load', () => {
-      contents.setZoomLevel(0);
-      this.deps.layout.layoutActiveTab();
-      // A fast connection opens tabs while the page is still loading its scripts, and a late one misses that list.
-      this.deps.tabs.sendTabList();
-    });
+    contents.on('did-finish-load', () => this.shellLoaded(contents));
+  }
+
+  /** The shell page (re)loaded: undo any zoom on it, lay it out, and hand it the tabs and the shown page's zoom. */
+  private shellLoaded(contents: WebContents): void {
+    contents.setZoomLevel(0);
+    this.deps.layout.layoutActiveTab();
+    // A fast connection opens tabs while the page is still loading its scripts, and a late one misses that list.
+    this.deps.tabs.sendTabList();
+    sendZoom({ tabs: this.deps.tabs, shell: this }, false); // a reloaded toolbar has no zoom of its own to show
   }
 
   /** Repaints the window and tells the page when the system theme changes. */

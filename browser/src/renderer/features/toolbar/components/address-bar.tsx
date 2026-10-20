@@ -1,6 +1,6 @@
 /**
- * The address bar (index.html's .address-wrap): the globe, the #url-bar input
- * and the loading status. Enter loads what it says and lets go of the focus;
+ * The address bar (index.html's .address-wrap): the globe, the #url-bar input,
+ * the loading status and the zoom chip. Enter loads what it says and lets go of the focus;
  * a focus request (Cmd/Ctrl L) focuses and selects it. The page's title
  * becomes the window's.
  */
@@ -9,6 +9,7 @@ import { useViewModel } from '../../../hooks/index.ts';
 import { Icon, IconButton } from '../../../ui/index.ts';
 import { navLook, windowTitle, type ToolbarViewModel } from '../view-models/toolbar-view-model.ts';
 import { AddressSuggestions } from './address-suggestions.tsx';
+import { ZoomChip } from './zoom-chip.tsx';
 import { TEXT } from '../model/constants.ts';
 
 /** What the address bar is given. */
@@ -118,6 +119,7 @@ export function AddressBar({ vm }: AddressBarProps) {
       >
         {look.status}
       </span>
+      <ZoomChip vm={vm.zoom} />
       <BookmarkStar vm={vm} />
       <AddressSuggestions vm={vm} />
     </div>

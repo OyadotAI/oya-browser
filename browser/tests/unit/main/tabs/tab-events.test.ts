@@ -47,6 +47,30 @@ describe('tab events', () => {
     assert.equal(native.view.frameSessions, undefined);
   });
 
+  it('zoom-changed on the shown tab sends once the level settles', () => {
+    mock.timers.reset(); // this test also holds the settle tick
+    mock.timers.enable({ apis: ['setTimeout', 'setImmediate'] });
+    ctx.tabs.activateTab(tab.id);
+    const sent = () => ctx.shell.sentOn('page-zoom');
+    const before = sent().length;
+    tab.view.webContents.emit('zoom-changed', {}, 'in');
+    tab.view.webContents.zoomLevel = 0.5;
+    assert.equal(sent().length, before, 'not read before the zoom settles');
+    mock.timers.tick(1);
+    assert.deepEqual(sent().at(-1), { percent: 110, announce: true });
+  });
+
+  it('zoom-changed on a background tab sends nothing', () => {
+    mock.timers.reset(); // this test also holds the settle tick
+    mock.timers.enable({ apis: ['setTimeout', 'setImmediate'] });
+    const other = ctx.tabs.find(ctx.tabs.createTab('https://c.test/'));
+    ctx.tabs.activateTab(other.id);
+    const before = ctx.shell.sentOn('page-zoom').length;
+    tab.view.webContents.emit('zoom-changed', {}, 'in');
+    mock.timers.tick(1);
+    assert.equal(ctx.shell.sentOn('page-zoom').length, before);
+  });
+
   /** A tab whose setup answers each of `answers` in turn. */
   function tabWith(answers) {
     const reset = mock.method(ctx.protection, 'resetTabCDP', () => {});

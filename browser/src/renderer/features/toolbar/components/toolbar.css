@@ -484,6 +484,39 @@ body.mode-browsing .toolbar {
 .bookmark-star.saved .icon path {
   fill: currentColor;
 }
+.zoom-chip {
+  flex: none;
+  height: 22px;
+  padding: 0 7px;
+  margin-right: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--secondary);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: none;
+  outline: none;
+  transition:
+    color var(--t-fast) var(--ease),
+    background-color var(--t-fast) var(--ease);
+}
+.zoom-chip:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+.zoom-chip:focus {
+  box-shadow: none;
+  outline: none;
+}
+.zoom-chip:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
 
 /* The incognito badge stands where Ask does; it never collapses, even where the connection pill hides. */
 .incognito-badge {

@@ -6,6 +6,28 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- A flow recording whose browser went away (closed, disconnected or torn down) now ends at its 30-minute limit with the steps recorded so far. The stop used to be retried every 5 seconds for as long as the server ran.
+
+## [1.0.200](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.200) · 2026-10-19
+
+### Added
+
+- The desktop address bar shows the page's zoom, as Chrome does: a "110%" chip beside the star whenever a page is not at actual size, following every zoom, tab switch and change of site. Click it, or press Enter on it, to put the page back to 100%. It is hidden at 100%, on the start page and in the library, and refuses while OyaAI holds the tab.
+
+### Fixed
+
+- The View menu's Zoom In, Zoom Out and Actual Size could zoom a tab OyaAI was driving; they now do nothing there, like the keyboard shortcuts.
+- After a short network drop, the desktop no longer overrides the latest decision on who drives: pressing AI Mode just as the connection dropped no longer lands you back in Human Mode, and an agent handed control while the connection was down keeps it. A hold the server forgot, or one that lapsed while offline, is still taken back.
+
+## [1.0.199](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.199) · 2026-10-19
+
+### Fixed
+
+- Pages on the desktop could stop taking clicks, in every tab, until a restart: when your Human Mode hold ran out or its renewal was refused, the browser paused with nobody driving and kept every tab fenced, with nothing on screen saying why. It now takes control back once, as it already did after a reconnect, also when the connection drops partway through. It never takes control from an agent or another person who holds it, never while you are handing back to AI Mode, and a clock running ahead of the server's gets one retake rather than one a second.
+- A press on a page fenced for an agent is now noted in `tab-health.json` in the app's data folder: once per control state and shown tab, with who held control and what was stacked over the page (sites only, nothing for private tabs), so the next report of dead clicks can be told apart from a hung page. It stays on your machine.
+
 ## [1.0.198](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.198) · 2026-10-17
 
 ### Fixed

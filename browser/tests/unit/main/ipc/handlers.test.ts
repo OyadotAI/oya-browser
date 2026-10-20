@@ -156,6 +156,35 @@ describe('IPC handlers', () => {
     }
   });
 
+  it("hands find's typing, steps and close to the window's find bar, which checks them", async () => {
+    const search = mock.method(ctx.findBar, 'search');
+    const step = mock.method(ctx.findBar, 'step');
+    const dismiss = mock.method(ctx.findBar, 'dismiss');
+    await call('find-in-page', 'cat');
+    await call('find-step', true);
+    await call('find-step', 'yes');
+    await call('close-find');
+    assert.deepEqual(search.mock.calls[0].arguments, ['cat']);
+    assert.deepEqual(
+      step.mock.calls.map((c) => c.arguments),
+      [[true], [false]],
+    );
+    assert.equal(dismiss.mock.callCount(), 1);
+  });
+
+  it('reset-zoom resets the shown page through the guarded helper', async () => {
+    const page = { webContents: { level: 1, isDestroyed: () => false } } as any;
+    page.webContents.getZoomLevel = () => page.webContents.level;
+    page.webContents.setZoomLevel = (level) => (page.webContents.level = level);
+    ctx.tabs = { activeTabId: 4, getActiveView: () => page, find: () => ({ id: 4, view: page }) };
+    ctx.agentTab.humanMay = () => false;
+    await call('reset-zoom');
+    assert.equal(page.webContents.level, 1, 'refused while an agent holds the tab');
+    ctx.agentTab.humanMay = () => true;
+    await call('reset-zoom');
+    assert.equal(page.webContents.level, 0);
+  });
+
   it('enters browsing mode on the first navigation', async () => {
     let entered;
     ctx.shell.browsingMode = false;

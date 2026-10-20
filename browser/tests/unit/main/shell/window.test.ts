@@ -95,7 +95,7 @@ describe('ShellWindow', () => {
   });
 
   it('undoes a zoom left on the shell, whose layout is in window pixels', () => {
-    ctx.tabs = { sendTabList: () => {} };
+    ctx.tabs = { sendTabList: () => {}, find: () => undefined };
     ctx.shell.create();
     const contents = ctx.shell.window.webContents;
     contents.zoomLevel = -1;
@@ -105,10 +105,18 @@ describe('ShellWindow', () => {
 
   it('sends the tab list again once the shell page has loaded, so a script that loaded late still sees the tabs', () => {
     let sent = 0;
-    ctx.tabs = { sendTabList: () => sent++ };
+    ctx.tabs = { sendTabList: () => sent++, find: () => undefined };
     ctx.shell.create();
     ctx.shell.window.webContents.emit('did-finish-load');
     assert.equal(sent, 1);
+  });
+
+  it("a shell reload sends the shown tab's zoom, so the address bar's chip is never empty", () => {
+    const page = { webContents: { getZoomLevel: () => 0.5, isDestroyed: () => false } };
+    ctx.tabs = { sendTabList: () => {}, activeTabId: 3, find: () => ({ id: 3, view: page }) };
+    ctx.shell.create();
+    ctx.shell.window.webContents.emit('did-finish-load');
+    assert.deepEqual(ctx.shell.window.webContents.sentOn('page-zoom'), [{ percent: 110, announce: false }]);
   });
 
   it('repaints when the system theme changes', () => {
@@ -136,19 +144,25 @@ describe('application menu', () => {
     assert.equal(opened, 1);
   });
 
-  it('zooms the page, never the shell', () => {
-    const ctx = mainCtx();
-    const page = { webContents: { zoomLevel: 0 } };
+  /** A shown page whose zoom the test can read. */
+  function zoomablePage(ctx) {
+    const page: any = { webContents: { zoomLevel: 0, isDestroyed: () => false } };
     page.webContents.getZoomLevel = () => page.webContents.zoomLevel;
     page.webContents.setZoomLevel = (level) => (page.webContents.zoomLevel = level);
-    ctx.tabs = { getActiveView: () => page };
+    ctx.tabs = { activeTabId: 1, getActiveView: () => page, find: () => ({ id: 1, view: page }) };
+    return page;
+  }
+
+  it('zooms the page, never the shell', () => {
+    const ctx = mainCtx();
+    const page = zoomablePage(ctx);
     installApplicationMenu(ctx);
     item(ctx, 'zoom-out').click();
     assert.ok(page.webContents.zoomLevel < 0);
     item(ctx, 'zoom-reset').click();
     item(ctx, 'zoom-in').click();
     assert.ok(page.webContents.zoomLevel > 0);
-    ctx.tabs = { getActiveView: () => undefined };
+    ctx.tabs = { getActiveView: () => undefined, find: () => undefined };
     assert.doesNotThrow(() => item(ctx, 'zoom-in').click());
   });
 
@@ -172,6 +186,32 @@ describe('application menu', () => {
     item(ctx, 'browser-new-tab').click({}, clicked);
     item(ctx, 'browser-new-tab').click();
     assert.deepEqual(opened, ['incognito', 'normal']);
+  });
+
+  it('Find opens in the window the menu was clicked in, not the last normal one', () => {
+    const ctx = mainCtx();
+    const opened: string[] = [];
+    const clicked = { webContents: {} };
+    const incognito = {
+      agentTab: ctx.agentTab,
+      tabs: { activeTabId: 1 },
+      findBar: { open: () => opened.push('incognito') },
+    };
+    ctx.findBar = { open: () => opened.push('normal') };
+    ctx.windows = { fromContents: (contents) => (contents === clicked.webContents ? incognito : undefined) };
+    installApplicationMenu(ctx);
+    item(ctx, 'browser-find').click({}, clicked);
+    item(ctx, 'browser-find').click();
+    assert.deepEqual(opened, ['incognito', 'normal']);
+  });
+
+  it('View zoom items do nothing while an agent holds the shown tab', () => {
+    const ctx = mainCtx();
+    const page = zoomablePage(ctx);
+    ctx.agentTab.humanMay = () => false;
+    installApplicationMenu(ctx);
+    item(ctx, 'zoom-in').click();
+    assert.equal(page.webContents.zoomLevel, 0);
   });
 
   it('names the product in the menus', () => {

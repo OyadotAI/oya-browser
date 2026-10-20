@@ -42,6 +42,7 @@ type Deps = Pick<
   | 'actions'
   | 'nativeBrowsing'
   | 'sitePermissions'
+  | 'findBar'
 >;
 
 /** What a validation run is started with: the draft, its options and where its events go. */

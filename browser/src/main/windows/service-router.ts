@@ -3,7 +3,7 @@ import type { AppServices } from '../app/services.ts';
 import type { BrowserWindows } from './windows.ts';
 
 /** Services that have a separate lifetime in each window. */
-type LocalService = 'shell' | 'shortcuts' | 'shield' | 'layout' | 'overlays' | 'tabs';
+type LocalService = 'shell' | 'shortcuts' | 'shield' | 'layout' | 'overlays' | 'tabs' | 'findBar';
 /** Tab commands carrying an id must route to its owner, not whichever window is focused. */
 const TAB_ID_METHODS = new Set(['activateTab', 'closeTab', 'find']);
 
@@ -20,7 +20,7 @@ export class WindowServiceRouter {
   }
   /** Root services are routers; each window retains concrete local service instances. */
   install(): void {
-    const names: LocalService[] = ['shell', 'shortcuts', 'shield', 'layout', 'overlays', 'tabs'];
+    const names: LocalService[] = ['shell', 'shortcuts', 'shield', 'layout', 'overlays', 'tabs', 'findBar'];
     for (const name of names) this.assign(name);
   }
   /** Route each property read and method at call time without changing a window-local service. */

@@ -9,8 +9,14 @@ export function discardWindow(scope: AppServices): void {
   closeWindowTabs(scope);
   if (scope.shell.window && !scope.shell.window.isDestroyed()) scope.shell.window.destroy();
 }
+/** Takes a tab out of its window, closing that window's find bar first so it stops listening to a page it no longer shows. */
+export function releaseTab(source: AppServices, id: number): void {
+  source.findBar.follow(null);
+  source.tabs.releaseTab(id);
+}
 /** The per-window shield and its polling must not survive the native window. */
 export function disposeWindow(scope: AppServices): void {
+  scope.findBar.close();
   scope.layout.flush();
   scope.shield.stopTracking();
   const contents = scope.shield.view?.webContents;

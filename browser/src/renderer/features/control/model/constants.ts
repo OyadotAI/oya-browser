@@ -23,7 +23,7 @@ export const RECORD_ID = 'record-toggle';
 export const NEW_TAB_ID = 'btn-new-tab';
 
 /** Toolbar controls that act on the page, marked blocked while it is watch-only. */
-export const PAGE_ACTIONS = ['btn-reload', NEW_TAB_ID, RECORD_ID] as const;
+export const PAGE_ACTIONS = ['btn-reload', 'btn-zoom', NEW_TAB_ID, RECORD_ID] as const;
 
 /** The address bar, read-only while watch-only. */
 export const ADDRESS_ID = 'url-bar';
@@ -32,7 +32,7 @@ export const ADDRESS_ID = 'url-bar';
 export const ACTION_ID = 'control-action';
 
 /** Clicks refused while watch-only (matched before the controls' own listeners run). */
-export const GUARDED = '#btn-back, #btn-forward, #btn-reload, #btn-new-tab, .tab-close, #record-toggle';
+export const GUARDED = '#btn-back, #btn-forward, #btn-reload, #btn-zoom, #btn-new-tab, .tab-close, #record-toggle';
 
 /** The words the bar says outside the mode labels. */
 export const TEXT = {

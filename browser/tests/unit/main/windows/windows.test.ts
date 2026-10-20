@@ -163,6 +163,24 @@ it('moves onto another window strip without creating a third window', async (t) 
   assert.equal(second.tabs.list.length, 2);
   await flush();
 });
+it('closes the find bar on a lone tab moved to another window, so the old window still tears down', async (t) => {
+  const { root, primary } = setup(t);
+  const id = primary.tabs.createTab('https://one.test/');
+  const contents = primary.tabs.find(id).view.webContents;
+  const stops = [];
+  contents.stopFindInPage = (action) => stops.push(action);
+  primary.findBar.open();
+  await root.windows.newWindow();
+  const second = root.windows.current;
+  second.shell.window.setPosition(-1200, 100);
+  await root.windows.detach(id, { x: -1100, y: 120 });
+  assert.deepEqual(stops, ['clearSelection']);
+  assert.equal(contents.listenerCount('found-in-page'), 0);
+  let scopes = 0;
+  root.windows.each(() => scopes++);
+  assert.equal(scopes, 1, 'the closed window left no scope behind');
+  await flush();
+});
 it('refuses transfer under agent control or while an overlay owns the page', async (t) => {
   const { root, primary } = setup(t);
   const id = primary.tabs.createTab('https://one.test/');

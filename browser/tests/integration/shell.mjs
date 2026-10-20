@@ -14,7 +14,7 @@ import { developmentExecutable } from '../../src/dev/launch.ts';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from '../../../ui/node_modules/playwright/index.mjs';
 import { shellLayout } from '../../src/main/shell/shell-layout.ts';
-import { BOOKMARKS_BAR_HEIGHT, CHROME_HEIGHT } from '../../src/main/shell/constants.ts';
+import { BOOKMARKS_BAR_HEIGHT, CHROME_HEIGHT, FIND_BAR_HEIGHT } from '../../src/main/shell/constants.ts';
 /** The chrome over the page: the strip, the toolbar and the bookmarks bar, which shows by default. */
 const TOP = CHROME_HEIGHT + BOOKMARKS_BAR_HEIGHT;
 
@@ -657,6 +657,33 @@ try {
     await capture(`record-dark-${width}`);
   }
   await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 860));
+  // Cmd/Ctrl+F from inside the page opens the find bar: it makes room for itself, counts and steps, and Esc closes it.
+  const pageTop = () =>
+    application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBrowserView().getBounds().y);
+  await application.evaluate(({ BrowserWindow }) => {
+    const wc = BrowserWindow.getAllWindows()[0].getBrowserView().webContents;
+    const modifiers = [process.platform === 'darwin' ? 'meta' : 'control'];
+    wc.focus();
+    wc.sendInputEvent({ type: 'keyDown', keyCode: 'F', modifiers });
+    wc.sendInputEvent({ type: 'keyUp', keyCode: 'F', modifiers });
+  });
+  await page.waitForFunction(() => document.activeElement?.closest('#find-bar'));
+  assert.equal(await pageTop(), TOP + FIND_BAR_HEIGHT, 'the page moves down by the find bar');
+  await page.keyboard.type('member');
+  const findCount = (pattern) =>
+    page.waitForFunction(
+      (source) => new RegExp(source).test(document.querySelector('#find-count').textContent),
+      pattern,
+    );
+  await findCount('^1 of [2-9]');
+  await page.keyboard.press('Enter');
+  await findCount('^2 of ');
+  await page.keyboard.type('zzz-not-on-the-page');
+  await findCount('^No results$');
+  await capture('find-bar-dark');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#find-bar').hidden);
+  assert.equal(await pageTop(), TOP, 'the page takes its room back');
   // A shortcut originating inside the page must reach the shell.
   await application.evaluate(({ BrowserWindow }) => {
     const wc = BrowserWindow.getAllWindows()[0].getBrowserView().webContents;

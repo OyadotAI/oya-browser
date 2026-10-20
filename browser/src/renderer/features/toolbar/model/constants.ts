@@ -41,6 +41,16 @@ export const TEXT = {
   ask: 'Assistant',
   askTitle: 'Open Assistant (⌘/Ctrl Shift D)',
   askRecordingTitle: 'Oya Agent · recording',
+  /** The find bar's name, and its field's placeholder. */
+  find: 'Find in page',
+  /** The find bar's count when the page has no match. */
+  findNone: 'No results',
+  /** Between the selected match and the total ("3 of 17"). */
+  findOf: ' of ',
+  /** The find bar's buttons; the previous and next names get their shortcut appended. */
+  findPrevious: 'Previous match',
+  findNext: 'Next match',
+  findClose: 'Close find bar (Esc)',
 } as const;
 
 /** The key that sends the address bar. */
@@ -48,6 +58,23 @@ export const SUBMIT_KEY = 'Enter';
 
 /** A dedicated overlay prevents native page views from covering the suggestions. */
 export const ADDRESS_OVERLAY = 'address';
+
+/** A page at actual size, as a percentage: the zoom chip hides at it. */
+export const FULL_SIZE_PERCENT = 100;
+
+/** What the address bar's zoom chip says, for a page at `percent`. */
+export const ZOOM_TEXT = {
+  /** The chip itself: "110%". */
+  chip: (percent: number) => `${percent}%`,
+  /** Its tooltip. */
+  title: (percent: number) => `Zoomed to ${percent}%. Click to reset to 100% (⌘/Ctrl 0)`,
+  /** Its accessible name. */
+  label: (percent: number) => `Zoom ${percent}%, reset to 100%`,
+  /** What a screen reader hears when a person zooms. */
+  announce: (percent: number) => `Zoom ${percent}%`,
+  /** What it hears when the page is back to actual size. */
+  reset: 'Zoom reset to 100%',
+} as const;
 
 /** What the share chip says. `shared` is the shared tab's host, `call` the calling tab's. */
 export const SHARE_TEXT = {
