@@ -20,6 +20,7 @@ type Deps = Pick<
   AppServices,
   | 'nativeBrowsing'
   | 'windows'
+  | 'downloadBubble'
   | 'passkeys'
   | 'mediaPermissions'
   | 'externalApps'
@@ -273,11 +274,12 @@ export class Persona {
     throw error;
   }
 
-  /** Never publish an activation superseded in the final promise continuation. */
+  /** Never publish an activation superseded in the final promise continuation; a switch re-tells the latest download. */
   private publishProfile(epoch: symbol, profile: FingerprintProfile, switched: boolean): void {
     if (this.policyEpoch !== epoch) throw Error('Native persona changed during activation');
     if (!switched) this.reprotectTabs();
     this.deps.shell.send('fingerprint-changed', fingerprintSummary(profile));
+    if (switched) this.deps.downloadBubble?.announce();
   }
 
   /** Restore the previous identity if native setup refuses a changed or incomplete policy. */

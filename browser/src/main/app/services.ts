@@ -77,6 +77,8 @@ export interface AppServices {
   library: import('../library/index.ts').BrowsingLibrary;
   /** The person's downloads, listed on the Downloads page. */
   downloads: import('../downloads/index.ts').Downloads;
+  /** Each window's download chip: what started there, told only to that window. */
+  downloadBubble: import('../downloads/index.ts').DownloadBubble;
   /** Electron's main-process API; only the composition root imports it. */
   electron: typeof Electron;
   /** The app's folder: the package root in development, the asar when packaged. */

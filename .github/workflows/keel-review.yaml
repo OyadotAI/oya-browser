@@ -1,0 +1,73 @@
+name: Keel review
+
+# The repository's team (.claude/agents: pm, designer, principal, reviewer, security,
+# reliability, qa) reviews every pull request and posts one comment, edited on each push. A
+# "do not ship" verdict fails the check, and so does a review that could not finish.
+#
+# Its own workflow rather than a job in ci.yaml: ci.yaml is also called by the deploys, and the
+# review must run with nothing before it but the checkout — no `npm ci`, no PR code.
+#
+# pull_request, never pull_request_target: the second would run a fork's code with these secrets.
+# A fork's PR gets no secrets here, so the review skips it with one line and passes. Until
+# CLAUDE_CODE_OAUTH_TOKEN (or an API key, or the proxy pair) is set, every PR skips the same way.
+on:
+  pull_request:
+  # A reply on one of Keel's threads is answered there, and resolved when it is settled.
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+
+jobs:
+  review:
+    # The review on a push, the replies on a collaborator's reply in a thread. Never a bot's
+    # comment: Keel's own line comments would each start a run, and anyone can comment on a PR
+    # while this job holds the secrets.
+    name: ${{ github.event_name == 'pull_request' && 'Team review' || 'Keel replies' }}
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.comment.in_reply_to_id && github.event.comment.user.type != 'Bot' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    # In the job, not the workflow, so a skipped run never touches it. One queue per PR: a push
+    # cancels whatever runs, and a reply waits its turn, so two runs never answer one thread.
+    concurrency:
+      group: keel-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    # Secrets cannot be read in `if:`, so the job says whether the app's are set. A fork's PR has
+    # none, and then the review skips and passes as it always has, posting nothing.
+    env:
+      HAS_APP: ${{ secrets.KEEL_APP_ID != '' }}
+    steps:
+      # Full history: the review diffs against origin/<base>.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # The review reads git history and needs no credential left in .git/config.
+          persist-credentials: false
+      # Posts as Keel-ADE rather than github-actions: a token minted from the org's Keel-ADE app,
+      # scoped to this repository and to the three permissions the review uses.
+      - uses: actions/create-github-app-token@v2
+        id: keel
+        if: env.HAS_APP == 'true'
+        with:
+          app-id: ${{ secrets.KEEL_APP_ID }}
+          private-key: ${{ secrets.KEEL_APP_PRIVATE_KEY }}
+          # Write only because GitHub's resolveReviewThread requires it, to close a settled
+          # thread. The token lives in the step that posts; the reviewing agent never has it.
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - uses: OyadotAI/keel-releases/review@review-v9
+        with:
+          github-token: ${{ steps.keel.outputs.token || github.token }}
+          # A Claude subscription token, from `claude setup-token`. Or an API key, or a gateway:
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # api-proxy-url: ${{ secrets.KEEL_PROXY_URL }}
+          # api-proxy-token: ${{ secrets.KEEL_PROXY_TOKEN }}
+          minutes: 30

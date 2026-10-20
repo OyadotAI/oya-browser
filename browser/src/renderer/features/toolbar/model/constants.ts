@@ -92,3 +92,69 @@ export const SHARE_TEXT = {
   title: (shared: string, call: string) =>
     `You're sharing ${shared} with ${call}. Oya can't move a live share to another tab, so this takes you to the call. Stop sharing there, then share again and pick the tab you want.`,
 } as const;
+
+/** How long a saved or cancelled download stays on the chip while the person can see it. */
+export const CHIP_DONE_MS = 8000;
+/** How long a newly saved file is on the chip before Open and Show act on it, so a page cannot swap one in under a click. */
+export const CHIP_ARM_MS = 500;
+/** How long a failed or moved download stays: longer, so it is read, but never all day. */
+export const CHIP_FAILED_MS = 30000;
+
+/** The Downloads button and its chip's words (the inline download indicator). */
+export const DOWNLOAD_TEXT = {
+  /** The button's label, idle. */
+  button: 'Downloads',
+  /** Its tooltip's shortcut. */
+  keys: ' (⌘ Shift J, Ctrl J)',
+  /** The status word, by phase. */
+  running: 'Downloading',
+  saved: 'Saved',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  gone: 'Moved or deleted',
+  /** More than one running. */
+  files: (n: number) => `Downloading ${n} files`,
+  /** The two actions on a saved file. */
+  open: 'Open',
+  show: (mac: boolean) => (mac ? 'Show in Finder' : 'Show in folder'),
+  showShort: 'Show',
+  openLabel: (name: string) => `Open ${name}`,
+  showLabel: (name: string, mac: boolean) => `Show ${name} in ${mac ? 'Finder' : 'folder'}`,
+  /** The body's accessible name before ". Show all downloads", by phase. */
+  describe: {
+    running: (name: string, bytes: string) => `Downloading ${name}, ${bytes}`,
+    files: (n: number) => `Downloading ${n} files`,
+    saved: (name: string, size: string) => `Saved ${name}, ${size}`,
+    failed: (name: string) => `${name} didn't download`,
+    cancelled: (name: string) => `${name} was cancelled, nothing was saved`,
+    gone: (name: string) => `${name} was moved or deleted`,
+  },
+  /** Added to the body's accessible name: what clicking it does. */
+  showAll: '. Show all downloads',
+  /** Bytes so far: with the size, or without it when the site did not say. */
+  of: (received: string, total: string) => `${received} of ${total}`,
+  soFar: (received: string) => `${received} so far`,
+  /** The chip's meter: how much has arrived of how much, and the percent. */
+  meter: (received: string, total: string, percent: number) => `${received} of ${total} · ${percent}%`,
+  /** What a screen reader hears, politely, as a download moves on. */
+  say: {
+    running: (name: string) => `Downloading ${name}`,
+    saved: (name: string) => `Saved ${name}`,
+    failed: (name: string) => `${name} didn't download`,
+    cancelled: (name: string) => `${name} was cancelled`,
+    gone: () => 'That file was moved or deleted.',
+  },
+} as const;
+
+/** A whole, in percent. */
+export const PERCENT = 100;
+/** The download ring's box, in SVG units (drawn at 14px). */
+export const RING_SIZE = 14;
+/** Its radius, leaving room for the 2px stroke. */
+export const RING_RADIUS = 6;
+/** The ring's centre. */
+export const RING_CENTRE = 7;
+/** The ring's circumference (2π × its radius), which its dash is measured against. */
+export const RING_LENGTH = 37.7;
+/** The share of the ring drawn, turning, when a site gave no size. */
+export const RING_INDETERMINATE = 0.25;

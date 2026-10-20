@@ -27,6 +27,22 @@ describe('IPC handlers', () => {
     assert.equal((await call('get-status')).browsing, false);
   });
 
+  it('download-action opens or reveals a download by id, says a missing file is gone, and refuses anything else', async () => {
+    const done: string[] = [];
+    ctx.downloads = {
+      open: (id) => (done.push(`open:${id}`), id === 'here'),
+      reveal: (id) => (done.push(`reveal:${id}`), id === 'here'),
+      forget: (id) => done.push(`forget:${id}`),
+    };
+    await call('download-action', 'here', 'open');
+    await call('download-action', 'here', 'reveal');
+    assert.deepEqual(done, ['open:here', 'reveal:here']);
+    await assert.rejects(async () => call('download-action', 'gone', 'open'), /moved or deleted/);
+    await assert.rejects(async () => call('download-action', 'here', 'remove'), /Unknown download action/);
+    await assert.rejects(async () => call('download-action', 'here', 'constructor'), /Unknown download action/);
+    assert.ok(!done.some((d) => d.startsWith('forget')), 'the chip never takes a download off the list');
+  });
+
   it('go-to-share-call asks the indicator and ignores renderer arguments', async () => {
     const asked = [];
     ctx.shareIndicator = { goToCall: (...args) => asked.push(args) };

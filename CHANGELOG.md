@@ -6,6 +6,23 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.202](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.202) · 2026-10-20
+
+### Fixed
+
+- The Downloads button's Open and Show in Finder act only on the file that was on screen when you clicked, and only once it has been there for half a second, so a page cannot start a download that swaps its own file in under your click.
+
+## [1.0.201](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.201) · 2026-10-20
+
+### Added
+
+- The desktop Downloads button shows each download as it happens: "Downloading" with how far it has got (bytes of the total and a percent, with a bar along the button), then "Saved" with the file's name and Open and Show in Finder. It shows in the window the download started in, never takes focus, and goes back to the plain button a few seconds after you have seen it. A failed or cancelled download says so instead.
+
+### Fixed
+
+- A download that paused and recovered on its own could show as failed on the Downloads page until it finished; only how a download ends decides that now.
+- The Downloads page says "Show in Finder" on a Mac, as the toolbar does.
+
 ### Fixed
 
 - A flow recording whose browser went away (closed, disconnected or torn down) now ends at its 30-minute limit with the steps recorded so far. The stop used to be retried every 5 seconds for as long as the server ran.

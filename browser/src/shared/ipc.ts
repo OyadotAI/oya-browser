@@ -308,6 +308,8 @@ export interface ShellCalls {
   readLibrary(tabId: number): Promise<LibraryPresentation>;
   /** Changes an existing saved page after checking this tab and profile. */
   libraryAction(tabId: number, action: LibraryAction, url?: string): Promise<LibraryPresentation | void>;
+  /** Opens a saved download, or shows it in its folder, by id (the toolbar's download chip). */
+  downloadAction(id: string, action: DownloadAction): Promise<void>;
   /** The bookmarks bar: whether it shows, and the bookmarks on it. */
   bookmarksBar(): Promise<Payload>;
   /** Shows or hides the bookmarks bar. */
@@ -467,6 +469,23 @@ export interface ShellCalls {
   installUpdate(): Promise<void>;
 }
 
+/** What a window's download chip shows: the latest download started from its pages, and the totals of those running. */
+export interface DownloadBubbleState {
+  /** The newest download from this window, in the profile on screen; null when there is none to show. */
+  latest: import('./library.ts').DownloadEntry | null;
+  /** How many of this window's downloads are still running. */
+  running: number;
+  /** Bytes saved so far across the running ones. */
+  received: number;
+  /** Their total size, or null when any of them did not say. */
+  total: number | null;
+  /** Whether the window is focused: a finished chip waits for the person to look. */
+  focused: boolean;
+}
+
+/** What the download chip can do with a saved file, by id. */
+export type DownloadAction = 'open' | 'reveal';
+
 /** Every event the shell page hears, with its payload. */
 export interface ShellEvents {
   /** The session inbox changed; fetch it through the trusted shell bridge. */
@@ -513,6 +532,8 @@ export interface ShellEvents {
   onBookmarksBar: Payload;
   /** The find bar opened, closed, or has a new count. */
   onFindBar: FindBarState;
+  /** This window's download chip changed: a download started, moved on or ended here. */
+  onDownloadBubble: DownloadBubbleState;
   /** The shown tab's zoom: a person zoomed, the tab switched, or the page went to another site. */
   onPageZoom: PageZoom;
   /** The routines or their runs changed. */
@@ -612,6 +633,7 @@ export const CALL_CHANNELS = {
   showLibrary: 'show-library',
   readLibrary: 'read-library',
   libraryAction: 'library-action',
+  downloadAction: 'download-action',
   /** The bookmarks bar: whether it shows, and the bookmarks on it. */
   bookmarksBar: 'bookmarks-bar-state',
   /** Shows or hides the bookmarks bar. */
@@ -746,6 +768,8 @@ export const EVENT_CHANNELS = {
   onBookmarksBar: 'bookmarks-bar',
   /** The find bar opened, closed, or has a new count. */
   onFindBar: 'find-bar',
+  /** This window's download chip changed: a download started, moved on or ended here. */
+  onDownloadBubble: 'download-bubble',
   /** The shown tab's zoom. */
   onPageZoom: 'page-zoom',
   /** The routines or their runs changed. */
