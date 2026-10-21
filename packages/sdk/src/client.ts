@@ -231,13 +231,12 @@ function noKey(saved: SavedConfig, address: string): string {
 export function createHttp(options: OyaOptions): Http {
   const saved = savedConfig();
   const address = addressOf(options, saved.baseUrl);
-  const url = webAddress(address);
-  const key = keyOf(options, saved, url);
+  const key = keyOf(options, saved, webAddress(address));
   const fetchImpl = options.fetch || globalThis.fetch;
   if (!fetchImpl) throw new Error('No fetch available, pass { fetch } or use Node 18+.');
   const origin = { apiKeyFrom: key.from, baseUrlFrom: address.from, savedKey: !!saved.apiKey };
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return new Http(url, key.value!, timeout, fetchImpl.bind(globalThis), origin);
+  return new Http(webAddress(address), key.value!, timeout, fetchImpl.bind(globalThis), origin);
 }
 
 /** A local address, which is served over plain http. */
