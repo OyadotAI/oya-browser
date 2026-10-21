@@ -10,9 +10,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 - The address bar no longer replaces what you are typing when the page changes its own address. On YouTube, Gmail and other sites that update their address as you use them, typing a new address or search used to be wiped mid-word. Your text now stays until you press Enter, pick a suggestion, press Escape or switch tabs, and an address you selected to type over stays selected. Escape with no suggestions open puts the page's address back, selected, as in Chrome. The bookmark star always reflects the page that is open, not the text being typed.
 
-- A desktop browser, or a cloud browser on a plan without proxy traffic, could be sent the operator's residential proxy credentials when it ran as a persona that a paid cloud browser had used since the server started. It then used the gateway without its traffic being metered. Each connection now gets its own copy of the persona's fingerprint, so a proxy given to one browser never reaches another. A change to a persona's proxy also applies on its next connect instead of after a restart. Operators who ran a residential gateway should rotate its credentials after upgrading.
+- **Operators who ran a residential gateway (`OYA_RESIDENTIAL_PROXY_URL`): rotate its credentials after upgrading.** A desktop browser, or a cloud browser on a plan without proxy traffic, could be sent the operator's residential proxy credentials when it ran as a persona that a paid cloud browser had used since the server started. It then used the gateway without its traffic being metered. Each connection now gets its own copy of the persona's fingerprint, so a proxy given to one browser never reaches another. A change to a persona's proxy also applies on its next connect instead of after a restart.
 
 - The key `oya login` saved is sent only to the control plane it was saved for. Pointing the CLI or the SDK at another address with `--url`, `OYA_BASE_URL` or `baseUrl` no longer carries that key there; instead they say the saved key is for another control plane and how to log in for this one.
+
 ## [1.0.202](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.202) · 2026-10-20
 
 ### Fixed

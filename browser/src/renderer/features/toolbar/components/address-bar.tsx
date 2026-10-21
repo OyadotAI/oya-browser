@@ -73,7 +73,7 @@ function AddressInput({ vm }: AddressBarProps) {
       spellCheck={false}
       autoComplete="off"
       value={url + inline}
-      onFocus={() => (vm.focused(), void vm.completion.search(vm.state.url))}
+      onFocus={() => vm.focused()}
       onBlur={() => vm.blurred()}
       onChange={(event) => vm.edit(event.target.value, typed(event.nativeEvent))}
       onKeyDown={(event) => addressKey(event, vm)}

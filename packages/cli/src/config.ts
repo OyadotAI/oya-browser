@@ -55,6 +55,8 @@ export interface Origin {
   baseUrlFrom: UrlSource;
   /** Whether `oya login` also saved a key, which a flag or the environment overrides. */
   savedKey: boolean;
+  /** The control plane that saved key is for, when the file says. */
+  savedUrl?: string;
 }
 
 /** The first of flag, environment and saved file that has a value, with its source. */
@@ -76,7 +78,7 @@ export function origin({ apiKey, baseUrl }: CliConfig = {}): Origin {
   const address = (url?.value ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   const key = first(apiKey, process.env.OYA_API_KEY, savedKeyFor(saved, address), KEY_SOURCES);
   const found = { apiKey: key?.value ?? '', apiKeyFrom: key?.from ?? ('none' as const), baseUrl: address };
-  return { ...found, baseUrlFrom: url?.from ?? 'default', savedKey: !!saved.apiKey };
+  return { ...found, baseUrlFrom: url?.from ?? 'default', savedKey: !!saved.apiKey, savedUrl: saved.baseUrl };
 }
 
 /**

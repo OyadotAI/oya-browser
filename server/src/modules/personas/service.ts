@@ -101,14 +101,14 @@ function mirroredFingerprint(persona: Pick<Persona, 'id' | 'proxy' | 'device'>) 
 }
 
 /**
- * A generated persona's fingerprint: a top-level copy of the cached profile,
- * with the persona's proxy as it is now. A connection puts its own proxy on it
- * (the operator's residential gateway, for a cloud browser on a paid plan); on
- * the shared object that proxy reached every later browser of the persona,
- * desktops included. Never write to a nested field; those are still the cache's.
+ * A generated persona's fingerprint: a deep copy of the cached profile, with
+ * the persona's proxy as it is now. A connection puts its own proxy on it (the
+ * operator's residential gateway, for a cloud browser on a paid plan); on the
+ * shared object that proxy reached every later browser of the persona,
+ * desktops included. The copy is deep so no write, nested or not, reaches the cache.
  */
 function generatedFingerprint({ id, seed, prefs, proxy }: Pick<Persona, 'id' | 'seed' | 'prefs' | 'proxy'>) {
-  return { ...getFingerprintForPersona({ id, seed, prefs, proxy }), proxy: proxy || null };
+  return { ...structuredClone(getFingerprintForPersona({ id, seed, prefs, proxy })), proxy: proxy || null };
 }
 
 /** One real browser profile to mirror into a persona. */

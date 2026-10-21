@@ -218,9 +218,10 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
     this.focusAddress();
   }
 
-  /** The field got focus: it is the person's until they leave it, so a page's address change cannot unselect it. */
+  /** The field got focus: it is the person's until they leave it, so a page's address change cannot unselect it; suggestions open for what it shows. */
   focused(): void {
     this.held = true;
+    void this.completion.search(this.state.url);
   }
 
   /** The field lost focus: typed text stays until the next address change; untouched, it shows the page's address now. */

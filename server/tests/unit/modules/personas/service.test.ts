@@ -465,6 +465,14 @@ describe('PersonaService fingerprints', () => {
     assert.equal(service.fingerprintFor(p).proxy, null);
   });
 
+  it("keeps a write to a nested field of one caller's fingerprint from the next caller too", () => {
+    const { service } = personaService();
+    const p = service.create('k');
+    const platform = service.fingerprintFor(p).navigator.platform;
+    service.fingerprintFor(p).navigator.platform = 'Tampered';
+    assert.equal(service.fingerprintFor(p).navigator.platform, platform);
+  });
+
   it('gives a fresh service built from the stored record the same fingerprint', async () => {
     const repository = new MemoryPersonaRepository();
     const writer = new PersonaService(personaDeps({ repository }));
