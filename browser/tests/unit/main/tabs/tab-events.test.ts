@@ -390,6 +390,15 @@ describe('tab events', () => {
       assert.equal(ctx.tabs.activeTabId, tab.id);
     });
 
+    it('is closed when its protection fails, never left showing the page', async () => {
+      mock.method(ctx.protection, 'setupTabCDP', async () => false);
+      mock.method(console, 'error', () => {});
+      const page = Object.assign(childPage(), { close: mock.fn() });
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      await ctx.tabs.list.at(-1).setup;
+      assert.equal(page.close.mock.callCount(), 1);
+    });
+
     it('is closed, never shown or thrown, when its session is not protected', () => {
       const decision = tab.view.webContents.openHandler(named);
       mock.method(ctx.protection, 'assertSession', () => {

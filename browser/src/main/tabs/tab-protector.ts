@@ -64,6 +64,8 @@ export class TabProtector {
   private failClosed(tab: Tab): void {
     this.deps.protection.resetTabCDP(tab.view);
     tab.protection = 'failed';
+    // A page made for `window.open` is already loading: close it rather than leave it showing.
+    if (tab.openedByPage) tab.view.webContents.close();
     console.error('[anonymity] tab protection failed twice, tab not loaded');
     showUnprotected(this.deps.tabs, tab);
   }
