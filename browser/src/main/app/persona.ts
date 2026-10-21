@@ -164,6 +164,14 @@ function createPersonaStorage(deps: Deps): PersonaStorage {
   });
 }
 
+/** Same immutable persona: verify protection on every live surface. */
+function reprotectTabs(deps: Deps): void {
+  deps.workers?.cover();
+  for (const tab of deps.tabs.list) {
+    if (!tab.view.webContents.isDestroyed()) deps.protection.setupTabCDP(tab.view);
+  }
+}
+
 /** The active persona and everything bound to it. */
 export class Persona {
   /** The fingerprint profile in use, or null before the server sends one. */
@@ -277,7 +285,7 @@ export class Persona {
   /** Never publish an activation superseded in the final promise continuation; a switch re-tells the latest download. */
   private publishProfile(epoch: symbol, profile: FingerprintProfile, switched: boolean): void {
     if (this.policyEpoch !== epoch) throw Error('Native persona changed during activation');
-    if (!switched) this.reprotectTabs();
+    if (!switched) reprotectTabs(this.deps);
     this.deps.shell.send('fingerprint-changed', fingerprintSummary(profile));
     if (switched) this.deps.downloadBubble?.announce();
   }
@@ -356,13 +364,5 @@ export class Persona {
     for (const url of reopen) this.deps.tabs.createTab(url);
     // The cookies are in the jar now, so the last session's pages can load signed in; a switch reopened its own above.
     this.deps.sessionTabs?.restore();
-  }
-
-  /** Same immutable persona: verify protection on every live surface. */
-  private reprotectTabs(): void {
-    this.deps.workers?.cover();
-    for (const tab of this.deps.tabs.list) {
-      if (!tab.view.webContents.isDestroyed()) this.deps.protection.setupTabCDP(tab.view);
-    }
   }
 }
