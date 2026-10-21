@@ -5,12 +5,13 @@ import { IncognitoSession, isIncognito } from '../../../../src/main/incognito/in
 import { privateSession } from '../../../../src/main/native-contexts/index.ts';
 
 /** A fresh fake session per partition, recording its cleanup. */
-function fakeSession(name: string, calls: string[]): any {
+function fakeSession(name: string, calls: string[], handlers: Array<[string, unknown]> = []): any {
   return {
     name,
     setPermissionRequestHandler() {},
     setPermissionCheckHandler() {},
     setProxy: async () => {},
+    on: (name: string, handler: unknown) => handlers.push([name, handler]),
     closeAllConnections: async () => calls.push('connections'),
     clearStorageData: async () => calls.push('storage'),
     clearCache: async () => calls.push('cache'),
@@ -20,6 +21,7 @@ function fakeSession(name: string, calls: string[]): any {
 /** Ungoverned desktop seams with a recorded partition and protection. */
 function setup() {
   const calls: string[] = [];
+  const handlers: Array<[string, unknown]> = [];
   const partitions: Array<[string, unknown]> = [];
   const protectedSessions: unknown[] = [];
   const deps: any = {
@@ -31,11 +33,14 @@ function setup() {
     electron: {
       app: {},
       session: {
-        fromPartition: (name: string, options: unknown) => (partitions.push([name, options]), fakeSession(name, calls)),
+        fromPartition: (name: string, options: unknown) => (
+          partitions.push([name, options]),
+          fakeSession(name, calls, handlers)
+        ),
       },
     },
   };
-  return { incognito: new IncognitoSession(deps), deps, calls, partitions, protectedSessions };
+  return { incognito: new IncognitoSession(deps), deps, calls, handlers, partitions, protectedSessions };
 }
 
 test('opens a protected in-memory partition that history, restore and agents treat as private', async () => {
@@ -79,6 +84,25 @@ test('a window still waiting when the session retires is refused', async () => {
   const pending = f.incognito.get();
   void f.incognito.retire();
   await assert.rejects(pending, /closed while the window opened/);
+});
+
+test('refuses every download, so nothing is written to disk', async () => {
+  const f = setup();
+  await f.incognito.get();
+  const [[name, handler]] = f.handlers.filter(([event]) => event === 'will-download');
+  const calls: string[] = [];
+  (handler as any)({ preventDefault: () => calls.push('prevented') }, { cancel: () => calls.push('cancelled') });
+  assert.deepEqual([name, calls], ['will-download', ['prevented', 'cancelled']]);
+});
+
+test('a failed open does not drop the session a later window opened meanwhile', async () => {
+  const f = setup();
+  const first = f.incognito.get();
+  f.deps.persona.active = { id: 'replacement' };
+  void f.incognito.retire();
+  const second = f.incognito.get();
+  await assert.rejects(first, /changed during session setup/);
+  assert.equal(await second, await f.incognito.get(), 'the later session stays the shared one');
 });
 
 test('a governed browser offers no incognito window', async () => {

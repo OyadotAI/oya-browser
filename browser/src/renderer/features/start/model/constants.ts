@@ -21,7 +21,7 @@ export const TEXT = {
 /** What an incognito window's start page says instead: what is and is not kept, and that it is not a new identity. */
 export const INCOGNITO_TEXT = {
   title: 'Incognito',
-  kept: "Incognito pages aren't saved to history, and their cookies and site data are deleted when you close every incognito window. Downloads and bookmarks you make here are kept.",
+  kept: "Incognito pages aren't saved to history, and their cookies and site data are deleted when you close every incognito window. Downloads aren't available here, so nothing is written to disk; bookmarks you make here are kept.",
   identity:
     "This isn't a different identity. Sites see the same device and network as this profile, and signing in still tells them who you are. Oya's agents can't see or use this window.",
 } as const;

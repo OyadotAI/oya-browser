@@ -5,14 +5,15 @@
  * the shell only asks.
  */
 import { CLOSED_TABS_MAX, WEB_URL } from './constants.ts';
-import type { LoadURLOptions, WebContents } from 'electron';
+import type { LoadURLOptions, Session, WebContents } from 'electron';
 import type { Tab, TabStrip } from './types.ts';
 import { privateSession } from '../native-contexts/index.ts';
 
 /** Whether a tab is worth bringing back: not the start page, a popup window, a private session or a blank tab. */
-export function reopenable(tab: Tab): boolean {
+export function reopenable(tab: Tab, own?: Session): boolean {
   const session = tab.view?.webContents?.session;
-  return !tab.home && !tab.window && !!tab.url && tab.url !== 'about:blank' && !(session && privateSession(session));
+  const foreign = !!session && privateSession(session) && session !== own;
+  return !tab.home && !tab.window && !!tab.url && tab.url !== 'about:blank' && !foreign;
 }
 
 /** A closed tab worth reopening: where it was, and its place on the strip. */

@@ -164,12 +164,13 @@ function createPersonaStorage(deps: Deps): PersonaStorage {
   });
 }
 
-/** Same immutable persona: verify protection on every live surface. */
+/** Same immutable persona: verify protection on every live surface, in every window, incognito included. */
 function reprotectTabs(deps: Deps): void {
   deps.workers?.cover();
-  for (const tab of deps.tabs.list) {
-    if (!tab.view.webContents.isDestroyed()) deps.protection.setupTabCDP(tab.view);
-  }
+  const managers = new Set([deps.tabs]);
+  deps.windows?.each((scope) => managers.add(scope.tabs));
+  for (const tabs of managers)
+    for (const tab of tabs.list) if (!tab.view.webContents.isDestroyed()) deps.protection.setupTabCDP(tab.view);
 }
 
 /** The active persona and everything bound to it. */

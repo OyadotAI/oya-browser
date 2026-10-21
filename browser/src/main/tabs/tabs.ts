@@ -182,7 +182,7 @@ function rememberClosed(tabs: TabManager, idx: number, keepOne: boolean): void {
   const tab = tabs.list[idx];
   if (!keepOne) return tabs.closed.clear();
   // An incognito window remembers its own closes in memory, and reopens them in its own session.
-  if (reopenable(tab) || tab.view.webContents.session === tabs.privateSession) tabs.closed.push(tab.url, idx);
+  if (reopenable(tab, tabs.privateSession)) tabs.closed.push(tab.url, idx);
 }
 
 /** The last tab closed. */

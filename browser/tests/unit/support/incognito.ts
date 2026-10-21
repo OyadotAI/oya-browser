@@ -6,6 +6,7 @@ const fakeSession = () => ({
   setPermissionRequestHandler() {},
   setPermissionCheckHandler() {},
   setProxy: async () => {},
+  on() {},
   cookies: { flushStore: async () => {} },
   flushStorageData() {},
 });

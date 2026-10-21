@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import * as order from '../../../../src/main/tabs/tab-order.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 const { ClosedTabs, reorder, moveTabTo, openBeside, closeOthers, closeToRight, reopenClosed, reopenable } = order;
 const { pinnable, pinnedCount, setPinned, openLink } = order;
@@ -21,6 +22,14 @@ describe('reopenable', () => {
     assert.equal(reopenable({ ...page, url: 'about:blank' } as any), false);
     assert.equal(reopenable({ ...page, url: '' } as any), false);
     assert.equal(reopenable({ url: 'https://a.test/', view: {} } as any), true, 'a tab with no session yet');
+  });
+
+  it('reopens an incognito tab only in its own session, under the same rules as any tab', async () => {
+    const session = await incognitoSession();
+    const tab = { url: 'https://a.test/', view: { webContents: { session } } };
+    assert.equal(reopenable(tab as any), false, 'private to every other window');
+    assert.equal(reopenable(tab as any, session), true);
+    assert.equal(reopenable({ ...tab, home: true } as any, session), false, 'never a start page');
   });
 });
 

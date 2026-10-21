@@ -332,7 +332,9 @@ function fakeElectron() {
       },
     },
     webContents: { getAllWebContents: () => [] },
-    session: { fromPartition: (name) => ({ name, cookies: { flushStore: async () => {} }, flushStorageData() {} }) },
+    session: {
+      fromPartition: (name) => ({ name, on() {}, cookies: { flushStore: async () => {} }, flushStorageData() {} }),
+    },
     app: Object.assign(new EventEmitter(), {
       quit() {
         this.quitted = true;
