@@ -144,9 +144,10 @@ class FakeBrowserView {
   constructor(options = {}) {
     /** Construction options. */
     this.options = options;
-    /** Its page, in the app-owned session it was given (an agent context or incognito), as Electron's. */
-    this.webContents = new FakePageContents({});
-    if (options.webPreferences?.session) this.webContents.session = options.webPreferences.session;
+    /** Its page: the one it was given to adopt (a page's own window.open), else a new one in the app-owned session it was given (an agent context or incognito), as Electron's. */
+    this.webContents = options.webContents ?? new FakePageContents({});
+    if (!options.webContents && options.webPreferences?.session)
+      this.webContents.session = options.webPreferences.session;
     /** Last bounds set. */
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     /** Last background colour. */

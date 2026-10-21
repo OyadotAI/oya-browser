@@ -773,6 +773,33 @@ try {
     Menu.buildFromTemplate = globalThis.realBuild;
   });
   await tabCount(1);
+  // A window the page names without asking for a size (Bubble's preview) opens as a tab, not a bare window,
+  // and the page keeps what window.open gave it: opening the name again reaches the same tab, and it can close it.
+  const openNamed = (target) =>
+    application.evaluate(
+      async ({ BrowserWindow }, js) => {
+        globalThis.namedOpener ??= BrowserWindow.getAllWindows()[0].getBrowserView().webContents;
+        return globalThis.namedOpener.executeJavaScript(js, true);
+      },
+      `(window.named = window.open(${JSON.stringify(target)}, 'preview'), !!window.named)`,
+    );
+  const windowCount = () => application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  const windowsBefore = await windowCount();
+  assert.equal(await openNamed(`${url}?named=1`), true, 'the page gets a live reference');
+  await tabCount(2);
+  assert.equal(await windowCount(), windowsBefore, 'no bare window opens');
+  await nthTab(0).click();
+  await openNamed(`${url}?named=2`);
+  await page.waitForFunction(() => document.querySelectorAll('#tab-list .tab-item')[1].classList.contains('active'));
+  const namedSearch = () =>
+    application.evaluate(() =>
+      globalThis.namedOpener.executeJavaScript('window.named.location.search').catch(() => ''),
+    );
+  for (let tries = 0; tries < 50 && (await namedSearch()) !== '?named=2'; tries++) await page.waitForTimeout(100);
+  assert.equal(await namedSearch(), '?named=2', 'the second open reaches the same tab');
+  await tabCount(2);
+  await application.evaluate(() => globalThis.namedOpener.executeJavaScript('window.named.close()'));
+  await tabCount(1);
   for (const theme of ['dark', 'light']) {
     await showTheme(theme);
     await capture(`tabs-1-${theme}`);
