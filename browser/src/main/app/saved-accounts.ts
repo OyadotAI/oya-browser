@@ -42,9 +42,13 @@ interface KnownAccount {
   };
 }
 
-/** A stable id for a server and key that reveals neither. */
-const idOf = (serverUrl: string, apiKey: string): string =>
+/** A stable id for a server and key that reveals neither; a saved draft also records it, to know which project it was saved to. */
+export const idOf = (serverUrl: string, apiKey: string): string =>
   createHash('sha256').update(`${serverUrl}\n${apiKey}`).digest('hex').slice(0, SAVED_ACCOUNT_ID_CHARS);
+
+/** This browser's server and key now, as the id a saved draft records (see workflow/published.ts). */
+export const accountOf = ({ serverUrl, apiKey }: Partial<Pick<ConfigValues, 'serverUrl' | 'apiKey'>>): string =>
+  idOf(String(serverUrl ?? ''), String(apiKey ?? ''));
 
 /** The remembered accounts; anything malformed in the file counts as none. */
 const savedOf = (deps: Deps): SavedAccount[] => {

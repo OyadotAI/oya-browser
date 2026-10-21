@@ -106,6 +106,10 @@ export interface Draft {
   publishedAt?: unknown;
   /** The revision last published. */
   publishedRevision?: unknown;
+  /** The playbook name it was last saved as, so a save under a new name renames that playbook instead of adding one. */
+  publishedName?: unknown;
+  /** The server and project it was saved to, as an id revealing neither: a rename only ever happens there. */
+  publishedTo?: unknown;
   /** The run it came from. */
   run?: unknown;
   /** Anything else a draft carries through. */

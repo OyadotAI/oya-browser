@@ -105,8 +105,11 @@ for any task that repeats.
 REST (Bearer API key):
 
     POST   /api/browsers/:id/playbooks              save the browser's last run: { name }
+                                                    (overwrites a playbook of the same name)
     POST   /api/browsers/:id/playbooks/:name/play   replay: { variables, autoHeal }
     GET    /api/playbooks                           every saved playbook
+    PATCH  /api/playbooks/:name                     rename: { name }; 409 if the name is taken,
+                                                    404 if there is none; its healed draft moves too
     GET    /api/playbooks/:name/export              one playbook as a JSON document
     POST   /api/playbooks/import                    { playbook, name?, overwrite? }
     DELETE /api/playbooks/:name                     delete one

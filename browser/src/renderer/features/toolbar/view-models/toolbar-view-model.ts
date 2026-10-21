@@ -1,6 +1,7 @@
 /**
  * The navigation toolbar: the address bar (the active page's address as the
- * main process reports it, or what the person typed), Back, Forward and
+ * main process reports it, or what the person is typing, which a page changing
+ * its own address never overwrites), Back, Forward and
  * Reload, the loading state of the active tab (progress, status, Reload
  * becoming Stop), and the page's title for the window. Other features ask
  * it to focus the address bar (the command palette's Cmd/Ctrl L).
@@ -37,8 +38,10 @@ export interface NavState {
 
 /** What the toolbar shows. */
 export interface ToolbarState {
-  /** The address bar's text. */
+  /** The address bar's text: the page's address, or what the person is typing. */
   url: string;
+  /** The active page's address, apart from the text: the bookmark star toggles this page, whatever is typed. */
+  page: string;
   /** The active page's title. */
   title: string;
   /** The active tab's navigation state. */
@@ -135,10 +138,19 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   private readonly bridge: ToolbarBridge;
   /** Last selected tab, to focus a new start page only once. */
   private activeId: number | undefined;
+  /**
+   * The field is the person's: from focus until Enter, blur or a tab switch. While it holds, a page changing
+   * its own address (YouTube, Gmail) updates `page` and leaves the text, its selection and the suggestions alone.
+   */
+  private held = false;
+  /** The person typed since focusing: blur then keeps their text, where a field only looked at catches up to the page. */
+  private typed = false;
+  /** A page address arrived, so the starting status, which may be older, is ignored. */
+  private heard = false;
 
   /** Empty, following the active page; the address starts from the main process's status. */
   constructor(bridge: ToolbarBridge) {
-    super({ url: '', title: '', nav: IDLE, focusRequest: 0 });
+    super({ url: '', page: '', title: '', nav: IDLE, focusRequest: 0 });
     this.bridge = bridge;
     this.completion = new AddressCompletion(bridge);
     this.bookmarks = new BookmarksBarViewModel(bridge);
@@ -156,16 +168,31 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
   /** Follows the active page's address and title, and the tabs; the address starts from the status. Its parts end with it. */
   private follow(bridge: ToolbarBridge): void {
     this.own(() => this.parts().forEach((part) => part.dispose()));
-    this.own(bridge.onUrlChanged((url) => this.set({ url })));
+    this.own(bridge.onUrlChanged((url) => ((this.heard = true), this.pageChanged(url))));
     this.own(bridge.onTitleChanged((title) => this.set({ title })));
     this.own(bridge.onTabsUpdated((tabs) => this.tabsChanged(tabs)));
-    void bridge.getStatus().then((status) => status?.url && this.set({ url: status.url }));
+    void bridge.getStatus().then((status) => status?.url && !this.heard && this.pageChanged(status.url));
+  }
+
+  /** The active page's address changed: shown, unless the person is typing over it. */
+  private pageChanged(url: string): void {
+    this.set({ page: url });
+    if (!this.held) this.replace(url);
+  }
+
+  /** Puts `url` in the field from outside: what was being typed and its completion go. */
+  private replace(url: string): void {
+    this.held = this.typed = false;
+    this.completion.dismiss();
+    this.set({ url });
   }
 
   /** A newly selected start page is ready for an address, not an agent task. */
   private tabsChanged(tabs: readonly ActiveTab[]): void {
     const active = tabs.find((tab) => tab.active);
     const focus = active?.home && !active.collection && active.id !== this.activeId;
+    // A switch shows the new tab's address, which its url-changed (sent just before) left in `page`.
+    if (active?.id !== this.activeId && this.activeId !== undefined) this.replace(this.state.page);
     if (active?.id !== this.activeId) this.completion.dismiss();
     this.activeId = active?.id;
     this.set({ nav: navOf(tabs) });
@@ -174,14 +201,39 @@ export class ToolbarViewModel extends ViewModel<ToolbarState> {
 
   /** The person typed in the address bar. */
   edit(url: string, typing = false): void {
+    this.held = this.typed = true;
     this.set({ url });
     void this.completion.search(url, typing);
   }
 
   /** Enter in the address bar: loads what it says (an address or a search). */
   submit(destination = this.completion.selectedUrl ?? this.state.url + this.completion.state.inline): void {
+    this.held = this.typed = false;
     this.completion.dismiss();
     void this.bridge.navigate(destination.trim());
+  }
+
+  /** Escape: closes the suggestions first, as Chrome does; then puts the page's address back, selected, to type afresh. */
+  escape(): void {
+    if (this.completion.state.open) return this.completion.dismiss();
+    this.replace(this.state.page);
+    // Still focused: the restored address stays selected through the page's next change.
+    this.held = true;
+    this.focusAddress();
+  }
+
+  /** The field got focus: it is the person's until they leave it, so a page's address change cannot unselect it; suggestions open for what it shows. */
+  focused(): void {
+    this.held = true;
+    void this.completion.search(this.state.url);
+  }
+
+  /** The field lost focus: typed text stays until the next address change; untouched, it shows the page's address now. */
+  blurred(): void {
+    const looked = this.held && !this.typed;
+    this.held = this.typed = false;
+    this.completion.dismiss();
+    if (looked) this.set({ url: this.state.page });
   }
 
   /** Opens the native history and bookmarks menu above the page. */

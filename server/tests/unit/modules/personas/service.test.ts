@@ -454,8 +454,23 @@ describe('PersonaService fingerprints', () => {
     const { service } = personaService();
     const p = service.create('k', { prefs: { platform: 'MacIntel', timezone: 'Europe/Paris' } });
     const first = service.fingerprintFor(p);
-    assert.equal(service.fingerprintFor(p), first);
+    assert.deepEqual(service.fingerprintFor(p), first);
     assert.deepEqual(service.fingerprintFor({ ...p }), first);
+  });
+
+  it("keeps one caller's write to its fingerprint from reaching the next caller", () => {
+    const { service } = personaService();
+    const p = service.create('k');
+    service.fingerprintFor(p).proxy = { host: 'gate.vendor.test', password: 'operator-secret' };
+    assert.equal(service.fingerprintFor(p).proxy, null);
+  });
+
+  it("keeps a write to a nested field of one caller's fingerprint from the next caller too", () => {
+    const { service } = personaService();
+    const p = service.create('k');
+    const platform = service.fingerprintFor(p).navigator.platform;
+    service.fingerprintFor(p).navigator.platform = 'Tampered';
+    assert.equal(service.fingerprintFor(p).navigator.platform, platform);
   });
 
   it('gives a fresh service built from the stored record the same fingerprint', async () => {

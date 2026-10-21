@@ -14,6 +14,7 @@ import {
   NAME_RULE,
   PLACEHOLDER,
   RECORD_SHORTCUT,
+  SAVE_SAY,
   SAY,
   UNTITLED,
   type Slot,
@@ -147,13 +148,18 @@ export function studioMode(state: StudioState): StudioMode {
 /** A control's disabled rule, given the mode, the state and the snapshot. */
 type Rule = (m: StudioMode, state: StudioState, s: WorkspaceSnapshot) => boolean;
 
+/** Save is off until the draft can run, the browser is connected, there is something new to save and a valid name. */
+const saveOff: Rule = (m, state, s) => !m.runnable || !state.connected || s.saved || !validName(state.name);
+
 /** Each control's disabled rule, by element id. */
 const DISABLED = {
   'record-toggle': (m, state) => state.busy || state.saving || m.running,
   'record-validate': (m) => !m.runnable,
   'record-clear': (m) => m.locked || !m.stored,
   'draft-library': (m) => m.locked || !m.stored,
-  'record-save': (m, state, s) => !m.runnable || !state.connected || s.saved || !validName(state.name),
+  'record-save': saveOff,
+  // Save as copy is a second way to save: off whenever Save is, and while a save runs (it would do nothing then).
+  'record-save-copy': (m, state, s) => state.saving || saveOff(m, state, s),
   'record-name': (m) => m.locked,
   'record-desc': (m) => m.locked,
   'step-undo': (m, _state, s) => m.locked || !s.canUndo,
@@ -197,12 +203,27 @@ export function finishCopy(state: StudioState, draft: Draft): string {
   return `${steps} saved on this device. ${next}`;
 }
 
+/**
+ * Whether saving now renames the playbook this draft was saved as: the name typed is a different one.
+ * The main process says which playbook that is (`renameFrom`), by the same rule the save follows.
+ */
+export function renaming(state: StudioState): boolean {
+  const from = state.snapshot?.renameFrom;
+  const name = state.name.trim();
+  return !!from && !!name && name !== from;
+}
+
 /** The save button's label. */
 export function saveLabel(state: StudioState, draft: Draft): string {
   if (state.saving) return 'Saving…';
   if (state.snapshot?.saved) return 'Saved';
+  if (renaming(state)) return 'Rename and save';
   return draft.publishedAt ? 'Save changes' : 'Save playbook';
 }
+
+/** What the card says while a save would rename: which playbook, how to keep it, and what else follows the name. */
+export const renameNote = (state: StudioState): string =>
+  SAVE_SAY.note(String(state.snapshot?.renameFrom), state.name.trim());
 
 /** What stands between this draft and saving it. */
 export function saveHint(state: StudioState): string {

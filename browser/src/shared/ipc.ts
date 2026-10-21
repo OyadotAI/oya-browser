@@ -31,6 +31,32 @@ export interface Failure {
   error?: string;
 }
 
+/** A save's rename step: the playbook it renamed, or found gone (and so saved anew). */
+export interface SaveRename {
+  /** The name the playbook had. */
+  from: string;
+  /** It was no longer on the server, so nothing was renamed and the save made a new playbook. */
+  missing?: boolean;
+}
+
+/** A rename the server refused, so nothing was saved. */
+export interface SaveRefusal {
+  /** The name the playbook still has. */
+  from: string;
+  /** The server's status, when it answered (409: the new name is taken). */
+  status?: number;
+  /** The server did not answer in time, so whether it renamed is unknown. */
+  timedOut?: boolean;
+}
+
+/** What saving a recording answers besides the server's body: whether a rename happened, or why it refused. */
+export interface SaveResult extends Failure {
+  /** Set only once the server confirmed the rename (or said the old playbook was gone). */
+  renamed?: SaveRename;
+  /** The rename the server refused; nothing was saved. */
+  renameFailed?: SaveRefusal;
+}
+
 /** One open tab, as the tab strip draws it. */
 export interface TabSummary {
   /** The tab's id in the main process. */
@@ -417,8 +443,8 @@ export interface ShellCalls {
   startRecording(): Promise<unknown>;
   /** Stops recording. */
   stopRecording(): Promise<unknown>;
-  /** Saves the recording as a playbook. */
-  saveRecording(name: string, description?: string): Promise<unknown>;
+  /** Saves the recording as a playbook: under a new name it renames the one it was saved as, unless `asCopy`. */
+  saveRecording(name: string, description?: string, asCopy?: boolean): Promise<unknown>;
   /** Sets the workspace panel width. */
   resizeDevPanel(width: number): Promise<void>;
   /** The active page's HTML and markdown. */
