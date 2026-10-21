@@ -11,6 +11,44 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 - The address bar no longer replaces what you are typing when the page changes its own address. On YouTube, Gmail and other sites that update their address as you use them, typing a new address or search used to be wiped mid-word. Your text now stays until you press Enter, pick a suggestion, press Escape or switch tabs, and an address you selected to type over stays selected. Escape with no suggestions open puts the page's address back, selected, as in Chrome. The bookmark star always reflects the page that is open, not the text being typed.
 
 - A desktop browser, or a cloud browser on a plan without proxy traffic, could be sent the operator's residential proxy credentials when it ran as a persona that a paid cloud browser had used since the server started. It then used the gateway without its traffic being metered. Each connection now gets its own copy of the persona's fingerprint, so a proxy given to one browser never reaches another. A change to a persona's proxy also applies on its next connect instead of after a restart. Operators who ran a residential gateway should rotate its credentials after upgrading.
+## [1.0.202](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.202) · 2026-10-20
+
+### Fixed
+
+- The Downloads button's Open and Show in Finder act only on the file that was on screen when you clicked, and only once it has been there for half a second, so a page cannot start a download that swaps its own file in under your click.
+
+## [1.0.201](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.201) · 2026-10-20
+
+### Added
+
+- The desktop Downloads button shows each download as it happens: "Downloading" with how far it has got (bytes of the total and a percent, with a bar along the button), then "Saved" with the file's name and Open and Show in Finder. It shows in the window the download started in, never takes focus, and goes back to the plain button a few seconds after you have seen it. A failed or cancelled download says so instead.
+
+### Fixed
+
+- A download that paused and recovered on its own could show as failed on the Downloads page until it finished; only how a download ends decides that now.
+- The Downloads page says "Show in Finder" on a Mac, as the toolbar does.
+
+### Fixed
+
+- A flow recording whose browser went away (closed, disconnected or torn down) now ends at its 30-minute limit with the steps recorded so far. The stop used to be retried every 5 seconds for as long as the server ran.
+
+## [1.0.200](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.200) · 2026-10-19
+
+### Added
+
+- The desktop address bar shows the page's zoom, as Chrome does: a "110%" chip beside the star whenever a page is not at actual size, following every zoom, tab switch and change of site. Click it, or press Enter on it, to put the page back to 100%. It is hidden at 100%, on the start page and in the library, and refuses while OyaAI holds the tab.
+
+### Fixed
+
+- The View menu's Zoom In, Zoom Out and Actual Size could zoom a tab OyaAI was driving; they now do nothing there, like the keyboard shortcuts.
+- After a short network drop, the desktop no longer overrides the latest decision on who drives: pressing AI Mode just as the connection dropped no longer lands you back in Human Mode, and an agent handed control while the connection was down keeps it. A hold the server forgot, or one that lapsed while offline, is still taken back.
+
+## [1.0.199](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.199) · 2026-10-19
+
+### Fixed
+
+- Pages on the desktop could stop taking clicks, in every tab, until a restart: when your Human Mode hold ran out or its renewal was refused, the browser paused with nobody driving and kept every tab fenced, with nothing on screen saying why. It now takes control back once, as it already did after a reconnect, also when the connection drops partway through. It never takes control from an agent or another person who holds it, never while you are handing back to AI Mode, and a clock running ahead of the server's gets one retake rather than one a second.
+- A press on a page fenced for an agent is now noted in `tab-health.json` in the app's data folder: once per control state and shown tab, with who held control and what was stacked over the page (sites only, nothing for private tabs), so the next report of dead clicks can be told apart from a hung page. It stays on your machine.
 
 ## [1.0.198](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.198) · 2026-10-17
 

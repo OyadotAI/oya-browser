@@ -5,10 +5,11 @@ import { Shortcuts } from '../shell/shortcuts.ts';
 import { ControlShield } from '../shell/control-shield.ts';
 import { PanelLayout } from '../shell/layout.ts';
 import { Overlays } from '../shell/overlays.ts';
+import { FindBar } from '../shell/find-bar.ts';
 import { TabManager } from '../tabs/tabs.ts';
 
 /** Stateful collaborators belonging to a single native window. */
-const LOCAL_SERVICES = new Set(['shell', 'shortcuts', 'shield', 'layout', 'overlays', 'tabs']);
+const LOCAL_SERVICES = new Set(['shell', 'shortcuts', 'shield', 'layout', 'overlays', 'tabs', 'findBar']);
 
 /** Keeps assignments to shared task/session state on the application, not on a window shadow copy. */
 export class WindowContext {
@@ -30,12 +31,15 @@ export class WindowContext {
   /** A complete local dependency graph; collaborators defer cross-service calls until startup. */
   private locals(scope: AppServices) {
     return {
-      shell: new ShellWindow(scope),
-      shortcuts: new Shortcuts(scope),
-      shield: new ControlShield(scope),
+      ...this.chrome(scope),
       layout: new PanelLayout(scope),
       overlays: new Overlays(scope),
       tabs: new TabManager(scope),
+      findBar: new FindBar(scope),
     };
+  }
+  /** The native window itself, its keys and the shield over its page. */
+  private chrome(scope: AppServices) {
+    return { shell: new ShellWindow(scope), shortcuts: new Shortcuts(scope), shield: new ControlShield(scope) };
   }
 }

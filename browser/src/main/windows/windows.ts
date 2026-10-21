@@ -168,11 +168,16 @@ export class BrowserWindows {
     this.assertMovable(source, tab.id);
     this.assertMovable(target, tab.id);
     this.assertSource(source, tab);
-    source.tabs.releaseTab(tab.id);
+    this.release(source, tab.id);
     target.tabs.receiveTab(Object.assign(tab, { pinned: false }));
     target.shell.stagedTab = undefined;
     this.present(target);
     if (!source.tabs.list.length) source.shell.window?.close();
+  }
+  /** Takes the tab out of its window, closing that window's find bar first so it stops listening to a page it no longer shows. */
+  private release(source: AppServices, id: number): void {
+    source.findBar.follow(null);
+    source.tabs.releaseTab(id);
   }
   /** Recheck ownership after asynchronous shell preparation. */
   private assertSource(source: AppServices, tab: Tab): void {

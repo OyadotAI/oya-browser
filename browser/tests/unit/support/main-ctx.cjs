@@ -477,6 +477,7 @@ function mainCtx(real = {}) {
     },
     layout: { open: false, layoutActiveTab() {}, reveal() {}, closeAll() {}, flush() {}, inherit() {}, openFor() {} },
     overlays: { names: new Set() },
+    findBar: { open() {}, search() {}, step() {}, close() {}, dismiss() {}, follow() {}, sync() {}, height: () => 0 },
     protection: {
       assertSession() {},
       configureSession() {},

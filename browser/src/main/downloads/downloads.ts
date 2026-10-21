@@ -11,7 +11,7 @@ import { basename } from 'node:path';
 import type { DownloadItem, Session, WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import type { JsonFile } from '../app/json-file.ts';
-import type { DownloadEntry, DownloadState } from '../../shared/library.ts';
+import type { DownloadEntry } from '../../shared/library.ts';
 import { DOWNLOADS_KEPT, PROGRESS_INTERVAL_MS } from './constants.ts';
 import { claimPath, fileExists } from './repository.ts';
 
@@ -38,10 +38,17 @@ export class Downloads {
    * person still confirms every file an agent would write to their disk.
    */
   mayAutoSave: (contents: WebContents) => boolean = () => false;
+  /**
+   * Hears each download as it is listed, with the page it came from, so the window that page is in can show it.
+   * Told before `started`, which may close that page: a tab opened only to download is gone right after.
+   */
+  listedFrom: (id: string, contents: WebContents | undefined) => void = () => {};
   /** Every kept download, newest first, across profiles. */
   private entries: StoredDownload[];
   /** Sessions already reporting here. */
   private readonly installed = new WeakSet<Session>();
+  /** The page each download came from, until it is listed. */
+  private readonly sources = new WeakMap<DownloadItem, WebContents>();
   /** The pending progress save, so arriving bytes write at most once per interval. */
   private pending?: ReturnType<typeof setTimeout>;
   /** The Downloads folder, the shell and the profile. */
@@ -62,6 +69,7 @@ export class Downloads {
     if (this.installed.has(session)) return;
     this.installed.add(session);
     session.on('will-download', (_event, item, contents) => {
+      this.sources.set(item, contents);
       if (!this.mayAutoSave(contents)) return this.awaitChoice(item, partition);
       this.start(item, partition);
       this.started(contents);
@@ -112,7 +120,7 @@ export class Downloads {
     const path = claimPath(this.deps.electron.app.getPath('downloads'), item.getFilename());
     item.setSavePath(path);
     const entry = this.listed(item, path, partition, item.getFilename());
-    item.on('updated', (_event, state) => this.update(entry, item, state === 'interrupted' ? 'interrupted' : null));
+    item.on('updated', () => this.update(entry, item));
     item.once('done', (_event, state) => this.finish(entry, item, state));
   }
 
@@ -124,9 +132,9 @@ export class Downloads {
   private awaitChoice(item: DownloadItem, partition: string): void {
     let entry: StoredDownload | undefined;
     const chosen = () => (entry ??= item.getSavePath() ? this.listed(item, item.getSavePath(), partition) : undefined);
-    item.on('updated', (_event, state) => {
+    item.on('updated', () => {
       const e = chosen();
-      if (e) this.update(e, item, state === 'interrupted' ? 'interrupted' : null);
+      if (e) this.update(e, item);
     });
     // chosen() keeps the entry it made, so asking twice lists the download once.
     item.once('done', (_event, state) => chosen() && this.finish(chosen() as StoredDownload, item, state));
@@ -137,12 +145,16 @@ export class Downloads {
     const entry: StoredDownload = { ...newDownload(item, title), id: randomUUID(), path, partition };
     this.entries = [entry, ...this.entries].slice(0, DOWNLOADS_KEPT);
     this.flush();
+    this.listedFrom(entry.id, this.sources.get(item));
     return entry;
   }
 
-  /** Bytes arrived: told at most once per interval. */
-  private update(entry: StoredDownload, item: DownloadItem, failed: DownloadState | null): void {
-    Object.assign(entry, bytes(item), failed ? { state: failed } : {});
+  /**
+   * Bytes arrived: told at most once per interval. Never changes the state: Electron reports a
+   * resumable pause as `interrupted` while the download goes on, and only `done` says how it ended.
+   */
+  private update(entry: StoredDownload, item: DownloadItem): void {
+    Object.assign(entry, bytes(item));
     this.pending ??= setTimeout(() => this.flush(), PROGRESS_INTERVAL_MS);
   }
 

@@ -2,10 +2,11 @@
 import { bookmarksBar, setBookmarksBar } from '../shell/bookmarks-bar.ts';
 import type { AppServices } from '../app/services.ts';
 import type { HandlersOf } from './handle.ts';
-import { LibraryMenu, addressSuggestions, readLibrary, changeLibrary } from '../library/index.ts';
+import { LibraryMenu, addressSuggestions, readLibrary, changeLibrary, runDownloadAction } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
+import { zoomShownPage } from '../shell/page-zoom.ts';
 
 /** The services navigation uses. */
 type Deps = Pick<
@@ -25,6 +26,7 @@ type Deps = Pick<
   | 'windows'
   | 'agentTab'
   | 'shareIndicator'
+  | 'findBar'
 >;
 
 /** The channels this group answers. */
@@ -33,9 +35,14 @@ type Channel =
   | 'show-library'
   | 'read-library'
   | 'library-action'
+  | 'download-action'
   | 'bookmarks-bar-state'
   | 'set-bookmarks-bar'
   | 'toggle-bookmark'
+  | 'find-in-page'
+  | 'find-step'
+  | 'close-find'
+  | 'reset-zoom'
   | 'navigate'
   | 'go-back'
   | 'go-forward'
@@ -60,9 +67,14 @@ export class NavigationHandlers {
     'show-library': (_e, kind) => new LibraryMenu(this.deps).show(kind),
     'read-library': (_e, id) => readLibrary(this.deps, id),
     'library-action': (_e, id, action, url) => changeLibrary(this.deps, id, action, url),
+    'download-action': (_e, id, action) => runDownloadAction(this.deps, id, action),
     'bookmarks-bar-state': () => bookmarksBar(this.deps as AppServices),
     'set-bookmarks-bar': (_e, shown) => setBookmarksBar(this.deps as AppServices, shown === true),
     'toggle-bookmark': () => new LibraryMenu(this.deps).toggle(),
+    'find-in-page': (_e, text) => this.deps.findBar.search(text),
+    'find-step': (_e, forward) => this.deps.findBar.step(forward === true),
+    'close-find': () => this.deps.findBar.dismiss(),
+    'reset-zoom': () => zoomShownPage(this.deps, () => 0),
     navigate: (_e, url) => this.navigate(url),
     'go-back': () => this.goInHistory('go_back'),
     'go-forward': () => this.goInHistory('go_forward'),

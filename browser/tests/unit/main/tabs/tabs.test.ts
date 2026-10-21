@@ -167,6 +167,17 @@ describe('TabManager', () => {
     assert.equal(ctx.tabs.activeTabId, a);
   });
 
+  it('tells the find bar which tab is shown, so it never stays over another page', () => {
+    const follow = mock.method(ctx.findBar, 'follow');
+    const a = ctx.tabs.createTab('https://a.test/');
+    const b = ctx.tabs.createTab('https://b.test/');
+    ctx.tabs.activateTab(a);
+    assert.deepEqual(
+      follow.mock.calls.map((c) => c.arguments[0]),
+      [a, b, a],
+    );
+  });
+
   it('ignores closing a tab that is not open', () => {
     ctx.tabs.createTab('https://a.test/');
     ctx.tabs.closeTab(99);

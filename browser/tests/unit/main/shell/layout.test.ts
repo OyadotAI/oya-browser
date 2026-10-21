@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { PanelLayout } from '../../../../src/main/shell/layout.ts';
 import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
 import { shellLayout } from '../../../../src/main/shell/shell-layout.ts';
-import { BOOKMARKS_BAR_HEIGHT, CHROME_HEIGHT } from '../../../../src/main/shell/constants.ts';
+import { BOOKMARKS_BAR_HEIGHT, CHROME_HEIGHT, FIND_BAR_HEIGHT } from '../../../../src/main/shell/constants.ts';
 
 describe('PanelLayout', () => {
   let ctx: any, view: any;
@@ -31,6 +31,16 @@ describe('PanelLayout', () => {
     ctx.layout.layoutActiveTab();
     assert.equal(view.bounds.y, CHROME_HEIGHT);
     assert.equal(ctx.shell.sentOn('shell-layout')[0].chromeHeight, CHROME_HEIGHT);
+  });
+
+  it('moves the page down by the find bar while it is open on the shown tab', () => {
+    ctx.findBar.height = () => FIND_BAR_HEIGHT;
+    ctx.layout.layoutActiveTab();
+    assert.equal(view.bounds.y, CHROME_HEIGHT + BOOKMARKS_BAR_HEIGHT + FIND_BAR_HEIGHT);
+    assert.equal(
+      ctx.shell.sentOn('shell-layout')[0].chromeHeight,
+      CHROME_HEIGHT + BOOKMARKS_BAR_HEIGHT + FIND_BAR_HEIGHT,
+    );
   });
 
   it('replays the open interaction state with geometry after shell load or resize', () => {

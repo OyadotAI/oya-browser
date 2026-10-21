@@ -11,6 +11,7 @@ import { HOME_URL } from '../tabs/constants.ts';
 import { moveTabTo, reopenClosed } from '../tabs/tab-order.ts';
 import { resolveShortcut } from '../../shared/shortcuts.ts';
 import { LAST_TAB_DIGIT, ZOOM_STEP } from './constants.ts';
+import { zoomShownPage } from './page-zoom.ts';
 
 /** The services the shortcuts use. */
 type Deps = Pick<
@@ -26,6 +27,7 @@ type Deps = Pick<
   | 'windows'
   | 'agentTab'
   | 'sitePermissions'
+  | 'findBar'
 >;
 
 /** A command the main process runs itself. */
@@ -63,9 +65,7 @@ const DIGIT_COMMANDS: Record<string, LocalCommand> = Object.fromEntries(
 
 /** Zoom only the page: never distort the shell relative to its native view bounds. */
 function zoomPage(deps: Deps, offset: number | null): void {
-  if (!deps.agentTab.humanMay(deps.tabs.activeTabId)) return;
-  const contents = deps.tabs.getActiveView()?.webContents;
-  if (contents) contents.setZoomLevel(offset === null ? 0 : contents.getZoomLevel() + offset);
+  zoomShownPage(deps, (current) => (offset === null ? 0 : current + offset));
 }
 
 /** Commands the main process runs itself; any other goes to the shell page. */
@@ -90,6 +90,9 @@ const LOCAL_COMMANDS: Record<string, LocalCommand> = {
   'reopen-tab': (deps) => deps.agentTab.humanMay(null) && reopenClosed(deps.tabs),
   'move-tab-left': (deps) => moveActive(deps, -1),
   'move-tab-right': (deps) => moveActive(deps, 1),
+  find: (deps) => deps.findBar.open(),
+  'find-next': (deps) => deps.findBar.step(true),
+  'find-previous': (deps) => deps.findBar.step(false),
 };
 
 /** The shared registry is also the guide's source of truth. */

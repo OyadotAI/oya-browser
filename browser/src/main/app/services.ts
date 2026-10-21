@@ -24,6 +24,7 @@ import type { Observer } from '../observe/observer.ts';
 import type { Recorder } from '../recording/recorder.ts';
 import type { Routines } from '../routines/routines.ts';
 import type { ControlShield } from '../shell/control-shield.ts';
+import type { FindBar } from '../shell/find-bar.ts';
 import type { PanelLayout } from '../shell/layout.ts';
 import type { Overlays } from '../shell/overlays.ts';
 import type { Shortcuts } from '../shell/shortcuts.ts';
@@ -74,6 +75,8 @@ export interface AppServices {
   library: import('../library/index.ts').BrowsingLibrary;
   /** The person's downloads, listed on the Downloads page. */
   downloads: import('../downloads/index.ts').Downloads;
+  /** Each window's download chip: what started there, told only to that window. */
+  downloadBubble: import('../downloads/index.ts').DownloadBubble;
   /** Electron's main-process API; only the composition root imports it. */
   electron: typeof Electron;
   /** The app's folder: the package root in development, the asar when packaged. */
@@ -104,6 +107,8 @@ export interface AppServices {
   layout: PanelLayout;
   /** Overlays over the page (src/main/shell/overlays.ts). */
   overlays: Overlays;
+  /** Find in page on the shown tab (src/main/shell/find-bar.ts). */
+  findBar: FindBar;
   /** The tabs (src/main/tabs/tabs.ts). */
   tabs: TabManager;
   /** A tab's protection before its first page (src/main/tabs/protection.ts). */

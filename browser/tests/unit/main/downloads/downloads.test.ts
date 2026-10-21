@@ -250,3 +250,44 @@ it('a chosen download that fails or is cancelled later says so', () => {
     ],
   );
 });
+
+it('a transient interruption keeps a download in progress: only its end says how it went', () => {
+  const { downloads, start } = setup();
+  const item = start();
+  item.emit('updated', {}, 'interrupted');
+  mock.timers.tick(1000);
+  assert.equal(downloads.list()[0].state, 'progressing', 'a resumable pause is not a failure');
+  item.emit('done', {}, 'completed');
+  assert.equal(downloads.list()[0].state, 'completed');
+});
+
+it('a download names the page it came from before a download-only tab closes', () => {
+  const { downloads } = setup();
+  const session = new EventEmitter();
+  const order: string[] = [];
+  const page = { id: 'page' };
+  downloads.listedFrom = (id, contents) => order.push(`listed:${(contents as any)?.id}:${!!id}`);
+  downloads.started = () => order.push('started');
+  downloads.install(session as any, 'persist:oya-a');
+  session.emit('will-download', {}, new FakeItem(), page);
+  assert.deepEqual(order, ['listed:page:true', 'started']);
+});
+
+it('a Save As download names its page only once a path is chosen, and never when cancelled', () => {
+  const { downloads } = agentSetup();
+  const session = new EventEmitter();
+  const told: string[] = [];
+  downloads.listedFrom = (id) => told.push(id);
+  downloads.install(session as any, 'persist:oya-b');
+  const cancelled = new FakeItem();
+  session.emit('will-download', {}, cancelled, {});
+  cancelled.emit('done', {}, 'cancelled');
+  const chosen = new FakeItem(undefined, 'b.zip');
+  session.emit('will-download', {}, chosen, {});
+  chosen.emit('updated', {}, 'progressing');
+  assert.equal(told.length, 0, 'nothing before a path is chosen');
+  chosen.path = join(folder, 'b.zip');
+  chosen.emit('updated', {}, 'progressing');
+  chosen.emit('done', {}, 'completed');
+  assert.equal(told.length, 1, 'once, when it is listed');
+});

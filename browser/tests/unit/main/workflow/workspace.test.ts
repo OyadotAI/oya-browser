@@ -13,7 +13,7 @@ const STEPS = [
 ];
 
 /** A workspace over memory stores; `runner` answers validation starts. */
-function workspaceWith({ drafts = {}, runs = {}, runner, failSave = false } = {}) {
+function workspaceWith({ drafts = {}, runs = {}, runner, failSave = false, account = undefined } = {}) {
   const published = [];
   const controls = [];
   const session = { control: (c) => controls.push(c) };
@@ -22,6 +22,7 @@ function workspaceWith({ drafts = {}, runs = {}, runner, failSave = false } = {}
     runStore: new MemoryStore(runs),
     notify: (state) => published.push(state),
     runner: runner || (async (draft, options, receive) => ((ws.receiveFromWorker = receive), session)),
+    account,
   });
   return { ws, published, controls };
 }
@@ -46,6 +47,29 @@ describe('Workspace', () => {
     assert.equal(ws.draft.steps[1].timeout, 2500);
     assert.equal(published.at(-1).canUndo, true);
     assert.equal(ws.store.load(ws.draft.id).steps[1].timeout, 2500);
+  });
+
+  it('undo and redo keep where the draft was saved: it describes the server, not the edit', () => {
+    const { ws } = workspaceWith();
+    ws.capture(STEPS, new Set(), false);
+    ws.edit({ type: 'metadata', name: 'b' });
+    Object.assign(ws.draft, { publishedName: 'b', publishedTo: 'acct' });
+    ws.edit({ type: 'undo' });
+    assert.deepEqual([ws.draft.name, ws.draft.publishedName, ws.draft.publishedTo], ['Untitled workflow', 'b', 'acct']);
+    ws.edit({ type: 'redo' });
+    assert.deepEqual([ws.draft.name, ws.draft.publishedName], ['b', 'b']);
+  });
+
+  it('names the playbook a rename would move only for the account it was saved to', () => {
+    const here = workspaceWith({ account: () => 'acct' }).ws;
+    here.capture(STEPS, new Set(), false);
+    Object.assign(here.draft, { publishedName: 'old', publishedTo: 'acct' });
+    assert.equal(here.snapshot().renameFrom, 'old');
+    here.draft.publishedTo = 'other';
+    assert.equal(here.snapshot().renameFrom, null);
+    const unknown = workspaceWith().ws;
+    Object.assign(unknown.draft, { publishedName: 'old', publishedTo: 'acct' });
+    assert.equal(unknown.snapshot().renameFrom, null, 'without an account nothing is renamed');
   });
 
   it('keeps at most a hundred undo steps', () => {

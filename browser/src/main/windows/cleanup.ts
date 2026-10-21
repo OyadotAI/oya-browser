@@ -6,6 +6,7 @@ export function closeWindowTabs(scope: AppServices): void {
 }
 /** The per-window shield and its polling must not survive the native window. */
 export function disposeWindow(scope: AppServices): void {
+  scope.findBar.close();
   scope.layout.flush();
   scope.shield.stopTracking();
   const contents = scope.shield.view?.webContents;

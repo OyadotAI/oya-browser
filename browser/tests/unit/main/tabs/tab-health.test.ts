@@ -86,4 +86,32 @@ describe('TabHealthLog', () => {
       ],
     );
   });
+
+  it("records a shield press with the control state and the window's views, top first", () => {
+    const shown = tabAt(4, 'https://www.linkedin.com/notifications/?token=x', 9);
+    const shield = { shield: true };
+    const extra = { other: true };
+    claimed.push(4);
+    const control = { mode: 'paused', mine: false, revision: 7, busy: false, interactive: false, localClients: 0 };
+    log.shieldPress({ tabs: [shown], views: [extra, shown.view, shield], shield, control, tab: 4 });
+    const { detectedAt: _at, ...rest } = file.value[0];
+    assert.deepEqual(rest, {
+      event: 'shield-press',
+      tab: 4,
+      agent: true,
+      control: { mode: 'paused', mine: false, revision: 7, busy: false, interactive: false },
+      views: [{ kind: 'shield' }, { kind: 'tab', tab: 4, origin: 'https://www.linkedin.com' }, { kind: 'other' }],
+    });
+  });
+
+  it('leaves a private tab out of the view stack entirely', () => {
+    const session = {};
+    ownSession(session, {}, 'private-2');
+    const priv = tabAt(5, 'https://secret.test/', 1, session);
+    const shield = {};
+    log.shieldPress({ tabs: [priv], views: [priv.view, shield], shield, control: { mode: 'agent' }, tab: 5 });
+    assert.deepEqual(file.value[0].views, [{ kind: 'shield' }]);
+    assert.equal('tab' in file.value[0], false, "the shown private tab's id is not written either");
+    assert.equal('agent' in file.value[0], false);
+  });
 });

@@ -1,0 +1,139 @@
+/* The Downloads button and its chip: one control in the library group that turns into "Saved · report.pdf  Open  Show". */
+.download-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 480px;
+  border-radius: 5px;
+  transition: background-color var(--t-fast) var(--ease);
+}
+.download-chip.phase-saved {
+  background: var(--accent-soft);
+}
+.download-chip.phase-failed,
+.download-chip.phase-gone {
+  background: var(--danger-soft);
+}
+.download-chip-body {
+  min-width: 0;
+}
+.download-chip.phase-saved .download-chip-status {
+  color: var(--accent);
+}
+.download-chip.phase-failed .download-chip-status,
+.download-chip.phase-gone .download-chip-status {
+  color: var(--danger);
+}
+.download-chip-name {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 180px;
+}
+.download-chip-stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-chip-ext,
+.download-chip-sep {
+  flex: none;
+  white-space: pre;
+}
+.download-chip-mark .icon {
+  color: var(--accent);
+}
+.download-chip-short {
+  display: none;
+}
+.download-ring {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.download-ring circle {
+  fill: none;
+  stroke-width: 2;
+}
+.download-ring-track {
+  stroke: var(--border);
+}
+.download-ring-arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
+}
+.download-ring.turning {
+  animation: download-ring-turn 1s linear infinite;
+}
+@keyframes download-ring-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .download-ring.turning {
+    animation: none;
+  }
+  .download-chip {
+    transition: none;
+  }
+}
+/* The meter: how far, in words, then a bar along the chip's bottom edge. */
+.download-chip-meter {
+  flex: none;
+  margin-left: 6px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.download-chip-bar {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 1px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--border);
+  pointer-events: none;
+}
+.download-chip-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.5s linear;
+}
+.download-chip-bar.sliding .download-chip-fill {
+  width: 30%;
+  animation: download-chip-slide 1.2s ease-in-out infinite;
+}
+@keyframes download-chip-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .download-chip-fill {
+    transition: none;
+  }
+  .download-chip-bar.sliding .download-chip-fill {
+    animation: none;
+  }
+}
+/* Narrow windows hide the toolbar's icons and the file name; the ring and check stay, and Show is one word. */
+@media (max-width: 959px) {
+  .toolbar .download-chip .download-ring,
+  .toolbar .download-chip .download-chip-mark .icon {
+    display: inline-block;
+  }
+  .download-chip-name,
+  .download-chip-long {
+    display: none;
+  }
+  .download-chip-short {
+    display: inline;
+  }
+}

@@ -15,6 +15,7 @@ import type { ValidationSession } from '../workflow/validation.ts';
 import { validateNative, type NativeValidationDeps } from '../workflow/native-validation.ts';
 import { installApplicationMenu } from '../shell/menu.ts';
 import { HOME_URL } from '../tabs/constants.ts';
+import { accountOf } from './saved-accounts.ts';
 
 /** The services start-up uses. */
 type Deps = Pick<
@@ -41,6 +42,7 @@ type Deps = Pick<
   | 'actions'
   | 'nativeBrowsing'
   | 'sitePermissions'
+  | 'findBar'
 >;
 
 /** What a validation run is started with: the draft, its options and where its events go. */
@@ -118,6 +120,7 @@ export class Boot {
       runStore: draftStore(this.deps.electron, 'workflow-runs'),
       notify: (state) => this.deps.shell.send('workspace-state', state),
       runner: (draft, options, event) => this.runValidation({ draft, options, event }),
+      account: () => accountOf(this.deps.config.values),
     });
   }
 

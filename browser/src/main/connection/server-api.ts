@@ -65,13 +65,18 @@ export class ServerApi {
     return res.json();
   }
 
-  /** Sends `method` with a JSON body to `/api/<route>` as this project: answers its JSON, or throws with the server's own error and status. */
-  async send(method: string, route: string, payload?: unknown): Promise<unknown> {
+  /**
+   * Sends `method` with a JSON body to `/api/<route>` as this project: answers its JSON, or throws with the
+   * server's own error and status. `timeoutMs` gives up on a server that never answers, so a call made inside
+   * a queue (a recording save) cannot hold everything behind it.
+   */
+  async send(method: string, route: string, payload?: unknown, timeoutMs?: number): Promise<unknown> {
     const config = this.deps.config.values;
     const res = await fetch(`${serverHttpBase(config.serverUrl)}/api/${route}`, {
       method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
     });
     return readApiAnswer(res);
   }

@@ -34,6 +34,7 @@ type Deps = TabEventsDeps &
     | 'appDir'
     | 'agentTab'
     | 'shareIndicator'
+    | 'findBar'
   >;
 
 /** Optional native session is application-owned, never chosen by page-supplied partition strings. */

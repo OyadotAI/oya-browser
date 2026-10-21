@@ -37,7 +37,7 @@ import { SESSION_TABS_FILE, TAB_HEALTH_FILE } from './tabs/constants.ts';
 import { TabHealthLog } from './tabs/tab-health.ts';
 import { WindowBounds } from './shell/window-bounds.ts';
 import { WINDOW_BOUNDS_FILE } from './shell/constants.ts';
-import { Downloads, DOWNLOADS_FILE, closeDownloadOnlyTab, personMayUse } from './downloads/index.ts';
+import { Downloads, DownloadBubble, DOWNLOADS_FILE, closeDownloadOnlyTab, personMayUse } from './downloads/index.ts';
 import { ExternalApps } from './app/external-apps.ts';
 import { Notifications } from './notifications/index.ts';
 import type { AppServices } from './app/services.ts';
@@ -196,7 +196,9 @@ app.once('will-quit', () => ctx.persona.disposeStorage());
 ctx.library = new BrowsingLibrary(ctx);
 ctx.library.changed = () => announceBookmarks(ctx);
 ctx.downloads = new Downloads(ctx, new JsonFile(userFile(DOWNLOADS_FILE)));
-ctx.downloads.changed = () => announceBookmarks(ctx);
+ctx.downloadBubble = new DownloadBubble(ctx);
+ctx.downloads.changed = () => (announceBookmarks(ctx), ctx.downloadBubble.announce());
+ctx.downloads.listedFrom = (id, contents) => ctx.downloadBubble.began(id, contents);
 ctx.downloads.started = (contents) => closeDownloadOnlyTab(ctx, contents);
 ctx.downloads.mayAutoSave = (contents) => personMayUse(ctx, contents);
 ctx.recorder = new Recorder(ctx);
@@ -208,6 +210,7 @@ ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.agentTab = new AgentTab(ctx, () =>
   ctx.windows?.each((scope) => {
     scope.shield.sync();
+    scope.findBar.sync();
     scope.tabs.sendTabList();
   }),
 );
@@ -217,6 +220,7 @@ ctx.control = new DesktopControl({
     ctx.agentTab.sync(state);
     ctx.dialogs.controlChanged();
     ctx.shield.controlChanged(state);
+    ctx.windows?.each((scope) => scope.findBar.sync());
   },
 });
 ctx.cookies = new CookieSync({

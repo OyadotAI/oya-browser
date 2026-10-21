@@ -22,6 +22,9 @@ export async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
+/** The account the studio's workspace is on, as a saved draft records it. */
+export const ACCOUNT = 'acct';
+
 /** A workspace whose runner never starts a real run; `ws.receiveFromWorker` feeds it. */
 function workspace(storage?: any): any {
   const ws: any = new Workspace({
@@ -32,6 +35,7 @@ function workspace(storage?: any): any {
       (ws.receiveFromWorker = receive),
       { control() {} }
     ),
+    account: () => ACCOUNT,
   });
   return ws;
 }
