@@ -5,7 +5,7 @@
  * becomes the window's.
  */
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { useViewModel } from '../../../hooks/index.ts';
+import { incognito, useViewModel } from '../../../hooks/index.ts';
 import { Icon, IconButton } from '../../../ui/index.ts';
 import { navLook, windowTitle, type ToolbarViewModel } from '../view-models/toolbar-view-model.ts';
 import { AddressSuggestions } from './address-suggestions.tsx';
@@ -83,10 +83,10 @@ function AddressInput({ vm }: AddressBarProps) {
 
 /** The star at the address bar's end, as in Chrome: filled when the page is bookmarked; a click saves or removes it. */
 function BookmarkStar({ vm }: AddressBarProps) {
-  // The page, not the text: the star toggles the page that is open, whatever is being typed.
+  // The page, not the text: the star toggles the page that is open, whatever is being typed. Incognito keeps no bookmarks.
   const { page } = useViewModel(vm);
   const { saved } = useViewModel(vm.bookmarks);
-  if (!/^https?:\/\//i.test(page)) return null;
+  if (incognito() || !/^https?:\/\//i.test(page)) return null;
   const on = saved.includes(page);
   return (
     <IconButton

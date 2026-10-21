@@ -4,6 +4,7 @@ import { showLibrary } from './tabs.ts';
 import type { AppServices } from '../app/services.ts';
 import { CLEAR_HISTORY_CONFIRMATION, CONFIRM_RESPONSE } from './constants.ts';
 import type { LibraryKind } from '../../shared/library.ts';
+import { isIncognito } from '../incognito/index.ts';
 
 /** The Forget item's label, counting the sites it would forget. */
 function forgetLabel(count: number): string {
@@ -81,11 +82,11 @@ export class LibraryMenu {
       click: () => this.mayUse() && this.deps.downloads.clear(),
     };
   }
-  /** Bookmarking uses the active page, not user-editable address-bar text. */
+  /** Bookmarking uses the active page, not user-editable address-bar text; an incognito page leaves nothing in the library. */
   toggle(): void {
     if (!this.mayUse()) return;
     const tab = this.deps.tabs.find(this.deps.tabs.activeTabId);
-    if (tab && !tab.home) this.deps.library.toggle(tab.url, tab.title);
+    if (tab && !tab.home && !isIncognito(tab.view?.webContents?.session)) this.deps.library.toggle(tab.url, tab.title);
   }
   /** Confirmation cannot clear a different profile if the persona changes while it is open. */
   private async clear(): Promise<void> {
