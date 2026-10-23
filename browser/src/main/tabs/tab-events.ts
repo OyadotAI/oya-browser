@@ -73,16 +73,18 @@ export class TabEvents {
   }
 
   /**
-   * A page the opener made follows its opener, as in Chrome: when the opener sends
-   * it somewhere again (Preview clicked a second time) the tab comes forward rather
+   * A page the opener made follows its opener, as in Chrome: when the page on screen
+   * sends it somewhere again (Preview clicked a second time) the tab comes forward rather
    * than reloading out of sight, and when the opener closes it (`w.close()`) it
    * leaves the strip.
    */
   private wireOpenedByPage(tab: Tab): void {
     const contents = tab.view.webContents;
     contents.on('did-start-navigation', ({ isMainFrame, initiator }) => {
-      const fromElsewhere = initiator && initiator.top?.frameTreeNodeId !== contents.mainFrame.frameTreeNodeId;
-      if (isMainFrame && fromElsewhere) this.deps.tabs.activateTab(tab.id);
+      // Only the page the person is looking at may bring it forward: a background page cannot pull focus.
+      const shown = this.deps.tabs.find(this.deps.tabs.activeTabId)?.view.webContents.mainFrame;
+      const fromShown = !!shown && initiator?.top?.frameTreeNodeId === shown.frameTreeNodeId;
+      if (isMainFrame && fromShown) this.deps.tabs.activateTab(tab.id);
     });
     contents.once('destroyed', () => this.deps.tabs.closeTab(tab.id));
   }

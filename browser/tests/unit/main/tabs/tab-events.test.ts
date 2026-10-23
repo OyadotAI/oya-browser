@@ -372,13 +372,23 @@ describe('tab events', () => {
       assert.equal(ctx.tabs.list.length, 1);
     });
 
-    it('comes forward when its opener sends it somewhere again', () => {
+    it('comes forward when the page on screen sends it somewhere again', () => {
+      tab.view.webContents.mainFrame = { frameTreeNodeId: 1 };
       const page = Object.assign(childPage(), { mainFrame: { frameTreeNodeId: 9 } });
       tab.view.webContents.openHandler(named).createWindow({ webContents: page });
       ctx.tabs.activateTab(tab.id);
-      const opener = { top: { frameTreeNodeId: 1 } };
-      page.emit('did-start-navigation', { isMainFrame: true, initiator: opener });
+      page.emit('did-start-navigation', { isMainFrame: true, initiator: { top: tab.view.webContents.mainFrame } });
       assert.equal(ctx.tabs.activeTabId, ctx.tabs.list.at(-1).id);
+    });
+
+    it('is not pulled forward by a page in the background', () => {
+      tab.view.webContents.mainFrame = { frameTreeNodeId: 1 };
+      const page = Object.assign(childPage(), { mainFrame: { frameTreeNodeId: 9 } });
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      const shown = ctx.tabs.find(ctx.tabs.createTab('https://other.test/'));
+      shown.view.webContents.mainFrame = { frameTreeNodeId: 5 };
+      page.emit('did-start-navigation', { isMainFrame: true, initiator: { top: tab.view.webContents.mainFrame } });
+      assert.equal(ctx.tabs.activeTabId, shown.id);
     });
 
     it('stays where it is when it navigates itself', () => {
