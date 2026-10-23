@@ -6,6 +6,24 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Added source-guided Rust V9 assignment expressions, arithmetic compound stores, prefix/postfix updates, conditionals, `typeof` and `void`. Shared retained references preserve evaluation order and existing store protections; the native demo now uses ordinary counter syntax. Full engine and browser parity remain unfinished.
+- Added source-guided Rust V9 function/script `var` declarations, hoisting, optional initializers and supported var/function/parameter redeclarations. Global properties share declaration cells, loop closures retain shared var bindings, and failed native events preserve committed state. Full engine and browser parity remain unfinished.
+- Added source-guided Rust V9 `call`, `apply` and `bind`, shared function-method identity, supported function name/length metadata and saved bound callbacks. Bound references and function properties participate in candidate validation, quotas and collection; full engine and browser parity remain unfinished.
+- Added source-guided Rust V9 method receivers, `this`, lexical arrow receivers and directive-based strictness. Page-global data, captured receivers, Storage and document proposals remain bounded atomic candidates. The greeting form now retains its object controller through a saved arrow; full engine and browser parity remain unfinished.
+- Added source-guided Rust V9 arrow functions with simple parameters, expression/block bodies and lexical capture. Arrows reuse source-validated closure graphs and atomic native publication; the greeting controller now exercises both body forms. Implicit arguments-object, async and richer-parameter semantics remain unfinished.
+- Extended native Rust V9 with bounded standard `for` loops, scoped let/const headers, per-iteration let cells and completion-aware updates. The native counter now displays loop-computed sums; loop failures retain committed VM, heap, Storage and document state.
+
+- Added source-guided Rust V9 first-class functions, anonymous/named expressions, directly nested declarations and lexical closures with shared cells. Functions pass through callbacks, returns and object/array storage; captured for-let iterations retain distinct bindings. Bounded source-validated graphs survive native events and reclaim unreachable cycles at successful request boundaries. The greeting form now uses a saved private-state controller; full V8 and browser parity remain unfinished.
+- Added a native V9 counter/branch journey and pinned lexical semantics: functions isolate caller scopes, local bindings shadow function names, undefined resolves as a scalar, and event snapshots must match their source declarations. Failed bindings, heap, Storage and DOM candidates remain unpublished; full browser parity is still unfinished.
+
+- Added a default native macOS session profile backed by Keychain. Supported cookies survive app restarts, while secure-storage failures block navigation until retry or clear; **Clear Saved Cookies…** removes the saved and live jar after confirmation. Electron profile import and local storage remain unsupported.
+- Started the Rust native replacement for Oya's Electron browser for people and agents, with independent networking, document/layout and V9 services, a macOS native window, verified HTTPS, native agent tools, control handoff, history and operator-granted native screenshots. Current compatibility is still under development.
+- Replaced the native prototype's string-only language core with V8-source-guided scanning, UTF-16 strings, binary64 numeric state, arithmetic precedence, JavaScript scalar conversions and located errors. Pinned source references, attribution and selected adapted upstream cases document the first port; full engine and browser compatibility remain unfinished.
+- Extended the Rust V9 subset with flat identity-preserving objects and arrays, own-property reads/writes, parameterized functions, return values and conditional/loop control flow. Page heap state and DOM proposals commit together after native event validation; full V8 and current Oya compatibility remain unfinished.
+- Added ordered blocking classic scripts to the Rust browser. Up to eight inline or external scripts share page state and V9 work limits; external scripts use governed fetch, require JavaScript MIME and cannot redirect. Failures discard the candidate page and report the source-order script index.
+
 ## [1.0.206](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.206) · 2026-10-22
 
 ### Fixed
