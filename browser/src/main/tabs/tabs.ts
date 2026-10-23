@@ -3,7 +3,15 @@
  * their first page loads. Opening, closing, switching, and the tab strip the
  * shell draws.
  */
-import type { BrowserView, BrowserWindow, LoadURLOptions, NavigationHistory, WebPreferences, Session } from 'electron';
+import type {
+  BrowserView,
+  BrowserViewConstructorOptions,
+  BrowserWindow,
+  LoadURLOptions,
+  NavigationHistory,
+  Session,
+  WebContents,
+} from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { TabEvents, type TabEventsDeps } from './tab-events.ts';
 import { AddressBar } from './navigation.ts';
@@ -11,11 +19,16 @@ import { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } from './constants.ts';
 import * as popups from './popup-tabs.ts';
 import { loadInTab, isUnprotected } from './load.ts';
 import { isHome, shownViewOf } from './home.ts';
-import { initialTab, mountTab, updateTabTitle, updateTabUrl } from './tab-lifecycle.ts';
+import {
+  initialTab,
+  mountTab,
+  sessionPreferences,
+  tabPreferences,
+  updateTabTitle,
+  updateTabUrl,
+} from './tab-lifecycle.ts';
 import { TabSelection } from './tab-selection.ts';
 import { ClosedTabs, reopenable } from './tab-order.ts';
-import { recordingPreferences } from '../recording/preload.ts';
-import { isNativeEngine } from '../native-policy/index.ts';
 import type { Tab, TabView } from './types.ts';
 import { reloadOrRecover } from './tab-recovery.ts';
 
@@ -38,7 +51,20 @@ type Deps = TabEventsDeps &
   >;
 
 /** Optional native session is application-owned, never chosen by page-supplied partition strings. */
-type CreateTabArguments = [url: string, activate?: boolean, loadOptions?: LoadURLOptions, session?: Session];
+type CreateTabArguments = [
+  url: string,
+  activate?: boolean,
+  loadOptions?: LoadURLOptions,
+  session?: Session,
+  /** The page Electron already made for a page's own `window.open`, to wrap rather than create. */
+  contents?: WebContents,
+];
+
+/** Electron's BrowserView shim adopts an existing page through `webContents`; its typings have not caught up. */
+type PageViewOptions = BrowserViewConstructorOptions & {
+  /** An existing page to wrap instead of a new one. */
+  webContents?: WebContents;
+};
 
 /** How a close treats the last tab. */
 interface CloseOptions {
@@ -157,21 +183,10 @@ function reportFirstLoad(e: LoadFailure): void {
 function openFirstPage(tab: Tab, tabReady: Promise<void>, url: string, loadOptions?: LoadURLOptions): void {
   tab.setup = tabReady;
   const load = (): Promise<void> | undefined =>
-    url && !isHome(url) && !tab.navigationRequest ? loadInTab(tab, url, loadOptions) : undefined;
+    url && !isHome(url) && !tab.navigationRequest && !tab.openedByPage ? loadInTab(tab, url, loadOptions) : undefined;
   tab.ready = Promise.resolve(tabReady).then(load);
   tab.ready.catch(reportFirstLoad);
 }
-
-/**
- * A tab's page settings. Background throttling is off so a tab keeps drawing while
- * the window is hidden or covered, and an agent's click is not left waiting for a
- * frame (see KEEP_RENDERING_SWITCHES in src/main/app/constants.ts).
- */
-const tabPreferences = (partition: string, appDir: string, owner: Session): WebPreferences => ({
-  ...recordingPreferences(appDir, !isNativeEngine(owner)),
-  partition,
-  backgroundThrottling: false,
-});
 
 /**
  * A person's close is remembered for Reopen closed tab; a bulk close (log
@@ -207,14 +222,18 @@ function reloadOrStop(tabs: TabManager, tab: Tab): void {
   else tabs.reloadTab(tab);
 }
 
-/** Creates a page in the active partition, with white behind sites that paint no background. */
-function createPageView(deps: Deps, session?: Session): BrowserView {
-  const owner = session || deps.persona.session();
+/**
+ * Creates a page in the active partition, with white behind sites that paint no
+ * background. Given `contents` (a page Electron made for `window.open`), it wraps
+ * that page, and checks the session the page actually runs in.
+ */
+function createPageView(deps: Deps, session?: Session, contents?: WebContents): BrowserView {
+  const owner = contents?.session ?? session ?? deps.persona.session();
   deps.protection.assertSession(owner);
   const webPreferences = session
-    ? { ...tabPreferences('', deps.appDir, owner), session }
+    ? sessionPreferences(deps.appDir, owner)
     : tabPreferences(deps.persona.partitionName(), deps.appDir, owner);
-  const view = new deps.electron.BrowserView({ webPreferences });
+  const view = new deps.electron.BrowserView({ webPreferences, webContents: contents } as PageViewOptions);
   view.setBackgroundColor(PAGE_BACKGROUND);
   return view;
 }
@@ -296,8 +315,8 @@ export class TabManager {
 
   /** Opens a tab on `url`, loaded with Electron's `loadOptions` (a referrer, a POST body); returns its id. */
   createTab(...args: CreateTabArguments): number {
-    const [url, activate = true, loadOptions, session] = args;
-    const tab = this.addTab(url, session ?? this.privateSession);
+    const [url, activate = true, loadOptions, session, contents] = args;
+    const tab = this.addTab(url, session ?? this.privateSession, contents);
     const tabReady = eventsFor(this.deps as AppServices, tab, this.events).wire(tab);
     openFirstPage(tab, tabReady, url, loadOptions);
     if (activate) this.deps.layout.inherit(tab.id, url);
@@ -307,10 +326,10 @@ export class TabManager {
   }
 
   /** A new view in the persona's partition, on the list. */
-  private addTab(url: string, session?: Session): Tab {
+  private addTab(url: string, session?: Session, contents?: WebContents): Tab {
     const id = this.deps.windows?.allocateTabId() ?? this.nextTabId++;
-    const tab = initialTab(id, createPageView(this.deps, session), url);
-    this.list.push(tab);
+    const tab = initialTab(id, createPageView(this.deps, session, contents), url);
+    this.list.push(Object.assign(tab, contents && { openedByPage: true }));
     return tab;
   }
 

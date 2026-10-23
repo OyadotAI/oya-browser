@@ -69,6 +69,24 @@ export class TabEvents {
     // Read on each event, not now: `deps` resolves the tab's current window, which a tear-off changes.
     wireHome(() => this.deps.tabs, tab);
     wireFavicon(() => this.deps.tabs, tab);
+    if (tab.openedByPage) this.wireOpenedByPage(tab);
+  }
+
+  /**
+   * A page the opener made follows its opener, as in Chrome: when the page on screen
+   * sends it somewhere again (Preview clicked a second time) the tab comes forward rather
+   * than reloading out of sight, and when the opener closes it (`w.close()`) it
+   * leaves the strip.
+   */
+  private wireOpenedByPage(tab: Tab): void {
+    const contents = tab.view.webContents;
+    contents.on('did-start-navigation', ({ isMainFrame, initiator }) => {
+      // Only the page the person is looking at may bring it forward: a background page cannot pull focus.
+      const shown = this.deps.tabs.find(this.deps.tabs.activeTabId)?.view.webContents.mainFrame;
+      const fromShown = !!shown && initiator?.top?.frameTreeNodeId === shown.frameTreeNodeId;
+      if (isMainFrame && fromShown) this.deps.tabs.activateTab(tab.id);
+    });
+    contents.once('destroyed', () => this.deps.tabs.closeTab(tab.id));
   }
 
   /** Shortcuts, focus, and the loading / failed state the tab strip shows. */

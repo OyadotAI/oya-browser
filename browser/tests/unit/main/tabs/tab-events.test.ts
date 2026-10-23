@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import { VIEW_SOURCE_LIGHT } from '../../../../src/main/tabs/tab-events.ts';
-import { mainCtx, FakeBrowserView } from '../../support/main-ctx.cjs';
+import { mainCtx, FakeBrowserView, FakePageContents } from '../../support/main-ctx.cjs';
 import { flush } from '../../support/fakes.cjs';
 import { incognitoSession } from '../../support/incognito.ts';
 import { TAB_UNPROTECTED_DESKTOP, TAB_PROBE_MS, HOME_URL } from '../../../../src/main/tabs/constants.ts';
@@ -302,14 +302,15 @@ describe('tab events', () => {
     assert.deepEqual(join.mock.calls.at(-1).arguments, [tab.view]);
   });
 
-  it('keeps a window the page named, because the page keeps using what it opened', () => {
+  it('keeps a named window that asked for a size a window, because the page sized it', () => {
     const before = ctx.tabs.list.length;
     const decision = tab.view.webContents.openHandler({
       url: 'https://vendor.example.com/sso',
-      features: '',
+      features: 'width=500,height=600',
       frameName: 'vendorWin',
     });
     assert.equal(decision.action, 'allow');
+    assert.equal(decision.createWindow, undefined);
     assert.equal(ctx.tabs.list.length, before, 'no tab is opened behind its back');
   });
 
@@ -318,6 +319,132 @@ describe('tab events', () => {
     const decision = tab.view.webContents.openHandler({ url: 'about:blank', features: '', frameName: '_blank' });
     assert.equal(decision.action, 'allow');
     assert.equal(ctx.tabs.list.length, before, 'no about:blank tab is left behind');
+  });
+
+  it('keeps a named blank window the page fills itself a window', () => {
+    const decision = tab.view.webContents.openHandler({ url: '', features: '', frameName: 'preview' });
+    assert.equal(decision.action, 'allow');
+    assert.equal(decision.createWindow, undefined);
+  });
+
+  it('keeps a named sign-in popup a window', () => {
+    const decision = tab.view.webContents.openHandler({
+      url: 'https://accounts.google.com/o/oauth2',
+      features: '',
+      frameName: 'signin',
+    });
+    assert.equal(decision.action, 'allow');
+    assert.equal(decision.createWindow, undefined);
+  });
+
+  describe('a named window with no size asked for', () => {
+    const named = { url: 'https://preview.test/app', features: '', frameName: 'preview' };
+    /** The page Electron makes for the opener, as createWindow receives it. */
+    const childPage = () => new FakePageContents({ url: named.url });
+
+    it('opens as a tab beside its opener, wrapping the page the opener holds', () => {
+      const decision = tab.view.webContents.openHandler(named);
+      const page = childPage();
+      assert.equal(decision.action, 'allow');
+      assert.equal(decision.createWindow({ webContents: page }), page);
+      const opened = ctx.tabs.list.at(-1);
+      assert.equal(ctx.tabs.list.length, 2);
+      assert.equal(opened.view.webContents, page);
+      assert.equal(opened.openerId, tab.id);
+      assert.equal(ctx.tabs.activeTabId, opened.id);
+    });
+
+    it('leaves the page Electron is loading alone: no blank page, no second load', async () => {
+      const page = childPage();
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      await ctx.tabs.list.at(-1).ready;
+      assert.deepEqual(page.loaded, []);
+    });
+
+    it('outlives the page that opened it, like any tab', () => {
+      assert.equal(tab.view.webContents.openHandler(named).outlivesOpener, true);
+    });
+
+    it('leaves the strip when the page closes it', () => {
+      const page = childPage();
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      page.emit('destroyed');
+      assert.equal(ctx.tabs.list.length, 1);
+    });
+
+    it('comes forward when the page on screen sends it somewhere again', () => {
+      tab.view.webContents.mainFrame = { frameTreeNodeId: 1 };
+      const page = Object.assign(childPage(), { mainFrame: { frameTreeNodeId: 9 } });
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      ctx.tabs.activateTab(tab.id);
+      page.emit('did-start-navigation', { isMainFrame: true, initiator: { top: tab.view.webContents.mainFrame } });
+      assert.equal(ctx.tabs.activeTabId, ctx.tabs.list.at(-1).id);
+    });
+
+    it('is not pulled forward by a page in the background', () => {
+      tab.view.webContents.mainFrame = { frameTreeNodeId: 1 };
+      const page = Object.assign(childPage(), { mainFrame: { frameTreeNodeId: 9 } });
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      const shown = ctx.tabs.find(ctx.tabs.createTab('https://other.test/'));
+      shown.view.webContents.mainFrame = { frameTreeNodeId: 5 };
+      page.emit('did-start-navigation', { isMainFrame: true, initiator: { top: tab.view.webContents.mainFrame } });
+      assert.equal(ctx.tabs.activeTabId, shown.id);
+    });
+
+    it('stays where it is when it navigates itself', () => {
+      const page = Object.assign(childPage(), { mainFrame: { frameTreeNodeId: 9 } });
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      ctx.tabs.activateTab(tab.id);
+      page.emit('did-start-navigation', { isMainFrame: true, initiator: { top: page.mainFrame } });
+      page.emit('did-start-navigation', { isMainFrame: true, initiator: null });
+      assert.equal(ctx.tabs.activeTabId, tab.id);
+    });
+
+    it('is closed when its protection fails, never left showing the page', async () => {
+      mock.method(ctx.protection, 'setupTabCDP', async () => false);
+      mock.method(console, 'error', () => {});
+      const page = Object.assign(childPage(), { close: mock.fn() });
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      await ctx.tabs.list.at(-1).setup;
+      assert.equal(page.close.mock.callCount(), 1);
+    });
+
+    it('is closed, never shown or thrown, when its session is not protected', () => {
+      const decision = tab.view.webContents.openHandler(named);
+      mock.method(ctx.protection, 'assertSession', () => {
+        throw new Error('unprotected');
+      });
+      mock.method(console, 'error', () => {});
+      const page = Object.assign(childPage(), { close: mock.fn() });
+      assert.equal(decision.createWindow({ webContents: page }), page);
+      assert.equal(page.close.mock.callCount(), 1);
+      assert.equal(ctx.tabs.list.length, 1);
+    });
+
+    it("stays the agent's when the agent's page opened it", () => {
+      const handOff = mock.method(ctx.agentTab, 'handOff', () => {});
+      tab.view.webContents.openHandler(named).createWindow({ webContents: childPage() });
+      assert.deepEqual(handOff.mock.calls[0].arguments, [tab.id, ctx.tabs.list.at(-1).id]);
+    });
+
+    it("gets the opener's session and the tab preload", () => {
+      const prefs = tab.view.webContents.openHandler(named).overrideBrowserWindowOptions.webPreferences;
+      assert.equal(prefs.session, tab.view.webContents.session);
+      assert.equal(prefs.preload, path.join(ctx.appDir, 'out', 'preload', 'recording.js'));
+      assert.equal(prefs.backgroundThrottling, false);
+    });
+
+    it('never opens a file: address', () => {
+      assert.deepEqual(tab.view.webContents.openHandler({ ...named, url: 'file:///etc/passwd' }), { action: 'deny' });
+    });
+
+    it('checks the session the page actually runs in', () => {
+      const assertSession = mock.method(ctx.protection, 'assertSession', () => {});
+      const page = childPage();
+      page.session = { child: true };
+      tab.view.webContents.openHandler(named).createWindow({ webContents: page });
+      assert.equal(assertSession.mock.calls.at(-1).arguments[0], page.session);
+    });
   });
 
   it('still turns an anonymous target=_blank into a tab', () => {
