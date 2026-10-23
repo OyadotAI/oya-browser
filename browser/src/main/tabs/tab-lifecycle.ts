@@ -1,10 +1,29 @@
 /** Rendering and initial tab records, independent of the manager's selection and lifetime. */
 import { mountOnly } from '../shell/view-stack.ts';
-import type { BrowserView } from 'electron';
+import type { BrowserView, Session, WebPreferences } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import type { Tab, TabView } from './types.ts';
 import { isHome, shownViewOf, staysHome, leaveHomeFor } from './home.ts';
 import { sendZoom } from '../shell/page-zoom.ts';
+import { recordingPreferences } from '../recording/preload.ts';
+import { isNativeEngine } from '../native-policy/index.ts';
+
+/**
+ * A tab's page settings. Background throttling is off so a tab keeps drawing while
+ * the window is hidden or covered, and an agent's click is not left waiting for a
+ * frame (see KEEP_RENDERING_SWITCHES in src/main/app/constants.ts).
+ */
+export const tabPreferences = (partition: string, appDir: string, owner: Session): WebPreferences => ({
+  ...recordingPreferences(appDir, !isNativeEngine(owner)),
+  partition,
+  backgroundThrottling: false,
+});
+
+/** A tab's page settings in a session the app already holds (an opener's), rather than a partition by name. */
+export const sessionPreferences = (appDir: string, session: Session): WebPreferences => ({
+  ...tabPreferences('', appDir, session),
+  session,
+});
 
 /** Initial tab state never loads a URL; protection still owns the first navigation. */
 export function initialTab(id: number, view: TabView, url: string): Tab {

@@ -33,6 +33,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 - Extended the Rust V9 subset with flat identity-preserving objects and arrays, own-property reads/writes, parameterized functions, return values and conditional/loop control flow. Page heap state and DOM proposals commit together after native event validation; full V8 and current Oya compatibility remain unfinished.
 - Added ordered blocking classic scripts to the Rust browser. Up to eight inline or external scripts share page state and V9 work limits; external scripts use governed fetch, require JavaScript MIME and cannot redirect. Failures discard the candidate page and report the source-order script index.
 
+### Fixed
+
+- Usage counted in the last minute before the top of each hour is now recorded and billed. It used to be dropped when the hour rolled over before the next write.
+
 ## [1.0.206](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.206) · 2026-10-22
 
 ### Fixed

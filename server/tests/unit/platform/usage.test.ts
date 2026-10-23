@@ -35,13 +35,17 @@ describe('usage', () => {
     assert.equal(now.hour, '2026-01-01T10:00:00.000Z');
   });
 
-  it("forgets an erased owner's counters, so no flush writes them back", () => {
+  it("forgets an erased owner's counters, ended hours included, so no flush writes them back", async () => {
     usage.record('key-a', 'commands');
     usage.record('key-b', 'commands');
+    mock.timers.tick(MS_PER_HOUR);
+    usage.record('key-a', 'commands');
     usage.forget(new Set([fingerprint('key-a')]));
     const actors = usage.snapshot().map((r) => r.actor);
     assert.equal(actors.length, 1);
     assert.equal(usage.current('key-a').commands, 0);
+    await usage.drain();
+    assert.equal(await storedRow('key-a'), undefined);
   });
 
   it('ignores unknown fields, non-numbers and a missing key', () => {
@@ -58,11 +62,17 @@ describe('usage', () => {
     assert.equal(usage.current('key-a').sandboxes_created, 0);
   });
 
-  it('starts a fresh bucket on the first write of a new hour', () => {
+  it('starts a fresh bucket on the first write of a new hour, and still writes the ended hour', async () => {
     usage.record('key-a', 'commands', 4);
     mock.timers.tick(MS_PER_HOUR);
     usage.record('key-a', 'commands');
     assert.equal(usage.current('key-a').commands, 1);
+    await usage.drain();
+    const rows = await getConnection().select('usage', { api_key: fingerprint('key-a') }, { order: ['hour', 'asc'] });
+    assert.deepEqual(
+      rows.map((r) => r.commands),
+      [4, 1],
+    );
   });
 
   it('counts a connected browser as started and open', () => {
@@ -171,15 +181,21 @@ describe('usage', () => {
     assert.deepEqual([row.browser_seconds, row.browsers_started], [CONNECTED_SECONDS, 1]);
   });
 
-  it('keeps counters a failed write could not store, logs it, and writes them on the next flush', async () => {
+  it('keeps counters a failed write could not store, ended hours included, logs it, and writes them on the next flush', async () => {
     const error = mock.method(console, 'error', () => {});
     const upsert = mock.method(getConnection(), 'upsert', async () => Promise.reject(new Error('storage down')));
     usage.record('key-a', 'commands');
+    mock.timers.tick(MS_PER_HOUR);
+    usage.record('key-a', 'commands', 2);
     await usage.drain();
     upsert.mock.restore();
     assert.match(error.mock.calls[0].arguments[0], /write failed \(storage down\)/);
     await usage.drain();
-    assert.equal((await storedRow('key-a')).commands, 1);
+    const rows = await getConnection().select('usage', { api_key: fingerprint('key-a') }, { order: ['hour', 'asc'] });
+    assert.deepEqual(
+      rows.map((r) => r.commands),
+      [1, 2],
+    );
     error.mock.restore();
   });
 });

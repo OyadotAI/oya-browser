@@ -73,6 +73,12 @@ export interface Tab {
   blankCommitted?: boolean;
   /** The tab that opened it, so a test run's tabs close with it. */
   openerId?: number;
+  /**
+   * Electron made this page for the page's own named `window.open` and is already
+   * loading it: protection must not blank it, nothing loads it again, and the
+   * page that opened it may close it.
+   */
+  openedByPage?: boolean;
   /** Pinned to the strip's leading block: drawn as its icon, spared by bulk closes, restored pinned. */
   pinned?: boolean;
 }

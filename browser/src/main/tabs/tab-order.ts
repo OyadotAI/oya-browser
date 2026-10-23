@@ -71,6 +71,7 @@ export interface OrderedTabs extends TabStrip {
     activate?: boolean,
     options?: import('electron').LoadURLOptions,
     session?: import('electron').Session,
+    contents?: WebContents,
   ): number;
   /** Closes a tab. */
   closeTab(id: number): void;
@@ -151,6 +152,8 @@ export interface Link {
   show?: boolean;
   /** How the first load goes (a POST body, a referrer). */
   options?: LoadURLOptions;
+  /** The page Electron already made for a named `window.open`, to wrap rather than create. */
+  contents?: WebContents;
 }
 
 /** Where a tab opened from the tab at `from` goes: after it and the tabs it already opened beside it, so links opened in a row keep their order, as in Chrome. */
@@ -175,9 +178,9 @@ function placeBeside(tabs: OrderedTabs, from: number, id: number): void {
  * middle-clicks open in the background, as in Chrome, so the person stays on
  * the page they were reading. Returns the new id.
  */
-export function openLink(tabs: OrderedTabs, { page, url, show = false, options }: Link): number {
+export function openLink(tabs: OrderedTabs, { page, url, show = false, options, contents }: Link): number {
   const from = tabs.list.findIndex((t) => t.view.webContents === page.webContents);
-  const id = tabs.createTab(url, show, options, page.webContents.session);
+  const id = tabs.createTab(url, show, options, page.webContents.session, contents);
   if (from !== -1) placeBeside(tabs, from, id);
   return id;
 }
