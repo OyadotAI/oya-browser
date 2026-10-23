@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Usage counted in the last minute before the top of each hour is now recorded and billed. It used to be dropped when the hour rolled over before the next write.
+
 ## [1.0.206](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.206) · 2026-10-22
 
 ### Fixed
