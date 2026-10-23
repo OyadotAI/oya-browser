@@ -236,9 +236,13 @@ assert.ok(/Promise\.race\(\[tab\.ready\.catch/.test(src), 'waitForTabReady must 
 
 // Session protection precedes construction. The compatibility-named tab readiness
 // check remains bounded after about:blank so dialog/world initialization cannot
-// strand a tab or expose a destination whose native setup failed.
+// strand a tab or expose a destination whose native setup failed. A tab a page
+// opened skips the blank load (its renderer is already loading that page), but
+// its setup is bounded the same way.
 assert.ok(
-  /const blank = tab\.view\.webContents\.loadURL\('about:blank'\)/.test(src) &&
+  /const blank = (tab\.openedByPage \? Promise\.resolve\(\) : )?tab\.view\.webContents\.loadURL\('about:blank'\)/.test(
+    src,
+  ) &&
     /withinTime\(\s*blank\.then\(\(\) => this\.deps\.protection\.setupTabCDP\(view\)\),\s*CDP_SETUP_TIMEOUT,?\s*\)/.test(
       src,
     ),
@@ -262,7 +266,11 @@ assert.match(
   /if \(NATIVE_SIGNIN_TEST\) \{\s*app.whenReady\(\).then\(\(\) => startNativeSigninTest\(electron\)\);\s*app.on\('window-all-closed', \(\) => app.quit\(\)\);\s*\} else \{/,
 );
 assert.doesNotMatch(src, /app\.commandLine\.appendSwitch\(['"]remote-debugging-port/);
-assert.match(src, /const owner = session \|\| deps\.persona\.session\(\);\s*deps\.protection\.assertSession\(owner\)/);
+// A page's session is checked before its view is made; one `window.open` made is checked in the session it runs in.
+assert.match(
+  src,
+  /const owner = (contents\?\.session \?\? session \?\? |session \|\| )deps\.persona\.session\(\);\s*deps\.protection\.assertSession\(owner\)/,
+);
 assert.strictEqual(
   pageLoads.length,
   1,

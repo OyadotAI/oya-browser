@@ -14,6 +14,10 @@ export const ALLOWED = {
   // braces stack exhaustion on deeply nested patterns, pulled in by the server's
   // dependencies: no fixed release to move to yet.
   'GHSA-vfj7-8cjw-p6xm': 'braces: no fixed version published',
+  // dompurify, pulled in by posthog-js for its product tours, which sanitize with
+  // ADD_TAGS/ADD_ATTR only: neither bug's mode is used, and 3.4.17 is the newest release.
+  'GHSA-cg2g-xh64-v4q7': 'dompurify: no fixed version published; posthog-js does not use SAFE_FOR_TEMPLATES',
+  'GHSA-mrv2-3pqr-j5jr': 'dompurify: no fixed version published; posthog-js does not use IN_PLACE',
 };
 
 /** Severities that fail the build. */
