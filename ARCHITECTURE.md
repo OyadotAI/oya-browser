@@ -12,7 +12,7 @@ part has its own `ARCHITECTURE.md` with the detail.
 | Server | [`server/`](server/ARCHITECTURE.md) | Node 22.18+ (24 in CI and the images), TypeScript run directly | REST API, browser WebSockets, MCP, the CDP gateway, the control plane |
 | Console | [`ui/`](ui/ARCHITECTURE.md) | Next.js 16, React 19 | The dashboard and public site, served by the server |
 | Oya Browser | [`browser/`](browser/ARCHITECTURE.md) | Electron 44, TypeScript built by electron-vite, React 19 for the shell page | The desktop browser, and the image cloud browsers run |
-| Native browser | [`native/`](native/ARCHITECTURE.md) | Rust, separate network/document/V9 processes, macOS native shell | Rust replacement for the Electron browser, being built for people and agents; currently an independent runtime with bounded PNG/JPEG, tables and Keychain-backed session cookies |
+| Mars | [`mars/`](mars/ARCHITECTURE.md) | Rust, reusable Eye/V9/Relay libraries and separate service processes, macOS native shell | Oya's Rust browser for people and agents; currently an independent runtime with bounded PNG/JPEG, tables and Keychain-backed session cookies |
 | SDK | [`packages/sdk/`](packages/ARCHITECTURE.md) | Node 20+, browsers | `@oya-ai/browser`, the public TypeScript client (MIT) |
 | CLI | [`packages/cli/`](packages/ARCHITECTURE.md) | Node 20+ | `@oya-ai/cli`, install and setup wizard (MIT) |
 
