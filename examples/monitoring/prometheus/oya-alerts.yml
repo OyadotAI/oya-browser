@@ -1,0 +1,28 @@
+# Self-hosted Oya: alerts on the control plane. Tune the thresholds to your load.
+groups:
+  - name: oya-control-plane
+    rules:
+      - alert: OyaQueueBackingUp
+        expr: oya_control_queue_depth > 10
+        for: 5m
+        annotations:
+          summary: 'Browser requests are queueing: {{ $value }} waiting for capacity'
+      - alert: OyaCleanupStuck
+        expr: oya_control_cleanup_oldest_seconds > 900
+        for: 5m
+        annotations:
+          summary: 'A browser has waited {{ $value }}s to be deleted; check the provider'
+      - alert: OyaWebhooksUndelivered
+        expr: oya_control_webhook_pending > 50
+        for: 10m
+        annotations:
+          summary: '{{ $value }} webhook deliveries are not acknowledged; is your endpoint up?'
+      - alert: OyaRequestsRejected
+        expr: increase(oya_routing_rejected_total[10m]) > 0
+        annotations:
+          summary: 'Browser requests were turned away for lack of capacity'
+      - alert: OyaEventLoopLag
+        expr: oya_event_loop_lag_mean_ms > 200
+        for: 5m
+        annotations:
+          summary: 'The Oya server is overloaded (event loop lag {{ $value }}ms)'

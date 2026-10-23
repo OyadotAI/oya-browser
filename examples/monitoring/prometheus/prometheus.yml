@@ -1,0 +1,15 @@
+# Self-hosted Oya only: scrape the server's Prometheus metrics.
+# Set OYA_METRICS_TOKEN on the Oya server, and put the same value in the file below.
+# The metrics token opens /api/metrics and nothing else.
+scrape_configs:
+  - job_name: oya
+    metrics_path: /api/metrics
+    scheme: https
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/oya-metrics-token
+    static_configs:
+      - targets: ['oya.example.internal'] # your Oya server's host
+
+rule_files:
+  - oya-alerts.yml

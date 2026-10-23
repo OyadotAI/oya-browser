@@ -18,6 +18,7 @@
     "sdk/*.ts",
     "multi-vendor/*.ts",
     "ecs/*.ts",
+    "monitoring/*.ts",
     "playwright/*.ts"
   ]
 }

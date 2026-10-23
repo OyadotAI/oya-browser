@@ -49,6 +49,16 @@ Each one sets `sandbox_runtime: 'ecs'` and a nested `ecs` setting, then starts a
 | [`04-cluster-name.ts`](ecs/04-cluster-name.ts) | Name the cluster by its name, looked up in `region`                       | `npx tsx --env-file=.env ecs/04-cluster-name.ts` |
 | [`05-cluster-arn.ts`](ecs/05-cluster-arn.ts)   | Name the cluster by its full ARN, whose region must match `region`        | `npx tsx --env-file=.env ecs/05-cluster-arn.ts`  |
 
+### 📈 [`monitoring/`](monitoring/): watch your project
+
+What is running, what it cost, what allowance is left, and every lifecycle event as it happens. Self-hosted servers also get a Prometheus scrape target and alert rules. Curl versions of every call are in [`monitoring/README.md`](monitoring/README.md).
+
+| File                                      | Feature Demonstrated                                                         | Run Command                                        |
+| :---------------------------------------- | :--------------------------------------------------------------------------- | :------------------------------------------------- |
+| [`01-status.ts`](monitoring/01-status.ts) | One snapshot: sessions by state, the live ones, this hour's usage and limits | `npx tsx --env-file=.env monitoring/01-status.ts`  |
+| [`02-events.ts`](monitoring/02-events.ts) | Tail the lifecycle event log live, from a cursor                             | `npx tsx --env-file=.env monitoring/02-events.ts`  |
+| [`prometheus/`](monitoring/prometheus/)   | Self-hosted: scrape `/api/metrics` and alert on the control plane            | see [`monitoring/README.md`](monitoring/README.md) |
+
 ---
 
 ## ⚡ Setup in 60 Seconds
