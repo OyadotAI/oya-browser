@@ -33,6 +33,9 @@ pub(super) enum Transport {
     Native,
     /** MCP owns its launched window for the client's stdio lifetime. */
     Mcp,
+    /** A person's window that also accepts `mars mcp` and `mars agent --attach` on the per-user
+    attach socket; each connection is its own lane and starts without any tab grant. */
+    Attach,
 }
 impl From<bool> for Transport {
     /** Existing broker callers keep their native-agent boolean seam. */
@@ -59,12 +62,14 @@ pub(super) enum Command {
         params: Value,
         page: Option<String>,
         permit: Permit,
+        /** A click on page content nothing listens to is not an error the person sees. */
+        quiet: bool,
     },
     /** Agent revision preconditions are never rewritten. */
     Agent(Request, Permit),
     /** OS presentation events do not grant document mutation. */
     Viewport(f64, f64),
-    /** Complete OS observations reflow from one post-chrome viewport and preference. */
+    /** Complete OS observations reflow from one viewport measured below the Mars shell and preference. */
     Context(RenderContext),
     /** Explicit appearance replies wait for both runtime publication and native display. */
     Appearance {
@@ -81,10 +86,18 @@ pub(super) enum Command {
     ProfileRetry,
     /** Explicit site-storage recovery never clears the independent cookie item. */
     ProfileStorageClear,
+    /** "Clear browsing data" empties the network engine's HTTP cache. */
+    CacheClear,
     /** A close decision saves session state on the runtime-owning worker. */
     SaveSession(mpsc::SyncSender<bool>),
     /** Explicit close-without-saving prevents the worker's final retry. */
     DiscardSession(mpsc::SyncSender<()>),
+    /** Save Link fetches one address as the person, through the governed network path, for saving. */
+    Download {
+        id: u64,
+        url: String,
+        permit: Permit,
+    },
 }
 
 /// Replies are acknowledged only after the UI has consumed their immutable snapshot.
@@ -111,6 +124,13 @@ pub(super) enum Event {
     },
     /** Startup cannot leave a misleading live-looking shell. */
     Failed(EngineError),
+    /** A fetched download; the UI thread saves it to the folder the person chose. */
+    Download {
+        id: u64,
+        result: EngineResult<crate::runtime::downloads::Fetched>,
+    },
+    /** A navigation answered with a file instead of a page; the UI thread lists and saves it. */
+    NavigationDownload(crate::runtime::downloads::Fetched),
 }
 
 /// All tasks are cancellable and joined before the desktop owner exits.
@@ -125,6 +145,46 @@ pub(super) struct Broker {
     pub transport: Transport,
     worker: Option<JoinHandle<()>>,
     io: Vec<JoinHandle<()>>,
+    /** The attach hub and the endpoint it bound; the socket is removed when the window closes. */
+    attach: Option<(mars::mcp::attach::Hub, mars::mcp::attach::Endpoint)>,
+}
+
+/** Attached agents enter through the same bounded command queue as every other agent. */
+struct AttachHost {
+    commands: SyncSender<Command>,
+}
+impl mars::mcp::attach::Host for AttachHost {
+    /** A full queue is Busy and a stopped worker is Closed; nothing waits on the UI thread. */
+    fn submit(&self, request: Request, permit: Permit) -> mars::mcp::attach::Submit {
+        use mars::mcp::attach::Submit;
+        match self.commands.try_send(Command::Agent(request, permit)) {
+            Ok(()) => Submit::Queued,
+            Err(mpsc::TrySendError::Full(_)) => Submit::Busy,
+            Err(mpsc::TrySendError::Disconnected(_)) => Submit::Closed,
+        }
+    }
+}
+
+/** Listen on the per-user attach socket. A socket another browser already owns, or a directory
+that is not private, leaves the window without agents instead of failing startup. */
+fn attach(
+    commands: SyncSender<Command>,
+    replies: Receiver<Response>,
+    authority: SharedAuthority,
+    cancel: Arc<AtomicBool>,
+) -> Option<(mars::mcp::attach::Hub, mars::mcp::attach::Endpoint)> {
+    let endpoint = mars::mcp::attach::Endpoint::default_location();
+    let started = endpoint.bind().and_then(|(listener, token)| {
+        let host = Arc::new(AttachHost { commands });
+        mars::mcp::attach::Hub::start(listener, token, host, replies, authority, cancel)
+    });
+    match started {
+        Ok(hub) => Some((hub, endpoint)),
+        Err(error) => {
+            eprintln!("Agents cannot attach to this window: {}", error.message);
+            None
+        }
+    }
 }
 
 impl Broker {
@@ -164,9 +224,13 @@ impl Broker {
         let (replies, output) = mpsc::sync_channel(QUEUE);
         let authority = crate::runtime::authority::Authority::shared(owner);
         let cancel = Arc::new(AtomicBool::new(false));
-        let connected = Arc::new(AtomicBool::new(transport != Transport::None));
+        let connected = Arc::new(AtomicBool::new(matches!(
+            transport,
+            Transport::Native | Transport::Mcp
+        )));
         let guard = Arc::clone(&authority);
         let stop = Arc::clone(&cancel);
+        let mut hub = None;
         let io = match transport {
             Transport::Native => super::io::start(
                 commands.clone(),
@@ -182,6 +246,10 @@ impl Broker {
                 cancel.clone(),
                 connected.clone(),
             )?,
+            Transport::Attach => {
+                hub = attach(commands.clone(), output, authority.clone(), cancel.clone());
+                Vec::new()
+            }
             Transport::None => Vec::new(),
         };
         let start = WorkerStart {
@@ -204,6 +272,7 @@ impl Broker {
             transport,
             worker: Some(worker),
             io,
+            attach: hub,
         })
     }
     /** Permission is captured before queue admission, never inferred when work finishes. */
@@ -272,6 +341,10 @@ impl Drop for Broker {
         for worker in self.io.drain(..) {
             let _ = worker.join();
         }
+        if let Some((hub, endpoint)) = self.attach.take() {
+            drop(hub);
+            endpoint.remove();
+        }
     }
 }
 
@@ -325,6 +398,18 @@ fn worker(
             return;
         }
     };
+    let first_paint = events.clone();
+    runtime.show_first_paint(Box::new(move |snapshot| {
+        let _ = first_paint.try_send(Event::Update {
+            snapshot: Box::new(snapshot),
+            result: Ok(json!({})),
+            agent_id: None,
+            appearance_update: false,
+            clear_error: false,
+            destination: None,
+            rejected_edit: None,
+        });
+    }));
     let destination = initial.clone();
     let result = if let Some(url) = initial {
         let state = authority::lock(&authority).expect("new authority");
@@ -357,8 +442,30 @@ fn worker(
                 if execute(&mut runtime, command, &events).is_err() {
                     break;
                 }
+                if let Some(fetched) = runtime.take_download()
+                    && events.try_send(Event::NavigationDownload(fetched)).is_err()
+                {
+                    break;
+                }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Idle time runs the visible page's timers and requests; a change repaints.
+                if runtime.run_page_scripts()
+                    && events
+                        .try_send(Event::Update {
+                            snapshot: Box::new(runtime.snapshot()),
+                            result: Ok(json!({})),
+                            agent_id: None,
+                            appearance_update: false,
+                            clear_error: false,
+                            destination: None,
+                            rejected_edit: None,
+                        })
+                        .is_err()
+                {
+                    break;
+                }
+            }
             Err(_) => break,
         }
     }
@@ -378,9 +485,18 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
         let _ = reply.send(());
         return Ok(());
     }
+    if let Command::Download { id, url, permit } = command {
+        let result = runtime.download(&url, permit);
+        return events
+            .try_send(Event::Download { id, result })
+            .map_err(|_| ());
+    }
     if matches!(
         &command,
-        Command::ProfileClear | Command::ProfileRetry | Command::ProfileStorageClear
+        Command::ProfileClear
+            | Command::ProfileRetry
+            | Command::ProfileStorageClear
+            | Command::CacheClear
     ) {
         let result = match command {
             Command::ProfileClear => runtime.clear_profile().map(|had_cookies| {
@@ -394,6 +510,7 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
             Command::ProfileStorageClear => runtime
                 .clear_saved_web_storage()
                 .map(|()| "Saved site storage cleared. You can continue browsing."),
+            Command::CacheClear => runtime.clear_cache().map(|()| "Cached files cleared."),
             _ => unreachable!(),
         };
         return events
@@ -443,10 +560,15 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
                 .try_send(Event::Loading(request.op.clone()))
                 .map_err(|_| ())?;
         }
+        let timed = std::time::Instant::now();
         let result = runtime.handle_as(request, permit);
+        crate::runtime::perf::record("broker.handle", timed, String::new);
+        let timed = std::time::Instant::now();
+        let snapshot = Box::new(runtime.snapshot());
+        crate::runtime::perf::record("broker.snapshot", timed, String::new);
         return events
             .try_send(Event::Update {
-                snapshot: Box::new(runtime.snapshot()),
+                snapshot,
                 result,
                 agent_id: Some(id),
                 appearance_update: false,
@@ -493,9 +615,10 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
             mut params,
             page,
             permit,
+            quiet,
         } => {
             let current = runtime.snapshot().inspection;
-            if page.is_some() && page.as_deref() != current["page_id"].as_str() {
+            let result = if page.is_some() && page.as_deref() != current["page_id"].as_str() {
                 Err(EngineError::new(
                     "invalid_target",
                     "The visible page changed before this action.",
@@ -509,6 +632,10 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
                     params["tab_id"] = current["tab_id"].clone();
                 }
                 runtime.handle_as(Request::new("human", &op, params), permit)
+            };
+            match result {
+                Err(error) if quiet && error.code == "invalid_target" => Ok(json!({})),
+                other => other,
             }
         }
         Command::Viewport(width, height) => runtime.set_viewport(width, height).map(|()| json!({})),
@@ -522,8 +649,10 @@ fn execute(runtime: &mut Runtime, command: Command, events: &SyncSender<Event>) 
         | Command::ProfileClear
         | Command::ProfileRetry
         | Command::ProfileStorageClear
+        | Command::CacheClear
         | Command::SaveSession(_)
-        | Command::DiscardSession(_) => unreachable!(),
+        | Command::DiscardSession(_)
+        | Command::Download { .. } => unreachable!(),
     };
     let rejected_edit = if result.is_err() { edited } else { None };
     events

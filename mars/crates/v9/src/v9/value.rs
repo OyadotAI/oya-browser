@@ -1,7 +1,4 @@
-/** Typed ECMAScript scalar values retain UTF-16 and binary64 through private service messages. */
-mod equality;
-mod heap;
-mod host;
+/** ECMAScript values: UTF-16 strings, binary64 numbers and arena identities, never native handles. */
 mod number;
 mod string;
 mod wire;
@@ -9,14 +6,26 @@ use crate::{
     constants::JS_STRING_UNITS,
     protocol::{EngineError, EngineResult},
 };
-pub(super) use heap::{Heap, HeapObject, ObjectId};
-pub use host::{HostKind, HostRef};
-pub(super) use number::{literal, to_uint32};
+pub(super) use number::{
+    literal, number_to_string, radix_string, string_number, to_int32, to_uint32,
+};
+use std::sync::Arc;
 pub use string::CodePointCursor;
 
-/// JavaScript strings can retain lone surrogate code units without invalid Rust UTF-8.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct JsString(Vec<u16>);
+/** Heap object identities; intrinsic objects live in a reserved high range. */
+pub type ObjectId = u32;
+
+/// JavaScript strings keep UTF-16 code units, including lone surrogates, and share their buffer.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct JsString(Arc<[u16]>);
+
+impl std::fmt::Debug for JsString {
+    /** Debug output shows the text, replacing unpaired surrogates. */
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:?}", String::from_utf16_lossy(&self.0))
+    }
+}
+
 impl JsString {
     /// Explicit DOM inputs are UTF-8, converted once at the VM boundary.
     pub fn from_utf8(value: &str) -> EngineResult<Self> {
@@ -30,7 +39,17 @@ impl JsString {
                 JS_STRING_UNITS,
             ));
         }
-        Ok(Self(units))
+        Ok(Self(units.into()))
+    }
+    /// Build from a slice under the same limit.
+    pub fn from_slice(units: &[u16]) -> EngineResult<Self> {
+        if units.len() > JS_STRING_UNITS {
+            return Err(EngineError::limit(
+                "JavaScript string UTF-16 units",
+                JS_STRING_UNITS,
+            ));
+        }
+        Ok(Self(units.into()))
     }
     /// Count code units rather than Rust Unicode scalar values or UTF-8 bytes.
     pub fn len(&self) -> usize {
@@ -40,124 +59,180 @@ impl JsString {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// The empty string.
+    pub fn empty() -> Self {
+        Self(Arc::from(Vec::new()))
+    }
     /// DOMString support is incomplete; fail explicitly rather than silently replacing surrogates.
     pub fn to_dom(&self) -> EngineResult<String> {
-        String::from_utf16(&self.0).map_err(|_|EngineError::unsupported("The UTF-8 document boundary cannot represent an unpaired JavaScript surrogate yet."))
+        String::from_utf16(&self.0).map_err(|_| {
+            EngineError::unsupported(
+                "The UTF-8 document boundary cannot represent an unpaired JavaScript surrogate yet.",
+            )
+        })
+    }
+    /// Text for diagnostics and keys, replacing unpaired surrogates.
+    pub fn lossy(&self) -> String {
+        String::from_utf16_lossy(&self.0)
     }
     /** Concatenation checks the code-unit budget before reserving output. */
-    fn concat(&self, other: &Self) -> EngineResult<Self> {
+    pub fn concat(&self, other: &Self) -> EngineResult<Self> {
         if self.len() + other.len() > JS_STRING_UNITS {
             return Err(EngineError::limit(
                 "JavaScript string UTF-16 units",
                 JS_STRING_UNITS,
             ));
         }
+        if other.is_empty() {
+            return Ok(self.clone());
+        }
+        if self.is_empty() {
+            return Ok(other.clone());
+        }
         let mut units = Vec::with_capacity(self.len() + other.len());
         units.extend_from_slice(&self.0);
         units.extend_from_slice(&other.0);
-        Ok(Self(units))
+        Ok(Self(units.into()))
+    }
+    /// Whether the string equals ASCII text.
+    pub fn is(&self, text: &str) -> bool {
+        self.0.len() == text.len() && self.0.iter().zip(text.bytes()).all(|(a, b)| *a == b as u16)
     }
 }
-/// Primitive values retain their language type without exposing any host objects.
+
+/// Values: primitives and identities. `Hole` marks dead-zone bindings and array holes only.
 #[derive(Clone, Debug, PartialEq)]
 pub enum JsValue {
+    Undefined,
+    Null,
+    Boolean(bool),
     Number(f64),
     String(JsString),
-    Boolean(bool),
-    Null,
-    Undefined,
+    /// An object in the page heap or an intrinsic.
     Object(ObjectId),
-    Function(u32),
-    /// Request-bound document identities carry data without native authority.
-    Host(HostRef),
+    /// A symbol identity.
+    Symbol(u32),
+    /// A BigInt. V9 bounds BigInts to 128 bits (RangeError beyond), which covers the 64-bit
+    /// integer arithmetic real pages do (protobuf and Closure int64) without arbitrary precision.
+    BigInt(i128),
+    /// Never visible to scripts: an uninitialized binding or a missing array element.
+    #[doc(hidden)]
+    Hole,
 }
+
 impl JsValue {
     /// Input strings remain literal values; entering one never evaluates source.
     pub fn string(value: &str) -> EngineResult<Self> {
         Ok(Self::String(JsString::from_utf8(value)?))
     }
-    /// Number conversion uses validated ECMAScript StringNumericLiteral syntax.
-    pub fn to_number(&self) -> f64 {
-        match self {
-            Self::Number(value) => *value,
-            Self::Boolean(value) => {
-                if *value {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::Null => 0.0,
-            Self::Undefined => f64::NAN,
-            Self::Object(_) | Self::Function(_) | Self::Host(_) => f64::NAN,
-            Self::String(value) => value
-                .to_dom()
-                .map(|s| number::string_number(&s))
-                .unwrap_or(f64::NAN),
-        }
-    }
-    /// Numeric rendering uses the pinned ECMA-compatible primitive rather than Rust formatting.
-    pub fn to_js_string(&self) -> EngineResult<JsString> {
-        match self {
-            Self::String(value) => Ok(value.clone()),
-            Self::Number(value) => JsString::from_utf8(ryu_js::Buffer::new().format(*value)),
-            Self::Boolean(true) => JsString::from_utf8("true"),
-            Self::Boolean(false) => JsString::from_utf8("false"),
-            Self::Null => JsString::from_utf8("null"),
-            Self::Undefined => JsString::from_utf8("undefined"),
-            Self::Object(_) => Err(EngineError::unsupported(
-                "Object conversion requires JavaScript ToPrimitive, which is not implemented yet.",
-            )),
-            Self::Host(_) => Err(EngineError::unsupported(
-                "Host-to-primitive conversion is not implemented yet.",
-            )),
-            Self::Function(_) => Err(EngineError::unsupported(
-                "Function-to-primitive conversion is not implemented yet.",
-            )),
-        }
-    }
-    /// Text proposals are validated before any document publication.
-    pub fn to_dom(&self) -> EngineResult<String> {
-        self.to_js_string()?.to_dom()
-    }
-    /// Numeric and string operands retain their type for JavaScript addition.
-    pub fn add(&self, other: &Self) -> EngineResult<Self> {
-        if matches!(self, Self::String(_)) || matches!(other, Self::String(_)) {
-            Ok(Self::String(
-                self.to_js_string()?.concat(&other.to_js_string()?)?,
-            ))
-        } else {
-            Ok(Self::Number(self.to_number() + other.to_number()))
-        }
-    }
-    /// Aggregate environments charge strings, independently of their serialized JSON size.
-    pub fn string_units(&self) -> usize {
-        match self {
-            Self::String(value) => value.len(),
-            Self::Host(value) => value.document.encode_utf16().count(),
-            _ => 0,
-        }
-    }
     /// Truthiness never converts a string to a number or invokes native code.
     pub fn truthy(&self) -> bool {
         match self {
-            Self::Undefined | Self::Null => false,
+            Self::Undefined | Self::Null | Self::Hole => false,
             Self::Boolean(value) => *value,
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             Self::String(value) => !value.is_empty(),
-            Self::Object(_) | Self::Function(_) | Self::Host(_) => true,
+            Self::BigInt(value) => *value != 0,
+            Self::Object(_) | Self::Symbol(_) => true,
         }
     }
-    /// Strict equality compares matching primitive types, treating NaN and signed zero as JavaScript does.
+    /// Strings held by the value count against aggregate environment budgets.
+    pub fn string_units(&self) -> usize {
+        match self {
+            Self::String(value) => value.len(),
+            _ => 0,
+        }
+    }
+    /// Null or undefined.
+    pub fn nullish(&self) -> bool {
+        matches!(self, Self::Undefined | Self::Null)
+    }
+    /// The object identity, if any.
+    pub fn object(&self) -> Option<ObjectId> {
+        match self {
+            Self::Object(id) => Some(*id),
+            _ => None,
+        }
+    }
+    /// A primitive as document text; objects and symbols need the VM's conversions.
+    pub fn to_dom(&self) -> EngineResult<String> {
+        Ok(match self {
+            Self::String(text) => return text.to_dom(),
+            Self::Number(value) => number_to_string(*value),
+            Self::Boolean(value) => value.to_string(),
+            Self::BigInt(value) => value.to_string(),
+            Self::Null => "null".into(),
+            Self::Undefined | Self::Hole => "undefined".into(),
+            Self::Object(_) | Self::Symbol(_) => {
+                return Err(EngineError::unsupported(
+                    "Converting an object to text needs the V9 VM.",
+                ));
+            }
+        })
+    }
+    /// A primitive's ToNumber; objects and symbols give NaN here.
+    pub fn to_number(&self) -> f64 {
+        match self {
+            Self::Number(value) => *value,
+            Self::Boolean(value) => f64::from(u8::from(*value)),
+            Self::Null => 0.0,
+            Self::String(text) => {
+                String::from_utf16(text.as_units()).map_or(f64::NAN, |text| string_number(&text))
+            }
+            _ => f64::NAN,
+        }
+    }
+    /// Loose equality (==) between values that need no script conversion: identities compare
+    /// as identities; an object against a primitive needs the VM and is refused here.
+    pub fn abstract_equal(&self, other: &Self) -> EngineResult<bool> {
+        use JsValue::*;
+        Ok(match (self, other) {
+            (Undefined | Null | Hole, Undefined | Null | Hole) => true,
+            (Undefined | Null | Hole, _) | (_, Undefined | Null | Hole) => false,
+            (Object(_) | Symbol(_), Object(_) | Symbol(_)) => self == other,
+            (BigInt(big), Number(number)) | (Number(number), BigInt(big)) => {
+                bigint_equals_number(*big, *number)
+            }
+            (Object(_), _) | (_, Object(_)) => {
+                return Err(EngineError::unsupported(
+                    "Comparing an object with a primitive needs the V9 VM.",
+                ));
+            }
+            (Number(_) | String(_) | Boolean(_), Number(_) | String(_) | Boolean(_))
+                if std::mem::discriminant(self) != std::mem::discriminant(other) =>
+            {
+                self.to_number() == other.to_number()
+            }
+            _ => self.strict_equal(other),
+        })
+    }
+    /// Strict equality (===).
     pub fn strict_equal(&self, other: &Self) -> bool {
-        self == other
-    }
-    /// Two strings compare raw UTF-16 units; all other supported primitive pairs compare numerically.
-    pub fn compare(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if let (Self::String(left), Self::String(right)) = (self, other) {
-            Some(left.0.cmp(&right.0))
-        } else {
-            self.to_number().partial_cmp(&other.to_number())
+        match (self, other) {
+            (Self::Number(a), Self::Number(b)) => a == b,
+            (Self::Undefined | Self::Hole, Self::Undefined | Self::Hole) => true,
+            _ => self == other,
         }
     }
+    /// SameValueZero, used by includes, Map and Set.
+    pub fn same_value_zero(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(a), Self::Number(b)) => a == b || a.is_nan() && b.is_nan(),
+            _ => self.strict_equal(other),
+        }
+    }
+    /// SameValue, used by Object.is.
+    pub fn same_value(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(a), Self::Number(b)) => {
+                a.to_bits() == b.to_bits() || a.is_nan() && b.is_nan()
+            }
+            _ => self.strict_equal(other),
+        }
+    }
+}
+
+/// Whether a BigInt and a Number denote the same mathematical value (`1n == 1`).
+pub(in crate::v9) fn bigint_equals_number(big: i128, number: f64) -> bool {
+    number.is_finite() && number.trunc() == number && big as f64 == number && number as i128 == big
 }

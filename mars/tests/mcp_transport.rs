@@ -43,6 +43,10 @@ struct Pipes {
 
 /** Integration waits are bounded independently of whether transport cancellation works. */
 const WAIT: Duration = Duration::from_secs(5);
+/** Far beyond any OS pipe buffer, so an unread client blocks the writer, yet small enough that
+building the frame costs nothing next to the write deadline. Sizing it from FRAME_BYTES made the
+test measure serialization of the largest possible frame instead of the deadline. */
+const BLOCKING_PAYLOAD_BYTES: usize = 1024 * 1024;
 impl Pipes {
     /** Each test gets fresh pipes and authority without touching process stdin or secure profiles. */
     fn new() -> Self {
@@ -209,10 +213,11 @@ fn native_ndjson_eof_revokes_ownership_without_cancelling_the_window_runtime() {
 #[test]
 fn oversized_unterminated_input_retires_the_connection() {
     let mut pipes = Pipes::new();
-    pipes
+    // The reader retires the connection as soon as the ceiling is crossed, so the tail of this
+    // write may meet a closed pipe; that is the retirement, not a failure of the test.
+    let _ = pipes
         .input
-        .write_all(&vec![b' '; constants::MCP_FRAME_BYTES])
-        .unwrap();
+        .write_all(&vec![b' '; constants::MCP_FRAME_BYTES]);
     pipes.wait_disconnected();
     assert!(pipes.commands.try_recv().is_err());
 }
@@ -237,7 +242,7 @@ fn output_backpressure_uses_an_absolute_complete_frame_deadline() {
         .responses
         .send(Response::new(
             Some(request.id),
-            Ok(json!({"data":"x".repeat(constants::FRAME_BYTES)})),
+            Ok(json!({"data":"x".repeat(BLOCKING_PAYLOAD_BYTES)})),
         ))
         .unwrap();
     pipes.wait_disconnected();

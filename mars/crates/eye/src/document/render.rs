@@ -1,44 +1,54 @@
 /** Oya owns point-based block flow, wrapping and control placement. */
 mod body;
 mod control;
+pub(crate) mod degrade;
+mod display;
+mod effects;
 mod flex;
 mod flex_column;
 mod flex_layout;
+mod float;
 mod flow;
+mod generated;
+mod grid;
 mod image;
+mod line;
+mod marker;
+mod path;
+mod positioned;
 mod sizing;
+mod svg;
 mod table;
 mod text;
 mod validation;
 mod wrap;
 use super::{Appearance, ColorScheme, Document, Node, RenderContext};
-use crate::protocol::{EngineError, EngineResult};
+use crate::{
+    constants::PAINT_LINES,
+    protocol::{EngineError, EngineResult},
+};
+pub use display::{
+    ClipRect, DisplayBackground, DisplayShadow, GradientStop, ImageSize, OpacityGroup,
+};
+/// Agent-visibility helpers for the app; the document facade exports them when the app wires them.
+#[allow(unused_imports)]
+pub use display::{agent_visible, painted_bounds};
 use serde::{Deserialize, Serialize};
+pub use svg::{FillRule, LineCap, LineJoin, PathCommand, VectorPath};
 
 /// Default document margin in logical points, shared by paint and inspection.
 pub const MARGIN: f64 = 32.0;
 /// Readable text does not stretch across arbitrarily wide windows.
 pub const CONTENT_WIDTH: f64 = 960.0;
-/// Paragraph and control separation is independent of glyph metrics.
-pub const BLOCK_GAP: f64 = 12.0;
-/// The default body font is a native system font.
-/// Native inputs/buttons retain comfortable desktop targets.
-pub const CONTROL_HEIGHT: f64 = 32.0;
-/// Table cells preserve readable separation without platform-specific widgets.
-pub const TABLE_PADDING: f64 = 8.0;
-/// Empty cells still receive a usable pointer and reading target.
-pub const TABLE_MIN_ROW_HEIGHT: f64 = 32.0;
 /// Supported viewport bounds constrain layout work and geometry.
 pub const MIN_VIEWPORT: f64 = 280.0;
 /// Bounds snapshots even for programmatic window requests.
 pub const MAX_VIEWPORT: f64 = 4096.0;
 /// Point geometry is explicitly different from the legacy abstract text layout.
 pub const UNIT: &str = "logical_points";
-/** A bounded display prevents tiny glyph runs from creating unbounded native paint work. */
-const PAINT_LINES: usize = 2048;
 
 /// One immutable display list is consumed by native painting and agent inspection.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayList {
     /// Top-left-origin logical-point geometry.
@@ -55,13 +65,20 @@ pub struct DisplayList {
     /// Scheme-sensitive text fallback remains consistent with the canvas color.
     #[serde(default)]
     pub canvas_foreground: Option<String>,
+    /// The root's used color scheme. Native form controls follow it, not the OS appearance, as
+    /// Chromium draws light controls on a page that never opted into dark.
+    #[serde(default)]
+    pub canvas_scheme: Appearance,
     /// Non-target body decoration remains separate when the root already supplies the canvas background.
     #[serde(default)]
     pub body_decoration: Option<DisplayDecoration>,
+    /// A layout bound cut the page short: later content, out-of-range boxes or excess lines are missing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 /// A formatting box can paint author decoration without inventing a DOM or agent identity.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayDecoration {
     /// Logical coordinates share the same document origin as ordinary display items.
@@ -76,7 +93,7 @@ pub struct DisplayDecoration {
 }
 
 /// Native controls and text drawing use exactly these boxes.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayItem {
     /// Stable native identity within one page generation.
@@ -118,10 +135,93 @@ pub struct DisplayItem {
     /// Error rows extend the engine box without stretching the native control itself.
     #[serde(default)]
     pub control_height: Option<f64>,
+    /// Effective opacity: this element's times every ancestor's, wrappers included.
+    /// Painters that composite `stacking_opacity` groups divide those groups back out.
+    #[serde(default = "full_opacity", skip_serializing_if = "is_opaque")]
+    pub opacity: f64,
+    /// Right-to-left base direction for native paragraph shaping.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rtl: bool,
+    /// Inline SVG paint in absolute document coordinates; empty for every other element.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vector: Vec<VectorPath>,
+    /// Corner radii top-left, top-right, bottom-right, bottom-left, clamped to the box.
+    #[serde(default, skip_serializing_if = "display::is_square")]
+    pub radius: [f64; 4],
+    /// Per-side border widths top, right, bottom, left when they differ; `border` is 0 then.
+    #[serde(default, skip_serializing_if = "display::is_square")]
+    pub border_widths: [f64; 4],
+    /// Per-side literal border colors matching `border_widths`; None paints `border_color`.
+    #[serde(default, skip_serializing_if = "display::no_colors")]
+    pub border_colors: [Option<String>; 4],
+    /// Box shadows, first listed on top as in CSS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadows: Vec<DisplayShadow>,
+    /// Gradient and image layers over `background`, first listed on top, with resolved geometry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub backgrounds: Vec<DisplayBackground>,
+    /// Absolute clip from overflow-clipping ancestors, already intersected; None paints unclipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<ClipRect>,
+    /// Absolute affine (a, b, c, d, e, f) applied after `clip`; pure translations are baked into geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<[f64; 6]>,
+    /// z-index of the stacking layer this item paints in; items are already in paint order.
+    #[serde(default, skip_serializing_if = "display::is_zero")]
+    pub z: i32,
+    /// Enclosing translucent stacking contexts, outermost first, composited as groups by painters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stacking_opacity: Vec<OpacityGroup>,
+    /// CSS numeric weight used for measuring and drawing; `bold` mirrors weight >= 600.
+    #[serde(
+        default = "display::normal_weight",
+        skip_serializing_if = "display::is_normal_weight"
+    )]
+    pub font_weight: u16,
+    /// Generic face shared by measurement and drawing.
+    #[serde(default, skip_serializing_if = "display::is_system")]
+    pub font_family: crate::platform::Family,
+    /// Extra advance after each character in points.
+    #[serde(default, skip_serializing_if = "display::is_zero_f64")]
+    pub letter_spacing: f64,
+    /// Lines are underlined: links unless the author removed text decoration, or authored underline.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    /// Lines are struck through (`text-decoration: line-through`, `<s>`, `<del>`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strikethrough: bool,
+    /// Italic or oblique font posture.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    /// `object-fit` sizing rule for `<img>` elements.
+    #[serde(default, skip_serializing_if = "display::is_fill")]
+    pub object_fit: super::style::ObjectFit,
+    /// `object-position` `[x_px, x_percent, y_px, y_percent]` for `<img>` elements, default `50% 50%`.
+    #[serde(
+        default = "display::default_object_position",
+        skip_serializing_if = "display::is_center_object_position"
+    )]
+    pub object_position: [f64; 4],
+    /// Content box `[x, y, width, height]` of an `<img>` element when padding or border insets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_box: Option<[f64; 4]>,
+    /// A `url()` mask (an Image layer with resolved geometry): painters fill `background` only
+    /// where the fetched mask image is opaque. Icon fonts' replacement, a colored box masked by an
+    /// svg, otherwise paints as a solid square or not at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<DisplayBackground>,
+}
+/** Items default to fully opaque. */
+fn full_opacity() -> f64 {
+    1.0
+}
+/** Fully opaque items keep their established serialized shape. */
+fn is_opaque(opacity: &f64) -> bool {
+    *opacity == 1.0
 }
 
 /// Each line preserves Unicode text and its exact measured native position.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PaintLine {
     /// Literal rendered text, never executable source.
@@ -151,24 +251,31 @@ pub fn render_with_context(
 ) -> EngineResult<DisplayList> {
     context.validate()?;
     super::validate_styles(document)?;
-    let (items, height, body_decoration) = flow::layout(document, context)?;
+    // Hosts lay out their shadow content with slotted light children in place.
+    let flat = super::shadow::flatten(document);
+    let document = flat.as_ref().unwrap_or(document);
+    let degraded = degrade::degrade(document);
+    let document = degraded.as_ref().unwrap_or(document);
+    let (mut items, height, body_decoration, mut truncated) = flow::layout(document, context)?;
+    effects(document, &mut items)?;
+    let mut items = effects::stack(document, items)?;
     validate_decoration(body_decoration.as_ref())?;
+    // Boxes outside the geometry bound or past the paint-line bound are dropped, not the page.
+    let before = items.len();
+    items.retain(|item| validate_geometry(std::slice::from_ref(item), 0.0).is_ok());
+    truncated |= items.len() != before;
+    truncated |= cap_lines(&mut items);
+    let height = height.clamp(0.0, crate::constants::LAYOUT_EXTENT);
     validate_geometry(&items, height)?;
-    if items
-        .iter()
-        .map(|item| item.lines.len() + item.validation.len())
-        .sum::<usize>()
-        > PAINT_LINES
-    {
-        return Err(EngineError::limit("paint lines", PAINT_LINES));
-    }
     let root = &document.formatting.html.style;
     let body = &document.formatting.body.style;
     let canvas_background = opaque(&root.background)
         .or_else(|| opaque(&body.background))
         .cloned()
         .or_else(|| {
-            (root.color_scheme != ColorScheme::Normal).then(|| match root.used_scheme {
+            // Chromium paints the initial canvas from the root's used scheme, which is light unless the
+            // page opts into dark; the OS appearance alone never darkens a page.
+            Some(match root.used_scheme {
                 Appearance::Light => "#ffffff".into(),
                 Appearance::Dark => "#000000".into(),
             })
@@ -186,8 +293,88 @@ pub fn render_with_context(
         items,
         canvas_background,
         canvas_foreground,
+        canvas_scheme: root.used_scheme,
         body_decoration,
+        truncated,
     })
+}
+/** Keeps at most PAINT_LINES runs in paint order; true when any were dropped. */
+fn cap_lines(items: &mut [DisplayItem]) -> bool {
+    let mut left = PAINT_LINES;
+    let mut dropped = false;
+    for item in items {
+        let count = item.lines.len() + item.validation.len();
+        if count <= left {
+            left -= count;
+            continue;
+        }
+        dropped = true;
+        item.validation.clear();
+        item.lines.truncate(left);
+        left -= item.lines.len();
+    }
+    dropped
+}
+/** Effective opacity and base direction come from the actual document after layout. */
+fn effects(document: &Document, items: &mut [DisplayItem]) -> EngineResult<()> {
+    let wrappers = document.formatting.html.style.opacity * document.formatting.body.style.opacity;
+    let positions = sizing::positions(document);
+    for item in items {
+        let node = find(document, &positions, item.local_id)?;
+        item.rtl = node.style.rtl;
+        item.opacity = wrappers;
+        // A `::before`/`::after` box shares its element's identity but has its own opacity, which
+        // pages use to hide hover and focus overlays; without it they paint as solid blocks.
+        if let Some(style) = effects::generated_style(node, item) {
+            item.opacity *= style.opacity;
+        }
+        let mut current = Some(node);
+        while let Some(node) = current {
+            item.opacity *= node.style.opacity;
+            current = match node.parent {
+                Some(parent) => Some(find(document, &positions, parent)?),
+                None => None,
+            };
+        }
+    }
+    Ok(())
+}
+/** Identity lookup never assumes local identities equal Vec indexes after scripts run. */
+fn find<'a>(
+    document: &'a Document,
+    positions: &[Option<usize>],
+    local: usize,
+) -> EngineResult<&'a Node> {
+    positions
+        .get(local)
+        .copied()
+        .flatten()
+        .map(|position| &document.nodes[position])
+        .ok_or_else(|| EngineError::invalid("Invalid layout node identity."))
+}
+
+/// Agents never target `aria-hidden=true` subtrees or the inside of an svg drawing.
+pub fn agent_hidden(document: &Document, node: &Node) -> bool {
+    let mut current = Some(node);
+    let mut first = true;
+    while let Some(node) = current {
+        if node
+            .attributes
+            .get("aria-hidden")
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+            || (!first && node.tag == "svg")
+        {
+            return true;
+        }
+        first = false;
+        current = node
+            .parent
+            .and_then(|parent| {
+                mars_core::dom::local_position(&document.nodes, parent, |node| node.local_id)
+            })
+            .map(|position| &document.nodes[position]);
+    }
+    false
 }
 /** Decoration shares the finite geometry and validated literal colors of actionable display items. */
 fn validate_decoration(decoration: Option<&DisplayDecoration>) -> EngineResult<()> {
@@ -210,18 +397,27 @@ fn opaque(color: &Option<String>) -> Option<&String> {
         .as_ref()
         .filter(|color| color.as_str() != "transparent")
 }
-/** Native semantic colors remain the fallback for an unstyled document. */
+/** The initial text color of the used scheme, as Chromium's CanvasText; never the OS's own. */
 fn default_foreground(style: &super::ComputedStyle) -> Option<String> {
-    (style.color_scheme != ColorScheme::Normal || opaque(&style.background).is_some()).then(|| {
-        match style.used_scheme {
-            Appearance::Light => "#000000".into(),
-            Appearance::Dark => "#ffffff".into(),
-        }
+    Some(match style.used_scheme {
+        Appearance::Light => "#000000".into(),
+        Appearance::Dark => "#ffffff".into(),
     })
 }
 
 /// Semantic roles expose the same interactions as the visible native controls.
+/// An explicit `role` attribute wins when its first token is a known ARIA role, except on native
+/// form controls, whose role decides which native widget and actions they get.
 pub fn role(node: &Node) -> &'static str {
+    let native = ["input", "button", "select", "textarea"].contains(&node.tag.as_str());
+    if !native
+        && let Some(explicit) = node.attributes.get("role").and_then(|value| {
+            let token = value.split_ascii_whitespace().next()?.to_ascii_lowercase();
+            ARIA_ROLES.iter().find(|role| **role == token).copied()
+        })
+    {
+        return explicit;
+    }
     match node.tag.as_str() {
         "h1" | "h2" | "h3" => "heading",
         "table" => "table",
@@ -239,7 +435,7 @@ pub fn role(node: &Node) -> &'static str {
         "thead" | "tbody" | "tfoot" => "rowgroup",
         "div" | "form" | "section" | "main" | "fieldset" => "group",
         "a" if node.href.is_some() => "link",
-        "img" => "image",
+        "img" | "svg" => "image",
         "input" if node.input_type() == "password" => "password",
         "input" if node.input_type() == "checkbox" => "checkbox",
         "input" if node.input_type() == "radio" => "radio",
@@ -252,18 +448,86 @@ pub fn role(node: &Node) -> &'static str {
     }
 }
 
+/// WAI-ARIA 1.2 roles a page may declare; anything else falls back to the element's own role.
+const ARIA_ROLES: [&str; 70] = [
+    "alert",
+    "alertdialog",
+    "application",
+    "article",
+    "banner",
+    "blockquote",
+    "button",
+    "caption",
+    "cell",
+    "checkbox",
+    "code",
+    "columnheader",
+    "combobox",
+    "complementary",
+    "contentinfo",
+    "definition",
+    "dialog",
+    "document",
+    "feed",
+    "figure",
+    "form",
+    "generic",
+    "grid",
+    "gridcell",
+    "group",
+    "heading",
+    "img",
+    "image",
+    "link",
+    "list",
+    "listbox",
+    "listitem",
+    "log",
+    "main",
+    "marquee",
+    "math",
+    "menu",
+    "menubar",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "meter",
+    "navigation",
+    "none",
+    "note",
+    "option",
+    "paragraph",
+    "presentation",
+    "progressbar",
+    "radio",
+    "radiogroup",
+    "region",
+    "row",
+    "rowgroup",
+    "rowheader",
+    "scrollbar",
+    "search",
+    "searchbox",
+    "separator",
+    "slider",
+    "spinbutton",
+    "status",
+    "switch",
+    "tab",
+    "table",
+    "tablist",
+    "tabpanel",
+    "textbox",
+    "timer",
+    "tooltip",
+];
 /** Private styles and arithmetic must never send NaN, infinity or excessive extents to AppKit. */
 fn validate_geometry(items: &[DisplayItem], height: f64) -> EngineResult<()> {
     validation::bounded(height)?;
     for item in items {
-        for value in [
-            item.x,
-            item.y,
-            item.width,
-            item.height,
-            item.font_size,
-            item.border,
-        ] {
+        validation::offset(item.x)?;
+        validation::offset(item.y)?;
+        for value in [item.width, item.height, item.font_size, item.border] {
             validation::bounded(value)?;
         }
         if let Some(advance) = item.line_height {
@@ -275,10 +539,17 @@ fn validate_geometry(items: &[DisplayItem], height: f64) -> EngineResult<()> {
         if let Some(height) = item.control_height {
             validation::bounded(height)?;
         }
+        if !(0.0..=1.0).contains(&item.opacity) {
+            return Err(EngineError::invalid("Invalid rendered opacity."));
+        }
+        for path in &item.vector {
+            validation::vector(path)?;
+        }
+        display::validate(item)?;
         for line in item.lines.iter().chain(&item.validation) {
-            for value in [line.x, line.y, line.width] {
-                validation::bounded(value)?;
-            }
+            validation::offset(line.x)?;
+            validation::offset(line.y)?;
+            validation::bounded(line.width)?;
         }
     }
     Ok(())

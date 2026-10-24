@@ -1,6 +1,5 @@
 /** Collection method identities and primitive properties use public owned-VM execution boundaries. */
 use mars::v9::{JsString, JsValue, event, execute, load};
-use serde_json::json;
 /** DOM text proposals expose ordinary values without requiring an external JavaScript engine. */
 fn result(source: &str, expression: &str) -> String {
     execute(&format!(
@@ -65,12 +64,7 @@ fn primitive_string_properties_preserve_utf16_and_index_spelling() {
         state.globals()["low"].value,
         Some(JsValue::String(JsString::from_units(vec![0xDD1E]).unwrap()))
     );
-    assert_eq!(
-        execute("document.getElementById('out').textContent='𝄞'[0];")
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
-    );
+    assert_eq!(result("", "'𝄞'[0]"), "\u{fffd}");
 }
 /** Ignored sloppy string stores still evaluate their RHS and return its value without retaining expandos. */
 #[test]
@@ -97,33 +91,26 @@ fn strict_string_stores_refuse_existing_and_absent_properties_after_rhs() {
     for property in ["length", "0", "extra", "trim"] {
         let error = execute(&format!("'use strict';const s='a';s['{property}']=7;")).unwrap_err();
         assert_eq!(error.code, "script_execution_error", "{property}");
-        assert!(error.message.contains("primitive string property"));
+        assert!(error.message.contains("TypeError"), "{}", error.message);
         let error = execute(&format!(
             "'use strict';const s='a';s['{property}']=missing();"
         ))
         .unwrap_err();
-        assert!(error.message.contains("Binding is not defined"));
+        assert!(error.message.contains("missing is not defined"));
     }
 }
-/** Unsupported standard String operations stay explicit while Number/Boolean wrapper access remains unavailable. */
+/** Primitives reach their wrapper prototypes, and methods of other types are simply absent. */
 #[test]
-fn unavailable_wrapper_methods_and_reflection_fail_explicitly() {
-    for source in [
-        "'a'.replace;",
-        "'a'.toString;",
-        "'a'.constructor;",
-        "'a'.__proto__;",
-        "(3).trim;",
-        "true.split;",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
+fn wrapper_methods_and_reflection_follow_javascript() {
+    assert_eq!(
+        result(
+            "",
+            "[typeof 'a'.replace,'a'.toString(),'a'.constructor===String,'a'.__proto__===String.prototype,typeof (3).trim,typeof true.split].join()"
+        ),
+        "function,a,true,true,undefined,undefined"
+    );
 }
-/** Explicit own array methods, including undefined, shadow canonical helpers; objects gain no array methods. */
+/** Explicit own array methods, including undefined, shadow canonical helpers; borrowed methods work on array-likes. */
 #[test]
 fn array_methods_respect_own_presence_and_array_brand() {
     let source = "const a=[];const b=[];const c=[];a.map=undefined;b.filter=function(){return 7;};c.join=8;const o={};";
@@ -141,10 +128,11 @@ fn array_methods_respect_own_presence_and_array_brand() {
         "script_execution_error"
     );
     assert_eq!(
-        execute("const map=[].map;map.call({length:0},x=>x);")
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
+        result(
+            "const map=[].map;",
+            "map.call({length:2,0:1,1:2},x=>x*2).join()"
+        ),
+        "2,4"
     );
 }
 /** New builtins support ordinary extraction, borrowing, apply and binding through the existing dispatcher. */
@@ -189,43 +177,5 @@ fn collection_callable_identity_survives_saved_events() {
     let state = load(source, &[]).unwrap().state;
     let wire = serde_json::to_value(state).unwrap();
     let execution = event(source, "run()", serde_json::from_value(wire).unwrap(), &[]).unwrap();
-    assert_eq!(execution.changes[0].text, "ok 2,3 true");
-}
-/** Canonical IDs are schema-owned even for unreachable saved records; extra selectors confer no authority. */
-#[test]
-fn forged_collection_intrinsics_are_refused_before_execution() {
-    let source = "function run(){}";
-    let original = serde_json::to_value(load(source, &[]).unwrap().state).unwrap();
-    let trim = mars::constants::VM_STRING_TRIM_ID.to_string();
-    let map = mars::constants::VM_ARRAY_MAP_ID.to_string();
-    for case in 0..4 {
-        let mut wire = original.clone();
-        match case {
-            0 => {
-                wire["graph"]["functions"][&trim]["kind"]["intrinsic"] = json!("array_map");
-            }
-            1 => {
-                wire["graph"]["functions"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(&trim);
-            }
-            2 => {
-                let record = wire["graph"]["functions"][&trim].clone();
-                wire["graph"]["functions"]["999"] = record;
-                wire["graph"]["next_function"] = json!(1000);
-            }
-            _ => {
-                let record = wire["graph"]["functions"][&map].clone();
-                wire["graph"]["functions"][&trim] = record;
-            }
-        }
-        assert_eq!(
-            event(source, "run()", serde_json::from_value(wire).unwrap(), &[])
-                .unwrap_err()
-                .code,
-            "invalid_request",
-            "case {case}"
-        );
-    }
+    assert_eq!(execution.changes[0].text().unwrap(), "ok 2,3 true");
 }

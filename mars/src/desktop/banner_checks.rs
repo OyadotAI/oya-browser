@@ -1,5 +1,5 @@
 /** Opt-in local startup verifies real banner text measurement and native view geometry. */
-use super::{Chrome, STATUS, TAB_ROW, TOOLBAR};
+use super::{Mars, STATUS, TAB_ROW, TOOLBAR};
 use crate::protocol::{EngineError, EngineResult};
 use objc2_foundation::NSString;
 
@@ -19,15 +19,15 @@ const MINIMUM_PAGE: f64 = 120.0;
 const MEASUREMENT_HEIGHT: f64 = 1_000_000.0;
 
 /// Synthetic copy is private to the existing local startup harness, never an agent operation.
-pub(super) fn verify(chrome: &Chrome) -> EngineResult<()> {
+pub(super) fn verify(mars: &Mars) -> EngineResult<()> {
     let long = LONG_LINE.repeat(LONG_LINES);
     ensure(long.len() <= crate::constants::TEXT_BYTES)?;
     for (width, height) in [(1100.0, 760.0), (640.0, 480.0)] {
         for (message, scrolling) in [(ORDINARY, false), (long.as_str(), true)] {
-            chrome.error.setStringValue(&NSString::from_str(message));
-            chrome.layout(width, height, true);
-            chrome.root.displayIfNeeded();
-            verify_message(chrome, message, width, height, scrolling)?;
+            mars.error.setStringValue(&NSString::from_str(message));
+            mars.layout(width, height, true);
+            mars.root.displayIfNeeded();
+            verify_message(mars, message, width, height, scrolling)?;
         }
     }
     Ok(())
@@ -35,19 +35,19 @@ pub(super) fn verify(chrome: &Chrome) -> EngineResult<()> {
 
 /// Actual AppKit frames must agree with complete native cell measurement and shell boundaries.
 fn verify_message(
-    chrome: &Chrome,
+    mars: &Mars,
     message: &str,
     width: f64,
     height: f64,
     scrolling: bool,
 ) -> EngineResult<()> {
-    let text = chrome.banner.scroll.frame();
-    let clip = chrome.banner.scroll.contentView().bounds();
-    let document = chrome.error.frame();
-    let page = chrome.scroll.frame();
-    let retry = chrome.retry.frame();
-    let dismiss = chrome.dismiss.frame();
-    let measured = chrome
+    let text = mars.banner.scroll.frame();
+    let clip = mars.banner.scroll.contentView().bounds();
+    let document = mars.error.frame();
+    let page = mars.scroll.frame();
+    let retry = mars.retry.frame();
+    let dismiss = mars.dismiss.frame();
+    let measured = mars
         .error
         .cell()
         .ok_or_else(failure)?
@@ -58,8 +58,7 @@ fn verify_message(
             MEASUREMENT_HEIGHT,
         ));
     ensure(
-        chrome.error.maximumNumberOfLines() == 0
-            && chrome.error.stringValue().to_string() == message,
+        mars.error.maximumNumberOfLines() == 0 && mars.error.stringValue().to_string() == message,
     )?;
     ensure(close(
         text.origin.y + text.size.height,
@@ -86,7 +85,7 @@ fn verify_message(
     ensure(close(page.origin.y, STATUS) && page.size.height >= MINIMUM_PAGE - TOLERANCE)?;
     ensure(document.size.height + TOLERANCE >= measured.height.ceil())?;
     ensure(document.size.width <= clip.size.width + TOLERANCE)?;
-    let top = if chrome.error.isFlipped() {
+    let top = if mars.error.isFlipped() {
         0.0
     } else {
         (document.size.height - clip.size.height).max(0.0)

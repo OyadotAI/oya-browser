@@ -22,6 +22,26 @@ fn discovery_contains_exact_fixed_tools_and_descriptions() {
             "Inspect one native tab's committed page, controls and current identities.",
         ),
         (
+            "page_summary",
+            "Read a short outline of one tab's page: title, headings, landmarks and numbered controls with their current values.",
+        ),
+        (
+            "page_find",
+            "Find nodes by role, accessible name, label or text and return their node IDs and bounds.",
+        ),
+        (
+            "page_diff",
+            "List the nodes added, removed or changed on the current page since an earlier revision.",
+        ),
+        (
+            "page_wait",
+            "Wait until one condition holds on the tab's page, or until the timeout passes.",
+        ),
+        (
+            "page_act",
+            "Run several steps in order on one tab, each against the revision the last step produced. Stops at the first failure.",
+        ),
+        (
             "page_layout",
             "Read the native display geometry for one tab in logical points.",
         ),
@@ -66,6 +86,42 @@ fn discovery_contains_exact_fixed_tools_and_descriptions() {
             "Set the document's vertical scroll offset in logical points.",
         ),
         (
+            "tab_open",
+            "Open a background tab of your own, under your control, optionally on a URL. Returns its tab_id and control_epoch. The person's tabs are untouched.",
+        ),
+        (
+            "tab_close",
+            "Close a tab you opened with tab_open. Tabs you did not open are refused.",
+        ),
+        (
+            "page_screenshot",
+            "Capture the tab's visible viewport, or one element's box, as a PNG image.",
+        ),
+        (
+            "page_click_at",
+            "Click whatever a person would click at a viewport point. Reports the node that was hit.",
+        ),
+        (
+            "page_hover",
+            "Read the node under a viewport point and what a click there would reach. Changes nothing.",
+        ),
+        (
+            "page_scroll_at",
+            "Turn the wheel at a viewport point, scrolling the page by delta_y points.",
+        ),
+        (
+            "page_press",
+            "Press a key on a field or control (Enter submits, Space toggles, Backspace erases), scroll with PageDown/PageUp/Home/End, or append text. Give exactly one of key or text.",
+        ),
+        (
+            "page_console",
+            "Read the engine's recent messages about this page: skipped scripts and refused resources.",
+        ),
+        (
+            "page_network",
+            "List the loads behind the current page: the document with method and status, and images with type and size. No headers or cookies.",
+        ),
+        (
             "control_release",
             "Return agent control of the specified native tab to the person.",
         ),
@@ -80,7 +136,7 @@ fn discovery_contains_exact_fixed_tools_and_descriptions() {
         assert!(tool.get("outputSchema").is_none());
         let required = tool["inputSchema"]["required"].as_array().unwrap();
         let properties = tool["inputSchema"]["properties"].as_object().unwrap();
-        assert_eq!(required.len(), properties.len());
+        assert!(required.len() <= properties.len());
         assert!(
             required
                 .iter()
@@ -158,10 +214,7 @@ fn unknown_tools_cannot_select_native_or_human_only_operations() {
         "page.set_text",
         "page_set_text",
         "control_grant",
-        "tab_open",
-        "tab_close",
         "tab_select",
-        "page_screenshot",
         "window_open",
         "page_execute",
         "page__navigate",

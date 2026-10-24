@@ -39,7 +39,7 @@ fn named_expression_names_preserve_private_recursive_bindings() {
         execute("const f=function privateName(){};const value=privateName;")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("is not defined")
     );
 }
 
@@ -122,7 +122,9 @@ fn metadata_survives_private_state_serialization_and_event_reconstruction() {
     let state = load(source, &[]).unwrap().state;
     let state = serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
     assert_eq!(
-        event(source, "run()", state, &[]).unwrap().changes[0].text,
+        event(source, "run()", state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
         "f 2"
     );
 }

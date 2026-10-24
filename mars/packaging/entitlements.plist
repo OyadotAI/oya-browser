@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hardened-runtime entitlements for a notarized Mars.app. Mars needs none of the runtime
+     exceptions (no JIT, no unsigned memory, no dyld environment, no library validation bypass):
+     V9 is an interpreter and every engine is the same signed binary. Network and file access are
+     governed by the per-engine Seatbelt profiles in sandbox/, not by entitlements. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict/>
+</plist>

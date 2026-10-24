@@ -69,6 +69,14 @@ pub(super) fn read(
 pub(super) fn response(request: &Request) -> String {
     let path = request.target.split('?').next().unwrap_or_default();
     #[cfg(feature = "test-support")]
+    if path == "/__test/clicks" {
+        return reply(
+            "200 OK",
+            "text/html",
+            include_str!("../../../fixtures/clicks.html"),
+        );
+    }
+    #[cfg(feature = "test-support")]
     if path == "/__test/v9-error" {
         return reply(
             "200 OK",

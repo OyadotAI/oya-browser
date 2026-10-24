@@ -51,7 +51,7 @@ fn strict_directives_require_complete_exact_literal_statements() {
         "'use strict'\nif(false){eval=1}",
     ] {
         let error = syntax(source);
-        assert!(error.message.contains("Invalid identifier in strict mode"));
+        assert!(error.message.contains("eval or arguments in strict mode"));
     }
     for source in [
         "function unused(){'use\\x20strict'\nvar eval=1}",
@@ -78,5 +78,5 @@ fn directive_looking_call_continuation_does_not_activate_strict_mode() {
 #[test]
 fn implicit_directives_preserve_nested_function_mode_inheritance() {
     let error = syntax("'use strict'\nfunction unused(){var arguments=1\nreturn arguments}");
-    assert!(error.message.contains("Invalid identifier in strict mode"));
+    assert!(error.message.contains("eval or arguments in strict mode"));
 }

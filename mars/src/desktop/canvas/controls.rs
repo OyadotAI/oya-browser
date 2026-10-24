@@ -2,6 +2,9 @@
 use super::*;
 use objc2_app_kit::{NSButtonType, NSPopUpButton, NSScrollView, NSSecureTextField, NSTextView};
 
+/// Native checkbox and radio frame; the glyph is 13 points and AppKit needs a little room around it.
+const CHOICE_FRAME: f64 = 16.0;
+
 /** Native controls retain identity across revisions and never parse HTML themselves. */
 pub(super) enum Widget {
     Input(Retained<NSTextField>),
@@ -32,9 +35,39 @@ impl Widget {
         }
     }
 }
+/** Chromium drops a control's native look once the author gives it a background or a border
+(including `border: none`); the canvas has already painted that CSS box, so the widget must not cover
+it with a bezel or an opaque field, or the page's own design and any child content disappear. */
+fn styled(item: &DisplayItem, node: &crate::document::Node) -> bool {
+    item.background.is_some()
+        || !item.backgrounds.is_empty()
+        || item.border > 0.0
+        || item.border_widths != [0.0; 4]
+        || node.style.border_style_none
+}
+/** A styled field's text takes the page's color; an unstyled one keeps AppKit's control text. */
+fn text_color(item: &DisplayItem, styled: bool) -> Option<Retained<NSColor>> {
+    item.color
+        .as_deref()
+        .filter(|_| styled)
+        .and_then(super::literal_color)
+}
+/** What `sync` needs of a node beyond the node itself, indexed once per update by the caller. */
+pub(super) struct Facts<'a> {
+    /// The node's accessible name, as inspection reports it.
+    pub name: &'a str,
+    /// Whether any node has this one as its parent.
+    pub has_children: bool,
+}
 impl Canvas {
     /** Only supported interactive roles become native widgets. */
-    pub(super) fn sync(&self, item: &DisplayItem, node: &crate::document::Node, human: bool) {
+    pub(super) fn sync(
+        &self,
+        item: &DisplayItem,
+        node: &crate::document::Node,
+        facts: Facts<'_>,
+        human: bool,
+    ) {
         if !["input", "button", "a", "label", "select", "textarea"].contains(&item.tag.as_str())
             || node.hidden()
         {
@@ -44,23 +77,35 @@ impl Canvas {
         let widget = widgets
             .entry(item.local_id)
             .or_insert_with(|| self.widget(item, node));
-        widget.view().setFrame(rect(
-            item.x,
-            item.y,
-            item.width,
-            item.control_height.unwrap_or(item.height),
-        ));
-        widget.enable(human && !node.disabled && node.style.interactive);
-        let name = self
-            .ivars()
-            .snapshot
-            .borrow()
-            .as_ref()
-            .and_then(|s| s.document.as_ref())
-            .map(|d| crate::document::label(d, node))
-            .unwrap_or_else(|| node.placeholder.clone());
+        let height = item.control_height.unwrap_or(item.height);
+        let frame = if ["checkbox", "radio"].contains(&node.input_type()) && item.tag == "input" {
+            // Chromium centers the fixed glyph in a wider authored box; AppKit draws it at the left.
+            rect(
+                item.x + (item.width - CHOICE_FRAME) / 2.0,
+                item.y + (height - CHOICE_FRAME) / 2.0,
+                CHOICE_FRAME,
+                CHOICE_FRAME,
+            )
+        } else {
+            rect(item.x, item.y, item.width, height)
+        };
+        widget.view().setFrame(frame);
+        // Pages hide styled-over native inputs with opacity:0 and keep them clickable, as Chromium does;
+        // an AppKit view at alpha 0 still takes its clicks.
+        widget.view().setAlphaValue(item.opacity.clamp(0.0, 1.0));
+        // Agent control blocks input at the canvas instead of greying every control out.
+        widget.enable(!node.disabled && node.style.interactive);
+        let name = facts.name;
         match widget {
             Widget::Input(field) => {
+                if !["checkbox", "radio"].contains(&node.input_type()) {
+                    let styled = styled(item, node);
+                    field.setBezeled(!styled);
+                    field.setDrawsBackground(!styled);
+                    if let Some(color) = text_color(item, styled) {
+                        field.setTextColor(Some(&color));
+                    }
+                }
                 if field.currentEditor().is_none() {
                     if field.stringValue().to_string() != node.value {
                         field.setStringValue(&NSString::from_str(&node.value));
@@ -71,18 +116,19 @@ impl Canvas {
                         .insert(node.local_id, node.value.clone());
                 }
                 field.setPlaceholderString(Some(&NSString::from_str(&node.placeholder)));
-                field.setEditable(!node.readonly());
-                field.setAccessibilityLabel(Some(&NSString::from_str(&name)));
+                field.setEditable(human && !node.readonly());
+                field.setAccessibilityLabel(Some(&NSString::from_str(name)));
             }
             Widget::Button(button) => {
-                button.setAccessibilityLabel(Some(&NSString::from_str(&name)));
+                button.setAccessibilityLabel(Some(&NSString::from_str(name)));
                 if ["checkbox", "radio"].contains(&node.input_type()) {
                     button.setState(if node.checked { 1 } else { 0 });
                 }
             }
             Widget::Push(button) => {
-                button.update(item);
-                button.setAccessibilityLabel(Some(&NSString::from_str(&name)));
+                // A button with element children shows them, never a bezel painted over them.
+                button.update(item, facts.has_children || styled(item, node));
+                button.setAccessibilityLabel(Some(&NSString::from_str(name)));
             }
             Widget::Select(button, ids) => {
                 if let Some(document) = self
@@ -101,9 +147,20 @@ impl Canvas {
                         button.selectItemAtIndex(index as isize);
                     }
                 }
-                button.setAccessibilityLabel(Some(&NSString::from_str(&name)));
+                button.setAccessibilityLabel(Some(&NSString::from_str(name)));
             }
-            Widget::Textarea(_, field) => {
+            Widget::Textarea(scroll, field) => {
+                let styled = styled(item, node);
+                scroll.setBorderType(if styled {
+                    objc2_app_kit::NSBorderType::NoBorder
+                } else {
+                    objc2_app_kit::NSBorderType::BezelBorder
+                });
+                scroll.setDrawsBackground(!styled);
+                field.setDrawsBackground(!styled);
+                if let Some(color) = text_color(item, styled) {
+                    field.setTextColor(Some(&color));
+                }
                 let focused = self
                     .window()
                     .and_then(|w| w.firstResponder())
@@ -117,7 +174,7 @@ impl Canvas {
                     field.setString(&NSString::from_str(&node.value));
                 }
                 field.setEditable(human && !node.disabled && !node.readonly());
-                field.setAccessibilityLabel(Some(&NSString::from_str(&name)));
+                field.setAccessibilityLabel(Some(&NSString::from_str(name)));
             }
         }
     }
@@ -220,6 +277,8 @@ impl Canvas {
             }
         }
         button.setTag(item.local_id as isize + NODE_TAG);
+        button.setControlSize(objc2_app_kit::NSControlSize::Small);
+        button.setFont(Some(&platform::font(item.font_size, item.bold)));
         unsafe {
             button.setTarget(Some(self));
             button.setAction(Some(sel!(selectOption:)));
@@ -234,6 +293,8 @@ impl Canvas {
             rect(0.0, 0.0, item.width, item.height),
         );
         scroll.setHasVerticalScroller(true);
+        scroll.setAutohidesScrollers(true);
+        scroll.setBorderType(objc2_app_kit::NSBorderType::BezelBorder);
         let field = NSTextView::initWithFrame(
             NSTextView::alloc(self.mtm()),
             rect(0.0, 0.0, item.width, item.height),

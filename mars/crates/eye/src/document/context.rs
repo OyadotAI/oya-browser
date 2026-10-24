@@ -20,7 +20,7 @@ pub enum Appearance {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RenderContext {
-    /// Logical width excludes all native shell chrome.
+    /// Logical width excludes the native Mars shell (toolbar, tabs, status).
     pub width: f64,
     /// Viewport-relative units use visible page height, never the document's scroll extent.
     pub height: f64,

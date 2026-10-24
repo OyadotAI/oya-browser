@@ -15,6 +15,7 @@ mars (application, native shell, coordinator, MCP, secure profiles)
   ├── mars-eye   → mars-core + document dependencies + OS text primitives
   ├── mars-v9    → mars-core + serde/serde_json/ryu-js
   ├── mars-relay → mars-core + HTTP/TLS/URL dependencies
+  ├── mars-mdp   → mars + CDP-compatible loopback front door (`mars-mdp` / `mars-cdp`)
   └── mars-core (shared bounded data, protocol/errors, limits)
 ```
 
@@ -63,7 +64,14 @@ ownership and the optional capture directory.
 
 Fetch → parse → V9 load/event → document validate/apply → native display → wire budget validation
 → authority recheck and atomic publication. Document and V9 operations are stateless over bounded
-values. Networking owns one expiring prepared connection. Transmission has its own authority
+values; each service keeps only content-addressed derivations of them that any request with the
+same content would recompute: V9 keeps compiled code by a SHA-256 of grammar, page offset and
+source text (CODE_CACHE_BYTES, least recently used first), and Eye keeps the parser state after a
+page's sheet list (the two most recent per thread), continuing it when a page's scripts append a
+sheet. Neither holds a page, a heap or anything a different text could reach. In the desktop, a
+navigation shows its parsed and styled page in the window before its scripts run (`window.inspect`
+reports it with `settling`); the committed page, history and the navigation's reply still wait
+for the scripts to settle, and a provisional page is never a candidate. Networking owns one expiring prepared connection. Transmission has its own authority
 admission after connection/TLS preparation; response cookies commit under current authority
 independently of subsequent document parsing. POST responses carry an explicit no-replay history
 policy. In the macOS desktop, one bounded host-only cookie jar is serialized as a versioned
@@ -118,7 +126,9 @@ without engine I/O. Agents also supply control_epoch and exact page/node/revisio
 preserve native order and can rebase revision only within their originally observed page generation.
 Deleted identities are not recycled within a page.
 
-Native controls use the engine boxes; custom painting uses its premeasured lines. Inspection
+Native controls use the engine boxes; custom painting uses its premeasured lines. Links and
+labels get their native widget once they come within a viewport of the visible region (a settled
+scroll republishes the snapshot and creates the rest); form controls always have theirs. Inspection
 comes from that same display. AppKit does not parse HTML, execute JS or choose page flow. Native
 captures read the actual root view after display completion and convert its monitor-profile
 bitmap to sRGB before PNG encoding. A capture repository writes create-new PNGs beneath a
@@ -150,14 +160,23 @@ under the captured authority. Presentation does not fetch, execute scripts, alte
 change page/revision identity; it advances layout generation. Inactive tabs recompute with the
 current context on activation. A failed candidate leaves the prior committed presentation.
 
-Static readable text admits 16 KiB of UTF-8 per node and 32 KiB in aggregate, independently
+Static readable text admits 16 KiB of UTF-8 per node and 512 KiB (a quarter of HTML_BYTES) in
+aggregate, independently
 of the unchanged 2,048-byte editable/control/metadata/document-write limits. Content validation
 also checks forged documents before style, projection, mutation and rendering. Nodes are never
 split to bypass a text cap. The request-local layout context charges native shaping inputs,
-retains bounded exact-font measurements/wrapped runs and shares its 65,536-work allowance
-across intrinsic sizing, dry runs and placement. Line placement consumes measured widths
-rather than repeatedly shaping a growing string. The frame/display/VM bounds remain separate;
-passing the text cap does not guarantee publishability.
+retains bounded exact-font measurements/wrapped runs and shares its 5,242,880-work allowance (128 per node plus 8 per stored text byte, so a page at
+both the node and text limits fits)
+across intrinsic sizing, dry runs and placement. Uncached native measurements are capped at
+16,384 per layout, since each is a fixed native call the per-scalar work undercounts.
+Inspection names are cut to 2,048 bytes per node. Line placement consumes measured widths
+rather than repeatedly shaping a growing string. The 16 MiB private frame is derived from the
+node, source and text budgets (asserted at compile time), so a page at every document limit
+crosses each private pipe; the VM state bound stays pinned at 128 KiB. Classic scripts are
+fetched in document order, then run blocking, then defer, then async, each in document order;
+script errors still name the document position. `<meta charset>` and http-equiv content-type
+are checked against the transport charset, X-UA-Compatible is inert, and every other
+http-equiv value is refused.
 
 The native error banner uses actual label measurement below the complete toolbar/tab stack.
 Its action row stays separate; a tall message scrolls inside a capped text region while at
@@ -187,7 +206,7 @@ the exact agent-visible display list. Production builds omit this observation.
 | src/desktop/broker.rs, src/desktop/io.rs | Bounded queues and cancellable agent pipes |
 | src/desktop/mcp_io.rs | Pollable MCP input, bounded output, UI-acknowledged replies and disconnect lifetime |
 | src/desktop/window/ | Native intentions, ordered updates, OS-only tools, menus |
-| src/desktop/canvas.rs, src/desktop/chrome.rs | Native controls, painting and shell |
+| src/desktop/canvas.rs, src/desktop/mars.rs | Native controls, painting and shell |
 | crates/eye/src/platform/ | OS font measurement/drawing primitives reused by the Mars shell |
 
 ## Failure, egress and lifetime
@@ -354,9 +373,16 @@ Projected page execution receives a bounded document-owned node projection on ea
 load/click. Host document, element and event values are private data identities;
 they confer no native authority. New service operations keep the old source-only
 facade behavior separate. V9 owns listener/event records and callback collector
-roots, while the real document independently applies text proposals and validates
+roots, while the real document independently replays the ordered `DomChange` log
+(text, fragment insert with a fixed `first_id`, subtree move, `lang`/`dir` attribute)
+and validates
 the returned state before Storage persistence and publication. Candidate identity
 combines the active tab and next global page generation; navigation/reload replace it.
+V9 parses inserted fragments through the core `FragmentParser` trait, which Eye
+implements and the app supplies, so neither engine depends on the other. Both trees
+place nodes with the same core `place`/`relocate` helpers, and the coordinator fails
+the navigation or click unless V9's returned structure digest equals the digest of
+Eye's applied projection.
 Click dispatch snapshots registrations before the inline handler and shares one
 candidate/work allowance across all callbacks. Additions wait; removals suppress
 pending calls. Event currentTarget is transient interpreter state, never serialized

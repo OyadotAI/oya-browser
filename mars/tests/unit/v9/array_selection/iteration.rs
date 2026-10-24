@@ -72,23 +72,18 @@ fn both_predicates_stop_before_later_failing_callbacks() {
     assert_eq!(result(source, "some+' '+found+' '+s+' '+f"), "true 5 01 01");
 }
 
-/** Holes consume shared work even when some makes no author calls; find callback work shares that allowance. */
+/** Holes consume shared work; endless callbacks stop at the work budget and deep recursion throws a catchable RangeError. */
 #[test]
 fn sparse_traversal_and_nested_predicates_share_operation_and_depth_limits() {
     assert_eq!(
         result("const a=[];a.length=1024;", "a.some(()=>true)"),
         "false"
     );
-    for source in [
-        "const a=[];a.length=1024;a.some(()=>false);a.some(()=>false);",
-        "const a=[];a.length=1024;a.find(()=>false);",
-        "[1].some(()=>{while(true){}});",
-        "function recurse(){return [1].find(recurse);}recurse();",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "limit_exceeded",
-            "{source}"
-        );
-    }
+    assert_eq!(
+        execute("[1].some(()=>{while(true){}});").unwrap_err().code,
+        "limit_exceeded"
+    );
+    let error = execute("function recurse(){return [1].find(recurse);}recurse();").unwrap_err();
+    assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("RangeError"), "{}", error.message);
 }

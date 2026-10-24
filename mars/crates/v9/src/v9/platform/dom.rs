@@ -1,0 +1,2615 @@
+use super::components;
+/** The DOM scripts see: node wrappers, the document, and Node/Element/HTMLElement members. */
+pub(in crate::v9) use super::html::{parse_detached, serialize};
+use super::nodes::{BODY, HEAD, HTML, VIRTUAL_BASE};
+use super::selector;
+use crate::document::InsertPosition;
+use crate::protocol::EngineError;
+use crate::v9::value::{JsString, JsValue, ObjectId};
+use crate::v9::vm::data::{Class, HostData};
+use crate::v9::vm::heap::{Key, Object, Prop, Slot};
+use crate::v9::vm::realm::realm;
+use crate::v9::vm::{Call, Res, Thrown, Vm};
+
+/** The size V9 reports for a rendered element's box, since it computes no layout. */
+const NOMINAL_BOX: f64 = 1.0;
+
+/** The document as a node identity for traversal. */
+pub(in crate::v9) const DOCUMENT: usize = VIRTUAL_BASE + 3;
+
+/** Engine errors from the node model become script errors where scripts can see them. */
+pub(in crate::v9) fn dom_error(vm: &mut Vm, error: EngineError) -> Thrown {
+    match error.code.as_str() {
+        "unsupported_feature" => {
+            let message = error.message.clone();
+            vm.unsupported_error(message.trim_end_matches('.'))
+        }
+        "invalid_request"
+            if error.message.starts_with("HierarchyRequestError")
+                || error.message.starts_with("NoModification") =>
+        {
+            vm.throw(crate::v9::vm::error::ErrorKind::Error, &error.message)
+        }
+        _ => Thrown::Fatal(error),
+    }
+}
+
+/** The wrapper object for a node, created once and reused. */
+pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
+    if node == DOCUMENT {
+        return Ok(JsValue::Object(realm().ids.document));
+    }
+    if let Some(id) = vm.page.state.wrappers.get(&node)
+        && vm.heap.get(*id).is_some()
+    {
+        return Ok(JsValue::Object(*id));
+    }
+    if !vm.page.exists(node) {
+        return Ok(JsValue::Null);
+    }
+    let tag = vm.page.tag(node);
+    let ids = &realm().ids;
+    let proto = match tag.as_str() {
+        "#text" | "#comment" => ids.text_prototype,
+        components::FRAGMENT => components::ids().fragment,
+        components::SHADOW_ROOT => components::ids().shadow_root,
+        _ => ids.html_element_prototype,
+    };
+    let id = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::Node(node))),
+        Some(proto),
+    ))?;
+    vm.page.state.wrappers.insert(node, id);
+    Ok(JsValue::Object(id))
+}
+
+/** The node a value wraps. */
+pub(in crate::v9) fn node_of(vm: &Vm, value: &JsValue) -> Option<usize> {
+    if *value == JsValue::Object(realm().ids.document) {
+        return Some(DOCUMENT);
+    }
+    match super::host_data(vm, value)? {
+        HostData::Node(node) => Some(node),
+        HostData::Document(html) => Some(html),
+        _ => None,
+    }
+}
+
+/** `this` as a node. */
+pub(super) fn this_node(vm: &mut Vm, call: &Call) -> Res<usize> {
+    node_of(vm, &call.this).ok_or_else(|| vm.type_error("Illegal invocation"))
+}
+
+/** An argument as a node. */
+pub(super) fn arg_node(vm: &mut Vm, call: &Call, index: usize) -> Res<usize> {
+    let value = call.arg(index);
+    if let Some(node) = node_of(vm, &value) {
+        return Ok(node);
+    }
+    Err(vm.type_error("parameter is not of type 'Node'"))
+}
+
+/** Rewrite node identities after the document adopted script-created nodes. */
+pub(in crate::v9) fn adopt(vm: &mut Vm, mapping: &[(usize, usize)]) {
+    for (old, new) in mapping {
+        if let Some(wrapper) = vm.page.state.wrappers.remove(old) {
+            if let Some(Class::Host(data)) =
+                vm.heap.get_mut(wrapper).map(|object| &mut object.class)
+            {
+                **data = HostData::Node(*new);
+            }
+            vm.page.state.wrappers.insert(*new, wrapper);
+        }
+        components::adopt(&mut vm.page, *old, *new);
+        super::scripts::adopt(&mut vm.page, *old, *new);
+        if vm.page.state.focused == Some(*old) {
+            vm.page.state.focused = Some(*new);
+        }
+        for listener in &mut vm.page.state.listeners {
+            if listener.target == super::Target::Node(*old) {
+                listener.target = super::Target::Node(*new);
+            }
+        }
+    }
+}
+
+/** A static node list object. */
+pub(in crate::v9) fn node_list(vm: &mut Vm, nodes: Vec<usize>) -> Res<JsValue> {
+    let id = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::NodeList(nodes))),
+        Some(realm().ids.node_list_prototype),
+    ))?;
+    Ok(JsValue::Object(id))
+}
+
+/** A live list of a node's children (or element children). */
+fn live_children(vm: &mut Vm, node: usize, elements: bool) -> Res<JsValue> {
+    let id = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::Children(node, elements))),
+        Some(realm().ids.node_list_prototype),
+    ))?;
+    Ok(JsValue::Object(id))
+}
+
+/** The nodes a list object currently holds. */
+fn list_nodes(vm: &mut Vm, data: &HostData) -> Vec<usize> {
+    match data {
+        HostData::NodeList(nodes) => nodes.clone(),
+        HostData::Children(node, elements) => {
+            let children = vm.page.children(*node);
+            if *elements {
+                children
+                    .into_iter()
+                    .filter(|child| vm.page.is_element(*child))
+                    .collect()
+            } else {
+                children
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/** Own virtual properties of host objects. */
+pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>> {
+    let Some(Class::Host(data)) = vm.heap.get(id).map(|object| &object.class) else {
+        return Ok(None);
+    };
+    let data = (**data).clone();
+    let Key::Str(name) = key else {
+        return Ok(None);
+    };
+    let readonly = |value: JsValue| Prop {
+        slot: Slot::Data(value),
+        attrs: crate::v9::vm::heap::ENUMERABLE,
+    };
+    match &data {
+        HostData::NodeList(_) | HostData::Children(..) => {
+            let nodes = list_nodes(vm, &data);
+            if let Some(index) = key.index() {
+                return match nodes.get(index as usize) {
+                    Some(node) => Ok(Some(readonly(wrap(vm, *node)?))),
+                    None => Ok(None),
+                };
+            }
+            if name.is("length") {
+                return Ok(Some(readonly(JsValue::Number(nodes.len() as f64))));
+            }
+            Ok(None)
+        }
+        HostData::Style(node) => {
+            let text = name.lossy();
+            if !style_property(&text) {
+                return Ok(None);
+            }
+            let declarations = style_map(vm, *node);
+            let value = declarations
+                .iter()
+                .find(|(property, _)| *property == kebab(&text))
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default();
+            Ok(Some(Prop::data(JsValue::string(&value)?)))
+        }
+        HostData::Computed(node) => {
+            let text = name.lossy();
+            if !style_property(&text) {
+                return Ok(None);
+            }
+            let value = computed_value(vm, *node, &kebab(&text));
+            Ok(Some(readonly(JsValue::string(&value)?)))
+        }
+        HostData::Dataset(node) => {
+            let attribute = format!("data-{}", kebab(&name.lossy()));
+            let value = vm
+                .page
+                .view(*node)
+                .and_then(|view| view.attributes.get(&attribute).cloned());
+            match value {
+                Some(value) => Ok(Some(Prop::data(JsValue::string(&value)?))),
+                None => Ok(None),
+            }
+        }
+        HostData::Storage(local) => {
+            let text = name.lossy();
+            if storage_method(&text) {
+                return Ok(None);
+            }
+            let area = if *local {
+                &vm.page.storage.local
+            } else {
+                &vm.page.storage.session
+            };
+            match area.get(&text) {
+                Some(value) => Ok(Some(Prop::data(JsValue::string(value)?))),
+                None => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+/** Host objects' own writes. */
+pub(super) fn host_write(
+    vm: &mut Vm,
+    id: ObjectId,
+    key: &Key,
+    value: &JsValue,
+) -> Res<Option<bool>> {
+    let Some(Class::Host(data)) = vm.heap.get(id).map(|object| &object.class) else {
+        return Ok(None);
+    };
+    let data = (**data).clone();
+    let Key::Str(name) = key else {
+        return Ok(None);
+    };
+    match data {
+        HostData::Style(node) => {
+            let property = name.lossy();
+            if !style_property(&property) {
+                return Ok(None);
+            }
+            let text = vm.to_text(value)?;
+            set_style(vm, node, &kebab(&property), &text)?;
+            Ok(Some(true))
+        }
+        HostData::Dataset(node) => {
+            let text = vm.to_text(value)?;
+            let attribute = format!("data-{}", kebab(&name.lossy()));
+            vm.page
+                .set_attribute(node, &attribute, Some(&text))
+                .map_err(|error| dom_error(vm, error))?;
+            components::flush(vm)?;
+            Ok(Some(true))
+        }
+        HostData::Storage(local) => {
+            let property = name.lossy();
+            if storage_method(&property) {
+                return Ok(None);
+            }
+            let text = vm.to_text(value)?;
+            super::window::storage_set(vm, local, property, text)?;
+            Ok(Some(true))
+        }
+        HostData::NodeList(_) | HostData::Children(..)
+            if key.index().is_some() || name.is("length") =>
+        {
+            Ok(Some(false))
+        }
+        _ => Ok(None),
+    }
+}
+
+/** Host objects' own deletes. */
+pub(super) fn host_delete(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<bool> {
+    let Some(Class::Host(data)) = vm.heap.get(id).map(|object| &object.class) else {
+        return Ok(false);
+    };
+    let data = (**data).clone();
+    let Key::Str(name) = key else {
+        return Ok(false);
+    };
+    match data {
+        HostData::Dataset(node) => {
+            let attribute = format!("data-{}", kebab(&name.lossy()));
+            vm.page
+                .set_attribute(node, &attribute, None)
+                .map_err(|error| dom_error(vm, error))?;
+            components::flush(vm)?;
+            Ok(true)
+        }
+        HostData::Storage(local) => {
+            super::window::storage_remove(vm, local, &name.lossy())?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/** Host objects' own virtual keys. */
+pub(super) fn host_keys(vm: &mut Vm, id: ObjectId) -> Res<Vec<Key>> {
+    let Some(Class::Host(data)) = vm.heap.get(id).map(|object| &object.class) else {
+        return Ok(Vec::new());
+    };
+    let data = (**data).clone();
+    let keys: Vec<String> = match &data {
+        HostData::NodeList(_) | HostData::Children(..) => {
+            let count = list_nodes(vm, &data).len();
+            (0..count).map(|index| index.to_string()).collect()
+        }
+        HostData::Dataset(node) => vm
+            .page
+            .view(*node)
+            .map(|view| {
+                view.attributes
+                    .keys()
+                    .filter_map(|name| name.strip_prefix("data-"))
+                    .map(camel)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        HostData::Storage(local) => {
+            let area = if *local {
+                &vm.page.storage.local
+            } else {
+                &vm.page.storage.session
+            };
+            area.keys().cloned().collect()
+        }
+        _ => Vec::new(),
+    };
+    keys.iter()
+        .map(|key| Ok(Key::Str(JsString::from_utf8(key)?)))
+        .collect()
+}
+
+/** Storage methods are prototype members, not keys. */
+fn storage_method(name: &str) -> bool {
+    matches!(
+        name,
+        "getItem" | "setItem" | "removeItem" | "clear" | "key" | "length"
+    )
+}
+
+/** Whether a style object key names a CSS property Chrome supports (so `in` checks match). */
+fn style_property(name: &str) -> bool {
+    let name = name
+        .strip_prefix("webkit")
+        .or_else(|| name.strip_prefix("Webkit"))
+        .map_or(name.to_string(), |rest| {
+            let mut chars = rest.chars();
+            chars.next().map_or(String::new(), |first| {
+                first.to_ascii_lowercase().to_string() + chars.as_str()
+            })
+        });
+    let name = if name.contains('-') {
+        camel(&name)
+    } else {
+        name
+    };
+    CSS_PROPERTIES.binary_search(&name.as_str()).is_ok()
+}
+
+/** CSS properties a style declaration exposes, camelCased and sorted for binary search. */
+const CSS_PROPERTIES: [&str; 209] = [
+    "accentColor",
+    "alignContent",
+    "alignItems",
+    "alignSelf",
+    "all",
+    "animation",
+    "animationDelay",
+    "animationDirection",
+    "animationDuration",
+    "animationFillMode",
+    "animationIterationCount",
+    "animationName",
+    "animationPlayState",
+    "animationTimingFunction",
+    "appearance",
+    "aspectRatio",
+    "backdropFilter",
+    "backfaceVisibility",
+    "background",
+    "backgroundAttachment",
+    "backgroundBlendMode",
+    "backgroundClip",
+    "backgroundColor",
+    "backgroundImage",
+    "backgroundOrigin",
+    "backgroundPosition",
+    "backgroundPositionX",
+    "backgroundPositionY",
+    "backgroundRepeat",
+    "backgroundSize",
+    "blockSize",
+    "border",
+    "borderBottom",
+    "borderBottomColor",
+    "borderBottomLeftRadius",
+    "borderBottomRightRadius",
+    "borderBottomStyle",
+    "borderBottomWidth",
+    "borderCollapse",
+    "borderColor",
+    "borderImage",
+    "borderLeft",
+    "borderLeftColor",
+    "borderLeftStyle",
+    "borderLeftWidth",
+    "borderRadius",
+    "borderRight",
+    "borderRightColor",
+    "borderRightStyle",
+    "borderRightWidth",
+    "borderSpacing",
+    "borderStyle",
+    "borderTop",
+    "borderTopColor",
+    "borderTopLeftRadius",
+    "borderTopRightRadius",
+    "borderTopStyle",
+    "borderTopWidth",
+    "borderWidth",
+    "bottom",
+    "boxDecorationBreak",
+    "boxShadow",
+    "boxSizing",
+    "breakAfter",
+    "breakBefore",
+    "breakInside",
+    "captionSide",
+    "caretColor",
+    "clear",
+    "clip",
+    "clipPath",
+    "color",
+    "columnCount",
+    "columnGap",
+    "columnRule",
+    "columnWidth",
+    "columns",
+    "contain",
+    "content",
+    "counterIncrement",
+    "counterReset",
+    "cssFloat",
+    "cursor",
+    "direction",
+    "display",
+    "emptyCells",
+    "fill",
+    "filter",
+    "flex",
+    "flexBasis",
+    "flexDirection",
+    "flexFlow",
+    "flexGrow",
+    "flexShrink",
+    "flexWrap",
+    "float",
+    "font",
+    "fontFamily",
+    "fontFeatureSettings",
+    "fontKerning",
+    "fontSize",
+    "fontStretch",
+    "fontStyle",
+    "fontVariant",
+    "fontWeight",
+    "gap",
+    "grid",
+    "gridArea",
+    "gridAutoColumns",
+    "gridAutoFlow",
+    "gridAutoRows",
+    "gridColumn",
+    "gridColumnEnd",
+    "gridColumnStart",
+    "gridRow",
+    "gridRowEnd",
+    "gridRowStart",
+    "gridTemplate",
+    "gridTemplateAreas",
+    "gridTemplateColumns",
+    "gridTemplateRows",
+    "height",
+    "hyphens",
+    "inset",
+    "isolation",
+    "justifyContent",
+    "justifyItems",
+    "justifySelf",
+    "left",
+    "letterSpacing",
+    "lineClamp",
+    "lineHeight",
+    "listStyle",
+    "listStyleImage",
+    "listStylePosition",
+    "listStyleType",
+    "margin",
+    "marginBottom",
+    "marginLeft",
+    "marginRight",
+    "marginTop",
+    "mask",
+    "maxHeight",
+    "maxWidth",
+    "minHeight",
+    "minWidth",
+    "mixBlendMode",
+    "objectFit",
+    "objectPosition",
+    "opacity",
+    "order",
+    "outline",
+    "outlineColor",
+    "outlineOffset",
+    "outlineStyle",
+    "outlineWidth",
+    "overflow",
+    "overflowWrap",
+    "overflowX",
+    "overflowY",
+    "padding",
+    "paddingBottom",
+    "paddingLeft",
+    "paddingRight",
+    "paddingTop",
+    "perspective",
+    "pointerEvents",
+    "position",
+    "quotes",
+    "resize",
+    "right",
+    "rotate",
+    "scale",
+    "scrollBehavior",
+    "stroke",
+    "strokeWidth",
+    "tabSize",
+    "tableLayout",
+    "textAlign",
+    "textDecoration",
+    "textIndent",
+    "textOverflow",
+    "textShadow",
+    "textSizeAdjust",
+    "textTransform",
+    "top",
+    "touchAction",
+    "transform",
+    "transformOrigin",
+    "transformStyle",
+    "transition",
+    "transitionDelay",
+    "transitionDuration",
+    "transitionProperty",
+    "transitionTimingFunction",
+    "translate",
+    "unicodeBidi",
+    "userSelect",
+    "verticalAlign",
+    "visibility",
+    "whiteSpace",
+    "width",
+    "willChange",
+    "wordBreak",
+    "wordSpacing",
+    "wordWrap",
+    "writingMode",
+    "zIndex",
+    "zoom",
+];
+
+/** camelCase to kebab-case (`backgroundColor` to `background-color`, `cssFloat` to `float`). */
+pub(in crate::v9) fn kebab(name: &str) -> String {
+    if name == "cssFloat" {
+        return "float".into();
+    }
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('-');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/** kebab-case to camelCase. */
+pub(in crate::v9) fn camel(name: &str) -> String {
+    let mut out = String::new();
+    let mut upper = false;
+    for c in name.chars() {
+        if c == '-' {
+            upper = true;
+        } else if upper {
+            out.push(c.to_ascii_uppercase());
+            upper = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/** The inline style declarations of a node. */
+pub(in crate::v9) fn style_map(vm: &mut Vm, node: usize) -> Vec<(String, String)> {
+    let text = vm
+        .page
+        .view(node)
+        .and_then(|view| view.attributes.get("style").cloned())
+        .unwrap_or_default();
+    text.split(';')
+        .filter_map(|declaration| {
+            let (name, value) = declaration.split_once(':')?;
+            Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
+        })
+        .filter(|(name, _)| !name.is_empty())
+        .collect()
+}
+
+/** Elements that display as blocks by default. */
+const BLOCK_TAGS: [&str; 31] = [
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "body",
+    "dd",
+    "details",
+    "dialog",
+    "div",
+    "dl",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hr",
+    "html",
+    "main",
+    "nav",
+    "ol",
+    "p",
+    "section",
+    "ul",
+];
+
+/** A computed value without layout: the inline declaration, else the CSS initial or UA default. */
+pub(in crate::v9) fn computed_value(vm: &mut Vm, node: usize, property: &str) -> String {
+    if let Some((_, value)) = style_map(vm, node)
+        .into_iter()
+        .find(|(name, _)| name == property)
+    {
+        return value;
+    }
+    let tag = vm.page.tag(node);
+    let hidden = vm
+        .page
+        .view(node)
+        .is_some_and(|view| view.attributes.contains_key("hidden"));
+    match property {
+        "display"
+            if hidden
+                || matches!(
+                    tag.as_str(),
+                    "head" | "script" | "style" | "template" | "meta" | "link" | "title"
+                ) =>
+        {
+            "none"
+        }
+        "display" if BLOCK_TAGS.contains(&tag.as_str()) => "block",
+        "display" if tag == "li" => "list-item",
+        "display" if matches!(tag.as_str(), "table") => "table",
+        "display" if matches!(tag.as_str(), "tr") => "table-row",
+        "display" if matches!(tag.as_str(), "td" | "th") => "table-cell",
+        "display"
+            if matches!(
+                tag.as_str(),
+                "button" | "input" | "select" | "textarea" | "img"
+            ) =>
+        {
+            "inline-block"
+        }
+        "display" => "inline",
+        "visibility" => "visible",
+        "position" => "static",
+        "opacity" => "1",
+        "float" => "none",
+        "overflow" | "overflow-x" | "overflow-y" => "visible",
+        "box-sizing" => "content-box",
+        "direction" => "ltr",
+        "z-index" | "width" | "height" | "top" | "left" | "right" | "bottom" => "auto",
+        "font-size" => "16px",
+        "color" => "rgb(0, 0, 0)",
+        "background-color" => "rgba(0, 0, 0, 0)",
+        _ if property.starts_with("margin")
+            || property.starts_with("padding")
+            || property.ends_with("width") =>
+        {
+            "0px"
+        }
+        _ => "",
+    }
+    .to_string()
+}
+
+/** Whether a connected element would render: no display:none or hidden on it or an ancestor. */
+pub(in crate::v9) fn rendered(vm: &mut Vm, node: usize) -> bool {
+    if !vm.page.connected(node) {
+        return false;
+    }
+    let mut chain = vec![node];
+    chain.extend(vm.page.ancestors(node));
+    chain
+        .into_iter()
+        .all(|id| computed_value(vm, id, "display") != "none")
+}
+
+/** Set (or with an empty value remove) one inline style property. */
+pub(in crate::v9) fn set_style(vm: &mut Vm, node: usize, property: &str, value: &str) -> Res<()> {
+    let mut declarations = style_map(vm, node);
+    declarations.retain(|(name, _)| name != property);
+    if !value.trim().is_empty() {
+        declarations.push((property.to_string(), value.trim().to_string()));
+    }
+    let text: Vec<String> = declarations
+        .iter()
+        .map(|(name, value)| format!("{name}: {value};"))
+        .collect();
+    let text = text.join(" ");
+    let result = if text.is_empty() {
+        vm.page.set_attribute(node, "style", None)
+    } else {
+        vm.page.set_attribute(node, "style", Some(&text))
+    };
+    result.map_err(|error| dom_error(vm, error))?;
+    components::flush(vm)
+}
+
+/** The name an accessor native was registered under. */
+pub(in crate::v9) fn native_name(call: &Call) -> &'static str {
+    realm().native(call.callee).map_or("", |def| def.name)
+}
+
+/** Wrap an optional node. */
+pub(super) fn wrap_option(vm: &mut Vm, node: Option<usize>) -> Res<JsValue> {
+    match node {
+        Some(node) => wrap(vm, node),
+        None => Ok(JsValue::Null),
+    }
+}
+
+/** Children of a traversal node, including the document. */
+fn traverse_children(vm: &mut Vm, node: usize) -> Vec<usize> {
+    if node == DOCUMENT {
+        return vec![HTML];
+    }
+    vm.page.children(node)
+}
+
+/** Parent for traversal: html's parent is the document. */
+fn traverse_parent(vm: &mut Vm, node: usize) -> Option<usize> {
+    match node {
+        DOCUMENT => None,
+        HTML => Some(DOCUMENT),
+        _ if vm.page.has_shadows() && vm.page.is_shadow_root(node) => None,
+        _ => vm.page.parent(node),
+    }
+}
+
+/** Siblings by offset. */
+fn sibling(vm: &mut Vm, node: usize, offset: isize, elements: bool) -> Option<usize> {
+    let parent = traverse_parent(vm, node)?;
+    let mut children = traverse_children(vm, parent);
+    if elements {
+        children.retain(|child| *child == node || vm.page.is_element(*child));
+    }
+    let position = children.iter().position(|child| *child == node)? as isize;
+    children
+        .get(usize::try_from(position + offset).ok()?)
+        .copied()
+}
+
+/** Node accessors and methods, dispatched by registered name. */
+pub(in crate::v9) fn node_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    let name = native_name(&call);
+    match name {
+        "nodeType" => Ok(JsValue::Number(match node {
+            DOCUMENT => 9.0,
+            _ => match vm.page.tag(node).as_str() {
+                "#text" => 3.0,
+                "#comment" => 8.0,
+                "#document-fragment" => 11.0,
+                _ => 1.0,
+            },
+        })),
+        "nodeName" => {
+            let tag = if node == DOCUMENT {
+                "#document".to_string()
+            } else {
+                vm.page.tag(node)
+            };
+            let name = if tag.starts_with('#') {
+                tag
+            } else {
+                tag.to_ascii_uppercase()
+            };
+            JsValue::string(&name).map_err(Into::into)
+        }
+        "parentNode" => {
+            let parent = traverse_parent(vm, node);
+            wrap_option(vm, parent)
+        }
+        "parentElement" => {
+            let parent = traverse_parent(vm, node).filter(|parent| *parent != DOCUMENT);
+            wrap_option(vm, parent)
+        }
+        "childNodes" => live_children(vm, node, false),
+        "firstChild" => {
+            let first = traverse_children(vm, node).first().copied();
+            wrap_option(vm, first)
+        }
+        "lastChild" => {
+            let last = traverse_children(vm, node).last().copied();
+            wrap_option(vm, last)
+        }
+        "nextSibling" => {
+            let next = sibling(vm, node, 1, false);
+            wrap_option(vm, next)
+        }
+        "previousSibling" => {
+            let previous = sibling(vm, node, -1, false);
+            wrap_option(vm, previous)
+        }
+        "ownerDocument" => {
+            if node == DOCUMENT {
+                Ok(JsValue::Null)
+            } else {
+                Ok(JsValue::Object(realm().ids.document))
+            }
+        }
+        "isConnected" => Ok(JsValue::Boolean(
+            node == DOCUMENT || vm.page.connected(node),
+        )),
+        "textContent" | "innerText" | "nodeValue" | "data" => {
+            if node == DOCUMENT {
+                return Ok(JsValue::Null);
+            }
+            let tag = vm.page.tag(node);
+            if name == "nodeValue" && !tag.starts_with('#') {
+                return Ok(JsValue::Null);
+            }
+            let text = vm.page.text_content(node);
+            JsValue::string(&text).map_err(Into::into)
+        }
+        "length" => {
+            let text = vm.page.text_content(node);
+            Ok(JsValue::Number(text.encode_utf16().count() as f64))
+        }
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** Node setters (textContent and friends). */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn node_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| node_set_steps(vm, call))
+}
+
+/** The node_set steps themselves. */
+fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    let value = call.arg(0);
+    let text = if value.nullish() {
+        String::new()
+    } else {
+        vm.to_text(&value)?
+    };
+    if node != DOCUMENT {
+        let tag = vm.page.tag(node);
+        if tag.starts_with('#') && tag != components::FRAGMENT && tag != components::SHADOW_ROOT {
+            let old = vm.page.text_content(node);
+            vm.page
+                .set_text(node, &text)
+                .map_err(|error| dom_error(vm, error))?;
+            vm.page
+                .mutations
+                .push(components::Mutation::Text { node, old });
+        } else {
+            let removed = vm.page.children(node);
+            vm.page
+                .set_text(node, &text)
+                .map_err(|error| dom_error(vm, error))?;
+            let added = vm.page.children(node);
+            children_changed(vm, node, added, removed);
+        }
+    }
+    Ok(JsValue::Undefined)
+}
+
+/** Queue a child list change of `parent` for reactions and observers. */
+pub(super) fn children_changed(vm: &mut Vm, parent: usize, added: Vec<usize>, removed: Vec<usize>) {
+    if added.is_empty() && removed.is_empty() {
+        return;
+    }
+    vm.page.mutations.push(components::Mutation::Children {
+        parent,
+        added,
+        removed,
+        previous: None,
+        next: None,
+    });
+}
+
+/** Remove a node from its parent, queueing the change. */
+pub(in crate::v9) fn remove_node(vm: &mut Vm, node: usize) -> Res<()> {
+    let parent = vm.page.parent(node);
+    let siblings = parent.map(|parent| vm.page.children(parent));
+    vm.page.remove(node).map_err(|error| dom_error(vm, error))?;
+    if let (Some(parent), Some(siblings)) = (parent, siblings) {
+        let position = siblings.iter().position(|child| *child == node);
+        vm.page.mutations.push(components::Mutation::Children {
+            parent,
+            added: Vec::new(),
+            removed: vec![node],
+            previous: position
+                .and_then(|index| index.checked_sub(1))
+                .and_then(|index| siblings.get(index).copied()),
+            next: position.and_then(|index| siblings.get(index + 1).copied()),
+        });
+    }
+    Ok(())
+}
+
+/** Node methods. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn node_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| node_method_steps(vm, call))
+}
+
+/** The node_method steps themselves. */
+fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    match native_name(&call) {
+        "appendChild" => {
+            let child = arg_node(vm, &call, 0)?;
+            insert(vm, node, child, None)?;
+            Ok(call.arg(0))
+        }
+        "insertBefore" => {
+            let child = arg_node(vm, &call, 0)?;
+            let reference = node_of(vm, &call.arg(1));
+            insert(vm, node, child, reference)?;
+            Ok(call.arg(0))
+        }
+        "removeChild" => {
+            let child = arg_node(vm, &call, 0)?;
+            if vm.page.parent(child) != Some(node) {
+                return Err(vm.throw(
+                    crate::v9::vm::error::ErrorKind::Error,
+                    "NotFoundError: The node to be removed is not a child of this node.",
+                ));
+            }
+            remove_node(vm, child)?;
+            Ok(call.arg(0))
+        }
+        "replaceChild" => {
+            let new = arg_node(vm, &call, 0)?;
+            let old = arg_node(vm, &call, 1)?;
+            insert(vm, node, new, Some(old))?;
+            remove_node(vm, old)?;
+            Ok(call.arg(1))
+        }
+        "hasChildNodes" => Ok(JsValue::Boolean(!traverse_children(vm, node).is_empty())),
+        "contains" => {
+            let Some(other) = node_of(vm, &call.arg(0)) else {
+                return Ok(JsValue::Boolean(false));
+            };
+            if other == node || node == DOCUMENT && vm.page.connected(other) {
+                return Ok(JsValue::Boolean(true));
+            }
+            Ok(JsValue::Boolean(vm.page.ancestors(other).contains(&node)))
+        }
+        "cloneNode" => {
+            let deep = call.arg(0).truthy();
+            let copy = clone_node(vm, node, deep)?;
+            wrap(vm, copy)
+        }
+        "getRootNode" => {
+            let composed = components::option(vm, &call.arg(0), "composed")?;
+            if !composed && let Some(root) = components::containing_root(&mut vm.page, node) {
+                return wrap(vm, root);
+            }
+            if vm.page.connected(node) {
+                return Ok(JsValue::Object(realm().ids.document));
+            }
+            let ancestors = vm.page.ancestors(node);
+            let root = ancestors.last().copied().unwrap_or(node);
+            wrap(vm, root)
+        }
+        "compareDocumentPosition" => {
+            let other = arg_node(vm, &call, 0)?;
+            Ok(JsValue::Number(compare_position(vm, node, other)))
+        }
+        "isEqualNode" | "isSameNode" => {
+            Ok(JsValue::Boolean(node_of(vm, &call.arg(0)) == Some(node)))
+        }
+        "normalize" => Ok(JsValue::Undefined),
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** DOCUMENT_POSITION bits for compareDocumentPosition. */
+pub(super) fn compare_position(vm: &mut Vm, node: usize, other: usize) -> f64 {
+    if node == other {
+        return 0.0;
+    }
+    let connected = |vm: &mut Vm, id: usize| id == DOCUMENT || vm.page.connected(id);
+    if connected(vm, node) != connected(vm, other) {
+        return 1.0 + 32.0 + 4.0;
+    }
+    if node == DOCUMENT || vm.page.ancestors(other).contains(&node) {
+        return 16.0 + 4.0;
+    }
+    if other == DOCUMENT || vm.page.ancestors(node).contains(&other) {
+        return 8.0 + 2.0;
+    }
+    let mut order = vec![HTML, HEAD];
+    order.extend(vm.page.descendants(HEAD));
+    order.push(BODY);
+    order.extend(vm.page.descendants(BODY));
+    let a = order.iter().position(|id| *id == node);
+    let b = order.iter().position(|id| *id == other);
+    match (a, b) {
+        (Some(a), Some(b)) if a < b => 4.0,
+        (Some(_), Some(_)) => 2.0,
+        _ => 1.0 + 32.0 + 4.0,
+    }
+}
+
+/** Move focus to a connected element: the old one gets `blur` and `focusout`, the new one
+`focus` and `focusin`, as a click or a person's typing would give them. */
+pub(in crate::v9) fn focus(vm: &mut Vm, node: usize) -> Res<()> {
+    if vm.page.state.focused == Some(node) || !vm.page.connected(node) {
+        return Ok(());
+    }
+    blur(vm)?;
+    vm.page.state.focused = Some(node);
+    super::events::fire(vm, super::Target::Node(node), "focus", false, false)?;
+    super::events::fire(vm, super::Target::Node(node), "focusin", true, false)?;
+    Ok(())
+}
+
+/** Take focus away from the focused element, if any, firing `blur` and `focusout`. */
+pub(in crate::v9) fn blur(vm: &mut Vm) -> Res<()> {
+    let Some(previous) = vm.page.state.focused.take() else {
+        return Ok(());
+    };
+    if vm.page.exists(previous) {
+        super::events::fire(vm, super::Target::Node(previous), "blur", false, false)?;
+        super::events::fire(vm, super::Target::Node(previous), "focusout", true, false)?;
+    }
+    Ok(())
+}
+
+/** Insert a node (fragments insert their children), adopting new identities. */
+pub(in crate::v9) fn insert(
+    vm: &mut Vm,
+    parent: usize,
+    child: usize,
+    reference: Option<usize>,
+) -> Res<()> {
+    if parent == DOCUMENT {
+        return Err(vm.unsupported_error("inserting directly into the document"));
+    }
+    let tag = vm.page.tag(child);
+    if tag == components::SHADOW_ROOT {
+        return Err(vm.throw(
+            crate::v9::vm::error::ErrorKind::Error,
+            "HierarchyRequestError: A shadow root cannot be inserted.",
+        ));
+    }
+    let children = if tag == components::FRAGMENT {
+        vm.page.children(child)
+    } else {
+        vec![child]
+    };
+    if tag == components::FRAGMENT && !children.is_empty() {
+        children_changed(vm, child, Vec::new(), children.clone());
+    }
+    let mut added = Vec::with_capacity(children.len());
+    for node in children {
+        if let Some(old) = vm.page.parent(node).filter(|_| tag != components::FRAGMENT) {
+            children_changed(vm, old, Vec::new(), vec![node]);
+        }
+        let mapping = vm
+            .page
+            .insert(parent, node, reference)
+            .map_err(|error| dom_error(vm, error))?;
+        adopt(vm, &mapping);
+        added.push(
+            mapping
+                .iter()
+                .find(|(old, _)| *old == node)
+                .map_or(node, |(_, new)| *new),
+        );
+    }
+    for node in &added {
+        super::scripts::after_insert(vm, *node)?;
+    }
+    let siblings = vm.page.children(parent);
+    let first = added
+        .first()
+        .and_then(|first| siblings.iter().position(|c| c == first));
+    let last = added
+        .last()
+        .and_then(|last| siblings.iter().position(|c| c == last));
+    vm.page.mutations.push(components::Mutation::Children {
+        parent,
+        added,
+        removed: Vec::new(),
+        previous: first
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| siblings.get(index).copied()),
+        next: last.and_then(|index| siblings.get(index + 1).copied()),
+    });
+    Ok(())
+}
+
+/** Copy a node (and optionally its subtree); defined custom elements in the copy upgrade. */
+pub(super) fn clone_node(vm: &mut Vm, node: usize, deep: bool) -> Res<usize> {
+    let copy = clone_tree(vm, node, deep)?;
+    vm.page
+        .mutations
+        .push(components::Mutation::Created { root: copy });
+    Ok(copy)
+}
+
+/** Copy a node (and optionally its subtree, template content included) as detached nodes. */
+pub(super) fn clone_tree(vm: &mut Vm, node: usize, deep: bool) -> Res<usize> {
+    let Some(view) = vm.page.view(node) else {
+        return Err(vm.type_error("Cannot clone this node"));
+    };
+    let tag = view.tag.clone();
+    let text = if view.tag.starts_with('#') {
+        Some(vm.page.text_content(node))
+    } else {
+        view.text.clone()
+    };
+    let copy = vm
+        .page
+        .create(&tag, text)
+        .map_err(|error| dom_error(vm, error))?;
+    if let Some(record) = vm.page.state.detached.get_mut(&copy) {
+        record.attributes = view.attributes.clone();
+    }
+    if let Some(value) = view.value {
+        vm.page.state.values.insert(copy, value);
+    }
+    if deep {
+        for child in vm.page.children(node) {
+            let child_copy = clone_tree(vm, child, true)?;
+            vm.page
+                .insert(copy, child_copy, None)
+                .map_err(|error| dom_error(vm, error))?;
+        }
+        components::clone_content(vm, node, copy)?;
+    }
+    Ok(copy)
+}
+
+/** Element accessors. */
+pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    let name = native_name(&call);
+    let view = vm.page.view(node);
+    let attribute = |attribute: &str| {
+        view.as_ref()
+            .and_then(|view| view.attributes.get(attribute).cloned())
+    };
+    match name {
+        "tagName" => {
+            let tag = vm.page.tag(node).to_ascii_uppercase();
+            JsValue::string(&tag).map_err(Into::into)
+        }
+        "localName" => {
+            let tag = vm.page.tag(node);
+            JsValue::string(&tag).map_err(Into::into)
+        }
+        "className" => JsValue::string(&attribute("class").unwrap_or_default()).map_err(Into::into),
+        "children" => live_children(vm, node, true),
+        "childElementCount" => {
+            let count = traverse_children(vm, node)
+                .into_iter()
+                .filter(|child| vm.page.is_element(*child))
+                .count();
+            Ok(JsValue::Number(count as f64))
+        }
+        "firstElementChild" => {
+            let first = traverse_children(vm, node)
+                .into_iter()
+                .find(|child| vm.page.is_element(*child));
+            wrap_option(vm, first)
+        }
+        "lastElementChild" => {
+            let last = traverse_children(vm, node)
+                .into_iter()
+                .rev()
+                .find(|child| vm.page.is_element(*child));
+            wrap_option(vm, last)
+        }
+        "nextElementSibling" => {
+            let next = sibling(vm, node, 1, true);
+            wrap_option(vm, next)
+        }
+        "previousElementSibling" => {
+            let previous = sibling(vm, node, -1, true);
+            wrap_option(vm, previous)
+        }
+        "innerHTML" => {
+            let html = serialize(&mut vm.page, node, false);
+            JsValue::string(&html).map_err(Into::into)
+        }
+        "outerHTML" => {
+            let html = serialize(&mut vm.page, node, true);
+            JsValue::string(&html).map_err(Into::into)
+        }
+        "classList" => host_object(
+            vm,
+            HostData::ClassList(node),
+            realm().ids.class_list_prototype,
+        ),
+        "dataset" => host_object(vm, HostData::Dataset(node), realm().ids.dataset_prototype),
+        "sheet" => super::sheets::element_sheet(vm, node),
+        "sandbox" | "relList" | "part" => {
+            let attribute = if name == "relList" { "rel" } else { name };
+            host_object(
+                vm,
+                HostData::TokenList(node, attribute.into()),
+                realm().ids.class_list_prototype,
+            )
+        }
+        "pathname" | "host" | "hostname" | "protocol" | "search" | "hash" | "origin" | "port"
+        | "username" | "password" => {
+            // Links decompose their resolved href as `URL` does; an unresolvable one is empty.
+            let href = attribute("href").unwrap_or_default();
+            let resolved = super::net::resolve(vm, &href);
+            let parsed = resolved
+                .as_deref()
+                .and_then(|url| url::Url::parse(url).ok());
+            let Some(url) = parsed else {
+                return JsValue::string("").map_err(Into::into);
+            };
+            let text = match name {
+                "pathname" => url.path().to_string(),
+                "host" => url
+                    .host_str()
+                    .map_or(String::new(), |host| match url.port() {
+                        Some(port) => format!("{host}:{port}"),
+                        None => host.to_string(),
+                    }),
+                "hostname" => url.host_str().unwrap_or_default().to_string(),
+                "protocol" => format!("{}:", url.scheme()),
+                "search" => url
+                    .query()
+                    .map_or(String::new(), |query| format!("?{query}")),
+                "hash" => url
+                    .fragment()
+                    .map_or(String::new(), |fragment| format!("#{fragment}")),
+                "origin" => url.origin().ascii_serialization(),
+                "port" => url.port().map_or(String::new(), |port| port.to_string()),
+                "username" => url.username().to_string(),
+                _ => url.password().unwrap_or_default().to_string(),
+            };
+            JsValue::string(&text).map_err(Into::into)
+        }
+        "validity" => super::sheets::validity(vm),
+        "willValidate" => Ok(JsValue::Boolean(true)),
+        "validationMessage" => JsValue::string("").map_err(Into::into),
+        "style" => host_object(vm, HostData::Style(node), realm().ids.style_prototype),
+        "attributes" => {
+            let list = vm.new_array(Vec::new())?;
+            for (key, value) in view.map(|view| view.attributes).unwrap_or_default() {
+                let item = vm.new_object()?;
+                vm.put(item, "name", JsValue::string(&key)?)?;
+                vm.put(item, "value", JsValue::string(&value)?)?;
+                vm.put(item, "nodeName", JsValue::string(&key)?)?;
+                vm.put(item, "specified", JsValue::Boolean(true))?;
+                vm.array_append(&JsValue::Object(list), JsValue::Object(item))?;
+            }
+            // A NamedNodeMap: an array of Attr records with the map's lookups on its prototype.
+            vm.set_proto(list, Some(realm().ids.named_node_map_prototype))?;
+            Ok(JsValue::Object(list))
+        }
+        "value" => {
+            let value = view
+                .as_ref()
+                .and_then(|view| view.value.clone())
+                .or_else(|| attribute("value"));
+            match value {
+                Some(value) => JsValue::string(&value).map_err(Into::into),
+                None if vm.page.tag(node) == "select" => {
+                    let options = vm.page.descendants(node);
+                    let selected = options.into_iter().find(|option| {
+                        vm.page.view(*option).is_some_and(|view| {
+                            view.tag == "option" && view.attributes.contains_key("selected")
+                        })
+                    });
+                    let text = selected
+                        .map(|option| {
+                            vm.page
+                                .view(option)
+                                .and_then(|view| view.attributes.get("value").cloned())
+                                .unwrap_or_else(|| vm.page.text_content(option))
+                        })
+                        .unwrap_or_default();
+                    JsValue::string(&text).map_err(Into::into)
+                }
+                None if vm.page.tag(node) == "textarea" || vm.page.tag(node) == "option" => {
+                    let text = vm.page.text_content(node);
+                    JsValue::string(&text).map_err(Into::into)
+                }
+                None => JsValue::string("").map_err(Into::into),
+            }
+        }
+        "offsetWidth" | "offsetHeight" | "clientWidth" | "clientHeight" | "scrollWidth"
+        | "scrollHeight" => {
+            let (_, _, width, height) = client_box(vm, node);
+            let laid_out = !vm.page.environment.geometry.is_empty();
+            let size = if name.ends_with("Width") {
+                width
+            } else {
+                height
+            };
+            let size = if size > 0.0 || laid_out || node == HTML || node == BODY {
+                size
+            } else if name.starts_with("offset") && rendered(vm, node) {
+                // Before the first layout, rendered elements report a nominal box, hidden ones zero.
+                NOMINAL_BOX
+            } else {
+                0.0
+            };
+            Ok(JsValue::Number(size))
+        }
+        "offsetTop" | "offsetLeft" => {
+            // Offsets are relative to the body, which starts at the document origin.
+            let (x, y, ..) = client_box(vm, node);
+            let value = if name == "offsetTop" {
+                y + vm.page.environment.scroll_y
+            } else {
+                x
+            };
+            Ok(JsValue::Number(value))
+        }
+        "scrollTop" => Ok(JsValue::Number(if node == HTML || node == BODY {
+            vm.page.environment.scroll_y
+        } else {
+            0.0
+        })),
+        "clientTop" | "clientLeft" | "scrollLeft" => Ok(JsValue::Number(0.0)),
+        "offsetParent" => {
+            if vm.page.connected(node) && node != BODY && node != HTML {
+                wrap(vm, BODY)
+            } else {
+                Ok(JsValue::Null)
+            }
+        }
+        "form" => {
+            let form = vm
+                .page
+                .ancestors(node)
+                .into_iter()
+                .find(|ancestor| vm.page.tag(*ancestor) == "form");
+            wrap_option(vm, form)
+        }
+        "options" => {
+            let options: Vec<usize> = vm
+                .page
+                .descendants(node)
+                .into_iter()
+                .filter(|child| vm.page.tag(*child) == "option")
+                .collect();
+            node_list(vm, options)
+        }
+        "selectedIndex" => {
+            let options: Vec<usize> = vm
+                .page
+                .descendants(node)
+                .into_iter()
+                .filter(|child| vm.page.tag(*child) == "option")
+                .collect();
+            let index = options.iter().position(|option| {
+                vm.page
+                    .view(*option)
+                    .is_some_and(|view| view.attributes.contains_key("selected"))
+            });
+            Ok(JsValue::Number(match index {
+                Some(index) => index as f64,
+                None if options.is_empty() => -1.0,
+                None => 0.0,
+            }))
+        }
+        "text" => {
+            let text = vm.page.text_content(node);
+            JsValue::string(&text).map_err(Into::into)
+        }
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** A cached-per-call host helper object (classList, dataset, style). */
+fn host_object(vm: &mut Vm, data: HostData, proto: ObjectId) -> Res<JsValue> {
+    let id = vm.alloc(Object::new(Class::Host(Box::new(data)), Some(proto)))?;
+    Ok(JsValue::Object(id))
+}
+
+/** Element setters. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn element_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| element_set_steps(vm, call))
+}
+
+/** The element_set steps themselves. */
+fn element_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    let value = call.arg(0);
+    match native_name(&call) {
+        "className" => {
+            let text = vm.to_text(&value)?;
+            vm.page
+                .set_attribute(node, "class", Some(&text))
+                .map_err(|error| dom_error(vm, error))?;
+        }
+        // Assigning a token list sets its attribute, as the IDL's PutForwards=value says.
+        name @ ("sandbox" | "relList" | "part") => {
+            let attribute = if name == "relList" { "rel" } else { name };
+            let text = vm.to_text(&value)?;
+            vm.page
+                .set_attribute(node, attribute, Some(&text))
+                .map_err(|error| dom_error(vm, error))?;
+        }
+        "innerHTML" => {
+            let html = if value.nullish() {
+                String::new()
+            } else {
+                vm.to_text(&value)?
+            };
+            set_inner_html(vm, node, &html)?;
+        }
+        "outerHTML" => {
+            let html = vm.to_text(&value)?;
+            vm.page
+                .insert_html(node, InsertPosition::BeforeBegin, &html)
+                .map_err(|error| dom_error(vm, error))?;
+            remove_node(vm, node)?;
+        }
+        "value" => {
+            let text = if value.nullish() {
+                String::new()
+            } else {
+                vm.to_text(&value)?
+            };
+            vm.page
+                .set_value(node, &text)
+                .map_err(|error| dom_error(vm, error))?;
+        }
+        "style" => {
+            let text = vm.to_text(&value)?;
+            vm.page
+                .set_attribute(node, "style", Some(&text))
+                .map_err(|error| dom_error(vm, error))?;
+        }
+        "scrollTop" | "scrollLeft" | "selectedIndex" => {}
+        _ => {}
+    }
+    Ok(JsValue::Undefined)
+}
+
+/** Replace a node's children with parsed HTML (a template's content's, for a template). */
+pub(in crate::v9) fn set_inner_html(vm: &mut Vm, node: usize, html: &str) -> Res<()> {
+    let node = if vm.page.tag(node) == "template" {
+        vm.page
+            .content_or_self(node)
+            .map_err(|error| dom_error(vm, error))?
+    } else {
+        node
+    };
+    let removed = vm.page.children(node);
+    replace_html(vm, node, html)?;
+    let added = vm.page.children(node);
+    for child in &added {
+        vm.page
+            .mutations
+            .push(components::Mutation::Created { root: *child });
+    }
+    children_changed(vm, node, added, removed);
+    Ok(())
+}
+
+/** Replace a node's children with parsed HTML in whichever store holds it. */
+fn replace_html(vm: &mut Vm, node: usize, html: &str) -> Res<()> {
+    let host = vm.page.has_shadows() && vm.page.shadow_root(node).is_some();
+    if vm.page.is_projected(node) && !host {
+        vm.page
+            .set_text(node, "")
+            .map_err(|error| dom_error(vm, error))?;
+        if !html.is_empty() {
+            vm.page
+                .insert_html(node, InsertPosition::BeforeEnd, html)
+                .map_err(|error| dom_error(vm, error))?;
+        }
+        return Ok(());
+    }
+    for child in vm.page.children(node) {
+        vm.page
+            .remove(child)
+            .map_err(|error| dom_error(vm, error))?;
+    }
+    vm.page
+        .insert_html(node, InsertPosition::BeforeEnd, html)
+        .map_err(|error| dom_error(vm, error))
+}
+
+/** NamedNodeMap lookups over the Attr records `attributes` built; the map is a snapshot, so
+writes through it are unsupported. */
+pub(in crate::v9) fn named_node_map_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let name = native_name(&call);
+    let length = vm.get(&call.this, &Key::from("length"))?;
+    let count = vm.to_integer(&length)?.max(0.0) as usize;
+    match name {
+        "item" => {
+            let index = vm.to_integer(&call.arg(0))?;
+            if index < 0.0 || index as usize >= count {
+                return Ok(JsValue::Null);
+            }
+            vm.get(&call.this, &Key::from(index.to_string().as_str()))
+        }
+        "getNamedItem" => {
+            let wanted = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            for index in 0..count {
+                let item = vm.get(&call.this, &Key::from(index.to_string().as_str()))?;
+                let name = vm.get(&item, &Key::from("name"))?;
+                if vm.to_text(&name)? == wanted {
+                    return Ok(item);
+                }
+            }
+            Ok(JsValue::Null)
+        }
+        _ => Err(vm.unsupported_error("NamedNodeMap writes")),
+    }
+}
+
+/** Reflected attributes: the accessor's own name says which attribute it mirrors. */
+pub(in crate::v9) fn reflect_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    // V9 hangs every reflected attribute on Element.prototype, where browsers have only some on
+    // each interface; read through a non-node (a class prototype a component library walks),
+    // the attribute is simply absent.
+    let Some(node) = node_of(vm, &call.this) else {
+        return Ok(JsValue::Undefined);
+    };
+    let name = native_name(&call);
+    let (attribute, kind) = reflected(name);
+    let value = vm
+        .page
+        .view(node)
+        .and_then(|view| view.attributes.get(attribute).cloned());
+    match kind {
+        Reflect::Boolean => Ok(JsValue::Boolean(value.is_some())),
+        Reflect::Url => {
+            let Some(value) = value else {
+                return JsValue::string("").map_err(Into::into);
+            };
+            let resolved = super::net::resolve(vm, &value).unwrap_or(value);
+            JsValue::string(&resolved).map_err(Into::into)
+        }
+        Reflect::Number => Ok(JsValue::Number(
+            value
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(if name == "tabIndex" { -1.0 } else { 0.0 }),
+        )),
+        Reflect::Text => JsValue::string(&value.unwrap_or_default()).map_err(Into::into),
+    }
+}
+
+/** Reflected attribute setters. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn reflect_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| reflect_set_steps(vm, call))
+}
+
+/** The reflect_set steps themselves. */
+fn reflect_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some(node) = node_of(vm, &call.this) else {
+        // On a non-node the inherited attribute is absent, so assignment makes a data property.
+        if let Some(id) = call.this.object() {
+            vm.put(id, native_name(&call), call.arg(0))?;
+        }
+        return Ok(JsValue::Undefined);
+    };
+    let (attribute, kind) = reflected(native_name(&call));
+    let value = call.arg(0);
+    let result = match kind {
+        Reflect::Boolean => {
+            if value.truthy() {
+                vm.page.set_attribute(node, attribute, Some(""))
+            } else {
+                vm.page.set_attribute(node, attribute, None)
+            }
+        }
+        _ => {
+            let text = vm.to_text(&value)?;
+            vm.page.set_attribute(node, attribute, Some(&text))
+        }
+    };
+    result.map_err(|error| dom_error(vm, error))?;
+    if attribute == "src" {
+        super::scripts::after_insert(vm, node)?;
+    }
+    Ok(JsValue::Undefined)
+}
+
+/** How a reflected attribute converts. */
+#[derive(Clone, Copy)]
+enum Reflect {
+    Text,
+    Boolean,
+    Url,
+    Number,
+}
+
+/** Reflected property names, their attributes and kinds. */
+pub(in crate::v9) const REFLECTED: [&str; 33] = [
+    "id",
+    "title",
+    "lang",
+    "dir",
+    "name",
+    "type",
+    "alt",
+    "rel",
+    "target",
+    "placeholder",
+    "htmlFor",
+    "accessKey",
+    "role",
+    "hidden",
+    "checked",
+    "selected",
+    "disabled",
+    "readOnly",
+    "required",
+    "multiple",
+    "autofocus",
+    "defer",
+    "async",
+    "href",
+    "src",
+    "action",
+    "cite",
+    "data",
+    "tabIndex",
+    "width",
+    "height",
+    "maxLength",
+    "colSpan",
+];
+
+/** The attribute behind a reflected property. */
+fn reflected(name: &str) -> (&str, Reflect) {
+    match name {
+        "htmlFor" => ("for", Reflect::Text),
+        "accessKey" => ("accesskey", Reflect::Text),
+        "readOnly" => ("readonly", Reflect::Boolean),
+        "maxLength" => ("maxlength", Reflect::Number),
+        "colSpan" => ("colspan", Reflect::Number),
+        "tabIndex" => ("tabindex", Reflect::Number),
+        "width" | "height" => (name, Reflect::Number),
+        "hidden" | "checked" | "selected" | "disabled" | "required" | "multiple" | "autofocus"
+        | "defer" | "async" => (name, Reflect::Boolean),
+        "href" | "src" | "action" | "cite" | "data" => (name, Reflect::Url),
+        _ => (name, Reflect::Text),
+    }
+}
+
+/** Element methods. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn element_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| element_method_steps(vm, call))
+}
+
+/** The element_method steps themselves. */
+fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    match native_name(&call) {
+        "getAttribute" => {
+            let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            match vm
+                .page
+                .view(node)
+                .and_then(|view| view.attributes.get(&name).cloned())
+            {
+                Some(value) => JsValue::string(&value).map_err(Into::into),
+                None => Ok(JsValue::Null),
+            }
+        }
+        "setAttribute" => {
+            let name = vm.to_text(&call.arg(0))?;
+            let value = vm.to_text(&call.arg(1))?;
+            vm.page
+                .set_attribute(node, &name, Some(&value))
+                .map_err(|error| dom_error(vm, error))?;
+            if name.eq_ignore_ascii_case("src") {
+                super::scripts::after_insert(vm, node)?;
+            }
+            Ok(JsValue::Undefined)
+        }
+        "removeAttribute" => {
+            let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let present = vm
+                .page
+                .view(node)
+                .is_some_and(|view| view.attributes.contains_key(&name));
+            if present {
+                vm.page
+                    .set_attribute(node, &name, None)
+                    .map_err(|error| dom_error(vm, error))?;
+            }
+            Ok(JsValue::Undefined)
+        }
+        "hasAttribute" => {
+            let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            Ok(JsValue::Boolean(
+                vm.page
+                    .view(node)
+                    .is_some_and(|view| view.attributes.contains_key(&name)),
+            ))
+        }
+        "hasAttributes" => Ok(JsValue::Boolean(
+            vm.page
+                .view(node)
+                .is_some_and(|view| !view.attributes.is_empty()),
+        )),
+        "getAttributeNames" => {
+            let names: Vec<JsValue> = vm
+                .page
+                .view(node)
+                .map(|view| {
+                    view.attributes
+                        .keys()
+                        .filter_map(|name| JsValue::string(name).ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(JsValue::Object(vm.new_array(names)?))
+        }
+        "toggleAttribute" => {
+            let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let present = vm
+                .page
+                .view(node)
+                .is_some_and(|view| view.attributes.contains_key(&name));
+            let wanted = if call.args.len() > 1 {
+                call.arg(1).truthy()
+            } else {
+                !present
+            };
+            if wanted != present {
+                let value = if wanted { Some("") } else { None };
+                vm.page
+                    .set_attribute(node, &name, value)
+                    .map_err(|error| dom_error(vm, error))?;
+            }
+            Ok(JsValue::Boolean(wanted))
+        }
+        "querySelector" | "querySelectorAll" => query(vm, node, &call),
+        "getElementsByTagName" => {
+            let tag = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let found = search(vm, node, |page, id| {
+                page.is_element(id) && (tag == "*" || page.tag(id) == tag)
+            });
+            node_list(vm, found)
+        }
+        "getElementsByClassName" => {
+            let wanted: Vec<String> = vm
+                .to_text(&call.arg(0))?
+                .split_ascii_whitespace()
+                .map(String::from)
+                .collect();
+            let found = search(vm, node, |page, id| {
+                let classes = page
+                    .view(id)
+                    .and_then(|view| view.attributes.get("class").cloned())
+                    .unwrap_or_default();
+                !wanted.is_empty()
+                    && wanted
+                        .iter()
+                        .all(|class| classes.split_ascii_whitespace().any(|c| c == class))
+            });
+            node_list(vm, found)
+        }
+        "matches" | "webkitMatchesSelector" | "msMatchesSelector" => {
+            let text = vm.to_text(&call.arg(0))?;
+            let list = selector::parse(&text).map_err(|message| {
+                vm.syntax_error(&format!("Failed to execute 'matches': {message}"))
+            })?;
+            Ok(JsValue::Boolean(selector::matches(
+                &mut vm.page,
+                node,
+                &list,
+                Some(node),
+            )))
+        }
+        "closest" => {
+            let text = vm.to_text(&call.arg(0))?;
+            let list = selector::parse(&text).map_err(|message| {
+                vm.syntax_error(&format!("Failed to execute 'closest': {message}"))
+            })?;
+            let mut candidates = vec![node];
+            candidates.extend(vm.page.ancestors(node));
+            let found = candidates
+                .into_iter()
+                .find(|id| selector::matches(&mut vm.page, *id, &list, Some(node)));
+            wrap_option(vm, found)
+        }
+        "remove" => {
+            if vm.page.parent(node).is_some() || vm.page.state.head.contains(&node) {
+                remove_node(vm, node)?;
+            }
+            Ok(JsValue::Undefined)
+        }
+        "append" | "prepend" | "before" | "after" | "replaceWith" | "replaceChildren" => {
+            mutate(vm, node, &call)
+        }
+        "insertAdjacentHTML" => {
+            let position = position(vm, &call.arg(0))?;
+            let html = vm.to_text(&call.arg(1))?;
+            vm.page
+                .insert_html(node, position, &html)
+                .map_err(|error| dom_error(vm, error))?;
+            Ok(JsValue::Undefined)
+        }
+        "insertAdjacentElement" | "insertAdjacentText" => {
+            let position = position(vm, &call.arg(0))?;
+            let inserted = if native_name(&call) == "insertAdjacentText" {
+                let text = vm.to_text(&call.arg(1))?;
+                vm.page
+                    .create("#text", Some(text))
+                    .map_err(|error| dom_error(vm, error))?
+            } else {
+                arg_node(vm, &call, 1)?
+            };
+            adjacent(vm, node, position, inserted)?;
+            Ok(call.arg(1))
+        }
+        "getBoundingClientRect" => rect(vm, node),
+        "getClientRects" => {
+            // Without layout, a rendered element reports one (empty) box so visibility checks pass.
+            let rects = if rendered(vm, node) {
+                vec![rect(vm, node)?]
+            } else {
+                Vec::new()
+            };
+            Ok(JsValue::Object(vm.new_array(rects)?))
+        }
+        "focus" => {
+            focus(vm, node)?;
+            Ok(JsValue::Undefined)
+        }
+        "blur" => {
+            if vm.page.state.focused == Some(node) {
+                blur(vm)?;
+            }
+            Ok(JsValue::Undefined)
+        }
+        "load" | "pause" => Ok(JsValue::Undefined),
+        "play" => {
+            // Nothing plays, so playback "starts" at once; the media element stays paused.
+            let promise = vm.promise_resolve(JsValue::Undefined)?;
+            Ok(JsValue::Object(promise))
+        }
+        "canPlayType" => JsValue::string("").map_err(Into::into),
+        "scrollIntoView"
+        | "scrollTo"
+        | "scrollBy"
+        | "scroll"
+        | "setPointerCapture"
+        | "releasePointerCapture"
+        | "select" => Ok(JsValue::Undefined),
+        "click" => {
+            super::events::fire(vm, super::Target::Node(node), "click", true, true)?;
+            Ok(JsValue::Undefined)
+        }
+        "checkValidity" | "reportValidity" => Ok(JsValue::Boolean(true)),
+        "setCustomValidity" => Ok(JsValue::Undefined),
+        "submit" | "requestSubmit" | "reset" => {
+            Err(vm.unsupported_error("form submission from script"))
+        }
+        // Element.animate stays absent so Web Animations polyfills install their own.
+        "attachShadow" => components::attach_shadow(vm, node, &call.arg(0)),
+        "requestFullscreen" => Err(vm.unsupported_error(native_name(&call))),
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** insertAdjacent* positions. */
+fn position(vm: &mut Vm, value: &JsValue) -> Res<InsertPosition> {
+    let text = vm.to_text(value)?.to_ascii_lowercase();
+    Ok(match text.as_str() {
+        "beforebegin" => InsertPosition::BeforeBegin,
+        "afterbegin" => InsertPosition::AfterBegin,
+        "beforeend" => InsertPosition::BeforeEnd,
+        "afterend" => InsertPosition::AfterEnd,
+        _ => return Err(vm.syntax_error(&format!("The value provided ('{text}') is not one of 'beforeBegin', 'afterBegin', 'beforeEnd', or 'afterEnd'."))),
+    })
+}
+
+/** Insert a node relative to another. */
+fn adjacent(vm: &mut Vm, node: usize, position: InsertPosition, inserted: usize) -> Res<()> {
+    match position {
+        InsertPosition::AfterBegin => {
+            let first = vm.page.children(node).first().copied();
+            insert(vm, node, inserted, first)
+        }
+        InsertPosition::BeforeEnd => insert(vm, node, inserted, None),
+        InsertPosition::BeforeBegin => {
+            let parent = vm
+                .page
+                .parent(node)
+                .ok_or_else(|| vm.type_error("The element has no parent."))?;
+            insert(vm, parent, inserted, Some(node))
+        }
+        InsertPosition::AfterEnd => {
+            let parent = vm
+                .page
+                .parent(node)
+                .ok_or_else(|| vm.type_error("The element has no parent."))?;
+            let next = sibling(vm, node, 1, false);
+            insert(vm, parent, inserted, next)
+        }
+    }
+}
+
+/** Nodes for append/prepend/before/after arguments (strings become text nodes). */
+fn argument_nodes(vm: &mut Vm, call: &Call) -> Res<Vec<usize>> {
+    let mut nodes = Vec::new();
+    for value in call.args {
+        match node_of(vm, value) {
+            Some(node) => nodes.push(node),
+            None => {
+                let text = vm.to_text(value)?;
+                nodes.push(
+                    vm.page
+                        .create("#text", Some(text))
+                        .map_err(|error| dom_error(vm, error))?,
+                );
+            }
+        }
+    }
+    Ok(nodes)
+}
+
+/** append, prepend, before, after, replaceWith, replaceChildren. */
+fn mutate(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
+    let name = native_name(call);
+    let nodes = argument_nodes(vm, call)?;
+    match name {
+        "append" => {
+            for child in nodes {
+                insert(vm, node, child, None)?;
+            }
+        }
+        "prepend" => {
+            let first = vm.page.children(node).first().copied();
+            for child in nodes {
+                insert(vm, node, child, first)?;
+            }
+        }
+        "before" | "after" | "replaceWith" => {
+            let Some(parent) = vm.page.parent(node) else {
+                return Ok(JsValue::Undefined);
+            };
+            let reference = if name == "after" {
+                sibling(vm, node, 1, false)
+            } else {
+                Some(node)
+            };
+            for child in nodes {
+                insert(vm, parent, child, reference)?;
+            }
+            if name == "replaceWith" {
+                remove_node(vm, node)?;
+            }
+        }
+        _ => {
+            for child in vm.page.children(node) {
+                remove_node(vm, child)?;
+            }
+            for child in nodes {
+                insert(vm, node, child, None)?;
+            }
+        }
+    }
+    Ok(JsValue::Undefined)
+}
+
+/** Descendants matching a predicate, in document order. */
+pub(super) fn search(
+    vm: &mut Vm,
+    root: usize,
+    mut predicate: impl FnMut(&mut super::Page, usize) -> bool,
+) -> Vec<usize> {
+    let all = if root == DOCUMENT {
+        let mut all = vec![HTML, HEAD];
+        all.extend(vm.page.descendants(HEAD));
+        all.push(BODY);
+        all.extend(vm.page.descendants(BODY));
+        all
+    } else {
+        vm.page.descendants(root)
+    };
+    all.into_iter()
+        .filter(|id| predicate(&mut vm.page, *id))
+        .collect()
+}
+
+/** querySelector and querySelectorAll. */
+fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
+    let all = native_name(call) == "querySelectorAll";
+    let text = vm.to_text(&call.arg(0))?;
+    let list = selector::parse(&text).map_err(|message| {
+        vm.syntax_error(&format!(
+            "Failed to execute 'querySelector' on 'Document': {message}"
+        ))
+    })?;
+    let scope = (node != DOCUMENT).then_some(node);
+    vm.charge(
+        vm.page
+            .document
+            .as_ref()
+            .map_or(0, |document| document.nodes.len()),
+    )?;
+    if all {
+        let found = search(vm, node, |page, id| {
+            selector::matches(page, id, &list, scope)
+        });
+        return node_list(vm, found);
+    }
+    let candidates = search(vm, node, |_, _| true);
+    let found = candidates
+        .into_iter()
+        .find(|id| selector::matches(&mut vm.page, *id, &list, scope));
+    wrap_option(vm, found)
+}
+
+/** A DOMRect-like object; V9 does not lay out, so every box is empty. */
+pub(super) fn rect(vm: &mut Vm, node: usize) -> Res<JsValue> {
+    let id = vm.new_object()?;
+    let (x, y, width, height) = client_box(vm, node);
+    for (name, value) in [
+        ("x", x),
+        ("y", y),
+        ("top", y),
+        ("left", x),
+        ("width", width),
+        ("height", height),
+        ("right", x + width),
+        ("bottom", y + height),
+    ] {
+        vm.put(id, name, JsValue::Number(value))?;
+    }
+    Ok(JsValue::Object(id))
+}
+
+/** A node's painted box in client coordinates (x, y, width, height) from the app's layout; the
+viewport for the root elements, and an empty box at the origin when the app laid nothing out. */
+pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
+    let environment = &vm.page.environment;
+    if node == HTML || node == BODY {
+        return (
+            0.0,
+            -environment.scroll_y,
+            environment.viewport_width,
+            environment
+                .geometry
+                .iter()
+                .map(|b| b.y + b.height)
+                .fold(environment.viewport_height, f64::max),
+        );
+    }
+    match environment.geometry.iter().find(|b| b.node == node) {
+        Some(b) => (b.x, b.y - environment.scroll_y, b.width, b.height),
+        None => (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+/** `elementFromPoint`: the last painted (topmost) box containing a client point, if any. */
+fn element_from_point(vm: &mut Vm, call: &Call) -> Res<Option<usize>> {
+    let x = vm.to_number(&call.arg(0))?;
+    let y = vm.to_number(&call.arg(1))? + vm.page.environment.scroll_y;
+    let hit = vm
+        .page
+        .environment
+        .geometry
+        .iter()
+        .rev()
+        .find(|b| x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height)
+        .map(|b| b.node);
+    Ok(hit.filter(|node| vm.page.exists(*node)))
+}
+
+/** Document accessors. */
+pub(in crate::v9) fn document_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let html = match super::host_data(vm, &call.this) {
+        Some(HostData::Document(html)) => Some(html),
+        _ => None,
+    };
+    let virtual_child = |vm: &mut Vm, index: usize| -> Option<usize> {
+        let html = html?;
+        vm.page.children(html).get(index).copied()
+    };
+    match native_name(&call) {
+        "body" => match html {
+            Some(_) => {
+                let body = virtual_child(vm, 1);
+                wrap_option(vm, body)
+            }
+            None => wrap(vm, BODY),
+        },
+        "head" => match html {
+            Some(_) => {
+                let head = virtual_child(vm, 0);
+                wrap_option(vm, head)
+            }
+            None => wrap(vm, HEAD),
+        },
+        "documentElement" => wrap(vm, html.unwrap_or(HTML)),
+        "styleSheets" => super::sheets::style_sheets(vm),
+        "readyState" => {
+            let state = match vm.page.state.ready {
+                super::ReadyState::Loading => "loading",
+                super::ReadyState::Interactive => "interactive",
+                super::ReadyState::Complete => "complete",
+            };
+            JsValue::string(state).map_err(Into::into)
+        }
+        "cookie" => JsValue::string(&vm.page.state.cookie).map_err(Into::into),
+        "title" => {
+            let title = vm
+                .page
+                .state
+                .title
+                .clone()
+                .unwrap_or_else(|| vm.page.environment.title.clone());
+            JsValue::string(&title).map_err(Into::into)
+        }
+        "URL" | "documentURI" => JsValue::string(&vm.page.state.href).map_err(Into::into),
+        "referrer" => JsValue::string(&vm.page.environment.referrer).map_err(Into::into),
+        "domain" => {
+            let host = super::net::parse_url(&vm.page.state.href)
+                .map(|url| url.host_str().unwrap_or("").to_string())
+                .unwrap_or_default();
+            JsValue::string(&host).map_err(Into::into)
+        }
+        "activeElement" => {
+            let focused = vm
+                .page
+                .state
+                .focused
+                .filter(|node| vm.page.connected(*node));
+            wrap(vm, focused.unwrap_or(BODY))
+        }
+        "currentScript" => {
+            let script = vm.page.current_script;
+            wrap_option(vm, script)
+        }
+        "scrollingElement" => wrap(vm, HTML),
+        "childNodes" => node_list(vm, vec![HTML]),
+        "children" => node_list(vm, vec![HTML]),
+        "firstChild" | "firstElementChild" | "lastChild" | "lastElementChild" => wrap(vm, HTML),
+        "forms" | "images" | "links" | "scripts" | "anchors" | "embeds" | "plugins" => {
+            let tag = match native_name(&call) {
+                "forms" => "form",
+                "images" => "img",
+                "links" | "anchors" => "a",
+                "scripts" => "script",
+                _ => "embed",
+            };
+            let found = search(vm, DOCUMENT, |page, id| page.tag(id) == tag);
+            node_list(vm, found)
+        }
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** Document setters (cookie, title). */
+pub(in crate::v9) fn document_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let text = vm.to_text(&call.arg(0))?;
+    match native_name(&call) {
+        "cookie" => super::window::write_cookie(vm, &text)?,
+        "title" => {
+            vm.page.state.title = Some(text.clone());
+            vm.page.effects.title = Some(text);
+        }
+        _ => {}
+    }
+    Ok(JsValue::Undefined)
+}
+
+/** Document methods. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn document_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| document_method_steps(vm, call))
+}
+
+/** The document_method steps themselves. */
+fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if node_of(vm, &call.this) != Some(DOCUMENT)
+        && !matches!(
+            super::host_data(vm, &call.this),
+            Some(HostData::Document(_))
+        )
+    {
+        return Err(vm.type_error("Illegal invocation"));
+    }
+    let name = native_name(&call);
+    match name {
+        "getElementById" => {
+            let wanted = vm.to_text(&call.arg(0))?;
+            if vm.page.legacy {
+                let node = super::window::legacy_element(vm, &wanted)?;
+                return wrap_option(vm, node);
+            }
+            if wanted.is_empty() {
+                return Ok(JsValue::Null);
+            }
+            let found = search(vm, DOCUMENT, |page, id| {
+                page.view(id).is_some_and(|view| {
+                    view.attributes
+                        .get("id")
+                        .is_some_and(|value| *value == wanted)
+                })
+            });
+            wrap_option(vm, found.first().copied())
+        }
+        "getElementsByName" => {
+            let wanted = vm.to_text(&call.arg(0))?;
+            let found = search(vm, DOCUMENT, |page, id| {
+                page.view(id).is_some_and(|view| {
+                    view.attributes
+                        .get("name")
+                        .is_some_and(|value| *value == wanted)
+                })
+            });
+            node_list(vm, found)
+        }
+        "getElementsByTagName"
+        | "getElementsByClassName"
+        | "querySelector"
+        | "querySelectorAll" => {
+            if name.starts_with("query") {
+                return query(vm, DOCUMENT, &call);
+            }
+            let this = call.this.clone();
+            let html = JsValue::Object(match wrap(vm, HTML)? {
+                JsValue::Object(id) => id,
+                _ => return Ok(JsValue::Null),
+            });
+            let _ = this;
+            let method = vm.get(&html, &Key::from(name))?;
+            vm.call(method, html, call.args.to_vec())
+        }
+        "createElement" | "createElementNS" => {
+            let tag = if name == "createElementNS" {
+                vm.to_text(&call.arg(1))?
+            } else {
+                vm.to_text(&call.arg(0))?
+            };
+            let tag = tag.to_ascii_lowercase();
+            if tag.is_empty()
+                || !tag
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == ':')
+            {
+                return Err(vm.throw(
+                    crate::v9::vm::error::ErrorKind::Error,
+                    "InvalidCharacterError: The tag name provided is not a valid name.",
+                ));
+            }
+            let options = call.arg(if name == "createElementNS" { 2 } else { 1 });
+            components::create_element(vm, &tag, &options)
+        }
+        "createTextNode" | "createComment" => {
+            let text = vm.to_text(&call.arg(0))?;
+            let tag = if name == "createTextNode" {
+                "#text"
+            } else {
+                "#comment"
+            };
+            let node = vm
+                .page
+                .create(tag, Some(text))
+                .map_err(|error| dom_error(vm, error))?;
+            wrap(vm, node)
+        }
+        "createDocumentFragment" => {
+            let node = vm
+                .page
+                .create("#document-fragment", None)
+                .map_err(|error| dom_error(vm, error))?;
+            wrap(vm, node)
+        }
+        "createEvent" => super::events::create_event(vm, "", false, false),
+        "hasFocus" => Ok(JsValue::Boolean(true)),
+        "elementFromPoint" => {
+            let hit = element_from_point(vm, &call)?;
+            wrap_option(vm, hit)
+        }
+        "elementsFromPoint" => {
+            let hit = element_from_point(vm, &call)?;
+            let mut chain = hit.map(|node| vec![node]).unwrap_or_default();
+            if let Some(node) = hit {
+                chain.extend(vm.page.ancestors(node));
+            }
+            let mut wrapped = Vec::with_capacity(chain.len());
+            for node in chain {
+                wrapped.push(wrap(vm, node)?);
+            }
+            Ok(JsValue::Object(vm.new_array(wrapped)?))
+        }
+        "getSelection" => super::range::selection(vm),
+        "createRange" => super::range::new_range(vm),
+        "open" | "close" => Ok(JsValue::Undefined),
+        "write" | "writeln" => Err(vm.unsupported_error("document.write")),
+        "importNode" | "adoptNode" => {
+            let node = arg_node(vm, &call, 0)?;
+            if name == "adoptNode" {
+                return Ok(call.arg(0));
+            }
+            let copy = clone_node(vm, node, call.arg(1).truthy())?;
+            wrap(vm, copy)
+        }
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** document.implementation.createHTMLDocument: a detached document with html, head and body. */
+pub(in crate::v9) fn create_html_document(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let _ = call;
+    let html = vm
+        .page
+        .create("html", None)
+        .map_err(|error| dom_error(vm, error))?;
+    let head = vm
+        .page
+        .create("head", None)
+        .map_err(|error| dom_error(vm, error))?;
+    let body = vm
+        .page
+        .create("body", None)
+        .map_err(|error| dom_error(vm, error))?;
+    vm.page
+        .insert(html, head, None)
+        .map_err(|error| dom_error(vm, error))?;
+    vm.page
+        .insert(html, body, None)
+        .map_err(|error| dom_error(vm, error))?;
+    let id = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::Document(html))),
+        Some(realm().ids.document_prototype),
+    ))?;
+    Ok(JsValue::Object(id))
+}
+
+/** classList methods. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn class_list(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| class_list_steps(vm, call))
+}
+
+/** The class_list steps themselves. */
+fn class_list_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (node, attribute) = match super::host_data(vm, &call.this) {
+        Some(HostData::ClassList(node)) => (node, "class".to_string()),
+        Some(HostData::TokenList(node, attribute)) => (node, attribute),
+        _ => return Err(vm.type_error("Illegal invocation")),
+    };
+    let current = vm
+        .page
+        .view(node)
+        .and_then(|view| view.attributes.get(&attribute).cloned())
+        .unwrap_or_default();
+    let mut classes: Vec<String> = current.split_ascii_whitespace().map(String::from).collect();
+    let mut arguments = Vec::new();
+    for value in call.args {
+        arguments.push(vm.to_text(value)?);
+    }
+    let name = native_name(&call);
+    let result = match name {
+        "contains" => {
+            return Ok(JsValue::Boolean(
+                arguments
+                    .first()
+                    .is_some_and(|wanted| classes.contains(wanted)),
+            ));
+        }
+        "item" => {
+            let index = vm.to_integer(&call.arg(0))?;
+            return match classes.get(index as usize) {
+                Some(class) if index >= 0.0 => JsValue::string(class).map_err(Into::into),
+                _ => Ok(JsValue::Null),
+            };
+        }
+        "length" => return Ok(JsValue::Number(classes.len() as f64)),
+        "value" | "toString" => return JsValue::string(&current).map_err(Into::into),
+        "add" => {
+            for class in arguments {
+                if !classes.contains(&class) {
+                    classes.push(class);
+                }
+            }
+            JsValue::Undefined
+        }
+        "remove" => {
+            classes.retain(|class| !arguments.contains(class));
+            JsValue::Undefined
+        }
+        "toggle" => {
+            let class = arguments.first().cloned().unwrap_or_default();
+            let present = classes.contains(&class);
+            let wanted = if call.args.len() > 1 {
+                call.arg(1).truthy()
+            } else {
+                !present
+            };
+            if wanted && !present {
+                classes.push(class);
+            } else if !wanted {
+                classes.retain(|existing| *existing != class);
+            }
+            JsValue::Boolean(wanted)
+        }
+        "replace" => {
+            let (old, new) = (
+                arguments.first().cloned().unwrap_or_default(),
+                arguments.get(1).cloned().unwrap_or_default(),
+            );
+            let found = classes.iter().position(|class| *class == old);
+            if let Some(position) = found {
+                classes[position] = new;
+            }
+            JsValue::Boolean(found.is_some())
+        }
+        _ => return Ok(JsValue::Undefined),
+    };
+    let text = classes.join(" ");
+    if text != current {
+        vm.page
+            .set_attribute(node, &attribute, Some(&text))
+            .map_err(|error| dom_error(vm, error))?;
+    }
+    Ok(result)
+}
+
+/** style object methods and cssText. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn style_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| style_method_steps(vm, call))
+}
+
+/** The style_method steps themselves. */
+fn style_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (node, computed) = match super::host_data(vm, &call.this) {
+        Some(HostData::Style(node)) => (node, false),
+        Some(HostData::Computed(node)) => (node, true),
+        _ => return Err(vm.type_error("Illegal invocation")),
+    };
+    let name = native_name(&call);
+    if computed && matches!(name, "setProperty" | "removeProperty") {
+        return Err(vm.throw(
+            crate::v9::vm::error::ErrorKind::Error,
+            "NoModificationAllowedError: computed styles are read-only.",
+        ));
+    }
+    match name {
+        "getPropertyValue" if computed => {
+            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let value = computed_value(vm, node, &property);
+            JsValue::string(&value).map_err(Into::into)
+        }
+        "getPropertyValue" => {
+            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let value = style_map(vm, node)
+                .into_iter()
+                .find(|(name, _)| *name == property)
+                .map(|(_, value)| value)
+                .unwrap_or_default();
+            JsValue::string(&value).map_err(Into::into)
+        }
+        "setProperty" => {
+            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let value = if call.arg(1).nullish() {
+                String::new()
+            } else {
+                vm.to_text(&call.arg(1))?
+            };
+            set_style(vm, node, &property, &value)?;
+            Ok(JsValue::Undefined)
+        }
+        "removeProperty" => {
+            let property = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            set_style(vm, node, &property, "")?;
+            Ok(JsValue::Undefined)
+        }
+        "getPropertyPriority" => JsValue::string("").map_err(Into::into),
+        "cssText" => {
+            let text = vm
+                .page
+                .view(node)
+                .and_then(|view| view.attributes.get("style").cloned())
+                .unwrap_or_default();
+            JsValue::string(&text).map_err(Into::into)
+        }
+        "length" => Ok(JsValue::Number(style_map(vm, node).len() as f64)),
+        _ => Ok(JsValue::Undefined),
+    }
+}
+
+/** style.cssText setter. */
+/** Runs the steps below, then the custom element reactions and records they queued. */
+pub(in crate::v9) fn style_text_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    components::reacting(vm, |vm| style_text_set_steps(vm, call))
+}
+
+/** The style_text_set steps themselves. */
+fn style_text_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some(HostData::Style(node)) = super::host_data(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    let text = vm.to_text(&call.arg(0))?;
+    let value = if text.trim().is_empty() {
+        None
+    } else {
+        Some(text.as_str())
+    };
+    vm.page
+        .set_attribute(node, "style", value)
+        .map_err(|error| dom_error(vm, error))?;
+    Ok(JsValue::Undefined)
+}
+
+/** NodeList methods: item, forEach, entries, keys, values. */
+pub(in crate::v9) fn list_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some(data) = super::host_data(vm, &call.this) else {
+        return Err(vm.type_error("Illegal invocation"));
+    };
+    let nodes = list_nodes(vm, &data);
+    match native_name(&call) {
+        "item" => {
+            let index = vm.to_integer(&call.arg(0))?;
+            let node = (index >= 0.0)
+                .then(|| nodes.get(index as usize).copied())
+                .flatten();
+            wrap_option(vm, node)
+        }
+        "forEach" => {
+            let callback = call.arg(0);
+            for (index, node) in nodes.into_iter().enumerate() {
+                let element = wrap(vm, node)?;
+                vm.call(
+                    callback.clone(),
+                    call.arg(1),
+                    vec![element, JsValue::Number(index as f64), call.this.clone()],
+                )?;
+            }
+            Ok(JsValue::Undefined)
+        }
+        _ => {
+            let mut values = Vec::new();
+            for node in nodes {
+                values.push(wrap(vm, node)?);
+            }
+            let array = vm.new_array(values)?;
+            let method = vm.get(&JsValue::Object(array), &Key::from(native_name(&call)))?;
+            vm.call(method, JsValue::Object(array), Vec::new())
+        }
+    }
+}
+
+/** Constructors scripts may not call directly but need for instanceof. */
+pub(in crate::v9) fn illegal_constructor(vm: &mut Vm, _: Call) -> Res<JsValue> {
+    Err(vm.type_error("Illegal constructor"))
+}

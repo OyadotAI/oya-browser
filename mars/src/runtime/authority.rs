@@ -24,7 +24,21 @@ pub struct Authority {
     pub epoch: u64,
     /// Ownership and epochs are isolated by never-reused native tab identity.
     pub tabs: HashMap<u64, (Owner, u64)>,
+    /// The agent lane that drives each claimed tab, so two connected agents never act on each
+    /// other's tabs. A lane claims a granted tab on its first mutation, or owns one it opened.
+    #[serde(skip)]
+    pub lanes: HashMap<u64, Claim>,
 }
+/// One lane's hold on a tab; `opened` marks a tab the lane created and may therefore close.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Claim {
+    /// Connection-assigned lane name, never chosen by the agent.
+    pub lane: String,
+    /// Only the opener may close a tab; a granted human tab is never closed by an agent.
+    pub opened: bool,
+}
+/// The lane of a caller that names none: the single stdio agent, as before lanes.
+pub const DEFAULT_LANE: &str = "default";
 /// Requests capture authority before entering the bounded worker queue.
 #[derive(Clone, Copy, Debug)]
 pub struct Permit {
@@ -45,6 +59,7 @@ impl Authority {
             owner,
             epoch: 1,
             tabs: HashMap::from([(1, (owner, 1))]),
+            lanes: HashMap::new(),
         }))
     }
     /// Takeover and disconnect immediately invalidate queued work.
@@ -63,6 +78,71 @@ impl Authority {
     /// Closing a tab removes its authority so stale permits cannot target a replacement.
     pub fn remove_tab(&mut self, id: u64) {
         self.tabs.remove(&id);
+        self.lanes.remove(&id);
+    }
+    /// An agent-opened tab starts under its lane's control; the person can still take it over.
+    pub fn open_for_lane(&mut self, id: u64, lane: &str) -> EngineResult<(Owner, u64)> {
+        let state = self.tabs.get_mut(&id).ok_or_else(denied)?;
+        *state = (Owner::Agent, state.1.saturating_add(1));
+        let status = *state;
+        self.lanes.insert(
+            id,
+            Claim {
+                lane: lane.into(),
+                opened: true,
+            },
+        );
+        Ok(status)
+    }
+    /// The first lane to mutate a granted tab drives it; any other lane is refused until the
+    /// claiming lane disconnects or the tab closes.
+    pub fn claim(&mut self, id: u64, lane: &str) -> EngineResult<()> {
+        match self.lanes.get(&id) {
+            Some(claim) if claim.lane != lane => Err(lane_denied()),
+            Some(_) => Ok(()),
+            None => {
+                self.lanes.insert(
+                    id,
+                    Claim {
+                        lane: lane.into(),
+                        opened: false,
+                    },
+                );
+                Ok(())
+            }
+        }
+    }
+    /// Whether this lane opened the tab, the one condition under which an agent may close it.
+    pub fn opened_by(&self, id: u64, lane: &str) -> bool {
+        self.lanes
+            .get(&id)
+            .is_some_and(|claim| claim.opened && claim.lane == lane)
+    }
+    /// Tabs one lane opened and still holds, which bounds how many tabs one agent can create.
+    pub fn opened_count(&self, lane: &str) -> usize {
+        self.lanes
+            .values()
+            .filter(|claim| claim.opened && claim.lane == lane)
+            .count()
+    }
+    /// One agent leaving returns only its own tabs to the person; other lanes keep working.
+    pub fn revoke_lane(&mut self, lane: &str) {
+        let ids = self
+            .lanes
+            .iter()
+            .filter(|(_, claim)| claim.lane == lane)
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.lanes.remove(&id);
+            if let Some(state) = self
+                .tabs
+                .get_mut(&id)
+                .filter(|state| state.0 == Owner::Agent)
+            {
+                *state = (Owner::Human, state.1.saturating_add(1));
+            }
+        }
     }
     /// Human control actions change only the selected tab's ownership generation.
     pub fn change_tab(&mut self, id: u64, owner: Owner) -> EngineResult<()> {
@@ -112,6 +192,7 @@ impl Authority {
             state.0 = Owner::Human;
             state.1 = state.1.saturating_add(1);
         }
+        self.lanes.clear();
         self.owner = Owner::Human;
         self.epoch = self.epoch.saturating_add(1);
     }
@@ -126,6 +207,14 @@ impl Authority {
         }
         Ok(())
     }
+}
+/// A lane cannot act on a tab another connected agent drives; the person decides, not the agent.
+pub fn lane_denied() -> EngineError {
+    EngineError::new(
+        "control_denied",
+        "Another agent drives this tab.",
+        "Open your own tab with tab_open, or ask the person to hand you this tab.",
+    )
 }
 /// Poisoned authority fails closed.
 pub fn lock(authority: &SharedAuthority) -> EngineResult<MutexGuard<'_, Authority>> {

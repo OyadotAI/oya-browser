@@ -1,6 +1,6 @@
 # Mars composes independent Rust browser engines and native agent control.
 [workspace]
-members = ["crates/core", "crates/eye", "crates/v9", "crates/relay"]
+members = ["crates/core", "crates/eye", "crates/v9", "crates/relay", "crates/link", "crates/mdp"]
 default-members = [".", "crates/core", "crates/eye", "crates/v9", "crates/relay"]
 resolver = "3"
 
@@ -19,18 +19,27 @@ mars-core = { path = "crates/core" }
 mars-eye = { path = "crates/eye" }
 mars-v9 = { path = "crates/v9" }
 mars-relay = { path = "crates/relay" }
+mars-link = { path = "crates/link" }
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.154"
+serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 url = "=2.5.8"
+# Already in the tree through rustls; verifies Subresource Integrity hashes.
+ring = "=0.17.14"
 libc = "=0.2.191"
 png = "=0.17.16"
 jpeg-decoder = "=0.3.2"
+# Web fonts: WOFF2 is unpacked by a pure-Rust decoder; WOFF 1.0 tables inflate through the zlib
+# backend png already uses. The sfnt bytes go to CoreText without system registration.
+woff2-patched = "=0.4.0"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.4"
 objc2-foundation = "=0.3.2"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSWindow", "NSView", "NSButton", "NSButtonCell", "NSTextField", "NSSecureTextField", "NSPopUpButton", "NSPopUpButtonCell", "NSTextView", "NSControl", "NSResponder", "NSScrollView", "NSClipView", "NSColor", "NSColorSpace", "NSFont", "NSStringDrawing", "NSGraphics", "NSGraphicsContext", "NSEvent", "NSMenu", "NSMenuItem", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSText", "NSCell", "NSAttributedString", "NSAppearance", "NSBezierPath", "NSRunningApplication", "NSAlert"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSWindow", "NSView", "NSButton", "NSButtonCell", "NSTextField", "NSSecureTextField", "NSPopUpButton", "NSPopUpButtonCell", "NSTextView", "NSControl", "NSResponder", "NSScrollView", "NSClipView", "NSColor", "NSColorSpace", "NSFont", "NSStringDrawing", "NSGraphics", "NSGraphicsContext", "NSEvent", "NSMenu", "NSMenuItem", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSText", "NSCell", "NSAttributedString", "NSAppearance", "NSBezierPath", "NSRunningApplication", "NSAlert", "objc2-core-graphics"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CGContext", "CGGradient", "CGColor", "CGColorSpace", "CGAffineTransform", "CGPath"] }
 security-framework = "=3.7.0"
 security-framework-sys = "=2.17.0"
 

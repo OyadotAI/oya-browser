@@ -97,9 +97,9 @@ fn var_controllers_process_current_inputs_via_call_and_apply_and_reload_fresh() 
     assert_eq!(text(&page, "out"), "Hello world 1 reads 1");
 }
 
-/** A late invalid DOM target rolls back local captured vars, global var mirrors, receivers, Storage and text. */
+/** A handler that throws keeps its captured vars, global var mirrors, receivers, Storage and text from before the throw, and stale handles stay refused. */
 #[test]
-fn var_candidates_rollback_with_storage_and_document_and_keep_revision_protection() {
+fn throwing_var_handler_keeps_earlier_effects_and_revision_protection() {
     let body = "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>var globalCount=0,saved=make();function make(){var count=0;return function(fail){var next=count+1;var next;count=next;globalCount=globalCount+1;this.n=this.n+1;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count+' '+globalCount+' '+this.n;if(fail){document.getElementById('missing').textContent='fail';}}.bind({n:0});}function good(){saved(false);}function bad(){saved(true);}function read(){document.getElementById('out').textContent=globalCount+' '+this.globalCount+' '+window.localStorage.getItem('count');}</script>";
     let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
@@ -107,16 +107,16 @@ fn var_candidates_rollback_with_storage_and_document_and_keep_revision_protectio
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "1 1 1");
     let stale = target(&page, "good");
-    assert!(call(&mut runtime, "page.click", target(&page, "bad")).is_err());
-    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
+    let page = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
+    assert_eq!(text(&page, "out"), "2 2 2");
     let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-    assert_eq!(text(&page, "out"), "1 1 1");
+    assert_eq!(text(&page, "out"), "2 2 2");
     assert_eq!(
         call(&mut runtime, "page.click", stale).unwrap_err().code,
         "revision_conflict"
     );
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
-    assert_eq!(text(&page, "out"), "2 2 2");
+    assert_eq!(text(&page, "out"), "3 3 3");
 }
 
 /** Capabilities expose the supported declaration rules without claiming full JavaScript conformance. */

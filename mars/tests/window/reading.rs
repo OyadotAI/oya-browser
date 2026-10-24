@@ -13,9 +13,12 @@ const CONTENT_WIDTH: f64 = 416.0;
 const BODY_PADDING: f64 = 32.0;
 /// The authored line advance must match both layout and native paint.
 const LINE_HEIGHT: f64 = 25.6;
+/// The first paragraph keeps its default 1em top margin below the body's padding, as in Chromium,
+/// where padding stops a child's margin from collapsing through.
+const PARAGRAPH_MARGIN: f64 = 16.0;
 /// The retained httpbin paragraph has this complete decoded UTF-8 byte count.
 const PARAGRAPH_BYTES: usize = 3588;
-/// Sampling away from the page edge excludes scrollbars and native chrome.
+/// Sampling away from the page edge excludes scrollbars and the native Mars shell.
 const CANVAS_SAMPLE_INSET: f64 = 8.0;
 /// A small color allowance tolerates native color conversion while distinguishing both schemes.
 const COLOR_TOLERANCE: u8 = 2;
@@ -134,7 +137,10 @@ fn assert_styled(window: &mut Window, before: &Value, appearance: &str) -> Value
         (number(context, "width") - CONTENT_WIDTH - BODY_PADDING * 2.0) / 2.0 + BODY_PADDING,
     );
     close(number(first, "width"), CONTENT_WIDTH);
-    close(number(first, "y"), number(context, "height") / 4.0);
+    close(
+        number(first, "y"),
+        number(context, "height") / 4.0 + PARAGRAPH_MARGIN,
+    );
     close(number(first, "line_height"), LINE_HEIGHT);
     assert_nested_link_frame(&state, &layout, &page);
     page

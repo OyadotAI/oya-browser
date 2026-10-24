@@ -1,16 +1,19 @@
 /** Typed private operations keep engine data separate from native agent authority. */
-use crate::document::{self, Document, TextChange};
+use crate::document::{self, Document, DomChange};
 use crate::protocol::{
-    EngineError, EngineResult, Request, Response, decode, encode, parameters, read_frame,
-    write_message,
+    EngineError, EngineResult, RequestHead, Response, TypedRequest, decode, encode, encode_reply,
+    parameters, read_frame,
 };
 use crate::{network, v9};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, Write};
 
 /** Private dispatch never shares the public agent operation table. */
 type Handler = fn(Value) -> EngineResult<Value>;
+/** Operations whose parameters or results are whole documents, sources or responses: they read
+their exact parameter type from the frame and write their result straight into the reply. */
+type TypedHandler = fn(&[u8], &str) -> EngineResult<Vec<u8>>;
 
 /// Ownership-pipe EOF and failed writes terminate services without background descendants.
 pub fn run_service(name: &str) -> EngineResult<()> {
@@ -23,47 +26,85 @@ pub fn run_service(name: &str) -> EngineResult<()> {
     let mut prepared: Option<(u64, network::Prepared)> = None;
     let mut sequence = 0_u64;
     while let Some(frame) = read_frame(&mut input)? {
-        let request: Request = decode(&frame)?;
-        request.validate()?;
-        let response = Response::new(
-            Some(request.id),
-            if name == "network" && request.op == "network.prepare" {
-                prepared.take();
-                sequence = sequence.saturating_add(1);
-                prepare(request.params).map(|connection| {
+        let head: RequestHead = decode(&frame)?;
+        head.validate()?;
+        let reply = if name == "network" && head.op == "network.prepare" {
+            prepared.take();
+            sequence = sequence.saturating_add(1);
+            value_request(&frame)
+                .and_then(prepare)
+                .map(|connection| {
                     prepared = Some((sequence, connection));
                     json!({"token":sequence})
                 })
-            } else if name == "network" && request.op == "network.transmit" {
-                let input: EngineResult<Transmit> = parameters(request.params);
-                input
-                    .and_then(|input| {
-                        prepared
-                            .take()
-                            .filter(|(token, _)| *token == input.token)
-                            .ok_or_else(|| {
-                                EngineError::invalid(
-                                    "Prepared request token expired or was consumed.",
-                                )
-                            })
+                .and_then(|result| encode_reply(&head.id, &result))
+        } else if name == "network" && head.op == "network.transmit" {
+            typed(&frame, &head.id, |input: Transmit| {
+                prepared
+                    .take()
+                    .filter(|(token, _)| *token == input.token)
+                    .ok_or_else(|| {
+                        EngineError::invalid("Prepared request token expired or was consumed.")
                     })
                     .and_then(|(_, connection)| connection.transmit())
-                    .and_then(serialize)
-            } else {
-                dispatch(name, &request.op, request.params)
-            },
-        );
-        let response = match encode(&response) {
-            Ok(_) => response,
-            Err(error) => Response::new(response.id, Err(error)),
+            })
+        } else {
+            dispatch(name, &head.op, &head.id, &frame)
         };
-        write_message(&mut output, &response)?;
+        let bytes = match reply {
+            Ok(bytes) => bytes,
+            Err(error) => encode(&Response::new(Some(head.id), Err(error)))?,
+        };
+        output.write_all(&bytes).map_err(closed)?;
+        output.flush().map_err(closed)?;
     }
     Ok(())
 }
 
+/** The same failure `write_message` reports when the owner's pipe is gone. */
+fn closed(_: io::Error) -> EngineError {
+    EngineError::invalid("The transport closed or could not be read or written.")
+}
+
+/** A request's parameters as a `Value`, for the small operations that take one. */
+fn value_request(frame: &[u8]) -> EngineResult<Value> {
+    decode::<TypedRequest<Value>>(frame).map(|request| request.params)
+}
+
+/** Decodes `P` straight from the frame, runs the operation and encodes its reply. */
+fn typed<P: DeserializeOwned, R: Serialize>(
+    frame: &[u8],
+    id: &str,
+    run: impl FnOnce(P) -> EngineResult<R>,
+) -> EngineResult<Vec<u8>> {
+    let request: TypedRequest<P> = serde_json::from_slice(frame)
+        .map_err(|_| EngineError::invalid("Parameters do not match this operation's schema."))?;
+    encode_reply(id, &run(request.params)?)
+}
+
 /** A correlated readiness response proves the child speaks this exact protocol. */
-fn dispatch(name: &str, op: &str, params: Value) -> EngineResult<Value> {
+fn dispatch(name: &str, op: &str, id: &str, frame: &[u8]) -> EngineResult<Vec<u8>> {
+    let typed_handlers: &[(&str, &str, TypedHandler)] = &[
+        ("network", "network.fetch_batch", fetch_batch),
+        ("document", "document.parse", parse),
+        ("document", "document.apply", apply),
+        ("document", "document.render", render),
+        ("document", "document.styles", styles),
+        ("v9", "v9.page", page),
+        ("v9", "v9.devtools", devtools),
+    ];
+    if let Some((_, _, handler)) = typed_handlers
+        .iter()
+        .find(|(service, operation, _)| *service == name && *operation == op)
+    {
+        return handler(frame, id);
+    }
+    let params = value_request(frame)?;
+    encode_reply(id, &dispatch_value(name, op, params)?)
+}
+
+/** The operations that still exchange small `Value` parameters. */
+fn dispatch_value(name: &str, op: &str, params: Value) -> EngineResult<Value> {
     if op == "service.ready" {
         let _: Empty = parameters(params)?;
         return Ok(json!({"service":name,"ready":true}));
@@ -71,12 +112,9 @@ fn dispatch(name: &str, op: &str, params: Value) -> EngineResult<Value> {
     let handlers: &[(&str, &str, Handler)] = &[
         ("network", "network.fetch", fetch),
         ("network", "network.web_fetch", web_fetch),
-        ("document", "document.parse", parse),
-        ("document", "document.apply", apply),
+        ("network", "network.cache_clear", cache_clear),
         ("document", "document.layout", layout),
-        ("document", "document.render", render),
         ("document", "document.value", value),
-        ("document", "document.styles", styles),
         ("v9", "v9.execute", execute),
         ("v9", "v9.load", load),
         ("v9", "v9.event", event),
@@ -119,6 +157,26 @@ struct Prepare {
     fixture_origins: Vec<String>,
     remaining_ms: u64,
 }
+/** Independent subresource GETs the coordinator already shaped hop by hop. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FetchBatch {
+    /** At most FETCH_BATCH requests, each validated by Relay exactly as a single fetch is. */
+    requests: Vec<network::WebRequest>,
+    /** Exact owned origins. */
+    fixture_origins: Vec<String>,
+    /** The navigation's remaining deadline, shared by every request in the batch. */
+    remaining_ms: u64,
+}
+/** One request's outcome; a failure stays this request's, never the batch's. */
+#[derive(serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BatchOutcome {
+    /** The response, a redirect included, for the coordinator to follow under its own policy. */
+    Response(network::WebResponse),
+    /** Why this request failed. */
+    Error(EngineError),
+}
 /** A one-use private token is not reachable through the agent front door. */
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -136,6 +194,9 @@ fn prepare(params: Value) -> EngineResult<network::Prepared> {
 struct Parse {
     /** Bounded HTML. */
     source: String,
+    /** Canonical encoding Relay decoded with, or none when the transport declared no charset. */
+    #[serde(default)]
+    charset: Option<String>,
 }
 /** Candidate mutation is atomic over explicit input data. */
 #[derive(Deserialize)]
@@ -143,8 +204,11 @@ struct Parse {
 struct Apply {
     /** Candidate snapshot. */
     document: Document,
-    /** Inert proposals. */
-    changes: Vec<TextChange>,
+    /** Inert ordered proposals, replayed in script order. */
+    changes: Vec<DomChange>,
+    /** V9's extended log, replayed after `changes` in the same atomic candidate. */
+    #[serde(default)]
+    script_changes: Vec<document::ScriptChange>,
 }
 /** Layout never resolves a hidden page. */
 #[derive(Deserialize)]
@@ -177,13 +241,14 @@ struct Styles {
     context: Option<document::RenderContext>,
 }
 /** Style visibility and paint metadata come from the same owned cascade. */
-fn styles(params: Value) -> EngineResult<Value> {
-    let input: Styles = parameters(params)?;
-    serialize(document::compute_styles_with_context(
-        &input.document,
-        &input.sheets,
-        input.context.unwrap_or_default(),
-    )?)
+fn styles(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Styles| {
+        document::compute_styles_with_context(
+            &input.document,
+            &input.sheets,
+            input.context.unwrap_or_default(),
+        )
+    })
 }
 /** Input editing does not reinterpret its value as source. */
 #[derive(Deserialize)]
@@ -243,6 +308,9 @@ struct DocumentLoad {
     /** Coordinator-selected origin and tab candidate values. */
     #[serde(default)]
     storage: v9::StorageState,
+    /** Coordinator-read preferred languages for navigator.languages. */
+    #[serde(default)]
+    languages: Vec<String>,
 }
 /** A click identifies a projected local node rather than evaluating caller-provided source. */
 #[derive(Deserialize)]
@@ -259,6 +327,218 @@ struct DocumentClick {
     /** Candidate storage remains atomic with VM and DOM changes. */
     #[serde(default)]
     storage: v9::StorageState,
+    /** Coordinator-read preferred languages for navigator.languages. */
+    #[serde(default)]
+    languages: Vec<String>,
+}
+
+/** One page lifecycle request: the projection, its sources and the facts the page sees. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PageCall {
+    /** The page's classic scripts in execution order (failed ones blanked to spaces); empty when
+    `sources_digest` names sources this process already holds. */
+    sources: Vec<String>,
+    /** SHA-256 of the sources (`sources_digest`), so a page's megabytes of script cross the pipe
+    once instead of on every lifecycle step. */
+    #[serde(default)]
+    sources_digest: Option<String>,
+    /** Current projection; it carries no native authority or secret values. */
+    document: document::ScriptDocument,
+    /** Coordinator-selected origin and tab candidate values. */
+    #[serde(default)]
+    storage: v9::StorageState,
+    /** Coordinator-read preferred languages for navigator.languages. */
+    #[serde(default)]
+    languages: Vec<String>,
+    /** URL, viewport, clock, cookie string (never HttpOnly) and node text. */
+    environment: v9::PageEnvironment,
+    /** The page's module scripts, import maps and fetched modules; none for a classic page. */
+    #[serde(default)]
+    modules: v9::ModuleInput,
+    /** Committed engine state; absent only for the first load. */
+    #[serde(default)]
+    state: Option<v9::VmState>,
+    /** What to run against the state. */
+    action: PageAction,
+}
+/** The V9 page entry points, one per lifecycle step. */
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum PageAction {
+    /** Run the page's scripts, each rolled back alone on failure. */
+    Load,
+    /** Fire DOMContentLoaded or load. */
+    Event { event: v9::PageEvent },
+    /** A trusted click on a projected node. */
+    Click { target: usize },
+    /** A person typed into a field the document already updated; None hides a secret value. */
+    Input {
+        target: usize,
+        #[serde(default)]
+        value: Option<String>,
+    },
+    /** Advance the virtual clock and run due timers. */
+    Timers { now_ms: f64, budget: usize },
+    /** Hand back responses to the page's requests. */
+    Resume { responses: Vec<v9::HostResponse> },
+    /** Continue module graphs with the modules fetched since the last step. */
+    Modules,
+}
+
+/** A DevTools request (Runtime.evaluate and friends) over the same projection and sources as a
+lifecycle step; the result rides beside the Execution the coordinator commits. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DevtoolsCall {
+    sources: Vec<String>,
+    #[serde(default)]
+    sources_digest: Option<String>,
+    document: document::ScriptDocument,
+    #[serde(default)]
+    storage: v9::StorageState,
+    #[serde(default)]
+    languages: Vec<String>,
+    environment: v9::PageEnvironment,
+    #[serde(default)]
+    modules: v9::ModuleInput,
+    #[serde(default)]
+    state: Option<v9::VmState>,
+    request: v9::devtools::Request,
+}
+
+/** One DevTools request in this process, under V9's own bounds and deadline. */
+fn devtools(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, run_devtools)
+}
+/** The request over its decoded call; sources are resident exactly as for `run_page`. */
+fn run_devtools(mut call: DevtoolsCall) -> EngineResult<v9::devtools::Outcome> {
+    let sources = resident_sources(
+        std::mem::take(&mut call.sources),
+        call.sources_digest.take(),
+    )?;
+    let host = v9::DocumentHost {
+        languages: &call.languages,
+        fragments: &document::DomFragments,
+    };
+    let input = v9::PageInput {
+        sources: &sources,
+        document: call.document,
+        storage: call.storage,
+        host: &host,
+        environment: &call.environment,
+        modules: &call.modules,
+    };
+    v9::devtools::run(input, call.state, call.request)
+}
+
+/** Every lifecycle step runs in this process, under V9's own bounds and deadline. */
+fn page(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, run_page)
+}
+/** One V9 page step over its decoded call. */
+fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
+    let sources = resident_sources(
+        std::mem::take(&mut call.sources),
+        call.sources_digest.take(),
+    )?;
+    let host = v9::DocumentHost {
+        languages: &call.languages,
+        fragments: &document::DomFragments,
+    };
+    let input = v9::PageInput {
+        sources: &sources,
+        document: call.document,
+        storage: call.storage,
+        host: &host,
+        environment: &call.environment,
+        modules: &call.modules,
+    };
+    let state = || {
+        call.state
+            .clone()
+            .ok_or_else(|| EngineError::invalid("This V9 page step needs committed state."))
+    };
+    match call.action {
+        PageAction::Load => v9::load_page(input),
+        PageAction::Event { event } => v9::page_event(input, state()?, event),
+        PageAction::Click { target } => v9::click_page(input, state()?, target),
+        PageAction::Input { target, value } => v9::input_page(input, state()?, target, value),
+        PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
+        PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
+        PageAction::Modules => v9::load_modules(input, state()?),
+    }
+}
+
+/// Distinct source lists the V9 process keeps: the current page's and one more (a tab switch or
+/// the page just left), so memory stays bounded by twice SCRIPT_TOTAL_BYTES.
+pub(super) const RESIDENT_SOURCES: usize = 2;
+/// The error a step gets when its digest names sources this process no longer holds (it was
+/// restarted, or evicted them); the coordinator then sends the sources themselves.
+pub(super) const SOURCES_MISSING: &str = "sources_missing";
+
+thread_local! {
+    /** Most recently used first; content-addressed, so pages never see each other's state. */
+    static RESIDENT: std::cell::RefCell<std::collections::VecDeque<(String, std::rc::Rc<Vec<String>>)>> =
+        Default::default();
+}
+
+/**
+ * The step's sources: the ones sent (checked against their digest, then kept), or the resident
+ * ones the digest names. The digest is recomputed here, so a page cannot plant code under
+ * another page's digest.
+ */
+fn resident_sources(
+    sources: Vec<String>,
+    digest: Option<String>,
+) -> EngineResult<std::rc::Rc<Vec<String>>> {
+    let Some(digest) = digest else {
+        return Ok(std::rc::Rc::new(sources));
+    };
+    RESIDENT.with_borrow_mut(|resident| {
+        let position = resident.iter().position(|(key, _)| *key == digest);
+        if sources.is_empty() {
+            let entry = position
+                .and_then(|index| resident.remove(index))
+                .ok_or_else(|| {
+                    EngineError::new(
+                        SOURCES_MISSING,
+                        "The V9 service does not hold this page's scripts.",
+                        "Send the page's sources with the step.",
+                    )
+                })?;
+            let sources = std::rc::Rc::clone(&entry.1);
+            resident.push_front(entry);
+            return Ok(sources);
+        }
+        if sources_digest(&sources) != digest {
+            return Err(EngineError::invalid(
+                "The page's sources do not match their digest.",
+            ));
+        }
+        if let Some(index) = position {
+            resident.remove(index);
+        }
+        let sources = std::rc::Rc::new(sources);
+        resident.push_front((digest, std::rc::Rc::clone(&sources)));
+        resident.truncate(RESIDENT_SOURCES);
+        Ok(sources)
+    })
+}
+
+/// SHA-256 over each source's length and bytes, in order, as lowercase hex.
+pub(super) fn sources_digest(sources: &[String]) -> String {
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    for source in sources {
+        context.update(&(source.len() as u64).to_le_bytes());
+        context.update(source.as_bytes());
+    }
+    context
+        .finish()
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /** Headless policy stays literal-loopback only. */
@@ -270,14 +550,51 @@ fn web_fetch(params: Value) -> EngineResult<Value> {
     let input: WebFetch = parameters(params)?;
     serialize(network::fetch_web(&input.url, &input.fixture_origins)?)
 }
+/** Empties Relay's HTTP cache. It is memory only: engines may write only the shared engine
+scratch folder (packaging/sandbox/engine.sb), and a disk cache there could be planted by the
+document or V9 engine, so `set_cache_directory` is deliberately not called. */
+fn cache_clear(params: Value) -> EngineResult<Value> {
+    let _: Empty = parameters(params)?;
+    network::clear_cache();
+    Ok(json!({"cleared":true}))
+}
+/** Fetches a bounded batch concurrently through Relay's ordinary prepare and transmit path. GETs
+only (Relay refuses others per request); redirects come back unfollowed. */
+fn fetch_batch(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, run_batch)
+}
+/** The batch over its decoded parameters, outcomes in request order. */
+fn run_batch(input: FetchBatch) -> EngineResult<Vec<BatchOutcome>> {
+    if input.requests.len() > super::resources::FETCH_BATCH {
+        return Err(EngineError::limit(
+            "batched requests",
+            super::resources::FETCH_BATCH,
+        ));
+    }
+    let outcomes = network::fetch_batch(input.requests, &input.fixture_origins, input.remaining_ms)
+        .into_iter()
+        .map(|result| match result {
+            Ok(response) => BatchOutcome::Response(response),
+            Err(error) => BatchOutcome::Error(error),
+        })
+        .collect::<Vec<_>>();
+    Ok(outcomes)
+}
 /** Markup semantics are owned by the document service. */
-fn parse(params: Value) -> EngineResult<Value> {
-    serialize(document::parse(&parameters::<Parse>(params)?.source)?)
+fn parse(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Parse| {
+        document::parse_with_charset(&input.source, input.charset.as_deref())
+    })
 }
 /** All proposed targets are checked before any mutation escapes. */
-fn apply(params: Value) -> EngineResult<Value> {
-    let input: Apply = parameters(params)?;
-    serialize(document::apply(&input.document, &input.changes)?)
+fn apply(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Apply| {
+        let applied = document::apply_changes(&input.document, &input.changes)?;
+        if input.script_changes.is_empty() {
+            return Ok(applied);
+        }
+        document::apply_script_changes(&applied, &input.script_changes)
+    })
 }
 /** Legacy abstract geometry remains available to headless clients. */
 fn layout(params: Value) -> EngineResult<Value> {
@@ -286,8 +603,11 @@ fn layout(params: Value) -> EngineResult<Value> {
     serialize(document::layout(&input.document))
 }
 /** Native point layout is computed once, independently of the window. */
-fn render(params: Value) -> EngineResult<Value> {
-    let input: Render = parameters(params)?;
+fn render(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, run_render)
+}
+/** Render over decoded parameters. */
+fn run_render(input: Render) -> EngineResult<document::DisplayList> {
     let context = input.context.unwrap_or_else(|| document::RenderContext {
         width: input
             .width
@@ -297,7 +617,7 @@ fn render(params: Value) -> EngineResult<Value> {
     if input.width.is_some_and(|width| width != context.width) {
         return Err(EngineError::invalid("Conflicting native viewport widths."));
     }
-    serialize(document::render_with_context(&input.document, context)?)
+    document::render_with_context(&input.document, context)
 }
 /** Type actions and human input use the same literal-value validator. */
 fn value(params: Value) -> EngineResult<Value> {
@@ -335,25 +655,63 @@ fn event(params: Value) -> EngineResult<Value> {
 /** Projected state is initialized even when a page has no classic scripts. */
 fn document_load(params: Value) -> EngineResult<Value> {
     let input: DocumentLoad = parameters(params)?;
-    serialize(v9::load_document_scripts(
+    serialize(v9::load_document_scripts_with(
         &input.sources,
         input.document,
         input.storage,
+        &host(&input.languages),
     )?)
 }
 /** Inline source and registered listeners execute together under the V9 transaction. */
 fn document_click(params: Value) -> EngineResult<Value> {
     let input: DocumentClick = parameters(params)?;
-    serialize(v9::click_document_scripts(
+    serialize(v9::click_document_scripts_with(
         &input.sources,
         input.target,
         input.state,
         input.document,
         input.storage,
+        &host(&input.languages),
     )?)
+}
+
+/** Eye's pure fragment parser runs inside the V9 process; parsing grants no authority. */
+fn host(languages: &[String]) -> v9::DocumentHost<'_> {
+    v9::DocumentHost {
+        languages,
+        fragments: &document::Fragments,
+    }
 }
 
 /** Serialization failures are explicit rather than successful null values. */
 fn serialize(value: impl serde::Serialize) -> EngineResult<Value> {
     serde_json::to_value(value).map_err(|_| EngineError::invalid("Cannot serialize engine result."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SOURCES_MISSING, resident_sources, sources_digest};
+
+    /** Sources cross once, are found by digest after, and cannot be planted under a wrong one. */
+    #[test]
+    fn resident_sources_are_content_addressed() {
+        let sources = vec!["let a = 1;".to_owned(), "a++".to_owned()];
+        let digest = sources_digest(&sources);
+        let missing = resident_sources(Vec::new(), Some(digest.clone())).unwrap_err();
+        assert_eq!(missing.code, SOURCES_MISSING);
+        let forged = resident_sources(vec!["evil()".into()], Some(digest.clone())).unwrap_err();
+        assert_ne!(forged.code, SOURCES_MISSING);
+        assert_eq!(
+            *resident_sources(sources.clone(), Some(digest.clone())).unwrap(),
+            sources
+        );
+        assert_eq!(
+            *resident_sources(Vec::new(), Some(digest)).unwrap(),
+            sources
+        );
+        assert_ne!(
+            sources_digest(&["ab".into(), "c".into()]),
+            sources_digest(&["a".into(), "bc".into()])
+        );
+    }
 }

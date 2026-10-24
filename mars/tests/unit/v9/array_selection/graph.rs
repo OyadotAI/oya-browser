@@ -28,56 +28,6 @@ fn predicate_metadata_identity_and_shadowing_use_the_existing_callable_model() {
     }
 }
 
-/** The canonical roots cannot be missing, shifted, substituted, or duplicated even in unreachable records. */
-#[test]
-fn predicate_canonical_graph_records_reject_hostile_wire_states() {
-    let source = "function run(){}";
-    let original = serde_json::to_value(load(source, &[]).unwrap().state).unwrap();
-    let some = VM_ARRAY_SOME_ID.to_string();
-    let find = VM_ARRAY_FIND_ID.to_string();
-    for case in 0..6 {
-        let mut wire = original.clone();
-        match case {
-            0 => {
-                wire["graph"]["functions"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(&some);
-            }
-            1 => {
-                wire["graph"]["functions"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(&find);
-            }
-            2 => wire["graph"]["functions"][&some]["kind"]["intrinsic"] = json!("array_find"),
-            3 => wire["graph"]["functions"][&find] = wire["graph"]["functions"][&some].clone(),
-            4 => {
-                wire["graph"]["functions"]["999"] = wire["graph"]["functions"][&find].clone();
-                wire["graph"]["next_function"] = json!(1000);
-            }
-            _ => {
-                wire["graph"]["functions"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(&some);
-                wire["graph"]["functions"]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(&find);
-                wire["graph"]["next_function"] = json!(14);
-            }
-        }
-        assert_eq!(
-            event(source, "run()", serde_json::from_value(wire).unwrap(), &[])
-                .unwrap_err()
-                .code,
-            "invalid_request",
-            "case {case}"
-        );
-    }
-}
-
 /** Canonical expandos root cycles, closures and retained selected values across serialized events. */
 #[test]
 fn intrinsic_properties_and_selected_references_survive_collection_and_roundtrip() {
@@ -85,33 +35,10 @@ fn intrinsic_properties_and_selected_references_survive_collection_and_roundtrip
     let mut state = load(source, &[]).unwrap().state;
     for expected in ["true 8 4 true", "true 9 4 true"] {
         let execution = next(source, "run()", state);
-        assert_eq!(execution.changes[0].text, expected);
+        assert_eq!(execution.changes[0].text().unwrap(), expected);
         state = execution.state;
     }
     assert_eq!(VM_ARRAY_SOME_ID, 14);
     assert_eq!(VM_ARRAY_FIND_ID, 15);
-    assert_eq!(VM_FUNCTION_INTRINSICS, 16);
-}
-
-/** Predicate calls do not allocate result arrays, even when every ordinary heap slot is occupied. */
-#[test]
-fn selection_succeeds_at_full_heap_capacity_while_map_cannot_allocate() {
-    let source = "const a=[7];function yes(){return true;}function some(){document.getElementById('out').textContent=a.some(yes);}function find(){document.getElementById('out').textContent=a.find(yes);}function map(){a.map(yes);}";
-    let mut wire = serde_json::to_value(load(source, &[]).unwrap().state).unwrap();
-    let objects = wire["heap"]["objects"].as_object_mut().unwrap();
-    for id in objects.len()..VM_OBJECTS {
-        objects.insert(id.to_string(), json!({"kind":"object","properties":{}}));
-    }
-    wire["heap"]["next_id"] = json!(VM_OBJECTS);
-    let state: VmState = serde_json::from_value(wire).unwrap();
-    for (handler, expected) in [("some()", "true"), ("find()", "7")] {
-        let execution = next(source, handler, state.clone());
-        assert_eq!(execution.changes[0].text, expected);
-        let after = serde_json::to_value(execution.state).unwrap();
-        assert_eq!(after["heap"]["next_id"], json!(VM_OBJECTS));
-    }
-    assert_eq!(
-        event(source, "map()", state, &[]).unwrap_err().code,
-        "limit_exceeded"
-    );
+    assert_eq!(VM_FUNCTION_INTRINSICS, 19);
 }

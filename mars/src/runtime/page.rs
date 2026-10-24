@@ -1,11 +1,33 @@
 /** Sole committed page snapshots retain generation, VM and native display identity. */
 use super::supervisor::Runtime;
 use crate::constants::{FRAME_BYTES, ID_BYTES};
-use crate::document::{DisplayList, Document, Node, TextChange};
-use crate::protocol::{EngineError, EngineResult, Response, encode, parameters};
+use crate::document::{DisplayItem, DisplayList, Document, DomChange, Node};
+use crate::protocol::{EngineError, EngineResult, Response, encode};
+use mars_core::dom::local_position;
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+
+/** document.styles parameters, written straight to the frame. */
+#[derive(serde::Serialize)]
+pub(super) struct StylesCall<'a> {
+    pub document: &'a Document,
+    pub sheets: &'a [String],
+    pub context: crate::document::RenderContext,
+}
+/** document.render parameters, written straight to the frame. */
+#[derive(serde::Serialize)]
+struct RenderCall<'a> {
+    document: &'a Document,
+    context: crate::document::RenderContext,
+}
+/** document.apply parameters, written straight to the frame. */
+#[derive(serde::Serialize)]
+struct ApplyCall<'a> {
+    document: &'a Document,
+    changes: &'a [DomChange],
+    script_changes: &'a [crate::document::ScriptChange],
+}
 
 /** Fixed metadata reserve covers viewport/history fields added to public inspection. */
 const INSPECTION_RESERVE: usize = 8 * 1024;
@@ -41,12 +63,26 @@ pub(super) struct Page {
     pub display: Option<DisplayList>,
     /** Presentation generation is independent of document revision. */
     pub layout_generation: u64,
+    /** The node styles are the cascade of this document under the page's sheets and the current
+    context; false once a change replaced the document without restyling it, so presentation
+    knows whether Eye must cascade again or already did. */
+    pub styled: bool,
     /** Canonical origin is coordinator-derived and never included in public snapshots. */
     pub origin: String,
     /** Last committed candidate maps stay private to the runtime transaction. */
     pub storage: crate::v9::StorageState,
     /** Dirty candidates publish storage together with page and VM changes. */
     pub storage_dirty: bool,
+    pub degraded: Vec<String>,
+    /** A stylesheet never reached Eye, so its hiding rules are unknown: every styling of this
+    page fails closed for agents, as Eye does for sheets it cannot scan. */
+    pub untrusted_styles: bool,
+    /** Page scripts' own lifecycle: environment, virtual clock, console and pending work. */
+    pub scripting: super::scripting::Scripting,
+    /** The inspection of this exact page, built once when its presentation was prepared and
+    read by publication, the window and agents alike; None after a script step, until the
+    next presentation. At NODES one inspection costs as much as laying the page out. */
+    pub inspection: Option<std::sync::Arc<Value>>,
 }
 
 impl Page {
@@ -58,25 +94,62 @@ impl Page {
     pub fn node_id(&self, local: usize) -> String {
         format!("{}:node-{local}", self.id())
     }
-    /** Inspection observes one revision without executing page code. */
+    /**
+     * Inspection observes one revision without executing page code. Labels and display bounds
+     * are indexed once, so a page at the node limit inspects in linear time.
+     */
     pub fn inspect(&self) -> Value {
+        match &self.inspection {
+            Some(inspection) => (**inspection).clone(),
+            None => self.inspect_now(),
+        }
+    }
+    /** Rebuilds the kept inspection after a change that left the document and display as they
+    were (diagnostics, degraded features): cheaper than a presentation. */
+    pub(super) fn refresh_inspection(&mut self) {
+        self.inspection = None;
+        self.inspection = Some(std::sync::Arc::new(self.inspect_now()));
+    }
+    /** The inspection built from the document and display, without the kept copy. */
+    fn inspect_now(&self) -> Value {
+        let labels = self.document.labels();
+        let mut bounds = BTreeMap::new();
+        for item in self.display.iter().flat_map(|display| &display.items) {
+            bounds.entry(item.local_id).or_insert(item);
+        }
         let nodes = self
             .document
             .nodes
             .iter()
-            .map(|node| self.inspect_node(node))
+            .zip(&labels)
+            .filter(|(node, _)| !crate::document::agent_hidden(&self.document, node))
+            .map(|(node, label)| self.inspect_node(node, label, &labels, &bounds))
             .collect::<Vec<_>>();
-        json!({"page_id":self.id(),"revision":self.revision,"url":safe_url(&self.url,self.sensitive),"title":self.document.title,"status":self.status,"diagnostics":self.document.diagnostics,"layout_generation":self.layout_generation,"nodes":nodes})
+        json!({"page_id":self.id(),"revision":self.revision,"url":safe_url(&self.url,self.sensitive),"title":self.document.title,"status":self.status,"diagnostics":self.document.diagnostics,"degraded":self.degraded,"layout_generation":self.layout_generation,"nodes":nodes})
     }
     /** Agent geometry and semantic controls refer to the exact painted display item. */
-    fn inspect_node(&self, node: &Node) -> Value {
+    fn inspect_node(
+        &self,
+        node: &Node,
+        label: &str,
+        labels: &[String],
+        bounds: &BTreeMap<usize, &DisplayItem>,
+    ) -> Value {
+        // Clipped-away or fully transparent boxes are not something a person could act on.
+        let seen = bounds
+            .get(&node.local_id)
+            .is_none_or(|item| crate::document::agent_visible(item));
         let editable = ["input", "textarea"].contains(&node.tag.as_str())
             && !node.disabled
             && !node.hidden()
-            && !node.readonly();
-        let mut value = json!({"node_id":self.node_id(node.local_id),"html_id":node.html_id,"tag":node.tag,"name":crate::document::label(&self.document,node),"text":node.text,"placeholder":node.placeholder,"href":node.href.as_deref().map(|url|safe_url(url,self.sensitive)),"role":crate::document::role(node),"type":node.input_type(),"protected":node.input_type()=="password","readonly":node.readonly(),"checked":node.checked,"selected":node.selected,"enabled":!node.disabled && !node.hidden() && node.style.interactive,"editable":editable});
+            && !node.readonly()
+            && seen;
+        let mut value = json!({"node_id":self.node_id(node.local_id),"html_id":node.html_id,"tag":node.tag,"name":label,"text":crate::document::own_text(&self.document,node),"placeholder":node.placeholder,"href":node.href.as_deref().map(|url|safe_url(url,self.sensitive)),"role":crate::document::role(node),"type":node.input_type(),"protected":node.input_type()=="password","readonly":node.readonly(),"checked":node.checked,"selected":node.selected,"enabled":!node.disabled && !node.hidden() && node.style.interactive && seen,"editable":editable});
         if node.tag == "img" {
             value["alt"] = json!(node.image_alt);
+        }
+        if let Some(lang) = node.attributes.get("lang") {
+            value["lang"] = json!(lang);
         }
         if node.tag == "th"
             && let Some(scope) = node.attributes.get("scope")
@@ -84,16 +157,14 @@ impl Page {
             value["header_scope"] = json!(scope);
         }
         if let Some(cell) = &node.table_cell {
+            let position =
+                |id: usize| local_position(&self.document.nodes, id, |node| node.local_id);
             let headers = cell
                 .headers
                 .iter()
                 .copied()
-                .filter(|id| {
-                    self.document
-                        .nodes
-                        .iter()
-                        .any(|node| node.local_id == *id && !node.hidden())
-                })
+                .filter_map(|id| position(id).map(|index| (id, index)))
+                .filter(|(_, index)| !self.document.nodes[*index].hidden())
                 .collect::<Vec<_>>();
             value["table_node_id"] = json!(self.node_id(cell.table));
             value["row_node_id"] = json!(self.node_id(cell.row));
@@ -102,26 +173,20 @@ impl Page {
             value["header_node_ids"] = json!(
                 headers
                     .iter()
-                    .map(|id| self.node_id(*id))
+                    .map(|(id, _)| self.node_id(*id))
                     .collect::<Vec<_>>()
             );
             value["header_labels"] = json!(
                 headers
                     .iter()
-                    .filter_map(|id| self.document.nodes.iter().find(|node| node.local_id == *id))
-                    .map(|node| crate::document::label(&self.document, node))
+                    .map(|(_, index)| &labels[*index])
                     .collect::<Vec<_>>()
             );
         }
         if !node.secret() {
             value["value"] = json!(node.value);
         }
-        if let Some(item) = self.display.as_ref().and_then(|display| {
-            display
-                .items
-                .iter()
-                .find(|item| item.local_id == node.local_id)
-        }) {
+        if let Some(item) = bounds.get(&node.local_id) {
             value["bounds"] = json!({"x":item.x,"y":item.y,"width":item.width,"height":item.height,"unit":"logical_points"});
         }
         value
@@ -201,7 +266,7 @@ pub struct BrowserSnapshot {
     pub render_context: crate::document::RenderContext,
     /// Native document scroll offset.
     pub scroll_y: f64,
-    /// Bounded tab labels and selection state drive native tab chrome.
+    /// Bounded tab labels and selection state drive the native Mars tab strip.
     pub tabs: Value,
 }
 
@@ -213,15 +278,53 @@ pub(super) struct Empty {}
 impl Runtime {
     /// The window can continue displaying retained content after an engine failure.
     pub fn snapshot(&self) -> BrowserSnapshot {
+        let started = std::time::Instant::now();
+        let snapshot = self.snapshot_of(self.page.as_ref(), self.inspection());
+        super::supervisor::perf::record("runtime.snapshot", started, String::new);
+        snapshot
+    }
+    /**
+     * Shows a navigation's page before its scripts run, when the window installed a first-paint
+     * sink and the navigation is in the visible tab. The window paints it from the document and
+     * display as it paints any snapshot; its inspection names the page and says `settling`, with
+     * no nodes, so observers know the page's scripts are still to run and the navigation does
+     * not pay for an inspection it will rebuild. The committed page is untouched until the
+     * navigation finishes.
+     */
+    pub(super) fn first_paint(&mut self, page: &Page) {
+        if self.active_tab_id != self.selected_tab_id() || self.provisional.is_none() {
+            return;
+        }
+        let inspection = json!({
+            "page_id": page.id(), "revision": page.revision, "url": safe_url(&page.url, page.sensitive),
+            "title": page.document.title, "status": page.status, "layout_generation": page.layout_generation,
+            "nodes": [], "settling": true, "tab_id": self.active_tab_id,
+            "viewport": {"width": self.render_context.width, "height": self.render_context.height, "scroll_y": self.scroll_y, "unit": "logical_points"},
+            "appearance": self.render_context.appearance,
+        });
+        let snapshot = self.snapshot_of(Some(page), inspection);
+        if let Some(sink) = self.provisional.as_mut() {
+            sink(snapshot);
+        }
+    }
+    /** Lays out a styled page for its first paint: the display alone, without the inspection
+    and wire checks `prepare_styled` adds, which the finished page gets. */
+    pub(super) fn prepare_display(&mut self, page: &mut Page) -> EngineResult<()> {
+        crate::document::validate_content(&page.document)?;
+        let call = RenderCall {
+            document: &page.document,
+            context: self.render_context,
+        };
+        page.display = Some(self.call_typed("document", "document.render", &call, None)?);
+        Ok(())
+    }
+    /** The window's view of `page` with its `inspection`. */
+    fn snapshot_of(&self, page: Option<&Page>, inspection: Value) -> BrowserSnapshot {
         BrowserSnapshot {
-            inspection: self.inspection(),
-            document: self.page.as_ref().map(|page| page.document.clone()),
-            images: self
-                .page
-                .as_ref()
-                .map(|page| page.images.clone())
-                .unwrap_or_default(),
-            display: self.page.as_ref().and_then(|page| page.display.clone()),
+            inspection,
+            document: page.map(|page| page.document.clone()),
+            images: page.map(|page| page.images.clone()).unwrap_or_default(),
+            display: page.and_then(|page| page.display.clone()),
             failed: self.failed,
             can_back: self.history_cursor.is_some_and(|index| index > 0),
             can_forward: self
@@ -235,22 +338,38 @@ impl Runtime {
     }
     /** One read view supplies both public inspection and UI snapshots. */
     pub(super) fn inspection(&self) -> Value {
-        let Some(page) = self.page.as_ref() else {
-            return json!({"tab_id":self.active_tab_id});
+        let started = std::time::Instant::now();
+        let value = self.inspection_now();
+        super::supervisor::perf::record("runtime.inspection", started, String::new);
+        value
+    }
+    /** `inspection` without the measurement probe. */
+    fn inspection_now(&self) -> Value {
+        let mut value = Self::inspection_of(self.render_context, self.scroll_y, self.page.as_ref());
+        value["tab_id"] = json!(self.active_tab_id);
+        value
+    }
+    /** `page` as agents see it under `context` scrolled to `scroll_y`, without the tab. */
+    fn inspection_of(
+        context: crate::document::RenderContext,
+        scroll_y: f64,
+        page: Option<&Page>,
+    ) -> Value {
+        let Some(page) = page else {
+            return json!({});
         };
         let mut value = page.inspect();
-        value["tab_id"] = json!(self.active_tab_id);
         if page.display.is_some() {
-            value["viewport"] = json!({"width":self.render_context.width,"height":self.render_context.height,"scroll_y":self.scroll_y,"unit":"logical_points"});
-            value["appearance"] = json!(self.render_context.appearance);
+            value["viewport"] = json!({"width":context.width,"height":context.height,"scroll_y":scroll_y,"unit":"logical_points"});
+            value["appearance"] = json!(context.appearance);
             if let Some(nodes) = value["nodes"].as_array_mut() {
                 for node in nodes {
                     let y = node["bounds"]["y"].as_f64().unwrap_or_default();
                     let height = node["bounds"]["height"].as_f64().unwrap_or_default();
                     node["visible"] = json!(
                         node.get("bounds").is_some()
-                            && y + height > self.scroll_y
-                            && y < self.scroll_y + self.render_context.height
+                            && y + height > scroll_y
+                            && y < scroll_y + context.height
                     );
                 }
             }
@@ -268,14 +387,46 @@ impl Runtime {
         context: crate::document::RenderContext,
     ) -> EngineResult<()> {
         context.validate()?;
-        let styled = self.call(
-            "document",
-            "document.styles",
-            json!({
-                "document":page.document,"sheets":page.resolved_stylesheets,"context":context
-            }),
-        )?;
-        page.document = self.returned("document", styled)?;
+        page.document = self.styled(&page.document, &page.resolved_stylesheets, context)?;
+        page.styled = true;
+        self.prepare_styled(page, context)
+    }
+    /** Presentation after a change: one more cascade only when the change left styles stale. */
+    pub(super) fn prepare_current(&mut self, page: &mut Page) -> EngineResult<()> {
+        if page.styled {
+            self.prepare_styled(page, self.render_context)
+        } else {
+            self.prepare(page)
+        }
+    }
+    /** One Eye cascade of `document` with `sheets` under `context`. */
+    pub(super) fn styled(
+        &mut self,
+        document: &Document,
+        sheets: &[String],
+        context: crate::document::RenderContext,
+    ) -> EngineResult<Document> {
+        let call = StylesCall {
+            document,
+            sheets,
+            context,
+        };
+        self.call_typed("document", "document.styles", &call, None)
+    }
+    /**
+     * Checks and lays out a document already styled with the page's sheets under `context`.
+     * Navigation uses it directly when scripts changed nothing, because restyling the same
+     * document with the same sheets is a no-op that costs a full Eye round trip at NODES.
+     */
+    pub(super) fn prepare_styled(
+        &mut self,
+        page: &mut Page,
+        context: crate::document::RenderContext,
+    ) -> EngineResult<()> {
+        context.validate()?;
+        if page.untrusted_styles {
+            untrusted(&mut page.document);
+        }
         crate::document::validate_content(&page.document)?;
         page.state
             .validate_document(&crate::document::script_document(
@@ -283,27 +434,36 @@ impl Runtime {
                 &page.script_identity,
             )?)?;
         if self.web_origins.is_some() {
-            let value = self.call(
-                "document",
-                "document.render",
-                json!({"document":page.document,"context":context}),
-            )?;
-            page.display = Some(self.returned("document", value)?);
+            let call = RenderCall {
+                document: &page.document,
+                context,
+            };
+            page.display = Some(self.call_typed("document", "document.render", &call, None)?);
         }
+        page.refresh_inspection();
         page.publishable()
     }
     /** All source and native text writes share the same document validation. */
     pub(super) fn apply(
         &mut self,
         document: &Document,
-        changes: &[TextChange],
+        changes: &[DomChange],
     ) -> EngineResult<Document> {
-        let value = self.call(
-            "document",
-            "document.apply",
-            json!({"document":document,"changes":changes}),
-        )?;
-        self.returned("document", value)
+        self.apply_all(document, changes, &[])
+    }
+    /** Both change logs replay in one Eye candidate: the original changes, then V9's extended ones. */
+    pub(super) fn apply_all(
+        &mut self,
+        document: &Document,
+        changes: &[DomChange],
+        script_changes: &[crate::document::ScriptChange],
+    ) -> EngineResult<Document> {
+        let call = ApplyCall {
+            document,
+            changes,
+            script_changes,
+        };
+        self.call_typed("document", "document.apply", &call, None)
     }
     /** Missing pages do not silently create an empty browser context. */
     pub(super) fn current(&self) -> EngineResult<&Page> {
@@ -321,7 +481,10 @@ impl Runtime {
         name: &str,
         value: Value,
     ) -> EngineResult<T> {
-        match serde_json::from_value(value) {
+        let started = std::time::Instant::now();
+        let typed = serde_json::from_value(value);
+        super::supervisor::perf::record("returned", started, || name.to_string());
+        match typed {
             Ok(value) => Ok(value),
             Err(_) => {
                 self.stop();
@@ -329,11 +492,14 @@ impl Runtime {
             }
         }
     }
-    /** Inspection reads native state directly, without injected source. */
-    pub(super) fn inspect(&mut self, params: Value) -> EngineResult<Value> {
-        let _: Empty = parameters(params)?;
-        self.current()?;
-        Ok(self.inspection())
+}
+/** No node, the html and body wrappers included, is agent-actionable; people still see the page. */
+fn untrusted(document: &mut Document) {
+    document.formatting.agent_untrusted = true;
+    document.formatting.html.style.interactive = false;
+    document.formatting.body.style.interactive = false;
+    for node in &mut document.nodes {
+        node.style.interactive = false;
     }
 }
 /** Browser-generated surfaces omit queries/fragments for protected navigation chains. */

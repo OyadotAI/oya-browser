@@ -6,19 +6,26 @@ use super::{
 };
 use crate::{
     constants::JS_STRING_UNITS,
-    protocol::{EngineError, EngineResult, SourceLocation},
+    protocol::{EngineResult, SourceLocation},
 };
 
-/** String literals preserve surrogate units until an explicit document boundary. */
+/** String literals preserve surrogate units until an explicit document boundary. A literal over
+JS_STRING_UNITS still scans to its closing quote and returns None, so the script parses and only
+code that evaluates the literal fails. */
 pub(super) fn string(
     source: &mut Source<'_>,
     quote: char,
     start: SourceLocation,
-) -> EngineResult<JsString> {
+) -> EngineResult<Option<JsString>> {
     let mut units = Vec::new();
+    let mut fits = true;
     while let Some(character) = source.next() {
         if character == quote {
-            return JsString::from_units(units);
+            return if fits {
+                JsString::from_units(units).map(Some)
+            } else {
+                Ok(None)
+            };
         }
         if matches!(character, '\n' | '\r') {
             return Err(errors::syntax(start, "unescaped line break in string"));
@@ -29,14 +36,51 @@ pub(super) fn string(
             push(character as u32, &mut units);
         }
         if units.len() > JS_STRING_UNITS {
-            return Err(errors::located(
-                EngineError::limit("JavaScript string UTF-16 units", JS_STRING_UNITS),
-                start,
-                "scan",
-            ));
+            fits = false;
+            units.clear();
         }
     }
     Err(errors::syntax(start, "unterminated string literal"))
+}
+/** Template chunks end at a backtick (tail) or at `${`; None cooks an overlong or invalid chunk. */
+pub(super) fn template(
+    source: &mut Source<'_>,
+    start: SourceLocation,
+) -> EngineResult<(Option<JsString>, bool)> {
+    let mut units = Vec::new();
+    let mut cooked = true;
+    loop {
+        let Some(character) = source.next() else {
+            return Err(errors::syntax(start, "unterminated template literal"));
+        };
+        match character {
+            '`' => break Ok((cook(units, cooked)?, true)),
+            '$' if source.peek() == Some('{') => {
+                source.next();
+                break Ok((cook(units, cooked)?, false));
+            }
+            '\\' => cooked &= escape(source, &mut units, start).is_ok(),
+            '\r' => {
+                if source.peek() == Some('\n') {
+                    source.next();
+                }
+                push(10, &mut units);
+            }
+            other => push(other as u32, &mut units),
+        }
+        if units.len() > JS_STRING_UNITS {
+            cooked = false;
+            units.clear();
+        }
+    }
+}
+/** Only a fully decoded, bounded chunk becomes a string value. */
+fn cook(units: Vec<u16>, cooked: bool) -> EngineResult<Option<JsString>> {
+    if cooked {
+        JsString::from_units(units).map(Some)
+    } else {
+        Ok(None)
+    }
 }
 /** Non-escape characters are identity escapes; line continuations contribute no code units. */
 fn escape(
@@ -62,17 +106,26 @@ fn escape(
         'v' => 11,
         'x' => hex(source, 2, start)?,
         'u' => unicode(source, start)?,
-        '0' if !source.peek().is_some_and(|c| c.is_ascii_digit()) => 0,
-        '0'..='9' => {
-            return Err(errors::unsupported(
-                start,
-                "legacy octal or non-octal decimal string escapes",
-            ));
-        }
+        '0'..='7' => legacy_octal(source, character),
         other => other as u32,
     };
     push(value, units);
     Ok(())
+}
+/** Sloppy-mode octal escapes take up to three digits and never exceed \\377. */
+fn legacy_octal(source: &mut Source<'_>, first: char) -> u32 {
+    let mut value = first as u32 - '0' as u32;
+    let digits = if first <= '3' { 2 } else { 1 };
+    for _ in 0..digits {
+        match source.peek().and_then(|c| c.to_digit(8)) {
+            Some(digit) => {
+                source.next();
+                value = value * 8 + digit;
+            }
+            None => break,
+        }
+    }
+    value
 }
 /** Fixed-width escapes require every promised hexadecimal digit. */
 fn hex(source: &mut Source<'_>, count: usize, start: SourceLocation) -> EngineResult<u32> {
@@ -87,7 +140,7 @@ fn hex(source: &mut Source<'_>, count: usize, start: SourceLocation) -> EngineRe
     Ok(value)
 }
 /** Braced code points use a checked bound, including surrogate code points. */
-fn unicode(source: &mut Source<'_>, start: SourceLocation) -> EngineResult<u32> {
+pub(super) fn unicode(source: &mut Source<'_>, start: SourceLocation) -> EngineResult<u32> {
     if source.peek() != Some('{') {
         return hex(source, 4, start);
     }

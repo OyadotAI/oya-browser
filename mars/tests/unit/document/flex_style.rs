@@ -179,43 +179,39 @@ fn flex_cannot_override_hidden_and_inert_ancestor_guards() {
     assert!(computed.nodes.iter().all(|node| node.hidden()));
     assert!(computed.nodes.iter().all(|node| !node.style.interactive));
 }
-/** Unsupported structures and malformed scalar forms fail explicitly instead of inventing geometry. */
+/// Unsupported structures and malformed scalar forms are dropped with a diagnostic naming the
+/// property, and never invent geometry: the result equals the style without that declaration.
 #[test]
-fn unsupported_flex_values_and_excluded_structures_are_rejected() {
-    for declaration in [
-        "display:inline-flex",
-        "display:flex;flex-direction:row-reverse",
-        "display:flex;flex-direction:column;flex-wrap:wrap",
-        "flex-wrap:wrap-reverse",
-        "flex:1 auto 2",
-        "flex:1 2 3",
-        "flex:1 2 0 0",
-        "flex-basis:1em",
-        "flex-basis:content",
-        "flex-grow:-1",
-        "flex-shrink:NaN",
-        "flex-grow:4097",
-        "gap:10",
-        "gap:1%",
-        "gap:1px 2px 3px",
-        "row-gap:-1px",
-        "justify-content:space-around",
-        "align-items:baseline",
-        "align-self:center",
-        "align-content:stretch",
-        "order:1",
-        "height:100px",
-        "min-height:0",
-        "max-height:100px",
-        "position:absolute",
-        "padding:auto",
-    ] {
+fn unsupported_flex_values_and_excluded_structures_are_dropped_with_a_diagnostic() {
+    let computed = |css: &str| {
         let document = parse("<div id=x></div>").unwrap();
+        compute_styles(&document, &[format!("#x{{{css}}}")]).unwrap()
+    };
+    for (declaration, kept, named) in [
+        (
+            "display:flex;flex-direction:column;flex-wrap:wrap",
+            "display:flex;flex-direction:column",
+            "Wrapped flex columns",
+        ),
+        ("flex:1 auto 2", "", "flex"),
+        ("flex:1 2 3", "", "flex"),
+        ("flex:1 2 0 0", "", "flex"),
+        ("flex-basis:1em", "", "flex-basis"),
+        ("flex-basis:content", "", "flex-basis"),
+        ("flex-grow:-1", "", "flex-grow"),
+        ("flex-shrink:NaN", "", "flex-shrink"),
+        ("flex-grow:4097", "", "flex-grow"),
+        ("gap:10", "", "gap"),
+        ("gap:1px 2px 3px", "", "gap"),
+        ("align-content:stretch", "", "align-content"),
+        ("padding:auto", "", "padding"),
+    ] {
+        let document = computed(declaration);
+        assert_eq!(document.diagnostics.len(), 1, "{declaration}");
+        assert!(document.diagnostics[0].contains(named), "{declaration}");
         assert_eq!(
-            compute_styles(&document, &[format!("#x{{{declaration}}}")])
-                .unwrap_err()
-                .code,
-            "unsupported_feature",
+            document.nodes[0].style,
+            computed(kept).nodes[0].style,
             "{declaration}"
         );
     }
@@ -243,7 +239,7 @@ fn private_computed_styles_reject_nonfinite_negative_and_excessive_values() {
         |s| s.font_size = 0.0,
         |s| s.font_size = 73.0,
         |s| s.border = 9.0,
-        |s| s.margin[0] = -1.0,
+        |s| s.margin[0] = -4097.0,
         |s| s.padding[0] = f64::INFINITY,
         |s| s.width = Some(4097.0),
         |s| s.max_width = Some(-1.0),

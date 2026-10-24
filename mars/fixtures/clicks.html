@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head><title>Clicks</title></head>
+<body>
+<h1 id="title">Clicks</h1>
+<p><a id="link" href="/second">Normal link</a></p>
+<p><button id="button">Count</button> <span id="count">0</span></p>
+<div id="div" style="padding:8px;background:#eeeeee;width:200px">Div button</div>
+<p><span id="role" role="button">Role button</span></p>
+<p id="log">none</p>
+<div style="height:1900px"></div>
+<p><a id="far" href="/forms">Far link</a></p>
+<div style="height:700px"></div>
+<script>
+document.getElementById('button').addEventListener('click', function () {
+  var count = document.getElementById('count');
+  count.textContent = String(Number(count.textContent) + 1);
+});
+document.getElementById('div').addEventListener('click', function () {
+  document.getElementById('log').textContent = 'div';
+});
+document.getElementById('role').addEventListener('click', function () {
+  document.getElementById('log').textContent = 'role';
+});
+setTimeout(function () {
+  var late = document.createElement('a');
+  late.id = 'late';
+  late.href = '/compat/choose-option';
+  late.textContent = 'Late link';
+  document.getElementById('far').parentNode.appendChild(late);
+}, 500);
+</script>
+</body>
+</html>

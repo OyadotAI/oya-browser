@@ -1,11 +1,16 @@
 /** Static CSS is verified through owned parse, cascade and render surfaces with unchanged source text. */
 use mars::document::{
-    Appearance, ColorScheme, Document, LineHeight, RenderContext, StyleSource,
+    Appearance, ColorScheme, Document, LineHeight, Position, RenderContext, StyleSource,
     compute_styles_with_context, parse, render_with_context,
 };
 
 /** The retained source includes its required script rather than manufacturing a runtime-compatible page. */
 const ORIGINAL: &str = include_str!("../../../fixtures/reading/example.html");
+
+/** Chromium's UA body margin, which insets every unstyled page. */
+const BODY_MARGIN: f64 = 8.0;
+/** The UA stylesheet's 1em paragraph block margin at the 16px initial font size, as in Chromium. */
+const P_MARGIN: f64 = 16.0;
 
 /** All test contexts use a real page viewport rather than shell window dimensions. */
 fn context(width: f64, height: f64, appearance: Appearance) -> RenderContext {
@@ -24,7 +29,7 @@ fn computed(source: &str, context: RenderContext) -> Document {
         .iter()
         .filter_map(|source| match source {
             StyleSource::Inline(sheet) => Some(sheet.clone()),
-            StyleSource::Linked(_) => None,
+            _ => None,
         })
         .collect::<Vec<_>>();
     compute_styles_with_context(&document, &sheets, context).unwrap()
@@ -48,7 +53,9 @@ fn original_source_styles_and_renders_with_script_reference_intact() {
         assert!(document.formatting.body_box_authored);
         let paragraph = &display.items[0];
         assert_eq!((paragraph.x, paragraph.width), (342.0, 416.0));
-        assert_eq!(paragraph.y, 170.0);
+        // The body's 25vh top padding separates it from the paragraph's UA 1em top margin, so
+        // the margins do not collapse and the paragraph starts 16px below the padding edge.
+        assert_eq!(paragraph.y, 170.0 + P_MARGIN);
         assert_eq!(paragraph.line_height, Some(25.6));
         for line in &paragraph.lines {
             assert!((line.x - (342.0 + (416.0 - line.width) / 2.0)).abs() < 0.001);
@@ -64,7 +71,7 @@ fn body_edges_auto_margins_and_vh_use_the_current_context() {
         let document = computed(ORIGINAL, context);
         let display = render_with_context(&document, context).unwrap();
         assert_eq!((display.items[0].x, display.items[0].width), (x, content));
-        assert_eq!(display.items[0].y, height / 4.0);
+        assert_eq!(display.items[0].y, height / 4.0 + P_MARGIN);
         assert_eq!(document.formatting.body.style.padding[2], 32.0);
     }
 }
@@ -198,25 +205,46 @@ fn scheme_negotiation_controls_colors_and_readable_link_defaults() {
     );
 }
 
-/** Unsupported structural behavior remains a refusal rather than silently exposing hidden content. */
+/** Unsupported root, body and value grammar is dropped with a diagnostic; supported grammar applies. */
 #[test]
-fn unsupported_structural_and_font_grammar_remains_explicit() {
-    for css in [
-        "html{padding:1px}",
-        "body{display:flex}",
-        "p{position:absolute}",
-        "p{font:italic 16px serif}",
-        "p{padding:auto}",
-        "html{color-scheme:only dark}",
-    ] {
+fn unsupported_structural_grammar_is_dropped_and_supported_grammar_applies() {
+    let styled = |css: &str| {
         let source = parse("<p>Readable</p>").unwrap();
-        assert_eq!(
-            compute_styles_with_context(&source, &[css.into()], RenderContext::default())
-                .unwrap_err()
-                .code,
-            "unsupported_feature"
-        );
+        compute_styles_with_context(&source, &[css.into()], RenderContext::default()).unwrap()
+    };
+    for (css, diagnostic) in [
+        (
+            "html{padding:1px}",
+            "Root element box styles are not supported.",
+        ),
+        (
+            "body{display:flex}",
+            "Root and body display types other than block are not supported.",
+        ),
+        (
+            "p{padding:auto}",
+            "A CSS value for padding is not supported and was ignored.",
+        ),
+    ] {
+        let document = styled(css);
+        assert_eq!(document.diagnostics, [diagnostic], "{css}");
+        assert_eq!(document.formatting.html.style.padding, [0.0; 4], "{css}");
+        assert!(!document.formatting.body.style.display_flex, "{css}");
+        assert_eq!(document.nodes[0].style.padding, [0.0; 4], "{css}");
     }
+    let font = styled("p{font:italic 16px serif}");
+    assert!(font.diagnostics.is_empty());
+    assert_eq!(font.nodes[0].style.font_size, 16.0);
+    let positioned = styled("p{position:absolute}");
+    assert_eq!(positioned.nodes[0].style.position, Position::Absolute);
+    // An absolute box's margins never collapse: static position 8px plus its own 16px margin.
+    let display = render_with_context(&positioned, RenderContext::default()).unwrap();
+    assert_eq!(
+        (display.items[0].x, display.items[0].y),
+        (BODY_MARGIN, 24.0)
+    );
+    let scheme = styled("html{color-scheme:only dark}");
+    assert_eq!(scheme.formatting.html.style.color_scheme, ColorScheme::Dark);
 }
 
 /** Scheme defaults cover the page even when the author supplies no explicit color literals. */
@@ -257,7 +285,7 @@ fn centered_mixed_inline_content_keeps_link_paint_and_target_geometry_together()
         .flat_map(|item| &item.lines)
         .map(|line| line.x + line.width)
         .fold(0.0, f64::max);
-    assert!((first.x - 32.0 - (300.0 - (right - first.x)) / 2.0).abs() < 0.001);
+    assert!((first.x - BODY_MARGIN - (300.0 - (right - first.x)) / 2.0).abs() < 0.001);
 }
 
 /** Native dark preference does not place semantic white text onto an authored light canvas in normal scheme. */
@@ -377,7 +405,10 @@ fn nested_link_targets_follow_center_and_right_aligned_span_paint() {
                 .unwrap();
             assert!(link.lines.is_empty());
             assert_eq!((link.x, link.width), (span.lines[0].x, span.lines[0].width));
-            assert_eq!((display.items[0].x, display.items[0].width), (32.0, 300.0));
+            assert_eq!(
+                (display.items[0].x, display.items[0].width),
+                (BODY_MARGIN, 300.0)
+            );
             assert!(link.x > display.items[0].x);
         }
     }
@@ -415,6 +446,9 @@ fn aligned_link_bounds_union_direct_text_and_nested_inline_descendants() {
             .map(|line| line.x + line.width)
             .fold(0.0, f64::max);
         assert_eq!((link.x, link.width), (left, right - left));
-        assert_eq!((display.items[0].x, display.items[0].width), (32.0, 300.0));
+        assert_eq!(
+            (display.items[0].x, display.items[0].width),
+            (BODY_MARGIN, 300.0)
+        );
     }
 }

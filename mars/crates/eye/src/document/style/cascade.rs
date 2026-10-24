@@ -1,20 +1,27 @@
-/** Ordered stylesheet and inline declarations select one bounded computed candidate. */
+/** Ordered UA, stylesheet and inline declarations select one bounded computed style per element. */
 use super::{
-    ComputedStyle,
-    apply::apply,
-    selectors::{matches, matches_wrapper},
-    syntax::{Rule, declarations, parse_sheet},
-    unsupported,
+    ComputedStyle, FlexDirection, FlexWrap, Position,
+    constants::OFFSCREEN,
+    declaration,
+    media::Truth,
+    note,
+    parsed::Parsed,
+    selectors::{Tree, matches, matches_compound, matches_wrapper, matches_wrapper_compound},
+    sheet::{Rule, Target},
+    vars::{BODY, FIRST_NODE, HTML, Scopes},
 };
 use crate::{
-    constants::{STYLE_BYTES, STYLE_SHEETS},
     document::{Document, Node, RenderContext},
-    protocol::{EngineError, EngineResult},
+    protocol::EngineResult,
 };
-use std::collections::BTreeMap;
-/** Cascade priority sorts importance, inline origin, specificity and source order. */
-type Priority = (bool, bool, usize, usize);
-/// Required sheets must all parse before a candidate's actions become visible.
+use std::{collections::BTreeMap, rc::Rc};
+/** UA declarations and presentational hints, the two layers below author rules. */
+type Defaults<'d> = (&'d [(&'d str, &'d str)], &'d [(&'d str, String)]);
+/** Cascade priority: importance, author origin, inline origin, specificity, source order. */
+pub(super) type Priority = (bool, bool, bool, usize, usize);
+/** Each property's winning priority and value. */
+pub(super) type Chosen = BTreeMap<String, (Priority, Rc<str>)>;
+/// Required sheets must all parse within bounds before a candidate's actions become visible.
 pub fn compute_styles(document: &Document, sheets: &[String]) -> EngineResult<Document> {
     compute_styles_with_context(document, sheets, RenderContext::default())
 }
@@ -26,180 +33,536 @@ pub fn compute_styles_with_context(
 ) -> EngineResult<Document> {
     context.validate()?;
     crate::document::validate_styles(document)?;
-    if sheets.len() > STYLE_SHEETS * 2
-        || sheets.iter().map(String::len).sum::<usize>() > STYLE_BYTES * STYLE_SHEETS
-    {
-        return Err(EngineError::limit(
-            "aggregate style bytes",
-            STYLE_BYTES * STYLE_SHEETS,
-        ));
-    }
-    let mut rules = Vec::new();
-    for sheet in sheets {
-        parse_sheet(sheet, &mut rules)?;
-    }
+    // Shadow trees style as the flat tree; the styles then return to the document's own nodes.
+    let flat = crate::document::shadow::flat(document, true);
+    let original = document;
+    let document = flat.as_ref().map_or(document, |flat| &flat.document);
+    super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
     let mut candidate = document.clone();
-    wrappers(document, &mut candidate, &rules, context)?;
-    for index in 0..candidate.nodes.len() {
-        let node = &document.nodes[index];
-        let parent = node
-            .parent
-            .and_then(|id| candidate.nodes.iter().find(|node| node.local_id == id))
-            .map(|node| &node.style)
-            .unwrap_or(&candidate.formatting.body.style);
-        let mut style = super::resolve::inherited(parent);
-        defaults(node, &mut style);
-        let chosen = winning(&rules, &node.attributes, |selector| {
-            matches(document, node, selector)
-        })?;
-        let default_link_color = node.href.is_some() && !chosen.contains_key("color");
-        if chosen.contains_key("font-size") {
-            style.font_size = parent.font_size;
+    let scoped = flat
+        .as_ref()
+        .map(|flat| flat.sheets.as_slice())
+        .unwrap_or(&[]);
+    let document_group = crate::document::shadow::DOCUMENT_GROUP;
+    let (parsed, groups) = super::parsed::parsed(sheets, scoped, document_group, context)?;
+    let mut cascade = Cascade {
+        tree: Tree::new(document).with_shadow_hosts(original),
+        groups,
+        parsed,
+        context,
+        scopes: Scopes::default(),
+        diagnostics: std::mem::take(&mut candidate.diagnostics),
+        widths: None,
+        ancestry: Vec::new(),
+    };
+    for message in &cascade.parsed.diagnostics {
+        note(&mut cascade.diagnostics, message.clone());
+    }
+    cascade.wrappers(document, &mut candidate)?;
+    cascade.nodes(document, &mut candidate)?;
+    // The sheets' faces travel with the styled document; fonts already loaded for them stay.
+    candidate.formatting.font_faces = cascade.parsed.font_faces.clone();
+    // `@container` conditions need laid-out sizes: one layout of these styles, then one more
+    // cascade that reads them. Bounded to that single extra pass; nothing iterates to a fixpoint.
+    if cascade.parsed.container_rules
+        && let Some(widths) = super::container::widths(&candidate, context)
+    {
+        cascade.widths = Some(widths);
+        cascade.scopes = Scopes::default();
+        super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
+        cascade.wrappers(document, &mut candidate)?;
+        cascade.nodes(document, &mut candidate)?;
+    }
+    if cascade.parsed.untrusted {
+        untrusted(&mut candidate);
+    }
+    candidate.diagnostics = cascade.diagnostics;
+    for note in crate::document::render::degrade::notes(&candidate) {
+        super::note(&mut candidate.diagnostics, note.into());
+    }
+    Ok(match flat {
+        Some(_) => crate::document::shadow::restore(original, candidate),
+        None => candidate,
+    })
+}
+/** One style pass's shared state. */
+struct Cascade<'a> {
+    /// Prebuilt matching index.
+    tree: Tree<'a>,
+    /// Each rule's shadow style group, when the document has shadow trees (empty otherwise).
+    groups: Vec<usize>,
+    /// The sheets' rules, buckets and keyframes, shared with the page's next cascade.
+    parsed: std::rc::Rc<Parsed>,
+    /// Viewport and appearance.
+    context: RenderContext,
+    /// Custom property scopes: html, body, then nodes in order.
+    scopes: Scopes,
+    /// Value-free diagnostics for the document.
+    diagnostics: Vec<String>,
+    /// Container content widths from the first layout; None during the first pass.
+    widths: Option<super::container::Widths>,
+    /// Size containers above the element being styled, nearest first.
+    ancestry: Vec<super::container::Ancestor>,
+}
+impl<'a> Cascade<'a> {
+    /** Styles every element in document order; parents come before their children. */
+    fn nodes(&mut self, document: &Document, candidate: &mut Document) -> EngineResult<()> {
+        let positions: BTreeMap<usize, usize> = document
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.local_id, index))
+            .collect();
+        for index in 0..candidate.nodes.len() {
+            let parent = document.nodes[index]
+                .parent
+                .and_then(|id| positions.get(&id).copied());
+            if self.parsed.container_rules {
+                self.ancestry = ancestry(candidate, &positions, parent);
+            }
+            let style = self.node(&document.nodes[index], parent, candidate)?;
+            candidate.nodes[index].style = style;
         }
-        resolve(&mut style, chosen, context, &mut candidate.diagnostics)?;
+        self.ancestry.clear();
+        Ok(())
+    }
+    /** Root and body are formatting subjects, never surrogate declarations on actual children. */
+    fn wrappers(&mut self, document: &Document, candidate: &mut Document) -> EngineResult<()> {
+        let formatting = &document.formatting;
+        let (mut html, hides) = self.winning(
+            "html",
+            &formatting.html.attributes,
+            &[],
+            &super::hints::html(&formatting.html.attributes),
+            &|target, tree| {
+                Ok(match target {
+                    Target::Selector(selector) => matches_wrapper(tree, "html", selector),
+                    Target::Mask(compound) => matches_wrapper_compound(tree, "html", compound),
+                })
+            },
+        )?;
+        if html.keys().any(|key| body_box_key(key)) {
+            html.retain(|key, _| !body_box_key(key));
+            note(
+                &mut self.diagnostics,
+                "Root element box styles are not supported.".into(),
+            );
+        }
+        let root = ComputedStyle::default();
+        let mut style = root.clone();
+        direction(&formatting.html.attributes, &mut style);
+        self.resolve(&mut style, &root, html, HTML, false)?;
+        style.interactive &= !hides;
+        style.hidden |= formatting.html.attributes.contains_key("hidden");
+        self.block_wrapper(&mut style);
+        candidate.formatting.html.style = style.clone();
+        // `rem` below the root is relative to the root element's computed font size.
+        super::values::set_root_font(style.font_size);
+        let (body, hides) = self.winning(
+            "body",
+            &formatting.body.attributes,
+            &super::ua::body(),
+            &super::hints::body(&formatting.body.attributes),
+            &|target, tree| {
+                Ok(match target {
+                    Target::Selector(selector) => matches_wrapper(tree, "body", selector),
+                    Target::Mask(compound) => matches_wrapper_compound(tree, "body", compound),
+                })
+            },
+        )?;
+        candidate.formatting.body_box_authored = true;
+        let mut body_style = super::resolve::inherited(&style);
+        direction(&formatting.body.attributes, &mut body_style);
+        self.resolve(&mut body_style, &style, body, BODY, false)?;
+        body_style.interactive &= !hides;
+        body_style.hidden |= formatting.body.attributes.contains_key("hidden");
+        self.block_wrapper(&mut body_style);
+        candidate.formatting.body.style = body_style;
+        Ok(())
+    }
+    /** Wrappers lay out as blocks; other display types are reported and ignored. */
+    fn block_wrapper(&mut self, style: &mut ComputedStyle) {
+        if style.inline || style.display_flex {
+            note(
+                &mut self.diagnostics,
+                "Root and body display types other than block are not supported.".into(),
+            );
+            style.inline = false;
+            style.display_flex = false;
+        }
+    }
+    /** One element's computed style from its parent's. */
+    fn node(
+        &mut self,
+        node: &Node,
+        parent: Option<usize>,
+        candidate: &Document,
+    ) -> EngineResult<ComputedStyle> {
+        let parent_style = parent
+            .map(|index| &candidate.nodes[index].style)
+            .unwrap_or(&candidate.formatting.body.style);
+        let mut style = super::resolve::inherited(parent_style);
+        super::ua::defaults(node, &mut style);
+        direction(&node.attributes, &mut style);
+        let ua = super::ua::declarations(node);
+        let hints = super::hints::hints(node, candidate);
+        let (chosen, hides) = self.winning(
+            &node.tag,
+            &node.attributes,
+            &ua,
+            &hints,
+            &|target, tree| match target {
+                Target::Selector(selector) => matches(tree, node, selector),
+                Target::Mask(compound) => Ok(matches_compound(tree, node, compound)),
+            },
+        )?;
+        let default_link_color = node.href.is_some() && !chosen.contains_key("color");
+        let scope_parent = parent.map_or(BODY, |index| index + FIRST_NODE);
+        let control = ["input", "button", "select", "textarea"].contains(&node.tag.as_str());
+        self.resolve_in(
+            &mut style,
+            parent_style,
+            chosen,
+            Some(scope_parent),
+            control,
+        )?;
         if default_link_color {
             style.color = super::resolve::link_foreground(&style);
         }
-        if style.margin_auto.iter().any(|auto| *auto)
-            && (parent.display_flex
-                || [
-                    "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
-                ]
-                .contains(&node.tag.as_str()))
-        {
-            return Err(unsupported());
-        }
-        style.hidden |= node.attributes.contains_key("hidden")
+        style.interactive &= !hides && !unreachable(&style);
+        self.repair(node, &mut style);
+        let parent_node = parent.map(|index| &candidate.nodes[index]);
+        let summary = parent_node.and_then(|p| self.tree.first_summary(p.local_id));
+        // `inert` subtrees can be seen but never acted on.
+        style.inert |= node.attributes.contains_key("inert");
+        style.interactive &= !style.inert;
+        style.hidden |= super::ua::closed(node, parent_node, summary)
+            || node.attributes.contains_key("hidden")
             || node.tag == "option"
+            || node.tag == "#comment"
             || (node.tag == "input" && node.input_type() == "hidden");
+        // pointer-events:auto re-enables a box under pointer-events:none, as in CSS, but nothing
+        // inside a hidden subtree is ever actionable.
+        style.interactive &= !style.hidden;
+        if self.parsed.pseudo_rules && !style.hidden {
+            let scope = self.scopes.len() - 1;
+            for after in [false, true] {
+                if let Some(generated) = self.generated(node, &style, scope, after)? {
+                    style.generated.push(generated);
+                }
+            }
+        }
         style.validate()?;
-        candidate.nodes[index].style = style;
+        Ok(style)
     }
-    Ok(candidate)
+    /** The element's `::before` or `::after` box, when a rule gives it content. */
+    fn generated(
+        &mut self,
+        node: &Node,
+        element: &ComputedStyle,
+        scope: usize,
+        after: bool,
+    ) -> EngineResult<Option<super::Generated>> {
+        let (mut chosen, _) = self.winning_for(
+            &node.tag,
+            &node.attributes,
+            (&[], &[]),
+            Some(after),
+            &|target, tree| match target {
+                Target::Selector(selector) => matches(tree, node, selector),
+                Target::Mask(_) => Ok(false),
+            },
+        )?;
+        let Some((_, content)) = chosen.remove("content") else {
+            return Ok(None);
+        };
+        let Some(content) = super::content::content(&content, &node.attributes) else {
+            return Ok(None);
+        };
+        chosen.retain(|key, _| !key.starts_with("--"));
+        let mut style = super::resolve::inherited(element);
+        // Generated boxes are inline unless a rule says otherwise.
+        style.inline = true;
+        let resolver = super::compute::Resolver {
+            scopes: &self.scopes,
+            scope,
+            context: self.context,
+            control: false,
+            keyframes: &self.parsed.keyframes,
+        };
+        resolver.resolve(&mut style, element, chosen, &mut self.diagnostics)?;
+        Ok(Some(super::Generated {
+            after,
+            content,
+            style: Box::new(style),
+        }))
+    }
+    /** Unsupported resolved combinations fall back to supported layout instead of refusing. */
+    fn repair(&mut self, node: &Node, style: &mut ComputedStyle) {
+        let table = [
+            "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
+        ];
+        if style.margin_auto.iter().any(|auto| *auto) && table.contains(&node.tag.as_str()) {
+            note(
+                &mut self.diagnostics,
+                "Automatic margins in table layout are ignored.".into(),
+            );
+            style.margin_auto = [false; 4];
+        }
+        if style.display_flex
+            && style.flex_direction == FlexDirection::Column
+            && style.flex_wrap == FlexWrap::Wrap
+        {
+            note(
+                &mut self.diagnostics,
+                "Wrapped flex columns lay out without wrapping.".into(),
+            );
+            style.flex_wrap = FlexWrap::NoWrap;
+        }
+    }
+    /** Wrapper resolution: html has no parent scope, body's is html. */
+    fn resolve(
+        &mut self,
+        style: &mut ComputedStyle,
+        parent: &ComputedStyle,
+        chosen: Chosen,
+        scope: usize,
+        control: bool,
+    ) -> EngineResult<()> {
+        let parent_scope = (scope == BODY).then_some(HTML);
+        self.resolve_in(style, parent, chosen, parent_scope, control)
+    }
+    /** Pushes this element's custom properties, then computes every winning declaration. */
+    fn resolve_in(
+        &mut self,
+        style: &mut ComputedStyle,
+        parent: &ComputedStyle,
+        mut chosen: Chosen,
+        parent_scope: Option<usize>,
+        control: bool,
+    ) -> EngineResult<()> {
+        let custom: BTreeMap<Rc<str>, Rc<str>> = chosen
+            .iter()
+            .filter(|(key, _)| key.starts_with("--"))
+            .map(|(key, (_, value))| (Rc::from(key.as_str()), value.clone()))
+            .collect();
+        chosen.retain(|key, _| !key.starts_with("--"));
+        self.scopes.push(parent_scope, custom);
+        let scope = self.scopes.len() - 1;
+        let resolver = super::compute::Resolver {
+            scopes: &self.scopes,
+            scope,
+            context: self.context,
+            control,
+            keyframes: &self.parsed.keyframes,
+        };
+        let hides = resolver.resolve(style, parent, chosen, &mut self.diagnostics)?;
+        style.interactive &= !hides;
+        Ok(())
+    }
+    /** Each property's cascade winner: UA first, then matching rules, then the style attribute. */
+    fn winning(
+        &mut self,
+        tag: &str,
+        attributes: &BTreeMap<String, String>,
+        ua: &[(&str, &str)],
+        hints: &[(&str, String)],
+        matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
+    ) -> EngineResult<(Chosen, bool)> {
+        self.winning_for(tag, attributes, (ua, hints), None, matcher)
+    }
+    /** Cascade winners for an element (`pseudo` None) or its `::before`/`::after` box. */
+    fn winning_for(
+        &mut self,
+        tag: &str,
+        attributes: &BTreeMap<String, String>,
+        (ua, hints): Defaults<'_>,
+        pseudo: Option<bool>,
+        matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
+    ) -> EngineResult<(Chosen, bool)> {
+        let mut chosen = Chosen::new();
+        let mut hides = false;
+        for (key, value) in ua {
+            choose(
+                &mut chosen,
+                key,
+                value.to_string().into(),
+                (false, false, false, 0, 0),
+            );
+        }
+        // Presentational hints are author-level with zero specificity, so any rule beats them.
+        for (key, value) in hints {
+            choose(
+                &mut chosen,
+                key,
+                value.as_str().into(),
+                (false, true, false, 0, 0),
+            );
+        }
+        for index in self.parsed.buckets.candidates(tag, attributes, pseudo) {
+            if let Some(group) = self.groups.get(index)
+                && !crate::document::shadow::applies(*group, attributes)
+            {
+                continue;
+            }
+            let rule = &self.parsed.rules[index];
+            // A mask demanding ancestors cannot match wrappers that lack them (see Rule).
+            let rootless =
+                (tag == "html" && rule.ancestors >= 1) || (tag == "body" && rule.ancestors >= 2);
+            if rule.pseudo != pseudo || rootless {
+                continue;
+            }
+            self.tree.exhausted.set(false);
+            if !matcher(&rule.target, &self.tree)? {
+                if self.tree.exhausted.get() && rule.hiding && masked(&self.tree, rule, matcher)? {
+                    note(
+                        &mut self.diagnostics,
+                        "A :has() check ran past its budget; its hiding rule masks what it could match.".into(),
+                    );
+                    hides = true;
+                }
+                continue;
+            }
+            if !rule.containers.is_empty() {
+                match self.container_truth(rule) {
+                    Truth::True => {}
+                    Truth::False => continue,
+                    // Undecided, like a dropped `@container`: its hiding rules mask what they match.
+                    Truth::Unknown => {
+                        hides |= rule.hiding;
+                        continue;
+                    }
+                }
+            }
+            hides |= rule.hides;
+            // `:host` and `::slotted()` rules come from an inner tree context, which loses to
+            // the outer context's normal declarations and wins with `!important`.
+            let anchored = self.groups.get(index) == Some(&crate::document::shadow::ANY_GROUP);
+            for (position, declaration) in rule.declarations.iter().enumerate() {
+                let priority = (
+                    declaration.important,
+                    !anchored || declaration.important,
+                    false,
+                    rule.specificity,
+                    source_order(rule.order, position),
+                );
+                choose(
+                    &mut chosen,
+                    &declaration.name,
+                    declaration.value.clone(),
+                    priority,
+                );
+            }
+        }
+        if let Some(inline) = attributes.get("style").filter(|_| pseudo.is_none()) {
+            let block = declaration::block(inline, &mut self.diagnostics);
+            hides |= block.hides;
+            for (position, declaration) in block.declarations.into_iter().enumerate() {
+                let order = source_order(self.parsed.rules.len(), position);
+                let priority = (declaration.important, true, true, 0, order);
+                choose(&mut chosen, &declaration.name, declaration.value, priority);
+            }
+        }
+        Ok((chosen, hides))
+    }
 }
-/** Root and body are formatting subjects, never surrogate declarations on actual children. */
-fn wrappers(
-    document: &Document,
-    candidate: &mut Document,
-    rules: &[Rule],
-    context: RenderContext,
-) -> EngineResult<()> {
-    let html = winning(rules, &document.formatting.html.attributes, |selector| {
-        Ok(matches_wrapper(document, "html", selector))
-    })?;
-    if html.keys().any(|key| body_box_key(key)) {
-        return Err(unsupported());
+impl Cascade<'_> {
+    /** Whether every `@container` query around a matched rule holds for the current element. */
+    fn container_truth(&self, rule: &Rule) -> Truth {
+        rule.containers.iter().fold(Truth::True, |truth, query| {
+            truth.and(query.truth(&self.ancestry, self.widths.as_ref()))
+        })
     }
-    let mut style = ComputedStyle::default();
-    resolve(&mut style, html, context, &mut candidate.diagnostics)?;
-    style.hidden |= document.formatting.html.attributes.contains_key("hidden");
-    if style.inline || style.display_flex {
-        return Err(unsupported());
+}
+/** Size containers among an element's ancestors, nearest first, from their computed styles. */
+fn ancestry(
+    candidate: &Document,
+    positions: &BTreeMap<usize, usize>,
+    parent: Option<usize>,
+) -> Vec<super::container::Ancestor> {
+    let mut found = Vec::new();
+    let mut current = parent;
+    while let Some(index) = current {
+        let node = &candidate.nodes[index];
+        found.extend(super::container::ancestor(node.local_id, &node.style));
+        current = node.parent.and_then(|id| positions.get(&id).copied());
     }
-    candidate.formatting.html.style = style.clone();
-    let body = winning(rules, &document.formatting.body.attributes, |selector| {
-        Ok(matches_wrapper(document, "body", selector))
-    })?;
-    candidate.formatting.body_box_authored = body.keys().any(|key| body_box_key(key));
-    let mut style = super::resolve::inherited(&style);
-    resolve(&mut style, body, context, &mut candidate.diagnostics)?;
-    style.hidden |= document.formatting.body.attributes.contains_key("hidden");
-    if style.inline || style.display_flex {
-        return Err(unsupported());
+    found
+}
+/**
+ * A hiding rule whose `:has()` ran out of budget is undecided, so it acts like a dropped hiding
+ * rule: its subject without `:has()` is a mask, and a match keeps the element from agents.
+ */
+fn masked<'a>(
+    tree: &Tree<'a>,
+    rule: &super::sheet::Rule,
+    matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
+) -> EngineResult<bool> {
+    let Target::Selector(selector) = &rule.target else {
+        return Ok(false);
+    };
+    let subject = super::selector_parse::has_free_subject(selector);
+    matcher(&Target::Mask(subject), tree)
+}
+/** Fail closed: no node, wrapper included, is agent-actionable; people still see the page. */
+fn untrusted(document: &mut Document) {
+    document.formatting.agent_untrusted = true;
+    document.formatting.html.style.interactive = false;
+    document.formatting.body.style.interactive = false;
+    for node in &mut document.nodes {
+        node.style.interactive = false;
     }
-    candidate.formatting.body.style = style;
-    Ok(())
+}
+/** Positioned or shifted far off-screen, or transformed to nothing: hidden from agents. */
+fn unreachable(style: &ComputedStyle) -> bool {
+    let positioned = matches!(style.position, Position::Absolute | Position::Fixed);
+    let far = |value: f64| value <= -OFFSCREEN;
+    let offset = positioned && (style.inset[0].is_some_and(far) || style.inset[3].is_some_and(far));
+    // A negative percentage margin of a whole containing block or more moves the box out of it.
+    let pushed = |side: usize| style.margin_percent[side] <= -super::constants::PERCENT;
+    let shifted = far(style.margin[0]) || far(style.margin[3]) || pushed(0) || pushed(3);
+    let degenerate = style
+        .transform
+        .is_some_and(|[a, b, c, d, e, f]| (a * d - b * c).abs() < f64::EPSILON || far(e) || far(f));
+    offset || shifted || degenerate
 }
 /** Only winning body box declarations opt into authored geometry. */
 fn body_box_key(key: &str) -> bool {
     key.starts_with("margin-")
         || key.starts_with("padding-")
-        || ["border", "border-width", "border-color", "border-style"].contains(&key)
+        || key.starts_with("border-")
+            && super::border::longhand(key).is_some_and(|(_, p)| p == "width")
         || ["width", "min-width", "max-width", "box-sizing"].contains(&key)
 }
-/** Existing native defaults remain separate from inherited author properties. */
-fn defaults(node: &Node, style: &mut ComputedStyle) {
-    style.inline = [
-        "span", "a", "strong", "em", "b", "i", "small", "code", "#text", "img",
-    ]
-    .contains(&node.tag.as_str());
-    style.bold |= ["strong", "b", "h1", "h2", "h3", "th"].contains(&node.tag.as_str());
-    if let Some((_, size)) = [("h1", 28.0), ("h2", 22.0), ("h3", 18.0)]
-        .iter()
-        .find(|(tag, _)| *tag == node.tag)
+/** An explicit `dir` sets the inherited base direction; other values keep the parent's. */
+fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
+    // ponytail: `dir=auto` inherits instead of running first-strong detection; add it with bidi.
+    match attributes
+        .get("dir")
+        .map(|dir| dir.to_ascii_lowercase())
+        .as_deref()
     {
-        style.font_size = *size;
+        Some("rtl") => style.rtl = true,
+        Some("ltr") => style.rtl = false,
+        _ => {}
     }
 }
-/** Each longhand has one cascade winner before dependent values are resolved. */
-fn winning(
-    rules: &[Rule],
-    attributes: &BTreeMap<String, String>,
-    matches: impl Fn(&str) -> EngineResult<bool>,
-) -> EngineResult<BTreeMap<String, (Priority, String)>> {
-    let mut chosen = BTreeMap::new();
-    for rule in rules {
-        if matches(&rule.selector)? {
-            for (key, value, important) in &rule.declarations {
-                choose(
-                    &mut chosen,
-                    key,
-                    value,
-                    (*important, false, rule.specificity, rule.order),
-                );
-            }
-        }
-    }
-    if let Some(inline) = attributes.get("style") {
-        for (key, value, important) in declarations(inline)? {
-            choose(&mut chosen, &key, &value, (important, true, 0, rules.len()));
-        }
-    }
-    Ok(chosen)
+/// Declarations one rule orders among themselves; later ones share the last position.
+const RULE_DECLARATIONS: usize = 1 << 16;
+/**
+ * Source order of a declaration: its rule's, then its place in the rule, so a logical and a
+ * physical spelling of one side in the same rule resolve by which came last.
+ */
+fn source_order(rule: usize, position: usize) -> usize {
+    rule.saturating_mul(RULE_DECLARATIONS)
+        .saturating_add(position.min(RULE_DECLARATIONS - 1))
 }
-/** Font and scheme dependencies precede geometry, line height and light-dark color conversion. */
-fn resolve(
-    style: &mut ComputedStyle,
-    mut chosen: BTreeMap<String, (Priority, String)>,
-    context: RenderContext,
-    diagnostics: &mut Vec<String>,
-) -> EngineResult<()> {
-    for key in ["font-size", "color-scheme"] {
-        if let Some((_, value)) = chosen.remove(key) {
-            apply(style, key, &value, context, diagnostics)?;
-        }
-    }
-    style.used_scheme = super::resolve::used_scheme(style.color_scheme, context.appearance);
-    for (key, (_, value)) in chosen {
-        apply(style, &key, &value, context, diagnostics)?;
-    }
-    if style.color.is_none()
-        && style
-            .background
-            .as_deref()
-            .is_some_and(|color| color != "transparent")
-    {
-        style.color = Some(
-            match style.used_scheme {
-                crate::document::Appearance::Light => "#000000",
-                crate::document::Appearance::Dark => "#ffffff",
-            }
-            .into(),
-        );
-    }
-    style.validate()
-}
-/** A stronger declaration wins without depending on iteration of a hash table. */
-fn choose(
-    chosen: &mut BTreeMap<String, (Priority, String)>,
-    key: &str,
-    value: &str,
-    priority: Priority,
-) {
+/** A stronger or equal later declaration wins without depending on hash iteration. */
+pub(super) fn choose(chosen: &mut Chosen, key: &str, value: Rc<str>, priority: Priority) {
     if chosen
         .get(key)
         .is_none_or(|(previous, _)| priority >= *previous)
     {
-        chosen.insert(key.into(), (priority, value.into()));
+        chosen.insert(key.into(), (priority, value));
     }
 }

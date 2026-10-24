@@ -2,7 +2,7 @@
 use super::*;
 use mars::{
     document::{parse, script_document},
-    v9::{HostKind, HostRef, JsValue, StorageState, load_document_scripts},
+    v9::{JsValue, StorageState, load_document_scripts},
 };
 
 /** Equal aliases, separate allocations and cross-brand references never compare by their contents. */
@@ -45,41 +45,20 @@ fn projected_hosts_compare_aliases_brands_and_nullish_values() {
     let executed =
         load_document_scripts(&[source.into()], document, StorageState::default()).unwrap();
     assert_eq!(
-        executed.changes[0].text,
+        executed.changes[0].text().unwrap(),
         "true false false false false false false true"
     );
 }
 
-/** Equal numeric IDs in distinct arenas or host brands cannot manufacture a shared identity. */
+/** Distinct object identities never compare equal; one identity always equals itself. */
 #[test]
-fn public_value_fast_paths_keep_arena_document_and_host_brand_identity_separate() {
+fn public_value_fast_paths_keep_object_identity_separate() {
     let object = JsValue::Object(7);
-    let function = JsValue::Function(7);
-    let element = host("page-a", HostKind::Element { local_id: 7 });
-    let event = host("page-a", HostKind::Event { id: 7 });
-    for (left, right) in [
-        (&object, &function),
-        (&object, &element),
-        (&function, &event),
-        (&element, &event),
-    ] {
-        assert!(!left.abstract_equal(right).unwrap());
-        assert!(!right.abstract_equal(left).unwrap());
-    }
-    assert!(element.abstract_equal(&element.clone()).unwrap());
-    assert!(
-        !element
-            .abstract_equal(&host("page-b", HostKind::Element { local_id: 7 }))
-            .unwrap()
-    );
-}
-
-/** Host identities remain plain scoped data; this test does not project or grant them native access. */
-fn host(document: &str, kind: HostKind) -> JsValue {
-    JsValue::Host(HostRef {
-        document: document.into(),
-        kind,
-    })
+    let other = JsValue::Object(8);
+    assert!(!object.abstract_equal(&other).unwrap());
+    assert!(!other.abstract_equal(&object).unwrap());
+    assert!(object.abstract_equal(&object.clone()).unwrap());
+    assert!(!object.abstract_equal(&JsValue::Null).unwrap());
 }
 
 /** Retained object and callable aliases preserve their comparison meaning across private serialization. */
@@ -90,5 +69,5 @@ fn serialized_event_state_retains_object_and_callable_aliases() {
         serde_json::from_value(serde_json::to_value(load(source, &[]).unwrap().state).unwrap())
             .unwrap();
     let executed = mars::v9::event(source, "check()", state, &[]).unwrap();
-    assert_eq!(executed.changes[0].text, "true true true");
+    assert_eq!(executed.changes[0].text().unwrap(), "true true true");
 }

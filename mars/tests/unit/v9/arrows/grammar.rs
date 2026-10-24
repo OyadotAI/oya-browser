@@ -70,21 +70,27 @@ fn invalid_and_duplicate_heads_are_early_errors() {
             "{source}"
         );
     }
-    for source in [
-        "const f=(x=1)=>x;",
-        "const f=(...x)=>x;",
-        "const f=([x])=>x;",
-        "const f=({x})=>x;",
-        "const f=async x=>x;",
-        "const f=async(x)=>x;",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
 }
+
+/** Defaults, rest, destructuring and async heads are ordinary arrow parameters. */
+#[test]
+fn default_rest_destructuring_and_async_heads_run() {
+    assert_eq!(
+        result(
+            "const f=(x=1)=>x,g=(...x)=>x.length,h=([x])=>x,i=({x})=>x;",
+            "[f(),g(1,2),h([3]),i({x:4})].join()"
+        ),
+        "1,2,3,4"
+    );
+    assert_eq!(
+        result(
+            "const f=async x=>x,g=async(x)=>x;",
+            "typeof f(1).then+typeof g(1).then"
+        ),
+        "functionfunction"
+    );
+}
+
 /** All JavaScript line terminators and multiline comments participate in the no-line-break arrow rule. */
 #[test]
 fn line_breaks_before_arrow_are_forbidden_and_after_arrow_are_allowed() {
@@ -94,12 +100,8 @@ fn line_breaks_before_arrow_are_forbidden_and_after_arrow_are_allowed() {
         for head in ["x", "(x)", "()"] {
             let source = format!("const f={head}{separator}=>1;");
             let error = execute(&source).unwrap_err();
-            assert_eq!(error.code, "script_syntax_error");
-            assert!(
-                error
-                    .message
-                    .contains("line break is not allowed before =>")
-            );
+            assert_eq!(error.code, "script_syntax_error", "{source:?}");
+            assert_eq!(error.phase.as_deref(), Some("parse"), "{source:?}");
         }
     }
     assert_eq!(result("const f=x/*same line*/=>\nx+1;", "f(3)"), "4");

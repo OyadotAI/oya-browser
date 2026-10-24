@@ -10,6 +10,12 @@ use std::collections::BTreeMap;
 pub fn validate_content(document: &Document) -> EngineResult<()> {
     validate_structure(document)?;
     validate_text(&document.title)?;
+    if document.csp.len() > super::CSP_POLICIES {
+        return Err(EngineError::limit("meta policies", super::CSP_POLICIES));
+    }
+    for policy in &document.csp {
+        validate_text(policy)?;
+    }
     for wrapper in [&document.formatting.html, &document.formatting.body] {
         for value in wrapper.attributes.values() {
             validate_text(value)?;
@@ -20,7 +26,7 @@ pub fn validate_content(document: &Document) -> EngineResult<()> {
         validate_node(node)?;
         total = add_static_bytes(total, node.text.len())?;
     }
-    validate_control_labels(document)
+    Ok(())
 }
 
 /** Parent-before-child ordering and bounded ancestry prevent forged cycles before label traversal. */
@@ -74,16 +80,20 @@ fn validate_node(node: &Node) -> EngineResult<()> {
 
 /** The byte length is checked before parser appends allocate the combined source text. */
 pub(super) fn validate_node_text(node: &Node, bytes: usize) -> EngineResult<()> {
-    let limit = if ["input", "textarea", "select", "button", "option"].contains(&node.tag.as_str())
-    {
-        crate::constants::TEXT_BYTES
-    } else {
-        STATIC_TEXT_NODE_BYTES
-    };
+    let limit = text_limit(node);
     if bytes > limit {
         return Err(EngineError::limit("node text bytes", limit));
     }
     Ok(())
+}
+
+/** Control text stays small for native widgets; static text has the larger per-node allowance. */
+pub(super) fn text_limit(node: &Node) -> usize {
+    if ["input", "textarea", "select", "button", "option"].contains(&node.tag.as_str()) {
+        crate::constants::TEXT_BYTES
+    } else {
+        STATIC_TEXT_NODE_BYTES
+    }
 }
 
 /** Checked aggregate arithmetic counts stored text once, without duplicated derived labels. */
@@ -92,33 +102,4 @@ pub(super) fn add_static_bytes(total: usize, bytes: usize) -> EngineResult<usize
         .checked_add(bytes)
         .filter(|total| *total <= STATIC_TEXT_TOTAL_BYTES)
         .ok_or_else(|| EngineError::limit("document text bytes", STATIC_TEXT_TOTAL_BYTES))
-}
-
-/** Descendant captions and associated labels are bounded before native control construction. */
-fn validate_control_labels(document: &Document) -> EngineResult<()> {
-    for node in &document.nodes {
-        if ["input", "textarea", "select", "button", "option"].contains(&node.tag.as_str()) {
-            validate_text(&super::label(document, node))?;
-            if ["button", "option"].contains(&node.tag.as_str()) {
-                validate_text(&caption(document, node))?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/** Caption extraction follows only validated ancestry and omits unrelated editable field values. */
-fn caption(document: &Document, node: &Node) -> String {
-    let mut text = node.text.clone();
-    for child in document
-        .nodes
-        .iter()
-        .filter(|child| child.parent == Some(node.local_id))
-    {
-        if !["input", "textarea", "select", "button"].contains(&child.tag.as_str()) {
-            text.push(' ');
-            text.push_str(&caption(document, child));
-        }
-    }
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

@@ -1483,7 +1483,8 @@ fn input_and_v9_events_change_the_same_visible_document() {
         "revision_conflict"
     );
 }
-/** Typed values survive both private service messages and a failed later event transaction. */
+/** Typed values survive private service messages; a handler that throws keeps the writes made
+before the throw, as a browser does, and the inspection, layout and console agree on them. */
 #[test]
 fn source_guided_arithmetic_reaches_visible_layout_without_partial_publication() {
     let source = "<p id=out>Initial</p><button id=calculate onclick='calculate(4,7)'>Calculate</button><button id=fail onclick='fail()'>Fail</button><script>const model={values:[2,3]};function sum(a,b){return a+b;}let total=sum(model.values[0],model.values[1])+9;model.values[0]=total;document.getElementById('out').textContent='Ready: '+model.values[0];function calculate(a,b){let next=sum(a,b);if(next>10){model.values[0]=next;}else{model.values[0]=10;}document.getElementById('out').textContent=model.values[0]+model.values.length;return model.values[0];}function fail(){model.values[0]=99;document.getElementById('out').textContent='partial';missing();}</script>";
@@ -1502,13 +1503,25 @@ fn source_guided_arithmetic_reaches_visible_layout_without_partial_publication()
     let layout = call(&mut runtime, "page.layout", json!({}), 1).unwrap();
     assert_eq!(layout["items"][0]["lines"][0]["text"], "13");
     assert_eq!(updated["revision"], 2);
-    let error = call(&mut runtime, "page.click", target(&updated, "fail"), 1).unwrap_err();
-    assert_eq!(error.code, "script_execution_error");
-    assert!(error.location.is_some());
+    let failed = call(&mut runtime, "page.click", target(&updated, "fail"), 1).unwrap();
+    assert_eq!(failed["nodes"][0]["text"], "partial");
+    assert_eq!(failed["revision"], 3);
+    assert_console_reports(&mut runtime, "ReferenceError", "missing");
     assert_eq!(
         call(&mut runtime, "page.inspect", json!({}), 1).unwrap(),
-        updated
+        failed
     );
+    let layout = call(&mut runtime, "page.layout", json!({}), 1).unwrap();
+    assert_eq!(layout["items"][0]["lines"][0]["text"], "partial");
+}
+
+/** The console holds one uncaught-error entry naming the error class and its cause. */
+fn assert_console_reports(runtime: &mut Runtime, class: &str, cause: &str) {
+    let console = call(runtime, "page.console", json!({}), 1).unwrap();
+    let entries = console["entries"].to_string();
+    assert!(entries.contains("Uncaught"), "{entries}");
+    assert!(entries.contains(class), "{entries}");
+    assert!(entries.contains(cause), "{entries}");
 }
 
 /** Ordered external and inline classic scripts share one candidate and native event program. */
@@ -1542,6 +1555,7 @@ fn ordered_classic_scripts_load_events_and_fail_atomically() {
     .unwrap();
     assert_eq!(node(&inline, "out")["text"], "8");
 
+    // A failing, mistyped, missing or redirected script stops only itself; the page commits.
     for path in [
         "later-failure",
         "wrong-mime",
@@ -1549,35 +1563,25 @@ fn ordered_classic_scripts_load_events_and_fail_atomically() {
         "missing-script",
         "redirect-script",
     ] {
-        let before = call(&mut runtime, "page.inspect", json!({}), 1).unwrap();
         let requests = fixture.requests.load(Ordering::Relaxed);
-        let error = call(
+        let page = call(
             &mut runtime,
             "page.navigate",
             json!({"url":format!("{}/{path}", fixture.url)}),
             1,
         )
-        .unwrap_err();
-        assert!(error.previous_page_retained, "{path}: {error:?}");
-        assert!(error.retryable, "{path}: safe GET can be retried");
-        assert_eq!(
-            call(&mut runtime, "page.inspect", json!({}), 1).unwrap(),
-            before
-        );
+        .unwrap();
+        assert_eq!(page["degraded"], json!(["scripts"]), "{path}");
+        let diagnostics = page["diagnostics"].to_string();
+        assert!(diagnostics.contains("did not run"), "{path}: {diagnostics}");
         if path == "later-failure" {
-            assert_eq!(
-                error
-                    .location
-                    .as_deref()
-                    .and_then(|location| location.script_index),
-                Some(2)
-            );
+            assert!(diagnostics.contains("Script 2 "), "{diagnostics}");
         }
         if path == "redirect-script" {
             assert_eq!(fixture.requests.load(Ordering::Relaxed) - requests, 2);
         }
         if path == "wrong-query" {
-            assert!(!error.message.contains("private-test"));
+            assert!(!diagnostics.contains("private-test"));
         }
     }
     assert_eq!(original["page_id"], "page-1");
@@ -1637,7 +1641,21 @@ fn static_images_paint_with_inspectable_bounds_and_alt_fallback() {
                     .is_some_and(|lines| !lines.is_empty())
         })
         .collect::<Vec<_>>();
-    assert!(siblings.iter().any(|item| item["y"] == inline_item["y"]));
+    // The image sits on the baseline of the text line it shares, inside that line's extent.
+    let (top, bottom) = (
+        inline_item["y"].as_f64().unwrap(),
+        inline_item["y"].as_f64().unwrap() + inline_item["height"].as_f64().unwrap(),
+    );
+    assert!(
+        siblings.iter().any(|item| {
+            let (y, height) = (
+                item["y"].as_f64().unwrap(),
+                item["height"].as_f64().unwrap(),
+            );
+            y <= top && bottom <= y + height
+        }),
+        "{inline_item} not inside any text line of {siblings:?}"
+    );
     let missing = call(
         &mut runtime,
         "page.navigate",
@@ -1649,7 +1667,7 @@ fn static_images_paint_with_inspectable_bounds_and_alt_fallback() {
     assert!(runtime.snapshot().images.is_empty());
 }
 
-/** Static table grids expose headers and identical human/agent cell geometry. */
+/** Static table grids expose headers and identical human/agent cell geometry; misplaced table parts still read. */
 #[test]
 fn tables_render_bounded_cells_and_header_relationships() {
     let fixture = Fixture::pages();
@@ -1691,18 +1709,31 @@ fn tables_render_bounded_cells_and_header_relationships() {
     assert!(narrow.display.as_ref().unwrap().height >= wide.height);
     let coffee = node(&page, "coffee-amount");
     assert!(coffee["bounds"]["width"].as_f64().unwrap() >= 136.0);
-    let retained = call(&mut runtime, "page.inspect", json!({}), 1).unwrap();
-    let bad = call(
+    let orphan = call(
         &mut runtime,
         "page.navigate",
         json!({"url":format!("{}/bad-table", fixture.url)}),
         1,
     )
-    .unwrap_err();
-    assert!(bad.previous_page_retained);
-    assert_eq!(
-        call(&mut runtime, "page.inspect", json!({}), 1).unwrap(),
-        retained
+    .unwrap();
+    let text = orphan["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| value["text"] == "Orphan")
+        .unwrap();
+    assert!(text["bounds"]["width"].as_f64().unwrap() > 0.0);
+    assert!(
+        orphan["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value
+                .as_str()
+                .unwrap()
+                .contains("table part outside any table")),
+        "{}",
+        orphan["diagnostics"]
     );
     let hidden = call(
         &mut runtime,
@@ -1758,10 +1789,11 @@ fn node(page: &Value, id: &str) -> Value {
         .unwrap()
         .clone()
 }
-/** Binding, heap, storage and DOM proposals pass through the same native transaction. */
+/** Binding, heap, storage and DOM proposals pass through the same native transaction: a thrown
+handler commits what it wrote before throwing, while an engine limit rolls every domain back. */
 #[test]
 fn counter_branches_and_failed_heap_storage_candidates_share_one_native_commit() {
-    let source = "<p id=count>0</p><p id=branch>Keep going.</p><button id=add onclick='add()'>Add one</button><button id=fail onclick='fail()'>Fail</button><button id=show onclick='show()'>Show committed state</button><script>let count=0;const target=3;const model={last:0};function show(){document.getElementById('count').textContent=count+' '+model.last+' '+window.sessionStorage.getItem('count');}function add(){count=count+1;model.last=count;window.sessionStorage.setItem('count',count);show();if(count>=target){document.getElementById('branch').textContent='Target reached.';}}function fail(){count=99;model.last=99;window.sessionStorage.setItem('count',99);show();target=9;}</script>";
+    let source = "<p id=count>0</p><p id=branch>Keep going.</p><button id=add onclick='add()'>Add one</button><button id=fail onclick='fail()'>Fail</button><button id=hang onclick='hang()'>Hang</button><button id=show onclick='show()'>Show committed state</button><script>let count=0;const target=3;const model={last:0};function show(){document.getElementById('count').textContent=count+' '+model.last+' '+window.sessionStorage.getItem('count');}function add(){count=count+1;model.last=count;window.sessionStorage.setItem('count',count);show();if(count>=target){document.getElementById('branch').textContent='Target reached.';}}function fail(){count=99;model.last=99;window.sessionStorage.setItem('count',99);show();target=9;}function hang(){count=5;model.last=5;window.sessionStorage.setItem('count',5);show();while(true){}}</script>";
     let fixture = Fixture::raw(
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{source}",
@@ -1777,14 +1809,21 @@ fn counter_branches_and_failed_heap_storage_candidates_share_one_native_commit()
     }
     assert_eq!(page["nodes"][1]["text"], "Target reached.");
     let before = page.clone();
-    let error = call(&mut runtime, "page.click", target(&page, "fail"), 1).unwrap_err();
-    assert_eq!(error.code, "script_execution_error");
+    let failed = call(&mut runtime, "page.click", target(&page, "fail"), 1).unwrap();
+    assert_eq!(failed["nodes"][0]["text"], "99 99 99");
+    assert_console_reports(&mut runtime, "TypeError", "constant");
     assert_eq!(
         call(&mut runtime, "page.inspect", json!({}), 1).unwrap(),
-        before
+        failed
     );
-    let after = call(&mut runtime, "page.click", target(&before, "show"), 1).unwrap();
-    assert_eq!(after["nodes"][0]["text"], "3 3 3");
+    let error = call(&mut runtime, "page.click", target(&failed, "hang"), 1).unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert_eq!(
+        call(&mut runtime, "page.inspect", json!({}), 1).unwrap(),
+        failed
+    );
+    let after = call(&mut runtime, "page.click", target(&failed, "show"), 1).unwrap();
+    assert_eq!(after["nodes"][0]["text"], "99 99 99");
     assert_eq!(
         call(&mut runtime, "page.click", target(&before, "add"), 1)
             .unwrap_err()
@@ -1792,9 +1831,10 @@ fn counter_branches_and_failed_heap_storage_candidates_share_one_native_commit()
         "revision_conflict"
     );
     let layout = call(&mut runtime, "page.layout", json!({}), 1).unwrap();
-    assert_eq!(layout["items"][0]["lines"][0]["text"], "3 3 3");
+    assert_eq!(layout["items"][0]["lines"][0]["text"], "99 99 99");
 }
-/** Standard-for execution reaches native layout and update failure rolls back all state domains. */
+/** Standard-for execution reaches native layout; a throw mid-loop keeps the iteration's writes
+across every state domain and reports the error to the console. */
 #[test]
 fn standard_for_sum_events_and_failed_updates_share_the_visible_transaction() {
     let source = "<p id=out>Initial</p><button id=add onclick='add()'>Add one</button><button id=fail onclick='fail()'>Fail</button><button id=show onclick='show()'>Show</button><script>let count=0;const model={sum:0};function add(){count=count+1;let sum=0;for(let i=1;i<=count;i=i+1){sum=sum+i;}model.sum=sum;window.sessionStorage.setItem('sum',sum);document.getElementById('out').textContent=count+' '+sum;}function fail(){for(let i=0;i<1;i=missing){count=99;model.sum=99;window.sessionStorage.setItem('sum',99);document.getElementById('out').textContent='partial';}}function show(){document.getElementById('out').textContent=count+' '+model.sum+' '+window.sessionStorage.getItem('sum');}</script>";
@@ -1811,21 +1851,18 @@ fn standard_for_sum_events_and_failed_updates_share_the_visible_transaction() {
         page = call(&mut runtime, "page.click", target(&page, "add"), 1).unwrap();
         assert_eq!(page["nodes"][0]["text"], format!("{count} {sum}"));
     }
-    assert_eq!(
-        call(&mut runtime, "page.click", target(&page, "fail"), 1)
-            .unwrap_err()
-            .code,
-        "script_execution_error"
-    );
+    let failed = call(&mut runtime, "page.click", target(&page, "fail"), 1).unwrap();
+    assert_eq!(failed["nodes"][0]["text"], "partial");
+    assert_console_reports(&mut runtime, "ReferenceError", "missing");
     assert_eq!(
         call(&mut runtime, "page.inspect", json!({}), 1).unwrap(),
-        page
+        failed
     );
-    let shown = call(&mut runtime, "page.click", target(&page, "show"), 1).unwrap();
-    assert_eq!(shown["nodes"][0]["text"], "4 10 10");
+    let shown = call(&mut runtime, "page.click", target(&failed, "show"), 1).unwrap();
+    assert_eq!(shown["nodes"][0]["text"], "99 99 99");
     assert_eq!(
         call(&mut runtime, "page.layout", json!({}), 1).unwrap()["items"][0]["lines"][0]["text"],
-        "4 10 10"
+        "99 99 99"
     );
 }
 /** Resize and scrolling update presentation while page identities and revisions stay stable. */

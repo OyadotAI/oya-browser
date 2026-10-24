@@ -1,8 +1,5 @@
 /** Owned block and inline formatting lays out native controls and literal shaped text. */
-pub(super) use super::{
-    BLOCK_GAP, CONTENT_WIDTH, CONTROL_HEIGHT, DisplayItem, MARGIN, PaintLine, TABLE_MIN_ROW_HEIGHT,
-    TABLE_PADDING,
-};
+pub(super) use super::{CONTENT_WIDTH, DisplayItem, MARGIN, PaintLine};
 pub(super) use crate::{
     document::{Document, Node},
     protocol::{EngineError, EngineResult},
@@ -16,6 +13,25 @@ pub(super) struct Flow {
     pub cursor: f64,
     pub line: f64,
     pub bottom: f64,
+    /** The adjoining bottom (or parent top) margin already counted in `y`, which the next block collapses with. */
+    pub collapsible: f64,
+    /** Fragments on the current line, aligned when it finishes. */
+    pub frags: Vec<super::line::Frag>,
+    /** Finished lines whose offsets `settle` still has to apply. */
+    pub finished: Vec<super::line::Finished>,
+    /** The containing block's own font metrics, part of every line. */
+    pub strut: Option<super::line::Strut>,
+    /** The containing block's text-align. */
+    pub align: super::line::Align,
+    /** Floats of this block formatting context that can still shorten lines. */
+    pub floats: Vec<super::float::FloatBox>,
+    /** Lowest bottom of floats pruned from `floats`, still honored by clearance. */
+    pub cleared: Option<f64>,
+    /** Definite content height of the containing block, for percentage heights. */
+    pub definite: Option<f64>,
+    /** Whether a space separates the next run: Some(true) after trailing whitespace, Some(false)
+     * right after text, None after an element closed, where the parser dropped any whitespace-only text. */
+    pub space: Option<bool>,
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -27,23 +43,96 @@ impl Flow {
             cursor: 0.0,
             line: 0.0,
             bottom: y,
+            collapsible: 0.0,
+            frags: Vec::new(),
+            finished: Vec::new(),
+            strut: None,
+            align: super::line::Align::Left,
+            floats: Vec::new(),
+            cleared: None,
+            definite: None,
+            space: Some(false),
         }
     }
-    /** A completed line advances only by the largest participating font. */
+    /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
+    pub fn nested(&self, x: f64, y: f64, width: f64, fresh: bool) -> Self {
+        let mut inner = Self::new(x, y, width);
+        if !fresh {
+            inner.floats = self.floats.clone();
+            inner.cleared = self.cleared;
+        }
+        inner
+    }
+    /** Records a fragment placed on the current line. */
+    pub fn push(&mut self, frag: super::line::Frag) {
+        self.frags.push(frag);
+    }
+    /** The top of a block whose top margin collapses with the margin already counted above it. */
+    pub fn block_top(&self, margin: f64) -> f64 {
+        self.y - self.collapsible + collapse(self.collapsible, margin)
+    }
+    /** Advances past a block and remembers its bottom margin for collapsing with the next one. */
+    pub fn after_block(&mut self, bottom: f64, margin: f64) {
+        self.y = bottom + margin;
+        self.collapsible = margin;
+        self.bottom = self.bottom.max(self.y);
+    }
+    /** A completed line advances by its baseline-aligned height. */
     pub fn newline(&mut self) {
-        if self.cursor > 0.0 || self.line > 0.0 {
-            self.y += self.line;
+        if self.cursor > 0.0 || self.line > 0.0 || !self.frags.is_empty() {
+            let aligned = super::line::finish(self);
+            self.y += self.line.max(aligned);
             self.bottom = self.bottom.max(self.y);
+            self.collapsible = 0.0;
         }
         self.cursor = 0.0;
         self.line = 0.0;
+        self.space = Some(false);
     }
 }
-/** Top-level children share a virtual body formatting context and one request budget. */
+/** CSS 2.1 margin collapsing: the largest positive margin plus the most negative one. */
+pub(super) fn collapse(a: f64, b: f64) -> f64 {
+    a.max(b).max(0.0) + a.min(b).min(0.0)
+}
+/** Items, document height, body decoration, and whether a bound cut layout short. */
+pub(super) type Laid = (
+    Vec<DisplayItem>,
+    f64,
+    Option<super::DisplayDecoration>,
+    bool,
+);
+/**
+ * Percentage paddings and margins resolve against their containing block's width, which only a
+ * layout knows: a first layout measures those widths, the percentages become pixels, and a
+ * second layout uses them. Bounded to that one extra pass; pages without them lay out once.
+ */
 pub(super) fn layout(
     document: &Document,
     presentation: crate::document::RenderContext,
-) -> EngineResult<(Vec<DisplayItem>, f64, Option<super::DisplayDecoration>)> {
+) -> EngineResult<Laid> {
+    // The page's loaded fonts must be on this thread before any run is measured.
+    crate::document::style::install_fonts(&document.formatting);
+    let body = super::sizing::has_percent_sides(&document.formatting.body.style);
+    let nodes = document
+        .nodes
+        .iter()
+        .any(|node| super::sizing::has_percent_sides(&node.style));
+    if !body && !nodes {
+        return layout_once(document, presentation);
+    }
+    let items = if nodes {
+        layout_once(document, presentation)?.0
+    } else {
+        Vec::new()
+    };
+    let resolved = super::sizing::resolve_percent_sides(document, &items, presentation.width);
+    layout_once(&resolved, presentation)
+}
+/** Top-level children share a virtual body formatting context and one request budget. */
+fn layout_once(
+    document: &Document,
+    presentation: crate::document::RenderContext,
+) -> EngineResult<Laid> {
     let mut context = LayoutContext::new(document)?;
     let mut items = Vec::new();
     let body = &document.formatting.body.style;
@@ -58,12 +147,60 @@ pub(super) fn layout(
         )
     };
     let mut flow = Flow::new(x, y, width);
+    flow.strut = Some(strut(body));
+    flow.align = alignment(body);
+    flow.definite = body
+        .height
+        .and_then(|height| height.resolve_size(Some(presentation.height)))
+        .map(|height| super::sizing::content_height(body, height));
+    if authored && body.padding[0] == 0.0 && super::sizing::border_sides(body)[0] == 0.0 {
+        // The body's top margin collapses with its first child's, as in Chromium.
+        flow.collapsible = body.margin[0];
+    }
     if !body.hidden {
+        let mut run = None;
         for node in document.nodes.iter().filter(|node| node.parent.is_none()) {
-            node_layout(&mut context, node, &mut flow, &mut items, None)?;
+            if !inline_level(node) {
+                root_line(&mut context, &mut flow, &mut items, run.take())?;
+            } else if run.is_none() {
+                run = Some(items.len());
+            }
+            // A page past the work bound keeps what was laid out instead of being refused.
+            if let Err(error) = node_layout(&mut context, node, &mut flow, &mut items, None) {
+                if !context.exhausted() {
+                    return Err(error);
+                }
+                break;
+            }
         }
+        if context.exhausted() {
+            context.reserve();
+            run = None;
+        }
+        root_line(&mut context, &mut flow, &mut items, run)?;
     }
     flow.newline();
+    super::line::settle(&mut context, &mut flow, &mut items, 0)?;
+    flow.bottom = flow.bottom.max(flow.floats_bottom());
+    let truncated = context.exhausted();
+    let positioned = match super::positioned::place(
+        &mut context,
+        &mut items,
+        (presentation.width, presentation.height),
+    ) {
+        Ok(bottom) => bottom,
+        Err(_) if context.exhausted() => 0.0,
+        Err(error) => return Err(error),
+    };
+    flow.bottom = flow.bottom.max(positioned);
+    if truncated {
+        let painted = items
+            .iter()
+            .map(|item| item.y + item.height)
+            .filter(|bottom| bottom.is_finite())
+            .fold(0.0, f64::max);
+        flow.bottom = flow.bottom.max(painted);
+    }
     let bottom = if authored {
         body.padding[2] + body.border + body.margin[2]
     } else {
@@ -71,7 +208,37 @@ pub(super) fn layout(
     };
     let height = flow.bottom.max(flow.y) + bottom;
     let decoration = super::body::decoration(document, x, y, width, height - body.margin[2]);
-    Ok((items, height, decoration))
+    Ok((items, height, decoration, context.exhausted()))
+}
+/** Consecutive root-level inline nodes share one anonymous body line, aligned like body text. */
+fn root_line(
+    context: &mut LayoutContext<'_>,
+    flow: &mut Flow,
+    items: &mut [DisplayItem],
+    run: Option<usize>,
+) -> EngineResult<()> {
+    if run.is_none() {
+        return Ok(());
+    }
+    flow.newline();
+    super::line::settle(context, flow, items, 0)
+}
+/** The font metrics every line of a block includes. */
+pub(super) fn strut(style: &crate::document::ComputedStyle) -> super::line::Strut {
+    super::line::Strut {
+        ascent: super::sizing::text_ascent(style),
+        height: super::sizing::advance(style),
+        font: style.font_size,
+    }
+}
+/** text-align resolved against the base direction; justify lays out as start. */
+pub(super) fn alignment(style: &crate::document::ComputedStyle) -> super::line::Align {
+    use super::line::Align;
+    match (style.align.as_str(), style.rtl) {
+        ("center" | "webkit-center", _) => Align::Center,
+        ("right", _) | ("start", true) | ("end", false) => Align::Right,
+        _ => Align::Left,
+    }
 }
 /** Forced flex border boxes bypass authored sizing, while ordinary flow preserves its cursor. */
 pub(super) fn node_layout(
@@ -85,29 +252,62 @@ pub(super) fn node_layout(
     if node.hidden() {
         return Ok(());
     }
+    if forced.is_none() && out_of_flow(node) {
+        let position = if flow.cursor > 0.0 && !inline_level(node) {
+            (flow.x, flow.y + flow.line)
+        } else {
+            (flow.left() + flow.cursor, flow.y)
+        };
+        context.defer(node.local_id, position);
+        return Ok(());
+    }
+    if forced.is_none() && node.style.float != crate::document::style::Float::None {
+        return super::float::float(context, node, flow, items);
+    }
     if node.tag == "br" {
-        flow.line = flow
-            .line
-            .max(node.style.line_height.used(node.style.font_size));
+        flow.line = flow.line.max(super::sizing::advance(&node.style));
         flow.newline();
         return Ok(());
     }
     if node.tag == "img" {
         return super::image::image(context, node, flow, items, forced);
     }
+    if node.tag == "svg" {
+        return super::svg::svg(context, node, flow, items, forced);
+    }
     if node.tag == "table" {
-        return super::table::table(context, node, flow, items);
+        return super::table::table(context, node, flow, items, forced);
+    }
+    if super::control::has_content(context, node) {
+        return super::control::content_box(context, node, flow, items, forced);
     }
     if ["input", "button", "select", "textarea"].contains(&node.tag.as_str()) {
         return super::control::control(context, node, flow, items, forced);
     }
-    if node.style.inline && !node.style.display_flex && forced.is_none() {
+    if inline_level(node) && forced.is_none() {
         return super::text::inline(context, node, flow, items);
     }
     block(context, node, flow, items, forced)
 }
+/** Absolute and fixed boxes leave normal flow and are placed against their containing block later. */
+pub(super) fn out_of_flow(node: &Node) -> bool {
+    matches!(
+        node.style.position,
+        crate::document::Position::Absolute | crate::document::Position::Fixed
+    )
+}
+/** Inline-level boxes share line boxes: inline elements, labels and inline-block controls.
+ * ponytail: labels and controls are inline-level by tag because the cascade has no
+ * inline-block default yet, so an authored `display: block` on them is not honored here. */
+pub(super) fn inline_level(node: &Node) -> bool {
+    node.style.inline_block
+        || !node.style.display_flex
+            && (node.style.inline
+                || node.tag == "label"
+                || ["input", "button", "select", "textarea"].contains(&node.tag.as_str()))
+}
 /** Blocks provide the same content origin to normal and flexible child formatting. */
-fn block(
+pub(super) fn block(
     context: &mut LayoutContext<'_>,
     node: &Node,
     flow: &mut Flow,
@@ -116,57 +316,183 @@ fn block(
 ) -> EngineResult<()> {
     flow.newline();
     let style = &node.style;
+    let fresh = forced.is_some() || new_context(node);
+    if forced.is_none()
+        && let Some(clear) = flow.clearance(style.clear)
+        && clear > flow.block_top(style.margin[0])
+    {
+        flow.y = clear;
+        flow.collapsible = 0.0;
+    }
+    let above = (flow.y - flow.collapsible, flow.collapsible);
     let y = forced
         .map(|bounds| bounds.y)
-        .unwrap_or(flow.y + style.margin[0]);
+        .unwrap_or_else(|| flow.block_top(style.margin[0]));
+    // A new formatting context sits beside floats instead of under them.
+    let (left, room) = if fresh && forced.is_none() {
+        flow.room_at(y)
+    } else {
+        (flow.x, flow.width)
+    };
     let width = forced.map(|bounds| bounds.width).unwrap_or_else(|| {
         border_width(
             node,
             flow.width,
-            (flow.width - style.margin[1] - style.margin[3]).max(0.0),
+            (room - style.margin[1] - style.margin[3]).max(0.0),
             None,
         )
     });
     let x = forced
         .map(|bounds| bounds.x)
-        .unwrap_or(flow.x + super::body::margin_start(style, flow.width, width));
-    let mut inner = Flow::new(
-        x + style.padding[3] + style.border,
-        y + style.padding[0] + style.border,
+        .unwrap_or_else(|| left + start_margin(context, node, room, width));
+    let sides = super::sizing::border_sides(style);
+    let specified = specified_height(node, forced, flow.definite)
+        .or_else(|| aspect_height(node, width, flow.definite));
+    let mut inner = flow.nested(
+        x + style.padding[3] + sides[3],
+        y + style.padding[0] + sides[0],
         (width - horizontal_edges(node)).max(0.0),
+        fresh,
     );
+    inner.strut = Some(strut(style));
+    inner.align = alignment(style);
+    inner.definite = specified.map(|height| (height - vertical_edges(node)).max(0.0));
+    // A flex container is its own formatting context, so no margin collapses through it.
+    let collapses = forced.is_none() && !fresh;
+    if collapses && style.padding[0] == 0.0 && sides[0] == 0.0 {
+        // A first child's top margin collapses through a parent with no top padding or border.
+        inner.collapsible = y - flow.y + flow.collapsible;
+    }
     let index = items.len();
     items.push(box_item(node, x, y, width, 0.0, Vec::new()));
-    if node.style.display_flex {
+    if style.display_grid {
+        super::grid::children(context, node, &mut inner, items)?;
+    } else if style.display_flex {
         super::flex_layout::children(
             context,
             node,
             &mut inner,
             items,
-            forced
-                .and_then(|bounds| bounds.height)
-                .map(|height| (height - vertical_edges(node)).max(0.0)),
+            specified.map(|height| (height - vertical_edges(node)).max(0.0)),
+            (clamp_height(node, 0.0, flow.definite) - vertical_edges(node)).max(0.0),
         )?;
     } else {
-        items[index].lines = super::text::text(context, &node.text, node, &mut inner)?;
-        for child in context.children(node.local_id) {
-            node_layout(context, child, &mut inner, items, None)?;
+        super::generated::generated(context, node, &mut inner, items, false)?;
+        let lines = super::text::text(context, &node.text, node, &mut inner, index)?;
+        items[index].lines = lines;
+        if !super::generated::is_generated(node) {
+            for child in context.children(node.local_id) {
+                node_layout(context, child, &mut inner, items, None)?;
+            }
         }
+        super::generated::generated(context, node, &mut inner, items, true)?;
     }
     inner.newline();
-    super::text::align(context, node, &mut items[index..], inner.x, inner.width)?;
-    let natural = (inner.bottom - y + style.padding[2] + style.border).max(vertical_edges(node));
-    let height = forced.and_then(|bounds| bounds.height).unwrap_or(natural);
+    super::line::settle(context, &mut inner, items, index + 1)?;
+    if style.list_item
+        && let Some(line) = super::marker::marker(context, node, (inner.x, y), &items[index..])?
+    {
+        items[index].lines.push(line);
+    }
+    if fresh {
+        inner.bottom = inner.bottom.max(inner.floats_bottom());
+    } else {
+        flow.floats = std::mem::take(&mut inner.floats);
+        flow.cleared = inner.cleared;
+    }
+    // A last child's bottom margin passes through a parent with no bottom padding or border.
+    let through = collapses
+        && style.padding[2] == 0.0
+        && sides[2] == 0.0
+        && specified.is_none()
+        && inner.bottom <= inner.y;
+    let trailing = if through { inner.collapsible } else { 0.0 };
+    let natural =
+        (inner.bottom - trailing - y + style.padding[2] + sides[2]).max(vertical_edges(node));
+    let height = clamp_height(node, specified.unwrap_or(natural), flow.definite);
     items[index].height = height;
-    flow.y = y
-        + height
-        + if forced.is_some() {
-            0.0
-        } else {
-            style.margin[2] + BLOCK_GAP
-        };
-    flow.bottom = flow.bottom.max(flow.y);
+    super::generated::absolute(context, node, items, index)?;
+    if forced.is_some() {
+        flow.y = y + height;
+        flow.collapsible = 0.0;
+        flow.bottom = flow.bottom.max(flow.y);
+    } else if height == 0.0 {
+        // An empty block's own top and bottom margins collapse with the ones around it.
+        let (base, previous) = above;
+        let combined = collapse(collapse(previous, style.margin[0]), style.margin[2]);
+        flow.y = base + combined;
+        flow.collapsible = combined;
+        flow.bottom = flow.bottom.max(flow.y);
+    } else {
+        flow.after_block(y + height, collapse(style.margin[2], trailing));
+    }
     Ok(())
+}
+/** The inline-start margin, with a legacy `<center>` parent centering narrower blocks. */
+fn start_margin(context: &LayoutContext<'_>, node: &Node, room: f64, width: f64) -> f64 {
+    let legacy = node
+        .parent
+        .and_then(|parent| context.node(parent).ok())
+        .is_some_and(|parent| parent.style.align == "webkit-center");
+    if legacy && !node.style.margin_auto.iter().any(|auto| *auto) {
+        let mut centered = node.style.clone();
+        centered.margin_auto[1] = true;
+        centered.margin_auto[3] = true;
+        return super::body::margin_start(&centered, room, width);
+    }
+    super::body::margin_start(&node.style, room, width)
+}
+/** Boxes that start a block formatting context: they contain floats and are not overlapped by outside ones. */
+pub(super) fn new_context(node: &Node) -> bool {
+    let style = &node.style;
+    style.overflow != crate::document::Overflow::Visible
+        || style.display_flex
+        || style.display_grid
+        || style.inline_block
+        || style.float != crate::document::style::Float::None
+        || out_of_flow(node)
+        || ["td", "th", "caption", "button", "fieldset"].contains(&node.tag.as_str())
+}
+/** A forced height, else the authored height as a border-box extent, if it is definite. */
+fn specified_height(node: &Node, forced: Option<BorderBox>, definite: Option<f64>) -> Option<f64> {
+    if let Some(height) = forced.and_then(|bounds| bounds.height) {
+        return Some(height);
+    }
+    let content = node.style.height?.resolve_size(definite)?;
+    Some(clamp_height(
+        node,
+        super::sizing::border_height(node, content),
+        definite,
+    ))
+}
+/**
+ * The border-box height `aspect-ratio` gives an automatic height at this border-box width: the
+ * ratio sizes the content box unless `box-sizing: border-box` makes it size the border box.
+ */
+fn aspect_height(node: &Node, width: f64, definite: Option<f64>) -> Option<f64> {
+    let ratio = node.style.aspect_ratio?;
+    let height = if node.style.box_sizing == crate::document::BoxSizing::BorderBox {
+        (width / ratio).max(vertical_edges(node))
+    } else {
+        (width - horizontal_edges(node)).max(0.0) / ratio + vertical_edges(node)
+    };
+    Some(clamp_height(node, height, definite))
+}
+/** min-height and max-height bound the border-box height; min wins over max. */
+fn clamp_height(node: &Node, height: f64, definite: Option<f64>) -> f64 {
+    let bound = |extent: Option<crate::document::style::Extent>| {
+        extent
+            .and_then(|extent| extent.resolve_size(definite))
+            .map(|value| super::sizing::border_height(node, value))
+    };
+    let mut height = height;
+    if let Some(max) = bound(node.style.max_height) {
+        height = height.min(max);
+    }
+    if let Some(min) = bound(node.style.min_height) {
+        height = height.max(min);
+    }
+    height
 }
 /** Every rendering collaborator uses the same forced-box and intrinsic sizing contract. */
 pub(super) use super::sizing::{
@@ -181,6 +507,7 @@ pub(super) fn box_item(
     height: f64,
     lines: Vec<PaintLine>,
 ) -> DisplayItem {
+    let face = super::sizing::face(&node.style);
     DisplayItem {
         local_id: node.local_id,
         tag: node.tag.clone(),
@@ -191,7 +518,7 @@ pub(super) fn box_item(
         height,
         font_size: node.style.font_size,
         bold: node.style.bold,
-        line_height: Some(node.style.line_height.used(node.style.font_size)),
+        line_height: Some(super::sizing::advance(&node.style)),
         lines,
         color: node.style.color.clone().or_else(|| {
             if node.style.color_scheme == crate::document::ColorScheme::Normal {
@@ -209,10 +536,50 @@ pub(super) fn box_item(
                 super::default_foreground(&node.style)
             }
         }),
-        background: node.style.background.clone(),
-        border: node.style.border,
+        // A url() mask keeps the fill it shapes; any other mask hides it, as Eye cannot apply it.
+        background: node
+            .style
+            .background
+            .clone()
+            .filter(|_| !node.style.masked || node.style.mask.is_some()),
+        border: if node.style.border_style_none {
+            0.0
+        } else {
+            node.style.border
+        },
         border_color: node.style.border_color.clone(),
         validation: Vec::new(),
         control_height: None,
+        opacity: 1.0,
+        rtl: false,
+        vector: Vec::new(),
+        radius: [0.0; 4],
+        border_widths: if node.style.border == 0.0 && !node.style.border_style_none {
+            node.style.border_widths
+        } else {
+            [0.0; 4]
+        },
+        border_colors: if node.style.border == 0.0 {
+            node.style.border_colors.clone()
+        } else {
+            Default::default()
+        },
+        shadows: Vec::new(),
+        backgrounds: Vec::new(),
+        clip: None,
+        transform: None,
+        z: 0,
+        stacking_opacity: Vec::new(),
+        font_weight: face.weight,
+        font_family: face.family,
+        letter_spacing: face.spacing,
+        underline: !node.style.text_decoration_none
+            && (node.style.underline || (node.tag == "a" && node.href.is_some())),
+        strikethrough: !node.style.text_decoration_none && node.style.strikethrough,
+        italic: face.italic,
+        object_fit: crate::document::style::ObjectFit::Fill,
+        object_position: super::display::default_object_position(),
+        content_box: None,
+        mask: None,
     }
 }

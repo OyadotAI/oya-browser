@@ -34,9 +34,9 @@ button.addEventListener('click',function(){const names=input.value.split(',').ma
     }
 }
 
-/** Callback and late host failures discard source-array writes, cells, Storage and text together. */
+/** Callback and late host failures keep the source-array writes, cells, Storage and text made before the throw. */
 #[test]
-fn array_callback_candidates_roll_back_through_real_services() {
+fn array_callback_effects_before_a_throw_commit_through_real_services() {
     let body = r#"<p id=out>initial</p><button id=good onclick='run(false)'>Good</button><button id=late onclick='run(true)'>Late failure</button><button id=callback onclick='bad()'>Callback failure</button><button id=probe onclick='probe()'>Probe</button><script>
 const values=[1,2,3];let count=0;
 function run(fail){const result=values.map(function(value,index,source){count++;if(index===0){source[1]+=1;}return value*2;});window.localStorage.setItem('count',count);document.getElementById('out').textContent=result.join(',');if(fail){document.getElementById('missing').textContent='fail';}}
@@ -48,14 +48,14 @@ function probe(){document.getElementById('out').textContent=count+' '+values.joi
     let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "2,6,6");
-    for id in ["callback", "late"] {
-        assert!(call(&mut runtime, "page.click", target(&page, id)).is_err());
-        assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
-    }
+    let page = call(&mut runtime, "page.click", target(&page, "callback")).unwrap();
+    assert_eq!(text(&page, "out"), "partial");
+    let page = call(&mut runtime, "page.click", target(&page, "late")).unwrap();
+    assert_eq!(text(&page, "out"), "2,182,6");
     let page = call(&mut runtime, "page.click", target(&page, "probe")).unwrap();
-    assert_eq!(text(&page, "out"), "3 1,3,3 3");
+    assert_eq!(text(&page, "out"), "8 1,91,3 8");
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
-    assert_eq!(text(&page, "out"), "2,8,6");
+    assert_eq!(text(&page, "out"), "2,184,6");
 }
 
 /** String/Array capabilities advertise implemented methods while retaining full-JavaScript unavailability. */

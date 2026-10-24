@@ -1,5 +1,5 @@
 /** Document rules are tested through parse, apply and layout only. */
-use mars::constants::{HTML_BYTES, NODES, STATIC_TEXT_NODE_BYTES, TEXT_BYTES};
+use mars::constants::{DOCUMENT_DEPTH, HTML_BYTES, NODES, STATIC_TEXT_NODE_BYTES, TEXT_BYTES};
 use mars::document::{TextChange, apply, layout, parse};
 mod flex_algorithm;
 mod flex_geometry;
@@ -21,24 +21,42 @@ fn entities_and_unicode_have_explicit_layout_units() {
     assert_eq!(document.nodes[1].local_id, 1);
 }
 
-/** Unsupported markup cannot silently become an incomplete document. */
+/** Module scripts are kept as scripts: V9 runs them, so they carry no fallback diagnostic. */
 #[test]
-fn unsupported_markup_is_rejected() {
-    for body in [
-        "<iframe></iframe>",
-        "<input type=file>",
-        "<input onchange='host()'>",
-        "<script type=module></script>",
-        "<script async></script>",
-        "<script defer></script>",
+fn module_scripts_are_kept_without_a_diagnostic() {
+    let document = parse("<html><body><script type=module></script></body></html>").unwrap();
+    assert_eq!(document.scripts.len(), 1);
+    assert!(
+        document.diagnostics.is_empty(),
+        "{:?}",
+        document.diagnostics
+    );
+}
+
+/** Unsupported markup degrades to inert content with a named diagnostic, never an incomplete page. */
+#[test]
+fn unsupported_markup_degrades_with_a_diagnostic() {
+    for (body, diagnostic) in [
+        (
+            "<iframe></iframe>",
+            Some("Embedded frame (not supported yet)"),
+        ),
+        (
+            "<input onchange='host()'>",
+            Some("Inline event handler attributes were removed and never run."),
+        ),
+        ("<input type=file>", None),
     ] {
-        assert_eq!(
-            parse(&format!("<html><body>{body}</body></html>"))
-                .unwrap_err()
-                .code,
-            "unsupported_feature",
+        let document = parse(&format!("<html><body>{body}</body></html>")).unwrap();
+        assert!(document.scripts.is_empty(), "{body}");
+        assert!(
+            document.nodes.iter().all(|node| node.handler.is_none()
+                && !node.attributes.keys().any(|key| key.starts_with("on"))),
             "{body}"
         );
+        if let Some(diagnostic) = diagnostic {
+            assert_eq!(document.diagnostics, [diagnostic], "{body}");
+        }
     }
 }
 
@@ -80,14 +98,15 @@ fn document_and_text_bounds_are_enforced() {
         parse(&" ".repeat(HTML_BYTES + 1)).unwrap_err().code,
         "limit_exceeded"
     );
+    let truncated = parse(&format!(
+        "<html><body><p id=\"a\">{}</p></body></html>",
+        "x".repeat(STATIC_TEXT_NODE_BYTES + 1)
+    ))
+    .unwrap();
+    assert_eq!(truncated.nodes[0].text.len(), STATIC_TEXT_NODE_BYTES);
     assert_eq!(
-        parse(&format!(
-            "<html><body><p id=\"a\">{}</p></body></html>",
-            "x".repeat(STATIC_TEXT_NODE_BYTES + 1)
-        ))
-        .unwrap_err()
-        .code,
-        "limit_exceeded"
+        truncated.diagnostics,
+        ["Text longer than the per-node bound was truncated."]
     );
     let original = parse("<html><body><p id=\"a\">x</p></body></html>").unwrap();
     assert_eq!(
@@ -148,7 +167,24 @@ fn nested_documents_generate_stable_native_local_ids() {
         "<div>".repeat(33),
         "</div>".repeat(33)
     );
-    assert_eq!(parse(&deep).unwrap_err().code, "limit_exceeded");
+    let flattened = parse(&deep).unwrap();
+    assert_eq!(
+        flattened.diagnostics,
+        ["Markup nested past the depth bound was flattened."]
+    );
+    assert!(flattened.nodes.iter().enumerate().all(|(index, node)| {
+        let depth = std::iter::successors(node.parent, |id| flattened.nodes[*id].parent).count();
+        node.local_id == index && depth < DOCUMENT_DEPTH
+    }));
+    assert!(flattened.nodes.iter().any(|node| node.text == "x"));
+    let again = parse(&deep).unwrap();
+    assert!(
+        flattened
+            .nodes
+            .iter()
+            .zip(&again.nodes)
+            .all(|(a, b)| a.local_id == b.local_id && a.parent == b.parent)
+    );
 }
 
 /** textContent removes descendants atomically while leaving surviving identities unchanged. */

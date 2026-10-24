@@ -61,7 +61,13 @@ pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> 
         .max(edges);
     let maximum = style
         .max_width
-        .map(|width| width + adjustment)
+        .map(|width| {
+            if style.percent_max_width {
+                viewport * width / 100.0
+            } else {
+                width + adjustment
+            }
+        })
         .unwrap_or(crate::constants::LAYOUT_EXTENT)
         .max(minimum);
     let width = specified

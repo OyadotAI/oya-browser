@@ -4,6 +4,16 @@ These notices accompany Mars and its independently reusable Eye, V9 and Relay li
 Redistributing an individual library must retain the notices applicable to its source
 and dependencies. Upstream Blink and V8 names below identify provenance, not runtime engines.
 
+## Chrome DevTools Protocol definitions
+
+`crates/mdp/protocol/` vendors the protocol definition files (`browser_protocol.pdl`,
+`domains/*.pdl`) from Chromium `2c592105bbcd9490a9894df48d0fe59b2c512651`
+(`third_party/blink/public/devtools_protocol/`) and `js_protocol.pdl` from V8
+`fedd021b538607860f9c56e5c193ad8dcd4f2bb1` (`include/`), unmodified. They are data the
+front door's catalog reads; no protocol code is generated from them. Copyright 2017 The Chromium
+Authors; Copyright 2017 The Chromium Authors. All rights reserved. They are used under the
+BSD-style terms below.
+
 ## V8 reference algorithms and adapted test cases
 
 The V9 scanner and arithmetic-expression work studies V8 revision
@@ -113,6 +123,18 @@ at [licenses/ryu-js/LICENSE-BOOST](licenses/ryu-js/LICENSE-BOOST).
 `png` 0.17.16 and `jpeg-decoder` 0.3.2 are licensed under MIT OR Apache-2.0.
 Their license texts ship with the Cargo dependencies; the package uses their
 bounded PNG and JPEG decoding APIs for static page images.
+
+## Font and content decoders
+
+`woff2-patched` 0.4.0 (Apache-2.0; it pulls in `brotli`, `bitvec`, `four-cc`,
+`safer-bytes` and `thiserror`) unpacks WOFF2 web fonts; WOFF 1.0 tables are
+inflated with `flate2` 1.1.10 (MIT OR Apache-2.0, Rust backend). The unpacked
+sfnt is handed to CoreText per page and never registered system-wide.
+`flate2`, `brotli-decompressor` 6.0.1 and `ruzstd` 0.9.1 (MIT OR Apache-2.0 /
+BSD-3-Clause / MIT) decode gzip, deflate, brotli and zstd response bodies
+under Relay's body bounds. `psl` 2.1.245 (MIT OR Apache-2.0) supplies the
+public suffix list that cookie domain rules consult. Their license texts ship
+with the Cargo dependencies.
 
 ## Blink BSD event-listener reference algorithms
 

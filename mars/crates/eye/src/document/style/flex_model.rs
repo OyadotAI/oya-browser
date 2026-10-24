@@ -37,13 +37,16 @@ pub enum JustifyContent {
     Center,
     End,
     SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
 }
 /// Supported cross-axis alignment excludes baseline and per-item overrides.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum AlignItems {
     Start,
     Center,
     End,
+    #[default]
     Stretch,
 }

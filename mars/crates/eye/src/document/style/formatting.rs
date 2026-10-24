@@ -1,13 +1,13 @@
 /** Non-target root/body formatting and inherited CSS values retain semantic distinctions until layout. */
 use super::ComputedStyle;
-use crate::constants::CSS_NORMAL_LINE_HEIGHT;
+use super::constants::NORMAL_LINE_HEIGHT;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Unitless factors inherit differently from lengths computed against a declaring font.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub enum LineHeight {
-    /// Preserves the established native normal line advance.
+    /// Chromium's normal advance for its default face.
     #[default]
     Normal,
     /// An inherited multiplier follows each descendant's own computed font size.
@@ -19,7 +19,7 @@ impl LineHeight {
     /// Measurement and painting consume one used line advance for the current font.
     pub fn used(self, font_size: f64) -> f64 {
         match self {
-            Self::Normal => font_size * CSS_NORMAL_LINE_HEIGHT,
+            Self::Normal => font_size * NORMAL_LINE_HEIGHT,
             Self::Number(value) => font_size * value,
             Self::Length(value) => value,
         }
@@ -63,4 +63,15 @@ pub struct DocumentFormatting {
     pub body: FormattingElement,
     /// Winning authored box declarations replace the legacy native reading inset once.
     pub body_box_authored: bool,
+    /// Some hiding rule could not be kept within the CSS bounds, so no node is agent-actionable.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub agent_untrusted: bool,
+    /// The sheets' `@font-face` rules in source order, set by the cascade; `font-family` lists
+    /// and the app's font loader both read them, so the files a page needs are decided once.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub font_faces: Vec<super::FontFace>,
+    /// Font files the app unpacked for those rules. They travel with the document so the
+    /// service that measures and the window that paints load the same bytes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fonts: Vec<super::LoadedFont>,
 }

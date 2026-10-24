@@ -27,6 +27,15 @@ pins V8 `fedd021b538607860f9c56e5c193ad8dcd4f2bb1`.
 These references identify the code being studied, rather than following a
 moving branch. They are not runtime dependencies.
 
+Local reference checkouts of exactly these commits live outside the repository, as
+shallow sparse clones: `~/Dev/upstream/chromium` (Blink `renderer/core` and `public`,
+`content/browser/devtools`, `third_party/inspector_protocol`, `net`, `services/network`,
+`base`, selected `components` and `chrome/browser` areas, Skia headers) and
+`~/Dev/upstream/v8` (`src`, `include`, `test/mjsunit`, `test/inspector`). Mars is a Rust
+port guided by that C++: read it for exact semantics (`browser_protocol.pdl`,
+`js_protocol.pdl`, `css_properties.json5`, `html.css`, the inspector agents) and never copy
+code or add it as a dependency.
+
 | Source inspected | Observed responsibilities | Rust destination |
 | --- | --- | --- |
 | [V8 scanner.cc](https://chromium.googlesource.com/v8/v8/+/fedd021b538607860f9c56e5c193ad8dcd4f2bb1/src/parsing/scanner.cc): constructor, token lookahead, comment skipping, ScanHexNumber, ScanEscape, ScanOctalEscape and ScanString | UTF-16 source/literals; exact escape decoding; comment and line-terminator distinctions; explicit illegal tokens | `crates/v9/src/v9/lexer/`, with a bounded source cursor and typed literals |

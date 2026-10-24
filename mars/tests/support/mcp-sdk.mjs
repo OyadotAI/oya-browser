@@ -12,7 +12,8 @@ const { Client } = await import(new URL('client/index.js', sdk));
 const { StdioClientTransport } = await import(new URL('client/stdio.js', sdk));
 /** Protocol waits and the overall owner deadline remain finite even after an assertion failure. */
 const REQUEST_MS = 8000, OWNER_MS = 35000, POLL_MS = 25, WAIT_MS = 4000;
-const TOOL_NAMES = ['runtime_capabilities', 'tab_list', 'control_status', 'page_inspect', 'page_layout',
+const TOOL_NAMES = ['runtime_capabilities', 'tab_list', 'control_status', 'page_inspect', 'page_summary',
+  'page_find', 'page_diff', 'page_wait', 'page_act', 'page_layout',
   'page_navigate', 'page_type', 'page_click', 'page_set_checked', 'page_select', 'page_submit',
   'page_back', 'page_forward', 'page_reload', 'page_scroll', 'control_release'];
 const client = new Client({ name: 'oya-native-engine-tests', version: '1' }, { capabilities: {} });

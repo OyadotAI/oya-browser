@@ -29,11 +29,13 @@ fn rejects_invalid_source_through_the_public_facade() {
     assert!(error.location.is_some());
 }
 
-/** Extraction does not broaden array spread into arbitrary object iteration. */
+/** Spreading a non-iterable object is a TypeError, as in browsers, reported with its location. */
 #[test]
-fn rejects_unsupported_object_iteration_without_a_host_fallback() {
+fn spreading_a_plain_object_throws_a_located_type_error() {
     let error = load("const values = [...{}]", &[]).unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
+    assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("TypeError"));
+    assert!(error.message.contains("not iterable"));
     assert_eq!(error.phase.as_deref(), Some("execute"));
     assert!(error.location.is_some());
 }

@@ -1,16 +1,28 @@
 /** Minimal HTTP framing is strict to prevent accepting ambiguous responses. */
+use super::mime;
 use crate::constants::{HTML_BYTES, HTTP_OK};
 use crate::protocol::{EngineError, EngineResult};
 use std::collections::BTreeMap;
 
-/** Returns an optional exact body length after validating the response. */
-pub(super) fn parse(bytes: &[u8]) -> EngineResult<Option<usize>> {
+/** A validated loopback response's exact body length and declared charset. */
+pub(super) struct Head {
+    /** Exact body length, or connection-delimited when absent. */
+    pub length: Option<usize>,
+    /** Charset parameter for `mime::decode`. */
+    pub charset: Option<String>,
+}
+
+/** Returns the body length and charset after validating the response. */
+pub(super) fn parse(bytes: &[u8]) -> EngineResult<Head> {
     let source = std::str::from_utf8(bytes).map_err(|_| unsupported())?;
     let mut lines = source.split("\r\n");
     status(lines.next().unwrap_or_default())?;
     let headers = fields(lines)?;
-    encoding(&headers)?;
-    content_length(&headers)
+    let charset = encoding(&headers)?;
+    Ok(Head {
+        length: content_length(&headers)?,
+        charset,
+    })
 }
 
 /** Redirects and error statuses are unsupported and never followed. */
@@ -28,7 +40,7 @@ fn status(line: &str) -> EngineResult<()> {
     Ok(())
 }
 
-/** Duplicate fields are rejected even if their spelling differs in case. */
+/** Repeated list fields are joined; repeated framing and singleton fields are rejected. */
 fn fields<'a>(lines: impl Iterator<Item = &'a str>) -> EngineResult<BTreeMap<String, String>> {
     let mut headers = BTreeMap::new();
     for line in lines {
@@ -39,18 +51,55 @@ fn fields<'a>(lines: impl Iterator<Item = &'a str>) -> EngineResult<BTreeMap<Str
         if value.chars().any(|c| c.is_control() && c != '\t') {
             return Err(unsupported());
         }
-        if headers
-            .insert(name.to_ascii_lowercase(), value.trim().into())
-            .is_some()
-        {
-            return Err(unsupported());
-        }
+        insert_field(&mut headers, name, value)?;
     }
     Ok(headers)
 }
 
+/** Fields Relay reads as one value, so a repeat is ambiguous framing rather than a list. */
+const SINGLETON_FIELDS: [&str; 6] = [
+    "content-length",
+    "transfer-encoding",
+    "content-encoding",
+    "content-type",
+    "location",
+    "set-cookie",
+];
+
+/**
+ * Adds one field under its lowercase name. RFC 9110 section 5.3 lets a recipient join repeated
+ * list fields with ", ", which is how a browser reads `Vary` or `X-Content-Type-Options` sent
+ * twice. Singleton fields stay refused, since picking either copy could disagree with another
+ * parser about the framing or the destination. Joined values never exceed the raw header bytes,
+ * so the caller's header budget still bounds them.
+ */
+pub(super) fn insert_field(
+    headers: &mut BTreeMap<String, String>,
+    name: &str,
+    value: &str,
+) -> EngineResult<()> {
+    let name = name.to_ascii_lowercase();
+    let value = value.trim();
+    let Some(existing) = headers.get_mut(&name) else {
+        headers.insert(name, value.to_owned());
+        return Ok(());
+    };
+    if SINGLETON_FIELDS.contains(&name.as_str()) {
+        return Err(EngineError::unsupported(
+            "Repeated HTTP framing or singleton header.",
+        ));
+    }
+    if existing.is_empty() {
+        value.clone_into(existing);
+    } else if !value.is_empty() {
+        existing.push_str(", ");
+        existing.push_str(value);
+    }
+    Ok(())
+}
+
 /** Transfer and compression codecs must be implemented before they can be advertised. */
-fn encoding(headers: &BTreeMap<String, String>) -> EngineResult<()> {
+fn encoding(headers: &BTreeMap<String, String>) -> EngineResult<Option<String>> {
     if headers.contains_key("transfer-encoding") {
         return Err(unsupported());
     }
@@ -60,13 +109,12 @@ fn encoding(headers: &BTreeMap<String, String>) -> EngineResult<()> {
     {
         return Err(unsupported());
     }
-    let content_type = headers.get("content-type").ok_or_else(unsupported)?;
-    if !["text/html", "text/html; charset=utf-8"]
-        .contains(&content_type.to_ascii_lowercase().as_str())
-    {
-        return Err(unsupported());
-    }
-    Ok(())
+    headers
+        .get("content-type")
+        .and_then(|value| mime::parse(value))
+        .filter(|content_type| content_type.essence == "text/html")
+        .map(|content_type| content_type.charset)
+        .ok_or_else(unsupported)
 }
 
 /** Length is bounded before any matching body allocation is attempted. */
@@ -87,6 +135,6 @@ fn content_length(headers: &BTreeMap<String, String>) -> EngineResult<Option<usi
 /** Includes the supported framing in the recovery hint. */
 fn unsupported() -> EngineError {
     EngineError::unsupported(
-        "HTTP requires status 200, UTF-8 text/html, identity encoding, no duplicate headers or transfer encoding, and a valid optional Content-Length.",
+        "HTTP requires status 200, text/html in a supported charset, identity encoding, no repeated framing headers or transfer encoding, and a valid optional Content-Length.",
     )
 }

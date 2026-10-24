@@ -199,3 +199,57 @@ fn invalid_argument_errors_do_not_echo_supplied_payloads() {
     assert!(!wire.contains(marker));
     assert!(!wire.contains("runtime.shutdown"));
 }
+/** Agent tools accept their optional fields, keep values unchanged and refuse anything unlisted. */
+#[test]
+fn agent_tools_accept_optional_fields_and_refuse_out_of_bound_values() {
+    let tab = json!({"tab_id":"native:tab-7"});
+    let act = json!({"tab_id":"native:tab-7","control_epoch":41,"page_id":"native:page-9","expected_revision":23,"steps":[{"action":"click","node_id":"n"}]});
+    for (name, operation, arguments) in [
+        ("page_summary", "page.summary", tab.clone()),
+        (
+            "page_inspect",
+            "page.inspect",
+            json!({"tab_id":"t","fields":["role"],"visible_only":true,"compact":true}),
+        ),
+        (
+            "page_find",
+            "page.find",
+            json!({"tab_id":"t","role":"button","name":"Go","label":"g","text":"o","limit":50,"visible_only":false}),
+        ),
+        (
+            "page_diff",
+            "page.diff",
+            json!({"tab_id":"t","since_revision":3}),
+        ),
+        (
+            "page_wait",
+            "page.wait",
+            json!({"tab_id":"t","text":"Done","timeout_ms":20000}),
+        ),
+        ("page_act", "page.act", act.clone()),
+    ] {
+        let request = translate(name, &arguments, "mcp-5").unwrap();
+        assert_eq!(request.op, operation);
+        assert_eq!(request.params, arguments);
+        let mut extra = arguments.clone();
+        extra["unlisted_field"] = json!(1);
+        invalid(name, &extra);
+    }
+    let mut steps = act.clone();
+    steps["steps"] = json!(vec![json!({"action":"scroll","y":0}); 17]);
+    invalid("page_act", &steps);
+    steps["steps"] = json!([]);
+    invalid("page_act", &steps);
+    steps["steps"] = json!([{"node_id":"n"}]);
+    invalid("page_act", &steps);
+    let mut mode = act.clone();
+    mode["result"] = json!("everything");
+    invalid("page_act", &mode);
+    let mut epochless = act;
+    epochless.as_object_mut().unwrap().remove("control_epoch");
+    invalid("page_act", &epochless);
+    invalid("page_wait", &json!({"tab_id":"t","timeout_ms":20001}));
+    invalid("page_find", &json!({"tab_id":"t","limit":51}));
+    invalid("page_find", &json!({"tab_id":"t","limit":0}));
+    invalid("page_diff", &tab);
+}

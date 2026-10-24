@@ -39,7 +39,7 @@ impl Window {
                 return;
             }
             if response == NSAlertFirstButtonReturn || response == NSAlertThirdButtonReturn {
-                self.window.makeFirstResponder(Some(&self.chrome.address));
+                self.window.makeFirstResponder(Some(&self.mars.address));
             }
             return;
         }
@@ -49,9 +49,25 @@ impl Window {
     pub(super) fn action(&mut self, action: Action) {
         if let Action::Activate(tag) = &action
             && [
-                chrome::PROFILE_CLEAR,
-                chrome::PROFILE_RETRY,
-                chrome::STORAGE_CLEAR,
+                mars::FIND,
+                mars::FIND_NEXT,
+                mars::FIND_PREVIOUS,
+                mars::FIND_CLOSE,
+            ]
+            .contains(tag)
+        {
+            self.find_action(*tag);
+            return;
+        }
+        if let Action::Activate(mars::DEGRADED) = action {
+            self.show_degraded();
+            return;
+        }
+        if let Action::Activate(tag) = &action
+            && [
+                mars::PROFILE_CLEAR,
+                mars::PROFILE_RETRY,
+                mars::STORAGE_CLEAR,
             ]
             .contains(tag)
         {
@@ -59,10 +75,15 @@ impl Window {
             return;
         }
         if let Action::Activate(tag) = &action
-            && (*tag == chrome::TAB_NEW
-                || *tag == chrome::TAB_CLOSE
-                || (*tag <= chrome::TAB_SELECT_BASE
-                    && *tag > chrome::TAB_SELECT_BASE - crate::constants::TABS as isize))
+            && ([
+                mars::TAB_NEW,
+                mars::TAB_CLOSE,
+                mars::TAB_REOPEN,
+                mars::TAB_LAST,
+            ]
+            .contains(tag)
+                || tab_index(*tag, mars::TAB_SELECT_BASE).is_some()
+                || tab_index(*tag, mars::TAB_CLOSE_BASE).is_some())
         {
             self.tab_action(*tag);
             return;
@@ -71,14 +92,14 @@ impl Window {
             self.error=Some("Input was not changed.\nText is limited to 2 KiB.\nShorten the value and try again.".into());
             return;
         }
-        if let Action::Activate(chrome::STOP) = action {
+        if let Action::Activate(mars::STOP) = action {
             let tab_id = self.selected_tab_id();
             let _ = self.broker.change(Owner::Human, &tab_id);
             self.pending.clear();
             self.activity = Some("Stopping…".into());
             return;
         }
-        if let Action::Activate(chrome::CONTROL) = action {
+        if let Action::Activate(mars::CONTROL) = action {
             if self.worker_dead {
                 return;
             }
@@ -91,28 +112,27 @@ impl Window {
             let _ = self.broker.change(owner, &tab_id);
             self.pending.clear();
             if let Some(snapshot) = self.snapshot.clone() {
-                self.window.makeFirstResponder(Some(&self.chrome.address));
+                self.window.makeFirstResponder(Some(&self.mars.address));
                 self.canvas.update(snapshot, owner == Owner::Human);
             }
             return;
         }
-        if let Action::Activate(chrome::CLOSE) = action {
+        if let Action::Activate(mars::CLOSE) = action {
             self.request_close();
             return;
         }
-        if let Action::Activate(chrome::LOCATION) = action {
-            self.window.makeFirstResponder(Some(&self.chrome.address));
+        if let Action::Activate(mars::LOCATION) = action {
+            self.window.makeFirstResponder(Some(&self.mars.address));
             unsafe {
-                self.chrome.address.selectText(None);
+                self.mars.address.selectText(None);
             }
             return;
         }
-        if let Action::Activate(chrome::DISMISS) = action {
+        if let Action::Activate(mars::DISMISS) = action {
             self.error = None;
             return;
         }
-        if matches!(&action, Action::Activate(tag) if *tag == chrome::RETRY) && !self.retry_allowed
-        {
+        if matches!(&action, Action::Activate(tag) if *tag == mars::RETRY) && !self.retry_allowed {
             return;
         }
         let selected_tab_id = self.selected_tab_id();
@@ -123,11 +143,14 @@ impl Window {
             return;
         };
         let _ = snapshot;
+        let quiet = matches!(action, Action::Tap(..));
         let (op, params, target) = match action {
             Action::Edit(id, text, observed) => {
                 ("page.type", self.target(id, Some(text)), Some(observed))
             }
-            Action::Click(id, observed) => ("page.click", self.target(id, None), Some(observed)),
+            Action::Click(id, observed) | Action::Tap(id, observed) => {
+                ("page.click", self.target(id, None), Some(observed))
+            }
             Action::Select(id, option, observed) => {
                 let mut params = self.target(id, None);
                 params["option_id"] = json!(format!(
@@ -137,20 +160,18 @@ impl Window {
                 ("page.select", params, Some(observed))
             }
             Action::Submit(id, observed) => ("page.submit", self.target(id, None), Some(observed)),
-            Action::Activate(chrome::BACK) => ("page.back", json!({}), None),
-            Action::Activate(chrome::FORWARD) => ("page.forward", json!({}), None),
-            Action::Activate(chrome::RELOAD) => ("page.reload", json!({}), None),
-            Action::Activate(tag)
-                if [chrome::ADDRESS, chrome::DEMO, chrome::RETRY].contains(&tag) =>
-            {
-                let url = if tag == chrome::DEMO {
+            Action::Activate(mars::BACK) => ("page.back", json!({}), None),
+            Action::Activate(mars::FORWARD) => ("page.forward", json!({}), None),
+            Action::Activate(mars::RELOAD) => ("page.reload", json!({}), None),
+            Action::Activate(tag) if [mars::ADDRESS, mars::DEMO, mars::RETRY].contains(&tag) => {
+                let url = if tag == mars::DEMO {
                     format!("{}/", self.demo)
-                } else if tag == chrome::RETRY {
+                } else if tag == mars::RETRY {
                     self.failed_url
                         .clone()
-                        .unwrap_or_else(|| self.chrome.address.stringValue().to_string())
+                        .unwrap_or_else(|| self.mars.committed_url())
                 } else {
-                    self.chrome.address.stringValue().to_string()
+                    self.typed_address()
                 };
                 self.failed_url = Some(url.clone());
                 ("page.navigate", json!({"url":url}), None)
@@ -175,6 +196,7 @@ impl Window {
                         params,
                         page: target,
                         permit,
+                        quiet,
                     })
                     .map_err(|_| EngineError::invalid("Native action queue is full."))
             });
@@ -185,66 +207,70 @@ impl Window {
             self.error = None;
         }
     }
-    /// Native tab buttons submit only explicit tab identities through the worker.
+    /// Native tab buttons and shortcuts submit only explicit tab identities through the worker.
     pub(super) fn tab_action(&mut self, tag: isize) {
         let Ok(permit) = self.broker.local_tab_permit() else {
             return;
         };
-        let (op, params) = if tag == chrome::TAB_NEW {
-            ("tab.open", json!({}))
-        } else {
-            let Some(tabs) = self
-                .snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.tabs["tabs"].as_array())
-            else {
-                return;
-            };
-            let index = if tag == chrome::TAB_CLOSE {
-                tabs.iter().position(|tab| tab["selected"] == true)
-            } else {
-                usize::try_from(chrome::TAB_SELECT_BASE - tag).ok()
-            };
-            let Some(tab_id) = index
-                .and_then(|index| tabs.get(index))
-                .and_then(|tab| tab["tab_id"].as_str())
-            else {
-                return;
-            };
-            if tag == chrome::TAB_CLOSE {
-                let _ = self.broker.change(Owner::Human, tab_id);
-            }
-            (
-                if tag == chrome::TAB_CLOSE {
-                    "tab.close"
-                } else {
-                    "tab.select"
-                },
-                json!({"tab_id":tab_id}),
-            )
+        let Some((op, params)) = self.tab_operation(tag) else {
+            return;
         };
         let result = self.broker.commands.try_send(Command::Human {
             op: op.into(),
             params,
             page: None,
             permit,
+            quiet: false,
         });
         if result.is_ok() {
             self.busy = true;
             self.error = None;
+        } else if let Some((_, url)) = self.reopen.take() {
+            self.closed_tabs.push(url);
         }
+    }
+    /// Resolve a tab tag to its operation; closing the only tab closes the window, as in every browser.
+    fn tab_operation(&mut self, tag: isize) -> Option<(&'static str, Value)> {
+        if tag == mars::TAB_NEW {
+            return Some(("tab.open", json!({})));
+        }
+        if tag == mars::TAB_REOPEN {
+            let url = self.take_closed()?;
+            self.reopen = Some((self.selected_tab_id(), url));
+            return Some(("tab.open", json!({})));
+        }
+        let tabs = self.snapshot.as_ref()?.tabs["tabs"].as_array()?.clone();
+        let closing = tag == mars::TAB_CLOSE || tab_index(tag, mars::TAB_CLOSE_BASE).is_some();
+        let index = if tag == mars::TAB_CLOSE {
+            tabs.iter().position(|tab| tab["selected"] == true)
+        } else if tag == mars::TAB_LAST {
+            tabs.len().checked_sub(1)
+        } else {
+            tab_index(tag, mars::TAB_CLOSE_BASE).or_else(|| tab_index(tag, mars::TAB_SELECT_BASE))
+        };
+        let tab_id = tabs.get(index?)?["tab_id"].as_str()?.to_owned();
+        if !closing {
+            return Some(("tab.select", json!({"tab_id":tab_id})));
+        }
+        if tabs.len() <= 1 {
+            self.request_close();
+            return None;
+        }
+        let _ = self.broker.change(Owner::Human, &tab_id);
+        self.remember_closed(&tab_id);
+        Some(("tab.close", json!({"tab_id":tab_id})))
     }
     /// Profile actions require a local human gesture and clear has native confirmation.
     fn profile_action(&mut self, tag: isize) {
         if self.broker.transport == Transport::Mcp
-            && [chrome::PROFILE_CLEAR, chrome::STORAGE_CLEAR].contains(&tag)
+            && [mars::PROFILE_CLEAR, mars::STORAGE_CLEAR].contains(&tag)
         {
             return;
         }
-        if tag == chrome::PROFILE_CLEAR && !confirm_cookie_clear(self.canvas.mtm()) {
+        if tag == mars::PROFILE_CLEAR && !confirm_cookie_clear(self.canvas.mtm()) {
             return;
         }
-        if tag == chrome::STORAGE_CLEAR && !confirm_storage_clear(self.canvas.mtm()) {
+        if tag == mars::STORAGE_CLEAR && !confirm_storage_clear(self.canvas.mtm()) {
             return;
         }
         self.send_profile_action(tag);
@@ -269,11 +295,11 @@ impl Window {
         alert.addButtonWithTitle(&NSString::from_str("Clear Saved Cookies…"));
         let response = alert.runModal();
         if code == "profile_unavailable" && response == NSAlertSecondButtonReturn {
-            self.send_profile_action(chrome::PROFILE_RETRY);
+            self.send_profile_action(mars::PROFILE_RETRY);
         } else if (code == "profile_unavailable" && response == NSAlertThirdButtonReturn)
             || (code != "profile_unavailable" && response == NSAlertSecondButtonReturn)
         {
-            self.send_profile_action(chrome::PROFILE_CLEAR);
+            self.send_profile_action(mars::PROFILE_CLEAR);
         }
     }
     /// Keep the explicit storage recovery decision separate from saved-cookie recovery.
@@ -303,13 +329,13 @@ impl Window {
         alert.addButtonWithTitle(&NSString::from_str("Keep Storage Blocked"));
         alert.addButtonWithTitle(&NSString::from_str("Clear Saved Site Storage"));
         if alert.runModal() == NSAlertSecondButtonReturn {
-            self.send_profile_action(chrome::STORAGE_CLEAR);
+            self.send_profile_action(mars::STORAGE_CLEAR);
         }
     }
     /// Human selection revokes agent control before a profile operation is queued.
-    fn send_profile_action(&mut self, tag: isize) {
+    pub(super) fn send_profile_action(&mut self, tag: isize) {
         if self.broker.transport == Transport::Mcp
-            && [chrome::PROFILE_CLEAR, chrome::STORAGE_CLEAR].contains(&tag)
+            && [mars::PROFILE_CLEAR, mars::STORAGE_CLEAR].contains(&tag)
         {
             return;
         }
@@ -321,9 +347,9 @@ impl Window {
         if let Some(snapshot) = self.snapshot.clone() {
             self.canvas.update(snapshot, true);
         }
-        let command = if tag == chrome::PROFILE_CLEAR {
+        let command = if tag == mars::PROFILE_CLEAR {
             Command::ProfileClear
-        } else if tag == chrome::STORAGE_CLEAR {
+        } else if tag == mars::STORAGE_CLEAR {
             Command::ProfileStorageClear
         } else {
             Command::ProfileRetry
@@ -331,9 +357,9 @@ impl Window {
         if self.broker.commands.try_send(command).is_ok() {
             self.busy = true;
             self.activity = Some(
-                if tag == chrome::PROFILE_CLEAR {
+                if tag == mars::PROFILE_CLEAR {
                     "Clearing saved cookies…"
-                } else if tag == chrome::STORAGE_CLEAR {
+                } else if tag == mars::STORAGE_CLEAR {
                     "Clearing saved site storage…"
                 } else {
                     "Retrying secure storage…"
@@ -448,4 +474,10 @@ fn recovery_copy(code: &str) -> (&'static str, &'static str) {
             "The secure-store result is uncertain. Clear saved cookies before using this profile again.",
         )
     }
+}
+
+/// The tab index a tag addresses within one base's range, if it is in range.
+fn tab_index(tag: isize, base: isize) -> Option<usize> {
+    let index = usize::try_from(base - tag).ok()?;
+    (index < crate::constants::TABS).then_some(index)
 }

@@ -1,0 +1,16 @@
+# Link connects Mars to the Oya server: control socket, pairing, personas and governed egress rules.
+[package]
+name = "mars-link"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mars-core = { path = "../core" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+url = "=2.5.8"
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+webpki-roots = "=1.0.9"
+# Already in the tree through rustls: SHA-1 for the WebSocket handshake and random masks and ids.
+ring = "=0.17.14"

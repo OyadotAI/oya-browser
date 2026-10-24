@@ -1,4 +1,6 @@
-/** Literal HTTP requests carry no page-controlled headers or policy overrides. */
+/** Literal HTTP requests carry no policy overrides; only script requests carry page-set headers,
+and only ones the CORS rules allow. */
+use super::constants::SCRIPT_REQUEST_HEADERS;
 use crate::constants::FORM_BYTES;
 use crate::protocol::{EngineError, EngineResult};
 pub use mars_core::http::Method;
@@ -7,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebRequest {
-    /// Method is selected by the owned form algorithm.
+    /// Method is selected by the owned form algorithm, or by a page script for fetch and XHR.
     pub method: Method,
     /// The coordinator retains the actual URL separately from its public projection.
     pub url: String,
@@ -18,6 +20,64 @@ pub struct WebRequest {
     /// Selects the smaller binary resource budget for explicitly requested images.
     #[serde(default)]
     pub image: bool,
+    /// URL of the top-level document this fetch serves (the navigation's own URL for a
+    /// navigation). Its origin partitions the HTTP cache; without it the cache is bypassed,
+    /// so no response is ever shared across sites.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_level: Option<String>,
+    /// URL of the document that caused this request: the page a link, form or subresource
+    /// came from. None means the person asked (typed URL, bookmark, reload). It sets
+    /// Sec-Fetch-Site, Origin and Referer the way Chrome would; without it they say "none".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiator: Option<String>,
+    /// What the response is for. It shapes Accept, Sec-Fetch-Dest and the HTTP/2 priority, which
+    /// servers and bot detectors compare against a real browser's.
+    #[serde(default)]
+    pub destination: Destination,
+    /// Headers a page's script set on a fetch or XHR (lowercase names), already stripped of
+    /// forbidden names by the CORS rules; validation refuses any that slip through. Script
+    /// requests only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
+    /// The Origin a script request sends, serialized the Fetch way (`null` once a redirect
+    /// tainted it). None sends none. Script requests only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// A script request's mode, for Sec-Fetch-Mode. Script requests only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<super::cors::Mode>,
+    /// Set for a CORS preflight: the request goes out as OPTIONS asking whether the real
+    /// method and headers may follow, with no cookies, headers or body of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<Preflight>,
+}
+/// What a CORS preflight asks the server about the request waiting behind it.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Preflight {
+    /// Access-Control-Request-Method: the real request's method.
+    pub method: String,
+    /// Access-Control-Request-Headers: its CORS-unsafe header names, sorted, comma-joined.
+    pub headers: String,
+}
+/// Chrome's request destinations that Mars issues. `image: true` always means `Image`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Destination {
+    /// A top-level navigation or form submission.
+    #[default]
+    Document,
+    /// A stylesheet.
+    Style,
+    /// A classic script.
+    Script,
+    /// An image.
+    Image,
+    /// A web font file for an `@font-face` rule: binary bytes of any declared type, under the
+    /// image byte bound.
+    Font,
+    /// Script-issued fetch or XHR.
+    Empty,
 }
 impl WebRequest {
     /// Navigation cannot accidentally inherit a previous submission body.
@@ -32,11 +92,70 @@ impl WebRequest {
         if self.body.len() > FORM_BYTES
             || self.cookie.len() > crate::constants::HEADER_BYTES
             || self.cookie.chars().any(char::is_control)
-            || (self.method == Method::Get && !self.body.is_empty())
+            || (self.method.is_safe() && !self.body.is_empty())
+            || self
+                .top_level
+                .as_deref()
+                .is_some_and(|top| super::policy::web_url(top).is_err())
+            || self
+                .initiator
+                .as_deref()
+                .is_some_and(|initiator| super::policy::web_url(initiator).is_err())
+            || !self.script_fields_valid()
         {
             return Err(EngineError::invalid("Invalid bounded web request."));
         }
         Ok(())
+    }
+    /** Script-only fields appear only on script requests, and every page-set byte is bounded:
+    no forbidden or malformed header, no line break anywhere, and a preflight carries nothing
+    of the page's own. */
+    fn script_fields_valid(&self) -> bool {
+        let script = self.destination == Destination::Empty;
+        let plain = |text: &str| {
+            !text
+                .bytes()
+                .any(|byte| byte.is_ascii_control() && byte != b'\t')
+        };
+        let token = |text: &str| {
+            !text.is_empty()
+                && text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+        };
+        let bytes: usize = self
+            .headers
+            .iter()
+            .map(|(name, value)| name.len() + value.len())
+            .sum();
+        let headers_ok = self.headers.len() <= SCRIPT_REQUEST_HEADERS
+            && bytes <= crate::constants::HEADER_BYTES
+            && self.headers.iter().all(|(name, value)| {
+                token(name)
+                    && *name == name.to_ascii_lowercase()
+                    && !super::cors::forbidden_request_header(name)
+                    && plain(value)
+            });
+        let origin_ok = self.origin.as_deref().is_none_or(|origin| {
+            origin == "null"
+                || super::policy::web_url(origin)
+                    .is_ok_and(|url| url.origin().ascii_serialization() == origin)
+        });
+        let preflight_ok = self.preflight.as_ref().is_none_or(|preflight| {
+            token(&preflight.method)
+                && preflight
+                    .headers
+                    .split(',')
+                    .all(|name| name.is_empty() || token(name))
+                && self.method == Method::Get
+                && self.cookie.is_empty()
+                && self.headers.is_empty()
+        });
+        let used = !self.headers.is_empty()
+            || self.origin.is_some()
+            || self.mode.is_some()
+            || self.preflight.is_some();
+        (script || !used) && headers_ok && origin_ok && preflight_ok
     }
 }
 /// Raw response metadata is private to the coordinator; never export cookies to agents.
@@ -58,4 +177,21 @@ pub struct WebResponse {
     pub location: Option<String>,
     /// Repeated fields remain separate, never comma-joined.
     pub set_cookies: Vec<String>,
+    /// Canonical WHATWG encoding the Content-Type header declared, so Eye can check a meta charset
+    /// against it. None when undeclared (decoded as UTF-8) or for image data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub charset: Option<String>,
+    /// A top-level GET the server marked as an attachment, or whose type no page can display:
+    /// `source` is then base64 of the raw body (still bounded by HTML_BYTES) and the coordinator
+    /// saves it instead of publishing a page. It is never parsed or run.
+    #[serde(default)]
+    pub download: bool,
+    /// The Content-Disposition value a download arrived with, for the suggested file name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disposition: Option<String>,
+    /// A script request's response headers (lowercase, repeats joined, at most
+    /// SCRIPT_RESPONSE_HEADERS), for the coordinator's CORS check and filtering. Set-Cookie and
+    /// Set-Cookie2 are never among them; other requests carry none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<(String, String)>,
 }

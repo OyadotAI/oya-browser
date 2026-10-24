@@ -82,32 +82,53 @@ fn separate_engines_complete_the_native_agent_flow() {
 fn failed_navigation_retains_the_previous_document_atomically() {
     let fixture = Fixture::pages();
     let mut runtime = runtime();
+    call(
+        &mut runtime,
+        "page.navigate",
+        json!({"url":format!("{}/plain", fixture.url)}),
+    )
+    .unwrap();
+    // A failing script stops only itself and the page still commits with the others' effects.
+    for path in ["badscript", "atomic"] {
+        let page = call(
+            &mut runtime,
+            "page.navigate",
+            json!({"url":format!("{}/{path}", fixture.url)}),
+        )
+        .unwrap();
+        assert_eq!(page["degraded"], json!(["scripts"]));
+        assert_eq!(
+            page["nodes"][0]["text"], "candidate",
+            "{path} rolled back alone"
+        );
+    }
     let original = call(
         &mut runtime,
         "page.navigate",
         json!({"url":format!("{}/plain", fixture.url)}),
     )
     .unwrap();
-    for path in ["badscript", "badmarkup", "atomic"] {
-        let error = call(
-            &mut runtime,
-            "page.navigate",
-            json!({"url":format!("{}/{path}", fixture.url)}),
-        )
-        .unwrap_err();
-        assert!(error.previous_page_retained);
-        assert_eq!(
-            call(&mut runtime, "page.inspect", json!({})).unwrap(),
-            original
-        );
-    }
+    // Markup recovers best effort, so a genuine failure is a page past the node budget.
+    let error = call(
+        &mut runtime,
+        "page.navigate",
+        json!({"url":format!("{}/over-budget", fixture.url)}),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.previous_page_retained);
+    assert_eq!(
+        call(&mut runtime, "page.inspect", json!({})).unwrap(),
+        original
+    );
     let next = call(
         &mut runtime,
         "page.navigate",
         json!({"url":format!("{}/plain", fixture.url)}),
     )
     .unwrap();
-    assert_eq!(next["page_id"], "page-2");
+    // Four commits came before; the refused candidate consumed no generation.
+    assert_eq!(next["page_id"], "page-5");
 }
 
 /** Node identities cannot be reused after a successful navigation. */

@@ -1,9 +1,19 @@
 /** Attribute semantics and character references stay owned and bounded. */
 use super::Node;
-use crate::constants::{ID_BYTES, SCRIPT_BYTES, STATIC_TEXT_NODE_BYTES, TEXT_BYTES};
+use crate::constants::{ID_BYTES, SCRIPT_BYTES, TEXT_BYTES};
 use crate::protocol::{EngineError, EngineResult};
 use std::collections::BTreeMap;
 pub(super) type Attributes = BTreeMap<String, String>;
+
+/** Input types Eye implements with their own semantics. */
+const INPUT_TYPES: [&str; 11] = [
+    "text", "password", "hidden", "checkbox", "radio", "submit", "button", "email", "search",
+    "url", "tel",
+];
+/** Typed fields Eye has no picker for; HTML falls back to a text field, so Eye edits them as text. */
+const TEXT_INPUT_TYPES: [&str; 6] = ["number", "date", "datetime-local", "month", "week", "time"];
+/** Controls without an implementation stay visible but static rather than refusing the page. */
+const STATIC_INPUT_TYPES: [&str; 3] = ["file", "color", "range"];
 
 /** Inert attributes survive; unsupported executable attributes refuse loading. */
 pub(super) fn node(
@@ -22,24 +32,6 @@ pub(super) fn node(
     }
     if let Some(kind) = attributes.get_mut("type") {
         *kind = kind.to_ascii_lowercase();
-    }
-    if tag == "input"
-        && attributes.get("type").is_some_and(|s| {
-            ![
-                "text", "password", "hidden", "checkbox", "radio", "submit", "button", "email",
-                "search", "url", "tel",
-            ]
-            .contains(&s.as_str())
-        })
-    {
-        return Err(EngineError::unsupported(
-            "This input type is not supported.",
-        ));
-    }
-    if tag == "select" && attributes.contains_key("multiple") {
-        return Err(EngineError::unsupported(
-            "Multiple selection is not supported yet.",
-        ));
     }
     let id = attributes
         .get("id")
@@ -60,7 +52,10 @@ pub(super) fn node(
         text: String::new(),
         parent,
         value: attributes.get("value").cloned().unwrap_or_default(),
-        href: attributes.get("href").cloned(),
+        href: attributes
+            .get("href")
+            .cloned()
+            .filter(|href| tag == "a" && !script_url(href)),
         handler: attributes.get("onclick").cloned(),
         placeholder: attributes.get("placeholder").cloned().unwrap_or_default(),
         disabled: attributes.contains_key("disabled"),
@@ -69,73 +64,82 @@ pub(super) fn node(
         attributes: attributes.clone(),
         style: Default::default(),
         validation: None,
-        image_src: attributes.get("src").cloned().filter(|_| tag == "img"),
+        image_src: attributes
+            .get("src")
+            .cloned()
+            .filter(|src| tag == "img" && !script_url(src)),
         image_alt: attributes.get("alt").cloned().unwrap_or_default(),
         image_size: None,
         table_cell: None,
+        defined: false,
     })
 }
-/** Numeric references and common entities decode without interpreting literal markup. */
-pub(super) fn entities(source: &str) -> EngineResult<String> {
-    decode_entities(source, TEXT_BYTES)
-}
 
-/** Only source body text receives the larger static allowance. */
-pub(super) fn static_entities(source: &str) -> EngineResult<String> {
-    decode_entities(source, STATIC_TEXT_NODE_BYTES)
-}
-
-/** Every decoded append checks bytes before allocation, including expanded numeric references. */
-fn decode_entities(source: &str, limit: usize) -> EngineResult<String> {
-    let mut output = String::new();
-    let mut rest = source;
-    while let Some(start) = rest.find('&') {
-        append_decoded(&mut output, &rest[..start], limit)?;
-        rest = &rest[start..];
-        let Some(end) = rest.find(';').filter(|end| *end <= 32) else {
-            append_decoded(&mut output, "&", limit)?;
-            rest = &rest[1..];
-            continue;
-        };
-        let name = &rest[1..end];
-        let value = match name {
-            "amp" => Some('&'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "quot" => Some('"'),
-            "apos" => Some('\''),
-            "nbsp" => Some('\u{a0}'),
-            _ => name
-                .strip_prefix("#x")
-                .or_else(|| name.strip_prefix("#X"))
-                .and_then(|s| u32::from_str_radix(s, 16).ok())
-                .or_else(|| name.strip_prefix('#').and_then(|s| s.parse().ok()))
-                .and_then(char::from_u32),
-        };
-        if let Some(value) = value {
-            append_decoded(&mut output, value.encode_utf8(&mut [0; 4]), limit)?;
-            rest = &rest[end + 1..];
-        } else {
-            append_decoded(&mut output, "&", limit)?;
-            rest = &rest[1..];
-        }
+/// Page-mode recovery applied before `node`: inline handlers are stripped rather than run or
+/// refused, oversized attribute values and identifiers are dropped, and input types without an
+/// implementation fall back the way HTML's do. Returns the value-free diagnostics to record.
+pub(super) fn recover(tag: &str, attributes: &mut Attributes) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    let before = attributes.len();
+    attributes.retain(|key, value| {
+        !(key.starts_with("on")
+            && !(tag == "button" && key == "onclick" && value.len() <= SCRIPT_BYTES))
+    });
+    if attributes.len() < before {
+        diagnostics.push("Inline event handler attributes were removed and never run.".into());
     }
-    append_decoded(&mut output, rest, limit)?;
-    Ok(output)
+    let before = attributes.len();
+    attributes.retain(|key, value| {
+        value.len() <= TEXT_BYTES && (key != "id" || (!value.is_empty() && value.len() <= ID_BYTES))
+    });
+    if attributes.len() < before {
+        diagnostics.push("Oversized or empty attribute values were dropped.".into());
+    }
+    if tag == "input" {
+        diagnostics.extend(input_type(attributes));
+    }
+    diagnostics
 }
+
+/** Unknown and picker types edit as text, image submits and reset is an inert button. */
+fn input_type(attributes: &mut Attributes) -> Option<String> {
+    let kind = attributes.get("type")?.trim().to_ascii_lowercase();
+    if INPUT_TYPES.contains(&kind.as_str()) || STATIC_INPUT_TYPES.contains(&kind.as_str()) {
+        attributes.insert("type".into(), kind);
+        return None;
+    }
+    let fallback = match kind.as_str() {
+        "image" => "submit",
+        "reset" => "button",
+        _ => "text",
+    };
+    attributes.insert("type".into(), fallback.into());
+    Some(if TEXT_INPUT_TYPES.contains(&kind.as_str()) {
+        format!("Input type {kind} is edited as plain text.")
+    } else {
+        "An unrecognized input type behaves as a text field.".into()
+    })
+}
+
+/// `javascript:` addresses stay inert: links and images never receive them as targets.
+/// Leading whitespace and controls are ignored and the scheme compares case-insensitively, as
+/// URL parsing does, so `" JaVa\tscript:"` is caught too.
+pub(super) fn script_url(url: &str) -> bool {
+    let scheme = url
+        .trim_start_matches(|c: char| c <= ' ')
+        .chars()
+        .filter(|c| !['\t', '\n', '\r'].contains(c))
+        .take("javascript:".len())
+        .collect::<String>();
+    scheme.eq_ignore_ascii_case("javascript:")
+}
+
+/** Character references decode with the owned named table; decoding never grows text. */
+pub(super) fn entities(source: &str) -> String {
+    super::entities::decode(source, false)
+}
+
 /** Unsupported syntax cannot create partially trusted native targets. */
 pub(super) fn syntax() -> EngineError {
     EngineError::unsupported("This page uses unsupported or malformed HTML markup.")
-}
-
-/** Source slices and decoded scalars share the same pre-allocation byte check. */
-fn append_decoded(output: &mut String, text: &str, limit: usize) -> EngineResult<()> {
-    if text.len() > limit.saturating_sub(output.len()) {
-        return Err(crate::protocol::EngineError::limit(
-            "node text bytes",
-            limit,
-        ));
-    }
-    output.push_str(text);
-    Ok(())
 }

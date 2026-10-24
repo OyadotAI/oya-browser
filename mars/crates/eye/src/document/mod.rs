@@ -1,11 +1,15 @@
 /** Eye owns the bounded document, cascade and rendering model. */
 mod content;
 mod context;
+mod entities;
 mod forms;
 mod markup;
+mod mutation;
 mod parser;
+mod recovery;
 mod render;
 mod script;
+mod shadow;
 mod style;
 mod table;
 mod tokenizer;
@@ -13,19 +17,34 @@ use crate::constants::LAYOUT_UNIT;
 use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
 pub use context::{Appearance, RenderContext};
-pub use forms::{Submission, form_owner, label, select, set_checked, submission};
+pub use forms::{Submission, form_owner, label, own_text, select, set_checked, submission};
 use mars_core::dom::descendant_ids;
-pub use mars_core::dom::{ScriptDocument, ScriptNode, TextChange, validate_text};
-pub use parser::parse;
-pub use render::{
-    DisplayDecoration, DisplayItem, DisplayList, PaintLine, render, render_with_context, role,
+pub use mars_core::dom::{
+    DomChange, FragmentParser, InsertPosition, MetadataElement, ScriptChange, ScriptDocument,
+    ScriptMode, ScriptNode, TextChange, validate_text,
 };
-pub use script::script_document;
+pub use mutation::{apply_changes, apply_script_changes};
+pub use parser::{Fragment, parse, parse_fragment, parse_with_charset};
+pub use render::{
+    ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
+    FillRule, GradientStop, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine, PathCommand,
+    VectorPath, agent_hidden, agent_visible, painted_bounds, render, render_with_context, role,
+};
+pub use script::{DomFragments, Fragments, script_document};
 use serde::{Deserialize, Serialize};
+pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
+use std::collections::BTreeMap;
 pub use style::{
-    AlignItems, BoxSizing, ColorScheme, ComputedStyle, DocumentFormatting, FlexBasis,
-    FlexDirection, FlexWrap, FormattingElement, JustifyContent, LineHeight, StyleSource,
-    compute_styles, compute_styles_with_context,
+    AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
+    ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,
+    FormattingElement, JustifyContent, LineHeight, ObjectFit, Overflow, Position, StyleSource,
+    TextTransform, WhiteSpace, background_urls, compute_styles, compute_styles_with_context,
+    rebase_urls,
+};
+pub use style::{
+    FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
+    FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,
+    install_fonts,
 };
 
 /** Private computed values are validated before layout even when a Rust caller bypasses CSS parsing. */
@@ -60,7 +79,38 @@ pub struct Document {
     /// Non-target wrapper styles preserve root/body semantics without allocating native node IDs.
     #[serde(default)]
     pub formatting: DocumentFormatting,
+    /// `<meta http-equiv=Content-Security-Policy>` texts in source order, at most CSP_POLICIES of
+    /// TEXT_BYTES each. Eye only records them; the coordinator enforces them when it fetches.
+    #[serde(default)]
+    pub csp: Vec<String>,
+    /// Metadata and data-block elements in source order, at most METADATA_ELEMENTS. They are
+    /// never nodes, so layout, paint and agents never see them; scripts find them through V9.
+    #[serde(default)]
+    pub metadata: Vec<MetadataElement>,
 }
+
+/// What a script element holds; modules and import maps go to V9's module loader.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptKind {
+    /// A classic script.
+    #[default]
+    Classic,
+    /// `type=module`: deferred unless `async`, fetched in CORS mode with its imports.
+    Module,
+    /// `type=importmap`: inline JSON mapping module specifiers to URLs.
+    ImportMap,
+}
+
+impl ScriptKind {
+    /// Classic scripts carry no kind on the wire, as before modules existed.
+    pub fn is_classic(&self) -> bool {
+        *self == Self::Classic
+    }
+}
+
+/// Meta-delivered policies one document keeps; later ones are dropped with a diagnostic.
+pub const CSP_POLICIES: usize = 8;
 
 /// Page scripts retain order while the coordinator resolves external source bytes.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -71,6 +121,23 @@ pub struct ScriptResource {
     /// External location remains private coordinator data until fetched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src: Option<String>,
+    /// Execution phase: blocking first, then defer, then async, each in document order.
+    #[serde(default)]
+    pub mode: ScriptMode,
+    /// A classic script, a module script or an import map.
+    #[serde(default, skip_serializing_if = "ScriptKind::is_classic")]
+    pub kind: ScriptKind,
+    /// Subresource Integrity metadata; the coordinator verifies the fetched body against it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integrity: Option<String>,
+    /// The element's `nonce`, matched against Content-Security-Policy `'nonce-…'` sources.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    /// The element's own attributes (`id`, `data-*`, `type`), within the page's METADATA_BYTES,
+    /// so the head record V9 gives the script answers `getElementById` and dataset reads the
+    /// way the real element does (Google's sign-in locates its bundle by `id="base-js"`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub attributes: BTreeMap<String, String>,
 }
 
 /// Native node identity is separate from its source HTML identifier.
@@ -127,6 +194,10 @@ pub struct Node {
     /// Intrinsic dimensions are set by the coordinator after bounded decode.
     #[serde(default)]
     pub image_size: Option<(u32, u32)>,
+    /// A custom element V9 upgraded, for `:defined` (uncustomized elements count as defined
+    /// too; only an undefined custom element is not).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub defined: bool,
     /// Parsed cell relationships let inspection use the same stable native identities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_cell: Option<TableCell>,
@@ -212,23 +283,7 @@ pub fn apply(document: &Document, changes: &[TextChange]) -> EngineResult<Docume
     }
     let mut candidate = document.clone();
     for change in changes {
-        let local = candidate
-            .nodes
-            .iter()
-            .find(|node| node.html_id == change.html_id)
-            .map(|node| node.local_id)
-            .ok_or_else(invalid_target)?;
-        let removed = descendants(&candidate, local);
-        candidate
-            .nodes
-            .retain(|node| !removed.contains(&node.local_id));
-        candidate
-            .nodes
-            .iter_mut()
-            .find(|node| node.local_id == local)
-            .ok_or_else(invalid_target)?
-            .text
-            .clone_from(&change.text);
+        mutation::apply_text(&mut candidate, change)?;
     }
     validate_content(&candidate)?;
     Ok(candidate)

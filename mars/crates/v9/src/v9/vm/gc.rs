@@ -1,0 +1,337 @@
+/** Precise mark-and-sweep collection over explicit roots, run between instructions. */
+use super::data::{
+    Class, FunctionKind, HostData, IterState, Job, PromiseState, ReactionHandler, SavedFrame,
+};
+use super::heap::{EnvId, FastSet, INTRINSIC_BASE, Slot};
+use super::{GLOBAL, Res, Vm};
+use crate::v9::value::{JsValue, ObjectId};
+
+/** Marking state; state validation reuses it to find every edge a saved graph holds. */
+#[derive(Default)]
+pub(super) struct Marker {
+    pub objects: FastSet<ObjectId>,
+    pub envs: FastSet<EnvId>,
+    values: Vec<JsValue>,
+    pending_envs: Vec<EnvId>,
+}
+
+impl Marker {
+    /** Queue a value. */
+    pub(super) fn value(&mut self, value: &JsValue) {
+        if let JsValue::Object(id) = value
+            && self.objects.insert(*id)
+        {
+            self.values.push(value.clone());
+        }
+    }
+    /** Queue an object. */
+    pub(super) fn object(&mut self, id: ObjectId) {
+        if self.objects.insert(id) {
+            self.values.push(JsValue::Object(id));
+        }
+    }
+    /** Queue an environment. */
+    pub(super) fn env(&mut self, id: Option<EnvId>) {
+        if let Some(id) = id
+            && self.envs.insert(id)
+        {
+            self.pending_envs.push(id);
+        }
+    }
+    /** Queue a saved frame's references. */
+    pub(super) fn frame(&mut self, frame: &SavedFrame) {
+        for value in frame.stack.iter().chain(&frame.regs).chain(&frame.args) {
+            self.value(value);
+        }
+        self.value(&frame.this);
+        self.value(&frame.callee);
+        self.value(&frame.new_target);
+        self.env(frame.env);
+        for handler in &frame.handlers {
+            self.env(handler.env);
+        }
+    }
+    /** Queue a job's references. */
+    pub(super) fn job(&mut self, job: &Job) {
+        match job {
+            Job::Reaction { reaction, argument } => {
+                self.reaction_handler(&reaction.handler);
+                if let Some(target) = reaction.target {
+                    self.object(target);
+                }
+                self.value(argument);
+            }
+            Job::Thenable {
+                promise,
+                thenable,
+                then,
+            } => {
+                self.object(*promise);
+                self.value(thenable);
+                self.value(then);
+            }
+            Job::Callback(function) => self.value(function),
+        }
+    }
+    /** Queue a reaction handler. */
+    fn reaction_handler(&mut self, handler: &ReactionHandler) {
+        match handler {
+            ReactionHandler::Function(value) => self.value(value),
+            ReactionHandler::Resume(id) => self.object(*id),
+        }
+    }
+}
+
+impl Vm<'_> {
+    /** Collect garbage now: everything unreachable from the roots is freed. */
+    pub fn collect_now(&mut self) -> Res<()> {
+        let mut marker = Marker::default();
+        marker.object(GLOBAL);
+        let materialized: Vec<ObjectId> = self
+            .heap
+            .objects
+            .keys()
+            .copied()
+            .filter(|id| *id >= INTRINSIC_BASE)
+            .collect();
+        for id in materialized {
+            marker.object(id);
+        }
+        for binding in self.globals.values() {
+            if let Some(value) = &binding.value {
+                marker.value(value);
+            }
+        }
+        for frame in &self.frames {
+            for value in frame.stack.iter().chain(&frame.regs).chain(&frame.args) {
+                marker.value(value);
+            }
+            marker.value(&frame.this);
+            marker.value(&frame.callee);
+            marker.value(&frame.new_target);
+            marker.env(frame.env);
+            for handler in &frame.handlers {
+                marker.env(handler.env);
+            }
+        }
+        for value in &self.pins {
+            marker.value(value);
+        }
+        for job in &self.jobs {
+            marker.job(job);
+        }
+        if let Some(frame) = &self.suspended {
+            marker.frame(frame);
+        }
+        self.module_roots(&mut marker);
+        let mut roots = Vec::new();
+        self.page.roots(&mut roots);
+        // A wrapper with its own properties (expando data) or listeners must keep its identity.
+        let wrappers: Vec<(usize, ObjectId)> = self
+            .page
+            .state
+            .wrappers
+            .iter()
+            .map(|(node, id)| (*node, *id))
+            .collect();
+        for (node, id) in wrappers {
+            let data = self
+                .heap
+                .get(id)
+                .is_some_and(|object| !object.props.is_empty());
+            let listened = self
+                .page
+                .state
+                .listeners
+                .iter()
+                .any(|listener| listener.target == super::super::platform::Target::Node(node));
+            let virtual_node = node >= super::super::platform::nodes_virtual_base()
+                && node < super::super::platform::BODY + 16;
+            if data || listened || virtual_node {
+                marker.object(id);
+            }
+        }
+        let pending: Vec<ObjectId> = self.page.state.xhrs.keys().copied().collect();
+        for id in pending {
+            if self
+                .page
+                .state
+                .pending
+                .iter()
+                .any(|request| request.owner == id)
+            {
+                marker.object(id);
+            }
+        }
+        for value in &roots {
+            marker.value(value);
+        }
+        self.trace(&mut marker);
+        self.heap
+            .objects
+            .retain(|id, _| *id >= INTRINSIC_BASE || marker.objects.contains(id));
+        self.heap.envs.retain(|id, _| marker.envs.contains(id));
+        self.page.sweep(&marker.objects);
+        self.heap.recount();
+        Ok(())
+    }
+    /** A module record keeps its body, namespace and environment alive (namespaces read the
+    environment by record, so nothing else may reach it), as does a dynamic import waiting. */
+    pub(super) fn module_roots(&self, marker: &mut Marker) {
+        for record in self.modules.state.records.values() {
+            for id in [record.holder, record.namespace, record.meta]
+                .into_iter()
+                .flatten()
+            {
+                marker.object(id);
+            }
+            marker.env(record.env);
+        }
+        for waiting in &self.modules.state.waiting {
+            if let Some(promise) = waiting.promise {
+                marker.object(promise);
+            }
+        }
+    }
+    /** Follow every edge from the queued roots. */
+    pub(super) fn trace(&self, marker: &mut Marker) {
+        loop {
+            if let Some(value) = marker.values.pop() {
+                if let JsValue::Object(id) = value
+                    && let Some(object) = self.heap.get(id)
+                {
+                    if let Some(proto) = object.proto {
+                        marker.object(proto);
+                    }
+                    for (_, prop) in object.props.iter() {
+                        match &prop.slot {
+                            Slot::Data(value) => marker.value(value),
+                            Slot::Accessor(get, set) => {
+                                if let Some(get) = get {
+                                    marker.object(*get);
+                                }
+                                if let Some(set) = set {
+                                    marker.object(*set);
+                                }
+                            }
+                        }
+                    }
+                    trace_class(&object.class, marker);
+                }
+                continue;
+            }
+            if let Some(env) = marker.pending_envs.pop() {
+                if let Some(record) = self.heap.env(env) {
+                    marker.env(record.parent);
+                    for value in &record.slots {
+                        marker.value(value);
+                    }
+                }
+                continue;
+            }
+            break;
+        }
+    }
+}
+
+/** Edges held inside an object's internal data. */
+fn trace_class(class: &Class, marker: &mut Marker) {
+    match class {
+        Class::Array(elements) => {
+            for value in elements {
+                marker.value(value);
+            }
+        }
+        Class::Function(function) => {
+            if let Some(home) = function.home {
+                marker.object(home);
+            }
+            if let Some(fields) = function.fields {
+                marker.object(fields);
+            }
+            match &function.kind {
+                FunctionKind::Closure { env, .. } => marker.env(*env),
+                FunctionKind::Native { slots, .. } => {
+                    for value in slots {
+                        marker.value(value);
+                    }
+                }
+                FunctionKind::Bound { target, this, args } => {
+                    marker.object(*target);
+                    marker.value(this);
+                    for value in args {
+                        marker.value(value);
+                    }
+                }
+            }
+        }
+        Class::Map(table) | Class::Set(table) | Class::WeakMap(table) | Class::WeakSet(table) => {
+            for (key, value) in table.entries.iter().flatten() {
+                marker.value(key);
+                marker.value(value);
+            }
+        }
+        Class::Promise(data) => {
+            match &data.state {
+                PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => {
+                    marker.value(value)
+                }
+                PromiseState::Pending => {}
+            }
+            for reaction in &data.reactions {
+                marker.reaction_handler(&reaction.handler);
+                if let Some(target) = reaction.target {
+                    marker.object(target);
+                }
+            }
+        }
+        Class::Generator(data) => {
+            if let Some(frame) = &data.frame {
+                marker.frame(frame);
+            }
+        }
+        Class::Async(data) => {
+            marker.object(data.promise);
+            if let Some(frame) = &data.frame {
+                marker.frame(frame);
+            }
+        }
+        Class::Iter(state) => match state.as_ref() {
+            IterState::Array { object, .. } | IterState::ForIn { object, .. } => {
+                marker.value(object)
+            }
+            IterState::Table { table, .. } => marker.object(*table),
+            IterState::Record { iterator, next, .. } => {
+                marker.value(iterator);
+                marker.value(next);
+            }
+            IterState::Matches { regexp, .. } => marker.object(*regexp),
+            IterState::String { .. } => {}
+        },
+        Class::View(view) => marker.object(view.buffer),
+        Class::Proxy(proxy) => {
+            if let (Some(target), Some(handler)) = (proxy.target, proxy.handler) {
+                marker.object(target);
+                marker.object(handler);
+            }
+        }
+        Class::Host(host) => match host.as_ref() {
+            HostData::Event(event) => {
+                marker.value(&event.target);
+                marker.value(&event.current);
+                marker.value(&event.detail);
+            }
+            HostData::Range(range) => {
+                marker.value(&range.start);
+                marker.value(&range.end);
+            }
+            HostData::Selection(ranges) => {
+                for range in ranges {
+                    marker.value(range);
+                }
+            }
+            _ => {}
+        },
+        _ => {}
+    }
+}

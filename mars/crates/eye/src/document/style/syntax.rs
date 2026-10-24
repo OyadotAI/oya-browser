@@ -1,74 +1,117 @@
-/** Bounded stylesheet grammar expands declarations before cascade resolution. */
-use super::{
-    selectors::{specificity, validate_selector},
-    unsupported,
-};
-use crate::{
-    constants::STYLE_BYTES,
-    protocol::{EngineError, EngineResult},
-};
-/** The parser never evaluates URLs, variables or host callbacks. */
-pub(super) struct Rule {
-    pub selector: String,
-    pub declarations: Vec<(String, String, bool)>,
-    pub specificity: usize,
-    pub order: usize,
-}
-
-/** At-rules and unresolved nested syntax cannot silently expose hidden controls. */
-pub(super) fn parse_sheet(sheet: &str, rules: &mut Vec<Rule>) -> EngineResult<()> {
-    if sheet.len() > STYLE_BYTES {
-        return Err(EngineError::limit("stylesheet bytes", STYLE_BYTES));
-    }
-    let mut source = String::new();
-    let mut rest = sheet;
-    while let Some(start) = rest.find("/*") {
-        source.push_str(&rest[..start]);
-        let end = rest[start + 2..].find("*/").ok_or_else(unsupported)? + start + 4;
-        rest = &rest[end..];
-    }
-    source.push_str(rest);
-    let mut rest = source.trim();
-    while !rest.is_empty() {
-        let (selectors, tail) = rest.split_once('{').ok_or_else(unsupported)?;
-        let (body, tail) = tail.split_once('}').ok_or_else(unsupported)?;
-        if selectors.contains('@') || body.contains(['{', '}']) {
-            return Err(unsupported());
-        }
-        let declarations = declarations(body)?;
-        for selector in selectors.split(',') {
-            let selector = selector.trim();
-            validate_selector(selector)?;
-            rules.push(Rule {
-                selector: selector.into(),
-                declarations: declarations.clone(),
-                specificity: specificity(selector),
-                order: rules.len(),
-            });
-            if rules.len() > crate::constants::NODES {
-                return Err(EngineError::limit("CSS rules", crate::constants::NODES));
+/** CSS Syntax-style scanning: comments, strings, escapes and balanced blocks, never panicking on input. */
+/** Comments become a space; strings are copied verbatim so comment openers inside them survive. */
+pub(super) fn strip_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut start = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' | b'\'' => index = string_end(bytes, index),
+            b'\\' => index += 2,
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                out.push_str(&source[start..index]);
+                out.push(' ');
+                index = find(bytes, index + 2, b"*/").map_or(bytes.len(), |end| end + 2);
+                start = index;
             }
+            _ => index += 1,
         }
-        rest = tail.trim();
     }
-    Ok(())
+    out.push_str(source.get(start..).unwrap_or(""));
+    out
 }
-/** Simple declaration grammar refuses unresolved values instead of guessing layout. */
-pub(super) fn declarations(source: &str) -> EngineResult<Vec<(String, String, bool)>> {
-    let mut declarations = Vec::new();
-    for declaration in source.split(';').filter(|s| !s.trim().is_empty()) {
-        let (key, value) = declaration.split_once(':').ok_or_else(unsupported)?;
-        let key = key.trim().to_ascii_lowercase();
-        let mut value = value.trim().to_ascii_lowercase();
-        let important = value.ends_with("!important");
-        if important {
-            value.truncate(value.len() - "!important".len());
-            value = value.trim().into();
+/** Index of the first occurrence of `needle` at or after `from`. */
+fn find(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    bytes
+        .get(from..)?
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|at| at + from)
+}
+/** Index just past a string starting at `start`; an unescaped newline or the end closes it. */
+fn string_end(bytes: &[u8], start: usize) -> usize {
+    let quote = bytes[start];
+    let mut index = start + 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'\n' => return index,
+            b if b == quote => return index + 1,
+            _ => index += 1,
         }
-        if key.is_empty() || value.is_empty() || value.contains(['{', '}', '!']) {
-            return Err(unsupported());
-        }
-        declarations.extend(super::shorthand::expand(key, value, important)?);
     }
-    Ok(declarations)
+    bytes.len()
+}
+/**
+ * First byte in `targets` at nesting depth zero from `from`, skipping strings, escapes and
+ * balanced `()`, `[]` and `{}`; returns the length when none occurs.
+ */
+pub(super) fn find_top(source: &str, from: usize, targets: &[u8]) -> usize {
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    let mut index = from;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if depth == 0 && targets.contains(&byte) {
+            return index;
+        }
+        match byte {
+            b'"' | b'\'' => {
+                index = string_end(bytes, index);
+                continue;
+            }
+            b'\\' => index += 1,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    bytes.len()
+}
+/** Index of the `}` closing the block whose `{` is at `open`, or the length when unclosed. */
+pub(super) fn block_end(source: &str, open: usize) -> usize {
+    find_top(source, open + 1, b"}")
+}
+/** Top-level pieces separated by `separator`, trimmed, empty pieces kept out. */
+pub(super) fn split_top(source: &str, separator: u8) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start <= source.len() {
+        let end = find_top(source, start, &[separator]);
+        let part = source[start..end].trim();
+        if !part.is_empty() {
+            parts.push(part);
+        }
+        start = end + 1;
+    }
+    parts
+}
+/** Top-level whitespace-separated tokens, keeping functions such as `rgb(1, 2, 3)` whole. */
+pub(super) fn tokens(source: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start <= source.len() {
+        let end = find_top(source, start, b" \t\r\n");
+        let part = source[start..end].trim();
+        if !part.is_empty() {
+            parts.push(part);
+        }
+        start = end + 1;
+    }
+    parts
+}
+/** The text of a selector's last compound: after its last top-level combinator or space. */
+pub(super) fn split_compounds(selector: &str) -> &str {
+    let mut start = 0;
+    let mut index = 0;
+    while index < selector.len() {
+        let end = find_top(selector, index, b" \t\r\n>+~");
+        if end < selector.len() {
+            start = end + 1;
+        }
+        index = end + 1;
+    }
+    &selector[start.min(selector.len())..]
 }
