@@ -65,15 +65,16 @@ entry file (`service.ts`, `routes.ts`, `socket.ts`). Other code imports the
 facade only. Behind it the work is split by responsibility, one job per file.
 `browsers/connection/` shows every pattern at small scale:
 
-| File                                                                        | Role                                                                                       |
-| :-------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------- |
-| `browsers/socket.ts`                                                        | Facade: `handleConnection`, `sendCommand`, `takeDialogNote`                                |
-| `connection/browser-connection.ts`                                          | Runs a connection's stages in order: admission, registration, welcome, heartbeat           |
-| `connection/admission.ts`, `registration.ts`, `identity.ts`, `heartbeat.ts` | One stage each                                                                             |
-| `connection/handlers/`                                                      | Command map: message type → handler, grouped by topic                                      |
-| `connection/transports/`                                                    | Strategy: `CommandTransport`, with `DriverTransport` and `SocketTransport` implementations |
-| `connection/commands.ts`                                                    | Facade over the transports: slot, dispatch, outcome                                        |
-| `connection/constants.ts`                                                   | Every number, by name                                                                      |
+| File                                                                        | Role                                                                                                      |
+| :-------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------- |
+| `browsers/socket.ts`                                                        | Facade: `handleConnection`, `sendCommand`, `takeDialogNote`, `releaseBrowser`                             |
+| `connection/browser-connection.ts`                                          | Runs a connection's stages in order: admission, registration, welcome, heartbeat                          |
+| `connection/admission.ts`, `registration.ts`, `identity.ts`, `heartbeat.ts` | One stage each                                                                                            |
+| `connection/handlers/`                                                      | Command map: message type → handler, grouped by topic                                                     |
+| `connection/transports/`                                                    | Strategy: `CommandTransport`, with `DriverTransport` and `SocketTransport` implementations                |
+| `connection/commands.ts`                                                    | Facade over the transports: slot, dispatch, outcome                                                       |
+| `connection/release.ts`                                                     | What a closed, replaced or dropped socket gives back: pending commands, relays, usage clock, persona slot |
+| `connection/constants.ts`                                                   | Every number, by name                                                                                     |
 
 The other patterns in use:
 
