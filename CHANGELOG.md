@@ -36,6 +36,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 ### Fixed
 
 - Usage counted in the last minute before the top of each hour is now recorded and billed. It used to be dropped when the hour rolled over before the next write.
+- A browser that reconnects, or that the server drops (Disconnect, a revoked key, a control-plane stop), now gives back what its connection held at once. It stops being billed, its persona is free for another browser and can be deleted, its waiting commands fail instead of timing out, and CDP clients relayed over it are disconnected instead of left waiting. A reconnect that is accepted bills the old connection's time up to the reconnect instead of dropping it.
 
 ## [1.0.206](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.206) · 2026-10-22
 

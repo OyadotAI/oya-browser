@@ -4,13 +4,10 @@
  * message to its handler. Each stage lives in its own module.
  */
 import { registry } from '../registry.ts';
-import { destroyMcpServer } from '../../../mcp/server.ts';
 import { metrics } from '../../../platform/metrics.ts';
-import * as usage from '../../../platform/usage.ts';
 import { container } from '../../../app/container.ts';
-import { closeRelays } from '../cdp-relay.ts';
 import { getAll as getAllCookies } from '../../personas/cookies.ts';
-import { failPending } from './commands.ts';
+import { releaseBrowser } from './release.ts';
 import { HANDLERS, type Connection } from './handlers/index.ts';
 import { admit, takePersona, Rejection } from './admission.ts';
 import { adopt, list, providerOf, type Registration } from './registration.ts';
@@ -176,14 +173,8 @@ export class BrowserConnection implements Connection {
 
   /** Takes the browser out of every registry and returns its persona slot. */
   private unregister() {
-    failPending(this.browserId, 'disconnected', 'Browser disconnected');
-    closeRelays(this.browserId);
-    registry.remove(this.browserId);
-    destroyMcpServer(this.browserId);
-    usage.browserDisconnected(this.apiKey, this.browserId);
-    container.personas.release(this.persona, this.browserId);
+    releaseBrowser(this.browserId, this, 'disconnected');
     metrics.wsDisconnections.inc({ client: 'oya' });
-    metrics.browsersConnected.set({}, registry.browsers.size);
   }
 }
 
