@@ -17,7 +17,11 @@ pub(super) fn hints(node: &Node, document: &Document) -> Vec<(&'static str, Stri
         "table" => table(attrs, &mut out),
         "td" | "th" => cell(node, document, &mut out),
         "font" => font(attrs, &mut out),
-        "img" | "object" | "embed" | "iframe" | "video" => replaced(attrs, &mut out),
+        "img" | "object" | "embed" | "iframe" => replaced(attrs, &mut out),
+        "video" => {
+            replaced(attrs, &mut out);
+            video(attrs, &mut out);
+        }
         _ => {}
     }
     out
@@ -174,6 +178,41 @@ fn replaced(attrs: &BTreeMap<String, String>, out: &mut Vec<(&'static str, Strin
         Some("middle" | "absmiddle" | "center") => out.push(("vertical-align", "middle".into())),
         _ => {}
     }
+}
+/** A video's `width` and `height`, and its `poster` frame as a contained, centered background,
+ * which is what Chromium shows before playback (Wikipedia's and gnu.org's videos were empty). */
+fn video(attrs: &BTreeMap<String, String>, out: &mut Vec<(&'static str, String)>) {
+    for name in ["width", "height"] {
+        if let Some(value) = attrs.get(name).and_then(|v| length(v)) {
+            out.push((name, value));
+        }
+    }
+    // Both attributes also give the box their ratio, so `width: 100%; height: auto` keeps it
+    // (gnu.org's video collapsed to nothing).
+    let pixels = |name: &str| attrs.get(name).and_then(|v| v.trim().parse::<f64>().ok());
+    if let (Some(width), Some(height)) = (pixels("width"), pixels("height"))
+        && width > 0.0
+        && height > 0.0
+    {
+        out.push(("aspect-ratio", format!("auto {width} / {height}")));
+    }
+    let Some(poster) = attrs
+        .get("poster")
+        .map(|url| url.trim())
+        .filter(|url| !url.is_empty())
+    else {
+        return;
+    };
+    let escaped = poster
+        .replace(['\n', '\r'], "")
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    out.extend([
+        ("background-image", format!("url(\"{escaped}\")")),
+        ("background-size", "contain".into()),
+        ("background-position", "center".into()),
+        ("background-repeat", "no-repeat".into()),
+    ]);
 }
 /** All four border sides with one width and style, in the current color. */
 fn sides(out: &mut Vec<(&'static str, String)>, width: &str, style: &str) {

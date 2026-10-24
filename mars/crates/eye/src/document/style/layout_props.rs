@@ -23,7 +23,12 @@ pub(super) fn apply(
         "max-height" => style.max_height = size(value, font, context, &["none"])?,
         "float" => style.float = float(value)?,
         "clear" => style.clear = clear(value)?,
-        "vertical-align" => style.vertical_align = vertical_align(value)?,
+        "vertical-align" => {
+            style.vertical_align = vertical_align(value)?;
+            style.vertical_shift = dimension(value, font, context)
+                .ok()
+                .map(|shift| (shift.px, shift.percent));
+        }
         "list-style-type" => style.list_style = list_style(value)?,
         "list-style" => style.list_style = list_shorthand(value),
         "row-gap" | "column-gap" | "grid-row-gap" | "grid-column-gap" => {
@@ -31,6 +36,8 @@ pub(super) fn apply(
         }
         "grid-template-columns" => style.grid_columns = template(value, font, context)?,
         "grid-template-rows" => style.grid_rows = template(value, font, context)?,
+        "grid-auto-rows" => style.grid_auto_rows = template(value, font, context)?,
+        "grid-auto-columns" => style.grid_auto_columns = template(value, font, context)?,
         "grid-row" => axis(style, 0, value)?,
         "grid-column" => axis(style, 1, value)?,
         "grid-column-start" => style.grid_column.start = line(value)?,
@@ -46,12 +53,23 @@ pub(super) fn apply(
         "background-repeat" => style.background_repeat = background_repeat(value)?,
         "object-fit" => style.object_fit = object_fit(value)?,
         "object-position" => style.object_position = background_position(value, font, context)?,
-        "aspect-ratio" => style.aspect_ratio = aspect_ratio(value)?,
+        "aspect-ratio" => {
+            style.aspect_ratio = aspect_ratio(value)?;
+            style.aspect_ratio_auto = value.split_whitespace().any(|part| part == "auto");
+        }
+        "overflow-wrap" => style.overflow_wrap_break = breaking(value, &["break-word", "anywhere"]),
+        "word-break" => style.word_break_all = breaking(value, &["break-all", "break-word"]),
+        // The end-edge value; a two-value form's second (end) value is the one LTR lines use.
+        "text-overflow" => style.text_overflow_ellipsis = tokens(value).last() == Some(&"ellipsis"),
         "container-type" => style.container_type = super::container::kind(value)?,
         "container-name" => style.container_names = super::container::names(value)?,
         // Generated content is read by the cascade for `::before` and `::after` boxes only.
         "content" => {}
+        // Read by the cascade from the winning declarations; only `text` changes the paint.
+        "background-clip" | "-webkit-background-clip" => {}
+        "table-layout" => style.table_layout_fixed = value == "fixed",
         "border-collapse" => style.border_collapse = value == "collapse",
+        "caption-side" => style.caption_bottom = value == "bottom",
         "border-spacing" => {
             let first = tokens(value).first().copied().ok_or_else(unsupported)?;
             style.border_spacing = extent(first, font, context)?.px.max(0.0);
@@ -70,6 +88,15 @@ fn object_fit(value: &str) -> EngineResult<ObjectFit> {
         "scale-down" => ObjectFit::ScaleDown,
         _ => return Err(unsupported()),
     })
+}
+/** An inherited line-breaking keyword: Some(true) for one of `breaking`, Some(false) for any
+other value, None for a CSS-wide keyword that defers to the parent. */
+fn breaking(value: &str, breaking: &[&str]) -> Option<bool> {
+    let value = value.trim();
+    if ["inherit", "unset", "revert", "revert-layer"].contains(&value) {
+        return None;
+    }
+    Some(breaking.contains(&value))
 }
 /** `auto`, `<ratio>` or `auto && <ratio>`; the ratio is width over height, bounded both ways. */
 fn aspect_ratio(value: &str) -> EngineResult<Option<f64>> {
@@ -200,8 +227,21 @@ fn template(value: &str, font: f64, context: RenderContext) -> EngineResult<Grid
     if value == "none" {
         return Ok(template);
     }
+    super::flex::begin_track_exprs();
     for token in split_tracks(value) {
-        if token.starts_with('[') {
+        if let Some(names) = token
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            let line = u16::try_from(template.tracks.len() + 1).map_err(|_| unsupported())?;
+            for name in names
+                .split_whitespace()
+                .filter(|name| super::layout_props::name(name))
+            {
+                if template.names.len() < GRID_TRACKS {
+                    template.names.push((name.to_owned(), line));
+                }
+            }
             continue;
         }
         if let Some(inner) = token
@@ -216,6 +256,7 @@ fn template(value: &str, font: f64, context: RenderContext) -> EngineResult<Grid
             return Err(unsupported());
         }
     }
+    template.exprs = super::flex::take_track_exprs();
     Ok(template)
 }
 /**
@@ -291,6 +332,7 @@ fn track(token: &str, font: f64, context: RenderContext) -> EngineResult<Track> 
         let [min, max] = parts.as_slice() else {
             return Err(unsupported());
         };
+        let content = track_content(min.trim(), max.trim(), font, context);
         let min = match track_size(min.trim(), font, context)? {
             TrackSize::Fr(_) => TrackSize::Auto,
             other => other,
@@ -298,6 +340,7 @@ fn track(token: &str, font: f64, context: RenderContext) -> EngineResult<Track> 
         return Ok(Track {
             min,
             max: track_size(max.trim(), font, context)?,
+            content,
         });
     }
     let size = track_size(token, font, context)?;
@@ -305,7 +348,41 @@ fn track(token: &str, font: f64, context: RenderContext) -> EngineResult<Track> 
         TrackSize::Fr(_) => TrackSize::Auto,
         other => other,
     };
-    Ok(Track { min, max: size })
+    let content = track_content(token, token, font, context);
+    Ok(Track {
+        min,
+        max: size,
+        content,
+    })
+}
+/** The content keywords of a track's two bounds; `fit-content(L)` has an `auto` minimum and a
+ * max-content maximum limited to `L`. */
+fn track_content(
+    min: &str,
+    max: &str,
+    font: f64,
+    context: RenderContext,
+) -> super::visual_model::TrackContent {
+    use super::visual_model::ContentKeyword;
+    let keyword = |token: &str| match token {
+        "min-content" => ContentKeyword::MinContent,
+        "max-content" => ContentKeyword::MaxContent,
+        _ => ContentKeyword::Auto,
+    };
+    let fit_limit = max
+        .strip_prefix("fit-content(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .and_then(|limit| extent(limit.trim(), font, context).ok());
+    let min = if min.starts_with("fit-content(") {
+        ContentKeyword::Auto
+    } else {
+        keyword(min)
+    };
+    super::visual_model::TrackContent {
+        min,
+        max: keyword(max),
+        fit_limit,
+    }
 }
 /** A single track size keyword, flexible factor or length. */
 fn track_size(token: &str, font: f64, context: RenderContext) -> EngineResult<TrackSize> {
@@ -318,7 +395,9 @@ fn track_size(token: &str, font: f64, context: RenderContext) -> EngineResult<Tr
     }
     match extent(token, font, context) {
         Ok(length) => Ok(TrackSize::Length(length)),
-        Err(error) => mixed(token, font, context).ok_or(error),
+        Err(error) => mixed(token, font, context)
+            .or_else(|| super::flex::track_expr_size(token, font, context))
+            .ok_or(error),
     }
 }
 /** Two-argument `max()` or `min()` mixing lengths and percentages, kept for the grid to decide. */
@@ -397,6 +476,12 @@ fn axis(style: &mut ComputedStyle, index: usize, value: &str) -> EngineResult<()
         placement(value)?
     };
     style.grid_area_names[index] = named.then(|| value.into());
+    // `name-start / name-end` line names; numbers and spans stay in `line`.
+    let mut parts = value.split('/').map(str::trim);
+    style.grid_line_names[index] = [parts.next(), parts.next()].map(|part| {
+        part.filter(|part| !named && *part != "auto" && !part.starts_with("span") && name(part))
+            .map(str::to_owned)
+    });
     if index == 0 {
         style.grid_row = line;
     } else {
@@ -451,34 +536,13 @@ fn background_size(value: &str, font: f64, context: RenderContext) -> EngineResu
         _ => return Err(unsupported()),
     })
 }
-/** Keyword or length offsets of the first layer as percentages or lengths; edge offsets are approximated. */
+/** Keyword, length and edge-offset positions of the first layer; see `paint::position`. */
 pub(super) fn background_position(
     value: &str,
     font: f64,
     context: RenderContext,
 ) -> EngineResult<[Extent; 2]> {
-    let first = split_top(value, b',')
-        .into_iter()
-        .next()
-        .unwrap_or_default();
-    let percent = |percent: f64| Extent { px: 0.0, percent };
-    let mut x = None;
-    let mut y = None;
-    let mut loose = Vec::new();
-    for token in tokens(first.trim()) {
-        match token {
-            "left" => x = Some(percent(0.0)),
-            "right" => x = Some(percent(100.0)),
-            "top" => y = Some(percent(0.0)),
-            "bottom" => y = Some(percent(100.0)),
-            "center" => loose.push(percent(50.0)),
-            _ => loose.push(extent(token, font, context)?),
-        }
-    }
-    let mut loose = loose.into_iter();
-    let x = x.or_else(|| loose.next()).unwrap_or(percent(50.0));
-    let y = y.or_else(|| loose.next()).unwrap_or(percent(50.0));
-    Ok([x, y])
+    super::paint::position(value, font, context)
 }
 /** Tiling keywords of the first layer; `space` and `round` tile like repeat. */
 fn background_repeat(value: &str) -> EngineResult<BackgroundRepeat> {
@@ -504,6 +568,10 @@ pub(super) fn name(value: &str) -> bool {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
         && !value.starts_with(|c: char| c.is_ascii_digit())
+        // CSS Syntax: `-` followed by a digit starts a number (`-1`), not an identifier.
+        && !value
+            .strip_prefix('-')
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 /**
  * `grid-template-areas`: one quoted string per row, equal cell counts, and every name one

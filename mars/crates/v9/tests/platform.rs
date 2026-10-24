@@ -212,8 +212,9 @@ fn listener_errors_are_reported_not_fatal() {
     )
     .unwrap();
     let lines = console(&done);
+    // The location names the script, since a page runs many: "(script 1 line 1, column N)".
     assert!(
-        lines[0].starts_with("Uncaught Error: bad (line 1, column"),
+        lines[0].starts_with("Uncaught Error: bad (script 1 line 1, column"),
         "{}",
         lines[0]
     );
@@ -247,10 +248,10 @@ fn random_uuid_is_unpredictable_and_well_formed() {
 fn absent_apis_are_undefined() {
     assert_eq!(
         eval(
-            "const r=[typeof Atomics,typeof SharedArrayBuffer,typeof WebSocket,typeof DOMParser,typeof fetch,typeof XMLHttpRequest].join();",
+            "const r=[typeof Atomics,typeof SharedArrayBuffer,typeof WebSocket,typeof fetch,typeof XMLHttpRequest].join();",
             "r"
         ),
-        "undefined,undefined,undefined,undefined,function,function"
+        "undefined,undefined,undefined,function,function"
     );
 }
 

@@ -29,6 +29,7 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         list_style: parent.list_style,
         border_spacing: parent.border_spacing,
         border_collapse: parent.border_collapse,
+        caption_bottom: parent.caption_bottom,
         ..ComputedStyle::default()
     }
 }
@@ -50,6 +51,7 @@ fn inherits(key: &str) -> bool {
             "list-style-type",
             "border-spacing",
             "border-collapse",
+            "caption-side",
             "pointer-events",
         ]
         .contains(&key)
@@ -123,6 +125,7 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         "width" => {
             style.width = source.width;
             style.percent_width = source.percent_width;
+            style.width_offset = source.width_offset;
         }
         "max-width" => {
             style.max_width = source.max_width;
@@ -134,8 +137,29 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         "max-height" => style.max_height = source.max_height,
         "box-sizing" => style.box_sizing = source.box_sizing,
         "aspect-ratio" => style.aspect_ratio = source.aspect_ratio,
-        "flex-direction" => style.flex_direction = source.flex_direction,
-        "flex-wrap" => style.flex_wrap = source.flex_wrap,
+        "flex-direction" => {
+            style.flex_direction = source.flex_direction;
+            style.flex_reverse = source.flex_reverse;
+        }
+        "flex-wrap" => {
+            style.flex_wrap = source.flex_wrap;
+            style.wrap_reverse = source.wrap_reverse;
+        }
+        "flex-flow" => {
+            style.flex_direction = source.flex_direction;
+            style.flex_reverse = source.flex_reverse;
+            style.flex_wrap = source.flex_wrap;
+            style.wrap_reverse = source.wrap_reverse;
+        }
+        "place-items" => {
+            style.align_items = source.align_items;
+            style.justify_items = source.justify_items;
+        }
+        "place-self" => {
+            style.align_self = source.align_self;
+            style.justify_self = source.justify_self;
+        }
+        "place-content" => style.justify_content = source.justify_content,
         "flex-basis" => style.flex_basis = source.flex_basis,
         "flex-grow" => style.flex_grow = source.flex_grow,
         "flex-shrink" => style.flex_shrink = source.flex_shrink,
@@ -153,10 +177,12 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         "grid-row" | "grid-row-start" | "grid-row-end" => {
             style.grid_row = source.grid_row;
             style.grid_area_names[0] = source.grid_area_names[0].clone();
+            style.grid_line_names[0] = source.grid_line_names[0].clone();
         }
         "grid-column" | "grid-column-start" | "grid-column-end" => {
             style.grid_column = source.grid_column;
             style.grid_area_names[1] = source.grid_area_names[1].clone();
+            style.grid_line_names[1] = source.grid_line_names[1].clone();
         }
         "container-type" => style.container_type = source.container_type,
         "container-name" => style.container_names = source.container_names.clone(),
@@ -197,6 +223,7 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
         "list-style" | "list-style-type" => style.list_style = source.list_style,
         "border-spacing" => style.border_spacing = source.border_spacing,
         "border-collapse" => style.border_collapse = source.border_collapse,
+        "caption-side" => style.caption_bottom = source.caption_bottom,
         _ => return false,
     }
     true
@@ -211,6 +238,8 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
             style.display_grid = source.display_grid;
             style.display_contents = source.display_contents;
             style.list_item = source.list_item;
+            style.table_box = source.table_box;
+            style.flow_root = source.flow_root;
         }
         "pointer-events" => style.interactive = source.interactive,
         "float" => style.float = source.float,

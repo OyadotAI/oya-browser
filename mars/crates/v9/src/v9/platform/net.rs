@@ -53,10 +53,8 @@ fn record(vm: &mut Vm, mut request: HostRequest, owner: ObjectId, xhr: bool) -> 
     if vm.page.state.pending.len() >= VM_HOST_REQUESTS {
         return Ok(false);
     }
-    if request
-        .body
-        .as_ref()
-        .is_some_and(|body| body.len() > VM_REQUEST_BODY_BYTES)
+    if request.body.as_ref().map_or(0, String::len) + request.body_bytes.len()
+        > VM_REQUEST_BODY_BYTES
     {
         return Err(EngineError::limit("request body bytes", VM_REQUEST_BODY_BYTES).into());
     }
@@ -115,13 +113,37 @@ fn form_type(vm: &mut Vm, body: &JsValue, headers: &mut Vec<(String, String)>) {
     }
 }
 
-/** A request body as text. */
-fn body_text(vm: &mut Vm, value: &JsValue) -> Res<Option<String>> {
+/** A request body: text, or bytes when a BufferSource holds something other than UTF-8. */
+#[derive(Default)]
+struct Body {
+    text: Option<String>,
+    bytes: Vec<u8>,
+}
+
+/** A request body as a browser reads it: strings and URLSearchParams as text, and an
+ArrayBuffer, typed array or DataView as its bytes (as text when they are UTF-8, so the common
+case stays a text body). Other objects are refused as unsupported. */
+fn request_body(vm: &mut Vm, value: &JsValue) -> Res<Body> {
     if value.nullish() {
-        return Ok(None);
+        return Ok(Body::default());
     }
     if let Some(HostData::SearchParams(pairs)) = super::host_data(vm, value) {
-        return Ok(Some(encode_pairs(&pairs)));
+        return Ok(Body {
+            text: Some(encode_pairs(&pairs)),
+            bytes: Vec::new(),
+        });
+    }
+    if let Some(bytes) = crate::v9::builtins::typed::source_bytes(vm, value) {
+        return Ok(match String::from_utf8(bytes) {
+            Ok(text) => Body {
+                text: Some(text),
+                bytes: Vec::new(),
+            },
+            Err(binary) => Body {
+                text: None,
+                bytes: binary.into_bytes(),
+            },
+        });
     }
     if matches!(value, JsValue::Object(_))
         && super::host_data(vm, value).is_none()
@@ -130,9 +152,14 @@ fn body_text(vm: &mut Vm, value: &JsValue) -> Res<Option<String>> {
             Some(Class::String(_))
         )
     {
-        return Err(vm.unsupported_error("request bodies other than strings and URLSearchParams"));
+        return Err(
+            vm.unsupported_error("request bodies other than strings, URLSearchParams and buffers")
+        );
     }
-    Ok(Some(vm.to_text(value)?))
+    Ok(Body {
+        text: Some(vm.to_text(value)?),
+        bytes: Vec::new(),
+    })
 }
 
 /** fetch(input, init). */
@@ -201,10 +228,13 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
     };
     let body = read(vm, "body")?;
     let body = if body.nullish() {
-        base.as_ref().and_then(|r| r.body.clone())
+        base.as_ref().map_or_else(Body::default, |r| Body {
+            text: r.body.clone(),
+            bytes: r.body_bytes.clone(),
+        })
     } else {
         form_type(vm, &body, &mut headers);
-        body_text(vm, &body)?
+        request_body(vm, &body)?
     };
     let credentials = read(vm, "credentials")?;
     let credentials = text(
@@ -225,7 +255,8 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
         method,
         url,
         headers,
-        body,
+        body: body.text,
+        body_bytes: body.bytes,
         credentials,
         mode,
     }))
@@ -313,14 +344,15 @@ pub(in crate::v9) fn send_beacon(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(url) = resolve(vm, &target) else {
         return Err(vm.type_error("Failed to execute 'sendBeacon': Invalid URL"));
     };
-    let body = body_text(vm, &call.arg(1))?;
+    let body = request_body(vm, &call.arg(1))?;
     let request = HostRequest {
         id: 0,
         kind: "beacon".into(),
         method: "POST".into(),
         url,
         headers: Vec::new(),
-        body,
+        body: body.text,
+        body_bytes: body.bytes,
         credentials: "include".into(),
         mode: "no-cors".into(),
     };
@@ -466,7 +498,7 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
         }
         "send" => {
-            let body = body_text(vm, &call.arg(0))?;
+            let body = request_body(vm, &call.arg(0))?;
             let Some(mut state) = vm.page.state.xhrs.get(&id).cloned() else {
                 return Ok(JsValue::Undefined);
             };
@@ -491,7 +523,8 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 method: state.method,
                 url: state.url,
                 headers: state.headers,
-                body,
+                body: body.text,
+                body_bytes: body.bytes,
                 credentials: credentials.into(),
                 mode: "cors".into(),
             };
@@ -881,9 +914,17 @@ pub(in crate::v9) fn url_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "protocol" => {
             let _ = url.set_scheme(value.trim_end_matches(':'));
         }
-        "host" => {
-            let _ = url.set_host(Some(&value));
+        "username" => {
+            let _ = url.set_username(&value);
         }
+        "password" => {
+            let _ = url.set_password(
+                Some(&value)
+                    .filter(|value| !value.is_empty())
+                    .map(|v| v.as_str()),
+            );
+        }
+        "host" => set_host_and_port(&mut url, &value),
         "hostname" => {
             let _ = url.set_host(Some(&value));
         }
@@ -908,6 +949,25 @@ pub(in crate::v9) fn url_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
         None => super::window::navigate(vm, "assign", url.to_string(), name == "hash")?,
     }
     Ok(JsValue::Undefined)
+}
+
+/** The `host` setter: a host, and the port after it when one is given (`example.com:81`),
+as the URL Standard's host state reads it; an IPv6 literal's colons stay in the host. */
+fn set_host_and_port(url: &mut url::Url, value: &str) {
+    let split = value
+        .rfind(':')
+        .filter(|colon| !value[*colon..].contains(']'))
+        .map(|colon| (&value[..colon], &value[colon + 1..]));
+    match split {
+        Some((host, port)) => {
+            if url.set_host(Some(host)).is_ok() && !port.is_empty() {
+                let _ = url.set_port(port.parse().ok());
+            }
+        }
+        None => {
+            let _ = url.set_host(Some(value));
+        }
+    }
 }
 
 /** URL statics that need blobs. */

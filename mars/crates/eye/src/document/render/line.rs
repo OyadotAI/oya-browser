@@ -19,6 +19,8 @@ pub(super) struct Frag {
     /** Fragment height, margins included for atomics. */
     pub height: f64,
     pub align: VerticalAlign,
+    /** How far `vertical-align: <length-percentage>` raises the baseline. */
+    pub shift: f64,
     /** Left margin of an atomic, so text-align measures its margin box. */
     pub margin: (f64, f64),
 }
@@ -58,10 +60,13 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
     }
     let strut = flow.strut;
     let font = strut.map_or(0.0, |strut| strut.font);
+    // Blink shifts sub and super by a fifth and a third of the font plus one layout pixel,
+    // which is a device pixel at 2x (half a CSS px).
+    let pixel = 1.0 / super::sizing::DEVICE_SCALE;
     let raise = |frag: &Frag| match frag.align {
-        VerticalAlign::Sub => -(font * SUB_SHIFT + 1.0),
-        VerticalAlign::Super => font * SUPER_SHIFT + 1.0,
-        _ => 0.0,
+        VerticalAlign::Sub => -(font * SUB_SHIFT + pixel),
+        VerticalAlign::Super => font * SUPER_SHIFT + pixel,
+        _ => frag.shift,
     };
     let anchored = |frag: &Frag| matches!(frag.align, VerticalAlign::Top | VerticalAlign::Bottom);
     // The baseline sits as low as the tallest ascent above it needs.
@@ -149,8 +154,145 @@ pub(super) fn settle(
                 move_piece(items, frag.piece, dx, 0.0);
             }
         }
+        if let Some(owner) = flow.ellipsis {
+            truncate(context, items, &line, owner)?;
+        }
     }
     refit_inlines(context, items, from)
+}
+/** The ellipsis string Blink uses for `text-overflow: ellipsis` (U+2026). */
+const ELLIPSIS: &str = "\u{2026}";
+/** Overflow below this is layout rounding, not content past the end edge. */
+const OVERFLOW_EPSILON: f64 = 0.01;
+/**
+ * Blink's LineTruncator (LTR): a line whose content passes the block's end edge keeps what fits
+ * before an ellipsis measured in the block's font, hides the rest and paints "…" right after the
+ * kept content. The first character or atomic of a line is clipped rather than ellipsed
+ * (css-overflow-3). Without it rustdoc's sidebar links were cut mid-letter with no "…".
+ */
+fn truncate(
+    context: &mut LayoutContext<'_>,
+    items: &mut [DisplayItem],
+    line: &Finished,
+    owner: usize,
+) -> EngineResult<()> {
+    let end = line.left + line.width;
+    let mut frags = line
+        .frags
+        .iter()
+        .filter_map(|(frag, _)| bounds(items, frag).map(|extent| (extent, frag.piece)))
+        .collect::<Vec<_>>();
+    if frags
+        .iter()
+        .all(|((_, right), _)| *right <= end + OVERFLOW_EPSILON)
+    {
+        return Ok(());
+    }
+    frags.sort_by(|a, b| a.0.0.total_cmp(&b.0.0));
+    let style = &context.node(owner)?.style;
+    let limit = end - context.measure(ELLIPSIS, super::sizing::face_for(style, Some(ELLIPSIS)))?;
+    let mut last_text = None;
+    let mut cut = false;
+    for (index, ((_, right), piece)) in frags.into_iter().enumerate() {
+        if !cut && right <= limit {
+            if let Piece::Text { item, line } = piece {
+                last_text = Some((item, line));
+            }
+            continue;
+        }
+        if cut {
+            hide(items, piece);
+            continue;
+        }
+        cut = true;
+        match piece {
+            Piece::Text { item, line } => {
+                ellipsize(context, items, (item, line), limit, index == 0)?
+            }
+            Piece::Atomic { .. } if index == 0 => {}
+            Piece::Atomic { .. } => {
+                hide(items, piece);
+                if let Some(run) = last_text {
+                    ellipsize(context, items, run, f64::INFINITY, false)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+/** Cuts one text run to the longest prefix ending by `limit` (at least one character when it
+ * starts the line) and appends the ellipsis, measured in the run's own font. */
+fn ellipsize(
+    context: &mut LayoutContext<'_>,
+    items: &mut [DisplayItem],
+    (item, line): (usize, usize),
+    limit: f64,
+    first: bool,
+) -> EngineResult<()> {
+    let Some(run) = items
+        .get(item)
+        .and_then(|found| found.lines.get(line))
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let style = context.node(items[item].local_id)?.style.clone();
+    let face = super::sizing::face_for(&style, Some(&run.text));
+    let room = limit - run.x;
+    let ends = run
+        .text
+        .char_indices()
+        .map(|(at, _)| at)
+        .skip(1)
+        .chain([run.text.len()]);
+    let ends = ends.collect::<Vec<_>>();
+    let (mut low, mut high) = (usize::from(first), ends.len());
+    // Binary search for the most characters whose width fits the room.
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        if context.measure(&run.text[..ends[middle - 1]], face)? <= room {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    let kept = if low == 0 {
+        ""
+    } else {
+        &run.text[..ends[low - 1]]
+    };
+    let text = format!("{kept}{ELLIPSIS}");
+    let width = context.measure(&text, face)?;
+    let target = &mut items[item].lines[line];
+    target.text = text;
+    target.width = width;
+    Ok(())
+}
+/** Hides a fragment that falls after the ellipsis. */
+fn hide(items: &mut [DisplayItem], piece: Piece) {
+    match piece {
+        Piece::Text { item, line } => {
+            if let Some(run) = items
+                .get_mut(item)
+                .and_then(|found| found.lines.get_mut(line))
+            {
+                run.text.clear();
+                run.width = 0.0;
+            }
+        }
+        Piece::Atomic { start, end } => {
+            for item in items.iter_mut().take(end).skip(start) {
+                item.opacity = 0.0;
+            }
+        }
+    }
+}
+/** Moves the fragments already on the current line `dx` along, as a left float placed beside
+ * them does. */
+pub(super) fn shift_current(flow: &Flow, items: &mut [DisplayItem], dx: f64) {
+    for frag in &flow.frags {
+        move_piece(items, frag.piece, dx, 0.0);
+    }
 }
 /** Horizontal extent of a fragment, margins included for atomics. */
 fn bounds(items: &[DisplayItem], frag: &Frag) -> Option<(f64, f64)> {
@@ -225,12 +367,17 @@ fn refit_inlines(
         let inline = inline_box(context, &items[index]);
         let item = &items[index];
         let rect = if inline {
-            let advance = item.line_height.unwrap_or(item.font_size);
+            // Blink's inline box is the font's content area (ascent plus descent) around the
+            // baseline, not the line-height: half the leading sits above and below it.
+            let style = &context.node(item.local_id)?.style;
+            let (_, content) = super::sizing::face_metrics(style);
+            let leading = super::sizing::half_leading(style);
             let mut rect = extents.remove(&item.local_id);
             for line in &item.lines {
+                let top = line.y + leading;
                 rect = Some(union(
                     rect,
-                    (line.x, line.y, line.x + line.width, line.y + advance),
+                    (line.x, top, line.x + line.width, top + content),
                 ));
             }
             let Some(rect) = rect else {
@@ -239,6 +386,13 @@ fn refit_inlines(
             let node = context.node(item.local_id)?;
             let sides = super::sizing::border_sides(&node.style);
             let pad = node.style.padding;
+            // On one line the box also spans its children's margins and its own leading space.
+            let rect = if rect.3 - rect.1 <= content + 0.01 {
+                let (lead, trail) = context.inline_edges(item.local_id);
+                (rect.0 - lead, rect.1, rect.2 + trail, rect.3)
+            } else {
+                rect
+            };
             let rect = (
                 rect.0 - pad[3] - sides[3],
                 rect.1 - pad[0] - sides[0],

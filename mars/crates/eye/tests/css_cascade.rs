@@ -221,7 +221,7 @@ fn other_pseudo_element_rules_are_dropped() {
 fn dropped_hiding_selector_makes_its_possible_targets_not_actionable() {
     let document = styled(
         "<div id=m class=menu><button id=b type=button>Go</button></div><button id=c type=button>Ok</button>",
-        ".menu:dir(ltr){display:none}",
+        ".menu:state(open){display:none}",
     );
     assert!(!by_id(&document, "m").style.interactive);
     assert!(!by_id(&document, "b").style.interactive);

@@ -16,23 +16,53 @@ pub(super) enum Connection {
     Plain(TcpStream),
     /** Rustls performs normal chain, hostname and signature validation. */
     Tls(Box<StreamOwned<ClientConnection, TcpStream>>),
+    /** TLS 1.2 RSA key exchange for servers that refuse Rustls's suites; same verifier. */
+    Legacy(Box<super::legacy::Stream>),
 }
 
-/** Resolve once, reject every nonpublic answer, then connect to one validated address. */
+/**
+ * Resolve once, reject every nonpublic answer, then connect to one validated address, racing
+ * the address families as Chromium's Happy Eyeballs does (eyeballs.rs).
+ */
 pub(super) fn connect(url: &Url, fixture: bool, deadline: Instant) -> EngineResult<Connection> {
     let addresses = resolve(url, fixture)?;
-    let mut last = network_error();
-    for address in addresses {
-        match TcpStream::connect_timeout(&address, remaining(deadline)?) {
-            Ok(socket) => {
-                let mut connection = wrap(socket, url)?;
-                connection.handshake(deadline)?;
-                return Ok(connection);
-            }
-            Err(error) => last = io_error(error),
-        }
+    remaining(deadline)?;
+    let (socket, _) = race(&addresses, deadline)?;
+    establish(socket, &addresses, url, deadline)
+}
+
+/** One raced connection to the admitted addresses. */
+fn race(addresses: &[SocketAddr], deadline: Instant) -> EngineResult<(TcpStream, SocketAddr)> {
+    super::eyeballs::race(addresses, deadline, |address, budget| {
+        TcpStream::connect_timeout(address, budget)
+    })
+    .map_err(io_error)
+}
+
+/**
+ * TLS through Rustls; when the server answers its hello with handshake_failure, once more on a
+ * fresh socket to the same admitted addresses with the RSA key exchange Chromium still offers
+ * (legacy.rs). Chrome sends both in one hello; a server that prefers ECDHE never reaches the
+ * second attempt, so only servers Chrome would reach over kRSA take it.
+ */
+fn establish(
+    socket: TcpStream,
+    addresses: &[SocketAddr],
+    url: &Url,
+    deadline: Instant,
+) -> EngineResult<Connection> {
+    let mut connection = wrap(socket, url)?;
+    if connection.handshake(deadline)? {
+        return Ok(connection);
     }
-    Err(last)
+    let (socket, _) = race(addresses, deadline)?;
+    let budget = remaining(deadline)?;
+    socket.set_read_timeout(Some(budget)).map_err(io_error)?;
+    socket.set_write_timeout(Some(budget)).map_err(io_error)?;
+    let name = url.host_str().ok_or_else(denied)?.trim_matches(['[', ']']);
+    super::legacy::connect(socket, name, &super::hello::verifier()?)
+        .map(|stream| Connection::Legacy(Box::new(stream)))
+        .map_err(io_error)
 }
 
 /** Standard DNS remains inside the supervised process so a stalled resolver can be killed. */
@@ -109,6 +139,7 @@ impl Connection {
             let count = match self {
                 Self::Plain(socket) => socket.write(bytes),
                 Self::Tls(stream) => stream.write(bytes),
+                Self::Legacy(stream) => stream.write(bytes),
             }
             .map_err(io_error)?;
             if count == 0 {
@@ -134,12 +165,15 @@ impl Connection {
                 let StreamOwned { conn, sock } = *stream;
                 Some((conn, sock))
             }
-            Self::Plain(_) => None,
+            Self::Plain(_) | Self::Legacy(_) => None,
         }
     }
 
-    /** TLS negotiation finishes in preparation, while stale ownership can still prevent POST. */
-    fn handshake(&mut self, deadline: Instant) -> EngineResult<()> {
+    /**
+     * TLS negotiation finishes in preparation, while stale ownership can still prevent POST.
+     * False when the server refused every suite offered, so the caller may try kRSA.
+     */
+    fn handshake(&mut self, deadline: Instant) -> EngineResult<bool> {
         if let Self::Tls(stream) = self {
             while stream.conn.is_handshaking() {
                 let remaining = remaining(deadline)?;
@@ -151,13 +185,15 @@ impl Connection {
                     .sock
                     .set_write_timeout(Some(remaining))
                     .map_err(io_error)?;
-                stream
-                    .conn
-                    .complete_io(&mut stream.sock)
-                    .map_err(io_error)?;
+                if let Err(error) = stream.conn.complete_io(&mut stream.sock) {
+                    if refused_suites(&error) {
+                        return Ok(false);
+                    }
+                    return Err(io_error(error));
+                }
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     /** The exact admitted address this socket was connected to. */
@@ -180,6 +216,13 @@ impl Connection {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
             ),
             Self::Tls(stream) => tls_idle(stream),
+            Self::Legacy(stream) => {
+                stream.open()
+                    && matches!(
+                        stream.sock.peek(&mut [0]),
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+                    )
+            }
         };
         self.socket().set_nonblocking(false).is_ok() && open
     }
@@ -189,6 +232,7 @@ impl Connection {
         match self {
             Self::Plain(socket) => socket,
             Self::Tls(stream) => &stream.sock,
+            Self::Legacy(stream) => &stream.sock,
         }
     }
 
@@ -203,6 +247,10 @@ impl Connection {
         match self {
             Self::Plain(socket) => socket.read(bytes),
             Self::Tls(stream) => match stream.read(bytes) {
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(0),
+                result => result,
+            },
+            Self::Legacy(stream) => match stream.read(bytes) {
                 Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(0),
                 result => result,
             },
@@ -235,7 +283,7 @@ fn remaining(deadline: Instant) -> EngineResult<Duration> {
 /** Rustls invalid-data errors expose no certificate bypass. */
 fn io_error(error: std::io::Error) -> EngineError {
     if error.kind() == std::io::ErrorKind::InvalidData {
-        return tls_error();
+        return tls_failure(&error);
     }
     if [std::io::ErrorKind::TimedOut, std::io::ErrorKind::WouldBlock].contains(&error.kind()) {
         return EngineError::new(
@@ -245,6 +293,37 @@ fn io_error(error: std::io::Error) -> EngineError {
         );
     }
     network_error()
+}
+
+/**
+ * The server answered the hello with handshake_failure (or a version or security refusal):
+ * no suite or version in common, Chromium's ERR_SSL_VERSION_OR_CIPHER_MISMATCH.
+ */
+fn refused_suites(error: &std::io::Error) -> bool {
+    use rustls::AlertDescription::{HandshakeFailure, InsufficientSecurity, ProtocolVersion};
+    matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::AlertReceived(
+            HandshakeFailure | InsufficientSecurity | ProtocolVersion
+        ))
+    )
+}
+
+/** A certificate refusal keeps its text; a suite mismatch says so instead. */
+fn tls_failure(error: &std::io::Error) -> EngineError {
+    let legacy = error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<super::legacy::Mismatch>());
+    if legacy || refused_suites(error) {
+        return EngineError::new(
+            "tls_error",
+            "The server uses an unsupported TLS protocol or cipher suite.",
+            "The site's TLS configuration is not one a browser accepts.",
+        );
+    }
+    tls_error()
 }
 
 /** Native TLS copy gives the user an explicit final refusal. */

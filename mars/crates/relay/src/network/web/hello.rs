@@ -6,6 +6,7 @@
  * or Chrome's randomized extension order; README.md records what tls.peet.ws measured.
  */
 use crate::protocol::{EngineError, EngineResult};
+use rustls::client::WebPkiServerVerifier;
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use rustls::{CipherSuite, ClientConfig, RootCertStore, SignatureScheme};
 use std::sync::{Arc, OnceLock};
@@ -45,18 +46,47 @@ type Mapping = Vec<(
 /// connections resume (as Chrome does) instead of repeating full handshakes.
 pub(super) fn config() -> EngineResult<Arc<ClientConfig>> {
     static CONFIG: OnceLock<Option<Arc<ClientConfig>>> = OnceLock::new();
-    CONFIG.get_or_init(build).clone().ok_or_else(|| {
-        EngineError::new(
-            "tls_error",
-            "The TLS client could not be configured.",
-            "Restart the browser.",
-        )
-    })
+    CONFIG.get_or_init(build).clone().ok_or_else(unconfigured)
+}
+
+/** The Mozilla roots both TLS paths trust, built once. */
+fn roots() -> Arc<RootCertStore> {
+    static ROOTS: OnceLock<Arc<RootCertStore>> = OnceLock::new();
+    ROOTS
+        .get_or_init(|| {
+            Arc::new(RootCertStore::from_iter(
+                webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
+            ))
+        })
+        .clone()
+}
+
+/// The WebPKI verifier Rustls builds from the same roots and provider, for the legacy RSA key
+/// exchange in legacy.rs, so both paths verify certificates identically.
+pub(super) fn verifier() -> EngineResult<Arc<WebPkiServerVerifier>> {
+    static VERIFIER: OnceLock<Option<Arc<WebPkiServerVerifier>>> = OnceLock::new();
+    VERIFIER
+        .get_or_init(|| {
+            WebPkiServerVerifier::builder_with_provider(roots(), Arc::new(provider()))
+                .build()
+                .ok()
+        })
+        .clone()
+        .ok_or_else(unconfigured)
+}
+
+/** The configuration could not be built. */
+fn unconfigured() -> EngineError {
+    EngineError::new(
+        "tls_error",
+        "The TLS client could not be configured.",
+        "Restart the browser.",
+    )
 }
 
 /** Builds the provider and configuration; None only if Rustls rejects its own defaults. */
 fn build() -> Option<Arc<ClientConfig>> {
-    let roots = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let roots = roots();
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider()))
         .with_safe_default_protocol_versions()
         .ok()?

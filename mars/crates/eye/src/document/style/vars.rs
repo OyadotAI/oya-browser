@@ -10,6 +10,16 @@ pub(super) const HTML: usize = 0;
 pub(super) const BODY: usize = 1;
 /** Node scopes start after the two wrappers. */
 pub(super) const FIRST_NODE: usize = 2;
+/** One `@property` registration (CSS Properties and Values API, Blink's PropertyRegistration). */
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Registration {
+    /// Whether the property inherits; a non-inherited one reads only its own element's value.
+    pub inherits: bool,
+    /// The value used where nothing declares the property, if the rule gave one.
+    pub initial: Option<Rc<str>>,
+}
+/** Registered custom properties by name; the first valid `@property` for a name wins. */
+pub(super) type Registrations = BTreeMap<String, Registration>;
 /** Each element's own custom properties plus its parent scope; lookups walk ancestors. */
 #[derive(Default)]
 pub(super) struct Scopes {
@@ -17,19 +27,57 @@ pub(super) struct Scopes {
     own: Vec<BTreeMap<Rc<str>, Rc<str>>>,
     /// Parent scope per scope.
     parent: Vec<Option<usize>>,
+    /// `@property` registrations from the page's sheets.
+    registered: Rc<Registrations>,
 }
 impl Scopes {
+    /** Empty scopes that honour the sheets' `@property` registrations. */
+    pub(super) fn registered(registered: Rc<Registrations>) -> Self {
+        Self {
+            registered,
+            ..Self::default()
+        }
+    }
     /** Adds the next scope in document order. */
     pub(super) fn push(&mut self, parent: Option<usize>, own: BTreeMap<Rc<str>, Rc<str>>) {
         self.own.push(own);
         self.parent.push(parent);
     }
+    /** Drops the last scope: a pseudo-element's, which lives only while its box computes. */
+    pub(super) fn pop(&mut self) {
+        self.own.pop();
+        self.parent.pop();
+    }
     /** Scopes pushed so far. */
     pub(super) fn len(&self) -> usize {
         self.own.len()
     }
-    /** Nearest declaration of `name` at or above `scope`. */
+    /**
+     * The computed value of `name` at `scope` and the scope it was declared in: the nearest
+     * declaration at or above it, or only its own for a non-inherited registered property, and
+     * a registered property's initial value (at the root, where it has no references) otherwise.
+     */
     fn lookup(&self, scope: usize, name: &str) -> Option<(usize, Rc<str>)> {
+        let Some(registration) = self.registered.get(name) else {
+            return self.declared(scope, name);
+        };
+        let found = match registration.inherits {
+            true => self.declared(scope, name),
+            false => self
+                .own
+                .get(scope)?
+                .get(name)
+                .map(|value| (scope, value.clone())),
+        };
+        let initial = || Some((HTML, registration.initial.clone()?));
+        match found {
+            Some((_, value)) if value.trim().eq_ignore_ascii_case("initial") => initial(),
+            None => initial(),
+            found => found,
+        }
+    }
+    /** Nearest declaration of `name` at or above `scope`. */
+    fn declared(&self, scope: usize, name: &str) -> Option<(usize, Rc<str>)> {
         let mut current = Some(scope);
         let mut steps = 0;
         while let Some(at) = current {

@@ -278,3 +278,271 @@ fn later_timers_publish_a_new_revision() {
     assert!(texts(&now).contains("later"), "{now}");
     assert_eq!(now["revision"], 2);
 }
+
+/** Script that measures a node it just inserted sees that node's laid-out box, as a browser's
+forced layout gives it, and can position the node with it (a centred consent dialog). */
+#[test]
+fn measuring_an_inserted_node_sees_its_layout() {
+    let (_fixture, mut runtime, page) = load(
+        "<button id=go>go</button><p id=out>none</p><script>document.getElementById('go')\
+         .addEventListener('click',()=>{const d=document.createElement('div');\
+         d.style.width='200px';d.textContent='dialog';document.body.appendChild(d);\
+         const r=d.getBoundingClientRect();document.getElementById('out').textContent=\
+         'width '+r.width+' left '+(innerWidth-r.width)/2})</script>",
+        vec![],
+    );
+    let go = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "go")
+        .unwrap()["node_id"]
+        .clone();
+    let clicked = agent_call(
+        &mut runtime,
+        "page.click",
+        json!({"page_id":page["page_id"],"node_id":go,"expected_revision":page["revision"]}),
+    )
+    .unwrap();
+    let width = clicked["viewport"]["width"].as_f64().unwrap();
+    let expected = format!("width 200 left {}", (width - 200.0) / 2.0);
+    assert!(texts(&clicked).contains(&expected), "{clicked}");
+}
+
+/** The names page.find reports for links, in document order. */
+fn link_names(runtime: &mut mars::runtime::Runtime, visible_only: bool) -> Vec<String> {
+    let found = agent_call(
+        runtime,
+        "page.find",
+        json!({"role":"link","visible_only":visible_only}),
+    )
+    .unwrap();
+    found["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|link| link["name"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/** A link whose text sits in child elements, an image's alt or an svg's aria-label is named by that
+content, as a browser's accessibility tree names it; aria-hidden content is left out. */
+#[test]
+fn links_are_named_by_their_content() {
+    let (_fixture, mut runtime, _page) = load(
+        "<a href=/tech><span>Tech</span> <b>news</b></a><a href=/home><img alt=Home></a>\
+         <a href=/logo><svg aria-label=Logo></svg></a><a href=/tip title=Tip></a>\
+         <a href=/real><span aria-hidden=true>X</span>Real</a>",
+        vec![],
+    );
+    assert_eq!(
+        link_names(&mut runtime, false),
+        ["Tech news", "Home", "Logo", "Tip", "Real"]
+    );
+}
+
+/** visible_only keeps links a person sees: on screen on both axes and not clipped away, so a
+skip link parked off the left edge or visually hidden by a clip is found only without it. */
+#[test]
+fn visible_only_leaves_out_links_off_screen_or_clipped_away() {
+    let (_fixture, mut runtime, page) = load(
+        "<a href=/skip style='position:absolute;left:-9999px'>Skip</a><p><a href=/on>On</a>\
+         <a href=/clipped style='position:absolute;clip:rect(0 0 0 0);width:1px;height:1px;\
+         overflow:hidden'>Clipped</a>",
+        vec![],
+    );
+    assert_eq!(link_names(&mut runtime, true), ["On"]);
+    assert_eq!(link_names(&mut runtime, false), ["Skip", "On", "Clipped"]);
+    let found = agent_call(
+        &mut runtime,
+        "page.find",
+        json!({"role":"link","name":"On"}),
+    )
+    .unwrap();
+    assert!(
+        found["matches"][0]["href"]
+            .as_str()
+            .unwrap()
+            .ends_with("/on"),
+        "{found}"
+    );
+    let skip = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["name"] == "Skip")
+        .unwrap();
+    assert_eq!(skip["visible"], false);
+}
+
+/** Stylesheets and scripts carried in `data:` URLs (media type with spaces and parameters,
+percent-encoded or base64) load locally as facebook.com's do; nothing reaches the network. */
+#[test]
+fn data_url_stylesheets_and_scripts_load() {
+    let (_fixture, _runtime, page) = load(
+        "<link rel=stylesheet href='data:text/css; charset=utf-8,%23gone%7Bdisplay:none%7D'>\
+         <p id=gone>hidden by the sheet</p><p id=out>initial</p>\
+         <script src='data:application/x-javascript;base64,ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ291dCcpLnRleHRDb250ZW50PSdmcm9tIGRhdGEn'></script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("from data"), "{page}");
+    let gone = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "gone")
+        .unwrap();
+    assert!(gone.get("bounds").is_none(), "{gone}");
+}
+
+/** A whitespace-only text node a script inserts, as a Polymer template stamps for a text
+binding, is kept, so the binding's later text reaches the page. */
+#[test]
+fn bound_text_in_whitespace_node_renders() {
+    let (_fixture, _runtime, page) = load(
+        "<div id=root></div><script>const t=document.createElement('template');\
+         t.innerHTML='<a id=\"e\">\\n  <span class=\"title\">[[x]]</span>\\n</a>';\
+         t.content.querySelector('span').firstChild.textContent=' ';\
+         const c=document.importNode(t.content,true);const text=c.querySelector('span').firstChild;\
+         document.getElementById('root').appendChild(c);\
+         setTimeout(()=>{text.textContent='Home'},0);</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("Home"), "{page}");
+}
+
+/** A gzip-encoded binary body, as YouTube posts its guide request, reaches the server as the
+JSON it encodes: Relay carries text bodies, so the runtime sends the decoded identity body
+without the Content-Encoding header, and the page reads the answer. */
+#[test]
+fn gzipped_binary_body_reaches_the_server_decoded() {
+    let (fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>const gz=new Uint8Array([31,139,8,0,0,0,0,0,2,255,171,86,\
+         74,47,205,76,73,85,178,42,41,42,77,173,5,0,148,63,164,148,14,0,0,0]);\
+         fetch('/api',{method:'POST',headers:{'Content-Type':'application/json',\
+         'Content-Encoding':'gzip'},body:gz}).then(r=>r.json()).then(d=>{\
+         document.getElementById('out').textContent=d.items},e=>{\
+         document.getElementById('out').textContent='failed '+e})</script>",
+        vec![(
+            "/api",
+            reply("application/json", "", "{\"items\":\"Home Shorts\"}"),
+        )],
+    );
+    assert!(texts(&page).contains("Home Shorts"), "{page}");
+    let request = fixture.last_request.lock().unwrap().clone();
+    assert!(request.ends_with("{\"guide\":true}"), "{request}");
+    assert!(
+        !request.to_ascii_lowercase().contains("content-encoding"),
+        "{request}"
+    );
+}
+
+/** A `data:` URL fetch is answered locally with its decoded text and media type, as Fetch's
+scheme fetch does; YouTube reads its player configuration this way. */
+#[test]
+fn data_url_fetch_reads_its_text() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>fetch('data:application/json;base64,eyJvayI6InllcyJ9')\
+         .then(r=>r.json()).then(d=>{document.getElementById('out').textContent='data '+d.ok},\
+         e=>{document.getElementById('out').textContent='failed '+e})</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("data yes"), "{page}");
+}
+
+/** A request the slice had no time left to start waits for the next slice instead of failing
+as a network error: here a hung request uses up the load's settle time, and the page's own
+request still answers later. */
+#[test]
+fn requests_past_the_slice_wait_instead_of_failing() {
+    let hung = Fixture::slow();
+    let body = format!(
+        "<p id=out>initial</p><script>fetch('{}/hang',{{mode:'no-cors'}}).catch(()=>{{}});\
+         fetch('/data.json').then(r=>r.json()).then(d=>{{\
+         document.getElementById('out').textContent=d.message}},e=>{{\
+         document.getElementById('out').textContent='failed '+e.message}})</script>",
+        hung.url
+    );
+    let page: &'static str = Box::leak(body.into_boxed_str());
+    let fixture = Fixture::routes(vec![
+        ("/", html("", page)),
+        (
+            "/data.json",
+            reply("application/json", "", "{\"message\":\"fetched\"}"),
+        ),
+    ]);
+    let mut runtime = two_origins(&fixture.url, &hung.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    assert!(!texts(&page).contains("failed"), "{page}");
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+    }
+    let now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert!(texts(&now).contains("fetched"), "{now}");
+}
+
+/** A script-built subtree whose markup passes one fragment's bound (a font probe's div of
+hundreds of styled spans) is inserted whole, and the page's scripts keep running. */
+#[test]
+fn large_script_built_subtree_inserts_whole() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><script>const d=document.createElement('div');\
+         for(let i=0;i<900;i++){const s=document.createElement('span');\
+         s.setAttribute('style','position:absolute;left:-9999px;font-size:72px;font-style:normal;font-weight:normal;letter-spacing:normal');\
+         s.textContent='mmmmmmmmmmlli '+i;d.appendChild(s)}document.body.appendChild(d);\
+         document.getElementById('out').textContent='probed '+d.children.length+' '+d.lastChild.isConnected</script>",
+        vec![],
+    );
+    assert!(texts(&page).contains("probed 900 true"), "{page}");
+    assert!(!page["degraded"].to_string().contains("scripts"), "{page}");
+}
+
+/** A fetched SVG icon, parsed with DOMParser and appended to its placeholder as LinkedIn's
+lazy loader does, becomes part of the page. */
+#[test]
+fn fetched_svg_icon_is_parsed_and_inserted() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><icon id=slot></icon><script>fetch('/icon.svg').then(r=>r.text())\
+         .then(t=>{const svg=new DOMParser().parseFromString(t,'image/svg+xml').firstChild;\
+         document.getElementById('slot').appendChild(svg);\
+         document.getElementById('out').textContent='icon '+svg.tagName+' '+svg.isConnected})</script>",
+        vec![(
+            "/icon.svg",
+            reply(
+                "image/svg+xml",
+                "",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M0 0h24v24H0z\"/></svg>",
+            ),
+        )],
+    );
+    assert!(texts(&page).contains("icon svg true"), "{page}");
+    assert!(
+        page["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["tag"] == "svg"),
+        "{page}"
+    );
+}
+
+/** A stylesheet a script links into the head is fetched and applied, and its `load` event
+fires: craigslist keeps its curtain up until its page CSS reports loaded. */
+#[test]
+fn script_linked_stylesheet_applies_and_fires_load() {
+    let (_fixture, _runtime, page) = load(
+        "<p id=out>initial</p><p id=hide>shown</p><script>const l=document.createElement('link');\
+         l.rel='stylesheet';l.href='/page.css';l.onload=()=>{\
+         document.getElementById('out').textContent='css loaded'};\
+         document.head.appendChild(l)</script>",
+        vec![("/page.css", reply("text/css", "", "#hide{display:none}"))],
+    );
+    assert!(texts(&page).contains("css loaded"), "{page}");
+    let hidden = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "hide");
+    assert!(hidden.is_none_or(|node| node["visible"] == false), "{page}");
+}

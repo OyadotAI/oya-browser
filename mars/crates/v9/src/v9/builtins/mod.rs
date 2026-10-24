@@ -20,7 +20,7 @@ mod reflect;
 mod regexp;
 mod string;
 mod symbol;
-mod typed;
+pub(in crate::v9) mod typed;
 mod weak;
 
 pub(in crate::v9) use function::{dynamic_base, evaluate as evaluate_source};

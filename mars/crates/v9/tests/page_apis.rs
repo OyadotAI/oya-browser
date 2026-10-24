@@ -323,13 +323,15 @@ fn geometry_comes_from_the_app_layout() {
         "const go = document.getElementById('go'); const box = go.getBoundingClientRect();
          const hit = document.elementFromPoint(50, 50);
          const r = [box.x, box.y, box.width, box.height, box.bottom, go.offsetWidth, go.offsetTop, go.clientHeight,
-           hit && hit.id, document.elementFromPoint(900, 900), document.elementsFromPoint(50, 50).length].join('|');",
+           hit && hit.id, String(document.elementFromPoint(900, 900)), document.elementsFromPoint(50, 50).length].join('|');",
         &environment,
     );
     assert_eq!(failure(&execution), None);
+    // elementsFromPoint lists the hit and every ancestor to the root, as Chrome does: the
+    // button, div#main, body and html.
     assert_eq!(
         common::global(&execution, "r"),
-        "40|45|80|30|75|80|60|30|go|null|2"
+        "40|45|80|30|75|80|60|30|go|null|4"
     );
     let bare =
         common::load("const r = document.getElementById('go').getBoundingClientRect().width;");
@@ -353,4 +355,111 @@ fn upgrades_record_definedness() {
             .iter()
             .any(|change| matches!(change, mars_v9::document::ScriptChange::Defined { .. }))
     );
+}
+
+/** Measuring a connected node newer than the app's last layout is reported, so the app can lay
+out and run the step again; nodes the layout saw, and detached nodes, are not. */
+#[test]
+fn measuring_a_node_newer_than_the_layout_is_reported() {
+    let mut environment = common::environment();
+    environment.geometry = vec![mars_v9::NodeBox {
+        node: 0,
+        x: 0.0,
+        y: 0.0,
+        width: 100.0,
+        height: 100.0,
+    }];
+    environment.laid_out_before = Some(4);
+    let stale = |source: &str, environment: &mars_v9::PageEnvironment| {
+        load_with(source, environment).effects.stale_geometry
+    };
+    let inserted =
+        "const d=document.createElement('div');document.body.appendChild(d);d.offsetWidth;";
+    assert!(stale(inserted, &environment));
+    assert!(!stale(
+        "document.getElementById('first').getBoundingClientRect();",
+        &environment
+    ));
+    assert!(!stale(
+        "document.createElement('div').getBoundingClientRect();",
+        &environment
+    ));
+    environment.laid_out_before = None;
+    assert!(!stale(inserted, &environment));
+}
+
+/** `document.all` is the one undetectable object: falsy, typeof "undefined", loosely equal to
+null, yet not `undefined` itself; its members still read the document. */
+#[test]
+fn document_all_is_undetectable() {
+    let r = eval(
+        "const all = document.all;
+         const r = [typeof all, !all, all == null, all == undefined, all === undefined,
+           undefined !== all, all.length > 0, all.item(0) === document.documentElement || all.item(0) !== null].join('|');",
+        "r",
+    );
+    assert_eq!(r, "undefined|true|true|true|false|true|true|true");
+}
+
+/** Members live on their element's interface: a div has no `data`, `href` or `value`, which a
+sanitizer tests with `in`, while anchors, inputs, objects and text nodes keep theirs. */
+#[test]
+fn members_belong_to_their_interfaces() {
+    let r = eval(
+        "const make = (tag) => document.createElement(tag);
+         const div = make('div'), a = make('a'), input = make('input'), custom = make('x-thing');
+         a.href = 'https://example.com/path'; input.value = 'typed';
+         const r = ['data' in div, 'data' in custom, 'text' in custom, 'href' in div, 'value' in div,
+           'href' in a, a.pathname, 'value' in input, input.value, 'data' in make('object'),
+           'data' in document.createTextNode('x'), document.createTextNode('x').data,
+           a instanceof HTMLAnchorElement, div instanceof HTMLAnchorElement, a instanceof HTMLElement,
+           'hidden' in div, 'title' in custom, new Image().src === ''].join('|');",
+        "r",
+    );
+    assert_eq!(
+        r,
+        "false|false|false|false|false|true|/path|true|typed|true|true|x|true|false|true|true|true|true"
+    );
+}
+
+/** DOMParser parses an SVG string into an element a page can append (LinkedIn's icons), drops
+the XML declaration, and gives an HTML document its head and body. */
+#[test]
+fn dom_parser_builds_appendable_trees() {
+    let r = eval(
+        "const svg = new DOMParser().parseFromString('<?xml version=\"1.0\"?><svg viewBox=\"0 0 24 24\"><path d=\"M0 0h24\"/></svg>', 'image/svg+xml').firstChild;
+         const host = document.getElementById('first'); host.appendChild(svg);
+         const doc = new DOMParser().parseFromString('<p class=x>hi</p>', 'text/html');
+         const r = [svg.tagName, svg.firstChild.tagName, document.createElement('div').tagName, svg.getAttribute('viewBox'), svg.isConnected,
+           host.querySelector('path') !== null, doc.body.querySelector('.x').textContent,
+           doc.documentElement.tagName.toLowerCase(), doc.head.childNodes.length].join('|');",
+        "r",
+    );
+    assert_eq!(r, "svg|path|DIV|0 0 24 24|true|true|hi|html|0");
+}
+
+/** URL's username and password are settable and `host` takes a port, as the URL Standard's
+setters do; Airbnb's URL helpers assign `username` and threw without it. */
+#[test]
+fn url_credentials_and_host_port_are_settable() {
+    let r = eval(
+        "'use strict'; const u = new URL('https://a.example.com:8080/p');
+         u.username = 'me'; u.password = 'pw'; u.host = 'c.example:9';
+         const v = new URL('https://x.example/'); v.host = 'y.example';
+         const r = [u.href, v.href].join('|');",
+        "r",
+    );
+    assert_eq!(r, "https://me:pw@c.example:9/p|https://y.example/");
+}
+
+/** Path2D exists, so polyfills that extend its prototype run (Twitch's polyfill bundle). */
+#[test]
+fn path2d_exists_for_polyfills() {
+    let r = eval(
+        "Path2D.prototype.roundRect ??= function () {};
+         const p = new Path2D(); p.moveTo(0, 0); p.lineTo(1, 1); p.closePath();
+         const r = [typeof Path2D, p instanceof Path2D, typeof p.roundRect].join('|');",
+        "r",
+    );
+    assert_eq!(r, "function|true|function");
 }

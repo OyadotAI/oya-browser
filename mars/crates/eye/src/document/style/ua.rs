@@ -90,6 +90,8 @@ pub(super) fn defaults(node: &Node, style: &mut ComputedStyle) {
     let tag = node.tag.as_str();
     style.inline = !BLOCK.contains(&tag);
     style.list_item = tag == "li";
+    // A video is a replaced box: an inline-block with Chromium's 300 by 150 default size.
+    style.inline_block = tag == "video";
     match tag {
         "ol" => style.list_style = super::ListStyle::Decimal,
         "ul" | "menu" => style.list_style = super::ListStyle::Disc,
@@ -123,6 +125,7 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
         "small" | "sub" | "sup" => out.push(("font-size", "smaller")),
         "center" => out.push(("text-align", "-webkit-center")),
         "table" => out.push(("border-spacing", "2px")),
+        "video" => out.extend([("width", "300px"), ("height", "150px")]),
         // Chromium's html.css hides these; script-inserted ones stay in the tree as DOM nodes.
         "script" | "style" | "template" => out.push(("display", "none")),
         // A slot's box is its assigned nodes', as Chromium's `slot { display: contents }`.

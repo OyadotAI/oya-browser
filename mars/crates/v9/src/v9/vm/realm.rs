@@ -125,6 +125,8 @@ pub(in crate::v9) struct Ids {
     pub text_prototype: ObjectId,
     pub document_prototype: ObjectId,
     pub document: ObjectId,
+    /** `document.all`: the one object with [[IsHTMLDDA]], falsy and typeof "undefined". */
+    pub document_all: ObjectId,
     pub event_prototype: ObjectId,
     pub custom_event_prototype: ObjectId,
     pub style_prototype: ObjectId,

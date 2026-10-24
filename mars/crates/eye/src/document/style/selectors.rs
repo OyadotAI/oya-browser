@@ -299,14 +299,108 @@ fn simple_matches<'a>(
         Simple::Pseudo(pseudo) => pseudo_matches(tree, element, *pseudo),
         Simple::Not(arguments) => !arguments
             .iter()
-            .any(|argument| compound_matches(tree, element, argument)),
+            .any(|argument| anchored(tree, element, argument)),
         Simple::Is(arguments, _) => arguments
             .iter()
-            .any(|argument| compound_matches(tree, element, argument)),
+            .any(|argument| anchored(tree, element, argument)),
         Simple::Has(arguments) => arguments
             .iter()
             .any(|(combinator, selector)| has(tree, element, *combinator, selector)),
+        Simple::Lang(ranges) => language(tree, element).is_some_and(|tag| lang(&tag, ranges)),
+        Simple::NthOf { a, b, last, of } => nth_of(tree, element, (*a, *b, *last), of),
     }
+}
+/**
+ * The element's inherited language (Blink's ComputeInheritedLanguage): the nearest `lang` or
+ * `xml:lang` on it or an ancestor, lowercased; None when nothing sets one.
+ */
+fn language<'a>(tree: &Tree<'a>, element: Element<'a>) -> Option<String> {
+    let mut current = Some(element);
+    while let Some(at) = current {
+        let (_, attributes) = at.parts(tree);
+        if let Some(value) = attributes
+            .get("xml:lang")
+            .or_else(|| attributes.get("lang"))
+        {
+            return Some(value.trim().to_ascii_lowercase());
+        }
+        current = at.parent(tree).ok().flatten();
+    }
+    None
+}
+/** Whether a lowercase string is a well-formed BCP 47 tag or, with `wild`, range. */
+fn well_formed(tag: &str, wild: bool) -> bool {
+    tag.split('-').all(|subtag| {
+        (wild && subtag == "*")
+            || (!subtag.is_empty()
+                && subtag.len() <= LANGUAGE_SUBTAG
+                && subtag.bytes().all(|b| b.is_ascii_alphanumeric()))
+    })
+}
+/// Longest BCP 47 subtag.
+const LANGUAGE_SUBTAG: usize = 8;
+/**
+ * RFC 4647 extended filtering, as Blink's MatchesLangPseudoClass: the first subtags must match
+ * (or the range's be `*`), then each later range subtag must appear in order, skipping language
+ * subtags but never past a singleton. `:lang("")` matches an explicit empty language.
+ */
+fn lang(tag: &str, ranges: &[String]) -> bool {
+    if !tag.is_empty() && !well_formed(tag, false) {
+        return false;
+    }
+    ranges.iter().any(|range| {
+        if tag.is_empty() {
+            return range.is_empty();
+        }
+        if !well_formed(range, true) {
+            return false;
+        }
+        let (mut wanted, mut have) = (range.split('-').peekable(), tag.split('-').peekable());
+        let (first, own) = (wanted.next().unwrap_or(""), have.next().unwrap_or(""));
+        if first != own && first != "*" {
+            return false;
+        }
+        while let (Some(want), Some(got)) = (wanted.peek(), have.peek()) {
+            if *want == "*" || want == got {
+                wanted.next();
+                have.next();
+            } else if got.len() == 1 {
+                return false;
+            } else {
+                have.next();
+            }
+        }
+        wanted.peek().is_none()
+    })
+}
+/** `:nth-child(an+b of S)`: the element matches S and is at a position an+b among its
+ * siblings that match S, counted from the end when `last`. */
+fn nth_of<'a>(
+    tree: &Tree<'a>,
+    element: Element<'a>,
+    (a, b, last): (i64, i64, bool),
+    of: &[Selector],
+) -> bool {
+    let Element::Node(node) = element else {
+        return false;
+    };
+    let matching = |sibling: &Node| of.iter().any(|s| anchored(tree, Element::Node(sibling), s));
+    if !matching(node) {
+        return false;
+    }
+    let siblings = tree
+        .children
+        .get(&node.parent)
+        .map_or(&[][..], Vec::as_slice);
+    let mut order = siblings.iter().filter(|sibling| matching(sibling));
+    let at = if last {
+        order
+            .rev()
+            .position(|sibling| sibling.local_id == node.local_id)
+    } else {
+        order.position(|sibling| sibling.local_id == node.local_id)
+    };
+    at.is_some_and(|at| nth(at as i64 + 1, a, b))
 }
 /**
  * Whether an element relative to `element` matches: a child, a descendant, the next or a later
@@ -420,8 +514,111 @@ fn pseudo_matches<'a>(tree: &Tree<'a>, element: Element<'a>, pseudo: Pseudo) -> 
             Element::Node(node) => !node.tag.contains('-') || tree.hosts.contains(&node.local_id),
             _ => true,
         },
+        Pseudo::Dir(rtl) => direction(tree, element) == rtl,
+        Pseudo::PlaceholderShown => node.is_some_and(placeholder_shown),
+        Pseudo::ReadWrite(writable) => node.is_some_and(read_write) == writable,
+        Pseudo::Required(required) => node.is_some_and(|node| {
+            form_control(node) && node.attributes.contains_key("required") == required
+        }),
+        Pseudo::Valid(valid) => {
+            node.is_some_and(|node| form_control(node) && !barred(node) && invalid(node) != valid)
+        }
+        Pseudo::Indeterminate => node
+            .is_some_and(|node| node.tag == "progress" && !node.attributes.contains_key("value")),
+        Pseudo::Default => node.is_some_and(|node| match node.tag.as_str() {
+            "input" => {
+                ["checkbox", "radio"].contains(&node.input_type())
+                    && node.attributes.contains_key("checked")
+            }
+            "option" => node.attributes.contains_key("selected"),
+            _ => false,
+        }),
+        Pseudo::Open => node.is_some_and(|node| {
+            ["details", "dialog"].contains(&node.tag.as_str())
+                && node.attributes.contains_key("open")
+        }),
         Pseudo::Never => false,
     }
+}
+/** The element's directionality: the nearest `dir=ltr|rtl` on it or an ancestor, else ltr. */
+// ponytail: `dir=auto` and bdi read as ltr; first-strong detection comes with bidi.
+fn direction<'a>(tree: &Tree<'a>, element: Element<'a>) -> bool {
+    let mut current = Some(element);
+    while let Some(at) = current {
+        let (_, attributes) = at.parts(tree);
+        match attributes
+            .get("dir")
+            .map(|d| d.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("rtl") => return true,
+            Some("ltr") => return false,
+            _ => {}
+        }
+        current = at.parent(tree).ok().flatten();
+    }
+    false
+}
+/** Input types whose value is text a person types, so a placeholder or `readonly` applies. */
+const TEXT_TYPES: [&str; 12] = [
+    "text",
+    "search",
+    "url",
+    "tel",
+    "email",
+    "password",
+    "number",
+    "date",
+    "month",
+    "week",
+    "time",
+    "datetime-local",
+];
+/** A text field: a textarea or a text-like input. */
+fn text_field(node: &Node) -> bool {
+    node.tag == "textarea" || (node.tag == "input" && TEXT_TYPES.contains(&node.input_type()))
+}
+/** Blink's IsPlaceholderVisible: a text field with a placeholder and no value. */
+fn placeholder_shown(node: &Node) -> bool {
+    text_field(node) && !node.placeholder.is_empty() && node.value.is_empty()
+}
+/** `:read-write`: an enabled, non-readonly text field, or an editable element. */
+fn read_write(node: &Node) -> bool {
+    if text_field(node) {
+        return !node.disabled && !node.attributes.contains_key("readonly");
+    }
+    node.attributes
+        .get("contenteditable")
+        .is_some_and(|value| !value.eq_ignore_ascii_case("false"))
+}
+/** Elements `:required`, `:optional`, `:valid` and `:invalid` apply to. */
+fn form_control(node: &Node) -> bool {
+    ["input", "select", "textarea"].contains(&node.tag.as_str())
+}
+/** Suffering from a constraint Eye checks: a recorded validation error, or `required` with no
+ * value (an unchecked checkbox, no selected option with a value). */
+fn invalid(node: &Node) -> bool {
+    let missing = match node.tag.as_str() {
+        "input" if node.input_type() == "checkbox" => !node.checked,
+        // ponytail: radio groups need the group's checked state; they read as valid.
+        "input" if node.input_type() == "radio" => false,
+        "select" => false,
+        _ => node.value.is_empty(),
+    };
+    node.validation.is_some() || (node.attributes.contains_key("required") && missing)
+}
+/** Barred from constraint validation: disabled, readonly, or a hidden or button input. */
+fn barred(node: &Node) -> bool {
+    node.disabled
+        || node.attributes.contains_key("readonly")
+        || (node.tag == "input"
+            && ["hidden", "button", "submit", "reset", "image"].contains(&node.input_type()))
+}
+/** A selector-function argument matched with `element` as its subject (Blink matches it as a
+ * sub-selector from the same element, so `:is(.a .b)` checks `.b` here and `.a` above). */
+fn anchored<'a>(tree: &Tree<'a>, element: Element<'a>, selector: &Selector) -> bool {
+    complex(tree, element, selector, selector.compounds.len())
+        .is_ok_and(|outcome| outcome == Outcome::Matched)
 }
 /** Whether some n >= 0 gives a*n + b == position. */
 fn nth(position: i64, a: i64, b: i64) -> bool {

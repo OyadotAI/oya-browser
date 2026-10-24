@@ -1,5 +1,5 @@
 /** Layout shapes Eye cannot place exactly fall back to block layout instead of refusing the page. */
-use crate::document::{Document, FlexDirection, FlexWrap, Node};
+use crate::document::{Document, Node};
 use std::collections::BTreeMap;
 
 /** Noted when a flex container falls back to block layout. */
@@ -7,8 +7,6 @@ const FLEX_AS_BLOCK: &str =
     "A flex container over text, tables or table structure was laid out as block flow.";
 /** Noted when automatic margins Eye cannot distribute are treated as zero. */
 const AUTO_MARGINS: &str = "Automatic margins on flex items or table structure were treated as 0.";
-/** Noted when a wrapped column, which needs a definite height Eye lacks, stays on one line. */
-const COLUMN_WRAP: &str = "A wrapped flex column was laid out without wrapping.";
 
 /** Table structure and non-container native controls never become flex containers. */
 const NO_FLEX_TAGS: [&str; 11] = [
@@ -19,11 +17,10 @@ const TABLE_TAGS: [&str; 8] = [
     "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
 ];
 
-/// Returns a copy with unsupported flex, column-wrap and auto-margin uses demoted, or None when
+/// Returns a copy with unsupported flex and auto-margin uses demoted, or None when
 /// nothing changes. Render lays out the copy; styling reports `notes` so the page says why.
-/// ponytail: demotion approximates (flex becomes block, auto margins become 0, column wrap
-/// becomes nowrap); anonymous flex items for bare text, flex auto-margin space distribution and
-/// definite-height column wrapping are the real fix.
+/// ponytail: demotion approximates (flex becomes block, auto margins become 0); anonymous
+/// flex items for bare text and flex auto-margin space distribution are the real fix.
 pub(super) fn degrade(document: &Document) -> Option<Document> {
     let mut copy = document.clone();
     (!demote(&mut copy).is_empty()).then_some(copy)
@@ -40,28 +37,11 @@ pub(crate) fn notes(document: &Document) -> Vec<&'static str> {
 fn demote(document: &mut Document) -> Vec<&'static str> {
     [
         (demote_flex(document), FLEX_AS_BLOCK),
-        (unwrap_columns(document), COLUMN_WRAP),
         (clear_auto_margins(document), AUTO_MARGINS),
     ]
     .into_iter()
     .filter_map(|(changed, note)| changed.then_some(note))
     .collect()
-}
-
-/** Wrapped flex columns lay out as one nowrap column. */
-fn unwrap_columns(document: &mut Document) -> bool {
-    let mut changed = false;
-    for node in &mut document.nodes {
-        let style = &mut node.style;
-        if style.display_flex
-            && style.flex_direction == FlexDirection::Column
-            && style.flex_wrap == FlexWrap::Wrap
-        {
-            style.flex_wrap = FlexWrap::NoWrap;
-            changed = true;
-        }
-    }
-    changed
 }
 
 /** Flex on table internals, controls, inside tables, or over bare text or tables becomes block. */

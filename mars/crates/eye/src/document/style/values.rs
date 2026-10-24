@@ -42,6 +42,13 @@ pub(super) fn signed_number(value: &str) -> EngineResult<f64> {
         .filter(|n| n.abs() <= f64::from(u32::MAX))
         .ok_or_else(unsupported)
 }
+/** A finite number clamped into the range `signed_number` accepts. */
+fn saturated(value: &str) -> EngineResult<f64> {
+    let bound = f64::from(u32::MAX);
+    math_number(value)
+        .map(|n| n.clamp(-bound, bound))
+        .ok_or_else(unsupported)
+}
 /** A finite number literal, or a `calc()`/`min()`/`max()`/`clamp()` of numbers evaluated to one. */
 fn math_number(value: &str) -> Option<f64> {
     let value = value.trim();
@@ -121,11 +128,22 @@ fn without_env(value: &str) -> EngineResult<std::borrow::Cow<'_, str>> {
     }
     Err(unsupported())
 }
+/// CSS pixels per inch.
+const PX_PER_IN: f64 = 96.0;
+/// Centimetres per inch.
+const CM_PER_IN: f64 = 2.54;
+/// Cap height as a share of the em, for `cap` (a typical Latin face's).
+const CAP_HEIGHT: f64 = 0.7;
+/// Blink's `line-height: normal` for the default faces, as a multiple of the font size.
+const NORMAL_LINE_HEIGHT: f64 = 1.2;
 /** One number with a unit; a bare zero is a length. */
 pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResult<Dimension> {
+    // Blink stores lengths as floats and saturates them at layout, so a huge finite length such
+    // as Tailwind's `calc(infinity * 1px)` (serialized `3.40282e38px`) is valid and as large as
+    // a length can be; the caller's own bound then applies.
     let scaled = |number: &str, scale: f64| -> EngineResult<Dimension> {
         Ok(Dimension {
-            px: signed_number(number)? * scale,
+            px: saturated(number)? * scale,
             percent: 0.0,
         })
     };
@@ -135,21 +153,61 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
             percent: signed_number(number)?,
         });
     }
-    let units: [(&str, f64); 12] = [
-        ("rem", root_font()),
+    let (width, height) = (context.width / PERCENT, context.height / PERCENT);
+    let root = root_font();
+    // Blink's CSSPrimitiveValue length units. Longer suffixes come first so `rem` is not read
+    // as `em`. A desktop window has no dynamic toolbars, so the small, large and dynamic
+    // viewport units equal the plain ones; `vi`/`vb` follow horizontal writing. `lh` uses the
+    // `normal` line height, as the declared one is not known here.
+    // ponytail: ch/ex/cap/ic from em ratios; use font metrics when the platform exposes them.
+    let units: [(&str, f64); 37] = [
+        ("svmin", width.min(height)),
+        ("svmax", width.max(height)),
+        ("lvmin", width.min(height)),
+        ("lvmax", width.max(height)),
+        ("dvmin", width.min(height)),
+        ("dvmax", width.max(height)),
+        ("vmin", width.min(height)),
+        ("vmax", width.max(height)),
+        ("rcap", root * CAP_HEIGHT),
+        ("cap", font * CAP_HEIGHT),
+        ("svw", width),
+        ("svh", height),
+        ("lvw", width),
+        ("lvh", height),
+        ("dvw", width),
+        ("dvh", height),
+        ("svi", width),
+        ("svb", height),
+        ("lvi", width),
+        ("lvb", height),
+        ("dvi", width),
+        ("dvb", height),
+        ("rem", root),
+        ("rex", root / 2.0),
+        ("rch", root / 2.0),
+        ("ric", root),
+        ("rlh", root * NORMAL_LINE_HEIGHT),
         ("em", font),
+        ("ex", font / 2.0),
+        ("ch", font / 2.0),
+        ("ic", font),
+        ("lh", font * NORMAL_LINE_HEIGHT),
         ("px", 1.0),
         ("pt", PX_PER_PT),
-        ("vw", context.width / PERCENT),
-        ("vh", context.height / PERCENT),
-        ("vmin", context.width.min(context.height) / PERCENT),
-        ("vmax", context.width.max(context.height) / PERCENT),
-        ("ch", font / 2.0),
-        ("ex", font / 2.0),
         ("pc", PX_PER_PT * 12.0),
-        ("in", 96.0),
+        ("in", PX_PER_IN),
+        ("cm", PX_PER_IN / CM_PER_IN),
     ];
-    for (suffix, scale) in units {
+    let more: [(&str, f64); 6] = [
+        ("mm", PX_PER_IN / CM_PER_IN / 10.0),
+        ("vw", width),
+        ("vh", height),
+        ("vi", width),
+        ("vb", height),
+        ("q", PX_PER_IN / CM_PER_IN / 40.0),
+    ];
+    for (suffix, scale) in units.into_iter().chain(more) {
         if let Some(number) = value.strip_suffix(suffix) {
             return scaled(number, scale);
         }
@@ -213,6 +271,25 @@ pub(super) fn contextual_color(
             dark
         });
     }
+    if let Some(color) = super::colors::system(
+        &value.trim().to_ascii_lowercase(),
+        scheme == crate::document::Appearance::Dark,
+    ) {
+        return Ok(Some(color));
+    }
+    if let Some(arguments) = value
+        .trim()
+        .strip_prefix("color-mix(")
+        .and_then(|value| value.strip_suffix(')'))
+    {
+        // Each argument resolves in context, so `currentcolor` mixes with the element's color.
+        let resolve = |color: &str| {
+            contextual_color(color, scheme, current)
+                .map(|literal| literal.and_then(|literal| super::colors::linear_of(&literal)))
+        };
+        let mixed = super::color_spaces::mix(&arguments.to_ascii_lowercase(), &resolve)?;
+        return Ok(mixed.map(super::colors::from_linear));
+    }
     color(value).map(Some)
 }
 thread_local! {
@@ -231,4 +308,32 @@ pub(super) fn set_root_font(size: f64) {
         CSS_ROOT_FONT_SIZE
     };
     ROOT_FONT.with(|root| root.set(size));
+}
+/**
+ * Properties whose grammar is `<integer>`. A math function there resolves to the nearest
+ * integer, halves toward positive infinity (CSS Values 4 "Range Checking", Blink's
+ * CSSMathFunctionValue::ComputeInteger), so `z-index: calc(-10)` is -10 rather than invalid.
+ */
+const INTEGER: [&str; 6] = [
+    "z-index",
+    "order",
+    "orphans",
+    "widows",
+    "column-count",
+    "-webkit-line-clamp",
+];
+/** `value` with a numeric math function rounded to an integer for `<integer>` properties. */
+pub(super) fn integer_math<'v>(key: &str, value: &'v str) -> std::borrow::Cow<'v, str> {
+    let trimmed = value.trim();
+    let math = ["calc(", "min(", "max(", "clamp(", "round("]
+        .iter()
+        .any(|function| trimmed.to_ascii_lowercase().starts_with(function));
+    if !INTEGER.contains(&key) || !math {
+        return value.into();
+    }
+    super::calc::tokens(trimmed)
+        .and_then(|tokens| super::calc::evaluate_number(&tokens))
+        .map_or(value.into(), |number| {
+            (number + 0.5).floor().to_string().into()
+        })
 }

@@ -218,7 +218,8 @@ fn unsupported_structural_grammar_is_dropped_and_supported_grammar_applies() {
             "Root element box styles are not supported.",
         ),
         (
-            "body{display:flex}",
+            // A flex or grid body is laid out (Eye gives it a container node); inline is not.
+            "body{display:inline}",
             "Root and body display types other than block are not supported.",
         ),
         (

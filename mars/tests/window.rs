@@ -10,6 +10,8 @@ mod forms;
 mod reading;
 #[path = "window/selection.rs"]
 mod selection;
+#[path = "window/shell.rs"]
+mod shell;
 #[allow(dead_code)]
 mod support;
 use serde_json::{Value, json};

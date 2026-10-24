@@ -191,12 +191,29 @@ fn svg_path_segment_limit_drops_only_that_path() {
     assert_eq!(item.vector[0].commands.len(), 2);
 }
 
+/** A `use` of a symbol defined in another, hidden svg draws the symbol's shapes, mapped from the
+symbol's viewBox, while the symbol itself draws nothing in place (LinkedIn-style icon sprites). */
+#[test]
+fn use_draws_a_symbol_from_a_sprite_sheet() {
+    let markup = "<svg style='display:none'><symbol id=icon viewBox='0 0 24 24'>\
+        <path d='M0 0H24V24Z'/></symbol></svg>\
+        <svg id=s width=12 height=12 viewBox='0 0 24 24'><use href='#icon'/></svg>";
+    let (_, item) = drawn(markup);
+    assert_eq!(item.vector.len(), 1);
+    let far = points(&item, 0)
+        .into_iter()
+        .fold(0.0_f64, |m, (x, y)| m.max(x).max(y));
+    assert!((far - 12.0).abs() < 0.01, "{far}");
+}
+
 /** Unsupported transforms, bad references and malformed data drop only their own shape. */
 #[test]
 fn unsupported_svg_shapes_are_dropped_with_a_diagnostic() {
     for markup in [
         "<svg><g transform='perspective(2)'><path d='M0 0'/></g><path d='M1 1'/></svg>",
-        "<svg><g id=a></g><use href=#a /><path d='M1 1'/></svg>",
+        // A `use` of a group or symbol copies its shapes (see the sprite test); a reference
+        // that is not a fragment is one Eye cannot draw.
+        "<svg><g id=a></g><use href=a /><path d='M1 1'/></svg>",
         "<svg><use href=#missing /><path d='M1 1'/></svg>",
         "<svg width=10 height=10><path stroke=black d='L10 10 L20 20'/><path d='M1 1'/></svg>",
         "<svg width=10 height=10><path d='M0 0 A1 1 0 2 1 5 5'/><path d='M1 1'/></svg>",

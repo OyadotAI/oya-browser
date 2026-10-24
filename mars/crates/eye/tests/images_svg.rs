@@ -156,3 +156,73 @@ fn inline_svg_sizes_from_css_attributes_and_view_box() {
     );
     assert_eq!(svg_box("<svg></svg>"), (300.0, 150.0));
 }
+
+/** The first path of the inline svg in `markup`, styled with `sheet`. */
+fn first_path(markup: &str, sheet: &str) -> mars_eye::VectorPath {
+    let document = compute_styles(&parse(markup).unwrap(), &[sheet.to_owned()]).unwrap();
+    let display = render(&document, 800.0).unwrap();
+    let svg = document
+        .nodes
+        .iter()
+        .find(|n| n.tag == "svg")
+        .unwrap()
+        .local_id;
+    let item = display.items.iter().find(|i| i.local_id == svg).unwrap();
+    item.vector[0].clone()
+}
+
+/** A stylesheet `fill` beats the `fill` presentation attribute, as the cascade orders them;
+CNN's logo is `<svg fill="none">` painted red by `.brand-logo__icon { fill: #c00 }`. */
+#[test]
+fn stylesheet_fill_beats_the_presentation_attribute() {
+    let markup = "<svg class=logo fill=none width=10 height=10><path d='M0 0H10V10Z'></path></svg>";
+    let path = first_path(markup, ".logo{fill:#c00}");
+    assert_eq!(path.fill.as_deref(), Some("#c00"));
+    let path = first_path(markup, "path{stroke:currentColor;stroke-width:2px}");
+    assert_eq!(
+        path.fill, None,
+        "the attribute still applies without CSS fill"
+    );
+    assert_eq!(path.stroke.as_deref(), Some("#000000"));
+    assert_eq!(path.stroke_width, 2.0);
+}
+
+/** On one element the inline style wins over the stylesheet; nearer elements win over farther ones. */
+#[test]
+fn inline_svg_paint_ranks_inline_style_then_sheet_then_attribute_nearest_first() {
+    let markup = "<svg class=logo fill=none width=10 height=10 style='fill:#00f'><path d='M0 0H10V10Z'></path></svg>";
+    assert_eq!(
+        first_path(markup, ".logo{fill:#c00}").fill.as_deref(),
+        Some("#00f")
+    );
+    let markup =
+        "<svg class=logo width=10 height=10><path fill=green d='M0 0H10V10Z'></path></svg>";
+    assert_eq!(
+        first_path(markup, ".logo{fill:#c00}").fill.as_deref(),
+        Some("green")
+    );
+}
+
+/** A `fill` Eye cannot paint (a gradient url) is dropped like an invalid declaration, so the shape
+keeps drawing with its attribute paint instead of vanishing. */
+#[test]
+fn an_unpaintable_stylesheet_fill_is_ignored() {
+    let markup = "<svg class=logo fill=red width=10 height=10><path d='M0 0H10V10Z'></path></svg>";
+    assert_eq!(
+        first_path(markup, ".logo{fill:url(#g)}").fill.as_deref(),
+        Some("red")
+    );
+}
+
+/** A drawing with only `width` and `height` scales into the img box as if that were its
+viewBox, as Chromium draws an SVG image (rustdoc's 106px logo overflowed its 48px box). */
+#[test]
+fn drawing_without_view_box_scales_by_its_size() {
+    let src = "data:image/svg+xml,<svg width=\"106\" height=\"106\"><path d=\"M0 0H106V106Z\"></path></svg>";
+    let (document, display) = layout(src, (106, 106), "width:48px;height:48px");
+    let item = image(&document, &display);
+    let PathCommand::Line { x, y } = item.vector[0].commands[2] else {
+        panic!("expected a line");
+    };
+    assert_eq!((x - item.x, y - item.y), (48.0, 48.0));
+}

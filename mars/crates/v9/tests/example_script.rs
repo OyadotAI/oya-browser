@@ -1,6 +1,7 @@
 /** The frozen example.com script runs against an inert projection without Eye. */
 use mars_v9::{
     DocumentHost, Execution, JsValue, StorageState,
+    constants::{FRAGMENT_BYTES, FRAGMENT_TOTAL_BYTES},
     document::{FragmentParser, InsertPosition, ScriptDocument, ScriptNode},
     load, load_document_scripts, load_document_scripts_with,
     protocol::{EngineError, EngineResult},
@@ -10,6 +11,8 @@ use std::collections::BTreeMap;
 
 /** The script is the gate: byte-for-byte what example.com served on 2026-10-23. */
 const SCRIPT: &str = include_str!("../../../fixtures/reading/example-s.js");
+/** UTF-8 bytes in one euro sign, so a fragment's bytes outgrow its characters. */
+const EURO_BYTES: usize = '€'.len_utf8();
 
 /** Reads one script-global lexical result from a successful source-only run. */
 fn global(source: &str) -> Option<JsValue> {
@@ -240,20 +243,23 @@ fn failure(
     run_with(source, page(), languages, fragments).unwrap_err()
 }
 
-/** A fragment over FRAGMENT_BYTES is refused before parsing. */
+/** A fragment over FRAGMENT_BYTES UTF-8 bytes is refused before parsing, though it has fewer
+characters than that: the bound is on bytes. */
 #[test]
 fn oversized_fragment_fails_explicitly() {
-    let euros = "€".repeat(683);
-    let source = format!("var a='{euros}',h=a+a;document.body.insertAdjacentHTML('beforeend',h)");
+    let characters = FRAGMENT_BYTES / EURO_BYTES + 1;
+    let source =
+        format!("var h='€'.repeat({characters});document.body.insertAdjacentHTML('beforeend',h)");
     assert_eq!(failure(&source, &[], &Empty).code, "limit_exceeded");
 }
 
 /** Fragments one execution inserts share FRAGMENT_TOTAL_BYTES. */
 #[test]
 fn aggregate_fragment_bytes_fail_explicitly() {
-    let euros = "€".repeat(650);
+    let characters = FRAGMENT_BYTES / EURO_BYTES;
+    let inserts = FRAGMENT_TOTAL_BYTES / (characters * EURO_BYTES) + 1;
     let source = format!(
-        "var a='{euros}',h=a+a;for(let i=0;i<9;i++)document.body.insertAdjacentHTML('beforeend',h)"
+        "var h='€'.repeat({characters});for(let i=0;i<{inserts};i++)document.body.insertAdjacentHTML('beforeend',h)"
     );
     let error = failure(&source, &[], &Empty);
     assert_eq!(error.code, "limit_exceeded");

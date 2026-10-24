@@ -61,6 +61,9 @@ pub(super) struct Page {
     pub images: BTreeMap<usize, super::images::ImageAsset>,
     /** Exact geometry consumed by the visible native window. */
     pub display: Option<DisplayList>,
+    /** One past the highest node identity `display` laid out: a node at or above it was
+    inserted since, so scripts that measure it need a fresh layout (see `scripting`). */
+    pub laid_out_before: usize,
     /** Presentation generation is independent of document revision. */
     pub layout_generation: u64,
     /** The node styles are the cascade of this document under the page's sheets and the current
@@ -112,18 +115,19 @@ impl Page {
     }
     /** The inspection built from the document and display, without the kept copy. */
     fn inspect_now(&self) -> Value {
-        let labels = self.document.labels();
+        let labels = super::names::names(&self.document);
         let mut bounds = BTreeMap::new();
         for item in self.display.iter().flat_map(|display| &display.items) {
             bounds.entry(item.local_id).or_insert(item);
         }
+        let derived = self.bounds();
         let nodes = self
             .document
             .nodes
             .iter()
             .zip(&labels)
             .filter(|(node, _)| !crate::document::agent_hidden(&self.document, node))
-            .map(|(node, label)| self.inspect_node(node, label, &labels, &bounds))
+            .map(|(node, label)| self.inspect_node(node, label, &labels, &bounds, &derived))
             .collect::<Vec<_>>();
         json!({"page_id":self.id(),"revision":self.revision,"url":safe_url(&self.url,self.sensitive),"title":self.document.title,"status":self.status,"diagnostics":self.document.diagnostics,"degraded":self.degraded,"layout_generation":self.layout_generation,"nodes":nodes})
     }
@@ -134,6 +138,7 @@ impl Page {
         label: &str,
         labels: &[String],
         bounds: &BTreeMap<usize, &DisplayItem>,
+        derived: &BTreeMap<usize, Value>,
     ) -> Value {
         // Clipped-away or fully transparent boxes are not something a person could act on.
         let seen = bounds
@@ -186,8 +191,11 @@ impl Page {
         if !node.secret() {
             value["value"] = json!(node.value);
         }
-        if let Some(item) = bounds.get(&node.local_id) {
+        if let Some(item) = bounds.get(&node.local_id).filter(|_| seen) {
             value["bounds"] = json!({"x":item.x,"y":item.y,"width":item.width,"height":item.height,"unit":"logical_points"});
+        } else if let Some(derived) = derived.get(&node.local_id) {
+            value["bounds"] = derived.clone();
+            value["bounds"]["unit"] = json!("logical_points");
         }
         value
     }
@@ -316,7 +324,17 @@ impl Runtime {
             context: self.render_context,
         };
         page.display = Some(self.call_typed("document", "document.render", &call, None)?);
+        page.laid_out_before = next_node(&page.document);
         Ok(())
+    }
+    /** Eye's layout of a styled `document` in the current context, checked like any other. */
+    pub(super) fn render(&mut self, document: &Document) -> EngineResult<DisplayList> {
+        crate::document::validate_content(document)?;
+        let call = RenderCall {
+            document,
+            context: self.render_context,
+        };
+        self.call_typed("document", "document.render", &call, None)
     }
     /** The window's view of `page` with its `inspection`. */
     fn snapshot_of(&self, page: Option<&Page>, inspection: Value) -> BrowserSnapshot {
@@ -364,13 +382,7 @@ impl Runtime {
             value["appearance"] = json!(context.appearance);
             if let Some(nodes) = value["nodes"].as_array_mut() {
                 for node in nodes {
-                    let y = node["bounds"]["y"].as_f64().unwrap_or_default();
-                    let height = node["bounds"]["height"].as_f64().unwrap_or_default();
-                    node["visible"] = json!(
-                        node.get("bounds").is_some()
-                            && y + height > scroll_y
-                            && y < scroll_y + context.height
-                    );
+                    node["visible"] = json!(in_viewport(node.get("bounds"), context, scroll_y));
                 }
             }
         }
@@ -439,6 +451,7 @@ impl Runtime {
                 context,
             };
             page.display = Some(self.call_typed("document", "document.render", &call, None)?);
+            page.laid_out_before = next_node(&page.document);
         }
         page.refresh_inspection();
         page.publishable()
@@ -492,6 +505,33 @@ impl Runtime {
             }
         }
     }
+}
+/**
+ * Whether a node's box shows in the viewport scrolled to `scroll_y`, on both axes: inspect's
+ * `visible` and page.find's `visible_only` share it. A skip link parked at `left:-9999px` is
+ * in the tree but not on screen, so it is not visible, though it stays actionable.
+ */
+pub(super) fn in_viewport(
+    bounds: Option<&Value>,
+    context: crate::document::RenderContext,
+    scroll_y: f64,
+) -> bool {
+    let Some(bounds) = bounds else {
+        return false;
+    };
+    let side = |key: &str| bounds[key].as_f64().unwrap_or_default();
+    let (x, y, width, height) = (side("x"), side("y"), side("width"), side("height"));
+    y + height > scroll_y && y < scroll_y + context.height && x + width > 0.0 && x < context.width
+}
+/** One past the highest node identity in `document`: the identity the next inserted node gets
+at the earliest, since V9 never reuses one. */
+pub(super) fn next_node(document: &Document) -> usize {
+    document
+        .nodes
+        .iter()
+        .map(|node| node.local_id + 1)
+        .max()
+        .unwrap_or(0)
 }
 /** No node, the html and body wrappers included, is agent-actionable; people still see the page. */
 fn untrusted(document: &mut Document) {

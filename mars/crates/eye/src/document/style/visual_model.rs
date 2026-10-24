@@ -99,6 +99,10 @@ pub struct ColorStop {
     pub color: String,
     /// 0..1 when authored as a percentage; None lets the painter distribute stops evenly.
     pub position: Option<f64>,
+    /// A length part of the position in px, added to `position` of the gradient line once the
+    /// painter knows the line's length (`10px`, `calc(100% - 4px)`); None for a bare percentage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub px: Option<f64>,
 }
 /// One `background-image` layer, first listed paints on top as in CSS.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -110,6 +114,13 @@ pub enum BackgroundLayer {
         angle: f64,
         /// Ordered stops.
         stops: Vec<ColorStop>,
+        /// `to <corner>` as (x, y) signs, right and bottom positive: the angle then depends on
+        /// the box, so the 50% line joins the two other corners (CSS Images 3.1.1).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        corner: Option<[i8; 2]>,
+        /// `repeating-linear-gradient`: the stop pattern tiles along the whole line.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        repeating: bool,
     },
     /// A radial gradient with its ending shape, size and center.
     Radial {
@@ -118,6 +129,9 @@ pub enum BackgroundLayer {
         /// Shape, size and center; the default is a centered farthest-corner ellipse.
         #[serde(default, skip_serializing_if = "RadialShape::is_default")]
         shape: RadialShape,
+        /// `repeating-radial-gradient`: the stop pattern tiles outward along the ray.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        repeating: bool,
     },
     /// An image the painter may fetch; the URL is as authored, relative to its stylesheet.
     Image {
@@ -238,6 +252,23 @@ impl Extent {
         self.resolve(basis).map(|value| value.max(0.0))
     }
 }
+/// The CSS table box a non-table element asks for with `display`, so `display: table` divs lay
+/// their `table-cell` children out side by side as Chromium does instead of stacking them.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TableBox {
+    /// Not a CSS table part.
+    #[default]
+    None,
+    /// `display: table`: lays out its rows or cells as a grid.
+    Table,
+    /// `display: table-row`.
+    Row,
+    /// `display: table-cell`.
+    Cell,
+    /// `display: table-caption`: spans the table above or below its grid.
+    Caption,
+}
 /// `float` sides; floats leave normal flow and shorten the line boxes beside them.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -350,6 +381,38 @@ pub struct Track {
     pub min: TrackSize,
     /// Upper bound.
     pub max: TrackSize,
+    /// Which content keyword an `Auto` bound was, and a `fit-content()` limit.
+    #[serde(default, skip_serializing_if = "TrackContent::is_auto")]
+    pub content: TrackContent,
+}
+/// The intrinsic keywords behind a track's `TrackSize::Auto` bounds: track sizing treats
+/// `auto`, `min-content`, `max-content` and `fit-content()` differently (css-grid-2 12.5).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct TrackContent {
+    /// The minimum's keyword.
+    pub min: ContentKeyword,
+    /// The maximum's keyword.
+    pub max: ContentKeyword,
+    /// `fit-content(limit)`: an `auto` minimum and a max-content maximum capped at `limit`.
+    pub fit_limit: Option<Extent>,
+}
+impl TrackContent {
+    /// Plain `auto` bounds, the default.
+    pub fn is_auto(&self) -> bool {
+        *self == Self::default()
+    }
+}
+/// An intrinsic track sizing keyword.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentKeyword {
+    /// `auto`.
+    #[default]
+    Auto,
+    /// `min-content`.
+    MinContent,
+    /// `max-content`.
+    MaxContent,
 }
 /// A single track size.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -365,6 +428,9 @@ pub enum TrackSize {
     Larger(Extent, Extent),
     /// `min(a, b)` of a length and a percentage.
     Smaller(Extent, Extent),
+    /// A math function mixing percentages and lengths beyond one `min`/`max`, kept as the
+    /// template's expression at this index and decided by the grid's size at layout.
+    Expr(u16),
 }
 impl TrackSize {
     /// Pixels of a fixed size against the grid's `basis`; None for `fr`, content sizes and unresolved percentages.
@@ -373,7 +439,7 @@ impl TrackSize {
             Self::Length(l) => l.resolve(basis),
             Self::Larger(a, b) => Some(a.resolve(basis)?.max(b.resolve(basis)?)),
             Self::Smaller(a, b) => Some(a.resolve(basis)?.min(b.resolve(basis)?)),
-            Self::Fr(_) | Self::Auto => None,
+            Self::Fr(_) | Self::Auto | Self::Expr(_) => None,
         }
     }
 }
@@ -386,6 +452,23 @@ pub struct GridTemplate {
     pub repeat: Vec<Track>,
     /// Index in `tracks` where the auto-repeat group goes.
     pub repeat_at: usize,
+    /// `[name]` line names with their one-based line numbers, in source order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub names: Vec<(String, u16)>,
+    /// Math-function track sizes `TrackSize::Expr` indexes, units other than `%` already px.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exprs: Vec<String>,
+}
+impl GridTemplate {
+    /// Pixels of a track size against the grid's `basis`, expression tracks included.
+    pub fn length(&self, size: TrackSize, basis: Option<f64>) -> Option<f64> {
+        match size {
+            TrackSize::Expr(index) => {
+                super::flex::resolve_track_expr(self.exprs.get(usize::from(index))?, basis?)
+            }
+            other => other.length(basis),
+        }
+    }
 }
 /// One named area of `grid-template-areas`: a rectangle of zero-based cells a grid item can name.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

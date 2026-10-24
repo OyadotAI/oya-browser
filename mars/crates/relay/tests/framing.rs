@@ -129,6 +129,25 @@ fn repeated_list_headers_are_accepted_on_every_path() {
     }
 }
 
+/** Field names are RFC 9110 tokens, so dots and underscores (netflix.com's
+`X-Netflix.request.growth.session.id`) are as valid as hyphens on every path. */
+#[test]
+fn token_field_names_with_dots_and_underscores_are_accepted_on_every_path() {
+    let response = page("X-Netflix.request.id: 1\r\nX_Trace: 2\r\n", b"ok");
+    for result in every_path(&response) {
+        assert_eq!(result.expect("token field names"), "ok");
+    }
+}
+
+/** A field name outside the token alphabet is still refused on every path. */
+#[test]
+fn field_names_outside_the_token_alphabet_are_refused_on_every_path() {
+    let response = page("X(Bad): 1\r\n", b"ok");
+    for result in every_path(&response) {
+        assert!(result.is_err());
+    }
+}
+
 /** Framing and destination fields stay refused when repeated, in any case. */
 #[test]
 fn repeated_singleton_headers_are_refused_on_every_path() {

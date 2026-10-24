@@ -8,6 +8,13 @@ pub fn web_url(value: &str) -> EngineResult<Url> {
     if value.len() > crate::constants::URL_BYTES {
         return Err(EngineError::limit("URL bytes", crate::constants::URL_BYTES));
     }
+    // Before the whitespace check: a serialized `data:` URL keeps its media type's spaces.
+    if value
+        .get(..DATA_SCHEME.len())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case(DATA_SCHEME))
+    {
+        return Err(inline_data());
+    }
     if value.chars().any(|c| c.is_control() || c.is_whitespace()) || value.contains('\\') {
         return Err(denied());
     }
@@ -80,6 +87,17 @@ fn public_v6(ip: Ipv6Addr) -> bool {
             || segments[0] == 0x2002
             || segments[0] == 0x3ffe
             || (segments[0] == 0x3fff && (segments[1] & 0xf000) == 0))
+}
+
+/** The scheme prefix of an inline-content URL. */
+const DATA_SCHEME: &str = "data:";
+
+/** A `data:` URL names no destination at all: its bytes are inline. Meta's pages link
+stylesheets and scripts that way. Refusing it as an egress denial made the page loader treat it
+as an authority failure and abandon the whole navigation (facebook.com, instagram.com), so it is
+refused as unsupported instead: still never fetched, but only that one resource is skipped. */
+fn inline_data() -> EngineError {
+    EngineError::unsupported("data: URLs carry their content inline and are not fetched.")
 }
 
 /// Egress denials preserve the current document and never trigger an alternate transport.

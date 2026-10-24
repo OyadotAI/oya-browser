@@ -248,13 +248,15 @@ fn a_dropped_rule_with_calc_subtraction_margins_does_not_mask_everything() {
     assert!(document.formatting.html.style.interactive);
 }
 
+/** A margin only shifts a box within its flow, so a dropped rule setting a negative one never
+masks: spacing utilities (X's `-space-x-3`) would otherwise withdraw every link. */
 #[test]
-fn a_dropped_rule_with_a_negative_margin_still_masks() {
+fn a_dropped_rule_with_a_negative_margin_never_masks() {
     let document = styled(
         "<a id=a href=/x>a</a>",
         ":where(a>b, a){margin-left:calc(var(--sp) * -4)}",
     );
-    assert!(!by_id(&document, "a").style.interactive);
+    assert!(by_id(&document, "a").style.interactive);
 }
 
 #[test]

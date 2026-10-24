@@ -184,19 +184,150 @@ pub(super) fn parse(source: &str) -> EngineResult<String> {
     if let Some(digits) = value.strip_prefix('#') {
         return hash(digits);
     }
+    if let Some(color) = system(&value, false) {
+        return Ok(color);
+    }
     let (name, arguments) = value
         .strip_suffix(')')
         .and_then(|value| value.split_once('('))
         .ok_or_else(unsupported)?;
+    if name.trim() == "color-mix" {
+        let resolve = |color: &str| parse(color).map(|literal| linear_of(&literal));
+        let mixed = super::color_spaces::mix(arguments, &resolve)?.ok_or_else(unsupported)?;
+        return Ok(from_linear(mixed));
+    }
+    if name.trim() == "color" {
+        return predefined(arguments);
+    }
     let parts = arguments_of(arguments)?;
     let rgba = match name.trim() {
         "rgb" | "rgba" => rgb(&parts)?,
         "hsl" | "hsla" => hsl(&parts)?,
+        "hwb" => hwb(&parts)?,
         "oklch" => oklab(&parts, true)?,
         "oklab" => oklab(&parts, false)?,
+        "lab" | "lch" => lab(&parts, name.trim() == "lch")?,
         _ => return Err(unsupported()),
     };
     Ok(hex(rgba))
+}
+/**
+ * CSS system colors as Blink's LayoutTheme::DefaultSystemColor gives them for a light or dark
+ * used color scheme (Highlight follows the macOS selection color).
+ */
+pub(super) fn system(name: &str, dark: bool) -> Option<String> {
+    let (light, night): (u32, u32) = match name {
+        "canvas" | "activecaption" | "appworkspace" | "background" | "inactivecaption"
+        | "infobackground" | "menu" | "scrollbar" | "window" => (0xffffff, 0x121212),
+        "canvastext" | "captiontext" | "infotext" | "menutext" | "windowtext" | "text"
+        | "buttontext" | "fieldtext" => (0x000000, 0xffffff),
+        "buttonface" | "buttonhighlight" | "buttonshadow" | "threedface" => (0xefefef, 0x6b6b6b),
+        "buttonborder" | "activeborder" | "inactiveborder" | "threeddarkshadow"
+        | "threedhighlight" | "threedlightshadow" | "threedshadow" | "windowframe" => {
+            (0x767676, 0x6b6b6b)
+        }
+        "field" => (0xffffff, 0x3b3b3b),
+        "graytext" | "inactivecaptiontext" => (0x808080, 0x808080),
+        "highlight" | "selecteditem" => (0xb3d7ff, 0x3f638b),
+        "highlighttext" | "selecteditemtext" => (0x000000, 0xffffff),
+        "linktext" => (0x0000ee, 0x9e9eff),
+        "visitedtext" => (0x551a8b, 0xd0adf0),
+        "activetext" => (0xff0000, 0xff0000),
+        "mark" => (0xffff00, 0xffff00),
+        "marktext" => (0x000000, 0x000000),
+        "accentcolor" => (0x0075ff, 0x99c8ff),
+        "accentcolortext" => (0xffffff, 0x000000),
+        _ => return None,
+    };
+    let [_, r, g, b] = if dark { night } else { light }.to_be_bytes();
+    Some(hex([r, g, b, u8::MAX]))
+}
+/// Slack for float error in a linear round trip, far below one 8-bit step.
+const ROUNDING: f64 = 1e-9;
+/** A painter literal as linear-light sRGB and alpha, for mixing. */
+pub(super) fn linear_of(literal: &str) -> Option<super::color_spaces::Linear> {
+    let literal = literal.trim();
+    if literal == "transparent" {
+        return Some([0.0; 4]);
+    }
+    let digits = match NAMED.iter().find(|(name, _)| *name == literal) {
+        Some((_, rgb)) => format!("{rgb:06x}"),
+        None => literal.strip_prefix('#')?.to_owned(),
+    };
+    let expanded: String = match digits.len() {
+        3 | 4 => digits.chars().flat_map(|c| [c, c]).collect(),
+        6 | 8 => digits,
+        _ => return None,
+    };
+    let byte = |i: usize| -> Option<f64> {
+        Some(f64::from(u8::from_str_radix(expanded.get(i..i + 2)?, 16).ok()?) / CHANNEL)
+    };
+    let alpha = if expanded.len() == 8 { byte(6)? } else { 1.0 };
+    let decode = super::color_spaces::decode;
+    Some([decode(byte(0)?), decode(byte(2)?), decode(byte(4)?), alpha])
+}
+/** Linear-light sRGB and alpha back to a painter literal, clipped to the gamut. */
+pub(super) fn from_linear([r, g, b, a]: super::color_spaces::Linear) -> String {
+    // A hair above, so a channel the round trip left at 127.4999… rounds as Blink's 127.5 does.
+    let encode = |linear: f64| super::color_spaces::encode(linear) + ROUNDING;
+    hex(bytes([encode(r), encode(g), encode(b)], a + ROUNDING))
+}
+/** `hwb()`: hue, whiteness and blackness (CSS Color 4). */
+fn hwb(parts: &[&str]) -> EngineResult<[u8; 4]> {
+    let h = hue(parts[0])?;
+    let mut w = component(parts[1], 1.0)?.clamp(0.0, 1.0);
+    let mut b = component(parts[2], 1.0)?.clamp(0.0, 1.0);
+    if w + b >= 1.0 {
+        let gray = w / (w + b);
+        return Ok(bytes([gray; 3], alpha(parts)?));
+    }
+    let pure = |n: f64| {
+        let k = (n + h / 30.0) % 12.0;
+        0.5 - 0.5 * (k - 3.0).min(9.0 - k).clamp(-1.0, 1.0)
+    };
+    (w, b) = (w, 1.0 - w - b);
+    let channel = |n: f64| pure(n) * b + w;
+    Ok(bytes(
+        [channel(0.0), channel(8.0), channel(4.0)],
+        alpha(parts)?,
+    ))
+}
+/** `lab()` (L 0..100, a/b with 100% = 125) or `lch()` (C with 100% = 150), D50. */
+fn lab(parts: &[&str], polar: bool) -> EngineResult<[u8; 4]> {
+    let lightness = component(parts[0], 100.0)?.clamp(0.0, 100.0);
+    let (a, b) = if polar {
+        let chroma = component(parts[1], 150.0)?.max(0.0);
+        let rect = super::color_spaces::from_polar([lightness, chroma, hue(parts[2])?]);
+        (rect[1], rect[2])
+    } else {
+        (component(parts[1], 125.0)?, component(parts[2], 125.0)?)
+    };
+    let rgb = super::color_spaces::lab_to_linear([lightness, a, b]);
+    let encode = super::color_spaces::encode;
+    Ok(bytes(rgb.map(encode), alpha(parts)?))
+}
+/** `color(<space> r g b [/ a])` for the sRGB and Display P3 spaces. */
+fn predefined(arguments: &str) -> EngineResult<String> {
+    let (space, rest) = arguments
+        .trim()
+        .split_once(char::is_whitespace)
+        .ok_or_else(unsupported)?;
+    let parts = arguments_of(rest)?;
+    let channel = |i: usize| component(parts[i], 1.0);
+    let values = [channel(0)?, channel(1)?, channel(2)?];
+    let decode = super::color_spaces::decode;
+    let linear = match space {
+        "srgb" => values.map(decode),
+        "srgb-linear" => values,
+        "display-p3" => super::color_spaces::p3_to_linear(values.map(decode)),
+        _ => return Err(unsupported()),
+    };
+    Ok(from_linear([
+        linear[0],
+        linear[1],
+        linear[2],
+        alpha(&parts)?,
+    ]))
 }
 /** A stored value is a literal the painter and validators accept without reparsing CSS. */
 pub(super) fn literal(value: &str) -> bool {

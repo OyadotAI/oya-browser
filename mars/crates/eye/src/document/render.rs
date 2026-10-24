@@ -1,4 +1,5 @@
 /** Oya owns point-based block flow, wrapping and control placement. */
+mod blur;
 mod body;
 mod control;
 pub(crate) mod degrade;
@@ -256,7 +257,22 @@ pub fn render_with_context(
     let document = flat.as_ref().unwrap_or(document);
     let degraded = degrade::degrade(document);
     let document = degraded.as_ref().unwrap_or(document);
-    let (mut items, height, body_decoration, mut truncated) = flow::layout(document, context)?;
+    let quirky = quirk_margins(document);
+    let document = quirky.as_ref().unwrap_or(document);
+    let rooted = body::container_root(document);
+    let (mut items, height, body_decoration, mut truncated) = match &rooted {
+        Some((rooted, root)) => {
+            let mut laid = flow::layout(rooted, context)?;
+            laid.0.retain(|item| item.local_id != *root);
+            laid
+        }
+        None => flow::layout(document, context)?,
+    };
+    // Zero-size text takes no room and paints nothing; hosts must not draw it at a default size.
+    for item in items.iter_mut().filter(|item| item.font_size == 0.0) {
+        item.lines.clear();
+        item.line_height = item.line_height.filter(|advance| *advance > 0.0);
+    }
     effects(document, &mut items)?;
     let mut items = effects::stack(document, items)?;
     validate_decoration(body_decoration.as_ref())?;
@@ -297,6 +313,18 @@ pub fn render_with_context(
         body_decoration,
         truncated,
     })
+}
+/** A copy with the quirks-mode margin quirk applied: the UA top margin of the first box in the
+ * body or a table cell is laid out as zero. None when no box has it. */
+fn quirk_margins(document: &Document) -> Option<Document> {
+    if !document.nodes.iter().any(|node| node.style.quirk_top) {
+        return None;
+    }
+    let mut copy = document.clone();
+    for node in copy.nodes.iter_mut().filter(|node| node.style.quirk_top) {
+        node.style.margin[0] = 0.0;
+    }
+    Some(copy)
 }
 /** Keeps at most PAINT_LINES runs in paint order; true when any were dropped. */
 fn cap_lines(items: &mut [DisplayItem]) -> bool {

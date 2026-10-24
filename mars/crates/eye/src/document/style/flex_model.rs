@@ -29,10 +29,14 @@ pub enum FlexBasis {
     Pixels(f64),
     Percent(f64),
 }
-/// Positive free main-axis space can be placed or distributed between existing items.
+/// Content distribution (`justify-content`, `align-content`), as Blink's
+/// `StyleContentAlignmentData`: a position or a distribution with its fallback.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum JustifyContent {
+    /// `normal` and `stretch`: flex lines and `auto` grid tracks take the free space; items in
+    /// a flex line pack at the start.
+    Stretch,
     Start,
     Center,
     End,
@@ -49,4 +53,12 @@ pub enum AlignItems {
     End,
     #[default]
     Stretch,
+    /// First-baseline alignment in a flex line; grid areas treat it as `start`.
+    Baseline,
+}
+impl JustifyContent {
+    /** The initial value, `normal`. */
+    pub fn normal() -> Self {
+        Self::Stretch
+    }
 }

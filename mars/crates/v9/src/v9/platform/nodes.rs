@@ -618,19 +618,20 @@ impl Page<'_> {
         child: usize,
         reference: Option<usize>,
     ) -> EngineResult<Vec<(usize, usize)>> {
-        // The document parser keeps no blank text run, but a script-created blank text node is
-        // real (a binding placeholder it fills later), so it crosses as a zero-width space and
-        // gets its own text back once adopted.
-        let blank_text = self.tag(child) == "#text" && self.text_content(child).trim().is_empty();
-        let html = if blank_text {
-            BLANK_TEXT_PLACEHOLDER.into()
-        } else {
-            super::html::serialize_all(self, child)
-        };
-        let (target, position) = self.placement(parent, child, reference);
-        let context = self.tag(parent);
         let mut old = vec![child];
         old.extend(self.all_descendants(child));
+        // The document parser keeps no blank text run, but a script's blank text node can be
+        // real: a binding placeholder it fills later (Polymer stamps `<span> </span>` and sets
+        // the text node's data). Such a node crosses as a zero-width space and gets its own text
+        // back once adopted: the inserted node itself, and any blank text that is its element's
+        // only child. Blank runs between elements stay out, as in the parsed document.
+        let blanks = self.blank_texts(child, &old);
+        let html = self.serialize_with_placeholders(child, &blanks);
+        if html.len() > FRAGMENT_BYTES && self.splittable(child) {
+            return self.insert_in_parts(parent, child, reference);
+        }
+        let (target, position) = self.placement(parent, child, reference);
+        let context = self.tag(parent);
         let nodes = self.parse_fragment(&context, &html)?;
         let tags: Vec<String> = old.iter().map(|id| self.tag(*id)).collect();
         let Some(mapping) =
@@ -678,11 +679,95 @@ impl Page<'_> {
                 self.state.values.insert(*new_id, value);
             }
         }
-        if blank_text && let Some((_, new_id)) = mapping.first() {
-            let text = self.state.texts.get(new_id).cloned().unwrap_or_default();
-            self.set_text(*new_id, &text)?;
+        for (old_id, text) in blanks {
+            if let Some((_, new_id)) = mapping.iter().find(|(id, _)| *id == old_id) {
+                self.set_text(*new_id, &text)?;
+            }
         }
         Ok(mapping)
+    }
+    /** Whether an inserted subtree too large for one fragment can go in as its element and then
+    its children: an element whose children are its own (not a template's content, not raw text). */
+    fn splittable(&mut self, id: usize) -> bool {
+        let tag = self.tag(id);
+        !tag.starts_with('#')
+            && tag != "template"
+            && !super::html::RAW.contains(&tag.as_str())
+            && self
+                .state
+                .detached
+                .get(&id)
+                .is_some_and(|record| !record.children.is_empty())
+    }
+    /**
+     * Insert a subtree whose markup passes FRAGMENT_BYTES in parts: the element alone, then each
+     * child into it, recursing as needed. A browser has no fragment bound; this keeps each change
+     * within the document engine's while the result is the same tree (a font-probing script
+     * appends a div of hundreds of styled spans, LinkedIn's among them).
+     */
+    fn insert_in_parts(
+        &mut self,
+        parent: usize,
+        child: usize,
+        reference: Option<usize>,
+    ) -> EngineResult<Vec<(usize, usize)>> {
+        let children = self
+            .state
+            .detached
+            .get_mut(&child)
+            .map(|record| std::mem::take(&mut record.children))
+            .unwrap_or_default();
+        for id in &children {
+            if let Some(record) = self.state.detached.get_mut(id) {
+                record.parent = None;
+            }
+        }
+        let mut mapping = self.insert_projected(parent, child, reference)?;
+        let Some(&(_, shell)) = mapping.first() else {
+            return Err(invalid());
+        };
+        for id in children {
+            mapping.extend(self.insert(shell, id, None)?);
+        }
+        Ok(mapping)
+    }
+    /** The blank text nodes of an inserted subtree that cross as placeholders, with their text:
+    the inserted node itself, and blank text that is its element's only child (outside raw-text
+    elements, whose content is not markup). */
+    fn blank_texts(&mut self, child: usize, subtree: &[usize]) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        for id in subtree.iter().copied() {
+            if self.tag(id) != "#text" {
+                continue;
+            }
+            let text = self.text_content(id);
+            if !text.trim().is_empty() {
+                continue;
+            }
+            let sole = self.parent(id).is_some_and(|parent| {
+                self.children(parent).len() == 1
+                    && !super::html::RAW.contains(&self.tag(parent).as_str())
+            });
+            if id == child || sole {
+                out.push((id, text));
+            }
+        }
+        out
+    }
+    /** The subtree's markup with each of `blanks` written as BLANK_TEXT_PLACEHOLDER; the nodes'
+    own text is left as it was. */
+    fn serialize_with_placeholders(&mut self, child: usize, blanks: &[(usize, String)]) -> String {
+        let swap = |nodes: &mut Self, text: &dyn Fn(&str) -> String| {
+            for (id, original) in blanks {
+                if let Some(record) = nodes.state.detached.get_mut(id) {
+                    record.text = Some(text(original));
+                }
+            }
+        };
+        swap(self, &|_| BLANK_TEXT_PLACEHOLDER.into());
+        let html = super::html::serialize_all(self, child);
+        swap(self, &|original| original.into());
+        html
     }
     /** Nodes the parser left out of an inserted subtree (a `<style>` the document keeps as a
     sheet, an ignorable text run) stay detached: each one whose parent was adopted becomes a

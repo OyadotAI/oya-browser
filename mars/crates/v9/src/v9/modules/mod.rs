@@ -487,20 +487,14 @@ fn validate(input: &ModuleInput, sources: usize) -> EngineResult<()> {
 /** A compiled module's code and record, or the syntax or registry error that stopped it. */
 type ModuleCompilation = Result<(Arc<Code>, Arc<ModuleInfo>), EngineError>;
 
-/** Compile one module at its page offset; the outer error is a deadline or service failure. */
 /** Compile a delivered classic script at its fixed offset, through the process code cache. */
 fn compile_classic(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<Arc<Code>> {
-    if vm.expired() {
-        return Err(super::platform::timeout());
-    }
     vm.registry
         .script(source, offset, || super::parse_at(source, offset, None))
 }
 
+/** Compile one module at its page offset; the outer error is a service failure. */
 fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompilation> {
-    if vm.expired() {
-        return Err(super::platform::timeout());
-    }
     Ok(vm.registry.module(source, offset, || {
         super::lexer::tokenize(source)
             .map_err(|mut error| {

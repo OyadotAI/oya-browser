@@ -1082,6 +1082,20 @@ fn svg_size(svg: &Node) -> (u32, u32) {
 /// An image carried in a `data:` URL: base64 or percent-encoded bytes, a bitmap or a drawing,
 /// under the same bounds as fetched images. Nothing is fetched.
 pub(super) fn data_url(src: &str) -> EngineResult<Fetched> {
+    let (mime, bytes) = data_body(src, crate::constants::IMAGE_BYTES)?;
+    if mime == SVG_MIME {
+        vector(&mime, std::str::from_utf8(&bytes).map_err(|_| invalid())?)
+    } else {
+        raster(mime, bytes)
+    }
+}
+
+/**
+ * A `data:` URL's media type essence (lowercase, parameters such as `charset` dropped) and its
+ * decoded bytes, base64 or percent-encoded, refused past `limit` bytes. Images, stylesheets and
+ * scripts all decode here; each caller applies its own type checks, as to a fetched body.
+ */
+pub(super) fn data_body(src: &str, limit: usize) -> EngineResult<(String, Vec<u8>)> {
     let rest = src
         .get(..5)
         .filter(|scheme| scheme.eq_ignore_ascii_case("data:"))
@@ -1090,20 +1104,23 @@ pub(super) fn data_url(src: &str) -> EngineResult<Fetched> {
     let (meta, payload) = rest.split_once(',').ok_or_else(invalid)?;
     let meta = meta.to_ascii_lowercase();
     let mime = meta.split(';').next().unwrap_or("").trim().to_owned();
-    let bytes = if meta.ends_with(";base64") {
+    let base64 = meta.contains(';') && meta.rsplit(';').next().map(str::trim) == Some("base64");
+    let bytes = if base64 {
         let compact = payload
             .chars()
             .filter(|c| !c.is_ascii_whitespace())
             .collect::<String>();
-        decode_base64(&percent_decode(&compact).map(char::from).collect::<String>())?
+        decode_base64_within(
+            &percent_decode(&compact).map(char::from).collect::<String>(),
+            limit,
+        )?
     } else {
         percent_decode(payload).collect()
     };
-    if mime == SVG_MIME {
-        vector(&mime, std::str::from_utf8(&bytes).map_err(|_| invalid())?)
-    } else {
-        raster(mime, bytes)
+    if bytes.len() > limit {
+        return Err(invalid());
     }
+    Ok((mime, bytes))
 }
 
 /** URL percent-decoding; a `%` not followed by two hex digits stays literal. */

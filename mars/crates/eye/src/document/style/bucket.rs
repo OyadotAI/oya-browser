@@ -93,7 +93,12 @@ impl Keys {
         });
         let keys: Option<Vec<(Keyed, &str)>> = arguments
             .filter(|arguments| !arguments.is_empty())
-            .and_then(|arguments| arguments.iter().map(key_of).collect());
+            .and_then(|arguments| {
+                arguments
+                    .iter()
+                    .map(|selector| selector.compounds.last().and_then(key_of))
+                    .collect()
+            });
         match keys {
             Some(keys) => {
                 for (map, key) in keys {

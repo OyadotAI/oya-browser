@@ -9,10 +9,12 @@ use super::{
     constants::BLOCK_DEPTH,
     declaration::{self, Block, Declaration},
     font_face::FontFaces,
+    layer::{self, Layers},
     media::{self, Truth},
     note,
     selector_parse::{self, Compound, Selector},
     syntax::{block_end, find_top, split_top, strip_comments},
+    vars::{Registration, Registrations},
 };
 use crate::{
     constants::{CSS_RULES, STYLE_BYTES},
@@ -50,6 +52,8 @@ pub(super) struct Rule {
     pub ancestors: usize,
     /// Enclosing `@container` queries, all of which must hold for the rule to apply.
     pub containers: Vec<Rc<Query>>,
+    /// The cascade layer the rule sits in (an index into the sheets' `Layers`).
+    pub layer: usize,
 }
 /** How a block's rules participate. */
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,16 +99,24 @@ struct Parser<'a> {
     context: RenderContext,
     /// `@container` queries enclosing the current block, outermost first.
     containers: Vec<Rc<Query>>,
+    /// Cascade layers declared so far, shared by every sheet.
+    layers: &'a mut Layers,
+    /// The layer enclosing the current block.
+    layer: usize,
+    /// `@property` registrations, shared by every sheet.
+    properties: &'a mut Registrations,
 }
 /** Bounds the sheet, then parses every rule it can. */
 pub(super) fn parse_sheet(
     sheet: &str,
     context: RenderContext,
-    (rules, budget, keyframes, font_faces): (
+    (rules, budget, keyframes, font_faces, layers, properties): (
         &mut Vec<Rc<Rule>>,
         &mut Budget,
         &mut Keyframes,
         &mut FontFaces,
+        &mut Layers,
+        &mut Registrations,
     ),
     diagnostics: &mut Vec<String>,
     skipped: bool,
@@ -131,6 +143,9 @@ pub(super) fn parse_sheet(
         diagnostics,
         context,
         containers: Vec::new(),
+        layers,
+        layer: layer::OUTER,
+        properties,
     };
     parser.list(&source, None, Mode::Apply, 0)
 }
@@ -149,7 +164,6 @@ impl Parser<'_> {
         }
         let mut index = 0;
         let mut block = Block::default();
-        let mut nested = Vec::new();
         while index < source.len() {
             let start = index;
             let stop = find_top(source, start, b"{;}");
@@ -173,25 +187,32 @@ impl Parser<'_> {
                     self.diagnostics,
                 );
             } else {
-                nested.push((prelude, body));
+                // Declarations before a nested rule apply before it; any after it form a
+                // nested declarations rule (Blink's CSSNestedDeclarationsRule) in source order.
+                if let Some(parents) = parents {
+                    self.push(parents, &std::mem::take(&mut block), mode)?;
+                }
+                if prelude.starts_with('@') {
+                    self.at_rule(prelude, body, parents, mode, depth)?;
+                } else {
+                    self.style_rule(prelude, body, parents, mode, depth)?;
+                }
             }
         }
         if let Some(parents) = parents {
             self.push(parents, &block, mode)?;
-        }
-        for (prelude, body) in nested {
-            if prelude.starts_with('@') {
-                self.at_rule(prelude, body, parents, mode, depth)?;
-            } else {
-                self.style_rule(prelude, body, parents, mode, depth)?;
-            }
         }
         Ok(())
     }
     /** Statement at-rules: `@import` and `@namespace` are dropped; `@charset` and `@layer` lists are inert. */
     fn statement(&mut self, prelude: &str) {
         let name = at_name(prelude);
-        if !["charset", "layer"].contains(&name.as_str()) {
+        if name == "layer" {
+            // `@layer a, b;` fixes the order of layers before any of their rules appear.
+            for layer in split_top(prelude["@layer".len()..].trim(), b',') {
+                self.layers.declare(self.layer, layer.trim());
+            }
+        } else if name != "charset" {
             note(self.diagnostics, unsupported_at(&name));
         }
     }
@@ -212,7 +233,16 @@ impl Parser<'_> {
                 Truth::False => Truth::Unknown,
                 truth => truth,
             },
-            "layer" => Truth::True,
+            "layer" => {
+                let enclosing = self.layer;
+                self.layer = match condition {
+                    "" => self.layers.anonymous(enclosing),
+                    named => self.layers.declare(enclosing, named),
+                };
+                let result = self.list(body, parents, mode, depth + 1);
+                self.layer = enclosing;
+                return result;
+            }
             "container" => match Query::parse(condition) {
                 Some(query) => {
                     self.containers.push(Rc::new(query));
@@ -240,8 +270,14 @@ impl Parser<'_> {
                 }
                 return Ok(());
             }
+            "property" => {
+                // Registrations are global, like keyframes; under a condition they stay unknown.
+                if mode == Mode::Apply && !self.masks_only && self.containers.is_empty() {
+                    register(self.properties, condition, body);
+                }
+                return Ok(());
+            }
             "page"
-            | "property"
             | "counter-style"
             | "font-feature-values"
             | "font-palette-values"
@@ -300,6 +336,7 @@ impl Parser<'_> {
                     pseudo,
                     ancestors: 0,
                     containers: self.containers.clone(),
+                    layer: self.layer,
                 }],
                 (Ok(_), Mode::Masked) if pseudo.is_some() => Vec::new(),
                 (Ok(selector), Mode::Masked) => {
@@ -382,6 +419,35 @@ fn generated(text: &str) -> (String, Option<bool>) {
     }
     (text.to_string(), None)
 }
+/**
+ * `@property --name { syntax; inherits; initial-value }`, validated as Blink's
+ * PropertyRegistration does for what Eye uses: `syntax` and `inherits` are required, and
+ * `initial-value` too unless the syntax is the universal `"*"`. The first valid rule wins.
+ */
+fn register(properties: &mut Registrations, name: &str, body: &str) {
+    if !name.starts_with("--") || properties.contains_key(name) {
+        return;
+    }
+    let mut fields = std::collections::BTreeMap::new();
+    for declaration in split_top(body, b';') {
+        if let Some((key, value)) = declaration.split_once(':') {
+            fields.insert(key.trim().to_ascii_lowercase(), value.trim());
+        }
+    }
+    let universal = fields
+        .get("syntax")
+        .is_some_and(|syntax| syntax.trim_matches(['"', '\'']).trim() == "*");
+    let inherits = match fields.get("inherits").map(|v| v.to_ascii_lowercase()) {
+        Some(value) if value == "true" => true,
+        Some(value) if value == "false" => false,
+        _ => return,
+    };
+    let initial = fields.get("initial-value").map(|value| Rc::from(*value));
+    if !fields.contains_key("syntax") || (initial.is_none() && !universal) {
+        return;
+    }
+    properties.insert(name.to_owned(), Registration { inherits, initial });
+}
 /** Marks the cascade untrusted: some hiding rule could not be kept. */
 fn fail_closed(budget: &mut Budget, diagnostics: &mut Vec<String>) {
     if !budget.untrusted {
@@ -404,6 +470,7 @@ fn mask(target: Target) -> Rule {
         pseudo: None,
         ancestors: 0,
         containers: Vec::new(),
+        layer: layer::OUTER,
     }
 }
 /** Lowercase at-rule name after `@`. */
@@ -423,25 +490,63 @@ fn unsupported_at(name: &str) -> String {
         super::diagnostic_name(name)
     )
 }
-/** CSS nesting: `&` stands for each parent; otherwise the parent is an ancestor. False when cut at the bound. */
+/**
+ * CSS nesting as Blink resolves it (CSSSelectorParser with a parent rule): a nested selector
+ * that is relative (`> a`) or has no `&` gets `& ` in front, and `&` stands for the whole parent
+ * list as `:is(parents)`, with that list's highest specificity. A single parent at the very start
+ * is spliced in as text, which matches and weighs the same and keeps rules bucketed by subject.
+ * False when cut at the rule bound.
+ */
 fn nest(prelude: &str, parents: Option<&[String]>) -> (Vec<String>, bool) {
     let pieces = split_top(prelude, b',');
     let Some(parents) = parents else {
         return (pieces.into_iter().map(Into::into).collect(), true);
     };
     let mut out = Vec::new();
-    // Nested selector lists multiply; past the rule bound the rest is cut and reported incomplete.
     for piece in pieces {
-        for parent in parents {
-            if out.len() >= CSS_RULES {
-                return (out, false);
-            }
-            out.push(if piece.contains('&') {
-                piece.replace('&', parent)
-            } else {
-                format!("{parent} {piece}")
-            });
+        if out.len() >= CSS_RULES {
+            return (out, false);
         }
+        let piece = piece.trim();
+        let mut ampersands = nesting_selectors(piece);
+        let piece = if ampersands.is_empty() {
+            ampersands.push(0);
+            format!("& {piece}")
+        } else {
+            piece.to_owned()
+        };
+        out.push(match (parents, ampersands.as_slice()) {
+            ([parent], [0]) => format!("{parent}{}", &piece[1..]),
+            _ => splice(&piece, &ampersands, &format!(":is({})", parents.join(", "))),
+        });
     }
     (out, true)
+}
+/** Byte offsets of each `&` outside strings and escapes. */
+fn nesting_selectors(selector: &str) -> Vec<usize> {
+    let bytes = selector.as_bytes();
+    let (mut out, mut index, mut quote) = (Vec::new(), 0, None);
+    while index < bytes.len() {
+        match (bytes[index], quote) {
+            (b'\\', _) => index += 1,
+            (b'"' | b'\'', None) => quote = Some(bytes[index]),
+            (byte, Some(open)) if byte == open => quote = None,
+            (b'&', None) => out.push(index),
+            _ => {}
+        }
+        index += 1;
+    }
+    out
+}
+/** `selector` with the `&` at each of `at` replaced by `parent`. */
+fn splice(selector: &str, at: &[usize], parent: &str) -> String {
+    let mut out = String::with_capacity(selector.len() + parent.len() * at.len());
+    let mut from = 0;
+    for &index in at {
+        out.push_str(&selector[from..index]);
+        out.push_str(parent);
+        from = index + 1;
+    }
+    out.push_str(&selector[from..]);
+    out
 }

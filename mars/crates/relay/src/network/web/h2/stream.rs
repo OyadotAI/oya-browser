@@ -173,10 +173,8 @@ impl Stream {
 
     /** One regular field, validated like HTTP/1.1 fields plus HTTP/2's lowercase rule. */
     fn field(&mut self, name: &str, value: &str) -> Result<(), u32> {
-        let valid_name = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_".contains(&b));
+        let valid_name =
+            crate::network::mime::token(name) && !name.bytes().any(|b| b.is_ascii_uppercase());
         if !valid_name || value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) {
             return Err(frame::PROTOCOL_ERROR);
         }

@@ -1,6 +1,6 @@
 /** Ordered UA, stylesheet and inline declarations select one bounded computed style per element. */
 use super::{
-    ComputedStyle, FlexDirection, FlexWrap, Position,
+    ComputedStyle, Position,
     constants::OFFSCREEN,
     declaration,
     media::Truth,
@@ -17,8 +17,12 @@ use crate::{
 use std::{collections::BTreeMap, rc::Rc};
 /** UA declarations and presentational hints, the two layers below author rules. */
 type Defaults<'d> = (&'d [(&'d str, &'d str)], &'d [(&'d str, String)]);
-/** Cascade priority: importance, author origin, inline origin, specificity, source order. */
-pub(super) type Priority = (bool, bool, bool, usize, usize);
+/**
+ * Cascade priority, after Blink's CascadePriority: importance, author origin, inline origin,
+ * cascade layer, specificity, source order. The layer is its rank for normal declarations and
+ * inverted for `!important` ones, so an earlier layer's important declaration wins.
+ */
+pub(super) type Priority = (bool, bool, bool, usize, usize, usize);
 /** Each property's winning priority and value. */
 pub(super) type Chosen = BTreeMap<String, (Priority, Rc<str>)>;
 /// Required sheets must all parse within bounds before a candidate's actions become visible.
@@ -54,7 +58,9 @@ pub fn compute_styles_with_context(
         diagnostics: std::mem::take(&mut candidate.diagnostics),
         widths: None,
         ancestry: Vec::new(),
+        ua_margin_top: false,
     };
+    cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
     for message in &cascade.parsed.diagnostics {
         note(&mut cascade.diagnostics, message.clone());
     }
@@ -68,7 +74,7 @@ pub fn compute_styles_with_context(
         && let Some(widths) = super::container::widths(&candidate, context)
     {
         cascade.widths = Some(widths);
-        cascade.scopes = Scopes::default();
+        cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
         super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
         cascade.wrappers(document, &mut candidate)?;
         cascade.nodes(document, &mut candidate)?;
@@ -103,6 +109,9 @@ struct Cascade<'a> {
     widths: Option<super::container::Widths>,
     /// Size containers above the element being styled, nearest first.
     ancestry: Vec<super::container::Ancestor>,
+    /// The element styled last took its top margin from the UA sheet, for the quirks-mode
+    /// margin quirk.
+    ua_margin_top: bool,
 }
 impl<'a> Cascade<'a> {
     /** Styles every element in document order; parents come before their children. */
@@ -120,7 +129,17 @@ impl<'a> Cascade<'a> {
             if self.parsed.container_rules {
                 self.ancestry = ancestry(candidate, &positions, parent);
             }
-            let style = self.node(&document.nodes[index], parent, candidate)?;
+            let mut style = self.node(&document.nodes[index], parent, candidate)?;
+            // Only an in-flow box's margin collapses into its container's top.
+            let in_flow = !matches!(style.position, Position::Absolute | Position::Fixed)
+                && style.float == super::Float::None;
+            if self.ua_margin_top
+                && in_flow
+                && candidate.formatting.quirks
+                && opens_quirk_container(candidate, index, parent)
+            {
+                style.quirk_top = true;
+            }
             candidate.nodes[index].style = style;
         }
         self.ancestry.clear();
@@ -154,7 +173,7 @@ impl<'a> Cascade<'a> {
         self.resolve(&mut style, &root, html, HTML, false)?;
         style.interactive &= !hides;
         style.hidden |= formatting.html.attributes.contains_key("hidden");
-        self.block_wrapper(&mut style);
+        self.block_wrapper(&mut style, false);
         candidate.formatting.html.style = style.clone();
         // `rem` below the root is relative to the root element's computed font size.
         super::values::set_root_font(style.font_size);
@@ -176,13 +195,14 @@ impl<'a> Cascade<'a> {
         self.resolve(&mut body_style, &style, body, BODY, false)?;
         body_style.interactive &= !hides;
         body_style.hidden |= formatting.body.attributes.contains_key("hidden");
-        self.block_wrapper(&mut body_style);
+        self.block_wrapper(&mut body_style, true);
         candidate.formatting.body.style = body_style;
         Ok(())
     }
-    /** Wrappers lay out as blocks; other display types are reported and ignored. */
-    fn block_wrapper(&mut self, style: &mut ComputedStyle) {
-        if style.inline || style.display_flex {
+    /** Wrappers lay out as blocks; other display types are reported and ignored, except a flex
+     * or grid body, which layout gives a container node of its own. */
+    fn block_wrapper(&mut self, style: &mut ComputedStyle, body: bool) {
+        if style.inline || (style.display_flex && !body) {
             note(
                 &mut self.diagnostics,
                 "Root and body display types other than block are not supported.".into(),
@@ -219,6 +239,11 @@ impl<'a> Cascade<'a> {
         let default_link_color = node.href.is_some() && !chosen.contains_key("color");
         let scope_parent = parent.map_or(BODY, |index| index + FIRST_NODE);
         let control = ["input", "button", "select", "textarea"].contains(&node.tag.as_str());
+        let clip_text = super::visual::clips_to_text(&chosen);
+        self.ua_margin_top = chosen
+            .get("margin-top")
+            .is_some_and(|((_, author, ..), _)| !author);
+        let authored = control.then(|| authored_control(&chosen));
         self.resolve_in(
             &mut style,
             parent_style,
@@ -228,6 +253,12 @@ impl<'a> Cascade<'a> {
         )?;
         if default_link_color {
             style.color = super::resolve::link_foreground(&style);
+        }
+        if clip_text {
+            super::visual::clip_to_text(&mut style);
+        }
+        if let Some((font, edges)) = authored {
+            (style.font_authored, style.edges_authored) = (font, edges);
         }
         style.interactive &= !hides && !unreachable(&style);
         self.repair(node, &mut style);
@@ -251,6 +282,17 @@ impl<'a> Cascade<'a> {
                     style.generated.push(generated);
                 }
             }
+        }
+        if style.validate().is_err() {
+            // One element's out-of-range author values must not fail the page's whole cascade:
+            // it falls back to inherited and user-agent styles, as if its rules were dropped.
+            note(
+                &mut self.diagnostics,
+                "An element's CSS values were outside supported bounds and were ignored.".into(),
+            );
+            style = super::resolve::inherited(parent_style);
+            super::ua::defaults(node, &mut style);
+            style.interactive &= !hides;
         }
         style.validate()?;
         Ok(style)
@@ -276,10 +318,41 @@ impl<'a> Cascade<'a> {
         let Some((_, content)) = chosen.remove("content") else {
             return Ok(None);
         };
+        // The pseudo-element is its own element for custom properties (Blink computes it with
+        // the originating element as parent), so its `--*` declarations and `var()` in
+        // `content` resolve in a scope of its own, dropped once the box is computed.
+        let custom: BTreeMap<Rc<str>, Rc<str>> = chosen
+            .iter()
+            .filter(|(key, _)| key.starts_with("--"))
+            .map(|(key, (_, value))| (Rc::from(key.as_str()), value.clone()))
+            .collect();
+        chosen.retain(|key, _| !key.starts_with("--"));
+        self.scopes.push(Some(scope), custom);
+        let result = self.generated_box(node, element, chosen, &content, after);
+        self.scopes.pop();
+        result
+    }
+    /** Computes a generated box's style in the pseudo-element scope pushed last. */
+    fn generated_box(
+        &mut self,
+        node: &Node,
+        element: &ComputedStyle,
+        chosen: Chosen,
+        content: &str,
+        after: bool,
+    ) -> EngineResult<Option<super::Generated>> {
+        let scope = self.scopes.len() - 1;
+        let content = if content.to_ascii_lowercase().contains("var(") {
+            match self.scopes.substitute(scope, content) {
+                Some(content) => content,
+                None => return Ok(None),
+            }
+        } else {
+            content.to_string()
+        };
         let Some(content) = super::content::content(&content, &node.attributes) else {
             return Ok(None);
         };
-        chosen.retain(|key, _| !key.starts_with("--"));
         let mut style = super::resolve::inherited(element);
         // Generated boxes are inline unless a rule says otherwise.
         style.inline = true;
@@ -308,16 +381,6 @@ impl<'a> Cascade<'a> {
                 "Automatic margins in table layout are ignored.".into(),
             );
             style.margin_auto = [false; 4];
-        }
-        if style.display_flex
-            && style.flex_direction == FlexDirection::Column
-            && style.flex_wrap == FlexWrap::Wrap
-        {
-            note(
-                &mut self.diagnostics,
-                "Wrapped flex columns lay out without wrapping.".into(),
-            );
-            style.flex_wrap = FlexWrap::NoWrap;
         }
     }
     /** Wrapper resolution: html has no parent scope, body's is html. */
@@ -387,7 +450,7 @@ impl<'a> Cascade<'a> {
                 &mut chosen,
                 key,
                 value.to_string().into(),
-                (false, false, false, 0, 0),
+                (false, false, false, 0, 0, 0),
             );
         }
         // Presentational hints are author-level with zero specificity, so any rule beats them.
@@ -396,7 +459,7 @@ impl<'a> Cascade<'a> {
                 &mut chosen,
                 key,
                 value.as_str().into(),
-                (false, true, false, 0, 0),
+                (false, true, false, 0, 0, 0),
             );
         }
         for index in self.parsed.buckets.candidates(tag, attributes, pseudo) {
@@ -443,6 +506,7 @@ impl<'a> Cascade<'a> {
                     declaration.important,
                     !anchored || declaration.important,
                     false,
+                    layer_key(&self.parsed.layer_ranks, rule.layer, declaration.important),
                     rule.specificity,
                     source_order(rule.order, position),
                 );
@@ -459,7 +523,7 @@ impl<'a> Cascade<'a> {
             hides |= block.hides;
             for (position, declaration) in block.declarations.into_iter().enumerate() {
                 let order = source_order(self.parsed.rules.len(), position);
-                let priority = (declaration.important, true, true, 0, order);
+                let priority = (declaration.important, true, true, 0, 0, order);
                 choose(&mut chosen, &declaration.name, declaration.value, priority);
             }
         }
@@ -547,6 +611,15 @@ fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
         _ => {}
     }
 }
+/** A rule's layer in the cascade: its rank, inverted for `!important` (Cascade 5 section 6.4). */
+fn layer_key(ranks: &[usize], layer: usize, important: bool) -> usize {
+    let rank = ranks.get(layer).copied().unwrap_or(usize::MAX - 1);
+    if important {
+        usize::MAX - 1 - rank
+    } else {
+        rank
+    }
+}
 /// Declarations one rule orders among themselves; later ones share the last position.
 const RULE_DECLARATIONS: usize = 1 << 16;
 /**
@@ -565,4 +638,71 @@ pub(super) fn choose(chosen: &mut Chosen, key: &str, value: Rc<str>, priority: P
     {
         chosen.insert(key.into(), (priority, value));
     }
+}
+
+/** Whether the page set a control's font, and its padding or border widths. The UA sheet sets
+ * neither on controls, so any winner is the page's (`font: inherit` and `padding: 0` included,
+ * which Tailwind's preflight gives every button). */
+fn authored_control(chosen: &Chosen) -> (bool, bool) {
+    let font = chosen
+        .keys()
+        .any(|key| ["font-size", "font-family"].contains(&key.as_str()));
+    let edges = chosen.keys().any(|key| {
+        key.starts_with("padding")
+            || (key.starts_with("border") && (key.ends_with("width") || key.ends_with("style")))
+    });
+    (font, edges)
+}
+
+/** The quirks-mode margin quirk: Chromium drops the UA top margin of the first box in the body
+ * or a table cell (CERN's first heading sat 21px low). True when the node's parent is the body
+ * or a cell and no visible sibling or text comes before it. */
+fn opens_quirk_container(document: &Document, index: usize, parent: Option<usize>) -> bool {
+    if let Some(parent) = parent {
+        let cell = &document.nodes[parent];
+        if !["td", "th"].contains(&cell.tag.as_str()) || !cell.text.trim().is_empty() {
+            return false;
+        }
+    }
+    let first = parent.map_or(0, |parent| parent + 1);
+    let node = &document.nodes[index];
+    // Backwards, so only the nearest earlier sibling's subtree is walked.
+    !(first..index).rev().any(|before| {
+        let sibling = &document.nodes[before];
+        sibling.parent == node.parent && !blank(document, before)
+    })
+}
+/** A box margins collapse through: hidden, or with no text, replaced content, height or edges
+ * anywhere in its subtree (CERN's `<HEADER>` holding only its title). */
+fn blank(document: &Document, index: usize) -> bool {
+    let mut subtree = vec![document.nodes[index].local_id];
+    let mut hidden: Vec<usize> = Vec::new();
+    for node in &document.nodes[index..] {
+        if node.local_id != subtree[0] && !node.parent.is_some_and(|p| subtree.contains(&p)) {
+            break;
+        }
+        subtree.push(node.local_id);
+        let style = &node.style;
+        if style.hidden
+            || node.tag == "#comment"
+            || node.parent.is_some_and(|p| hidden.contains(&p))
+        {
+            hidden.push(node.local_id);
+            continue;
+        }
+        let boxed = style.height.is_some()
+            || style
+                .padding
+                .iter()
+                .chain(style.border_widths.iter())
+                .any(|v| *v > 0.0);
+        let replaced = [
+            "img", "svg", "input", "button", "select", "textarea", "video", "iframe",
+        ]
+        .contains(&node.tag.as_str());
+        if !node.text.trim().is_empty() || boxed || replaced {
+            return false;
+        }
+    }
+    true
 }

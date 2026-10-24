@@ -120,6 +120,13 @@ pub enum JsValue {
     Hole,
 }
 
+/// Whether an object is `document.all`, the one object with [[IsHTMLDDA]]: ToBoolean is false,
+/// typeof is "undefined" and it loosely equals null and undefined (ECMA-262 B.3.6). Pages compare
+/// against it to tell a missing value from a present one (YouTube's attribute sanitizer does).
+pub(in crate::v9) fn is_html_dda(id: u32) -> bool {
+    id == crate::v9::vm::realm::realm().ids.document_all
+}
+
 impl JsValue {
     /// Input strings remain literal values; entering one never evaluates source.
     pub fn string(value: &str) -> EngineResult<Self> {
@@ -133,7 +140,8 @@ impl JsValue {
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             Self::String(value) => !value.is_empty(),
             Self::BigInt(value) => *value != 0,
-            Self::Object(_) | Self::Symbol(_) => true,
+            Self::Object(id) => !is_html_dda(*id),
+            Self::Symbol(_) => true,
         }
     }
     /// Strings held by the value count against aggregate environment budgets.

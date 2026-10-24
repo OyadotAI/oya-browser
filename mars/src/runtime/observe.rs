@@ -249,7 +249,7 @@ impl Page {
     }
     /** What a point lookup reports about a node: identity, role and name, never a secret value. */
     pub(super) fn point_node(&self, node: &Node) -> Value {
-        let labels = self.document.labels();
+        let labels = super::names::names(&self.document);
         let name = local_position(&self.document.nodes, node.local_id, |node| node.local_id)
             .and_then(|index| labels.get(index))
             .map(|name| cap(name.trim()))
@@ -263,19 +263,60 @@ impl Page {
         }
         value
     }
-    /** Inspect-style node bounds keyed by local identity. */
-    fn bounds(&self) -> BTreeMap<usize, Value> {
-        let mut bounds = BTreeMap::new();
-        for item in self.display.iter().flat_map(|display| &display.items) {
-            bounds.entry(item.local_id).or_insert_with(
-                || json!({"x":item.x,"y":item.y,"width":item.width,"height":item.height}),
-            );
+    /**
+     * Inspect-style node bounds keyed by local identity: a node's own first painted box, else
+     * the union of its descendants' boxes. Eye paints an inline link's text under the text
+     * node, not the `<a>`, so without the union `<a>Learn more</a>` had no geometry and
+     * visible_only dropped it. Only boxes a person can see count.
+     */
+    pub(super) fn bounds(&self) -> BTreeMap<usize, Value> {
+        let mut boxes: BTreeMap<usize, [f64; 4]> = BTreeMap::new();
+        // A box clipped away or fully transparent is nothing a person sees: a visually hidden
+        // skip link has a box in the viewport, but no visible pixel.
+        let painted = self.display.iter().flat_map(|display| &display.items);
+        for item in painted.filter(|item| crate::document::agent_visible(item)) {
+            boxes.entry(item.local_id).or_insert([
+                item.x,
+                item.y,
+                item.x + item.width,
+                item.y + item.height,
+            ]);
         }
-        bounds
+        // Document order puts every child after its parent, so one reverse pass carries each
+        // box up through every ancestor that painted nothing itself.
+        let mut derived: BTreeMap<usize, [f64; 4]> = BTreeMap::new();
+        for node in self.document.nodes.iter().rev() {
+            let Some(own) = boxes
+                .get(&node.local_id)
+                .or(derived.get(&node.local_id))
+                .copied()
+            else {
+                continue;
+            };
+            if let Some(parent) = node.parent.filter(|parent| !boxes.contains_key(parent)) {
+                let union = derived.entry(parent).or_insert(own);
+                *union = [
+                    union[0].min(own[0]),
+                    union[1].min(own[1]),
+                    union[2].max(own[2]),
+                    union[3].max(own[3]),
+                ];
+            }
+        }
+        boxes.extend(derived);
+        boxes
+            .into_iter()
+            .map(|(id, [left, top, right, bottom])| {
+                (
+                    id,
+                    json!({"x":left,"y":top,"width":right - left,"height":bottom - top}),
+                )
+            })
+            .collect()
     }
     /** Capture diffable state for every node an agent could see. */
     pub(super) fn snapshot(&self) -> Snapshot {
-        let labels = self.document.labels();
+        let labels = super::names::names(&self.document);
         let nodes = self
             .document
             .nodes
@@ -347,7 +388,7 @@ impl Page {
      * numbered controls. Numbering follows document order, so it is stable for one revision.
      */
     pub(super) fn summary(&self) -> Value {
-        let labels = self.document.labels();
+        let labels = super::names::names(&self.document);
         let mut headings = Vec::new();
         let mut landmarks = Vec::new();
         let mut controls = Vec::new();
@@ -390,8 +431,8 @@ impl Page {
         value
     }
     /** Semantic search returns identities and geometry, never a CSS selector to guess. */
-    fn find(&self, query: &Query, limit: usize, visible: impl Fn(&Value) -> bool) -> Value {
-        let labels = self.document.labels();
+    fn find(&self, query: &Query, limit: usize, visible: impl Fn(Option<&Value>) -> bool) -> Value {
+        let labels = super::names::names(&self.document);
         let bounds = self.bounds();
         let mut matches = Vec::new();
         let mut total = 0;
@@ -401,7 +442,7 @@ impl Page {
                 continue;
             }
             let geometry = bounds.get(&node.local_id);
-            if geometry.is_some_and(|geometry| !visible(geometry)) {
+            if !visible(geometry) {
                 continue;
             }
             total += 1;
@@ -414,6 +455,11 @@ impl Page {
             }
             if !text.trim().is_empty() && text.trim() != name.trim() {
                 entry["text"] = json!(cap(text.trim()));
+            }
+            // The destination, as page.inspect reports it, so a link is chosen without a
+            // second read of the whole page.
+            if let Some(href) = &node.href {
+                entry["href"] = json!(safe_url(href, self.sensitive));
             }
             if !enabled(node) {
                 entry["disabled"] = json!(true);
@@ -428,7 +474,7 @@ impl Page {
     /** Resolve a step target to exactly one node so a batch never acts on a guess. */
     pub(super) fn resolve(&self, query: &Query) -> EngineResult<String> {
         query.validate()?;
-        let labels = self.document.labels();
+        let labels = super::names::names(&self.document);
         let found = self
             .document
             .nodes
@@ -677,11 +723,9 @@ impl Runtime {
         };
         query.validate()?;
         let limit = input.limit.unwrap_or(FIND_DEFAULT).clamp(1, FIND_MAX);
-        let (top, height) = (self.scroll_y, self.render_context.height);
-        let visible = |bounds: &Value| {
-            let y = bounds["y"].as_f64().unwrap_or_default();
-            let h = bounds["height"].as_f64().unwrap_or_default();
-            !input.visible_only || (y + h > top && y < top + height)
+        let (context, top) = (self.render_context, self.scroll_y);
+        let visible = |bounds: Option<&Value>| {
+            !input.visible_only || super::page::in_viewport(bounds, context, top)
         };
         Ok(self.current()?.find(&query, limit, visible))
     }

@@ -1,6 +1,6 @@
 /** Supported declaration values update computed fields; Ok(false) means the property is unknown. */
 use super::{
-    ColorScheme, ComputedStyle,
+    ColorScheme, ComputedStyle, TableBox,
     constants::{WEIGHT_BOLD, WEIGHT_BOLD_FACE, WEIGHT_MAX, WEIGHT_MIN, WEIGHT_NORMAL},
     note, unsupported,
     values::{contextual_color, contextual_length, number},
@@ -162,17 +162,7 @@ fn layout(
             _ => return Err(unsupported()),
         },
         "pointer-events" => style.interactive = value != "none",
-        "width" => {
-            style.percent_width = value.ends_with('%');
-            style.width = match value {
-                "auto" | "min-content" | "max-content" | "fit-content" => {
-                    style.percent_width = false;
-                    None
-                }
-                _ if style.percent_width => Some(number(value.trim_end_matches('%'))?),
-                _ => Some(contextual_length(value, style.font_size, context)?),
-            };
-        }
+        "width" => width(style, value, context)?,
         "max-width" => {
             style.percent_max_width = value.ends_with('%');
             style.max_width = match value {
@@ -192,6 +182,39 @@ fn layout(
         _ => return Ok(false),
     }
     Ok(true)
+}
+/**
+ * `width`: a keyword, a percentage, a length, or a `calc()` mixing both, whose px part waits in
+ * `width_offset` until the percentage resolves against the containing block.
+ */
+fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> EngineResult<()> {
+    style.width_offset = 0.0;
+    style.percent_width = value.ends_with('%');
+    style.width = match value {
+        "auto" | "min-content" | "max-content" | "fit-content" => {
+            style.percent_width = false;
+            None
+        }
+        _ if style.percent_width => Some(number(value.trim_end_matches('%'))?),
+        _ if value.starts_with("calc(") => {
+            let mixed = super::values::dimension(value, style.font_size, context)?;
+            style.percent_width = mixed.percent != 0.0;
+            style.width_offset = if style.percent_width { mixed.px } else { 0.0 };
+            let main = if style.percent_width {
+                mixed.percent
+            } else {
+                mixed.px
+            };
+            // A part past the computed-style bounds drops the declaration instead of failing
+            // the whole cascade at validation.
+            if !(0.0..=crate::constants::CSS_MAX_SCALAR).contains(&main) {
+                return Err(unsupported());
+            }
+            Some(main)
+        }
+        _ => Some(contextual_length(value, style.font_size, context)?),
+    };
+    Ok(())
 }
 /** Display keywords; table boxes lay out as blocks for now. */
 fn display(
@@ -214,8 +237,10 @@ fn display(
         }
         "grid" | "block grid" => set_display(style, false, false, false, true),
         "inline-grid" | "inline grid" => set_display(style, false, true, false, true),
-        "block" | "flow-root" | "block flow" | "block flow-root" => {
-            set_display(style, false, false, false, false)
+        "block" | "block flow" => set_display(style, false, false, false, false),
+        "flow-root" | "block flow-root" => {
+            set_display(style, false, false, false, false);
+            style.flow_root = true;
         }
         "list-item" | "block list-item" | "block flow list-item" => {
             set_display(style, false, false, false, false);
@@ -225,8 +250,24 @@ fn display(
             set_display(style, true, false, false, false);
             style.display_contents = true;
         }
-        "table" | "table-row" | "table-cell" | "table-row-group" | "table-header-group"
-        | "table-footer-group" | "table-caption" | "table-column" | "table-column-group" => {
+        "table" | "block table" => {
+            set_display(style, false, false, false, false);
+            style.table_box = TableBox::Table;
+        }
+        "table-row" => {
+            set_display(style, false, false, false, false);
+            style.table_box = TableBox::Row;
+        }
+        "table-cell" => {
+            set_display(style, false, false, false, false);
+            style.table_box = TableBox::Cell;
+        }
+        "table-caption" => {
+            set_display(style, false, false, false, false);
+            style.table_box = TableBox::Caption;
+        }
+        "table-row-group" | "table-header-group" | "table-footer-group" | "table-column"
+        | "table-column-group" => {
             note(
                 diagnostics,
                 format!("CSS display {outer} lays out as block."),
@@ -245,6 +286,8 @@ fn set_display(style: &mut ComputedStyle, inline: bool, atomic: bool, flex: bool
     style.display_grid = grid;
     style.display_contents = false;
     style.list_item = false;
+    style.table_box = TableBox::None;
+    style.flow_root = false;
 }
 /** Offered color schemes. */
 fn color_scheme(value: &str) -> EngineResult<ColorScheme> {
@@ -285,6 +328,11 @@ fn font_size(value: &str, parent: f64, context: RenderContext) -> EngineResult<f
     };
     if !size.is_finite() || size < 0.0 {
         return Err(unsupported());
+    }
+    // `font-size: 0` hides text and the spaces between inline blocks, as in Chromium; only
+    // sizes above it take the minimum.
+    if size == 0.0 {
+        return Ok(0.0);
     }
     Ok(size.clamp(CSS_MIN_FONT_SIZE, CSS_MAX_FONT_SIZE))
 }

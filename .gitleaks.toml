@@ -10,4 +10,5 @@ paths = [
   '''^server/test-[^/]+\.js$''',
   '''^examples/\.env\.example$''',
   '''^extension/content/agent\.js$''',
+  '''^mars/crates/link/data/generate\.mjs$''',
 ]

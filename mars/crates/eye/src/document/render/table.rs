@@ -1,7 +1,11 @@
 /** Automatic table layout: a span-aware grid, min/max column widths, border spacing and row heights. */
 use super::flow::*;
 use super::sizing::IntrinsicWidths;
-use crate::document::style::VerticalAlign;
+use crate::document::style::{TableBox, VerticalAlign};
+
+mod collapse;
+mod columns;
+pub(super) use collapse::resolve as collapse_borders;
 
 /** Columns one table lays out; cells past it are skipped rather than widen the grid without bound. */
 const GRID_COLUMNS: usize = 128;
@@ -21,6 +25,56 @@ struct Grid<'a> {
     rows: Vec<&'a Node>,
     cells: Vec<Slot<'a>>,
     columns: usize,
+    /** The only row is the anonymous one CSS wraps around a `display: table` box's direct
+     * cells; it is the table itself, so it paints no row box of its own. */
+    anonymous: bool,
+}
+/** Whether a box lays out as a table: a `<table>`, or a `display: table` box with a
+ * `table-row` or `table-cell` child, or with a caption beside one other child (MediaWiki's
+ * thumbnails, whose width is the image's and not the caption's). One without is laid out as a
+ * block, because CSS wraps its other children in a single anonymous cell, which is what a block
+ * gives (the common `content: ""; display: table` clearfix among them). */
+pub(super) fn is_table(context: &LayoutContext<'_>, node: &Node) -> bool {
+    if node.tag == "table" {
+        return true;
+    }
+    if node.style.table_box != TableBox::Table {
+        return false;
+    }
+    let children = context.children(node.local_id);
+    let parts = |kinds: &[TableBox]| {
+        children
+            .iter()
+            .filter(|child| kinds.contains(&child.style.table_box))
+            .count()
+    };
+    let others = children
+        .iter()
+        .filter(|child| !is_caption(child) && !super::flow::out_of_flow(child))
+        .count();
+    parts(&[TableBox::Row, TableBox::Cell]) > 0 || (parts(&[TableBox::Caption]) > 0 && others == 1)
+}
+/** A caption: `<caption>` or a CSS `table-caption`. */
+fn is_caption(node: &Node) -> bool {
+    node.tag == "caption" || node.style.table_box == TableBox::Caption
+}
+/** A row: `<tr>`, or a CSS `table-row`. */
+fn is_row(node: &Node) -> bool {
+    node.tag == "tr" || node.style.table_box == TableBox::Row
+}
+/** A box that lays out as a table cell: `<td>`, `<th>` or `display: table-cell`. */
+pub(super) fn is_cell_box(node: &Node) -> bool {
+    ["td", "th"].contains(&node.tag.as_str()) || node.style.table_box == TableBox::Cell
+}
+/** A cell of this row: `<td>` and `<th>`, and any in-flow child of a CSS row, since CSS wraps
+ * a stray child of a row in an anonymous cell rather than dropping it. */
+fn is_cell(row: &Node, cell: &Node) -> bool {
+    if is_caption(cell) {
+        return false;
+    }
+    ["td", "th"].contains(&cell.tag.as_str())
+        || cell.style.table_box == TableBox::Cell
+        || (row.tag != "tr" && !super::flow::out_of_flow(cell))
 }
 /** A table: caption above, then the grid inside the table's own border and padding. */
 pub(super) fn table(
@@ -34,10 +88,11 @@ pub(super) fn table(
     let style = &node.style;
     let grid = grid(context, node)?;
     let spacing = spacing(node);
-    let columns = column_widths(context, &grid, spacing)?;
+    let fixed_layout = fixed_layout(node);
+    let columns = column_constraints(context, &grid, spacing, fixed_layout)?;
     let edges = horizontal_edges(node) + spacing * (grid.columns + 1) as f64;
-    let minimum = columns.iter().map(|c| c.min_content).sum::<f64>() + edges;
-    let maximum = columns.iter().map(|c| c.max_content).sum::<f64>() + edges;
+    let (minimum, maximum) = columns::grid_min_max(&columns, fixed_layout);
+    let (minimum, maximum) = (minimum + edges, maximum + edges);
     let room = (flow.width - style.margin[1] - style.margin[3]).max(0.0);
     let width = match forced {
         Some(bounds) => bounds.width,
@@ -70,21 +125,29 @@ pub(super) fn table(
         y + sides[0] + style.padding[0],
         (width - horizontal_edges(node)).max(0.0),
     );
-    for caption in context
+    let (bottom_captions, top_captions): (Vec<_>, Vec<_>) = context
         .all_children(node.local_id)
         .into_iter()
-        .filter(|child| child.tag == "caption")
-    {
+        .filter(|child| is_caption(child))
+        .partition(|caption| caption.style.caption_bottom);
+    for caption in top_captions {
         node_layout(context, caption, &mut inner, items, None)?;
     }
     inner.newline();
-    let fixed = fixed_columns(&grid);
-    let widths = distribute(
-        &columns,
-        &fixed,
+    let widths = columns::widths(
         (inner.width - spacing * (grid.columns + 1) as f64).max(0.0),
+        &columns,
+        fixed_layout,
     );
-    let bottom = place(context, &grid, &widths, (inner.x, inner.y, spacing), items)?;
+    let mut bottom = place(context, &grid, &widths, (inner.x, inner.y, spacing), items)?;
+    if !bottom_captions.is_empty() {
+        let mut below = Flow::new(inner.x, bottom, inner.width);
+        for caption in bottom_captions {
+            node_layout(context, caption, &mut below, items, None)?;
+        }
+        below.newline();
+        bottom = below.bottom.max(below.y);
+    }
     let natural = bottom - y + style.padding[2] + sides[2];
     let specified = style
         .height
@@ -128,8 +191,12 @@ fn spacing(node: &Node) -> f64 {
 fn grid<'a>(context: &mut LayoutContext<'a>, table: &Node) -> EngineResult<Grid<'a>> {
     let mut rows = context.descendants(table.local_id);
     rows.retain(|node| {
-        node.tag == "tr" && !node.hidden() && owner(context, node) == Some(table.local_id)
+        is_row(node) && !node.hidden() && owner(context, node) == Some(table.local_id)
     });
+    let anonymous = rows.is_empty() && table.tag != "table";
+    if anonymous {
+        rows.push(context.node(table.local_id)?);
+    }
     rows.truncate(GRID_ROWS);
     let mut taken: Vec<Vec<bool>> = vec![Vec::new(); rows.len()];
     let mut cells = Vec::new();
@@ -138,7 +205,7 @@ fn grid<'a>(context: &mut LayoutContext<'a>, table: &Node) -> EngineResult<Grid<
         context.charge(1)?;
         let mut column = 0;
         for cell in context.children(node.local_id) {
-            if !["td", "th"].contains(&cell.tag.as_str()) {
+            if !is_cell(node, cell) {
                 continue;
             }
             while taken[row].get(column).copied().unwrap_or(false) {
@@ -180,6 +247,7 @@ fn grid<'a>(context: &mut LayoutContext<'a>, table: &Node) -> EngineResult<Grid<
         rows,
         cells,
         columns: columns.max(1),
+        anonymous,
     })
 }
 /** The nearest table ancestor, so a nested table's rows belong to it and not to the outer grid. */
@@ -187,114 +255,83 @@ fn owner(context: &LayoutContext<'_>, node: &Node) -> Option<usize> {
     let mut current = node.parent;
     while let Some(local) = current {
         let ancestor = context.node(local).ok()?;
-        if ancestor.tag == "table" {
+        if ancestor.tag == "table" || ancestor.style.table_box == TableBox::Table {
             return Some(local);
         }
         current = ancestor.parent;
     }
     None
 }
-/** A cell's border-box min and max widths; an authored width fixes both, never below min-content. */
-fn cell_widths(context: &mut LayoutContext<'_>, cell: &Node) -> EngineResult<IntrinsicWidths> {
-    let content = context.intrinsic_widths(cell.local_id)?;
-    let edges = horizontal_edges(cell);
-    let min = content.min_content + edges;
-    let max = content.max_content.max(content.min_content) + edges;
-    Ok(
-        match cell.style.width.filter(|_| !cell.style.percent_width) {
-            Some(width) => {
-                let fixed = super::sizing::content_size(cell, width, true) + edges;
-                IntrinsicWidths {
-                    min_content: min.max(fixed),
-                    max_content: min.max(fixed),
-                }
-            }
-            None => IntrinsicWidths {
-                min_content: min,
-                max_content: max,
-            },
-        },
-    )
+/** `table-layout: fixed` applies only to a table with an authored width (Blink's
+ * IsFixedTableLayout). */
+fn fixed_layout(node: &Node) -> bool {
+    node.style.table_layout_fixed && node.style.width.is_some()
 }
-/** Column min and max widths: single-span cells first, then spans spread their excess evenly. */
-fn column_widths(
+/** Blink's CreateCellInlineConstraint: the border-box min (min-content, raised by min-width)
+ * and max (an authored length, else max-content, capped by max-width), its percentage width,
+ * and whether a length was authored. Fixed tables skip min-content. */
+fn cell_constraint(
+    context: &mut LayoutContext<'_>,
+    cell: &Node,
+    fixed: bool,
+) -> EngineResult<columns::Cell> {
+    let edges = horizontal_edges(cell);
+    let style = &cell.style;
+    let length = style.width.filter(|_| !style.percent_width);
+    let authored = length.map(|width| super::sizing::content_size(cell, width, true) + edges);
+    let content = if fixed && authored.is_some() {
+        IntrinsicWidths::default()
+    } else {
+        context.intrinsic_widths(cell.local_id)?
+    };
+    let mut min = if fixed {
+        0.0
+    } else {
+        let floor = style.min_width;
+        (content.min_content + edges)
+            .max(floor.map_or(0.0, |w| super::sizing::content_size(cell, w, true) + edges))
+    };
+    let mut max = authored.unwrap_or(content.max_content.max(content.min_content) + edges);
+    if let Some(cap) = style.max_width.filter(|_| !style.percent_max_width) {
+        let cap = super::sizing::content_size(cell, cap, true) + edges;
+        max = max.min(cap);
+        min = min.min(cap);
+    }
+    Ok(columns::Cell {
+        min,
+        max: max.max(min),
+        percent: style.width.filter(|_| style.percent_width),
+        constrained: authored.is_some(),
+    })
+}
+/** Column constraints from every cell (only the first row's in a fixed table). */
+fn column_constraints(
     context: &mut LayoutContext<'_>,
     grid: &Grid<'_>,
     spacing: f64,
-) -> EngineResult<Vec<IntrinsicWidths>> {
-    let mut columns = vec![IntrinsicWidths::default(); grid.columns];
-    for pass in [false, true] {
-        for slot in grid.cells.iter().filter(|slot| (slot.columns > 1) == pass) {
-            context.charge(slot.columns)?;
-            if slot.cell.hidden() {
-                continue;
-            }
-            let widths = cell_widths(context, slot.cell)?;
-            let span = &mut columns[slot.column..slot.column + slot.columns];
-            let gaps = spacing * (slot.columns - 1) as f64;
-            let have_min = span.iter().map(|c| c.min_content).sum::<f64>() + gaps;
-            let have_max = span.iter().map(|c| c.max_content).sum::<f64>() + gaps;
-            let count = span.len() as f64;
-            for column in span.iter_mut() {
-                column.min_content += (widths.min_content - have_min).max(0.0) / count;
-                column.max_content += (widths.max_content - have_max).max(0.0) / count;
-                column.max_content = column.max_content.max(column.min_content);
-            }
+    fixed: bool,
+) -> EngineResult<Vec<columns::Column>> {
+    let mut singles = Vec::new();
+    let mut spans = Vec::new();
+    for slot in &grid.cells {
+        context.charge(slot.columns)?;
+        if slot.cell.hidden() || (fixed && slot.row > 0) {
+            continue;
+        }
+        let cell = cell_constraint(context, slot.cell, fixed)?;
+        if slot.columns == 1 {
+            singles.push((slot.column, cell));
+        } else {
+            spans.push((slot.column, slot.columns, cell));
         }
     }
-    Ok(columns)
-}
-/** Column widths for an available width: between min and max, then extra space in proportion to
- * max, given only to columns without an authored width while any exist. */
-fn distribute(columns: &[IntrinsicWidths], fixed: &[bool], available: f64) -> Vec<f64> {
-    let min = columns.iter().map(|c| c.min_content).sum::<f64>();
-    let max = columns.iter().map(|c| c.max_content).sum::<f64>();
-    if available <= min {
-        return columns.iter().map(|c| c.min_content).collect();
-    }
-    if available <= max {
-        let share = (available - min) / (max - min).max(f64::EPSILON);
-        return columns
-            .iter()
-            .map(|c| c.min_content + (c.max_content - c.min_content) * share)
-            .collect();
-    }
-    let extra = available - max;
-    let flexible = fixed.iter().any(|fixed| !fixed);
-    let grows = |index: usize| !flexible || !fixed.get(index).copied().unwrap_or(false);
-    let basis = columns
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| grows(*index))
-        .map(|(_, c)| c.max_content)
-        .sum::<f64>();
-    let count = (0..columns.len())
-        .filter(|index| grows(*index))
-        .count()
-        .max(1);
-    columns
-        .iter()
-        .enumerate()
-        .map(|(index, c)| {
-            if !grows(index) {
-                c.max_content
-            } else if basis > 0.0 {
-                c.max_content + extra * c.max_content / basis
-            } else {
-                c.max_content + extra / count as f64
-            }
-        })
-        .collect()
-}
-/** Columns a single-span cell gives an authored pixel width. */
-fn fixed_columns(grid: &Grid<'_>) -> Vec<bool> {
-    let mut fixed = vec![false; grid.columns];
-    for slot in grid.cells.iter().filter(|slot| slot.columns == 1) {
-        if slot.cell.style.width.is_some() && !slot.cell.style.percent_width {
-            fixed[slot.column] = true;
-        }
-    }
-    fixed
+    Ok(columns::constraints(
+        grid.columns,
+        &singles,
+        &spans,
+        spacing,
+        fixed,
+    ))
 }
 /** Lays out every cell at its column span width, sizes rows, then aligns cells vertically; returns the bottom. */
 fn place(
@@ -323,6 +360,7 @@ fn place(
         .map(|row| {
             row.style
                 .height
+                .filter(|_| !grid.anonymous)
                 .and_then(|h| h.resolve(None))
                 .unwrap_or(0.0)
         })
@@ -354,12 +392,13 @@ fn place(
         tops.push(y);
         y += height + spacing;
     }
-    let total = x - x0;
-    for (row, node) in grid.rows.iter().enumerate() {
+    // A row box spans its columns, inside the outer border spacing (Blink's row fragments).
+    let total = (x - x0 - 2.0 * spacing).max(0.0);
+    for (row, node) in grid.rows.iter().enumerate().filter(|_| !grid.anonymous) {
         context.charge(1)?;
         items.push(box_item(
             node,
-            x0,
+            x0 + spacing,
             tops[row],
             total,
             heights[row],
@@ -383,6 +422,11 @@ fn place(
             },
             items,
         )?;
+        // Alignment moves the content by its own height, not the authored cell height.
+        let natural = context
+            .content_height(slot.cell.local_id)
+            .unwrap_or(natural)
+            .min(natural);
         let offset = match row_align(context, slot.cell) {
             VerticalAlign::Top | VerticalAlign::TextTop => 0.0,
             VerticalAlign::Bottom | VerticalAlign::TextBottom => height - natural,
@@ -427,12 +471,12 @@ pub(super) fn intrinsic(
     node: &Node,
 ) -> EngineResult<IntrinsicWidths> {
     let grid = grid(context, node)?;
-    let columns = column_widths(context, &grid, spacing(node))?;
-    let edges = horizontal_edges(node) + spacing(node) * (grid.columns + 1) as f64;
-    let min = columns.iter().map(|c| c.min_content).sum::<f64>() + edges;
-    let max = columns.iter().map(|c| c.max_content).sum::<f64>() + edges;
+    let fixed = fixed_layout(node);
+    let columns = column_constraints(context, &grid, spacing(node), fixed)?;
+    let (min, max) = columns::grid_min_max(&columns, fixed);
+    let edges = spacing(node) * (grid.columns + 1) as f64;
     Ok(IntrinsicWidths {
-        min_content: (min - horizontal_edges(node)).max(0.0),
-        max_content: (max - horizontal_edges(node)).max(0.0),
+        min_content: min + edges,
+        max_content: max + edges,
     })
 }

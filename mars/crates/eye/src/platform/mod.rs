@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 pub use text::{
     attributed, colored, directed, font, has_font, local_font_exists, measure, metrics,
-    register_font, register_local, styled,
+    register_family, register_font, register_local, styled,
 };
 
 /// The generic face text is shaped and drawn with; System is the native interface font.
@@ -70,6 +70,11 @@ pub fn register_font(_key: u64, _bytes: &[u8]) -> bool {
 /// Headless builds have no installed fonts to name.
 #[cfg(not(target_os = "macos"))]
 pub fn register_local(_key: u64, _name: &str) -> bool {
+    false
+}
+/// Headless builds have no installed families.
+#[cfg(not(target_os = "macos"))]
+pub fn register_family(_key: u64, _name: &str) -> bool {
     false
 }
 /// Headless builds have no installed fonts to name.

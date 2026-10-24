@@ -178,9 +178,11 @@ impl Canvas {
             .as_ref()
             .and_then(|snapshot| snapshot.inspection["page_id"].as_str().map(str::to_owned))
     }
-    /** Adjacent input events are coalesced before entering the bounded worker queue. */
+    /** Adjacent input events are coalesced before entering the bounded worker queue. Page input is
+    dropped while an agent holds the tab; shell controls (the control pill, the tab strip, menus)
+    always reach the window, which checks ownership itself, or the person could never take control back. */
     fn push(&self, action: Action) {
-        if !self.ivars().human.get() {
+        if !self.ivars().human.get() && !matches!(action, Action::Activate(_)) {
             return;
         }
         let mut actions = self.ivars().actions.borrow_mut();

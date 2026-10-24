@@ -74,4 +74,8 @@ pub struct DocumentFormatting {
     /// service that measures and the window that paints load the same bytes.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fonts: Vec<super::LoadedFont>,
+    /// The page has no standards doctype, so Chromium lays it out in quirks mode (CERN's first
+    /// page and Hacker News among them).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quirks: bool,
 }

@@ -1,6 +1,12 @@
 /** Relay-local budgets for connection reuse, the HTTP cache and parallel fetches. */
 use std::time::Duration;
 
+/// Relay answers this much before the caller's deadline. `remaining_ms` is measured against
+/// the same instant the coordinator stops waiting for the reply, so without a margin Relay's own
+/// timeout always lands after it: the coordinator then retires the whole network service as
+/// hung (and restarts the engine) instead of receiving an ordinary, degradable timeout.
+pub const REPLY_MARGIN: Duration = Duration::from_millis(300);
+
 /// One socket read. Large enough that a 2 MiB body is not thousands of system calls, small
 /// enough that the retained cursor buffer stays a fixed, modest allocation.
 pub const READ_BYTES: usize = 16 * 1024;

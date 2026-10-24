@@ -26,12 +26,13 @@ pub(super) fn decoration(
     if color.is_none() && body.border == 0.0 {
         return None;
     }
-    let left = x - body.padding[3] - body.border;
-    let top = y - body.padding[0] - body.border;
+    let sides = super::sizing::border_sides(body);
+    let left = x - body.padding[3] - sides[3];
+    let top = y - body.padding[0] - sides[0];
     Some(super::DisplayDecoration {
         x: left,
         y: top,
-        width: width + body.padding[1] + body.padding[3] + body.border * 2.0,
+        width: width + body.padding[1] + body.padding[3] + sides[1] + sides[3],
         height: (bottom - top).max(0.0),
         color,
         border: body.border,
@@ -40,7 +41,9 @@ pub(super) fn decoration(
 }
 /** Content-box bounds subtract edges before max width, then resolve automatic horizontal margins. */
 pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> (f64, f64, f64) {
-    let edges = style.padding[1] + style.padding[3] + style.border * 2.0;
+    // Per-side borders (GNU's `border: .1em solid; border-top: 0`) inset the content too.
+    let sides = super::sizing::border_sides(style);
+    let edges = style.padding[1] + style.padding[3] + sides[1] + sides[3];
     let adjustment = if style.box_sizing == crate::document::BoxSizing::ContentBox {
         edges
     } else {
@@ -49,7 +52,7 @@ pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> 
     let available = (viewport - style.margin[1] - style.margin[3]).max(0.0);
     let specified = style.width.map(|width| {
         if style.percent_width {
-            viewport * width / 100.0
+            viewport * width / 100.0 + style.width_offset
         } else {
             width
         }
@@ -75,10 +78,10 @@ pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> 
         .unwrap_or(available)
         .min(maximum)
         .max(minimum);
-    let x = margin_start(style, viewport, width) + style.padding[3] + style.border;
+    let x = margin_start(style, viewport, width) + style.padding[3] + sides[3];
     (
         x,
-        style.margin[0] + style.padding[0] + style.border,
+        style.margin[0] + style.padding[0] + sides[0],
         (width - edges).max(0.0),
     )
 }
@@ -99,4 +102,50 @@ pub(super) fn margin_start(
         } else {
             0.0
         }
+}
+
+/**
+ * A copy of the document whose top-level nodes sit in one layout-only body node, when the body
+ * is a flex or grid container. Eye keeps the body as formatting data rather than a node, so
+ * without this a `display: flex` body (rustdoc's sidebar and content, sticky-footer pages)
+ * stacked its children as blocks. The node carries the body's container properties but none of
+ * its box or paint, which `content` and `decoration` already apply; returns its local id so the
+ * caller can drop the items it paints.
+ */
+pub(super) fn container_root(document: &Document) -> Option<(Document, usize)> {
+    let body = &document.formatting.body.style;
+    if !(body.display_flex || body.display_grid) || body.hidden {
+        return None;
+    }
+    let id = document.nodes.iter().map(|node| node.local_id).max()? + 1;
+    let mut root = crate::document::markup::node("body", id, None, Default::default()).ok()?;
+    root.style = layout_only(body);
+    let mut copy = document.clone();
+    for node in copy.nodes.iter_mut().filter(|node| node.parent.is_none()) {
+        node.parent = Some(id);
+    }
+    copy.nodes.insert(0, root);
+    Some((copy, id))
+}
+/** The body's container properties without the margin, border, padding, width or paint the
+ * wrapper geometry already applied, so nothing is counted twice. */
+fn layout_only(body: &crate::document::ComputedStyle) -> crate::document::ComputedStyle {
+    let initial = crate::document::ComputedStyle::default();
+    let mut style = body.clone();
+    style.margin = initial.margin;
+    style.margin_auto = initial.margin_auto;
+    style.padding = initial.padding;
+    style.border = initial.border;
+    style.border_widths = initial.border_widths;
+    style.width = None;
+    style.max_width = None;
+    style.background = None;
+    style.backgrounds = initial.backgrounds;
+    style.shadows = initial.shadows;
+    style.generated = initial.generated;
+    style.opacity = initial.opacity;
+    style.position = initial.position;
+    style.transform = initial.transform;
+    style.overflow = initial.overflow;
+    style
 }

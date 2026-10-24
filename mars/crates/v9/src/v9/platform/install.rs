@@ -1,6 +1,6 @@
 /** Builds the platform's intrinsic prototypes and singletons, and the global object's prototype. */
 use super::dom::{self, REFLECTED};
-use super::{console, events, net, timers, window};
+use super::{console, events, interfaces, net, timers, window};
 use crate::v9::value::JsValue;
 use crate::v9::vm::heap::Key;
 use crate::v9::vm::heap::{CONFIGURABLE, HIDDEN_ATTRS};
@@ -60,7 +60,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::node_get,
     );
-    for name in ["textContent", "nodeValue", "data"] {
+    for name in ["textContent", "nodeValue"] {
         b.accessor(node, name, Some(dom::node_get), Some(dom::node_set));
     }
     methods(
@@ -95,7 +95,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     );
     let element = b.object(Some(node));
     b.ids.element_prototype = element;
-    getters(
+    shared_getters(
         b,
         element,
         &[
@@ -127,15 +127,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_get,
     );
-    for name in [
-        "className",
-        "innerHTML",
-        "outerHTML",
-        "style",
-        "sandbox",
-        "relList",
-        "part",
-    ] {
+    for name in ["className", "innerHTML", "outerHTML", "style", "part"] {
         b.accessor(
             element,
             name,
@@ -185,7 +177,10 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_method,
     );
-    for name in REFLECTED {
+    for name in REFLECTED
+        .into_iter()
+        .filter(|name| !interfaces::specific(name))
+    {
         b.accessor(
             element,
             name,
@@ -195,17 +190,11 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     }
     let html = b.object(Some(element));
     b.ids.html_element_prototype = html;
-    b.accessor(
-        html,
-        "value",
-        Some(dom::element_get),
-        Some(dom::element_set),
-    );
     b.accessor(html, "innerText", Some(dom::node_get), Some(dom::node_set));
-    for name in ["scrollTop", "scrollLeft", "selectedIndex"] {
+    for name in ["scrollTop", "scrollLeft"] {
         b.accessor(html, name, Some(dom::element_get), Some(dom::element_set));
     }
-    getters(
+    shared_getters(
         b,
         html,
         &[
@@ -226,7 +215,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_get,
     );
-    methods(
+    shared_methods(
         b,
         html,
         &[
@@ -247,8 +236,10 @@ pub(in crate::v9) fn install(b: &mut Builder) {
         ],
         dom::element_method,
     );
+    interfaces::install(b, html);
     let text = b.object(Some(node));
     b.ids.text_prototype = text;
+    b.accessor(text, "data", Some(dom::node_get), Some(dom::node_set));
     getters(b, text, &["length"], dom::node_get);
     b.getter(text, "wholeText", dom::node_get);
     document(b, node);
@@ -367,6 +358,15 @@ fn document(b: &mut Builder, node: u32) {
     sheets(b);
     let document = b.object(Some(proto));
     b.ids.document = document;
+    let all = b.object(Some(b.ids.object_prototype));
+    b.ids.document_all = all;
+    b.getter(all, "length", dom::document_all);
+    methods(b, all, &["item", "namedItem"], dom::document_all);
+    b.getter(proto, "all", |_, _| {
+        Ok(JsValue::Object(
+            crate::v9::vm::realm::realm().ids.document_all,
+        ))
+    });
     b.getter(proto, "defaultView", window::window_get);
     b.getter(proto, "location", window::window_get);
 }
@@ -695,16 +695,12 @@ fn network(b: &mut Builder) {
     let url = b.object(Some(object_prototype));
     b.ids.url_prototype = url;
     for name in [
-        "href", "protocol", "host", "hostname", "port", "pathname", "search", "hash",
+        "href", "protocol", "username", "password", "host", "hostname", "port", "pathname",
+        "search", "hash",
     ] {
         b.accessor(url, name, Some(net::url_get), Some(net::url_set));
     }
-    getters(
-        b,
-        url,
-        &["origin", "username", "password", "searchParams"],
-        net::url_get,
-    );
+    getters(b, url, &["origin", "searchParams"], net::url_get);
     methods(b, url, &["toString", "toJSON"], net::url_get);
     let ctor = b.constructor("URL", 1, net::url_construct, url, None);
     methods(
@@ -1032,24 +1028,11 @@ fn global_object(b: &mut Builder) {
         "Storage",
         "HTMLDivElement",
         "HTMLSpanElement",
-        "HTMLAnchorElement",
-        "HTMLInputElement",
-        "HTMLFormElement",
-        "HTMLImageElement",
-        "HTMLButtonElement",
-        "HTMLSelectElement",
-        "HTMLTextAreaElement",
-        "HTMLScriptElement",
-        "HTMLIFrameElement",
-        "HTMLCanvasElement",
-        "HTMLVideoElement",
-        "HTMLMediaElement",
         "HTMLBodyElement",
         "HTMLHtmlElement",
         "HTMLTemplateElement",
         "SVGElement",
         "SVGGraphicsElement",
-        "SVGSVGElement",
         "CharacterData",
         "Attr",
     ] {
@@ -1095,6 +1078,7 @@ fn global_object(b: &mut Builder) {
         let ctor = b.constructor(name, 1, construct_observer, observer, None);
         b.global(name, ctor);
     }
+    path2d(b);
     let image = b.object(Some(b.ids.html_element_prototype));
     let ctor = b.constructor("Image", 0, construct_image, image, None);
     b.global("Image", ctor);
@@ -1121,13 +1105,56 @@ fn global_object(b: &mut Builder) {
         ))
     });
     super::channel::install(b);
+    super::dom_parser::install(b);
+    super::scripts::install(b);
     super::components::install(b);
-    // Absent APIs (DOMParser, FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)
+    // Absent APIs (FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)
     // stay undefined, so libraries that feature-detect them take their fallback paths.
     let globals = std::mem::take(&mut b.globals);
     for (name, value) in globals {
         b.put(proto, Key::from(name), Static::Value(value), HIDDEN_ATTRS);
     }
+}
+
+/** Path2D: a path object pages build for canvas drawing. V9 draws no canvas, so the path
+methods record nothing; the interface exists because polyfill bundles extend
+`Path2D.prototype` unguarded (Twitch's does, and its whole polyfill script failed without it). */
+fn path2d(b: &mut Builder) {
+    let proto = b.object(Some(b.ids.object_prototype));
+    methods(
+        b,
+        proto,
+        &[
+            "addPath",
+            "closePath",
+            "moveTo",
+            "lineTo",
+            "bezierCurveTo",
+            "quadraticCurveTo",
+            "arc",
+            "arcTo",
+            "ellipse",
+            "rect",
+            "roundRect",
+        ],
+        noop_method,
+    );
+    let ctor = b.constructor("Path2D", 0, construct_plain, proto, None);
+    b.global("Path2D", ctor);
+}
+
+/** `new X()` for an interface whose instances hold no state: a plain object over the prototype. */
+fn construct_plain(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let fallback = crate::v9::vm::realm::realm().ids.object_prototype;
+    let Some(target) = &call.new_target else {
+        return Err(vm.type_error("Constructor requires 'new'"));
+    };
+    let proto = vm.prototype_for(target, fallback)?;
+    let id = vm.alloc(crate::v9::vm::heap::Object::new(
+        crate::v9::vm::data::Class::Plain,
+        Some(proto),
+    ))?;
+    Ok(JsValue::Object(id))
 }
 
 /** Range and Selection: `document.createRange()`, `new Range()` and `getSelection()`. */
@@ -1280,6 +1307,20 @@ fn constructor_without_link(b: &mut Builder, name: &'static str, prototype: u32)
         return ctor;
     }
     ctor
+}
+
+/** Getters on a shared prototype, leaving out the members one interface owns. */
+fn shared_getters(b: &mut Builder, target: u32, names: &[&'static str], function: NativeFn) {
+    for name in names.iter().filter(|name| !interfaces::specific(name)) {
+        b.getter(target, name, function);
+    }
+}
+
+/** Methods on a shared prototype, leaving out the members one interface owns. */
+fn shared_methods(b: &mut Builder, target: u32, names: &[&'static str], function: NativeFn) {
+    for name in names.iter().filter(|name| !interfaces::specific(name)) {
+        b.method(target, name, 0, function);
+    }
 }
 
 /** Register methods that share one native dispatching on its name. */

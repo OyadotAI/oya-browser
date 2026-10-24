@@ -68,8 +68,11 @@ pub(super) fn declaration(item: &str, block: &mut Block, diagnostics: &mut Vec<S
     if name.starts_with("transition") || name.starts_with("-webkit-transition") {
         return;
     }
-    let name = match name.strip_prefix("-webkit-") {
-        Some(standard) if standard.starts_with("animation") || standard.starts_with("mask") => {
+    let name = match (alias(&name), name.strip_prefix("-webkit-")) {
+        (Some(standard), _) => standard.to_string(),
+        (None, Some(standard))
+            if standard.starts_with("animation") || standard.starts_with("mask") =>
+        {
             standard.to_string()
         }
         _ => name,
@@ -96,6 +99,145 @@ pub(super) fn declaration(item: &str, block: &mut Block, diagnostics: &mut Vec<S
         }
     }
 }
+/**
+ * Legacy and prefixed names the CSS parser treats as another property, as Blink's
+ * `alias_for` entries do (sorted, for binary search): `grid-gap` is `gap`, `-webkit-transform`
+ * is `transform`, and so on, so both spellings cascade as one property.
+ */
+const ALIASES: [(&str, &str); 110] = [
+    ("-webkit-align-content", "align-content"),
+    ("-webkit-align-items", "align-items"),
+    ("-webkit-align-self", "align-self"),
+    ("-webkit-animation", "animation"),
+    ("-webkit-animation-delay", "animation-delay"),
+    ("-webkit-animation-direction", "animation-direction"),
+    ("-webkit-animation-duration", "animation-duration"),
+    ("-webkit-animation-fill-mode", "animation-fill-mode"),
+    (
+        "-webkit-animation-iteration-count",
+        "animation-iteration-count",
+    ),
+    ("-webkit-animation-name", "animation-name"),
+    ("-webkit-animation-play-state", "animation-play-state"),
+    (
+        "-webkit-animation-timing-function",
+        "animation-timing-function",
+    ),
+    ("-webkit-app-region", "app-region"),
+    ("-webkit-appearance", "appearance"),
+    ("-webkit-backface-visibility", "backface-visibility"),
+    ("-webkit-background-clip", "background-clip"),
+    ("-webkit-background-origin", "background-origin"),
+    ("-webkit-background-size", "background-size"),
+    ("-webkit-border-after", "border-block-end"),
+    ("-webkit-border-after-color", "border-block-end-color"),
+    ("-webkit-border-after-style", "border-block-end-style"),
+    ("-webkit-border-after-width", "border-block-end-width"),
+    ("-webkit-border-before", "border-block-start"),
+    ("-webkit-border-before-color", "border-block-start-color"),
+    ("-webkit-border-before-style", "border-block-start-style"),
+    ("-webkit-border-before-width", "border-block-start-width"),
+    (
+        "-webkit-border-bottom-left-radius",
+        "border-bottom-left-radius",
+    ),
+    (
+        "-webkit-border-bottom-right-radius",
+        "border-bottom-right-radius",
+    ),
+    ("-webkit-border-end", "border-inline-end"),
+    ("-webkit-border-end-color", "border-inline-end-color"),
+    ("-webkit-border-end-style", "border-inline-end-style"),
+    ("-webkit-border-end-width", "border-inline-end-width"),
+    ("-webkit-border-radius", "border-radius"),
+    ("-webkit-border-start", "border-inline-start"),
+    ("-webkit-border-start-color", "border-inline-start-color"),
+    ("-webkit-border-start-style", "border-inline-start-style"),
+    ("-webkit-border-start-width", "border-inline-start-width"),
+    ("-webkit-border-top-left-radius", "border-top-left-radius"),
+    ("-webkit-border-top-right-radius", "border-top-right-radius"),
+    ("-webkit-box-shadow", "box-shadow"),
+    ("-webkit-box-sizing", "box-sizing"),
+    ("-webkit-clip-path", "clip-path"),
+    ("-webkit-column-count", "column-count"),
+    ("-webkit-column-gap", "column-gap"),
+    ("-webkit-column-rule", "column-rule"),
+    ("-webkit-column-rule-color", "column-rule-color"),
+    ("-webkit-column-rule-style", "column-rule-style"),
+    ("-webkit-column-rule-width", "column-rule-width"),
+    ("-webkit-column-span", "column-span"),
+    ("-webkit-column-width", "column-width"),
+    ("-webkit-columns", "columns"),
+    ("-webkit-filter", "filter"),
+    ("-webkit-flex", "flex"),
+    ("-webkit-flex-basis", "flex-basis"),
+    ("-webkit-flex-direction", "flex-direction"),
+    ("-webkit-flex-flow", "flex-flow"),
+    ("-webkit-flex-grow", "flex-grow"),
+    ("-webkit-flex-shrink", "flex-shrink"),
+    ("-webkit-flex-wrap", "flex-wrap"),
+    ("-webkit-font-feature-settings", "font-feature-settings"),
+    ("-webkit-hyphenate-character", "hyphenate-character"),
+    ("-webkit-justify-content", "justify-content"),
+    ("-webkit-logical-height", "block-size"),
+    ("-webkit-logical-width", "inline-size"),
+    ("-webkit-margin-after", "margin-block-end"),
+    ("-webkit-margin-before", "margin-block-start"),
+    ("-webkit-margin-end", "margin-inline-end"),
+    ("-webkit-margin-start", "margin-inline-start"),
+    ("-webkit-mask", "mask"),
+    ("-webkit-mask-clip", "mask-clip"),
+    ("-webkit-mask-composite", "mask-composite"),
+    ("-webkit-mask-image", "mask-image"),
+    ("-webkit-mask-origin", "mask-origin"),
+    ("-webkit-mask-position", "mask-position"),
+    ("-webkit-mask-repeat", "mask-repeat"),
+    ("-webkit-mask-size", "mask-size"),
+    ("-webkit-max-logical-height", "max-block-size"),
+    ("-webkit-max-logical-width", "max-inline-size"),
+    ("-webkit-min-logical-height", "min-block-size"),
+    ("-webkit-min-logical-width", "min-inline-size"),
+    ("-webkit-opacity", "opacity"),
+    ("-webkit-order", "order"),
+    ("-webkit-padding-after", "padding-block-end"),
+    ("-webkit-padding-before", "padding-block-start"),
+    ("-webkit-padding-end", "padding-inline-end"),
+    ("-webkit-padding-start", "padding-inline-start"),
+    ("-webkit-perspective", "perspective"),
+    ("-webkit-perspective-origin", "perspective-origin"),
+    ("-webkit-print-color-adjust", "print-color-adjust"),
+    ("-webkit-shape-image-threshold", "shape-image-threshold"),
+    ("-webkit-shape-margin", "shape-margin"),
+    ("-webkit-shape-outside", "shape-outside"),
+    ("-webkit-text-emphasis", "text-emphasis"),
+    ("-webkit-text-emphasis-color", "text-emphasis-color"),
+    ("-webkit-text-emphasis-position", "text-emphasis-position"),
+    ("-webkit-text-emphasis-style", "text-emphasis-style"),
+    ("-webkit-text-size-adjust", "text-size-adjust"),
+    ("-webkit-transform", "transform"),
+    ("-webkit-transform-origin", "transform-origin"),
+    ("-webkit-transform-style", "transform-style"),
+    ("-webkit-transition", "transition"),
+    ("-webkit-transition-delay", "transition-delay"),
+    ("-webkit-transition-duration", "transition-duration"),
+    ("-webkit-transition-property", "transition-property"),
+    (
+        "-webkit-transition-timing-function",
+        "transition-timing-function",
+    ),
+    ("-webkit-user-select", "user-select"),
+    ("grid-column-gap", "column-gap"),
+    ("grid-gap", "gap"),
+    ("grid-row-gap", "row-gap"),
+    ("word-wrap", "overflow-wrap"),
+];
+/** The property an alias stands for. */
+fn alias(name: &str) -> Option<&'static str> {
+    ALIASES
+        .binary_search_by(|(alias, _)| (*alias).cmp(name))
+        .ok()
+        .map(|index| ALIASES[index].1)
+}
 /** Records a dropped declaration by property name only; vendor-prefixed names stay quiet. */
 pub(super) fn dropped(name: &str, drop: Drop, diagnostics: &mut Vec<String>) {
     if name.starts_with('-') {
@@ -119,6 +261,7 @@ pub(super) fn validate(name: &str, value: &str) -> Result<Vec<(String, String)>,
             continue;
         }
         let mut scratch = ComputedStyle::default();
+        let value = &super::values::integer_math(key, value);
         let physical = super::logical::physical(key, false);
         match super::apply::apply(
             &mut scratch,
@@ -149,4 +292,16 @@ fn importance(value: &str) -> (&str, bool) {
         return (trimmed[..head.len()].trim(), true);
     }
     (trimmed, false)
+}
+
+#[cfg(test)]
+mod tests {
+    /** The alias table is sorted, so binary search finds every entry. */
+    #[test]
+    fn aliases_are_sorted_and_resolve() {
+        assert!(super::ALIASES.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert_eq!(super::alias("grid-gap"), Some("gap"));
+        assert_eq!(super::alias("-webkit-box-shadow"), Some("box-shadow"));
+        assert_eq!(super::alias("gap"), None);
+    }
 }

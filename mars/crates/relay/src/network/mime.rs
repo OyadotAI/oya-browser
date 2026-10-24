@@ -104,8 +104,9 @@ fn quoted_string(input: &str) -> (String, &str) {
     (value, "")
 }
 
-/** HTTP token characters; an empty token is invalid. */
-fn token(value: &str) -> bool {
+/** HTTP token characters (RFC 9110 tchar); an empty token is invalid. Field names are tokens,
+so `x-netflix.request.id` is as valid as `x-request-id`. */
+pub(crate) fn token(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()

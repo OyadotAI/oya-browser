@@ -6,6 +6,7 @@ mod forms;
 mod markup;
 mod mutation;
 mod parser;
+mod quirks;
 mod recovery;
 mod render;
 mod script;
@@ -201,6 +202,15 @@ pub struct Node {
     /// Parsed cell relationships let inspection use the same stable native identities.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub table_cell: Option<TableCell>,
+    /// Source whitespace directly followed this element. The parser drops whitespace-only text,
+    /// so this is how inline layout tells `<b>a</b> <i>b</i>` (spaced) from `<b>a</b><i>b</i>`
+    /// (adjacent, as syntax-highlighted code is).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub space_after: bool,
+    /// Source whitespace began this element's content before any text or child, as in an
+    /// otherwise empty `<span> </span>` spacer between two links.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub space_leading: bool,
 }
 
 /// Table relationships are derived from bounded source order during parsing.

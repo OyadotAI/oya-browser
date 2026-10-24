@@ -169,3 +169,64 @@ fn content_type_verdicts_match_on_every_fetch_path() {
         }
     }
 }
+
+/** A `data:` resource (facebook.com links its CSS and scripts that way) is refused as
+unsupported, so a page loader skips that one resource instead of abandoning the navigation as an
+egress denial. It is still never fetched, and a redirect to one is still refused. */
+#[test]
+fn data_urls_are_unsupported_resources_rather_than_egress_denials() {
+    let data = "data:text/css; charset=utf-8,.a%7Bcolor%3Ared%7D";
+    assert_eq!(
+        policy::web_url(data).expect_err("inline").code,
+        "unsupported_feature"
+    );
+    let error = Prepared::connect(WebRequest::get(data), &[], PREPARATION_MS)
+        .err()
+        .expect("never fetched");
+    assert_eq!(error.code, "unsupported_feature");
+    let page = url::Url::parse("https://1.1.1.1/").expect("url");
+    assert!(mars_relay::redirect_url(&page, data, &[]).is_err());
+    for other in [
+        "file:///etc/passwd",
+        "javascript:alert(1)",
+        "ftp://1.1.1.1/",
+    ] {
+        assert_eq!(
+            policy::web_url(other).expect_err("denied").code,
+            "permission_denied"
+        );
+    }
+}
+
+/** Budget a caller gives a request to a server that never answers. */
+const STALLED_MS: u64 = 1_000;
+
+/** Relay's timeout must reach the caller before the caller's own deadline. Otherwise the
+coordinator, which stops waiting at that same instant, retires the network service as hung and
+restarts the engine (gnu.org and nytimes.com under load) instead of degrading one resource. */
+#[test]
+fn a_stalled_server_times_out_before_the_callers_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    let origin = format!("http://{}", listener.local_addr().expect("address"));
+    let holder = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("connection");
+        std::thread::sleep(std::time::Duration::from_millis(STALLED_MS * 2));
+        drop(stream);
+    });
+    let started = std::time::Instant::now();
+    let error = Prepared::connect(
+        WebRequest::get(&format!("{origin}/")),
+        std::slice::from_ref(&origin),
+        STALLED_MS,
+    )
+    .and_then(Prepared::transmit)
+    .expect_err("stalled");
+    let elapsed = started.elapsed();
+    assert_eq!(error.code, "timeout");
+    assert!(error.service.is_none());
+    assert!(
+        elapsed < std::time::Duration::from_millis(STALLED_MS),
+        "{elapsed:?}"
+    );
+    holder.join().expect("holder");
+}

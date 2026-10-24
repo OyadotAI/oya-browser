@@ -37,7 +37,9 @@ impl ComputedStyle {
             return Err(invalid());
         }
         let advance = self.line_height.used(self.font_size);
-        if !advance.is_finite() || advance <= 0.0 || advance > CSS_MAX_SCALAR {
+        // Zero-size text may have a zero line; every other line advances.
+        let empty = advance == 0.0 && self.font_size == 0.0;
+        if !advance.is_finite() || (advance <= 0.0 && !empty) || advance > CSS_MAX_SCALAR {
             return Err(invalid());
         }
         if lengths.any(|value| !scalar(value))
@@ -47,7 +49,8 @@ impl ComputedStyle {
                 .any(|value| !value.is_finite() || value.abs() > CSS_MAX_SCALAR)
             || !(0.0..=1.0).contains(&self.opacity)
             || !self.font_size.is_finite()
-            || !(CSS_MIN_FONT_SIZE..=CSS_MAX_FONT_SIZE).contains(&self.font_size)
+            || !(self.font_size == 0.0
+                || (CSS_MIN_FONT_SIZE..=CSS_MAX_FONT_SIZE).contains(&self.font_size))
             || !self.border.is_finite()
             || !(0.0..=CSS_MAX_BORDER_WIDTH).contains(&self.border)
             || self.font_families.len() > super::font_face::FONT_FAMILY_NAMES
@@ -98,8 +101,10 @@ impl ComputedStyle {
             });
         let layers_ok = self.backgrounds.len() <= BACKGROUND_LAYERS
             && self.backgrounds.iter().all(|layer| match layer {
-                BackgroundLayer::Linear { angle, stops } => angle.is_finite() && stops_ok(stops),
-                BackgroundLayer::Radial { stops, shape } => {
+                BackgroundLayer::Linear { angle, stops, .. } => {
+                    angle.is_finite() && stops_ok(stops)
+                }
+                BackgroundLayer::Radial { stops, shape, .. } => {
                     let extents = match shape.size {
                         super::RadialSize::Explicit(x, y) => {
                             [x, y, shape.center[0], shape.center[1]]
@@ -152,12 +157,18 @@ fn stops(layer: &BackgroundLayer) -> &[ColorStop] {
         BackgroundLayer::Image { .. } => &[],
     }
 }
-/** Stop counts and positions stay inside the gradient line. */
+/** Stop counts stay bounded, and positions finite and within `GRADIENT_STOP_REACH` lines (CSS
+ * allows stops before 0% and past 100%; the painter clips the ramp to the line). */
 fn stops_ok(stops: &[ColorStop]) -> bool {
+    let reach = super::paint::GRADIENT_STOP_REACH;
     stops.len() <= GRADIENT_STOPS
-        && stops
-            .iter()
-            .all(|stop| stop.position.is_none_or(|p| (0.0..=1.0).contains(&p)))
+        && stops.iter().all(|stop| {
+            stop.position
+                .is_none_or(|p| (-reach..=1.0 + reach).contains(&p))
+                && stop
+                    .px
+                    .is_none_or(|px| px.is_finite() && px.abs() <= CSS_MAX_SCALAR)
+        })
 }
 /** CSS scalars share one finite nonnegative budget independently of their source spelling. */
 fn scalar(value: f64) -> bool {
@@ -179,12 +190,15 @@ impl ComputedStyle {
             super::TrackSize::Length(e) => extent(e),
             super::TrackSize::Fr(f) => scalar(*f),
             super::TrackSize::Auto => true,
+            // Resolved at layout against the template's bounded expression list.
+            super::TrackSize::Expr(_) => true,
             super::TrackSize::Larger(a, b) | super::TrackSize::Smaller(a, b) => {
                 extent(a) && extent(b)
             }
         };
         let template = |t: &super::GridTemplate| {
             t.tracks.len() + t.repeat.len() <= super::constants::GRID_TRACKS
+                && t.exprs.len() <= super::constants::GRID_TRACKS
                 && t.repeat_at <= t.tracks.len()
                 && t.tracks
                     .iter()
@@ -255,6 +269,7 @@ impl ComputedStyle {
             && self
                 .grid_area_names
                 .iter()
+                .chain(self.grid_line_names.iter().flatten())
                 .flatten()
                 .all(|name| name.len() <= GRID_NAME_BYTES)
     }

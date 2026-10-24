@@ -114,6 +114,44 @@ fn learn_more_link_is_actionable() {
     assert!(links[0]["text"].as_str().unwrap().contains("Learn more"));
 }
 
+/** The link paints only through its text, yet it has geometry and visible_only finds it: an
+inline element's box is the union of what its content painted. */
+#[test]
+fn learn_more_link_is_found_on_screen() {
+    let (mut runtime, page, _fixture) = navigate(&["en-US"]);
+    let link = tagged(&page, "a")[0];
+    assert!(link["bounds"]["width"].as_f64().unwrap() > 0.0, "{link}");
+    let top = link["bounds"]["y"].as_f64().unwrap();
+    let scrolled = call(
+        &mut runtime,
+        "page.scroll",
+        json!({"page_id":page["page_id"],"expected_revision":page["revision"],"y":top}),
+    );
+    assert_eq!(tagged(&scrolled, "a")[0]["visible"], true, "{scrolled}");
+    let found = call(
+        &mut runtime,
+        "page.find",
+        json!({"role":"link","visible_only":true}),
+    );
+    assert_eq!(found["matches"][0]["name"], "Learn more", "{found}");
+}
+
+/** With a window showing the first paint, the settled page is laid out again after its script
+built the link, so the link has a box rather than keeping the pre-script layout. */
+#[test]
+fn first_paint_layout_is_replaced_after_scripts_build_content() {
+    let fixture = fixture();
+    let mut runtime = runtime(&fixture.url, &["en-US"]);
+    runtime.show_first_paint(Box::new(|_| {}));
+    let page = call(
+        &mut runtime,
+        "page.navigate",
+        json!({ "url": format!("{}/", fixture.url) }),
+    );
+    let link = tagged(&page, "a")[0];
+    assert!(link["bounds"]["width"].as_f64().unwrap() > 0.0, "{link}");
+}
+
 /** The decorative SVG and its parts are never agent targets. */
 #[test]
 fn svg_icon_is_not_an_agent_target() {

@@ -236,7 +236,8 @@ fn computed_style_serde_preserves_defaults_and_rejects_unknown_variants() {
 fn private_computed_styles_reject_nonfinite_negative_and_excessive_values() {
     let cases: &[fn(&mut ComputedStyle)] = &[
         |s| s.font_size = f64::NAN,
-        |s| s.font_size = 0.0,
+        // Zero is `font-size: 0`, which hides text; sizes between it and the minimum are invalid.
+        |s| s.font_size = 4.0,
         |s| s.font_size = 73.0,
         |s| s.border = 9.0,
         |s| s.margin[0] = -4097.0,

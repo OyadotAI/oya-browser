@@ -75,11 +75,61 @@ pub(in crate::v9) fn connected(vm: &mut Vm, node: usize) -> Res<()> {
     let mut nodes = vec![node];
     nodes.extend(vm.page.descendants(node));
     for node in nodes {
-        if vm.page.tag(node) == "script" {
-            connected_script(vm, node)?;
+        match vm.page.tag(node).as_str() {
+            "script" => connected_script(vm, node)?,
+            "link" => connected_sheet(vm, node)?,
+            _ => {}
         }
     }
     Ok(())
+}
+
+/// The native that fires a stylesheet link's `load` event, made once with the realm.
+static SHEET_LOADED: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/** Make the stylesheet `load` native; runs once, inside the realm build. */
+pub(super) fn install(b: &mut crate::v9::vm::realm::Builder) {
+    let _ = SHEET_LOADED.set(b.function("", 1, sheet_loaded));
+}
+
+/**
+ * A `<link rel=stylesheet href>` connected by script gets its `load` event in a later task, as
+ * a browser fires it once the sheet arrives; the app fetches and applies the sheet itself.
+ * Loaders that wait on it (craigslist keeps its curtain up until its CSS reports loaded) carry
+ * on. ponytail: `load` even when the fetch fails, where a browser fires `error`; tell them
+ * apart once V9 hears back about sheets.
+ */
+fn connected_sheet(vm: &mut Vm, node: usize) -> Res<()> {
+    let Some(view) = vm.page.view(node) else {
+        return Ok(());
+    };
+    let sheet = view.attributes.get("rel").is_some_and(|rel| {
+        rel.split_ascii_whitespace()
+            .any(|token| token.eq_ignore_ascii_case("stylesheet"))
+    });
+    let href = view
+        .attributes
+        .get("href")
+        .filter(|href| !href.trim().is_empty())
+        .and_then(|href| super::net::resolve(vm, href));
+    let (Some(native), Some(href)) = (SHEET_LOADED.get().copied().filter(|_| sheet), href) else {
+        return Ok(());
+    };
+    if vm.page.effects.stylesheets.len() < MODULES && !vm.page.effects.stylesheets.contains(&href) {
+        vm.page.effects.stylesheets.push(href);
+    }
+    let link = super::dom::wrap(vm, node)?;
+    super::timers::schedule(vm, JsValue::Object(native), vec![link])
+}
+
+/** Fire `load` on the link a sheet task names, if it is still in the page. */
+fn sheet_loaded(vm: &mut Vm, call: crate::v9::vm::Call) -> Res<JsValue> {
+    if let Some(node) = super::dom::node_of(vm, &call.arg(0))
+        && vm.page.exists(node)
+    {
+        fire(vm, Target::Node(node), "load", false)?;
+    }
+    Ok(JsValue::Undefined)
 }
 
 /** Start one connected script element: request its source, or run its inline text. */

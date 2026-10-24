@@ -26,6 +26,8 @@ use url::Url;
 const SETTLE_VIRTUAL_MS: f64 = 200.0;
 /// Real time one step may spend fetching the images its changes inserted.
 const INSERTED_IMAGE_WALL: Duration = Duration::from_millis(1500);
+/// Network time a started script request always gets, however much of the slice is left.
+const SCRIPT_REQUEST_WALL: Duration = Duration::from_secs(3);
 /// Real time the first commit may spend on that settling, inside the navigation deadline.
 const SETTLE_WALL: Duration = Duration::from_millis(1500);
 /// V9 round trips one settle may make (requests and timer runs together).
@@ -261,35 +263,16 @@ impl Runtime {
             // V9 builds the head records once, at load; later steps would only resend them.
             environment.metadata.clone_from(&page.document.metadata);
         }
-        let state = (!load).then_some(&page.state);
-        let digest =
-            (!page.scripts.is_empty()).then(|| super::service::sources_digest(&page.scripts));
-        let resident = digest
-            .as_ref()
-            .is_some_and(|digest| self.v9_sources.contains(digest));
-        let languages = self.languages.clone();
-        let mut call = PageCall {
-            sources: if resident { &[] } else { &page.scripts },
-            sources_digest: digest.as_deref(),
-            document: &projection,
-            storage: &page.storage,
-            languages: &languages,
-            environment: &environment,
-            state,
-            modules: &page.scripting.modules.input,
-            action: &action,
-        };
-        let execution: Execution = match self.call_typed("v9", "v9.page", &call, None) {
-            Err(error) if resident && error.code == super::service::SOURCES_MISSING => {
-                call.sources = &page.scripts;
-                self.call_typed("v9", "v9.page", &call, None)
-            }
-            result => result,
-        }?;
-        if let Some(digest) = digest {
-            self.note_v9_sources(digest);
+        let mut execution = self.execute(page, &projection, &environment, &action)?;
+        if execution.effects.stale_geometry
+            && let Ok(geometry) = self.forced_geometry(page, &execution)
+        {
+            // V9 steps are pure, so the first run is dropped whole and the second commits.
+            environment.geometry = geometry;
+            environment.laid_out_before = None;
+            execution = self.execute(page, &projection, &environment, &action)?;
         }
-        let changed = !execution.changes.is_empty() || !execution.script_changes.is_empty();
+        let mut changed = !execution.changes.is_empty() || !execution.script_changes.is_empty();
         // A step that changed nothing keeps the document and the projection it was given: Eye
         // would return the same document, and at NODES that copy and its projections cost as
         // much as styling the page. The structure check still runs.
@@ -331,6 +314,7 @@ impl Runtime {
             page.document = applied;
             page.styled = false;
         }
+        changed |= self.load_inserted_sheets(page, &effects.stylesheets)?;
         let pending = PendingImages::of(first_new, &changes, &script_changes);
         page.scripting.pending_images = Some(match page.scripting.pending_images.take() {
             Some(earlier) => earlier.merge(pending),
@@ -467,6 +451,91 @@ impl Runtime {
         Ok(())
     }
 
+    /// Fetch the stylesheets scripts linked in this step and add them to the page's sheets, as a
+    /// browser applies an inserted `<link rel=stylesheet>` (craigslist links its page CSS from
+    /// its boot script). Each gets SCRIPT_REQUEST_WALL; the page's style allowance still holds.
+    /// Returns whether a sheet was added, so the page restyles.
+    fn load_inserted_sheets(&mut self, page: &mut Page, hrefs: &[String]) -> EngineResult<bool> {
+        let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
+        let mut added = false;
+        for href in hrefs {
+            let deadline = Instant::now() + SCRIPT_REQUEST_WALL;
+            let Some(css) = self.inserted_sheet(&base, href, deadline)? else {
+                continue;
+            };
+            let total: usize = page.resolved_stylesheets.iter().map(String::len).sum();
+            if total + css.len() > crate::constants::STYLE_TOTAL_BYTES {
+                continue;
+            }
+            page.resolved_stylesheets.push(css);
+            page.styled = false;
+            added = true;
+        }
+        Ok(added)
+    }
+
+    /** One V9 page step over `projection`, sending the sources only when V9 does not hold them. */
+    fn execute(
+        &mut self,
+        page: &Page,
+        projection: &crate::document::ScriptDocument,
+        environment: &PageEnvironment,
+        action: &Value,
+    ) -> EngineResult<Execution> {
+        let load = action["kind"] == "load";
+        let digest =
+            (!page.scripts.is_empty()).then(|| super::service::sources_digest(&page.scripts));
+        let resident = digest
+            .as_ref()
+            .is_some_and(|digest| self.v9_sources.contains(digest));
+        let languages = self.languages.clone();
+        let mut call = PageCall {
+            sources: if resident { &[] } else { &page.scripts },
+            sources_digest: digest.as_deref(),
+            document: projection,
+            storage: &page.storage,
+            languages: &languages,
+            environment,
+            state: (!load).then_some(&page.state),
+            modules: &page.scripting.modules.input,
+            action,
+        };
+        let execution = match self.call_typed("v9", "v9.page", &call, None) {
+            Err(error) if resident && error.code == super::service::SOURCES_MISSING => {
+                call.sources = &page.scripts;
+                self.call_typed("v9", "v9.page", &call, None)
+            }
+            result => result,
+        }?;
+        if let Some(digest) = digest {
+            self.note_v9_sources(digest);
+        }
+        Ok(execution)
+    }
+
+    /**
+     * The boxes of the page as `execution` left it, for a step whose script measured a node
+     * inserted since the last layout. A browser lays out synchronously when script reads
+     * geometry; this is the bounded equivalent: one cascade and layout of the candidate, only
+     * for such a step, never for every step, and only once per step.
+     */
+    fn forced_geometry(
+        &mut self,
+        page: &Page,
+        execution: &Execution,
+    ) -> EngineResult<Vec<crate::v9::NodeBox>> {
+        let applied = self.apply_all(
+            &page.document,
+            &execution.changes,
+            &execution.script_changes,
+        )?;
+        let mut sheets = page.resolved_stylesheets.clone();
+        sheets.extend(inserted_sheets(&applied, page.document.styles.len()));
+        let styled = self.styled(&applied, &sheets, self.render_context)?;
+        let display = self.render(&styled)?;
+        Ok(boxes(&display))
+    }
+
     /** Per-request facts: current URL, viewport, title, node text and the jar's script cookies. */
     fn step_environment(&mut self, page: &Page) -> EngineResult<PageEnvironment> {
         let mut environment = page.scripting.environment.clone();
@@ -477,20 +546,10 @@ impl Runtime {
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
         environment.node_text = node_text(&page.document);
-        // The last layout's boxes, in paint order; a step that changes the document sees the
-        // previous layout until the commit lays the page out again (a one-step lag).
-        environment.geometry = page
-            .display
-            .iter()
-            .flat_map(|display| &display.items)
-            .map(|item| crate::v9::NodeBox {
-                node: item.local_id,
-                x: item.x,
-                y: item.y,
-                width: item.width,
-                height: item.height,
-            })
-            .collect();
+        // The last layout's boxes, in paint order. A node inserted since has none, and a step
+        // that measures one is laid out and run again (`forced_geometry`).
+        environment.geometry = page.display.as_ref().map(boxes).unwrap_or_default();
+        environment.laid_out_before = page.display.is_some().then_some(page.laid_out_before);
         environment.scroll_y = self.scroll_y;
         Ok(environment)
     }
@@ -550,7 +609,11 @@ impl Runtime {
         self.settle_scripts(page, until, end)
     }
 
-    /** Perform a batch of script requests; beacons are sent and expect no answer. */
+    /// Perform a batch of script requests; beacons are sent and expect no answer. Requests start
+    /// only while the slice has time and at most SCRIPT_REQUESTS_PER_STEP per batch; the rest
+    /// stay pending for the next slice, as a browser's fetch waits for a busy main thread rather
+    /// than failing. Each started request gets at least SCRIPT_REQUEST_WALL on the network, so
+    /// a slice that slow script steps used up does not turn every answer into a network error.
     fn perform_requests(
         &mut self,
         page: &mut Page,
@@ -559,17 +622,25 @@ impl Runtime {
     ) -> EngineResult<Vec<HostResponse>> {
         let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
         let mut responses = Vec::new();
-        for (index, request) in requests.into_iter().enumerate() {
-            let response = if index >= SCRIPT_REQUESTS_PER_STEP || Instant::now() >= until {
-                failed(request.id, FAILED_TO_FETCH)
-            } else {
-                let preflights = &mut page.scripting.preflights;
-                self.script_request(&base, &request, preflights, until)?
+        let mut requests = requests.into_iter();
+        for sent in 0..SCRIPT_REQUESTS_PER_STEP {
+            let started = Instant::now();
+            // At least one request per slice, so a page always makes progress.
+            if sent > 0 && started >= until {
+                break;
+            }
+            let Some(request) = requests.next() else {
+                break;
             };
+            let deadline = until.max(started + SCRIPT_REQUEST_WALL);
+            let preflights = &mut page.scripting.preflights;
+            let response = self.script_request(&base, &request, preflights, deadline)?;
             if request.kind != "beacon" {
                 responses.push(response);
             }
         }
+        let later = std::mem::take(&mut page.scripting.requests);
+        page.scripting.requests = requests.chain(later).collect();
         Ok(responses)
     }
 
@@ -586,6 +657,13 @@ impl Runtime {
         preflights: &mut crate::network::cors::PreflightCache,
         until: Instant,
     ) -> EngineResult<HostResponse> {
+        if request
+            .url
+            .get(..5)
+            .is_some_and(|s| s.eq_ignore_ascii_case("data:"))
+        {
+            return Ok(data_response(request));
+        }
         let Some(parsed) = script_request_from(request) else {
             return Ok(failed(request.id, FAILED_TO_FETCH));
         };
@@ -713,8 +791,10 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         .collect();
     let body = if method.is_safe() {
         String::new()
-    } else {
+    } else if request.body_bytes.is_empty() {
         request.body.clone().unwrap_or_default()
+    } else {
+        identity_body(&request.body_bytes, &mut headers)?
     };
     if request.body.is_some() && !headers.iter().any(|(name, _)| name == "content-type") {
         headers.push(("content-type".into(), TEXT_BODY_TYPE.into()));
@@ -727,6 +807,38 @@ fn script_request_from(request: &HostRequest) -> Option<ScriptRequest> {
         mode,
         credentials: Credentials::parse(&request.credentials)?,
     })
+}
+
+/**
+ * A binary body as the text Relay sends. Relay carries text bodies only, so a gzip or deflate
+ * encoded body (YouTube gzips its Innertube JSON, the guide among it) goes out decoded, without
+ * its Content-Encoding: the server reads the same JSON. Any other binary body, or one that does
+ * not decode to UTF-8 within the body bound, cannot be sent and fails as a network error.
+ * ponytail: decode-and-send until Relay's WebRequest body is bytes; then send them unchanged.
+ */
+fn identity_body(bytes: &[u8], headers: &mut Vec<(String, String)>) -> Option<String> {
+    use std::io::Read;
+    let encoding = headers
+        .iter()
+        .find(|(name, _)| name == "content-encoding")
+        .map(|(_, value)| value.to_ascii_lowercase())?;
+    let limit = crate::constants::VM_REQUEST_BODY_BYTES as u64 + 1;
+    let mut decoded = Vec::new();
+    match encoding.as_str() {
+        "gzip" => flate2::read::GzDecoder::new(bytes)
+            .take(limit)
+            .read_to_end(&mut decoded),
+        "deflate" => flate2::read::ZlibDecoder::new(bytes)
+            .take(limit)
+            .read_to_end(&mut decoded),
+        _ => return None,
+    }
+    .ok()?;
+    if decoded.len() as u64 >= limit {
+        return None;
+    }
+    headers.retain(|(name, _)| name != "content-encoding");
+    String::from_utf8(decoded).ok()
 }
 
 /** A readable final response, handed to the page if it is text within VM_RESPONSE_BYTES, with
@@ -746,6 +858,28 @@ fn readable(
         url: response.url,
         headers,
         body: response.source,
+        error: None,
+    }
+}
+
+/** A `data:` URL fetched by script: decoded locally, as Fetch's scheme fetch does, never sent to
+Relay. GET only, UTF-8 text within VM_RESPONSE_BYTES, with its media type as Content-Type;
+anything else is a network error. YouTube reads its player configuration this way. */
+fn data_response(request: &HostRequest) -> HostResponse {
+    let decoded = super::images::data_body(&request.url, VM_RESPONSE_BYTES)
+        .ok()
+        .filter(|_| request.method == "GET")
+        .and_then(|(mime, bytes)| Some((mime, String::from_utf8(bytes).ok()?)));
+    let Some((mime, body)) = decoded else {
+        return failed(request.id, FAILED_TO_FETCH);
+    };
+    HostResponse {
+        id: request.id,
+        status: 200,
+        status_text: "OK".into(),
+        url: request.url.clone(),
+        headers: vec![("content-type".into(), mime)],
+        body,
         error: None,
     }
 }
@@ -862,6 +996,20 @@ fn random_seed() -> u64 {
 }
 
 /** Inline style sheets scripts inserted join the page's sheets, as before. */
+/** A display list's boxes as V9 reads them, in paint order. */
+fn boxes(display: &crate::document::DisplayList) -> Vec<crate::v9::NodeBox> {
+    display
+        .items
+        .iter()
+        .map(|item| crate::v9::NodeBox {
+            node: item.local_id,
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height,
+        })
+        .collect()
+}
 pub(super) fn inserted_sheets(
     applied: &Document,
     before: usize,
