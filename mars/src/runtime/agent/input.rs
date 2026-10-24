@@ -1,0 +1,312 @@
+/**
+ * Pointer and keyboard input for agents, mapped onto the existing native element operations so a
+ * point or a key press takes exactly the path, checks and publication a node-targeted call takes.
+ */
+use super::super::supervisor::Runtime;
+use crate::document::Node;
+use crate::protocol::{EngineError, EngineResult, Request, parameters};
+use serde::Deserialize;
+use serde_json::{Value, json};
+
+/// Share of the viewport one PageDown or PageUp moves, leaving some context on screen.
+const PAGE_STEP: f64 = 0.9;
+/// Modifier names a press may carry, in the spelling the DOM uses.
+const MODIFIERS: &[&str] = &["Shift", "Control", "Alt", "Meta"];
+/// Input types that are buttons or choices, not text an agent can edit.
+const NOT_TEXT: &[&str] = &[
+    "checkbox", "radio", "submit", "button", "reset", "file", "image", "hidden", "color", "range",
+];
+
+/** A point in viewport coordinates on one observed page revision. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Point {
+    page_id: String,
+    expected_revision: u64,
+    x: f64,
+    y: f64,
+}
+
+/** Hovering only reads what lies under a point. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Hover {
+    x: f64,
+    y: f64,
+}
+
+/** A wheel turn at a point; the document is the only scroller this engine has. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Wheel {
+    page_id: String,
+    expected_revision: u64,
+    x: f64,
+    y: f64,
+    delta_y: f64,
+}
+
+/** One named key or one character, or literal text to append, with optional modifiers. */
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Press {
+    page_id: String,
+    expected_revision: u64,
+    #[serde(default)]
+    node_id: Option<String>,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    modifiers: Vec<String>,
+}
+
+impl Runtime {
+    /** Viewport points become document points; a point outside the viewport is refused. */
+    fn document_point(&self, x: f64, y: f64) -> EngineResult<(f64, f64)> {
+        let (width, height) = (self.render_context.width, self.render_context.height);
+        if !(x.is_finite()
+            && y.is_finite()
+            && (0.0..width).contains(&x)
+            && (0.0..height).contains(&y))
+        {
+            return Err(EngineError::new(
+                "invalid_target",
+                "The point is outside the viewport.",
+                "Use viewport coordinates from page_find bounds minus the scroll offset.",
+            ));
+        }
+        Ok((x, y + self.scroll_y))
+    }
+
+    /**
+     * page.click_at: click whatever a person would click at this point. A text field has no click
+     * action; it is reported as `focused` so the agent can type into it with page.press.
+     */
+    pub(super) fn click_at(&mut self, params: Value) -> EngineResult<Value> {
+        let input: Point = parameters(params)?;
+        let (x, y) = self.document_point(input.x, input.y)?;
+        let page = self.current()?;
+        let (hit, target) = page.hit(x, y).ok_or_else(nothing_here)?;
+        let hit = page.point_node(hit);
+        let target = target.ok_or_else(nothing_here)?;
+        let node_id = page.node_id(target.local_id);
+        if editable(target) {
+            return Ok(
+                json!({"page_id":page.id(),"revision":page.revision,"focused":node_id,"hit":hit}),
+            );
+        }
+        let request = Request::new(
+            "click_at",
+            "page.click",
+            json!({"page_id":input.page_id,"node_id":node_id,"expected_revision":input.expected_revision}),
+        );
+        let mut result = self.dispatch_active(request)?;
+        result["hit"] = hit;
+        Ok(result)
+    }
+
+    /**
+     * page.hover reads the node under a point. Pages get no hover events in this engine, so it
+     * changes nothing; it tells the agent what a click there would reach.
+     */
+    pub(super) fn hover(&mut self, params: Value) -> EngineResult<Value> {
+        let input: Hover = parameters(params)?;
+        let (x, y) = self.document_point(input.x, input.y)?;
+        let page = self.current()?;
+        let mut result = json!({"page_id":page.id(),"revision":page.revision,"events":"none"});
+        if let Some((hit, target)) = page.hit(x, y) {
+            result["hit"] = page.point_node(hit);
+            if let Some(target) = target {
+                result["clickable"] = json!(page.node_id(target.local_id));
+            }
+        }
+        Ok(result)
+    }
+
+    /** page.scroll_at: a wheel turn over the page scrolls the document by delta_y points. */
+    pub(super) fn scroll_at(&mut self, params: Value) -> EngineResult<Value> {
+        let input: Wheel = parameters(params)?;
+        self.document_point(input.x, input.y)?;
+        if !input.delta_y.is_finite() {
+            return Err(EngineError::invalid("delta_y must be a finite number."));
+        }
+        self.scroll_to(
+            &input.page_id,
+            input.expected_revision,
+            self.scroll_y + input.delta_y,
+        )
+    }
+
+    /** Scrolling keys and wheels share page.scroll and its stale-revision check. */
+    fn scroll_to(&mut self, page_id: &str, revision: u64, y: f64) -> EngineResult<Value> {
+        let request = Request::new(
+            "input",
+            "page.scroll",
+            json!({"page_id":page_id,"expected_revision":revision,"y":y}),
+        );
+        self.dispatch_active(request)
+    }
+
+    /** page.press: a key or appended text, translated into one existing element operation. */
+    pub(super) fn press(&mut self, params: Value) -> EngineResult<Value> {
+        let input: Press = parameters(params)?;
+        if input
+            .modifiers
+            .iter()
+            .any(|modifier| !MODIFIERS.contains(&modifier.as_str()))
+        {
+            return Err(EngineError::invalid(
+                "Modifiers are Shift, Control, Alt or Meta.",
+            ));
+        }
+        let key = match (&input.key, &input.text) {
+            (Some(key), None) => key.clone(),
+            (None, Some(_)) => String::new(),
+            _ => {
+                return Err(EngineError::invalid(
+                    "A press names exactly one of key or text.",
+                ));
+            }
+        };
+        if let Some(y) = self.scroll_key(&key) {
+            return self.scroll_to(&input.page_id, input.expected_revision, y);
+        }
+        let (op, mut params) = self.key_operation(&input, &key)?;
+        params["page_id"] = json!(input.page_id);
+        params["expected_revision"] = json!(input.expected_revision);
+        params["node_id"] = json!(input.node_id);
+        self.dispatch_active(Request::new("press", op, params))
+    }
+
+    /** PageDown, PageUp, Home and End move the document the way a person's keyboard does. */
+    fn scroll_key(&self, key: &str) -> Option<f64> {
+        let step = self.render_context.height * PAGE_STEP;
+        match key {
+            "PageDown" => Some(self.scroll_y + step),
+            "PageUp" => Some(self.scroll_y - step),
+            "Home" => Some(0.0),
+            "End" => Some(f64::MAX / 2.0),
+            _ => None,
+        }
+    }
+
+    /** Choose the element operation a key performs on the targeted node. */
+    fn key_operation(&self, input: &Press, key: &str) -> EngineResult<(&'static str, Value)> {
+        let page = self.current()?;
+        let node_id = input.node_id.as_deref().ok_or_else(|| {
+            EngineError::invalid("This key needs node_id: the field or control it goes to.")
+        })?;
+        let node = page
+            .document
+            .nodes
+            .iter()
+            .find(|node| page.node_id(node.local_id) == node_id)
+            .ok_or_else(stale)?;
+        let text = editable(node);
+        let command = input
+            .modifiers
+            .iter()
+            .any(|modifier| modifier == "Control" || modifier == "Meta");
+        let typed = |value: String| Ok(("page.type", json!({"text":value})));
+        if let Some(appended) = &input.text {
+            return if text {
+                typed(format!("{}{appended}", node.value))
+            } else {
+                Err(not_text())
+            };
+        }
+        match key {
+            "Enter" if text && node.tag == "textarea" => typed(format!("{}\n", node.value)),
+            "Enter" if text => Ok(("page.submit", json!({}))),
+            "Enter" if ["a", "button"].contains(&node.tag.as_str()) || button(node) => {
+                Ok(("page.click", json!({})))
+            }
+            "Enter" if node.tag == "input" => Ok(("page.submit", json!({}))),
+            "Space" | " " if ["checkbox", "radio"].contains(&node.input_type()) => Ok((
+                "page.set_checked",
+                json!({"checked":node.input_type() == "radio" || !node.checked}),
+            )),
+            "Space" | " " if text => typed(format!("{} ", node.value)),
+            "Space" | " " if node.tag == "button" || button(node) => Ok(("page.click", json!({}))),
+            "Backspace" if text => typed(erase(&node.value, command, &input.modifiers)),
+            single if text && !command && single.chars().count() == 1 => {
+                typed(format!("{}{single}", node.value))
+            }
+            _ => Err(EngineError::new(
+                "unsupported_operation",
+                "This key has no native action on that node.",
+                "Supported: Enter, Space, Backspace, PageDown, PageUp, Home, End, single characters and text.",
+            )),
+        }
+    }
+}
+
+/** Inputs that act as buttons, which Enter and Space activate. */
+fn button(node: &Node) -> bool {
+    node.tag == "input" && ["submit", "button", "reset", "image"].contains(&node.input_type())
+}
+
+/** Fields whose value is text an agent can type into. */
+fn editable(node: &Node) -> bool {
+    node.tag == "textarea" || node.tag == "input" && !NOT_TEXT.contains(&node.input_type())
+}
+
+/**
+ * Backspace with no caret model erases from the end: one character, the last word with Alt,
+ * or everything with Control or Meta (select-all, then delete).
+ */
+fn erase(value: &str, command: bool, modifiers: &[String]) -> String {
+    if command {
+        return String::new();
+    }
+    if modifiers.iter().any(|modifier| modifier == "Alt") {
+        let trimmed = value.trim_end();
+        return trimmed[..trimmed.rfind(char::is_whitespace).map_or(0, |at| at + 1)].into();
+    }
+    let mut chars = value.chars();
+    chars.next_back();
+    chars.as_str().into()
+}
+
+/** Nothing actionable lies under the point; the agent should look before clicking. */
+fn nothing_here() -> EngineError {
+    EngineError::new(
+        "invalid_target",
+        "Nothing a click can activate is at that point.",
+        "Call page_hover or page_find to see what is there.",
+    )
+}
+
+/** The node belongs to another page or no longer exists. */
+fn stale() -> EngineError {
+    EngineError::new(
+        "invalid_target",
+        "The node is not on the current page.",
+        "Call page_summary and use a current node_id.",
+    )
+}
+
+/** Text goes only into editable fields. */
+fn not_text() -> EngineError {
+    EngineError::new(
+        "invalid_target",
+        "That node does not take typed text.",
+        "Target a text field from page_summary.",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::erase;
+
+    /** Backspace erases one character, a word with Alt, or the field with Control or Meta. */
+    #[test]
+    fn backspace_erases_by_modifier() {
+        assert_eq!(erase("héllo", false, &[]), "héll");
+        assert_eq!(erase("two words ", false, &["Alt".into()]), "two ");
+        assert_eq!(erase("word", false, &["Alt".into()]), "");
+        assert_eq!(erase("all of it", true, &[]), "");
+    }
+}

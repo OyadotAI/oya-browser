@@ -17,8 +17,21 @@ pub enum BindingKind {
 pub struct Binding {
     /// Var and let cells admit reassignment after initialization.
     pub kind: BindingKind,
-    /// None represents the temporal dead zone, never a committed successful global.
+    /// None represents the temporal dead zone, never a committed successful global. On the wire
+    /// the dead zone is an absent field, so an initialized `null` (JSON null) stays `Some(Null)`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "initialized"
+    )]
     pub value: Option<JsValue>,
+}
+
+/** A present value field is always initialized, whatever it holds, including null. */
+fn initialized<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<JsValue>, D::Error> {
+    JsValue::deserialize(deserializer).map(Some)
 }
 /// The coordinator owns this private, bounded per-page state; agents cannot supply it.
 pub type Globals = BTreeMap<String, Binding>;

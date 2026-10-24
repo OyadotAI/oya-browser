@@ -70,7 +70,7 @@ impl Session {
         request: crate::protocol::Request,
         now: Instant,
     ) -> Vec<Action> {
-        if self.pending.len() >= MCP_PENDING_REQUESTS {
+        if self.pending.len() + self.waiting.len() >= MCP_PENDING_REQUESTS {
             return self.send(
                 wire::error(
                     Some(&id.value),
@@ -94,6 +94,7 @@ impl Session {
                 control_epoch: request.params.get("control_epoch").and_then(Value::as_u64),
                 admitted: now,
                 cancelled: false,
+                wait: super::waits::plan(&request, now),
             },
         );
         vec![Action::Dispatch(request)]

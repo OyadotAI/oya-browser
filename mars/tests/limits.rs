@@ -1,17 +1,24 @@
 /** Wire-limit regressions drive the real native agent executable and owned fixture. */
 #[allow(dead_code)]
 mod support;
-use mars::constants::{ID_BYTES, NODES, TEXT_BYTES};
+use mars::constants::{ID_BYTES, NODES, STATIC_TEXT_TOTAL_BYTES, TEXT_BYTES};
 use mars::protocol::{Request, Response, decode, encode, read_frame};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use support::Fixture;
 
-/** JSON expansion of a valid maximum-length ID cannot make a committed page unreadable. */
+/// More nodes than STATIC_TEXT_TOTAL_BYTES / TEXT_BYTES, so filling them must hit the text limit.
+const FILL_NODES: usize = NODES / 16;
+
+/**
+ * JSON expansion of a valid maximum-length ID cannot make a committed page unreadable. Since
+ * stored text is bounded by STATIC_TEXT_TOTAL_BYTES, the document text limit refuses native
+ * writes long before inspection could reach FRAME_BYTES, so a page of FILL_NODES nodes is enough.
+ */
 #[test]
-fn escaped_request_ids_remain_usable_at_the_inspection_frame_limit() {
-    let body: String = (0..NODES)
+fn escaped_request_ids_remain_usable_at_the_document_text_limit() {
+    let body: String = (0..FILL_NODES)
         .map(|id| format!("<p id=\"n{id}\"></p>"))
         .collect();
     let body = format!("<html><body>{body}</body></html>");
@@ -93,7 +100,8 @@ fn fill_document(
     page: &Value,
     revision: &mut u64,
 ) -> usize {
-    for target in 0..NODES {
+    const _: () = assert!(FILL_NODES * TEXT_BYTES > STATIC_TEXT_TOTAL_BYTES);
+    for target in 0..FILL_NODES {
         if !bounded_mutation(child, output, page, target, revision, TEXT_BYTES) {
             return target;
         }
@@ -119,6 +127,7 @@ fn bounded_mutation(
     );
     if let Some(error) = response.error {
         assert_eq!(error.code, "limit_exceeded");
+        assert!(error.message.contains("document text"), "{}", error.message);
         return false;
     }
     *revision = response.result.unwrap()["revision"].as_u64().unwrap();

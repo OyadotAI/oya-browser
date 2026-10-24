@@ -1,4 +1,4 @@
-/** One versioned desktop cookie profile uses only the operating system Keychain. */
+/** Desktop profile records are sealed with one Keychain-held key; see `vault` for the format. */
 use crate::{
     constants::{SESSION_PROFILE_BYTES, WEB_STORAGE_PROFILE_BYTES},
     protocol::EngineError,
@@ -7,11 +7,15 @@ pub use mars_core::profile::{ProfileError, validate_size};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+#[cfg(target_os = "macos")]
+mod keychain;
+pub mod vault;
+
 /// One owner persists a complete candidate before publishing it to navigation.
 pub trait ProfileStore: Send + Sync {
     /// Read the one default profile; absence means a new empty profile.
     fn load(&self) -> Result<Option<Vec<u8>>, ProfileError>;
-    /// Atomically replace the Keychain item's payload.
+    /// Atomically replace the stored profile.
     fn replace(&self, bytes: &[u8]) -> Result<(), ProfileError>;
     /// Remove the stored profile; an absent item is already clear.
     fn clear(&self) -> Result<(), ProfileError>;
@@ -31,6 +35,36 @@ pub trait WebStorageStore: Send + Sync {
     fn mark_recovery(&self) -> Result<(), ProfileError>;
     /// Remove the marker only after the origin map has been deleted successfully.
     fn clear_recovery(&self) -> Result<(), ProfileError>;
+}
+
+/** History, bookmarks and settings each own one independent secure record, so clearing one never touches another or the cookie jar. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Record {
+    /// Visited pages, newest first.
+    History,
+    /// Saved pages.
+    Bookmarks,
+    /// Appearance, home page, downloads folder and bookmarks bar.
+    Settings,
+}
+
+impl Record {
+    /** The most bytes a valid record of this kind encodes to; larger reads are corrupt. */
+    pub fn limit(self) -> usize {
+        match self {
+            Self::History => crate::runtime::history::HISTORY_BYTES,
+            Self::Bookmarks => crate::runtime::bookmarks::BOOKMARKS_BYTES,
+            Self::Settings => crate::runtime::settings::SETTINGS_BYTES,
+        }
+    }
+}
+
+/** One complete versioned record per kind, replaced whole, read back as untrusted bytes. */
+pub trait RecordStore: Send + Sync {
+    /// Read one record; absence means a fresh profile.
+    fn load(&self, record: Record) -> Result<Option<Vec<u8>>, ProfileError>;
+    /// Replace one complete record.
+    fn replace(&self, record: Record, bytes: &[u8]) -> Result<(), ProfileError>;
 }
 
 /** Session URLs use an independent secure record and never contain request bodies. */
@@ -93,7 +127,7 @@ pub(crate) fn session_url_valid(value: &str) -> bool {
         })
 }
 
-/** Complete localStorage state has one independent Keychain transaction boundary. */
+/** Complete localStorage state is one independent sealed record, replaced whole. */
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebStorageProfile {
@@ -142,8 +176,7 @@ impl WebStorageProfile {
     }
 }
 
-/// A test-only store can assert commit order without exposing profile bytes in logs.
-#[cfg(any(test, feature = "test-support"))]
+/// In-memory stores: tests and `--ephemeral` runs use them so nothing touches the Keychain.
 pub mod test_support {
     use super::{ProfileError, ProfileStore, SessionStore, WebStorageStore};
     use std::sync::{
@@ -282,6 +315,45 @@ pub mod test_support {
         }
     }
 
+    /** Hermetic history, bookmarks and settings records for restart tests and verification windows. */
+    #[derive(Default)]
+    pub struct MemoryRecordStore {
+        values: Mutex<std::collections::HashMap<super::Record, Vec<u8>>>,
+        fail_replace: AtomicBool,
+    }
+
+    impl MemoryRecordStore {
+        /// Seed one record, valid or not, as if a previous run saved it.
+        pub fn seed(&self, record: super::Record, bytes: Vec<u8>) {
+            if let Ok(mut values) = self.values.lock() {
+                values.insert(record, bytes);
+            }
+        }
+        /// Read one record for structured assertions.
+        pub fn record(&self, record: super::Record) -> Option<Vec<u8>> {
+            self.values.lock().ok()?.get(&record).cloned()
+        }
+        /// Fail one save; browsing must continue and the next save retries.
+        pub fn fail_next_replace(&self) {
+            self.fail_replace.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl super::RecordStore for MemoryRecordStore {
+        fn load(&self, record: super::Record) -> Result<Option<Vec<u8>>, ProfileError> {
+            let values = self.values.lock().map_err(|_| ProfileError::Unavailable)?;
+            Ok(values.get(&record).cloned())
+        }
+        fn replace(&self, record: super::Record, bytes: &[u8]) -> Result<(), ProfileError> {
+            if self.fail_replace.swap(false, Ordering::SeqCst) {
+                return Err(ProfileError::Unavailable);
+            }
+            let mut values = self.values.lock().map_err(|_| ProfileError::Unavailable)?;
+            values.insert(record, bytes.to_vec());
+            Ok(())
+        }
+    }
+
     impl MemoryWebStorageStore {
         /// Read only record presence for tests that must not print site values.
         pub fn has_record(&self) -> bool {
@@ -392,22 +464,34 @@ pub fn unavailable() -> EngineError {
     ProfileError::Unavailable.engine_error()
 }
 
-/// Build the production store on macOS without providing a plaintext fallback.
+/// Build the production cookie store on macOS without providing a plaintext fallback.
 #[cfg(target_os = "macos")]
 pub fn system_store() -> std::sync::Arc<dyn ProfileStore> {
-    std::sync::Arc::new(keychain::KeychainStore)
+    std::sync::Arc::new(vault::Cookies(keychain::system()))
 }
 
-/** Production localStorage remains in a distinct Keychain account from cookie data. */
+/** Production localStorage is its own sealed record, independent of the cookie record. */
 #[cfg(target_os = "macos")]
 pub fn system_web_storage_store() -> std::sync::Arc<dyn WebStorageStore> {
-    std::sync::Arc::new(keychain::KeychainWebStorageStore)
+    std::sync::Arc::new(vault::Storage(keychain::system()))
 }
 
-/** The desktop session record is encrypted independently from cookies and Web Storage. */
+/** The desktop session is its own sealed record, independent of cookies and Web Storage. */
 #[cfg(target_os = "macos")]
 pub fn system_session_store() -> std::sync::Arc<dyn SessionStore> {
-    std::sync::Arc::new(keychain::KeychainSessionStore)
+    std::sync::Arc::new(vault::Sessions(keychain::system()))
+}
+
+/** History, bookmarks and settings are sealed records, never plaintext files. */
+#[cfg(target_os = "macos")]
+pub fn system_record_store() -> std::sync::Arc<dyn RecordStore> {
+    std::sync::Arc::new(vault::Records(keychain::system()))
+}
+
+/** Unsupported platforms keep history and bookmarks for the session only rather than in plaintext. */
+#[cfg(not(target_os = "macos"))]
+pub fn system_record_store() -> std::sync::Arc<dyn RecordStore> {
+    std::sync::Arc::new(UnsupportedStore)
 }
 
 /// Other desktop platforms cannot silently substitute weaker persistence.
@@ -465,275 +549,20 @@ impl WebStorageStore for UnsupportedStore {
     }
 }
 #[cfg(not(target_os = "macos"))]
+impl RecordStore for UnsupportedStore {
+    fn load(&self, _record: Record) -> Result<Option<Vec<u8>>, ProfileError> {
+        Err(ProfileError::Unavailable)
+    }
+    fn replace(&self, _record: Record, _bytes: &[u8]) -> Result<(), ProfileError> {
+        Err(ProfileError::Unavailable)
+    }
+}
+#[cfg(not(target_os = "macos"))]
 impl SessionStore for UnsupportedStore {
     fn load(&self) -> Result<Option<Vec<u8>>, ProfileError> {
         Err(ProfileError::Unavailable)
     }
     fn replace(&self, _bytes: &[u8]) -> Result<(), ProfileError> {
         Err(ProfileError::Unavailable)
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod keychain {
-    use super::{
-        ProfileError, ProfileStore, SESSION_PROFILE_BYTES, SessionStore, WEB_STORAGE_PROFILE_BYTES,
-        WebStorageStore, validate_size,
-    };
-    use crate::constants::PROFILE_STORE_TIMEOUT;
-    use security_framework::passwords::{
-        delete_generic_password, get_generic_password, set_generic_password,
-    };
-    use security_framework_sys::base::errSecItemNotFound;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    /** One in-flight Keychain call bounds retries if the OS stalls. */
-    static STORE_BUSY: AtomicBool = AtomicBool::new(false);
-    /** Recovery writes proceed independently when an origin operation is stuck late. */
-    static RECOVERY_BUSY: AtomicBool = AtomicBool::new(false);
-
-    /// Stable identifiers isolate Mars's default profile from other apps.
-    const SERVICE: &str = "com.oyabrowser.native.profile";
-    /// One complete bounded jar gives Keychain replacement a single commit boundary.
-    const ACCOUNT: &str = "default-cookie-jar-v1";
-    /// Web Storage is intentionally independent from the cookie-clear operation.
-    const STORAGE_ACCOUNT: &str = "default-web-storage-v1";
-    /// Recovery state is separate so origin replacement cannot erase the fail-closed marker.
-    const STORAGE_RECOVERY_ACCOUNT: &str = "default-web-storage-recovery-v1";
-    /// Tab URLs use an independent record and survive cookie or site-data clearing.
-    const SESSION_ACCOUNT: &str = "default-tab-session-v1";
-
-    /** Keychain owns encryption and access policy; no cookie data reaches disk files. */
-    pub(super) struct KeychainStore;
-    /** Independent secure record owns only first-party localStorage values. */
-    pub(super) struct KeychainWebStorageStore;
-    /** The current ordered GET session is encrypted independently from site data. */
-    pub(super) struct KeychainSessionStore;
-
-    impl WebStorageStore for KeychainWebStorageStore {
-        fn load(&self) -> Result<Option<Vec<u8>>, ProfileError> {
-            bounded_storage(load_storage_now)
-        }
-        fn replace(&self, bytes: &[u8]) -> Result<(), ProfileError> {
-            if bytes.len() > WEB_STORAGE_PROFILE_BYTES {
-                return Err(ProfileError::Corrupt);
-            }
-            let bytes = bytes.to_vec();
-            bounded_storage(move || replace_storage_now(&bytes))
-        }
-        fn clear(&self) -> Result<(), ProfileError> {
-            bounded_storage(clear_storage_now)
-        }
-        fn recovery_required(&self) -> Result<bool, ProfileError> {
-            bounded_recovery(load_recovery_now)
-        }
-        fn mark_recovery(&self) -> Result<(), ProfileError> {
-            bounded_recovery(mark_recovery_now)
-        }
-        fn clear_recovery(&self) -> Result<(), ProfileError> {
-            bounded_recovery(clear_recovery_now)
-        }
-    }
-
-    impl SessionStore for KeychainSessionStore {
-        fn load(&self) -> Result<Option<Vec<u8>>, ProfileError> {
-            bounded_storage(load_session_now)
-        }
-        fn replace(&self, bytes: &[u8]) -> Result<(), ProfileError> {
-            if bytes.len() > SESSION_PROFILE_BYTES {
-                return Err(ProfileError::Corrupt);
-            }
-            let bytes = bytes.to_vec();
-            bounded_storage(move || replace_session_now(&bytes))
-        }
-    }
-
-    impl ProfileStore for KeychainStore {
-        fn load(&self) -> Result<Option<Vec<u8>>, ProfileError> {
-            bounded(load_now)
-        }
-
-        fn replace(&self, bytes: &[u8]) -> Result<(), ProfileError> {
-            validate_size(bytes)?;
-            let bytes = bytes.to_vec();
-            bounded(move || replace_now(&bytes))
-        }
-
-        fn clear(&self) -> Result<(), ProfileError> {
-            bounded(clear_now)
-        }
-    }
-
-    /// Keychain reads return one bounded data item or a new-profile result.
-    fn load_now() -> Result<Option<Vec<u8>>, ProfileError> {
-        match get_generic_password(SERVICE, ACCOUNT) {
-            Ok(bytes) => {
-                validate_size(&bytes)?;
-                Ok(Some(bytes))
-            }
-            Err(error) if error.code() == errSecItemNotFound => Ok(None),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// Load the independent Web Storage item with its own encoded bound.
-    fn load_storage_now() -> Result<Option<Vec<u8>>, ProfileError> {
-        match get_generic_password(SERVICE, STORAGE_ACCOUNT) {
-            Ok(bytes) if bytes.len() <= WEB_STORAGE_PROFILE_BYTES => Ok(Some(bytes)),
-            Ok(_) => Err(ProfileError::Corrupt),
-            Err(error) if error.code() == errSecItemNotFound => Ok(None),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// Load the separate bounded browser-session record.
-    fn load_session_now() -> Result<Option<Vec<u8>>, ProfileError> {
-        match get_generic_password(SERVICE, SESSION_ACCOUNT) {
-            Ok(bytes) if bytes.len() <= SESSION_PROFILE_BYTES => Ok(Some(bytes)),
-            Ok(_) => Err(ProfileError::Corrupt),
-            Err(error) if error.code() == errSecItemNotFound => Ok(None),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// Replace only the ordered HTTP(S) tab session, never cookies or site storage.
-    fn replace_session_now(bytes: &[u8]) -> Result<(), ProfileError> {
-        if bytes.len() > SESSION_PROFILE_BYTES {
-            return Err(ProfileError::Corrupt);
-        }
-        set_generic_password(SERVICE, SESSION_ACCOUNT, bytes).map_err(|_| ProfileError::Unavailable)
-    }
-
-    /// Replace the origin map without touching the cookie account.
-    fn replace_storage_now(bytes: &[u8]) -> Result<(), ProfileError> {
-        if bytes.len() > WEB_STORAGE_PROFILE_BYTES {
-            return Err(ProfileError::Corrupt);
-        }
-        set_generic_password(SERVICE, STORAGE_ACCOUNT, bytes).map_err(|_| ProfileError::Unavailable)
-    }
-
-    /// Clearing storage never deletes or modifies the cookie item.
-    fn clear_storage_now() -> Result<(), ProfileError> {
-        match delete_generic_password(SERVICE, STORAGE_ACCOUNT) {
-            Ok(()) => Ok(()),
-            Err(error) if error.code() == errSecItemNotFound => Ok(()),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// A malformed marker is treated as present so startup always fails closed.
-    fn load_recovery_now() -> Result<bool, ProfileError> {
-        match get_generic_password(SERVICE, STORAGE_RECOVERY_ACCOUNT) {
-            Ok(bytes) if bytes.as_slice() == b"oya-web-storage-recovery-v1" => Ok(true),
-            Ok(_) => Ok(true),
-            Err(error) if error.code() == errSecItemNotFound => Ok(false),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// Store a fixed payload containing no page-controlled or site data.
-    fn mark_recovery_now() -> Result<(), ProfileError> {
-        set_generic_password(
-            SERVICE,
-            STORAGE_RECOVERY_ACCOUNT,
-            b"oya-web-storage-recovery-v1",
-        )
-        .map_err(|_| ProfileError::Unavailable)
-    }
-
-    /// The caller deletes the origin map first, making marker deletion safe after late writes.
-    fn clear_recovery_now() -> Result<(), ProfileError> {
-        match delete_generic_password(SERVICE, STORAGE_RECOVERY_ACCOUNT) {
-            Ok(()) => Ok(()),
-            Err(error) if error.code() == errSecItemNotFound => Ok(()),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// Web Storage timeout is uncertain because Keychain may finish after caller timeout.
-    fn bounded_storage<T: Send + 'static>(
-        operation: impl FnOnce() -> Result<T, ProfileError> + Send + 'static,
-    ) -> Result<T, ProfileError> {
-        if STORE_BUSY.swap(true, Ordering::AcqRel) {
-            return Err(ProfileError::Unavailable);
-        }
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let worker = std::thread::Builder::new()
-            .name("oya-storage-keychain".into())
-            .spawn(move || {
-                let result = operation();
-                STORE_BUSY.store(false, Ordering::Release);
-                let _ = sender.send(result);
-            });
-        if worker.is_err() {
-            STORE_BUSY.store(false, Ordering::Release);
-            return Err(ProfileError::Unavailable);
-        }
-        receiver
-            .recv_timeout(PROFILE_STORE_TIMEOUT)
-            .unwrap_or(Err(ProfileError::CommitUncertain))
-    }
-
-    /// Recovery marker I/O has its own deadline lane and never waits for a late origin write.
-    fn bounded_recovery<T: Send + 'static>(
-        operation: impl FnOnce() -> Result<T, ProfileError> + Send + 'static,
-    ) -> Result<T, ProfileError> {
-        if RECOVERY_BUSY.swap(true, Ordering::AcqRel) {
-            return Err(ProfileError::Unavailable);
-        }
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let worker = std::thread::Builder::new()
-            .name("oya-storage-recovery".into())
-            .spawn(move || {
-                let result = operation();
-                RECOVERY_BUSY.store(false, Ordering::Release);
-                let _ = sender.send(result);
-            });
-        if worker.is_err() {
-            RECOVERY_BUSY.store(false, Ordering::Release);
-            return Err(ProfileError::Unavailable);
-        }
-        receiver
-            .recv_timeout(PROFILE_STORE_TIMEOUT)
-            .unwrap_or(Err(ProfileError::CommitUncertain))
-    }
-
-    /// One Keychain item replacement commits the complete profile record.
-    fn replace_now(bytes: &[u8]) -> Result<(), ProfileError> {
-        validate_size(bytes)?;
-        set_generic_password(SERVICE, ACCOUNT, bytes).map_err(|_| ProfileError::Unavailable)
-    }
-
-    /// Clearing a missing Keychain item is already a successful reset.
-    fn clear_now() -> Result<(), ProfileError> {
-        match delete_generic_password(SERVICE, ACCOUNT) {
-            Ok(()) => Ok(()),
-            Err(error) if error.code() == errSecItemNotFound => Ok(()),
-            Err(_) => Err(ProfileError::Unavailable),
-        }
-    }
-
-    /// OS calls run off the browser worker with a deadline and one-flight guard.
-    fn bounded<T: Send + 'static>(
-        operation: impl FnOnce() -> Result<T, ProfileError> + Send + 'static,
-    ) -> Result<T, ProfileError> {
-        if STORE_BUSY.swap(true, Ordering::AcqRel) {
-            return Err(ProfileError::Unavailable);
-        }
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let worker = std::thread::Builder::new()
-            .name("oya-profile-keychain".into())
-            .spawn(move || {
-                let result = operation();
-                STORE_BUSY.store(false, Ordering::Release);
-                let _ = sender.send(result);
-            });
-        if worker.is_err() {
-            STORE_BUSY.store(false, Ordering::Release);
-            return Err(ProfileError::Unavailable);
-        }
-        receiver
-            .recv_timeout(PROFILE_STORE_TIMEOUT)
-            .unwrap_or(Err(ProfileError::Unavailable))
     }
 }

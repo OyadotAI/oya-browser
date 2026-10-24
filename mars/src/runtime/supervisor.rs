@@ -3,8 +3,9 @@ use super::authority::{self, Owner, Permit, SharedAuthority};
 use super::page::Page;
 use crate::constants::{RPC_POLL, RPC_TIMEOUT, WEB_RPC_TIMEOUT};
 use crate::protocol::{
-    EngineError, EngineResult, Request, Response, decode, encode, read_frame, write_message,
+    EngineError, EngineResult, Response, TypedResponse, decode, encode_request, read_frame,
 };
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::BufReader;
@@ -43,11 +44,15 @@ impl EnginePrograms {
 /// One local owner and one committed page; services never retain hidden page state.
 pub struct Runtime {
     /** Exactly three children after successful startup. */
-    services: Vec<Service>,
+    pub(super) services: Vec<Service>,
+    /** Engine paths and the crash budget for per-engine restart (CB-23). */
+    pub(super) revival: super::restart::Revival,
     /** Child/protocol failures poison the session without automatic restart. */
     pub(super) failed: bool,
     /** A candidate is never visible here until every navigation step succeeds. */
     pub(super) page: Option<Page>,
+    /** The last navigation that turned out to be a file, held until the desktop saves it. */
+    pub(super) ready_download: Option<super::downloads::Fetched>,
     /** Allocated only for successful navigation publication. */
     pub(super) generation: u64,
     /** Startup fixture grants never come from page/agent parameters. */
@@ -95,6 +100,21 @@ pub struct Runtime {
     next_tab_id: u64,
     /** Recent selection order chooses the destination when a tab closes. */
     recent_tabs: Vec<String>,
+    /** Preferred languages for navigator.languages, read once at startup. */
+    pub(super) languages: Vec<String>,
+    /** A few past revisions per tab back page.diff; never part of snapshots or sessions. */
+    pub(super) revisions: super::observe::Revisions,
+    /** Batched subresource answers keyed by their exact request, kept only while one
+    navigation or script step builds its candidate. */
+    pub(super) prefetched:
+        std::collections::HashMap<String, EngineResult<crate::network::WebResponse>>,
+    /** Digests of the source lists the V9 process holds, most recent first, mirroring its own
+    bounded list; a wrong guess only costs one resend. */
+    pub(super) v9_sources: std::collections::VecDeque<String>,
+    /** Where a navigation shows its parsed and styled page before its scripts run, as a browser
+    paints before load; the desktop window installs it. The committed page, history and the
+    navigation's reply are unaffected: a provisional page is never a candidate. */
+    pub(super) provisional: Option<Box<dyn FnMut(super::page::BrowserSnapshot) + Send>>,
 }
 
 /** One inactive tab owns its document and navigation presentation state. */
@@ -120,6 +140,11 @@ impl TabState {
 }
 
 impl Runtime {
+    /// Installs where navigations show their first paint (the page before its scripts run).
+    pub fn show_first_paint(&mut self, sink: Box<dyn FnMut(super::page::BrowserSnapshot) + Send>) {
+        self.provisional = Some(sink);
+    }
+
     /// Return the selected identity for desktop commands issued by native controls.
     pub fn selected_tab_id(&self) -> &str {
         &self.selected_tab_id
@@ -137,7 +162,7 @@ impl Runtime {
         }
         self.activate_tab(id)?;
         let result = operation(self);
-        self.store_active_tab();
+        // activate_tab stores the active tab itself; storing here too wrote None over its page.
         self.activate_tab(&selected)?;
         result
     }
@@ -181,6 +206,7 @@ impl Runtime {
             authority::lock(authority)?.remove_tab(tab_key(id)?);
         }
         self.recent_tabs.retain(|recent| recent != id);
+        self.revisions.remove(id);
         if self.tabs.is_empty() {
             let replacement = format!("tab-{}", self.next_tab_id);
             self.next_tab_id = self.next_tab_id.saturating_add(1);
@@ -385,8 +411,8 @@ impl Runtime {
             tab.scroll_y,
         );
         if let Some(page) = candidate.0.as_mut() {
-            self.prepare_presentation(page, self.render_context)?;
             page.layout_generation = page.layout_generation.saturating_add(1);
+            self.prepare_presentation(page, self.render_context)?;
             page.publishable()?;
         }
         self.store_active_tab();
@@ -408,6 +434,12 @@ impl Runtime {
         Ok(())
     }
 
+    /// Replaces the startup language list, so hermetic tests choose it without process env.
+    pub fn with_languages(mut self, languages: Vec<String>) -> Self {
+        self.languages = super::languages::usable(languages);
+        self
+    }
+
     /// Partial startup is cleaned by owned Service drops.
     pub fn start(programs: EnginePrograms) -> EngineResult<Self> {
         Self::start_cancel(programs, Arc::new(AtomicBool::new(false)))
@@ -417,8 +449,10 @@ impl Runtime {
     fn start_cancel(programs: EnginePrograms, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
         let mut runtime = Self {
             services: Vec::new(),
+            revival: super::restart::Revival::new(&programs),
             failed: false,
             page: None,
+            ready_download: None,
             generation: 0,
             web_origins: None,
             authority: None,
@@ -445,6 +479,11 @@ impl Runtime {
             active_tab_id: "tab-1".into(),
             next_tab_id: 2,
             recent_tabs: vec!["tab-1".into()],
+            languages: super::languages::preferred(),
+            revisions: Default::default(),
+            prefetched: Default::default(),
+            v9_sources: Default::default(),
+            provisional: None,
         };
         for (name, executable) in [
             ("network", programs.network),
@@ -697,6 +736,12 @@ impl Runtime {
         authority::lock(authority)?.permit_for(Owner::Human, tab_key(tab_id)?)
     }
 
+    /// Empty Relay's HTTP cache for "Clear browsing data"; pages, cookies and storage are untouched.
+    pub fn clear_cache(&mut self) -> EngineResult<()> {
+        self.call("network", "network.cache_clear", json!({}))
+            .map(|_| ())
+    }
+
     /// Delete a recovered Web Storage profile without touching the separate cookie jar.
     pub fn clear_saved_web_storage(&mut self) -> EngineResult<()> {
         self.clear_web_storage()
@@ -800,15 +845,14 @@ impl Runtime {
                 _ => Some(service.name),
             });
         if let Some(name) = dead {
-            self.stop();
-            return Err(EngineError::service(name, false));
+            return Err(self.revive(name, None));
         }
         Ok(())
     }
 
     /** A transport fault retires all services before returning the failure. */
     pub(super) fn call(&mut self, name: &str, op: &str, params: Value) -> EngineResult<Value> {
-        self.call_until(name, op, params, None)
+        self.call_until(name, op, &params, None)
     }
 
     /** A navigation resource RPC shares its existing absolute deadline. */
@@ -819,28 +863,60 @@ impl Runtime {
         params: Value,
         deadline: Instant,
     ) -> EngineResult<Value> {
-        self.call_until(name, op, params, Some(deadline))
+        self.call_until(name, op, &params, Some(deadline))
     }
 
-    /** Every call keeps the service cap and optionally applies a tighter owner deadline. */
-    fn call_until(
+    /**
+     * `call` for large engine data: the parameters are written straight to the frame and the
+     * result is read straight into `T`, never through a `Value` tree. A reply whose result does
+     * not fit `T` retires the session, exactly as `returned` does for a `Value` reply.
+     */
+    pub(super) fn call_typed<T: DeserializeOwned>(
         &mut self,
         name: &str,
         op: &str,
-        params: Value,
+        params: &impl Serialize,
         deadline: Option<Instant>,
-    ) -> EngineResult<Value> {
+    ) -> EngineResult<T> {
+        self.call_until(name, op, params, deadline)
+    }
+
+    /** Every call keeps the service cap and optionally applies a tighter owner deadline. */
+    fn call_until<T: DeserializeOwned>(
+        &mut self,
+        name: &str,
+        op: &str,
+        params: &impl Serialize,
+        deadline: Option<Instant>,
+    ) -> EngineResult<T> {
         self.healthy()?;
         let service = self
             .services
             .iter_mut()
             .find(|service| service.name == name)
             .ok_or_else(|| EngineError::service(name, false))?;
-        let result = service.call(op, params, deadline);
-        if result.as_ref().is_err_and(|error| error.service.is_some()) {
-            self.stop();
+        match service.call(op, params, deadline) {
+            Err(error) if error.service.is_some() => {
+                // A restarted engine starts empty.
+                if name == "v9" {
+                    self.v9_sources.clear();
+                }
+                Err(self.revive(name, Some(error)))
+            }
+            Err(error) => Err(error),
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(Mismatch)) => {
+                self.stop();
+                Err(EngineError::service(name, false))
+            }
         }
-        result
+    }
+
+    /** Records that the V9 process now holds these sources, under its own eviction order. */
+    pub(super) fn note_v9_sources(&mut self, digest: String) {
+        self.v9_sources.retain(|known| *known != digest);
+        self.v9_sources.push_front(digest);
+        self.v9_sources.truncate(super::service::RESIDENT_SOURCES);
     }
 
     /// Exposes owned process identities for native diagnostics, without transport handles.
@@ -874,17 +950,17 @@ pub fn tab_key(id: &str) -> EngineResult<u64> {
 }
 
 /** The supervisor retains the Child handle while a worker may block in pipe I/O. */
-struct Service {
+pub(super) struct Service {
     /** Runtime owner may cancel while transport is blocked in either direction. */
     cancel: Arc<AtomicBool>,
     /** Static service identity is never supplied by page input. */
-    name: &'static str,
+    pub(super) name: &'static str,
     /** Retained outside the worker so deadline expiry can release blocked writes. */
     child: Child,
-    /** One in-flight request; the coordinator has no unbounded queue. */
-    requests: Option<SyncSender<Request>>,
-    /** The worker returns exactly one reply for each accepted request. */
-    replies: Receiver<EngineResult<Value>>,
+    /** One in-flight encoded request; the coordinator has no unbounded queue. */
+    requests: Option<SyncSender<Vec<u8>>>,
+    /** The worker returns exactly one reply frame for each accepted request. */
+    replies: Receiver<EngineResult<Vec<u8>>>,
     /** Joined only after child termination releases both pipe ends. */
     worker: Option<JoinHandle<()>>,
     /** Internal correlation prevents accepting a late or mismatched reply. */
@@ -893,7 +969,11 @@ struct Service {
 
 impl Service {
     /** Cleared environment avoids passing API keys and proxy configuration to engines. */
-    fn spawn(name: &'static str, executable: &Path, cancel: Arc<AtomicBool>) -> EngineResult<Self> {
+    pub(super) fn spawn(
+        name: &'static str,
+        executable: &Path,
+        cancel: Arc<AtomicBool>,
+    ) -> EngineResult<Self> {
         let mut child = Command::new(executable)
             .args(["_service", name])
             .env_clear()
@@ -932,28 +1012,36 @@ impl Service {
         })
     }
 
-    /** Both worker writes and reads are covered by this external deadline. */
-    fn call(
+    /** Both worker writes and reads are covered by this external deadline. The request is
+    serialized once, here, so its size check and its bytes are the same work. */
+    fn call<T: DeserializeOwned>(
         &mut self,
         op: &str,
-        params: Value,
+        params: &impl Serialize,
         owner_deadline: Option<Instant>,
-    ) -> EngineResult<Value> {
+    ) -> EngineResult<Result<T, Mismatch>> {
         let rpc_deadline = Instant::now() + rpc_timeout(op);
         let deadline = owner_deadline.map_or(rpc_deadline, |owner| owner.min(rpc_deadline));
         if Instant::now() >= deadline {
             return Err(crate::protocol::EngineError::navigation_timeout());
         }
         self.sequence += 1;
-        let request = Request::new(&self.sequence.to_string(), op, params);
-        encode(&request)?;
+        let started = Instant::now();
+        let id = self.sequence.to_string();
+        let frame = encode_request(&id, op, params)?;
+        perf::record("rpc.encode", started, || format!("{op}\t{}", frame.len()));
+        perf::dump(op, self.sequence, &frame);
         self.requests
             .as_ref()
             .ok_or_else(|| EngineError::service(self.name, false))?
-            .try_send(request)
-            .map_err(|_| EngineError::service(self.name, false))?;
-        loop {
+            .try_send(frame)
+            .map_err(|error| {
+                eprintln!("DEBUG try_send failed for {op}: {error:?}");
+                EngineError::service(self.name, false)
+            })?;
+        let reply = loop {
             if self.cancel.load(Ordering::Relaxed) {
+                eprintln!("DEBUG cancel flag set for {op}");
                 return Err(EngineError::service(self.name, false));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -961,13 +1049,62 @@ impl Service {
                 return Err(EngineError::service(self.name, true));
             }
             match self.replies.recv_timeout(remaining.min(RPC_POLL)) {
-                Ok(result) => return result,
+                Ok(reply) => break reply?,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(_) => return Err(EngineError::service(self.name, false)),
             }
+        };
+        let decoding = Instant::now();
+        let result = self.decode_reply(&id, &reply);
+        perf::record("rpc.decode", decoding, || op.to_string());
+        perf::record("rpc.total", started, || op.to_string());
+        result
+    }
+
+    /** Envelope violations are transport faults; valid engine errors remain ordinary failures. */
+    fn decode_reply<T: DeserializeOwned>(
+        &self,
+        id: &str,
+        frame: &[u8],
+    ) -> EngineResult<Result<T, Mismatch>> {
+        let fault = || EngineError::service(self.name, false);
+        let typed = decode::<TypedResponse<T>>(frame);
+        if let Err(error) = &typed {
+            eprintln!(
+                "DEBUG typed decode failed for {id}: {} {} (frame {} bytes)",
+                error.code,
+                error.message,
+                frame.len()
+            );
+        }
+        let Ok(reply) = typed else {
+            // A well-formed reply whose result has the wrong shape is the child's fault, not
+            // the transport's.
+            return match decode::<Response>(frame) {
+                Ok(reply)
+                    if reply.version == crate::constants::VERSION
+                        && reply.id.as_deref() == Some(id)
+                        && reply.result.is_some()
+                        && reply.error.is_none() =>
+                {
+                    Ok(Err(Mismatch))
+                }
+                _ => Err(fault()),
+            };
+        };
+        if reply.version != crate::constants::VERSION || reply.id.as_deref() != Some(id) {
+            return Err(fault());
+        }
+        match (reply.result, reply.error) {
+            (Some(result), None) => Ok(Ok(result)),
+            (None, Some(error)) => Err(error),
+            _ => Err(fault()),
         }
     }
 }
+
+/** A reply that parsed but whose result is not the type the caller asked for. */
+struct Mismatch;
 
 impl Drop for Service {
     /** Kill first, release channels second, then join; blocked pipe writes cannot leak. */
@@ -995,35 +1132,78 @@ fn transport(
     name: &str,
     mut stdin: ChildStdin,
     stdout: ChildStdout,
-    requests: Receiver<Request>,
-    replies: SyncSender<EngineResult<Value>>,
+    requests: Receiver<Vec<u8>>,
+    replies: SyncSender<EngineResult<Vec<u8>>>,
 ) {
     let mut stdout = BufReader::new(stdout);
     while let Ok(request) = requests.recv() {
         let result = exchange(&mut stdin, &mut stdout, &request)
-            .unwrap_or_else(|_| Err(EngineError::service(name, false)));
+            .map_err(|_| EngineError::service(name, false));
         if replies.send(result).is_err() {
             return;
         }
     }
 }
 
-/** Envelope violations are transport faults; valid engine errors remain ordinary failures. */
+/** Writes one encoded request and reads exactly one bounded reply frame. */
 fn exchange(
     stdin: &mut ChildStdin,
     stdout: &mut BufReader<ChildStdout>,
-    request: &Request,
-) -> EngineResult<EngineResult<Value>> {
-    write_message(stdin, request)?;
+    request: &[u8],
+) -> EngineResult<Vec<u8>> {
+    let started = Instant::now();
+    std::io::Write::write_all(stdin, request)
+        .and_then(|()| std::io::Write::flush(stdin))
+        .map_err(|_| EngineError::invalid("The transport closed or could not be written."))?;
     let frame = read_frame(stdout)?.ok_or_else(|| EngineError::invalid("Service EOF."))?;
-    let reply: Response = decode(&frame)?;
-    if reply.version != request.version || reply.id.as_deref() != Some(&request.id) {
-        return Err(EngineError::invalid("Mismatched service reply."));
+    perf::record("rpc.wait", started, || format!("-\t{}", frame.len()));
+    Ok(frame)
+}
+
+/**
+ * Opt-in phase timing for measuring page loads. `MARS_PERF` names a file the coordinator
+ * appends one tab-separated line to per measured step; unset, every probe is one relaxed load.
+ * Engines never see the variable (their environment is cleared), so only coordinator-side
+ * times and wire sizes are recorded.
+ */
+pub mod perf {
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+
+    /** The open log, or None when measurement is off. */
+    static SINK: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+
+    /** The sink, opened on first use from MARS_PERF. */
+    fn sink() -> &'static Option<Mutex<std::fs::File>> {
+        SINK.get_or_init(|| {
+            let path = std::env::var_os("MARS_PERF")?;
+            let file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .ok()?;
+            Some(Mutex::new(file))
+        })
     }
-    match (reply.result, reply.error) {
-        (Some(result), None) => Ok(Ok(result)),
-        (None, Some(error)) => Ok(Err(error)),
-        _ => Err(EngineError::invalid("Invalid service reply shape.")),
+
+    /** Writes one request frame to the MARS_PERF_DUMP folder, so a perf test can replay a
+    real page's engine calls in-process. */
+    pub fn dump(op: &str, sequence: u64, frame: &[u8]) {
+        if let Some(folder) = std::env::var_os("MARS_PERF_DUMP") {
+            let path = std::path::Path::new(&folder).join(format!("{sequence:06}-{op}.json"));
+            let _ = std::fs::write(path, frame);
+        }
+    }
+
+    /** Appends `event`, the milliseconds since `start` and `detail`. */
+    pub fn record(event: &str, start: Instant, detail: impl FnOnce() -> String) {
+        if let Some(file) = sink()
+            && let Ok(mut file) = file.lock()
+        {
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            let _ = writeln!(file, "{event}\t{ms:.2}\t{}", detail());
+        }
     }
 }
 

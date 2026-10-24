@@ -29,23 +29,21 @@ fn registered_bound_controller_reads_current_inputs_and_reload_resets_state() {
     assert_eq!(text(&page, "out"), "world 1");
 }
 
-/** Failed callbacks preserve document revision, storage, captured counts and listener registration atomically. */
+/** A listener that throws keeps its earlier storage, captured count and text, and every listener stays registered. */
 #[test]
-fn failed_listener_candidates_leave_the_committed_page_and_storage_unchanged() {
+fn throwing_listener_keeps_earlier_effects_and_registrations() {
     let body = "<p id=out>initial</p><button id=good type=button>Good</button><button id=bad type=button>Bad</button><button id=read type=button>Read</button><script>var count=0;const out=document.getElementById('out');function update(){count++;window.localStorage.setItem('count',count);out.textContent=count;}document.getElementById('good').addEventListener('click',update);document.getElementById('bad').addEventListener('click',()=>{update();document.getElementById('missing').textContent='fail';});document.getElementById('read').addEventListener('click',()=>{out.textContent=count+' '+window.localStorage.getItem('count');});</script>";
     let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
     let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "1");
-    assert!(call(&mut runtime, "page.click", target(&page, "bad")).is_err());
-    let inspected = call(&mut runtime, "page.inspect", json!({})).unwrap();
-    assert_eq!(inspected["revision"], page["revision"]);
-    assert_eq!(text(&inspected, "out"), "1");
-    let inspected = call(&mut runtime, "page.click", target(&inspected, "read")).unwrap();
-    assert_eq!(text(&inspected, "out"), "1 1");
-    let inspected = call(&mut runtime, "page.click", target(&inspected, "good")).unwrap();
+    let inspected = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
     assert_eq!(text(&inspected, "out"), "2");
+    let inspected = call(&mut runtime, "page.click", target(&inspected, "read")).unwrap();
+    assert_eq!(text(&inspected, "out"), "2 2");
+    let inspected = call(&mut runtime, "page.click", target(&inspected, "good")).unwrap();
+    assert_eq!(text(&inspected, "out"), "3");
 }
 
 /** Inspection never executes registered callbacks and an old revision cannot trigger another dispatch. */

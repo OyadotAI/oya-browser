@@ -26,27 +26,16 @@ fn generic_string_methods_convert_supported_primitive_receivers() {
         );
     }
 }
-/** Limit conversion precedes separator conversion, and separator conversion precedes zero-limit success. */
+/** split converts the limit before the separator, as the specification and V8 order them. */
 #[test]
 fn split_conversion_order_matches_pinned_v8() {
-    let error = execute("'abc'.split({},{});").unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert!(
-        error.message.contains("object-to-primitive conversion"),
-        "{}",
-        error.message
+    assert_eq!(
+        result(
+            "let order='';const separator={toString(){order+='s';return 'b';}};const limit={valueOf(){order+='l';return 2;}};const parts='abc'.split(separator,limit);",
+            "order+' '+parts.join('|')"
+        ),
+        "ls a|c"
     );
-    for source in [
-        "'abc'.split({},0);",
-        "'abc'.split(undefined,{});",
-        "''.split.call({},',',{});",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
 }
 /** Separator primitives use JavaScript rendering and undefined retains the omitted-separator shortcut. */
 #[test]
@@ -92,36 +81,33 @@ fn extracted_and_bound_string_methods_keep_identity_and_metadata() {
         "b"
     );
 }
-/** Unsupported coercion never silently renders objects, functions or host references. */
+/** Objects and functions convert through ToString wherever a string method needs a string. */
 #[test]
-fn object_function_and_host_coercion_fail_explicitly() {
-    for source in [
-        "''.trim.call({});",
-        "''.trim.call(function(){});",
-        "'abc'.split(function(){});",
-        "'abc'.split(',',function(){});",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
+fn object_and_function_receivers_convert_through_to_string() {
+    assert_eq!(
+        result(
+            "",
+            "''.trim.call({})+'/'+'a b'.split({toString(){return ' ';}}).length+'/'+'abc'.split(',',{valueOf(){return 0;}}).length"
+        ),
+        "[object Object]/2/0"
+    );
+}
+/** Host objects carry their browser toStringTag, so String(document) names its interface. */
+#[test]
+fn host_objects_report_their_interface_tag() {
     use mars::{
-        document::ScriptDocument,
+        document::{parse, script_document},
         v9::{StorageState, load_document_scripts},
     };
+    let document = script_document(&parse("<p id=x>t</p>").unwrap(), "strings").unwrap();
+    let loaded = load_document_scripts(
+        &["document.getElementById('x').textContent=String(document)+' '+String(document.getElementById('x'))+' '+Object.prototype.toString.call(window);".into()],
+        document,
+        StorageState::default(),
+    )
+    .unwrap();
     assert_eq!(
-        load_document_scripts(
-            &["''.trim.call(document);".into()],
-            ScriptDocument {
-                identity: "strings".into(),
-                nodes: Vec::new()
-            },
-            StorageState::default()
-        )
-        .unwrap_err()
-        .code,
-        "unsupported_feature"
+        loaded.changes[0].text().unwrap(),
+        "[object HTMLDocument] [object HTMLParagraphElement] [object Window]"
     );
 }

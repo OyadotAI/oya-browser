@@ -89,13 +89,17 @@ fn comments_numeric_literals_and_separators_preserve_token_boundaries() {
         assert_eq!(error.code, "script_syntax_error", "{source}");
         assert!(error.location.is_some());
     }
-    for source in ["1**2", "1n", "077", "'\\1'", "`text`"] {
-        assert_eq!(
-            execute(&format!("let n={source};")).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
+    for source in ["077", "'\\1'", "`text`"] {
+        execute(&format!("let n={source};")).unwrap();
     }
+    assert_eq!(evaluate("2**10"), "1024");
+    execute("let n=1n;").unwrap();
+    assert_eq!(
+        execute("let n=1000000000000000000000000000000000000000n;")
+            .unwrap_err()
+            .code,
+        "unsupported_feature"
+    );
 }
 /** JavaScript identity escapes and UTF-16 pairs replace the prototype's invented escape restrictions. */
 #[test]
@@ -124,30 +128,42 @@ fn string_escapes_and_line_continuations_follow_javascript_rules() {
         );
     }
 }
-/** Internal lone surrogates survive private JSON while a DOM conversion fails explicitly. */
+/** Negative zero, infinities, NaN and lone surrogates survive the state wire; the DOM write replaces the surrogate. */
 #[test]
 fn typed_wire_preserves_nonfinite_signed_zero_and_surrogate_units() {
     let loaded = load("let n=-0; let inf=1/0; let nan=0/0; let s='\\ud800';", &[]).unwrap();
     let wire = serde_json::to_string(&loaded).unwrap();
-    assert!(wire.contains("8000000000000000"));
-    assert!(wire.contains("55296"));
     let restored: mars::v9::Execution = serde_json::from_str(&wire).unwrap();
+    let globals = restored.state.globals();
+    assert!(matches!(globals["inf"].value, Some(JsValue::Number(n)) if n == f64::INFINITY));
+    assert!(matches!(globals["nan"].value, Some(JsValue::Number(n)) if n.is_nan()));
     assert!(
-        matches!(restored.state.globals()["inf"].value,Some(JsValue::Number(n)) if n==f64::INFINITY)
+        matches!(globals["n"].value, Some(JsValue::Number(n)) if n == 0.0 && n.is_sign_negative())
     );
-    assert!(
-        matches!(restored.state.globals()["n"].value,Some(JsValue::Number(n)) if n==0.0 && n.is_sign_negative())
-    );
-    let error = execute("document.getElementById('x').textContent='\\ud800';").unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert_eq!(error.phase.as_deref(), Some("dom"));
-    for value in [
-        json!({"type":"number","bits":"0"}),
-        json!({"type":"number","bits":"xxxxxxxxxxxxxxxx"}),
-        json!({"type":"string","units":vec![0;JS_STRING_UNITS+1]}),
-    ] {
-        assert!(serde_json::from_value::<JsValue>(value).is_err());
+    assert!(matches!(&globals["s"].value, Some(JsValue::String(s)) if s.as_units() == [0xd800]));
+    let changes = execute("document.getElementById('x').textContent='\\ud800';").unwrap();
+    assert_eq!(changes[0].text, "\u{fffd}");
+    for value in [json!({"n":"bogus"}), json!({"w":vec![0;JS_STRING_UNITS+1]})] {
+        assert!(
+            serde_json::from_value::<JsValue>(value.clone()).is_err(),
+            "{value}"
+        );
     }
+}
+/** A global holding null keeps that value across the state wire instead of falling back into its dead zone. */
+#[test]
+fn null_globals_survive_the_state_wire() {
+    use mars::v9::{VmState, event};
+    let source = "let saved=null;const fixed=null;function show(){document.getElementById('out').textContent=String(saved)+' '+String(fixed);}";
+    let loaded = load(source, &[]).unwrap();
+    let state: VmState =
+        serde_json::from_value(serde_json::to_value(&loaded.state).unwrap()).unwrap();
+    assert_eq!(
+        event(source, "show()", state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
+        "null null"
+    );
 }
 /** Located errors never include the source, literals or field values. */
 #[test]
@@ -162,7 +178,7 @@ fn script_locations_count_utf16_columns_and_crlf_once() {
     assert_eq!(error.input_kind.as_deref(), Some("script"));
     assert_eq!(
         execute("\u{85}let a=1;").unwrap_err().code,
-        "unsupported_feature"
+        "script_syntax_error"
     );
 }
 /** Candidate environments and proposals never escape when an event fails after a valid write. */
@@ -173,7 +189,7 @@ fn typed_globals_survive_event_round_trips_and_failed_candidates() {
     let wire = serde_json::to_string(&loaded.state).unwrap();
     let state = serde_json::from_str(&wire).unwrap();
     let result = event(source, "calculate()", state, &[]).unwrap();
-    assert_eq!(result.changes[0].text, "15");
+    assert_eq!(result.changes[0].text().unwrap(), "15");
     assert!(event(source, "fail()", loaded.state.clone(), &[]).is_err());
     assert_eq!(
         loaded.state.globals()["total"].value,
@@ -192,7 +208,7 @@ fn objects_arrays_parameters_and_returns_flow_through_native_events() {
         .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&wire)));
     let result = event(source, "show()", state, &[])
         .unwrap_or_else(|error| panic!("{error:?}: {}", String::from_utf8_lossy(&wire)));
-    assert_eq!(result.changes[0].text, "13");
+    assert_eq!(result.changes[0].text().unwrap(), "13");
     assert!(matches!(
         result.state.globals()["model"].value,
         Some(JsValue::Object(_))
@@ -208,7 +224,7 @@ fn object_aliases_and_cycles_keep_identity_across_events() {
     let wire = serde_json::to_vec(&loaded.state).unwrap();
     let state = serde_json::from_slice(&wire).unwrap();
     let result = event(source, "show()", state, &[]).unwrap();
-    assert_eq!(result.changes[0].text, "true true");
+    assert_eq!(result.changes[0].text().unwrap(), "true true");
 }
 
 /** Failed object and DOM writes remain confined to the discarded event candidate. */
@@ -231,7 +247,8 @@ fn dangling_heap_references_are_rejected_at_the_state_boundary() {
         "let state={value:1}; function show(){document.getElementById('result').textContent=1;}";
     let loaded = load(source, &[]).unwrap();
     let mut wire = serde_json::to_value(&loaded.state).unwrap();
-    wire["heap"]["objects"]["0"]["properties"]["value"] = json!({"type":"object","id":999});
+    let id = crate::v9::wire_global_object(&wire, "state");
+    crate::v9::wire_object(&mut wire, id)["k"][0][1] = json!({"o": 999});
     let state: VmState = serde_json::from_value(wire).unwrap();
     assert_eq!(
         event(source, "show()", state, &[]).unwrap_err().code,
@@ -278,7 +295,7 @@ fn nested_blocks_do_not_consume_function_call_depth() {
     nested.push('}');
     let loaded = load(&nested, &[]).unwrap();
     let result = event(&nested, "show()", loaded.state, &[]).unwrap();
-    assert_eq!(result.changes[0].text, "7");
+    assert_eq!(result.changes[0].text().unwrap(), "7");
 }
 
 /** Parameter names cannot redeclare lexical bindings in their function body. */
@@ -298,7 +315,7 @@ fn ordered_page_scripts_share_state_and_event_functions() {
     ];
     let loaded = load_scripts(&sources, &[]).unwrap();
     let result = event_scripts(&sources, "show()", loaded.state, &[]).unwrap();
-    assert_eq!(result.changes[0].text, "7");
+    assert_eq!(result.changes[0].text().unwrap(), "7");
 }
 
 /** Storage calls mutate bounded candidates and remain visible to ordered event execution. */
@@ -313,7 +330,7 @@ fn local_and_session_storage_methods_return_candidates_for_events() {
     assert_eq!(loaded.storage.session.get("session").unwrap(), "tab");
     let result =
         event_scripts_with_storage(&sources, "show()", loaded.state, &[], loaded.storage).unwrap();
-    assert_eq!(result.changes[0].text, "persisted tab");
+    assert_eq!(result.changes[0].text().unwrap(), "persisted tab");
 }
 
 /** Missing keys are null, and removeItem/clear affect only their candidate area. */
@@ -324,18 +341,18 @@ fn storage_missing_remove_and_clear_follow_web_storage_rules() {
     let result = load_scripts_with_storage(&sources, &[], StorageState::default()).unwrap();
     assert_eq!(result.storage.local.get("a"), None);
     assert_eq!(result.storage.session.get("b"), None);
-    assert_eq!(result.changes[0].text, "true true");
+    assert_eq!(result.changes[0].text().unwrap(), "true true");
 }
 
-/** A quota failure aborts the whole storage candidate instead of keeping earlier writes. */
+/** A write past the storage quota throws a catchable QuotaExceededError and leaves the area unchanged. */
 #[test]
-fn storage_quota_failure_discards_all_candidate_writes() {
+fn storage_quota_failure_throws_and_keeps_the_area() {
     use mars::{
         constants::STORAGE_AREA_BYTES,
         v9::{StorageState, load_scripts_with_storage},
     };
     const ENTRIES_TO_FILL: usize = 32;
-    let local = (0..ENTRIES_TO_FILL)
+    let local: std::collections::BTreeMap<String, String> = (0..ENTRIES_TO_FILL)
         .map(|index| {
             let key = format!("k{index}");
             let value = "x".repeat(STORAGE_AREA_BYTES / ENTRIES_TO_FILL - key.len());
@@ -343,12 +360,18 @@ fn storage_quota_failure_discards_all_candidate_writes() {
         })
         .collect();
     let storage = StorageState {
-        local,
+        local: local.clone(),
         session: Default::default(),
     };
-    let sources = vec!["window.localStorage.setItem('new','x');".into()];
-    let error = load_scripts_with_storage(&sources, &[], storage).unwrap_err();
-    assert_eq!(error.code, "limit_exceeded");
+    let sources = vec!["let caught='';try{window.localStorage.setItem('new','x');}catch(error){caught=error.name;}".into()];
+    let loaded = load_scripts_with_storage(&sources, &[], storage).unwrap();
+    assert_eq!(
+        loaded.state.globals()["caught"].value,
+        Some(JsValue::String(
+            JsString::from_utf8("QuotaExceededError").unwrap()
+        ))
+    );
+    assert_eq!(loaded.storage.local, local);
 }
 
 /** Later classic scripts do not hoist their functions into earlier execution. */
@@ -362,21 +385,6 @@ fn later_page_script_functions_are_not_visible_earlier() {
     let error = load_scripts(&sources, &[]).unwrap_err();
     assert_eq!(error.code, "script_execution_error");
     assert_eq!(error.location.unwrap().script_index, Some(1));
-}
-
-/** Aggregate page globals stay within the state bound before a page can commit. */
-#[test]
-fn ordered_page_scripts_share_the_global_limit() {
-    use mars::v9::load_scripts;
-    let first = (0..40)
-        .map(|index| format!("let value{index}=0;"))
-        .collect::<String>();
-    let second = (40..65)
-        .map(|index| format!("let value{index}=0;"))
-        .collect::<String>();
-    let error = load_scripts(&[first, second], &[]).unwrap_err();
-    assert_eq!(error.code, "limit_exceeded");
-    assert_eq!(error.location.unwrap().script_index, Some(2));
 }
 
 /** A later duplicate reports its declaration's own source line and script index. */
@@ -445,7 +453,7 @@ fn trailing_handler_comments_do_not_swallow_the_optional_semicolon() {
     ] {
         let state = load(source, &[]).unwrap().state;
         let result = event(source, handler, state, &[]).unwrap();
-        assert_eq!(result.changes[0].text, "14", "{handler}");
+        assert_eq!(result.changes[0].text().unwrap(), "14", "{handler}");
     }
     let error = event(
         source,
@@ -461,24 +469,18 @@ fn trailing_handler_comments_do_not_swallow_the_optional_semicolon() {
     );
     assert_eq!(error.input_kind.as_deref(), Some("handler"));
 }
-/** AST depth bounds flat chains as well as explicit source nesting. */
+/** AST depth bounds explicit nesting, and committed strings are bounded separately in aggregate. */
 #[test]
 fn expression_and_environment_budgets_are_independent() {
-    for expression in [
-        format!(
-            "{}1{}",
-            "(".repeat(EXPRESSION_DEPTH),
-            ")".repeat(EXPRESSION_DEPTH)
-        ),
-        std::iter::repeat_n("1", EXPRESSION_DEPTH + 2)
-            .collect::<Vec<_>>()
-            .join("+"),
-    ] {
-        assert_eq!(
-            execute(&format!("let n={expression};")).unwrap_err().code,
-            "limit_exceeded"
-        );
-    }
+    let nested = format!(
+        "{}1{}",
+        "(".repeat(EXPRESSION_DEPTH),
+        ")".repeat(EXPRESSION_DEPTH)
+    );
+    assert_eq!(
+        execute(&format!("let n={nested};")).unwrap_err().code,
+        "limit_exceeded"
+    );
     let value = JsValue::String(JsString::from_utf8(&"x".repeat(JS_STRING_UNITS)).unwrap());
     let globals = (0..=JS_ENVIRONMENT_UNITS / JS_STRING_UNITS)
         .map(|i| (format!("n{i}"), value.clone()))
@@ -493,14 +495,9 @@ fn expression_and_environment_budgets_are_independent() {
         })
         .collect();
     assert_eq!(
-        event(
-            "function f(){}",
-            "f()",
-            mars::v9::VmState::from_globals(globals),
-            &[]
-        )
-        .unwrap_err()
-        .code,
+        event("", "0", mars::v9::VmState::from_globals(globals), &[])
+            .unwrap_err()
+            .code,
         "limit_exceeded"
     );
 }

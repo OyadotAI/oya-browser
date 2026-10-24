@@ -46,6 +46,11 @@ impl Window {
                 self.retry_allowed = false;
                 self.error = Some(error.message);
             }
+            Event::Download { id, result } => self.finish_download(id, result),
+            Event::NavigationDownload(fetched) => {
+                let id = self.downloads.start(&fetched.url);
+                self.finish_download(id, Ok(fetched));
+            }
             Event::Window(request, permit) => {
                 let id = request.id.clone();
                 if request.op == "window.appearance" {
@@ -69,19 +74,19 @@ impl Window {
                         old.inspection["tab_id"] != snapshot.inspection["tab_id"]
                     });
                 if changed {
-                    self.chrome.address.setStringValue(&NSString::from_str(
+                    self.mars.address.setStringValue(&NSString::from_str(
                         snapshot.inspection["url"].as_str().unwrap_or_default(),
                     ));
                 }
-                self.chrome.set_tabs(&snapshot.tabs, &self.canvas);
+                self.mars.set_tabs(&snapshot.tabs, &self.canvas);
+                let timed = std::time::Instant::now();
                 self.canvas.update(snapshot.clone(), human);
-                self.chrome.welcome.setHidden(snapshot.document.is_some());
-                self.chrome.mark.setHidden(snapshot.document.is_some());
-                self.chrome.back.setEnabled(snapshot.can_back && human);
-                self.chrome
-                    .forward
-                    .setEnabled(snapshot.can_forward && human);
-                self.chrome
+                crate::runtime::perf::record("ui.canvas_update", timed, String::new);
+                self.mars.welcome.setHidden(snapshot.document.is_some());
+                self.mars.mark.setHidden(snapshot.document.is_some());
+                self.mars.back.setEnabled(snapshot.can_back && human);
+                self.mars.forward.setEnabled(snapshot.can_forward && human);
+                self.mars
                     .reload
                     .setEnabled(snapshot.document.is_some() && human && !snapshot.failed);
                 self.ready = !snapshot.failed;
@@ -116,6 +121,7 @@ impl Window {
                 destination,
                 rejected_edit,
             } => {
+                let update_timed = std::time::Instant::now();
                 let profile_recovery = result
                     .as_ref()
                     .err()
@@ -142,26 +148,28 @@ impl Window {
                 let navigated = self.snapshot.as_ref().map(|old| &old.inspection["page_id"])
                     != Some(&snapshot.inspection["page_id"]);
                 if navigated || tab_changed {
-                    self.chrome.address.setStringValue(&NSString::from_str(
+                    self.mars.address.setStringValue(&NSString::from_str(
                         snapshot.inspection["url"].as_str().unwrap_or_default(),
                     ));
                 }
-                self.chrome.set_tabs(&snapshot.tabs, &self.canvas);
-                self.canvas.update(snapshot.clone(), human);
-                self.chrome.welcome.setHidden(snapshot.document.is_some());
-                self.chrome.mark.setHidden(snapshot.document.is_some());
-                self.chrome.back.setEnabled(snapshot.can_back && human);
-                self.chrome
-                    .forward
-                    .setEnabled(snapshot.can_forward && human);
-                self.chrome
+                let timed = std::time::Instant::now();
+                self.mars.set_tabs(&snapshot.tabs, &self.canvas);
+                crate::runtime::perf::record("ui.set_tabs", timed, String::new);
+                let timed = std::time::Instant::now();
+                let copy = snapshot.clone();
+                crate::runtime::perf::record("ui.snapshot_clone", timed, String::new);
+                let timed = std::time::Instant::now();
+                self.canvas.update(copy, human);
+                crate::runtime::perf::record("ui.canvas_update", timed, String::new);
+                self.mars.welcome.setHidden(snapshot.document.is_some());
+                self.mars.mark.setHidden(snapshot.document.is_some());
+                self.mars.back.setEnabled(snapshot.can_back && human);
+                self.mars.forward.setEnabled(snapshot.can_forward && human);
+                self.mars
                     .reload
                     .setEnabled(snapshot.document.is_some() && human && !snapshot.failed);
-                if self.snapshot.as_ref().map(|old| old.scroll_y) != Some(snapshot.scroll_y) {
-                    self.canvas
-                        .scrollPoint(NSPoint::new(0.0, snapshot.scroll_y));
-                    self.last_scroll = snapshot.scroll_y;
-                }
+                let previous_scroll = self.snapshot.as_ref().map(|old| old.scroll_y);
+                let runtime_scroll = snapshot.scroll_y;
                 self.snapshot = Some(snapshot);
                 if let Some((page, id, text)) = rejected_edit {
                     self.canvas.reject_edit(&page, id, &text);
@@ -172,8 +180,10 @@ impl Window {
                 }
                 if let Err(error) = &result {
                     let script_event = error.phase.is_some() && destination.is_none();
+                    // A restarted engine (CB-23) is healthy again; the person may retry by hand.
+                    let restarted = error.code == "engine_restarted";
                     self.retry_allowed =
-                        error.retryable && error.service.is_none() && !script_event;
+                        error.retryable && (error.service.is_none() || restarted) && !script_event;
                     if let Some(id) = error.invalid_node.as_deref() {
                         self.canvas.focus_invalid(*id, &error.message);
                     }
@@ -184,7 +194,7 @@ impl Window {
                             .as_ref()
                             .and_then(|snapshot| snapshot.inspection["url"].as_str())
                         {
-                            self.canvas.restore(&self.chrome.address, url);
+                            self.canvas.restore(&self.mars.address, url);
                         }
                     }
                     let script_index = error
@@ -220,7 +230,16 @@ impl Window {
                     self.error = None;
                     self.retry_allowed = true;
                 }
+                let timed = std::time::Instant::now();
                 self.layout();
+                crate::runtime::perf::record("ui.layout", timed, String::new);
+                // After layout, so a taller new page does not clamp the offset to the old height.
+                if self
+                    .scroll
+                    .adopt(previous_scroll, runtime_scroll, navigated || tab_changed)
+                {
+                    self.canvas.scrollPoint(NSPoint::new(0.0, runtime_scroll));
+                }
                 if let Some(value) = result
                     .as_mut()
                     .ok()
@@ -233,9 +252,12 @@ impl Window {
                     value["operations"]["window.appearance"] = json!({"tab_id":"string","appearance":"light|dark|system","control_epoch":"u64"});
                 }
                 if let Some(id) = agent_id {
-                    self.chrome.root.layoutSubtreeIfNeeded();
-                    self.chrome.root.displayIfNeeded();
+                    let timed = std::time::Instant::now();
+                    self.mars.root.layoutSubtreeIfNeeded();
+                    self.mars.root.displayIfNeeded();
+                    crate::runtime::perf::record("ui.display", timed, String::new);
                     self.reply(Response::new(Some(id), result));
+                    crate::runtime::perf::record("ui.update", update_timed, String::new);
                 }
                 if let Some(code) = profile_recovery
                     && self.broker.transport != Transport::Mcp

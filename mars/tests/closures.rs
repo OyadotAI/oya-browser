@@ -109,9 +109,9 @@ fn greeting_controller_persists_through_native_events_and_resets_on_reload() {
     assert_eq!(text(&page, "greeting-count"), "Greetings created: 0");
     assert_eq!(text(&page, "result"), "Your greeting appears here.");
 }
-/** A late document validation failure discards captured cells, aliases, Storage and earlier text proposals. */
+/** A handler that throws keeps the captured cells, aliases, Storage and text it changed first, as browsers do. */
 #[test]
-fn late_native_failure_rolls_back_closure_heap_storage_and_document_together() {
+fn throwing_closure_keeps_earlier_heap_storage_and_document_effects() {
     let body = "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><script>function make(){let count=0;const box={count:0};return function(fail){count=count+1;box.count=box.count+1;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count+' '+box.count;if(fail){document.getElementById('missing').textContent='fail';}};}const controller=make();function good(){controller(false);}function bad(){controller(true);}function read(){document.getElementById('out').textContent=window.localStorage.getItem('count');}</script><button id=read onclick='read()'>Read</button>";
     let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
@@ -119,33 +119,26 @@ fn late_native_failure_rolls_back_closure_heap_storage_and_document_together() {
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "1 1");
     let stale = target(&page, "good");
-    assert!(call(&mut runtime, "page.click", target(&page, "bad")).is_err());
-    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
+    let page = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
+    assert_eq!(text(&page, "out"), "2 2");
     let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-    assert_eq!(text(&page, "out"), "1");
+    assert_eq!(text(&page, "out"), "2");
     assert_eq!(
         call(&mut runtime, "page.click", stale).unwrap_err().code,
         "revision_conflict"
     );
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
-    assert_eq!(text(&page, "out"), "2 2");
+    assert_eq!(text(&page, "out"), "3 3");
     let output = page.to_string();
     assert!(!output.contains("scope_id"));
     assert!(!output.contains("next_function"));
     assert!(!output.contains("function self"));
 }
-/** Peak string exhaustion must discard already proposed private counter, heap, Storage and text changes. */
+/** Exhausting the work budget stops the handler uncatchably and discards its counter, heap, Storage and text changes. */
 #[test]
-fn iteration_budget_failure_rolls_back_all_native_candidates() {
-    let loops = "for(let t=s;;){break;}".repeat(4);
-    let script = format!(
-        "let s='{}';function make(){{let count=0;const box={{n:0}};return fail=>{{count=count+1;box.n=box.n+1;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count+' '+box.n;if(fail){{{loops}}}}};}}const controller=make();function good(){{controller(false);}}function bad(){{controller(true);}}function read(){{document.getElementById('out').textContent=window.localStorage.getItem('count');}}",
-        "x".repeat(mars::constants::JS_STRING_UNITS)
-    );
-    let body = format!(
-        "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>{script}</script>"
-    );
-    let fixture = fixture(&body);
+fn work_budget_failure_rolls_back_all_native_candidates() {
+    let body = "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>function make(){let count=0;const box={n:0};return fail=>{count=count+1;box.n=box.n+1;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count+' '+box.n;if(fail){try{for(;;){}}catch(error){}}};}const controller=make();function good(){controller(false);}function bad(){controller(true);}function read(){document.getElementById('out').textContent=window.localStorage.getItem('count');}</script>";
+    let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
     let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
@@ -170,9 +163,18 @@ fn native_capabilities_expose_closures_and_their_bounds() {
         "arrow functions with simple parameters, expression/block bodies and lexical capture"
     ));
     assert!(v9.contains("receiver-aware ordinary function calls; this expressions; lexical this capture in arrows; supported strict and non-strict receiver behavior"));
-    assert_eq!(capabilities["limits"]["vm_environments"], 512);
-    assert_eq!(capabilities["limits"]["vm_functions"], 512);
-    assert_eq!(capabilities["limits"]["vm_captured_bindings"], 2048);
+    assert_eq!(
+        capabilities["limits"]["vm_environments"],
+        mars::constants::VM_ENVIRONMENTS
+    );
+    assert_eq!(
+        capabilities["limits"]["vm_functions"],
+        mars::constants::VM_FUNCTIONS
+    );
+    assert_eq!(
+        capabilities["limits"]["vm_captured_bindings"],
+        mars::constants::VM_BINDINGS
+    );
     assert!(
         capabilities["unavailable"]
             .as_array()
@@ -180,19 +182,19 @@ fn native_capabilities_expose_closures_and_their_bounds() {
             .contains(&json!("full_javascript"))
     );
 }
-/** A controller retained only by this edges commits or rolls back with global properties, Storage and DOM. */
+/** A controller retained only by this edges keeps its global property, Storage and DOM effects when it later throws. */
 #[test]
-fn receiver_candidates_commit_and_roll_back_across_the_three_native_services() {
+fn receiver_candidates_commit_across_the_three_native_services_even_when_the_handler_throws() {
     let body = "<p id=out>initial</p><button id=good onclick='good()'>Good</button><button id=bad onclick='bad()'>Bad</button><button id=read onclick='read()'>Read</button><script>function make(){return {n:0,create:function(){'use strict';return fail=>{this.n=this.n+1;globalThis.last=this.n;window.localStorage.setItem('count',this.n);document.getElementById('out').textContent=this.n;if(fail){document.getElementById('missing').textContent='fail';}};}}.create();}const saved=make();function good(){saved(false);}function bad(){saved(true);}function read(){document.getElementById('out').textContent=last+' '+window.localStorage.getItem('count');}</script>";
     let fixture = fixture(body);
     let mut runtime = runtime(&fixture.url);
     let page = call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
     assert_eq!(text(&page, "out"), "1");
-    assert!(call(&mut runtime, "page.click", target(&page, "bad")).is_err());
-    assert_eq!(call(&mut runtime, "page.inspect", json!({})).unwrap(), page);
-    let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
-    assert_eq!(text(&page, "out"), "1 1");
-    let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
+    let page = call(&mut runtime, "page.click", target(&page, "bad")).unwrap();
     assert_eq!(text(&page, "out"), "2");
+    let page = call(&mut runtime, "page.click", target(&page, "read")).unwrap();
+    assert_eq!(text(&page, "out"), "2 2");
+    let page = call(&mut runtime, "page.click", target(&page, "good")).unwrap();
+    assert_eq!(text(&page, "out"), "3");
 }

@@ -1,10 +1,11 @@
 /** Owned form algorithms produce literal requests shared by humans and native tools. */
 use super::{Document, Node};
 use crate::{
-    constants::FORM_BYTES,
+    constants::{FORM_BYTES, TEXT_BYTES},
     protocol::{EngineError, EngineResult},
 };
-use mars_core::http::Method;
+use mars_core::{dom::local_position, http::Method};
+use std::{collections::BTreeMap, rc::Rc};
 
 /// A request proposal contains data, never permission to send it.
 #[derive(Clone)]
@@ -25,14 +26,24 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
     {
         return Err(EngineError::limit("form controls", 256));
     }
-    for node in &document.nodes {
-        if node.tag == "form" && ancestor(document, node, "form").is_some() {
-            return Err(EngineError::unsupported("Nested forms are not supported."));
-        }
-        if node.tag == "input" && node.attributes.contains_key("pattern") {
-            return Err(EngineError::unsupported(
-                "Pattern validation is not supported yet.",
-            ));
+    for (present, message) in [
+        (
+            document
+                .nodes
+                .iter()
+                .any(|n| n.tag == "form" && ancestor(document, n, "form").is_some()),
+            "Nested forms submit with their nearest form.",
+        ),
+        (
+            document
+                .nodes
+                .iter()
+                .any(|n| n.tag == "input" && n.attributes.contains_key("pattern")),
+            "Input pattern constraints are not checked yet.",
+        ),
+    ] {
+        if present {
+            diagnose(document, message);
         }
     }
     let disabled = document
@@ -51,8 +62,7 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
         .map(|n| n.local_id)
         .collect::<Vec<_>>();
     for id in radios {
-        let copy = document.clone();
-        *document = set_checked(&copy, id, true)?;
+        check(document, id, true)?;
     }
     let selects = document
         .nodes
@@ -61,6 +71,9 @@ pub(super) fn normalize(document: &mut Document) -> EngineResult<()> {
         .map(|n| n.local_id)
         .collect::<Vec<_>>();
     for id in selects {
+        if document.nodes[id].attributes.contains_key("multiple") {
+            continue;
+        }
         let options = options(document, id);
         let selected = options
             .iter()
@@ -91,7 +104,7 @@ pub fn form_owner(document: &Document, node: &Node) -> Option<usize> {
 fn ancestor(document: &Document, node: &Node, tag: &str) -> Option<usize> {
     let mut parent = node.parent;
     while let Some(id) = parent {
-        let item = document.nodes.iter().find(|n| n.local_id == id)?;
+        let item = &document.nodes[local_position(&document.nodes, id, |n| n.local_id)?];
         if item.tag == tag {
             return Some(id);
         }
@@ -104,24 +117,191 @@ pub fn label(document: &Document, node: &Node) -> String {
     if let Some(name) = node.attributes.get("aria-label") {
         return name.clone();
     }
+    let owner = ancestor(document, node, "label");
     let labels = document
         .nodes
         .iter()
         .filter(|label| {
             label.tag == "label"
                 && (label.attributes.get("for") == Some(&node.html_id)
-                    || ancestor(document, node, "label") == Some(label.local_id))
+                    || owner == Some(label.local_id))
         })
         .map(|label| text(document, label))
         .collect::<Vec<_>>()
         .join(" ");
+    let has_own = has_own_text(document, node);
+    let label = choose_label(labels, node, has_own, || text(document, node));
+    capped(&label, TEXT_BYTES).to_owned()
+}
+/** One deduplicated, bounded parse note; normalization runs once per parsed page. */
+fn diagnose(document: &mut Document, message: &str) {
+    let diagnostics = &mut document.diagnostics;
+    if diagnostics.len() < crate::constants::DIAGNOSTICS
+        && !diagnostics.iter().any(|d| d == message)
+    {
+        diagnostics.push(message.into());
+    }
+}
+/** Association text wins, then the node's own text, then its placeholder. */
+fn choose_label(
+    labels: String,
+    node: &Node,
+    has_own: bool,
+    own: impl FnOnce() -> String,
+) -> String {
     if !labels.is_empty() {
         labels
-    } else if !node.text.is_empty() {
-        text(document, node)
+    } else if has_own {
+        own()
     } else {
         node.placeholder.clone()
     }
+}
+/// An element's own text run: its leading text plus its direct `#text` children. Script-inserted
+/// markup keeps text in child nodes, so reading `node.text` alone made inserted links nameless.
+pub fn own_text(document: &Document, node: &Node) -> String {
+    // Page-parsed text stays byte-exact; only split-off child runs are joined.
+    if !node.text.is_empty() {
+        return node.text.clone();
+    }
+    document
+        .nodes
+        .iter()
+        .filter(|n| n.parent == Some(node.local_id) && n.tag == "#text")
+        .map(|n| n.text.trim())
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+/** Whether a node has any own text run, so container elements without one stay unnamed. */
+fn has_own_text(document: &Document, node: &Node) -> bool {
+    !node.text.is_empty()
+        || document
+            .nodes
+            .iter()
+            .any(|n| n.parent == Some(node.local_id) && n.tag == "#text" && !n.text.is_empty())
+}
+impl Document {
+    /// Every node's `label`, in node order, cut to TEXT_BYTES. Inspection labels every node, and
+    /// calling `label` per node rescans the document each time, which at the node limit outlives
+    /// the call deadline. Every descendant of a wrapping label repeats its text, so uncut names
+    /// would cost NODES times STATIC_TEXT_TOTAL_BYTES.
+    pub fn labels(&self) -> Vec<String> {
+        let mut labels = Labels::new(self);
+        (0..self.nodes.len())
+            .map(|index| labels.capped_label(index, TEXT_BYTES))
+            .collect()
+    }
+}
+/** Indexes built once so labeling every node costs nodes times depth, not nodes squared. */
+struct Labels<'a> {
+    /** The document being labeled. */
+    document: &'a Document,
+    /** Non-control child positions by parent identity, in node order, as `text` walks them. */
+    children: BTreeMap<usize, Vec<usize>>,
+    /** Label positions by their `for` value, in node order. */
+    by_for: BTreeMap<&'a str, Vec<usize>>,
+    /** Label positions by identity, so a wrapping label is found without a scan. */
+    by_id: BTreeMap<usize, Vec<usize>>,
+    /** Each position's `text`, computed once and shared because every ancestor's text repeats it. */
+    texts: Vec<Option<Rc<str>>>,
+}
+impl<'a> Labels<'a> {
+    /** One walk over the nodes fills every index. */
+    fn new(document: &'a Document) -> Self {
+        let mut labels = Self {
+            document,
+            children: BTreeMap::new(),
+            by_for: BTreeMap::new(),
+            by_id: BTreeMap::new(),
+            texts: vec![None; document.nodes.len()],
+        };
+        for (index, node) in document.nodes.iter().enumerate() {
+            labels.index(index, node);
+        }
+        labels
+    }
+    /** Records one node in the child and label indexes. */
+    fn index(&mut self, index: usize, node: &'a Node) {
+        if let Some(parent) = node.parent.filter(|_| !control(node)) {
+            self.children.entry(parent).or_default().push(index);
+        }
+        if node.tag == "label" {
+            if let Some(target) = node.attributes.get("for") {
+                self.by_for.entry(target).or_default().push(index);
+            }
+            self.by_id.entry(node.local_id).or_default().push(index);
+        }
+    }
+    /** `label` cut to `cap` bytes on a char boundary, built without joining the uncut texts. */
+    fn capped_label(&mut self, index: usize, cap: usize) -> String {
+        let node = &self.document.nodes[index];
+        if let Some(name) = node.attributes.get("aria-label") {
+            return capped(name, cap).to_owned();
+        }
+        let mut found = self
+            .by_for
+            .get(node.html_id.as_str())
+            .cloned()
+            .unwrap_or_default();
+        if let Some(owner) = ancestor(self.document, node, "label") {
+            found.extend(self.by_id.get(&owner).into_iter().flatten());
+        }
+        found.sort_unstable();
+        found.dedup();
+        let mut labels = String::new();
+        for (position, label) in found.into_iter().enumerate() {
+            if position > 0 {
+                labels.push(' ');
+            }
+            labels.push_str(capped(&self.text(label), cap - labels.len().min(cap)));
+            if labels.len() >= cap {
+                break;
+            }
+        }
+        let labels = capped(&labels, cap).to_owned();
+        let has_own = !node.text.is_empty()
+            || self
+                .children
+                .get(&node.local_id)
+                .into_iter()
+                .flatten()
+                .any(|&child| {
+                    let child = &self.document.nodes[child];
+                    child.tag == "#text" && !child.text.is_empty()
+                });
+        choose_label(labels, node, has_own, || {
+            capped(&self.text(index), cap).to_owned()
+        })
+    }
+    /** The same value `text` returns, memoized; recursion is bounded by validated depth. */
+    fn text(&mut self, index: usize) -> Rc<str> {
+        if let Some(text) = &self.texts[index] {
+            return Rc::clone(text);
+        }
+        let node = &self.document.nodes[index];
+        let mut result = node.text.clone();
+        for child in self
+            .children
+            .get(&node.local_id)
+            .cloned()
+            .unwrap_or_default()
+        {
+            result.push(' ');
+            result.push_str(&self.text(child));
+        }
+        let result: Rc<str> = result
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .into();
+        self.texts[index] = Some(Rc::clone(&result));
+        result
+    }
+}
+/** The longest prefix of `text` within `cap` bytes that ends on a char boundary. */
+fn capped(text: &str, cap: usize) -> &str {
+    &text[..text.floor_char_boundary(cap)]
 }
 /** Text extraction cannot include values from password/hidden/native fields. */
 fn text(document: &Document, node: &Node) -> String {
@@ -150,6 +330,12 @@ fn options(document: &Document, id: usize) -> Vec<&Node> {
 }
 /// Idempotent checked state prevents agents from blindly toggling a checkbox.
 pub fn set_checked(document: &Document, id: usize, checked: bool) -> EngineResult<Document> {
+    let mut candidate = document.clone();
+    check(&mut candidate, id, checked)?;
+    Ok(candidate)
+}
+/** In place, so normalizing many checked radios does not copy the whole document per radio. */
+fn check(document: &mut Document, id: usize, checked: bool) -> EngineResult<()> {
     let node = document
         .nodes
         .iter()
@@ -160,24 +346,34 @@ pub fn set_checked(document: &Document, id: usize, checked: bool) -> EngineResul
     if node.disabled || node.hidden() {
         return Err(invalid());
     }
-    let mut candidate = document.clone();
     let owner = form_owner(document, node);
     let name = node.attributes.get("name");
-    for item in &mut candidate.nodes {
-        if item.local_id == id {
-            item.checked = checked;
-        } else if checked
-            && node.input_type() == "radio"
-            && name.is_some()
-            && item.tag == "input"
-            && item.input_type() == "radio"
-            && item.attributes.get("name") == name
-            && form_owner(document, item) == owner
-        {
-            item.checked = false;
+    let states = document
+        .nodes
+        .iter()
+        .map(|item| {
+            if item.local_id == id {
+                Some(checked)
+            } else if checked
+                && node.input_type() == "radio"
+                && name.is_some()
+                && item.tag == "input"
+                && item.input_type() == "radio"
+                && item.attributes.get("name") == name
+                && form_owner(document, item) == owner
+            {
+                Some(false)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for (item, state) in document.nodes.iter_mut().zip(states) {
+        if let Some(state) = state {
+            item.checked = state;
         }
     }
-    Ok(candidate)
+    Ok(())
 }
 /// Select one enabled option by native option identity, including duplicate author values.
 pub fn select(document: &Document, id: usize, option: usize) -> EngineResult<Document> {

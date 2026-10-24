@@ -1,40 +1,174 @@
 /** Unsupported and forged private layout inputs fail before native geometry is published. */
 use super::*;
 
-/** Unsupported flex modes and unresolved values cannot silently turn into block flow. */
+/** Reversed directions, reversed wrapping, percentage gaps and baseline alignment are approximated
+ * (source order, start alignment, the percentage part dropped) without a diagnostic. */
 #[test]
-fn unsupported_layout_declarations_fail_closed() {
+fn approximated_flex_values_style_without_a_diagnostic() {
     for css in [
-        "display:inline-flex",
         "display:flex;flex-direction:row-reverse",
         "display:flex;flex-wrap:wrap-reverse",
-        "display:flex;flex-direction:column;flex-wrap:wrap",
         "display:flex;gap:10%",
-        "display:flex;flex-basis:calc(100px - 2px)",
         "display:flex;align-items:baseline",
     ] {
+        let source = format!("<div style='{css}'><p>a</p><p>b</p></div>");
+        let document = compute_styles(&parse(&source).unwrap(), &[]).unwrap();
+        assert!(document.diagnostics.is_empty(), "{css}");
+        assert_eq!(render(&document, 500.0).unwrap().items.len(), 3, "{css}");
+    }
+}
+
+/** `inline-flex` is a supported atomic inline flex container, so it styles without a diagnostic. */
+#[test]
+fn inline_flex_is_an_atomic_inline_flex_container() {
+    let source = "<div style='display:inline-flex'><p>a</p><p>b</p></div>";
+    let document = compute_styles(&parse(source).unwrap(), &[]).unwrap();
+    assert!(document.diagnostics.is_empty());
+    let style = &document.nodes[0].style;
+    assert!(style.display_flex && style.inline_block);
+    let display = render(&document, 500.0).unwrap();
+    assert_eq!(display.items.len(), 3);
+    assert_eq!(display.items[1].y, display.items[2].y);
+}
+
+/** Unsupported flex modes and values are dropped or approximated with a named diagnostic. */
+#[test]
+fn unsupported_layout_declarations_degrade_with_a_diagnostic() {
+    for (css, diagnostic) in [
+        (
+            "display:flex;flex-direction:column;flex-wrap:wrap",
+            "Wrapped flex columns lay out without wrapping.",
+        ),
+        (
+            "display:flex;flex-basis:calc(100px - 2px)",
+            "A CSS value for flex-basis is not supported and was ignored.",
+        ),
+    ] {
+        let source = format!("<div style='{css}'><p>a</p><p>b</p></div>");
+        let document = compute_styles(&parse(&source).unwrap(), &[]).unwrap();
+        assert_eq!(document.diagnostics, [diagnostic], "{css}");
+        assert!(document.nodes[0].style.display_flex, "{css}");
+        let display = render(&document, 500.0).unwrap();
+        assert_eq!(display.items.len(), 3, "{css}");
+    }
+}
+
+/** A wrapped column stacks its items in one column, as nowrap would, without overlap. */
+#[test]
+fn wrapped_columns_lay_out_as_one_nowrap_column() {
+    let source =
+        "<div style='display:flex;flex-direction:column;flex-wrap:wrap'><p>a</p><p>b</p></div>";
+    let display = render(
+        &compute_styles(&parse(source).unwrap(), &[]).unwrap(),
+        500.0,
+    )
+    .unwrap();
+    let (a, b) = (&display.items[1], &display.items[2]);
+    assert_eq!(a.x, b.x);
+    assert!(b.y >= a.y + a.height);
+}
+
+/** Flex over tables or table structure falls back to block flow, keeping every box, with a diagnostic. */
+#[test]
+fn unsupported_flex_tree_shapes_fall_back_to_block_flow() {
+    for (body, boxes) in [
+        (
+            "<div style='display:flex'><table><tr><td>cell</td></tr></table></div>",
+            4,
+        ),
+        (
+            "<table style='display:flex'><tr><td>cell</td></tr></table>",
+            3,
+        ),
+    ] {
+        let document = compute_styles(&parse(body).unwrap(), &[]).unwrap();
         assert_eq!(
-            compute_styles(&parse(&format!("<div style='{css}'></div>")).unwrap(), &[])
-                .unwrap_err()
-                .code,
-            "unsupported_feature",
-            "{css}"
+            document.diagnostics,
+            ["A flex container over text, tables or table structure was laid out as block flow."],
+            "{body}"
+        );
+        let display = render(&document, 500.0).unwrap();
+        assert_eq!(display.items.len(), boxes, "{body}");
+        // Block flow keeps the first child at the container's left edge; a table's own
+        // border-spacing may inset its cells.
+        let first = &display.items[0];
+        assert_eq!(display.items[1].x, first.x, "{body}");
+        assert!(
+            display.items[1..]
+                .iter()
+                .all(|child| child.x >= first.x && child.y >= first.y),
+            "{body}"
         );
     }
 }
 
-/** Mixed anonymous text runs and flex table participation require unimplemented layout models. */
+/** Bare text runs (leading or trailing) and content `<button>` elements participate in flex layout without diagnostics. */
 #[test]
-fn unsupported_flex_tree_shapes_fail_explicitly() {
+fn flex_containers_wrap_bare_text_and_content_buttons_as_flex_items() {
     for body in [
-        "<div style='display:flex'>before<div>child</div></div>",
-        "<div style='display:flex'><table><tr><td>cell</td></tr></table></div>",
-        "<table style='display:flex'><tr><td>cell</td></tr></table>",
+        "<div style='display:flex;gap:8px'>before<div>child</div></div>",
+        "<div style='display:flex;gap:8px'><div>child</div>after</div>",
+        "<button style='display:flex;gap:8px'><span>Icon</span>Save</button>",
     ] {
-        let result = compute_styles(&parse(body).unwrap(), &[])
-            .and_then(|document| render(&document, 500.0));
-        assert_eq!(result.unwrap_err().code, "unsupported_feature", "{body}");
+        let document = compute_styles(&parse(body).unwrap(), &[]).unwrap();
+        assert!(document.diagnostics.is_empty(), "{body}");
+        let display = render(&document, 500.0).unwrap();
+        assert!(display.items[1].x >= display.items[0].x, "{body}");
     }
+    let lead = render(
+        &compute_styles(
+            &parse("<div style='display:flex;gap:8px'>before<div>child</div></div>").unwrap(),
+            &[],
+        )
+        .unwrap(),
+        500.0,
+    )
+    .unwrap();
+    assert!(!lead.items[0].lines.is_empty());
+    assert!(lead.items[1].x > lead.items[0].x);
+}
+
+/** Replaced images, percentage radii/insets/transforms, typography decorations and SVG stroke/fill rules resolve into the display list. */
+#[test]
+fn day_to_day_visual_upgrades_resolve_into_display_items() {
+    let html = concat!(
+        "<div style='position:relative;width:200px;height:100px'>",
+        "<img src='a.png' width='80' height='80' style='object-fit:cover;object-position:25% 75%;border-radius:50%;padding:4px'>",
+        "<div style='position:absolute;top:50%;left:50%;transform:translate(-50%, -50%);width:80px;height:20px'><em><u><s>Badge</s></u></em></div>",
+        "<svg width='24' height='24' viewBox='0 0 24 24'><path d='M2 12 L22 12' style='stroke:#112233;stroke-width:2px;stroke-linecap:round;fill-rule:evenodd;fill-opacity:50%;stroke-opacity:0.75'/></svg>",
+        "</div>"
+    );
+    let document = compute_styles(&parse(html).unwrap(), &[]).unwrap();
+    assert!(
+        document.diagnostics.is_empty(),
+        "{:?}",
+        document.diagnostics
+    );
+    let display = render(&document, 500.0).unwrap();
+    let img = display.items.iter().find(|item| item.tag == "img").unwrap();
+    assert_eq!(img.object_fit, mars::document::ObjectFit::Cover);
+    assert_eq!(img.object_position, [0.0, 25.0, 0.0, 75.0]);
+    assert!(img.radius[0] >= 40.0);
+    assert!(img.content_box.is_some());
+
+    let badge = display
+        .items
+        .iter()
+        .find(|item| item.lines.iter().any(|l| l.text.contains("Badge")))
+        .unwrap();
+    assert!((badge.x - (display.items[0].x + 100.0 - 40.0)).abs() < 1e-6);
+    assert!((badge.y - (display.items[0].y + 50.0 - 10.0)).abs() < 1e-6);
+    assert!(badge.italic);
+    assert!(badge.underline);
+    assert!(badge.strikethrough);
+
+    let svg = display.items.iter().find(|item| item.tag == "svg").unwrap();
+    assert_eq!(svg.vector.len(), 1);
+    let path = &svg.vector[0];
+    assert_eq!(path.line_cap, mars::document::LineCap::Round);
+    assert_eq!(path.fill_rule, mars::document::FillRule::EvenOdd);
+    assert!((path.fill_opacity - 0.5).abs() < 1e-6);
+    assert!((path.stroke_opacity - 0.75).abs() < 1e-6);
 }
 
 /** Private wire data cannot bypass CSS numeric ranges and poison native geometry. */

@@ -1,0 +1,16 @@
+<!DOCTYPE html><html><head><title>Embeds</title></head><body>
+<h1>Media</h1>
+<iframe id="yt" width="560" height="315" src="https://www.youtube.com/embed/x" title="YouTube video player" allow="autoplay" allowfullscreen><p>inner text never shows</p></iframe>
+<iframe id="pixel" src="https://tracker.example/p" width="0" height="0" style="display:none"></iframe>
+<video id="clip" controls width="640" poster="poster.jpg"><source src="clip.webm" type="video/webm"><track kind="captions" src="en.vtt" srclang="en"><p>Your browser cannot play this. <a href="clip.webm">Download the video</a>.</p></video>
+<video id="bare" src="bare.mp4"></video>
+<audio id="podcast" controls src="ep1.mp3"></audio>
+<audio id="silent" src="ping.mp3"></audio>
+<canvas id="chart" width="400" height="200">A chart of downloads.</canvas>
+<canvas id="blank"></canvas>
+<object data="doc.pdf" type="application/pdf" width="100%" height="500"><a href="doc.pdf">Read the PDF</a></object>
+<embed src="game.swf" width="200" height="100">
+<picture><source srcset="hero.avif" type="image/avif"><img src="hero.jpg" alt="Hero image"></picture>
+<map name="m"><area shape="rect" coords="0,0,10,10" href="a.html" alt="A"></map>
+<p>After the media.</p>
+</body></html>

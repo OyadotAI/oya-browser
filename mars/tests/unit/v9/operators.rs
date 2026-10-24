@@ -1,7 +1,7 @@
 /** Ordinary expression operators preserve references, bounded evaluation and transactional native state. */
 use mars::{
     constants::EXPRESSION_DEPTH,
-    v9::{JsValue, VmState, event, execute, load},
+    v9::{VmState, event, execute, load},
 };
 
 /** Native text proposals expose public expression behavior without a privileged evaluation API. */
@@ -83,37 +83,25 @@ fn prefix_and_postfix_updates_use_numeric_results_for_primitive_values() {
 /** Postfix return values retain IEEE negative zero even though the stored value advances to one. */
 #[test]
 fn postfix_preserves_negative_zero_in_the_returned_number() {
-    let wire = serde_json::to_value(
-        load("var value=-0;var previous=value++;", &[])
-            .unwrap()
-            .state,
-    )
-    .unwrap();
     assert_eq!(
-        wire["functions"]["previous"]["value"],
-        serde_json::to_value(JsValue::Number(-0.0)).unwrap()
-    );
-    assert_eq!(
-        wire["functions"]["value"]["value"],
-        serde_json::to_value(JsValue::Number(1.0)).unwrap()
+        result(
+            "var value=-0;var previous=value++;",
+            "(1/previous)+' '+value"
+        ),
+        "-Infinity 1"
     );
 }
 
-/** Objects and functions cannot silently become NaN when an operator requires primitive conversion. */
+/** Objects and functions convert through ToPrimitive in arithmetic compounds and updates, as in JavaScript. */
 #[test]
-fn arithmetic_compounds_and_updates_refuse_unsupported_object_conversion() {
-    for source in [
-        "var x={};x++;",
-        "var x=function(){};++x;",
-        "var x=1;x+={};",
-        "var x=1;x*=function(){};",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
+fn arithmetic_compounds_and_updates_convert_objects_through_to_primitive() {
+    assert_eq!(
+        result(
+            "var x={};x++;var y=function(){};++y;var z=1;z+={};var w=1;w*=function(){};",
+            "[x,y,z,w].join()"
+        ),
+        "NaN,NaN,1[object Object],NaN"
+    );
 }
 
 /** Plain stores defer TDZ/const checks until RHS evaluation while compounds must read their old value first. */
@@ -123,7 +111,7 @@ fn plain_and_compound_assignment_preserve_reference_and_store_error_order() {
         execute("x=missing();let x;")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("is not defined")
     );
     assert!(
         execute("x+=missing();let x;")
@@ -135,34 +123,22 @@ fn plain_and_compound_assignment_preserve_reference_and_store_error_order() {
         execute("const x=1;x+=missing();")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("is not defined")
     );
     assert!(
         execute("const x=1;x++;")
             .unwrap_err()
             .message
-            .contains("const binding")
+            .contains("Assignment to constant variable")
     );
     assert!(
         execute("const x=1;x+=2;")
             .unwrap_err()
             .message
-            .contains("const binding")
+            .contains("Assignment to constant variable")
     );
     assert_eq!(
         execute("'use strict';missing=1;").unwrap_err().code,
-        "script_execution_error"
-    );
-    assert_eq!(
-        execute("const f=function self(){self=1;};f();")
-            .unwrap_err()
-            .code,
-        "unsupported_feature"
-    );
-    assert_eq!(
-        execute("'use strict';const value=(missing=(globalThis.missing=1));")
-            .unwrap_err()
-            .code,
         "script_execution_error"
     );
     assert_eq!(
@@ -200,7 +176,7 @@ fn function_metadata_stores_preserve_sloppy_results_and_strict_refusals() {
     );
 }
 
-/** Typeof suppresses only an ordinary unresolved identifier, preserving TDZ and unavailable host boundaries. */
+/** Typeof suppresses only an ordinary unresolved identifier, preserving TDZ; absent host APIs are undefined. */
 #[test]
 fn typeof_distinguishes_missing_identifiers_tdz_primitives_and_owned_callables() {
     assert_eq!(
@@ -220,19 +196,15 @@ fn typeof_distinguishes_missing_identifiers_tdz_primitives_and_owned_callables()
         execute("const observed=typeof missing.value;")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("is not defined")
     );
-    for source in [
-        "const x=typeof process;",
-        "const x=typeof fetch;",
-        "function f(){return typeof arguments;}f();",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
+    assert_eq!(
+        result(
+            "function f(){return typeof arguments;}",
+            "typeof process+' '+typeof fetch+' '+f()"
+        ),
+        "undefined function object"
+    );
     assert!(execute("const x=typeof null.value;").is_err());
     assert_eq!(
         result(
@@ -259,7 +231,7 @@ fn void_evaluates_once_and_returns_undefined_for_any_supported_value() {
         execute("const value=void missing;")
             .unwrap_err()
             .message
-            .contains("Binding is not defined")
+            .contains("is not defined")
     );
 }
 
@@ -294,7 +266,9 @@ fn conditional_and_assignment_function_sites_survive_serialized_events() {
         serde_json::from_value(serde_json::to_value(load(source, &[]).unwrap().state).unwrap())
             .unwrap();
     assert_eq!(
-        event(source, "run()", state, &[]).unwrap().changes[0].text,
+        event(source, "run()", state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
         "1 2 3"
     );
 }
@@ -306,7 +280,7 @@ fn updates_and_compounds_preserve_every_supported_reference_kind_across_events()
     let mut state = load(source, &[]).unwrap().state;
     for expected in ["2 2 1 1", "4 4 2 2", "6 6 3 3"] {
         let executed = event(source, "run()", state, &[]).unwrap();
-        assert_eq!(executed.changes[0].text, expected);
+        assert_eq!(executed.changes[0].text().unwrap(), expected);
         state = executed.state;
     }
 }
@@ -332,38 +306,44 @@ fn assignment_conditional_and_nested_argument_chains_share_expression_depth_limi
     }
 }
 
-/** Ordinary operators cannot turn inline handlers or native DOM fields into a general authority surface. */
+/** Inline handlers are ordinary statements, and DOM text fields take compound and update operators. */
 #[test]
-fn handlers_and_native_dom_writes_keep_their_existing_restricted_grammar() {
-    let source = "var count=0;function run(){count++;}";
+fn handlers_and_native_dom_writes_accept_ordinary_operators() {
+    let source = "var count=0;function run(){count++;}function read(){document.getElementById('out').textContent=count;}";
     let state = load(source, &[]).unwrap().state;
-    for handler in ["count++", "count=1", "count+=1", "this.run()"] {
-        assert!(
-            event(source, handler, state.clone(), &[]).is_err(),
-            "{handler}"
-        );
-    }
-    for source in [
-        "document.getElementById('out').textContent+='x';",
-        "document.getElementById('out').textContent++;",
-    ] {
-        assert!(execute(source).is_err(), "{source}");
-    }
+    let executed = event(
+        source,
+        "count++;count=count+1;count+=1;this.run()",
+        state,
+        &[],
+    )
+    .unwrap();
+    let read = event(source, "read()", executed.state, &[]).unwrap();
+    assert_eq!(read.changes[0].text().unwrap(), "4");
+    assert_eq!(
+        execute("document.getElementById('out').textContent='a';document.getElementById('out').textContent+='x';").unwrap()
+            .last()
+            .unwrap()
+            .text,
+        "ax"
+    );
 }
 
-/** Unsupported targets and longer operator families cannot be reinterpreted as shorter supported expressions. */
+/** Invalid assignment targets are parse errors; logical, exponent and shift compounds are ordinary operators. */
 #[test]
-fn invalid_reference_targets_and_unsupported_operator_families_fail_before_execution() {
-    for source in [
-        "1=2;",
-        "const f=()=>1;f()++;",
-        "var a=1,b=2;(true?a:b)+=1;",
-        "var a=1;a**=2;",
-        "var a=1;a&&=2;",
-        "var a=1;a||=2;",
-        "var a=1;a??=2;",
-        "var a=1;a<<=2;",
-    ] {
-        assert!(execute(source).is_err(), "{source}");
+fn invalid_reference_targets_fail_and_every_compound_operator_runs() {
+    for source in ["1=2;", "const f=()=>1;f()++;", "var a=1,b=2;(true?a:b)+=1;"] {
+        assert_eq!(
+            execute(source).unwrap_err().code,
+            "script_syntax_error",
+            "{source}"
+        );
     }
+    assert_eq!(
+        result(
+            "var a=3;a**=2;var b=0;b&&=2;var c=0;c||=2;var d=null;d??=2;var e=1;e<<=2;",
+            "[a,b,c,d,e].join()"
+        ),
+        "9,0,2,2,4"
+    );
 }

@@ -26,7 +26,10 @@ impl Runtime {
         self.change_context(context, permit)
     }
     /** Observation captures an existing grant and never manufactures a human or agent owner. */
-    fn presentation_permit(&self, supplied: Option<Permit>) -> EngineResult<Option<Permit>> {
+    pub(in crate::runtime) fn presentation_permit(
+        &self,
+        supplied: Option<Permit>,
+    ) -> EngineResult<Option<Permit>> {
         let Some(shared) = &self.authority else {
             return Ok(None);
         };
@@ -52,9 +55,9 @@ impl Runtime {
         }
         let mut candidate = self.page.clone();
         if let Some(page) = candidate.as_mut() {
-            self.prepare_presentation(page, context)?;
+            // The generation advances first, so the presentation's kept inspection names it.
             page.layout_generation = page.layout_generation.saturating_add(1);
-            page.publishable()?;
+            self.prepare_presentation(page, context)?;
         }
         self.commit_context(context, candidate, permit)
     }

@@ -15,32 +15,6 @@ pub(super) fn syntax(location: SourceLocation, reason: &str) -> EngineError {
         "parse",
     )
 }
-/** Recognized features fail explicitly rather than acquiring accidental subset semantics. */
-pub(super) fn unsupported(location: SourceLocation, feature: &str) -> EngineError {
-    located(
-        EngineError::unsupported(format!(
-            "This JavaScript feature is not supported yet: {feature}. Line {}, column {}.",
-            location.line, location.column
-        )),
-        location,
-        "parse",
-    )
-}
-/** Unbound names and invalid VM operations never include variable or field values. */
-pub(super) fn execution(location: SourceLocation, reason: &str) -> EngineError {
-    located(
-        EngineError::new(
-            "script_execution_error",
-            format!(
-                "Script execution failed at line {}, column {}: {reason}.",
-                location.line, location.column
-            ),
-            "Correct the script; no script changes were applied.",
-        ),
-        location,
-        "execute",
-    )
-}
 /** Budget and DOM failures retain their stable error classification. */
 pub(super) fn located(
     mut error: EngineError,

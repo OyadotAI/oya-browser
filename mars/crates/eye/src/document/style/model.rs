@@ -2,6 +2,7 @@
 use {
     super::flex_model::*,
     super::formatting::{ColorScheme, LineHeight},
+    super::visual_model::*,
     crate::document::Appearance,
     serde::{Deserialize, Serialize},
 };
@@ -10,6 +11,12 @@ use {
 pub enum StyleSource {
     Inline(String),
     Linked(String),
+    /// A linked sheet with a `media` attribute: once fetched it applies as `@media <media> { }`,
+    /// so the cascade evaluates the query against the viewport like any other media rule.
+    LinkedMedia {
+        href: String,
+        media: String,
+    },
 }
 /// One computed style is shared by rendering, native widgets and action guards.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -17,6 +24,9 @@ pub enum StyleSource {
 pub struct ComputedStyle {
     pub hidden: bool,
     pub interactive: bool,
+    /// Inherited: inside an `inert` subtree, which no `pointer-events` value makes actionable.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub inert: bool,
     pub inline: bool,
     pub font_size: f64,
     pub bold: bool,
@@ -35,6 +45,9 @@ pub struct ComputedStyle {
     pub width: Option<f64>,
     pub percent_width: bool,
     pub max_width: Option<f64>,
+    /// `max_width` is a percentage of the containing block's width.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub percent_max_width: bool,
     pub border: f64,
     pub border_color: Option<String>,
     pub align: String,
@@ -62,12 +75,244 @@ pub struct ComputedStyle {
     pub align_items: AlignItems,
     /// None retains the content minimum; explicit zero permits supported shrinking.
     pub min_width: Option<f64>,
+    /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
+    #[serde(skip_serializing_if = "opaque")]
+    pub opacity: f64,
+    /// Inherited base direction from the `dir` attribute; it maps start and end alignment.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub rtl: bool,
+    /// Positioning scheme; offsets live in `inset`.
+    #[serde(skip_serializing_if = "default")]
+    pub position: Position,
+    /// Resolved px offsets top, right, bottom, left; None is `auto` or an unresolved percentage.
+    #[serde(skip_serializing_if = "default")]
+    pub inset: [Option<f64>; 4],
+    /// Stacking order; None is `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub z_index: Option<i32>,
+    /// The stricter of overflow-x and overflow-y.
+    #[serde(skip_serializing_if = "default")]
+    pub overflow: Overflow,
+    /// Corner radii in px: top-left, top-right, bottom-right, bottom-left.
+    #[serde(skip_serializing_if = "default")]
+    pub radius: [f64; 4],
+    /// Box shadows in paint order, bounded.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shadows: Vec<BoxShadow>,
+    /// Background image layers, first on top, bounded; the color stays in `background`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub backgrounds: Vec<BackgroundLayer>,
+    /// 2D affine transform (a, b, c, d, e, f) about the box's transform origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform: Option<[f64; 6]>,
+    /// Inherited: the nearest author declaration removed link underlines.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub text_decoration_none: bool,
+    /// Numeric weight 1..1000; `bold` is kept equal to `font_weight >= 600`.
+    #[serde(skip_serializing_if = "normal_weight")]
+    pub font_weight: u16,
+    /// Inherited extra advance per character in px, may be negative.
+    #[serde(skip_serializing_if = "default")]
+    pub letter_spacing: f64,
+    /// Inherited case mapping.
+    #[serde(skip_serializing_if = "default")]
+    pub text_transform: TextTransform,
+    /// Inherited whitespace handling.
+    #[serde(skip_serializing_if = "default")]
+    pub white_space: WhiteSpace,
+    /// Inherited generic face, the fallback when no listed family has a loaded face.
+    #[serde(skip_serializing_if = "default")]
+    pub font_family: FontFamily,
+    /// Inherited `font-family` names as authored (lowercased, unquoted), matched against the
+    /// document's `@font-face` rules; empty when only the generic is known.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub font_families: Vec<String>,
+    /// Inherited `font-style`, which picks italic faces of a loaded family.
+    #[serde(skip_serializing_if = "default")]
+    pub font_style: super::FontStyle,
+    /// Inherited: the pointer shows a hand over this box.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cursor_pointer: bool,
+    /// The author set every border side's style to none or hidden, so native control borders go too.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub border_style_none: bool,
+    /// Per-side painted border widths top, right, bottom, left; `border` equals them when uniform, else 0.
+    #[serde(skip_serializing_if = "default")]
+    pub border_widths: [f64; 4],
+    /// Per-side literal border colors; None paints the default border color.
+    #[serde(skip_serializing_if = "default")]
+    pub border_colors: [Option<String>; 4],
+    /// Authored height; a percentage resolves only against a definite containing height.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<Extent>,
+    /// Authored minimum height.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_height: Option<Extent>,
+    /// Authored maximum height.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_height: Option<Extent>,
+    /// Float side; floated boxes leave flow and shorten neighbouring lines.
+    #[serde(skip_serializing_if = "default")]
+    pub float: Float,
+    /// Sides of earlier floats this block moves below.
+    #[serde(skip_serializing_if = "default")]
+    pub clear: Clear,
+    /// An atomic inline: inline-block, inline-flex, inline-grid or inline-table.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub inline_block: bool,
+    /// Placement within the line box or table row.
+    #[serde(skip_serializing_if = "default")]
+    pub vertical_align: VerticalAlign,
+    /// `display: list-item` boxes get a marker.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub list_item: bool,
+    /// Inherited marker kind.
+    #[serde(skip_serializing_if = "default")]
+    pub list_style: ListStyle,
+    /// Grid container.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub display_grid: bool,
+    /// `display: contents`: no box of its own, its children lay out in its parent; it falls
+    /// back to an inline box when it has text or generated content of its own.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub display_contents: bool,
+    /// Column tracks of a grid container.
+    #[serde(skip_serializing_if = "default")]
+    pub grid_columns: GridTemplate,
+    /// Row tracks of a grid container.
+    #[serde(skip_serializing_if = "default")]
+    pub grid_rows: GridTemplate,
+    /// Placement of a grid item along the columns.
+    #[serde(skip_serializing_if = "default")]
+    pub grid_column: GridLine,
+    /// Placement of a grid item along the rows.
+    #[serde(skip_serializing_if = "default")]
+    pub grid_row: GridLine,
+    /// Named areas of a grid container, from `grid-template-areas`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub grid_areas: Vec<GridArea>,
+    /// Named areas a grid item asks for on its row and column axes (`grid-area: name`); they win
+    /// over the numeric lines of that axis when the container defines them.
+    #[serde(skip_serializing_if = "default")]
+    pub grid_area_names: [Option<String>; 2],
+    /// Inline-axis alignment of grid items in their areas.
+    #[serde(skip_serializing_if = "default")]
+    pub justify_items: AlignItems,
+    /// Size of background image layers.
+    #[serde(skip_serializing_if = "default")]
+    pub background_size: BackgroundSize,
+    /// Position of background image layers.
+    #[serde(skip_serializing_if = "default")]
+    pub background_position: [Extent; 2],
+    /// Inherited gap between table cells, in px.
+    #[serde(skip_serializing_if = "default")]
+    pub border_spacing: f64,
+    /// Inherited: adjacent table cell borders collapse and cells touch.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub border_collapse: bool,
+    /// `::before` and `::after` boxes with content, in that order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generated: Vec<Generated>,
+    /// A mask image shapes this box; Eye cannot apply masks, so its fills are not painted.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub masked: bool,
+    /// The first `url()` mask layer and its geometry, painted with the box's fill as alpha.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<super::MaskLayer>,
+    /// Tiling of background image layers.
+    #[serde(skip_serializing_if = "default")]
+    pub background_repeat: BackgroundRepeat,
+    /// Own cross-axis alignment in a flex line or grid area; None is `auto` (the parent's `align-items`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align_self: Option<AlignItems>,
+    /// Own inline-axis alignment in a grid area; None is `auto` (the parent's `justify-items`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub justify_self: Option<AlignItems>,
+    /// Flex and grid placement order; equal values keep source order.
+    #[serde(skip_serializing_if = "default")]
+    pub order: i32,
+    /// Percentage parts of the paddings, top, right, bottom, left, all of the containing block's
+    /// width; layout adds them to `padding` once that width is known.
+    #[serde(skip_serializing_if = "default")]
+    pub padding_percent: [f64; 4],
+    /// Percentage parts of the margins, all of the containing block's width, like `padding_percent`.
+    #[serde(skip_serializing_if = "default")]
+    pub margin_percent: [f64; 4],
+    /// Preferred width-to-height ratio for an automatic height; None is `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<f64>,
+    /// `clip: rect()` as insets from the border box top, right, bottom, left; only absolute and
+    /// fixed boxes honor it, as in CSS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_rect: Option<[Extent; 4]>,
+    /// `clip-path: inset()` as insets from the border box top, right, bottom, left.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_path: Option<[Extent; 4]>,
+    /// Size containment for container queries.
+    #[serde(skip_serializing_if = "default")]
+    pub container_type: ContainerType,
+    /// Names `@container` queries can select this container by, bounded.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub container_names: Vec<String>,
+    /// Replaced content sizing rule (`object-fit`).
+    #[serde(skip_serializing_if = "default")]
+    pub object_fit: ObjectFit,
+    /// Replaced content alignment (`object-position`), initial `50% 50%`.
+    #[serde(skip_serializing_if = "center_object_position")]
+    pub object_position: [Extent; 2],
+    /// Inherited: `text-decoration` includes `underline`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    /// Inherited: `text-decoration` includes `line-through`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub strikethrough: bool,
+    /// Percentage parts of `top`, `right`, `bottom`, `left` insets.
+    #[serde(skip_serializing_if = "default")]
+    pub inset_percent: [f64; 4],
+    /// Percentage parts of corner radii when no fixed px width was authored.
+    #[serde(skip_serializing_if = "default")]
+    pub radius_percent: [f64; 4],
+    /// Percentage translation `[tx_percent, ty_percent]` of the box's own size.
+    #[serde(skip_serializing_if = "default")]
+    pub translate_percent: [f64; 2],
+}
+/// A generated `::before` or `::after` box: its text and its own computed style.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Generated {
+    /// `::after` rather than `::before`.
+    pub after: bool,
+    /// Literal generated text, bounded.
+    pub content: String,
+    /// The box's style; its own `generated` list stays empty.
+    pub style: Box<ComputedStyle>,
+}
+/** Default-valued visual fields are omitted so existing serialized shapes stay stable. */
+fn default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+/** Centered object-position is the initial value. */
+fn center_object_position(position: &[Extent; 2]) -> bool {
+    *position
+        == [Extent {
+            px: 0.0,
+            percent: 50.0,
+        }; 2]
+}
+/** Normal weight is the default serialized shape. */
+fn normal_weight(weight: &u16) -> bool {
+    *weight == super::constants::WEIGHT_NORMAL
+}
+/** Fully opaque styles keep their established serialized shape. */
+fn opaque(opacity: &f64) -> bool {
+    *opacity == 1.0
 }
 impl Default for ComputedStyle {
     fn default() -> Self {
         Self {
             hidden: false,
             interactive: true,
+            inert: false,
             inline: false,
             font_size: crate::constants::CSS_ROOT_FONT_SIZE,
             bold: false,
@@ -82,9 +327,10 @@ impl Default for ComputedStyle {
             width: None,
             percent_width: false,
             max_width: None,
+            percent_max_width: false,
             border: 0.0,
             border_color: None,
-            align: "left".into(),
+            align: "start".into(),
             box_sizing: BoxSizing::ContentBox,
             display_flex: false,
             flex_direction: FlexDirection::Row,
@@ -97,6 +343,74 @@ impl Default for ComputedStyle {
             justify_content: JustifyContent::Start,
             align_items: AlignItems::Stretch,
             min_width: None,
+            opacity: 1.0,
+            rtl: false,
+            position: Position::Static,
+            inset: [None; 4],
+            z_index: None,
+            overflow: Overflow::Visible,
+            radius: [0.0; 4],
+            shadows: Vec::new(),
+            backgrounds: Vec::new(),
+            transform: None,
+            text_decoration_none: false,
+            font_weight: super::constants::WEIGHT_NORMAL,
+            letter_spacing: 0.0,
+            text_transform: TextTransform::None,
+            white_space: WhiteSpace::Normal,
+            font_family: FontFamily::Serif,
+            font_families: Vec::new(),
+            font_style: super::FontStyle::Normal,
+            cursor_pointer: false,
+            border_style_none: false,
+            border_widths: [0.0; 4],
+            border_colors: [None, None, None, None],
+            height: None,
+            min_height: None,
+            max_height: None,
+            float: Float::None,
+            clear: Clear::None,
+            inline_block: false,
+            vertical_align: VerticalAlign::Baseline,
+            list_item: false,
+            list_style: ListStyle::Disc,
+            display_grid: false,
+            display_contents: false,
+            grid_columns: GridTemplate::default(),
+            grid_rows: GridTemplate::default(),
+            grid_column: GridLine::default(),
+            grid_row: GridLine::default(),
+            grid_areas: Vec::new(),
+            grid_area_names: [None, None],
+            justify_items: AlignItems::Stretch,
+            background_size: BackgroundSize::Auto,
+            background_position: [Extent::default(); 2],
+            background_repeat: BackgroundRepeat::Repeat,
+            generated: Vec::new(),
+            masked: false,
+            mask: None,
+            border_spacing: 0.0,
+            border_collapse: false,
+            align_self: None,
+            justify_self: None,
+            order: 0,
+            padding_percent: [0.0; 4],
+            margin_percent: [0.0; 4],
+            aspect_ratio: None,
+            clip_rect: None,
+            clip_path: None,
+            container_type: ContainerType::Normal,
+            container_names: Vec::new(),
+            object_fit: ObjectFit::Fill,
+            object_position: [Extent {
+                px: 0.0,
+                percent: 50.0,
+            }; 2],
+            underline: false,
+            strikethrough: false,
+            inset_percent: [0.0; 4],
+            radius_percent: [0.0; 4],
+            translate_percent: [0.0; 2],
         }
     }
 }

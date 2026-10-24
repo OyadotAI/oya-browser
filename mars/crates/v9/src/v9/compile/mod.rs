@@ -1,0 +1,717 @@
+/**
+ * Lowers V9's syntax tree to a compact stack bytecode. Code is rebuilt from page source on every
+ * request (or taken from the process cache of code the same source produced before) and
+ * identified by its source site, so serialized state never carries executable code.
+ */
+mod cache;
+mod expr;
+mod function;
+mod module;
+mod pattern;
+mod scan;
+mod stmt;
+
+use super::errors;
+use super::syntax::{Body, Expr, Func, FuncFlags, Name, Pos, Program, Stmt};
+use super::value::JsString;
+use super::vm::heap::FastMap;
+use crate::protocol::{EngineError, EngineResult};
+pub(in crate::v9) use function::PRIVATE_MARK;
+pub(in crate::v9) use module::{Export, ModuleInfo};
+use std::rc::Rc;
+use std::sync::Arc;
+
+/** Register and slot indexes. */
+pub(in crate::v9) type Slot = u16;
+
+/** One bytecode instruction; operands index the owning code's string table. */
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::v9) enum Op {
+    Undefined,
+    Null,
+    True,
+    False,
+    Hole,
+    Number(f64),
+    /** A BigInt literal, its decimal text in the string table. */
+    BigInt(u32),
+    String(u32),
+    Pop,
+    Dup,
+    /** a b -> a b a b */
+    Dup2,
+    /** a b -> b a */
+    Swap,
+    /** a b c -> c a b */
+    Rot3,
+    /** a b c d -> d a b c */
+    Rot4,
+    GetReg(Slot),
+    /** Throws a ReferenceError naming the string if the register is in its dead zone. */
+    GetRegChecked(Slot, u32),
+    /** Store the top of stack and keep it. */
+    SetReg(Slot),
+    /** Store, failing if the binding is still in its dead zone. */
+    SetRegChecked(Slot, u32),
+    GetEnv(Slot, Slot),
+    GetEnvChecked(Slot, Slot, u32),
+    SetEnv(Slot, Slot),
+    SetEnvChecked(Slot, Slot, u32),
+    /** Push a fresh block environment with this many slots, all in their dead zone. */
+    PushEnv(Slot),
+    PopEnv,
+    /** Replace the current environment with a copy, for per-iteration loop bindings. */
+    CopyEnv,
+    GetGlobal(u32),
+    TypeofGlobal(u32),
+    SetGlobal(u32),
+    DeleteGlobal(u32),
+    /** Top-level `var`: define the global property if it is missing. */
+    DeclareVar(u32),
+    /** Top-level `function`: define or overwrite the global property with the closure on the stack. */
+    DeclareFunction(u32),
+    /** Top-level `let`/`const`/`class`: create the dead-zone global binding; flag is const. */
+    DeclareLexical(u32, bool),
+    /** Initialize a top-level lexical binding with the value on the stack (popped). */
+    InitLexical(u32),
+    /** Assignment to a constant. */
+    ThrowConst(u32),
+    LoadThis,
+    LoadNewTarget,
+    LoadHome,
+    LoadCallee,
+    CreateArguments,
+    GlobalThis,
+    NewObject,
+    /** Pop `count` values into a new array; Hole values become holes. */
+    NewArray(u32),
+    /** array value -> array */
+    ArrayPush,
+    /** array iterable -> array */
+    ArraySpread,
+    /** obj value -> obj */
+    DefineField(u32),
+    /** obj key value -> obj */
+    DefineFieldComputed,
+    /** obj function -> obj; kind 0 method, 1 getter, 2 setter; enumerable flag for literals. */
+    DefineMethod(u32, u8, bool),
+    /** obj key function -> obj */
+    DefineMethodComputed(u8, bool),
+    /** obj source -> obj */
+    CopyData,
+    /** source key1..keyN -> rest */
+    CopyRest(u32),
+    /** obj proto -> obj, for a literal `__proto__: value`. */
+    SetProtoLiteral,
+    GetProp(u32),
+    GetElem,
+    /** obj value -> value */
+    SetProp(u32),
+    /** obj key value -> value */
+    SetElem,
+    DeleteProp(u32),
+    DeleteElem,
+    In,
+    InstanceOf,
+    /** this home -> value, looking the name up from the home object's prototype. */
+    GetSuper(u32),
+    /** this key home -> value */
+    GetSuperElem,
+    /** this home value -> value */
+    SetSuper(u32),
+    /** this home key value -> value */
+    SetSuperElem,
+    ToPropertyKey,
+    /** callee this args... -> result */
+    Call(u16),
+    /** callee this array -> result */
+    CallSpread,
+    /** callee args... -> object */
+    New(u16),
+    /** callee array -> object */
+    NewSpread,
+    /** args... -> this; calls the parent constructor */
+    SuperCall(u16),
+    /** array -> this */
+    SuperCallSpread,
+    Return,
+    /** value this -> return from a derived constructor */
+    ReturnDerived,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Exp,
+    Shl,
+    Shr,
+    UShr,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Eq,
+    Ne,
+    StrictEq,
+    StrictNe,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Not,
+    Neg,
+    ToNumber,
+    ToNumeric,
+    BitNot,
+    Typeof,
+    Inc,
+    Dec,
+    ToStr,
+    Jump(u32),
+    JumpIfFalse(u32),
+    JumpIfTrue(u32),
+    /** Jump keeping the value if falsy; otherwise pop it. */
+    JumpIfFalseKeep(u32),
+    JumpIfTrueKeep(u32),
+    /** Jump keeping the value if it is neither null nor undefined; otherwise pop it. */
+    JumpIfNotNullishKeep(u32),
+    /** If the value is null or undefined, replace it with undefined and jump; else keep it. */
+    JumpIfNullish(u32),
+    /** Leave handlers and environments down to the given depths, running finally blocks. */
+    JumpOut(u32, u16, u16),
+    Throw,
+    /** Throw an unsupported-feature error naming this string. */
+    Unsupported(u32),
+    /** Install a handler: catch address, finally address (0 means none) and the finally
+    block's three completion registers. */
+    PushTry(u32, u32, Slot),
+    PopTry,
+    /** Record a normal completion in a finally block's registers before entering it. */
+    Normal(Slot),
+    /** Resume the completion a finally block's registers hold. */
+    EndFinally(Slot),
+    /** Push argument `n`, or undefined. */
+    Arg(Slot),
+    /** Push an array of the arguments from `n` on. */
+    RestArgs(Slot),
+    Closure(u32),
+    /** superclass? ctor-site -> ctor prototype; flag says a superclass is on the stack. */
+    Class(u32, bool),
+    GetIterator,
+    /** iter -> iter value, or jump with iter when done. */
+    IterNext(u32),
+    /** iter -> iter value (undefined once done), for destructuring. */
+    IterStep,
+    /** iter -> array of the remaining values */
+    IterRest,
+    /** iter -> (closes it unless already done) */
+    IterClose,
+    ForIn,
+    /** iter -> iter key, or jump with iter when done. */
+    ForInNext(u32),
+    Yield,
+    /** iterable -> result, delegating with yield*. */
+    YieldStar,
+    Await,
+    /** Suspend a fresh generator until its first next(); a module body suspends the same way
+    until its graph evaluates it. */
+    Initial,
+    /** specifier -> promise: `import()`, resolved against the running code's module or script. */
+    Import,
+    Regex(u32, u32),
+    /** Push the frozen strings object for tagged template `index` of this code. */
+    TemplateObject(u32),
+}
+
+/** One compiled function or script. */
+pub(in crate::v9) struct Code {
+    /// Source site identity; scripts use their start offset with the source tag.
+    pub site: u32,
+    /// Function kind.
+    pub flags: FuncFlags,
+    /// Strict-mode code.
+    pub strict: bool,
+    /// Observable function name.
+    pub name: JsString,
+    /// Observable function length.
+    pub length: u32,
+    /// The instructions.
+    pub ops: Vec<Op>,
+    /// Register count.
+    pub registers: Slot,
+    /// Slots in the function-scope environment, which exists only when closures can see it.
+    pub env: Option<Slot>,
+    /// Strings and names the instructions reference.
+    pub strings: Vec<JsString>,
+    /// Tagged template chunks: cooked (None when invalid) and raw.
+    pub templates: Vec<Vec<(Option<JsString>, JsString)>>,
+    /// Instruction index to source position, sorted.
+    pub positions: Vec<(u32, Pos)>,
+}
+
+impl Code {
+    /** The source position of an instruction, for diagnostics. */
+    pub fn position(&self, pc: usize) -> Pos {
+        let index = self
+            .positions
+            .partition_point(|(start, _)| *start as usize <= pc);
+        index
+            .checked_sub(1)
+            .map(|index| self.positions[index].1)
+            .unwrap_or_default()
+    }
+}
+
+impl Code {
+    /** Bytes this code holds, for the process cache's bound. */
+    fn footprint(&self) -> usize {
+        let strings = |strings: &[JsString]| strings.iter().map(|s| s.len() * 2).sum::<usize>();
+        let templates = self
+            .templates
+            .iter()
+            .flatten()
+            .map(|(cooked, raw)| cooked.as_ref().map_or(0, |s| s.len() * 2) + raw.len() * 2)
+            .sum::<usize>();
+        std::mem::size_of::<Self>()
+            + self.ops.len() * std::mem::size_of::<Op>()
+            + strings(&self.strings)
+            + templates
+            + self.positions.len() * std::mem::size_of::<(u32, Pos)>()
+    }
+}
+
+/** Every code of one page, keyed by site. */
+#[derive(Default)]
+pub(in crate::v9) struct Registry {
+    pub codes: FastMap<u32, Arc<Code>>,
+}
+
+impl Registry {
+    /** Compile a script and its nested functions; returns the script's top-level code. */
+    pub fn add(&mut self, program: &Program) -> EngineResult<Arc<Code>> {
+        let unit = compile_script(program)?;
+        self.adopt(&unit)?;
+        Ok(unit.entry.clone())
+    }
+    /**
+     * The code `source` compiles to as a classic script at page offset `offset`: the process
+     * cache's unit when this exact text compiled there before, else `parse` and compile it and
+     * keep the unit for the next request. Either way its codes join this registry.
+     */
+    pub fn script(
+        &mut self,
+        source: &str,
+        offset: usize,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<Arc<Code>> {
+        let key = cache::key(cache::Grammar::Script, offset, source);
+        let unit = match cache::get(&key) {
+            Some(unit) => unit,
+            None => {
+                let unit = compile_script(&parse()?)?;
+                cache::put(key, unit.clone());
+                unit
+            }
+        };
+        self.adopt(&unit)?;
+        Ok(unit.entry.clone())
+    }
+    /**
+     * The code and link facts `source` compiles to as a module at `offset`, cached like
+     * `script`. A parse or compile failure is the module's own outcome, not a request failure,
+     * and is not cached; the same text fails the same way next time.
+     */
+    pub fn module(
+        &mut self,
+        source: &str,
+        offset: usize,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<(Arc<Code>, Arc<ModuleInfo>)> {
+        let key = cache::key(cache::Grammar::Module, offset, source);
+        let unit = match cache::get(&key) {
+            Some(unit) => unit,
+            None => {
+                let unit = compile_module(parse()?)?;
+                cache::put(key, unit.clone());
+                unit
+            }
+        };
+        if self.codes.contains_key(&unit.entry.site) {
+            return Err(EngineError::invalid("Duplicate V9 module site."));
+        }
+        self.adopt(&unit)?;
+        let info = unit
+            .info
+            .clone()
+            .ok_or_else(|| EngineError::invalid("V9 lost a module's code."))?;
+        Ok((unit.entry.clone(), info))
+    }
+    /** Files a unit's codes under their sites; a site compiled twice in one page is refused. */
+    fn adopt(&mut self, unit: &cache::Unit) -> EngineResult<()> {
+        for code in &unit.codes {
+            if self.codes.contains_key(&code.site) {
+                return Err(EngineError::invalid("Duplicate V9 code site."));
+            }
+            self.codes.insert(code.site, code.clone());
+        }
+        self.codes.insert(unit.entry.site, unit.entry.clone());
+        Ok(())
+    }
+    /** Look up compiled code by site. */
+    pub fn get(&self, site: u32) -> Option<&Arc<Code>> {
+        self.codes.get(&site)
+    }
+}
+
+/** Compile a classic script and its nested functions into one shareable unit. */
+fn compile_script(program: &Program) -> EngineResult<Arc<cache::Unit>> {
+    let mut compiler = Compiler::default();
+    let script = compiler.script(program)?;
+    Ok(Arc::new(cache::Unit::new(compiler.done, script, None)))
+}
+
+/** Compile a module and its nested functions into one shareable unit with its link facts. */
+fn compile_module(program: Program) -> EngineResult<Arc<cache::Unit>> {
+    let mut compiler = Compiler::default();
+    let (site, info) = compiler.module(program)?;
+    let position = compiler
+        .done
+        .iter()
+        .position(|code| code.site == site)
+        .ok_or_else(|| EngineError::invalid("V9 lost a module's code."))?;
+    let body = compiler.done.remove(position);
+    Ok(Arc::new(cache::Unit::new(compiler.done, body, Some(info))))
+}
+
+/** Where a binding lives. */
+#[derive(Clone, Copy, Debug)]
+enum Place {
+    Register(Slot),
+    Env(Slot),
+    /** Top-level bindings live on the global object or the global lexical map, by name. */
+    Global,
+}
+
+/** How a binding was declared, which decides dead-zone checks and assignability. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Declared {
+    Var,
+    Let,
+    Const,
+    /** A name only assignment cannot change silently: a class's own name inside its body. */
+    ClassInner,
+    /** A named function expression's own name: a sloppy write is dropped, a strict one throws. */
+    FunctionName,
+    /** Hidden bindings: this, arguments, new.target, the home object. */
+    Hidden,
+    /** A module's imported name: a live read of another module's export, never assignable. */
+    Import,
+}
+
+/** One binding in a scope. */
+#[derive(Clone, Debug)]
+struct Binding {
+    name: Name,
+    declared: Declared,
+    place: Place,
+}
+
+/** One lexical scope during compilation. */
+struct Scope {
+    bindings: Vec<Binding>,
+    /// Position of each name in `bindings`: a minified bundle declares thousands of names in one
+    /// function scope and reads them millions of times, so lookups cannot scan the vector.
+    index: FastMap<Name, usize>,
+    /// Whether this scope has a runtime environment record.
+    env: bool,
+    /// Slots allocated in that environment.
+    slots: Slot,
+    /// First scope of a function: lookups crossing it leave the function.
+    boundary: bool,
+    /// The top-level script scope: names resolve globally.
+    global: bool,
+}
+
+/** What a break or continue target is. */
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TargetKind {
+    Loop,
+    Switch,
+    /** A labeled non-loop statement: only a labeled break leaves it. */
+    Block,
+}
+
+/** A break or continue target. */
+struct Target {
+    labels: Vec<Name>,
+    kind: TargetKind,
+    breaks: Vec<usize>,
+    continues: Vec<usize>,
+    /// Handlers active outside the target.
+    handlers: u16,
+    /// Environments pushed outside the target.
+    envs: u16,
+}
+
+/** Per-function emission state. */
+#[derive(Default)]
+struct FnState {
+    ops: Vec<Op>,
+    positions: Vec<(u32, Pos)>,
+    strings: Vec<JsString>,
+    string_index: FastMap<Vec<u16>, u32>,
+    templates: Vec<Vec<(Option<JsString>, JsString)>>,
+    registers: Slot,
+    max_registers: Slot,
+    /// Runtime environments pushed inside this function, beyond its own.
+    envs: u16,
+    /// Active exception handlers.
+    handlers: u16,
+    targets: Vec<Target>,
+    /// Labels waiting for the next loop or statement.
+    pending_labels: Vec<Name>,
+    last_pos: Option<Pos>,
+    /// Index of the first scope of this function in the shared stack.
+    scope_base: usize,
+    strict: bool,
+    flags: FuncFlags,
+    /// Open optional chains.
+    chains: Vec<expr::Chain>,
+}
+
+/** The compiler: a stack of functions over one shared scope stack. */
+#[derive(Default)]
+struct Compiler {
+    scopes: Vec<Scope>,
+    functions: Vec<FnState>,
+    done: Vec<Code>,
+    /// Sites of enclosing classes, innermost last, for private names.
+    classes: Vec<u32>,
+    /// The module body being compiled, if any.
+    module: Option<module::ModuleScope>,
+}
+
+/** Most registers any one function may use. */
+const MAX_REGISTERS: usize = Slot::MAX as usize;
+
+impl Compiler {
+    /** The function being emitted. */
+    fn f(&mut self) -> &mut FnState {
+        self.functions.last_mut().expect("function state")
+    }
+    /** Append an instruction, returning its index. */
+    fn emit(&mut self, op: Op) -> usize {
+        let state = self.f();
+        state.ops.push(op);
+        state.ops.len() - 1
+    }
+    /** The next instruction index. */
+    fn here(&mut self) -> usize {
+        self.f().ops.len()
+    }
+    /** Record the source position for the following instructions. */
+    fn at(&mut self, pos: Pos) {
+        let state = self.f();
+        if state.last_pos != Some(pos) {
+            state.last_pos = Some(pos);
+            let pc = state.ops.len() as u32;
+            if state.positions.last().is_some_and(|(last, _)| *last == pc) {
+                state.positions.pop();
+            }
+            state.positions.push((pc, pos));
+        }
+    }
+    /** Point the jump at `index` to the current instruction. */
+    fn patch(&mut self, index: usize) {
+        let target = self.here() as u32;
+        self.patch_to(index, target);
+    }
+    /** Point the jump at `index` to `target`. */
+    fn patch_to(&mut self, index: usize, target: u32) {
+        let op = &mut self.f().ops[index];
+        *op = match *op {
+            Op::Jump(_) => Op::Jump(target),
+            Op::JumpIfFalse(_) => Op::JumpIfFalse(target),
+            Op::JumpIfTrue(_) => Op::JumpIfTrue(target),
+            Op::JumpIfFalseKeep(_) => Op::JumpIfFalseKeep(target),
+            Op::JumpIfTrueKeep(_) => Op::JumpIfTrueKeep(target),
+            Op::JumpIfNotNullishKeep(_) => Op::JumpIfNotNullishKeep(target),
+            Op::JumpIfNullish(_) => Op::JumpIfNullish(target),
+            Op::JumpOut(_, handlers, envs) => Op::JumpOut(target, handlers, envs),
+            Op::IterNext(_) => Op::IterNext(target),
+            Op::ForInNext(_) => Op::ForInNext(target),
+            other => other,
+        };
+    }
+    /** Intern a string constant. */
+    fn string(&mut self, value: &JsString) -> u32 {
+        let state = self.f();
+        if let Some(index) = state.string_index.get(value.as_units()) {
+            return *index;
+        }
+        let index = state.strings.len() as u32;
+        state.strings.push(value.clone());
+        state.string_index.insert(value.as_units().to_vec(), index);
+        index
+    }
+    /** Intern a name. */
+    fn name(&mut self, name: &str) -> EngineResult<u32> {
+        let value = JsString::from_utf8(name)?;
+        Ok(self.string(&value))
+    }
+    /** Allocate a temporary register. */
+    fn temp(&mut self) -> EngineResult<Slot> {
+        let state = self.f();
+        if state.registers as usize >= MAX_REGISTERS {
+            return Err(EngineError::limit("V9 registers", MAX_REGISTERS));
+        }
+        let slot = state.registers;
+        state.registers += 1;
+        state.max_registers = state.max_registers.max(state.registers);
+        Ok(slot)
+    }
+    /** Release temporaries down to `mark`. */
+    fn release(&mut self, mark: Slot) {
+        self.f().registers = mark;
+    }
+    /** Push a scope; `env` gives it a runtime environment. */
+    fn push_scope(&mut self, env: bool, boundary: bool) {
+        self.scopes.push(Scope {
+            bindings: Vec::new(),
+            index: FastMap::default(),
+            env,
+            slots: 0,
+            boundary,
+            global: false,
+        });
+    }
+    /** Declare a binding in the innermost scope; redeclaring a name reuses its place. */
+    fn declare(&mut self, name: &Name, declared: Declared) -> EngineResult<Place> {
+        let scope = self.scopes.last_mut().expect("scope");
+        if let Some(existing) = scope.index.get(name).map(|&at| &mut scope.bindings[at]) {
+            if declared != Declared::Var && declared != Declared::Hidden {
+                existing.declared = declared;
+            }
+            return Ok(existing.place);
+        }
+        let place = if scope.global {
+            Place::Global
+        } else if scope.env {
+            let slot = scope.slots;
+            scope.slots = scope
+                .slots
+                .checked_add(1)
+                .ok_or_else(|| EngineError::limit("V9 scope bindings", MAX_REGISTERS))?;
+            Place::Env(slot)
+        } else {
+            let place = Place::Register(self.temp()?);
+            return Ok(self.push_binding(name, declared, place));
+        };
+        Ok(self.push_binding(name, declared, place))
+    }
+    /** Add a binding record to the innermost scope. */
+    fn push_binding(&mut self, name: &Name, declared: Declared, place: Place) -> Place {
+        let scope = self.scopes.last_mut().expect("scope");
+        scope.index.insert(name.clone(), scope.bindings.len());
+        scope.bindings.push(Binding {
+            name: name.clone(),
+            declared,
+            place,
+        });
+        place
+    }
+    /** Find a binding: its place, declaration kind, and how many environments lie between. */
+    fn resolve(&self, name: &str) -> Option<(Place, Declared, Slot)> {
+        let mut hops: Slot = 0;
+        let base = self.functions.last().map_or(0, |f| f.scope_base);
+        for (index, scope) in self.scopes.iter().enumerate().rev() {
+            if let Some(binding) = scope.index.get(name).map(|&at| &scope.bindings[at]) {
+                return match binding.place {
+                    // A register belongs to its own function only.
+                    Place::Register(_) if index < base => None,
+                    place => Some((place, binding.declared, hops)),
+                };
+            }
+            if scope.env {
+                hops += 1;
+            }
+        }
+        None
+    }
+    /** Start a new function's emission state. */
+    fn begin_function(&mut self, strict: bool, flags: FuncFlags) {
+        let scope_base = self.scopes.len();
+        self.functions.push(FnState {
+            scope_base,
+            strict,
+            flags,
+            ..FnState::default()
+        });
+    }
+    /** Finish a function into code. */
+    fn end_function(&mut self, func: Option<&Func>, site: u32, env: Option<Slot>) -> Code {
+        let state = self.functions.pop().expect("function state");
+        let (name, length, flags, strict) = match func {
+            Some(func) => (
+                JsString::from_utf8(&func.display.borrow()).unwrap_or_else(|_| empty()),
+                func.length,
+                func.flags,
+                func.strict,
+            ),
+            None => (empty(), 0, FuncFlags::default(), state.strict),
+        };
+        Code {
+            site,
+            flags,
+            strict,
+            name,
+            length,
+            ops: state.ops,
+            registers: state.max_registers,
+            env,
+            strings: state.strings,
+            templates: state.templates,
+            positions: state.positions,
+        }
+    }
+    /** Compile a script's top level. */
+    fn script(&mut self, program: &Program) -> EngineResult<Code> {
+        self.begin_function(program.strict, FuncFlags::default());
+        self.scopes.push(Scope {
+            bindings: Vec::new(),
+            index: FastMap::default(),
+            env: false,
+            slots: 0,
+            boundary: true,
+            global: true,
+        });
+        self.at(program.pos);
+        self.global_declarations(&program.body)?;
+        let result = self.temp()?;
+        self.emit(Op::Undefined);
+        self.emit(Op::SetReg(result));
+        self.emit(Op::Pop);
+        self.statements_with_result(&program.body, Some(result))?;
+        self.emit(Op::GetReg(result));
+        self.emit(Op::Return);
+        self.scopes.pop();
+        let site = super::syntax::site_of(program.pos);
+        Ok(self.end_function(None, site, None))
+    }
+    /** A syntax or limit error at a position, for checks only the compiler can make. */
+    fn error(&self, pos: Pos, reason: &str) -> EngineError {
+        errors::syntax(pos.location(), reason)
+    }
+}
+
+/** The empty string. */
+fn empty() -> JsString {
+    JsString::from_units(Vec::new()).expect("empty string fits")
+}
+
+/** Whether a function body is a block. */
+fn block_body(func: &Func) -> Option<&[Stmt]> {
+    match &func.body {
+        Body::Block(body) => Some(body),
+        Body::Expr(_) => None,
+    }
+}

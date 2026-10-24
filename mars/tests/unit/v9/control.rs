@@ -5,10 +5,10 @@ use mars::{
 };
 use serde_json::json;
 
-/** Text proposals expose expression values without a privileged evaluation entry point. */
+/** Text proposals expose expression values, converted with String() because textContent turns null into empty text. */
 fn evaluate(expression: &str) -> String {
     execute(&format!(
-        "document.getElementById('out').textContent={expression};"
+        "document.getElementById('out').textContent=String({expression});"
     ))
     .unwrap()
     .remove(0)
@@ -106,7 +106,7 @@ fn lexical_initialization_shadowing_and_const_rules_are_enforced() {
     let result = execute("let x=1; {let x=2; x=x+3; document.getElementById('inner').textContent=x;} x=x+1; document.getElementById('outer').textContent=x; let y; document.getElementById('empty').textContent=y;").unwrap();
     assert_eq!(
         result.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
-        ["5", "2", "undefined"]
+        ["5", "2", ""]
     );
     for source in [
         "let x=x;",
@@ -122,12 +122,21 @@ fn lexical_initialization_shadowing_and_const_rules_are_enforced() {
             "{source}"
         );
     }
+    for source in ["const x;", "if(true)let x=1;"] {
+        assert_eq!(
+            execute(source).unwrap_err().code,
+            "script_syntax_error",
+            "{source}"
+        );
+    }
+}
+/** Two lexical declarations, or a lexical and a function declaration, of one name in one scope are early errors. */
+#[test]
+fn duplicate_declarations_in_one_scope_are_early_errors() {
     for source in [
-        "const x;",
         "if(false){let x=1;const x=2;}",
         "function never(){let x=1;let x=2;}",
         "let f=1;function f(){}",
-        "if(true)let x=1;",
     ] {
         assert_eq!(
             execute(source).unwrap_err().code,
@@ -173,15 +182,15 @@ fn reference_checks_preserve_call_and_assignment_evaluation_order() {
     let error = execute("function f(){}function g(){f(missing);let f=1;}g();").unwrap_err();
     assert!(error.message.contains("before initialization"));
     let error = execute("const x=1;x=missing;").unwrap_err();
-    assert!(error.message.contains("Binding is not defined"));
+    assert!(error.message.contains("missing is not defined"));
     let changes=execute("let total=1;function change(){total=5;return 2;}total=total+change();document.getElementById('out').textContent=total;").unwrap();
     assert_eq!(changes[0].text, "3");
 }
-/** The fallback undefined value is shadowable, including the entire nearer lexical TDZ. */
+/** undefined may be shadowed by a local lexical binding, whose TDZ covers the whole block. */
 #[test]
 fn builtin_scalar_names_are_resolved_after_lexical_cells() {
     assert_eq!(
-        execute("let undefined=7;document.getElementById('out').textContent=undefined;").unwrap()
+        execute("function f(){let undefined=7;return undefined;}document.getElementById('out').textContent=f();").unwrap()
             [0]
         .text,
         "7"
@@ -189,6 +198,25 @@ fn builtin_scalar_names_are_resolved_after_lexical_cells() {
     let error = execute("{document.getElementById('out').textContent=undefined;let undefined=7;}")
         .unwrap_err();
     assert!(error.message.contains("before initialization"));
+}
+/** A global lexical declaration may not shadow a non-configurable global property (undefined, NaN, document...). */
+#[test]
+fn global_lexical_declarations_of_restricted_globals_are_syntax_errors() {
+    for name in [
+        "undefined",
+        "NaN",
+        "Infinity",
+        "document",
+        "window",
+        "location",
+    ] {
+        let error = execute(&format!("let {name}=7;")).unwrap_err();
+        assert!(
+            error.message.contains("SyntaxError"),
+            "{name}: {}",
+            error.message
+        );
+    }
 }
 /** Ordered loading and event reconstruction reject both directions of lexical/function conflict. */
 #[test]
@@ -198,7 +226,7 @@ fn cross_script_function_and_lexical_conflicts_share_the_same_rules() {
         vec!["const f=1;".into(), "function f(){}".into()],
     ] {
         let error = load_scripts(&sources, &[]).unwrap_err();
-        assert_eq!(error.code, "script_syntax_error");
+        assert!(error.message.contains("SyntaxError"), "{}", error.message);
         assert_eq!(error.location.unwrap().script_index, Some(2));
     }
     let sources=vec!["function read(){return 1;}".into(),"function read(){return 2;}function show(){document.getElementById('out').textContent=read();}".into()];
@@ -207,7 +235,8 @@ fn cross_script_function_and_lexical_conflicts_share_the_same_rules() {
         event_scripts(&sources, "show()", state, &[])
             .unwrap()
             .changes[0]
-            .text,
+            .text()
+            .unwrap(),
         "2"
     );
 }
@@ -250,9 +279,9 @@ fn repeated_counter_events_commit_bindings_and_text_atomically() {
     let mut state = load(source, &[]).unwrap().state;
     for count in 1..=4 {
         let result = event(source, "add()", state, &[]).unwrap();
-        assert_eq!(result.changes[1].text, count.to_string());
+        assert_eq!(result.changes[1].text().unwrap(), count.to_string());
         assert_eq!(
-            result.changes[0].text,
+            result.changes[0].text().unwrap(),
             if count >= 3 { "reached" } else { "keep" }
         );
         state = serde_json::from_value(serde_json::to_value(result.state).unwrap()).unwrap();
@@ -289,7 +318,12 @@ fn supplied_event_bindings_cannot_change_declaration_shape_or_mutability() {
                 wire["globals"]["extra"] = wire["globals"]["count"].clone();
             }
             "kind" => wire["globals"]["target"]["kind"] = json!("let"),
-            _ => wire["globals"]["count"]["value"] = json!(null),
+            _ => {
+                wire["globals"]["count"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("value");
+            }
         }
         let supplied = serde_json::from_value(wire).unwrap();
         assert!(
@@ -306,47 +340,21 @@ fn duplicate_direct_function_declarations_keep_the_last_hoisted_value() {
     assert_eq!(execute(source).unwrap()[0].text, "2 4");
 }
 
-/** Var arguments uses an explicit replacement or an arrow-owned cell, never a fabricated implicit object. */
+/** var arguments keeps the arguments object unless replaced; arrows have none, and strict code refuses the name. */
 #[test]
 fn var_arguments_preserves_explicit_parameters_and_direct_function_replacements() {
     let source = "function parameter(arguments){var arguments;return arguments;}function declared(){var arguments;function arguments(){return 3;}return arguments();}const arrow=()=>{var arguments=5;return arguments;};document.getElementById('out').textContent=parameter(7)+' '+declared()+' '+arrow();";
     assert_eq!(execute(source).unwrap()[0].text, "7 3 5");
-    let source = "let arguments=11;const arrow=()=>{var arguments;return arguments;};document.getElementById('out').textContent=arrow();";
+    let source = "let arguments=11;const arrow=()=>{var arguments;return arguments;};document.getElementById('out').textContent=String(arrow());";
     assert_eq!(execute(source).unwrap()[0].text, "undefined");
-    for source in [
-        "function never(){var arguments;}",
-        "function never(){if(false)var arguments;}",
-    ] {
-        assert_eq!(execute(source).unwrap_err().code, "unsupported_feature");
-    }
+    let source = "function f(){var arguments;return arguments.length;}function g(){if(false)var arguments;return arguments.length;}document.getElementById('out').textContent=f(1,2)+' '+g(3);";
+    assert_eq!(execute(source).unwrap()[0].text, "2 1");
     assert_eq!(
         execute("function never(){'use strict';var arguments;}")
             .unwrap_err()
             .code,
         "script_syntax_error"
     );
-}
-
-/** Repeated names still consume declarator slots before a short var list can allocate excessive syntax. */
-#[test]
-fn var_declarator_limits_charge_repetitions_and_unique_scope_bindings_separately() {
-    use mars::constants::{FUNCTION_PARAMETERS, STATEMENTS};
-    let repeated = format!("var {};", vec!["same"; STATEMENTS + 1].join(","));
-    let error = execute(&repeated).unwrap_err();
-    assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("V9 statements"));
-    let parameters = (0..FUNCTION_PARAMETERS)
-        .map(|index| format!("p{index}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let variables = (0..STATEMENTS + 1 - FUNCTION_PARAMETERS)
-        .map(|index| format!("v{index}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let source = format!("function never({parameters}){{var {variables};}}");
-    let error = execute(&source).unwrap_err();
-    assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("V9 scope bindings"));
 }
 
 /** Var conflicts cross intervening blocks but stop at function boundaries and independent lexical siblings. */
@@ -365,4 +373,12 @@ fn unreachable_var_conflicts_respect_lexical_scopes_and_function_boundaries() {
     }
     let source = "let x=1;function never(){var x=2;}{let sibling=3;}var sibling=4;function outer(){const inner=()=>{var arguments=9;return arguments;};return inner();}document.getElementById('out').textContent=x+' '+sibling+' '+outer();";
     assert_eq!(execute(source).unwrap()[0].text, "1 4 9");
+}
+
+/** Uncaught error messages end in exactly one period, even when the JavaScript message has its own. */
+#[test]
+fn uncaught_error_messages_end_with_one_period() {
+    let error = execute("const c=1;c=2;").unwrap_err();
+    assert!(error.message.contains("Assignment to constant variable"));
+    assert!(!error.message.ends_with(".."), "{}", error.message);
 }

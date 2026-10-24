@@ -29,14 +29,19 @@ impl Window {
     /** The owning UI thread implements only a small explicit OS command table. */
     pub(super) fn window_request(
         &mut self,
-        request: Request,
+        mut request: Request,
         permit: Permit,
     ) -> EngineResult<Value> {
         request.validate()?;
+        // The attach front door stamps its lane on every request; window operations have no lane
+        // parameter, and would otherwise refuse every attached agent's observation.
+        if let Some(params) = request.params.as_object_mut() {
+            params.remove("lane");
+        }
         match request.op.as_str() {
             "window.inspect" => {
                 let _: Empty = parameters(request.params)?;
-                let size = self.chrome.root.bounds().size;
+                let size = self.mars.root.bounds().size;
                 let tab_id = self.selected_tab_id();
                 let owner = if self.broker.permit(Owner::Human, &tab_id).is_ok() {
                     Owner::Human
@@ -48,14 +53,14 @@ impl Window {
                 let observation = {
                     let mut observation = observation;
                     observation["native_frames"] = self.canvas.native_frames();
-                    observation["native_banner"] = self.chrome.banner_observation();
+                    observation["native_banner"] = self.mars.banner_observation();
                     observation["render_context"] = self
                         .snapshot
                         .as_ref()
                         .map(|snapshot| snapshot.render_context)
                         .map_or(Value::Null, |context| json!(context));
                     observation["native_validation"] =
-                        self.canvas.validation_regions(&self.chrome.root);
+                        self.canvas.validation_regions(&self.mars.root);
                     observation
                 };
                 Ok(observation)
@@ -76,7 +81,13 @@ impl Window {
                         "Screenshot targets a stale visible page or layout.",
                     ));
                 }
-                self.capture.save(&self.chrome.root, inspection)
+                if !self.capture.granted() {
+                    // Without the operator's --capture-dir grant, pixels go only to an agent the
+                    // person handed this tab to, at the tab's current control epoch.
+                    authority::lock(&self.broker.authority)?
+                        .validate_tab(permit, crate::runtime::tab_key(&shot.tab_id)?)?;
+                }
+                self.capture.save(&self.mars.root, inspection)
             }
             "window.resize" => {
                 let size: Resize = parameters(request.params)?;
@@ -99,6 +110,8 @@ impl Window {
                     .setContentSize(NSSize::new(size.width, size.height));
                 Ok(json!({"width":size.width,"height":size.height,"layout_pending":true}))
             }
+            #[cfg(feature = "test-support")]
+            "window.human" => self.human_request(request.params),
             _ => Err(EngineError::unsupported("Unknown native window operation.")),
         }
     }

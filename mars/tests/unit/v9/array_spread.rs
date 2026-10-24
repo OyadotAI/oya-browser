@@ -1,9 +1,9 @@
 /** Array-literal expansion preserves source effects, exact identities and independent resource caps. */
 use mars::{
-    constants::{JS_STRING_UNITS, VM_ARRAY_LENGTH, VM_OBJECTS, VM_PROPERTIES},
+    constants::VM_ARRAY_LENGTH,
     v9::{VmState, event, execute, load},
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 /** Native text proposals observe results without exposing interpreter internals. */
 fn result(source: &str, expression: &str) -> String {

@@ -1,4 +1,13 @@
 /** Native agents manipulate browser-owned Rust state through a discoverable protocol. */
+#[path = "agent/input.rs"]
+mod input;
+#[path = "agent/lanes.rs"]
+mod lanes;
+#[path = "agent/raster.rs"]
+mod raster;
+pub(crate) use raster::base64;
+#[path = "agent/traces.rs"]
+mod traces;
 use super::authority::{self, Owner, Permit};
 use super::page::Empty;
 use super::supervisor::Runtime;
@@ -35,7 +44,9 @@ impl Runtime {
         let shutting_down = request.op == "runtime.shutdown";
         let result = self.handle_request(request);
         if result.is_ok() && !shutting_down && (save_session || self.session_dirty) {
+            let timed = std::time::Instant::now();
             self.persist_session();
+            super::supervisor::perf::record("agent.persist_session", timed, String::new);
         }
         result
     }
@@ -68,14 +79,39 @@ impl Runtime {
             let id = self.page_tab_id(&request.params)?;
             let mut active = request;
             remove_tab_id(&mut active.params);
-            let result = self.run_in_tab(&id, |runtime| runtime.handle_active(active))?;
+            let result = self.in_tab(&id, |runtime| runtime.handle_active(active))?;
             return add_tab_id(result, &id);
         }
         self.handle_active(request)
     }
 
+    /**
+     * Run a page operation in one tab without changing the person's visible selection; the
+     * background tab's page and history are swapped in and stored back exactly once.
+     */
+    fn in_tab<T>(
+        &mut self,
+        id: &str,
+        operation: impl FnOnce(&mut Self) -> EngineResult<T>,
+    ) -> EngineResult<T> {
+        // Background work never moves the person's visible selection.
+        self.run_in_tab(id, operation)
+    }
+
     /// Existing page commands execute only after the tab wrapper selected their state.
     fn handle_active(&mut self, request: Request) -> EngineResult<Value> {
+        let timed = std::time::Instant::now();
+        self.record_revision();
+        super::supervisor::perf::record("agent.record_revision", timed, String::new);
+        let result = self.dispatch_active(request);
+        let timed = std::time::Instant::now();
+        self.record_revision();
+        super::supervisor::perf::record("agent.record_revision", timed, String::new);
+        result
+    }
+
+    /// Dispatch on the active tab without recording, so a batch's steps do not evict history.
+    pub(super) fn dispatch_active(&mut self, request: Request) -> EngineResult<Value> {
         request.validate()?;
         if let Some(error) = self.profile_error
             && requires_profile(&request.op)
@@ -89,7 +125,12 @@ impl Runtime {
             ("runtime.capabilities", Self::capabilities),
             ("runtime.shutdown", Self::shutdown),
             ("page.navigate", Self::navigate),
-            ("page.inspect", Self::inspect),
+            ("page.inspect", Self::inspect_with),
+            ("page.summary", Self::summary),
+            ("page.find", Self::find_nodes),
+            ("page.diff", Self::diff_since),
+            ("page.wait", Self::wait_condition),
+            ("page.act", Self::act),
             ("page.set_text", Self::set_text),
             ("page.layout", Self::layout),
             ("page.click", Self::click),
@@ -101,8 +142,28 @@ impl Runtime {
             ("page.set_checked", Self::check),
             ("page.select", Self::select_option),
             ("page.submit", Self::submit),
+            ("page.screenshot", Self::screenshot),
+            ("page.click_at", Self::click_at),
+            ("page.hover", Self::hover),
+            ("page.scroll_at", Self::scroll_at),
+            ("page.press", Self::press),
+            ("page.console", Self::console),
+            ("page.network", Self::network),
             ("control.status", Self::control_status),
             ("control.release", Self::release_control),
+            ("page.devtools", Self::devtools),
+            ("page.devtools_peek", Self::devtools_peek),
+            ("page.nodes", Self::nodes),
+            ("page.history", Self::history_position),
+            ("page.outer_html", Self::outer_html),
+            ("page.set_attribute", Self::set_attribute),
+            ("page.scroll_into_view", Self::scroll_into_view),
+            ("page.cookies_list", Self::cookies_list),
+            ("page.cookies_set", Self::cookies_set),
+            ("page.cookies_delete", Self::cookies_delete),
+            ("page.cookies_clear", Self::cookies_clear),
+            ("page.emulate", Self::emulate),
+            ("page.navigate_intercepted", Self::navigate_intercepted),
         ];
         let handler = handlers
             .iter()
@@ -145,6 +206,14 @@ impl Runtime {
     /// Desktop admissions carry local authority rather than trusting page/agent parameters.
     pub fn handle_as(&mut self, mut request: Request, permit: Permit) -> EngineResult<Value> {
         request.validate()?;
+        let lane = lanes::take_lane(&mut request.params)?;
+        if permit.owner == Owner::Agent && ["tab.open", "tab.close"].contains(&request.op.as_str())
+        {
+            self.permit = Some(permit);
+            let result = self.agent_tab(request, permit, &lane);
+            self.permit = None;
+            return result;
+        }
         if mutating(&request.op)
             && let Some(authority) = &self.authority
         {
@@ -158,7 +227,7 @@ impl Runtime {
             } else {
                 permit.tab_id
             };
-            let state = authority::lock(authority)?;
+            let mut state = authority::lock(authority)?;
             let local_tab_action = request.op.starts_with("tab.")
                 && permit.owner == Owner::Human
                 && permit.tab_id.is_none();
@@ -166,6 +235,9 @@ impl Runtime {
                 // The window dispatches these only from native human actions.
             } else if let Some(tab_id) = tab_id {
                 state.validate_tab(permit, tab_id)?;
+                if permit.owner == Owner::Agent {
+                    state.claim(tab_id, &lane)?;
+                }
             } else {
                 state.validate(permit)?;
             }
@@ -233,7 +305,7 @@ impl Runtime {
         let mut result = json!({"protocol_version":VERSION,"product_goal":"electron_replacement","implementation_status":"in_development","state":if self.failed {"failed"} else {"ready"},
             "operations":{"runtime.capabilities":{},"runtime.shutdown":{},"page.navigate":{"url":"string"},"page.inspect":{},"page.set_text":{"page_id":"string","node_id":"string","expected_revision":"u64","text":"string"},"page.layout":{}},
             "engines":self.process_ids().into_iter().map(|(name,pid)|json!({"name":name,"pid":pid})).collect::<Vec<_>>(),
-            "subsets":{"network":"literal loopback HTTP GET; UTF-8 HTML; no redirects","document":"bounded explicit HTML tree, ordered blocking classic inline/external scripts, text, links, inputs and buttons","v9":"ordered classic scripts share page state and budgets; typed values; own-property objects and arrays; lexical bindings; named functions with parameters and returns; if/while; arithmetic and comparisons; input reads and textContent writes","web_storage":{"localStorage":{"scope":"canonical origin","methods":["getItem","setItem","removeItem","clear"]},"sessionStorage":{"scope":"tab and canonical origin","methods":["getItem","setItem","removeItem","clear"]}},"layout":LAYOUT_UNIT},
+            "subsets":{"network":"literal loopback HTTP GET; UTF-8 HTML; no redirects","document":"bounded explicit HTML tree, classic inline/external scripts run blocking, then defer, then async, each in document order, text, links, inputs and buttons","v9":"ordered classic scripts share page state and budgets; typed values; own-property objects and arrays; lexical bindings; named functions with parameters and returns; if/while; arithmetic and comparisons; input reads and textContent writes","web_storage":{"localStorage":{"scope":"canonical origin","methods":["getItem","setItem","removeItem","clear"]},"sessionStorage":{"scope":"tab and canonical origin","methods":["getItem","setItem","removeItem","clear"]}},"layout":LAYOUT_UNIT},
             "unavailable":["desktop_window","pixels","css","full_javascript","https","internet","frames","named_profiles","electron_profile_import","cookie_inspection","human_agent_handoff","os_sandbox"],
             "limits":{"frame_bytes":FRAME_BYTES,"html_bytes":HTML_BYTES,"header_bytes":HEADER_BYTES,"nodes":NODES,"text_bytes":TEXT_BYTES,"script_bytes":SCRIPT_BYTES,"script_total_bytes":SCRIPT_TOTAL_BYTES,"script_count":SCRIPT_COUNT,"statements":STATEMENTS,"tokens":TOKENS,"operations":OPERATIONS,"expression_nesting":EXPRESSION_DEPTH,"js_string_units":JS_STRING_UNITS,"js_environment_units":JS_ENVIRONMENT_UNITS,"vm_state_bytes":crate::constants::VM_STATE_BYTES,"vm_objects":crate::constants::VM_OBJECTS,"vm_properties":crate::constants::VM_PROPERTIES,"vm_array_length":crate::constants::VM_ARRAY_LENGTH,"function_parameters":crate::constants::FUNCTION_PARAMETERS,"url_bytes":URL_BYTES,"id_bytes":ID_BYTES,"network_deadline_ms":NETWORK_TIMEOUT.as_millis(),"rpc_deadline_ms":RPC_TIMEOUT.as_millis()}});
         result["subsets"]["v9"] = json!(
@@ -282,7 +354,7 @@ impl Runtime {
             result["desktop"] = json!(true);
             result["ownership"] = self.control_status(json!({}))?;
             result["subsets"]["network"] = json!(
-                "public HTTP/HTTPS with verified TLS; bounded redirects; exact owned fixture grants"
+                "public HTTP/HTTPS with verified TLS over HTTP/1.1 and HTTP/2; bounded redirects; exact owned fixture grants; public-suffix-aware domain cookies with SameSite (RFC 6265bis) and HttpOnly"
             );
             result["subsets"]["layout"] = json!("logical_points; one shared native display list");
             result["subsets"]["css"] = json!(
@@ -298,14 +370,24 @@ impl Runtime {
                 "frames",
                 "named_profiles",
                 "electron_profile_import",
-                "domain_cookies",
                 "cookie_inspection",
                 "os_sandbox"
             ]);
             result["operations"]["page.scroll"] =
                 json!({"page_id":"string","expected_revision":"u64","y":"logical_points"});
         }
+        result["operations"]["page.inspect"] = json!({"fields":"optional [string]","visible_only":"optional bool","compact":"optional bool"});
+        result["operations"]["page.summary"] = json!({});
+        result["operations"]["page.find"] = json!({"role":"optional string","name":"optional string","label":"optional string","text":"optional string","limit":"optional u64","visible_only":"optional bool"});
+        result["operations"]["page.diff"] = json!({"since_revision":"u64"});
+        result["operations"]["page.wait"] = json!({"text":"optional string","role":"optional string","name":"optional string","label":"optional string","absent":"optional bool","url":"optional string","after_revision":"optional u64","navigated_from":"optional string","timeout_ms":"optional u64"});
+        result["operations"]["page.act"] = json!({"page_id":"string","expected_revision":"u64","steps":"[step]","result":"optional summary|diff|none","max_steps":super::batch::ACT_STEPS});
         for operation in [
+            "page.summary",
+            "page.find",
+            "page.diff",
+            "page.wait",
+            "page.act",
             "page.navigate",
             "page.inspect",
             "page.layout",
@@ -322,6 +404,8 @@ impl Runtime {
         ] {
             result["operations"][operation]["tab_id"] = json!("string");
         }
+        lanes::describe(&mut result);
+        super::devtools::describe(&mut result);
         Ok(result)
     }
 
@@ -349,6 +433,11 @@ fn session_mutation(op: &str) -> bool {
         "page.set_text",
         "page.set_checked",
         "page.select",
+        "page.act",
+        "page.click_at",
+        "page.press",
+        "page.devtools",
+        "page.navigate_intercepted",
     ]
     .contains(&op)
 }
@@ -362,6 +451,10 @@ fn requires_profile(op: &str) -> bool {
         "page.reload",
         "page.click",
         "page.submit",
+        "page.click_at",
+        "page.press",
+        "page.devtools",
+        "page.navigate_intercepted",
     ]
     .contains(&op)
 }
@@ -380,6 +473,18 @@ pub fn mutating(op: &str) -> bool {
         "page.set_checked",
         "page.select",
         "page.submit",
+        "page.act",
+        "page.click_at",
+        "page.scroll_at",
+        "page.press",
+        "page.devtools",
+        "page.set_attribute",
+        "page.scroll_into_view",
+        "page.cookies_set",
+        "page.cookies_delete",
+        "page.cookies_clear",
+        "page.emulate",
+        "page.navigate_intercepted",
         "runtime.shutdown",
         "control.release",
         "tab.open",

@@ -1,4 +1,4 @@
-/** UTF-16 string algorithms retain surrogate units and enforce output caps before allocation. */
+/** Borrowed UTF-16 views: code-point iteration keeps unpaired surrogates intact. */
 use super::JsString;
 use crate::{
     constants::{
@@ -100,6 +100,7 @@ impl<'a> Iterator for CodePointCursor<'a> {
         Some(&self.units[start..self.offset])
     }
 }
+
 /** Surrogate units are never ECMAScript whitespace and remain valid owned JavaScript text. */
 fn space(unit: u16) -> bool {
     char::from_u32(u32::from(unit)).is_some_and(whitespace)

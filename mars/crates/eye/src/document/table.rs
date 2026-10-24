@@ -1,159 +1,180 @@
 /** Static table validation derives bounded row/cell relationships from source order. */
 use super::{Document, Node, TableCell};
 use crate::{
-    constants::{TABLE_CELLS, TABLE_COLUMNS, TABLE_ROWS},
+    constants::{DIAGNOSTICS, TABLE_CELLS, TABLE_COLUMNS, TABLE_ROWS},
     protocol::{EngineError, EngineResult},
 };
+use std::collections::BTreeMap;
 
-/** Only ordinary nonnested table structure enters the native grid layout. */
+/** Direct child positions by parent position, built once so every table check stays linear. */
+type Children = Vec<Vec<usize>>;
+
+/** Table relationships are annotated best effort: structure outside the static subset is laid
+out as the tree builder repaired it and noted once, never refused. Only the hard row, column and
+cell bounds still fail. */
 pub(super) fn annotate(document: &mut Document) -> EngineResult<()> {
-    validate_tree(document)?;
-    let tables = ids(document, "table");
-    for table in tables {
-        annotate_table(document, table)?;
+    let kids = index_children(document);
+    for message in irregularities(document, &kids) {
+        if document.diagnostics.len() < DIAGNOSTICS
+            && !document.diagnostics.iter().any(|d| d == message)
+        {
+            document.diagnostics.push(message.into());
+        }
     }
-    Ok(())
-}
-
-/** Malformed relationships and spanning models fail before candidate publication. */
-fn validate_tree(document: &Document) -> EngineResult<()> {
-    for node in &document.nodes {
-        if table_tag(&node.tag) {
-            validate_parent(document, node)?;
+    let mut rows = BTreeMap::<usize, Vec<usize>>::new();
+    for row in ids(document, "tr") {
+        if let Some(table) = closest_table(document, row) {
+            rows.entry(table).or_default().push(row);
         }
-        if node.tag == "table" && ancestor(document, node, "table") {
-            return Err(unsupported());
-        }
-        validate_spans(node)?;
     }
     for table in ids(document, "table") {
-        validate_children(
-            document,
-            table,
-            &["caption", "thead", "tbody", "tfoot", "tr"],
-        )?;
-    }
-    for group in ids(document, "thead")
-        .into_iter()
-        .chain(ids(document, "tbody"))
-        .chain(ids(document, "tfoot"))
-    {
-        validate_children(document, group, &["tr"])?;
-    }
-    for row in ids(document, "tr") {
-        validate_children(document, row, &["th", "td"])?;
+        let rows = rows.remove(&table).unwrap_or_default();
+        annotate_table(document, &kids, table, &rows)?;
     }
     Ok(())
 }
 
-/** Structural containers reject markup that the grid would otherwise silently omit. */
-fn validate_children(document: &Document, parent: usize, allowed: &[&str]) -> EngineResult<()> {
-    if document
-        .nodes
+/** One walk records each node under its parent, in source order. */
+fn index_children(document: &Document) -> Children {
+    let mut kids = vec![Vec::new(); document.nodes.len()];
+    for (index, node) in document.nodes.iter().enumerate() {
+        if let Some(list) = node.parent.and_then(|parent| kids.get_mut(parent)) {
+            list.push(index);
+        }
+    }
+    kids
+}
+
+/** The value-free notes for structure the grid lays out approximately. */
+fn irregularities(document: &Document, kids: &Children) -> Vec<&'static str> {
+    let mut found = Vec::new();
+    for node in &document.nodes {
+        if node.tag == "table" && ancestor(document, node, "table") {
+            found.push("Nested tables are laid out inside their cells.");
+        }
+        if table_tag(&node.tag) && !valid_parent(document, node) {
+            found.push("Table parts outside their usual parents are laid out best effort.");
+        }
+        if spanning(node) {
+            found.push("Table cell spans are laid out as single cells.");
+        }
+    }
+    let unexpected = |parent: usize, allowed: &[&str]| {
+        kids[parent]
+            .iter()
+            .any(|child| !allowed.contains(&document.nodes[*child].tag.as_str()))
+    };
+    let tables = ids(document, "table");
+    let groups = ["thead", "tbody", "tfoot"]
         .iter()
-        .any(|node| node.parent == Some(parent) && !allowed.contains(&node.tag.as_str()))
+        .flat_map(|tag| ids(document, tag));
+    if tables.iter().any(|table| {
+        unexpected(
+            *table,
+            &[
+                "caption", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "form",
+            ],
+        )
+    }) || groups
+        .into_iter()
+        .any(|group| unexpected(group, &["tr", "form"]))
+        || ids(document, "tr")
+            .into_iter()
+            .any(|row| unexpected(row, &["th", "td", "form"]))
     {
-        return Err(unsupported());
+        found.push("Content inside table structure that is not a row or cell is not laid out.");
     }
-    Ok(())
+    if tables
+        .iter()
+        .any(|table| duplicate_groups(document, kids, *table))
+    {
+        found.push("Repeated table captions, headers or footers are laid out in source order.");
+    }
+    found
 }
 
-/** Table children must use the supported direct structural parents. */
-fn validate_parent(document: &Document, node: &Node) -> EngineResult<()> {
+/** Table children normally use the direct structural parents HTML gives them. */
+fn valid_parent(document: &Document, node: &Node) -> bool {
     let parent = node
         .parent
         .and_then(|id| document.nodes.get(id))
         .map(|parent| parent.tag.as_str());
-    let valid = match node.tag.as_str() {
-        "table" => !ancestor(document, node, "table"),
+    match node.tag.as_str() {
         "caption" | "thead" | "tbody" | "tfoot" => parent == Some("table"),
         "tr" => [Some("table"), Some("thead"), Some("tbody"), Some("tfoot")].contains(&parent),
         "th" | "td" => parent == Some("tr"),
         _ => true,
-    };
-    if valid { Ok(()) } else { Err(unsupported()) }
+    }
 }
 
-/** Spans and unsupported header scopes cannot desynchronize grid geometry. */
-fn validate_spans(node: &Node) -> EngineResult<()> {
-    if !["th", "td"].contains(&node.tag.as_str()) {
-        return Ok(());
-    }
-    for name in ["rowspan", "colspan"] {
-        if node.attributes.get(name).is_some_and(|value| value != "1") {
-            return Err(unsupported());
-        }
-    }
-    if node.tag == "th"
-        && node
+/** Spans and unknown header scopes are laid out as one ordinary cell. */
+fn spanning(node: &Node) -> bool {
+    ["th", "td"].contains(&node.tag.as_str())
+        && (["rowspan", "colspan"].iter().any(|name| {
+            node.attributes
+                .get(*name)
+                .is_some_and(|value| value.trim() != "1")
+        }) || node
             .attributes
             .get("scope")
-            .is_some_and(|scope| !["row", "col"].contains(&scope.as_str()))
-    {
-        return Err(unsupported());
-    }
-    Ok(())
+            .is_some_and(|scope| !["row", "col"].contains(&scope.as_str())))
 }
 
 /** Each table has independently bounded source-ordered rows and columns. */
-fn annotate_table(document: &mut Document, table: usize) -> EngineResult<()> {
-    validate_groups(document, table)?;
-    let rows = ids(document, "tr")
-        .into_iter()
-        .filter(|row| closest_table(document, *row) == Some(table))
-        .collect::<Vec<_>>();
+fn annotate_table(
+    document: &mut Document,
+    kids: &Children,
+    table: usize,
+    rows: &[usize],
+) -> EngineResult<()> {
     if rows.len() > TABLE_ROWS {
         return Err(EngineError::limit("table rows", TABLE_ROWS));
     }
-    if rows
+    let cells = rows
         .iter()
-        .map(|row| children(document, *row).len())
-        .sum::<usize>()
-        > TABLE_CELLS
-    {
+        .map(|row| children(document, kids, *row))
+        .collect::<Vec<_>>();
+    if cells.iter().map(Vec::len).sum::<usize>() > TABLE_CELLS {
         return Err(EngineError::limit("table cells", TABLE_CELLS));
     }
-    annotate_cells(document, table, &rows)
+    annotate_cells(document, table, rows, &cells)
 }
 
-/** Duplicate caption and header/footer groups make source associations ambiguous. */
-fn validate_groups(document: &Document, table: usize) -> EngineResult<()> {
-    for tag in ["caption", "thead", "tfoot"] {
-        if document
-            .nodes
+/** Duplicate caption and header/footer groups make source associations approximate. */
+fn duplicate_groups(document: &Document, kids: &Children, table: usize) -> bool {
+    ["caption", "thead", "tfoot"].iter().any(|tag| {
+        kids[table]
             .iter()
-            .filter(|node| node.parent == Some(table) && node.tag == tag)
+            .filter(|child| document.nodes[**child].tag == *tag)
             .count()
             > 1
-        {
-            return Err(unsupported());
-        }
-    }
-    Ok(())
+    })
 }
 
 /** Header associations use explicit row/column scope or the first header row. */
-fn annotate_cells(document: &mut Document, table: usize, rows: &[usize]) -> EngineResult<()> {
-    let mut column_headers = Vec::new();
-    let first_header_row = rows.iter().position(|row| {
-        let cells = children(document, *row);
+fn annotate_cells(
+    document: &mut Document,
+    table: usize,
+    rows: &[usize],
+    cells: &[Vec<usize>],
+) -> EngineResult<()> {
+    let mut column_headers = BTreeMap::<usize, Vec<usize>>::new();
+    let first_header_row = rows.iter().zip(cells).position(|(row, cells)| {
         !cells.is_empty()
             && (closest_tag(document, *row, "thead", table)
                 || cells.iter().all(|id| document.nodes[*id].tag == "th"))
     });
-    for (row_index, row) in rows.iter().enumerate() {
-        let row_cells = children(document, *row);
+    for (row_index, row_cells) in cells.iter().enumerate() {
         if row_cells.len() > TABLE_COLUMNS {
             return Err(EngineError::limit("table columns", TABLE_COLUMNS));
         }
         for (column_index, id) in row_cells.iter().enumerate() {
             if is_column_header(document, *id, row_index, table, first_header_row) {
-                column_headers.push((*id, column_index));
+                column_headers.entry(column_index).or_default().push(*id);
             }
         }
     }
-    for (row_index, row) in rows.iter().enumerate() {
-        let row_cells = children(document, *row);
+    for (row_index, (row, row_cells)) in rows.iter().zip(cells).enumerate() {
         let row_headers = row_cells
             .iter()
             .copied()
@@ -166,7 +187,10 @@ fn annotate_cells(document: &mut Document, table: usize, rows: &[usize]) -> Engi
             })
             .collect::<Vec<_>>();
         for (column_index, id) in row_cells.iter().enumerate() {
-            let headers = headers_for(document, *id, column_index, &column_headers, &row_headers);
+            let column = column_headers
+                .get(&column_index)
+                .map_or(&[][..], Vec::as_slice);
+            let headers = headers_for(document, *id, column, &row_headers);
             document.nodes[*id].table_cell = Some(TableCell {
                 table,
                 row: *row,
@@ -180,17 +204,11 @@ fn annotate_cells(document: &mut Document, table: usize, rows: &[usize]) -> Engi
 }
 
 /** Column headers apply down their column; explicit row headers apply across the row. */
-fn headers_for(
-    document: &Document,
-    cell: usize,
-    column: usize,
-    columns: &[(usize, usize)],
-    rows: &[usize],
-) -> Vec<usize> {
-    let mut result = columns
+fn headers_for(document: &Document, cell: usize, column: &[usize], rows: &[usize]) -> Vec<usize> {
+    let mut result = column
         .iter()
-        .filter(|(id, index)| *index == column && *id != cell)
-        .map(|(id, _)| *id)
+        .copied()
+        .filter(|id| *id != cell)
         .collect::<Vec<_>>();
     result.extend(rows.iter().copied().filter(|id| *id != cell));
     if document.nodes[cell].tag == "th" {
@@ -257,11 +275,11 @@ fn ancestor(document: &Document, node: &Node, tag: &str) -> bool {
 }
 
 /** Direct children preserve source order and stable local node IDs. */
-fn children(document: &Document, parent: usize) -> Vec<usize> {
-    document
-        .nodes
+fn children(document: &Document, kids: &Children, parent: usize) -> Vec<usize> {
+    kids[parent]
         .iter()
-        .filter(|node| node.parent == Some(parent) && ["td", "th"].contains(&node.tag.as_str()))
+        .map(|child| &document.nodes[*child])
+        .filter(|node| ["td", "th"].contains(&node.tag.as_str()))
         .map(|node| node.local_id)
         .collect()
 }
@@ -282,11 +300,4 @@ fn table_tag(tag: &str) -> bool {
         "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td",
     ]
     .contains(&tag)
-}
-
-/** Unsupported table behavior is explicit and leaves the committed page intact. */
-fn unsupported() -> EngineError {
-    EngineError::unsupported(
-        "This table structure is malformed or outside the supported static subset.",
-    )
 }

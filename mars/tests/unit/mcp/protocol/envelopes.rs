@@ -137,7 +137,7 @@ fn strict_tool_wrappers_and_discovery_reject_unimplemented_protocol_features() {
         json!({"jsonrpc":"2.0","id":7,"method":"tools/list","params":{"cursor":"","_meta":{}}}),
         now,
     ));
-    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 16);
+    assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 30);
     assert!(listed["result"].get("nextCursor").is_none());
     assert_eq!(
         sent(receive(

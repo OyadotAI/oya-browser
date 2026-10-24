@@ -7,47 +7,35 @@ fn copied_cycles_closures_and_bound_callbacks_keep_identity_across_events() {
     let source = "function make(){const box={n:7};const read=()=>box;box.read=read;return box;}const box=make();function plus(n){return this.n+n;}const bound=plus.bind(box,2);const a=[box,box.read,bound];const b=[...a];function run(){document.getElementById('out').textContent=(b!==a)+' '+(b[0]===box)+' '+(b[1]()===box)+' '+(b[0].read===b[1])+' '+b[2]();}";
     let state = round_trip(load(source, &[]).unwrap().state);
     assert_eq!(
-        event(source, "run()", state, &[]).unwrap().changes[0].text,
+        event(source, "run()", state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
         "true true true true 9"
     );
 }
 
-/** Numbers keep their wire bits and strings keep unpaired units without a UTF-8 conversion. */
+/** Negative zero, NaN and unpaired surrogate units survive copying and a state round trip exactly. */
 #[test]
 fn scalar_bits_and_lone_surrogate_strings_are_shallow_copied_exactly() {
-    let source = "const a=[-0,NaN,'\\ud800'];const b=[...a];function run(){document.getElementById('out').textContent=(1/b[0])+' '+(b[1]!==b[1])+' '+b[2].length;}";
+    let source = "const a=[-0,NaN,'\\ud800'];const b=[...a];function run(){document.getElementById('out').textContent=(1/b[0])+' '+(b[1]!==b[1])+' '+b[2].length+' '+b[2].charCodeAt(0);}";
     let loaded = load(source, &[]).unwrap();
-    let wire = serde_json::to_value(&loaded.state).unwrap();
-    let array = wire["globals"]["b"]["value"]["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
-    let elements = &wire["heap"]["objects"][&array]["elements"];
-    assert_eq!(
-        elements[0],
-        json!({"type":"number","bits":format!("{:016x}", (-0.0f64).to_bits())})
-    );
-    assert_eq!(elements[2], json!({"type":"string","units":[0xd800]}));
     assert_eq!(
         event(source, "run()", round_trip(loaded.state), &[])
             .unwrap()
             .changes[0]
-            .text,
-        "-Infinity true 1"
+            .text()
+            .unwrap(),
+        "-Infinity true 1 55296"
     );
 }
 
-/** Invalid source records cannot be rescued by a spread followed by collection. */
+/** A forged array element naming an object the heap does not hold is refused before the event runs. */
 #[test]
 fn forged_sparse_source_references_are_rejected_before_event_execution() {
     let source = "const a=[1];function run(){const b=[...a];}";
-    let original = serde_json::to_value(load(source, &[]).unwrap().state).unwrap();
-    let array = original["globals"]["a"]["value"]["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
-    let mut wire = original;
-    wire["heap"]["objects"][&array]["elements"][0] = json!({"type":"object","id":99999});
+    let mut wire = serde_json::to_value(load(source, &[]).unwrap().state).unwrap();
+    let array = crate::v9::wire_global_object(&wire, "a");
+    crate::v9::wire_object(&mut wire, array)["c"]["array"][0] = json!({"o": 99999});
     let error = event(source, "run()", serde_json::from_value(wire).unwrap(), &[]).unwrap_err();
     assert_eq!(error.code, "invalid_request");
 }
@@ -59,14 +47,14 @@ fn nested_spread_operand_closures_retain_their_source_owned_capture() {
     let mut state = load(source, &[]).unwrap().state;
     for expected in ["5", "6"] {
         let executed = event(source, "run()", round_trip(state), &[]).unwrap();
-        assert_eq!(executed.changes[0].text, expected);
+        assert_eq!(executed.changes[0].text().unwrap(), expected);
         state = executed.state;
     }
 }
 
-/** Host values remain exact document identities as array elements, but hosts are not iterable. */
+/** Host values remain exact document identities as array elements; a non-iterable host throws; another page's state is refused. */
 #[test]
-fn copied_host_references_keep_identity_and_host_iteration_is_explicitly_unsupported() {
+fn copied_host_references_keep_identity_and_foreign_document_state_is_refused() {
     use mars::{
         document::{parse, script_document},
         v9::{StorageState, click_document_scripts, load_document_scripts},
@@ -87,22 +75,14 @@ fn copied_host_references_keep_identity_and_host_iteration_is_explicitly_unsuppo
         StorageState::default(),
     )
     .unwrap();
-    assert_eq!(executed.changes[0].text, "true true");
+    assert_eq!(executed.changes[0].text().unwrap(), "true true");
     let invalid = "const a=[...document];";
     let error = load_document_scripts(&[invalid.into()], document.clone(), StorageState::default())
         .unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert_eq!(error.phase.as_deref(), Some("execute"));
-    assert_eq!(
-        error.location.unwrap().byte_offset,
-        invalid.find("...").unwrap()
-    );
+    assert_eq!(error.code, "script_execution_error");
+    assert!(error.message.contains("not iterable"));
     let mut wire = serde_json::to_value(loaded.state).unwrap();
-    let array = wire["globals"]["b"]["value"]["id"]
-        .as_u64()
-        .unwrap()
-        .to_string();
-    wire["heap"]["objects"][&array]["elements"][1]["reference"]["document"] = json!("forged-page");
+    wire["page"]["identity"] = json!("forged-page");
     let forged: VmState = serde_json::from_value(wire).unwrap();
     assert_eq!(
         forged.validate_document(&document).unwrap_err().code,

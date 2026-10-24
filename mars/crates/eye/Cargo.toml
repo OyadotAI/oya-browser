@@ -14,4 +14,7 @@ url = "=2.5.8"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "=0.6.4"
 objc2-foundation = "=0.3.2"
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSColor", "NSFont", "NSStringDrawing", "NSAttributedString"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "NSColor", "NSFont", "NSStringDrawing", "NSAttributedString", "NSParagraphStyle", "NSText", "NSFontDescriptor"] }
+# Web fonts: CTFontManagerCreateFontDescriptorFromData loads a page's font bytes for this process only.
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFData"] }
+objc2-core-text = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CTFontDescriptor", "CTFontManager"] }

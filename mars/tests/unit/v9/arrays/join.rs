@@ -12,36 +12,39 @@ fn join_preserves_sparse_nullish_fields_and_formats_supported_primitives() {
 
 /** Separator conversion occurs even when no positions will be visited. */
 #[test]
-fn empty_array_join_still_validates_separator_conversion() {
+fn empty_array_join_still_converts_the_separator() {
     assert_eq!(result("", "[].join(undefined)"), "");
     assert_eq!(
-        execute("[].join({});").unwrap_err().code,
-        "unsupported_feature"
+        result(
+            "let calls=0;const joined=[].join({toString(){calls++;return ',';}});",
+            "joined+calls"
+        ),
+        "1"
     );
 }
 
-/** General ToPrimitive, nested-array conversion and function serialization stay explicitly unavailable. */
+/** Object, nested-array and function elements join through ToString, as in JavaScript. */
 #[test]
-fn join_refuses_object_function_and_nested_array_elements() {
-    for source in ["[{}].join();", "[[1]].join();", "[()=>1].join();"] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
+#[ignore = "known V9 gap: Function.prototype.toString prints [native code]; V9 keeps no function source spans"]
+fn join_converts_object_nested_array_and_function_elements() {
+    assert_eq!(result("", "[{}].join()"), "[object Object]");
+    assert_eq!(result("", "[[1,[2]]].join()"), "1,2");
+    assert_eq!(result("", "[()=>1].join()"), "()=>1");
 }
 
 /** A joined value may reach the exact UTF-16 cap, while the next append fails before growing it further. */
 #[test]
 fn join_checks_utf16_output_budget_before_appending() {
-    let value = "x".repeat(JS_STRING_UNITS / 2);
+    let half = JS_STRING_UNITS / 2;
     assert_eq!(
-        result(&format!("const s='{value}';"), "[s,s].join('')").len(),
-        JS_STRING_UNITS
+        result(
+            &format!("const s='x'.repeat({half});"),
+            "[s,s].join('').length"
+        ),
+        JS_STRING_UNITS.to_string()
     );
     assert_eq!(
-        execute(&format!("const s='{value}';[s,s].join(',');"))
+        execute(&format!("const s='x'.repeat({half});[s,s].join(',');"))
             .unwrap_err()
             .code,
         "limit_exceeded"

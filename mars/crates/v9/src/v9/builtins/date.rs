@@ -1,0 +1,784 @@
+/** Date over the page's virtual clock; local time uses the host's fixed timezone offset. */
+use super::*;
+use crate::v9::vm::data::Class;
+use crate::v9::vm::heap::Object;
+use crate::v9::vm::realm::{NativeFn, realm, symbol};
+
+/** Milliseconds per day. */
+const DAY: f64 = 86_400_000.0;
+/** Milliseconds per hour. */
+const HOUR: f64 = 3_600_000.0;
+/** Milliseconds per minute. */
+const MINUTE: f64 = 60_000.0;
+/** Milliseconds per second. */
+const SECOND: f64 = 1000.0;
+/** The largest time value. */
+const MAX_TIME: f64 = 8.64e15;
+/** Day names. */
+const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Month names. */
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** Date and Date.prototype. */
+pub(super) fn install(b: &mut Builder) {
+    let proto = b.object(Some(b.ids.object_prototype));
+    b.ids.date_prototype = proto;
+    let ctor = b.constructor("Date", 7, construct, proto, None);
+    b.global("Date", ctor);
+    b.method(ctor, "now", 0, now);
+    b.method(ctor, "parse", 1, parse);
+    b.method(ctor, "UTC", 7, utc);
+    let getters: [(&'static str, NativeFn); 20] = [
+        ("getTime", get_time),
+        ("valueOf", get_time),
+        ("getFullYear", |vm, call| field(vm, call, Field::Year, true)),
+        ("getMonth", |vm, call| field(vm, call, Field::Month, true)),
+        ("getDate", |vm, call| field(vm, call, Field::Date, true)),
+        ("getDay", |vm, call| field(vm, call, Field::Day, true)),
+        ("getHours", |vm, call| field(vm, call, Field::Hours, true)),
+        ("getMinutes", |vm, call| {
+            field(vm, call, Field::Minutes, true)
+        }),
+        ("getSeconds", |vm, call| {
+            field(vm, call, Field::Seconds, true)
+        }),
+        ("getMilliseconds", |vm, call| {
+            field(vm, call, Field::Millis, true)
+        }),
+        ("getUTCFullYear", |vm, call| {
+            field(vm, call, Field::Year, false)
+        }),
+        ("getUTCMonth", |vm, call| {
+            field(vm, call, Field::Month, false)
+        }),
+        ("getUTCDate", |vm, call| field(vm, call, Field::Date, false)),
+        ("getUTCDay", |vm, call| field(vm, call, Field::Day, false)),
+        ("getUTCHours", |vm, call| {
+            field(vm, call, Field::Hours, false)
+        }),
+        ("getUTCMinutes", |vm, call| {
+            field(vm, call, Field::Minutes, false)
+        }),
+        ("getUTCSeconds", |vm, call| {
+            field(vm, call, Field::Seconds, false)
+        }),
+        ("getUTCMilliseconds", |vm, call| {
+            field(vm, call, Field::Millis, false)
+        }),
+        ("getTimezoneOffset", timezone_offset),
+        ("getYear", |vm, call| {
+            let year = field(vm, call, Field::Year, true)?;
+            Ok(match year {
+                JsValue::Number(year) => JsValue::Number(year - 1900.0),
+                other => other,
+            })
+        }),
+    ];
+    for (name, function) in getters {
+        b.method(proto, name, 0, function);
+    }
+    let setters: [(&'static str, u32, NativeFn); 15] = [
+        ("setTime", 1, set_time),
+        ("setMilliseconds", 1, |vm, call| {
+            set(vm, call, Field::Millis, true)
+        }),
+        ("setSeconds", 2, |vm, call| {
+            set(vm, call, Field::Seconds, true)
+        }),
+        ("setMinutes", 3, |vm, call| {
+            set(vm, call, Field::Minutes, true)
+        }),
+        ("setHours", 4, |vm, call| set(vm, call, Field::Hours, true)),
+        ("setDate", 1, |vm, call| set(vm, call, Field::Date, true)),
+        ("setMonth", 2, |vm, call| set(vm, call, Field::Month, true)),
+        ("setFullYear", 3, |vm, call| {
+            set(vm, call, Field::Year, true)
+        }),
+        ("setUTCMilliseconds", 1, |vm, call| {
+            set(vm, call, Field::Millis, false)
+        }),
+        ("setUTCSeconds", 2, |vm, call| {
+            set(vm, call, Field::Seconds, false)
+        }),
+        ("setUTCMinutes", 3, |vm, call| {
+            set(vm, call, Field::Minutes, false)
+        }),
+        ("setUTCHours", 4, |vm, call| {
+            set(vm, call, Field::Hours, false)
+        }),
+        ("setUTCDate", 1, |vm, call| {
+            set(vm, call, Field::Date, false)
+        }),
+        ("setUTCMonth", 2, |vm, call| {
+            set(vm, call, Field::Month, false)
+        }),
+        ("setUTCFullYear", 3, |vm, call| {
+            set(vm, call, Field::Year, false)
+        }),
+    ];
+    for (name, length, function) in setters {
+        b.method(proto, name, length, function);
+    }
+    let formats: [(&'static str, NativeFn); 10] = [
+        ("toISOString", to_iso),
+        ("toJSON", to_json),
+        ("toString", to_string),
+        ("toDateString", to_date_string),
+        ("toTimeString", to_time_string),
+        ("toUTCString", to_utc_string),
+        ("toGMTString", to_utc_string),
+        ("toLocaleString", to_locale_string),
+        ("toLocaleDateString", to_locale_date_string),
+        ("toLocaleTimeString", to_locale_time_string),
+    ];
+    for (name, function) in formats {
+        b.method(proto, name, 0, function);
+    }
+    b.symbol_method(
+        proto,
+        symbol::TO_PRIMITIVE,
+        "[Symbol.toPrimitive]",
+        1,
+        to_primitive,
+    );
+}
+
+/** The page's virtual time in milliseconds. */
+pub(in crate::v9) fn now_ms(vm: &Vm) -> f64 {
+    (vm.page.state.epoch + vm.page.state.clock).floor()
+}
+
+/** The local timezone offset in milliseconds (UTC plus this is local). */
+pub(super) fn local_offset(vm: &Vm) -> f64 {
+    vm.page.environment.timezone_offset_minutes * MINUTE
+}
+
+/** Days since the epoch for a civil date (proleptic Gregorian). */
+fn days_from_civil(year: f64, month: f64, day: f64) -> f64 {
+    let year = year + (month / 12.0).floor();
+    let month = month.rem_euclid(12.0) + 1.0;
+    let (y, m) = if month <= 2.0 {
+        (year - 1.0, month + 9.0)
+    } else {
+        (year, month - 3.0)
+    };
+    let era = (y / 400.0).floor();
+    let yoe = y - era * 400.0;
+    let doy = ((153.0 * m + 2.0) / 5.0).floor() + day - 1.0;
+    let doe = yoe * 365.0 + (yoe / 4.0).floor() - (yoe / 100.0).floor() + doy;
+    era * 146_097.0 + doe - 719_468.0
+}
+
+/** Civil year, month (0-based) and day for days since the epoch. */
+fn civil_from_days(days: f64) -> (f64, f64, f64) {
+    let z = days + 719_468.0;
+    let era = (z / 146_097.0).floor();
+    let doe = z - era * 146_097.0;
+    let yoe = ((doe - (doe / 1460.0).floor() + (doe / 36_524.0).floor()
+        - (doe / 146_096.0).floor())
+        / 365.0)
+        .floor();
+    let doy = doe - (365.0 * yoe + (yoe / 4.0).floor() - (yoe / 100.0).floor());
+    let mp = ((5.0 * doy + 2.0) / 153.0).floor();
+    let day = doy - ((153.0 * mp + 2.0) / 5.0).floor() + 1.0;
+    let month = if mp < 10.0 { mp + 3.0 } else { mp - 9.0 };
+    let year = yoe + era * 400.0 + if month <= 2.0 { 1.0 } else { 0.0 };
+    (year, month - 1.0, day)
+}
+
+/** MakeTime + MakeDay + MakeDate. */
+fn make_date(
+    year: f64,
+    month: f64,
+    day: f64,
+    hours: f64,
+    minutes: f64,
+    seconds: f64,
+    millis: f64,
+) -> f64 {
+    let parts = [year, month, day, hours, minutes, seconds, millis];
+    if parts.iter().any(|part| !part.is_finite()) {
+        return f64::NAN;
+    }
+    let days = days_from_civil(year.trunc(), month.trunc(), 1.0) + day.trunc() - 1.0;
+    days * DAY
+        + hours.trunc() * HOUR
+        + minutes.trunc() * MINUTE
+        + seconds.trunc() * SECOND
+        + millis.trunc()
+}
+
+/** TimeClip. */
+fn clip(time: f64) -> f64 {
+    if !time.is_finite() || time.abs() > MAX_TIME {
+        f64::NAN
+    } else {
+        time.trunc() + 0.0
+    }
+}
+
+/** Broken-down fields of a time value. */
+pub(super) struct Parts {
+    pub year: f64,
+    pub month: f64,
+    pub date: f64,
+    pub day: f64,
+    pub hours: f64,
+    pub minutes: f64,
+    pub seconds: f64,
+    pub millis: f64,
+}
+
+/** Split a time value. */
+pub(super) fn parts(time: f64) -> Parts {
+    let days = (time / DAY).floor();
+    let within = time - days * DAY;
+    let (year, month, date) = civil_from_days(days);
+    Parts {
+        year,
+        month,
+        date,
+        day: (days + 4.0).rem_euclid(7.0),
+        hours: (within / HOUR).floor(),
+        minutes: (within / MINUTE).floor() % 60.0,
+        seconds: (within / SECOND).floor() % 60.0,
+        millis: within % SECOND,
+    }
+}
+
+/** `Date(...)`: a string when called, an object with `new`. */
+fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let Some(target) = &call.new_target else {
+        let time = now_ms(vm);
+        return text(vm, &format_local(vm, time));
+    };
+    let time = match call.args.len() {
+        0 => now_ms(vm),
+        1 => {
+            let value = call.arg(0);
+            let primitive = match &value {
+                JsValue::Object(id) => match vm.heap.get(*id).map(|o| &o.class) {
+                    Some(Class::Date(time)) => JsValue::Number(*time),
+                    _ => vm.to_primitive(&value, crate::v9::vm::convert::Hint::Default)?,
+                },
+                other => other.clone(),
+            };
+            match primitive {
+                JsValue::String(text) => parse_date(vm, &text.lossy()),
+                other => vm.to_number(&other)?,
+            }
+        }
+        _ => {
+            let local = components(vm, &call)?;
+            local - local_offset(vm)
+        }
+    };
+    let proto = vm.prototype_for(target, realm().ids.date_prototype)?;
+    let id = vm.alloc(Object::new(Class::Date(clip(time)), Some(proto)))?;
+    Ok(JsValue::Object(id))
+}
+
+/** Year, month, ... arguments to a time value (two-digit years mean 19xx). */
+fn components(vm: &mut Vm, call: &Call) -> Res<f64> {
+    let mut values = [f64::NAN, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+    for (index, slot) in values.iter_mut().enumerate() {
+        if index < call.args.len() {
+            *slot = vm.to_number(&call.args[index])?;
+        }
+    }
+    let year = values[0];
+    if year.is_finite() && (0.0..=99.0).contains(&year.trunc()) {
+        values[0] = 1900.0 + year.trunc();
+    }
+    Ok(make_date(
+        values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+    ))
+}
+
+/** Date.now. */
+fn now(vm: &mut Vm, _: Call) -> Res<JsValue> {
+    Ok(JsValue::Number(now_ms(vm)))
+}
+
+/** Date.parse. */
+fn parse(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let text = arg_string(vm, &call, 0)?.lossy();
+    Ok(JsValue::Number(clip(parse_date(vm, &text))))
+}
+
+/** Date.UTC. */
+fn utc(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    Ok(JsValue::Number(clip(components(vm, &call)?)))
+}
+
+/** Parse ISO, RFC 2822 and common English date strings. */
+fn parse_date(vm: &Vm, text: &str) -> f64 {
+    let text = text.trim();
+    if let Some(time) = parse_iso(text) {
+        return match time {
+            (time, true) => time,
+            (time, false) => time - local_offset(vm),
+        };
+    }
+    parse_english(text).map_or(
+        f64::NAN,
+        |(time, utc)| if utc { time } else { time - local_offset(vm) },
+    )
+}
+
+/** `YYYY-MM-DDTHH:mm:ss.sssZ` and its shorter forms; date-only forms are UTC. */
+fn parse_iso(text: &str) -> Option<(f64, bool)> {
+    let bytes = text.as_bytes();
+    let number = |range: std::ops::Range<usize>| -> Option<f64> {
+        let slice = text.get(range)?;
+        slice
+            .bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| slice.parse().ok())
+            .flatten()
+    };
+    let (year, rest) = if bytes.first().is_some_and(|b| *b == b'+' || *b == b'-') {
+        let sign = if bytes[0] == b'-' { -1.0 } else { 1.0 };
+        (sign * number(1..7)?, 7)
+    } else {
+        (number(0..4)?, 4)
+    };
+    let mut month = 1.0;
+    let mut day = 1.0;
+    let mut index = rest;
+    if bytes.get(index) == Some(&b'-') {
+        month = number(index + 1..index + 3)?;
+        index += 3;
+        if bytes.get(index) == Some(&b'-') {
+            day = number(index + 1..index + 3)?;
+            index += 3;
+        }
+    }
+    if index == bytes.len() {
+        return Some((make_date(year, month - 1.0, day, 0.0, 0.0, 0.0, 0.0), true));
+    }
+    if !matches!(bytes.get(index), Some(b'T' | b't' | b' ')) {
+        return None;
+    }
+    let hours = number(index + 1..index + 3)?;
+    if bytes.get(index + 3) != Some(&b':') {
+        return None;
+    }
+    let minutes = number(index + 4..index + 6)?;
+    index += 6;
+    let mut seconds = 0.0;
+    let mut millis = 0.0;
+    if bytes.get(index) == Some(&b':') {
+        seconds = number(index + 1..index + 3)?;
+        index += 3;
+        if bytes.get(index) == Some(&b'.') {
+            let start = index + 1;
+            let mut end = start;
+            while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+                end += 1;
+            }
+            let fraction: f64 = format!("0.{}", text.get(start..end)?).parse().ok()?;
+            millis = (fraction * 1000.0).floor();
+            index = end;
+        }
+    }
+    let base = make_date(year, month - 1.0, day, hours, minutes, seconds, millis);
+    match bytes.get(index) {
+        None => Some((base, false)),
+        Some(b'Z' | b'z') if index + 1 == bytes.len() => Some((base, true)),
+        Some(sign @ (b'+' | b'-')) => {
+            let offset_hours = number(index + 1..index + 3)?;
+            let minute_start = if bytes.get(index + 3) == Some(&b':') {
+                index + 4
+            } else {
+                index + 3
+            };
+            let offset_minutes = number(minute_start..minute_start + 2).unwrap_or(0.0);
+            let offset = (offset_hours * HOUR + offset_minutes * MINUTE)
+                * if *sign == b'+' { 1.0 } else { -1.0 };
+            Some((base - offset, true))
+        }
+        _ => None,
+    }
+}
+
+/** "Tue, 01 Jan 2020 10:00:00 GMT", "January 1, 2020 10:00", "1 Jan 2020" and similar. */
+fn parse_english(text: &str) -> Option<(f64, bool)> {
+    let mut year = None;
+    let mut month = None;
+    let mut day = None;
+    let mut time = (0.0, 0.0, 0.0);
+    let mut utc = false;
+    let mut offset = 0.0;
+    for word in text
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|w| !w.is_empty())
+    {
+        let lower = word.to_ascii_lowercase();
+        if let Some(index) = MONTHS
+            .iter()
+            .position(|m| lower.starts_with(&m.to_ascii_lowercase()))
+        {
+            month = Some(index as f64);
+        } else if lower == "gmt" || lower == "utc" || lower == "z" {
+            utc = true;
+        } else if (lower.starts_with("gmt")
+            || lower.starts_with("utc")
+            || lower.starts_with('+')
+            || lower.starts_with('-'))
+            && lower.len() >= 5
+        {
+            let digits = lower.trim_start_matches("gmt").trim_start_matches("utc");
+            let sign = if digits.starts_with('-') { -1.0 } else { 1.0 };
+            let digits = digits.trim_start_matches(['+', '-']).replace(':', "");
+            let value: f64 = digits.parse().ok()?;
+            offset = sign * ((value / 100.0).floor() * HOUR + (value % 100.0) * MINUTE);
+            utc = true;
+        } else if word.contains(':') {
+            let pieces: Vec<f64> = word.split(':').filter_map(|p| p.parse().ok()).collect();
+            time = (
+                *pieces.first()?,
+                pieces.get(1).copied().unwrap_or(0.0),
+                pieces.get(2).copied().unwrap_or(0.0),
+            );
+        } else if let Ok(number) = word.parse::<f64>() {
+            if number > 31.0 || day.is_some() {
+                year = Some(number);
+            } else {
+                day = Some(number);
+            }
+        } else if DAYS
+            .iter()
+            .any(|d| lower.starts_with(&d.to_ascii_lowercase()))
+        {
+        } else if lower == "pm" && time.0 < 12.0 {
+            time.0 += 12.0;
+        } else if lower == "am" {
+            if time.0 == 12.0 {
+                time.0 = 0.0;
+            }
+        } else if word.contains('/') {
+            let pieces: Vec<f64> = word.split('/').filter_map(|p| p.parse().ok()).collect();
+            if pieces.len() == 3 {
+                month = Some(pieces[0] - 1.0);
+                day = Some(pieces[1]);
+                year = Some(pieces[2]);
+            }
+        } else {
+            return None;
+        }
+    }
+    let year = year?;
+    let year = if (0.0..50.0).contains(&year) {
+        year + 2000.0
+    } else if (50.0..100.0).contains(&year) {
+        year + 1900.0
+    } else {
+        year
+    };
+    let time = make_date(
+        year,
+        month?,
+        day.unwrap_or(1.0),
+        time.0,
+        time.1,
+        time.2,
+        0.0,
+    ) - offset;
+    Some((time, utc))
+}
+
+/** The time value a receiver holds. */
+fn this_time(vm: &mut Vm, call: &Call) -> Res<f64> {
+    if let JsValue::Object(id) = &call.this
+        && let Some(Class::Date(time)) = vm.heap.get(*id).map(|o| &o.class)
+    {
+        return Ok(*time);
+    }
+    Err(vm.type_error("this is not a Date object."))
+}
+
+/** Replace a receiver's time value. */
+fn store(vm: &mut Vm, call: &Call, time: f64) -> Res<JsValue> {
+    let time = clip(time);
+    if let JsValue::Object(id) = &call.this
+        && let Some(Class::Date(slot)) = vm.heap.get_mut(*id).map(|o| &mut o.class)
+    {
+        *slot = time;
+    }
+    Ok(JsValue::Number(time))
+}
+
+/** Date.prototype.getTime and valueOf. */
+fn get_time(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    this_time(vm, &call).map(JsValue::Number)
+}
+
+/** Which broken-down field. */
+#[derive(Clone, Copy)]
+enum Field {
+    Year,
+    Month,
+    Date,
+    Day,
+    Hours,
+    Minutes,
+    Seconds,
+    Millis,
+}
+
+/** A getter for one field, local or UTC. */
+fn field(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    if time.is_nan() {
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let time = if local { time + local_offset(vm) } else { time };
+    let p = parts(time);
+    Ok(JsValue::Number(match which {
+        Field::Year => p.year,
+        Field::Month => p.month,
+        Field::Date => p.date,
+        Field::Day => p.day,
+        Field::Hours => p.hours,
+        Field::Minutes => p.minutes,
+        Field::Seconds => p.seconds,
+        Field::Millis => p.millis,
+    }))
+}
+
+/** getTimezoneOffset: minutes UTC is ahead of local. */
+fn timezone_offset(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    this_time(vm, &call)?;
+    Ok(JsValue::Number(
+        -vm.page.environment.timezone_offset_minutes + 0.0,
+    ))
+}
+
+/** setTime. */
+fn set_time(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    this_time(vm, &call)?;
+    let time = arg_number(vm, &call, 0)?;
+    store(vm, &call, time)
+}
+
+/** The field setters: the field and the ones after it come from the arguments. */
+fn set(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    let offset = if local { local_offset(vm) } else { 0.0 };
+    let base = if time.is_nan() && matches!(which, Field::Year) {
+        0.0
+    } else {
+        time + offset
+    };
+    let p = parts(base);
+    let mut fields = [
+        p.year, p.month, p.date, p.hours, p.minutes, p.seconds, p.millis,
+    ];
+    let start = match which {
+        Field::Year => 0,
+        Field::Month => 1,
+        Field::Date | Field::Day => 2,
+        Field::Hours => 3,
+        Field::Minutes => 4,
+        Field::Seconds => 5,
+        Field::Millis => 6,
+    };
+    let max = match which {
+        Field::Year | Field::Minutes => 3,
+        Field::Month | Field::Seconds => 2,
+        Field::Hours => 4,
+        Field::Date | Field::Day | Field::Millis => 1,
+    };
+    for index in 0..call.args.len().clamp(1, max) {
+        fields[start + index] = vm.to_number(&call.arg(index))?;
+    }
+    let local_time = make_date(
+        fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6],
+    );
+    store(vm, &call, local_time - offset)
+}
+
+/** The ISO form, used by toISOString and toJSON. */
+pub(in crate::v9) fn format_iso(time: f64) -> String {
+    let p = parts(time);
+    let year = if (0.0..=9999.0).contains(&p.year) {
+        format!("{:04}", p.year as i64)
+    } else {
+        format!(
+            "{}{:06}",
+            if p.year < 0.0 { '-' } else { '+' },
+            p.year.abs() as i64
+        )
+    };
+    format!(
+        "{year}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        p.month as i64 + 1,
+        p.date as i64,
+        p.hours as i64,
+        p.minutes as i64,
+        p.seconds as i64,
+        p.millis as i64
+    )
+}
+
+/** Date.prototype.toISOString. */
+fn to_iso(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    if time.is_nan() {
+        return Err(vm.range_error("Invalid time value"));
+    }
+    text(vm, &format_iso(time))
+}
+
+/** Date.prototype.toJSON. */
+fn to_json(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = vm.to_primitive(&call.this, crate::v9::vm::convert::Hint::Number)?;
+    if matches!(time, JsValue::Number(n) if !n.is_finite()) {
+        return Ok(JsValue::Null);
+    }
+    let method = vm.get(&call.this, &key("toISOString"))?;
+    vm.call(method, call.this.clone(), Vec::new())
+}
+
+/** The zone suffix such as `GMT+0100 (Coordinated Universal Time)`. */
+fn zone(vm: &Vm) -> String {
+    let minutes = vm.page.environment.timezone_offset_minutes;
+    let sign = if minutes < 0.0 { '-' } else { '+' };
+    let minutes = minutes.abs() as i64;
+    let name = if minutes == 0 {
+        "Coordinated Universal Time".to_string()
+    } else {
+        "Local Time".to_string()
+    };
+    format!("GMT{sign}{:02}{:02} ({name})", minutes / 60, minutes % 60)
+}
+
+/** The date portion: `Tue Jan 01 2020`. */
+fn date_part(p: &Parts) -> String {
+    format!(
+        "{} {} {:02} {:04}",
+        DAYS[p.day as usize], MONTHS[p.month as usize], p.date as i64, p.year as i64
+    )
+}
+
+/** The time portion: `10:00:00`. */
+fn time_part(p: &Parts) -> String {
+    format!(
+        "{:02}:{:02}:{:02}",
+        p.hours as i64, p.minutes as i64, p.seconds as i64
+    )
+}
+
+/** Date.prototype.toString form. */
+fn format_local(vm: &Vm, time: f64) -> String {
+    if time.is_nan() {
+        return "Invalid Date".into();
+    }
+    let p = parts(time + local_offset(vm));
+    format!("{} {} {}", date_part(&p), time_part(&p), zone(vm))
+}
+
+/** Date.prototype.toString. */
+fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    let formatted = format_local(vm, time);
+    text(vm, &formatted)
+}
+
+/** Date.prototype.toDateString. */
+fn to_date_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    if time.is_nan() {
+        return text(vm, "Invalid Date");
+    }
+    let p = parts(time + local_offset(vm));
+    text(vm, &date_part(&p))
+}
+
+/** Date.prototype.toTimeString. */
+fn to_time_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    if time.is_nan() {
+        return text(vm, "Invalid Date");
+    }
+    let p = parts(time + local_offset(vm));
+    let zone = zone(vm);
+    text(vm, &format!("{} {zone}", time_part(&p)))
+}
+
+/** Date.prototype.toUTCString. */
+fn to_utc_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    if time.is_nan() {
+        return text(vm, "Invalid Date");
+    }
+    let p = parts(time);
+    text(
+        vm,
+        &format!(
+            "{}, {:02} {} {:04} {} GMT",
+            DAYS[p.day as usize],
+            p.date as i64,
+            MONTHS[p.month as usize],
+            p.year as i64,
+            time_part(&p)
+        ),
+    )
+}
+
+/** en-US `1/2/2020, 3:04:05 PM`. */
+fn locale(vm: &Vm, time: f64, date: bool, clock: bool) -> String {
+    if time.is_nan() {
+        return "Invalid Date".into();
+    }
+    let p = parts(time + local_offset(vm));
+    let day = format!("{}/{}/{}", p.month as i64 + 1, p.date as i64, p.year as i64);
+    let hour = p.hours as i64 % 12;
+    let clock_text = format!(
+        "{}:{:02}:{:02} {}",
+        if hour == 0 { 12 } else { hour },
+        p.minutes as i64,
+        p.seconds as i64,
+        if p.hours < 12.0 { "AM" } else { "PM" }
+    );
+    match (date, clock) {
+        (true, true) => format!("{day}, {clock_text}"),
+        (true, false) => day,
+        _ => clock_text,
+    }
+}
+
+/** Date.prototype.toLocaleString. */
+fn to_locale_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    let formatted = locale(vm, time, true, true);
+    text(vm, &formatted)
+}
+
+/** Date.prototype.toLocaleDateString. */
+fn to_locale_date_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    let formatted = locale(vm, time, true, false);
+    text(vm, &formatted)
+}
+
+/** Date.prototype.toLocaleTimeString. */
+fn to_locale_time_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    let formatted = locale(vm, time, false, true);
+    text(vm, &formatted)
+}
+
+/** Date.prototype[Symbol.toPrimitive]: "number" gives the time, otherwise the string. */
+fn to_primitive(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let hint = arg_string(vm, &call, 0)?.lossy();
+    if hint == "number" {
+        let method = vm.get(&call.this, &key("valueOf"))?;
+        return vm.call(method, call.this.clone(), Vec::new());
+    }
+    let method = vm.get(&call.this, &key("toString"))?;
+    vm.call(method, call.this.clone(), Vec::new())
+}

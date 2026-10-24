@@ -1,5 +1,6 @@
 /** Inline text and native shaping share the same containing content box. */
 use super::flow::*;
+use super::line::{Frag, Piece};
 /** Inline descendants preserve their own paint and exact hit geometry. */
 pub(super) fn inline(
     context: &mut LayoutContext<'_>,
@@ -7,18 +8,28 @@ pub(super) fn inline(
     flow: &mut Flow,
     items: &mut Vec<DisplayItem>,
 ) -> EngineResult<()> {
-    let document = context.document;
+    if node.style.inline_block {
+        return atomic(context, node, flow, items);
+    }
     let index = items.len();
     let y = flow.y;
-    let x = flow.x + flow.cursor;
-    let lines = text(context, &node.text, node, flow)?;
-    items.push(box_item(node, x, y, 0.0, 0.0, lines));
-    for child in document
-        .nodes
-        .iter()
-        .filter(|n| n.parent == Some(node.local_id))
-    {
-        node_layout(context, child, flow, items, None)?;
+    let sides = super::sizing::border_sides(&node.style);
+    // Inline start and end edges take room on the line; vertical ones paint outside it.
+    flow.cursor += node.style.margin[3] + node.style.padding[3] + sides[3];
+    let x = flow.left() + flow.cursor;
+    items.push(box_item(node, x, y, 0.0, 0.0, Vec::new()));
+    super::generated::generated(context, node, flow, items, false)?;
+    let lines = text(context, &node.text, node, flow, index)?;
+    items[index].lines = lines;
+    if !super::generated::is_generated(node) {
+        for child in context.all_children(node.local_id) {
+            node_layout(context, child, flow, items, None)?;
+        }
+    }
+    super::generated::generated(context, node, flow, items, true)?;
+    flow.cursor += node.style.margin[1] + node.style.padding[1] + sides[1];
+    if flow.space == Some(false) {
+        flow.space = None;
     }
     let descendants = &items[index..];
     let left = descendants
@@ -30,39 +41,231 @@ pub(super) fn inline(
         .iter()
         .flat_map(|i| i.lines.iter())
         .map(|line| line.x + line.width)
-        .fold(flow.x + flow.cursor, f64::max);
+        .fold(flow.left() + flow.cursor, f64::max);
     items[index].x = left;
     items[index].width = (right - left).max(0.0);
-    items[index].height =
-        (flow.y + flow.line - y).max(node.style.line_height.used(node.style.font_size));
+    items[index].height = (flow.y + flow.line - y).max(super::sizing::advance(&node.style));
     Ok(())
 }
-/** Wrapping measures exact runs; whitespace collapses across adjacent inline elements. */
+/** An inline-block, inline-flex or inline-grid: laid out as a block, then placed on the line as one unit. */
+fn atomic(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &mut Flow,
+    items: &mut Vec<DisplayItem>,
+) -> EngineResult<()> {
+    let style = &node.style;
+    let margins = (style.margin[3], style.margin[1]);
+    let width = super::float::shrink_width(context, node, flow.width, margins.0 + margins.1)?;
+    let outer = width + margins.0 + margins.1;
+    if flow.cursor > 0.0 && flow.cursor + outer > flow.room() {
+        flow.newline();
+    }
+    flow.fit(outer);
+    let bounds = BorderBox {
+        x: flow.left() + flow.cursor + margins.0,
+        y: flow.y + style.margin[0],
+        width,
+        height: None,
+    };
+    let start = items.len();
+    let mut inner = Flow::new(bounds.x, bounds.y, width);
+    inner.definite = flow.definite;
+    node_layout(context, node, &mut inner, items, Some(bounds))?;
+    let height = items.get(start).map_or(0.0, |item| item.height);
+    let margin_box = style.margin[0] + height + style.margin[2];
+    let ascent = if style.overflow == crate::document::Overflow::Visible {
+        last_baseline(context, &items[start..])?
+            .map(|baseline| baseline - flow.y)
+            .unwrap_or(margin_box)
+    } else {
+        margin_box
+    };
+    place_atomic(
+        flow,
+        (start, items.len()),
+        outer,
+        (ascent, margin_box),
+        style,
+        margins,
+    );
+    Ok(())
+}
+/** Records an atomic fragment and advances the line past its margin box. */
+pub(super) fn place_atomic(
+    flow: &mut Flow,
+    (start, end): (usize, usize),
+    outer: f64,
+    (ascent, height): (f64, f64),
+    style: &crate::document::ComputedStyle,
+    margins: (f64, f64),
+) {
+    flow.push(Frag {
+        piece: Piece::Atomic { start, end },
+        ascent,
+        height,
+        align: style.vertical_align,
+        margin: margins,
+    });
+    flow.cursor += outer;
+    flow.space = None;
+    flow.line = flow.line.max(height);
+    flow.bottom = flow.bottom.max(flow.y + flow.line);
+}
+/** The baseline of the last line box inside an atomic inline's items, in document coordinates. */
+fn last_baseline(
+    context: &mut LayoutContext<'_>,
+    items: &[DisplayItem],
+) -> EngineResult<Option<f64>> {
+    for item in items.iter().rev() {
+        context.charge(1)?;
+        if let Some(line) = item.lines.iter().max_by(|a, b| a.y.total_cmp(&b.y)) {
+            let node = context.node(item.local_id)?;
+            return Ok(Some(line.y + super::sizing::text_ascent(&node.style)));
+        }
+    }
+    Ok(None)
+}
+/** A text fragment for the run at `line` of the item at `item`, with its effective vertical alignment. */
+fn text_frag(context: &LayoutContext<'_>, node: &Node, item: usize, line: usize) -> Frag {
+    Frag {
+        piece: Piece::Text { item, line },
+        ascent: super::sizing::text_ascent(&node.style),
+        height: super::sizing::advance(&node.style),
+        align: effective_align(context, node),
+        margin: (0.0, 0.0),
+    }
+}
+/** vertical-align applies to an inline box and everything inside it, so the nearest non-baseline inline ancestor wins. */
+fn effective_align(
+    context: &LayoutContext<'_>,
+    node: &Node,
+) -> crate::document::style::VerticalAlign {
+    use crate::document::style::VerticalAlign;
+    let mut current = Some(node);
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(node) = current else {
+            break;
+        };
+        if node.style.vertical_align != VerticalAlign::Baseline || !node.style.inline {
+            return if node.style.inline {
+                node.style.vertical_align
+            } else {
+                VerticalAlign::Baseline
+            };
+        }
+        current = node.parent.and_then(|parent| context.node(parent).ok());
+    }
+    VerticalAlign::Baseline
+}
+/** Wrapping measures exact runs; whitespace collapses across adjacent inline elements unless preserved. */
 pub(super) fn text(
     context: &mut LayoutContext<'_>,
     source: &str,
     node: &Node,
     flow: &mut Flow,
+    item: usize,
 ) -> EngineResult<Vec<PaintLine>> {
+    use crate::document::WhiteSpace;
     context.charge(source.chars().count())?;
+    let source = transformed(&node.style, source);
+    let space = node.style.white_space;
     let mut lines: Vec<PaintLine> = Vec::new();
-    let font = node.style.font_size;
-    let bold = node.style.bold;
+    if !matches!(
+        space,
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
+    ) {
+        words(context, &source, node, flow, (item, &mut lines))?;
+        return Ok(lines);
+    }
+    for (index, segment) in source.split('\n').enumerate() {
+        if index > 0 {
+            flow.line = flow.line.max(super::sizing::advance(&node.style));
+            flow.newline();
+        }
+        if space == WhiteSpace::Pre {
+            preserved(context, segment, node, flow, (item, &mut lines))?;
+        } else {
+            // ponytail: pre-wrap collapses runs of spaces inside a line like pre-line; keep them when it matters.
+            words(context, segment, node, flow, (item, &mut lines))?;
+        }
+    }
+    Ok(lines)
+}
+/** One unwrapped run keeps every space; tabs advance as eight spaces. */
+fn preserved(
+    context: &mut LayoutContext<'_>,
+    segment: &str,
+    node: &Node,
+    flow: &mut Flow,
+    (item, lines): (usize, &mut Vec<PaintLine>),
+) -> EngineResult<()> {
+    let segment = segment.replace('\t', "        ");
+    let advance = super::sizing::advance(&node.style);
+    flow.line = flow.line.max(advance);
+    flow.bottom = flow.bottom.max(flow.y + flow.line);
+    if segment.is_empty() {
+        return Ok(());
+    }
+    let width = context.measure(
+        &segment,
+        super::sizing::face_for(&node.style, Some(&segment)),
+    )?;
+    let frag = text_frag(context, node, item, lines.len());
+    flow.push(frag);
+    lines.push(PaintLine {
+        text: segment,
+        x: flow.left() + flow.cursor,
+        y: flow.y,
+        width,
+    });
+    flow.cursor += width;
+    Ok(())
+}
+/** Collapsed words share line boxes; nowrap only breaks at forced newlines. */
+fn words(
+    context: &mut LayoutContext<'_>,
+    source: &str,
+    node: &Node,
+    flow: &mut Flow,
+    (item, lines): (usize, &mut Vec<PaintLine>),
+) -> EngineResult<()> {
+    let face = super::sizing::face_for(&node.style, Some(source));
+    let nowrap = node.style.white_space == crate::document::WhiteSpace::Nowrap;
     let space = if source.split_whitespace().next().is_some() {
-        context.measure(" ", font, bold)?
+        context.measure(" ", face)?
     } else {
         0.0
     };
+    let limit = if nowrap {
+        crate::constants::LAYOUT_EXTENT
+    } else {
+        flow.width.max(1.0)
+    };
+    // Only source whitespace separates runs: `one<b>two</b>` stays one word.
+    let mut spaced =
+        source.starts_with(char::is_whitespace) || flow.space.unwrap_or(node.tag != "#text");
     for word in source.split_whitespace() {
-        let chunks = super::wrap::lines(word, flow.width.max(1.0), font, bold, context)?;
+        let chunks = super::wrap::lines(word, limit, face, context)?;
         let count = chunks.len();
         for (index, chunk) in chunks.into_iter().enumerate() {
-            let gap = if flow.cursor > 0.0 { space } else { 0.0 };
-            if flow.cursor > 0.0 && flow.cursor + gap + chunk.width > flow.width {
+            let gap = if flow.cursor > 0.0 && spaced {
+                space
+            } else {
+                0.0
+            };
+            if !nowrap && flow.cursor > 0.0 && flow.cursor + gap + chunk.width > flow.room() {
                 flow.newline();
             }
-            let gap = if flow.cursor > 0.0 { space } else { 0.0 };
-            let x = flow.x + flow.cursor + gap;
+            if !nowrap {
+                flow.fit(chunk.width);
+            }
+            let gap = if flow.cursor > 0.0 && spaced {
+                space
+            } else {
+                0.0
+            };
+            let x = flow.left() + flow.cursor + gap;
             if let Some(line) = lines.last_mut().filter(|line| line.y == flow.y) {
                 context.charge(chunk.text.chars().count())?;
                 if gap > 0.0 {
@@ -71,6 +274,8 @@ pub(super) fn text(
                 line.text.push_str(&chunk.text);
                 line.width += gap + chunk.width;
             } else {
+                let frag = text_frag(context, node, item, lines.len());
+                flow.push(frag);
                 lines.push(PaintLine {
                     text: chunk.text,
                     x,
@@ -79,110 +284,45 @@ pub(super) fn text(
                 });
             }
             flow.cursor += gap + chunk.width;
-            flow.line = flow.line.max(node.style.line_height.used(font));
+            flow.line = flow.line.max(super::sizing::advance(&node.style));
             flow.bottom = flow.bottom.max(flow.y + flow.line);
             if index + 1 < count {
                 flow.newline();
             }
         }
+        spaced = true;
     }
-    Ok(lines)
-}
-/** A containing block aligns whole inline lines together, including separately targetable links. */
-pub(super) fn align(
-    context: &mut LayoutContext<'_>,
-    owner: &Node,
-    items: &mut [DisplayItem],
-    x: f64,
-    width: f64,
-) -> EngineResult<()> {
-    if !["center", "right"].contains(&owner.style.align.as_str()) {
-        return Ok(());
-    }
-    let eligible = items
-        .iter()
-        .map(|item| inline_descendant(context.document, item.local_id, owner.local_id))
-        .collect::<Vec<_>>();
-    let mut extents = std::collections::BTreeMap::<u64, (f64, f64)>::new();
-    for (index, item) in items.iter().enumerate() {
-        if !eligible[index] {
-            continue;
-        }
-        for line in &item.lines {
-            context.charge(1)?;
-            let extent = extents
-                .entry(line.y.to_bits())
-                .or_insert((line.x, line.x + line.width));
-            extent.0 = extent.0.min(line.x);
-            extent.1 = extent.1.max(line.x + line.width);
-        }
-    }
-    for (index, item) in items.iter_mut().enumerate() {
-        if !eligible[index] {
-            continue;
-        }
-        for line in &mut item.lines {
-            let (left, right) = extents[&line.y.to_bits()];
-            let free = (width - (right - left)).max(0.0);
-            line.x += x - left
-                + if owner.style.align == "center" {
-                    free / 2.0
-                } else {
-                    free
-                };
-        }
-    }
-    refresh_inline_bounds(context, items, &eligible)
-}
-/** Reverse source order unions descendant paint into inline ancestors without widening block boxes. */
-fn refresh_inline_bounds(
-    context: &mut LayoutContext<'_>,
-    items: &mut [DisplayItem],
-    eligible: &[bool],
-) -> EngineResult<()> {
-    let mut extents = std::collections::BTreeMap::<usize, (f64, f64)>::new();
-    for (index, item) in items.iter_mut().enumerate().rev() {
-        if !eligible[index] || index == 0 {
-            continue;
-        }
-        context.charge(item.lines.len() + 1)?;
-        for line in &item.lines {
-            add_extent(&mut extents, item.local_id, (line.x, line.x + line.width));
-        }
-        let Some((left, right)) = extents.remove(&item.local_id) else {
-            continue;
-        };
-        item.x = left;
-        item.width = (right - left).max(0.0);
-        if let Some(parent) = context.node(item.local_id)?.parent {
-            add_extent(&mut extents, parent, (left, right));
-        }
-    }
+    flow.space = if source.split_whitespace().next().is_some() {
+        Some(source.ends_with(char::is_whitespace))
+    } else if spaced || !source.is_empty() {
+        Some(true)
+    } else {
+        flow.space
+    };
     Ok(())
 }
-/** Exact painted extents combine direct text and descendant runs under one stable identity. */
-fn add_extent(
-    extents: &mut std::collections::BTreeMap<usize, (f64, f64)>,
-    id: usize,
-    bounds: (f64, f64),
-) {
-    let extent = extents.entry(id).or_insert(bounds);
-    extent.0 = extent.0.min(bounds.0);
-    extent.1 = extent.1.max(bounds.1);
-}
-/** Nested block formatting already aligns its own descendants and must not be translated again. */
-fn inline_descendant(document: &Document, mut id: usize, owner: usize) -> bool {
-    while id != owner {
-        let Some(node) = document.nodes.iter().find(|node| node.local_id == id) else {
-            return false;
-        };
-        if !node.style.inline {
-            return false;
+/** CSS text-transform changes what is measured and painted, never the agent-visible text. */
+pub(super) fn transformed<'a>(
+    style: &crate::document::ComputedStyle,
+    source: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    use crate::document::TextTransform;
+    match style.text_transform {
+        TextTransform::None => source.into(),
+        TextTransform::Uppercase => source.to_uppercase().into(),
+        TextTransform::Lowercase => source.to_lowercase().into(),
+        TextTransform::Capitalize => {
+            let mut result = String::with_capacity(source.len());
+            let mut start = true;
+            for c in source.chars() {
+                if start && c.is_alphanumeric() {
+                    result.extend(c.to_uppercase());
+                } else {
+                    result.push(c);
+                }
+                start = c.is_whitespace();
+            }
+            result.into()
         }
-        let Some(parent) = node.parent else {
-            return false;
-        };
-        id = parent;
     }
-    true
 }

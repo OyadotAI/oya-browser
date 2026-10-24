@@ -14,6 +14,9 @@ pub(super) struct FlexItem {
     pub max_content: f64,
     pub margin_start: f64,
     pub margin_end: f64,
+    /// Main-axis `auto` margins (start, end); they absorb the line's positive free space
+    /// before `justify-content` sees any (Flexbox 9.5), which is how a nav pushes itself right.
+    pub auto_margins: [bool; 2],
     pub main_edges: f64,
     pub grow: f64,
     pub shrink: f64,
@@ -22,6 +25,31 @@ impl FlexItem {
     /** Noncontent space never receives a grow or shrink factor. */
     pub fn outer(&self, content: f64) -> f64 {
         content + self.margin_start + self.margin_end + self.main_edges
+    }
+}
+
+/** Positive free space split equally over the line's auto margins; zero when there are none
+or the line overflows, where auto margins collapse to zero and alignment proceeds as usual. */
+pub(super) fn auto_margin_share(items: &[FlexItem], free: f64) -> f64 {
+    let count = items
+        .iter()
+        .map(|item| item.auto_margins.iter().filter(|auto| **auto).count())
+        .sum::<usize>();
+    if count == 0 || free <= 0.0 {
+        0.0
+    } else {
+        free / count as f64
+    }
+}
+
+/** Cross-axis offset of an item whose cross auto margins take the free space, overriding its
+`align-self`; None when neither cross margin is auto. */
+pub(super) fn auto_cross_offset(auto_start: bool, auto_end: bool, free: f64) -> Option<f64> {
+    match (auto_start, auto_end) {
+        (false, false) => None,
+        (true, true) => Some(free / 2.0),
+        (true, false) => Some(free),
+        (false, true) => Some(0.0),
     }
 }
 

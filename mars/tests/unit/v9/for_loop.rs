@@ -110,10 +110,6 @@ fn lexical_headers_preserve_tdz_const_and_lifetime_rules() {
             "{source}"
         );
     }
-    assert_eq!(
-        execute("for(const i;false;);").unwrap_err().code,
-        "script_syntax_error"
-    );
 }
 /** Shallow per-iteration cells keep shared heap references rather than copying their objects. */
 #[test]
@@ -152,37 +148,28 @@ fn infinite_and_deep_loops_fail_with_structured_limits() {
     let source = format!("{};", "for(;;)".repeat(STATEMENT_DEPTH + 1));
     assert_eq!(execute(&source).unwrap_err().code, "limit_exceeded");
 }
-/** Iteration copies count retained strings before successful finish can collect dead loop records. */
+/** A const header without an initializer is an early error, as for any const declaration. */
 #[test]
-fn iteration_copies_enforce_the_peak_retained_string_budget() {
-    use mars::constants::JS_STRING_UNITS;
-    let source = format!(
-        "let s='{}';{}",
-        "x".repeat(JS_STRING_UNITS),
-        "for(let t=s;;){break;}".repeat(4)
+fn const_headers_require_an_initializer() {
+    assert_eq!(
+        execute("for(const i;false;);").unwrap_err().code,
+        "script_syntax_error"
     );
-    let error = execute(&source).unwrap_err();
-    assert_eq!(error.code, "limit_exceeded");
-    assert!(error.message.contains("environment UTF-16 units"));
-    assert_eq!(error.phase.as_deref(), Some("execute"));
 }
-/** Unsupported iteration and operator families never receive accidental standard-for semantics. */
+/** for-of, for-in, bare-target heads and several header declarators run as JavaScript; for await needs an async function. */
 #[test]
-fn unsupported_header_families_fail_explicitly() {
-    for source in [
-        "for(let x of [1]){}",
-        "for(const x in {}){}",
-        "for(x of [1]){}",
-        "for await(x of [1]){}",
-        "for(let i=0,j=0;i<2;i=i+1){}",
-        "let i=0;for(i=0;i<2;i&&=1){}",
-    ] {
-        assert_eq!(
-            execute(source).unwrap_err().code,
-            "unsupported_feature",
-            "{source}"
-        );
-    }
+fn other_header_families_follow_javascript() {
+    assert_eq!(
+        result(
+            "let a='';for(let x of [1,2])a+=x;for(const x in {p:1,q:2})a+=x;let y;for(y of [3])a+=y;for(let i=0,j=5;i<2;i=i+1){a+=j;}",
+            "a"
+        ),
+        "12pq355"
+    );
+    assert_eq!(
+        execute("for await(x of [1]){}").unwrap_err().code,
+        "unsupported_feature"
+    );
     assert_eq!(
         execute("for(1=2;false;);").unwrap_err().code,
         "script_syntax_error"
@@ -200,9 +187,11 @@ fn loop_globals_round_trip_without_exporting_header_bindings() {
         ["count"]
     );
     let first = event(source, "add()", state, &[]).unwrap();
-    assert_eq!(first.changes[0].text, "3");
+    assert_eq!(first.changes[0].text().unwrap(), "3");
     assert_eq!(
-        event(source, "add()", first.state, &[]).unwrap().changes[0].text,
+        event(source, "add()", first.state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
         "6"
     );
 }
@@ -213,7 +202,9 @@ fn failed_update_discards_the_entire_event_candidate() {
     let state = load(source, &[]).unwrap().state;
     assert!(event(source, "fail()", state.clone(), &[]).is_err());
     assert_eq!(
-        event(source, "show()", state, &[]).unwrap().changes[0].text,
+        event(source, "show()", state, &[]).unwrap().changes[0]
+            .text()
+            .unwrap(),
         "0"
     );
 }

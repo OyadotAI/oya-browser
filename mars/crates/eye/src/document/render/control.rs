@@ -1,6 +1,163 @@
 /** Native controls receive the exact border boxes returned by owned layout. */
 use super::flow::*;
-/** Native controls occupy engine boxes; AppKit never lays out their surrounding HTML. */
+use crate::platform::Face;
+
+/// Chromium's `-webkit-small-control` font size for controls that do not set their own.
+pub(super) const CONTROL_FONT: f64 = 13.333;
+/// Default text field border box, as Chromium's macOS theme draws `size=20`.
+const FIELD_SIZE: (f64, f64) = (148.0, 21.0);
+/// Default textarea border box (`cols=20 rows=2`).
+const TEXTAREA_SIZE: (f64, f64) = (182.0, 37.0);
+/// Checkboxes and radios are fixed native glyph squares.
+const CHOICE_SIZE: f64 = 13.0;
+/// Horizontal padding plus border a push button adds around its measured title.
+const BUTTON_EDGES: f64 = 16.0;
+/// A popup adds its arrow cell and padding beside the selected option's title.
+const SELECT_EDGES: f64 = 28.0;
+/// Default push button and popup height.
+const BUTTON_HEIGHT: f64 = 21.0;
+/// Inner inset between a control's border box and its measured title.
+const TITLE_INSET: (f64, f64) = (8.0, 3.0);
+
+/** Push buttons, including submit and button inputs, paint a measured title. */
+pub(super) fn is_button(node: &Node) -> bool {
+    node.tag == "button"
+        || (node.tag == "input" && ["submit", "button"].contains(&node.input_type()))
+}
+/** A `<button>` with element children (icons, labelled spans) lays its content out like an
+inline-block, as Chromium does; only a text-only button is a measured native title. Without this
+every child of such a button is dropped and icon buttons paint empty. */
+pub(super) fn has_content(context: &LayoutContext<'_>, node: &Node) -> bool {
+    node.tag == "button" && !context.children(node.local_id).is_empty()
+}
+/** A content button is an inline-block (or the block, flex or grid box it was styled as). */
+pub(super) fn content_box(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &mut Flow,
+    items: &mut Vec<DisplayItem>,
+    forced: Option<BorderBox>,
+) -> EngineResult<()> {
+    let mut boxed = node.clone();
+    boxed.style.inline_block |=
+        boxed.style.inline && !boxed.style.display_flex && !boxed.style.display_grid;
+    if forced.is_none() && inline_level(&boxed) {
+        return super::text::inline(context, &boxed, flow, items);
+    }
+    let start = items.len();
+    block(context, &boxed, flow, items, forced)?;
+    if !boxed.style.display_flex && !boxed.style.display_grid {
+        center_content(&boxed, &mut items[start..]);
+    }
+    Ok(())
+}
+/** Chromium centers a button's content block vertically in a taller button box. */
+fn center_content(node: &Node, items: &mut [DisplayItem]) {
+    let Some((own, content)) = items.split_first_mut() else {
+        return;
+    };
+    let sides = super::sizing::border_sides(&node.style);
+    let top = own.y + node.style.padding[0] + sides[0];
+    let bottom = own.y + own.height - node.style.padding[2] - sides[2];
+    let used = content
+        .iter()
+        .map(|item| item.y + item.height)
+        .fold(top, f64::max);
+    let free = bottom - used;
+    if free > 0.0 {
+        for item in content {
+            super::line::translate(item, 0.0, free / 2.0);
+        }
+    }
+}
+/** Checkboxes and radios keep their fixed glyph size regardless of font. */
+fn is_choice(node: &Node) -> bool {
+    node.tag == "input" && ["checkbox", "radio"].contains(&node.input_type())
+}
+/** Chromium does not inherit the page font into controls; an authored size still wins. */
+pub(super) fn control_font(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    let inherited = node
+        .parent
+        .and_then(|parent| context.node(parent).ok())
+        .map(|parent| parent.style.font_size)
+        .unwrap_or(crate::constants::CSS_ROOT_FONT_SIZE);
+    if node.style.font_size == inherited {
+        CONTROL_FONT
+    } else {
+        node.style.font_size
+    }
+}
+/** Chromium's UA margins around checkbox and radio glyphs, used when the page sets none. */
+fn choice_margins(node: &Node) -> Option<Node> {
+    if !is_choice(node) || node.style.margin != [0.0; 4] {
+        return None;
+    }
+    let mut node = node.clone();
+    node.style.margin = if node.input_type() == "radio" {
+        [3.0, 3.0, 0.0, 5.0]
+    } else {
+        [3.0, 3.0, 3.0, 4.0]
+    };
+    Some(node)
+}
+/** The visible title of a button or popup; empty for every other control. */
+fn title(context: &LayoutContext<'_>, node: &Node) -> String {
+    if node.tag == "input" && is_button(node) {
+        if node.value.is_empty() {
+            "Submit".into()
+        } else {
+            node.value.clone()
+        }
+    } else if node.tag == "button" {
+        node.text.clone()
+    } else if node.tag == "select" {
+        context
+            .all_children(node.local_id)
+            .into_iter()
+            .find(|n| n.selected)
+            .or_else(|| {
+                context
+                    .all_children(node.local_id)
+                    .into_iter()
+                    .find(|n| n.tag == "option")
+            })
+            .map(|n| n.text.clone())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+/** Intrinsic border box of a control, the size Chromium gives it with no authored width. */
+pub(super) fn natural_size(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+) -> EngineResult<(f64, f64)> {
+    let font = control_font(context, node);
+    if is_choice(node) {
+        return Ok((CHOICE_SIZE, CHOICE_SIZE));
+    }
+    if node.tag == "textarea" {
+        return Ok(TEXTAREA_SIZE);
+    }
+    let scale = font / CONTROL_FONT;
+    if is_button(node) || node.tag == "select" {
+        let text = title(context, node);
+        let edges = if node.tag == "select" {
+            SELECT_EDGES
+        } else {
+            BUTTON_EDGES
+        };
+        let width = context.measure(&text, Face::system(font, node.style.bold))? + edges;
+        return Ok((width, (BUTTON_HEIGHT * scale).max(BUTTON_HEIGHT)));
+    }
+    Ok((
+        FIELD_SIZE.0 * scale,
+        (FIELD_SIZE.1 * scale).max(FIELD_SIZE.1),
+    ))
+}
+/** A control's baseline sits this share of its font below its vertical middle, times two. */
+const CONTROL_BASELINE: f64 = 0.7;
+/** Native controls are inline-blocks: they share line boxes with text and wrap like words. */
 pub(super) fn control(
     context: &mut LayoutContext<'_>,
     node: &Node,
@@ -8,84 +165,109 @@ pub(super) fn control(
     items: &mut Vec<DisplayItem>,
     forced: Option<BorderBox>,
 ) -> EngineResult<()> {
-    let document = context.document;
-    flow.newline();
-    let style = &node.style;
-    let y = forced
-        .map(|bounds| bounds.y)
-        .unwrap_or(flow.y + style.margin[0]);
+    let margins = choice_margins(node);
+    let style = &margins.as_ref().unwrap_or(node).style;
+    let font = control_font(context, node);
+    let (natural, natural_box) = natural_size(context, node)?;
     let available = (flow.width - style.margin[1] - style.margin[3]).max(1.0);
-    let button = node.tag == "button"
-        || (node.tag == "input" && ["submit", "button"].contains(&node.input_type()));
-    let title = if node.tag == "input" && button {
-        if node.value.is_empty() {
-            "Submit".into()
+    // Authored widths and min/max apply; a wide choice box centers its fixed glyph when painted.
+    // A natural width is shrink-to-fit: capped at the containing block, as Chromium caps it, so
+    // a long label wraps inside the button instead of running off the page.
+    let fits = natural <= available;
+    let width = forced.map(|bounds| bounds.width).unwrap_or_else(|| {
+        if style.width.is_some() || style.min_width.is_some() || style.max_width.is_some() {
+            border_width(node, flow.width, available, Some(natural))
         } else {
-            node.value.clone()
+            natural.min(available)
         }
-    } else if node.tag == "select" {
-        document
-            .nodes
-            .iter()
-            .find(|n| n.parent == Some(node.local_id) && n.selected)
-            .map(|n| n.text.clone())
-            .unwrap_or_default()
-    } else {
-        crate::document::label(document, node)
+    });
+    let outer = width + style.margin[1] + style.margin[3];
+    let (x, y) = match forced {
+        Some(bounds) => (bounds.x, bounds.y),
+        None => {
+            if flow.cursor > 0.0 && flow.cursor + outer > flow.room() {
+                flow.newline();
+            }
+            flow.fit(outer);
+            (
+                flow.left() + flow.cursor + style.margin[3],
+                flow.y + style.margin[0],
+            )
+        }
     };
-    let natural = if button {
-        (context.measure(&title, style.font_size, style.bold)? + 32.0).max(120.0)
-    } else {
-        480.0
-    };
-    let width = forced
-        .map(|bounds| bounds.width)
-        .unwrap_or_else(|| border_width(node, flow.width, available, Some(natural)));
-    let x = forced
-        .map(|bounds| bounds.x)
-        .unwrap_or(flow.x + super::body::margin_start(style, flow.width, width));
     let mut local = Flow::new(
-        x + style.padding[3] + style.border + 8.0,
-        y + style.padding[0] + style.border + 4.0,
-        (width - horizontal_edges(node) - 16.0).max(1.0),
+        x + style.border + TITLE_INSET.0,
+        y + style.border + TITLE_INSET.1,
+        (width - style.border * 2.0 - TITLE_INSET.0 * 2.0).max(1.0),
     );
-    let lines = if button {
-        super::text::text(context, &title, node, &mut local)?
+    let lines = if is_button(node) {
+        // Controls draw their titles in the system face, as Chromium's macOS theme does.
+        let mut sized = node.clone();
+        sized.style.font_size = font;
+        sized.style.font_family = crate::document::FontFamily::SystemUi;
+        sized.style.letter_spacing = 0.0;
+        sized.style.text_transform = crate::document::TextTransform::None;
+        // A naturally sized button fits its title measured whole; word-by-word sums can exceed
+        // that by kerning, so it never wraps.
+        if style.width.is_none() && style.max_width.is_none() && fits {
+            sized.style.white_space = crate::document::WhiteSpace::Nowrap;
+        }
+        super::text::text(
+            context,
+            &title(context, node),
+            &sized,
+            &mut local,
+            usize::MAX,
+        )?
     } else {
         Vec::new()
     };
-    let height = if node.tag == "textarea" {
-        (style.line_height.used(style.font_size) * 3.0).max(CONTROL_HEIGHT)
-    } else {
-        CONTROL_HEIGHT.max(local.bottom - y - style.padding[0] - style.border + 4.0)
-    };
-    let natural_height = height + vertical_edges(node);
+    let height = natural_box.max(local.bottom - y + TITLE_INSET.1 + style.border);
     let mut validation = Vec::new();
     let mut validation_extent = 0.0;
     if let Some(error) = &node.validation {
-        let mut error_flow = Flow::new(x, y + natural_height + 2.0, width);
-        validation = super::text::text(context, error, node, &mut error_flow)?;
-        validation_extent = error_flow.bottom - (y + natural_height);
+        let mut error_flow = Flow::new(x, y + height + 2.0, width.max(FIELD_SIZE.0));
+        validation = super::text::text(context, error, node, &mut error_flow, usize::MAX)?;
+        validation_extent = error_flow.bottom - (y + height);
     }
+    // An authored height sizes the control's border box, as for any inline-block.
+    let authored = style
+        .height
+        .and_then(|extent| extent.resolve_size(flow.definite))
+        .map(|content| super::sizing::border_height(node, content));
     let total = forced
         .and_then(|bounds| bounds.height)
-        .unwrap_or(natural_height + validation_extent);
+        .or(authored.map(|height| height + validation_extent))
+        .unwrap_or(height + validation_extent);
     let control_height = (total - validation_extent).max(0.0);
+    // A taller authored box centers its title, as native buttons do.
+    let mut lines = lines;
+    let spare = (control_height - height) / 2.0;
+    if spare > 0.0 {
+        for line in &mut lines {
+            line.y += spare;
+        }
+    }
     for line in &mut validation {
-        line.y += control_height - natural_height;
+        line.y += control_height - height;
     }
     let mut item = box_item(node, x, y, width, total, lines);
+    item.font_size = font;
     item.control_height = Some(control_height);
     item.validation = validation;
-    let total_height = item.height;
+    let start = items.len();
     items.push(item);
-    flow.y = y
-        + total_height
-        + if forced.is_some() {
-            0.0
-        } else {
-            style.margin[2] + BLOCK_GAP
-        };
-    flow.bottom = flow.bottom.max(flow.y);
+    if forced.is_none() {
+        // The text baseline sits a little below the control's middle, as native controls draw it.
+        let ascent = style.margin[0] + (control_height + font * CONTROL_BASELINE) / 2.0;
+        super::text::place_atomic(
+            flow,
+            (start, start + 1),
+            outer,
+            (ascent, total + style.margin[0] + style.margin[2]),
+            style,
+            (style.margin[3], style.margin[1]),
+        );
+    }
     Ok(())
 }

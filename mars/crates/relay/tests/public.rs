@@ -1,5 +1,7 @@
 /** Independent public consumers pin Relay policy and request failures without network I/O. */
-use mars_relay::{CookieJar, Method, Prepared, WebRequest, policy};
+use mars_relay::{CookieJar, Method, Prepared, WebRequest, fetch, fetch_web, policy};
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::time::SystemTime;
 
 /** Rejected literal targets must fail before opening a socket or resolving a name. */
@@ -99,4 +101,71 @@ fn cookies_round_trip_through_pure_records_without_profile_io() {
             .header(&insecure, Some(&insecure), true, now)
             .is_empty()
     );
+}
+
+/** Navigation, subresource and loopback fetches each open one connection. */
+const PATHS: usize = 3;
+
+/** Serves one raw response to exactly `PATHS` loopback connections. */
+fn serve(response: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("loopback listener");
+    let origin = format!("http://{}", listener.local_addr().expect("address"));
+    let worker = std::thread::spawn(move || {
+        for stream in listener.incoming().take(PATHS) {
+            let mut stream = stream.expect("connection");
+            let mut request = Vec::new();
+            let mut byte = [0; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                request.push(byte[0]);
+            }
+            stream.write_all(&response).expect("response");
+        }
+    });
+    (origin, worker)
+}
+
+/** Every fetch path parses Content-Type and decodes charsets identically. */
+#[test]
+fn content_type_verdicts_match_on_every_fetch_path() {
+    let accepted = "\u{e9}".as_bytes();
+    for (content_type, body, expected) in [
+        ("text/html;charset=UTF-8", accepted, Ok("\u{e9}")),
+        ("TEXT/HTML; Charset=\"utf-8\"", accepted, Ok("\u{e9}")),
+        (
+            "text/html; charset=windows-1252",
+            b"\x80\x93\xE9".as_slice(),
+            Ok("\u{20AC}\u{201C}\u{e9}"),
+        ),
+        (
+            "text/html; charset=shift_jis",
+            accepted,
+            Err("unsupported_feature"),
+        ),
+    ] {
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(body);
+        let (origin, worker) = serve(response);
+        let url = format!("{origin}/");
+        let grants = std::slice::from_ref(&origin);
+        let navigation = fetch_web(&url, grants).map(|page| page.source);
+        let subresource = Prepared::connect(WebRequest::get(&url), grants, PREPARATION_MS)
+            .and_then(Prepared::transmit)
+            .map(|response| {
+                assert_eq!(response.mime, "text/html", "{content_type}");
+                response.source
+            });
+        let loopback = fetch(&url);
+        worker.join().expect("fixture");
+        for result in [navigation, subresource, loopback] {
+            assert_eq!(
+                result.as_deref().map_err(|error| error.code.as_str()),
+                expected,
+                "{content_type}"
+            );
+        }
+    }
 }

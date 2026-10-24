@@ -63,7 +63,7 @@ impl McpCheck {
             return Ok(());
         }
         unsafe {
-            window.chrome.control.performClick(None);
+            window.mars.control.performClick(None);
         }
         self.menus_verified = false;
         self.phase += 1;
@@ -84,7 +84,7 @@ fn verify_profile_menus(window: &mut Window) -> EngineResult<()> {
         .and_then(|item| item.submenu())
         .ok_or_else(|| EngineError::invalid("Native MCP profile menu is missing."))?;
     menu.update();
-    for tag in [chrome::PROFILE_CLEAR, chrome::STORAGE_CLEAR] {
+    for tag in [mars::PROFILE_CLEAR, mars::STORAGE_CLEAR] {
         if menu.itemWithTag(tag).is_none_or(|item| item.isEnabled()) {
             return Err(EngineError::invalid(
                 "Native MCP modal menu action was enabled.",
@@ -112,7 +112,7 @@ fn verify_branding(window: &Window) -> EngineResult<()> {
         .submenu()
         .and_then(|menu| menu.itemAtIndex(0))
         .ok_or_else(|| EngineError::invalid("Mars quit menu is missing."))?;
-    let welcome = window.chrome.welcome.stringValue().to_string();
+    let welcome = window.mars.welcome.stringValue().to_string();
     if window.window.title().to_string() != "Mars"
         || application.title().to_string() != "Mars"
         || quit.title().to_string() != "Quit Mars"

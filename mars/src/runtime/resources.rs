@@ -2,13 +2,23 @@
 use super::supervisor::Runtime;
 use crate::{
     constants::{REDIRECTS, WEB_TIMEOUT},
-    network::{Method, WebRequest, WebResponse},
+    network::{Destination, Method, Preflight, WebRequest, WebResponse, cors},
     protocol::{EngineError, EngineResult},
 };
 use serde_json::json;
 use std::time::{Instant, SystemTime};
 use url::Url;
 
+/** What a redirect response does to an acquisition. */
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Redirects {
+    /** Follow it, revalidating the destination (navigations, images, sheets). */
+    Follow,
+    /** Refuse it (classic scripts must not redirect). */
+    Refuse,
+    /** Hand it back so the caller re-decides credentials and origin for the next hop. */
+    Return,
+}
 /** Response metadata keeps final method for history replay policy. */
 pub(super) struct Acquired {
     pub response: WebResponse,
@@ -19,26 +29,54 @@ impl Runtime {
     /** One navigation deadline covers all redirects and required stylesheets. */
     pub(super) fn acquire(
         &mut self,
-        mut request: WebRequest,
+        request: WebRequest,
         deadline: Instant,
         initiator: Option<Url>,
         top_level: bool,
         allow_redirects: bool,
     ) -> EngineResult<Acquired> {
+        let redirects = if allow_redirects {
+            Redirects::Follow
+        } else {
+            Redirects::Refuse
+        };
+        self.acquire_with(request, deadline, initiator, top_level, redirects, true)
+    }
+    /** `acquire` with an explicit redirect policy, where `credentials: false` sends no cookies
+    and stores none the response sets (a page's script request decides credentials hop by hop
+    itself). */
+    pub(super) fn acquire_with(
+        &mut self,
+        mut request: WebRequest,
+        deadline: Instant,
+        initiator: Option<Url>,
+        top_level: bool,
+        redirects_policy: Redirects,
+        credentials: bool,
+    ) -> EngineResult<Acquired> {
         let grants = self
             .web_origins
             .clone()
             .ok_or_else(|| EngineError::unsupported("Forms require desktop networking."))?;
-        let mut admitted_post = false;
+        let mut admitted_unsafe = false;
         let mut diagnostics = Vec::new();
+        // Who caused the request drives Sec-Fetch-Site, Origin and Referer; typed URLs have none.
+        if request.initiator.is_none() {
+            request.initiator = initiator.as_ref().map(Url::to_string);
+        }
         let result = (|| {
             for redirects in 0..=REDIRECTS {
+                // A DevTools client that paused this navigation decides its first hop.
+                let intercepted = (redirects == 0 && top_level)
+                    .then(|| super::devtools::intercept(&mut request))
+                    .flatten();
                 let url = crate::network::policy::web_url(&request.url)?;
-                request.cookie = self.cookies.header(
+                self.shape_hop(
+                    &mut request,
                     &url,
                     initiator.as_ref(),
-                    top_level && request.method == Method::Get,
-                    SystemTime::now(),
+                    top_level,
+                    credentials,
                 );
                 let remaining = deadline
                     .saturating_duration_since(Instant::now())
@@ -46,23 +84,33 @@ impl Runtime {
                 if remaining.is_zero() {
                     return Err(EngineError::navigation_timeout());
                 }
-                let token=self.call_deadline("network","network.prepare",json!({"request":request,"fixture_origins":grants,"remaining_ms":remaining.as_millis() as u64}), deadline)?;
-                self.publish(|runtime| {
-                    if request.method == Method::Post
-                        && let Some(page) = &mut runtime.page
-                    {
-                        page.revision = page.revision.saturating_add(1);
-                    }
-                })?;
-                admitted_post |= request.method == Method::Post;
-                let value = self.call_deadline(
-                    "network",
-                    "network.transmit",
-                    json!({"token":token["token"]}),
-                    deadline,
-                )?;
-                let response: WebResponse = self.returned("network", value)?;
-                let reports = self.commit_cookies(&url, &response.set_cookies)?;
+                let response = if let Some(answer) = intercepted {
+                    self.publish(|_| ())?;
+                    answer?
+                } else if let Some(response) = self.take_prefetched(&request) {
+                    // The batch already sent this exact request; the authority check still runs.
+                    self.publish(|_| ())?;
+                    response?
+                } else {
+                    let token=self.call_deadline("network","network.prepare",json!({"request":request,"fixture_origins":grants,"remaining_ms":remaining.as_millis() as u64}), deadline)?;
+                    self.publish(|runtime| {
+                        if !request.method.is_safe()
+                            && let Some(page) = &mut runtime.page
+                        {
+                            page.revision = page.revision.saturating_add(1);
+                        }
+                    })?;
+                    admitted_unsafe |= !request.method.is_safe();
+                    let transmit = json!({"token":token["token"]});
+                    self.call_typed("network", "network.transmit", &transmit, Some(deadline))?
+                };
+                // Fetch stores a response's cookies only when the request included credentials.
+                let stored: &[String] = if credentials {
+                    &response.set_cookies
+                } else {
+                    &[]
+                };
+                let reports = self.commit_cookies(&url, stored)?;
                 for report in reports {
                     if diagnostics.len() < crate::constants::DIAGNOSTICS
                         && !diagnostics.contains(&report)
@@ -77,10 +125,20 @@ impl Runtime {
                         diagnostics,
                     });
                 }
-                if !allow_redirects {
-                    return Err(EngineError::unsupported(
-                        "A required script resource redirected.",
-                    ));
+                match redirects_policy {
+                    Redirects::Follow => {}
+                    Redirects::Refuse => {
+                        return Err(EngineError::unsupported(
+                            "A required script resource redirected.",
+                        ));
+                    }
+                    Redirects::Return => {
+                        return Ok(Acquired {
+                            response,
+                            method: request.method,
+                            diagnostics,
+                        });
+                    }
                 }
                 if redirects == REDIRECTS {
                     return Err(EngineError::unsupported("Redirect limit exceeded."));
@@ -93,23 +151,155 @@ impl Runtime {
                         .ok_or_else(|| EngineError::unsupported("Redirect has no Location."))?,
                     &grants,
                 )?;
-                if request.method == Method::Post {
-                    if [301, 302, 303].contains(&response.status) {
-                        request.method = Method::Get;
-                        request.body.clear();
-                    } else if next.origin() != url.origin() {
-                        return Err(EngineError::unsupported(
-                            "Cross-origin POST-preserving redirects are not supported.",
-                        ));
-                    }
+                if redirects_to_get(&request.method, response.status) {
+                    request.method = Method::Get;
+                    request.body.clear();
+                } else if !request.method.is_safe() && next.origin() != url.origin() {
+                    return Err(EngineError::unsupported(
+                        "Cross-origin POST-preserving redirects are not supported.",
+                    ));
                 }
                 request.url = next.into();
                 request.cookie.clear();
             }
             Err(EngineError::unsupported("Redirect limit exceeded."))
         })();
-        result.map_err(|error| if admitted_post { uncertain() } else { error })
+        result.map_err(|error| if admitted_unsafe { uncertain() } else { error })
     }
+}
+
+/// Requests one `network.fetch_batch` call carries: two rounds of Relay's batch workers, so a
+/// batch of the largest resources still fits one wire frame.
+pub(super) const FETCH_BATCH: usize = 2 * crate::network::network::constants::BATCH_WORKERS;
+
+/** The outcome of one batched request as the network service reports it. */
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum BatchOutcome {
+    /** The first hop's response, a redirect included. */
+    Response(WebResponse),
+    /** Why the request failed; the later acquire sees exactly this. */
+    Error(EngineError),
+}
+
+impl Runtime {
+    /** Names the cache partition, initiator-derived cookies and the like for one hop, so a
+    prefetched request and the later acquire of the same resource are byte-identical. */
+    fn shape_hop(
+        &mut self,
+        request: &mut WebRequest,
+        url: &Url,
+        initiator: Option<&Url>,
+        top_level: bool,
+        credentials: bool,
+    ) {
+        // The HTTP cache is partitioned by the top-level site, so every request names it.
+        request.top_level = if top_level {
+            Some(request.url.clone())
+        } else {
+            initiator.map(Url::to_string)
+        };
+        request.cookie = if credentials {
+            self.cookies.header(
+                url,
+                initiator,
+                top_level && request.method == Method::Get,
+                SystemTime::now(),
+            )
+        } else {
+            String::new()
+        };
+    }
+
+    /** A prefetched answer to exactly this request (cookies included), used at most once. */
+    fn take_prefetched(&mut self, request: &WebRequest) -> Option<EngineResult<WebResponse>> {
+        if self.prefetched.is_empty() || request.method != Method::Get {
+            return None;
+        }
+        self.prefetched.remove(&prefetch_key(request))
+    }
+
+    /**
+     * Sends independent subresource GETs (`(request, initiator)`, shaped as `acquire` would with
+     * credentials and no top-level navigation) concurrently, so a page's sheets, scripts or
+     * images cost about one round trip instead of one each. Answers wait in `prefetched` until
+     * `acquire` asks for the identical request; a request whose cookies changed meanwhile, or
+     * that nobody asks for, is simply fetched or dropped as before. Only authority and service
+     * failures stop the caller; any other batch failure leaves the sequential path to do the work.
+     */
+    pub(super) fn prefetch(
+        &mut self,
+        requests: Vec<(WebRequest, Url)>,
+        deadline: Instant,
+    ) -> EngineResult<()> {
+        let Some(grants) = self.web_origins.clone() else {
+            return Ok(());
+        };
+        let mut shaped: Vec<(String, WebRequest)> = Vec::new();
+        for (mut request, initiator) in requests {
+            let Ok(url) = crate::network::policy::web_url(&request.url) else {
+                continue;
+            };
+            if request.method != Method::Get {
+                continue;
+            }
+            if request.initiator.is_none() {
+                request.initiator = Some(initiator.to_string());
+            }
+            self.shape_hop(&mut request, &url, Some(&initiator), false, true);
+            let key = prefetch_key(&request);
+            if !self.prefetched.contains_key(&key) && !shaped.iter().any(|(k, _)| *k == key) {
+                shaped.push((key, request));
+            }
+        }
+        // A lone request gains nothing from a batch.
+        if shaped.len() < 2 {
+            return Ok(());
+        }
+        for chunk in shaped.chunks(FETCH_BATCH) {
+            let remaining = deadline
+                .saturating_duration_since(Instant::now())
+                .min(WEB_TIMEOUT);
+            if remaining.is_zero() {
+                return Ok(());
+            }
+            self.publish(|_| ())?;
+            let requests: Vec<&WebRequest> = chunk.iter().map(|(_, request)| request).collect();
+            let started = Instant::now();
+            let batch = json!({"requests":requests,"fixture_origins":grants,"remaining_ms":remaining.as_millis() as u64});
+            let outcomes: Vec<BatchOutcome> =
+                match self.call_typed("network", "network.fetch_batch", &batch, Some(deadline)) {
+                    Ok(outcomes) => outcomes,
+                    Err(error) if stops(&error) => return Err(error),
+                    Err(_) => return Ok(()),
+                };
+            super::supervisor::perf::record("page.prefetch", started, || chunk.len().to_string());
+            for ((key, _), outcome) in chunk.iter().zip(outcomes) {
+                match outcome {
+                    BatchOutcome::Response(response) => {
+                        self.prefetched.insert(key.clone(), Ok(response));
+                    }
+                    // A service-level failure is the sequential path's to discover and recover.
+                    BatchOutcome::Error(error) if error.service.is_none() => {
+                        self.prefetched.insert(key.clone(), Err(error));
+                    }
+                    BatchOutcome::Error(_) => {}
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/** Every field of the request, so only an identical request reuses a prefetched answer. */
+fn prefetch_key(request: &WebRequest) -> String {
+    serde_json::to_string(request).unwrap_or_default()
+}
+
+/** Authority, ownership and engine-service failures stop a load; everything else degrades. */
+fn stops(error: &EngineError) -> bool {
+    error.service.is_some()
+        || ["permission_denied", "control_denied"].contains(&error.code.as_str())
 }
 
 impl Runtime {
@@ -118,12 +308,40 @@ impl Runtime {
         if fields.is_empty() {
             return Ok(Vec::new());
         }
+        self.commit_jar(|jar| jar.receive(url, fields, SystemTime::now()))
+    }
+
+    /// `document.cookie` writes go through the jar's script setter, which refuses HttpOnly
+    /// cookies and any write that would replace one, then persist exactly like server cookies.
+    pub(super) fn commit_document_cookies(
+        &mut self,
+        url: &str,
+        fields: &[String],
+    ) -> EngineResult<()> {
+        if fields.is_empty() {
+            return Ok(());
+        }
+        let url = Url::parse(url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
+        self.commit_jar(|jar| {
+            for field in fields {
+                let _ = jar.set_document_cookie(&url, field, SystemTime::now());
+            }
+            Vec::new()
+        })
+        .map(|_| ())
+    }
+
+    /** Change a candidate jar, persist it to the profile, then publish it under authority. */
+    pub(super) fn commit_jar(
+        &mut self,
+        change: impl FnOnce(&mut crate::network::CookieJar) -> Vec<String>,
+    ) -> EngineResult<Vec<String>> {
         let previous = self
             .cookies
             .profile_record()
             .map_err(|_| crate::profile::unavailable())?;
         let mut candidate = self.cookies.clone();
-        let reports = candidate.receive(url, fields, SystemTime::now());
+        let reports = change(&mut candidate);
         let next = candidate
             .profile_record()
             .map_err(|_| crate::profile::unavailable())?;
@@ -174,11 +392,251 @@ impl Runtime {
         })
     }
 }
-/** A dispatched POST is never offered a generic retry, including later rendering failure. */
+/** A dispatched POST (or any other unsafe method) is never offered a generic retry, including
+later rendering failure. */
 pub(super) fn uncertain() -> EngineError {
     EngineError::new(
         "submission_uncertain",
         "We couldn’t confirm the submission result. The server may have received it. Check the result before submitting again.",
         "Dismiss this message; no submission was replayed.",
     )
+}
+
+/// Redirect statuses a script request follows hop by hop.
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+
+/// Fetch's request-body header names, dropped when a redirect turns a request into a GET.
+const BODY_HEADERS: [&str; 4] = [
+    "content-encoding",
+    "content-language",
+    "content-location",
+    "content-type",
+];
+
+/// A page script's credentials mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Credentials {
+    /// Never send or store cookies.
+    Omit,
+    /// Cookies only while the request has not left the page's origin.
+    SameOrigin,
+    /// Cookies on every hop, cross-origin too, and then the CORS check needs an exact origin
+    /// and Access-Control-Allow-Credentials.
+    Include,
+}
+
+impl Credentials {
+    /// The credentials mode a page named, or None for one the Fetch standard does not have.
+    pub(super) fn parse(text: &str) -> Option<Self> {
+        match text {
+            "omit" => Some(Self::Omit),
+            "" | "same-origin" => Some(Self::SameOrigin),
+            "include" => Some(Self::Include),
+            _ => None,
+        }
+    }
+}
+
+/// One script request, as parsed from what the page asked for.
+pub(super) struct ScriptRequest {
+    /// The current hop's URL.
+    pub url: Url,
+    /// Any method a script may send; only GET and HEAD are safe.
+    pub method: Method,
+    /// The text body (empty for GET and HEAD).
+    pub body: String,
+    /// Page-set headers, forbidden names already dropped.
+    pub headers: Vec<(String, String)>,
+    /// cors, no-cors or same-origin.
+    pub mode: cors::Mode,
+    /// omit, same-origin or include.
+    pub credentials: Credentials,
+}
+
+/// What a script request delivers to the page.
+pub(super) enum ScriptAnswer {
+    /// A response the page may read, with only the headers it may see.
+    Readable(Box<WebResponse>, Vec<(String, String)>),
+    /// A cross-origin no-cors response: status 0, no headers, no body.
+    Opaque,
+    /// A network error; the page sees only TypeError("Failed to fetch").
+    Failed,
+}
+
+impl Runtime {
+    /**
+     * A page's fetch or XMLHttpRequest as the Fetch standard runs it, one hop at a time under
+     * the same egress policy: same-origin mode stops at another origin, no-cors turns
+     * cross-origin answers opaque, and CORS mode preflights what is not simple, sends Origin
+     * (`null` once a redirect taints it), and lets the page read a cross-origin response,
+     * redirects included, only when the server's Access-Control headers pass the CORS check.
+     * Every refusal is the same bare network error.
+     */
+    pub(super) fn fetch_for_script(
+        &mut self,
+        base: &Url,
+        mut request: ScriptRequest,
+        preflights: &mut cors::PreflightCache,
+        until: Instant,
+    ) -> EngineResult<ScriptAnswer> {
+        let include = request.credentials == Credentials::Include;
+        let mut flow = cors::Flow::new(base.origin(), request.mode);
+        for redirects in 0..=REDIRECTS {
+            if !flow.enter(&request.url)
+                || !self.preflighted(base, &request, &flow, preflights, until)?
+            {
+                return Ok(ScriptAnswer::Failed);
+            }
+            let first = redirects == 0;
+            let Some(response) = self.script_hop(base, &request, &flow, first, until)? else {
+                return Ok(ScriptAnswer::Failed);
+            };
+            let tainting = flow.tainting();
+            if tainting == cors::Tainting::Cors
+                && !cors::allows(&response.headers, &flow.serialized(), include)
+            {
+                return Ok(ScriptAnswer::Failed);
+            }
+            if !REDIRECT_STATUSES.contains(&response.status) {
+                return Ok(answer(response, tainting, include));
+            }
+            let Some(next) = self.next_hop(&request.url, &response) else {
+                return Ok(ScriptAnswer::Failed);
+            };
+            flow.redirect(&request.url, &next);
+            if redirects_to_get(&request.method, response.status) {
+                request.method = Method::Get;
+                request.body.clear();
+                request
+                    .headers
+                    .retain(|(name, _)| !BODY_HEADERS.contains(&name.as_str()));
+            }
+            request.url = next;
+        }
+        Ok(ScriptAnswer::Failed)
+    }
+
+    /** Whether a CORS hop that is not simple has a preflight allowing it, cached or fresh. */
+    fn preflighted(
+        &mut self,
+        base: &Url,
+        request: &ScriptRequest,
+        flow: &cors::Flow,
+        preflights: &mut cors::PreflightCache,
+        until: Instant,
+    ) -> EngineResult<bool> {
+        let method = request.method.name();
+        if flow.tainting() != cors::Tainting::Cors
+            || !cors::needs_preflight(method, &request.headers)
+        {
+            return Ok(true);
+        }
+        let include = request.credentials == Credentials::Include;
+        let origin = flow.serialized();
+        let names = cors::unsafe_header_names(&request.headers);
+        let now = Instant::now();
+        if preflights.covers(&origin, &request.url, include, method, &names, now) {
+            return Ok(true);
+        }
+        let web = WebRequest {
+            destination: Destination::Empty,
+            origin: Some(origin.clone()),
+            mode: Some(cors::Mode::Cors),
+            preflight: Some(Preflight {
+                method: method.into(),
+                headers: names.join(","),
+            }),
+            ..WebRequest::get(request.url.as_str())
+        };
+        let Some(response) = self.script_send(base, web, false, until)? else {
+            return Ok(false);
+        };
+        let Some(allowance) = cors::preflight(response.status, &response.headers, &origin, include)
+        else {
+            return Ok(false);
+        };
+        let covered = allowance.covers(method, &names, include);
+        preflights.store(&origin, &request.url, include, allowance, now);
+        Ok(covered)
+    }
+
+    /** One hop of the real request, with the cookies, Origin and mode its state calls for. */
+    fn script_hop(
+        &mut self,
+        base: &Url,
+        request: &ScriptRequest,
+        flow: &cors::Flow,
+        first: bool,
+        until: Instant,
+    ) -> EngineResult<Option<WebResponse>> {
+        let tainting = flow.tainting();
+        let cookies = match request.credentials {
+            Credentials::Include => true,
+            Credentials::SameOrigin => tainting == cors::Tainting::Basic,
+            Credentials::Omit => false,
+        };
+        let origin = (tainting == cors::Tainting::Cors || !request.method.is_safe())
+            .then(|| flow.serialized());
+        let mut web = WebRequest {
+            method: request.method.clone(),
+            body: request.body.clone(),
+            destination: Destination::Empty,
+            headers: request.headers.clone(),
+            origin,
+            mode: Some(request.mode),
+            ..WebRequest::get(request.url.as_str())
+        };
+        // A DevTools client that paused this page request decides its first hop, as it does
+        // for navigations; a hop after a redirect is never paused.
+        if first && let Some(answer) = super::devtools::intercept(&mut web) {
+            return answer.map(Some);
+        }
+        self.script_send(base, web, cookies, until)
+    }
+
+    /** Send one script hop; an egress refusal or network failure is None, never a detail the
+    page could read. Authority and service failures still stop the caller. */
+    fn script_send(
+        &mut self,
+        base: &Url,
+        web: WebRequest,
+        cookies: bool,
+        until: Instant,
+    ) -> EngineResult<Option<WebResponse>> {
+        match self.acquire_with(
+            web,
+            until,
+            Some(base.clone()),
+            false,
+            Redirects::Return,
+            cookies,
+        ) {
+            Ok(acquired) => Ok(Some(acquired.response)),
+            Err(error) if error.service.is_some() || error.code == "control_denied" => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /** The redirect's destination under the same egress policy, or None to fail the request. */
+    fn next_hop(&self, url: &Url, response: &WebResponse) -> Option<Url> {
+        let grants = self.web_origins.clone().unwrap_or_default();
+        let location = response.location.as_deref()?;
+        crate::network::redirect_url(url, location, &grants).ok()
+    }
+}
+
+/** The final response as the page may see it, by tainting. */
+fn answer(response: WebResponse, tainting: cors::Tainting, include: bool) -> ScriptAnswer {
+    if tainting == cors::Tainting::Opaque {
+        return ScriptAnswer::Opaque;
+    }
+    let headers = cors::exposed(&response.headers, tainting, include);
+    ScriptAnswer::Readable(Box::new(response), headers)
+}
+
+/** Fetch's redirect rewrite: a 301 or 302 turns a POST into a GET, and a 303 turns every method
+but GET and HEAD into one. Any other unsafe method keeps its method and body. */
+fn redirects_to_get(method: &Method, status: u16) -> bool {
+    (status == 303 && !method.is_safe())
+        || ([301, 302].contains(&status) && *method == Method::Post)
 }

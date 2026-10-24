@@ -1,0 +1,31 @@
+# Mars MDP front door: translates a Chrome DevTools Protocol subset into native Mars operations.
+[package]
+name = "mars-mdp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "mars-mdp"
+
+[dependencies]
+mars = { path = "../.." }
+serde_json = "=1.0.154"
+# Already in the tree through rustls; SHA-1 for the WebSocket accept key and token randomness.
+ring = "=0.17.14"
+# Already in the tree through the Mars application; screenshot clips crop its PNG captures.
+png = "=0.17.16"
+# Already in the tree; Emulation.setTimezoneOverride asks the C library for a zone's offset.
+libc = "=0.2.191"
+# Already in the tree; frame origins and cookie URLs are parsed, never guessed.
+url = "=2.5.8"
+
+[lib]
+name = "mars_mdp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mars-mdp"
+path = "src/main.rs"
+
+[[bin]]
+name = "mars-cdp"
+path = "src/bin/mars-cdp.rs"

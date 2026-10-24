@@ -2,6 +2,8 @@
 #![cfg(all(target_os = "macos", feature = "test-support"))]
 #[path = "window/banner.rs"]
 mod banner;
+#[path = "window/clicks.rs"]
+mod clicks;
 #[path = "window/forms.rs"]
 mod forms;
 #[path = "window/reading.rs"]
@@ -31,17 +33,26 @@ struct Window {
 impl Window {
     /** An ignored test requires an explicit operator command before opening native windows. */
     fn start() -> Self {
+        Self::start_as(true)
+    }
+    /** A window the person controls: the agent is connected to observe but holds no tab. */
+    fn start_human() -> Self {
+        Self::start_as(false)
+    }
+    /** Every window launch is ephemeral, observable over the native protocol and allowed to capture. */
+    fn start_as(agent_control: bool) -> Self {
+        let mut args = vec!["desktop", "--test-profile", "--agent"];
+        if agent_control {
+            args.push("--agent-control");
+        }
+        args.extend([
+            "--url",
+            "demo",
+            "--capture-dir",
+            "/private/tmp/oya-native-window-tests",
+        ]);
         let mut child = Command::new(env!("CARGO_BIN_EXE_mars"))
-            .args([
-                "desktop",
-                "--test-profile",
-                "--agent",
-                "--agent-control",
-                "--url",
-                "demo",
-                "--capture-dir",
-                "/private/tmp/oya-native-window-tests",
-            ])
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -204,18 +215,38 @@ fn visible_window_completes_agent_journey_and_captures_native_states() {
                 .unwrap()
                 .trim_end_matches('/')
         );
-        let error = window.request("page.navigate", json!({"url":url,"control_epoch":1}));
-        assert_eq!(error["error"]["code"], "script_syntax_error");
-        assert_eq!(error["error"]["location"]["line"], 2);
-        let state = window.call("window.inspect", json!({}));
+        // A page whose script fails to parse still loads, as in a browser; the failed script is a
+        // diagnostic on the page, not a navigation error, and Back returns to the demo.
+        let broken = window.call("page.navigate", json!({"url":url,"control_epoch":1}));
+        assert_ne!(broken["page_id"], before["page_id"]);
         assert!(
-            state["error"]
+            broken["degraded"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|feature| feature == "scripts"),
+            "{broken}"
+        );
+        assert!(
+            broken["diagnostics"][0]
                 .as_str()
                 .unwrap()
-                .contains("line 2, column 7")
+                .contains("line 2, column 7"),
+            "{broken}"
         );
-        assert_eq!(state["page"]["page_id"], before["page_id"]);
+        let state = window.call("window.inspect", json!({}));
+        assert!(state["error"].is_null(), "{state}");
+        assert_eq!(state["page"]["page_id"], broken["page_id"]);
         window.capture();
+        let returned = window.call("page.back", json!({"control_epoch":1}));
+        assert!(
+            returned["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|node| node["html_id"] == "add"),
+            "{returned}"
+        );
     }
     for count in 1..=4 {
         let page = window.call("page.inspect", json!({}));

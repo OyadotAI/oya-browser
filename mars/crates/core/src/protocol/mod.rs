@@ -1,12 +1,14 @@
 /** Versioned bounded messages shared by agents and private engine pipes. */
 mod codec;
 mod error;
+mod typed;
 
 use crate::constants::{ID_BYTES, VERSION};
 pub use codec::{decode, encode, read_frame, write_message};
 pub use error::{EngineError, EngineResult, SourceLocation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use typed::{RequestHead, TypedRequest, TypedResponse, encode_reply, encode_request};
 
 /// One sequential operation; unknown envelope fields are rejected.
 #[derive(Debug, Deserialize, Serialize)]

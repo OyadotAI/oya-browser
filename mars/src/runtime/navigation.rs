@@ -2,17 +2,17 @@
 use super::{
     page::{Empty, Page},
     resources::{Acquired, uncertain},
-    supervisor::Runtime,
+    supervisor::{Runtime, perf},
 };
 use crate::{
-    constants::{HISTORY_ENTRIES, STYLE_BYTES, STYLE_SHEETS, WEB_TIMEOUT},
+    constants::{DIAGNOSTICS, HISTORY_ENTRIES, STYLE_SHEETS, STYLE_TOTAL_BYTES, WEB_TIMEOUT},
     document::{Document, StyleSource},
     network::{Method, WebRequest, WebResponse},
     protocol::{EngineError, EngineResult, parameters},
-    v9::Execution,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 /** History retains the internal destination without exposing protected queries. */
@@ -28,6 +28,49 @@ pub(super) struct HistoryEntry {
 struct Navigate {
     url: String,
 }
+/** What a load skipped: bounded, deduplicated diagnostics and the feature names behind them. */
+#[derive(Default)]
+struct Gaps {
+    /// Messages added to the document's diagnostics.
+    diagnostics: Vec<String>,
+    /// Feature names ("scripts", "stylesheets", "images") for `page.degraded`.
+    degraded: Vec<String>,
+    /// A stylesheet could not reach Eye, so its hiding rules are unknown: no node may be
+    /// agent-actionable on this page.
+    untrusted_styles: bool,
+}
+impl Gaps {
+    /** Record one skipped resource; both lists stay under DIAGNOSTICS and never repeat. */
+    fn note(&mut self, feature: &str, message: String) {
+        if self.degraded.len() < DIAGNOSTICS && !self.degraded.iter().any(|f| f == feature) {
+            self.degraded.push(feature.into());
+        }
+        if self.diagnostics.len() < DIAGNOSTICS && !self.diagnostics.contains(&message) {
+            self.diagnostics.push(message);
+        }
+    }
+    /** Fold into the document's own diagnostics under the same bound. */
+    fn record(&self, document: &mut Document) {
+        for message in &self.diagnostics {
+            if document.diagnostics.len() < DIAGNOSTICS && !document.diagnostics.contains(message) {
+                document.diagnostics.push(message.clone());
+            }
+        }
+    }
+}
+/** One script ready for V9, in execution order, remembering where the author put it. */
+struct Resolved {
+    /// Source text.
+    source: String,
+    /// Zero-based position in the document.
+    index: usize,
+    /// External URL with query and fragment removed, or None for an inline script.
+    url: Option<String>,
+    /// A module script or import map, which V9's module loader runs; None for a classic script.
+    module: Option<super::modules::Entry>,
+    /// The element's attributes, for the head record V9 gives the script.
+    attributes: BTreeMap<String, String>,
+}
 /** History is changed only when its corresponding page commits. */
 enum History {
     New,
@@ -35,6 +78,18 @@ enum History {
 }
 
 impl Runtime {
+    /** A committed same-document URL change (pushState, a hash) updates the current history
+    entry in place, never fetching. */
+    pub(super) fn sync_history_url(&mut self) {
+        let (Some(index), Some(page)) = (self.history_cursor, self.page.as_ref()) else {
+            return;
+        };
+        if let Some(entry) = self.history.get_mut(index)
+            && entry.url != page.url
+        {
+            entry.url.clone_from(&page.url);
+        }
+    }
     /** Restored destinations use GET and keep query data out of inspection. */
     pub(super) fn navigate_restored_request(&mut self, url: &str) -> EngineResult<()> {
         self.load_request(WebRequest::get(url), true, History::New)
@@ -114,16 +169,40 @@ impl Runtime {
         request.url = url.into();
         self.load_request(request, sensitive, History::New)
     }
-    /** Expensive parsing, VM and layout happen outside the brief final authority lock. */
+    /** A script's navigation (location assignment, window.open) to an absolute URL, as a link
+    from the current page: the same pipeline, sensitivity and authority as a click. */
+    pub(super) fn script_navigate(&mut self, url: &str, hops: u8) -> EngineResult<Value> {
+        let sensitive = self.current()?.sensitive;
+        self.load_request_from(WebRequest::get(url), sensitive, History::New, hops)
+    }
+    /** Ordinary navigations start a script navigation chain. */
     fn load_request(
         &mut self,
         request: WebRequest,
         sensitive: bool,
         history: History,
     ) -> EngineResult<Value> {
+        self.load_request_from(request, sensitive, history, 0)
+    }
+    /** Expensive parsing, VM and layout happen outside the brief final authority lock. A
+    navigation the committed page's scripts asked for follows, `hops` deep in the chain. */
+    fn load_request_from(
+        &mut self,
+        request: WebRequest,
+        sensitive: bool,
+        history: History,
+        hops: u8,
+    ) -> EngineResult<Value> {
         self.ensure_storage_ready()?;
+        self.ready_download = None;
         let is_post = request.method == Method::Post;
+        let started = Instant::now();
         let result = self.candidate(request, sensitive).and_then(|page| {
+            perf::record("page.candidate", started, String::new);
+            let started = Instant::now();
+            let Some(page) = page else {
+                return self.download_ready();
+            };
             let rollback = if page.storage_dirty {
                 self.write_storage(&page.origin, &page.storage)?
             } else {
@@ -167,7 +246,12 @@ impl Runtime {
             {
                 self.rollback_storage(previous);
             }
-            published
+            let published = published?;
+            perf::record("page.publish", started, String::new);
+            Ok(match self.follow_script_navigation(hops) {
+                Some(Ok(followed)) => followed,
+                _ => published,
+            })
         });
         result.map_err(|mut error| {
             if is_post
@@ -192,15 +276,37 @@ impl Runtime {
             error
         })
     }
-    /** Required CSS is acquired before hidden content can gain native geometry. */
-    fn candidate(&mut self, request: WebRequest, sensitive: bool) -> EngineResult<Page> {
+    /** The committed page stays; the file waits for the desktop to save it, never parsed or run. */
+    fn download_ready(&self) -> EngineResult<Value> {
+        let ready = self
+            .ready_download
+            .as_ref()
+            .ok_or_else(|| EngineError::service("network", false))?;
+        Ok(json!({"download_ready":{
+            "url":ready.url,"mime":ready.mime,"disposition":ready.disposition,"bytes":ready.bytes.len()
+        }}))
+    }
+    /** Required CSS is acquired before hidden content can gain native geometry. A response the
+    network service marked as a download is held in `ready_download` and yields no page. */
+    fn candidate(&mut self, request: WebRequest, sensitive: bool) -> EngineResult<Option<Page>> {
         let deadline = Instant::now() + WEB_TIMEOUT;
         let initiator = self
             .page
             .as_ref()
             .and_then(|p| url::Url::parse(&p.url).ok());
+        // HTML forms and links only navigate with GET or POST; other methods are for page scripts.
+        if !matches!(request.method, Method::Get | Method::Post) {
+            return Err(EngineError::unsupported(
+                "Navigations use only GET and POST.",
+            ));
+        }
+        let fetch = Instant::now();
         let acquired = if self.web_origins.is_some() {
-            self.acquire(request, deadline, initiator, true, true)?
+            let acquired = self.acquire(request, deadline, initiator, true, true)?;
+            perf::record("page.fetch", fetch, || {
+                acquired.response.source.len().to_string()
+            });
+            acquired
         } else {
             if request.method != Method::Get {
                 return Err(EngineError::unsupported(
@@ -220,13 +326,26 @@ impl Runtime {
                     mime: "text/html".into(),
                     location: None,
                     set_cookies: Vec::new(),
+                    charset: None,
+                    download: false,
+                    disposition: None,
+                    headers: Vec::new(),
                 },
                 method: Method::Get,
                 diagnostics: Vec::new(),
             }
         };
+        if acquired.response.download && acquired.method == Method::Get {
+            self.ready_download =
+                Some(super::downloads::Fetched::from_download(acquired.response)?);
+            return Ok(None);
+        }
         let post = acquired.method == Method::Post;
-        self.build_page(acquired, deadline, sensitive)
+        self.prefetched.clear();
+        let built = self.build_page(acquired, deadline, sensitive);
+        self.prefetched.clear();
+        built
+            .map(Some)
             .map_err(|error| if post { uncertain() } else { error })
     }
     /** Cookie network-state commits precede document parsing, under current authority. */
@@ -241,23 +360,46 @@ impl Runtime {
                 "The document requires UTF-8 text/html.",
             ));
         }
-        let parsed = self.call(
-            "document",
-            "document.parse",
-            json!({"source":acquired.response.source}),
-        )?;
-        let mut document: Document = self.returned("document", parsed)?;
+        let total = Instant::now();
+        let mut phase = Instant::now();
+        let parse = json!({"source":acquired.response.source,"charset":acquired.response.charset});
+        let mut document: Document = self.call_typed("document", "document.parse", &parse, None)?;
+        perf::record("page.parse", phase, || document.nodes.len().to_string());
+        phase = Instant::now();
         document.diagnostics.extend(acquired.diagnostics);
         let script_resources = std::mem::take(&mut document.scripts);
-        let images = self.resolve_images(&mut document, &acquired.response.url, deadline)?;
-        let sheets = self.stylesheets(&document, &acquired.response.url, deadline)?;
-        let styled = self.call(
-            "document",
-            "document.styles",
-            json!({"document":document,"sheets":sheets,"context":self.render_context}),
+        self.prefetch_head(
+            &document,
+            &script_resources,
+            &acquired.response.url,
+            deadline,
         )?;
-        document = self.returned("document", styled)?;
-        let scripts = self.resolve_scripts(script_resources, &acquired.response.url, deadline)?;
+        let mut gaps = Gaps::default();
+        let sheets = self.stylesheets(&document, &acquired.response.url, deadline, &mut gaps)?;
+        perf::record("page.fetch_styles", phase, || {
+            sheets.iter().map(String::len).sum::<usize>().to_string()
+        });
+        phase = Instant::now();
+        document = self.styled(&document, &sheets, self.render_context)?;
+        perf::record("page.styles", phase, String::new);
+        phase = Instant::now();
+        let all = crate::constants::IMAGE_COUNT;
+        self.prefetch_images(&document, &acquired.response.url, deadline, &|_| true, all)?;
+        let images =
+            self.resolve_images(&mut document, &acquired.response.url, deadline, &mut gaps)?;
+        perf::record("page.images", phase, || images.len().to_string());
+        phase = Instant::now();
+        let resolved = self.resolve_scripts(
+            script_resources,
+            &acquired.response.url,
+            &document.csp,
+            deadline,
+            &mut gaps,
+        )?;
+        perf::record("page.fetch_scripts", phase, || {
+            let bytes: usize = resolved.iter().map(|script| script.source.len()).sum();
+            format!("{}\t{bytes}", resolved.len())
+        });
         let origin = canonical_origin(&acquired.response.url)?;
         let base_storage = self.storage_for(&origin)?;
         let generation = self
@@ -265,281 +407,597 @@ impl Runtime {
             .checked_add(1)
             .ok_or_else(|| EngineError::limit("page generations", usize::MAX))?;
         let script_identity = format!("{}:document-{generation}", self.active_tab_id);
-        let projection = crate::document::script_document(&document, &script_identity)?;
-        let value = self.call(
-            "v9",
-            "v9.document_load",
-            json!({"sources":scripts,"document":projection,"storage":base_storage}),
-        )?;
-        let execution: Execution = self.returned("v9", value)?;
-        document = self.apply(&document, &execution.changes)?;
-        execution
-            .state
-            .validate_document(&crate::document::script_document(
-                &document,
-                &script_identity,
-            )?)?;
-        let storage = execution.storage;
-        let state = execution.state;
+        let environment = self.page_environment(
+            &acquired.response.url,
+            self.referrer(&acquired.response.url),
+            resolved
+                .iter()
+                .map(|script| script.url.clone().unwrap_or_default())
+                .collect(),
+            resolved
+                .iter()
+                .map(|script| script.attributes.clone())
+                .collect(),
+            &document.formatting,
+        );
         let mut page = Page {
             generation,
             script_identity,
             revision: 1,
             document,
-            scripts,
+            scripts: resolved
+                .iter()
+                .map(|script| script.source.clone())
+                .collect(),
             resolved_stylesheets: sheets,
             url: acquired.response.url,
             sensitive,
             replayable: acquired.method == Method::Get,
             status: acquired.response.status,
-            state,
+            state: Default::default(),
             images,
             display: None,
             layout_generation: 1,
+            styled: true,
+            inspection: None,
             origin,
-            storage_dirty: storage != base_storage,
-            storage,
+            storage_dirty: false,
+            storage: base_storage,
+            degraded: Vec::new(),
+            untrusted_styles: false,
+            scripting: super::scripting::Scripting {
+                environment,
+                modules: super::modules::Modules::new(
+                    resolved
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, script)| Some((index, script.module.clone()?))),
+                ),
+                ..Default::default()
+            },
         };
-        self.prepare(&mut page)?;
+        phase = Instant::now();
+        // First paint: people see the parsed and styled page while its scripts run, as a
+        // browser paints before load. The window is the only observer; agents get the page
+        // once it has settled, as before.
+        if !resolved.is_empty() && self.provisional.is_some() && self.web_origins.is_some() {
+            self.prepare_display(&mut page)?;
+            self.first_paint(&page);
+            perf::record("page.first_paint", phase, String::new);
+        }
+        page.scripting.loading = true;
+        let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps);
+        page.scripting.loading = false;
+        let restyle = restyle?;
+        self.flush_inserted_images(&mut page)?;
+        perf::record("page.scripts", phase, || restyle.to_string());
+        phase = Instant::now();
+        gaps.record(&mut page.document);
+        page.degraded = gaps.degraded;
+        page.untrusted_styles = gaps.untrusted_styles;
+        page.scripting.wake();
+        if page.styled && page.display.is_some() && !page.untrusted_styles {
+            // Scripts left the first paint's document as it was: its layout stands, only the
+            // page's notes changed.
+            page.refresh_inspection();
+            page.publishable()?;
+        } else {
+            self.prepare_current(&mut page)?;
+        }
+        perf::record("page.prepare", phase, || {
+            page.document.nodes.len().to_string()
+        });
+        perf::record("page.build", total, || page.url.clone());
         Ok(page)
     }
-    /** Optional static images share governed networking but ordinary failures use alt text. */
+    /**
+     * Run the page's scripts the way a browser does: V9 isolates each one, so a script that
+     * fails is rolled back alone and noted, and its source is blanked to spaces of the same
+     * length so later requests re-parse the page with unchanged code offsets. Then
+     * DOMContentLoaded and load fire and the page settles (its requests answered, its first
+     * timers run). If V9 or the document engine refuses the whole load, the page still loads
+     * without script effects. Returns whether the document changed.
+     */
+    fn run_scripts(
+        &mut self,
+        page: &mut Page,
+        resolved: &[Resolved],
+        deadline: Instant,
+        gaps: &mut Gaps,
+    ) -> EngineResult<bool> {
+        let loaded = match self.script_step(page, json!({"kind":"load"})) {
+            Ok(step) => step,
+            Err(error) if fatal(&error) => return Err(error),
+            Err(error) => {
+                for script in resolved {
+                    gaps.note("scripts", script_note(script, &error.message));
+                }
+                page.scripts.clear();
+                page.scripting.modules = Default::default();
+                self.script_step(page, json!({"kind":"load"}))?
+            }
+        };
+        for failure in &loaded.failed {
+            if let Some(script) = resolved.get(failure.index) {
+                let note = script_note(script, &failure.error.message);
+                let entry = crate::v9::ConsoleEntry {
+                    level: "error".into(),
+                    text: note.clone(),
+                };
+                super::scripting::record_console(&mut page.scripting, vec![entry], 0);
+                gaps.note("scripts", note);
+                page.scripts[failure.index] = " ".repeat(script.source.len());
+            }
+        }
+        let mut changed = loaded.changed;
+        for event in ["dom_content_loaded", "load"] {
+            match self.script_step(page, json!({"kind":"event","event":event})) {
+                Ok(step) => changed |= step.changed,
+                Err(error) if fatal(&error) => return Err(error),
+                Err(error) => {
+                    let reason = error.message.chars().take(REASON_CHARS).collect::<String>();
+                    gaps.note(
+                        "scripts",
+                        format!("The page's {event} handlers did not run: {reason}"),
+                    );
+                    break;
+                }
+            }
+        }
+        Ok(self.settle_after_load(page, deadline)? || changed)
+    }
+    /** What a new page's `document.referrer` says: the page it came from, origin only when the
+    origins differ or that page's address was sensitive, as Chrome's default policy does. */
+    fn referrer(&self, url: &str) -> String {
+        let Some(previous) = self.page.as_ref() else {
+            return String::new();
+        };
+        let (Ok(mut from), Ok(to)) = (url::Url::parse(&previous.url), url::Url::parse(url)) else {
+            return String::new();
+        };
+        if previous.sensitive || from.origin() != to.origin() {
+            return format!("{}/", from.origin().ascii_serialization());
+        }
+        from.set_fragment(None);
+        from.into()
+    }
+    /**
+     * Starts every linked stylesheet and every external script the page may run at once, as a
+     * browser's preload scanner does, so `stylesheets` and `resolve_scripts` find their answers
+     * waiting. Only what they would request is sent: the first STYLE_SHEETS sheets and the
+     * first SCRIPT_COUNT scripts the page's Content-Security-Policy allows.
+     */
+    fn prefetch_head(
+        &mut self,
+        document: &Document,
+        scripts: &[crate::document::ScriptResource],
+        base: &str,
+        deadline: Instant,
+    ) -> EngineResult<()> {
+        let Ok(base) = url::Url::parse(base) else {
+            return Ok(());
+        };
+        let request = |url: url::Url, destination| {
+            let request = WebRequest {
+                destination,
+                ..WebRequest::get(url.as_str())
+            };
+            (request, base.clone())
+        };
+        let sheets = document
+            .styles
+            .iter()
+            .filter_map(|source| match source {
+                StyleSource::Linked(href) | StyleSource::LinkedMedia { href, .. } => Some(href),
+                StyleSource::Inline(_) => None,
+            })
+            .take(STYLE_SHEETS)
+            .filter_map(|href| base.join(href).ok())
+            .map(|url| request(url, crate::network::Destination::Style));
+        let code = scripts
+            .iter()
+            .take(crate::constants::SCRIPT_COUNT)
+            .filter_map(|script| {
+                let url = base.join(script.src.as_deref()?).ok()?;
+                let candidate = super::csp::Candidate {
+                    url: Some(&url),
+                    nonce: script.nonce.as_deref(),
+                    source: &script.source,
+                };
+                super::csp::allows(&document.csp, &base, &candidate).then_some(url)
+            })
+            .map(|url| request(url, crate::network::Destination::Script));
+        let requests = sheets.chain(code).collect();
+        self.prefetch(requests, deadline)
+    }
+    /**
+     * Starts the images `load_images` will read first for the nodes `wanted` selects, together:
+     * each visible img's first candidate source and each CSS background, up to `limit` (what is left of IMAGE_COUNT). A fallback candidate, needed
+     * only when the first fails, is still fetched on its own.
+     */
+    pub(super) fn prefetch_images(
+        &mut self,
+        document: &Document,
+        base: &str,
+        deadline: Instant,
+        wanted: &dyn Fn(&crate::document::Node) -> bool,
+        limit: usize,
+    ) -> EngineResult<()> {
+        let Ok(base) = url::Url::parse(base) else {
+            return Ok(());
+        };
+        let viewport = self.render_context.width;
+        let firsts = document
+            .nodes
+            .iter()
+            .filter(|node| node.tag == "img" && !node.hidden() && wanted(node))
+            .filter_map(|node| {
+                super::images::sources(document, node, viewport)
+                    .into_iter()
+                    .next()
+            })
+            .map(|(src, _)| src);
+        let backgrounds = crate::document::background_urls(document, base.as_str())
+            .into_iter()
+            .filter(|(id, _)| {
+                document
+                    .nodes
+                    .iter()
+                    .find(|node| node.local_id == *id)
+                    .is_some_and(wanted)
+            })
+            .map(|(_, url)| url);
+        let mut requests: Vec<(WebRequest, url::Url)> = firsts
+            .chain(backgrounds)
+            .take(limit)
+            .filter(|src| {
+                !src.get(..5)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("data:"))
+            })
+            .filter_map(|src| base.join(src.trim()).ok())
+            .map(|url| {
+                let request = WebRequest {
+                    destination: crate::network::Destination::Image,
+                    image: !super::images::svg_address(&url),
+                    ..WebRequest::get(url.as_str())
+                };
+                (request, base.clone())
+            })
+            .collect();
+        // The text's font files load beside the images, so the first paint has its faces.
+        requests.extend(
+            crate::document::font_requests(document)
+                .into_iter()
+                .filter_map(|font| base.join(&font.url).ok())
+                .map(|url| {
+                    let request = WebRequest {
+                        destination: crate::network::Destination::Font,
+                        ..WebRequest::get(url.as_str())
+                    };
+                    (request, base.clone())
+                }),
+        );
+        self.prefetch(requests, deadline)
+    }
+    /**
+     * Optional static images share governed networking, selected from the styled document so
+     * hidden images are not fetched and CSS backgrounds are known. An ordinary failure, or an
+     * image past IMAGE_COUNT or the page byte budgets, shows alt text.
+     */
     fn resolve_images(
         &mut self,
         document: &mut Document,
         base: &str,
         deadline: Instant,
+        gaps: &mut Gaps,
     ) -> EngineResult<std::collections::BTreeMap<usize, super::images::ImageAsset>> {
-        use crate::constants::{IMAGE_BYTES, IMAGE_COUNT};
         let base =
             url::Url::parse(base).map_err(|_| EngineError::invalid("Invalid image base URL."))?;
-        let ids = document
-            .nodes
-            .iter()
-            .filter(|node| node.tag == "img")
-            .map(|node| node.local_id)
-            .collect::<Vec<_>>();
-        if ids.len() > IMAGE_COUNT {
-            return Err(EngineError::limit("page images", IMAGE_COUNT));
-        }
-        let mut images = std::collections::BTreeMap::new();
-        let mut total = 0usize;
-        let mut decoded = 0u64;
-        for id in ids {
-            let src = document.nodes[id].image_src.clone();
-            let loaded = if let Some(src) = src {
-                match self.read_image(&base, &src, deadline) {
-                    Ok(image) => Some(image),
-                    Err(error)
-                        if error.service.is_some()
-                            || ["permission_denied", "control_denied", "timeout"]
-                                .contains(&error.code.as_str()) =>
-                    {
-                        return Err(error);
-                    }
-                    Err(_) => None,
-                }
-            } else {
-                None
-            };
-            match loaded {
-                Some((asset, size)) => {
-                    total = total.saturating_add(asset.bytes.len());
-                    if total > IMAGE_BYTES {
-                        return Err(EngineError::limit("page image bytes", IMAGE_BYTES));
-                    }
-                    decoded = decoded.saturating_add(u64::from(size.0) * u64::from(size.1) * 4);
-                    if decoded > crate::constants::IMAGE_DECODED_BYTES as u64 {
-                        return Err(EngineError::limit(
-                            "decoded page image bytes",
-                            crate::constants::IMAGE_DECODED_BYTES,
-                        ));
-                    }
-                    document.nodes[id].image_size = Some(size);
-                    images.insert(id, asset);
-                }
-                None => document.nodes[id].text = document.nodes[id].image_alt.clone(),
-            }
-            if Instant::now() >= deadline {
-                return Err(EngineError::navigation_timeout());
-            }
+        let mut notes = Vec::new();
+        let images = self.load_images(
+            document,
+            &base,
+            deadline,
+            &mut super::images::Budget::default(),
+            &|_| true,
+            &mut notes,
+        )?;
+        for note in notes {
+            gaps.note("images", note);
         }
         Ok(images)
     }
-    /** A single image uses the existing exact-origin policy, deadline and service authority. */
-    fn read_image(
-        &mut self,
-        base: &url::Url,
-        source: &str,
-        deadline: Instant,
-    ) -> EngineResult<(super::images::ImageAsset, (u32, u32))> {
-        let url = base
-            .join(source)
-            .map_err(|_| EngineError::invalid("Invalid image URL."))?;
-        let mut request = WebRequest::get(url.as_str());
-        request.image = true;
-        let acquired = self.acquire(request, deadline, Some(base.clone()), false, true)?;
-        if acquired.response.status != 200 || !acquired.response.image_data {
-            return Err(EngineError::unsupported("The image could not be loaded."));
-        }
-        let bytes = super::images::decode_base64(&acquired.response.source)?;
-        let size = super::images::dimensions(&acquired.response.mime, &bytes)?;
-        Ok((
-            super::images::ImageAsset {
-                mime: acquired.response.mime,
-                bytes: std::sync::Arc::new(bytes),
-            },
-            (size.width, size.height),
-        ))
-    }
-    /** Resource destinations inherit no fixture grant beyond the configured exact origins. */
+    /**
+     * Resource destinations inherit no fixture grant beyond the configured exact origins. A
+     * linked sheet that fails or is not text/css is skipped with a diagnostic. A sheet over
+     * STYLE_BYTES still goes to Eye, which keeps its hiding rules as agent masks. A sheet that
+     * would pass STYLE_TOTAL_BYTES (or a linked sheet past STYLE_SHEETS) cannot cross the pipe,
+     * so its hiding rules are unknown and the page fails closed for agents.
+     */
     fn stylesheets(
         &mut self,
         document: &Document,
         base: &str,
         deadline: Instant,
+        gaps: &mut Gaps,
     ) -> EngineResult<Vec<String>> {
         let base = url::Url::parse(base)
             .map_err(|_| EngineError::invalid("Invalid document base URL."))?;
         let mut sheets = Vec::new();
         let mut linked = 0;
+        let mut total = 0usize;
         for source in &document.styles {
             let css = match source {
-                StyleSource::Inline(css) => css.clone(),
-                StyleSource::Linked(href) => {
+                StyleSource::Inline(css) => Some(css.clone()),
+                StyleSource::Linked(href) | StyleSource::LinkedMedia { href, .. } => {
                     linked += 1;
                     if linked > STYLE_SHEETS {
-                        return Err(EngineError::limit("linked stylesheets", STYLE_SHEETS));
+                        gaps.note("stylesheets", format!("Stylesheets after the first {STYLE_SHEETS} linked ones were skipped; agents may not act on this page."));
+                        gaps.untrusted_styles = true;
+                        None
+                    } else {
+                        self.linked_sheet(&base, href, deadline, gaps)?
+                            .map(|css| match source {
+                                StyleSource::LinkedMedia { media, .. } => {
+                                    format!("@media {media} {{\n{css}\n}}")
+                                }
+                                _ => css,
+                            })
                     }
-                    let url = base
-                        .join(href)
-                        .map_err(|_| EngineError::invalid("Invalid stylesheet URL."))?;
-                    let acquired = self.acquire(
-                        WebRequest::get(url.as_str()),
-                        deadline,
-                        Some(base.clone()),
-                        false,
-                        true,
-                    )?;
-                    if acquired.response.status != 200 || acquired.response.mime != "text/css" {
-                        return Err(EngineError::unsupported(
-                            "A required stylesheet did not return UTF-8 text/css.",
-                        ));
-                    }
-                    acquired.response.source
                 }
             };
-            if css.len() > STYLE_BYTES
-                || sheets.iter().map(String::len).sum::<usize>() + css.len()
-                    > STYLE_BYTES * STYLE_SHEETS
-            {
-                return Err(EngineError::limit(
-                    "required stylesheet bytes",
-                    STYLE_BYTES * STYLE_SHEETS,
-                ));
+            let Some(css) = css else { continue };
+            if total + css.len() > STYLE_TOTAL_BYTES {
+                gaps.note(
+                    "stylesheets",
+                    "Stylesheets past the page's style allowance were skipped; agents may not act on this page.".into(),
+                );
+                gaps.untrusted_styles = true;
+                continue;
             }
+            total += css.len();
             sheets.push(css);
         }
         Ok(sheets)
     }
-    /** External scripts use the shared deadline and reject redirects before following them. */
+    /** One linked sheet; only authority, service and deadline failures stop the navigation. */
+    fn linked_sheet(
+        &mut self,
+        base: &url::Url,
+        href: &str,
+        deadline: Instant,
+        gaps: &mut Gaps,
+    ) -> EngineResult<Option<String>> {
+        let skipped = |gaps: &mut Gaps| {
+            gaps.note(
+                "stylesheets",
+                "A stylesheet could not be loaded as UTF-8 text/css and was skipped.".into(),
+            );
+            Ok(None)
+        };
+        let Ok(url) = base.join(href) else {
+            return skipped(gaps);
+        };
+        match self.acquire(
+            WebRequest {
+                destination: crate::network::Destination::Style,
+                ..WebRequest::get(url.as_str())
+            },
+            deadline,
+            Some(base.clone()),
+            false,
+            true,
+        ) {
+            Ok(acquired)
+                if acquired.response.status == 200 && acquired.response.mime == "text/css" =>
+            {
+                Ok(Some(crate::document::rebase_urls(
+                    &acquired.response.source,
+                    url.as_str(),
+                )))
+            }
+            Err(error) if fatal(&error) => Err(error),
+            _ => skipped(gaps),
+        }
+    }
+    /**
+     * External scripts use the shared deadline and reject redirects before following them.
+     * Fetching stays in document order; the scripts come back in execution order (blocking,
+     * then defer, then async, each in document order, which the spec allows because the parse
+     * has finished before any script runs). A script that cannot be fetched, is not
+     * JavaScript, or would pass SCRIPT_COUNT, SCRIPT_BYTES or SCRIPT_TOTAL_BYTES is skipped
+     * with a diagnostic; only authority and service failures stop the navigation.
+     */
     fn resolve_scripts(
         &mut self,
-        mut resources: Vec<crate::document::ScriptResource>,
+        resources: Vec<crate::document::ScriptResource>,
         base: &str,
+        csp: &[String],
         deadline: Instant,
-    ) -> EngineResult<Vec<String>> {
-        use crate::constants::{SCRIPT_BYTES, SCRIPT_TOTAL_BYTES};
+        gaps: &mut Gaps,
+    ) -> EngineResult<Vec<Resolved>> {
+        use crate::constants::{SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES};
         let base = url::Url::parse(base)
             .map_err(|_| EngineError::invalid("Invalid document base URL."))?;
         let mut total = 0usize;
-        for (index, script) in resources.iter_mut().enumerate() {
-            let candidate = if let Some(src) = script.src.take() {
-                let url = base.join(&src).map_err(|_| {
-                    script_error(
-                        EngineError::unsupported("A page script has an invalid URL."),
-                        index,
-                    )
-                })?;
-                let acquired = self
-                    .acquire(
-                        WebRequest::get(url.as_str()),
-                        deadline,
-                        Some(base.clone()),
-                        false,
-                        false,
-                    )
-                    .map_err(|error| {
-                        let safe = if error.service.is_some()
-                            || ["timeout", "permission_denied", "control_denied"]
-                                .contains(&error.code.as_str())
-                        {
-                            error
-                        } else {
-                            EngineError::unsupported(
-                                "Page script could not be loaded; the page was not changed.",
-                            )
-                        };
-                        script_error(safe, index)
-                    })?;
-                if acquired.response.status != 200 {
-                    return Err(script_error(
-                        EngineError::unsupported(
-                            "Page script could not be loaded; the page was not changed.",
-                        ),
-                        index,
-                    ));
-                }
-                if !javascript_mime(&acquired.response.mime) {
-                    return Err(script_error(
-                        EngineError::unsupported(
-                            "A page script returned an unsupported content type.",
-                        ),
-                        index,
-                    ));
-                }
-                acquired.response.source
-            } else {
-                std::mem::take(&mut script.source)
-            };
-            if candidate.len() > SCRIPT_BYTES {
-                return Err(script_error(
-                    EngineError::limit("script bytes", SCRIPT_BYTES),
+        let mut ready = Vec::new();
+        for (index, script) in resources.into_iter().enumerate() {
+            let url = script.src.as_deref().map(|src| {
+                base.join(src)
+                    .map(|url| super::page::safe_url(url.as_str(), true))
+            });
+            let skip = |gaps: &mut Gaps, url: Option<String>, reason: &str| {
+                let script = Resolved {
+                    source: String::new(),
                     index,
-                ));
+                    url,
+                    module: None,
+                    attributes: BTreeMap::new(),
+                };
+                gaps.note("scripts", script_note(&script, reason));
+            };
+            if index >= SCRIPT_COUNT {
+                skip(
+                    gaps,
+                    None,
+                    &format!("only the first {SCRIPT_COUNT} scripts run"),
+                );
+                continue;
             }
-            total = total.saturating_add(candidate.len());
-            if total > SCRIPT_TOTAL_BYTES {
-                return Err(EngineError::limit("page script bytes", SCRIPT_TOTAL_BYTES));
+            let raw = script.src.as_deref().and_then(|src| base.join(src).ok());
+            let candidate = super::csp::Candidate {
+                url: raw.as_ref(),
+                nonce: script.nonce.as_deref(),
+                source: &script.source,
+            };
+            if !super::csp::allows(csp, &base, &candidate) {
+                skip(
+                    gaps,
+                    url.and_then(Result::ok),
+                    "the page's Content-Security-Policy forbids it",
+                );
+                continue;
             }
-            script.source = candidate;
+            if let Some(module) = super::modules::entry(&script, raw.as_ref()) {
+                // Module graphs load through V9's module loader, which asks for each module.
+                let source = if script.src.is_some() {
+                    String::new()
+                } else {
+                    script.source
+                };
+                match url {
+                    Some(Err(_)) => skip(gaps, None, "its URL is invalid"),
+                    _ if total + source.len() > SCRIPT_TOTAL_BYTES => skip(
+                        gaps,
+                        url.and_then(Result::ok),
+                        "it is over the script size budget",
+                    ),
+                    url => {
+                        total += source.len();
+                        let url = url.and_then(Result::ok);
+                        let module = Some(module);
+                        ready.push((
+                            script.mode,
+                            Resolved {
+                                source,
+                                index,
+                                url,
+                                module,
+                                attributes: script.attributes,
+                            },
+                        ));
+                    }
+                }
+                continue;
+            }
+            // Integrity only constrains fetched scripts; inline scripts ignore it, as in browsers.
+            let integrity = script.src.as_ref().and(script.integrity);
+            let source = match (&url, script.src) {
+                (Some(Err(_)), _) => {
+                    skip(gaps, None, "its URL is invalid");
+                    continue;
+                }
+                (Some(Ok(_)), Some(src)) => match self
+                    .fetch_script(&base, &src, deadline)
+                    .map_err(|error| at_script(error, index))?
+                {
+                    Ok(source) => source,
+                    Err(reason) => {
+                        skip(gaps, url.and_then(Result::ok), reason);
+                        continue;
+                    }
+                },
+                _ => script.source,
+            };
+            let url = url.and_then(Result::ok);
+            if integrity
+                .as_deref()
+                .is_some_and(|metadata| !super::integrity::matches(metadata, source.as_bytes()))
+            {
+                skip(gaps, url, "its integrity hash does not match");
+                continue;
+            }
+            if source.len() > SCRIPT_BYTES || total + source.len() > SCRIPT_TOTAL_BYTES {
+                skip(gaps, url, "it is over the script size budget");
+                continue;
+            }
+            total += source.len();
+            let module = None;
+            ready.push((
+                script.mode,
+                Resolved {
+                    source,
+                    index,
+                    url,
+                    module,
+                    attributes: script.attributes,
+                },
+            ));
         }
-        Ok(resources
-            .iter()
-            .map(|script| script.source.clone())
-            .collect())
+        ready.sort_by_key(|(mode, script)| (*mode, script.index));
+        Ok(ready.into_iter().map(|(_, script)| script).collect())
+    }
+    /** The outer error stops navigation; the inner one is the reason this one script is skipped. */
+    pub(super) fn fetch_script(
+        &mut self,
+        base: &url::Url,
+        src: &str,
+        deadline: Instant,
+    ) -> EngineResult<Result<String, &'static str>> {
+        let Ok(url) = base.join(src) else {
+            return Ok(Err("its URL is invalid"));
+        };
+        let acquired = match self.acquire(
+            WebRequest {
+                destination: crate::network::Destination::Script,
+                ..WebRequest::get(url.as_str())
+            },
+            deadline,
+            Some(base.clone()),
+            false,
+            false,
+        ) {
+            Ok(acquired) => acquired,
+            Err(error) if fatal(&error) => return Err(error),
+            Err(_) => return Ok(Err("it could not be loaded")),
+        };
+        Ok(if acquired.response.status != 200 {
+            Err("it could not be loaded")
+        } else if !javascript_mime(&acquired.response.mime) {
+            Err("it did not return JavaScript")
+        } else {
+            Ok(acquired.response.source)
+        })
     }
 }
 
+/** Characters of an engine reason a diagnostic quotes. */
+const REASON_CHARS: usize = 240;
+/** A navigation-stopping script error names the script's document position, never its URL. */
+fn at_script(mut error: EngineError, index: usize) -> EngineError {
+    let location = error.location.get_or_insert_with(Default::default);
+    location.script_index = Some(index + 1);
+    error
+}
+/** Authority, ownership and engine-service failures stop a load; everything else degrades. */
+fn fatal(error: &EngineError) -> bool {
+    error.service.is_some()
+        || ["permission_denied", "control_denied"].contains(&error.code.as_str())
+}
+/** A script's diagnostic names its document position and, for external scripts, its URL. */
+fn script_note(script: &Resolved, reason: &str) -> String {
+    let place = script.url.as_deref().unwrap_or("inline");
+    let reason = reason.chars().take(REASON_CHARS).collect::<String>();
+    format!(
+        "Script {} ({place}) did not run: {reason}",
+        script.index + 1
+    )
+}
 /** Normalize browser storage ownership to the standards-defined serialized origin. */
 fn canonical_origin(value: &str) -> EngineResult<String> {
     let url =
         url::Url::parse(value).map_err(|_| EngineError::invalid("Invalid storage origin."))?;
     Ok(url.origin().ascii_serialization())
-}
-/** External resource errors identify their source order without exposing its URL. */
-fn script_error(mut error: EngineError, index: usize) -> EngineError {
-    if let Some(location) = error.location.as_deref_mut() {
-        location.script_index = Some(index + 1);
-    } else {
-        error.location = Some(Box::new(crate::protocol::SourceLocation {
-            byte_offset: 0,
-            line: 1,
-            column: 1,
-            script_index: Some(index + 1),
-        }));
-    }
-    error
 }
 /** Only common UTF-8 classic JavaScript media types are executable in this slice. */
 fn javascript_mime(mime: &str) -> bool {

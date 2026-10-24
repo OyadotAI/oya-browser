@@ -38,9 +38,9 @@ impl Check {
     /** Unicode input, rejected paste, V9 click and address rejection cross the real native edge. */
     pub fn advance(&mut self, window: &mut Window) -> EngineResult<bool> {
         if !self.banner_checked && window.ready && !window.busy && !window.agent_busy {
-            let size = window.chrome.root.bounds().size;
+            let size = window.mars.root.bounds().size;
             window
-                .chrome
+                .mars
                 .verify_banner_layout(size.width, size.height, window.error.is_some())?;
             self.banner_checked = true;
             eprintln!("Native complete and scrolling banner geometry verified.");
@@ -139,10 +139,8 @@ impl Check {
                 }
                 window
                     .canvas
-                    .restore(&window.chrome.address, "http://169.254.169.254/");
-                window
-                    .window
-                    .makeFirstResponder(Some(&window.chrome.address));
+                    .restore(&window.mars.address, "http://169.254.169.254/");
+                window.window.makeFirstResponder(Some(&window.mars.address));
                 let enter=objc2_app_kit::NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(objc2_app_kit::NSEventType::KeyDown,NSPoint::new(0.0,0.0),objc2_app_kit::NSEventModifierFlags::empty(),0.0,window.window.windowNumber(),None,&NSString::from_str("\r"),&NSString::from_str("\r"),false,36).ok_or_else(||EngineError::invalid("Could not create native Return event."))?;
                 window.window.sendEvent(&enter);
                 self.phase = 3;
@@ -156,7 +154,7 @@ impl Check {
                     "Failed human navigation replaced the document.",
                 )?;
                 ensure(
-                    window.chrome.address.stringValue().to_string()
+                    window.mars.address.stringValue().to_string()
                         == snapshot.inspection["url"].as_str().unwrap_or_default(),
                     "Failed human navigation did not restore the committed address.",
                 )?;
@@ -176,13 +174,13 @@ impl Check {
                     "Retired worker left live/loading state.",
                 )?;
                 ensure(
-                    !window.chrome.address.isEnabled() && !window.chrome.control.isEnabled(),
+                    !window.mars.address.isEnabled() && !window.mars.control.isEnabled(),
                     "Retired worker left native mutations enabled.",
                 )?;
-                window.chrome.root.displayIfNeeded();
+                window.mars.root.displayIfNeeded();
                 let capture = window
                     .capture
-                    .save(&window.chrome.root, &snapshot.inspection)?;
+                    .save(&window.mars.root, &snapshot.inspection)?;
                 eprintln!("Native human UI verification passed: {}", capture["path"]);
                 return Ok(true);
             }
@@ -204,7 +202,7 @@ impl Check {
                 .as_str()
                 .unwrap_or_default()
                 .into();
-            window.tab_action(chrome::TAB_NEW);
+            window.tab_action(mars::TAB_NEW);
             self.tab_phase = 1;
             return Ok(false);
         }
@@ -218,7 +216,7 @@ impl Check {
         let selected = snapshot.inspection["tab_id"].as_str().unwrap_or_default();
         match self.tab_phase {
             1 if selected == "tab-2" && snapshot.document.is_none() => {
-                window.action(Action::Activate(chrome::DEMO));
+                window.action(Action::Activate(mars::DEMO));
                 self.tab_phase = 2;
             }
             2 if selected == "tab-2" && snapshot.document.is_some() => {
@@ -226,7 +224,7 @@ impl Check {
                     snapshot.inspection["page_id"] != self.page,
                     "New tab reused the prior page identity.",
                 )?;
-                window.tab_action(chrome::TAB_SELECT_BASE);
+                window.tab_action(mars::TAB_SELECT_BASE);
                 self.tab_phase = 3;
             }
             3 if selected == "tab-1" => {
@@ -234,11 +232,11 @@ impl Check {
                     snapshot.inspection["page_id"] == self.page,
                     "Switching tabs lost the first page.",
                 )?;
-                window.tab_action(chrome::TAB_SELECT_BASE - 1);
+                window.tab_action(mars::TAB_SELECT_BASE - 1);
                 self.tab_phase = 4;
             }
             4 if selected == "tab-2" => {
-                window.tab_action(chrome::TAB_CLOSE);
+                window.tab_action(mars::TAB_CLOSE);
                 self.tab_phase = 5;
             }
             5 if selected == "tab-1" => {
@@ -252,10 +250,10 @@ impl Check {
                         .is_some_and(|tabs| tabs.len() == 1),
                     "Closing a tab left a stale tab entry.",
                 )?;
-                window.chrome.root.displayIfNeeded();
+                window.mars.root.displayIfNeeded();
                 let capture = window
                     .capture
-                    .save(&window.chrome.root, &snapshot.inspection)?;
+                    .save(&window.mars.root, &snapshot.inspection)?;
                 eprintln!("Native tab journey capture: {}", capture["path"]);
                 self.tabs_done = true;
             }

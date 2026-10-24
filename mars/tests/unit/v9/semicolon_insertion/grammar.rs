@@ -45,15 +45,15 @@ fn newline_statements_preserve_execution_order() {
     assert_eq!(result("let n=1;n=n+2;n=n*3;", "n"), "9");
 }
 
-/** Same-line adjacent statements require a separator and identify the following original token. */
+/** Same-line adjacent statements require a separator; the error names the following original token. */
 #[test]
-fn same_line_missing_separator_uses_the_narrow_statement_tail_reason() {
+fn same_line_missing_separator_points_at_the_next_statement() {
     let source = "let n=1 let m=2";
     let error = syntax(source);
     assert!(
-        error
-            .message
-            .contains("expected ';' between statements on the same line")
+        error.message.contains("unexpected token"),
+        "{}",
+        error.message
     );
     assert_eq!(
         error.location.unwrap().byte_offset,
@@ -88,9 +88,9 @@ fn standard_for_headers_require_both_explicit_semicolons() {
     ] {
         let error = syntax(source);
         assert!(
-            error
-                .message
-                .contains("expected punctuation or an explicit semicolon")
+            error.message.contains("unexpected token"),
+            "{}",
+            error.message
         );
     }
     assert_eq!(

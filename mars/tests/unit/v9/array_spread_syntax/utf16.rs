@@ -66,12 +66,8 @@ fn code_point_spread_does_not_change_code_unit_string_operations() {
     );
 }
 
-/** A later UTF-8 DOM boundary refusal retains that later operation rather than blaming spread. */
+/** A lone surrogate crosses the UTF-8 DOM boundary as U+FFFD instead of failing the write. */
 #[test]
-fn unmatched_surrogate_fails_only_when_a_later_dom_write_requires_utf8() {
-    let source = "const a=[...'\\ud800'];document.getElementById('result').textContent=a[0];";
-    let error = execute(source).unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert_eq!(error.phase.as_deref(), Some("dom"));
-    assert!(error.location.unwrap().byte_offset > source.find("...").unwrap());
+fn unmatched_surrogate_becomes_a_replacement_character_at_the_dom_write() {
+    assert_eq!(result("const a=[...'\\ud800'];", "a[0]"), "\u{fffd}");
 }

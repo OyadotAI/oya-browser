@@ -18,6 +18,9 @@ const SOCKET_TIMEOUT: Duration = Duration::from_millis(500);
 /** Longer than the engine's absolute network deadline. */
 const SLOW_RESPONSE: Duration = Duration::from_secs(4);
 
+/** Builds each fixture response from the raw request text. */
+type Responder = Box<dyn Fn(&str) -> Vec<u8> + Send>;
+
 /** A disposable listener serves only synthetic in-memory data. */
 pub struct Fixture {
     /** URL is always an explicit literal loopback endpoint. */
@@ -35,18 +38,35 @@ pub struct Fixture {
 impl Fixture {
     /** Different routes exercise complete, failing and partially valid navigations. */
     pub fn pages() -> Self {
-        Self::start(None, false)
+        Self::start(Box::new(page_response), false)
     }
     /** An exact raw response enables malformed HTTP framing tests. */
     pub fn raw(response: Vec<u8>) -> Self {
-        Self::start(Some(response), false)
+        Self::start(Box::new(move |_| response.clone()), false)
+    }
+    /** Exact request paths map to exact raw responses; anything else is a 404. */
+    pub fn routes(routes: Vec<(&'static str, Vec<u8>)>) -> Self {
+        Self::start(
+            Box::new(move |request| {
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                routes
+                    .iter()
+                    .find(|(route, _)| *route == path)
+                    .map(|(_, response)| response.clone())
+                    .unwrap_or_else(|| {
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_vec()
+                    })
+            }),
+            false,
+        )
     }
     /** A held-open socket tests the client's total deadline. */
     pub fn slow() -> Self {
-        Self::start(None, true)
+        Self::start(Box::new(page_response), true)
     }
     /** No fixture touches a user profile, filesystem page or external service. */
-    fn start(response: Option<Vec<u8>>, slow: bool) -> Self {
+    fn start(respond: Responder, slow: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -57,7 +77,7 @@ impl Fixture {
         let count = Arc::clone(&requests);
         let observed = Arc::clone(&last_request);
         let worker =
-            thread::spawn(move || serve(listener, response, slow, &signal, &count, &observed));
+            thread::spawn(move || serve(listener, respond, slow, &signal, &count, &observed));
         Self {
             url,
             requests,
@@ -82,7 +102,7 @@ impl Drop for Fixture {
 /** This server exists exclusively for hermetic protocol integration tests. */
 fn serve(
     listener: TcpListener,
-    raw: Option<Vec<u8>>,
+    respond: Responder,
     slow: bool,
     stop: &AtomicBool,
     requests: &AtomicUsize,
@@ -104,7 +124,7 @@ fn serve(
             if let Ok(mut observed) = last_request.lock() {
                 *observed = request.to_string();
             }
-            let response = raw.clone().unwrap_or_else(|| page_response(&request));
+            let response = respond(&request);
             let _ = socket.write_all(&response);
         }
         thread::park_timeout(POLL);
@@ -159,8 +179,8 @@ fn page_response(request: &str) -> Vec<u8> {
         "/script" => include_str!("../../fixtures/hello.html").to_owned(),
         "/badscript" => "<html><body><h1 id=\"title\">candidate</h1><script>unsupported();</script></body></html>".into(),
         "/atomic" => "<html><body><h1 id=\"title\">candidate</h1><script>document.getElementById('title').textContent = 'changed'; document.getElementById('missing').textContent = 'wrong';</script></body></html>".into(),
-        "/badmarkup" => "<html><body><table><tr><td colspan=2>unsupported</td></tr></table></body></html>".into(),
-        "/large" => format!("<html><body><p id=\"a\">{}</p></body></html>", "\u{0}".repeat(mars::constants::FRAME_BYTES / 8 - mars::constants::ID_BYTES)),
+        "/over-budget" => "<p></p>".repeat(mars::constants::NODES + 1),
+        "/large" => format!("<html><body><p id=\"a\">{}</p></body></html>", "\u{0}".repeat(mars::constants::HTML_BYTES / 2)),
         "/ordered" => "<p id=out>initial</p><button id=show onclick='show()'>Show</button><script src='/external.js'></script><script>value=value+1;</script><script>document.getElementById('out').textContent=value;</script>".into(),
         "/inline" => "<p id=out>initial</p><script>let value=6;</script><script>value=value+2;</script><script>document.getElementById('out').textContent=value;</script>".into(),
         "/later-failure" => "<p id=out>candidate</p><script>document.getElementById('out').textContent='partial';</script><script>let value=missing;</script>".into(),
@@ -264,4 +284,49 @@ pub fn assert_gone(pids: &[u32]) {
         );
         thread::sleep(POLL);
     }
+}
+
+/** A complete HTML response with exact framing and any extra header lines the test names. */
+pub fn html(extra_headers: &str, body: &str) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .into_bytes()
+}
+
+/** A desktop runtime over the owned engines, with only the fixture origin granted. */
+pub fn desktop(origin: &str) -> mars::runtime::Runtime {
+    use mars::runtime::{
+        EnginePrograms, Runtime,
+        authority::{Authority, Owner},
+    };
+    Runtime::desktop(
+        EnginePrograms::same(std::path::Path::new(env!("CARGO_BIN_EXE_mars"))),
+        vec![origin.into()],
+        Authority::shared(Owner::Agent),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap()
+}
+
+/** One agent call on tab 1, carrying the current control epoch for mutations. */
+pub fn agent_call(
+    runtime: &mut mars::runtime::Runtime,
+    op: &str,
+    mut params: serde_json::Value,
+) -> Result<serde_json::Value, mars::protocol::EngineError> {
+    use mars::runtime::authority::{Owner, Permit};
+    if op.starts_with("page.") {
+        params["tab_id"] = serde_json::json!("tab-1");
+    }
+    if mars::runtime::mutating(op) {
+        params["control_epoch"] = serde_json::json!(1);
+    }
+    let permit = Permit {
+        owner: Owner::Agent,
+        epoch: 1,
+        tab_id: Some(1),
+    };
+    runtime.handle_as(mars::protocol::Request::new("support", op, params), permit)
 }

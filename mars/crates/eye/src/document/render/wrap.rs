@@ -1,6 +1,6 @@
 /** Bounded scalar-safe line breaking reuses measured widths without rescanning long suffixes. */
 use super::sizing::LayoutContext;
-use crate::protocol::EngineResult;
+use crate::{platform::Face, protocol::EngineResult};
 
 /** Placement consumes the exact width from bounded shaping instead of measuring each chunk again. */
 #[derive(Clone)]
@@ -15,11 +15,10 @@ pub(super) struct MeasuredText {
 pub(super) fn lines(
     text: &str,
     width: f64,
-    font: f64,
-    bold: bool,
+    face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<Vec<MeasuredText>> {
-    if let Some(lines) = context.wrapped(text, width, font, bold)? {
+    if let Some(lines) = context.wrapped(text, width, face)? {
         return Ok(lines);
     }
     context.charge(text.chars().count() + 1)?;
@@ -28,9 +27,9 @@ pub(super) fn lines(
         text: String::new(),
         width: 0.0,
     };
-    let gap = context.measure(" ", font, bold)?;
+    let gap = context.measure(" ", face)?;
     for word in text.split_whitespace() {
-        let mut chunks = word_parts(word, width, font, bold, context)?
+        let mut chunks = word_parts(word, width, face, context)?
             .into_iter()
             .peekable();
         while let Some(chunk) = chunks.next() {
@@ -49,7 +48,7 @@ pub(super) fn lines(
     if !current.text.is_empty() {
         result.push(current);
     }
-    context.remember_wrapped(text, width, font, bold, &result)?;
+    context.remember_wrapped(text, width, face, &result)?;
     Ok(result)
 }
 
@@ -83,22 +82,17 @@ fn append_chunk(
 fn word_parts(
     word: &str,
     width: f64,
-    font: f64,
-    bold: bool,
+    face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<Vec<MeasuredText>> {
     context.charge(word.chars().count() + 1)?;
-    let boundaries = word
-        .char_indices()
-        .map(|(offset, _)| offset)
-        .chain(std::iter::once(word.len()))
-        .collect::<Vec<_>>();
+    let boundaries = break_offsets(word);
     let mut start = 0;
     let mut hint = 1;
     let mut result = Vec::new();
     while start + 1 < boundaries.len() {
         let (end, measured) =
-            fitting_prefix(word, &boundaries, (start, hint), width, font, bold, context)?;
+            fitting_prefix(word, &boundaries, (start, hint), width, face, context)?;
         result.push(MeasuredText {
             text: word[boundaries[start]..boundaries[end]].into(),
             width: measured,
@@ -115,20 +109,19 @@ fn fitting_prefix(
     boundaries: &[usize],
     position: (usize, usize),
     width: f64,
-    font: f64,
-    bold: bool,
+    face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<(usize, f64)> {
     let (start, hint) = position;
     let last = boundaries.len() - 1;
     let mut fit = (start + hint).min(last);
-    let mut measured = context.measure(&word[boundaries[start]..boundaries[fit]], font, bold)?;
+    let mut measured = context.measure(&word[boundaries[start]..boundaries[fit]], face)?;
     if measured > width {
         let first = start + 1;
         let minimum = if fit == first {
             measured
         } else {
-            context.measure(&word[boundaries[start]..boundaries[first]], font, bold)?
+            context.measure(&word[boundaries[start]..boundaries[first]], face)?
         };
         if minimum > width || fit == first {
             return Ok((first, minimum));
@@ -139,14 +132,14 @@ fn fitting_prefix(
             start,
             (first, fit, minimum),
             width,
-            (font, bold),
+            face,
             context,
         );
     }
     let mut step = 1;
     while fit < last {
         let probe = (fit + step).min(last);
-        let candidate = context.measure(&word[boundaries[start]..boundaries[probe]], font, bold)?;
+        let candidate = context.measure(&word[boundaries[start]..boundaries[probe]], face)?;
         if candidate > width {
             return search_prefix(
                 word,
@@ -154,7 +147,7 @@ fn fitting_prefix(
                 start,
                 (fit, probe, measured),
                 width,
-                (font, bold),
+                face,
                 context,
             );
         }
@@ -172,14 +165,13 @@ fn search_prefix(
     start: usize,
     bracket: (usize, usize, f64),
     width: f64,
-    font: (f64, bool),
+    face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<(usize, f64)> {
     let (mut fit, mut overflow, mut measured) = bracket;
-    let (font, bold) = font;
     while fit + 1 < overflow {
         let probe = fit + (overflow - fit) / 2;
-        let candidate = context.measure(&word[boundaries[start]..boundaries[probe]], font, bold)?;
+        let candidate = context.measure(&word[boundaries[start]..boundaries[probe]], face)?;
         if candidate <= width {
             fit = probe;
             measured = candidate;
@@ -189,3 +181,40 @@ fn search_prefix(
     }
     Ok((fit, measured))
 }
+
+/** Byte offsets a long word may break at: CJK opportunities when the word has CJK, else every scalar. */
+// ponytail: owned CJK subset of UAX #14 (ideographs, kana, hangul, fullwidth); upgrade to unicode-linebreak for full rules.
+fn break_offsets(word: &str) -> Vec<usize> {
+    let cjk = word.chars().any(ideographic);
+    let chars = word.char_indices().collect::<Vec<_>>();
+    let mut offsets = vec![0];
+    for pair in chars.windows(2) {
+        let ((_, before), (offset, after)) = (pair[0], pair[1]);
+        if !cjk
+            || ((ideographic(before) || ideographic(after))
+                && !CLOSING.contains(&after)
+                && !OPENING.contains(&before))
+        {
+            offsets.push(offset);
+        }
+    }
+    if !word.is_empty() {
+        offsets.push(word.len());
+    }
+    offsets
+}
+
+/** Han, kana, hangul, CJK punctuation and fullwidth forms allow breaks between characters. */
+fn ideographic(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x11ff | 0x2e80..=0x303f | 0x3040..=0x30ff | 0x3130..=0x318f | 0x31f0..=0x31ff
+        | 0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0xff00..=0xffef
+        | 0x20000..=0x2fa1f)
+}
+
+/** A line never starts with closing punctuation. */
+const CLOSING: [char; 16] = [
+    '，', '。', '、', '；', '：', '？', '！', '）', '」', '』', '】', '》', '〉', '．', '…', '〕',
+];
+/** A line never ends with opening punctuation. */
+const OPENING: [char; 8] = ['（', '「', '『', '【', '《', '〈', '〔', '“'];

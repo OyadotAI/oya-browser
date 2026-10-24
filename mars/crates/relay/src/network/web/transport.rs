@@ -1,13 +1,13 @@
 /** Validated exact-address connections preserve hostname verification without DNS rebinding. */
-use crate::constants::{DNS_ANSWERS, NETWORK_CHUNK_BYTES};
+use crate::constants::DNS_ANSWERS;
+use crate::network::WebRequest;
+use crate::network::constants::{POOL_PROBE_RECORDS, READ_BYTES};
 use crate::network::policy::{denied, public_address};
-use crate::network::{Method, WebRequest};
 use crate::protocol::{EngineError, EngineResult};
 use ::url::{Host, Url};
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{ClientConnection, StreamOwned};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /** TLS uses the same owned HTTP codec and socket deadline as plaintext. */
@@ -50,13 +50,18 @@ fn resolve(url: &Url, fixture: bool) -> EngineResult<Vec<SocketAddr>> {
     };
     if addresses.is_empty()
         || addresses.len() > DNS_ANSWERS
-        || addresses.iter().any(|address| {
-            !(public_address(address.ip()) || (fixture && address.ip().is_loopback()))
-        })
+        || addresses
+            .iter()
+            .any(|address| !admitted(address.ip(), fixture))
     {
         return Err(denied());
     }
     Ok(addresses)
+}
+
+/** The one destination predicate: public, or loopback under the exact fixture grant. */
+pub(super) fn admitted(ip: IpAddr, fixture: bool) -> bool {
+    public_address(ip) || (fixture && ip.is_loopback())
 }
 
 /** SNI and certificate verification use the URL hostname, never the resolved IP substitute. */
@@ -64,13 +69,6 @@ fn wrap(socket: TcpStream, url: &Url) -> EngineResult<Connection> {
     if url.scheme() == "http" {
         return Ok(Connection::Plain(socket));
     }
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let roots = RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let config = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|_| tls_error())?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
     let name = rustls::pki_types::ServerName::try_from(
         url.host_str()
             .ok_or_else(denied)?
@@ -78,7 +76,8 @@ fn wrap(socket: TcpStream, url: &Url) -> EngineResult<Connection> {
             .to_owned(),
     )
     .map_err(|_| tls_error())?;
-    let connection = ClientConnection::new(Arc::new(config), name).map_err(|_| tls_error())?;
+    let connection =
+        ClientConnection::new(super::hello::config()?, name).map_err(|_| tls_error())?;
     Ok(Connection::Tls(Box::new(StreamOwned::new(
         connection, socket,
     ))))
@@ -87,59 +86,23 @@ fn wrap(socket: TcpStream, url: &Url) -> EngineResult<Connection> {
 impl Connection {
     /** Prepared socket lifetime is bounded even before a transmit operation arrives. */
     pub(super) fn lease(&self, deadline: Instant) -> EngineResult<super::lease::Lease> {
-        super::lease::Lease::start(
-            match self {
-                Self::Plain(socket) => socket,
-                Self::Tls(stream) => &stream.sock,
-            },
-            deadline,
-        )
+        super::lease::Lease::start(self.socket(), deadline)
     }
-    /** HTTP framing is constructed from normalized URL fields, without ambient proxy state. */
-    pub(super) fn write_request(&mut self, url: &Url, deadline: Instant) -> EngineResult<()> {
-        self.write_web_request(url, &WebRequest::get(url.as_str()), deadline)
-    }
-    /** No application bytes leave until the coordinator authorizes transmission. */
+    /**
+     * No application bytes leave until the coordinator authorizes transmission. `conditional`
+     * holds the cache's validator fields, built from stored header values that header parsing
+     * already proved free of control characters. GET asks to keep the connection open for
+     * reuse; POST always closes, since a POST is never retried. Header order and spelling
+     * follow Chrome's HTTP/1.1 requests.
+     */
     pub(super) fn write_web_request(
         &mut self,
         url: &Url,
         request: &WebRequest,
+        conditional: &[(&'static str, String)],
         deadline: Instant,
     ) -> EngineResult<()> {
-        let host = url.host_str().ok_or_else(denied)?;
-        let host = url
-            .port()
-            .map(|port| format!("{host}:{port}"))
-            .unwrap_or_else(|| host.to_owned());
-        let target = format!(
-            "{}{}",
-            url.path(),
-            url.query()
-                .map(|query| format!("?{query}"))
-                .unwrap_or_default()
-        );
-        let method = if request.method == Method::Post {
-            "POST"
-        } else {
-            "GET"
-        };
-        let cookie = if request.cookie.is_empty() {
-            String::new()
-        } else {
-            format!("Cookie: {}\r\n", request.cookie)
-        };
-        let content = if request.method == Method::Post {
-            format!(
-                "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n",
-                request.body.len()
-            )
-        } else {
-            String::new()
-        };
-        let wire = format!(
-            "{method} {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAccept: text/html, text/css\r\nAccept-Encoding: identity\r\nUser-Agent: Oya-Native/0.3\r\n{cookie}{content}\r\n{}",
-            request.body
-        );
+        let wire = http1_request(url, request, conditional)?;
         let mut bytes = wire.as_bytes();
         while !bytes.is_empty() {
             self.deadline(deadline)?;
@@ -154,6 +117,25 @@ impl Connection {
             bytes = &bytes[count..];
         }
         Ok(())
+    }
+
+    /** The ALPN result: `h2` when the server chose HTTP/2, otherwise `http/1.1`. */
+    pub(super) fn protocol(&self) -> &'static str {
+        match self {
+            Self::Tls(stream) if stream.conn.alpn_protocol() == Some(b"h2") => "h2",
+            _ => "http/1.1",
+        }
+    }
+
+    /** Hands a negotiated TLS session to the HTTP/2 framing layer; None for plaintext. */
+    pub(super) fn into_tls(self) -> Option<(ClientConnection, TcpStream)> {
+        match self {
+            Self::Tls(stream) => {
+                let StreamOwned { conn, sock } = *stream;
+                Some((conn, sock))
+            }
+            Self::Plain(_) => None,
+        }
     }
 
     /** TLS negotiation finishes in preparation, while stale ownership can still prevent POST. */
@@ -178,22 +160,59 @@ impl Connection {
         Ok(())
     }
 
-    /** Reads and TLS handshake I/O share the remaining absolute request budget. */
+    /** The exact admitted address this socket was connected to. */
+    pub(super) fn peer(&self) -> Option<SocketAddr> {
+        self.socket().peer_addr().ok()
+    }
+
+    /**
+     * An idle pooled connection is reusable only when the peer has neither closed it nor sent
+     * anything unrequested. TLS records that arrived while idle (session tickets, a close
+     * alert) are processed without blocking; any plaintext or a close disqualifies it.
+     */
+    pub(super) fn idle_and_open(&mut self) -> bool {
+        if self.socket().set_nonblocking(true).is_err() {
+            return false;
+        }
+        let open = match self {
+            Self::Plain(socket) => matches!(
+                socket.peek(&mut [0]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+            ),
+            Self::Tls(stream) => tls_idle(stream),
+        };
+        self.socket().set_nonblocking(false).is_ok() && open
+    }
+
+    /** Both variants expose the one OS socket for timeouts, probes and leases. */
+    fn socket(&self) -> &TcpStream {
+        match self {
+            Self::Plain(socket) => socket,
+            Self::Tls(stream) => &stream.sock,
+        }
+    }
+
+    /**
+     * Reads and TLS handshake I/O share the remaining absolute request budget. A TCP close
+     * without TLS close_notify reads as EOF, as in every browser: servers that end a
+     * connection-delimited body that way (craigslist.org's redirects) are common, and
+     * Content-Length and chunked bodies still refuse a short read as truncated.
+     */
     pub(super) fn read(&mut self, bytes: &mut [u8], deadline: Instant) -> EngineResult<usize> {
         self.deadline(deadline)?;
         match self {
             Self::Plain(socket) => socket.read(bytes),
-            Self::Tls(stream) => stream.read(bytes),
+            Self::Tls(stream) => match stream.read(bytes) {
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(0),
+                result => result,
+            },
         }
         .map_err(io_error)
     }
 
     /** Every socket operation receives both timeouts because TLS reads may also write. */
     fn deadline(&self, deadline: Instant) -> EngineResult<()> {
-        let socket = match self {
-            Self::Plain(socket) => socket,
-            Self::Tls(stream) => &stream.sock,
-        };
+        let socket = self.socket();
         let duration = remaining(deadline)?;
         socket.set_read_timeout(Some(duration)).map_err(io_error)?;
         socket.set_write_timeout(Some(duration)).map_err(io_error)
@@ -245,5 +264,90 @@ fn network_error() -> EngineError {
     )
 }
 
+/** Drains idle TLS records on a nonblocking socket; open means no plaintext and no close. */
+fn tls_idle(stream: &mut StreamOwned<ClientConnection, TcpStream>) -> bool {
+    if !stream
+        .conn
+        .process_new_packets()
+        .is_ok_and(|state| !state.peer_has_closed() && state.plaintext_bytes_to_read() == 0)
+    {
+        return false;
+    }
+    for _ in 0..POOL_PROBE_RECORDS {
+        match stream.conn.read_tls(&mut stream.sock) {
+            Ok(0) => return false,
+            Ok(_) => match stream.conn.process_new_packets() {
+                Ok(state) if !state.peer_has_closed() && state.plaintext_bytes_to_read() == 0 => {}
+                _ => return false,
+            },
+            Err(error) => return error.kind() == std::io::ErrorKind::WouldBlock,
+        }
+    }
+    false
+}
+
 /** Fixed read chunks keep framing allocation bounded independently of socket buffering. */
-pub(super) const READ_CHUNK: usize = NETWORK_CHUNK_BYTES;
+pub(super) const READ_CHUNK: usize = READ_BYTES;
+
+/** The request line, Host, Connection, then Chrome's fields, a script's own, then the body. */
+fn http1_request(
+    url: &Url,
+    request: &WebRequest,
+    conditional: &[(&'static str, String)],
+) -> EngineResult<String> {
+    let host = url.host_str().ok_or_else(denied)?;
+    let host = url
+        .port()
+        .map(|port| format!("{host}:{port}"))
+        .unwrap_or_else(|| host.to_owned());
+    let target = format!(
+        "{}{}",
+        url.path(),
+        url.query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default()
+    );
+    let method = super::fields::method(request);
+    let connection = if !request.method.is_safe() {
+        "close"
+    } else {
+        "keep-alive"
+    };
+    let mut wire =
+        format!("{method} {target} HTTP/1.1\r\nHost: {host}\r\nConnection: {connection}\r\n");
+    if let Some(length) = super::fields::content_length(request) {
+        wire.push_str(&format!("Content-Length: {length}\r\n"));
+    }
+    for (name, value) in super::fields::fields(url, request, conditional) {
+        wire.push_str(&format!("{}: {value}\r\n", super::fields::http1_name(name)));
+    }
+    for (name, value) in super::fields::page_fields(request) {
+        wire.push_str(&format!("{}: {value}\r\n", super::fields::http1_name(name)));
+    }
+    wire.push_str("\r\n");
+    wire.push_str(&request.body);
+    Ok(wire)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /** A TLS peer that closes TCP without close_notify ends a body like a plain close. */
+    #[test]
+    fn a_tls_close_without_close_notify_reads_as_end_of_body() {
+        let (client, server) = super::super::testing::tls(b"http/1.1", |mut tls| {
+            tls.write_all(b"HTTP/1.1 302 Found\r\nLocation: /next\r\n\r\n")
+                .expect("write");
+            tls.flush().expect("flush");
+            let _ = tls.sock.shutdown(std::net::Shutdown::Both);
+        });
+        let mut connection = Connection::Tls(Box::new(client));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let response =
+            super::super::body::response(&mut connection, deadline, false, false, Vec::new())
+                .expect("response");
+        assert_eq!((response.status, response.reusable), (302, false));
+        server.join().expect("server");
+    }
+}

@@ -4,10 +4,14 @@ mod broker;
 mod canvas;
 #[cfg(target_os = "macos")]
 mod capture;
-#[cfg(target_os = "macos")]
-mod chrome;
 mod io;
+#[cfg(target_os = "macos")]
+mod library;
+#[cfg(target_os = "macos")]
+mod mars;
 mod mcp_io;
+#[cfg(target_os = "macos")]
+mod selection;
 mod site;
 #[cfg(target_os = "macos")]
 mod window;
@@ -29,8 +33,7 @@ pub struct Options {
     /// Explicit local test startup exercises OS callbacks without exposing an agent bypass.
     #[cfg(feature = "test-support")]
     pub verify_ui: bool,
-    /// Disposable in-memory profiles isolate opt-in native tests from the user's Keychain.
-    #[cfg(feature = "test-support")]
+    /// In-memory profiles (`--ephemeral`): tests and private sessions never touch the Keychain.
     pub test_profile: bool,
     /// Local test startup exercises real toolbar ownership transitions for MCP verification.
     #[cfg(feature = "test-support")]
@@ -48,7 +51,6 @@ impl Options {
             url: None,
             #[cfg(feature = "test-support")]
             verify_ui: false,
-            #[cfg(feature = "test-support")]
             test_profile: false,
             #[cfg(feature = "test-support")]
             verify_mcp_ui: false,
@@ -66,8 +68,9 @@ impl Options {
                     result.verify_ui = true;
                     result.test_profile = true;
                 }
-                #[cfg(feature = "test-support")]
-                "--test-profile" => result.test_profile = true,
+                // Ephemeral profiles keep cookies, storage, history and settings in memory, so
+                // scripted runs and private sessions never read or prompt for the Keychain.
+                "--ephemeral" | "--test-profile" => result.test_profile = true,
                 #[cfg(feature = "test-support")]
                 "--verify-mcp-ui" => {
                     result.verify_mcp_ui = true;

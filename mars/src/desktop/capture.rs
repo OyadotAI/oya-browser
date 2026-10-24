@@ -1,4 +1,5 @@
-/** Screenshots capture the actual native content view into an operator-granted directory. */
+/** Screenshots capture the actual native content view into an operator-granted directory, or return
+it inline as base64 PNG when no directory was granted (attached agents have no shared filesystem). */
 use crate::protocol::{EngineError, EngineResult};
 use objc2_app_kit::{NSBitmapImageFileType, NSColorRenderingIntent, NSColorSpace, NSView};
 use objc2_foundation::NSDictionary;
@@ -25,12 +26,13 @@ impl Capture {
             sequence: 0,
         })
     }
-    /** Display completion precedes a native bitmap read on the main thread. */
+    /** Whether the operator granted a capture directory at startup. */
+    pub fn granted(&self) -> bool {
+        self.directory.is_some()
+    }
+    /** Display completion precedes a native bitmap read on the main thread. Without a startup
+    directory the PNG is returned inline, so nothing is written to disk. */
     pub fn save(&mut self, view: &NSView, inspection: &Value) -> EngineResult<Value> {
-        let directory = self
-            .directory
-            .as_ref()
-            .ok_or_else(|| error("Screenshots require --capture-dir at startup."))?;
         view.displayIfNeeded();
         let bounds = view.bounds();
         let bitmap = view
@@ -50,6 +52,12 @@ impl Capture {
             )
         }
         .ok_or_else(|| error("Native PNG encoding failed."))?;
+        let mut result = json!({"page_id":inspection["page_id"],"revision":inspection["revision"],"layout_generation":inspection["layout_generation"],"width":bounds.size.width,"height":bounds.size.height,"unit":"logical_points"});
+        let Some(directory) = self.directory.as_ref() else {
+            result["mime"] = json!("image/png");
+            result["png_base64"] = json!(crate::runtime::base64(&data.to_vec()));
+            return Ok(result);
+        };
         self.sequence += 1;
         let path = directory.join(format!(
             "oya-native-{}-{}.png",
@@ -64,9 +72,8 @@ impl Capture {
             .map_err(|_| error("Cannot create a new native capture."))?;
         file.write_all(&data.to_vec())
             .map_err(|_| error("Cannot write the native capture."))?;
-        Ok(
-            json!({"path":path,"page_id":inspection["page_id"],"revision":inspection["revision"],"layout_generation":inspection["layout_generation"],"width":bounds.size.width,"height":bounds.size.height,"unit":"logical_points"}),
-        )
+        result["path"] = json!(path);
+        Ok(result)
     }
 }
 /** Capture errors never silently switch to a different screenshot provider. */

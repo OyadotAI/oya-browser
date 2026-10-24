@@ -5,13 +5,19 @@ mod appearance;
 mod check;
 mod commands;
 mod events;
+mod find;
+mod human;
 mod menus;
+mod page_menu;
+mod panels;
+mod scroll;
+mod shell;
 use super::{
     Options,
     broker::{Broker, Command, Event, Transport},
     canvas::{Action, Canvas, rect},
     capture::Capture,
-    chrome::{self, Chrome},
+    mars::{self, Mars},
     site::Site,
 };
 use crate::{
@@ -46,7 +52,7 @@ struct Window {
     window: Retained<NSWindow>,
     close_delegate: Retained<CloseDelegate>,
     canvas: Retained<Canvas>,
-    chrome: Chrome,
+    mars: Mars,
     broker: Broker,
     snapshot: Option<BrowserSnapshot>,
     pending: VecDeque<Action>,
@@ -58,7 +64,8 @@ struct Window {
     capture: Capture,
     last_context: Option<RenderContext>,
     pending_appearance: Option<appearance::PendingAppearance>,
-    last_scroll: f64,
+    /** What the engine knows of the person's scrolling; reported only once it settles. */
+    scroll: scroll::ScrollReport,
     closed: bool,
     last_owner: Option<Owner>,
     agent_busy: bool,
@@ -66,6 +73,37 @@ struct Window {
     activity: Option<String>,
     status_notice: Option<String>,
     retry_allowed: bool,
+    /** Find-in-page matches and highlight timing; UI only. */
+    find: find::FindState,
+    /** Last committed address of every tab seen selected, so a closed tab can reopen where it was. */
+    tab_urls: std::collections::HashMap<String, String>,
+    /** Addresses of closed tabs, most recent last, for Cmd+Shift+T. */
+    closed_tabs: Vec<String>,
+    /** A reopen in flight: the tab selected before `tab.open`, and the address to load once a new tab is selected. */
+    reopen: Option<(String, String)>,
+    /** History, bookmarks and settings, saved to their own secure records. */
+    library: super::library::Library,
+    /** This session's downloads. */
+    downloads: crate::runtime::downloads::Downloads,
+    /** Bumped on every library or downloads change; menus and windows redraw when it moves. */
+    library_generation: u64,
+    menus_generation: u64,
+    /** The Library and Settings windows, built on first use. */
+    library_panel: Option<panels::LibraryPanel>,
+    settings_panel: Option<panels::SettingsPanel>,
+    /** The page's right-click menu and the snapshot it last read. */
+    page_menu: Retained<page_menu::PageMenu>,
+    page_menu_key: String,
+    /** Page text selection and Cmd+C. */
+    selection: Retained<super::selection::PageSelection>,
+    /** Committed pages already written to history. */
+    recorded: VecDeque<String>,
+    /** Zoom per tab; tabs not listed are at 100%. */
+    zoom: std::collections::HashMap<String, f64>,
+    /** Address text last completed, so suggestions update only when it changes. */
+    typed: Option<String>,
+    /** A feature's status message and when it clears. */
+    notice: Option<(String, std::time::Instant)>,
 }
 
 /** The title-bar close callback is deferred into the owning window state machine. */
@@ -106,6 +144,7 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     let mtm = MainThreadMarker::new()
         .ok_or_else(|| EngineError::invalid("Desktop must start on the main thread."))?;
     let profiles = verification_profiles(&options);
+    let records = record_store(&options);
     let site = Site::start()?;
     let capture = Capture::new(options.capture_dir)?;
     let executable = std::env::current_exe()
@@ -131,8 +170,10 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     };
     let transport = if options.mcp {
         Transport::Mcp
+    } else if options.agent {
+        Transport::Native
     } else {
-        options.agent.into()
+        Transport::Attach
     };
     let broker = if let Some(profiles) = profiles {
         Broker::start_with_profiles(
@@ -154,19 +195,19 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     };
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-    let mut window = Window::new(mtm, broker, site.origin.clone(), capture);
+    let library = super::library::Library::load(records);
+    let mut window = Window::new(mtm, broker, site.origin.clone(), capture, library);
     #[cfg(feature = "test-support")]
     let mut check = options.verify_ui.then(check::Check::new);
     #[cfg(feature = "test-support")]
     let mut mcp_check = options.verify_mcp_ui.then(check::McpCheck::new);
     menus(&app, &window.canvas, window.broker.transport);
+    window.apply_appearance();
     app.finishLaunching();
     window.window.makeKeyAndOrderFront(None);
     #[allow(deprecated)]
     app.activateIgnoringOtherApps(true);
-    window
-        .window
-        .makeFirstResponder(Some(&window.chrome.address));
+    window.window.makeFirstResponder(Some(&window.mars.address));
     while window.window.isVisible() && !window.closed {
         let result: EngineResult<()> = autoreleasepool(|_| {
             window.tick();
@@ -205,10 +246,26 @@ pub(super) fn run(options: Options) -> EngineResult<()> {
     Ok(())
 }
 
+/** Ephemeral runs and UI verification keep every profile in memory, away from the Keychain. */
+fn ephemeral(options: &Options) -> bool {
+    #[cfg(feature = "test-support")]
+    if options.verify_ui {
+        return true;
+    }
+    options.test_profile
+}
+
+/** History, bookmarks and settings use the Keychain, except in test profiles, which stay in memory. */
+fn record_store(_options: &Options) -> std::sync::Arc<dyn crate::profile::RecordStore> {
+    if ephemeral(_options) {
+        return std::sync::Arc::new(crate::profile::test_support::MemoryRecordStore::default());
+    }
+    crate::profile::system_record_store()
+}
+
 /** Local UI verification owns fresh stores so it cannot read or change the user's secure profiles. */
 fn verification_profiles(_options: &Options) -> Option<super::broker::ProfileStores> {
-    #[cfg(feature = "test-support")]
-    if _options.verify_ui || _options.test_profile {
+    if ephemeral(_options) {
         use crate::profile::test_support::{
             MemorySessionStore, MemoryStore, MemoryWebStorageStore,
         };
@@ -232,9 +289,17 @@ impl Window {
             .into()
     }
     /** The native window holds no WebView, Electron or remote debugging connection. */
-    fn new(mtm: MainThreadMarker, broker: Broker, demo: String, capture: Capture) -> Self {
+    fn new(
+        mtm: MainThreadMarker,
+        broker: Broker,
+        demo: String,
+        capture: Capture,
+        library: super::library::Library,
+    ) -> Self {
         let canvas = Canvas::new(mtm);
-        let chrome = Chrome::new(&canvas);
+        let page_menu = page_menu::PageMenu::install(&canvas);
+        let selection = super::selection::PageSelection::install(&canvas);
+        let mars = Mars::new(&canvas);
         let window = unsafe {
             NSWindow::initWithContentRect_styleMask_backing_defer(
                 NSWindow::alloc(mtm),
@@ -242,7 +307,8 @@ impl Window {
                 NSWindowStyleMask::Titled
                     | NSWindowStyleMask::Closable
                     | NSWindowStyleMask::Miniaturizable
-                    | NSWindowStyleMask::Resizable,
+                    | NSWindowStyleMask::Resizable
+                    | NSWindowStyleMask::FullSizeContentView,
                 NSBackingStoreType::Buffered,
                 false,
             )
@@ -252,15 +318,17 @@ impl Window {
             window.setContentMinSize(NSSize::new(640.0, 480.0));
         }
         window.setTitle(&NSString::from_str("Mars"));
+        window.setTitlebarAppearsTransparent(true);
+        window.setTitleVisibility(objc2_app_kit::NSWindowTitleVisibility::Hidden);
         let close_delegate = CloseDelegate::new(mtm);
         window.setDelegate(Some(ProtocolObject::from_ref(&*close_delegate)));
-        window.setContentView(Some(&chrome.root));
+        window.setContentView(Some(&mars.root));
         window.center();
         Self {
             window,
             close_delegate,
             canvas,
-            chrome,
+            mars,
             broker,
             snapshot: None,
             pending: VecDeque::new(),
@@ -272,7 +340,7 @@ impl Window {
             capture,
             last_context: None,
             pending_appearance: None,
-            last_scroll: 0.0,
+            scroll: Default::default(),
             closed: false,
             last_owner: None,
             agent_busy: false,
@@ -280,6 +348,23 @@ impl Window {
             activity: None,
             status_notice: None,
             retry_allowed: true,
+            find: find::FindState::default(),
+            tab_urls: std::collections::HashMap::new(),
+            closed_tabs: Vec::new(),
+            reopen: None,
+            library,
+            downloads: Default::default(),
+            library_generation: 1,
+            menus_generation: 0,
+            library_panel: None,
+            settings_panel: None,
+            page_menu,
+            page_menu_key: String::new(),
+            selection,
+            recorded: VecDeque::new(),
+            zoom: Default::default(),
+            typed: None,
+            notice: None,
         }
     }
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
@@ -302,18 +387,28 @@ impl Window {
             }
         }
         while let Some(action) = self.canvas.pop() {
+            if let Action::Activate(tag) = action
+                && self.human_action(tag)
+            {
+                continue;
+            }
             if matches!(
                 action,
                 Action::Rejected
                     | Action::Activate(
-                        chrome::CONTROL
-                            | chrome::CLOSE
-                            | chrome::LOCATION
-                            | chrome::DISMISS
-                            | chrome::STOP
-                            | chrome::PROFILE_CLEAR
-                            | chrome::PROFILE_RETRY
-                            | chrome::STORAGE_CLEAR
+                        mars::CONTROL
+                            | mars::CLOSE
+                            | mars::LOCATION
+                            | mars::DISMISS
+                            | mars::STOP
+                            | mars::PROFILE_CLEAR
+                            | mars::PROFILE_RETRY
+                            | mars::STORAGE_CLEAR
+                            | mars::FIND
+                            | mars::FIND_NEXT
+                            | mars::FIND_PREVIOUS
+                            | mars::FIND_CLOSE
+                            | mars::DEGRADED
                     )
             ) {
                 self.action(action);
@@ -331,6 +426,7 @@ impl Window {
         self.cancel_stale_appearance();
         self.ownership();
         self.layout();
+        self.shell_tick();
         if self.ready && !self.busy && self.pending_appearance.is_none() {
             if let Some(action) = self.pending.pop_front() {
                 self.action(action);
@@ -347,28 +443,29 @@ impl Window {
         let owner = if human { Owner::Human } else { Owner::Agent };
         if self.last_owner != Some(owner) {
             if let Some(snapshot) = self.snapshot.clone() {
-                self.window.makeFirstResponder(Some(&self.chrome.address));
+                self.window.makeFirstResponder(Some(&self.mars.address));
                 self.canvas.update(snapshot, human);
             }
             self.last_owner = Some(owner);
         }
         if let Some(snapshot) = &self.snapshot {
-            self.chrome
+            self.mars
                 .back
                 .setEnabled(human && snapshot.can_back && !snapshot.failed);
-            self.chrome
+            self.mars
                 .forward
                 .setEnabled(human && snapshot.can_forward && !snapshot.failed);
-            self.chrome
+            self.mars
                 .reload
                 .setEnabled(human && snapshot.document.is_some() && !snapshot.failed);
         }
-        self.chrome.control.setTitle(&NSString::from_str(if human {
+        self.mars.set_control(human);
+        self.mars.control.setTitle(&NSString::from_str(if human {
             "Allow agent"
         } else {
             "Take control"
         }));
-        self.chrome.control.setEnabled(
+        self.mars.control.setEnabled(
             !human
                 || (connected
                     && self.ready
@@ -376,10 +473,8 @@ impl Window {
                     && !self.busy
                     && self.pending.is_empty()),
         );
-        self.chrome.address.setEnabled(human && self.ready);
-        self.chrome
-            .demo
-            .setEnabled(human && self.ready && !self.busy);
+        self.mars.address.setEnabled(human && self.ready);
+        self.mars.demo.setEnabled(human && self.ready && !self.busy);
         let state = if self
             .snapshot
             .as_ref()
@@ -395,7 +490,7 @@ impl Window {
         } else {
             "Agent control"
         };
-        self.chrome
+        self.mars
             .status
             .setStringValue(&NSString::from_str(&format!(
                 "{}{state}",
@@ -409,23 +504,26 @@ impl Window {
                     ""
                 }
             )));
-        self.chrome.stop.setHidden(self.activity.is_none());
-        self.chrome
-            .stop
-            .setEnabled(human && self.activity.is_some());
+        self.mars.stop.setHidden(self.activity.is_none());
+        self.mars.stop.setEnabled(human && self.activity.is_some());
     }
-    /** Engine-owned geometry is set from the actual scroll viewport, including error chrome. */
+    /** Engine-owned geometry is set from the actual scroll viewport, including the error banner. */
     fn layout(&self) {
-        let size = self.chrome.root.bounds().size;
-        self.chrome.error.setStringValue(&NSString::from_str(
+        let size = self.mars.root.bounds().size;
+        self.mars.error.setStringValue(&NSString::from_str(
             self.error.as_deref().unwrap_or_default(),
         ));
-        self.chrome
+        self.mars
             .layout(size.width, size.height, self.error.is_some());
-        self.chrome
+        self.mars
             .retry
             .setHidden(self.error.is_none() || !self.retry_allowed);
-        let viewport = self.chrome.scroll.contentSize();
+        let zoom = self.mars.scroll.magnification().max(0.01);
+        let size = self.mars.scroll.contentSize();
+        let viewport = NSSize::new(
+            (size.width / zoom).max(human::PAGE_WIDTH_MIN),
+            size.height / zoom,
+        );
         let height = self
             .snapshot
             .as_ref()
@@ -453,11 +551,11 @@ impl Window {
             }
             return;
         }
-        let y = self.chrome.scroll.contentView().bounds().origin.y;
-        if (y - self.last_scroll).abs() > 0.5
+        let y = self.mars.scroll.contentView().bounds().origin.y;
+        if let Some(y) = self.scroll.settled(y, std::time::Instant::now())
             && self.broker.commands.try_send(Command::Scroll(y)).is_ok()
         {
-            self.last_scroll = y;
+            self.scroll.sent = y;
             self.busy = true;
         }
     }

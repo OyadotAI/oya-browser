@@ -22,14 +22,24 @@ fn parses_and_renders_html_without_the_browser_shell() {
         && item.height.is_finite()));
 }
 
-/** Unsupported layout rules remain explicit instead of producing misleading geometry. */
+/** Unsupported CSS is dropped with a value-free diagnostic instead of refusing the page. */
 #[test]
-fn rejects_unsupported_css_without_a_renderer_fallback() {
-    let document = parse("<p style='position:fixed'>Secret-free error</p>").unwrap();
-    let error = compute_styles(&document, &[]).unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
-    assert!(error.message.contains("Eye"));
-    assert!(!error.message.contains("Secret-free error"));
+fn drops_unsupported_css_with_a_value_free_diagnostic() {
+    let document = parse("<p style='column-count:2;color:red'>Secret-free text</p>").unwrap();
+    let document = compute_styles(&document, &[]).unwrap();
+    assert_eq!(document.nodes[0].style.color.as_deref(), Some("red"));
+    assert!(
+        document
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("column-count"))
+    );
+    assert!(
+        document
+            .diagnostics
+            .iter()
+            .all(|d| !d.contains("Secret-free"))
+    );
 }
 
 /** Eye reexports the exact shared projection type without conversion or duplicate validators. */

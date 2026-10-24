@@ -62,9 +62,30 @@ fn call(runtime: &mut Runtime, op: &str, params: Value) -> mars::protocol::Engin
     runtime.handle(Request::new("fault-test", op, params))
 }
 
-/** Broken engine envelopes cannot be mistaken for a user input error or a page. */
+/** Process IDs of every engine the runtime currently owns. */
+fn engine_pids(runtime: &Runtime) -> Vec<u32> {
+    runtime
+        .process_ids()
+        .into_iter()
+        .map(|(_, pid)| pid)
+        .collect()
+}
+
+/** The one live engine with this name. */
+fn engine_pid(runtime: &Runtime, name: &str) -> u32 {
+    runtime
+        .process_ids()
+        .into_iter()
+        .find(|(service, _)| *service == name)
+        .map(|(_, pid)| pid)
+        .unwrap()
+}
+
+/** Broken engine envelopes restart only that engine, never replay the operation, and a crash loop
+still retires the entire session. Every fault child exits after the first request it reads, so a
+fresh child that is still alive proves the failed operation was not sent to it again. */
 #[test]
-fn invalid_child_replies_retire_the_entire_session_without_replay() {
+fn invalid_child_replies_restart_the_engine_without_replay() {
     for mode in [
         "malformed",
         "exit",
@@ -75,19 +96,36 @@ fn invalid_child_replies_retire_the_entire_session_without_replay() {
     ] {
         let fault = Fault::new(mode);
         let mut runtime = Runtime::start(fault.programs("network")).unwrap();
-        let pids: Vec<_> = runtime
-            .process_ids()
-            .into_iter()
-            .map(|(_, pid)| pid)
-            .collect();
-        let error = call(
-            &mut runtime,
-            "page.navigate",
-            json!({"url":"http://127.0.0.1:1/"}),
-        )
-        .unwrap_err();
-        assert_eq!(error.code, "service_unavailable", "{mode}");
+        let mut owned = engine_pids(&runtime);
+        let navigate = json!({"url":"http://127.0.0.1:1/"});
+        let crashed = engine_pid(&runtime, "network");
+        let error = call(&mut runtime, "page.navigate", navigate.clone()).unwrap_err();
+        assert_eq!(error.code, "engine_restarted", "{mode}");
         assert_eq!(error.service.as_deref(), Some("network"));
+        assert!(error.retryable, "{mode}");
+        let fresh = engine_pid(&runtime, "network");
+        assert_ne!(fresh, crashed, "{mode}");
+        owned.push(fresh);
+        #[cfg(unix)]
+        {
+            support::assert_gone(&[crashed]);
+            assert!(
+                support::process_exists(fresh),
+                "{mode}: operation was replayed"
+            );
+        }
+        assert_eq!(
+            call(&mut runtime, "runtime.capabilities", json!({})).unwrap()["state"],
+            "ready"
+        );
+        let retired = loop {
+            let error = call(&mut runtime, "page.navigate", navigate.clone()).unwrap_err();
+            if error.code != "engine_restarted" {
+                break error;
+            }
+            owned.push(engine_pid(&runtime, "network"));
+        };
+        assert_eq!(retired.code, "service_unavailable", "{mode}");
         assert_eq!(
             call(&mut runtime, "page.inspect", json!({}))
                 .unwrap_err()
@@ -99,21 +137,18 @@ fn invalid_child_replies_retire_the_entire_session_without_replay() {
             "failed"
         );
         #[cfg(unix)]
-        support::assert_gone(&pids);
+        support::assert_gone(&owned);
     }
 }
 
-/** The deadline supervisor can kill a child even while its worker writes a large request. */
+/** The deadline supervisor kills a child even while its worker writes a large request, replaces it,
+and the runtime still reaps every engine it owns when it stops. */
 #[test]
 fn child_that_stops_reading_cannot_hang_or_leak_the_runtime() {
     let fixture = support::Fixture::pages();
     let fault = Fault::new("blocked");
     let mut runtime = Runtime::start(fault.programs("document")).unwrap();
-    let pids: Vec<_> = runtime
-        .process_ids()
-        .into_iter()
-        .map(|(_, pid)| pid)
-        .collect();
+    let stuck = engine_pid(&runtime, "document");
     let start = Instant::now();
     let error = call(
         &mut runtime,
@@ -125,11 +160,18 @@ fn child_that_stops_reading_cannot_hang_or_leak_the_runtime() {
     assert_eq!(error.service.as_deref(), Some("document"));
     assert!(start.elapsed() >= RPC_TIMEOUT);
     assert!(start.elapsed() < RPC_TIMEOUT + REAP_MARGIN);
+    let fresh = engine_pid(&runtime, "document");
+    assert_ne!(fresh, stuck);
+    let pids = engine_pids(&runtime);
+    #[cfg(unix)]
+    support::assert_gone(&[stuck]);
+    runtime.stop();
     #[cfg(unix)]
     support::assert_gone(&pids);
 }
 
-/** A later script fetch shares the navigation deadline and preserves service failure identity. */
+/** A later script fetch shares the navigation deadline and preserves service failure identity; the
+stalled engine is replaced and the committed page stays. */
 #[test]
 fn stalled_external_script_uses_the_remaining_navigation_deadline() {
     let fixture = support::Fixture::pages();
@@ -157,6 +199,7 @@ fn stalled_external_script_uses_the_remaining_navigation_deadline() {
             permit,
         )
         .unwrap();
+    let stalled = engine_pid(&runtime, "network");
     let started = Instant::now();
     let error = runtime
         .handle_as(
@@ -176,8 +219,11 @@ fn stalled_external_script_uses_the_remaining_navigation_deadline() {
     assert!(!error.message.contains("private-secret"));
     assert!(started.elapsed() < WEB_TIMEOUT + REAP_MARGIN);
     let snapshot = runtime.snapshot();
-    assert!(snapshot.failed);
+    assert!(!snapshot.failed);
     assert_eq!(snapshot.inspection["page_id"], old["page_id"]);
+    #[cfg(unix)]
+    support::assert_gone(&[stalled]);
+    assert_ne!(engine_pid(&runtime, "network"), stalled);
 }
 
 /** A later startup failure reaps every child whose handshake already succeeded. */

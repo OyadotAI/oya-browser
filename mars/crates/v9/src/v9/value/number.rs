@@ -23,7 +23,7 @@ pub(in crate::v9) fn literal(source: &str) -> EngineResult<f64> {
     parse(&source.replace('_', ""), false).ok_or_else(invalid)
 }
 /** StringToNumber accepts whitespace, signed decimals/Infinity and unsigned radix integers. */
-pub(super) fn string_number(source: &str) -> f64 {
+pub(in crate::v9) fn string_number(source: &str) -> f64 {
     let source = source.trim_matches(whitespace);
     if source.is_empty() {
         return 0.0;
@@ -147,3 +147,54 @@ pub(in crate::v9) fn to_uint32(value: f64) -> u32 {
         .trunc()
         .rem_euclid(crate::constants::JS_UINT32_MODULUS) as u32
 }
+
+/** ToInt32: ToUint32 reinterpreted as signed. */
+pub(in crate::v9) fn to_int32(value: f64) -> i32 {
+    to_uint32(value) as i32
+}
+
+/** Number::toString(10), using the pinned ECMAScript-compatible shortest formatting. */
+pub(in crate::v9) fn number_to_string(value: f64) -> String {
+    ryu_js::Buffer::new().format(value).to_string()
+}
+
+/** Number::toString(radix) for radixes other than ten, as browsers print them. */
+pub(in crate::v9) fn radix_string(value: f64, radix: u32) -> String {
+    if !value.is_finite() || radix == 10 {
+        return number_to_string(value);
+    }
+    let negative = value < 0.0;
+    let value = value.abs();
+    let mut integer = value.trunc();
+    let mut fraction = value - integer;
+    let mut digits = Vec::new();
+    if integer == 0.0 {
+        digits.push(b'0');
+    }
+    while integer >= 1.0 {
+        let digit = (integer % f64::from(radix)) as u32;
+        digits.push(std::char::from_digit(digit, radix).unwrap_or('0') as u8);
+        integer = (integer / f64::from(radix)).trunc();
+    }
+    digits.reverse();
+    let mut text = String::from_utf8(digits).unwrap_or_default();
+    if fraction > 0.0 {
+        text.push('.');
+        // Fifty-two bits of fraction need at most this many digits in the smallest radix.
+        let mut count = 0;
+        while fraction > 0.0 && count < RADIX_FRACTION_DIGITS {
+            fraction *= f64::from(radix);
+            let digit = fraction.trunc() as u32;
+            text.push(std::char::from_digit(digit, radix).unwrap_or('0'));
+            fraction -= f64::from(digit);
+            count += 1;
+        }
+    }
+    if negative {
+        text.insert(0, '-');
+    }
+    text
+}
+
+/** Fraction digits printed for a non-decimal radix. */
+const RADIX_FRACTION_DIGITS: usize = 52;

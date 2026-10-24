@@ -139,9 +139,12 @@ fn write(output: Descriptor, responses: Receiver<Response>, cancel: &AtomicBool)
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => return,
         };
+        let timed = std::time::Instant::now();
         let Ok(bytes) = encode(&response) else {
             return;
         };
+        crate::runtime::perf::record("io.encode", timed, || bytes.len().to_string());
+        let timed = std::time::Instant::now();
         let mut offset = 0;
         while offset < bytes.len() && !cancel.load(Ordering::Relaxed) {
             if !ready(output.fd, libc::POLLOUT) {
@@ -160,6 +163,7 @@ fn write(output: Descriptor, responses: Receiver<Response>, cancel: &AtomicBool)
                 return;
             }
         }
+        crate::runtime::perf::record("io.write", timed, String::new);
     }
 }
 /** Fixed short polling intervals cap shutdown latency without busy waiting. */

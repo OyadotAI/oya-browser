@@ -9,5 +9,26 @@ description = "V9: Mars's bounded, Rust-owned JavaScript runtime"
 [dependencies]
 mars-core = { path = "../core" }
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.154"
+serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 ryu-js = "=1.0.3"
+# Already in the workspace through the app; WHATWG URL parsing for location, URL and fetch.
+url = "=2.5.8"
+# Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
+ring = "=0.17.14"
+
+[features]
+# Measurement builds only: exposes `measure::load_page_scaled`, which multiplies V9's heap bounds
+# so the check example can report what real scripts would need. The service never enables it.
+measure = []
+
+[[example]]
+name = "js"
+required-features = ["measure"]
+
+[[example]]
+name = "page"
+required-features = ["measure"]
+
+[[example]]
+name = "replay"
+required-features = ["measure"]

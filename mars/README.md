@@ -18,6 +18,7 @@ what remains to build; they do not narrow the product goal.
 | `mars-eye` | Eye | Parse documents and produce bounded layout/render data |
 | `mars-v9` | V9 | Evaluate the supported JavaScript subset through explicit host data |
 | `mars-relay` | Relay | Perform bounded networking through explicit request/policy APIs |
+| `mars-mdp` | MDP | Serve the Mars DevTools Protocol (CDP-compatible) front door over native operations |
 | `mars-core` | Mars Core | Shared bounded data contracts and errors |
 
 Use each engine as a Rust library without launching the Mars desktop app or sibling
@@ -254,14 +255,19 @@ page/node identities. An outdated revision returns `revision_conflict`; an old p
 script lookup keys, not native authority. Treat all page content as untrusted data.
 
 Inspection includes semantic roles, literal text/value, enabled/editable flags, logical-point
-bounds, visibility, viewport/scroll and layout generation. `page.layout` returns the same
+bounds, visibility, viewport/scroll and layout generation. While a navigation's scripts run, the
+window already shows the parsed and styled page, and `window.inspect` reports that page with
+`"settling":true`; `page.navigate` replies, and `page.inspect` changes, only once the scripts
+have settled, so an agent that wants the finished page waits for the reply or for a
+`window.inspect` page without `settling`. `page.layout` returns the same
 premeasured display list painted by the window. Layout generation changes independently of
 document revision. Window resize acknowledges `layout_pending`; inspect the updated viewport
 before capturing. Document responses follow consumption of the corresponding visible snapshot.
 
-Screenshots require an operator-selected `--capture-dir DIR` at startup. Capture writes an
-actual native content-view PNG converted to sRGB under a generated new filename. Agents cannot select paths or
-overwrite files. Screenshots require the exact current page/revision/layout. `runtime.shutdown`
+With an operator-selected `--capture-dir DIR` at startup, capture writes an actual native
+content-view PNG converted to sRGB under a generated new filename. Agents cannot select paths or
+overwrite files. Without one, the PNG comes back inline as `png_base64`, and only for a tab the
+person has handed to agents. Screenshots require the exact current page/revision/layout. `runtime.shutdown`
 stops the engines; the desktop window retains its disabled last page until closed. In headless
 mode it also exits the coordinator.
 
@@ -274,7 +280,9 @@ unterminated input ends that connection. No invalid input executes page code.
 **Network.** Owned HTTP/1.1 framing supports desktop GET and URL-encoded POST,
 verified Rustls HTTPS, bounded navigation redirects, and required UTF-8 HTML/CSS/JavaScript
 resources. Classic scripts load in document order; script redirects are rejected.
-Repeated Set-Cookie fields remain separate; ambiguous framing remains rejected.
+Repeated Set-Cookie fields remain separate; other repeated list headers (Vary,
+X-Content-Type-Options) are joined with commas, while repeated Content-Length,
+Transfer-Encoding, Content-Encoding, Content-Type and Location remain rejected.
 DNS resolves once, every answer must pass destination policy, and connections pin
 an accepted address while preserving Host/SNI. Only exact owned fixture origins
 receive a startup loopback grant. Headless networking remains literal-loopback GET.
@@ -305,9 +313,10 @@ names, single/double/unquoted attributes, common character references and omitte
 wrappers/selected optional closings. Inert attributes remain data. This is not a
 complete HTML5 tree builder. Static tables support captions, groups, rows, cells,
 and basic header associations; spans, nested tables and advanced table CSS remain
-unsupported. Other unsupported embeds, modules and
-asynchronous/deferred scripts fail explicitly. Up to eight ordered inline or external classic
-scripts are supported within the existing V9 language and source budgets.
+unsupported. Other unsupported embeds, modules,
+`integrity`/`crossorigin` scripts and http-equiv values other than content-type and
+X-UA-Compatible fail explicitly. Up to eight inline or external classic scripts run blocking,
+then `defer`, then `async`, each in document order, and are supported within the existing V9 language and source budgets.
 Static PNG and JPEG resources load through the governed network service, with
 bounded encoded/decoded sizes, intrinsic geometry, native AppKit painting,
 agent image roles/bounds and alt-text fallback on ordinary resource failure.
@@ -381,7 +390,7 @@ and avoids remeasuring growing merged lines. Nonfinite, over-budget or unsupport
 layout rejects the candidate page.
 
 Static readable text has separate UTF-8 byte limits: 16 KiB per stored node and
-32 KiB across the document. The parser keeps complete source text in its original
+512 KiB across the document. The parser keeps complete source text in its original
 node; wrapping creates paint lines, never replacement DOM nodes. Editable values,
 control captions/labels, titles, attributes and script-generated document writes
 retain the 2,048-byte limit. V9 string/source/work and wire budgets are unchanged.
@@ -395,12 +404,19 @@ scroll internally while keeping Retry/Dismiss and at least 120 points of page
 viewport available. Existing retry/replay policy and inline field errors remain.
 
 Frozen [reading fixtures](fixtures/reading/README.md) separate compatibility stages.
-The unchanged example.com source retains its required `/s.js` reference in document
-parse/style/render tests. Its stylesheet is supported by this slice, but required
-JavaScript/DOM/SVG behavior remains unsupported; stage rendering is not a fully
-committed example.com navigation. The unchanged httpbin HTML exercises its complete
+The unchanged example.com page and its frozen `/s.js` commit as a real navigation
+through the supervised services (`tests/example_reading.rs`). The script's
+`insertAdjacentHTML`, `querySelectorAll`, `prepend`, reflected `lang` and
+`navigator.languages` reads run in V9 against Eye's fragment parser, which the app
+passes in at the service edge. V9 returns an ordered structural change log (text,
+insert, move, set attribute) that Eye replays atomically. Navigation fails if the
+structure digest V9 computed differs from Eye's applied document. Script-inserted
+inline styles join the page's stylesheets. The icon paints as native vector paths,
+the Arabic paragraph shapes right to left, and the SVG stays out of agent targets.
+`navigator.languages` comes from the OS preferred-language list (override with
+`MARS_LANGUAGES=fr-FR,en`). The unchanged httpbin HTML exercises its complete
 3,588-byte paragraph through the real services. Broader page compatibility,
-async/deferred scripts and full web-platform behavior remain unfinished.
+script modules and full web-platform behavior remain unfinished.
 
 **V9.** The [source map](UPSTREAM.md) pins the V8 parser and bytecode-generator
 routines used to guide this Rust slice. The bounded language includes typed
@@ -447,8 +463,10 @@ and supported expression/assignment updates. `let` headers get fresh shallow
 per-iteration cells while object identities remain shared. `continue` runs the
 update; `break` and return skip it. Lexical header names disappear when the loop finishes;
 `var` headers keep the containing function/script cell, shared by every iteration.
-`for…in`, `for…of`, `for await`, multiple lexical declarators, general comma expressions,
+`for…in`, `for…of`, `for await`, multiple lexical declarators,
 logical/nullish/bitwise/exponentiation assignments and optional chaining remain unsupported.
+Comma (sequence) expressions evaluate their operands left to right and return the last one;
+each operand charges the shared operation budget.
 
 Abstract equality (`==`, `!=`) supports Number, raw UTF-16 String, Boolean, Null and
 Undefined values, plus existing object/function/host identity paths. Null and undefined
@@ -734,12 +752,12 @@ changes remain candidate data until document validation and authority publicatio
 
 | Resource | Bound |
 | --- | --- |
-| JSON frame including escaping/newline | 256 KiB |
-| MCP frame / pending calls / queued output / whole-session request IDs | 1 MiB / 16 / 16 / 4,096 |
+| JSON frame including escaping/newline | 16 MiB |
+| MCP frame / pending calls / queued output / whole-session request IDs | 64 MiB / 16 / 16 / 4,096 |
 | MCP initialize / native request / complete output frame deadline | 30 s / 30 s / 2 s |
-| HTML / HTTP headers | 64 KiB / 8 KiB |
-| Nodes / nesting | 512 / 32 |
-| Static readable UTF-8 text per node / per document | 16 KiB / 32 KiB |
+| HTML / HTTP headers / chunk framing | 2 MiB / 32 KiB / 128 KiB |
+| Nodes / nesting / table rows / CSS rules | 8,192 / 32 / 256 / 512 |
+| Static readable UTF-8 text per node / per document | 16 KiB / 512 KiB |
 | Editable values, control labels/captions, titles, attributes and document writes | 2 KiB UTF-8 each |
 | V9 per-script / page aggregate source / script count / tokens / statements / operations / call depth / parameters | 4 KiB / 32 KiB / 8 / 1,024 / 64 / 2,048 / 16 / 16 |
 | V9 objects / own properties / array length / state bytes | 256 / 1,024 / 1,024 / 128 KiB |
@@ -748,7 +766,7 @@ changes remain candidate data until document validation and authority publicatio
 | Session cookies / per host / aggregate jar / cookie Keychain record | 64 / 16 / 32 KiB / 48 KiB |
 | Web Storage entries / area / per key or value / aggregate Keychain record | 256 / 64 KiB / 2,048 UTF-16 units / 512 KiB |
 | URL / correlation ID | 2 KiB / 128 bytes |
-| Shared layout work / display lines / maximum layout extent | 65,536 / 2,048 / 1,048,576 logical points |
+| Shared layout work / display lines / maximum layout extent | 5,242,880 / 32,768 / 1,048,576 logical points |
 | Page viewport width / height | 280–4,096 / 120–4,096 logical points |
 | History entries / desktop command queue | 64 / 16 |
 | Headless network / ordinary engine RPC | 2 s / 3 s |
