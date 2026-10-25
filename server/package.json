@@ -20,11 +20,11 @@
     "test:native-services": "node --import ./tests/support/hermetic.js --test --test-concurrency=1 tests/integration/native-fixture.test.js tests/integration/native-cdp-connection.test.js tests/integration/login-auto.test.js tests/integration/totp-login.test.js tests/integration/upload.test.js tests/integration/challenges.test.js tests/integration/dialog.test.js tests/integration/native-mcp.test.js tests/integration/login-flow.test.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.135.0",
-    "@aws-sdk/client-ecs": "^3.1152.0",
-    "@aws-sdk/client-sso": "^3.1152.0",
-    "@aws-sdk/credential-providers": "^3.1152.0",
-    "@daytona/sdk": "0.225.0",
+    "@anthropic-ai/sdk": "^1.1.0",
+    "@aws-sdk/client-ecs": "^3.1155.0",
+    "@aws-sdk/client-sso": "^3.1155.0",
+    "@aws-sdk/credential-providers": "^3.1155.0",
+    "@daytona/sdk": "0.226.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@sentry/node": "^11.8.0",
     "@supabase/supabase-js": "^2.118.0",
@@ -49,10 +49,10 @@
     "@types/ws": "^8.18.2",
     "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-jsdoc": "^65.3.11",
+    "eslint-plugin-jsdoc": "^65.4.0",
     "globals": "^17.13.0",
     "prettier": "^3.9.10",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.2"
+    "typescript-eslint": "^8.72.0"
   }
 }
