@@ -91,6 +91,10 @@ pub struct BoxShadow {
     pub color: String,
     /// Inner shadow instead of an outer one.
     pub inset: bool,
+    /// The color is `currentcolor` (authored or omitted): it computes to the keyword, so an
+    /// inheriting box paints its own `color`, not `color` here, which is only its fallback.
+    #[serde(default)]
+    pub current: bool,
 }
 /// One gradient color stop; position is a fraction of the gradient line when authored in percent.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -381,6 +385,22 @@ pub enum BackgroundRepeat {
     RepeatX,
     /// Tiled vertically.
     RepeatY,
+    /// Each axis on its own, horizontal then vertical, when either one is `space` or `round`.
+    Axes(RepeatStyle, RepeatStyle),
+}
+/// One axis of `background-repeat`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RepeatStyle {
+    /// Tiled at the tile size.
+    #[default]
+    Repeat,
+    /// Painted once.
+    NoRepeat,
+    /// As many whole tiles as fit, the leftover spread between them.
+    Space,
+    /// Tiles rescaled so a whole number fits.
+    Round,
 }
 /// One grid track sizing function: `min` and `max` of `minmax()`, equal for a plain size.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]

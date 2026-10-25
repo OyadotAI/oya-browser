@@ -35,13 +35,14 @@ pub(super) fn shadows(
 /** `[inset] x y [blur [spread]] [color]` in any order of the color and inset. */
 fn shadow(layer: &str, style: &ComputedStyle, context: RenderContext) -> EngineResult<BoxShadow> {
     let mut lengths = Vec::new();
-    let (mut color, mut inset) = (None, false);
+    let (mut color, mut inset, mut current) = (None, false, true);
     for token in tokens(layer) {
         if token == "inset" && !inset {
             inset = true;
         } else if let Ok(length) = signed_length(token, style.font_size, context) {
             lengths.push(length);
         } else if color.is_none() {
+            current = token.eq_ignore_ascii_case("currentcolor");
             color = Some(
                 contextual_color(token, style.used_scheme, style.color.as_deref())?
                     .unwrap_or_else(|| BLACK.into()),
@@ -68,6 +69,7 @@ fn shadow(layer: &str, style: &ComputedStyle, context: RenderContext) -> EngineR
             .or_else(|| style.color.clone())
             .unwrap_or_else(|| BLACK.into()),
         inset,
+        current,
     })
 }
 /** Layers in order; unsupported image kinds are skipped with a diagnostic, not fatal. */

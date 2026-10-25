@@ -4,54 +4,100 @@
  * half of its outer edges. Resolved once before layout by rewriting those widths into a copy of
  * the document, so sizing and painting both see them.
  *
- * ponytail: width wins and nothing else (no style ranking, `hidden` or column borders); the winning edge paints in each cell's own color. */
+ * ponytail: no `hidden` and no column borders. */
 use super::super::flow::*;
 use super::{Grid, grid, is_anonymous, is_table};
+use crate::document::BorderStyle;
 
-/** Widest border on each horizontal and vertical edge of one table's grid. */
+/** One grid edge's winning border: width, color (None is the box's text color) and style. */
+#[derive(Clone, Default)]
+struct Edge {
+    width: f64,
+    color: Option<String>,
+    style: BorderStyle,
+    /** Which kind of box set it: table 0, row group 1, row 2, cell 3. */
+    rank: u8,
+}
+impl Edge {
+    /** css-tables-3 conflict resolution (Blink's IsSourceOnSideBetter): the wider border wins,
+     * then the stronger style, then the box nearer the cell; a full tie keeps the first, the
+     * cell above or to the left. */
+    fn beats(&self, other: &Edge) -> bool {
+        let strength = |style: BorderStyle| match style {
+            BorderStyle::Double => 8,
+            BorderStyle::Solid => 7,
+            BorderStyle::Dashed => 6,
+            BorderStyle::Dotted => 5,
+            BorderStyle::Ridge => 4,
+            BorderStyle::Outset => 3,
+            BorderStyle::Groove => 2,
+            BorderStyle::Inset => 1,
+        };
+        if self.width != other.width {
+            return self.width > other.width;
+        }
+        if self.style != other.style {
+            return strength(self.style) > strength(other.style);
+        }
+        self.rank > other.rank
+    }
+}
+/** The winning border on each horizontal and vertical edge of one table's grid. */
 struct Edges {
     columns: usize,
     /** `(rows + 1) * columns` edges above each row and below the last. */
-    across: Vec<f64>,
+    across: Vec<Edge>,
     /** `rows * (columns + 1)` edges left of each column and right of the last. */
-    down: Vec<f64>,
+    down: Vec<Edge>,
 }
 impl Edges {
     /** Empty edges for a grid of `rows` by `columns`. */
     fn new(rows: usize, columns: usize) -> Self {
         Self {
             columns,
-            across: vec![0.0; (rows + 1) * columns],
-            down: vec![0.0; rows * (columns + 1)],
+            across: vec![Edge::default(); (rows + 1) * columns],
+            down: vec![Edge::default(); rows * (columns + 1)],
         }
     }
-    /** Merges a box's border widths `[top, right, bottom, left]` over rows `r0..r1`, columns `c0..c1`. */
-    fn merge(&mut self, (r0, r1): (usize, usize), (c0, c1): (usize, usize), sides: [f64; 4]) {
+    /** Merges a box's borders `[top, right, bottom, left]` over rows `r0..r1`, columns `c0..c1`. */
+    fn merge(&mut self, (r0, r1): (usize, usize), (c0, c1): (usize, usize), sides: [Edge; 4]) {
         let columns = self.columns;
         for column in c0..c1 {
-            raise(&mut self.across[r0 * columns + column], sides[0]);
-            raise(&mut self.across[r1 * columns + column], sides[2]);
+            raise(&mut self.across[r0 * columns + column], &sides[0]);
+            raise(&mut self.across[r1 * columns + column], &sides[2]);
         }
         for row in r0..r1 {
-            raise(&mut self.down[row * (columns + 1) + c0], sides[3]);
-            raise(&mut self.down[row * (columns + 1) + c1], sides[1]);
+            raise(&mut self.down[row * (columns + 1) + c0], &sides[3]);
+            raise(&mut self.down[row * (columns + 1) + c1], &sides[1]);
         }
     }
-    /** Blink's GetCellBorders: the widest edge on each side of the area, halved. */
-    fn half(&self, (r0, r1): (usize, usize), (c0, c1): (usize, usize)) -> [f64; 4] {
+    /** Blink's GetCellBorders: the winning edge on each side of the area, at half its width. */
+    fn half(&self, (r0, r1): (usize, usize), (c0, c1): (usize, usize)) -> [Edge; 4] {
         let columns = self.columns;
-        let widest = |edges: &mut dyn Iterator<Item = f64>| edges.fold(0.0_f64, f64::max) / 2.0;
+        let best = |edges: &mut dyn Iterator<Item = &Edge>| {
+            let mut edge = edges.fold(Edge::default(), |best, edge| {
+                if edge.beats(&best) {
+                    edge.clone()
+                } else {
+                    best
+                }
+            });
+            edge.width /= 2.0;
+            edge
+        };
         [
-            widest(&mut (c0..c1).map(|c| self.across[r0 * columns + c])),
-            widest(&mut (r0..r1).map(|r| self.down[r * (columns + 1) + c1])),
-            widest(&mut (c0..c1).map(|c| self.across[r1 * columns + c])),
-            widest(&mut (r0..r1).map(|r| self.down[r * (columns + 1) + c0])),
+            best(&mut (c0..c1).map(|c| &self.across[r0 * columns + c])),
+            best(&mut (r0..r1).map(|r| &self.down[r * (columns + 1) + c1])),
+            best(&mut (c0..c1).map(|c| &self.across[r1 * columns + c])),
+            best(&mut (r0..r1).map(|r| &self.down[r * (columns + 1) + c0])),
         ]
     }
 }
-/** Keeps the wider of two border widths. */
-fn raise(edge: &mut f64, width: f64) {
-    *edge = edge.max(width);
+/** Keeps the winner of two borders on one edge. */
+fn raise(edge: &mut Edge, side: &Edge) {
+    if side.width > 0.0 && side.beats(edge) {
+        *edge = side.clone();
+    }
 }
 
 /** The document with every collapsed table's cell and table borders resolved, or None when no
@@ -84,7 +130,7 @@ pub(in super::super) fn resolve(document: &Document) -> EngineResult<Option<Docu
     Ok(Some(resolved))
 }
 /** Each cell's and the table's resolved half borders, as (identity, sides, is the table). */
-fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> {
+fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [Edge; 4], bool)> {
     let (rows, columns) = (grid.rows.len(), grid.columns);
     if rows == 0 {
         return Vec::new();
@@ -93,7 +139,7 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
     // An anonymous table has no border of its own; its wrapping block keeps its border.
     let anonymous = is_anonymous(table);
     if !anonymous {
-        edges.merge((0, rows), (0, columns), sides(table));
+        edges.merge((0, rows), (0, columns), sides(table, 0));
     }
     // Blink's collapsed borders take the widest of table, row group, row and cell borders.
     for section in &grid.sections {
@@ -101,7 +147,7 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
             edges.merge(
                 (section.rows.start, section.rows.end),
                 (0, columns),
-                sides(group),
+                sides(group, 1),
             );
         }
     }
@@ -111,14 +157,14 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
         .enumerate()
         .filter(|(_, row)| !row.anonymous)
     {
-        edges.merge((index, index + 1), (0, columns), sides(row.node));
+        edges.merge((index, index + 1), (0, columns), sides(row.node, 2));
     }
     for slot in &grid.cells {
         let area = (slot.row, slot.row + slot.rows);
         edges.merge(
             area,
             (slot.column, slot.column + slot.columns),
-            sides(slot.cell),
+            sides(slot.cell, 3),
         );
     }
     let mut out: Vec<_> = grid
@@ -135,14 +181,24 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
     }
     out
 }
-/** A box's border widths `[top, right, bottom, left]`. */
-fn sides(node: &Node) -> [f64; 4] {
-    super::super::sizing::border_sides(&node.style)
+/** A box's borders `[top, right, bottom, left]`, a color it leaves unset being its text color. */
+fn sides(node: &Node, rank: u8) -> [Edge; 4] {
+    let style = &node.style;
+    let widths = super::super::sizing::border_sides(style);
+    std::array::from_fn(|side| Edge {
+        width: widths[side],
+        color: style.border_colors[side]
+            .clone()
+            .or_else(|| style.border_color.clone())
+            .or_else(|| style.color.clone()),
+        style: style.border_styles[side],
+        rank,
+    })
 }
 /** Writes resolved half borders into a style. A collapsed table has no padding; where the
  * table's own border lost to a cell's, its half is kept as padding so it is not painted in the
  * table's color. */
-fn apply(style: &mut crate::document::ComputedStyle, half: [f64; 4], table: bool) {
+fn apply(style: &mut crate::document::ComputedStyle, half: [Edge; 4], table: bool) {
     let own = super::super::sizing::border_sides(style);
     if style.border > 0.0 {
         // Per-side widths paint with per-side colors, so carry the shorthand's color over.
@@ -150,12 +206,20 @@ fn apply(style: &mut crate::document::ComputedStyle, half: [f64; 4], table: bool
     }
     style.border = 0.0;
     if !table {
-        style.border_widths = half;
+        // A cell paints each edge in the winner's color and style (Blink's collapsed borders).
+        for (side, edge) in half.into_iter().enumerate() {
+            style.border_widths[side] = edge.width;
+            if edge.width > 0.0 {
+                style.border_style_none = false;
+                style.border_colors[side] = edge.color;
+                style.border_styles[side] = edge.style;
+            }
+        }
         return;
     }
-    for side in 0..4 {
-        let wins = own[side] >= half[side] * 2.0 && own[side] > 0.0;
-        style.border_widths[side] = if wins { half[side] } else { 0.0 };
-        style.padding[side] = if wins { 0.0 } else { half[side] };
+    for (side, edge) in half.iter().enumerate() {
+        let wins = own[side] >= edge.width * 2.0 && own[side] > 0.0;
+        style.border_widths[side] = if wins { edge.width } else { 0.0 };
+        style.padding[side] = if wins { 0.0 } else { edge.width };
     }
 }

@@ -411,12 +411,18 @@ fn effects(document: &Document, items: &mut [DisplayItem]) -> EngineResult<()> {
     }
     Ok(())
 }
+/** Filled table parts considered per render; later ones paint no background box. Real tables
+ * have a handful; past this a page is hostile, and table_parts runs after layout's budget. */
+const TABLE_PART_LIMIT: usize = 1_024;
 /**
  * Blink's `TableSectionPainter` and `TableColumnPainter`: a row group, column or column group
  * has no box in this layout, yet its background paints behind the cells it covers, above the
  * table's own and below rows and cells. Each such part with a background gets one box over its
  * cells, placed just before the table's first row or cell, so `display: table-row-group;
  * background: black` fills the section instead of vanishing.
+ *
+ * Every table's cells and column ranges are found once per render, not once per part, and at
+ * most `TABLE_PART_LIMIT` parts are considered, so thousands of filled parts stay linear.
  *
  * ponytail: one box over the part's cells, not one clipped copy per cell, so border-spacing
  * gaps fill too; split per cell if a spaced table with a section background ever shows it.
@@ -425,7 +431,9 @@ fn table_parts(document: &Document, items: &mut Vec<DisplayItem>) -> EngineResul
     use super::style::TableBox;
     let positions = sizing::positions(document);
     let painted: std::collections::HashSet<usize> = items.iter().map(|i| i.local_id).collect();
+    let mut tables: Option<std::collections::HashMap<usize, TableFacts>> = None;
     let mut added = Vec::new();
+    let mut considered = 0;
     for node in &document.nodes {
         let group = matches!(
             node.style.table_box,
@@ -438,23 +446,34 @@ fn table_parts(document: &Document, items: &mut Vec<DisplayItem>) -> EngineResul
         {
             continue;
         }
+        considered += 1;
+        if considered > TABLE_PART_LIMIT {
+            break;
+        }
         let Some(table) = table_of(document, &positions, node)? else {
             continue;
         };
-        let cells = table_cells(document, &positions, items, table)?;
+        let tables = match &mut tables {
+            Some(tables) => tables,
+            None => tables.insert(table_facts(document, &positions, items)?),
+        };
+        let Some(facts) = tables.get(&table) else {
+            continue;
+        };
+        let cells = &facts.cells;
         let Some(&(first, _)) = cells.first() else {
             continue;
         };
         let rect = if group {
             let mut within = Vec::new();
-            for &(index, _) in &cells {
+            for &(index, _) in cells {
                 if descends(document, &positions, items[index].local_id, node.local_id)? {
                     within.push(rect_of(&items[index]));
                 }
             }
             union(within)
         } else {
-            column_rect(document, items, &cells, table, node)
+            column_rect(items, cells, facts.columns.get(&node.local_id).copied())
         };
         if let Some([x, y, width, height]) = rect {
             added.push((first, flow::box_item(node, x, y, width, height, Vec::new())));
@@ -482,25 +501,43 @@ fn table_of(
     }
     Ok(None)
 }
-/** Indexes of the row and cell items whose nearest table is `table`, in paint order, each
- * flagged true for a cell. */
-fn table_cells(
+/** One table's paint facts, shared by all of its parts. */
+#[derive(Default)]
+struct TableFacts {
+    /** Indexes of its row and cell items in paint order, each flagged true for a cell. */
+    cells: Vec<(usize, bool)>,
+    /** The leaf column range `[start, end)` of each column and column group, by identity. */
+    columns: std::collections::HashMap<usize, (usize, usize)>,
+}
+/** Every table that has rows or cells, with its facts, from one pass over the items and one
+ * parent-to-children index of the document. */
+fn table_facts(
     document: &Document,
     positions: &[Option<usize>],
     items: &[DisplayItem],
-    table: usize,
-) -> EngineResult<Vec<(usize, bool)>> {
+) -> EngineResult<std::collections::HashMap<usize, TableFacts>> {
     use super::style::TableBox;
-    let mut cells = Vec::new();
+    let mut tables = std::collections::HashMap::<usize, TableFacts>::new();
     for (index, item) in items.iter().enumerate() {
         let node = find(document, positions, item.local_id)?;
-        if matches!(node.style.table_box, TableBox::Row | TableBox::Cell)
-            && table_of(document, positions, node)? == Some(table)
-        {
-            cells.push((index, node.style.table_box == TableBox::Cell));
+        if !matches!(node.style.table_box, TableBox::Row | TableBox::Cell) {
+            continue;
+        }
+        if let Some(table) = table_of(document, positions, node)? {
+            let cell = node.style.table_box == TableBox::Cell;
+            tables.entry(table).or_default().cells.push((index, cell));
         }
     }
-    Ok(cells)
+    let mut children = std::collections::HashMap::<usize, Vec<&Node>>::new();
+    for node in &document.nodes {
+        if let Some(parent) = node.parent {
+            children.entry(parent).or_default().push(node);
+        }
+    }
+    for (table, facts) in &mut tables {
+        facts.columns = column_ranges(&children, *table);
+    }
+    Ok(tables)
 }
 /** Whether `ancestor` is on `local`'s parent chain. */
 fn descends(
@@ -531,9 +568,12 @@ fn union(rects: impl IntoIterator<Item = [f64; 4]>) -> Option<[f64; 4]> {
         Some([left, top, right - left, bottom - top])
     })
 }
-/** The leaf columns (`span` each) a column or column group covers, from its table's column
- * elements in document order: Blink's `LayoutTableColumn` visit order. */
-fn column_range(document: &Document, table: usize, column: &Node) -> Option<(usize, usize)> {
+/** The leaf columns (`span` each) every column and column group of `table` covers, by identity,
+ * from its column elements in document order: Blink's `LayoutTableColumn` visit order. */
+fn column_ranges(
+    children: &std::collections::HashMap<usize, Vec<&Node>>,
+    table: usize,
+) -> std::collections::HashMap<usize, (usize, usize)> {
     let span = |node: &Node| {
         node.attributes
             .get("span")
@@ -541,48 +581,40 @@ fn column_range(document: &Document, table: usize, column: &Node) -> Option<(usi
             .unwrap_or(1)
             .max(1)
     };
-    let is_column = |node: &Node| node.style.table_box == super::style::TableBox::Column;
-    let mut at = 0;
-    for part in document
-        .nodes
-        .iter()
-        .filter(|n| n.parent == Some(table) && is_column(n))
-    {
-        let inner: Vec<&Node> = document
-            .nodes
-            .iter()
-            .filter(|n| n.parent == Some(part.local_id) && is_column(n))
-            .collect();
+    let is_column = |node: &&Node| node.style.table_box == super::style::TableBox::Column;
+    let kids = |local: usize| children.get(&local).into_iter().flatten().copied();
+    let mut ranges = std::collections::HashMap::new();
+    let mut at: usize = 0;
+    for part in kids(table).filter(is_column) {
+        let inner: Vec<&Node> = kids(part.local_id).filter(is_column).collect();
         let own = if inner.is_empty() {
             span(part)
         } else {
-            inner.iter().map(|n| span(n)).sum()
+            inner
+                .iter()
+                .fold(0, |sum: usize, n| sum.saturating_add(span(n)))
         };
-        if part.local_id == column.local_id {
-            return Some((at, at + own));
-        }
+        let end = at.saturating_add(own);
+        ranges.entry(part.local_id).or_insert((at, end));
         for leaf in &inner {
-            if leaf.local_id == column.local_id {
-                return Some((at, at + span(leaf)));
-            }
-            at += span(leaf);
+            let next = at.saturating_add(span(leaf));
+            ranges.entry(leaf.local_id).or_insert((at, next));
+            at = next;
         }
         if inner.is_empty() {
-            at += own;
+            at = end;
         }
     }
-    None
+    ranges
 }
 /** A column's box: its leaf columns' x extents (each column starts at a distinct cell left
  * edge) across the full height of the table's cells. */
 fn column_rect(
-    document: &Document,
     items: &[DisplayItem],
     cells: &[(usize, bool)],
-    table: usize,
-    column: &Node,
+    range: Option<(usize, usize)>,
 ) -> Option<[f64; 4]> {
-    let (start, end) = column_range(document, table, column)?;
+    let (start, end) = range?;
     let cells: Vec<&DisplayItem> = cells
         .iter()
         .filter(|(_, cell)| *cell)

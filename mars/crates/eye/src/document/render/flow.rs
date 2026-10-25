@@ -48,6 +48,10 @@ pub(super) struct Flow {
     /** Sides (left, right) of floats adjoining the open margin strut, here or in an ancestor
      * whose strut is still open (Blink's adjoining object types). */
     pub adjoining: [bool; 2],
+    /** Blink's self_collapsing_child_had_clearance: the last in-flow children are self-collapsing
+     * and one of them had clearance, so their margins no longer collapse through this box's
+     * block-end edge but count toward its height (CSS 2.1 8.3.1). */
+    pub cleared_collapsing: bool,
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -74,6 +78,7 @@ impl Flow {
             last_top: std::cell::Cell::new(y),
             unpositioned: Vec::new(),
             adjoining: [false; 2],
+            cleared_collapsing: false,
         }
     }
     /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
@@ -107,6 +112,7 @@ impl Flow {
         self.y = bottom + margin;
         self.collapsible = margin;
         self.bottom = self.bottom.max(self.y);
+        self.cleared_collapsing = false;
     }
     /** A completed line advances by its baseline-aligned height. */
     pub fn newline(&mut self) {
@@ -117,6 +123,7 @@ impl Flow {
             self.y += self.line.max(aligned);
             self.bottom = self.bottom.max(self.y);
             self.collapsible = 0.0;
+            self.cleared_collapsing = false;
         }
         self.cursor = 0.0;
         self.line = 0.0;
@@ -619,6 +626,7 @@ pub(super) fn block(
         && style.padding[2] == 0.0
         && sides[2] == 0.0
         && specified.is_none()
+        && !inner.cleared_collapsing
         && inner.bottom <= inner.y;
     let trailing = if through { inner.collapsible } else { 0.0 };
     let natural =
@@ -641,11 +649,18 @@ pub(super) fn block(
         flow.bottom = flow.bottom.max(flow.y);
     } else if height == 0.0 {
         // An empty block's own top and bottom margins collapse with the ones around it.
-        let (base, previous) = above;
+        // With clearance its border edge sits at the floats' bottom and the strut before the
+        // clearance is separated: the margins restart at its own top margin edge (Blink's
+        // ComputeInflowPosition for a self-collapsing cleared child).
+        let (base, previous) = match cleared {
+            Some(clear) => (clear - style.margin[0], 0.0),
+            None => above,
+        };
         let combined = collapse(collapse(previous, style.margin[0]), style.margin[2]);
         flow.y = base + combined;
         flow.collapsible = combined;
         flow.bottom = flow.bottom.max(flow.y);
+        flow.cleared_collapsing |= cleared.is_some();
     } else {
         flow.after_block(y + height, collapse(style.margin[2], trailing));
     }

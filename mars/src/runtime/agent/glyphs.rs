@@ -19,6 +19,9 @@ const NORMAL_LINE_HEIGHT: f64 = 1.2;
 const OVERHANG: f64 = 1.0;
 /// Bitmap edge cap per run, so a pathological run cannot allocate without bound.
 const RUN_EDGE: f64 = 4096.0;
+/// Glyph bitmap pixels one screenshot may draw across all of its runs, four full 2048-pixel
+/// canvases' worth; past it runs paint as bars, so thousands of runs cannot multiply the cap.
+pub(super) const SHOT_GLYPH_PIXELS: usize = 4 * 2048 * 2048;
 
 /** A run's antialiased coverage on the canvas pixel grid: `left`, `top` in canvas pixels. */
 pub(super) struct Coverage {
@@ -83,16 +86,74 @@ pub(super) fn baseline_offset(item: &DisplayItem) -> f64 {
 }
 
 /**
- * The coverage of one run drawn at its laid-out place, or None when nothing can draw it (no
- * text, zero size, or AppKit refused the offscreen bitmap) so the caller keeps its bar.
- * `origin` is the canvas's document position of pixel (0, 0).
+ * The part of a run's ink box that can show, as canvas pixels `[left, top, right, bottom]`: the
+ * box cut to the canvas and the item's clip, then to `RUN_EDGE`. None when nothing shows, so an
+ * off-canvas or clipped-out run allocates nothing. `canvas` is `[left, top, width, height]`
+ * with its document position of pixel (0, 0) first.
+ */
+#[cfg(target_os = "macos")]
+fn visible(
+    item: &DisplayItem,
+    line: &PaintLine,
+    baseline: f64,
+    canvas: [f64; 4],
+) -> Option<[f64; 4]> {
+    let (size, [ox, oy, width, height]) = (item.font_size, canvas);
+    let pad = size * OVERHANG;
+    let mut rect = [
+        (line.x - pad - ox).floor(),
+        (line.y + baseline - 2.0 * size - oy).floor(),
+        (line.x + line.width + pad - ox).ceil(),
+        (line.y + baseline + size - oy).ceil(),
+    ];
+    let mut cut = |[l, t, r, b]: [f64; 4]| {
+        rect = [
+            rect[0].max(l),
+            rect[1].max(t),
+            rect[2].min(r),
+            rect[3].min(b),
+        ];
+    };
+    cut([0.0, 0.0, width, height]);
+    if let Some(c) = item.clip {
+        cut([
+            (c.x - ox).floor(),
+            (c.y - oy).floor(),
+            (c.x + c.width - ox).ceil(),
+            (c.y + c.height - oy).ceil(),
+        ]);
+    }
+    rect[2] = rect[2].min(rect[0] + RUN_EDGE);
+    rect[3] = rect[3].min(rect[1] + RUN_EDGE);
+    (rect[2] > rect[0] && rect[3] > rect[1]).then_some(rect)
+}
+
+/** Coverage that paints nothing: the run shows nowhere, and needs neither a bitmap nor a bar. */
+#[cfg(target_os = "macos")]
+fn hidden() -> Coverage {
+    Coverage {
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        alpha: Vec::new(),
+    }
+}
+
+/**
+ * The coverage of one run drawn at its laid-out place, sized to the part of it the canvas and
+ * the item's clip let show, or None when nothing can draw it (no text, zero size, the
+ * screenshot's `budget` of glyph pixels is spent, or AppKit refused the offscreen bitmap) so
+ * the caller keeps its bar. `canvas` is `[left, top, width, height]`, its document position of
+ * pixel (0, 0) first; a drawn run takes its bitmap's pixels from `budget`.
  */
 #[cfg(target_os = "macos")]
 pub(super) fn rasterize(
     item: &DisplayItem,
     line: &PaintLine,
     baseline: f64,
-    origin: (f64, f64),
+    canvas: [f64; 4],
+    budget: &mut usize,
 ) -> Option<Coverage> {
     use objc2::{AnyThread, rc::autoreleasepool};
     use objc2_app_kit::{
@@ -103,13 +164,14 @@ pub(super) fn rasterize(
     if line.text.trim().is_empty() || item.font_size <= 0.0 {
         return None;
     }
-    let size = item.font_size;
+    let Some([left, top, right, bottom]) = visible(item, line, baseline, canvas) else {
+        return Some(hidden());
+    };
+    let (size, origin) = (item.font_size, (canvas[0], canvas[1]));
     let pad = size * OVERHANG;
-    let left = (line.x - pad - origin.0).floor();
-    let top = (line.y + baseline - 2.0 * size - origin.1).floor();
-    let width = ((line.x + line.width + pad - origin.0).ceil() - left).clamp(1.0, RUN_EDGE);
-    let height = ((line.y + baseline + size - origin.1).ceil() - top).clamp(1.0, RUN_EDGE);
-    let (w, h) = (width as usize, height as usize);
+    let height = bottom - top;
+    let (w, h) = ((right - left) as usize, height as usize);
+    *budget = budget.checked_sub(w * h)?;
     autoreleasepool(|_| {
         // SAFETY: null planes ask AppKit to allocate an 8-bit premultiplied RGBA buffer of the
         // given size, which it owns; the color space name is Apple's immutable constant.
@@ -170,7 +232,8 @@ pub(super) fn rasterize(
     _item: &DisplayItem,
     _line: &PaintLine,
     _baseline: f64,
-    _origin: (f64, f64),
+    _canvas: [f64; 4],
+    _budget: &mut usize,
 ) -> Option<Coverage> {
     None
 }

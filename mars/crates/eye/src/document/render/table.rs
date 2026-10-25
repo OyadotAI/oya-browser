@@ -29,6 +29,8 @@ struct Grid<'a> {
     sections: Vec<Section<'a>>,
     /** Constraints the `<col>` and `<colgroup>` elements set, one per column they span. */
     elements: Vec<columns::Column>,
+    /** Whether the table collapses its borders, so cells paint whole grid edges. */
+    collapsed: bool,
 }
 /** Whether a box lays out as a table: a `<table>`, or a `display: table` box with a
  * `table-row` or `table-cell` child, or with a caption beside one other child (MediaWiki's
@@ -526,6 +528,7 @@ fn grid<'a>(context: &mut LayoutContext<'a>, table: &Node) -> EngineResult<Grid<
         columns: columns.max(elements.len()).max(1),
         sections,
         elements,
+        collapsed: table.style.border_collapse,
     })
 }
 /** `table-layout: fixed` applies only to a table with an authored width (Blink's
@@ -672,6 +675,25 @@ fn place(
     }
     // A row box spans its columns, inside the outer border spacing (Blink's row fragments).
     let total = (x - x0 - 2.0 * spacing).max(0.0);
+    // Row groups paint first, under their rows and cells (Blink's TableSectionPainter), and give
+    // a positioned group a box to offset and to contain its absolute descendants.
+    // ponytail: one box over the group's rows, so border spacing between its rows takes its
+    // background; paint it per cell when a page shows the gap.
+    for section in &grid.sections {
+        let (Some(node), Some(&first), Some(last)) = (
+            section.node,
+            tops.get(section.rows.start),
+            section.rows.end.checked_sub(1),
+        ) else {
+            continue;
+        };
+        if section.rows.is_empty() {
+            continue;
+        }
+        context.charge(1)?;
+        let bottom = tops[last] + heights[last];
+        items.push(part_box(node, x0 + spacing, first, total, bottom - first));
+    }
     for (row, node) in grid
         .rows
         .iter()
@@ -679,13 +701,12 @@ fn place(
         .filter(|(_, row)| !row.anonymous)
     {
         context.charge(1)?;
-        items.push(box_item(
+        items.push(part_box(
             node.node,
             x0 + spacing,
             tops[row],
             total,
             heights[row],
-            Vec::new(),
         ));
     }
     for ((slot, natural), baseline) in grid.cells.iter().zip(measured).zip(baselines) {
@@ -730,8 +751,54 @@ fn place(
                 super::line::translate(item, 0.0, offset);
             }
         }
+        if grid.collapsed
+            && let Some(edges) = collapsed_edges(slot.cell, start, items)
+        {
+            items.push(edges);
+        }
     }
     Ok(y)
+}
+/** A row or row group's box: its background only, since in the separated model those boxes
+ * have no borders (CSS 2.1 17.6.1) and in the collapsed one their widths already joined the
+ * cells' edges (collapse.rs), so painting them again would draw each border twice. */
+fn part_box(node: &Node, x: f64, y: f64, width: f64, height: f64) -> DisplayItem {
+    let mut item = box_item(node, x, y, width, height, Vec::new());
+    item.border = 0.0;
+    item.border_widths = [0.0; 4];
+    item
+}
+/**
+ * A collapsed cell's borders as Blink's CollapsedBorderPainter draws them: each edge at its whole
+ * width, centered on the grid line, rather than the half the cell's box holds for layout. The
+ * cell's own box keeps its background and drops its half borders; the edges paint over it as one
+ * more item of the cell (a 36px orange border painted 18px wide made a fixed table's cell 36px
+ * narrower than its reference).
+ *
+ * ponytail: each cell paints all four of its edges in their winners' colors, so a shared edge
+ * paints twice and an overlap goes to the later cell in paint (DOM) order; Blink paints each
+ * edge once in grid order, which row-group-order.html (a thead after a tbody) shows.
+ */
+fn collapsed_edges(cell: &Node, start: usize, items: &mut [DisplayItem]) -> Option<DisplayItem> {
+    let own = items.get_mut(start)?;
+    let half = super::sizing::border_sides(&cell.style);
+    if own.local_id != cell.local_id || half.iter().all(|width| *width <= 0.0) {
+        return None;
+    }
+    own.border_widths = [0.0; 4];
+    let mut edges = own.clone();
+    edges.background = None;
+    edges.backgrounds = Vec::new();
+    edges.shadows = Vec::new();
+    edges.lines = Vec::new();
+    edges.vector = Vec::new();
+    edges.validation = Vec::new();
+    edges.x -= half[3];
+    edges.y -= half[0];
+    edges.width += half[1] + half[3];
+    edges.height += half[0] + half[2];
+    edges.border_widths = half.map(|width| super::sizing::snap_border(width * 2.0));
+    Some(edges)
 }
 /** Blink's RowBaselineTabulator: the tallest ascent and descent of a row's baseline-aligned
  * cells (a row-spanning cell adds its ascent only). */

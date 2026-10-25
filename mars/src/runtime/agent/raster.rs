@@ -6,6 +6,9 @@
  */
 #[path = "glyphs.rs"]
 mod glyphs;
+#[cfg(test)]
+#[path = "raster_svg_tests.rs"]
+mod svg_tests;
 
 use super::super::supervisor::Runtime;
 use crate::document::{
@@ -43,6 +46,8 @@ struct Canvas {
     width: usize,
     height: usize,
     pixels: Vec<u8>,
+    /** Glyph bitmap pixels this screenshot may still draw; past them runs paint as bars. */
+    glyph_pixels: usize,
 }
 
 impl Canvas {
@@ -59,6 +64,7 @@ impl Canvas {
             width,
             height,
             pixels,
+            glyph_pixels: glyphs::SHOT_GLYPH_PIXELS,
         }
     }
     /** Blend one color over a document rectangle, clipped to the canvas and an optional clip. */
@@ -124,7 +130,7 @@ impl Canvas {
     }
     /** Paint one display item in Blink's box order: shadow, background color, background
      * layers bottom first, border, then the image placeholder and text runs. */
-    fn item(&mut self, item: &DisplayItem, foreground: [u8; 4], image: Option<&Bitmap>) {
+    fn item(&mut self, item: &DisplayItem, foreground: [u8; 4], image: Option<&Picture>) {
         let item = &snapped(item);
         let clip = item.clip;
         let fade = |mut color: [u8; 4]| {
@@ -133,12 +139,7 @@ impl Canvas {
         };
         let bounds = [item.x, item.y, item.width, item.height];
         let corners = item.radius.map(|r| [r, r]);
-        for shadow in item
-            .shadows
-            .iter()
-            .rev()
-            .filter(|s| !s.inset && s.blur == 0.0)
-        {
+        for shadow in item.shadows.iter().rev().filter(|s| !s.inset) {
             let Some(color) = painter_rgba(&shadow.color).map(fade) else {
                 continue;
             };
@@ -150,10 +151,14 @@ impl Canvas {
                 item.height + 2.0 * spread,
             ];
             let radii = item.radius.map(|r| [(r + spread).max(0.0); 2]);
-            self.shade(rect, clip.as_ref(), |x, y| {
-                (inside_rounded(x, y, rect, radii) && !inside_rounded(x, y, bounds, corners))
-                    .then_some(color)
-            });
+            self.shadow(
+                rect,
+                clip.as_ref(),
+                shadow.blur,
+                &|x, y| inside_rounded(x, y, rect, radii),
+                &|x, y| !inside_rounded(x, y, bounds, corners),
+                color,
+            );
         }
         if let Some(color) = item.background.as_deref().and_then(painter_rgba) {
             let color = fade(color);
@@ -177,21 +182,24 @@ impl Canvas {
                 inside_rounded(x, y, bounds, corners).then(|| stop_color(&stops, t))
             });
         }
-        if let Some(bitmap) = image.filter(|_| item.tag != "img") {
+        if let Some(picture) = image.filter(|_| item.tag != "img") {
             for layer in item.backgrounds.iter().rev() {
-                self.background_image(item, layer, bitmap, &fade);
+                self.background_image(item, layer, picture, &fade);
             }
         }
         if item.tag == "img" {
             let dest = item.content_box.unwrap_or(bounds);
-            match image {
+            match image.and_then(Picture::raster) {
                 // ponytail: object-fit and object-position paint as `fill`; add them when a
                 // replaced-content suite needs them.
                 Some(bitmap) => self.tile(
                     dest,
                     clip.as_ref(),
-                    [dest[0], dest[1], dest[2], dest[3]],
-                    [false; 2],
+                    Tiling {
+                        tile: dest,
+                        repeat: [false; 2],
+                        gap: [0.0; 2],
+                    },
                     bitmap,
                     &fade,
                 ),
@@ -202,6 +210,7 @@ impl Canvas {
                 ),
             }
         }
+        self.inset_shadows(item, &fade);
         let ink = fade(
             item.color
                 .as_deref()
@@ -210,6 +219,85 @@ impl Canvas {
         );
         self.border(item, ink, &fade);
         self.text(item, ink);
+    }
+    /**
+     * One box shadow as Blink's `BoxPainterBase::PaintNormalBoxShadow` and `PaintInsetBoxShadow`
+     * draw it: the `shape` mask over `rect`, blurred by a Gaussian of sigma `blur / 2` (Skia's
+     * `BlurRadiusToStdDev`), painted only where `keep` holds (outside the border box for an
+     * outer shadow, inside the padding box for an inset one).
+     */
+    fn shadow(
+        &mut self,
+        rect: [f64; 4],
+        clip: Option<&ClipRect>,
+        blur: f64,
+        shape: &dyn Fn(f64, f64) -> bool,
+        keep: &dyn Fn(f64, f64) -> bool,
+        color: [u8; 4],
+    ) {
+        let sigma = blur.max(0.0) / 2.0;
+        if sigma <= 0.0 {
+            self.shade(rect, clip, |x, y| {
+                (shape(x, y) && keep(x, y)).then_some(color)
+            });
+            return;
+        }
+        let reach = (sigma * BLUR_REACH).ceil();
+        let region = [
+            (rect[0] - reach).floor(),
+            (rect[1] - reach).floor(),
+            (rect[2] + 2.0 * reach).ceil() + 1.0,
+            (rect[3] + 2.0 * reach).ceil() + 1.0,
+        ];
+        let coverage = blurred(region, sigma, shape);
+        let columns = region[2] as usize;
+        self.shade(region, clip, |x, y| {
+            let (column, row) = ((x - region[0]) as usize, (y - region[1]) as usize);
+            let alpha = *coverage.get(row * columns + column)?;
+            if alpha <= 0.0 || !keep(x, y) {
+                return None;
+            }
+            let mut out = color;
+            out[3] = (f64::from(color[3]) * alpha.min(1.0)).round() as u8;
+            Some(out)
+        });
+    }
+    /** Inset shadows inside the padding box: everything but the hole, the padding box moved by
+     * the offset and shrunk by the spread with its inner radii shrunk to match. */
+    fn inset_shadows(&mut self, item: &DisplayItem, fade: &dyn Fn([u8; 4]) -> [u8; 4]) {
+        let [bt, br, bb, bl] = if item.border > 0.0 {
+            [item.border; 4]
+        } else {
+            item.border_widths
+        };
+        let padding = [
+            item.x + bl,
+            item.y + bt,
+            (item.width - bl - br).max(0.0),
+            (item.height - bt - bb).max(0.0),
+        ];
+        let inner = item.radius.map(|r| [(r - bt.max(bl)).max(0.0); 2]);
+        for shadow in item.shadows.iter().rev().filter(|s| s.inset) {
+            let Some(color) = painter_rgba(&shadow.color).map(fade) else {
+                continue;
+            };
+            let spread = shadow.spread;
+            let hole = [
+                padding[0] + shadow.x + spread,
+                padding[1] + shadow.y + spread,
+                (padding[2] - 2.0 * spread).max(0.0),
+                (padding[3] - 2.0 * spread).max(0.0),
+            ];
+            let radii = inner.map(|[r, _]| [(r - spread).max(0.0); 2]);
+            self.shadow(
+                padding,
+                item.clip.as_ref(),
+                shadow.blur,
+                &|x, y| !inside_rounded(x, y, hole, radii),
+                &|x, y| inside_rounded(x, y, padding, inner),
+                color,
+            );
+        }
     }
     /**
      * Text runs as real glyphs drawn by the platform's font rasterizer at their laid-out places;
@@ -222,7 +310,8 @@ impl Canvas {
         }
         let baseline = glyphs::baseline_offset(item);
         for line in &item.lines {
-            match glyphs::rasterize(item, line, baseline, (self.left, self.top)) {
+            let canvas = [self.left, self.top, self.width as f64, self.height as f64];
+            match glyphs::rasterize(item, line, baseline, canvas, &mut self.glyph_pixels) {
                 Some(coverage) => self.glyphs(&coverage, item.clip.as_ref(), ink),
                 None => self.fill(
                     [
@@ -277,23 +366,26 @@ impl Canvas {
         &mut self,
         area: [f64; 4],
         clip: Option<&ClipRect>,
-        tile: [f64; 4],
-        repeat: [bool; 2],
+        tiling: Tiling,
         bitmap: &Bitmap,
         fade: &dyn Fn([u8; 4]) -> [u8; 4],
     ) {
-        let [tx, ty, tw, th] = tile;
+        let [tx, ty, tw, th] = tiling.tile;
         if tw <= 0.0 || th <= 0.0 {
             return;
         }
+        // A repeating axis has period tile + gap; the gap between tiles paints nothing.
+        let along = |at: f64, start: f64, size: f64, axis: usize| {
+            let offset = at - start;
+            let offset = if tiling.repeat[axis] {
+                offset.rem_euclid(size + tiling.gap[axis])
+            } else {
+                offset
+            };
+            offset / size
+        };
         self.shade(area, clip, |x, y| {
-            let (mut u, mut v) = ((x - tx) / tw, (y - ty) / th);
-            if repeat[0] {
-                u = u.rem_euclid(1.0);
-            }
-            if repeat[1] {
-                v = v.rem_euclid(1.0);
-            }
+            let (u, v) = (along(x, tx, tw, 0), along(y, ty, th, 1));
             ((0.0..1.0).contains(&u) && (0.0..1.0).contains(&v)).then(|| fade(bitmap.sample(u, v)))
         });
     }
@@ -306,13 +398,15 @@ impl Canvas {
         &mut self,
         item: &DisplayItem,
         layer: &DisplayBackground,
-        bitmap: &Bitmap,
+        picture: &Picture,
         fade: &dyn Fn([u8; 4]) -> [u8; 4],
     ) {
         let DisplayBackground::Image {
             size,
             position,
             repeat,
+            space,
+            round,
             ..
         } = layer
         else {
@@ -329,37 +423,24 @@ impl Canvas {
             (item.width - bl - br).max(0.0),
             (item.height - bt - bb).max(0.0),
         ];
-        let (natural_w, natural_h) = (f64::from(bitmap.width), f64::from(bitmap.height));
-        let (w, h) = match *size {
-            ImageSize::Auto => (natural_w, natural_h),
-            ImageSize::Cover | ImageSize::Contain => {
-                let (sx, sy) = (origin[2] / natural_w, origin[3] / natural_h);
-                let scale = if *size == ImageSize::Cover {
-                    sx.max(sy)
-                } else {
-                    sx.min(sy)
-                };
-                (natural_w * scale, natural_h * scale)
-            }
-            ImageSize::Fixed { width, height } => match (width, height) {
-                (Some(w), Some(h)) => (w, h),
-                (Some(w), None) => (w, w * natural_h / natural_w),
-                (None, Some(h)) => (h * natural_w / natural_h, h),
-                (None, None) => (natural_w, natural_h),
-            },
+        let (w, h) = concrete_size(*size, [origin[2], origin[3]], picture.natural());
+        let auto = match *size {
+            ImageSize::Auto => [true; 2],
+            ImageSize::Fixed { width, height } => [width.is_none(), height.is_none()],
+            _ => [false; 2],
         };
-        let [xpx, xpct, ypx, ypct] = *position;
-        let x = origin[0] + xpx + (origin[2] - w) * xpct / 100.0;
-        let y = origin[1] + ypx + (origin[3] - h) * ypct / 100.0;
+        let (w, h) = rounded([origin[2], origin[3]], (w, h), *round, auto);
+        let drawn;
+        let bitmap = match picture {
+            Picture::Raster(bitmap) => bitmap,
+            Picture::Vector(markup) => {
+                drawn = Bitmap::draw(markup, w, h);
+                &drawn
+            }
+        };
+        let tiling = Tiling::place(origin, (w, h), *position, *repeat, *space);
         let bounds = [item.x, item.y, item.width, item.height];
-        self.tile(
-            bounds,
-            item.clip.as_ref(),
-            [x, y, w, h],
-            *repeat,
-            bitmap,
-            fade,
-        );
+        self.tile(bounds, item.clip.as_ref(), tiling, bitmap, fade);
     }
     /**
      * Borders as Blink's `BoxBorderPainter` draws them: each side owns the part of the border
@@ -462,7 +543,7 @@ impl Runtime {
             let bitmap = bitmaps.entry(item.local_id).or_insert_with(|| {
                 page.images
                     .get(&item.local_id)
-                    .and_then(|asset| Bitmap::decode(&asset.bytes))
+                    .and_then(|asset| Picture::decode(&asset.mime, &asset.bytes))
             });
             canvas.item(item, foreground, bitmap.as_ref());
         }
@@ -560,6 +641,363 @@ impl Bitmap {
             self.rgba[at + 3],
         ]
     }
+}
+
+/** Where one image layer's tiles go: the anchor tile `[x, y, width, height]`, which axes
+ * repeat, and the empty gap between neighbouring tiles on each. */
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Tiling {
+    tile: [f64; 4],
+    repeat: [bool; 2],
+    gap: [f64; 2],
+}
+impl Tiling {
+    /**
+     * Blink's `BackgroundImageGeometry`: the tile sits at its `position` in the positioning
+     * `area`, and a `space` axis that fits two or more whole tiles instead starts at the area's
+     * edge with the leftover spread evenly between them (`GetSpaceBetweenImageTiles`); one that
+     * fits fewer paints once, as `no-repeat`, at its position.
+     */
+    fn place(
+        area: [f64; 4],
+        (w, h): (f64, f64),
+        [xpx, xpct, ypx, ypct]: [f64; 4],
+        mut repeat: [bool; 2],
+        space: [bool; 2],
+    ) -> Self {
+        let mut tile = [
+            area[0] + xpx + (area[2] - w) * xpct / 100.0,
+            area[1] + ypx + (area[3] - h) * ypct / 100.0,
+            w,
+            h,
+        ];
+        let mut gap = [0.0; 2];
+        for axis in 0..2 {
+            if !(space[axis] && repeat[axis]) {
+                continue;
+            }
+            let (size, extent) = (tile[axis + 2], area[axis + 2]);
+            let count = if size > 0.0 {
+                (extent / size).floor()
+            } else {
+                0.0
+            };
+            if count > 1.0 {
+                gap[axis] = (extent - count * size) / (count - 1.0);
+                tile[axis] = area[axis];
+            } else {
+                repeat[axis] = false;
+            }
+        }
+        Self { tile, repeat, gap }
+    }
+}
+
+/**
+ * `background-repeat: round` as Blink's `BackgroundImageGeometry` rescales the tile: a round
+ * axis takes the area's extent over the nearest whole number of tiles (at least one), and when
+ * only that axis rounds and the other's size is `auto`, the other scales with it to keep the
+ * image's ratio. The horizontal axis is settled first, as Blink does.
+ */
+fn rounded(
+    area: [f64; 2],
+    (mut w, mut h): (f64, f64),
+    round: [bool; 2],
+    auto: [bool; 2],
+) -> (f64, f64) {
+    if round[0] && area[0] > 0.0 && w > 0.0 {
+        let fitted = area[0] / (area[0] / w).round().max(1.0);
+        if auto[1] && !round[1] {
+            h = h * fitted / w;
+        }
+        w = fitted;
+    }
+    if round[1] && area[1] > 0.0 && h > 0.0 {
+        let fitted = area[1] / (area[1] / h).round().max(1.0);
+        if auto[0] && !round[0] {
+            w = w * fitted / h;
+        }
+        h = fitted;
+    }
+    (w, h)
+}
+
+/// Longest edge a drawn SVG tile may rasterize to; a larger tile samples it stretched.
+// ponytail: an extreme tile (a 2^31 viewBox under `cover`) is drawn at this cap and scaled,
+// so fine detail along that axis blurs; draw only the visible part when a test needs it.
+const DRAWN_EDGE: f64 = 2048.0;
+/// Straight pieces each cubic Bezier flattens into before filling.
+const CUBIC_STEPS: usize = 16;
+
+/// Sigmas past which a Gaussian's weight is negligible, as Skia sizes its blur kernels.
+const BLUR_REACH: f64 = 3.0;
+
+/** The `shape` mask sampled at each pixel center of `region` (whole pixels), then blurred
+ * horizontally and vertically by a Gaussian of `sigma`, row-major. */
+fn blurred(region: [f64; 4], sigma: f64, shape: &dyn Fn(f64, f64) -> bool) -> Vec<f64> {
+    let (columns, rows) = (region[2] as usize, region[3] as usize);
+    let mut mask: Vec<f64> = (0..rows * columns)
+        .map(|at| {
+            let (x, y) = ((at % columns) as f64 + 0.5, (at / columns) as f64 + 0.5);
+            f64::from(u8::from(shape(region[0] + x, region[1] + y)))
+        })
+        .collect();
+    let reach = (sigma * BLUR_REACH).ceil() as isize;
+    let kernel: Vec<f64> = (-reach..=reach)
+        .map(|d| (-((d * d) as f64) / (2.0 * sigma * sigma)).exp())
+        .collect();
+    let total: f64 = kernel.iter().sum();
+    for (stride, count, lines) in [(1, columns, rows), (columns, rows, columns)] {
+        let line_step = if stride == 1 { columns } else { 1 };
+        let mut out = vec![0.0; mask.len()];
+        for line in 0..lines {
+            for i in 0..count {
+                let mut sum = 0.0;
+                for (k, weight) in kernel.iter().enumerate() {
+                    let j = i as isize + k as isize - reach;
+                    if (0..count as isize).contains(&j) {
+                        sum += weight * mask[line * line_step + j as usize * stride];
+                    }
+                }
+                out[line * line_step + i * stride] = sum / total;
+            }
+        }
+        mask = out;
+    }
+    mask
+}
+
+/** A background picture: a decoded bitmap, or an SVG drawing rasterized at its tile size. */
+enum Picture {
+    Raster(Bitmap),
+    Vector(String),
+}
+/** Natural width, height and aspect ratio (width over height); any may be absent. */
+type Natural = (Option<f64>, Option<f64>, Option<f64>);
+impl Picture {
+    /** A bitmap by its signature, or `image/svg+xml` markup kept for drawing. */
+    fn decode(mime: &str, bytes: &[u8]) -> Option<Self> {
+        if mime.eq_ignore_ascii_case("image/svg+xml") {
+            return Some(Self::Vector(String::from_utf8_lossy(bytes).into_owned()));
+        }
+        Bitmap::decode(bytes).map(Self::Raster)
+    }
+    /** The bitmap, for painters that cannot draw vectors. */
+    fn raster(&self) -> Option<&Bitmap> {
+        match self {
+            Self::Raster(bitmap) => Some(bitmap),
+            Self::Vector(_) => None,
+        }
+    }
+    /** Natural dimensions as Blink's `SVGImage` reports them: the root's absolute `width`
+     * and `height` (percentages count as absent), and the ratio of those when both are
+     * present, else of the viewBox. */
+    fn natural(&self) -> Natural {
+        let markup = match self {
+            Self::Raster(bitmap) => {
+                let (w, h) = (f64::from(bitmap.width), f64::from(bitmap.height));
+                return (Some(w), Some(h), Some(w / h));
+            }
+            Self::Vector(markup) => markup,
+        };
+        let Some(svg) = crate::document::parse(markup)
+            .ok()
+            .and_then(|doc| doc.nodes.into_iter().find(|node| node.tag == "svg"))
+        else {
+            return (None, None, None);
+        };
+        let length = |name: &str| {
+            let value = svg.attributes.get(name)?.trim();
+            let value = value.strip_suffix("px").unwrap_or(value);
+            value
+                .parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite() && *v >= 0.0)
+        };
+        let (width, height) = (length("width"), length("height"));
+        let view = svg.attributes.get("viewbox").and_then(|value| {
+            let parts: Vec<f64> = value
+                .split(|c: char| c == ',' || c.is_ascii_whitespace())
+                .filter(|part| !part.is_empty())
+                .filter_map(|part| part.parse().ok())
+                .collect();
+            (parts.len() == 4 && parts[2] > 0.0 && parts[3] > 0.0).then(|| parts[2] / parts[3])
+        });
+        let ratio = match (width, height) {
+            (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(w / h),
+            (Some(_), Some(_)) => None,
+            _ => view,
+        };
+        (width, height, ratio)
+    }
+}
+
+/**
+ * The tile size of an image layer by CSS Images' default sizing algorithm, as Blink's
+ * `BackgroundImageGeometry::CalculateFillTileSize` resolves it against the positioning
+ * `area`: `cover` and `contain` scale the natural ratio (or take the area without one), a
+ * missing dimension follows the ratio, then the natural size, then the area, and an image
+ * with only a ratio is sized as if `contain`.
+ */
+fn concrete_size(size: ImageSize, [aw, ah]: [f64; 2], (nw, nh, ratio): Natural) -> (f64, f64) {
+    let contain = |cover: bool| match ratio {
+        Some(r) if (aw / ah > r) != cover => (ah * r, ah),
+        Some(r) => (aw, aw / r),
+        None => (aw, ah),
+    };
+    match size {
+        ImageSize::Cover => contain(true),
+        ImageSize::Contain => contain(false),
+        ImageSize::Fixed {
+            width: Some(w),
+            height: Some(h),
+        } => (w, h),
+        ImageSize::Fixed {
+            width: Some(w),
+            height: None,
+        } => (w, ratio.map(|r| w / r).or(nh).unwrap_or(ah)),
+        ImageSize::Fixed {
+            width: None,
+            height: Some(h),
+        } => (ratio.map(|r| h * r).or(nw).unwrap_or(aw), h),
+        _ => match (nw, nh, ratio) {
+            (Some(w), Some(h), _) => (w, h),
+            (Some(w), None, Some(r)) => (w, w / r),
+            (None, Some(h), Some(r)) => (h * r, h),
+            (Some(w), None, None) => (w, ah),
+            (None, Some(h), None) => (aw, h),
+            (None, None, Some(_)) => contain(false),
+            (None, None, None) => (aw, ah),
+        },
+    }
+}
+
+impl Bitmap {
+    /** An SVG drawing's fills rasterized into a `width` by `height` tile (capped at
+     * DRAWN_EDGE a side), each pixel painted whose center the path's winding rule covers. */
+    fn draw(markup: &str, width: f64, height: f64) -> Self {
+        let edge = |v: f64| v.ceil().clamp(1.0, DRAWN_EDGE) as u32;
+        let (bw, bh) = (edge(width), edge(height));
+        let (sx, sy) = (
+            f64::from(bw) / width.max(f64::MIN_POSITIVE),
+            f64::from(bh) / height.max(f64::MIN_POSITIVE),
+        );
+        let mut bitmap = Self {
+            width: bw,
+            height: bh,
+            rgba: vec![0; (bw * bh * 4) as usize],
+        };
+        for path in crate::document::VectorPath::from_image(markup, [0.0, 0.0, width, height]) {
+            let Some(mut color) = path.fill.as_deref().and_then(painter_rgba) else {
+                continue;
+            };
+            color[3] = (f64::from(color[3]) * path.fill_opacity.clamp(0.0, 1.0)).round() as u8;
+            let edges = flatten(&path.commands, sx, sy);
+            bitmap.fill(
+                &edges,
+                path.fill_rule == crate::document::FillRule::EvenOdd,
+                color,
+            );
+        }
+        bitmap
+    }
+    /** Source-over `color` into every pixel whose center the edges enclose. */
+    fn fill(&mut self, edges: &[[f64; 4]], even_odd: bool, color: [u8; 4]) {
+        for row in 0..self.height {
+            let y = f64::from(row) + 0.5;
+            let mut crossings: Vec<(f64, i32)> = edges
+                .iter()
+                .filter(|[_, y0, _, y1]| (*y0 <= y) != (*y1 <= y))
+                .map(|[x0, y0, x1, y1]| {
+                    let x = x0 + (y - y0) * (x1 - x0) / (y1 - y0);
+                    (x, if y1 > y0 { 1 } else { -1 })
+                })
+                .collect();
+            crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut winding = 0;
+            for pair in crossings.windows(2) {
+                winding += pair[0].1;
+                let inside = if even_odd {
+                    winding % 2 != 0
+                } else {
+                    winding != 0
+                };
+                if inside {
+                    self.span(row, pair[0].0, pair[1].0, color);
+                }
+            }
+        }
+    }
+    /** Blend `color` over the pixels of `row` whose centers lie in [x0, x1). */
+    fn span(&mut self, row: u32, x0: f64, x1: f64, color: [u8; 4]) {
+        let start = (x0 - 0.5).ceil().max(0.0) as u32;
+        let end = ((x1 - 0.5).ceil().max(0.0) as u32).min(self.width);
+        let alpha = f64::from(color[3]) / 255.0;
+        for column in start..end {
+            let at = ((row * self.width + column) * 4) as usize;
+            let under = f64::from(self.rgba[at + 3]) / 255.0;
+            let out = alpha + under * (1.0 - alpha);
+            for (channel, &paint) in color.iter().enumerate().take(3) {
+                let mixed = f64::from(paint) * alpha
+                    + f64::from(self.rgba[at + channel]) * under * (1.0 - alpha);
+                self.rgba[at + channel] = if out > 0.0 {
+                    (mixed / out).round() as u8
+                } else {
+                    0
+                };
+            }
+            self.rgba[at + 3] = (out * 255.0).round() as u8;
+        }
+    }
+}
+
+/** Path commands as straight edges `[x0, y0, x1, y1]` scaled by `sx`, `sy`, every subpath
+ * closed (fills close implicitly) and cubics flattened into CUBIC_STEPS pieces. */
+fn flatten(commands: &[crate::document::PathCommand], sx: f64, sy: f64) -> Vec<[f64; 4]> {
+    use crate::document::PathCommand;
+    let mut edges = Vec::new();
+    let (mut start, mut at) = ((0.0, 0.0), (0.0, 0.0));
+    let push = |edges: &mut Vec<[f64; 4]>, from: (f64, f64), to: (f64, f64)| {
+        edges.push([from.0 * sx, from.1 * sy, to.0 * sx, to.1 * sy]);
+    };
+    for command in commands {
+        match *command {
+            PathCommand::Move { x, y } => {
+                push(&mut edges, at, start);
+                (start, at) = ((x, y), (x, y));
+            }
+            PathCommand::Line { x, y } => {
+                push(&mut edges, at, (x, y));
+                at = (x, y);
+            }
+            PathCommand::Cubic {
+                x1,
+                y1,
+                x2,
+                y2,
+                x,
+                y,
+            } => {
+                let from = at;
+                for step in 1..=CUBIC_STEPS {
+                    let t = step as f64 / CUBIC_STEPS as f64;
+                    let u = 1.0 - t;
+                    let point = |a: f64, b: f64, c: f64, d: f64| {
+                        u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
+                    };
+                    let next = (point(from.0, x1, x2, x), point(from.1, y1, y2, y));
+                    push(&mut edges, at, next);
+                    at = next;
+                }
+            }
+            PathCommand::Close => {
+                push(&mut edges, at, start);
+                at = start;
+            }
+        }
+    }
+    push(&mut edges, at, start);
+    edges
 }
 
 /** One edge pair `[start, length]` snapped as Blink's `PixelSnappedIntRect` does: both edges

@@ -62,6 +62,12 @@ pub(super) fn apply(
         }
         "text-transform" => style.text_transform = text_transform(value)?,
         "white-space" => style.white_space = white_space(value)?,
+        "white-space-collapse" => {
+            style.white_space = longhands(Some(collapse(value)?), None, style.white_space)
+        }
+        "text-wrap-mode" | "text-wrap" => {
+            style.white_space = longhands(None, Some(wrap_mode(value)?), style.white_space)
+        }
         "cursor" => style.cursor_pointer = value.split(',').any(|part| part.trim() == "pointer"),
         "font-family" => {
             style.font_family = font_family(value);
@@ -306,7 +312,8 @@ fn text_transform(value: &str) -> EngineResult<TextTransform> {
         _ => return Err(unsupported()),
     })
 }
-/** Whitespace keywords; `break-spaces` behaves as pre-wrap here. */
+/** Whitespace keywords; `break-spaces` behaves as pre-wrap here. CSS Text 4 also accepts the
+`white-space` shorthand as its two longhands, `<white-space-collapse> || <text-wrap-mode>`. */
 fn white_space(value: &str) -> EngineResult<WhiteSpace> {
     Ok(match value {
         "normal" => WhiteSpace::Normal,
@@ -314,8 +321,77 @@ fn white_space(value: &str) -> EngineResult<WhiteSpace> {
         "nowrap" => WhiteSpace::Nowrap,
         "pre-wrap" | "break-spaces" => WhiteSpace::PreWrap,
         "pre-line" => WhiteSpace::PreLine,
+        _ => {
+            let (mut collapsing, mut wrapping) = (None, None);
+            for part in value.split_ascii_whitespace() {
+                match (collapse(part), wrap_mode(part)) {
+                    (Ok(found), _) if collapsing.is_none() => collapsing = Some(found),
+                    (_, Ok(found)) if wrapping.is_none() => wrapping = Some(found),
+                    _ => return Err(unsupported()),
+                }
+            }
+            if collapsing.is_none() && wrapping.is_none() {
+                return Err(unsupported());
+            }
+            longhands(
+                Some(collapsing.unwrap_or(Collapse::Spaces)),
+                Some(wrapping.unwrap_or(true)),
+                WhiteSpace::Normal,
+            )
+        }
+    })
+}
+/** `white-space-collapse` values Eye tells apart; `break-spaces` and `preserve-spaces` keep
+spaces as `preserve` does. */
+#[derive(Clone, Copy, PartialEq)]
+enum Collapse {
+    Spaces,
+    Preserve,
+    PreserveBreaks,
+}
+/** One `white-space-collapse` keyword. */
+fn collapse(value: &str) -> EngineResult<Collapse> {
+    Ok(match value {
+        "collapse" => Collapse::Spaces,
+        "preserve" | "break-spaces" | "preserve-spaces" => Collapse::Preserve,
+        "preserve-breaks" => Collapse::PreserveBreaks,
         _ => return Err(unsupported()),
     })
+}
+/** One `text-wrap-mode` keyword (or a `text-wrap` shorthand naming it): whether lines wrap.
+`text-wrap: balance | pretty | stable` keep wrapping. */
+fn wrap_mode(value: &str) -> EngineResult<bool> {
+    Ok(match value {
+        "wrap" | "balance" | "pretty" | "stable" | "auto" => true,
+        "nowrap" => false,
+        _ => return Err(unsupported()),
+    })
+}
+/** Folds the two CSS Text 4 longhands back into the CSS 2 keyword Eye lays out by, keeping
+whichever half `current` already had. `preserve-breaks nowrap` has no CSS 2 keyword; it lays
+out as `pre-line`. */
+fn longhands(
+    collapsing: Option<Collapse>,
+    wrapping: Option<bool>,
+    current: WhiteSpace,
+) -> WhiteSpace {
+    let (old_collapse, old_wrap) = match current {
+        WhiteSpace::Normal => (Collapse::Spaces, true),
+        WhiteSpace::Nowrap => (Collapse::Spaces, false),
+        WhiteSpace::Pre => (Collapse::Preserve, false),
+        WhiteSpace::PreWrap => (Collapse::Preserve, true),
+        WhiteSpace::PreLine => (Collapse::PreserveBreaks, true),
+    };
+    match (
+        collapsing.unwrap_or(old_collapse),
+        wrapping.unwrap_or(old_wrap),
+    ) {
+        (Collapse::Spaces, true) => WhiteSpace::Normal,
+        (Collapse::Spaces, false) => WhiteSpace::Nowrap,
+        (Collapse::Preserve, true) => WhiteSpace::PreWrap,
+        (Collapse::Preserve, false) => WhiteSpace::Pre,
+        (Collapse::PreserveBreaks, _) => WhiteSpace::PreLine,
+    }
 }
 /** The authored names, lowercased and unquoted, for `@font-face` matching; bounded in count and length. */
 pub(super) fn font_families(value: &str) -> Vec<String> {

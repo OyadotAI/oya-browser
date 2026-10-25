@@ -555,9 +555,20 @@ fn background_repeat(value: &str) -> EngineResult<BackgroundRepeat> {
         ["no-repeat"] | ["no-repeat", "no-repeat"] => BackgroundRepeat::NoRepeat,
         ["repeat-x"] | ["repeat", "no-repeat"] => BackgroundRepeat::RepeatX,
         ["repeat-y"] | ["no-repeat", "repeat"] => BackgroundRepeat::RepeatY,
-        ["repeat" | "space" | "round"] | ["repeat" | "space" | "round", _] => {
-            BackgroundRepeat::Repeat
-        }
+        ["repeat"] | ["repeat", "repeat"] => BackgroundRepeat::Repeat,
+        [one] => BackgroundRepeat::Axes(repeat_style(one)?, repeat_style(one)?),
+        [x, y] => BackgroundRepeat::Axes(repeat_style(x)?, repeat_style(y)?),
+        _ => return Err(unsupported()),
+    })
+}
+/** One `background-repeat` axis keyword. */
+fn repeat_style(value: &str) -> EngineResult<super::RepeatStyle> {
+    use super::RepeatStyle;
+    Ok(match value {
+        "repeat" => RepeatStyle::Repeat,
+        "no-repeat" => RepeatStyle::NoRepeat,
+        "space" => RepeatStyle::Space,
+        "round" => RepeatStyle::Round,
         _ => return Err(unsupported()),
     })
 }

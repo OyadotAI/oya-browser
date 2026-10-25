@@ -279,12 +279,19 @@ fn paths(
     content: (f64, f64, f64, f64),
     current: &str,
 ) -> EngineResult<Vec<VectorPath>> {
-    drawing(context, context.document, svg, content, current)
+    let document = context.document;
+    drawing(
+        &mut |work| context.charge(work),
+        document,
+        svg,
+        content,
+        current,
+    )
 }
 
 /** The shapes of `svg`, a drawing inside `document`, charged to the layout's work budget. */
 fn drawing(
-    context: &mut LayoutContext<'_>,
+    charge: &mut dyn FnMut(usize) -> EngineResult<()>,
     document: &Document,
     svg: &Node,
     content: (f64, f64, f64, f64),
@@ -307,7 +314,7 @@ fn drawing(
                 .collect()
         };
         for (path, segments) in shapes {
-            context.charge(segments + 1)?;
+            charge(segments + 1)?;
             result.push(path);
         }
     }
@@ -402,7 +409,7 @@ fn use_copies(
         }
         paint.extend(&outer);
         paint.push(svg);
-        let segments = parse(&path_data(shape)?)?;
+        let segments = parse(&path_data(shape, view_box_numbers(svg))?)?;
         let matrix = multiply(viewport, multiply(base, matrix));
         copies.push((
             vector(document, &segments, matrix, &paint, current, viewport[0])?,
@@ -476,7 +483,48 @@ pub(super) fn image_paths(
     };
     let mut svg = svg.clone();
     synthesize_view_box(&mut svg);
-    drawing(context, &document, &svg, content, current)
+    drawing(
+        &mut |work| context.charge(work),
+        &document,
+        &svg,
+        content,
+        current,
+    )
+}
+
+/// Segments one background drawing may emit, so a hostile sprite cannot stall the painter.
+const IMAGE_WORK: usize = 1 << 16;
+
+impl VectorPath {
+    /// The paint of an SVG document drawn as a CSS image (a background layer) into `tile`
+    /// ([x, y, width, height]), fitted by its viewBox and `preserveAspectRatio` as Blink's
+    /// `SVGImage` draws into its concrete object size. Markup that does not parse, or passes
+    /// IMAGE_WORK segments, paints nothing, like a broken image.
+    pub fn from_image(markup: &str, [x, y, width, height]: [f64; 4]) -> Vec<VectorPath> {
+        let Ok(document) = crate::document::parse(markup) else {
+            return Vec::new();
+        };
+        let Some(svg) = document.nodes.iter().find(|node| node.tag == "svg") else {
+            return Vec::new();
+        };
+        let mut svg = svg.clone();
+        synthesize_view_box(&mut svg);
+        let mut left = IMAGE_WORK;
+        let mut charge = |work: usize| {
+            left = left
+                .checked_sub(work)
+                .ok_or_else(|| EngineError::limit("image work", IMAGE_WORK))?;
+            Ok(())
+        };
+        drawing(
+            &mut charge,
+            &document,
+            &svg,
+            (x, y, width, height),
+            "#000000",
+        )
+        .unwrap_or_default()
+    }
 }
 
 /** An SVG image without a `viewBox` scales its `width` by `height` canvas into the img box, as
@@ -537,7 +585,7 @@ fn shape(
     }
     let mut paint = chain.clone();
     paint.push(svg);
-    let segments = parse(&path_data(shape)?)?;
+    let segments = parse(&path_data(shape, view_box_numbers(svg))?)?;
     let path = vector(
         document,
         &segments,
@@ -556,13 +604,25 @@ const DRAWN: [&str; 7] = [
 
 /// The path data a shape element stands for, per SVG 2's equivalent paths: a rect (with rx/ry
 /// as arcs), circle and ellipse as two arcs, line, polyline and polygon from their points. A
-/// missing length is 0; a malformed or percentage one drops the shape.
-fn path_data(node: &Node) -> EngineResult<String> {
+/// missing length is 0; a malformed one drops the shape. A percentage resolves against the
+/// root's viewBox (its user-space viewport): width for x, height for y, and the normalized
+/// diagonal for radii; without a viewBox it drops the shape.
+fn path_data(node: &Node, view: Option<[f64; 4]>) -> EngineResult<String> {
     let length = |name: &str| -> EngineResult<f64> {
         let Some(value) = node.attributes.get(name) else {
             return Ok(0.0);
         };
         let value = value.trim();
+        if let Some(percent) = value.strip_suffix('%') {
+            let [_, _, w, h] = view.ok_or_else(unsupported)?;
+            let basis = match name {
+                "x" | "width" | "cx" | "rx" | "x1" | "x2" => w,
+                "y" | "height" | "cy" | "ry" | "y1" | "y2" => h,
+                _ => ((w * w + h * h) / 2.0).sqrt(),
+            };
+            let percent = percent.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+            return percent.map(|p| p * basis / 100.0).ok_or_else(unsupported);
+        }
         value
             .strip_suffix("px")
             .unwrap_or(value)
