@@ -232,7 +232,9 @@ pub struct DisplayItem {
 }
 /** All-solid sides keep the established serialized shape. */
 fn solid_borders(styles: &[crate::document::BorderStyle; 4]) -> bool {
-    styles.iter().all(|style| *style == crate::document::BorderStyle::Solid)
+    styles
+        .iter()
+        .all(|style| *style == crate::document::BorderStyle::Solid)
 }
 /** Items default to fully opaque. */
 fn full_opacity() -> f64 {

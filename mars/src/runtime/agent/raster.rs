@@ -566,7 +566,7 @@ impl Ring {
     /** Distance along `side` from its start: the left end of a row, the top end of a column. */
     fn along(&self, side: usize, px: f64, py: f64) -> f64 {
         let [x, y, ..] = self.outer;
-        if side % 2 == 0 { px - x } else { py - y }
+        if side.is_multiple_of(2) { px - x } else { py - y }
     }
     /** Which side owns a point of the ring: the one whose miter-normalized depth is least. */
     fn side(&self, px: f64, py: f64) -> Option<usize> {

@@ -732,10 +732,14 @@ fn split_of(source: &str) -> Option<(&str, &str)> {
     let ident =
         |b: u8| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b >= 0x80 || b == b'\\';
     (1..bytes.len().saturating_sub(1)).find_map(|at| {
-        let word = bytes[at..at + 2].eq_ignore_ascii_case(b"of");
-        let before = bytes[at - 1].is_ascii_whitespace() || source[..at].ends_with("*/");
+        // Checked on bytes, and the ASCII "of" first: only then are `at` and `at + 2` char
+        // boundaries, so slicing a selector holding multibyte text never panics.
+        if !bytes[at..at + 2].eq_ignore_ascii_case(b"of") {
+            return None;
+        }
+        let before = bytes[at - 1].is_ascii_whitespace() || bytes[..at].ends_with(b"*/");
         let after = bytes.get(at + 2).is_some_and(|&b| !ident(b));
-        (word && before && after).then(|| (&source[..at], &source[at + 2..]))
+        (before && after).then(|| (&source[..at], &source[at + 2..]))
     })
 }
 /** `:lang()` ranges: identifiers or strings, comma-separated, lowercased; None when empty. */

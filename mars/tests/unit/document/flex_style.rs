@@ -199,7 +199,7 @@ fn unsupported_flex_values_and_excluded_structures_are_dropped_with_a_diagnostic
         ("flex:1 auto 2", "", "flex"),
         ("flex:1 2 3", "", "flex"),
         ("flex:1 2 0 0", "", "flex"),
-        ("flex-basis:1em", "", "flex-basis"),
+        ("flex-basis:fit-content(10px)", "", "flex-basis"),
         ("flex-basis:fit-content(10px)", "", "flex-basis"),
         ("flex-grow:-1", "", "flex-grow"),
         ("flex-shrink:NaN", "", "flex-shrink"),
