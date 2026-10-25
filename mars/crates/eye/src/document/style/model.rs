@@ -65,6 +65,16 @@ pub struct ComputedStyle {
     /// `wrap-reverse`: lines stack from the cross-end edge.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wrap_reverse: bool,
+    /// `flex-wrap: balance`: lines are broken to even out their free space (Blink's
+    /// `FlexWrap::IsBalanced`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flex_balance: bool,
+    /// `display: -webkit-box`: a legacy box never wraps (Blink's `IsDeprecatedFlexbox`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub webkit_box: bool,
+    /// `flex-line-count`, the minimum number of balanced lines; None is its initial `1`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flex_line_count: Option<u32>,
     /// Automatic, pixel and percentage bases retain distinct layout meaning.
     pub flex_basis: FlexBasis,
     /// Nonnegative growth distributes only real positive main-axis free space.
@@ -75,6 +85,10 @@ pub struct ComputedStyle {
     pub row_gap: f64,
     /// Only between-item separation contributes to the line's horizontal budget.
     pub column_gap: f64,
+    /// Percentage parts of `column-gap` and `row-gap`, resolved by grid layout against the
+    /// content box in that axis (zero against an indefinite one, as Blink's GridGap does).
+    #[serde(skip_serializing_if = "default")]
+    pub gap_percent: [f64; 2],
     /// Main-axis content distribution (`justify-content`); `normal` is `Stretch`.
     pub justify_content: JustifyContent,
     /// Cross-axis content distribution of flex lines and grid rows (`align-content`).
@@ -147,6 +161,13 @@ pub struct ComputedStyle {
     /// Inherited case mapping.
     #[serde(skip_serializing_if = "default")]
     pub text_transform: TextTransform,
+    /// Inherited `text-transform: full-width`: ASCII and halfwidth forms paint as their
+    /// fullwidth compatibility forms (Blink's Character::FullWidth mapping).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub text_transform_full_width: bool,
+    /// Inherited `text-transform: full-size-kana`: small kana paint as their full-size letters.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub text_transform_full_size_kana: bool,
     /// Inherited whitespace handling.
     #[serde(skip_serializing_if = "default")]
     pub white_space: WhiteSpace,
@@ -339,9 +360,28 @@ pub struct ComputedStyle {
     /// Declared `word-break`: Some(true) for `break-all` or `break-word`, None when inherited.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_break_all: Option<bool>,
+    /// Declared `word-break: break-all` (Some(true)) or another value (Some(false)), None when
+    /// inherited: unlike `break-word`, it makes every letter a break opportunity, so a word
+    /// starts on the current line and fills the width left there.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_break_fill: Option<bool>,
+    /// Declared `word-break: keep-all` (Some(true)) or another value, None when inherited:
+    /// ideographs then break only where letters would (UAX #14 with ID treated as AL).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_break_keep_all: Option<bool>,
+    /// Declared `line-break: anywhere` (Some(true)) or another value, None when inherited: a
+    /// break opportunity between every two typographic letter units, preserved spaces included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_break_anywhere: Option<bool>,
     /// `text-overflow: ellipsis` (not inherited): a clipping block ends overflowing lines in "…".
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub text_overflow_ellipsis: bool,
+    /// `text-box-trim` (not inherited) as whether the (block-start, block-end) edge trims.
+    #[serde(skip_serializing_if = "super::text_box::untrimmed")]
+    pub text_box_trim: [bool; 2],
+    /// `text-box-edge` (inherited) as (over, under) codes from `style/text_box.rs`.
+    #[serde(skip_serializing_if = "super::text_box::auto_edge")]
+    pub text_box_edge: [u8; 2],
     /// `vertical-align: <length-percentage>` as (px, percent of the element's line-height); the
     /// box's baseline rises by it. None for the keywords.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -509,11 +549,15 @@ impl Default for ComputedStyle {
             flex_wrap: FlexWrap::NoWrap,
             flex_reverse: false,
             wrap_reverse: false,
+            flex_balance: false,
+            webkit_box: false,
+            flex_line_count: None,
             flex_basis: FlexBasis::Auto,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             row_gap: 0.0,
             column_gap: 0.0,
+            gap_percent: [0.0; 2],
             justify_content: JustifyContent::Stretch,
             align_content: JustifyContent::Stretch,
             align_items: AlignItems::Stretch,
@@ -538,6 +582,8 @@ impl Default for ComputedStyle {
             spacing_percent: [0.0; 2],
             text_indent: (0.0, 0.0),
             text_transform: TextTransform::None,
+            text_transform_full_width: false,
+            text_transform_full_size_kana: false,
             white_space: WhiteSpace::Normal,
             break_spaces: false,
             tab_size: None,
@@ -598,7 +644,12 @@ impl Default for ComputedStyle {
             aspect_ratio_auto: false,
             overflow_wrap_break: None,
             word_break_all: None,
+            word_break_fill: None,
+            word_break_keep_all: None,
+            line_break_anywhere: None,
             text_overflow_ellipsis: false,
+            text_box_trim: [false, false],
+            text_box_edge: [0, 0],
             vertical_shift: None,
             clip_rect: None,
             clip_path: None,

@@ -91,8 +91,9 @@ fn headers(
             return Ok((headers, cookies));
         }
         let (name, value) = line.split_once(':').ok_or_else(unsupported)?;
-        if !crate::network::mime::token(name) || value.chars().any(|c| c.is_control() && c != '\t')
-        {
+        // Chromium's HttpResponseHeaders keeps any value byte but NUL (Fetch's header value),
+        // so a stray vertical tab or form feed reaches the CORS parsers instead of failing.
+        if !crate::network::mime::token(name) || value.contains('\0') {
             return Err(unsupported());
         }
         if name.eq_ignore_ascii_case("set-cookie") {
@@ -214,7 +215,9 @@ impl Input<'_> {
         }
         Ok(output)
     }
-    /** Header and chunk lines stop at their budget rather than growing until newline; `limit` names that budget in the error. */
+    /** Header and chunk lines stop at their budget rather than growing until newline; `limit`
+    names that budget in the error. A line ends at LF with an optional CR before it, as
+    Chromium's HttpUtil::LocateEndOfHeaders and HttpChunkedDecoder accept bare-LF servers. */
     fn line(&mut self, budget: usize, limit: fn() -> EngineError) -> EngineResult<String> {
         let mut output = Vec::new();
         loop {
@@ -222,14 +225,13 @@ impl Input<'_> {
             if output.len() >= budget {
                 return Err(limit());
             }
-            output.push(byte);
-            if output.ends_with(b"\r\n") {
-                output.truncate(output.len() - 2);
+            if byte == b'\n' {
+                if output.last() == Some(&b'\r') {
+                    output.pop();
+                }
                 return String::from_utf8(output).map_err(|_| unsupported());
             }
-            if byte == b'\n' {
-                return Err(unsupported());
-            }
+            output.push(byte);
         }
     }
 }

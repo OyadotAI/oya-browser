@@ -329,7 +329,7 @@ fn send(
         Channel::Http1(connection) => {
             let (response, connection) =
                 send_http1(connection, url, request, conditional, deadline)?;
-            if response.reusable && request.method == Method::Get {
+            if response.reusable && request.method == Method::Get && request.preflight.is_none() {
                 pool::POOL.checkin(url, fixture, connection);
             }
             response
@@ -360,11 +360,14 @@ fn send_http1(
         return Err(Failure::Retryable(body::truncated()));
     }
     first.truncate(count);
+    // Chromium's PreflightController downloads a preflight's headers only, so a preflight
+    // body that never ends cannot stall the request behind it (the connection is not reused).
+    let headers_only = request.method == Method::Head || request.preflight.is_some();
     let response = body::response(
         &mut connection,
         deadline,
         request.image,
-        request.method == Method::Head,
+        headers_only,
         first,
     )
     .map_err(Failure::Final)?;
@@ -537,7 +540,9 @@ fn redirect(url: &Url, headers: &BTreeMap<String, String>, grants: &[String]) ->
         .ok_or_else(|| EngineError::unsupported("Redirect has no Location."))?;
     redirect_url(url, location, grants)
 }
-/// Every coordinator-managed redirect repeats the same downgrade and fixture-origin policy.
+/// Every coordinator-managed redirect repeats the same downgrade and fixture-origin policy: a
+/// redirect out of a granted fixture may reach a private destination only when that exact
+/// origin is granted too (WPT's cross-origin redirects between its own test hosts).
 pub fn redirect_url(url: &Url, location: &str, grants: &[String]) -> EngineResult<Url> {
     if location.chars().any(char::is_control) || location.contains('\\') {
         return Err(super::policy::denied());
@@ -552,6 +557,7 @@ pub fn redirect_url(url: &Url, location: &str, grants: &[String]) -> EngineResul
     }
     if fixture_granted(url, grants)
         && next.origin() != url.origin()
+        && !fixture_granted(&next, grants)
         && next.host_str().is_some_and(|host| {
             let host = host.trim_matches(['[', ']']);
             super::policy::local_hostname(host)

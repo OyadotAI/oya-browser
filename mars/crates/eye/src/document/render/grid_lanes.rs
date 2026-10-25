@@ -291,7 +291,10 @@ fn rows(
     out_of_flow_kids: &[&Node],
 ) -> EngineResult<()> {
     let style = &node.style;
-    let (gap, stack_gap) = (style.row_gap, style.column_gap);
+    // Percentage gaps as in grid layout: the stacking gap against the width, the row gap
+    // against a definite height, else against the sized rows once they are sized.
+    let gap = style.row_gap + style.gap_percent[1] * inner.definite.unwrap_or(0.0) / 100.0;
+    let stack_gap = style.column_gap + style.gap_percent[0] * inner.width / 100.0;
     let mut tracks_list = super::expand(&style.grid_rows, inner.definite.unwrap_or(0.0), gap);
     let explicit = tracks_list.len();
     let mut lanes = Vec::with_capacity(kids.len());
@@ -343,7 +346,12 @@ fn rows(
     let free = inner.definite.map_or(0.0, |height| height - used);
     let (lead, between) =
         super::super::flex_layout::justification(style.align_content, free, heights.len(), false);
-    let tops = super::offsets(inner.y + lead, &heights, gap + between);
+    let late = match inner.definite {
+        None => style.gap_percent[1] * used / 100.0,
+        Some(_) => 0.0,
+    };
+    let row_gap = gap + between + late;
+    let tops = super::offsets(inner.y + lead, &heights, row_gap);
     let tolerance = style.flow_tolerance.unwrap_or(style.font_size);
     let mut running = vec![0.0; heights.len()];
     let mut cursor = 0;
@@ -351,7 +359,7 @@ fn rows(
         context.charge(1)?;
         let row = start.unwrap_or_else(|| first_eligible(&running, span, cursor, tolerance));
         let left = running[row..row + span].iter().copied().fold(0.0, f64::max);
-        let area = super::span(&heights, row, span, gap + between);
+        let area = super::span(&heights, row, span, row_gap);
         let margins = child.style.margin;
         let align = child.style.align_self.unwrap_or(style.align_items);
         let stretch = align == AlignItems::Stretch

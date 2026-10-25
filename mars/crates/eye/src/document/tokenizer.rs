@@ -33,21 +33,37 @@ impl<'a> Tokenizer<'a> {
             }
             let text = self.text_end();
             if text > 0 {
-                let token = Token::Text(decode(&self.rest[..text], false));
+                // The data state passes U+0000 through and tree construction drops it in body
+                // content, after character references are resolved, as HTML does.
+                let token =
+                    Token::Text(decode(&newlines(&self.rest[..text]), false).replace('\0', ""));
                 self.rest = &self.rest[text..];
                 return Some(token);
             }
             let rest = self.rest;
             if let Some(after) = rest.strip_prefix("<!--") {
                 return Some(Token::Comment(self.comment(after)));
-            } else if let Some(after) = rest.strip_prefix("<![CDATA[") {
+            } else if self.foreign
+                && let Some(after) = rest.strip_prefix("<![CDATA[")
+            {
                 let end = after.find("]]>").unwrap_or(after.len());
                 self.rest = after.get(end + 3..).unwrap_or("");
-                if self.foreign && end > 0 {
-                    return Some(Token::Text(after[..end].to_owned()));
+                if end > 0 {
+                    return Some(Token::Text(newlines(&after[..end])));
                 }
-            } else if rest.starts_with("<!") || rest.starts_with("<?") {
+            } else if rest.starts_with("<!")
+                && rest
+                    .as_bytes()
+                    .get(2..9)
+                    .is_some_and(|word| word.eq_ignore_ascii_case(b"doctype"))
+            {
                 self.skip_past('>');
+            } else if let Some(after) = rest.strip_prefix("<!") {
+                self.rest = after;
+                return Some(self.bogus_comment());
+            } else if rest.starts_with("<?") {
+                self.rest = &rest[1..];
+                return Some(self.bogus_comment());
             } else if let Some(after) = rest.strip_prefix("</") {
                 if let Some(token) = self.end_tag(after) {
                     return Some(token);
@@ -56,6 +72,14 @@ impl<'a> Tokenizer<'a> {
                 return Some(token);
             }
         }
+    }
+    /** The bogus comment state: everything to the next `>` (or the end of input) is the
+    comment's data, as `<!x>`, `<?x>` and `</#x>` become comments in HTML. */
+    fn bogus_comment(&mut self) -> Token {
+        let end = self.rest.find('>').unwrap_or(self.rest.len());
+        let data = comment_data(&self.rest[..end]);
+        self.rest = self.rest.get(end + 1..).unwrap_or("");
+        Token::Comment(data)
     }
     /** Bytes of literal text before the next markup; a `<` that cannot open markup is text. */
     fn text_end(&self) -> usize {
@@ -71,22 +95,13 @@ impl<'a> Tokenizer<'a> {
         }
         self.rest.len()
     }
-    /** Comments end at `-->`, `--!>`, the abrupt `<!-->` forms, or the end of input. Returns
-    the comment's data. */
+    /** The comment start, comment and comment end states after `<!--`: `-->`, `--!>` and the
+    abrupt `<!-->` and `<!--->` forms end it, the end of input emits what was read, and stray
+    dashes stay data (`<!----->` holds `-`). Returns the comment's data. */
     fn comment(&mut self, after: &'a str) -> String {
-        for abrupt in [">", "->"] {
-            if let Some(rest) = after.strip_prefix(abrupt) {
-                self.rest = rest;
-                return String::new();
-            }
-        }
-        let (data, end) = [("-->", 3), ("--!>", 4)]
-            .iter()
-            .filter_map(|(close, len)| after.find(close).map(|at| (at, at + len)))
-            .min()
-            .unwrap_or((after.len(), after.len()));
+        let (data, end) = comment_end(after);
         self.rest = &after[end..];
-        after[..data].to_owned()
+        comment_data(&data)
     }
     /** Bogus comments and ignored tags run to the next `>` or the end of input. */
     fn skip_past(&mut self, close: char) {
@@ -98,9 +113,15 @@ impl<'a> Tokenizer<'a> {
     /** End tags ignore their attributes; `</>` is dropped and other `</x` is a bogus comment. */
     fn end_tag(&mut self, after: &'a str) -> Option<Token> {
         self.rest = after;
-        if !after.starts_with(|c: char| c.is_ascii_alphabetic()) {
-            self.skip_past('>');
+        if after.is_empty() {
+            return Some(Token::Text("</".into()));
+        }
+        if let Some(rest) = after.strip_prefix('>') {
+            self.rest = rest;
             return None;
+        }
+        if !after.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            return Some(self.bogus_comment());
         }
         let name = self.name();
         let closed = self.rest.contains('>');
@@ -175,7 +196,7 @@ impl<'a> Tokenizer<'a> {
                 value
             }
         };
-        (name, decode(raw, true))
+        (name, decode(&newlines(raw).replace('\0', "\u{fffd}"), true))
     }
     /** Raw text runs to a genuine case-insensitive `</tag`, or to the end of input when unclosed. */
     pub fn raw(&mut self, tag: &str) -> String {
@@ -198,11 +219,75 @@ impl<'a> Tokenizer<'a> {
             }
             at = index + 2;
         };
-        let text = self.rest[..end].to_owned();
+        let text = newlines(&self.rest[..end]).replace('\0', "\u{fffd}");
         self.rest = &self.rest[end..];
         if !self.rest.is_empty() {
             self.skip_past('>');
         }
         text
     }
+}
+
+/** Input stream preprocessing: CRLF pairs and lone CRs become LF, applied to each token's text
+since the tokenizer borrows the source. A CR then plain text then LF is two newlines. */
+fn newlines(text: &str) -> String {
+    if text.contains('\r') {
+        text.replace("\r\n", "\n").replace('\r', "\n")
+    } else {
+        text.to_owned()
+    }
+}
+
+/** Comment data with U+0000 replaced, as every comment state does, and newlines normalized. */
+fn comment_data(data: &str) -> String {
+    newlines(data).replace('\0', "\u{fffd}")
+}
+
+/** Runs HTML's comment states over the text after `<!--`; returns the data and the byte
+offset just past the comment. The less-than sign states only report nesting errors, so they
+add nothing beyond the characters themselves. */
+fn comment_end(after: &str) -> (String, usize) {
+    #[derive(PartialEq)]
+    enum State {
+        Start,
+        StartDash,
+        Comment,
+        EndDash,
+        End,
+        EndBang,
+    }
+    let mut state = State::Start;
+    let mut data = String::new();
+    let chars = after.char_indices();
+    for (at, c) in chars {
+        let next = at + c.len_utf8();
+        state = match (state, c) {
+            (State::Start | State::StartDash | State::End | State::EndBang, '>') => {
+                return (data, next);
+            }
+            (State::Start, '-') => State::StartDash,
+            (State::StartDash | State::EndDash, '-') => State::End,
+            (State::Comment, '-') => State::EndDash,
+            (State::End, '!') => State::EndBang,
+            (State::End, '-') => {
+                data.push('-');
+                State::End
+            }
+            (State::EndBang, '-') => {
+                data.push_str("--!");
+                State::EndDash
+            }
+            (state, c) => {
+                data.push_str(match state {
+                    State::StartDash | State::EndDash => "-",
+                    State::End => "--",
+                    State::EndBang => "--!",
+                    _ => "",
+                });
+                data.push(c);
+                State::Comment
+            }
+        };
+    }
+    (data, after.len())
 }

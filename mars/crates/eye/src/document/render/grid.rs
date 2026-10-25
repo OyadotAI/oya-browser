@@ -43,7 +43,12 @@ pub(super) fn children(
     if style.grid_lanes {
         return lanes::children(context, node, inner, items, &kids, &out_of_flow_kids);
     }
-    let gap = (style.column_gap, style.row_gap);
+    // Percentage gaps resolve against the content box, a row gap only against a definite
+    // height (Blink's GridLayoutAlgorithm::GutterSize); intrinsic sizing counted them as zero.
+    let gap = (
+        style.column_gap + style.gap_percent[0] * inner.width / 100.0,
+        style.row_gap + style.gap_percent[1] * inner.definite.unwrap_or(0.0) / 100.0,
+    );
     let mut columns = expand(&style.grid_columns, inner.width, gap.0);
     let explicit_columns = columns.len();
     // Rows repeat into a definite height, else once (css-grid-2 7.2.3.2).
@@ -158,7 +163,13 @@ pub(super) fn children(
         heights.len(),
         false,
     );
-    let row_gap = gap.1 + row_between;
+    // An auto height sized the rows with a percentage row gap as zero; the gap then resolves
+    // against that height and the rows overflow it (Blink lays out again at the used size).
+    let late_gap = match inner.definite {
+        None => style.gap_percent[1] * rows_used / 100.0,
+        Some(_) => 0.0,
+    };
+    let row_gap = gap.1 + row_between + late_gap;
     let tops = offsets(inner.y + row_lead, &heights, row_gap);
     for (item, (width, height)) in placed.iter().zip(natural) {
         context.charge(1)?;

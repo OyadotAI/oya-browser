@@ -200,6 +200,9 @@ struct Tree<'a> {
     base_url: Option<url::Url>,
     /** Attribute and text bytes the page's metadata elements hold, bounded by METADATA_BYTES. */
     metadata_bytes: usize,
+    /** Set just after a `<pre>` or `<listing>` start tag: a newline right after it is dropped,
+    as HTML's in-body mode ignores the next LF token there. */
+    after_pre: bool,
 }
 impl<'a> Tree<'a> {
     /** Pages and fragments share one builder; only the base identity and mode differ. */
@@ -227,6 +230,7 @@ impl<'a> Tree<'a> {
             foreign_context: false,
             base_url: None,
             metadata_bytes: 0,
+            after_pre: false,
         }
     }
     /** Every token is consumed, then every still-open element closes at end of input. */
@@ -276,7 +280,16 @@ impl<'a> Tree<'a> {
         }
     }
     /** Wrapper markup has no extra display node. */
-    fn consume(&mut self, token: Token) -> EngineResult<()> {
+    fn consume(&mut self, mut token: Token) -> EngineResult<()> {
+        if std::mem::take(&mut self.after_pre)
+            && let Token::Text(text) = &mut token
+            && text.starts_with('\n')
+        {
+            text.remove(0);
+            if text.is_empty() {
+                return Ok(());
+            }
+        }
         match token {
             Token::Start(tag, attrs, closed) => self.start(tag, attrs, closed),
             Token::End(tag) => self.end(&tag),
@@ -511,6 +524,7 @@ impl<'a> Tree<'a> {
                 self.close_current(&tag);
             }
             "embed" => self.finish(self.document.nodes.len() - 1),
+            "pre" | "listing" => self.after_pre = true,
             _ => {}
         }
         Ok(())
@@ -1094,6 +1108,20 @@ impl<'a> Tree<'a> {
             return Err(EngineError::limit("document nodes", NODES));
         }
         let parent = parent.unwrap_or_else(|| self.stack.last().map(|index| self.local(*index)));
+        // Inserting a character where the previous sibling is a Text node extends it, so text a
+        // dropped tag or comment split stays one node, as in HTML.
+        if let Some(last) = self.document.nodes.last()
+            && last.tag == "#text"
+            && last.parent == parent
+        {
+            let limit = super::content::text_limit(last).saturating_sub(last.text.len());
+            let text = self.truncated(text, limit);
+            self.text_bytes = super::content::add_static_bytes(self.text_bytes, text.len())?;
+            if let Some(last) = self.document.nodes.last_mut() {
+                last.text.push_str(&text);
+            }
+            return Ok(());
+        }
         let mut node = markup::node(
             "#text",
             self.base + self.document.nodes.len(),

@@ -248,7 +248,12 @@ fn value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
         .find(|(field, _)| field.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value.trim())
+        .map(|(_, value)| http_trim(value))
+}
+
+/** Fetch's HTTP tab-or-space trim: a vertical tab or form feed stays and spoils a token. */
+fn http_trim(text: &str) -> &str {
+    text.trim_matches([' ', '\t'])
 }
 
 /// The CORS check. Access-Control-Allow-Origin must be `*` (only without credentials) or the
@@ -275,7 +280,7 @@ fn tokens(headers: &[(String, String)], name: &str) -> Option<Vec<String>> {
     let mut items = Vec::new();
     for item in list
         .split(',')
-        .map(str::trim)
+        .map(http_trim)
         .filter(|item| !item.is_empty())
     {
         if !item

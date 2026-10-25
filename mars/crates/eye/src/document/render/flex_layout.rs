@@ -253,11 +253,11 @@ fn row(
             (flow.width, definite.then_some(container_cross)),
         )?);
     }
-    let ranges = flex::break_lines(
+    let ranges = flex::break_lines_in(
         &records,
         flow.width,
         parent.style.column_gap,
-        parent.style.flex_wrap == FlexWrap::Wrap,
+        flex::Breaking::of(parent),
     );
     let mut lines = Vec::with_capacity(ranges.len());
     for range in ranges {

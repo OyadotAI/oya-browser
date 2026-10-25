@@ -60,7 +60,12 @@ pub(super) fn apply(
             (style.word_spacing, style.spacing_percent[1]) =
                 spacing(value, style.font_size, context)?
         }
-        "text-transform" => style.text_transform = text_transform(value)?,
+        "text-transform" => {
+            let (case, full_width, full_size_kana) = text_transform(value)?;
+            style.text_transform = case;
+            style.text_transform_full_width = full_width;
+            style.text_transform_full_size_kana = full_size_kana;
+        }
         "white-space" => {
             style.white_space = white_space(value)?;
             style.break_spaces = value.split_ascii_whitespace().any(|v| v == "break-spaces");
@@ -321,15 +326,32 @@ fn tab_size(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64
         .then_some((used, true))
         .ok_or_else(unsupported)
 }
-/** Case mapping keywords. */
-fn text_transform(value: &str) -> EngineResult<TextTransform> {
-    Ok(match value {
-        "none" => TextTransform::None,
-        "uppercase" => TextTransform::Uppercase,
-        "lowercase" => TextTransform::Lowercase,
-        "capitalize" => TextTransform::Capitalize,
-        _ => return Err(unsupported()),
-    })
+/** `none | [capitalize | uppercase | lowercase] || full-width || full-size-kana` as the case
+mapping and the full-width and full-size-kana flags; a keyword twice is invalid. */
+fn text_transform(value: &str) -> EngineResult<(TextTransform, bool, bool)> {
+    if value == "none" {
+        return Ok((TextTransform::None, false, false));
+    }
+    let (mut case, mut full_width, mut kana) = (None, false, false);
+    for word in value.split_ascii_whitespace() {
+        let seen = match word {
+            "uppercase" | "lowercase" | "capitalize" if case.is_none() => {
+                case = Some(match word {
+                    "uppercase" => TextTransform::Uppercase,
+                    "lowercase" => TextTransform::Lowercase,
+                    _ => TextTransform::Capitalize,
+                });
+                false
+            }
+            "full-width" => std::mem::replace(&mut full_width, true),
+            "full-size-kana" => std::mem::replace(&mut kana, true),
+            _ => return Err(unsupported()),
+        };
+        if seen {
+            return Err(unsupported());
+        }
+    }
+    Ok((case.unwrap_or(TextTransform::None), full_width, kana))
 }
 /** Whitespace keywords; `break-spaces` behaves as pre-wrap here. CSS Text 4 also accepts the
 `white-space` shorthand as its two longhands, `<white-space-collapse> || <text-wrap-mode>`. */

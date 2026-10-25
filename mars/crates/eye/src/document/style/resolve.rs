@@ -21,6 +21,8 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         spacing_percent: parent.spacing_percent,
         text_indent: parent.text_indent,
         text_transform: parent.text_transform,
+        text_transform_full_width: parent.text_transform_full_width,
+        text_transform_full_size_kana: parent.text_transform_full_size_kana,
         white_space: parent.white_space,
         break_spaces: parent.break_spaces,
         tab_size: parent.tab_size,
@@ -36,6 +38,7 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         border_collapse: parent.border_collapse,
         caption_bottom: parent.caption_bottom,
         vertical_writing: parent.vertical_writing,
+        text_box_edge: parent.text_box_edge,
         ..ComputedStyle::default()
     }
 }
@@ -62,6 +65,7 @@ fn inherits(key: &str) -> bool {
             "border-collapse",
             "caption-side",
             "pointer-events",
+            "text-box-edge",
         ]
         .contains(&key)
 }
@@ -234,7 +238,11 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
             style.spacing_percent[1] = source.spacing_percent[1];
         }
         "text-indent" => style.text_indent = source.text_indent,
-        "text-transform" => style.text_transform = source.text_transform,
+        "text-transform" => {
+            style.text_transform = source.text_transform;
+            style.text_transform_full_width = source.text_transform_full_width;
+            style.text_transform_full_size_kana = source.text_transform_full_size_kana;
+        }
         "white-space" => {
             style.white_space = source.white_space;
             style.break_spaces = source.break_spaces;

@@ -33,6 +33,9 @@ pub(super) struct Strut {
     /** The font's own ascent and descent without leading, where `text-top` and `text-bottom`
      * align (Blink's TextTop and the primary font's descent). */
     pub text: (f64, f64),
+    /** Where `text-box-trim` cuts the line around its baseline: the font's ascent and descent
+     * at `text-box-edge` (Blink's InlineBoxState::AdjustEdges for the line's root style). */
+    pub edges: (f64, f64),
 }
 impl Strut {
     /** The strut of a block with this style: its line-height around its primary font. */
@@ -43,8 +46,29 @@ impl Strut {
             height: super::sizing::advance(style),
             font: style.font_size,
             text: (ascent, content - ascent),
+            edges: trim_edges(style, (ascent, content - ascent)),
         }
     }
+}
+/** The font's ascent at the `text-box-edge` over edge and descent at its under edge, given
+ * its full `text` ascent and descent. */
+fn trim_edges(style: &crate::document::ComputedStyle, (ascent, descent): (f64, f64)) -> (f64, f64) {
+    use crate::document::style::text_box::{OVER_CAP, OVER_EX, UNDER_ALPHABETIC};
+    let [over, under] = style.text_box_edge;
+    let face = || crate::platform::edges(super::sizing::face(style));
+    let over = match over {
+        OVER_CAP => face().0,
+        OVER_EX => face().1,
+        _ => ascent,
+    };
+    (
+        over,
+        if under == UNDER_ALPHABETIC {
+            0.0
+        } else {
+            descent
+        },
+    )
 }
 /** Horizontal alignment of finished lines inside their available width. */
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -153,8 +177,10 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
             };
         }
     }
-    let height = over + under;
+    let mut height = over + under;
     let down = over - ascent;
+    let cut = trim_line(flow, strut, height, baseline - lowest + down);
+    height -= cut;
     let placed = frags
         .into_iter()
         .map(|frag| {
@@ -163,7 +189,7 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
                 VerticalAlign::Bottom => height - frag.height,
                 _ => top_of(&frag) - lowest + down,
             };
-            (frag, top)
+            (frag, top - cut)
         })
         .collect();
     let (left, width) = flow.room_at(flow.y);
@@ -175,6 +201,61 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
     });
     height
 }
+/**
+ * Blink's ApplyTextBoxTrim for a line of a block that trims: the first formatted line's top
+ * moves down to the root font's over edge (the returned cut, which the caller takes off the
+ * line and its fragments), and every line records how far its bottom sits below the under edge,
+ * so the block's end trims the last one with `trim_end`. Content past the edges overflows.
+ */
+fn trim_line(flow: &mut Flow, strut: Option<Strut>, height: f64, baseline: f64) -> f64 {
+    let Some(strut) = strut else {
+        return 0.0;
+    };
+    let cut = if std::mem::take(&mut flow.trim[0]) {
+        baseline - strut.edges.0
+    } else {
+        0.0
+    };
+    // The text runs' own advance (`flow.line`) and the bottom they reached lose the cut with
+    // the line box.
+    flow.line -= cut;
+    if flow.bottom > flow.y {
+        flow.bottom = (flow.bottom - cut).max(flow.y);
+    }
+    if flow.trim[1] {
+        flow.tail = Some((height - baseline - strut.edges.1, Vec::new(), f64::INFINITY));
+    }
+    cut
+}
+/**
+ * Blink's TrimBlockEndBy at a block's end: when this block trims its end (`own`) and its last
+ * formatted line came last, the line's bottom rises to the under edge, taking the block's
+ * content height and every nested last block (`tail`'s items) with it.
+ */
+pub(super) fn trim_end(flow: &mut Flow, items: &mut [DisplayItem], own: bool) {
+    if !own {
+        return;
+    }
+    let Some((cut, nested, end)) = flow.tail.take() else {
+        return;
+    };
+    // A `<br clear>` moved the end below the line to clear floats; the line still trims, but
+    // the clearance keeps the block's end where it was.
+    if super::flow::cleared_past(flow, end) {
+        return;
+    }
+    if flow.bottom <= end.min(flow.y) + LINE_EPSILON {
+        flow.bottom = flow.y - cut;
+    }
+    flow.y -= cut;
+    for index in nested {
+        if let Some(item) = items.get_mut(index) {
+            item.height = (item.height - cut).max(0.0);
+        }
+    }
+}
+/** How far past a line's bottom the flow may end and still end at that line. */
+pub(super) const LINE_EPSILON: f64 = 0.01;
 /** Applies every finished line's offsets and alignment to the items, then refits inline boxes. */
 pub(super) fn settle(
     context: &mut LayoutContext<'_>,

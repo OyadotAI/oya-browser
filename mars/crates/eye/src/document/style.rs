@@ -39,6 +39,7 @@ mod sheet;
 mod shorthand;
 mod subjects;
 mod syntax;
+pub(crate) mod text_box;
 mod ua;
 mod urls;
 mod validation;

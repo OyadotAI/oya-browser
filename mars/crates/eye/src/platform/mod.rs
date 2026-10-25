@@ -4,7 +4,7 @@ mod text;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 pub use text::{
-    attributed, colored, directed, font, has_font, local_font_exists, measure, metrics,
+    attributed, colored, directed, edges, font, has_font, local_font_exists, measure, metrics,
     register_family, register_font, register_local, styled,
 };
 
@@ -88,6 +88,12 @@ pub fn local_font_exists(_name: &str) -> bool {
 pub fn measure(text: &str, face: Face) -> f64 {
     let count = text.chars().count() as f64;
     count * face.size * if face.bold() { 0.65 } else { 0.6 } + count * face.spacing
+}
+
+/// Headless builds use a fixed cap height and x-height.
+#[cfg(not(target_os = "macos"))]
+pub fn edges(face: Face) -> (f64, f64) {
+    (face.size * 0.7, face.size * 0.5)
 }
 
 /// Headless builds use a fixed ascender and normal line height.

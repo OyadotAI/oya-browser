@@ -57,6 +57,7 @@ pub(super) fn apply(
             .any(|word| ["paint", "strict", "content"].contains(&word));
     }
     if super::layout_props::apply(style, key, value, context)?
+        || super::text_box::apply(style, key, value)?
         || super::flex::apply(style, key, value, context)?
         || super::visual::apply(style, key, value, context, diagnostics)?
     {
@@ -339,10 +340,12 @@ fn display(
             set_display(style, true, true, false, false)
         }
         "flex" | "block flex" | "-webkit-box" | "-webkit-flex" => {
-            set_display(style, false, false, true, false)
+            set_display(style, false, false, true, false);
+            style.webkit_box = outer == "-webkit-box";
         }
         "inline-flex" | "inline flex" | "-webkit-inline-box" | "-webkit-inline-flex" => {
-            set_display(style, false, true, true, false)
+            set_display(style, false, true, true, false);
+            style.webkit_box = outer == "-webkit-inline-box";
         }
         "grid" | "block grid" => set_display(style, false, false, false, true),
         "inline-grid" | "inline grid" => set_display(style, false, true, false, true),
@@ -408,6 +411,7 @@ fn set_display(style: &mut ComputedStyle, inline: bool, atomic: bool, flex: bool
     style.list_item = false;
     style.table_box = TableBox::None;
     style.flow_root = false;
+    style.webkit_box = false;
 }
 /** Offered color schemes. */
 fn color_scheme(value: &str) -> EngineResult<ColorScheme> {
