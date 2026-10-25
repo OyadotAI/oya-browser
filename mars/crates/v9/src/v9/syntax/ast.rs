@@ -161,8 +161,9 @@ pub(in crate::v9) enum StmtKind {
     Switch(Expr, Vec<Case>),
     Labeled(Name, Box<Stmt>),
     Empty,
-    /** `with` parses but cannot run: V9 resolves names statically. */
-    With(Box<Stmt>),
+    /** `with (object) body`: names in the body look in the object first (an object
+    environment record, V8's with context). */
+    With(Expr, Box<Stmt>),
     /** A class field definition; appears only inside a class's synthesized initializer. */
     Field(PropKey, Option<Expr>),
 }

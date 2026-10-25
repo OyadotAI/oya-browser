@@ -3,6 +3,14 @@ use super::scan;
 use super::*;
 use crate::v9::syntax::{Case, Declarator, ForHead, ForInit, Pattern, StmtKind, VarKind};
 
+/** Which kind of for-each loop is being lowered. */
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Each {
+    In,
+    Of,
+    AwaitOf,
+}
+
 impl Compiler {
     /** Top-level declarations: global vars and functions now, global lexical bindings in their dead zone. */
     pub(super) fn global_declarations(&mut self, body: &[Stmt]) -> EngineResult<()> {
@@ -78,6 +86,7 @@ impl Compiler {
                 if !self.f().strict
                     && let Some(name) = &func.name
                     && self.scopes.last().is_some_and(|scope| !scope.boundary)
+                    && !self.f().annex_skip.contains(name)
                 {
                     self.load_name(name, stmt.pos)?;
                     self.store_var_outward(name, stmt.pos)?;
@@ -119,15 +128,11 @@ impl Compiler {
                 labels,
             )?,
             StmtKind::ForIn(head, right, body) => {
-                self.for_each(stmt, head, right, body, false, labels)?
+                self.for_each(stmt, head, right, body, Each::In, labels)?
             }
             StmtKind::ForOf(head, right, body, is_await) => {
-                if *is_await {
-                    let index = self.name("for await")?;
-                    self.emit(Op::Unsupported(index));
-                } else {
-                    self.for_each(stmt, head, right, body, true, labels)?
-                }
+                let kind = if *is_await { Each::AwaitOf } else { Each::Of };
+                self.for_each(stmt, head, right, body, kind, labels)?
             }
             StmtKind::While(test, body) => {
                 self.push_target(labels, TargetKind::Loop);
@@ -181,11 +186,48 @@ impl Compiler {
                 }
             }
             StmtKind::Empty => {}
-            StmtKind::With(..) => {
-                let index = self.name("with statements")?;
-                self.emit(Op::Unsupported(index));
+            // Strict eval code inherits its caller's strictness after parsing (spec 14.11.1).
+            StmtKind::With(..) if self.f().strict => {
+                return Err(errors::syntax(
+                    stmt.pos.location(),
+                    "SyntaxError: Strict mode code may not include a with statement",
+                ));
             }
+            StmtKind::With(object, body) => self.with_statement(object, body, labels)?,
             StmtKind::Field(key, value) => self.field(key, value.as_ref())?,
+        }
+        Ok(())
+    }
+    /**
+     * `with (object) body` (spec 14.11, V8's with context): the object, converted with
+     * ToObject, sits in the hidden `%with` slot of a fresh environment, and every name the body
+     * looks up across that scope checks it first (see `ext_checks`).
+     */
+    fn with_statement(
+        &mut self,
+        object: &Expr,
+        body: &Stmt,
+        labels: Vec<Name>,
+    ) -> EngineResult<()> {
+        let labeled = !labels.is_empty();
+        if labeled {
+            self.push_target(labels, TargetKind::Block);
+        }
+        self.expr(object)?;
+        self.emit(Op::ToObject);
+        self.push_scope(true, false);
+        self.f().envs += 1;
+        self.emit(Op::PushEnv(1));
+        self.declare(&Name::from(super::eval::WITH), Declared::Hidden)?;
+        self.emit(Op::SetEnv(0, 0));
+        self.emit(Op::Pop);
+        self.stmt(body)?;
+        self.scopes.pop();
+        self.emit(Op::PopEnv);
+        self.f().envs -= 1;
+        if labeled {
+            let end = self.here() as u32;
+            self.pop_target(end);
         }
         Ok(())
     }
@@ -278,7 +320,14 @@ impl Compiler {
     /** `return`, which constructors and derived constructors finish specially. */
     fn return_statement(&mut self, value: Option<&Expr>) -> EngineResult<()> {
         match value {
-            Some(value) => self.expr(value)?,
+            Some(value) => {
+                self.expr(value)?;
+                // An async generator awaits the value it returns.
+                let flags = self.f().flags;
+                if flags.asynchronous && flags.generator {
+                    self.emit(Op::Await);
+                }
+            }
             None => {
                 self.emit(Op::Undefined);
             }
@@ -449,23 +498,33 @@ impl Compiler {
         head: &ForHead,
         right: &Expr,
         body: &Stmt,
-        of: bool,
+        kind: Each,
         labels: Vec<Name>,
     ) -> EngineResult<()> {
+        let of = kind != Each::In;
         let mark = self.f().registers;
         let iterator = self.temp()?;
         self.expr(right)?;
-        self.emit(if of { Op::GetIterator } else { Op::ForIn });
+        self.emit(match kind {
+            Each::In => Op::ForIn,
+            Each::Of => Op::GetIterator,
+            Each::AwaitOf => Op::GetAsyncIterator,
+        });
         self.emit(Op::SetReg(iterator));
         self.emit(Op::Pop);
         self.push_target(labels, TargetKind::Loop);
         let start = self.here();
         self.emit(Op::GetReg(iterator));
-        let exit = self.emit(if of {
-            Op::IterNext(0)
-        } else {
-            Op::ForInNext(0)
-        });
+        let exit = match kind {
+            Each::In => self.emit(Op::ForInNext(0)),
+            Each::Of => self.emit(Op::IterNext(0)),
+            Each::AwaitOf => {
+                // for await: the next() result is awaited before its done and value are read.
+                self.emit(Op::AsyncIterNext);
+                self.emit(Op::Await);
+                self.emit(Op::AsyncIterValue(0))
+            }
+        };
         // Each iteration gets fresh lexical bindings.
         let lexical = matches!(head, ForHead::Declare(VarKind::Let | VarKind::Const, _));
         let mut scope = None;
@@ -520,7 +579,14 @@ impl Compiler {
         for index in breaks {
             self.patch(index);
         }
-        if of {
+        if kind == Each::AwaitOf {
+            // AsyncIteratorClose: await what return() gives back; it must be an object.
+            self.emit(Op::GetReg(iterator));
+            let skip = self.emit(Op::AsyncIterClose(0));
+            self.emit(Op::Await);
+            self.emit(Op::AsyncCloseCheck);
+            self.patch(skip);
+        } else if of {
             self.emit(Op::GetReg(iterator));
             self.emit(Op::IterClose);
         }
@@ -683,8 +749,13 @@ impl Compiler {
             self.f().envs += 1;
             self.emit(Op::PushEnv(0))
         });
+        let declared = if matches!(param, Pattern::Ident(..)) {
+            Declared::Catch
+        } else {
+            Declared::Let
+        };
         for name in &names {
-            self.declare(name, Declared::Let)?;
+            self.declare(name, declared)?;
         }
         self.bind_pattern(param, true)?;
         self.emit(Op::Pop);

@@ -326,7 +326,7 @@ impl Vm<'_> {
             new_target: construct.clone().unwrap_or(JsValue::Undefined),
             handlers: Vec::new(),
             envs: 0,
-            boundary: boundary || flags.asynchronous,
+            boundary: boundary || flags.asynchronous && !flags.generator,
             construct: construct.is_some(),
             resume: Resume::Next,
             code,
@@ -335,7 +335,7 @@ impl Vm<'_> {
             self.run_fields(&function, &this)?;
         }
         self.frames.push(frame);
-        if flags.asynchronous {
+        if flags.asynchronous && !flags.generator {
             return self.start_async().map(Invoked::Value);
         }
         Ok(Invoked::Frame)
@@ -370,7 +370,9 @@ impl Vm<'_> {
             .registry
             .get(site)
             .ok_or_else(|| EngineError::invalid("Invalid V9 function code site."))?;
-        let proto = if code.flags.generator {
+        let proto = if code.flags.generator && code.flags.asynchronous {
+            realm().ids.async_generator_function_prototype
+        } else if code.flags.generator {
             realm().ids.generator_function_prototype
         } else if code.flags.asynchronous {
             realm().ids.async_function_prototype
@@ -493,6 +495,12 @@ impl Vm<'_> {
     }
     /** Run (or resume) an async frame; on await, park it in `holder` and subscribe to the value. */
     pub fn drive_async(&mut self, holder: ObjectId, resume: Option<(Resume, JsValue)>) -> Res<()> {
+        if let (Some(Class::AsyncGenerator(_)), Some((mode, value))) = (
+            self.heap.get(holder).map(|object| &object.class),
+            resume.clone(),
+        ) {
+            return self.async_generator_settled(holder, mode, value);
+        }
         let promise = match self.heap.get(holder).map(|object| &object.class) {
             Some(Class::Async(data)) => data.promise,
             _ => return Err(EngineError::invalid("Invalid V9 async state.").into()),
@@ -522,8 +530,18 @@ impl Vm<'_> {
                 {
                     data.frame = frame;
                 }
-                let awaited = self.promise_resolve(value)?;
-                self.await_promise(awaited, holder)
+                match self.promise_resolve(value) {
+                    Ok(awaited) => self.await_promise(awaited, holder),
+                    // A throwing `constructor` lookup throws at the await. Each such resumption
+                    // counts as native depth, so the frame bound limits a loop of them.
+                    Err(Thrown::Value(error)) => {
+                        self.native_depth += 1;
+                        let resumed = self.drive_async(holder, Some((Resume::Throw, error)));
+                        self.native_depth -= 1;
+                        resumed
+                    }
+                    Err(fatal) => Err(fatal),
+                }
             }
             Ok(Exit::Yield(_)) => {
                 Err(EngineError::invalid("V9 yield in an async function.").into())

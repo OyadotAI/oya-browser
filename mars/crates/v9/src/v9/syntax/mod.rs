@@ -52,6 +52,8 @@ struct Context {
     no_arguments: bool,
     /// Directly inside a class static block, where `await` is reserved.
     static_block: bool,
+    /// Inside a parameter list, where `yield` and `await` expressions are early errors.
+    parameters: bool,
 }
 
 /** A recursive-descent parser over the scanner's tokens. */
@@ -157,6 +159,9 @@ impl Parser {
         let module = self.module.take();
         if let Some(module) = &module {
             module::check_exports(module, pos)?;
+            // A module's top-level functions are lexical, and imports bind lexically too.
+            self.check_redeclarations(&body)?;
+            module::check_imports(module, &body)?;
         }
         Ok(Program {
             body,
@@ -234,7 +239,8 @@ impl Parser {
     }
     /** True if the current token is this identifier or keyword. */
     fn at_name(&self, name: &str) -> bool {
-        matches!(&self.peek().kind, Kind::Name(found) if found == name)
+        let token = self.peek();
+        !token.escaped && matches!(&token.kind, Kind::Name(found) if found == name)
     }
     /** Consume the punctuator if present. */
     fn eat(&mut self, spelling: &str) -> bool {

@@ -82,9 +82,13 @@ impl Compiler {
         } else {
             Vec::new()
         };
-        // Destructuring null or undefined throws, even for an empty pattern.
+        // Destructuring null or undefined throws, even for an empty pattern; CopyRest raises
+        // that error, and runs only for a nullish value so no getter is read twice.
+        self.emit(Op::Dup);
+        let ok = self.emit(Op::JumpIfNotNullishKeep(0));
         self.emit(Op::Dup);
         self.emit(Op::CopyRest(0));
+        self.patch(ok);
         self.emit(Op::Pop);
         for (index, prop) in props.iter().enumerate() {
             self.emit(Op::Dup);

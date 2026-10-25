@@ -199,6 +199,11 @@ impl Props {
     pub fn get(&self, key: &Key) -> Option<&Prop> {
         self.position(key).map(|index| &self.entries[index].1)
     }
+    /** Change a property in place: the interpreter's store fast path updates a value without
+    the remove and insert a replacement would cost. */
+    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Prop> {
+        self.position(key).map(|index| &mut self.entries[index].1)
+    }
     /** Insert or replace, returning the old property. */
     pub fn insert(&mut self, key: Key, prop: Prop) -> Option<Prop> {
         if let Some(index) = self.position(&key) {

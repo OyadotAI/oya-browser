@@ -290,6 +290,15 @@ fn trace_class(class: &Class, marker: &mut Marker) {
                 marker.frame(frame);
             }
         }
+        Class::AsyncGenerator(data) => {
+            if let Some(frame) = &data.frame {
+                marker.frame(frame);
+            }
+            for request in &data.queue {
+                marker.value(&request.value);
+                marker.object(request.promise);
+            }
+        }
         Class::Async(data) => {
             marker.object(data.promise);
             if let Some(frame) = &data.frame {

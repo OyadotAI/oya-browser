@@ -57,6 +57,9 @@ impl Parser {
     /** `yield`, `yield value` and `yield* iterable`. */
     fn yield_expression(&mut self, no_in: bool) -> EngineResult<Expr> {
         let pos = self.pos();
+        if self.context.parameters {
+            return Err(self.error_at(pos, "Yield expression not allowed in formal parameter"));
+        }
         self.next();
         let delegate = !self.peek().line_terminator_before && self.eat("*");
         let ends = self.peek().line_terminator_before && !delegate
@@ -219,6 +222,9 @@ impl Parser {
             return self.node(ExprKind::Unary(operator, Box::new(operand)), pos);
         }
         if self.at_name("await") && self.context.asynchronous {
+            if self.context.parameters {
+                return Err(self.error_at(pos, "Illegal await-expression in formal parameters"));
+            }
             self.next();
             let operand = self.unary()?;
             return self.node(ExprKind::Await(Box::new(operand)), pos);
@@ -466,7 +472,8 @@ impl Parser {
             }
             Kind::Symbol('[') => return self.array_literal(),
             Kind::Symbol('{') => return self.object_literal(),
-            Kind::Name(name) => match name.as_str() {
+            // An escaped name is never a keyword, so it takes the identifier arm.
+            Kind::Name(name) => match if token.escaped { "" } else { name.as_str() } {
                 "this" => {
                     self.next();
                     ExprKind::This

@@ -13,7 +13,9 @@ use crate::v9::binding::{Binding, BindingKind};
 use crate::v9::compile::Op;
 use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
 
+mod asyncgen;
 mod eval;
+mod with;
 
 /** Completion kinds a finally block's registers hold. */
 const NORMAL: f64 = 0.0;
@@ -58,7 +60,10 @@ impl Vm<'_> {
             return Ok(None);
         };
         let mode = std::mem::take(&mut frame.resume);
-        if frame.code.ops.get(frame.pc) == Some(&Op::YieldStar) {
+        if matches!(
+            frame.code.ops.get(frame.pc),
+            Some(Op::YieldStar | Op::AsyncYieldStar)
+        ) {
             frame.resume = mode;
             return Ok(None);
         }
@@ -448,6 +453,14 @@ impl Vm<'_> {
             Op::GetExt(name, hops, slot) => self.get_ext(name, hops, slot)?,
             Op::SetExt(name, hops, slot) => self.set_ext(name, hops, slot)?,
             Op::DeclareExt(name, hops, slot) => self.declare_ext(name, hops, slot)?,
+            Op::GetWith(name, hops, slot, call) => self.get_with(name, hops, slot, call)?,
+            Op::SetWith(name, hops, slot) => self.set_with(name, hops, slot)?,
+            Op::DeleteWith(name, hops, slot) => self.delete_with(name, hops, slot)?,
+            Op::ToObject => {
+                let value = self.pop();
+                let id = self.to_object(&value)?;
+                self.push(JsValue::Object(id));
+            }
             Op::ThrowSyntax(message) => {
                 let message = self.constant(message).lossy();
                 return Err(self.syntax_error(&message));
@@ -1170,10 +1183,22 @@ impl Vm<'_> {
                 let frame = self.frames.pop().expect("generator frame");
                 let callee = frame.callee.clone();
                 let boundary = frame.boundary;
+                let asynchronous = frame.code.flags.asynchronous;
                 let saved = self.save_frame(frame);
-                let generator = self.new_generator(saved, &callee)?;
+                let generator = if asynchronous {
+                    self.new_async_generator(saved, &callee)?
+                } else {
+                    self.new_generator(saved, &callee)?
+                };
                 return Ok(self.finish_frame(JsValue::Object(generator), boundary));
             }
+            Op::GetAsyncIterator
+            | Op::AsyncIterNext
+            | Op::AsyncIterValue(_)
+            | Op::AsyncIterClose(_)
+            | Op::AsyncCloseCheck
+            | Op::AsyncYieldStar
+            | Op::AsyncYieldStarResult => return self.async_iteration_op(op),
             Op::Regex(pattern, flags) => {
                 let pattern = self.constant(pattern);
                 let flags = self.constant(flags).lossy();
@@ -1209,17 +1234,26 @@ impl Vm<'_> {
     }
     /** Read a global name: lexical bindings first, then the global object. */
     pub fn global_get(&mut self, name: &JsString, typeof_only: bool) -> Res<JsValue> {
-        let text = name.lossy();
-        if let Some(binding) = self.globals.get(&text) {
-            return match &binding.value {
-                Some(value) => Ok(value.clone()),
-                None => {
-                    Err(self
-                        .reference_error(&format!("Cannot access '{text}' before initialization")))
-                }
-            };
+        let found = with_text(name, |text| {
+            self.globals.get(text).map(|binding| binding.value.clone())
+        });
+        if let Some(value) = found {
+            let text = name.lossy();
+            return value.ok_or_else(|| {
+                self.reference_error(&format!("Cannot access '{text}' before initialization"))
+            });
         }
         let key = Key::Str(name.clone());
+        // An own data property of the global object (var, function, builtins) answers in one
+        // lookup; anything else takes the full [[HasProperty]] then [[Get]] path.
+        if let Some(Prop {
+            slot: Slot::Data(value),
+            ..
+        }) = self.own(GLOBAL, &key)?
+        {
+            return Ok(value);
+        }
+        let text = name.lossy();
         if self.has_property(GLOBAL, &key)? {
             return self.get_from(GLOBAL, &key, &JsValue::Object(GLOBAL));
         }
@@ -1230,21 +1264,29 @@ impl Vm<'_> {
     }
     /** Assign a global name. */
     pub fn global_set(&mut self, name: &JsString, value: JsValue) -> Res<()> {
-        let text = name.lossy();
-        if let Some(binding) = self.globals.get(&text) {
-            if binding.value.is_none() {
+        let found = with_text(name, |text| {
+            self.globals
+                .get(text)
+                .map(|binding| (binding.value.is_none(), binding.kind == BindingKind::Const))
+        });
+        if let Some((uninitialized, constant)) = found {
+            if uninitialized {
+                let text = name.lossy();
                 return Err(
                     self.reference_error(&format!("Cannot access '{text}' before initialization"))
                 );
             }
-            if binding.kind == BindingKind::Const {
+            if constant {
                 return Err(self.type_error("Assignment to constant variable."));
             }
             let units = value.string_units();
-            self.globals.get_mut(&text).expect("binding").value = Some(value);
+            with_text(name, |text| {
+                self.globals.get_mut(text).expect("binding").value = Some(value);
+            });
             self.heap.adjust(0, units as isize);
             return Ok(());
         }
+        let text = name.lossy();
         let key = Key::Str(name.clone());
         let strict = self.frames.last().is_some_and(|frame| frame.code.strict);
         if strict && !self.has_property(GLOBAL, &key)? {
@@ -1745,4 +1787,24 @@ impl Vm<'_> {
         }
         Ok(())
     }
+}
+
+/** Names at most this long convert to text on the stack. */
+const SHORT_NAME: usize = 64;
+
+/** Run `body` on a name's text. Short ASCII names, nearly every identifier, convert on the stack,
+so a global read or write allocates nothing; any other name takes the lossy conversion the
+global map's keys were made with. */
+fn with_text<R>(name: &JsString, body: impl FnOnce(&str) -> R) -> R {
+    let units = name.as_units();
+    let mut bytes = [0u8; SHORT_NAME];
+    if units.len() <= SHORT_NAME && units.iter().all(|unit| *unit < 0x80) {
+        for (byte, unit) in bytes.iter_mut().zip(units) {
+            *byte = *unit as u8;
+        }
+        if let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
+            return body(text);
+        }
+    }
+    body(&name.lossy())
 }

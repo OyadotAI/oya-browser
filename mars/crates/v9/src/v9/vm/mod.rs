@@ -3,6 +3,7 @@
  * Every root is explicit, so collection can run between instructions and suspended generator and
  * async frames are plain data.
  */
+pub(in crate::v9) mod asyncgen;
 pub(in crate::v9) mod bigint;
 pub(in crate::v9) mod call;
 pub(in crate::v9) mod convert;

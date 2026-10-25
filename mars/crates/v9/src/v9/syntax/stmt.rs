@@ -35,7 +35,12 @@ impl Parser {
         if self.module_item() {
             return self.module_declaration();
         }
-        match name.as_str() {
+        // An escaped name is never a keyword, so it takes the identifier arm.
+        match if self.peek().escaped {
+            ""
+        } else {
+            name.as_str()
+        } {
             "var" => {
                 self.next();
                 let list = self.declarations(VarKind::Var, false)?;
@@ -46,17 +51,25 @@ impl Parser {
                 self.pos(),
                 "Lexical declaration cannot appear in a single-statement context",
             )),
-            "let" if !list_item && self.let_declaration() => Err(self.error_at(
-                self.pos(),
-                "Lexical declaration cannot appear in a single-statement context",
-            )),
+            // A single statement only refuses `let [`; `let` before a new line is a name.
+            "let"
+                if !list_item
+                    && (matches!(self.peek_at(1).kind, Kind::Symbol('['))
+                        || self.let_declaration() && !self.peek_at(1).line_terminator_before) =>
+            {
+                Err(self.error_at(
+                    self.pos(),
+                    "Lexical declaration cannot appear in a single-statement context",
+                ))
+            }
             "const" => {
                 self.next();
                 let list = self.declarations(VarKind::Const, false)?;
                 self.semicolon()?;
                 Ok(StmtKind::Var(VarKind::Const, list))
             }
-            "let" if self.let_declaration() => {
+            // Outside a statement list `let` is only ever a name (`let` then a new line then `{`).
+            "let" if list_item && self.let_declaration() => {
                 self.next();
                 let list = self.declarations(VarKind::Let, false)?;
                 self.semicolon()?;
@@ -139,9 +152,9 @@ impl Parser {
                 if self.strict {
                     return Err(self.error_at(pos, "with is not allowed in strict mode"));
                 }
-                self.parenthesized()?;
+                let object = self.parenthesized()?;
                 let body = self.sub_statement(false)?;
-                Ok(StmtKind::With(Box::new(body)))
+                Ok(StmtKind::With(object, Box::new(body)))
             }
             "import" | "export" if !matches!(self.peek_at(1).kind, Kind::Symbol('(' | '.')) => {
                 Err(self.unexpected())
@@ -187,11 +200,21 @@ impl Parser {
                 "In strict mode code, functions can only be declared at top level or inside a block.",
             ));
         }
-        self.statement(false)
+        let declares = if_branch && self.at_name("function");
+        let statement = self.statement(false)?;
+        if !declares {
+            return Ok(statement);
+        }
+        // B.3.4: the function stands as if it were the only statement in a block.
+        let pos = statement.pos;
+        Ok(Stmt {
+            kind: StmtKind::Block(vec![statement]),
+            pos,
+        })
     }
     /** A block's (or case block's) lexical names must be unique, apart from sloppy plain
     function pairs, and no `var` in the same list may reuse one. */
-    fn check_redeclarations<'a>(
+    pub(super) fn check_redeclarations<'a>(
         &self,
         body: impl IntoIterator<Item = &'a Stmt>,
     ) -> EngineResult<()> {
@@ -338,7 +361,32 @@ impl Parser {
                         "for-in/of loop variable declaration may not have an initializer.",
                     ));
                 }
-                return self.for_each(ForHead::Declare(kind, declarator.target), is_await);
+                let assign = match (&declarator.target, declarator.init) {
+                    (Pattern::Ident(name, at), Some(init)) => {
+                        let target = Box::new(Pattern::Ident(name.clone(), *at));
+                        let kind = ExprKind::Assign(AssignOp::Assign, target, Box::new(init));
+                        Some(Expr { kind, pos: *at })
+                    }
+                    _ => None,
+                };
+                let mut each =
+                    self.for_each(ForHead::Declare(kind, declarator.target), is_await)?;
+                // B.3.5: the initializer runs once, before the object expression.
+                if let (Some(assign), StmtKind::ForIn(_, right, _)) = (assign, &mut each) {
+                    let pos = right.pos;
+                    let object = std::mem::replace(
+                        right,
+                        Expr {
+                            kind: ExprKind::Sequence(Vec::new()),
+                            pos,
+                        },
+                    );
+                    *right = Expr {
+                        kind: ExprKind::Sequence(vec![assign, object]),
+                        pos,
+                    };
+                }
+                return Ok(each);
             }
             // Only a for-in/of head may omit initializers; a plain for head follows the
             // ordinary declaration rule.
@@ -356,10 +404,14 @@ impl Parser {
             let start = self.position;
             let value = self.expression(true)?;
             if self.at_name("of")
-                && !(matches!(&value.kind, ExprKind::Ident(n) if &**n == "async")
+                && !(!is_await
+                    && matches!(&value.kind, ExprKind::Ident(n) if &**n == "async")
                     && self.position == start + 1)
                 || self.at_name("in")
             {
+                if matches!(value.kind, ExprKind::Assign(..)) {
+                    return Err(self.error_at(value.pos, "Invalid left-hand side in for-in loop"));
+                }
                 let target = self.pattern_of(value)?;
                 return self.for_each(ForHead::Target(target), is_await);
             }
@@ -438,8 +490,12 @@ impl Parser {
     }
     /** `label: statement` */
     fn labeled(&mut self, list_item: bool) -> EngineResult<StmtKind> {
+        let pos = self.pos();
         let name = self.identifier()?;
         self.expect(":")?;
+        if self.labels.iter().any(|(label, _)| *label == name) {
+            return Err(self.error_at(pos, &format!("Label '{name}' has already been declared")));
+        }
         let is_loop = matches!(&self.peek().kind, Kind::Name(n) if ["for", "while", "do"].contains(&n.as_str()));
         self.labels.push((name.clone(), is_loop));
         // A labelled function is sloppy Annex B grammar, and only where a declaration may stand.
@@ -453,7 +509,9 @@ impl Parser {
             }
             self.statement(list_item)
         } else {
-            self.statement(false)
+            // A nested label keeps the declaration context: `a: b: function f() {}`.
+            let nested = matches!(self.peek_at(1).kind, Kind::Symbol(':')) && self.at_identifier();
+            self.statement(list_item && nested)
         };
         self.labels.pop();
         Ok(StmtKind::Labeled(name, Box::new(body?)))

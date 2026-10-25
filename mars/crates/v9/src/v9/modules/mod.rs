@@ -496,7 +496,7 @@ fn compile_classic(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<Arc
 /** Compile one module at its page offset; the outer error is a service failure. */
 fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompilation> {
     Ok(vm.registry.module(source, offset, || {
-        super::lexer::tokenize(source)
+        super::lexer::tokenize_module(source)
             .map_err(|mut error| {
                 if let Some(location) = error.location.as_deref_mut() {
                     location.byte_offset += offset;

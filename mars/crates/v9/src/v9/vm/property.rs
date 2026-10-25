@@ -38,6 +38,29 @@ impl Descriptor {
     }
 }
 
+/** What the fast property path found on one object. */
+enum Fast {
+    /** An own data property's value. */
+    Value(JsValue),
+    /** No own property: the walk continues at this prototype. */
+    Missing(Option<ObjectId>),
+    /** Exotic object or accessor: the full path decides. */
+    Slow,
+}
+
+/** Whether `own` reads `key` on this class straight from the property list with no exotic
+behaviour (proxies, host objects, namespaces, and the index and length keys of arrays, strings
+and typed views all have their own). */
+fn ordinary_slot(class: &Class, key: &Key) -> bool {
+    match class {
+        Class::Proxy(_) | Class::Host(_) | Class::Namespace(_) => false,
+        Class::Array(_) | Class::String(_) | Class::View(_) => {
+            key.index().is_none() && !key_is(key, "length")
+        }
+        _ => true,
+    }
+}
+
 /** Longest prototype chain walked before assuming a cycle. */
 pub(in crate::v9) const CHAIN_STEPS: usize = 4096;
 
@@ -266,12 +289,12 @@ impl Vm<'_> {
                     }));
                 }
                 if key_is(key, "prototype")
-                    && !flags.arrow
-                    && !flags.method
-                    && !flags.asynchronous
-                    && !flags.fields
+                    && (flags.generator
+                        || !flags.arrow && !flags.method && !flags.asynchronous && !flags.fields)
                 {
-                    let proto = if flags.generator {
+                    let proto = if flags.generator && flags.asynchronous {
+                        realm().ids.async_generator_prototype
+                    } else if flags.generator {
                         realm().ids.generator_prototype
                     } else {
                         realm().ids.object_prototype
@@ -368,6 +391,15 @@ impl Vm<'_> {
     pub fn get_from(&mut self, start: ObjectId, key: &Key, receiver: &JsValue) -> Res<JsValue> {
         let mut id = start;
         for _ in 0..CHAIN_STEPS {
+            match self.fast_own(id, key) {
+                Fast::Value(value) => return Ok(value),
+                Fast::Missing(Some(proto)) => {
+                    id = proto;
+                    continue;
+                }
+                Fast::Missing(None) => return Ok(JsValue::Undefined),
+                Fast::Slow => {}
+            }
             if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_get(&proxy, key, receiver);
             }
@@ -425,6 +457,9 @@ impl Vm<'_> {
         value: JsValue,
         receiver: &JsValue,
     ) -> Res<bool> {
+        if *receiver == JsValue::Object(start) && self.fast_write(start, &key, &value) {
+            return Ok(true);
+        }
         let mut id = start;
         for _ in 0..CHAIN_STEPS {
             if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
@@ -450,6 +485,49 @@ impl Vm<'_> {
             return Ok(false);
         };
         self.write_own(*target, key, value)
+    }
+    /** One step of the ordinary [[Get]] walk answered straight from a heap object's property
+    list, as V8's fast-properties load does; anything exotic, an accessor, or a function's
+    virtual names says Slow and takes the full path, so behaviour is unchanged. */
+    fn fast_own(&self, id: ObjectId, key: &Key) -> Fast {
+        let Some(object) = self.heap.get(id) else {
+            return Fast::Slow;
+        };
+        if !ordinary_slot(&object.class, key) {
+            return Fast::Slow;
+        }
+        match object.props.get(key) {
+            Some(Prop {
+                slot: Slot::Data(value),
+                ..
+            }) => Fast::Value(value.clone()),
+            Some(_) => Fast::Slow,
+            None if object.function().is_some() => Fast::Slow,
+            None => Fast::Missing(object.proto),
+        }
+    }
+    /** Overwrite an own writable data property of an ordinary object in place, the common
+    `o.x = v` on an existing field. False leaves every other case to the full [[Set]]. */
+    fn fast_write(&mut self, id: ObjectId, key: &Key, value: &JsValue) -> bool {
+        let Some(object) = self.heap.get_mut(id) else {
+            return false;
+        };
+        if !ordinary_slot(&object.class, key) {
+            return false;
+        }
+        let Some(prop) = object.props.get_mut(key) else {
+            return false;
+        };
+        let Slot::Data(old) = &mut prop.slot else {
+            return false;
+        };
+        if prop.attrs & WRITABLE == 0 {
+            return false;
+        }
+        let delta = value.string_units() as isize - old.string_units() as isize;
+        *old = value.clone();
+        self.heap.adjust(0, delta);
+        true
     }
     /** Create or update an own data property as assignment does. */
     pub fn write_own(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<bool> {
@@ -665,13 +743,10 @@ impl Vm<'_> {
         {
             return Ok(true);
         }
-        let virtual_slot = self
-            .heap
-            .get(id)
-            .is_some_and(|o| o.function().is_some() && o.props.get(key).is_none());
+        let virtual_slot = self.heap.get(id).is_some_and(|o| o.function().is_some());
         if virtual_slot && (key_is(key, "name") || key_is(key, "length")) {
-            // A function's `name` and `length` live outside its property table until written;
-            // deleting one leaves a hidden mark so the virtual value stops answering (spec:
+            // A function's `name` and `length` live outside its property table until written
+            // (a built-in's may also sit in it, over the virtual one); deleting one leaves a hidden mark so the virtual value stops answering (spec:
             // SetFunctionName and SetFunctionLength define ordinary configurable properties).
             let mark = Prop {
                 slot: Slot::Data(JsValue::Undefined),

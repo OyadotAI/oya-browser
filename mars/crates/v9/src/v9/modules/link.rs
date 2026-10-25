@@ -102,6 +102,16 @@ fn link(vm: &mut Vm, keys: &[String]) -> Res<Result<(), String>> {
                 )));
             }
         }
+        // InitializeEnvironment: every indirect export must resolve, unambiguously.
+        for (name, export) in &info.exports {
+            if matches!(export, crate::v9::compile::Export::Indirect(_, Some(_)))
+                && resolve_export(&vm.modules, key, name, &mut Vec::new()).is_none()
+            {
+                return Ok(Err(format!(
+                    "The export '{name}' cannot be resolved: it is missing, circular or ambiguous"
+                )));
+            }
+        }
     }
     for key in keys {
         instantiate(vm, key)?;
@@ -517,6 +527,11 @@ pub(in crate::v9) fn advance_dynamic(vm: &mut Vm) -> Res<()> {
         let keys = match graph(vm, &item.key) {
             Graph::Pending => {
                 kept.push(item);
+                continue;
+            }
+            Graph::Failed(error) if error.code == "script_syntax_error" => {
+                let error = vm.syntax_error(&error.message);
+                settle_thrown(vm, promise, error)?;
                 continue;
             }
             Graph::Failed(error) => {

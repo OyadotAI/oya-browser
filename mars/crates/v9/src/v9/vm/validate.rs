@@ -154,6 +154,19 @@ impl Vm<'_> {
                 }
                 Class::Generator(data) => self.validate_frame(data.frame.as_ref())?,
                 Class::Async(data) => self.validate_frame(data.frame.as_ref())?,
+                Class::AsyncGenerator(data) => {
+                    self.validate_frame(data.frame.as_ref())?;
+                    let forged_request = data.queue.iter().any(|request| {
+                        request.mode > 2
+                            || !matches!(
+                                self.heap.get(request.promise).map(|o| &o.class),
+                                Some(Class::Promise(_))
+                            )
+                    });
+                    if forged_request {
+                        return Err(forged("async generator request"));
+                    }
+                }
                 _ => {}
             }
         }

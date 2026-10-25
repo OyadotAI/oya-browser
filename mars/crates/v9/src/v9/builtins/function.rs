@@ -73,6 +73,12 @@ fn empty(_: &mut Vm, _: Call) -> Res<JsValue> {
 
 /** `new Function(params..., body)` compiles with V9's parser; it grants no new authority. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    create_dynamic(vm, call, "function")
+}
+
+/** CreateDynamicFunction for Function, GeneratorFunction, AsyncFunction and
+AsyncGeneratorFunction: `prefix` is the kind's keyword form. */
+pub(super) fn create_dynamic(vm: &mut Vm, call: Call, prefix: &str) -> Res<JsValue> {
     let mut params = Vec::new();
     let count = call.args.len();
     for index in 0..count.saturating_sub(1) {
@@ -84,7 +90,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         arg_string(vm, &call, count - 1)?.lossy()
     };
     let source = format!(
-        "(function anonymous({}\n) {{\n{}\n}})",
+        "({prefix} anonymous({}\n) {{\n{}\n}})",
         params.join(","),
         body
     );

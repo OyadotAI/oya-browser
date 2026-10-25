@@ -5,6 +5,7 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{Static, string, symbol};
 
+mod asyncgen;
 mod helpers;
 
 /** %IteratorPrototype%, the native iterator prototypes, and generator prototypes. */
@@ -72,6 +73,7 @@ pub(super) fn install(b: &mut Builder) {
         Static::Value(string("AsyncFunction")),
         CONFIGURABLE,
     );
+    asyncgen::install(b);
 }
 
 /** `[Symbol.iterator]() { return this }`. */
