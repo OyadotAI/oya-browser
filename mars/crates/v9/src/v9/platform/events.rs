@@ -60,6 +60,12 @@ pub(in crate::v9) fn event_target(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let Some(id) = event.object().filter(|id| matches!(vm.heap.get(*id).map(|o| &o.class), Some(Class::Host(data)) if matches!(**data, HostData::Event(_)))) else {
                 return Err(vm.type_error("parameter 1 is not of type 'Event'."));
             };
+            if flag(vm, id, DISPATCHING) || flag(vm, id, UNINITIALIZED) {
+                return Err(vm.dom_exception(
+                    "InvalidStateError",
+                    "The event is already being dispatched or was not initialized.",
+                ));
+            }
             let proceed = dispatch(vm, target, id)?;
             Ok(JsValue::Boolean(proceed))
         }
@@ -131,6 +137,82 @@ pub(in crate::v9) fn create_event(
     Ok(JsValue::Object(id))
 }
 
+/** Private event slots for the DOM standard's flags EventData does not carry. */
+const DISPATCHING: &str = "dispatching";
+/** Set on `document.createEvent` events until initEvent runs. */
+pub(in crate::v9) const UNINITIALIZED: &str = "uninitialized";
+
+/** Read one of an event's private flags. */
+fn flag(vm: &Vm, event: ObjectId, name: &str) -> bool {
+    matches!(
+        vm.heap
+            .get(event)
+            .and_then(|object| object.props.get(&Key::private(name))),
+        Some(crate::v9::vm::heap::Prop {
+            slot: crate::v9::vm::heap::Slot::Data(JsValue::Boolean(true)),
+            ..
+        })
+    )
+}
+
+/** Set or clear one of an event's private flags. */
+pub(in crate::v9) fn set_flag(vm: &mut Vm, event: ObjectId, name: &str, on: bool) {
+    vm.heap.put(
+        event,
+        Key::private(name),
+        crate::v9::vm::heap::Prop {
+            slot: crate::v9::vm::heap::Slot::Data(JsValue::Boolean(on)),
+            attrs: crate::v9::vm::heap::HIDDEN_ATTRS,
+        },
+    );
+}
+
+/** `document.createEvent(interface)`: the DOM standard's table of legacy interface names,
+matched ASCII case-insensitively; anything else is NotSupportedError. The event is created
+uninitialized, so dispatching it before initEvent throws InvalidStateError. */
+pub(in crate::v9) fn create_legacy_event(vm: &mut Vm, interface: &str) -> Res<JsValue> {
+    const TABLE: &[(&str, &str)] = &[
+        ("beforeunloadevent", "BeforeUnloadEvent"),
+        ("compositionevent", "CompositionEvent"),
+        ("customevent", "CustomEvent"),
+        ("devicemotionevent", "DeviceMotionEvent"),
+        ("deviceorientationevent", "DeviceOrientationEvent"),
+        ("dragevent", "DragEvent"),
+        ("event", "Event"),
+        ("events", "Event"),
+        ("focusevent", "FocusEvent"),
+        ("hashchangeevent", "HashChangeEvent"),
+        ("htmlevents", "Event"),
+        ("keyboardevent", "KeyboardEvent"),
+        ("messageevent", "MessageEvent"),
+        ("mouseevent", "MouseEvent"),
+        ("mouseevents", "MouseEvent"),
+        ("storageevent", "StorageEvent"),
+        ("svgevents", "Event"),
+        ("textevent", "TextEvent"),
+        ("touchevent", "TouchEvent"),
+        ("uievent", "UIEvent"),
+        ("uievents", "UIEvent"),
+    ];
+    let lower = interface.to_ascii_lowercase();
+    let Some((_, name)) = TABLE.iter().find(|(key, _)| *key == lower) else {
+        return Err(vm.dom_exception(
+            "NotSupportedError",
+            &format!("The provided event type ('{interface}') is invalid."),
+        ));
+    };
+    let event = create_event(vm, "", false, false)?;
+    let id = event.object().expect("event object");
+    let ctor = vm.get(&JsValue::Object(GLOBAL), &Key::from(name))?;
+    if let JsValue::Object(_) = ctor
+        && let JsValue::Object(proto) = vm.get(&ctor, &Key::from("prototype"))?
+    {
+        vm.set_proto(id, Some(proto))?;
+    }
+    set_flag(vm, id, UNINITIALIZED, true);
+    Ok(event)
+}
+
 /** Change an event's data. */
 fn with_event<T>(vm: &mut Vm, id: ObjectId, change: impl FnOnce(&mut EventData) -> T) -> Option<T> {
     match vm.heap.get_mut(id).map(|object| &mut object.class) {
@@ -188,11 +270,26 @@ pub(in crate::v9) fn dispatch(vm: &mut Vm, target: Target, event: ObjectId) -> R
     let target_value = target_value(vm, target)?;
     let data = with_event(vm, event, |data| {
         data.target = target_value.clone();
-        data.stopped = false;
-        data.immediate = false;
         data.clone()
     })
     .ok_or_else(|| EngineError::invalid("Invalid V9 event."))?;
+    set_flag(vm, event, DISPATCHING, true);
+    let result = propagate(vm, target, event, &data);
+    // The DOM standard's dispatch ends by clearing the dispatch and both stop flags, so the
+    // same event can be dispatched again and its listeners run again.
+    set_flag(vm, event, DISPATCHING, false);
+    with_event(vm, event, |data| {
+        data.phase = 0;
+        data.current = JsValue::Null;
+        data.stopped = false;
+        data.immediate = false;
+    });
+    result?;
+    Ok(!prevented(vm, event))
+}
+
+/** Run the capture, target and bubble phases along the event path. */
+fn propagate(vm: &mut Vm, target: Target, event: ObjectId, data: &EventData) -> Res<()> {
     if let Target::Node(node) = target {
         super::components::set_original(vm, event, node);
     }
@@ -200,17 +297,18 @@ pub(in crate::v9) fn dispatch(vm: &mut Vm, target: Target, event: ObjectId) -> R
         data.trusted && data.kind != "slotchange" || super::components::composed(vm, event);
     let route = path(vm, target, composed);
     let last = route.len().saturating_sub(1);
+    // Each "inner invoke" returns at once when propagation already stopped, so a flag set
+    // before dispatch, or by an earlier target, keeps every later listener from running.
     for (index, current) in route.iter().enumerate() {
-        if index == last {
+        if index == last || stopped(vm, event) {
             break;
         }
         invoke(vm, *current, event, &data.kind, true, 1)?;
-        if stopped(vm, event) {
-            return Ok(!prevented(vm, event));
-        }
     }
-    invoke(vm, target, event, &data.kind, true, 2)?;
-    if !immediate(vm, event) {
+    if !stopped(vm, event) {
+        invoke(vm, target, event, &data.kind, true, 2)?;
+    }
+    if !stopped(vm, event) {
         invoke(vm, target, event, &data.kind, false, 2)?;
     }
     if data.bubbles {
@@ -221,11 +319,7 @@ pub(in crate::v9) fn dispatch(vm: &mut Vm, target: Target, event: ObjectId) -> R
             invoke(vm, *current, event, &data.kind, false, 3)?;
         }
     }
-    with_event(vm, event, |data| {
-        data.phase = 0;
-        data.current = JsValue::Null;
-    });
-    Ok(!prevented(vm, event))
+    Ok(())
 }
 
 /** Whether propagation stopped. */
@@ -417,6 +511,9 @@ pub(in crate::v9) fn fire(
 
 /** `new Event(type, init)` and `new CustomEvent(type, init)`. */
 pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.args.is_empty() {
+        return Err(vm.type_error("Failed to construct 'Event': 1 argument required."));
+    }
     let kind = vm.to_text(&call.arg(0))?;
     let init = call.arg(1);
     let flag = |vm: &mut Vm, name: &str| -> Res<bool> {
@@ -529,6 +626,13 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             return Ok(JsValue::Object(vm.new_array(values)?));
         }
         "initEvent" | "initCustomEvent" => {
+            if call.args.is_empty() {
+                return Err(vm.type_error("1 argument required, but only 0 present."));
+            }
+            if flag(vm, id, DISPATCHING) {
+                return Ok(JsValue::Undefined);
+            }
+            set_flag(vm, id, UNINITIALIZED, false);
             let kind = vm.to_text(&call.arg(0))?;
             let bubbles = call.arg(1).truthy();
             let cancelable = call.arg(2).truthy();
@@ -537,6 +641,10 @@ pub(in crate::v9) fn event_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 data.kind = kind;
                 data.bubbles = bubbles;
                 data.cancelable = cancelable;
+                data.stopped = false;
+                data.immediate = false;
+                data.default_prevented = false;
+                data.target = JsValue::Null;
                 if detail != JsValue::Undefined {
                     data.detail = detail;
                 }

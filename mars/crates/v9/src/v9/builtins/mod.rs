@@ -32,11 +32,6 @@ pub(in crate::v9) use json::json_parse_text;
 pub(in crate::v9) use object::{from_descriptor, to_descriptor};
 pub(in crate::v9) use typed::{load as typed_load, random_values, store as typed_store};
 
-/** Whether a value is an Array. */
-pub(in crate::v9) fn is_array(vm: &Vm, value: &JsValue) -> bool {
-    array::is_array_value(vm, value)
-}
-
 /** A symbol's description for display. */
 pub(in crate::v9) fn symbol_text(vm: &Vm, id: u32) -> String {
     symbol::symbol_description(vm, id).unwrap_or_default()

@@ -49,6 +49,9 @@ pub(in crate::v9) struct XhrState {
     pub response_type: String,
     pub with_credentials: bool,
     pub sent: bool,
+    /// Bumped by open() and abort(): a delivery whose handlers reopened or aborted the request
+    /// stops firing the old request's events (XHR's "terminate the fetch").
+    pub generation: u32,
 }
 
 /** Record a request, failing like a network error past the pending bound. */
@@ -72,35 +75,6 @@ fn record(vm: &mut Vm, mut request: HostRequest, owner: ObjectId, xhr: bool) -> 
     }
     vm.page.effects.requests.push(request);
     Ok(true)
-}
-
-/** Header pairs from a Headers object, an object or an array of pairs. */
-fn header_list(vm: &mut Vm, value: &JsValue) -> Res<Vec<(String, String)>> {
-    if value.nullish() {
-        return Ok(Vec::new());
-    }
-    if let Some(HostData::Headers(list)) = super::host_data(vm, value) {
-        return Ok(list);
-    }
-    let mut out = Vec::new();
-    if crate::v9::builtins::is_array(vm, value) {
-        for pair in vm.iterate_to_vec(value)? {
-            let name = vm.get(&pair, &Key::from("0"))?;
-            let item = vm.get(&pair, &Key::from("1"))?;
-            out.push((vm.to_text(&name)?.to_ascii_lowercase(), vm.to_text(&item)?));
-        }
-        return Ok(out);
-    }
-    if let JsValue::Object(id) = value {
-        for key in vm.enumerable_keys(*id)? {
-            let item = vm.get(value, &key)?;
-            out.push((
-                crate::v9::vm::property::key_text(&key).to_ascii_lowercase(),
-                vm.to_text(&item)?,
-            ));
-        }
-    }
-    Ok(out)
 }
 
 /** A URLSearchParams body is a form: label it so unless the page set its own Content-Type.
@@ -569,7 +543,7 @@ impl Vm<'_> {
         }
         let data = ResponseData {
             status: response.status,
-            status_text: response.status_text,
+            status_text: status_text(response.status, response.status_text),
             url: response.url,
             headers: response.headers,
             body: response.body,
@@ -581,29 +555,113 @@ impl Vm<'_> {
         ))?;
         self.resolve_promise(promise, JsValue::Object(object))
     }
-    /** Complete an XMLHttpRequest. */
+    /** Complete an XMLHttpRequest the way XHR's "process response" steps do: HEADERS_RECEIVED,
+    then LOADING with one progress event, then DONE with load and loadend. A network error goes
+    straight to DONE with error and loadend and no response. A handler that calls open() or
+    abort() ends the old request's events at once. */
     fn deliver_xhr(&mut self, xhr: ObjectId, response: HostResponse) -> Res<()> {
-        let failed = response.error.is_some();
+        let Some(generation) = self.page.state.xhrs.get(&xhr).map(|s| s.generation) else {
+            return Ok(());
+        };
+        if response.error.is_some() {
+            return xhr_request_error(self, xhr, "error");
+        }
+        let total = response.body.len();
         if let Some(state) = self.page.state.xhrs.get_mut(&xhr) {
-            state.ready = 4;
-            state.status = if failed { 0 } else { response.status };
-            state.status_text = response.status_text;
-            state.response = response.body;
+            state.ready = XHR_HEADERS_RECEIVED;
+            state.status = response.status;
+            state.status_text = status_text(response.status, response.status_text);
             state.response_headers = response.headers;
             state.response_url = response.url;
         }
-        let target = Target::Object(xhr);
-        fire(self, target, "readystatechange", false, false)?;
-        fire(
-            self,
-            target,
-            if failed { "error" } else { "load" },
-            false,
-            false,
-        )?;
-        fire(self, target, "loadend", false, false)?;
+        let current =
+            |vm: &Vm| vm.page.state.xhrs.get(&xhr).map(|s| s.generation) == Some(generation);
+        fire(self, Target::Object(xhr), "readystatechange", false, false)?;
+        if !current(self) {
+            return Ok(());
+        }
+        if let Some(state) = self.page.state.xhrs.get_mut(&xhr) {
+            state.ready = XHR_LOADING;
+            state.response = response.body;
+        }
+        fire(self, Target::Object(xhr), "readystatechange", false, false)?;
+        if !current(self) {
+            return Ok(());
+        }
+        fire_progress(self, xhr, "progress", total, total)?;
+        if !current(self) {
+            return Ok(());
+        }
+        if let Some(state) = self.page.state.xhrs.get_mut(&xhr) {
+            state.ready = XHR_DONE;
+            state.sent = false;
+        }
+        fire(self, Target::Object(xhr), "readystatechange", false, false)?;
+        if !current(self) {
+            return Ok(());
+        }
+        fire_progress(self, xhr, "load", total, total)?;
+        if current(self) {
+            fire_progress(self, xhr, "loadend", total, total)?;
+        }
         Ok(())
     }
+}
+
+/** The host's reason phrase, or Chromium's canonical one when the host passed none.
+ponytail: the coordinator drops the server's reason phrase; carry it through WebResponse and
+this fallback becomes the HTTP/2 path only. */
+fn status_text(status: u16, given: String) -> String {
+    if given.is_empty() && status != 0 {
+        return reason_phrase_for(status).into();
+    }
+    given
+}
+
+/** XHR's "request error steps": DONE, no response, readystatechange, then `kind` (error,
+abort or timeout) and loadend as ProgressEvents of zero bytes. */
+fn xhr_request_error(vm: &mut Vm, xhr: ObjectId, kind: &str) -> Res<()> {
+    let Some(state) = vm.page.state.xhrs.get_mut(&xhr) else {
+        return Ok(());
+    };
+    *state = XhrState {
+        method: std::mem::take(&mut state.method),
+        url: std::mem::take(&mut state.url),
+        headers: std::mem::take(&mut state.headers),
+        response_type: std::mem::take(&mut state.response_type),
+        with_credentials: state.with_credentials,
+        generation: state.generation,
+        ready: XHR_DONE,
+        ..XhrState::default()
+    };
+    let generation = state.generation;
+    fire(vm, Target::Object(xhr), "readystatechange", false, false)?;
+    if vm.page.state.xhrs.get(&xhr).map(|s| s.generation) != Some(generation) {
+        return Ok(());
+    }
+    fire_progress(vm, xhr, kind, 0, 0)?;
+    fire_progress(vm, xhr, "loadend", 0, 0)
+}
+
+/** Fire a ProgressEvent (an Event with ProgressEvent.prototype and loaded, total and
+lengthComputable) at an XMLHttpRequest. */
+fn fire_progress(vm: &mut Vm, xhr: ObjectId, kind: &str, loaded: usize, total: usize) -> Res<()> {
+    let event = super::events::create_event(vm, kind, false, false)?;
+    let Some(id) = event.object() else {
+        return Ok(());
+    };
+    let global = JsValue::Object(crate::v9::vm::GLOBAL);
+    let ctor = vm.get(&global, &Key::from("ProgressEvent"))?;
+    if matches!(ctor, JsValue::Object(_))
+        && let JsValue::Object(proto) = vm.get(&ctor, &Key::from("prototype"))?
+    {
+        vm.set_proto(id, Some(proto))?;
+    }
+    vm.put(id, "lengthComputable", JsValue::Boolean(total > 0))?;
+    vm.put(id, "loaded", JsValue::Number(loaded as f64))?;
+    vm.put(id, "total", JsValue::Number(total as f64))?;
+    super::events::dispatch(vm, Target::Object(xhr), id)?;
+    Ok(())
 }
 
 /** `new XMLHttpRequest()`. */
@@ -645,17 +703,25 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             if call.args.len() > 2 && !call.arg(2).truthy() {
                 return Err(vm.unsupported_error("synchronous XMLHttpRequest"));
             }
+            // Terminate any ongoing fetch, then fire readystatechange only when the state was
+            // not OPENED already (XHR open() steps 13 and 14).
+            vm.page.state.pending.retain(|pending| pending.owner != id);
+            let mut was_opened = false;
             if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
+                was_opened = state.ready == 1;
                 *state = XhrState {
                     method,
                     url,
                     ready: 1,
                     response_type: state.response_type.clone(),
                     with_credentials: state.with_credentials,
+                    generation: state.generation.wrapping_add(1),
                     ..XhrState::default()
                 };
             }
-            fire(vm, Target::Object(id), "readystatechange", false, false)?;
+            if !was_opened {
+                fire(vm, Target::Object(id), "readystatechange", false, false)?;
+            }
         }
         "setRequestHeader" => {
             let name = vm.to_text(&call.arg(0))?;
@@ -693,24 +759,15 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 credentials: credentials.into(),
                 mode: "cors".into(),
             };
+            let generation = state.generation;
             if !record(vm, request, id, true)? {
-                vm.deliver_xhr(
-                    id,
-                    HostResponse {
-                        error: Some("too many requests".into()),
-                        ..HostResponse::default()
-                    },
-                )?;
+                return xhr_request_error(vm, id, "error").map(|()| JsValue::Undefined);
             }
+            fire_progress(vm, id, "loadstart", 0, 0)?;
+            // A loadstart handler that reopened or aborted has already ended this request.
+            let _ = generation;
         }
-        "abort" => {
-            vm.page.state.pending.retain(|pending| pending.owner != id);
-            if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
-                state.ready = 0;
-                state.sent = false;
-            }
-            fire(vm, Target::Object(id), "abort", false, false)?;
-        }
+        "abort" => xhr_abort(vm, id)?,
         "getResponseHeader" => {
             let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
             let state = vm.page.state.xhrs.get(&id).cloned().unwrap_or_default();
@@ -721,6 +778,17 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 Some(value) => JsValue::string(&value).map_err(Into::into),
                 None => Ok(JsValue::Null),
             };
+        }
+        "overrideMimeType" => {
+            // XHR overrideMimeType(): an InvalidStateError once LOADING or DONE; the override
+            // itself only changes decoding, and Relay already hands over decoded text.
+            let ready = vm.page.state.xhrs.get(&id).map_or(0, |s| s.ready);
+            if ready == XHR_LOADING || ready == XHR_DONE {
+                return Err(vm.dom_exception(
+                    "InvalidStateError",
+                    "Failed to execute 'overrideMimeType' on 'XMLHttpRequest': MimeType cannot be overridden when the state is LOADING or DONE.",
+                ));
+            }
         }
         "getAllResponseHeaders" => {
             let state = vm.page.state.xhrs.get(&id).cloned().unwrap_or_default();
@@ -734,6 +802,90 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** XMLHttpRequest's HEADERS_RECEIVED state: response headers are readable from here on. */
 const XHR_HEADERS_RECEIVED: u8 = 2;
+/** XMLHttpRequest's LOADING state: the body is arriving and responseText is readable. */
+const XHR_LOADING: u8 = 3;
+/** XMLHttpRequest's DONE state. */
+const XHR_DONE: u8 = 4;
+/** XMLHttpResponseType's values; any other assignment is ignored. */
+const XHR_RESPONSE_TYPES: [&str; 6] = ["", "arraybuffer", "blob", "document", "json", "text"];
+
+/** Chromium's GetHttpReasonPhrase (net/http/http_status_code_list.h) for the codes pages
+meet: the statusText a response gets when the host passes no reason phrase, as Chromium
+synthesizes one for HTTP/2 and HTTP/3. */
+fn reason_phrase_for(status: u16) -> &'static str {
+    match status {
+        100 => "Continue",
+        101 => "Switching Protocols",
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        203 => "Non-Authoritative Information",
+        204 => "No Content",
+        205 => "Reset Content",
+        206 => "Partial Content",
+        300 => "Multiple Choices",
+        301 => "Moved Permanently",
+        302 => "Found",
+        303 => "See Other",
+        304 => "Not Modified",
+        307 => "Temporary Redirect",
+        308 => "Permanent Redirect",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        402 => "Payment Required",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        406 => "Not Acceptable",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        411 => "Length Required",
+        412 => "Precondition Failed",
+        413 => "Request Entity Too Large",
+        414 => "Request-URI Too Long",
+        415 => "Unsupported Media Type",
+        416 => "Requested Range Not Satisfiable",
+        417 => "Expectation Failed",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        505 => "HTTP Version Not Supported",
+        _ => "",
+    }
+}
+
+/** `abort()` (XHR standard): an in-flight request (OPENED and sent, HEADERS_RECEIVED or
+LOADING) runs the request error steps with `abort`; then a DONE request returns to UNSENT
+without another readystatechange. An unsent or finished request fires nothing. */
+fn xhr_abort(vm: &mut Vm, id: ObjectId) -> Res<()> {
+    vm.page.state.pending.retain(|pending| pending.owner != id);
+    let Some(state) = vm.page.state.xhrs.get_mut(&id) else {
+        return Ok(());
+    };
+    let in_flight = (state.ready == 1 && state.sent)
+        || state.ready == XHR_HEADERS_RECEIVED
+        || state.ready == XHR_LOADING;
+    state.generation = state.generation.wrapping_add(1);
+    let generation = state.generation;
+    if in_flight {
+        xhr_request_error(vm, id, "abort")?;
+    }
+    if let Some(state) = vm.page.state.xhrs.get_mut(&id)
+        && state.generation == generation
+        && state.ready == XHR_DONE
+    {
+        state.ready = 0;
+        state.status = 0;
+        state.status_text.clear();
+        state.response.clear();
+        state.response_headers.clear();
+    }
+    Ok(())
+}
 
 /** `open()`'s method, checked and normalised as Fetch does (Blink's
 XMLHttpRequest::open): not a token is a SyntaxError, CONNECT, TRACE or TRACK a SecurityError. */
@@ -805,13 +957,25 @@ pub(in crate::v9) fn xhr_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "readyState" => JsValue::Number(f64::from(state.ready)),
         "status" => JsValue::Number(f64::from(state.status)),
         "statusText" => JsValue::string(&state.status_text)?,
-        "responseText" => JsValue::string(&state.response)?,
+        "responseText" => {
+            if !matches!(state.response_type.as_str(), "" | "text") {
+                return Err(vm.dom_exception(
+                    "InvalidStateError",
+                    "Failed to read the 'responseText' property from 'XMLHttpRequest': The value is only accessible if the object's 'responseType' is '' or 'text'.",
+                ));
+            }
+            JsValue::string(&state.response)?
+        }
         "responseURL" => JsValue::string(&state.response_url)?,
         "responseType" => JsValue::string(&state.response_type)?,
         "withCredentials" => JsValue::Boolean(state.with_credentials),
         "response" => {
-            if state.ready != 4 {
-                return Ok(JsValue::string("")?);
+            let text = matches!(state.response_type.as_str(), "" | "text");
+            if text {
+                return Ok(JsValue::string(&state.response)?);
+            }
+            if state.ready != XHR_DONE {
+                return Ok(JsValue::Null);
             }
             if state.response_type == "json" {
                 return crate::v9::builtins::json_parse_text(vm, &state.response)
@@ -832,7 +996,18 @@ pub(in crate::v9) fn xhr_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = call.arg(0);
     match native_name(&call) {
         "responseType" => {
+            // XHR: an unknown value is ignored; LOADING or DONE is an InvalidStateError.
             let text = vm.to_text(&value)?;
+            if !XHR_RESPONSE_TYPES.contains(&text.as_str()) {
+                return Ok(JsValue::Undefined);
+            }
+            let ready = vm.page.state.xhrs.get(&id).map_or(0, |s| s.ready);
+            if ready == XHR_LOADING || ready == XHR_DONE {
+                return Err(vm.dom_exception(
+                    "InvalidStateError",
+                    "Failed to set the 'responseType' property on 'XMLHttpRequest': The response type cannot be set if the object's state is LOADING or DONE.",
+                ));
+            }
             if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
                 state.response_type = text;
             }
@@ -1352,258 +1527,7 @@ pub(in crate::v9) fn encode_pairs(pairs: &[(String, String)]) -> String {
         .finish()
 }
 
-/** `new URL(url, base)`. */
-pub(in crate::v9) fn url_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let input = vm.to_text(&call.arg(0))?;
-    let parsed = if call.arg(1).nullish() {
-        url::Url::parse(&input)
-    } else {
-        let base = vm.to_text(&call.arg(1))?;
-        url::Url::parse(&base).and_then(|base| base.join(&input))
-    };
-    let Ok(parsed) = parsed else {
-        return Err(vm.type_error(&format!("Failed to construct 'URL': Invalid URL '{input}'")));
-    };
-    let id = vm.alloc(Object::new(
-        Class::Host(Box::new(HostData::Url(parsed.to_string()))),
-        Some(realm().ids.url_prototype),
-    ))?;
-    Ok(JsValue::Object(id))
-}
-
-/** The URL behind a URL object or `location`. */
-fn this_url(vm: &mut Vm, call: &Call) -> Res<(Option<ObjectId>, url::Url)> {
-    if call.this == JsValue::Object(realm().ids.location) {
-        let href = vm.page.state.href.clone();
-        return Ok((
-            None,
-            url::Url::parse(&href)
-                .unwrap_or_else(|_| url::Url::parse("about:blank").expect("about:blank parses")),
-        ));
-    }
-    if let (Some(HostData::Url(href)), JsValue::Object(id)) =
-        (super::host_data(vm, &call.this), call.this.clone())
-    {
-        return Ok((
-            Some(id),
-            url::Url::parse(&href).map_err(|_| EngineError::invalid("Invalid V9 URL."))?,
-        ));
-    }
-    Err(vm.type_error("Illegal invocation"))
-}
-
-/** URL and location component getters. */
-pub(in crate::v9) fn url_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, url) = this_url(vm, &call)?;
-    let text = match native_name(&call) {
-        "href" | "toString" | "toJSON" => url.to_string(),
-        "protocol" => format!("{}:", url.scheme()),
-        "host" => match (url.host_str(), url.port()) {
-            (Some(host), Some(port)) => format!("{host}:{port}"),
-            (Some(host), None) => host.to_string(),
-            _ => String::new(),
-        },
-        "hostname" => url.host_str().unwrap_or("").to_string(),
-        "port" => url.port().map(|port| port.to_string()).unwrap_or_default(),
-        "pathname" => url.path().to_string(),
-        "search" => url
-            .query()
-            .filter(|query| !query.is_empty())
-            .map(|query| format!("?{query}"))
-            .unwrap_or_default(),
-        "hash" => url
-            .fragment()
-            .filter(|fragment| !fragment.is_empty())
-            .map(|fragment| format!("#{fragment}"))
-            .unwrap_or_default(),
-        "origin" => url.origin().ascii_serialization(),
-        "username" => url.username().to_string(),
-        "password" => url.password().unwrap_or("").to_string(),
-        "searchParams" => {
-            let pairs: Vec<(String, String)> = url
-                .query_pairs()
-                .map(|(a, b)| (a.into_owned(), b.into_owned()))
-                .collect();
-            let id = vm.alloc(Object::new(
-                Class::Host(Box::new(HostData::SearchParams(pairs))),
-                Some(realm().ids.search_params_prototype),
-            ))?;
-            return Ok(JsValue::Object(id));
-        }
-        _ => String::new(),
-    };
-    JsValue::string(&text).map_err(Into::into)
-}
-
-/** URL and location component setters; location changes become navigation requests. */
-pub(in crate::v9) fn url_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (owner, mut url) = this_url(vm, &call)?;
-    let value = vm.to_text(&call.arg(0))?;
-    let name = native_name(&call);
-    match name {
-        "href" => match resolve(vm, &value) {
-            Some(href) => {
-                url = url::Url::parse(&href).map_err(|_| EngineError::invalid("Invalid V9 URL."))?
-            }
-            None => return Err(vm.type_error(&format!("Invalid URL '{value}'"))),
-        },
-        "protocol" => {
-            let _ = url.set_scheme(value.trim_end_matches(':'));
-        }
-        "username" => {
-            let _ = url.set_username(&value);
-        }
-        "password" => {
-            let _ = url.set_password(
-                Some(&value)
-                    .filter(|value| !value.is_empty())
-                    .map(|v| v.as_str()),
-            );
-        }
-        "host" => set_host_and_port(&mut url, &value),
-        "hostname" => {
-            let _ = url.set_host(Some(&value));
-        }
-        "port" => {
-            let _ = url.set_port(value.parse().ok());
-        }
-        "pathname" => url.set_path(&value),
-        "search" => {
-            url.set_query(Some(value.trim_start_matches('?')).filter(|query| !query.is_empty()))
-        }
-        "hash" => url.set_fragment(
-            Some(value.trim_start_matches('#')).filter(|fragment| !fragment.is_empty()),
-        ),
-        _ => {}
-    }
-    match owner {
-        Some(id) => {
-            if let Some(Class::Host(host)) = vm.heap.get_mut(id).map(|o| &mut o.class) {
-                **host = HostData::Url(url.to_string());
-            }
-        }
-        None => super::window::navigate(vm, "assign", url.to_string(), name == "hash")?,
-    }
-    Ok(JsValue::Undefined)
-}
-
-/** The `host` setter: a host, and the port after it when one is given (`example.com:81`),
-as the URL Standard's host state reads it; an IPv6 literal's colons stay in the host. */
-fn set_host_and_port(url: &mut url::Url, value: &str) {
-    let split = value
-        .rfind(':')
-        .filter(|colon| !value[*colon..].contains(']'))
-        .map(|colon| (&value[..colon], &value[colon + 1..]));
-    match split {
-        Some((host, port)) => {
-            if url.set_host(Some(host)).is_ok() && !port.is_empty() {
-                let _ = url.set_port(port.parse().ok());
-            }
-        }
-        None => {
-            let _ = url.set_host(Some(value));
-        }
-    }
-}
-
 /** URL statics that need blobs. */
 pub(in crate::v9) fn url_object_url(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Err(vm.unsupported_error(&format!("URL.{}", native_name(&call))))
-}
-
-/** `new URLSearchParams(init)`. */
-pub(in crate::v9) fn params_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let init = call.arg(0);
-    let pairs = match &init {
-        JsValue::Undefined | JsValue::Null => Vec::new(),
-        JsValue::Object(_) if super::host_data(vm, &init).is_none() => header_list(vm, &init)?,
-        other => {
-            let text = vm.to_text(other)?;
-            url::form_urlencoded::parse(text.trim_start_matches('?').as_bytes())
-                .map(|(a, b)| (a.into_owned(), b.into_owned()))
-                .collect()
-        }
-    };
-    let id = vm.alloc(Object::new(
-        Class::Host(Box::new(HostData::SearchParams(pairs))),
-        Some(realm().ids.search_params_prototype),
-    ))?;
-    Ok(JsValue::Object(id))
-}
-
-/** URLSearchParams methods. */
-pub(in crate::v9) fn params_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (Some(HostData::SearchParams(mut pairs)), JsValue::Object(id)) =
-        (super::host_data(vm, &call.this), call.this.clone())
-    else {
-        return Err(vm.type_error("Illegal invocation"));
-    };
-    let name = if call.args.is_empty() {
-        String::new()
-    } else {
-        vm.to_text(&call.arg(0))?
-    };
-    let result = match native_name(&call) {
-        "get" => {
-            return match pairs.iter().find(|(key, _)| *key == name) {
-                Some((_, value)) => JsValue::string(value).map_err(Into::into),
-                None => Ok(JsValue::Null),
-            };
-        }
-        "getAll" => {
-            let values: Vec<JsValue> = pairs
-                .iter()
-                .filter(|(key, _)| *key == name)
-                .filter_map(|(_, value)| JsValue::string(value).ok())
-                .collect();
-            return Ok(JsValue::Object(vm.new_array(values)?));
-        }
-        "has" => return Ok(JsValue::Boolean(pairs.iter().any(|(key, _)| *key == name))),
-        "toString" => return JsValue::string(&encode_pairs(&pairs)).map_err(Into::into),
-        "size" => return Ok(JsValue::Number(pairs.len() as f64)),
-        "set" => {
-            let value = vm.to_text(&call.arg(1))?;
-            match pairs.iter().position(|(key, _)| *key == name) {
-                Some(position) => {
-                    pairs[position].1 = value;
-                    let mut seen = false;
-                    pairs.retain(|(key, _)| *key != name || !std::mem::replace(&mut seen, true));
-                }
-                None => pairs.push((name, value)),
-            }
-            JsValue::Undefined
-        }
-        "append" => {
-            let value = vm.to_text(&call.arg(1))?;
-            pairs.push((name, value));
-            JsValue::Undefined
-        }
-        "delete" => {
-            pairs.retain(|(key, _)| *key != name);
-            JsValue::Undefined
-        }
-        "sort" => {
-            pairs.sort_by(|a, b| a.0.cmp(&b.0));
-            JsValue::Undefined
-        }
-        "forEach" => {
-            for (key, value) in pairs.clone() {
-                vm.call(
-                    call.arg(0),
-                    call.arg(1),
-                    vec![
-                        JsValue::string(&value)?,
-                        JsValue::string(&key)?,
-                        call.this.clone(),
-                    ],
-                )?;
-            }
-            return Ok(JsValue::Undefined);
-        }
-        kind => return pair_iterator(vm, &pairs, kind),
-    };
-    if let Some(Class::Host(host)) = vm.heap.get_mut(id).map(|o| &mut o.class) {
-        **host = HostData::SearchParams(pairs);
-    }
-    Ok(result)
 }

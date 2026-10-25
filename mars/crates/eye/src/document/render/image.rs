@@ -146,7 +146,7 @@ fn inline_image(
     let style = &node.style;
     let outer = width + style.margin[1] + style.margin[3];
     if flow.cursor > 0.0 && !flow.fits(outer) {
-        flow.newline();
+        flow.wrap();
     }
     flow.fit(outer);
     let start = items.len();

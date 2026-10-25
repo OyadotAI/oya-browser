@@ -52,6 +52,8 @@ pub(super) struct Flow {
      * and one of them had clearance, so their margins no longer collapse through this box's
      * block-end edge but count toward its height (CSS 2.1 8.3.1). */
     pub cleared_collapsing: bool,
+    /** Preserved white space hanging at the end of the current line. */
+    pub hang: super::line::Hang,
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -79,6 +81,7 @@ impl Flow {
             unpositioned: Vec::new(),
             adjoining: [false; 2],
             cleared_collapsing: false,
+            hang: super::line::Hang::default(),
         }
     }
     /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
@@ -93,6 +96,7 @@ impl Flow {
     /** Records a fragment placed on the current line. */
     pub fn push(&mut self, frag: super::line::Frag) {
         self.frags.push(frag);
+        self.hang = super::line::Hang::default();
     }
     /** The top of a block whose top margin collapses with the margin already counted above it. */
     pub fn block_top(&self, margin: f64) -> f64 {
@@ -128,6 +132,13 @@ impl Flow {
         self.cursor = 0.0;
         self.line = 0.0;
         self.space = Some(false);
+        self.hang = super::line::Hang::default();
+    }
+    /** Ends the line at a soft wrap opportunity, where its hanging white space hangs whole
+     * (a forced break or the paragraph's end hangs only what overflows). */
+    pub fn wrap(&mut self) {
+        self.hang.soft = true;
+        self.newline();
     }
 }
 /** Moves floats placed before the margin strut resolved down by `delta`, where the resolved
@@ -353,11 +364,7 @@ fn root_line(
 }
 /** The font metrics every line of a block includes. */
 pub(super) fn strut(style: &crate::document::ComputedStyle) -> super::line::Strut {
-    super::line::Strut {
-        ascent: super::sizing::text_ascent(style),
-        height: super::sizing::advance(style),
-        font: style.font_size,
-    }
+    super::line::Strut::of(style)
 }
 /** text-align resolved against the base direction; justify lays out as start. */
 pub(super) fn alignment(style: &crate::document::ComputedStyle) -> super::line::Align {
@@ -430,7 +437,18 @@ fn dispatch(
         return super::float::float(context, node, flow, items);
     }
     if node.tag == "br" {
-        flow.line = flow.line.max(super::sizing::advance(&node.style));
+        // Blink's EnsureTextMetrics: a forced break directly in the block sits in the root box,
+        // which always has the strut's metrics, so the br's own font and line-height count
+        // only inside an inline box.
+        let in_box = node
+            .parent
+            .and_then(|parent| context.node(parent).ok())
+            .is_some_and(|parent| parent.style.inline);
+        let own = super::sizing::advance(&node.style);
+        flow.line = flow.line.max(match flow.strut {
+            Some(strut) if !in_box => strut.height,
+            _ => own,
+        });
         flow.newline();
         return Ok(());
     }
@@ -587,7 +605,8 @@ pub(super) fn block(
         )?;
     } else {
         super::generated::generated(context, node, &mut inner, items, false)?;
-        let lines = super::text::text(context, &node.text, node, &mut inner, index)?;
+        let own = super::text::own_text(node);
+        let lines = super::text::text(context, &own, node, &mut inner, index)?;
         items[index].lines = lines;
         if !super::generated::is_generated(node) {
             for child in context.children(node.local_id) {

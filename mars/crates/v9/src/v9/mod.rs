@@ -1615,6 +1615,8 @@ pub fn replay(
         match change {
             // Definedness is a document-engine fact for `:defined`; the projection has no field.
             ScriptChange::Defined { .. } => {}
+            // The virtual html and body hold their attributes in V9's own state already.
+            ScriptChange::RootAttribute { .. } | ScriptChange::Focus { .. } => {}
             ScriptChange::Dom { change } => match change {
                 DomChange::Text { html_id, text } => {
                     let node = document

@@ -26,9 +26,11 @@ pub(in crate::v9) mod scripts;
 mod selector;
 mod sheets;
 mod timers;
+mod url_bindings;
+mod url_parser;
 mod window;
 
-pub(in crate::v9) use dom::{focus, native_name};
+pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
 
 pub(in crate::v9) use install::install;

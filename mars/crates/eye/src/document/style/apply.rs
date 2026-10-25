@@ -67,8 +67,9 @@ pub(super) fn apply(
     }
     layout(style, key, value, context, diagnostics)
 }
-/** `overflow-clip-margin: <visual-box> || <length [0,inf]>` as (reference box, px): 0 is the
- * padding box (the initial), 1 the border box, 2 the content box. */
+/** `overflow-clip-margin: <visual-box> || <length>` as (reference box, px): 0 is the padding box
+ * (the initial), 1 the border box, 2 the content box. Blink takes any length (ValueRange::kAll),
+ * so a negative one pulls the clip edge inside its reference box. */
 fn overflow_clip_margin(value: &str, font: f64, context: RenderContext) -> EngineResult<(u8, f64)> {
     let (mut reference, mut margin) = (None, None);
     for word in value.split_whitespace() {
@@ -82,7 +83,7 @@ fn overflow_clip_margin(value: &str, font: f64, context: RenderContext) -> Engin
             Some(_) if reference.is_some() => return Err(unsupported()),
             Some(boxed) => reference = Some(boxed),
             None if margin.is_some() => return Err(unsupported()),
-            None => margin = Some(contextual_length(word, font, context)?),
+            None => margin = Some(super::values::signed_length(word, font, context)?),
         }
     }
     if reference.is_none() && margin.is_none() {

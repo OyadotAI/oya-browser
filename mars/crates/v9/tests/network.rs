@@ -123,7 +123,11 @@ fn xhr_fires_readystate_and_load() {
         ..HostResponse::default()
     };
     let resumed = answer(&sources, loaded.state, vec![response]);
-    assert_eq!(console(&resumed), ["state 4", "load 200 text 1"]);
+    // HEADERS_RECEIVED, LOADING and DONE each fire readystatechange (XHR standard).
+    assert_eq!(
+        console(&resumed),
+        ["state 2", "state 3", "state 4", "load 200 text 1"]
+    );
 }
 
 /** Synchronous XMLHttpRequest is refused as unsupported. */

@@ -88,3 +88,44 @@ fn a_failed_web_font_is_reported() {
         "no font diagnostic in {text}"
     );
 }
+
+/** A run of only white space (a tab's empty run, preserved spaces) has no ink, so it paints
+nothing; the bar stands in only for glyphs the rasterizer could not draw. Tabs painted as
+bars across the line before. */
+#[test]
+fn white_space_runs_paint_nothing() {
+    let body = "<div style='white-space:pre;font:20px/1 monospace;color:#00ff00'>&#9;&#9;   </div>";
+    let (_, pixels, _) = shoot(body);
+    let green = pixels
+        .chunks(3)
+        .filter(|p| p[1] > 128 && p[0] < 128)
+        .count();
+    assert_eq!(green, 0);
+}
+
+/** `ch` resolves against the page's web font once it loads: the page styles again, as Blink
+invalidates font-relative lengths on a font load, so a box sized in `ch` matches the text it
+holds. It kept the fallback face's `ch` before. */
+#[cfg(target_os = "macos")]
+#[test]
+fn ch_follows_a_loaded_web_font() {
+    let font = std::fs::read("/System/Library/Fonts/Supplemental/Times New Roman.ttf").unwrap();
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: font/ttf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        font.len()
+    )
+    .into_bytes();
+    response.extend(font);
+    let page = "<style>@font-face{font-family:Site;src:url(/site.ttf)}\
+        div{font:20px/1 Site,monospace;width:10ch}</style><div>0</div>";
+    let fixture = Fixture::routes(vec![("/", html("", page)), ("/site.ttf", response)]);
+    let mut runtime = desktop(&fixture.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    let div = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["tag"] == "div");
+    // Ten of Times New Roman's half-em digits at 20px, not ten of the monospace fallback's.
+    assert_eq!(div.unwrap()["bounds"]["width"], 100.0, "{page}");
+}

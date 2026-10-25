@@ -61,9 +61,16 @@ pub(super) fn apply(
                 spacing(value, style.font_size, context)?
         }
         "text-transform" => style.text_transform = text_transform(value)?,
-        "white-space" => style.white_space = white_space(value)?,
+        "white-space" => {
+            style.white_space = white_space(value)?;
+            style.break_spaces = value.split_ascii_whitespace().any(|v| v == "break-spaces");
+        }
         "white-space-collapse" => {
-            style.white_space = longhands(Some(collapse(value)?), None, style.white_space)
+            style.white_space = longhands(Some(collapse(value)?), None, style.white_space);
+            style.break_spaces = value == "break-spaces";
+        }
+        "tab-size" | "-moz-tab-size" => {
+            style.tab_size = Some(tab_size(value, style.font_size, context)?)
         }
         "text-wrap-mode" | "text-wrap" => {
             style.white_space = longhands(None, Some(wrap_mode(value)?), style.white_space)
@@ -301,6 +308,18 @@ pub(super) fn respace(style: &mut ComputedStyle, old: f64) {
     let bound = |v: f64| v.clamp(-LETTER_SPACING_MAX, LETTER_SPACING_MAX);
     style.letter_spacing = bound(style.letter_spacing + style.spacing_percent[0] * delta);
     style.word_spacing = bound(style.word_spacing + style.spacing_percent[1] * delta);
+}
+/** `tab-size`: a non-negative number of spaces, or a non-negative length. */
+fn tab_size(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64, bool)> {
+    if let Ok(count) = value.parse::<f64>() {
+        return (count.is_finite() && count >= 0.0)
+            .then_some((count, false))
+            .ok_or_else(unsupported);
+    }
+    let used = dimension(value, font, context)?.of(font);
+    (used.is_finite() && (0.0..=crate::constants::LAYOUT_EXTENT).contains(&used))
+        .then_some((used, true))
+        .ok_or_else(unsupported)
 }
 /** Case mapping keywords. */
 fn text_transform(value: &str) -> EngineResult<TextTransform> {

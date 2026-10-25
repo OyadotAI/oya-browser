@@ -64,10 +64,14 @@ pub fn compute_styles_with_context(
     for message in &cascade.parsed.diagnostics {
         note(&mut cascade.diagnostics, message.clone());
     }
-    cascade.wrappers(document, &mut candidate)?;
-    cascade.nodes(document, &mut candidate)?;
     // The sheets' faces travel with the styled document; fonts already loaded for them stay.
     candidate.formatting.font_faces = cascade.parsed.font_faces.clone();
+    // `ch` and `ic` measure this document's own loaded fonts, not the ones the last document
+    // styled or laid out on this thread left installed.
+    super::install_fonts(&candidate.formatting);
+    super::values::take_measured();
+    cascade.wrappers(document, &mut candidate)?;
+    cascade.nodes(document, &mut candidate)?;
     // `@container` conditions need laid-out sizes: one layout of these styles, then one more
     // cascade that reads them. Bounded to that single extra pass; nothing iterates to a fixpoint.
     if cascade.parsed.container_rules
@@ -79,6 +83,7 @@ pub fn compute_styles_with_context(
         cascade.wrappers(document, &mut candidate)?;
         cascade.nodes(document, &mut candidate)?;
     }
+    candidate.formatting.font_metrics = super::values::take_measured();
     if cascade.parsed.untrusted {
         untrusted(&mut candidate);
     }
@@ -434,17 +439,58 @@ impl<'a> Cascade<'a> {
     ) -> EngineResult<(Chosen, bool)> {
         self.winning_for(tag, attributes, (ua, hints), None, matcher)
     }
-    /** Cascade winners for an element (`pseudo` None) or its `::before`/`::after` box. */
+    /**
+     * Cascade winners for an element (`pseudo` None) or its `::before`/`::after` box. A winner
+     * of `revert` or `revert-layer` rolls its property back (Cascade 5 section 7.3): the
+     * cascade reruns with that origin's or layer's declarations of it left out, as Blink's
+     * StyleCascade looks up the reverted origin or layer, until no winner reverts.
+     */
     fn winning_for(
+        &mut self,
+        tag: &str,
+        attributes: &BTreeMap<String, String>,
+        defaults: Defaults<'_>,
+        pseudo: Option<bool>,
+        matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
+    ) -> EngineResult<(Chosen, bool)> {
+        let mut rolled = Rolled::new();
+        let mut round = 0;
+        loop {
+            let (mut chosen, hides) =
+                self.gather(tag, attributes, defaults, pseudo, matcher, &rolled)?;
+            let reverting: Vec<(String, Revert)> = chosen
+                .iter()
+                .filter_map(|(key, (priority, value))| {
+                    Some((key.clone(), revert_of(priority, value)?))
+                })
+                .collect();
+            round += 1;
+            if reverting.is_empty() || round > REVERT_ROUNDS {
+                chosen.retain(|_, (priority, value)| revert_of(priority, value).is_none());
+                return Ok((chosen, hides));
+            }
+            for (key, revert) in reverting {
+                rolled.entry(key).or_default().push(revert);
+            }
+        }
+    }
+    /** One cascade pass, leaving out the declarations an earlier `revert` rolled back. */
+    fn gather(
         &mut self,
         tag: &str,
         attributes: &BTreeMap<String, String>,
         (ua, hints): Defaults<'_>,
         pseudo: Option<bool>,
         matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
+        rolled: &Rolled,
     ) -> EngineResult<(Chosen, bool)> {
         let mut chosen = Chosen::new();
         let mut hides = false;
+        let choose = |chosen: &mut Chosen, key: &str, value: Rc<str>, priority: Priority| {
+            if !rolled_back(rolled, key, &priority) {
+                choose(chosen, key, value, priority);
+            }
+        };
         for (key, value) in ua {
             choose(
                 &mut chosen,
@@ -612,6 +658,47 @@ fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
         Some("ltr") => style.rtl = false,
         _ => {}
     }
+}
+/** How many times one element's cascade reruns for `revert`; each rerun drops one layer or
+origin, so real sheets settle in a few and a hostile one cannot loop. */
+const REVERT_ROUNDS: usize = 32;
+/** What a `revert` winner rolls back: one origin (the author's when true, else the user
+agent's) or, for `revert-layer`, one layer of one origin and importance. */
+#[derive(Clone, Copy)]
+enum Revert {
+    Origin(bool),
+    Layer(bool, bool, bool, usize),
+}
+/** The rolled-back origins and layers of each property. */
+type Rolled = BTreeMap<String, Vec<Revert>>;
+/** The rollback a winning value asks for, if it is `revert` or `revert-layer`. */
+fn revert_of(priority: &Priority, value: &str) -> Option<Revert> {
+    let value = value.trim();
+    let (important, author, inline, layer, _, _) = *priority;
+    if value.eq_ignore_ascii_case("revert") {
+        return Some(Revert::Origin(author));
+    }
+    if !value.eq_ignore_ascii_case("revert-layer") {
+        return None;
+    }
+    // In the user agent origin `revert-layer` has no layer below it and acts as `revert`.
+    Some(if author {
+        Revert::Layer(important, author, inline, layer)
+    } else {
+        Revert::Origin(false)
+    })
+}
+/** Whether a declaration of `key` at `priority` was rolled back. Reverting the author origin
+leaves only the user agent's; reverting that leaves nothing, so the property is unset. */
+fn rolled_back(rolled: &Rolled, key: &str, priority: &Priority) -> bool {
+    let (important, author, inline, layer, _, _) = *priority;
+    rolled.get(key).is_some_and(|reverts| {
+        reverts.iter().any(|revert| match *revert {
+            Revert::Origin(true) => author,
+            Revert::Origin(false) => true,
+            Revert::Layer(i, a, n, l) => (i, a, n, l) == (important, author, inline, layer),
+        })
+    })
 }
 /** A rule's layer in the cascade: its rank, inverted for `!important` (Cascade 5 section 6.4). */
 fn layer_key(ranks: &[usize], layer: usize, important: bool) -> usize {

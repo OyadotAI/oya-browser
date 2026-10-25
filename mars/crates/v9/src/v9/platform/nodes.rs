@@ -299,7 +299,9 @@ impl Page<'_> {
             ScriptChange::Dom {
                 change: DomChange::InsertHtml { html, .. },
             } => html.len(),
-            ScriptChange::Attribute { value, .. } => value.as_ref().map_or(0, String::len),
+            ScriptChange::Attribute { value, .. } | ScriptChange::RootAttribute { value, .. } => {
+                value.as_ref().map_or(0, String::len)
+            }
             ScriptChange::Value { value, .. } => value.len(),
             _ => 0,
         };
@@ -892,10 +894,25 @@ impl Page<'_> {
         if matches!(id, HTML | HEAD | BODY) {
             let seed = self.root_attributes(id);
             let attributes = self.state.virtual_attributes.entry(id).or_insert(seed);
+            let unchanged = attributes.get(&name).map(String::as_str) == value;
             match value {
-                Some(value) => attributes.insert(name, value.into()),
+                Some(value) => attributes.insert(name.clone(), value.into()),
                 None => attributes.remove(&name),
             };
+            // The document engine styles html and body from its own copy, so it hears of the
+            // write; the head has no attributes that style anything.
+            let tells = id != HEAD
+                && !unchanged
+                && !self.legacy_changes()
+                && crate::document::script_attribute_allowed(&name);
+            if tells {
+                crate::document::validate_text(value.unwrap_or_default())?;
+                self.record(ScriptChange::RootAttribute {
+                    body: id == BODY,
+                    name,
+                    value: value.map(Into::into),
+                })?;
+            }
             return Ok(());
         }
         if let Some(record) = self.state.detached.get_mut(&id) {

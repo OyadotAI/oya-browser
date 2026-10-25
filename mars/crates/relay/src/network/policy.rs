@@ -35,13 +35,23 @@ pub fn web_url(value: &str) -> EngineResult<Url> {
     Ok(url)
 }
 
-/// Only the exact operator-owned fixture origin can reach literal loopback addresses.
+/// Only the exact operator-owned fixture origin can reach loopback: a literal loopback address,
+/// or a localhost name, which always means loopback (`local_hostname`).
 pub fn fixture_granted(url: &Url, origins: &[String]) -> bool {
     let host = url.host_str().unwrap_or_default().trim_matches(['[', ']']);
-    host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    (host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback()) || local_hostname(host))
         && origins
             .iter()
             .any(|origin| *origin == url.origin().ascii_serialization())
+}
+
+/// Chromium's `net::IsLocalHostname`: `localhost` and every `*.localhost` name, with or without
+/// a trailing dot, case-insensitively. Chromium's host resolver answers these with loopback
+/// itself and never asks DNS (RFC 6761 section 6.3), so no resolver can point them elsewhere,
+/// and WPT's `www1.localhost` style subdomains reach the local test server.
+pub fn local_hostname(host: &str) -> bool {
+    let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    host == "localhost" || host.ends_with(".localhost")
 }
 
 /// Reject nonpublic, reserved and transition ranges, including IPv4-mapped forms.

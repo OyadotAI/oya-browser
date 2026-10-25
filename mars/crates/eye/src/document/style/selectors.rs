@@ -28,6 +28,8 @@ pub(super) struct Tree<'a> {
     parents: std::collections::BTreeSet<usize>,
     /** Hosts of a shadow root in the source document, for `:defined` on custom elements. */
     hosts: std::collections::BTreeSet<usize>,
+    /** The focused element and its ancestors, for `:focus-within`; empty when nothing is. */
+    focus_chain: std::collections::BTreeSet<usize>,
 }
 impl<'a> Tree<'a> {
     /** One linear walk; without it each sibling step rescanned the node list and hostile sheets went quadratic. */
@@ -65,11 +67,12 @@ impl<'a> Tree<'a> {
             .into_iter()
             .map(|(id, (key, at))| (id, (at, typed_counts[&key])))
             .collect();
-        let by_id = document
+        let by_id: BTreeMap<usize, &'a Node> = document
             .nodes
             .iter()
             .map(|node| (node.local_id, node))
             .collect();
+        let focus_chain = focus_chain(document, &by_id);
         Self {
             document,
             by_id,
@@ -80,6 +83,7 @@ impl<'a> Tree<'a> {
             exhausted: std::cell::Cell::new(false),
             parents,
             hosts: std::collections::BTreeSet::new(),
+            focus_chain,
         }
     }
     /**
@@ -97,6 +101,22 @@ impl<'a> Tree<'a> {
             .collect();
         self
     }
+}
+/** The focused node and every ancestor up the (already flattened) tree, as Blink's
+`:focus-within` walks the flat tree from the focused element. */
+fn focus_chain(
+    document: &Document,
+    by_id: &BTreeMap<usize, &Node>,
+) -> std::collections::BTreeSet<usize> {
+    let mut chain = std::collections::BTreeSet::new();
+    let mut current = document.nodes.iter().find(|node| node.focused);
+    while let Some(node) = current {
+        if !chain.insert(node.local_id) {
+            break;
+        }
+        current = node.parent.and_then(|parent| by_id.get(&parent).copied());
+    }
+    chain
 }
 impl<'a> Tree<'a> {
     /** The first `summary` element child of a node: the part of a closed `details` that shows. */
@@ -542,6 +562,11 @@ fn pseudo_matches<'a>(tree: &Tree<'a>, element: Element<'a>, pseudo: Pseudo) -> 
             ["details", "dialog"].contains(&node.tag.as_str())
                 && node.attributes.contains_key("open")
         }),
+        Pseudo::Focus => node.is_some_and(|node| node.focused),
+        Pseudo::FocusWithin => match element {
+            Element::Node(node) => tree.focus_chain.contains(&node.local_id),
+            _ => !tree.focus_chain.is_empty(),
+        },
         Pseudo::Never => false,
     }
 }

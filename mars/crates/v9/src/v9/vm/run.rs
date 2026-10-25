@@ -1248,10 +1248,13 @@ impl Vm<'_> {
         if self.has_property(GLOBAL, &key)? {
             return self.get_from(GLOBAL, &key, &JsValue::Object(GLOBAL));
         }
+        let text = name.lossy();
+        if let Some(element) = crate::v9::platform::named_element(self, &text)? {
+            return Ok(element);
+        }
         if typeof_only {
             return Ok(JsValue::Undefined);
         }
-        let text = name.lossy();
         Err(self.reference_error(&format!("{text} is not defined")))
     }
     /** Assign a global name. */

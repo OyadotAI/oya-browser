@@ -215,6 +215,14 @@ pub struct Node {
     /// otherwise empty `<span> </span>` spacer between two links.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub space_leading: bool,
+    /// The dropped white space `space_leading` stands for, which preserved white space
+    /// (`pre`, `pre-wrap`) lays out as written.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub leading_space: String,
+    /// The page's focused element, as a script's `focus()` left it, for `:focus` and
+    /// `:focus-within`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub focused: bool,
 }
 
 /// Table relationships are derived from bounded source order during parsing.

@@ -46,6 +46,22 @@ pub(super) fn install(b: &mut Builder) {
     let ctor = b.constructor("DocumentType", 0, dom::illegal_constructor, proto, None);
     b.global("DocumentType", ctor);
     let _ = DOCTYPE_PROTOTYPE.set(proto);
+    // CharacterData and the ChildNode mixin on text and comment nodes.
+    let text = b.ids.text_prototype;
+    for name in [
+        "substringData",
+        "appendData",
+        "insertData",
+        "deleteData",
+        "replaceData",
+        "splitText",
+        "before",
+        "after",
+        "replaceWith",
+        "remove",
+    ] {
+        b.method(text, name, 0, dom::character_data_method);
+    }
 }
 
 /** The prototype a doctype node's wrapper gets. */
