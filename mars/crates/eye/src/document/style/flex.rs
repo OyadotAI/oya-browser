@@ -247,6 +247,7 @@ pub(super) fn track_expr_size(
             super::calc::Token::Open(name) => text.push_str(&format!("{name}(")),
             super::calc::Token::Close => text.push(')'),
             super::calc::Token::Comma => text.push(','),
+            super::calc::Token::Word(word) => text.push_str(&format!(" {word} ")),
         }
     }
     resolve_track_expr(&text, TRACK_EXPR_PROBE)?;

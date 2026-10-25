@@ -197,6 +197,9 @@ struct Parse {
     /** Canonical encoding Relay decoded with, or none when the transport declared no charset. */
     #[serde(default)]
     charset: Option<String>,
+    /** The response is an XML document (XHTML or SVG), parsed as XML rather than HTML. */
+    #[serde(default)]
+    xml: bool,
 }
 /** Candidate mutation is atomic over explicit input data. */
 #[derive(Deserialize)]
@@ -586,7 +589,11 @@ fn run_batch(input: FetchBatch) -> EngineResult<Vec<BatchOutcome>> {
 /** Markup semantics are owned by the document service. */
 fn parse(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
     typed(frame, id, |input: Parse| {
-        document::parse_with_charset(&input.source, input.charset.as_deref())
+        if input.xml {
+            document::parse_xml(&input.source, input.charset.as_deref())
+        } else {
+            document::parse_with_charset(&input.source, input.charset.as_deref())
+        }
     })
 }
 /** All proposed targets are checked before any mutation escapes. */

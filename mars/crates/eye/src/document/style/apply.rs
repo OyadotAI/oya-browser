@@ -1,6 +1,6 @@
 /** Supported declaration values update computed fields; Ok(false) means the property is unknown. */
 use super::{
-    ColorScheme, ComputedStyle, TableBox,
+    ColorScheme, ComputedStyle, SizeKeyword, TableBox,
     constants::{WEIGHT_BOLD, WEIGHT_BOLD_FACE, WEIGHT_MAX, WEIGHT_MIN, WEIGHT_NORMAL},
     note, unsupported,
     values::{contextual_color, contextual_length, number},
@@ -34,11 +34,13 @@ pub(super) fn apply(
         return Ok(true);
     }
     if key == "min-width" {
+        let keyword = size_keyword(value, style.font_size, context)?;
+        style.size_keywords[1] = keyword;
         style.min_width_percent = None;
         style.min_width = None;
         if let Some(percent) = value.strip_suffix('%') {
             style.min_width_percent = Some(number(percent)?);
-        } else if !["auto", "min-content", "max-content", "fit-content"].contains(&value) {
+        } else if keyword == SizeKeyword::None && value != "auto" {
             style.min_width = Some(contextual_length(value, style.font_size, context)?);
         }
         return Ok(true);
@@ -145,6 +147,15 @@ fn text(
 ) -> EngineResult<bool> {
     match key {
         "color-scheme" => style.color_scheme = color_scheme(value)?,
+        "writing-mode" => {
+            style.vertical_writing = match value {
+                "horizontal-tb" | "lr" | "lr-tb" | "rl" | "rl-tb" => false,
+                "vertical-rl" | "vertical-lr" | "sideways-rl" | "sideways-lr" | "tb" | "tb-rl" => {
+                    true
+                }
+                _ => return Err(unsupported()),
+            }
+        }
         "direction" => {
             style.rtl = match value {
                 "rtl" => true,
@@ -168,7 +179,11 @@ fn text(
                 _ => return Err(unsupported()),
             }
         }
-        "font-size" => style.font_size = font_size(value, style.font_size, context)?,
+        "font-size" => {
+            let old = style.font_size;
+            style.font_size = font_size(value, style.font_size, context)?;
+            super::visual::respace(style, old);
+        }
         "font-weight" => set_weight(style, weight(value, style.font_weight)?),
         "color" => {
             if let Some(color) = contextual_color(value, style.used_scheme, style.color.as_deref())?
@@ -210,8 +225,14 @@ fn layout(
         "pointer-events" => style.interactive = value != "none",
         "width" => width(style, value, context)?,
         "max-width" => {
+            let keyword = size_keyword(value, style.font_size, context)?;
+            style.size_keywords[2] = keyword;
             style.percent_max_width = value.ends_with('%');
             style.max_width = match value {
+                _ if keyword != SizeKeyword::None => {
+                    style.percent_max_width = false;
+                    None
+                }
                 "none" | "min-content" | "max-content" | "fit-content" => {
                     style.percent_max_width = false;
                     None
@@ -229,15 +250,47 @@ fn layout(
     }
     Ok(true)
 }
+/** The content keyword a `width`, `min-width` or `max-width` value names, if any; a
+ * `fit-content()` argument is a non-negative length or percentage. */
+fn size_keyword(value: &str, font: f64, context: RenderContext) -> EngineResult<SizeKeyword> {
+    Ok(match value {
+        "min-content" | "-webkit-min-content" => SizeKeyword::MinContent,
+        "max-content" | "-webkit-max-content" => SizeKeyword::MaxContent,
+        "fit-content" | "-webkit-fit-content" => SizeKeyword::FitContent,
+        _ => match value
+            .strip_prefix("fit-content(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            Some(limit) => {
+                let limit = super::values::dimension(limit, font, context)?;
+                if limit.px < 0.0 || limit.percent < 0.0 {
+                    return Err(unsupported());
+                }
+                SizeKeyword::FitContentLimit(super::Extent {
+                    px: limit.px.min(CSS_MAX_SCALAR),
+                    percent: limit.percent.min(CSS_MAX_SCALAR),
+                })
+            }
+            None => SizeKeyword::None,
+        },
+    })
+}
 /**
  * `width`: a keyword, a percentage, a length, or a `calc()` mixing both, whose px part waits in
  * `width_offset` until the percentage resolves against the containing block.
  */
 fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> EngineResult<()> {
+    let keyword = size_keyword(value, style.font_size, context)?;
+    style.size_keywords[0] = keyword;
     style.width_offset = 0.0;
     style.percent_width = value.ends_with('%');
     style.width_stretch = matches!(value, "stretch" | "-webkit-fill-available");
-    style.width_fit = matches!(value, "min-content" | "max-content" | "fit-content");
+    style.width_fit = keyword != SizeKeyword::None;
+    if style.width_fit {
+        style.percent_width = false;
+        style.width = None;
+        return Ok(());
+    }
     if style.width_stretch {
         // A definite percentage-like size, so flex bases and blocks resolve it against the
         // containing block; sizing subtracts the margins and edges.

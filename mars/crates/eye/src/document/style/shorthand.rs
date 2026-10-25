@@ -304,7 +304,8 @@ fn side_parts(prefix: &str, [width, style, color]: &[String; 3]) -> Vec<(String,
 }
 /** Horizontal radii only; the elliptical part after `/` is approximated away. */
 fn radius(value: &str) -> Option<Vec<(String, String)>> {
-    let horizontal = value.split('/').next()?;
+    // Only a top-level `/` separates the axes; `calc(1/32 * 100%)` keeps its division.
+    let horizontal = &value[..super::syntax::find_top(value, 0, b"/")];
     let values = four(horizontal)?;
     Some(
         CORNERS

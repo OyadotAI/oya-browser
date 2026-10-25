@@ -144,11 +144,12 @@ fn percent_decode(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/** Content type by extension. XHTML goes out as text/html: Mars has no XML parser, and the
-HTML parser reads CSS2's .xht files well enough for layout. */
+/** Content type by extension, as wptserve sends it: XHTML is application/xhtml+xml, so Mars
+reads `.xht` tests with its XML parser as Blink does. */
 fn mime(file: &Path) -> &'static str {
     match file.extension().and_then(|e| e.to_str()).unwrap_or("") {
-        "html" | "htm" | "xht" | "xhtml" => "text/html; charset=utf-8",
+        "html" | "htm" => "text/html; charset=utf-8",
+        "xht" | "xhtml" => "application/xhtml+xml; charset=utf-8",
         "css" => "text/css",
         "js" => "text/javascript",
         "png" => "image/png",

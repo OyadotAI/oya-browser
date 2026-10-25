@@ -18,6 +18,7 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         rtl: parent.rtl,
         letter_spacing: parent.letter_spacing,
         word_spacing: parent.word_spacing,
+        spacing_percent: parent.spacing_percent,
         text_indent: parent.text_indent,
         text_transform: parent.text_transform,
         white_space: parent.white_space,
@@ -32,6 +33,7 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         border_spacing: parent.border_spacing,
         border_collapse: parent.border_collapse,
         caption_bottom: parent.caption_bottom,
+        vertical_writing: parent.vertical_writing,
         ..ComputedStyle::default()
     }
 }
@@ -51,6 +53,7 @@ fn inherits(key: &str) -> bool {
             "visibility",
             "color-scheme",
             "direction",
+            "writing-mode",
             "list-style",
             "list-style-type",
             "border-spacing",
@@ -132,14 +135,17 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
             style.width_offset = source.width_offset;
             style.width_stretch = source.width_stretch;
             style.width_fit = source.width_fit;
+            style.size_keywords[0] = source.size_keywords[0];
         }
         "max-width" => {
             style.max_width = source.max_width;
             style.percent_max_width = source.percent_max_width;
+            style.size_keywords[2] = source.size_keywords[2];
         }
         "min-width" => {
             style.min_width = source.min_width;
             style.min_width_percent = source.min_width_percent;
+            style.size_keywords[1] = source.size_keywords[1];
         }
         "height" => style.height = source.height,
         "min-height" => style.min_height = source.min_height,
@@ -205,6 +211,7 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
         "color" => style.color = source.color.clone(),
         "font-size" => style.font_size = source.font_size,
         "direction" => style.rtl = source.rtl,
+        "writing-mode" => style.vertical_writing = source.vertical_writing,
         "font-weight" => {
             style.font_weight = source.font_weight;
             style.bold = source.bold;
@@ -216,8 +223,14 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
         "font-style" => style.font_style = source.font_style,
         "line-height" => style.line_height = source.line_height,
         "text-align" => style.align = source.align.clone(),
-        "letter-spacing" => style.letter_spacing = source.letter_spacing,
-        "word-spacing" => style.word_spacing = source.word_spacing,
+        "letter-spacing" => {
+            style.letter_spacing = source.letter_spacing;
+            style.spacing_percent[0] = source.spacing_percent[0];
+        }
+        "word-spacing" => {
+            style.word_spacing = source.word_spacing;
+            style.spacing_percent[1] = source.spacing_percent[1];
+        }
         "text-indent" => style.text_indent = source.text_indent,
         "text-transform" => style.text_transform = source.text_transform,
         "white-space" => style.white_space = source.white_space,

@@ -49,13 +49,21 @@ fn saturated(value: &str) -> EngineResult<f64> {
         .map(|n| n.clamp(-bound, bound))
         .ok_or_else(unsupported)
 }
+/** The math functions `calc::tokens` evaluates, which Blink parses as CSSMathFunctionValue. */
+const MATH_FUNCTIONS: [&str; 9] = [
+    "calc(", "min(", "max(", "clamp(", "round(", "mod(", "rem(", "abs(", "sign(",
+];
+/** Whether `value` is one math function (so out-of-range results clamp instead of failing). */
+pub(super) fn is_math(value: &str) -> bool {
+    let value = value.trim_start();
+    MATH_FUNCTIONS
+        .iter()
+        .any(|function| value.starts_with(function))
+}
 /** A finite number literal, or a `calc()`/`min()`/`max()`/`clamp()` of numbers evaluated to one. */
 fn math_number(value: &str) -> Option<f64> {
     let value = value.trim();
-    if ["calc(", "min(", "max(", "clamp("]
-        .iter()
-        .any(|function| value.starts_with(function))
-    {
+    if is_math(value) {
         let tokens = super::calc::tokens(value).ok()?;
         return super::calc::evaluate_number(&tokens).ok();
     }
@@ -76,6 +84,13 @@ pub(super) fn contextual_length(
         return Ok(0.0);
     }
     let px = dimension(value, font, context)?.pixels()?;
+    // A math function out of the property's range is clamped, not invalid (CSS Values 4
+    // section 10.12, Blink's CSSMathFunctionValue::ClampToPermittedRange).
+    let px = if is_math(value) {
+        px.clamp(0.0, CSS_MAX_SCALAR)
+    } else {
+        px
+    };
     if (0.0..=CSS_MAX_SCALAR).contains(&px) {
         Ok(px)
     } else {
@@ -92,10 +107,7 @@ pub(super) fn signed_length(value: &str, font: f64, context: RenderContext) -> E
 pub(super) fn dimension(value: &str, font: f64, context: RenderContext) -> EngineResult<Dimension> {
     let value = without_env(value.trim())?;
     let value = value.as_ref();
-    if ["calc(", "min(", "max(", "clamp("]
-        .iter()
-        .any(|function| value.starts_with(function))
-    {
+    if is_math(value) {
         let tokens = super::calc::tokens(value)?;
         return super::calc::evaluate(&tokens, font, context);
     }

@@ -8,6 +8,7 @@ use super::{
         TABLE_CONTEXT, TABLE_SCOPE, VOID, in_scope, list_item, ordinary_end,
     },
     tokenizer::{Token, Tokenizer},
+    xml::{Tokens, XmlTokenizer},
 };
 use crate::constants::{
     DIAGNOSTICS, DOCUMENT_DEPTH, FRAGMENT_BYTES, HTML_BYTES, METADATA_BYTES, METADATA_ELEMENTS,
@@ -40,6 +41,28 @@ pub fn parse_with_charset(source: &str, charset: Option<&str>) -> EngineResult<D
     tree.decoded = charset.map_or(Some(UTF_8), encoding_for_label);
     tree.run()?;
     tree.document.formatting.quirks = super::quirks::quirks(source);
+    finish_page(tree)
+}
+
+/// Parses an XML document (XHTML or SVG, chosen by `xml_mime`) into the same Document the HTML
+/// parser builds: well-formed XML, no HTML error recovery, never quirks. The first
+/// well-formedness error ends parsing with Blink's parse-error block above what was built.
+pub fn parse_xml(source: &str, charset: Option<&str>) -> EngineResult<Document> {
+    if source.len() > HTML_BYTES {
+        return Err(EngineError::limit("HTML bytes", HTML_BYTES));
+    }
+    let mut tree = Tree::new(source, 0, false);
+    tree.tokens = Tokens::Xml(XmlTokenizer::new(source));
+    tree.decoded = charset.map_or(Some(UTF_8), encoding_for_label);
+    tree.run()?;
+    if let Some(message) = tree.tokens.error().map(str::to_owned) {
+        super::xml::error_block(&mut tree.document, &message)?;
+    }
+    finish_page(tree)
+}
+
+/** The page passes both parsers share: content bounds, forms and tables. */
+fn finish_page(mut tree: Tree) -> EngineResult<Document> {
     super::validate_content(&tree.document)?;
     super::forms::normalize(&mut tree.document)?;
     super::table::annotate(&mut tree.document)?;
@@ -154,7 +177,7 @@ const PLACEHOLDER_MAX: u32 = 4096;
 
 /** Optional closing recovery stays within the existing recursion budget. */
 struct Tree<'a> {
-    tokens: Tokenizer<'a>,
+    tokens: Tokens<'a>,
     document: Document,
     /** Vec indexes of open elements; identities are `base` plus the index. */
     stack: Vec<usize>,
@@ -182,7 +205,7 @@ impl<'a> Tree<'a> {
     /** Pages and fragments share one builder; only the base identity and mode differ. */
     fn new(source: &'a str, base: usize, fragment: bool) -> Self {
         Self {
-            tokens: Tokenizer::new(source),
+            tokens: Tokens::Html(Tokenizer::new(source)),
             document: Document {
                 nodes: Vec::new(),
                 scripts: Vec::new(),
@@ -209,7 +232,8 @@ impl<'a> Tree<'a> {
     /** Every token is consumed, then every still-open element closes at end of input. */
     fn run(&mut self) -> EngineResult<()> {
         loop {
-            self.tokens.foreign = self.in_svg();
+            let foreign = self.in_svg();
+            self.tokens.set_foreign(foreign);
             let Some(token) = self.tokens.next() else {
                 break;
             };
@@ -299,8 +323,17 @@ impl<'a> Tree<'a> {
                 }
             }
             "body" | "html" => {}
-            "br" => return self.start("br".into(), Default::default(), true),
+            "br" if !self.tokens.xml() => {
+                return self.start("br".into(), Default::default(), true);
+            }
             "form" if self.ignored_forms > 0 => self.ignored_forms -= 1,
+            // XML end tags always name the current element; one the builder never opened
+            // (flattened past the depth bound, or skipped) closes nothing.
+            _ if self.tokens.xml() => {
+                if self.current() == tag {
+                    self.close(self.stack.len() - 1);
+                }
+            }
             _ => {
                 if let Some(position) = self.end_position(tag) {
                     self.close(position);
@@ -499,7 +532,8 @@ impl<'a> Tree<'a> {
     /// HTML's "in body" mode ignores caption, col, colgroup, row-group, row and cell start tags
     /// when no table (or template) is open; script fragments keep their context's own rules.
     fn stray_table_part(&self, tag: &str) -> bool {
-        STRAY_TABLE_PARTS.contains(&tag)
+        !self.tokens.xml()
+            && STRAY_TABLE_PARTS.contains(&tag)
             && !self.fragment
             && !self
                 .open()
@@ -507,6 +541,9 @@ impl<'a> Tree<'a> {
     }
     /** Start tags that end open paragraphs, list items, options, headings, links and table parts. */
     fn implied_closes(&mut self, tag: &str) {
+        if self.tokens.xml() {
+            return;
+        }
         if CLOSES_P.contains(&tag)
             && let Some(position) = in_scope(
                 self.open(),
@@ -578,6 +615,9 @@ impl<'a> Tree<'a> {
     /** Cells start an implied row; other content inside table structure moves beside the table. */
     fn insertion_parent(&mut self, tag: &str) -> EngineResult<Option<usize>> {
         let current = self.current().to_owned();
+        if self.tokens.xml() {
+            return Ok(self.stack.last().map(|index| self.local(*index)));
+        }
         if ["td", "th"].contains(&tag)
             && current != "tr"
             && TABLE_CONTEXT.contains(&current.as_str())
@@ -595,7 +635,7 @@ impl<'a> Tree<'a> {
     /** HTML foster parenting: content misplaced in open table structure belongs to the table's
     parent. None when the current node is not table structure inside a table. */
     fn foster_parent(&mut self) -> Option<Option<usize>> {
-        if !TABLE_CONTEXT.contains(&self.current()) {
+        if self.tokens.xml() || !TABLE_CONTEXT.contains(&self.current()) {
             return None;
         }
         let table = self
