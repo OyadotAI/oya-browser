@@ -49,12 +49,19 @@ pub(super) fn content_box(
     let mut boxed = node.clone();
     boxed.style.inline_block |=
         boxed.style.inline && !boxed.style.display_flex && !boxed.style.display_grid;
-    if forced.is_none() && inline_level(&boxed) {
+    // Its display decides, not its tag: `inline_level` treats every button as inline, which laid
+    // a `display: block` button out as an inline box that dropped its padding, border and
+    // min-height (16px tall where Blink's block-level LayoutButton gives 32px).
+    if forced.is_none() && boxed.style.inline_block {
         return super::text::inline(context, &boxed, flow, items);
     }
+    // Blink never stretches a button's auto width to its container (space_utils.cc's
+    // ShouldBlockContainerChildStretchAutoInlineSize): a block button still fits its content.
+    let plain = !boxed.style.display_flex && !boxed.style.display_grid;
+    boxed.style.width_fit |= plain && boxed.style.width.is_none();
     let start = items.len();
     block(context, &boxed, flow, items, forced)?;
-    if !boxed.style.display_flex && !boxed.style.display_grid {
+    if plain {
         center_content(&boxed, &mut items[start..]);
     }
     Ok(())
@@ -284,15 +291,15 @@ pub(super) fn control(
         validation = super::text::text(context, error, node, &mut error_flow, usize::MAX)?;
         validation_extent = error_flow.bottom - (y + height);
     }
-    // An authored height sizes the control's border box, as for any inline-block.
+    // An authored height sizes the control's border box, then min- and max-height clamp it, as
+    // for any inline-block.
     let authored = style
         .height
         .and_then(|extent| extent.resolve_size(flow.definite))
         .map(|content| super::sizing::border_height(node, content));
-    let total = forced
-        .and_then(|bounds| bounds.height)
-        .or(authored.map(|height| height + validation_extent))
-        .unwrap_or(height + validation_extent);
+    let total = forced.and_then(|bounds| bounds.height).unwrap_or_else(|| {
+        clamp_height(node, authored.unwrap_or(height), flow.definite) + validation_extent
+    });
     let control_height = (total - validation_extent).max(0.0);
     // A taller authored box centers its title, as native buttons do.
     let mut lines = lines;

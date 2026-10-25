@@ -85,3 +85,41 @@ fn a_document_scroll_reaches_page_scripts() {
     }
     assert_eq!(title, "at 700");
 }
+
+/** A script that measures a node it just inserted under a scrolled inner container sees the box
+where it is painted: CSSOM View rects subtract every ancestor scroller's offset, so a lazy
+loader on a page that scrolls its `<main>` sees rows enter the viewport. */
+#[test]
+fn script_geometry_subtracts_an_inner_scrollers_offset() {
+    let shell = SHELL.replace(
+        "</main>",
+        "</main><script>addEventListener('scroll', () => { const d = document.createElement('div'); \
+         d.textContent = 'row'; const s = document.getElementById('s'); s.insertBefore(d, s.firstChild); \
+         d.getBoundingClientRect(); document.title = 'top ' + s.getBoundingClientRect().top }, true)</script>",
+    );
+    let fixture = Fixture::routes(vec![("/", html("", &shell))]);
+    let mut runtime = desktop(&fixture.url);
+    let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
+    agent_call(
+        &mut runtime,
+        "page.scroll_at",
+        json!({"page_id":page["page_id"],"expected_revision":page["revision"],"x":100.0,"y":200.0,"delta_y":300.0}),
+    )
+    .unwrap();
+    // The document cannot scroll; this only makes the page's scripts run their scroll listener.
+    agent_call(
+        &mut runtime,
+        "page.scroll",
+        json!({"page_id":page["page_id"],"expected_revision":page["revision"],"y":0.0}),
+    )
+    .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut title = String::new();
+    while std::time::Instant::now() < deadline && !title.starts_with("top") {
+        runtime.run_page_scripts();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let inspected = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+        title = inspected["title"].as_str().unwrap_or_default().to_owned();
+    }
+    assert_eq!(title, "top -250");
+}

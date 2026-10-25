@@ -78,6 +78,29 @@ fn block_image(
     flow.after_block(y + natural_height, node.style.margin[2]);
     Ok(())
 }
+/** Min- and max-content widths of an img. One still showing its alt text is laid out by Blink as
+ * a block of that fallback text (HTMLImageFallbackHelper), so only an authored width replaces the
+ * text's width: an authored height alone (LinkedIn's lazy `h-[840px]` flex item) kept the alt's
+ * 154px in Chromium but collapsed to 0 here through the replaced path's missing ratio. */
+pub(super) fn intrinsic(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+) -> EngineResult<super::sizing::IntrinsicWidths> {
+    let authored_width = node.style.width.is_some() || node.attributes.contains_key("width");
+    let empty_with_height = node.text.is_empty() && node.style.height.is_some();
+    let (min_content, max_content) =
+        if node.image_size.is_some() || authored_width || empty_with_height {
+            super::sizing::replaced_contribution(node)
+        } else {
+            let face = super::sizing::face_for(&node.style, Some(&node.text));
+            let width = context.measure(&node.text, face)?;
+            (width, width)
+        };
+    Ok(super::sizing::IntrinsicWidths {
+        min_content,
+        max_content,
+    })
+}
 /** Chromium clips alt text to an image box it was given, so alt that only fits by breaking words
 (a narrow or zero-width positioned image still loading) shows nothing, not a column of letters. */
 fn fitting_alt(lines: Vec<super::PaintLine>, alt: &str, width: f64) -> Vec<super::PaintLine> {
