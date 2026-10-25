@@ -315,9 +315,22 @@ thread_local! {
      * cascade. Font-size resolves against the parent's face, everything after against its own. */
     static FONT_FACE: std::cell::Cell<Option<crate::platform::Face>> = const { std::cell::Cell::new(None) };
 }
+thread_local! {
+    /** Whether the current cascade measured a face for `ch` or `ic`. */
+    static MEASURED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 /** Sets (or clears) the face `ch` and `ic` measure for the lengths resolved next. */
 pub(super) fn set_font_face(face: Option<crate::platform::Face>) {
+    if face.is_some() {
+        MEASURED.with(|measured| measured.set(true));
+    }
     FONT_FACE.with(|current| current.set(face));
+}
+/** Whether a style measured a face since the last call, which clears it: such styles change
+ * when the page's web fonts load, so the page styles again then (Blink invalidates
+ * font-relative lengths on a font load). */
+pub(super) fn take_measured() -> bool {
+    MEASURED.with(|measured| measured.replace(false))
 }
 /**
  * The face a computed style shapes text with, as layout picks it: a loaded page font the family

@@ -75,7 +75,11 @@ pub(super) enum Pseudo {
     Default,
     /// `:open`: a `<details>` or `<dialog>` with `open`.
     Open,
-    /// `:hover`, `:focus` and other user-state classes: the rule is kept and never matches.
+    /// `:focus`: the element a script's `focus()` left focused.
+    Focus,
+    /// `:focus-within`: the focused element or one of its flat-tree ancestors.
+    FocusWithin,
+    /// `:hover` and other user-state classes: the rule is kept and never matches.
     Never,
 }
 /// One simple selector inside a compound.
@@ -564,13 +568,13 @@ impl<'a> Cursor<'a> {
             "indeterminate" => Pseudo::Indeterminate,
             "default" => Pseudo::Default,
             "open" => Pseudo::Open,
+            "focus" => Pseudo::Focus,
+            "focus-within" => Pseudo::FocusWithin,
             // States a page reaches only through a person or a script call Eye has not made.
             "hover"
             | "active"
-            | "focus"
             | "visited"
             | "focus-visible"
-            | "focus-within"
             | "target"
             | "autofill"
             | "-webkit-autofill"

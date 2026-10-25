@@ -22,6 +22,8 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         text_indent: parent.text_indent,
         text_transform: parent.text_transform,
         white_space: parent.white_space,
+        break_spaces: parent.break_spaces,
+        tab_size: parent.tab_size,
         font_family: parent.font_family,
         font_families: parent.font_families.clone(),
         font_style: parent.font_style,
@@ -233,7 +235,11 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
         }
         "text-indent" => style.text_indent = source.text_indent,
         "text-transform" => style.text_transform = source.text_transform,
-        "white-space" => style.white_space = source.white_space,
+        "white-space" => {
+            style.white_space = source.white_space;
+            style.break_spaces = source.break_spaces;
+        }
+        "tab-size" => style.tab_size = source.tab_size,
         "cursor" => style.cursor_pointer = source.cursor_pointer,
         "color-scheme" => {
             style.color_scheme = source.color_scheme;

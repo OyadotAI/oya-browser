@@ -13,6 +13,8 @@ serde_json = { version = "=1.0.154", features = ["float_roundtrip"] }
 ryu-js = "=1.0.3"
 # Already in the workspace through the app; WHATWG URL parsing for location, URL and fetch.
 url = "=2.5.8"
+# Already in the workspace through url; UTS #46 for the URL host parser.
+idna = "=1.1.0"
 # Already in the workspace through rustls; the OS CSPRNG behind crypto.randomUUID.
 ring = "=0.17.14"
 

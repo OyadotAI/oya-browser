@@ -72,6 +72,11 @@ fn resolve(url: &Url, fixture: bool) -> EngineResult<Vec<SocketAddr>> {
     let addresses: Vec<SocketAddr> = match host {
         Host::Ipv4(ip) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
         Host::Ipv6(ip) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
+        // Chromium's ResolveLocalHostname: loopback without asking DNS.
+        Host::Domain(host) if super::super::policy::local_hostname(host) => vec![
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port),
+            SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port),
+        ],
         Host::Domain(host) => (host, port)
             .to_socket_addrs()
             .map_err(io_error)?

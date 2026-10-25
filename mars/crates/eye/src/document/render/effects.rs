@@ -41,6 +41,8 @@ struct Tree<'a> {
     matrices: Vec<Option<Matrix>>,
     /// Clamped scroll offsets per scroll container identity; empty paints everything unscrolled.
     offsets: ScrollOffsets,
+    /// How far each scroll container's contents reach right and down (its scrollable overflow).
+    reach: std::collections::BTreeMap<usize, [f64; 2]>,
 }
 impl<'a> Tree<'a> {
     /** Identity lookup never assumes identities equal vector indexes. */
@@ -100,9 +102,17 @@ pub(super) fn stack(
         positions,
         boxes,
         offsets: ScrollOffsets::new(),
+        reach: std::collections::BTreeMap::new(),
     };
     let ranges = scroll_ranges(&mut tree, &items)?;
     tree.offsets = clamp_offsets(&ranges, offsets);
+    // Sticky boxes inside scroll containers move with the offsets and the reach just learned, so
+    // matrices memoized while measuring the ranges are recomputed.
+    tree.reach = ranges
+        .iter()
+        .map(|(local, range)| (*local, range.reach))
+        .collect();
+    tree.matrices.iter_mut().for_each(|slot| *slot = None);
     let areas = scroll_areas(&mut tree, &items, &ranges)?;
     let mut resolved = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
@@ -361,7 +371,10 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
         .flatten()
         .map(|index| &items[index]);
     if style.position == Position::Sticky {
-        matrix[5] = sticky_offset(tree, items, node, own);
+        [matrix[4], matrix[5]] = match scroll_container(tree, node) {
+            Some(scroller) => inner_sticky_offset(tree, items, node, own, scroller),
+            None => [0.0, sticky_offset(tree, items, node, own)],
+        };
     } else if style.position == Position::Relative {
         let [x, y] = relative_offset(tree, items, node);
         matrix[4] = x;
@@ -443,6 +456,114 @@ fn sticky_offset(
     own: Option<&DisplayItem>,
 ) -> f64 {
     sticky_pin(tree, items, node, own).map_or(0.0, |pin| pin.offset(0.0))
+}
+/** The nearest scroll container a sticky box sticks to, None for the viewport. A fixed box
+ * between them pins to the viewport, so the walk stops there. */
+fn scroll_container<'a>(tree: &Tree<'a>, node: &'a Node) -> Option<&'a Node> {
+    for ancestor in tree.ancestors(node).ok()? {
+        if scrolls(&ancestor.style) {
+            return Some(ancestor);
+        }
+        if ancestor.style.position == Position::Fixed {
+            return None;
+        }
+    }
+    None
+}
+/** A rectangle as [left, top, right, bottom] in layout coordinates. */
+type Edges = [f64; 4];
+/** The border box of an identity's first item as edges. */
+fn edges_of(tree: &Tree<'_>, items: &[DisplayItem], local: usize) -> Option<Edges> {
+    let item = &items[tree.boxes.get(local).copied().flatten()?];
+    Some([item.x, item.y, item.x + item.width, item.y + item.height])
+}
+/** Edges moved inward by per-side amounts in CSS order (top, right, bottom, left). */
+fn contract([l, t, r, b]: Edges, [top, right, bottom, left]: [f64; 4]) -> Edges {
+    [l + left, t + top, r - right, b - bottom]
+}
+/**
+ * A sticky box's offset inside a scroll container, a port of Blink's
+ * UpdateStickyPositionConstraints and StickyPositionScrollingConstraints: the constraining rect
+ * is the container's content box at its scroll offset; the box may travel within its parent's
+ * content box (the scrollable overflow when the parent is the scroller) less its own margins; a
+ * start inset pushes it forward, then an end inset pulls it back, each limited by that room.
+ * ponytail: transforms and nested sticky offsets between the box and the scroller are ignored.
+ */
+fn inner_sticky_offset(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    own: Option<&DisplayItem>,
+    scroller: &Node,
+) -> [f64; 2] {
+    let (Some(own), Some(outer)) = (own, edges_of(tree, items, scroller.local_id)) else {
+        return [0.0; 2];
+    };
+    let [sx, sy] = tree
+        .offsets
+        .get(&scroller.local_id)
+        .copied()
+        .unwrap_or_default();
+    let client = contract(outer, sizing::border_sides(&scroller.style));
+    let [l, t, r, b] = contract(client, scroller.style.padding);
+    let view = [l + sx, t + sy, r + sx, b + sy];
+    let parent = node.parent.unwrap_or(scroller.local_id);
+    let room = if parent == scroller.local_id {
+        let [right, bottom] = tree
+            .reach
+            .get(&parent)
+            .copied()
+            .unwrap_or([client[2], client[3]]);
+        contract(
+            [client[0], client[1], right, bottom],
+            scroller.style.padding,
+        )
+    } else {
+        let Some(box_edges) = edges_of(tree, items, parent) else {
+            return [0.0; 2];
+        };
+        let parent = tree
+            .node(parent)
+            .map(|n| &n.style)
+            .unwrap_or(&scroller.style);
+        contract(
+            contract(box_edges, sizing::border_sides(parent)),
+            parent.padding,
+        )
+    };
+    let style = &node.style;
+    let margins = std::array::from_fn(|side| {
+        if style.margin_auto[side] {
+            0.0
+        } else {
+            style.margin[side]
+        }
+    });
+    let room = contract(room, margins);
+    let rect = [own.x, own.y, own.x + own.width, own.y + own.height];
+    let axis = |start: usize, end: usize, low: usize, high: usize| {
+        let size = view[high] - view[low];
+        let mut min = super::positioned::inset(style, start, size);
+        let mut max = super::positioned::inset(style, end, size);
+        if let (Some(lo), Some(hi)) = (min, max) {
+            let free = size - (rect[high] - rect[low]) - lo - hi;
+            if free < 0.0 {
+                max = Some(hi + free);
+            }
+        }
+        let mut offset = 0.0;
+        if let Some(lo) = min.take() {
+            let push = (view[low] + lo - rect[low]).min(room[high] - rect[high]);
+            offset += push.max(0.0);
+        }
+        if let Some(hi) = max {
+            let pull =
+                (rect[high] + offset - (view[high] - hi)).min(rect[low] + offset - room[low]);
+            offset -= pull.max(0.0);
+        }
+        offset
+    };
+    [axis(3, 1, 0, 2), axis(0, 2, 1, 3)]
 }
 /** A sticky box's constraint against the viewport (Blink's StickyPositionScrollingConstraints):
  * its `top` inset, where it sits unstuck, and how far its containing block lets it travel. */
@@ -881,15 +1002,21 @@ fn clip_box(
     let mut radius = inner_radius(radii(style, item.width, item.height), border);
     if let Some(margin) = clip_margin(style) {
         match style.overflow_clip_box {
-            1 => {
-                outsets = [0.0; 4];
-                radius = radii(style, item.width, item.height);
-            }
+            1 => outsets = [0.0; 4],
             2 => outsets = std::array::from_fn(|side| outsets[side] - style.padding[side]),
             _ => {}
         }
         outsets = outsets.map(|side| side + margin);
-        radius = radius.map(|r| if r > 0.0 { r + margin } else { r });
+        // Blink outsets the padding-box rounded rect with corner correction
+        // (AdjustRoundedClipForOverflowClipMargin), by each corner's horizontal outset.
+        let spread: [f64; 4] = std::array::from_fn(|side| outsets[side] + border[side]);
+        let size = [
+            item.width - border[1] - border[3],
+            item.height - border[0] - border[2],
+        ];
+        let [_, right, _, left] = spread;
+        let corner = [left, right, right, left];
+        radius = std::array::from_fn(|i| outset_radius(radius[i], corner[i], size));
     }
     let [top, right, bottom, left] = outsets;
     let mut rect = ClipRect {
@@ -906,15 +1033,19 @@ fn clip_box(
     let visible = |axis: Overflow, other: Overflow| {
         axis == Overflow::Visible && other == Overflow::Clip && !style.contain_paint
     };
-    if visible(style.overflow_x, style.overflow_y) {
+    let open_x = visible(style.overflow_x, style.overflow_y);
+    let open_y = visible(style.overflow_y, style.overflow_x);
+    if open_x {
         (rect.x, rect.width) = (-open, open * 2.0);
     }
-    if visible(style.overflow_y, style.overflow_x) {
+    if open_y {
         (rect.y, rect.height) = (-open, 2.0 * open);
     }
     let matrix = painted(tree, items, node)?;
     let mut rect = super::display::transform_rect(&rect, Some(matrix));
-    if matrix[..4] == IDENTITY[..4] {
+    // Blink builds the inner border-radius clip only for boxes clipping both axes, so a box that
+    // clips one axis clips square (rounded-overflow-clip-visible).
+    if matrix[..4] == IDENTITY[..4] && !open_x && !open_y {
         rect.radius = radius;
     }
     Ok(Some(rect))
@@ -930,6 +1061,20 @@ fn clip_margin(style: &crate::document::ComputedStyle) -> Option<f64> {
     let effect = style.overflow_clip_margin != 0.0 || style.overflow_clip_box != 0;
     ((clip_both || style.contain_paint) && !scroller && effect)
         .then_some(style.overflow_clip_margin)
+}
+/** A corner radius outset by `outset` on a box of `size` (css-backgrounds-3 corner shaping, as
+ * Blink's ComputeOutsetAdjustedBorderRadius): a small radius grows less than the outset, by the
+ * cubic ratio, unless the corner already covers over half its edge. Never negative. */
+fn outset_radius(radius: f64, outset: f64, [width, height]: [f64; 2]) -> f64 {
+    if radius <= 0.0 || outset == 0.0 || width <= 0.0 || height <= 0.0 {
+        return radius.max(0.0);
+    }
+    let coverage = 2.0 * (radius / width).min(radius / height);
+    if radius > outset || coverage > 1.0 {
+        return (radius + outset).max(0.0);
+    }
+    let ratio = radius / outset;
+    radius + outset * (1.0 - (1.0 - ratio).powi(3) * (1.0 - coverage.powi(3)))
 }
 /** Inner padding-edge radii shrink by the adjacent border widths. */
 fn inner_radius(outer: [f64; 4], [top, right, bottom, left]: [f64; 4]) -> [f64; 4] {

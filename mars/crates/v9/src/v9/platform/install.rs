@@ -1,6 +1,6 @@
 /** Builds the platform's intrinsic prototypes and singletons, and the global object's prototype. */
 use super::dom::{self, REFLECTED};
-use super::{console, events, interfaces, net, timers, window};
+use super::{console, events, interfaces, net, timers, url_bindings, window};
 use crate::v9::value::JsValue;
 use crate::v9::vm::heap::Key;
 use crate::v9::vm::heap::{CONFIGURABLE, HIDDEN_ATTRS};
@@ -586,7 +586,7 @@ fn network(b: &mut Builder) {
         ],
         net::xhr_method,
     );
-    b.method(xhr, "overrideMimeType", 1, noop);
+    b.method(xhr, "overrideMimeType", 1, net::xhr_method);
     getters(
         b,
         xhr,
@@ -709,17 +709,23 @@ fn network(b: &mut Builder) {
         "href", "protocol", "username", "password", "host", "hostname", "port", "pathname",
         "search", "hash",
     ] {
-        b.accessor(url, name, Some(net::url_get), Some(net::url_set));
+        b.accessor(
+            url,
+            name,
+            Some(url_bindings::url_get),
+            Some(url_bindings::url_set),
+        );
     }
-    getters(b, url, &["origin", "searchParams"], net::url_get);
-    methods(b, url, &["toString", "toJSON"], net::url_get);
-    let ctor = b.constructor("URL", 1, net::url_construct, url, None);
+    getters(b, url, &["origin", "searchParams"], url_bindings::url_get);
+    methods(b, url, &["toString", "toJSON"], url_bindings::url_get);
+    let ctor = b.constructor("URL", 1, url_bindings::url_construct, url, None);
     methods(
         b,
         ctor,
         &["createObjectURL", "revokeObjectURL"],
         net::url_object_url,
     );
+    methods(b, ctor, &["parse", "canParse"], url_bindings::url_static);
     b.global("URL", ctor);
     let params = b.object(Some(object_prototype));
     b.ids.search_params_prototype = params;
@@ -730,17 +736,24 @@ fn network(b: &mut Builder) {
             "get", "getAll", "has", "set", "append", "delete", "sort", "forEach", "toString",
             "keys", "values",
         ],
-        net::params_method,
+        url_bindings::params_method,
     );
-    let entries = b.method(params, "entries", 0, net::params_method);
+    let entries = b.method(params, "entries", 0, url_bindings::params_method);
     b.put(
         params,
         Key::Sym(symbol::ITERATOR),
         Static::Value(JsValue::Object(entries)),
         HIDDEN_ATTRS,
     );
-    b.getter(params, "size", net::params_method);
-    let ctor = b.constructor("URLSearchParams", 0, net::params_construct, params, None);
+    b.getter(params, "size", url_bindings::params_method);
+    url_bindings::install_iterator(b);
+    let ctor = b.constructor(
+        "URLSearchParams",
+        0,
+        url_bindings::params_construct,
+        params,
+        None,
+    );
     b.global("URLSearchParams", ctor);
 }
 
@@ -752,9 +765,14 @@ fn singletons(b: &mut Builder) {
     for name in [
         "href", "protocol", "host", "hostname", "port", "pathname", "search", "hash",
     ] {
-        b.accessor(location, name, Some(net::url_get), Some(net::url_set));
+        b.accessor(
+            location,
+            name,
+            Some(url_bindings::url_get),
+            Some(url_bindings::url_set),
+        );
     }
-    b.getter(location, "origin", net::url_get);
+    b.getter(location, "origin", url_bindings::url_get);
     methods(
         b,
         location,

@@ -24,12 +24,14 @@ pub(in crate::v9) fn dom_error(vm: &mut Vm, error: EngineError) -> Thrown {
             let message = error.message.clone();
             vm.unsupported_error(message.trim_end_matches('.'))
         }
-        "invalid_request"
-            if error.message.starts_with("HierarchyRequestError")
-                || error.message.starts_with("NoModification") =>
-        {
-            vm.throw(crate::v9::vm::error::ErrorKind::Error, &error.message)
-        }
+        "invalid_request" => match error.message.split_once(": ") {
+            // "<DOMException name>: message" from the node model is the DOMException the DOM
+            // standard names, so `assert_throws_dom` and `e.name` see what Blink throws.
+            Some((name, message)) if crate::v9::builtins::legacy_code(name) != 0 => {
+                vm.dom_exception(name, message)
+            }
+            _ => Thrown::Fatal(error),
+        },
         _ => Thrown::Fatal(error),
     }
 }
@@ -795,6 +797,24 @@ pub(in crate::v9) fn native_name(call: &Call) -> &'static str {
     realm().native(call.callee).map_or("", |def| def.name)
 }
 
+/** The element a bare global name reaches through the window's named properties (HTML's
+named access on the Window object): the first element in tree order whose id is the name.
+Only a name no binding or property answers gets here, so scripts writing `dut.foo` for
+`<div id=dut>` work as in Blink's WindowProperties. */
+pub(in crate::v9) fn named_element(vm: &mut Vm, name: &str) -> Res<Option<JsValue>> {
+    if name.is_empty() || vm.page.legacy || vm.page.document.is_none() {
+        return Ok(None);
+    }
+    let found = search(vm, DOCUMENT, |page, id| {
+        page.view(id)
+            .is_some_and(|view| view.attributes.get("id").is_some_and(|value| value == name))
+    });
+    match found.first() {
+        Some(node) => Ok(Some(wrap(vm, *node)?)),
+        None => Ok(None),
+    }
+}
+
 /** Wrap an optional node. */
 pub(super) fn wrap_option(vm: &mut Vm, node: Option<usize>) -> Res<JsValue> {
     match node {
@@ -965,6 +985,108 @@ fn node_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Undefined)
 }
 
+/** Replace a character data node's text, queueing the characterData record. */
+fn set_data(vm: &mut Vm, node: usize, text: &str) -> Res<()> {
+    let old = vm.page.text_content(node);
+    vm.page
+        .set_text(node, text)
+        .map_err(|error| dom_error(vm, error))?;
+    vm.page
+        .mutations
+        .push(components::Mutation::Text { node, old });
+    Ok(())
+}
+
+/** A WebIDL `unsigned long` argument: ToNumber, then modulo 2^32. */
+fn unsigned_long(vm: &mut Vm, value: &JsValue) -> Res<usize> {
+    let number = vm.to_number(value)?;
+    if !number.is_finite() {
+        return Ok(0);
+    }
+    Ok(number.trunc().rem_euclid(4_294_967_296.0) as usize)
+}
+
+/** CharacterData's substringData, appendData, insertData, deleteData and replaceData, and
+Text's splitText, in UTF-16 code units as the DOM standard counts them (Blink's
+CharacterData::replaceData). An offset past the length is IndexSizeError; a count runs at
+most to the end. */
+pub(super) fn character_data_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let node = this_node(vm, &call)?;
+    let name = native_name(&call);
+    if matches!(name, "before" | "after" | "replaceWith" | "remove") {
+        if name == "remove" {
+            if traverse_parent(vm, node).is_some() {
+                remove_node(vm, node)?;
+            }
+            return Ok(JsValue::Undefined);
+        }
+        return components::reacting(vm, |vm| mutate(vm, node, &call));
+    }
+    let units: Vec<u16> = vm.page.text_content(node).encode_utf16().collect();
+    let length = units.len();
+    let required = match name {
+        "appendData" => 1,
+        "substringData" | "insertData" | "deleteData" => 2,
+        "replaceData" => 3,
+        _ => 1,
+    };
+    if call.args.len() < required {
+        return Err(vm.type_error(&format!("{required} arguments required.")));
+    }
+    if name == "appendData" {
+        let mut text = String::from_utf16_lossy(&units);
+        text.push_str(&vm.to_text(&call.arg(0))?);
+        set_data(vm, node, &text)?;
+        return Ok(JsValue::Undefined);
+    }
+    let offset = unsigned_long(vm, &call.arg(0))?;
+    if offset > length {
+        return Err(vm.dom_exception(
+            "IndexSizeError",
+            "The offset is larger than the node's length.",
+        ));
+    }
+    let count = match name {
+        "insertData" | "splitText" => 0,
+        _ => unsigned_long(vm, &call.arg(1))?.min(length - offset),
+    };
+    let tail = &units[offset + count..];
+    match name {
+        "substringData" => {
+            JsValue::string(&String::from_utf16_lossy(&units[offset..offset + count]))
+                .map_err(Into::into)
+        }
+        "splitText" => split_text(vm, node, &units, offset),
+        _ => {
+            let inserted = match name {
+                "insertData" => vm.to_text(&call.arg(1))?,
+                "replaceData" => vm.to_text(&call.arg(2))?,
+                _ => String::new(),
+            };
+            let mut text = String::from_utf16_lossy(&units[..offset]);
+            text.push_str(&inserted);
+            text.push_str(&String::from_utf16_lossy(tail));
+            set_data(vm, node, &text)?;
+            Ok(JsValue::Undefined)
+        }
+    }
+}
+
+/** Text.splitText: the data after `offset` moves into a new text node placed after this one. */
+fn split_text(vm: &mut Vm, node: usize, units: &[u16], offset: usize) -> Res<JsValue> {
+    let rest = String::from_utf16_lossy(&units[offset..]);
+    let created = vm
+        .page
+        .create("#text", Some(rest))
+        .map_err(|error| dom_error(vm, error))?;
+    if let Some(parent) = traverse_parent(vm, node) {
+        let next = sibling(vm, node, 1, false);
+        insert(vm, parent, created, next)?;
+    }
+    set_data(vm, node, &String::from_utf16_lossy(&units[..offset]))?;
+    wrap(vm, created)
+}
+
 /** Queue a child list change of `parent` for reactions and observers. */
 pub(super) fn children_changed(vm: &mut Vm, parent: usize, added: Vec<usize>, removed: Vec<usize>) {
     if added.is_empty() && removed.is_empty() {
@@ -1011,21 +1133,27 @@ fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match native_name(&call) {
         "appendChild" => {
             let child = arg_node(vm, &call, 0)?;
+            ensure_pre_insert(vm, node, child, None, false)?;
             insert(vm, node, child, None)?;
             Ok(call.arg(0))
         }
         "insertBefore" => {
             let child = arg_node(vm, &call, 0)?;
-            let reference = node_of(vm, &call.arg(1));
+            let reference = if call.arg(1).nullish() {
+                None
+            } else {
+                Some(arg_node(vm, &call, 1)?)
+            };
+            ensure_pre_insert(vm, node, child, reference, false)?;
             insert(vm, node, child, reference)?;
             Ok(call.arg(0))
         }
         "removeChild" => {
             let child = arg_node(vm, &call, 0)?;
-            if vm.page.parent(child) != Some(node) {
-                return Err(vm.throw(
-                    crate::v9::vm::error::ErrorKind::Error,
-                    "NotFoundError: The node to be removed is not a child of this node.",
+            if traverse_parent(vm, child) != Some(node) {
+                return Err(vm.dom_exception(
+                    "NotFoundError",
+                    "The node to be removed is not a child of this node.",
                 ));
             }
             remove_node(vm, child)?;
@@ -1034,8 +1162,7 @@ fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "replaceChild" => {
             let new = arg_node(vm, &call, 0)?;
             let old = arg_node(vm, &call, 1)?;
-            insert(vm, node, new, Some(old))?;
-            remove_node(vm, old)?;
+            replace_child(vm, node, new, old)?;
             Ok(call.arg(1))
         }
         "hasChildNodes" => Ok(JsValue::Boolean(!traverse_children(vm, node).is_empty())),
@@ -1069,12 +1196,81 @@ fn node_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let other = arg_node(vm, &call, 0)?;
             Ok(JsValue::Number(compare_position(vm, node, other)))
         }
-        "isEqualNode" | "isSameNode" => {
-            Ok(JsValue::Boolean(node_of(vm, &call.arg(0)) == Some(node)))
+        "isSameNode" => Ok(JsValue::Boolean(node_of(vm, &call.arg(0)) == Some(node))),
+        "isEqualNode" => {
+            let Some(other) = node_of(vm, &call.arg(0)) else {
+                return Ok(JsValue::Boolean(false));
+            };
+            Ok(JsValue::Boolean(equal_nodes(vm, node, other)))
         }
-        "normalize" => Ok(JsValue::Undefined),
+        "normalize" => {
+            normalize(vm, node)?;
+            Ok(JsValue::Undefined)
+        }
         _ => Ok(JsValue::Undefined),
     }
+}
+
+/** The DOM standard's "equals": same type, same name and attributes (or data), and equal
+children in order. */
+fn equal_nodes(vm: &mut Vm, a: usize, b: usize) -> bool {
+    if a == b {
+        return true;
+    }
+    if node_type(vm, a) != node_type(vm, b) || vm.page.tag(a) != vm.page.tag(b) {
+        return false;
+    }
+    let (left, right) = (vm.page.view(a), vm.page.view(b));
+    let same_attributes = match (&left, &right) {
+        (Some(left), Some(right)) => left.attributes == right.attributes,
+        (None, None) => true,
+        _ => false,
+    };
+    if !same_attributes {
+        return false;
+    }
+    if matches!(node_type(vm, a), 3 | 8) && vm.page.text_content(a) != vm.page.text_content(b) {
+        return false;
+    }
+    let (left, right) = (traverse_children(vm, a), traverse_children(vm, b));
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(&right)
+            .all(|(l, r)| equal_nodes(vm, *l, *r))
+}
+
+/** Node.normalize: drop empty text nodes and merge each run of adjacent text nodes into its
+first, through the whole subtree. */
+fn normalize(vm: &mut Vm, node: usize) -> Res<()> {
+    let mut run: Option<(usize, String)> = None;
+    for child in traverse_children(vm, node) {
+        if node_type(vm, child) != 3 {
+            flush_text_run(vm, run.take())?;
+            normalize(vm, child)?;
+            continue;
+        }
+        let data = vm.page.text_content(child);
+        match run.as_mut() {
+            Some((_, text)) => {
+                text.push_str(&data);
+                remove_node(vm, child)?;
+            }
+            None if data.is_empty() => remove_node(vm, child)?,
+            None => run = Some((child, data)),
+        }
+    }
+    flush_text_run(vm, run)
+}
+
+/** Write a merged text run back into the first node of the run, if it grew. */
+fn flush_text_run(vm: &mut Vm, run: Option<(usize, String)>) -> Res<()> {
+    if let Some((first, text)) = run
+        && vm.page.text_content(first) != text
+    {
+        set_data(vm, first, &text)?;
+    }
+    Ok(())
 }
 
 /** DOCUMENT_POSITION bits for compareDocumentPosition. */
@@ -1113,9 +1309,22 @@ pub(in crate::v9) fn focus(vm: &mut Vm, node: usize) -> Res<()> {
     }
     blur(vm)?;
     vm.page.state.focused = Some(node);
+    tell_focus(vm, Some(node))?;
     super::events::fire(vm, super::Target::Node(node), "focus", false, false)?;
     super::events::fire(vm, super::Target::Node(node), "focusin", true, false)?;
     Ok(())
+}
+
+/** Tell the document engine where focus now is, for `:focus` and `:focus-within`. Only
+projected elements have an identity there; focus elsewhere reads as none. */
+fn tell_focus(vm: &mut Vm, node: Option<usize>) -> Res<()> {
+    if vm.page.environment.dom_level != crate::v9::DomLevel::Extended {
+        return Ok(());
+    }
+    let node = node.filter(|node| vm.page.is_projected(*node));
+    vm.page
+        .record(crate::document::ScriptChange::Focus { node })
+        .map_err(|error| dom_error(vm, error))
 }
 
 /** Take focus away from the focused element, if any, firing `blur` and `focusout`. */
@@ -1123,11 +1332,139 @@ pub(in crate::v9) fn blur(vm: &mut Vm) -> Res<()> {
     let Some(previous) = vm.page.state.focused.take() else {
         return Ok(());
     };
+    tell_focus(vm, None)?;
     if vm.page.exists(previous) {
         super::events::fire(vm, super::Target::Node(previous), "blur", false, false)?;
         super::events::fire(vm, super::Target::Node(previous), "focusout", true, false)?;
     }
     Ok(())
+}
+
+/** The DOM nodeType of a node (1 element, 3 text, 8 comment, 9 document, 10 doctype, 11
+fragment; shadow roots are fragments). */
+pub(super) fn node_type(vm: &mut Vm, node: usize) -> u8 {
+    if node == DOCUMENT {
+        return 9;
+    }
+    match vm.page.tag(node).as_str() {
+        "#text" => 3,
+        "#comment" => 8,
+        components::FRAGMENT | components::SHADOW_ROOT => 11,
+        super::frames::DOCUMENT_NODE => 9,
+        super::frames::DOCTYPE => 10,
+        _ => 1,
+    }
+}
+
+/** A thrown HierarchyRequestError. */
+fn hierarchy(vm: &mut Vm, message: &str) -> Thrown {
+    vm.dom_exception("HierarchyRequestError", message)
+}
+
+/** The DOM standard's "ensure pre-insertion validity" (and, with `replacing`, the checks of
+"replace a child"): which parent, node and child combinations throw, and as what. Blink runs
+the same checks in ContainerNode::EnsurePreInsertionValidity before any tree change, so a
+rejected call leaves the tree untouched. */
+pub(super) fn ensure_pre_insert(
+    vm: &mut Vm,
+    parent: usize,
+    node: usize,
+    child: Option<usize>,
+    replacing: bool,
+) -> Res<()> {
+    let parent_type = node_type(vm, parent);
+    if !matches!(parent_type, 1 | 9 | 11) {
+        return Err(hierarchy(vm, "The parent cannot have children."));
+    }
+    if node == parent || vm.page.ancestors(parent).contains(&node) || node == DOCUMENT {
+        return Err(hierarchy(vm, "The new child element contains the parent."));
+    }
+    if let Some(child) = child
+        && traverse_parent(vm, child) != Some(parent)
+    {
+        let message = if replacing {
+            "The node to be replaced is not a child of this node."
+        } else {
+            "The node before which the new node is to be inserted is not a child of this node."
+        };
+        return Err(vm.dom_exception("NotFoundError", message));
+    }
+    let node_kind = node_type(vm, node);
+    if node_kind == 9 {
+        return Err(hierarchy(vm, "A document cannot be inserted."));
+    }
+    if node_kind == 3 && parent_type == 9 || node_kind == 10 && parent_type != 9 {
+        return Err(hierarchy(vm, "The node cannot be inserted here."));
+    }
+    if parent_type == 9 {
+        document_child_rules(vm, parent, node, node_kind, child, replacing)?;
+    }
+    Ok(())
+}
+
+/** The document branch of pre-insertion validity: one element, one doctype, the doctype first. */
+fn document_child_rules(
+    vm: &mut Vm,
+    parent: usize,
+    node: usize,
+    kind: u8,
+    child: Option<usize>,
+    replacing: bool,
+) -> Res<()> {
+    let all = traverse_children(vm, parent);
+    let kinds: Vec<u8> = all.iter().map(|c| node_type(vm, *c)).collect();
+    let at = child.and_then(|c| all.iter().position(|x| *x == c));
+    // The document's children of one type, leaving out the child being replaced.
+    let others = |wanted: u8| {
+        kinds
+            .iter()
+            .enumerate()
+            .filter(move |(i, k)| **k == wanted && !(replacing && Some(*i) == at))
+            .map(|(i, _)| i)
+    };
+    let elements = match kind {
+        11 => {
+            let inner = vm.page.children(node);
+            let inner: Vec<u8> = inner.iter().map(|c| node_type(vm, *c)).collect();
+            if inner.contains(&3) {
+                return Err(hierarchy(vm, "Text cannot be a child of a document."));
+            }
+            inner.iter().filter(|k| **k == 1).count()
+        }
+        1 => 1,
+        10 => {
+            let element_before = others(1).any(|i| at.is_none_or(|a| i < a));
+            if others(10).next().is_some() || element_before {
+                return Err(hierarchy(vm, "The document cannot take this doctype."));
+            }
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+    let doctype_after = at.is_some_and(|a| others(10).any(|i| i > a));
+    let child_is_doctype = !replacing && at.is_some_and(|a| kinds[a] == 10);
+    let taken = others(1).next().is_some() || doctype_after || child_is_doctype;
+    if elements > 1 || elements == 1 && taken {
+        return Err(hierarchy(
+            vm,
+            "The document can only have one element child.",
+        ));
+    }
+    Ok(())
+}
+
+/** The DOM standard's "replace a child": validate, then put `new` where `old` was. */
+fn replace_child(vm: &mut Vm, parent: usize, new: usize, old: usize) -> Res<()> {
+    ensure_pre_insert(vm, parent, new, Some(old), true)?;
+    if new == old {
+        return Ok(());
+    }
+    let mut reference = sibling(vm, old, 1, false);
+    if reference == Some(new) {
+        reference = sibling(vm, new, 1, false);
+    }
+    remove_node(vm, old)?;
+    insert(vm, parent, new, reference)
 }
 
 /** Insert a node (fragments insert their children), adopting new identities. */
@@ -2055,46 +2392,77 @@ fn argument_nodes(vm: &mut Vm, call: &Call) -> Res<Vec<usize>> {
     Ok(nodes)
 }
 
-/** append, prepend, before, after, replaceWith, replaceChildren. */
+/** append, prepend, before, after, replaceWith, replaceChildren, as the DOM standard's
+ParentNode and ChildNode steps: the nodes are validated first, then moved out of wherever they
+were (as "convert nodes into a node" does with its fragment), then inserted together at a
+point found among the siblings that are not being moved. */
 fn mutate(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     let name = native_name(call);
     let nodes = argument_nodes(vm, call)?;
-    match name {
-        "append" => {
-            for child in nodes {
-                insert(vm, node, child, None)?;
-            }
+    let child_steps = matches!(name, "before" | "after" | "replaceWith");
+    let parent = if child_steps {
+        match traverse_parent(vm, node) {
+            Some(parent) => parent,
+            None => return Ok(JsValue::Undefined),
         }
+    } else {
+        node
+    };
+    for child in &nodes {
+        ensure_pre_insert(vm, parent, *child, None, false)?;
+    }
+    let viable = |vm: &mut Vm, offset: isize| {
+        let mut at = sibling(vm, node, offset, false);
+        while let Some(candidate) = at.filter(|c| nodes.contains(c)) {
+            at = sibling(vm, candidate, offset, false);
+        }
+        at
+    };
+    let previous = viable(vm, -1);
+    let next = viable(vm, 1);
+    // The first child of `parent` from `start` on that is not being moved: inserting before it
+    // lands where the standard's fragment would, without detaching projected nodes first.
+    let unmoved = |vm: &mut Vm, start: Option<usize>| {
+        let mut at = start;
+        while let Some(candidate) = at.filter(|c| nodes.contains(c)) {
+            at = sibling(vm, candidate, 1, false);
+        }
+        at
+    };
+    let reference = match name {
+        "append" => None,
         "prepend" => {
-            let first = vm.page.children(node).first().copied();
-            for child in nodes {
-                insert(vm, node, child, first)?;
-            }
-        }
-        "before" | "after" | "replaceWith" => {
-            let Some(parent) = vm.page.parent(node) else {
-                return Ok(JsValue::Undefined);
-            };
-            let reference = if name == "after" {
-                sibling(vm, node, 1, false)
+            let first = traverse_children(vm, node).first().copied();
+            // When the first child is also the first node prepended it keeps its place; the
+            // insert treats "before itself" as that, and the change log stays an afterbegin.
+            if first.is_some() && first == nodes.first().copied() {
+                first
             } else {
-                Some(node)
+                unmoved(vm, first)
+            }
+        }
+        "before" => {
+            let start = match previous {
+                Some(previous) => sibling(vm, previous, 1, false),
+                None => traverse_children(vm, parent).first().copied(),
             };
-            for child in nodes {
-                insert(vm, parent, child, reference)?;
-            }
-            if name == "replaceWith" {
-                remove_node(vm, node)?;
-            }
+            unmoved(vm, start)
         }
+        "after" | "replaceWith" => next,
         _ => {
-            for child in vm.page.children(node) {
-                remove_node(vm, child)?;
+            for child in traverse_children(vm, node) {
+                if !nodes.contains(&child) {
+                    remove_node(vm, child)?;
+                }
             }
-            for child in nodes {
-                insert(vm, node, child, None)?;
-            }
+            None
         }
+    };
+    if name == "replaceWith" && !nodes.contains(&node) {
+        remove_node(vm, node)?;
+    }
+    for child in nodes {
+        insert(vm, parent, child, reference)?;
     }
     Ok(JsValue::Undefined)
 }
@@ -2482,7 +2850,10 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .map_err(|error| dom_error(vm, error))?;
             wrap(vm, node)
         }
-        "createEvent" => super::events::create_event(vm, "", false, false),
+        "createEvent" => {
+            let interface = vm.to_text(&call.arg(0))?;
+            super::events::create_legacy_event(vm, &interface)
+        }
         "hasFocus" => Ok(JsValue::Boolean(true)),
         "elementFromPoint" => {
             let hit = element_from_point(vm, &call)?;

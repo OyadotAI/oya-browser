@@ -30,6 +30,21 @@ pub(super) struct Strut {
     pub ascent: f64,
     pub height: f64,
     pub font: f64,
+    /** The font's own ascent and descent without leading, where `text-top` and `text-bottom`
+     * align (Blink's TextTop and the primary font's descent). */
+    pub text: (f64, f64),
+}
+impl Strut {
+    /** The strut of a block with this style: its line-height around its primary font. */
+    pub fn of(style: &crate::document::ComputedStyle) -> Self {
+        let (ascent, content) = super::sizing::face_metrics(style);
+        Self {
+            ascent: super::sizing::text_ascent(style),
+            height: super::sizing::advance(style),
+            font: style.font_size,
+            text: (ascent, content - ascent),
+        }
+    }
 }
 /** Horizontal alignment of finished lines inside their available width. */
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -44,6 +59,33 @@ pub(super) struct Finished {
     frags: Vec<(Frag, f64)>,
     left: f64,
     width: f64,
+    hang: Hang,
+}
+/** Preserved white space (`pre-wrap` spaces and tabs) at the end of a line, which hangs past
+ * its end edge, after Blink's LineInfo::ComputeTrailingSpaceWidth. */
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Hang {
+    /** The trailing spaces' width. */
+    pub width: f64,
+    /** The line ended at a soft wrap, so all of it hangs. */
+    pub soft: bool,
+    /** The spaces are in a right-to-left paragraph. */
+    pub rtl: bool,
+}
+impl Hang {
+    /** How much of the line's `content` width hangs in `available`: everything before a soft
+     * wrap, only what overflows before a forced break or at the paragraph's end (CSS Text's
+     * conditional hang). Right to left it all hangs, as trailing white space reorders to the
+     * line's visual end (UAX #9 rule L1) and so never moves the text off its start edge. */
+    // ponytail: lines lay out left to right, so a right-to-left line's trailing spaces sit at
+    // its right past the edge instead of at its left; same text, different hanging background.
+    fn used(self, content: f64, available: f64) -> f64 {
+        if self.soft || self.rtl {
+            self.width
+        } else {
+            self.width.min((content - available).max(0.0))
+        }
+    }
 }
 /** Subscripts drop by a fifth of the parent font, as Chromium does. */
 const SUB_SHIFT: f64 = 0.2;
@@ -74,15 +116,18 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
     for frag in frags.iter().filter(|frag| !anchored(frag)) {
         baseline = baseline.max(match frag.align {
             VerticalAlign::Middle => frag.height / 2.0 + font * HALF_X_HEIGHT,
-            VerticalAlign::TextTop => 0.0,
+            // These hang from the parent's text edges; `lowest` below extends the line for them.
+            VerticalAlign::TextTop | VerticalAlign::TextBottom => 0.0,
             _ => frag.ascent + raise(frag),
         });
     }
     let top_of = |frag: &Frag| match frag.align {
         VerticalAlign::Middle => baseline - font * HALF_X_HEIGHT - frag.height / 2.0,
-        VerticalAlign::TextTop => baseline - strut.map_or(frag.ascent, |strut| strut.ascent),
+        // Blink's kTextTop and kTextBottom: the box's leading edges meet the parent's font
+        // ascent and descent, not its line-height, so leading never shifts them.
+        VerticalAlign::TextTop => baseline - strut.map_or(frag.ascent, |strut| strut.text.0),
         VerticalAlign::TextBottom => {
-            baseline + strut.map_or(0.0, |strut| strut.height - strut.ascent) - frag.height
+            baseline + strut.map_or(0.0, |strut| strut.text.1) - frag.height
         }
         _ => baseline - frag.ascent - raise(frag),
     };
@@ -95,16 +140,28 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
     for frag in frags.iter().filter(|frag| !anchored(frag)) {
         height = height.max(top_of(frag) - lowest + frag.height);
     }
+    // Blink's MetricsForTopAndBottomAlign: a top or bottom box taller than the aligned subtree
+    // keeps the subtree on the edge it names and extends the other one, so a tall `bottom` box
+    // pushes the subtree down rather than hanging below it.
+    let (ascent, descent) = (baseline - lowest, height - (baseline - lowest));
+    let (mut over, mut under) = (ascent, descent);
     for frag in frags.iter().filter(|frag| anchored(frag)) {
-        height = height.max(frag.height);
+        if frag.height > over + under {
+            (over, under) = match frag.align {
+                VerticalAlign::Top => (ascent, frag.height - ascent),
+                _ => (frag.height - descent, descent),
+            };
+        }
     }
+    let height = over + under;
+    let down = over - ascent;
     let placed = frags
         .into_iter()
         .map(|frag| {
             let top = match frag.align {
                 VerticalAlign::Top => 0.0,
                 VerticalAlign::Bottom => height - frag.height,
-                _ => top_of(&frag) - lowest,
+                _ => top_of(&frag) - lowest + down,
             };
             (frag, top)
         })
@@ -114,6 +171,7 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
         frags: placed,
         left,
         width,
+        hang: flow.hang,
     });
     height
 }
@@ -146,6 +204,7 @@ pub(super) fn settle(
         // margin, border and padding before the first fragment take part of the line, as in
         // Blink's line offset, so alignment distributes only what is left.
         let left = left.min(line.left);
+        let right = (right - line.hang.used(right - left, line.width)).max(left);
         let free = (line.width - (right - left)).max(0.0);
         let dx = line.left - left
             + match align {
@@ -345,11 +404,14 @@ pub(super) fn translate(item: &mut DisplayItem, dx: f64, dy: f64) {
         path.translate(dx, dy);
     }
 }
-/** A text-bearing inline element (not atomic, not replaced) whose box spans its runs. */
+/** A text-bearing inline element (not atomic, not replaced) whose box spans its runs. A
+ * floated or absolutely positioned one is blockified and keeps its own box. */
 fn inline_box(context: &LayoutContext<'_>, item: &DisplayItem) -> bool {
     context.node(item.local_id).is_ok_and(|node| {
         node.style.inline
             && !node.style.inline_block
+            && node.style.float == crate::document::style::Float::None
+            && !super::flow::out_of_flow(node)
             && !["img", "svg", "input", "button", "select", "textarea", "br"]
                 .contains(&node.tag.as_str())
     })

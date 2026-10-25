@@ -527,6 +527,7 @@ dependencies = [
 name = "mars-v9"
 version = "0.1.0"
 dependencies = [
+ "idna",
  "mars-core",
  "ring",
  "ryu-js",

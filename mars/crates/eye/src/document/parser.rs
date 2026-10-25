@@ -1065,8 +1065,11 @@ impl<'a> Tree<'a> {
     }
     /** Literal text stays attached to its source element where unambiguous. */
     fn text(&mut self, text: String) -> EngineResult<()> {
-        if text.trim().is_empty() && !self.in_preformatted() {
-            self.space_after_sibling();
+        // A no-break space is text, never dropped (`<td>&nbsp;</td>`).
+        // ponytail: other Unicode spaces (U+3000) still drop like HTML white space; keep them
+        // once collapsible layout hangs an ideographic space at a line's end.
+        if text.chars().all(|c| c.is_whitespace() && c != '\u{a0}') && !self.in_preformatted() {
+            self.space_after_sibling(&text);
             return Ok(());
         }
         self.head = false;
@@ -1113,14 +1116,23 @@ impl<'a> Tree<'a> {
     /** Dropped whitespace-only text marks the element it follows, the last node's ancestor that
      * is a child of the open element, or the open element itself when it has no content yet, so
      * layout keeps the space between two inline elements. */
-    fn space_after_sibling(&mut self) {
+    fn space_after_sibling(&mut self, text: &str) {
         let parent = self.stack.last().map(|index| self.local(*index));
         let mut current = self.document.nodes.len().checked_sub(1);
         if let Some(open) = self.stack.last().copied()
             && current == Some(open)
             && self.document.nodes[open].text.is_empty()
         {
-            self.document.nodes[open].space_leading = true;
+            let node = &mut self.document.nodes[open];
+            node.space_leading = true;
+            // Only ASCII white space is kept, so any byte count is a character boundary.
+            if text
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+            {
+                let room = LEADING_SPACE_BYTES.saturating_sub(node.leading_space.len());
+                node.leading_space.push_str(&text[..text.len().min(room)]);
+            }
             return;
         }
         while let Some(index) = current {
@@ -1147,6 +1159,9 @@ impl<'a> Tree<'a> {
     }
 }
 
+/** How much dropped leading white space an element keeps for preserved white space to lay out:
+ * enough for any indentation or spacer, a bound on what every element of a page may carry. */
+const LEADING_SPACE_BYTES: usize = 64;
 /** A `media` attribute that is not simply all or screen; inline sheets wrap it as `@media` so the
 cascade evaluates it against the viewport like any other media rule. */
 fn conditional_media(attrs: &markup::Attributes) -> Option<&str> {

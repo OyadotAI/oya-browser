@@ -60,11 +60,49 @@ pub fn apply_script_changes(
             ScriptChange::NodeText { node, text } => set_node_text(&mut candidate, *node, text)?,
             ScriptChange::Value { node, value } => set_field_value(&mut candidate, *node, value)?,
             ScriptChange::Defined { node } => mark_defined(&mut candidate, *node)?,
+            ScriptChange::RootAttribute { body, name, value } => {
+                set_root_attribute(&mut candidate, *body, name, value.as_deref())?
+            }
+            ScriptChange::Focus { node } => {
+                for entry in &mut candidate.nodes {
+                    entry.focused = Some(entry.local_id) == *node;
+                }
+            }
         }
     }
     validate_preorder(candidate.nodes.iter().map(key))?;
     validate_content(&candidate)?;
     Ok(candidate)
+}
+
+/** A script's write to `<html>` or `<body>` attributes, which live on the formatting wrappers
+rather than in the node list; names are re-checked as for any other element. */
+fn set_root_attribute(
+    candidate: &mut Document,
+    body: bool,
+    name: &str,
+    value: Option<&str>,
+) -> EngineResult<()> {
+    if !script_attribute_allowed(name) {
+        return Err(EngineError::unsupported(
+            "Scripts may not write event handler, srcdoc or http-equiv attributes.",
+        ));
+    }
+    if let Some(value) = value {
+        validate_text(value)?;
+    }
+    let formatting = &mut candidate.formatting;
+    let element = if body {
+        &mut formatting.body
+    } else {
+        &mut formatting.html
+    };
+    let name = name.to_ascii_lowercase();
+    match value {
+        Some(value) => element.attributes.insert(name, value.into()),
+        None => element.attributes.remove(&name),
+    };
+    Ok(())
 }
 
 /** An upgraded custom element matches `:defined` from now on. */

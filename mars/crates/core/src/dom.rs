@@ -616,6 +616,24 @@ pub enum ScriptChange {
         /// The upgraded element.
         node: usize,
     },
+    /// Set (Some) or remove (None) one attribute of the document element (`body` false) or the
+    /// body (`body` true). Those are virtual in V9's projection, so they travel apart from
+    /// Attribute; without this `<html class>` written by a script (WPT's `reftest-wait`,
+    /// `:root.dark` themes) never reached the document engine's style.
+    RootAttribute {
+        /// Whether the body rather than the document element changes.
+        body: bool,
+        /// Lowercase attribute name.
+        name: String,
+        /// New value, or None to remove the attribute.
+        value: Option<String>,
+    },
+    /// Focus moved to an element, or left the page (None), so `:focus` and `:focus-within`
+    /// match where the script put it.
+    Focus {
+        /// The newly focused element.
+        node: Option<usize>,
+    },
 }
 
 /// Attributes scripts may write through ScriptChange: everything except inline event handlers

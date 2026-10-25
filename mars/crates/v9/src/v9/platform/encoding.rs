@@ -110,7 +110,7 @@ fn slot(name: &str) -> Key {
 }
 
 /** Read a private slot. */
-fn read_slot(vm: &Vm, value: &JsValue, name: &str) -> Option<JsValue> {
+pub(super) fn read_slot(vm: &Vm, value: &JsValue, name: &str) -> Option<JsValue> {
     match &vm.heap.get(value.object()?)?.props.get(&slot(name))?.slot {
         Slot::Data(value) => Some(value.clone()),
         _ => None,
@@ -118,7 +118,7 @@ fn read_slot(vm: &Vm, value: &JsValue, name: &str) -> Option<JsValue> {
 }
 
 /** Write a private slot. */
-fn write_slot(vm: &mut Vm, id: ObjectId, name: &str, value: JsValue) {
+pub(super) fn write_slot(vm: &mut Vm, id: ObjectId, name: &str, value: JsValue) {
     let prop = Prop {
         slot: Slot::Data(value),
         attrs: HIDDEN_ATTRS,

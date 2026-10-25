@@ -553,9 +553,11 @@ pub fn redirect_url(url: &Url, location: &str, grants: &[String]) -> EngineResul
     if fixture_granted(url, grants)
         && next.origin() != url.origin()
         && next.host_str().is_some_and(|host| {
-            host.trim_matches(['[', ']'])
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| !super::policy::public_address(ip))
+            let host = host.trim_matches(['[', ']']);
+            super::policy::local_hostname(host)
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| !super::policy::public_address(ip))
         })
     {
         return Err(super::policy::denied());

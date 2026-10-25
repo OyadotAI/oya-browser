@@ -150,6 +150,14 @@ pub struct ComputedStyle {
     /// Inherited whitespace handling.
     #[serde(skip_serializing_if = "default")]
     pub white_space: WhiteSpace,
+    /// Inherited `white-space-collapse: break-spaces`: preserved spaces never hang and every one
+    /// is a break opportunity. It lays out as `pre-wrap` otherwise.
+    #[serde(skip_serializing_if = "default")]
+    pub break_spaces: bool,
+    /// Inherited `tab-size` when authored: (value, whether it is a length in px rather than a
+    /// number of spaces). None is the initial 8 spaces.
+    #[serde(skip_serializing_if = "default")]
+    pub tab_size: Option<(f64, bool)>,
     /// Inherited generic face, the fallback when no listed family has a loaded face.
     #[serde(skip_serializing_if = "default")]
     pub font_family: FontFamily,
@@ -531,6 +539,8 @@ impl Default for ComputedStyle {
             text_indent: (0.0, 0.0),
             text_transform: TextTransform::None,
             white_space: WhiteSpace::Normal,
+            break_spaces: false,
+            tab_size: None,
             font_family: FontFamily::Serif,
             font_families: Vec::new(),
             font_style: super::FontStyle::Normal,

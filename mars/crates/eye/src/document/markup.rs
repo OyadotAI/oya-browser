@@ -74,6 +74,8 @@ pub(super) fn node(
         defined: false,
         space_after: false,
         space_leading: false,
+        leading_space: String::new(),
+        focused: false,
     })
 }
 

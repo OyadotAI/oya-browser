@@ -254,7 +254,7 @@ fn inline_box(node: &Node, flow: &mut Flow) -> (f64, f64, f64, f64) {
     let height = content_height(node, content, flow.definite) + vertical_edges(node);
     let outer = width + node.style.margin[1] + node.style.margin[3];
     if flow.cursor > 0.0 && !flow.fits(outer) {
-        flow.newline();
+        flow.wrap();
     }
     flow.fit(outer);
     let x = flow.left() + flow.cursor + node.style.margin[3];

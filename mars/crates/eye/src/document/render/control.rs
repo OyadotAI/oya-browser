@@ -255,7 +255,7 @@ pub(super) fn control(
         Some(bounds) => (bounds.x, bounds.y),
         None => {
             if flow.cursor > 0.0 && !flow.fits(outer) {
-                flow.newline();
+                flow.wrap();
             }
             flow.fit(outer);
             (

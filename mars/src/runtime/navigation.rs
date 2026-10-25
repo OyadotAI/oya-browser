@@ -387,8 +387,14 @@ impl Runtime {
         phase = Instant::now();
         let all = crate::constants::IMAGE_COUNT;
         self.prefetch_images(&document, &acquired.response.url, deadline, &|_| true, all)?;
+        let fonts = document.formatting.fonts.len();
         let images =
             self.resolve_images(&mut document, &acquired.response.url, deadline, &mut gaps)?;
+        // `ch` and `ic` resolved against fallback faces before the web fonts arrived; Blink
+        // restyles font-relative lengths when a font loads, so the page styles once more.
+        if document.formatting.font_metrics && document.formatting.fonts.len() > fonts {
+            document = self.styled(&document, &sheets, self.render_context)?;
+        }
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let resolved = self.resolve_scripts(
