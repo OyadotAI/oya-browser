@@ -328,6 +328,23 @@ impl Object {
     }
 }
 
+/** Whether an object's own properties are variable bindings: the global object's are the page's
+global vars and functions (an object environment record), and an eval-var object's are the vars a
+sloppy direct eval declared. Without this a single `var a,b,...` or repeated eval could declare
+bindings past VM_BINDINGS, bounded only by the much larger property budget. */
+fn holds_bindings(id: ObjectId, object: &Object) -> bool {
+    id == crate::constants::VM_GLOBAL_OBJECT_ID || matches!(object.class, Class::EvalVars)
+}
+
+/** The bindings an object holds: its own property count when it holds bindings, else none. */
+fn binding_props(id: ObjectId, object: &Object) -> usize {
+    if holds_bindings(id, object) {
+        object.props.len()
+    } else {
+        0
+    }
+}
+
 /** Live counts the bounds apply to. */
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::v9) struct Counts {
@@ -336,6 +353,7 @@ pub(in crate::v9) struct Counts {
     pub properties: usize,
     pub units: usize,
     pub environments: usize,
+    /** Environment slots plus the own properties of binding holders (see `holds_bindings`). */
     pub bindings: usize,
 }
 
@@ -360,19 +378,20 @@ impl Heap {
             ));
         }
         self.next_object += 1;
-        self.count_object(&object, true);
+        self.count_object(id, &object, true);
         self.objects.insert(id, object);
         Ok(id)
     }
     /** Store an object under a fixed identity (the global object or a materialized intrinsic). */
     pub fn insert_at(&mut self, id: ObjectId, object: Object) {
-        self.count_object(&object, true);
+        self.count_object(id, &object, true);
         if let Some(old) = self.objects.insert(id, object) {
-            self.count_object(&old, false);
+            self.count_object(id, &old, false);
         }
     }
     /** Add or remove an object's contribution to the counts. */
-    fn count_object(&mut self, object: &Object, add: bool) {
+    fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
+        let bindings = binding_props(id, object);
         let (objects, functions) = if object.function().is_some() {
             (0, 1)
         } else {
@@ -384,11 +403,13 @@ impl Heap {
             counts.functions += functions;
             counts.properties += object.property_count();
             counts.units += object.units();
+            counts.bindings += bindings;
         } else {
             counts.objects = counts.objects.saturating_sub(objects);
             counts.functions = counts.functions.saturating_sub(functions);
             counts.properties = counts.properties.saturating_sub(object.property_count());
             counts.units = counts.units.saturating_sub(object.units());
+            counts.bindings = counts.bindings.saturating_sub(bindings);
         }
     }
     /** A new environment record. */
@@ -432,6 +453,7 @@ impl Heap {
     /** Set an own property, keeping counts; returns the previous property. */
     pub fn put(&mut self, id: ObjectId, key: Key, prop: Prop) -> Option<Prop> {
         let object = self.objects.get_mut(&id)?;
+        let binding = usize::from(holds_bindings(id, object));
         let added = prop.units();
         let old = object.props.insert(key, prop);
         let counts = &mut self.counts;
@@ -440,15 +462,19 @@ impl Heap {
             None => {
                 counts.units += added;
                 counts.properties += 1;
+                counts.bindings += binding;
             }
         }
         old
     }
     /** Remove an own property, keeping counts. */
     pub fn remove(&mut self, id: ObjectId, key: &Key) -> Option<Prop> {
-        let old = self.objects.get_mut(&id)?.props.remove(key)?;
+        let object = self.objects.get_mut(&id)?;
+        let binding = usize::from(holds_bindings(id, object));
+        let old = object.props.remove(key)?;
         self.counts.units = self.counts.units.saturating_sub(old.units());
         self.counts.properties = self.counts.properties.saturating_sub(1);
+        self.counts.bindings = self.counts.bindings.saturating_sub(binding);
         Some(old)
     }
     /** Adjust counts after changing an object's internal class data in place. */
@@ -463,7 +489,8 @@ impl Heap {
     counts between collections count every reference and so only ever overestimate. */
     pub fn recount(&mut self) {
         let mut counts = Counts::default();
-        for object in self.objects.values() {
+        for (id, object) in &self.objects {
+            counts.bindings += binding_props(*id, object);
             if object.function().is_some() {
                 counts.functions += 1;
             } else {
@@ -480,7 +507,7 @@ impl Heap {
             };
         }
         counts.environments = self.envs.len();
-        counts.bindings = self.envs.values().map(|env| env.slots.len()).sum();
+        counts.bindings += self.envs.values().map(|env| env.slots.len()).sum::<usize>();
         counts.units += self.distinct_units();
         self.counts = counts;
     }

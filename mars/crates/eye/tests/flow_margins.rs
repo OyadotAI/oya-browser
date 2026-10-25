@@ -75,12 +75,13 @@ fn clearance_absorbs_the_top_margin() {
     assert!(close(place(markup, "p").0, 0.0), "{:?}", place(markup, "p"));
 }
 
-/** A cleared child whose margin already clears the float keeps it, and its parent stays with the
-float instead of moving down with that margin. */
+/** A child clearing a float adjoining its parent's open strut gets clearance whatever its margin
+(Blink's HasClearancePastAdjoiningFloats; WPT adjoining-float-before-clearance): it sits at the
+float's bottom, and its parent stays with the float instead of moving down with that margin. */
 #[test]
 fn cleared_child_resolves_its_parent_where_it_stands() {
     let markup = "<div id=p><div style='float:left;height:50px;width:50px'></div><div id=c style='clear:left;margin-top:80px'>x</div></div>";
-    assert!(close(place(markup, "c").0, 80.0));
+    assert!(close(place(markup, "c").0, 50.0));
     assert!(close(place(markup, "p").0, 0.0));
 }
 

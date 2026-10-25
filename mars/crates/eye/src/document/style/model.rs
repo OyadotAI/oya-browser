@@ -234,6 +234,12 @@ pub struct ComputedStyle {
     /// `grid-auto-flow: dense`: auto-placement restarts from the grid's start for every item.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub grid_flow_dense: bool,
+    /// `display: grid-lanes` (css-grid-3): the grid container stacks items into lanes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_lanes: bool,
+    /// Grid-lanes `flow-tolerance` in pixels; None is `normal` (1em), infinity `infinite`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_tolerance: Option<f64>,
     /// Placement of a grid item along the columns.
     #[serde(skip_serializing_if = "default")]
     pub grid_column: GridLine,
@@ -552,6 +558,8 @@ impl Default for ComputedStyle {
             grid_auto_columns: GridTemplate::default(),
             grid_flow_column: false,
             grid_flow_dense: false,
+            grid_lanes: false,
+            flow_tolerance: None,
             grid_column: GridLine::default(),
             grid_row: GridLine::default(),
             grid_areas: Vec::new(),

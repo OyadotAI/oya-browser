@@ -708,7 +708,7 @@ impl super::supervisor::Runtime {
                 ));
                 break;
             }
-            match self.fetch_font(base, &request.url, deadline) {
+            match self.fetch_font_retrying(base, &request.url, deadline) {
                 Ok(sfnt) if bytes + sfnt.len() > FONT_TOTAL_BYTES => {
                     notes.push("Fonts past the page font budget use fallback faces.".into());
                 }
@@ -729,13 +729,40 @@ impl super::supervisor::Runtime {
                     });
                 }
                 Err(error) if stops_loading(&error) => return Err(error),
-                Err(_) => {}
+                Err(_) => {
+                    notes.push("A web font failed to load; its text uses a fallback face.".into())
+                }
             }
             if std::time::Instant::now() >= deadline {
                 return Err(EngineError::navigation_timeout());
             }
         }
         Ok(())
+    }
+    /**
+     * `fetch_font`, tried again up to FONT_ATTEMPTS times while the failure is transient (the
+     * connection, not the file): under load a loopback fetch can drop, and a silently missing
+     * font lays the page out in the fallback face. A refused or non-font file is final.
+     */
+    fn fetch_font_retrying(
+        &mut self,
+        base: &url::Url,
+        source: &str,
+        deadline: std::time::Instant,
+    ) -> EngineResult<Vec<u8>> {
+        let mut attempt = 1;
+        loop {
+            match self.fetch_font(base, source, deadline) {
+                Err(error)
+                    if attempt < FONT_ATTEMPTS
+                        && retryable(&error)
+                        && std::time::Instant::now() < deadline =>
+                {
+                    attempt += 1;
+                }
+                result => return result,
+            }
+        }
     }
     /** One font file under the page's authority, unpacked to sfnt bytes. */
     fn fetch_font(
@@ -955,6 +982,16 @@ pub(super) fn stops_loading(error: &EngineError) -> bool {
     error.service.is_some()
         || ["permission_denied", "control_denied"].contains(&error.code.as_str())
 }
+/** Whether a font fetch may succeed if tried again: not a refusal, a bad file or a bad URL. */
+fn retryable(error: &EngineError) -> bool {
+    !stops_loading(error) && ![UNSUPPORTED, INVALID, LIMIT].contains(&error.code.as_str())
+}
+/// Tries one font file gets before its family falls back.
+const FONT_ATTEMPTS: usize = 3;
+/** The code an unparseable font URL fails with. */
+const INVALID: &str = "invalid_request";
+/** The code a font past a byte budget fails with. */
+const LIMIT: &str = "limit_exceeded";
 /** The code Relay refuses a non-bitmap image body with. */
 const UNSUPPORTED: &str = "unsupported_feature";
 /** The only status whose body is the image. */
@@ -1412,6 +1449,15 @@ mod tests {
     #[test]
     fn woff1_unpacks_to_the_wrapped_sfnt() {
         assert_eq!(sfnt(&tiny_woff()).unwrap(), tiny_sfnt());
+    }
+
+    /** A dropped or timed-out font fetch is tried again; a refused, bad or oversized file is not. */
+    #[test]
+    fn only_transient_font_failures_retry() {
+        assert!(retryable(&EngineError::navigation_timeout()));
+        assert!(!retryable(&font_invalid()));
+        assert!(!retryable(&EngineError::invalid("Invalid font URL.")));
+        assert!(!retryable(&EngineError::limit("font bytes", 1)));
     }
 
     /** TrueType and CFF OpenType bytes pass through; anything else is refused without detail. */

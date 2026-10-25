@@ -179,7 +179,11 @@ impl VmState {
                 "V9 environment UTF-16 units",
             ),
             (counts.environments, limits.environments, "V9 environments"),
-            (counts.bindings, limits.bindings, "V9 captured bindings"),
+            (
+                counts.bindings + self.globals.len(),
+                limits.bindings,
+                "V9 bindings",
+            ),
         ] {
             if count > limit {
                 return Err(EngineError::limit(name, limit));

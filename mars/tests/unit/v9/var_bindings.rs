@@ -1,6 +1,6 @@
 /** Var declarations preserve function ownership and declaration instantiation across native VM requests. */
 use mars::{
-    constants::STATEMENTS,
+    constants::VM_BINDINGS,
     v9::{VmState, event, event_scripts, execute, load, load_scripts},
 };
 use serde_json::json;
@@ -231,7 +231,8 @@ fn serialized_var_counters_persist_and_failed_callbacks_keep_the_committed_value
 /** A single declaration statement cannot bypass the page's declared-variable allocation limit. */
 #[test]
 fn many_var_declarators_share_the_existing_variable_quota() {
-    let names = (0..=STATEMENTS)
+    // The page's declared-variable quota is VM_BINDINGS; one statement naming more must fail.
+    let names = (0..=VM_BINDINGS)
         .map(|index| format!("v{index}"))
         .collect::<Vec<_>>()
         .join(",");
@@ -239,6 +240,51 @@ fn many_var_declarators_share_the_existing_variable_quota() {
         execute(&format!("var {names};")).unwrap_err().code,
         "limit_exceeded"
     );
+}
+
+/** Vars a sloppy direct eval declares count against the same quota as global vars: half the
+quota in globals and a little over half in eval vars together cross it, neither alone does. */
+#[test]
+fn eval_declared_vars_share_the_variable_quota_with_global_vars() {
+    let half = VM_BINDINGS / 2;
+    // Short base-36 names keep the eval sources inside the page's dynamic code allowance; the
+    // punctuation prefixes keep them clear of reserved words.
+    let names = |prefix: &str, range: std::ops::Range<usize>| {
+        range
+            .map(|index| format!("{prefix}{}", base36(index)))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let globals = format!("var {};", names("$", 0..half));
+    // The surplus outlasts the interpreter's periodic bound check while f is still running.
+    let evals = half + half / 16;
+    // One eval string stays under the string literal bound, so the eval vars arrive in parts.
+    let parts = 4;
+    let calls = (0..parts)
+        .map(|part| {
+            let range = part * evals / parts..(part + 1) * evals / parts;
+            format!("eval('var {}');", names("_", range))
+        })
+        .collect::<String>();
+    let eval = format!("function f(){{{calls}}}f();");
+    assert!(execute(&globals).is_ok());
+    assert!(execute(&eval).is_ok());
+    assert_eq!(
+        execute(&format!("{globals}{eval}")).unwrap_err().code,
+        "limit_exceeded"
+    );
+}
+
+/** A number's base-36 digits, for short distinct identifiers. */
+fn base36(mut value: usize) -> String {
+    let mut digits = Vec::new();
+    loop {
+        digits.push(char::from_digit((value % 36) as u32, 36).unwrap());
+        value /= 36;
+        if value == 0 {
+            return digits.into_iter().rev().collect();
+        }
+    }
 }
 
 /** Initialized Undefined remains a legitimate stored var value after later assignments and service messages. */

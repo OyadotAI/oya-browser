@@ -45,6 +45,9 @@ pub(super) struct Flow {
     /** Floats placed while the margin strut was open, as (index in `floats`, item range, top
      * they were given); Blink positions them only once the BFC block offset resolves. */
     pub unpositioned: Vec<(usize, std::ops::Range<usize>, f64)>,
+    /** Sides (left, right) of floats adjoining the open margin strut, here or in an ancestor
+     * whose strut is still open (Blink's adjoining object types). */
+    pub adjoining: [bool; 2],
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -70,6 +73,7 @@ impl Flow {
             resolved: None,
             last_top: std::cell::Cell::new(y),
             unpositioned: Vec::new(),
+            adjoining: [false; 2],
         }
     }
     /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
@@ -133,41 +137,66 @@ fn position_floats(inner: &mut Flow, items: &mut [DisplayItem], delta: f64) {
         }
     }
 }
-/** The highest top at or below `y` where a formatting-context root with an authored width fits
- * between the floats, with that opportunity's left edge and width; an auto-width one fits
- * anywhere, shrinking to the room. Blink's LayoutNewFormattingContext also rejects an
- * opportunity shorter than the fragment, so an authored height is checked over its whole
- * extent; ponytail: an auto height is checked over one line, a trial layout per opportunity
- * would cover it. */
+/** The highest top at or below `y` where a formatting-context root fits between the floats,
+ * with the left edge and room its margins and width resolve against, after Blink's
+ * LayoutNewFormattingContext: with no float beside it the root's margins apply from the
+ * content edge (and may be negative); with floats the margins only shrink the opportunity,
+ * measured from the content edge, so a margin under a float costs nothing. An opportunity is
+ * rejected when the border box crosses a float or is taller than it. Ponytail: an auto
+ * height is checked over one line; a trial layout per opportunity would cover it. */
 fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> (f64, f64, f64) {
+    use super::float::LINE_FIT_SLACK;
     let style = &node.style;
     let height = specified_height(node, None, flow.definite);
-    let room = |y: f64| match height {
-        Some(height) => flow.room_at_height(y, height.max(super::float::LINE_FIT_SLACK)),
-        None => flow.room_at(y),
+    let extent = height.unwrap_or(0.0).max(LINE_FIT_SLACK);
+    let (margin_left, margin_right) = (style.margin[3], style.margin[1]);
+    let place = |y: f64| {
+        let (left, width) = match height {
+            Some(_) => flow.room_at_height(y, extent),
+            None => flow.room_at(y),
+        };
+        let (floats_left, floats_right) = (left > flow.x, left + width < flow.x + flow.width);
+        let (line_left, line_right) = if !floats_left && !floats_right {
+            (left + margin_left, left + width - margin_right)
+        } else {
+            (
+                left.max(flow.x + margin_left.max(0.0)),
+                (left + width).min(flow.x + flow.width - margin_right.max(0.0)),
+            )
+        };
+        let size = (line_right - line_left).max(0.0);
+        let room = (size + margin_left + margin_right).max(0.0);
+        // An auto width fills the opportunity, which still rejects it when the margins leave
+        // its border box over a float (CSS 2.1 9.5: a root's border box never overlaps a
+        // float's margin box), even one past the containing block's edge.
+        let border = border_width(node, flow.width, size, None);
+        let (x0, x1) = (
+            line_left + LINE_FIT_SLACK,
+            line_left + border - LINE_FIT_SLACK,
+        );
+        let overlaps = flow
+            .floats
+            .iter()
+            .any(|f| f.x1 > f.x0 && f.top < y + extent && f.bottom > y && f.x0 < x1 && f.x1 > x0);
+        let wide = (floats_left || floats_right) && border > width + LINE_FIT_SLACK;
+        let fits = !overlaps && !wide;
+        (fits, line_left - margin_left, room)
     };
-    if style.width.is_none() {
-        let (left, width) = room(y);
-        return (y, left, width);
-    }
-    let margins = style.margin[1] + style.margin[3];
-    let needed = border_width(node, flow.width, flow.width, None) + margins;
-    let extent = height.unwrap_or(0.0);
     for _ in 0..=flow.floats.len() {
-        let (_, width) = room(y);
+        let (fits, left, room) = place(y);
         let next = flow
             .floats
             .iter()
-            .filter(|f| f.top < y + extent.max(super::float::LINE_FIT_SLACK) && f.bottom > y)
+            .filter(|f| f.top < y + extent && f.bottom > y)
             .map(|f| f.bottom)
             .fold(f64::INFINITY, f64::min);
-        if width + super::float::LINE_FIT_SLACK >= needed || !next.is_finite() {
-            break;
+        if fits || !next.is_finite() {
+            return (y, left, room);
         }
         y = next;
     }
-    let (left, width) = room(y);
-    (y, left, width)
+    let (_, left, room) = place(y);
+    (y, left, room)
 }
 /** css-overflow-3: `text-overflow` applies only to a block container that clips its overflow. */
 pub(super) fn ellipsis_owner(node: &Node) -> Option<usize> {
@@ -462,13 +491,16 @@ pub(super) fn block(
         .is_none()
         .then(|| flow.clearance(style.clear))
         .flatten();
-    if clearing.is_some() {
-        // A cleared child past adjoining floats resolves its parent's open strut first, where the
-        // parent stands, so its own margin no longer collapses through (Blink's clearance rules).
-        flow.strut_open = false;
-    }
-    let cleared = clearing.filter(|clear| *clear > flow.block_top(style.margin[0]));
+    // Blink's HasClearancePastAdjoiningFloats: clearing a float that adjoins the open strut is
+    // certain clearance, whatever the margin; otherwise clearance applies only when the
+    // hypothetical border edge sits above the floats.
+    let past_adjoining = flow.strut_open && clears_adjoining(flow, style.clear);
+    let cleared =
+        clearing.filter(|clear| past_adjoining || *clear > flow.block_top(style.margin[0]));
     if let Some(clear) = cleared {
+        // Clearance separates the child's margin from its parent's open strut, which resolves
+        // where the parent stands (Blink's ResolveBfcBlockOffset at the previous position).
+        flow.strut_open = false;
         flow.y = clear;
         flow.collapsible = 0.0;
         flow.placed_at(clear);
@@ -481,7 +513,10 @@ pub(super) fn block(
     // A new formatting context sits beside floats instead of under them, in the first layout
     // opportunity its authored width fits (Blink's LayoutNewFormattingContext).
     let (left, room) = if fresh && forced.is_none() {
-        let (top, left, room) = beside_floats(flow, node, y);
+        let (top, left, room) = match separated_from_adjoining(flow, node, cleared) {
+            Some(placed) => placed,
+            None => beside_floats(flow, node, y),
+        };
         y = top;
         (left, room)
     } else {
@@ -526,6 +561,9 @@ pub(super) fn block(
         // A first child's top margin collapses through a parent with no top padding or border.
         inner.collapsible = y - flow.y + flow.collapsible;
         inner.strut_open = true;
+        if flow.strut_open {
+            inner.adjoining = flow.adjoining;
+        }
     }
     let index = items.len();
     items.push(box_item(node, x, y, width, 0.0, Vec::new()));
@@ -563,6 +601,7 @@ pub(super) fn block(
     } else if through_top && inner.strut_open && flow.strut_open {
         // Still unresolved: the floats wait for the outer box, which shares their list.
         flow.unpositioned.append(&mut inner.unpositioned);
+        flow.adjoining = [0, 1].map(|side| flow.adjoining[side] || inner.adjoining[side]);
     }
     if style.list_item
         && let Some(line) = super::marker::marker(context, node, (inner.x, y), &items[index..])?
@@ -611,6 +650,42 @@ pub(super) fn block(
         flow.after_block(y + height, collapse(style.margin[2], trailing));
     }
     Ok(())
+}
+/** Blink's HandleNewFormattingContext abort: a formatting-context root with a top margin,
+ * met while floats adjoin the open margin strut, is first tried with that margin collapsing
+ * (the floats moving down with it). When it does not fit beside them there, its margin is
+ * separated like clearance: the strut resolves where it stands, the floats stay, and the root
+ * takes the first opportunity from there, its margin ignored. None when the margins adjoin. */
+fn separated_from_adjoining(
+    flow: &mut Flow,
+    node: &Node,
+    cleared: Option<f64>,
+) -> Option<(f64, f64, f64)> {
+    let adjoining = flow.strut_open && flow.adjoining.iter().any(|side| *side);
+    if !adjoining || cleared.is_some() || node.style.margin[0] == 0.0 {
+        return None;
+    }
+    // Floats sit at the strut so far, so trying the root there with them unmoved is the same
+    // as trying it at the collapsed position with them moved down by the margin.
+    let separated = flow.y;
+    let placed = beside_floats(flow, node, separated);
+    if placed.0 <= separated {
+        return None;
+    }
+    flow.strut_open = false;
+    flow.placed_at(placed.0);
+    Some(placed)
+}
+/** Whether `clear` names a side with a float adjoining the open margin strut. */
+fn clears_adjoining(flow: &Flow, clear: crate::document::style::Clear) -> bool {
+    use crate::document::style::Clear;
+    let [left, right] = flow.adjoining;
+    match clear {
+        Clear::None => false,
+        Clear::Left => left,
+        Clear::Right => right,
+        Clear::Both => left || right,
+    }
 }
 /** The inline-start margin, with a legacy `<center>` parent centering narrower blocks. */
 fn start_margin(context: &LayoutContext<'_>, node: &Node, room: f64, width: f64) -> f64 {

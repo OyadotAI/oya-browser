@@ -2,43 +2,23 @@
 internal methods as Object and Reflect see them, ported from the spec's Proxy exotic object
 (V8's builtins-proxy-gen and objects.cc): a proxy asks its handler's trap and the result is
 checked against the target's invariants. vm/proxy.rs leaves these four to the target, so a trap
-that threw, lied about extensibility or reported a foreign prototype went unnoticed. */
+that threw, lied about extensibility or reported a foreign prototype went unnoticed.
+Trap-less proxies are skipped in a loop (`Vm::proxy_trap`), and a trap's invariant check on its
+target runs one native level deeper (`Vm::deeper`): recursing per proxy let a long chain overflow
+the native stack and abort the process. */
 use super::*;
-use crate::v9::vm::data::ProxyData;
-
-/** The proxy's target and its named trap; a revoked proxy throws. */
-fn trap(vm: &mut Vm, proxy: &ProxyData, name: &str) -> Res<(ObjectId, Option<JsValue>)> {
-    let (Some(target), Some(handler)) = (proxy.target, proxy.handler) else {
-        return Err(vm.type_error(&format!(
-            "Cannot perform '{name}' on a proxy that has been revoked"
-        )));
-    };
-    let method = vm.get(&JsValue::Object(handler), &key(name))?;
-    if method.nullish() {
-        return Ok((target, None));
-    }
-    if !vm.is_callable(&method) {
-        return Err(vm.type_error(&format!("'{name}' on proxy: trap is not a function")));
-    }
-    Ok((target, Some(method)))
-}
-
-/** Call a trap with the handler as `this`. */
-fn call_trap(vm: &mut Vm, proxy: &ProxyData, method: JsValue, args: Vec<JsValue>) -> Res<JsValue> {
-    let handler = proxy.handler.map_or(JsValue::Undefined, JsValue::Object);
-    vm.call(method, handler, args)
-}
 
 /** O.[[GetPrototypeOf]](). */
 pub(super) fn get_prototype_of(vm: &mut Vm, id: ObjectId) -> Res<Option<ObjectId>> {
     let Some(proxy) = vm.proxy_of(id) else {
         return Ok(vm.proto_of(id));
     };
-    let (target, Some(method)) = trap(vm, &proxy, "getPrototypeOf")? else {
-        let target = proxy.target.unwrap_or(id);
+    let (proxy, target, method) = vm.proxy_trap(&proxy, "getPrototypeOf")?;
+    let Some(method) = method else {
+        // The chain ends at an ordinary object, so this recursion is one level.
         return get_prototype_of(vm, target);
     };
-    let proto = match call_trap(vm, &proxy, method, vec![JsValue::Object(target)])? {
+    let proto = match vm.call_trap(&proxy, method, vec![JsValue::Object(target)])? {
         JsValue::Object(proto) => Some(proto),
         JsValue::Null => None,
         _ => {
@@ -47,7 +27,9 @@ pub(super) fn get_prototype_of(vm: &mut Vm, id: ObjectId) -> Res<Option<ObjectId
             );
         }
     };
-    if is_extensible(vm, target)? || get_prototype_of(vm, target)? == proto {
+    if vm.deeper(|vm| is_extensible(vm, target))?
+        || vm.deeper(|vm| get_prototype_of(vm, target))? == proto
+    {
         return Ok(proto);
     }
     Err(vm.type_error("'getPrototypeOf' on proxy: proxy target is non-extensible but the trap did not return its actual prototype"))
@@ -58,15 +40,21 @@ pub(super) fn set_prototype_of(vm: &mut Vm, id: ObjectId, proto: Option<ObjectId
     let Some(proxy) = vm.proxy_of(id) else {
         return vm.set_proto(id, proto);
     };
-    let (target, Some(method)) = trap(vm, &proxy, "setPrototypeOf")? else {
-        let target = proxy.target.unwrap_or(id);
+    let (proxy, target, method) = vm.proxy_trap(&proxy, "setPrototypeOf")?;
+    let Some(method) = method else {
+        // The chain ends at an ordinary object, so this recursion is one level.
         return set_prototype_of(vm, target, proto);
     };
     let value = proto.map_or(JsValue::Null, JsValue::Object);
-    if !call_trap(vm, &proxy, method, vec![JsValue::Object(target), value])?.truthy() {
+    if !vm
+        .call_trap(&proxy, method, vec![JsValue::Object(target), value])?
+        .truthy()
+    {
         return Ok(false);
     }
-    if is_extensible(vm, target)? || get_prototype_of(vm, target)? == proto {
+    if vm.deeper(|vm| is_extensible(vm, target))?
+        || vm.deeper(|vm| get_prototype_of(vm, target))? == proto
+    {
         return Ok(true);
     }
     Err(vm.type_error("'setPrototypeOf' on proxy: trap returned truish for setting a new prototype on the non-extensible proxy target"))
@@ -77,12 +65,15 @@ pub(super) fn is_extensible(vm: &mut Vm, id: ObjectId) -> Res<bool> {
     let Some(proxy) = vm.proxy_of(id) else {
         return Ok(vm.heap.get(id).is_none_or(|object| object.extensible));
     };
-    let (target, Some(method)) = trap(vm, &proxy, "isExtensible")? else {
-        let target = proxy.target.unwrap_or(id);
+    let (proxy, target, method) = vm.proxy_trap(&proxy, "isExtensible")?;
+    let Some(method) = method else {
+        // The chain ends at an ordinary object, so this recursion is one level.
         return is_extensible(vm, target);
     };
-    let result = call_trap(vm, &proxy, method, vec![JsValue::Object(target)])?.truthy();
-    if result != is_extensible(vm, target)? {
+    let result = vm
+        .call_trap(&proxy, method, vec![JsValue::Object(target)])?
+        .truthy();
+    if result != vm.deeper(|vm| is_extensible(vm, target))? {
         return Err(vm.type_error(
             "'isExtensible' on proxy: trap result does not reflect extensibility of proxy target",
         ));
@@ -99,12 +90,15 @@ pub(super) fn prevent_extensions(vm: &mut Vm, id: ObjectId) -> Res<bool> {
         }
         return Ok(true);
     };
-    let (target, Some(method)) = trap(vm, &proxy, "preventExtensions")? else {
-        let target = proxy.target.unwrap_or(id);
+    let (proxy, target, method) = vm.proxy_trap(&proxy, "preventExtensions")?;
+    let Some(method) = method else {
+        // The chain ends at an ordinary object, so this recursion is one level.
         return prevent_extensions(vm, target);
     };
-    let result = call_trap(vm, &proxy, method, vec![JsValue::Object(target)])?.truthy();
-    if result && is_extensible(vm, target)? {
+    let result = vm
+        .call_trap(&proxy, method, vec![JsValue::Object(target)])?
+        .truthy();
+    if result && vm.deeper(|vm| is_extensible(vm, target))? {
         return Err(vm.type_error(
             "'preventExtensions' on proxy: trap returned truish but the proxy target is extensible",
         ));

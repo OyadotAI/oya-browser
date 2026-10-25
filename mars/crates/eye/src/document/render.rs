@@ -306,6 +306,7 @@ pub fn render_scrolled(
         item.lines.clear();
         item.line_height = item.line_height.filter(|advance| *advance > 0.0);
     }
+    table_parts(document, &mut items)?;
     effects(document, &mut items)?;
     let (mut items, scrollers) = effects::stack(document, items, offsets)?;
     validate_decoration(body_decoration.as_ref())?;
@@ -409,6 +410,197 @@ fn effects(document: &Document, items: &mut [DisplayItem]) -> EngineResult<()> {
         }
     }
     Ok(())
+}
+/**
+ * Blink's `TableSectionPainter` and `TableColumnPainter`: a row group, column or column group
+ * has no box in this layout, yet its background paints behind the cells it covers, above the
+ * table's own and below rows and cells. Each such part with a background gets one box over its
+ * cells, placed just before the table's first row or cell, so `display: table-row-group;
+ * background: black` fills the section instead of vanishing.
+ *
+ * ponytail: one box over the part's cells, not one clipped copy per cell, so border-spacing
+ * gaps fill too; split per cell if a spaced table with a section background ever shows it.
+ */
+fn table_parts(document: &Document, items: &mut Vec<DisplayItem>) -> EngineResult<()> {
+    use super::style::TableBox;
+    let positions = sizing::positions(document);
+    let painted: std::collections::HashSet<usize> = items.iter().map(|i| i.local_id).collect();
+    let mut added = Vec::new();
+    for node in &document.nodes {
+        let group = matches!(
+            node.style.table_box,
+            TableBox::RowGroup | TableBox::HeaderGroup | TableBox::FooterGroup
+        );
+        let filled = node.style.background.is_some() || !node.style.backgrounds.is_empty();
+        if !(group || node.style.table_box == TableBox::Column)
+            || !filled
+            || painted.contains(&node.local_id)
+        {
+            continue;
+        }
+        let Some(table) = table_of(document, &positions, node)? else {
+            continue;
+        };
+        let cells = table_cells(document, &positions, items, table)?;
+        let Some(&(first, _)) = cells.first() else {
+            continue;
+        };
+        let rect = if group {
+            let mut within = Vec::new();
+            for &(index, _) in &cells {
+                if descends(document, &positions, items[index].local_id, node.local_id)? {
+                    within.push(rect_of(&items[index]));
+                }
+            }
+            union(within)
+        } else {
+            column_rect(document, items, &cells, table, node)
+        };
+        if let Some([x, y, width, height]) = rect {
+            added.push((first, flow::box_item(node, x, y, width, height, Vec::new())));
+        }
+    }
+    // Same slot: later parts insert first, so document order (columns, then groups) survives.
+    for (at, item) in added.into_iter().rev() {
+        items.insert(at, item);
+    }
+    Ok(())
+}
+/** The nearest `display: table` ancestor of a table part. */
+fn table_of(
+    document: &Document,
+    positions: &[Option<usize>],
+    node: &Node,
+) -> EngineResult<Option<usize>> {
+    let mut current = node.parent;
+    while let Some(local) = current {
+        let ancestor = find(document, positions, local)?;
+        if ancestor.style.table_box == super::style::TableBox::Table || ancestor.tag == "table" {
+            return Ok(Some(local));
+        }
+        current = ancestor.parent;
+    }
+    Ok(None)
+}
+/** Indexes of the row and cell items whose nearest table is `table`, in paint order, each
+ * flagged true for a cell. */
+fn table_cells(
+    document: &Document,
+    positions: &[Option<usize>],
+    items: &[DisplayItem],
+    table: usize,
+) -> EngineResult<Vec<(usize, bool)>> {
+    use super::style::TableBox;
+    let mut cells = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let node = find(document, positions, item.local_id)?;
+        if matches!(node.style.table_box, TableBox::Row | TableBox::Cell)
+            && table_of(document, positions, node)? == Some(table)
+        {
+            cells.push((index, node.style.table_box == TableBox::Cell));
+        }
+    }
+    Ok(cells)
+}
+/** Whether `ancestor` is on `local`'s parent chain. */
+fn descends(
+    document: &Document,
+    positions: &[Option<usize>],
+    local: usize,
+    ancestor: usize,
+) -> EngineResult<bool> {
+    let mut current = find(document, positions, local)?.parent;
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return Ok(true);
+        }
+        current = find(document, positions, parent)?.parent;
+    }
+    Ok(false)
+}
+/** An item's border box as `[x, y, width, height]`. */
+fn rect_of(item: &DisplayItem) -> [f64; 4] {
+    [item.x, item.y, item.width, item.height]
+}
+/** The smallest rectangle holding every one given; None for none. */
+fn union(rects: impl IntoIterator<Item = [f64; 4]>) -> Option<[f64; 4]> {
+    rects.into_iter().fold(None, |acc, [x, y, w, h]| {
+        let [ax, ay, aw, ah] = acc.unwrap_or([x, y, w, h]);
+        let (left, top) = (ax.min(x), ay.min(y));
+        let (right, bottom) = ((ax + aw).max(x + w), (ay + ah).max(y + h));
+        Some([left, top, right - left, bottom - top])
+    })
+}
+/** The leaf columns (`span` each) a column or column group covers, from its table's column
+ * elements in document order: Blink's `LayoutTableColumn` visit order. */
+fn column_range(document: &Document, table: usize, column: &Node) -> Option<(usize, usize)> {
+    let span = |node: &Node| {
+        node.attributes
+            .get("span")
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1)
+    };
+    let is_column = |node: &Node| node.style.table_box == super::style::TableBox::Column;
+    let mut at = 0;
+    for part in document
+        .nodes
+        .iter()
+        .filter(|n| n.parent == Some(table) && is_column(n))
+    {
+        let inner: Vec<&Node> = document
+            .nodes
+            .iter()
+            .filter(|n| n.parent == Some(part.local_id) && is_column(n))
+            .collect();
+        let own = if inner.is_empty() {
+            span(part)
+        } else {
+            inner.iter().map(|n| span(n)).sum()
+        };
+        if part.local_id == column.local_id {
+            return Some((at, at + own));
+        }
+        for leaf in &inner {
+            if leaf.local_id == column.local_id {
+                return Some((at, at + span(leaf)));
+            }
+            at += span(leaf);
+        }
+        if inner.is_empty() {
+            at += own;
+        }
+    }
+    None
+}
+/** A column's box: its leaf columns' x extents (each column starts at a distinct cell left
+ * edge) across the full height of the table's cells. */
+fn column_rect(
+    document: &Document,
+    items: &[DisplayItem],
+    cells: &[(usize, bool)],
+    table: usize,
+    column: &Node,
+) -> Option<[f64; 4]> {
+    let (start, end) = column_range(document, table, column)?;
+    let cells: Vec<&DisplayItem> = cells
+        .iter()
+        .filter(|(_, cell)| *cell)
+        .map(|&(i, _)| &items[i])
+        .collect();
+    let mut lefts: Vec<f64> = cells.iter().map(|c| c.x).collect();
+    lefts.sort_by(f64::total_cmp);
+    lefts.dedup_by(|a, b| (*a - *b).abs() < crate::constants::LAYOUT_EPSILON);
+    let [_, top, _, height] = union(cells.iter().map(|c| rect_of(c)))?;
+    let columns = (start..end.min(lefts.len())).filter_map(|k| {
+        let width = cells
+            .iter()
+            .filter(|c| (c.x - lefts[k]).abs() < crate::constants::LAYOUT_EPSILON)
+            .map(|c| c.width)
+            .fold(f64::INFINITY, f64::min);
+        width.is_finite().then_some([lefts[k], top, width, height])
+    });
+    union(columns)
 }
 /** Identity lookup never assumes local identities equal Vec indexes after scripts run. */
 fn find<'a>(

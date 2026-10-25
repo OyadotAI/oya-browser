@@ -161,7 +161,7 @@ impl Vm<'_> {
         let id = match self.ext_object(hops, slot)? {
             Some(id) => id,
             None => {
-                let id = self.alloc(Object::new(Class::Plain, None))?;
+                let id = self.alloc(Object::new(Class::EvalVars, None))?;
                 let env = self.env_at(hops)?;
                 self.heap.set_slot(env, slot as usize, JsValue::Object(id));
                 id

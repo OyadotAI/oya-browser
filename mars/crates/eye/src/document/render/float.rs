@@ -173,6 +173,7 @@ pub(super) fn float(
     if flow.strut_open {
         let index = flow.floats.len() - 1;
         flow.unpositioned.push((index, start..items.len(), y));
+        flow.adjoining[usize::from(!left)] = true;
     }
     if left && flow.cursor > 0.0 && y == flow.y {
         super::line::shift_current(flow, items, outer);

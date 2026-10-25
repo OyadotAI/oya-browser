@@ -345,6 +345,10 @@ fn display(
         }
         "grid" | "block grid" => set_display(style, false, false, false, true),
         "inline-grid" | "inline grid" => set_display(style, false, true, false, true),
+        "grid-lanes" | "block grid-lanes" | "inline-grid-lanes" | "inline grid-lanes" => {
+            set_display(style, false, outer.starts_with("inline"), false, true);
+            style.grid_lanes = true;
+        }
         "block" | "block flow" => set_display(style, false, false, false, false),
         "flow-root" | "block flow-root" => {
             set_display(style, false, false, false, false);
@@ -398,6 +402,7 @@ fn set_display(style: &mut ComputedStyle, inline: bool, atomic: bool, flex: bool
     style.inline_block = atomic;
     style.display_flex = flex;
     style.display_grid = grid;
+    style.grid_lanes = false;
     style.display_contents = false;
     style.list_item = false;
     style.table_box = TableBox::None;

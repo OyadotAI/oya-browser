@@ -70,6 +70,9 @@ pub(in crate::v9) enum Class {
     Proxy(Box<ProxyData>),
     /** A module namespace: its exports read the named module's bindings live. */
     Namespace(String),
+    /** A function call's eval-var object (`%ext`): each own property is a `var` a sloppy direct
+    eval declared, so it counts against the bindings bound like an environment slot. */
+    EvalVars,
 }
 
 /** A Proxy's target and handler. */

@@ -377,3 +377,16 @@ fn resolve(line: GridLine, count: usize) -> (Option<usize>, usize) {
         (None, None) => (None, span),
     }
 }
+/** A grid-lanes item's zero-based start (None when auto-placed) and span in the lane axis
+ * (`axis` 0 for rows, 1 for columns) against `count` explicit lanes; the stacking axis has no
+ * lines, so only this one resolves (css-grid-3 masonry placement). */
+pub(super) fn lane_lines(
+    node: &Node,
+    style: &ComputedStyle,
+    axis: usize,
+    count: usize,
+) -> (Option<usize>, usize) {
+    let line_names = [&style.grid_rows.names[..], &style.grid_columns.names[..]];
+    let (row, column) = lines(node, &style.grid_areas, line_names);
+    resolve(if axis == 0 { row } else { column }, count)
+}

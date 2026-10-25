@@ -260,6 +260,7 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
             style.inline_block = source.inline_block;
             style.display_flex = source.display_flex;
             style.display_grid = source.display_grid;
+            style.grid_lanes = source.grid_lanes;
             style.display_contents = source.display_contents;
             style.list_item = source.list_item;
             style.table_box = source.table_box;

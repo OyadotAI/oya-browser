@@ -3,7 +3,7 @@ use super::{
     LineHeight, unsupported,
     values::{length, number},
 };
-use crate::{constants::CSS_MAX_SCALAR, protocol::EngineResult};
+use crate::protocol::EngineResult;
 /** Size keywords the shorthand recognizes as its required size. */
 const SIZE_KEYWORDS: [&str; 10] = [
     "xx-small",
@@ -76,7 +76,7 @@ fn size_token(token: &str) -> bool {
 }
 /** Percentages compute once; unitless factors remain relative and bounded through inheritance. */
 pub(super) fn line_height(value: &str, font: f64) -> EngineResult<LineHeight> {
-    let max_factor = CSS_MAX_SCALAR / crate::constants::CSS_MAX_FONT_SIZE;
+    let max_factor = crate::constants::CSS_MAX_LINE_HEIGHT_FACTOR;
     if value == "normal" {
         return Ok(LineHeight::Normal);
     }
