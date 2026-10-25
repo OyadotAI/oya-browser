@@ -370,7 +370,7 @@ fn style_property(name: &str) -> bool {
 }
 
 /** CSS properties a style declaration exposes, camelCased and sorted for binary search. */
-const CSS_PROPERTIES: [&str; 209] = [
+const CSS_PROPERTIES: [&str; 236] = [
     "accentColor",
     "alignContent",
     "alignItems",
@@ -471,10 +471,12 @@ const CSS_PROPERTIES: [&str; 209] = [
     "fontFamily",
     "fontFeatureSettings",
     "fontKerning",
+    "fontOpticalSizing",
     "fontSize",
     "fontStretch",
     "fontStyle",
     "fontVariant",
+    "fontVariationSettings",
     "fontWeight",
     "gap",
     "grid",
@@ -494,7 +496,10 @@ const CSS_PROPERTIES: [&str; 209] = [
     "gridTemplateRows",
     "height",
     "hyphens",
+    "inlineSize",
     "inset",
+    "insetBlock",
+    "insetInline",
     "isolation",
     "justifyContent",
     "justifyItems",
@@ -508,13 +513,17 @@ const CSS_PROPERTIES: [&str; 209] = [
     "listStylePosition",
     "listStyleType",
     "margin",
+    "marginBlock",
     "marginBottom",
+    "marginInline",
     "marginLeft",
     "marginRight",
     "marginTop",
     "mask",
     "maxHeight",
+    "maxInlineSize",
     "maxWidth",
+    "minBlockSize",
     "minHeight",
     "minWidth",
     "mixBlendMode",
@@ -531,31 +540,49 @@ const CSS_PROPERTIES: [&str; 209] = [
     "overflowWrap",
     "overflowX",
     "overflowY",
+    "overscrollBehavior",
     "padding",
+    "paddingBlock",
     "paddingBottom",
+    "paddingInline",
     "paddingLeft",
     "paddingRight",
     "paddingTop",
     "perspective",
+    "placeContent",
+    "placeItems",
+    "placeSelf",
     "pointerEvents",
     "position",
     "quotes",
     "resize",
     "right",
     "rotate",
+    "rowGap",
     "scale",
     "scrollBehavior",
+    "scrollSnapType",
+    "scrollbarColor",
+    "scrollbarWidth",
     "stroke",
     "strokeWidth",
     "tabSize",
     "tableLayout",
     "textAlign",
     "textDecoration",
+    "textDecorationColor",
+    "textDecorationLine",
+    "textDecorationSkipInk",
+    "textDecorationStyle",
+    "textDecorationThickness",
     "textIndent",
     "textOverflow",
     "textShadow",
     "textSizeAdjust",
     "textTransform",
+    "textUnderlineOffset",
+    "textUnderlinePosition",
+    "textWrap",
     "top",
     "touchAction",
     "transform",
@@ -1300,6 +1327,7 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "style" => host_object(vm, HostData::Style(node), realm().ids.style_prototype),
         "attributes" => {
             let list = vm.new_array(Vec::new())?;
+            let mut named = Vec::new();
             for (key, value) in view.map(|view| view.attributes).unwrap_or_default() {
                 let item = vm.new_object()?;
                 vm.put(item, "name", JsValue::string(&key)?)?;
@@ -1307,9 +1335,11 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 vm.put(item, "nodeName", JsValue::string(&key)?)?;
                 vm.put(item, "specified", JsValue::Boolean(true))?;
                 vm.array_append(&JsValue::Object(list), JsValue::Object(item))?;
+                named.push((key, item));
             }
             // A NamedNodeMap: an array of Attr records with the map's lookups on its prototype.
             vm.set_proto(list, Some(realm().ids.named_node_map_prototype))?;
+            named_attributes(vm, list, named)?;
             Ok(JsValue::Object(list))
         }
         "value" => {
@@ -1539,6 +1569,30 @@ fn replace_html(vm: &mut Vm, node: usize, html: &str) -> Res<()> {
     vm.page
         .insert_html(node, InsertPosition::BeforeEnd, html)
         .map_err(|error| dom_error(vm, error))
+}
+
+/**
+ * NamedNodeMap's named getter: `attributes['data-x']` is the Attr, as WebIDL's
+ * [LegacyUnenumerableNamedProperties] gives it, so the names are not enumerable and never
+ * shadow an index or a member on the chain (`length`, `item`). jQuery 1.x's feature probe reads
+ * `div.attributes['onfocusin'].expando` and throws on load without it.
+ */
+fn named_attributes(vm: &mut Vm, list: ObjectId, named: Vec<(String, ObjectId)>) -> Res<()> {
+    for (name, item) in named {
+        let key = Key::from(name.as_str());
+        if key.index().is_some() || vm.has_property(list, &key)? {
+            continue;
+        }
+        let desc = crate::v9::vm::property::Descriptor {
+            value: Some(JsValue::Object(item)),
+            writable: Some(false),
+            enumerable: Some(false),
+            configurable: Some(true),
+            ..Default::default()
+        };
+        vm.define(list, key, desc)?;
+    }
+    Ok(())
 }
 
 /** NamedNodeMap lookups over the Attr records `attributes` built; the map is a snapshot, so

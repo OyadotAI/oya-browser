@@ -108,8 +108,9 @@ impl Scopes {
             let inner_start = at + "var(".len();
             let close = find_top(rest, inner_start, b")");
             let inner = rest.get(inner_start..close)?;
-            out.push_str(&self.reference(scope, inner, depth)?);
+            let substituted = self.reference(scope, inner, depth)?;
             rest = rest.get(close + 1..).unwrap_or("");
+            push_tokens(&mut out, &substituted, rest);
             if out.len() > VAR_OUTPUT_BYTES {
                 return None;
             }
@@ -128,4 +129,24 @@ impl Scopes {
             .and_then(|(at, value)| self.expand(at, &value, depth + 1));
         declared.or_else(|| self.expand(scope, fallback?.trim(), depth + 1))
     }
+}
+/**
+ * Appends a substitution as the separate tokens it is (css-variables: substitution is token
+ * by token, Blink serializes an empty comment where two would merge). Text splicing alone let
+ * `var(--w)minmax(0,1fr)` become one `326pxminmax` dimension and drop the whole track list;
+ * a space keeps the boundary wherever the neighbouring characters would otherwise glue.
+ */
+fn push_tokens(out: &mut String, substituted: &str, next: &str) {
+    if glues(out.chars().next_back(), substituted.chars().next()) {
+        out.push(' ');
+    }
+    out.push_str(substituted);
+    if glues(substituted.chars().next_back(), next.chars().next()) {
+        out.push(' ');
+    }
+}
+/** Two characters that would tokenize as one ident, number or dimension when adjacent. */
+fn glues(before: Option<char>, after: Option<char>) -> bool {
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '%') || !c.is_ascii();
+    before.is_some_and(word) && after.is_some_and(word)
 }

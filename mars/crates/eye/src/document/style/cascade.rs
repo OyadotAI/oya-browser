@@ -590,13 +590,15 @@ fn unreachable(style: &ComputedStyle) -> bool {
         .is_some_and(|[a, b, c, d, e, f]| (a * d - b * c).abs() < f64::EPSILON || far(e) || far(f));
     offset || shifted || degenerate
 }
-/** Only winning body box declarations opt into authored geometry. */
+/** Root box geometry declarations, dropped because the root box keeps the viewport's geometry.
+ * `box-sizing` stays: it changes nothing on the root itself, and the common
+ * `html{box-sizing:border-box} *{box-sizing:inherit}` reset reads it from there. */
 fn body_box_key(key: &str) -> bool {
     key.starts_with("margin-")
         || key.starts_with("padding-")
         || key.starts_with("border-")
             && super::border::longhand(key).is_some_and(|(_, p)| p == "width")
-        || ["width", "min-width", "max-width", "box-sizing"].contains(&key)
+        || ["width", "min-width", "max-width"].contains(&key)
 }
 /** An explicit `dir` sets the inherited base direction; other values keep the parent's. */
 fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {

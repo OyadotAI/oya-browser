@@ -155,8 +155,15 @@ impl Runtime {
         )
     }
 
-    /** Scrolling keys and wheels share page.scroll and its stale-revision check. */
+    /** Scrolling keys and wheels share page.scroll and its stale-revision check. A viewport
+    whose overflow clips holds still for them, as Blink's does under a consent dialog. */
     fn scroll_to(&mut self, page_id: &str, revision: u64, y: f64) -> EngineResult<Value> {
+        let locked = self
+            .current()?
+            .display
+            .as_ref()
+            .is_some_and(|d| d.viewport_locked);
+        let y = if locked { self.scroll_y } else { y };
         let request = Request::new(
             "input",
             "page.scroll",

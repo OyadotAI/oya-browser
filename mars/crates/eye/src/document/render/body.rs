@@ -39,6 +39,19 @@ pub(super) fn decoration(
         border_color: body.border_color.clone(),
     })
 }
+/** The body's definite content height when body clips its own overflow, so content past it adds
+ * nothing to the document's scrollable extent. Body keeps its overflow only while the root's is
+ * not visible (otherwise it propagates to the viewport); a consent dialog's
+ * `body{height:100vh;overflow:hidden}` leaves Chromium's document one viewport tall. */
+pub(super) fn clipped_height(document: &Document, definite: Option<f64>) -> Option<f64> {
+    use crate::document::Overflow::Visible;
+    let (root, body) = (
+        &document.formatting.html.style,
+        &document.formatting.body.style,
+    );
+    let propagates = root.overflow_x == Visible && root.overflow_y == Visible;
+    definite.filter(|_| !propagates && body.overflow_y != Visible)
+}
 /** Content-box bounds subtract edges before max width, then resolve automatic horizontal margins. */
 pub(super) fn content(style: &crate::document::ComputedStyle, viewport: f64) -> (f64, f64, f64) {
     // Per-side borders (GNU's `border: .1em solid; border-top: 0`) inset the content too.
