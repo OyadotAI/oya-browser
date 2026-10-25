@@ -5,7 +5,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { cutNote, keepOrder, pickBlocks } from '../../../../src/page/render/cut.ts';
+import { cutNote, keepOrder, pickBlocks, refit } from '../../../../src/page/render/cut.ts';
 import type { Block } from '../../../../src/page/render/types.ts';
 
 /** Every block is one unit of room. */
@@ -160,5 +160,26 @@ describe('cutNote', () => {
       'showing 3 of 9 blocks around what is on screen; scroll and analyze again for the rest',
     );
     assert.equal(cutNote(3, 9, false), 'showing 3 of 9 blocks from the top; scroll and analyze again for the rest');
+  });
+});
+
+describe('refit', () => {
+  it('an overflow smaller than one row still takes a row off before the passes run out', () => {
+    // A pick that fills its room to within a 40-character row: the page is 4 over until the room is 40 smaller.
+    const render = (room: number) => 'x'.repeat(room > 960 ? 1004 : 980);
+    const page = refit(1000, 1000, render, () => 'fallback');
+    assert.equal(page.length, 980, 'the refit page, not the fallback');
+  });
+
+  it('a page that never fits comes from the fallback', () => {
+    assert.equal(
+      refit(
+        10,
+        100,
+        () => 'x'.repeat(20),
+        () => 'fallback',
+      ),
+      'fallback',
+    );
   });
 });
