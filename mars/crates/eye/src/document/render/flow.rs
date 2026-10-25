@@ -187,10 +187,14 @@ pub(super) fn layout(
     let collapsed = super::table::collapse_borders(document)?;
     let document = collapsed.as_ref().unwrap_or(document);
     let body = super::sizing::has_percent_sides(&document.formatting.body.style);
-    let nodes = document
-        .nodes
-        .iter()
-        .any(|node| super::sizing::has_percent_sides(&node.style));
+    let nodes = document.nodes.iter().any(|node| {
+        super::sizing::has_percent_sides(&node.style)
+            || node
+                .style
+                .generated
+                .iter()
+                .any(|generated| super::sizing::has_percent_sides(&generated.style))
+    });
     if !body && !nodes {
         return layout_once(document, presentation);
     }
@@ -280,7 +284,9 @@ fn layout_once(
     } else {
         MARGIN
     };
-    let height = flow.bottom.max(flow.y) + bottom;
+    let height = super::body::clipped_height(document, flow.definite)
+        .map_or(flow.bottom.max(flow.y), |clip| y + clip)
+        + bottom;
     let decoration = super::body::decoration(document, x, y, width, height - body.margin[2]);
     Ok((items, height, decoration, context.exhausted()))
 }

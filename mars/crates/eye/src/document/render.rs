@@ -81,6 +81,11 @@ pub struct DisplayList {
     /// Scroll containers with somewhere to scroll, in no particular order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scrollers: Vec<ScrollArea>,
+    /// The viewport's propagated `overflow-y` clips (CSS Overflow 3 section 3.3: the root's, or
+    /// body's while the root's is visible), so a person's wheel and keys cannot scroll the
+    /// document; scripts still can. Blink's `ScrollableArea::UserInputScrollable`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub viewport_locked: bool,
 }
 
 /// A formatting box can paint author decoration without inventing a DOM or agent identity.
@@ -331,7 +336,16 @@ pub fn render_scrolled(
         body_decoration,
         truncated,
         scrollers,
+        viewport_locked: viewport_locked(root, body),
     })
+}
+/** The viewport takes the root's overflow, or body's when the root's is visible on both axes;
+ * `hidden` and `clip` there stop user scrolling of the document. */
+fn viewport_locked(root: &super::ComputedStyle, body: &super::ComputedStyle) -> bool {
+    use super::Overflow::{Clip, Hidden, Visible};
+    let visible = root.overflow_x == Visible && root.overflow_y == Visible;
+    let used = if visible { body } else { root };
+    matches!(used.overflow_y, Hidden | Clip)
 }
 /** A copy with the quirks-mode margin quirk applied: the UA top margin of the first box in the
  * body or a table cell is laid out as zero. None when no box has it. */

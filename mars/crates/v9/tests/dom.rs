@@ -25,6 +25,14 @@ fn selectors_match_over_the_projection() {
     );
 }
 
+/** NamedNodeMap's named getter finds an Attr by name, unenumerable, never over `length`. */
+#[test]
+fn attributes_are_readable_by_name() {
+    let source = "const n=document.createElement('div');n.setAttribute('onfocusin','t');n.setAttribute('data-x','1');n.setAttribute('length','9');\
+        const a=n.attributes;const r=[a['data-x'].value,a.onfocusin.expando,a['onfocusin'].name,a.length,Object.keys(a).join(':'),a.nope].join();";
+    assert_eq!(eval(source, "r"), "1,,onfocusin,3,0:1:2,");
+}
+
 /** Lookups, traversal and element facts. */
 #[test]
 fn lookups_and_traversal() {

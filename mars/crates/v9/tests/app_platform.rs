@@ -60,6 +60,20 @@ fn separator_property_escapes_match_exactly() {
     assert_eq!(out, "true|true|true|false|true|true|false");
 }
 
+/** `\p{M}` compiles and matches combining marks: a news site's name validator,
+ * `/^(?=.*\p{L})([-'.,\s\p{L}\p{M}])*$/u`, sat in the inline bundle that runs its header, and
+ * the SyntaxError stopped the whole script. */
+#[test]
+fn mark_property_escape_matches_combining_marks() {
+    let out = eval(
+        "const re = /^(?=.*\\p{L})([-'.,\\s\\p{L}\\p{M}])*$/u;
+         const out = [re.test('Jose\\u0301'), /\\p{M}/u.test('\\u0301'), /\\p{Mark}/u.test('\\u05b0'),
+           /\\p{M}/u.test('a'), re.test('1')].join('|');",
+        "out",
+    );
+    assert_eq!(out, "true|true|true|false|false");
+}
+
 /** A source's chunks reach a default reader in order, then `done`, as React Server Components
  * read their payload (`reader.read().then(function next(r) { ... reader.read().then(next) })`). */
 #[test]

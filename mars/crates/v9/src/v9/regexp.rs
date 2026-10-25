@@ -809,6 +809,40 @@ const SEPARATOR: &[(u32, u32)] = &[
 ];
 /** Control (Cc): the C0 and C1 controls and DEL. */
 const CONTROL: &[(u32, u32)] = &[(0x0, 0x1f), (0x7f, 0x9f)];
+/** Mark (M): the combining-mark blocks and the marks of the common scripts. */
+// ponytail: the main mark runs only, not every scattered mark in UnicodeData.txt; generate the
+// full Mn/Mc/Me table from the UCD if a page tests marks in rarer scripts.
+const MARK: &[(u32, u32)] = &[
+    (0x300, 0x36f),
+    (0x483, 0x489),
+    (0x591, 0x5bd),
+    (0x5bf, 0x5bf),
+    (0x5c1, 0x5c2),
+    (0x5c4, 0x5c5),
+    (0x5c7, 0x5c7),
+    (0x610, 0x61a),
+    (0x64b, 0x65f),
+    (0x670, 0x670),
+    (0x6d6, 0x6dc),
+    (0x6df, 0x6e4),
+    (0x6e7, 0x6e8),
+    (0x6ea, 0x6ed),
+    (0x900, 0x903),
+    (0x93a, 0x93c),
+    (0x93e, 0x94f),
+    (0x951, 0x957),
+    (0x962, 0x963),
+    (0xe31, 0xe31),
+    (0xe34, 0xe3a),
+    (0xe47, 0xe4e),
+    (0x1ab0, 0x1aff),
+    (0x1dc0, 0x1dff),
+    (0x20d0, 0x20f0),
+    (0x302a, 0x302f),
+    (0x3099, 0x309a),
+    (0xfe00, 0xfe0f),
+    (0xfe20, 0xfe2f),
+];
 
 /** General categories small enough to list exactly, as V8's ICU tables give them. LinkedIn's
  * whitespace trimmer is `/[\t\n\u000B\f\r\u001C-\u001F\p{Zs}\p{Zl}\p{Zp}]/gu`, and the
@@ -820,6 +854,7 @@ fn exact_category(name: &str) -> Option<&'static [(u32, u32)]> {
         "Zp" | "Paragraph_Separator" => PARAGRAPH_SEPARATOR,
         "Z" | "Separator" => SEPARATOR,
         "Cc" | "Control" | "cntrl" => CONTROL,
+        "M" | "Mark" | "Combining_Mark" => MARK,
         _ => return None,
     })
 }

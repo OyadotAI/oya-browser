@@ -123,10 +123,11 @@ define_class!(
                 && let Some(page)=self.page_id() {self.push(Action::Tap(node,page));}
         }
         /** A wheel over an inner scroll container that can move goes to the engine, which paints
-        its contents moved; any other wheel scrolls the document natively. */
+        its contents moved; any other wheel scrolls the document natively, unless the page's
+        viewport overflow clips (a consent dialog's `overflow: hidden`), when it holds still. */
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self,event:&objc2_app_kit::NSEvent) {
-            if !self.wheel(event) {unsafe {let _:()=msg_send![super(self),scrollWheel:event];}}
+            if !self.wheel(event) && !self.viewport_locked() {unsafe {let _:()=msg_send![super(self),scrollWheel:event];}}
         }
         /** Only fixed native selectors turn OS actions into bounded UI intentions. */
         #[unsafe(method(activate:))]
@@ -218,6 +219,15 @@ impl Canvas {
         let top = self.visibleRect().origin.y;
         self.push(Action::Wheel(point.x, point.y - top, delta, page));
         true
+    }
+    /** The current page's viewport overflow clips, so a person cannot scroll the document. */
+    pub(super) fn viewport_locked(&self) -> bool {
+        self.ivars()
+            .snapshot
+            .borrow()
+            .as_ref()
+            .and_then(|snapshot| snapshot.display.as_ref())
+            .is_some_and(|display| display.viewport_locked)
     }
     /** Native callbacks stamp the current visible generation before entering a queue. */
     fn page_id(&self) -> Option<String> {
