@@ -15,6 +15,8 @@ export const PAGE_RENDER = {
   MAX_BLOCK_SHARE: 0.5,
   // Bounds the renders a markdown cut makes: each re-pick is a full render, so a page of thousands of blocks would otherwise stall the cut.
   MAX_REFITS: 3,
+  // How much faster the room shrinks on each refit pass: an overflow smaller than one row must still take a row off before MAX_REFITS runs out.
+  REFIT_GROWTH: 2,
   // Bounds how often a block's text is shrunk to its share: escapes and markup can keep a shrunk text over the share, and each pass is a full size measure.
   MAX_SHRINK_PASSES: 3,
   // The blank lines and newlines a markdown block can add around its own line, counted as one character each, so the cut's size never undercounts.
