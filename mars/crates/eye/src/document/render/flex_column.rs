@@ -189,23 +189,50 @@ pub(super) fn column(
     extent: ColumnExtent,
 ) -> EngineResult<()> {
     let container_index = output.len().saturating_sub(1);
-    let wrap = parent.style.flex_wrap == FlexWrap::Wrap && extent.definite().is_some();
+    // A balanced column wraps even with an indefinite height: `flex-line-count` alone can make
+    // lines, which then size the column by the longest of them (Blink's
+    // `max_sum_hypothetical_main_size`).
+    let breaking = flex::Breaking::of(parent);
+    let balanced = matches!(breaking, flex::Breaking::Balance(_));
+    let wrap =
+        parent.style.flex_wrap == FlexWrap::Wrap && (extent.definite().is_some() || balanced);
     let mut records = Vec::new();
     let mut widths = Vec::new();
+    // Balancing into `flex-line-count` lines gives each item that share of the cross space to
+    // fit into (Blink's `BuildSpaceForLayout` divides the available inline size).
+    let available = match breaking {
+        flex::Breaking::Balance(count) if wrap => {
+            let count = f64::from(count);
+            ((flow.width - (count - 1.0) * parent.style.column_gap) / count).max(0.0)
+        }
+        _ => flow.width,
+    };
     for child in children {
         let width = if wrap {
-            fit_width(context, parent, child, flow.width)?
+            fit_width(context, parent, child, (flow.width, available))?
         } else {
             cross_width(context, parent, child, flow.width)?
         };
         widths.push(width);
         records.push(item(context, parent, child, width, extent.definite())?);
     }
-    let intrinsic = records
+    let gap = parent.style.row_gap;
+    let ranges = if wrap {
+        let size = extent.definite().unwrap_or(crate::constants::LAYOUT_EXTENT);
+        flex::break_lines_in(&records, size, gap, breaking)
+    } else {
+        std::iter::once(0..records.len()).collect()
+    };
+    let intrinsic = ranges
         .iter()
-        .map(|record| record.outer(record.hypothetical_content))
-        .sum::<f64>()
-        + parent.style.row_gap * records.len().saturating_sub(1) as f64;
+        .map(|range| {
+            records[range.clone()]
+                .iter()
+                .map(|record| record.outer(record.hypothetical_content))
+                .sum::<f64>()
+                + gap * range.len().saturating_sub(1) as f64
+        })
+        .fold(0.0_f64, f64::max);
     let extent = extent.resolve(intrinsic);
     let mut bottom = flow.y;
     if !wrap {
@@ -225,7 +252,6 @@ pub(super) fn column(
             output,
         )?;
     } else {
-        let ranges = flex::break_lines(&records, extent, parent.style.row_gap, true);
         let mut crosses = ranges
             .iter()
             .map(|range| {
@@ -291,19 +317,21 @@ pub(super) fn column(
 }
 
 /** An item's border-box width before its line's cross size is known: its own width, or its
-max-content fitted into the container, which is what a column line's cross size grows to. */
+max-content fitted into the space it may take, which is what a column line's cross size grows
+to. Percentages resolve against the container's inner width `basis`, while `fit` is the space
+to fit into (a balanced line's share of it). */
 fn fit_width(
     context: &mut LayoutContext<'_>,
     parent: &Node,
     child: &Node,
-    inner: f64,
+    (inner, fit): (f64, f64),
 ) -> EngineResult<f64> {
     if own_text(parent, child) {
         let intrinsic = super::sizing::text_intrinsic(context, parent)?;
-        return Ok(intrinsic.max_content.min(inner));
+        return Ok(intrinsic.max_content.min(fit));
     }
     let intrinsic = item_intrinsic(context, child)?;
-    let available = (inner - child.style.margin[1] - child.style.margin[3]).max(0.0);
+    let available = (fit - child.style.margin[1] - child.style.margin[3]).max(0.0);
     Ok(border_width(
         child,
         inner,

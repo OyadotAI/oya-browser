@@ -13,17 +13,88 @@ pub(super) struct MeasuredText {
     pub width: f64,
 }
 
+/** Where a text's words may break besides UAX #14, from its inherited `word-break`,
+`overflow-wrap` and `line-break` (Blink's LineBreakType and break_anywhere_if_overflow). */
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct Breaks {
+    /** Every scalar may end a line: `overflow-wrap: break-word | anywhere`, `word-break:
+    break-all | break-word` or `line-break: anywhere`. */
+    pub breakable: bool,
+    /** The scalars are ordinary break opportunities (`word-break: break-all`, `line-break:
+    anywhere`), so a word starts on the current line and fills the width left there instead of
+    moving to the next line first as an emergency `overflow-wrap` break does. */
+    pub fill: bool,
+    /** `word-break: keep-all`: ideographs do not break between each other (UAX #14 with ID
+    resolved to AL), so CJK runs wrap like words. */
+    pub keep_all: bool,
+}
+
 /** Whitespace-normalized text accumulates widths without remeasuring a growing merged line. */
 pub(super) fn lines(
     text: &str,
     width: f64,
     face: Face,
-    breakable: bool,
+    breaks: Breaks,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<Vec<MeasuredText>> {
+    let breakable = breaks.breakable;
+    // ponytail: keep-all runs skip the wrap cache, whose key holds only `breakable`; key on the
+    // whole `Breaks` if keep-all pages ever get long.
+    if breaks.keep_all {
+        return wrap_words(text, width, face, breaks, context);
+    }
     if let Some(lines) = context.wrapped(text, width, face, breakable)? {
         return Ok(lines);
     }
+    let result = wrap_words(text, width, face, breaks, context)?;
+    context.remember_wrapped(text, width, face, breakable, &result)?;
+    Ok(result)
+}
+
+/** The longest leading piece of `word`, ending at a break opportunity before its end, that fits
+`room`: what a filling break (`word-break: break-all`) leaves on the current line before the
+rest wraps, as Blink's LineBreaker breaks a text item at the remaining available width. None
+when not even the first piece fits or the word has no inner opportunity. */
+pub(super) fn head(
+    word: &str,
+    room: f64,
+    face: Face,
+    breaks: Breaks,
+    context: &mut LayoutContext<'_>,
+) -> EngineResult<Option<MeasuredText>> {
+    context.charge(word.chars().count() + 1)?;
+    let boundaries = break_offsets(word, breaks);
+    if boundaries.len() < 3 || room <= 0.0 {
+        return Ok(None);
+    }
+    let inner = &boundaries[..boundaries.len() - 1];
+    let first = context.measure(&word[..inner[1]], face)?;
+    if first > room + FIT_SLACK {
+        return Ok(None);
+    }
+    let (end, width) = search_prefix(
+        word,
+        inner,
+        0,
+        (1, inner.len(), first),
+        room + FIT_SLACK,
+        face,
+        context,
+    )?;
+    Ok(Some(MeasuredText {
+        text: word[..inner[end]].into(),
+        width,
+    }))
+}
+
+/** The words of `text` packed greedily into lines of `width`. */
+fn wrap_words(
+    text: &str,
+    width: f64,
+    face: Face,
+    breaks: Breaks,
+    context: &mut LayoutContext<'_>,
+) -> EngineResult<Vec<MeasuredText>> {
     context.charge(text.chars().count() + 1)?;
     let mut result = Vec::new();
     let mut current = MeasuredText {
@@ -36,7 +107,7 @@ pub(super) fn lines(
         .split([' ', '\t', '\n', '\r', '\x0c'])
         .filter(|word| !word.is_empty());
     for word in words {
-        let mut chunks = word_parts(word, (width, breakable), face, context)?
+        let mut chunks = word_parts(word, (width, breaks), face, context)?
             .into_iter()
             .peekable();
         while let Some(chunk) = chunks.next() {
@@ -55,7 +126,6 @@ pub(super) fn lines(
     if !current.text.is_empty() {
         result.push(current);
     }
-    context.remember_wrapped(text, width, face, breakable, &result)?;
     Ok(result)
 }
 
@@ -88,12 +158,21 @@ fn append_chunk(
 /** One boundary table and forward-only indexes avoid repeated whole-suffix scans and shaping. */
 fn word_parts(
     word: &str,
-    (width, breakable): (f64, bool),
+    (width, breaks): (f64, Breaks),
     face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<Vec<MeasuredText>> {
     context.charge(word.chars().count() + 1)?;
-    let boundaries = break_offsets(word, breakable);
+    let mut boundaries = break_offsets(word, breaks);
+    // CSS Text 3 lets keep-all relax to `normal` when a line has no other break point; a
+    // keep-all word wider than a whole line is that case, so its ideographs break again.
+    if breaks.keep_all && context.measure(word, face)? > width + FIT_SLACK {
+        let normal = Breaks {
+            keep_all: false,
+            ..breaks
+        };
+        boundaries = break_offsets(word, normal);
+    }
     let mut start = 0;
     let mut hint = 1;
     let mut result = Vec::new();
@@ -193,10 +272,12 @@ fn search_prefix(
  * Byte offsets a space-free run may break at, after Blink's line breaker: by default only UAX #14
  * opportunities inside the run (CJK, after a hyphen or dash between letters, a zero-width space),
  * so a long word overflows its line as in Chromium; `overflow-wrap: break-word | anywhere` or
- * `word-break: break-all` (`breakable`) add every scalar.
+ * `word-break: break-all` (`breakable`) add every scalar, and `word-break: keep-all` removes the
+ * breaks between two ideographs.
  */
 // ponytail: owned subset of UAX #14 (ideographs, kana, hangul, fullwidth, the punctuation classes, hyphens, dashes, ZWSP); upgrade to the full pair table when a page needs it.
-fn break_offsets(word: &str, breakable: bool) -> Vec<usize> {
+fn break_offsets(word: &str, breaks: Breaks) -> Vec<usize> {
+    let breakable = breaks.breakable;
     let cjk = word.chars().any(|c| class(c) == Class::Ideographic);
     let chars = word.char_indices().collect::<Vec<_>>();
     let mut offsets = vec![0];
@@ -206,7 +287,7 @@ fn break_offsets(word: &str, breakable: bool) -> Vec<usize> {
         let previous = index.checked_sub(1).map(|i| chars[i].1);
         flags = if regional(before) { flags + 1 } else { 0 };
         let opportunity = if cjk {
-            ideographic_break(before, after)
+            ideographic_break(before, after) && !(breaks.keep_all && kept(before) && kept(after))
         } else {
             hyphen_break(previous, before, after)
         };
@@ -246,6 +327,11 @@ fn extends(c: char) -> bool {
 fn pictographic(c: char) -> bool {
     matches!(c as u32, 0x00a9 | 0x00ae | 0x2190..=0x21ff | 0x2300..=0x23ff | 0x2600..=0x27bf
         | 0x2b00..=0x2bff | 0x1f000..=0x1faff)
+}
+/** A scalar `word-break: keep-all` keeps against its neighbour: ideographs, kana and hangul
+(class ID, and AL once keep-all resolves it), not the CJK punctuation around them. */
+fn kept(c: char) -> bool {
+    class(c) == Class::Ideographic
 }
 /** Regional indicators pair into flags (UAX #29 GB12, GB13). */
 fn regional(c: char) -> bool {

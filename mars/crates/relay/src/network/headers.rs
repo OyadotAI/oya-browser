@@ -79,7 +79,8 @@ pub(super) fn insert_field(
     value: &str,
 ) -> EngineResult<()> {
     let name = name.to_ascii_lowercase();
-    let value = value.trim();
+    // HTTP whitespace only: a trailing form feed or vertical tab is part of the value.
+    let value = value.trim_matches([' ', '\t']);
     let Some(existing) = headers.get_mut(&name) else {
         headers.insert(name, value.to_owned());
         return Ok(());

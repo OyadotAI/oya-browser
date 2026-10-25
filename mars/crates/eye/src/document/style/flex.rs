@@ -28,23 +28,43 @@ pub(super) fn apply(
             style.flex_reverse = value.ends_with("-reverse");
         }
         "flex-wrap" => {
-            style.flex_wrap = match value {
-                "nowrap" => FlexWrap::NoWrap,
-                "wrap" | "wrap-reverse" => FlexWrap::Wrap,
-                _ => return Err(unsupported()),
+            let (mode, balance) = wrap_mode(value)?;
+            style.flex_wrap = if mode == "nowrap" {
+                FlexWrap::NoWrap
+            } else {
+                FlexWrap::Wrap
             };
-            style.wrap_reverse = value == "wrap-reverse";
+            style.wrap_reverse = mode == "wrap-reverse";
+            style.flex_balance = balance;
+        }
+        "flex-line-count" => {
+            let count: u32 = value.trim().parse().map_err(|_| unsupported())?;
+            if count == 0 {
+                return Err(unsupported());
+            }
+            style.flex_line_count = Some(count);
         }
         // Shorthands no other module expands: each word goes to the longhand it names.
+        // An omitted longhand takes its initial value, as any shorthand resets it.
         "flex-flow" => {
-            for word in value.split_whitespace() {
-                let key = if word.contains("wrap") {
-                    "flex-wrap"
-                } else {
-                    "flex-direction"
-                };
-                apply(style, key, word, context)?;
+            let (wrap, direction): (Vec<&str>, Vec<&str>) = value
+                .split_whitespace()
+                .partition(|word| word.contains("wrap") || *word == "balance");
+            if direction.len() > 1 {
+                return Err(unsupported());
             }
+            let wrap = if wrap.is_empty() {
+                "nowrap".to_owned()
+            } else {
+                wrap.join(" ")
+            };
+            apply(style, "flex-wrap", &wrap, context)?;
+            apply(
+                style,
+                "flex-direction",
+                direction.first().unwrap_or(&"row"),
+                context,
+            )?;
         }
         "place-items" | "place-self" => {
             let (align_key, justify_key) = if key == "place-items" {
@@ -124,6 +144,26 @@ pub(super) fn apply(
         _ => return Ok(false),
     }
     Ok(true)
+}
+/** A `flex-wrap` value as its wrap mode and whether it balances: `nowrap`, `wrap`,
+`wrap-reverse`, `balance` (which wraps), or `balance` beside `wrap` or `wrap-reverse` in either
+order (css-flexbox-2). `balance` never combines with `nowrap`, and no word repeats. */
+fn wrap_mode(value: &str) -> EngineResult<(&str, bool)> {
+    let words = value.split_whitespace().collect::<Vec<_>>();
+    let balance = words.iter().filter(|word| **word == "balance").count();
+    let modes = words
+        .iter()
+        .filter(|word| ["nowrap", "wrap", "wrap-reverse"].contains(word))
+        .collect::<Vec<_>>();
+    let valid = words.len() == balance + modes.len()
+        && balance <= 1
+        && modes.len() <= 1
+        && !words.is_empty()
+        && !(balance == 1 && modes.first() == Some(&&"nowrap"));
+    if !valid {
+        return Err(unsupported());
+    }
+    Ok((modes.first().map_or("wrap", |mode| **mode), balance == 1))
 }
 /** A `justify-content` or `align-content` value. An overflow keyword is accepted and ignored:
  * `unsafe` is what Blink does by default, and `safe` only differs once content overflows.

@@ -14,6 +14,11 @@ use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, Res, Vm};
 use std::collections::BTreeMap;
 
+mod display_names;
+mod locale;
+mod locale_info;
+mod tag;
+
 /** The formatter kinds, each a constructor on `Intl`. */
 const KINDS: [&str; 7] = [
     "NumberFormat",
@@ -105,6 +110,9 @@ pub(super) fn install(b: &mut Builder) {
     b.global("Intl", intl);
     b.method(intl, "getCanonicalLocales", 1, canonical_locales);
     b.method(intl, "supportedValuesOf", 1, supported_values);
+    locale::install(b, intl);
+    display_names::install(b, intl);
+    to_string_tag(b, intl, "Intl");
     for kind in KINDS {
         let proto = b.object(Some(b.ids.object_prototype));
         for name in [
@@ -119,6 +127,11 @@ pub(super) fn install(b: &mut Builder) {
         ] {
             b.method(proto, name, 1, method);
         }
+        to_string_tag(
+            b,
+            proto,
+            INTL_TAGS[KINDS.iter().position(|k| *k == kind).unwrap_or(0)],
+        );
         let ctor = b.constructor(kind, 0, construct, proto, None);
         b.method(ctor, "supportedLocalesOf", 1, supported_locales);
         b.value(
@@ -130,9 +143,31 @@ pub(super) fn install(b: &mut Builder) {
     }
 }
 
-/** `Intl.getCanonicalLocales(locales)`: the requested tags, as given. */
+/** `Symbol.toStringTag` names per formatter kind, in `KINDS` order. */
+const INTL_TAGS: [&str; 7] = [
+    "Intl.NumberFormat",
+    "Intl.DateTimeFormat",
+    "Intl.PluralRules",
+    "Intl.RelativeTimeFormat",
+    "Intl.ListFormat",
+    "Intl.Collator",
+    "Intl.Segmenter",
+];
+
+/** A configurable, non-writable `Symbol.toStringTag` value. */
+fn to_string_tag(b: &mut Builder, target: u32, name: &'static str) {
+    use crate::v9::vm::realm::{Static, string, symbol};
+    b.put(
+        target,
+        Key::Sym(symbol::TO_STRING_TAG),
+        Static::Value(string(name)),
+        crate::v9::vm::heap::CONFIGURABLE,
+    );
+}
+
+/** `Intl.getCanonicalLocales(locales)`: the requested tags, canonical and deduplicated. */
 fn canonical_locales(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let locales = locale_list(vm, &call.arg(0))?;
+    let locales = locale::canonical_list(vm, &call.arg(0))?;
     let values = locales
         .iter()
         .map(|locale| JsValue::string(locale))
@@ -149,7 +184,8 @@ fn supported_values(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "numberingSystem" => "latn",
         "timeZone" => "UTC",
         "unit" => "second",
-        _ => "",
+        "collation" => "emoji",
+        _ => return Err(vm.range_error(&format!("Invalid key : {key}"))),
     };
     let values = if value.is_empty() {
         Vec::new()
@@ -191,7 +227,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     // no name entry of their own.
     let name = vm.get(&JsValue::Object(call.callee), &Key::from("name"))?;
     let kind = vm.to_text(&name)?;
-    let locale = locale_list(vm, &call.arg(0))?
+    let locale = locale::canonical_list(vm, &call.arg(0))?
         .into_iter()
         .next()
         .filter(|tag| !tag.is_empty())

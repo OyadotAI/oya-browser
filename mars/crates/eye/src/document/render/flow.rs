@@ -54,6 +54,16 @@ pub(super) struct Flow {
     pub cleared_collapsing: bool,
     /** Preserved white space hanging at the end of the current line. */
     pub hang: super::line::Hang,
+    /** `text-box-trim` still to apply here: (the first formatted line's start, the last one's
+     * end), from this block's style or passed down through edges without border or padding. */
+    pub trim: [bool; 2],
+    /** The end cut the last formatted line would take, with the nested last blocks whose
+     * height shrinks with it, and the line's bottom (infinite once a nested block checked it);
+     * None once anything but a trimmable line came last. */
+    pub tail: Option<(f64, Vec<usize>, f64)>,
+    /** An inline box left the current line empty: Blink wraps it in an anonymous block with no
+     * formatted line, which still takes a pending `text-box-trim` start or end. */
+    pub empty_run: bool,
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -82,6 +92,9 @@ impl Flow {
             adjoining: [false; 2],
             cleared_collapsing: false,
             hang: super::line::Hang::default(),
+            trim: [false, false],
+            tail: None,
+            empty_run: false,
         }
     }
     /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
@@ -96,6 +109,7 @@ impl Flow {
     /** Records a fragment placed on the current line. */
     pub fn push(&mut self, frag: super::line::Frag) {
         self.frags.push(frag);
+        self.empty_run = false;
         self.hang = super::line::Hang::default();
     }
     /** The top of a block whose top margin collapses with the margin already counted above it. */
@@ -125,6 +139,9 @@ impl Flow {
             self.strut_open = false;
             let aligned = super::line::finish(self);
             self.y += self.line.max(aligned);
+            if let Some(tail) = &mut self.tail {
+                tail.2 = tail.2.min(self.y);
+            }
             self.bottom = self.bottom.max(self.y);
             self.collapsible = 0.0;
             self.cleared_collapsing = false;
@@ -362,6 +379,11 @@ fn root_line(
     flow.newline();
     super::line::settle(context, flow, items, 0)
 }
+/** Whether something after the last line (a `<br clear>`'s clearance) left this flow's end
+ * below that line's bottom `end`. */
+pub(super) fn cleared_past(flow: &Flow, end: f64) -> bool {
+    flow.y > end + super::line::LINE_EPSILON
+}
 /** The font metrics every line of a block includes. */
 pub(super) fn strut(style: &crate::document::ComputedStyle) -> super::line::Strut {
     super::line::Strut::of(style)
@@ -400,6 +422,10 @@ pub(super) fn node_layout(
     dispatch(context, node, flow, items, forced)?;
     if inline_run {
         flow.space = Some(node.space_after || flow.space == Some(true));
+        if flow.frags.is_empty() && flow.cursor == 0.0 {
+            flow.empty_run = true;
+            flow.tail = None;
+        }
     }
     Ok(())
 }
@@ -508,6 +534,9 @@ pub(super) fn block(
     forced: Option<BorderBox>,
 ) -> EngineResult<()> {
     flow.newline();
+    if std::mem::take(&mut flow.empty_run) {
+        flow.trim[0] = false;
+    }
     let style = &node.style;
     let fresh = forced.is_some() || new_context(node);
     // CSS 2.1 9.5.2: clearance places the border edge at the cleared floats' bottom, absorbing
@@ -576,6 +605,15 @@ pub(super) fn block(
         fresh,
     );
     inner.strut = Some(strut(style));
+    // Blink's SetInitialTextBoxTrim: a trim passed down stops at border or padding, and the
+    // block's own `text-box-trim` adds to it.
+    let passed = [(0, 0), (1, 2)].map(|(side, edge)| {
+        forced.is_none() && flow.trim[side] && style.padding[edge] == 0.0 && sides[edge] == 0.0
+    });
+    inner.trim = [
+        style.text_box_trim[0] || passed[0],
+        style.text_box_trim[1] || passed[1],
+    ];
     inner.align = alignment(style);
     inner.ellipsis = ellipsis_owner(node);
     inner.definite = specified.map(|height| (height - vertical_edges(node)).max(0.0));
@@ -617,6 +655,7 @@ pub(super) fn block(
     }
     inner.newline();
     super::line::settle(context, &mut inner, items, index + 1)?;
+    super::line::trim_end(&mut inner, items, style.text_box_trim[1]);
     if through_top && let Some(top) = inner.resolved {
         // The collapsed margins resolved at the first child's border edge, which is where this
         // box's border edge sits too (Blink resolves both at one BFC block offset).
@@ -661,6 +700,24 @@ pub(super) fn block(
     // max-height cut it) separates the last child's bottom margin, which is then dropped.
     let trailing = if height == natural { trailing } else { 0.0 };
     items[index].height = height;
+    if forced.is_none() {
+        // Blink's UpdateTextBoxTrim: any in-flow block takes the first formatted line, and
+        // only a last block that leaves its end cut to its parent passes it on.
+        flow.trim[0] = false;
+        flow.tail = inner
+            .tail
+            .take()
+            .filter(|tail| {
+                passed[1]
+                    && specified.is_none()
+                    && !style.text_box_trim[1]
+                    && !cleared_past(&inner, tail.2)
+            })
+            .map(|(cut, mut nested, _)| {
+                nested.push(index);
+                (cut, nested, f64::INFINITY)
+            });
+    }
     super::generated::absolute(context, node, items, index)?;
     if forced.is_some() {
         flow.y = y + height;

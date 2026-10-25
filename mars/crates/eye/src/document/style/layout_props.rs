@@ -58,7 +58,12 @@ pub(super) fn apply(
             style.aspect_ratio_auto = value.split_whitespace().any(|part| part == "auto");
         }
         "overflow-wrap" => style.overflow_wrap_break = breaking(value, &["break-word", "anywhere"]),
-        "word-break" => style.word_break_all = breaking(value, &["break-all", "break-word"]),
+        "word-break" => {
+            style.word_break_all = breaking(value, &["break-all", "break-word"]);
+            style.word_break_fill = breaking(value, &["break-all"]);
+            style.word_break_keep_all = breaking(value, &["keep-all"]);
+        }
+        "line-break" => style.line_break_anywhere = breaking(value, &["anywhere"]),
         // The end-edge value; a two-value form's second (end) value is the one LTR lines use.
         "text-overflow" => style.text_overflow_ellipsis = tokens(value).last() == Some(&"ellipsis"),
         "container-type" => style.container_type = super::container::kind(value)?,
@@ -202,19 +207,25 @@ fn list_shorthand(value: &str) -> ListStyle {
         .find_map(|token| list_style(token).ok())
         .unwrap_or_default()
 }
-/** Gaps accept any length; percentages resolve to zero like an indefinite basis. */
+/** Gaps accept any length and percentage; grid layout resolves the percentage part. */
 fn gap(
     style: &mut ComputedStyle,
     key: &str,
     value: &str,
     context: RenderContext,
 ) -> EngineResult<()> {
-    let px = if value == "normal" {
-        0.0
+    let (px, percent) = if value == "normal" {
+        (0.0, 0.0)
     } else {
-        extent(value, style.font_size, context)?.px.max(0.0)
+        let extent = extent(value, style.font_size, context)?;
+        (extent.px, extent.percent)
     };
-    if key.contains("row") {
+    // ponytail: the length part clamps on its own, so `calc(10% - 5px)` loses its negative
+    // part; keep it signed when flex layout resolves percentage gaps too.
+    let px = px.max(0.0);
+    let axis = usize::from(key.contains("row"));
+    style.gap_percent[axis] = percent.max(0.0);
+    if axis == 1 {
         style.row_gap = px;
     } else {
         style.column_gap = px;

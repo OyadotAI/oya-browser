@@ -29,7 +29,6 @@ const UNCLAIMED: &[&str] = &[
     "Atomics",
     "Atomics.waitAsync",
     "Atomics.pause",
-    "Intl",
     "cross-realm",
     "IsHTMLDDA",
     "host-gc-required",
@@ -72,7 +71,7 @@ const UNCLAIMED: &[&str] = &[
     "nonextensible-applies-to-private",
 ];
 /** Whole test262 folders V9 does not claim. */
-const UNCLAIMED_DIRS: &[&str] = &["intl402", "staging"];
+const UNCLAIMED_DIRS: &[&str] = &["staging"];
 /** mjsunit folders that test d8, wasm or the sandbox rather than the language. */
 const MJSUNIT_SKIP_DIRS: &[&str] = &["wasm", "shared-memory", "sandbox", "d8", "tools"];
 /** Host definitions test262 expects (INTERPRETING.md): print for async tests and a small $262. */
@@ -204,7 +203,7 @@ fn skip262(rel: &str, meta: &Meta) -> Option<String> {
     }
     meta.features
         .iter()
-        .find(|f| UNCLAIMED.contains(&f.as_str()) || f.starts_with("Intl"))
+        .find(|f| UNCLAIMED.contains(&f.as_str()))
         .map(|f| format!("feature:{f}"))
 }
 

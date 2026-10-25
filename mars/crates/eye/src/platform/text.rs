@@ -285,6 +285,18 @@ pub fn measure(text: &str, face: Face) -> f64 {
 /// so they match their Windows counterparts' vertical metrics, the de facto web standard.
 const CLASSIC_ASCENT: f64 = 0.15;
 
+/// Cap height and x-height of a face, where `text-box-edge: cap` and `ex` put a line's edge
+/// (Blink's FontMetrics::CapHeight and XHeight read from the font).
+pub fn edges(face: Face) -> (f64, f64) {
+    if face.size <= 0.0 {
+        return (0.0, 0.0);
+    }
+    autoreleasepool(|_| {
+        let font = cached_font(face);
+        (font.capHeight(), font.xHeight())
+    })
+}
+
 /// Ascender and CSS `line-height: normal` of a face, as Chromium computes them on macOS.
 pub fn metrics(face: Face) -> (f64, f64) {
     if face.size <= 0.0 {

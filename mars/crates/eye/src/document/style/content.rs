@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 pub(super) const GENERATED_CHARS: usize = 256;
 
 /** The generated text, or None for `none`, `normal` and values Eye cannot render. Icon-font
- * code points (the private use area) are dropped, since no installed face draws them. */
+ * code points (the private use area) are dropped, since no installed face draws them. Control
+ * characters stay: CSS Text 3 section 4.1.1 says they render visibly, which text layout does. */
 pub(super) fn content(value: &str, attributes: &BTreeMap<String, String>) -> Option<String> {
     let value = value.trim();
     if ["none", "normal", "inherit", "initial", "unset"]
@@ -41,7 +42,7 @@ pub(super) fn content(value: &str, attributes: &BTreeMap<String, String>) -> Opt
     }
     let text = out
         .chars()
-        .filter(|c| !('\u{e000}'..='\u{f8ff}').contains(c) && !c.is_control())
+        .filter(|c| !('\u{e000}'..='\u{f8ff}').contains(c))
         .take(GENERATED_CHARS)
         .collect::<String>();
     Some(text)

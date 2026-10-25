@@ -376,7 +376,7 @@ fn style_property(name: &str) -> bool {
 }
 
 /** CSS properties a style declaration exposes, camelCased and sorted for binary search. */
-const CSS_PROPERTIES: [&str; 236] = [
+const CSS_PROPERTIES: [&str; 239] = [
     "accentColor",
     "alignContent",
     "alignItems",
@@ -575,6 +575,9 @@ const CSS_PROPERTIES: [&str; 236] = [
     "tabSize",
     "tableLayout",
     "textAlign",
+    "textBox",
+    "textBoxEdge",
+    "textBoxTrim",
     "textDecoration",
     "textDecorationColor",
     "textDecorationLine",

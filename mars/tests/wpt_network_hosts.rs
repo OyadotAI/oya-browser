@@ -154,6 +154,9 @@ fn wptserve(root: &Path, out: &Path) -> Wptserve {
                     .iter()
                     .map(move |p| format!("http://{sub}localhost:{p}"))
             })
+            // get_host_info() names 127.0.0.1 as REMOTE_HOST and NOTSAMESITE_HOST when the
+            // page's host is localhost, so the cross-site origin is the literal loopback IP.
+            .chain(ports[..2].iter().map(|p| format!("http://127.0.0.1:{p}")))
             .collect(),
     };
     let deadline = Instant::now() + STARTUP;
