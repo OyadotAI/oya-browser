@@ -4,6 +4,8 @@ use crate::protocol::EngineError;
 use crate::v9::vm::data::{Class, IterKind, IterState};
 use crate::v9::vm::realm::{NativeFn, symbol};
 
+mod from_async;
+
 /** Array and Array.prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
@@ -13,6 +15,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(ctor, "isArray", 1, is_array);
     b.method(ctor, "of", 0, of);
     b.method(ctor, "from", 1, from);
+    from_async::install(b, ctor);
     super::typed::species_getter(b, ctor);
     let methods: [(&'static str, u32, NativeFn); 38] = [
         ("at", 1, at),

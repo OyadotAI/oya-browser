@@ -102,6 +102,16 @@ fn link(vm: &mut Vm, keys: &[String]) -> Res<Result<(), String>> {
                 )));
             }
         }
+        // InitializeEnvironment: every indirect export must resolve, unambiguously.
+        for (name, export) in &info.exports {
+            if matches!(export, crate::v9::compile::Export::Indirect(_, Some(_)))
+                && resolve_export(&vm.modules, key, name, &mut Vec::new()).is_none()
+            {
+                return Ok(Err(format!(
+                    "The export '{name}' cannot be resolved: it is missing, circular or ambiguous"
+                )));
+            }
+        }
     }
     for key in keys {
         instantiate(vm, key)?;
@@ -257,19 +267,71 @@ fn dependencies(vm: &Vm, key: &str) -> Vec<String> {
         .collect()
 }
 
-/** Visit a module depth first, then run it if its dependencies allow. */
-fn start(vm: &mut Vm, key: &str, stack: &mut Vec<String>) -> Res<()> {
+/** One evaluation walk: the modules being visited, and Tarjan's bookkeeping for finding each
+strongly connected component (a cycle) and its root, the module the walk entered it by (the
+spec's [[DFSAncestorIndex]] and [[CycleRoot]]). */
+#[derive(Default)]
+struct Walk {
+    /// Modules being visited, outermost first.
+    stack: Vec<String>,
+    /// Visited modules whose component is not closed yet.
+    open: Vec<String>,
+    /// Each open module's lowest reachable visit index.
+    low: HashMap<String, usize>,
+    /// Visits so far, numbering each module.
+    next: usize,
+}
+
+/** Visit a module depth first, then run it if its dependencies allow. When it closes a cycle,
+every module of the cycle records it as their cycle root. */
+fn start(vm: &mut Vm, key: &str, walk: &mut Walk) -> Res<()> {
     let record = vm.modules.state.records.entry(key.to_string()).or_default();
     if record.entered {
         return Ok(());
     }
     record.entered = true;
-    stack.push(key.to_string());
+    let index = walk.next;
+    walk.next += 1;
+    walk.low.insert(key.to_string(), index);
+    walk.open.push(key.to_string());
+    walk.stack.push(key.to_string());
     for dependency in dependencies(vm, key) {
-        start(vm, &dependency, stack)?;
+        start(vm, &dependency, walk)?;
+        if let Some(&low) = walk.low.get(&dependency) {
+            let mine = walk.low.get_mut(key).expect("open module");
+            *mine = (*mine).min(low);
+        }
     }
-    stack.pop();
-    try_run(vm, key, stack)
+    walk.stack.pop();
+    if walk.low.get(key) == Some(&index) {
+        close_cycle(vm, key, walk);
+    }
+    try_run(vm, key, &walk.stack)
+}
+
+/** Pop a closed component off the walk: each member's cycle root is `root`. */
+fn close_cycle(vm: &mut Vm, root: &str, walk: &mut Walk) {
+    while let Some(member) = walk.open.pop() {
+        walk.low.remove(&member);
+        let done = member == root;
+        vm.modules
+            .state
+            .records
+            .entry(member)
+            .or_default()
+            .cycle_root = Some(root.to_string());
+        if done {
+            break;
+        }
+    }
+}
+
+/** The module whose completion stands for `key`'s: its cycle root, or itself. A module of a
+cycle is done only when the whole cycle is (spec 16.2.1.5.3.1 InnerModuleEvaluation 11.c). */
+fn cycle_root(vm: &Vm, key: &str) -> String {
+    record(vm, key)
+        .and_then(|record| record.cycle_root.clone())
+        .unwrap_or_else(|| key.to_string())
 }
 
 /** Run a module whose dependencies finished; reject it if one failed; otherwise wait for the
@@ -289,7 +351,14 @@ fn try_run(vm: &mut Vm, key: &str, stack: &[String]) -> Res<()> {
         if record(vm, key).is_some_and(|record| record.cycle.contains(&dependency)) {
             continue;
         }
-        match completion(vm, &dependency) {
+        // A dependency in another cycle counts as done once that cycle's root is.
+        let root = cycle_root(vm, &dependency);
+        let waited = if root == cycle_root(vm, key) {
+            dependency
+        } else {
+            root
+        };
+        match completion(vm, &waited) {
             Some((_, PromiseState::Rejected(error))) => {
                 return reject(vm, key, error);
             }
@@ -481,7 +550,7 @@ fn evaluate_entry(vm: &mut Vm, key: &str, keys: &[String]) -> Res<Option<EngineE
             &message,
         )));
     }
-    start(vm, key, &mut Vec::new())?;
+    start(vm, key, &mut Walk::default())?;
     vm.drain_jobs()?;
     match completion(vm, key) {
         Some((_, PromiseState::Rejected(error))) => {
@@ -519,6 +588,11 @@ pub(in crate::v9) fn advance_dynamic(vm: &mut Vm) -> Res<()> {
                 kept.push(item);
                 continue;
             }
+            Graph::Failed(error) if error.code == "script_syntax_error" => {
+                let error = vm.syntax_error(&error.message);
+                settle_thrown(vm, promise, error)?;
+                continue;
+            }
             Graph::Failed(error) => {
                 reject_type_error(vm, promise, &error.message)?;
                 continue;
@@ -530,7 +604,7 @@ pub(in crate::v9) fn advance_dynamic(vm: &mut Vm) -> Res<()> {
             settle_thrown(vm, promise, error)?;
             continue;
         }
-        if let Err(thrown) = start(vm, &item.key, &mut Vec::new()) {
+        if let Err(thrown) = start(vm, &item.key, &mut Walk::default()) {
             settle_thrown(vm, promise, thrown)?;
             continue;
         }
@@ -557,10 +631,11 @@ pub(in crate::v9) fn refuse_dynamic(vm: &mut Vm, message: &str) {
     vm.modules.state.waiting = kept;
 }
 
-/** Settle a dynamic import when its root module finishes. */
+/** Settle a dynamic import when its module's cycle root finishes (spec Evaluate step 3), so an
+import of a member of a failed cycle rejects with the cycle's error. */
 fn subscribe_import(vm: &mut Vm, key: &str, promise: ObjectId) -> Res<()> {
     let namespace = namespace(vm, key)?;
-    let Some((root, _)) = completion(vm, key) else {
+    let Some((root, _)) = completion(vm, &cycle_root(vm, key)) else {
         return vm.resolve_promise(promise, JsValue::Object(namespace));
     };
     let target = JsValue::Object(promise);

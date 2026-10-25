@@ -53,8 +53,18 @@ impl Compiler {
             scan::bound_names(rest, &mut params);
         }
         parameter_early_errors(func, &params)?;
+        // A non-simple list initializes its names in order, so a default that reads a later
+        // (or its own) parameter hits the TDZ (spec IteratorBindingInitialization).
+        let tdz = !simple_parameters(func);
         for name in &params {
-            self.declare(name, Declared::Var)?;
+            if tdz {
+                let place = self.declare(name, Declared::Let)?;
+                self.emit(Op::Hole);
+                self.set_place(place, 0);
+                self.emit(Op::Pop);
+            } else {
+                self.declare(name, Declared::Var)?;
+            }
         }
         if uses.eval && !func.strict {
             // A sloppy direct eval's new vars live in this object, made on its first `var`.
@@ -65,6 +75,11 @@ impl Compiler {
         let mut vars = Vec::new();
         scan::var_names(body, func.strict, true, &mut vars);
         self.hidden_bindings(func, uses, &params, &vars)?;
+        let mut skip = params.clone();
+        if uses.arguments && !func.flags.arrow && !func.flags.fields {
+            skip.push(Name::from("arguments"));
+        }
+        self.f().annex_skip = skip;
         if self_name
             && let Some(name) = &func.name
             && !params.contains(name)
@@ -192,14 +207,15 @@ impl Compiler {
     }
     /** The parameter bindings themselves, in order. */
     fn parameter_values(&mut self, func: &Func) -> EngineResult<()> {
+        let initialize = !simple_parameters(func);
         for (index, param) in func.params.iter().enumerate() {
             self.emit(Op::Arg(index as Slot));
-            self.bind_pattern(param, false)?;
+            self.bind_pattern(param, initialize)?;
             self.emit(Op::Pop);
         }
         if let Some(rest) = &func.rest {
             self.emit(Op::RestArgs(func.params.len() as Slot));
-            self.bind_pattern(rest, false)?;
+            self.bind_pattern(rest, initialize)?;
             self.emit(Op::Pop);
         }
         Ok(())
@@ -215,7 +231,8 @@ impl Compiler {
         if let Some(name) = &named {
             self.declare(name, Declared::ClassInner)?;
         }
-        self.classes.push(class.pos.offset);
+        self.classes
+            .push((class.pos.offset, class.privates.clone()));
         let result = self.class_body(class);
         self.classes.pop();
         let scope = self.scopes.pop().expect("class scope");
@@ -325,9 +342,12 @@ impl Compiler {
             PropKey::Computed(_) => Err(EngineError::invalid("Computed key has no index.")),
         }
     }
-    /** Private names become keys scripts cannot spell or enumerate. */
+    /** Private names become keys scripts cannot spell or enumerate, keyed by the innermost
+    enclosing class that declares the name (a nested class may use an outer class's `#x`). */
     pub(super) fn private_name(&mut self, name: &str) -> EngineResult<u32> {
-        let class = self.classes.last().copied().unwrap_or(0);
+        let class = (self.classes.iter().rev())
+            .find(|(_, names)| names.iter().any(|n| &**n == name))
+            .map_or(0, |(site, _)| *site);
         let key = JsString::from_utf8(&format!("{class}:{name}"))?;
         Ok(self.private_string(&key))
     }
@@ -353,6 +373,10 @@ impl Compiler {
         self.load_static(name)?;
         self.patch_all(ext);
         Ok(())
+    }
+    /** Push a name's value from its static place, for callers that made their own checks. */
+    pub(super) fn load_static_name(&mut self, name: &Name) -> EngineResult<()> {
+        self.load_static(name)
     }
     /** Push a name's value from its static place. */
     fn load_static(&mut self, name: &Name) -> EngineResult<()> {
@@ -453,30 +477,51 @@ impl Compiler {
         }
         Ok(())
     }
-    /** Annex B: a sloppy block function also updates the function-level `var` of its name. */
+    /**
+     * Annex B (spec B.3.3): a sloppy block function also updates the function-level `var` of
+     * its name, unless a lexical binding of that name between them blocked the hoisting. Eval
+     * code continues into the caller's scopes up to its var scope.
+     */
     pub(super) fn store_var_outward(&mut self, name: &Name, pos: Pos) -> EngineResult<()> {
-        let base = self.functions.last().map_or(0, |f| f.scope_base);
+        let state = self.functions.last();
+        let base = state.map_or(0, |f| f.scope_base);
+        let eval = state.and_then(|f| f.eval_vars);
+        let floor = match eval {
+            Some(scope) => scope.unwrap_or(0),
+            None => base,
+        };
         let mut hops: Slot = 0;
-        for scope in self.scopes[base..].iter().rev() {
+        let mut own = true;
+        for at in (floor..self.scopes.len()).rev() {
+            let scope = &self.scopes[at];
             if let Some(binding) = scope
                 .index
                 .get(name)
                 .map(|&at| &scope.bindings[at])
-                .filter(|b| b.declared == Declared::Var)
+                .filter(|binding| binding.declared != Declared::Catch)
             {
-                let place = binding.place;
-                match place {
-                    Place::Global => {
-                        let index = self.name(name)?;
-                        self.emit(Op::SetGlobal(index));
+                if binding.declared == Declared::Var {
+                    let place = binding.place;
+                    match place {
+                        Place::Global => {
+                            let index = self.name(name)?;
+                            self.emit(Op::SetGlobal(index));
+                        }
+                        place => self.set_place(place, hops),
                     }
-                    place => self.set_place(place, hops),
+                    return Ok(());
                 }
-                return Ok(());
+                if !own || at < base {
+                    return Ok(());
+                }
+                own = false;
             }
             if scope.env {
                 hops += 1;
             }
+        }
+        if let Some(var_scope) = eval {
+            self.eval_block_function_store(name, var_scope)?;
         }
         let _ = pos;
         Ok(())
@@ -511,6 +556,10 @@ impl Compiler {
 /// Early errors a body directive can create after the head was parsed: strict code refuses
 /// `eval` and `arguments` as a parameter or function name, and strict functions and arrows
 /// refuse duplicate parameters. Whole-script, so an unreached branch fails the same way.
+/** A parameter list of plain names only, with no defaults, patterns or rest. */
+fn simple_parameters(func: &Func) -> bool {
+    func.rest.is_none() && func.params.iter().all(|p| matches!(p, Pattern::Ident(..)))
+}
 fn parameter_early_errors(func: &Func, params: &[Name]) -> EngineResult<()> {
     let restricted = |name: &Name| &**name == "eval" || &**name == "arguments";
     if func.strict && (params.iter().any(restricted) || func.name.as_ref().is_some_and(restricted))

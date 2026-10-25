@@ -25,7 +25,6 @@ type Outcomes = Arc<Mutex<Vec<Option<Result<(), String>>>>>;
 /** Features V9 does not claim (its README: no modules, with, async generators, for await,
 SharedArrayBuffer, Atomics, Intl; language support stops at ES2023), plus host hooks it lacks. */
 const UNCLAIMED: &[&str] = &[
-    "async-iteration",
     "SharedArrayBuffer",
     "Atomics",
     "Atomics.waitAsync",
@@ -35,15 +34,12 @@ const UNCLAIMED: &[&str] = &[
     "IsHTMLDDA",
     "host-gc-required",
     "tail-call-optimization",
-    "dynamic-import",
-    "import-attributes",
+    "import-text",
     "import-assertions",
     "import-defer",
-    "import.meta",
     "json-modules",
     "source-phase-imports",
     "source-phase-imports-module-source",
-    "top-level-await",
     "ShadowRealm",
     "Temporal",
     "decorators",
@@ -70,7 +66,6 @@ const UNCLAIMED: &[&str] = &[
     "json-parse-with-source",
     "String.prototype.isWellFormed",
     "String.prototype.toWellFormed",
-    "Array.fromAsync",
     "await-dictionary",
     "canonical-tz",
     "legacy-regexp",
@@ -92,6 +87,16 @@ struct Case {
     runs: Vec<(&'static str, String)>,
     negative: Option<(String, String)>,
     is_async: bool,
+    /** The host loader for tests that load modules from sibling files on disk. */
+    host: Option<Host>,
+}
+
+/** test262's module host: the test file is the base URL, and module requests read files beside it. */
+#[derive(Clone)]
+struct Host {
+    file: PathBuf,
+    /** For `flags: [module]`: the harness, run as a classic script before the test module. */
+    prelude: Option<String>,
 }
 
 /** Frontmatter fields the runner reads. */
@@ -192,7 +197,7 @@ fn skip262(rel: &str, meta: &Meta) -> Option<String> {
     if rel.contains("_FIXTURE") {
         return Some("fixture".into());
     }
-    for flag in ["module", "CanBlockIsTrue"] {
+    for flag in ["CanBlockIsTrue"] {
         if meta.flags.iter().any(|f| f == flag) {
             return Some(format!("flag:{flag}"));
         }
@@ -259,7 +264,8 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
         }
         let has = |f: &str| meta.flags.iter().any(|x| x == f);
         let is_async = has("async");
-        let body = if has("raw") {
+        let module = has("module");
+        let body = if has("raw") || module {
             source.clone()
         } else {
             let mut prelude = base.clone();
@@ -274,7 +280,20 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
             format!("{prelude}{source}")
         };
         let mut runs = Vec::new();
-        if !has("onlyStrict") && !has("noStrict") && !has("raw") {
+        let mut prelude = None;
+        if module {
+            let mut harness = base.clone();
+            if is_async {
+                harness.push_str(&done);
+                harness.push('\n');
+            }
+            for include in &meta.includes {
+                harness.push_str(&read(include));
+                harness.push('\n');
+            }
+            prelude = Some(harness);
+            runs.push(("module", body));
+        } else if !has("onlyStrict") && !has("noStrict") && !has("raw") {
             runs.push(("sloppy", body.clone()));
             runs.push(("strict", format!("\"use strict\";\n{body}")));
         } else if has("onlyStrict") {
@@ -288,6 +307,10 @@ fn cases262(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> {
             runs,
             negative: meta.negative,
             is_async,
+            host: (module || source.contains("import")).then(|| Host {
+                file: file.clone(),
+                prelude,
+            }),
         });
     }
     cases
@@ -339,6 +362,7 @@ fn cases_mjsunit(root: &Path, skips: &mut BTreeMap<String, usize>) -> Vec<Case> 
             runs: vec![("sloppy", format!("{base}{source}"))],
             negative: None,
             is_async: false,
+            host: None,
         });
     }
     cases
@@ -349,7 +373,11 @@ fn run_one(
     source: &str,
     negative: &Option<(String, String)>,
     is_async: bool,
+    host: Option<&Host>,
 ) -> Result<(), String> {
+    if let Some(host) = host {
+        return run_hosted(source, negative, is_async, host);
+    }
     if let Some((phase, kind)) = negative
         && (phase == "parse" || phase == "early")
     {
@@ -394,11 +422,111 @@ fn run_one(
     Ok(())
 }
 
+/** Run a test through the module host: classic or module, serving each round of module
+requests from the files beside the test, as the app serves fetches. */
+fn run_hosted(
+    source: &str,
+    negative: &Option<(String, String)>,
+    is_async: bool,
+    host: &Host,
+) -> Result<(), String> {
+    use mars_v9::{EntryKind, ModuleEntry, ModuleInput, ModuleSource};
+    let url = url::Url::from_file_path(&host.file).map_err(|_| "bad test path".to_string())?;
+    let mut environment = common::environment();
+    environment.url = url.to_string();
+    let mut input = ModuleInput::default();
+    let sources: Vec<String> = match &host.prelude {
+        Some(prelude) => {
+            input.entries.push(ModuleEntry {
+                index: 1,
+                kind: EntryKind::Module,
+                url: Some(url.to_string()),
+            });
+            vec![prelude.clone(), String::new()]
+        }
+        None => vec![source.to_string()],
+    };
+    let page = common::host();
+    let mut execution = mars_v9::load_page(mars_v9::PageInput {
+        modules: &input,
+        ..common::input(&sources, &page, &environment)
+    })
+    .map_err(|e| e.message)?;
+    let mut failures = Vec::new();
+    let mut console = Vec::new();
+    for _ in 0..64 {
+        failures.extend(
+            execution
+                .failed
+                .iter()
+                .map(|f| (f.error.code.clone(), f.error.message.clone())),
+        );
+        console.extend(common::console(&execution));
+        if execution.module_requests.is_empty() {
+            break;
+        }
+        for request in &execution.module_requests {
+            let text = if request.url == url.as_str() && host.prelude.is_some() {
+                Some(source.to_string())
+            } else {
+                url::Url::parse(&request.url)
+                    .ok()
+                    .and_then(|u| u.to_file_path().ok())
+                    .and_then(|path| std::fs::read_to_string(path).ok())
+            };
+            input.sources.push(ModuleSource {
+                url: request.url.clone(),
+                source: text,
+                classic: false,
+            });
+        }
+        execution = mars_v9::load_modules(
+            mars_v9::PageInput {
+                modules: &input,
+                ..common::input(&sources, &page, &environment)
+            },
+            execution.state.clone(),
+        )
+        .map_err(|e| e.message)?;
+    }
+    // A module that rejects after a fetch round (top-level await) reports through the console.
+    if host.prelude.is_some() {
+        failures.extend(
+            console
+                .iter()
+                .filter(|l| l.starts_with("Uncaught ") && !l.starts_with("Uncaught (in promise)"))
+                .map(|l| ("module_rejected".to_string(), l.clone())),
+        );
+    }
+    let failure = failures.into_iter().next();
+    if let Some((_, kind)) = negative {
+        return match failure {
+            Some((code, m))
+                if m.contains(kind.as_str())
+                    || (kind == "SyntaxError" && code.contains("syntax")) =>
+            {
+                Ok(())
+            }
+            Some((_, m)) => Err(format!("expected {kind}: {m}")),
+            None => Err(format!("expected {kind}, ran fine")),
+        };
+    }
+    if let Some((code, message)) = failure {
+        return Err(format!("{code}: {message}"));
+    }
+    if is_async && !console.iter().any(|l| l == "Test262:AsyncTestComplete") {
+        let detail = console.iter().find(|l| l.starts_with("Test262:")).cloned();
+        return Err(detail.unwrap_or_else(|| "async test never called $DONE".into()));
+    }
+    Ok(())
+}
+
 /** Run with a hard timeout; a hung or panicking run counts as a failure. */
 fn run_guarded(
     source: String,
     negative: Option<(String, String)>,
     is_async: bool,
+    host: Option<Host>,
     timeout: Duration,
 ) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
@@ -406,7 +534,7 @@ fn run_guarded(
     thread::Builder::new()
         .stack_size(64 << 20)
         .spawn(move || {
-            let _ = tx.send(run_one(&source, &negative, is_async));
+            let _ = tx.send(run_one(&source, &negative, is_async, host.as_ref()));
         })
         .map_err(|e| e.to_string())?;
     match rx.recv_timeout(timeout) {
@@ -449,6 +577,7 @@ fn run_case(case: &Case, timeout: Duration) -> Result<(), String> {
             source.clone(),
             case.negative.clone(),
             case.is_async,
+            case.host.clone(),
             timeout,
         )
         .map_err(|e| format!("[{mode}] {e}"))?;

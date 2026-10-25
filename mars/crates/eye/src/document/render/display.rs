@@ -98,7 +98,18 @@ pub enum DisplayBackground {
         /// Tiles horizontally and vertically.
         #[serde(default)]
         repeat: [bool; 2],
+        /// Per axis, a repeating layer spaces whole tiles across the positioning area
+        /// (`background-repeat: space`); a painter that ignores it tiles them flush.
+        #[serde(default, skip_serializing_if = "is_flush")]
+        space: [bool; 2],
+        /// Per axis, a repeating layer rescales its tile so whole tiles fill the area (`round`).
+        #[serde(default, skip_serializing_if = "is_flush")]
+        round: [bool; 2],
     },
+}
+/** Neither axis set: the default `space` and `round`, left out of serialized items. */
+fn is_flush(axes: &[bool; 2]) -> bool {
+    !axes[0] && !axes[1]
 }
 /// A background image's used size rule, resolved against the box except where the image's own size decides.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]

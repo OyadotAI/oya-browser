@@ -21,6 +21,8 @@ pub(super) struct Token {
     pub exact_strict: bool,
     /** Trivia before this token, rather than lines inside its predecessor, controls restricted grammar. */
     pub line_terminator_before: bool,
+    /// A name spelled with `\u` escapes, which never acts as a keyword or contextual keyword.
+    pub escaped: bool,
 }
 /** Numeric/string literals retain JavaScript types through AST construction. */
 #[derive(Clone, Debug, PartialEq)]
@@ -63,10 +65,15 @@ pub(super) enum Kind {
 }
 /** Scanning consumes the complete bounded script before any evaluation can begin. */
 pub(super) fn tokenize(source: &str) -> EngineResult<Vec<Token>> {
-    tokenize_with_limit(source, SCRIPT_BYTES)
+    tokenize_with_limit(source, SCRIPT_BYTES, true)
 }
-/** One scanner applies identical lexical rules under an operation-specific source bound. */
-fn tokenize_with_limit(source: &str, limit: usize) -> EngineResult<Vec<Token>> {
+/** Module code: the same scanner without Annex B's HTML-like comments (spec B.1.1). */
+pub(super) fn tokenize_module(source: &str) -> EngineResult<Vec<Token>> {
+    tokenize_with_limit(source, SCRIPT_BYTES, false)
+}
+/** One scanner applies identical lexical rules under an operation-specific source bound;
+`html` admits script code's HTML-like comments. */
+fn tokenize_with_limit(source: &str, limit: usize, html: bool) -> EngineResult<Vec<Token>> {
     if source.len() > limit {
         return Err(EngineError::limit("script bytes", limit));
     }
@@ -81,7 +88,7 @@ fn tokenize_with_limit(source: &str, limit: usize) -> EngineResult<Vec<Token>> {
     let mut braces: Vec<bool> = Vec::new();
     loop {
         let previous_line = source.location().line;
-        let has_token = skip(&mut source)?;
+        let has_token = skip(&mut source, html, tokens.is_empty())?;
         let line_terminator_before = source.location().line != previous_line;
         if !has_token {
             tokens.push(Token {
@@ -89,6 +96,7 @@ fn tokenize_with_limit(source: &str, limit: usize) -> EngineResult<Vec<Token>> {
                 location: source.location(),
                 exact_strict: false,
                 line_terminator_before,
+                escaped: false,
             });
             break;
         }
@@ -103,15 +111,19 @@ fn tokenize_with_limit(source: &str, limit: usize) -> EngineResult<Vec<Token>> {
         let exact_strict = source.rest().starts_with("\"use strict\"")
             || source.rest().starts_with("'use strict'");
         let regex = regex_allowed(tokens.last().map(|token| &token.kind));
+        let text = source.rest();
         let kind = next_kind(&mut source, &mut braces, regex).map_err(|mut error| {
             error.phase = Some("scan".into());
             errors::located(error, location, "scan")
         })?;
+        let consumed = text.len() - source.rest().len();
+        let escaped = matches!(kind, Kind::Name(_)) && text[..consumed].contains('\\');
         tokens.push(Token {
             kind,
             location,
             exact_strict,
             line_terminator_before,
+            escaped,
         });
     }
     Ok(tokens)
@@ -205,14 +217,24 @@ fn regex_allowed(previous: Option<&Kind>) -> bool {
         Some(_) => true,
     }
 }
-/** Comments terminate on JavaScript line terminators, not Rust's broader Unicode whitespace. */
-fn skip(source: &mut Source<'_>) -> EngineResult<bool> {
+/** Comments terminate on JavaScript line terminators, not Rust's broader Unicode whitespace.
+In script code `<!--` opens a line comment, and so does `-->` at the start of a line, where
+only whitespace and comments precede it (spec B.1.1 HTML-like comments). */
+fn skip(source: &mut Source<'_>, html: bool, first: bool) -> EngineResult<bool> {
+    let mut line_start = first;
     loop {
-        if source.peek().is_some_and(whitespace) {
+        if let Some(c) = source
+            .peek()
+            .filter(|&c| whitespace(c) || line_terminator(c))
+        {
+            line_start |= line_terminator(c);
             source.next();
             continue;
         }
-        if source.rest().starts_with("//") {
+        let rest = source.rest();
+        let html_comment =
+            html && (rest.starts_with("<!--") || line_start && rest.starts_with("-->"));
+        if rest.starts_with("//") || html_comment {
             while source.peek().is_some_and(|c| !line_terminator(c)) {
                 source.next();
             }
@@ -223,7 +245,9 @@ fn skip(source: &mut Source<'_>) -> EngineResult<bool> {
             source.next();
             source.next();
             while !source.rest().starts_with("*/") {
-                if source.next().is_none() {
+                let next = source.next();
+                line_start |= next.is_some_and(line_terminator);
+                if next.is_none() {
                     return Err(errors::located(
                         errors::syntax(start, "unterminated block comment"),
                         start,

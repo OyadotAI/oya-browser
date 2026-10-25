@@ -13,7 +13,9 @@ use crate::v9::binding::{Binding, BindingKind};
 use crate::v9::compile::Op;
 use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
 
+mod asyncgen;
 mod eval;
+mod with;
 
 /** Completion kinds a finally block's registers hold. */
 const NORMAL: f64 = 0.0;
@@ -58,7 +60,10 @@ impl Vm<'_> {
             return Ok(None);
         };
         let mode = std::mem::take(&mut frame.resume);
-        if frame.code.ops.get(frame.pc) == Some(&Op::YieldStar) {
+        if matches!(
+            frame.code.ops.get(frame.pc),
+            Some(Op::YieldStar | Op::AsyncYieldStar)
+        ) {
             frame.resume = mode;
             return Ok(None);
         }
@@ -448,6 +453,14 @@ impl Vm<'_> {
             Op::GetExt(name, hops, slot) => self.get_ext(name, hops, slot)?,
             Op::SetExt(name, hops, slot) => self.set_ext(name, hops, slot)?,
             Op::DeclareExt(name, hops, slot) => self.declare_ext(name, hops, slot)?,
+            Op::GetWith(name, hops, slot, call) => self.get_with(name, hops, slot, call)?,
+            Op::SetWith(name, hops, slot) => self.set_with(name, hops, slot)?,
+            Op::DeleteWith(name, hops, slot) => self.delete_with(name, hops, slot)?,
+            Op::ToObject => {
+                let value = self.pop();
+                let id = self.to_object(&value)?;
+                self.push(JsValue::Object(id));
+            }
             Op::ThrowSyntax(message) => {
                 let message = self.constant(message).lossy();
                 return Err(self.syntax_error(&message));
@@ -615,13 +628,9 @@ impl Vm<'_> {
                     }
                 }
             }
-            Op::GetProp(key) => {
-                let key = self.constant_key(key);
+            Op::GetProp(site) => {
                 let object = self.peek(0);
-                if key.hidden() {
-                    self.private_brand(&object, &key, false)?;
-                }
-                let value = self.get(&object, &key)?;
+                let value = self.load_named(site, &object)?;
                 self.pop();
                 self.push(value);
             }
@@ -638,15 +647,10 @@ impl Vm<'_> {
                 self.drop_n(2);
                 self.push(value);
             }
-            Op::SetProp(key) => {
-                let key = self.constant_key(key);
+            Op::SetProp(site) => {
                 let value = self.peek(0);
                 let object = self.peek(1);
-                if key.hidden() {
-                    self.private_brand(&object, &key, true)?;
-                }
-                let strict = self.frame().code.strict;
-                self.set(&object, key, value.clone(), strict)?;
+                self.store_named(site, &object, &value)?;
                 self.drop_n(2);
                 self.push(value);
             }
@@ -1161,19 +1165,32 @@ impl Vm<'_> {
                 return Ok(self.suspend(Exit::Yield(JsValue::Undefined)));
             }
             Op::Import => {
+                let options = self.pop();
                 let specifier = self.pop();
                 let site = self.frame().code.site;
-                let promise = crate::v9::modules::dynamic_import(self, specifier, site)?;
+                let promise = crate::v9::modules::dynamic_import(self, specifier, options, site)?;
                 self.push(promise);
             }
             Op::Initial => {
                 let frame = self.frames.pop().expect("generator frame");
                 let callee = frame.callee.clone();
                 let boundary = frame.boundary;
+                let asynchronous = frame.code.flags.asynchronous;
                 let saved = self.save_frame(frame);
-                let generator = self.new_generator(saved, &callee)?;
+                let generator = if asynchronous {
+                    self.new_async_generator(saved, &callee)?
+                } else {
+                    self.new_generator(saved, &callee)?
+                };
                 return Ok(self.finish_frame(JsValue::Object(generator), boundary));
             }
+            Op::GetAsyncIterator
+            | Op::AsyncIterNext
+            | Op::AsyncIterValue(_)
+            | Op::AsyncIterClose(_)
+            | Op::AsyncCloseCheck
+            | Op::AsyncYieldStar
+            | Op::AsyncYieldStarResult => return self.async_iteration_op(op),
             Op::Regex(pattern, flags) => {
                 let pattern = self.constant(pattern);
                 let flags = self.constant(flags).lossy();
@@ -1209,42 +1226,59 @@ impl Vm<'_> {
     }
     /** Read a global name: lexical bindings first, then the global object. */
     pub fn global_get(&mut self, name: &JsString, typeof_only: bool) -> Res<JsValue> {
-        let text = name.lossy();
-        if let Some(binding) = self.globals.get(&text) {
-            return match &binding.value {
-                Some(value) => Ok(value.clone()),
-                None => {
-                    Err(self
-                        .reference_error(&format!("Cannot access '{text}' before initialization")))
-                }
-            };
+        let found = with_text(name, |text| {
+            self.globals.get(text).map(|binding| binding.value.clone())
+        });
+        if let Some(value) = found {
+            return value.ok_or_else(|| {
+                let text = name.lossy();
+                self.reference_error(&format!("Cannot access '{text}' before initialization"))
+            });
         }
         let key = Key::Str(name.clone());
+        // An own data property of the global object (var, function, builtins) answers in one
+        // lookup; anything else takes the full [[HasProperty]] then [[Get]] path.
+        if let Some(Prop {
+            slot: Slot::Data(value),
+            ..
+        }) = self.own(GLOBAL, &key)?
+        {
+            return Ok(value);
+        }
         if self.has_property(GLOBAL, &key)? {
             return self.get_from(GLOBAL, &key, &JsValue::Object(GLOBAL));
         }
         if typeof_only {
             return Ok(JsValue::Undefined);
         }
+        let text = name.lossy();
         Err(self.reference_error(&format!("{text} is not defined")))
     }
     /** Assign a global name. */
     pub fn global_set(&mut self, name: &JsString, value: JsValue) -> Res<()> {
-        let text = name.lossy();
-        if let Some(binding) = self.globals.get(&text) {
-            if binding.value.is_none() {
+        let found = with_text(name, |text| {
+            self.globals
+                .get(text)
+                .map(|binding| (binding.value.is_none(), binding.kind == BindingKind::Const))
+        });
+        if let Some((uninitialized, constant)) = found {
+            if uninitialized {
+                let text = name.lossy();
                 return Err(
                     self.reference_error(&format!("Cannot access '{text}' before initialization"))
                 );
             }
-            if binding.kind == BindingKind::Const {
+            if constant {
                 return Err(self.type_error("Assignment to constant variable."));
             }
             let units = value.string_units();
-            self.globals.get_mut(&text).expect("binding").value = Some(value);
+            with_text(name, |text| {
+                self.globals.get_mut(text).expect("binding").value = Some(value);
+            });
             self.heap.adjust(0, units as isize);
             return Ok(());
         }
+        let text = name.lossy();
         let key = Key::Str(name.clone());
         let strict = self.frames.last().is_some_and(|frame| frame.code.strict);
         if strict && !self.has_property(GLOBAL, &key)? {
@@ -1377,6 +1411,117 @@ impl Vm<'_> {
             self.jump_out(target as u32, handlers, envs)?;
         }
         Ok(Flow::Next)
+    }
+    /** `object.name`: the property-load inline cache. A hit is a shape compare and an indexed
+    read; a miss on an ordinary object looks the key up once, caches an own data property under
+    the object's shape, and walks on from the prototype when the key is absent. */
+    fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
+        if let Some(value) = self.load_hit(site, base) {
+            return Ok(value);
+        }
+        let key = self.constant_key(site);
+        if key.hidden() {
+            self.private_brand(base, &key, false)?;
+            return self.get(base, &key);
+        }
+        let JsValue::Object(id) = base else {
+            return self.get(base, &key);
+        };
+        let Some(object) = self.heap.get(*id).filter(|o| cacheable(&o.class)) else {
+            return self.get(base, &key);
+        };
+        match object.props.position(&key) {
+            Some(slot) => {
+                if let Some(Slot::Data(value)) = object.props.slot(slot).map(|p| &p.slot) {
+                    let value = value.clone();
+                    let shape = object.props.shape_id();
+                    self.frame().code.caches.record(site, shape, slot);
+                    return Ok(value);
+                }
+            }
+            None if object.function().is_none() => {
+                return match object.proto {
+                    Some(proto) => self.get_from(proto, &key, base),
+                    None => Ok(JsValue::Undefined),
+                };
+            }
+            None => {}
+        }
+        self.get(base, &key)
+    }
+    /** A cached own data property of an ordinary object, if the site knows its shape. */
+    fn load_hit(&self, site: u32, base: &JsValue) -> Option<JsValue> {
+        let JsValue::Object(id) = base else {
+            return None;
+        };
+        let object = self.heap.get(*id).filter(|o| cacheable(&o.class))?;
+        let code = &self.frames.last()?.code;
+        let slot = code.caches.lookup(site, object.props.shape_id())?;
+        match &object.props.slot(slot)?.slot {
+            Slot::Data(value) => Some(value.clone()),
+            Slot::Accessor(..) => None,
+        }
+    }
+    /** `object.name = value`: the property-store inline cache. It writes in place only an own
+    writable data property of an ordinary object (attributes live in the slot, so a frozen or
+    read-only property, a setter, or a new key always takes the full [[Set]]). */
+    fn store_named(&mut self, site: u32, base: &JsValue, value: &JsValue) -> Res<()> {
+        if self.store_cached(site, base, value, None) {
+            return Ok(());
+        }
+        let key = self.constant_key(site);
+        if key.hidden() {
+            self.private_brand(base, &key, true)?;
+        } else if self.store_cached(site, base, value, Some(&key)) {
+            return Ok(());
+        }
+        let strict = self.frame().code.strict;
+        self.set(base, key, value.clone(), strict)
+    }
+    /** One store attempt: through the cache when `key` is None, else by looking the key up and
+    caching the slot it finds. False means the full [[Set]] must run. */
+    fn store_cached(
+        &mut self,
+        site: u32,
+        base: &JsValue,
+        value: &JsValue,
+        key: Option<&Key>,
+    ) -> bool {
+        let JsValue::Object(id) = base else {
+            return false;
+        };
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        let Some(object) = self
+            .heap
+            .objects
+            .get_mut(id)
+            .filter(|o| cacheable(&o.class))
+        else {
+            return false;
+        };
+        let shape = object.props.shape_id();
+        let slot = match key {
+            None => frame.code.caches.lookup(site, shape),
+            Some(key) => object.props.position(key),
+        };
+        let Some(prop) = slot.and_then(|slot| object.props.slot_mut(slot)) else {
+            return false;
+        };
+        let Slot::Data(old) = &mut prop.slot else {
+            return false;
+        };
+        if prop.attrs & WRITABLE == 0 {
+            return false;
+        }
+        let delta = value.string_units() as isize - old.string_units() as isize;
+        *old = value.clone();
+        if let (Some(slot), Some(_)) = (slot, key) {
+            frame.code.caches.record(site, shape, slot);
+        }
+        self.heap.adjust(0, delta);
+        true
     }
     /** Array element read without key conversion when possible. */
     fn fast_element(&self, object: &JsValue, key: &JsValue) -> Option<JsValue> {
@@ -1745,4 +1890,39 @@ impl Vm<'_> {
         }
         Ok(())
     }
+}
+
+/** Names at most this long convert to text on the stack. */
+const SHORT_NAME: usize = 64;
+
+/** Run `body` on a name's text. Short ASCII names, nearly every identifier, convert on the stack,
+so a global read or write allocates nothing; any other name takes the lossy conversion the
+global map's keys were made with. */
+fn with_text<R>(name: &JsString, body: impl FnOnce(&str) -> R) -> R {
+    let units = name.as_units();
+    let mut bytes = [0u8; SHORT_NAME];
+    if units.len() <= SHORT_NAME && units.iter().all(|unit| *unit < 0x80) {
+        for (byte, unit) in bytes.iter_mut().zip(units) {
+            *byte = *unit as u8;
+        }
+        if let Ok(text) = std::str::from_utf8(&bytes[..units.len()]) {
+            return body(text);
+        }
+    }
+    body(&name.lossy())
+}
+
+/** Whether an object's named keys live only in its property list, so an inline cache may
+answer for it: proxies, host objects and namespaces have their own lookups, and arrays, strings
+and typed views answer index and `length` keys themselves. */
+fn cacheable(class: &Class) -> bool {
+    !matches!(
+        class,
+        Class::Proxy(_)
+            | Class::Host(_)
+            | Class::Namespace(_)
+            | Class::Array(_)
+            | Class::String(_)
+            | Class::View(_)
+    )
 }

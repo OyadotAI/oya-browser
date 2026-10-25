@@ -161,7 +161,11 @@ impl Vm<'_> {
             let name = self.peek_data(*id, "name");
             let message = self.peek_data(*id, "message");
             if let Some(message) = message {
-                let name = name.unwrap_or_else(|| "Error".into());
+                // An error-like object without a `name` (test262's Test262Error) is called
+                // after its constructor, as V8's message for it reads.
+                let name = name
+                    .or_else(|| self.constructor_name(*id).filter(|name| name != "Object"))
+                    .unwrap_or_else(|| "Error".into());
                 return if message.is_empty() {
                     name
                 } else {
@@ -174,6 +178,20 @@ impl Vm<'_> {
             JsValue::String(text) => text.lossy().chars().take(MESSAGE_CHARS).collect(),
             other => format!("{other:?}"),
         }
+    }
+    /** The `name` of the object's `constructor`, read without running getters. */
+    fn constructor_name(&mut self, mut id: ObjectId) -> Option<String> {
+        let key = Key::from("constructor");
+        for _ in 0..PEEK_DEPTH {
+            if let Ok(Some(prop)) = self.own(id, &key) {
+                return match prop.slot {
+                    Slot::Data(JsValue::Object(ctor)) => self.peek_data(ctor, "name"),
+                    _ => None,
+                };
+            }
+            id = self.proto_of(id)?;
+        }
+        None
     }
     /** A data property along the chain, read without running getters. */
     fn peek_data(&mut self, mut id: ObjectId, name: &str) -> Option<String> {

@@ -70,6 +70,9 @@ impl Parser {
         self.expect_name("from")?;
         let request = self.module_request()?;
         for (local, imported, pos) in entries {
+            if &*local == "eval" || &*local == "arguments" {
+                return Err(self.error_at(pos, "Unexpected eval or arguments in strict mode"));
+            }
             let declared = self
                 .module
                 .as_ref()
@@ -217,20 +220,21 @@ impl Parser {
         let mut list = Vec::new();
         while !self.eat("}") {
             let pos = self.pos();
+            let string = matches!(self.peek().kind, Kind::String(_));
             let local = self.module_export_name()?;
             let export = if self.eat_name("as") {
                 self.module_export_name()?
             } else {
                 local.clone()
             };
-            list.push((local, export, pos));
+            list.push((local, export, pos, string));
             if !self.at("}") {
                 self.expect(",")?;
             }
         }
         if self.eat_name("from") {
             let request = self.module_request()?;
-            for (imported, export, _) in list {
+            for (imported, export, _, _) in list {
                 self.export(ExportEntry::Indirect {
                     export,
                     request,
@@ -238,7 +242,10 @@ impl Parser {
                 });
             }
         } else {
-            for (local, export, pos) in list {
+            for (local, export, pos, string) in list {
+                if string {
+                    return Err(self.error_at(pos, "A string export name needs 'from'"));
+                }
                 self.binding_name(&local, pos)?;
                 self.export(ExportEntry::Local { export, local, pos });
             }
@@ -249,9 +256,10 @@ impl Parser {
     fn module_export_name(&mut self) -> EngineResult<Name> {
         if let Kind::String(value) = &self.peek().kind {
             let location = self.peek().location;
-            let text = value
-                .to_dom()
-                .map_err(|error| errors::located(error, location, "parse"))?;
+            // IsStringWellFormedUnicode: an export name with a lone surrogate is an early error.
+            let text = value.to_dom().map_err(|_| {
+                errors::syntax(location, "An export name must be well-formed Unicode")
+            })?;
             self.next();
             return Ok(Name::from(text.as_str()));
         }
@@ -278,13 +286,42 @@ impl Parser {
             },
         )
     }
-    /** Import attributes (`with { type: 'json' }`) are read and ignored, then the semicolon. */
+    /** Import attributes (`with { type: 'json' }`), checked and then ignored, then the
+    semicolon. Each entry is `key: 'value'` with an identifier-name or string key, and a key
+    given twice is an early error (spec 16.2.2.1). */
     fn module_end(&mut self) -> EngineResult<()> {
         if (self.at_name("with") || self.at_name("assert")) && !self.peek().line_terminator_before {
             self.next();
             self.expect("{")?;
+            let mut keys = Vec::new();
             while !self.eat("}") {
-                self.next();
+                let token = self.next();
+                let key = match token.kind {
+                    Kind::Name(name) => name.as_str().to_string(),
+                    Kind::String(value) => value
+                        .to_dom()
+                        .map_err(|error| errors::located(error, token.location, "parse"))?,
+                    _ => {
+                        self.position -= 1;
+                        return Err(self.unexpected());
+                    }
+                };
+                if keys.contains(&key) {
+                    return Err(errors::syntax(
+                        token.location,
+                        "Import attribute has duplicate key",
+                    ));
+                }
+                keys.push(key);
+                self.expect(":")?;
+                if !matches!(self.next().kind, Kind::String(_)) {
+                    self.position -= 1;
+                    return Err(self.unexpected());
+                }
+                if !self.eat(",") {
+                    self.expect("}")?;
+                    break;
+                }
             }
         }
         self.semicolon()
@@ -322,6 +359,28 @@ fn pattern_names(pattern: &Pattern, names: &mut Vec<Name>) {
         }
         Pattern::Default(target, _) => pattern_names(target, names),
     }
+}
+
+/** No top-level declaration may reuse an import's local name. */
+pub(super) fn check_imports(module: &ModuleSyntax, body: &[Stmt]) -> EngineResult<()> {
+    let mut names = Vec::new();
+    for stmt in body {
+        match &stmt.kind {
+            StmtKind::Var(_, list) => list
+                .iter()
+                .for_each(|d| super::func::bound_names(&d.target, &mut names)),
+            StmtKind::Class(class) => names.extend(class.name.clone()),
+            StmtKind::Function(func) => names.extend(func.name.clone()),
+            _ => {}
+        }
+        if let Some(entry) = module.imports.iter().find(|e| names.contains(&e.local)) {
+            return Err(errors::syntax(
+                stmt.pos.location(),
+                &format!("Identifier '{}' has already been declared", entry.local),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /** A module may export each name once. */

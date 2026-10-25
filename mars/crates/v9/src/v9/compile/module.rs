@@ -161,9 +161,9 @@ fn link_facts(scope: ModuleScope) -> EngineResult<ModuleInfo> {
             ExportEntry::Local { export, local, pos } => {
                 let imported = syntax.imports.iter().find(|import| import.local == *local);
                 let source = match imported {
-                    Some(import) if import.imported.is_some() => {
-                        Export::Indirect(import.request, import.imported.clone())
-                    }
+                    // A re-exported namespace import is the namespace itself (ES2024), so two
+                    // star exports of it are not ambiguous.
+                    Some(import) => Export::Indirect(import.request, import.imported.clone()),
                     _ => match bindings.iter().find(|binding| binding.name == *local) {
                         Some(Binding {
                             place: Place::Env(slot),

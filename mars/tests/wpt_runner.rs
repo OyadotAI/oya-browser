@@ -313,14 +313,15 @@ fn normalize(path: &Path) -> String {
     parts.join("/")
 }
 
-/** Why a reftest is not run: it needs script, waits, prints, or a person. */
+/** Why a reftest is not run: only what Mars cannot do (paged media, a person at the keyboard)
+or a reference that is not in the checkout. Script and reftest-wait tests run, as navigation runs
+the page's scripts through V9 and `settle` waits out reftest-wait. */
 fn skip_reason(
     root: &Path,
     path: &str,
     html: &str,
     refs: &[(bool, String)],
 ) -> Option<&'static str> {
-    let lower = html.to_ascii_lowercase();
     let flags: String = tags(html, "meta")
         .into_iter()
         .filter(|meta| {
@@ -331,34 +332,17 @@ fn skip_reason(
         .collect::<Vec<_>>()
         .join(" ");
     let name = path.rsplit('/').next().unwrap_or(path);
-    if name.contains("-manual") || flags.contains("interact") {
+    if name.contains("-manual") {
         return Some("manual");
     }
-    if name.contains("-visual") {
-        return Some("visual");
+    if flags.contains("interact") {
+        return Some("interact");
     }
     if name.contains("-print") || path.contains("/print/") || flags.contains("paged") {
         return Some("print");
     }
-    if tags(html, "html")
-        .iter()
-        .any(|h| h.get("class").is_some_and(|c| c.contains("reftest-wait")))
-    {
-        return Some("reftest-wait");
-    }
-    if lower.contains("<script") {
-        return Some("script");
-    }
-    for (_, reference) in refs {
-        let Ok(bytes) = std::fs::read(root.join(reference)) else {
-            return Some("missing-reference");
-        };
-        if String::from_utf8_lossy(&bytes)
-            .to_ascii_lowercase()
-            .contains("<script")
-        {
-            return Some("script");
-        }
+    if refs.iter().any(|(_, r)| !root.join(r).is_file()) {
+        return Some("missing-reference");
     }
     None
 }
@@ -372,10 +356,40 @@ struct Outcome {
     millis: u128,
 }
 
-/** Navigate to `url` and return the viewport screenshot's PNG (base64) and size. */
+/** Real time a reftest-wait page gets to drop the class before it counts as a timeout. */
+const WAIT_TIMEOUT: Duration = Duration::from_secs(6);
+/** How often the runner pumps the page's timers while it waits, the coordinator's tick. */
+const WAIT_POLL: Duration = Duration::from_millis(100);
+
+/** Whether `<html>`'s class list still holds `reftest-wait`. */
+fn waiting(runtime: &mut mars::runtime::Runtime) -> Result<bool, String> {
+    let nodes =
+        agent_call(runtime, "page.nodes", json!({})).map_err(|e| format!("nodes: {e:?}"))?;
+    Ok(nodes["html_attributes"]["class"]
+        .as_str()
+        .is_some_and(|class| class.split_ascii_whitespace().any(|c| c == "reftest-wait")))
+}
+
+/** Run the page's timers and requests on the coordinator's schedule, as the desktop broker
+does, until `<html>` drops `reftest-wait` (WPT's signal that the page is ready to compare) or
+WAIT_TIMEOUT passes. Pages that never had the class return at once. */
+fn settle(runtime: &mut mars::runtime::Runtime) -> Result<(), String> {
+    let deadline = Instant::now() + WAIT_TIMEOUT;
+    while waiting(runtime)? {
+        if Instant::now() >= deadline {
+            return Err("reftest-wait timeout".into());
+        }
+        thread::sleep(WAIT_POLL);
+        runtime.run_page_scripts();
+    }
+    Ok(())
+}
+
+/** Navigate to `url`, let it settle, and return the viewport screenshot's PNG (base64) and size. */
 fn shoot(runtime: &mut mars::runtime::Runtime, url: &str) -> Result<String, String> {
     agent_call(runtime, "page.navigate", json!({"url": url}))
         .map_err(|e| format!("navigate: {e:?}"))?;
+    settle(runtime)?;
     let shot = agent_call(runtime, "page.screenshot", json!({}))
         .map_err(|e| format!("screenshot: {e:?}"))?;
     Ok(format!(
@@ -407,6 +421,7 @@ fn run(runtime: &mut mars::runtime::Runtime, origin: &str, case: &Case, blank: &
     let (status, detail) = match result {
         Ok((true, note)) => ("pass", note),
         Ok((false, detail)) => ("fail", detail),
+        Err(error) if error.contains("reftest-wait timeout") => ("fail", error),
         Err(error) => ("error", error),
     };
     Outcome {
@@ -589,6 +604,23 @@ fn report(cases: &[Case], outcomes: &[Option<Outcome>], elapsed: Duration) {
         )
         .unwrap();
     }
+    let total = |k: &str| {
+        counts
+            .values()
+            .map(|c| c.get(k).copied().unwrap_or(0))
+            .sum::<usize>()
+    };
+    let ran = total("pass") + total("fail") + total("error");
+    println!(
+        "{:<20} {:>5} {:>5} {:>5} {:>5} {:>5}   {:5.1}%",
+        "TOTAL",
+        total("pass"),
+        total("pass:blank"),
+        total("fail"),
+        total("error"),
+        total("skip"),
+        100.0 * total("pass") as f64 / ran.max(1) as f64
+    );
     println!(
         "{} cases in {:.1}s; results in {}",
         cases.len(),
@@ -600,4 +632,28 @@ fn report(cases: &[Case], outcomes: &[Option<Outcome>], elapsed: Duration) {
 /** Counter keys live for the report; a handful of skip reasons is a few bytes. */
 fn leak(text: String) -> &'static str {
     Box::leak(text.into_boxed_str())
+}
+
+/** Only what Mars cannot do is skipped: script and reftest-wait cases run; manual, interact and
+print do not, and each is counted under its own reason. */
+#[test]
+fn skips_only_what_mars_cannot_do() {
+    let root = std::env::temp_dir().join(format!("wpt-skips-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a-ref.html"), "<script>1</script>").unwrap();
+    let refs = [(true, "a-ref.html".to_string())];
+    let reason = |path: &str, html: &str| skip_reason(&root, path, html, &refs);
+    assert_eq!(reason("css/x/a.html", "<script>x()</script>"), None);
+    assert_eq!(reason("css/x/a.html", "<html class='reftest-wait'>"), None);
+    assert_eq!(reason("css/x/a-visual.html", ""), None);
+    assert_eq!(reason("css/x/a-manual.html", ""), Some("manual"));
+    let interact = "<meta name=flags content='interact'>";
+    assert_eq!(reason("css/x/a.html", interact), Some("interact"));
+    assert_eq!(reason("css/x/a-print.html", ""), Some("print"));
+    let missing = [(true, "gone-ref.html".to_string())];
+    assert_eq!(
+        skip_reason(&root, "css/x/a.html", "", &missing),
+        Some("missing-reference")
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

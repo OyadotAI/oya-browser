@@ -146,11 +146,21 @@ impl Compiler {
                     }
                 }
                 self.at(expr.pos);
-                if *delegate {
+                // An async generator awaits what it yields, and delegates to an async iterator.
+                let asynchronous = self.f().flags.asynchronous;
+                if *delegate && asynchronous {
+                    self.emit(Op::GetAsyncIterator);
+                    self.emit(Op::Undefined);
+                    self.emit(Op::AsyncYieldStar);
+                    self.emit(Op::AsyncYieldStarResult);
+                } else if *delegate {
                     self.emit(Op::GetIterator);
                     self.emit(Op::Undefined);
                     self.emit(Op::YieldStar);
                 } else {
+                    if asynchronous {
+                        self.emit(Op::Await);
+                    }
                     self.emit(Op::Yield);
                 }
             }
@@ -162,9 +172,11 @@ impl Compiler {
             ExprKind::ImportMeta => self.load_name(&Name::from(super::module::META), expr.pos)?,
             ExprKind::Import(specifier, options) => {
                 self.expr(specifier)?;
-                if let Some(options) = options {
-                    self.expr(options)?;
-                    self.emit(Op::Pop);
+                match options {
+                    Some(options) => self.expr(options)?,
+                    None => {
+                        self.emit(Op::Undefined);
+                    }
                 }
                 self.at(expr.pos);
                 self.emit(Op::Import);
@@ -233,6 +245,8 @@ impl Compiler {
         pos: Pos,
     ) -> EngineResult<()> {
         let mut method = false;
+        // The callee is a name that pushed its own `this` (a `with` object or undefined).
+        let mut receiver = false;
         match &callee.kind {
             ExprKind::Member(object, prop, member_optional) => {
                 let is_super = matches!(object.kind, ExprKind::Super);
@@ -244,6 +258,10 @@ impl Compiler {
             }
             ExprKind::Super => {
                 return self.super_call(args, pos);
+            }
+            ExprKind::Ident(name) if !optional => {
+                self.callee_name(name, callee.pos)?;
+                receiver = true;
             }
             _ => {
                 self.expr(callee)?;
@@ -264,7 +282,7 @@ impl Compiler {
         }
         if method {
             self.emit(Op::Swap);
-        } else {
+        } else if !receiver {
             self.emit(Op::Undefined);
         }
         let direct = !optional
@@ -539,12 +557,14 @@ impl Compiler {
                 }
             }
             ExprKind::Ident(name) => {
+                let with = self.delete_checks(name)?;
                 if matches!(self.resolve(name), None | Some((Place::Global, ..))) {
                     let index = self.name(name)?;
                     self.emit(Op::DeleteGlobal(index));
                 } else {
                     self.emit(Op::False);
                 }
+                self.patch_all(with);
             }
             _ => {
                 self.expr(operand)?;

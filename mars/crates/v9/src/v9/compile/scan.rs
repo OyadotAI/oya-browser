@@ -121,7 +121,11 @@ impl Walker {
                     self.stmts(&case.body);
                 }
             }
-            StmtKind::Labeled(_, body) | StmtKind::With(body) => self.stmt(body),
+            StmtKind::Labeled(_, body) => self.stmt(body),
+            StmtKind::With(object, body) => {
+                self.expr(object);
+                self.stmt(body);
+            }
             StmtKind::Field(key, value) => {
                 self.key(key);
                 if let Some(value) = value {
@@ -386,67 +390,159 @@ pub(super) fn bound_names(pattern: &Pattern, out: &mut Vec<Name>) {
 
 /** `var` names hoisted to the function, including sloppy block functions (Annex B). */
 pub(super) fn var_names(body: &[Stmt], strict: bool, top: bool, out: &mut Vec<Name>) {
-    for stmt in body {
-        var_names_stmt(stmt, strict, top, out);
+    var_names_in(body, strict, top, &mut Vec::new(), out);
+}
+
+/**
+ * `var` names of a statement list. `blocked` holds the names enclosing blocks declare
+ * lexically: an Annex B block function of such a name is not hoisted, since replacing it with
+ * `var` would be an early error (spec B.3.3.1 step ii).
+ */
+fn var_names_in(
+    body: &[Stmt],
+    strict: bool,
+    top: bool,
+    blocked: &mut Vec<Name>,
+    out: &mut Vec<Name>,
+) {
+    let mark = blocked.len();
+    if !strict {
+        blocked.extend(lexical_names(body, !top).into_iter().map(|(name, _)| name));
     }
+    for stmt in body {
+        match &unlabeled(stmt).kind {
+            StmtKind::Function(func) => {
+                if !top
+                    && !strict
+                    && let Some(name) = &func.name
+                    && !blocked[..mark].contains(name)
+                {
+                    out.push(name.clone());
+                }
+            }
+            _ => var_names_stmt(stmt, strict, blocked, out),
+        }
+    }
+    blocked.truncate(mark);
+}
+
+/** A statement under its labels. */
+fn unlabeled(stmt: &Stmt) -> &Stmt {
+    let mut stmt = stmt;
+    while let StmtKind::Labeled(_, inner) = &stmt.kind {
+        stmt = inner;
+    }
+    stmt
+}
+
+/** The names a loop head declares lexically. */
+fn head_lexicals(kind: VarKind, patterns: &mut dyn Iterator<Item = &Pattern>) -> Vec<Name> {
+    let mut names = Vec::new();
+    if kind != VarKind::Var {
+        for pattern in patterns {
+            bound_names(pattern, &mut names);
+        }
+    }
+    names
+}
+
+/** A nested statement's `var` names, with `extra` names blocked inside it. */
+fn var_names_nested(
+    stmt: &Stmt,
+    strict: bool,
+    extra: Vec<Name>,
+    blocked: &mut Vec<Name>,
+    out: &mut Vec<Name>,
+) {
+    let mark = blocked.len();
+    blocked.extend(extra);
+    var_names_in(std::slice::from_ref(stmt), strict, false, blocked, out);
+    blocked.truncate(mark);
 }
 
 /** `var` names in one statement. */
-fn var_names_stmt(stmt: &Stmt, strict: bool, top: bool, out: &mut Vec<Name>) {
+fn var_names_stmt(stmt: &Stmt, strict: bool, blocked: &mut Vec<Name>, out: &mut Vec<Name>) {
     match &stmt.kind {
         StmtKind::Var(VarKind::Var, list) => {
             for declarator in list {
                 bound_names(&declarator.target, out);
             }
         }
-        StmtKind::Function(func) if !top && !strict => {
-            if let Some(name) = &func.name {
-                out.push(name.clone());
-            }
-        }
         StmtKind::If(_, yes, no) => {
-            var_names_stmt(yes, strict, false, out);
+            var_names_nested(yes, strict, Vec::new(), blocked, out);
             if let Some(no) = no {
-                var_names_stmt(no, strict, false, out);
+                var_names_nested(no, strict, Vec::new(), blocked, out);
             }
         }
-        StmtKind::Block(body) => var_names(body, strict, false, out),
+        StmtKind::Block(body) => var_names_in(body, strict, false, blocked, out),
         StmtKind::For { init, body, .. } => {
-            if let Some(ForInit::Declare(VarKind::Var, list)) = init {
-                for declarator in list {
-                    bound_names(&declarator.target, out);
+            let mut extra = Vec::new();
+            if let Some(ForInit::Declare(kind, list)) = init {
+                if *kind == VarKind::Var {
+                    for declarator in list {
+                        bound_names(&declarator.target, out);
+                    }
                 }
+                extra = head_lexicals(*kind, &mut list.iter().map(|d| &d.target));
             }
-            var_names_stmt(body, strict, false, out);
+            var_names_nested(body, strict, extra, blocked, out);
         }
         StmtKind::ForIn(head, _, body) | StmtKind::ForOf(head, _, body, _) => {
-            if let ForHead::Declare(VarKind::Var, pattern) = head {
-                bound_names(pattern, out);
+            let mut extra = Vec::new();
+            if let ForHead::Declare(kind, pattern) = head {
+                if *kind == VarKind::Var {
+                    bound_names(pattern, out);
+                }
+                extra = head_lexicals(*kind, &mut std::iter::once(pattern));
             }
-            var_names_stmt(body, strict, false, out);
+            var_names_nested(body, strict, extra, blocked, out);
         }
-        StmtKind::While(_, body) | StmtKind::DoWhile(body, _) | StmtKind::With(body) => {
-            var_names_stmt(body, strict, false, out)
+        StmtKind::While(_, body) | StmtKind::DoWhile(body, _) | StmtKind::With(_, body) => {
+            var_names_nested(body, strict, Vec::new(), blocked, out)
         }
-        StmtKind::Labeled(_, body) => var_names_stmt(body, strict, top, out),
+        StmtKind::Labeled(_, body) => var_names_stmt(body, strict, blocked, out),
         StmtKind::Try {
             block,
+            param,
             handler,
             finalizer,
-            ..
         } => {
-            var_names(block, strict, false, out);
+            var_names_in(block, strict, false, blocked, out);
             if let Some(handler) = handler {
-                var_names(handler, strict, false, out);
+                // A plain catch name may be redeclared by var (B.3.4); a pattern may not.
+                let mark = blocked.len();
+                if let Some(param @ (Pattern::Object(..) | Pattern::Array(..))) = param {
+                    bound_names(param, blocked);
+                }
+                var_names_in(handler, strict, false, blocked, out);
+                blocked.truncate(mark);
             }
             if let Some(finalizer) = finalizer {
-                var_names(finalizer, strict, false, out);
+                var_names_in(finalizer, strict, false, blocked, out);
             }
         }
         StmtKind::Switch(_, cases) => {
-            for case in cases {
-                var_names(&case.body, strict, false, out);
+            let mark = blocked.len();
+            if !strict {
+                for case in cases {
+                    blocked.extend(lexical_names(&case.body, true).into_iter().map(|(n, _)| n));
+                }
             }
+            for case in cases {
+                for stmt in &case.body {
+                    if let StmtKind::Function(func) = &unlabeled(stmt).kind {
+                        if !strict
+                            && let Some(name) = &func.name
+                            && !blocked[..mark].contains(name)
+                        {
+                            out.push(name.clone());
+                        }
+                    } else {
+                        var_names_stmt(stmt, strict, blocked, out);
+                    }
+                }
+            }
+            blocked.truncate(mark);
         }
         _ => {}
     }
@@ -543,6 +639,6 @@ fn function_conflict(functions: &[Name], vars: &[Name], strict: bool) -> Option<
 /** `var` names a single statement declares, for loop heads that hold their own lexical names. */
 pub(super) fn stmt_var_names(stmt: &Stmt) -> Vec<Name> {
     let mut out = Vec::new();
-    var_names_stmt(stmt, true, false, &mut out);
+    var_names_stmt(stmt, true, &mut Vec::new(), &mut out);
     out
 }

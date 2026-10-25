@@ -119,12 +119,16 @@ impl Vm<'_> {
             then,
         })
     }
-    /** PromiseResolve: promises pass through, other values are wrapped. */
+    /** PromiseResolve(%Promise%, value): a promise whose `constructor` is %Promise% passes
+    through (the lookup is observable and may throw), anything else is wrapped. */
     pub fn promise_resolve(&mut self, value: JsValue) -> Res<ObjectId> {
         if let JsValue::Object(id) = value
             && matches!(self.heap.get(id).map(|o| &o.class), Some(Class::Promise(_)))
         {
-            return Ok(id);
+            self.pin(value.clone());
+            if self.get(&value, &key("constructor"))? == JsValue::Object(realm().ids.promise) {
+                return Ok(id);
+            }
         }
         let promise = self.new_promise()?;
         self.pin(JsValue::Object(promise));

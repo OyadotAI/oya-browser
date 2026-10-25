@@ -40,6 +40,18 @@ pub(super) fn inline(
         }
     }
     super::generated::generated(context, node, flow, items, true)?;
+    if items.len() == index + 1 && items[index].lines.is_empty() && opens_line(node, &sides) {
+        // An empty run at the box's content start, so the line settles it and the box gets its
+        // content area, padding and borders around it like any other inline box.
+        let run = PaintLine {
+            text: String::new(),
+            x,
+            y,
+            width: 0.0,
+        };
+        items[index].lines.push(run);
+        flow.push(text_frag(context, node, index, 0));
+    }
     flow.cursor += node.style.margin[1] + node.style.padding[1] + sides[1];
     let descendants = &items[index..];
     let left = descendants
@@ -170,6 +182,16 @@ fn last_baseline(
         }
     }
     Ok(None)
+}
+/** Blink's IsInlineBoxStartEmpty and IsInlineBoxEndEmpty: an inline box with an inline-start or
+ * inline-end margin, border or padding is not an empty item, so its line is not empty and gets
+ * the box's line-height and the strut even when the box holds nothing. An empty `<span>` with a
+ * border used to leave its block 0px tall. */
+fn opens_line(node: &Node, sides: &[f64; 4]) -> bool {
+    let style = &node.style;
+    [1, 3]
+        .iter()
+        .any(|&side| style.margin[side] != 0.0 || style.padding[side] != 0.0 || sides[side] != 0.0)
 }
 /** A text fragment for the run at `line` of the item at `item`, with its effective vertical alignment. */
 fn text_frag(context: &LayoutContext<'_>, node: &Node, item: usize, line: usize) -> Frag {

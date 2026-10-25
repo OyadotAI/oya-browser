@@ -83,6 +83,16 @@ pub(in crate::v9) enum Op {
     SetExt(u32, Slot, Slot),
     /** Create a sloppy eval's var in the eval-var object (undefined) unless it is there. */
     DeclareExt(u32, Slot, Slot),
+    /** Look a name up in the `with` object in env slot (hops, slot), honoring
+    Symbol.unscopables: pushes the value (and the object as `this` when the flag says the
+    name is called) and true when the object holds it, else false. */
+    GetWith(u32, Slot, Slot, bool),
+    /** value -> value bool: store into the `with` object when it holds the name. */
+    SetWith(u32, Slot, Slot),
+    /** -> result true, or false: `delete name` on the `with` object when it holds the name. */
+    DeleteWith(u32, Slot, Slot),
+    /** value -> object, throwing a TypeError for null and undefined (spec ToObject). */
+    ToObject,
     /** Throw a SyntaxError with this message, for eval's runtime declaration conflicts. */
     ThrowSyntax(u32),
     /** Top-level `let`/`const`/`class`: create the dead-zone global binding; flag is const. */
@@ -229,6 +239,21 @@ pub(in crate::v9) enum Op {
     /** iterable -> result, delegating with yield*. */
     YieldStar,
     Await,
+    /** value -> async iterator record (GetIterator with kind async, wrapping a sync iterator in
+    an AsyncFromSyncIterator when there is no Symbol.asyncIterator). */
+    GetAsyncIterator,
+    /** record -> what its next() returned, for an Await to settle. */
+    AsyncIterNext,
+    /** result -> its value, or pop and jump when it is done; a non-object is a TypeError. */
+    AsyncIterValue(u32),
+    /** record -> what its return() returned, or pop and jump when it has none (AsyncIteratorClose). */
+    AsyncIterClose(u32),
+    /** awaited return() result -> (a TypeError unless it is an object). */
+    AsyncCloseCheck,
+    /** record received -> one step of `yield*` in an async generator; suspends to await. */
+    AsyncYieldStar,
+    /** record mode result -> the awaited inner result: done ends the delegation, else yields. */
+    AsyncYieldStarResult,
     /** Suspend a fresh generator until its first next(); a module body suspends the same way
     until its graph evaluates it. */
     Initial,
@@ -266,6 +291,8 @@ pub(in crate::v9) struct Code {
     pub templates: Vec<Vec<(Option<JsString>, JsString)>>,
     /// Instruction index to source position, sorted.
     pub positions: Vec<(u32, Pos)>,
+    /// Inline caches of the property loads and stores, one per entry of `strings`.
+    pub caches: crate::v9::vm::shape::SiteCaches,
 }
 
 impl Code {
@@ -296,6 +323,7 @@ impl Code {
             + strings(&self.strings)
             + templates
             + self.positions.len() * std::mem::size_of::<(u32, Pos)>()
+            + self.caches.bytes()
     }
 }
 
@@ -456,6 +484,8 @@ enum Declared {
     FunctionName,
     /** Hidden bindings: this, arguments, new.target, the home object. */
     Hidden,
+    /** A plain `catch (name)` parameter, which a `var` or block function may cross (B.3.4). */
+    Catch,
     /** A module's imported name: a live read of another module's export, never assignable. */
     Import,
 }
@@ -533,6 +563,12 @@ struct FnState {
     chains: Vec<expr::Chain>,
     /// Compiling the parameter list, where a sloppy direct eval may not declare `arguments`.
     in_params: bool,
+    /// Sloppy eval code: its var scope among the caller's scopes (None for the global scope),
+    /// where Annex B block functions store their value.
+    eval_vars: Option<Option<usize>>,
+    /// Parameter names (and `arguments` when the function has its own arguments object): an
+    /// Annex B block function of such a name never updates the function-level binding (B.3.2.1).
+    annex_skip: Vec<Name>,
 }
 
 /** The compiler: a stack of functions over one shared scope stack. */
@@ -541,8 +577,8 @@ struct Compiler {
     scopes: Vec<Scope>,
     functions: Vec<FnState>,
     done: Vec<Code>,
-    /// Sites of enclosing classes, innermost last, for private names.
-    classes: Vec<u32>,
+    /// Enclosing classes, innermost last, for private names: each one's site and declared names.
+    classes: Vec<(u32, Vec<Name>)>,
     /// The module body being compiled, if any.
     module: Option<module::ModuleScope>,
 }
@@ -595,6 +631,8 @@ impl Compiler {
             Op::JumpIfNullish(_) => Op::JumpIfNullish(target),
             Op::JumpOut(_, handlers, envs) => Op::JumpOut(target, handlers, envs),
             Op::IterNext(_) => Op::IterNext(target),
+            Op::AsyncIterValue(_) => Op::AsyncIterValue(target),
+            Op::AsyncIterClose(_) => Op::AsyncIterClose(target),
             Op::ForInNext(_) => Op::ForInNext(target),
             other => other,
         };
@@ -736,6 +774,7 @@ impl Compiler {
             ops: state.ops,
             registers: state.max_registers,
             env,
+            caches: crate::v9::vm::shape::SiteCaches::new(state.strings.len()),
             strings: state.strings,
             privates: state.private_index.into_values().collect(),
             templates: state.templates,

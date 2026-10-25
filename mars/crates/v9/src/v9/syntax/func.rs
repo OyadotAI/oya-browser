@@ -191,6 +191,13 @@ impl Parser {
     }
     /** `( a, b = 1, {c}, ...rest )` */
     fn parameters(&mut self) -> EngineResult<(Vec<Pattern>, Option<Pattern>)> {
+        let outer = std::mem::replace(&mut self.context.parameters, true);
+        let result = self.parameter_list();
+        self.context.parameters = outer;
+        result
+    }
+    /** The list itself; `parameters` marks the context while it is read. */
+    fn parameter_list(&mut self) -> EngineResult<(Vec<Pattern>, Option<Pattern>)> {
         self.expect("(")?;
         let mut params = Vec::new();
         let mut rest = None;
@@ -238,6 +245,7 @@ impl Parser {
             derived: outer.derived,
             no_arguments: outer.no_arguments,
             static_block: false,
+            parameters: false,
         };
         let result = self.arrow_parts(simple, no_in);
         let strict = self.strict;
@@ -402,7 +410,7 @@ impl Parser {
         let body = self.class_body(derived);
         let closed = self.close_privates();
         let (members, constructor, fields, statics) = body?;
-        closed?;
+        let privates = closed?;
         let display = name.clone().unwrap_or_else(|| Name::from(""));
         let constructor = match constructor {
             Some(func) => {
@@ -434,6 +442,7 @@ impl Parser {
             members,
             fields: initializer(pos, SITE_FIELDS, fields),
             statics: initializer(pos, SITE_STATICS, statics),
+            privates,
             pos,
         }))
     }

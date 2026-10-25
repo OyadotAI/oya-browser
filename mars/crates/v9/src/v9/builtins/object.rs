@@ -396,7 +396,10 @@ fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     if !super::integrity::prevent_extensions(vm, id)? {
         return Err(vm.type_error("Cannot prevent extensions"));
     }
-    if vm.proxy_of(id).is_some() {
+    // Proxies and module namespaces (whose exports refuse to freeze) answer through their own
+    // [[DefineOwnProperty]].
+    let namespace = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Namespace(_)));
+    if namespace || vm.proxy_of(id).is_some() {
         return restrict_generic(vm, id, clear);
     }
     vm.materialize(id)?;

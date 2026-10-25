@@ -991,7 +991,10 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
             y: shadow.y,
             blur: shadow.blur.max(0.0),
             spread: shadow.spread,
-            color: shadow.color.clone(),
+            color: match (shadow.current, &style.color) {
+                (true, Some(color)) => color.clone(),
+                _ => shadow.color.clone(),
+            },
             inset: shadow.inset,
         })
         .collect();
@@ -1054,16 +1057,20 @@ fn background(
                 stops: resolve_stops(stops, rx, *repeating),
             }
         }
-        BackgroundLayer::Image { url } => image_layer(
-            url,
-            (
-                style.background_size,
-                style.background_position,
-                style.background_repeat,
-            ),
-            width,
-            height,
-        ),
+        BackgroundLayer::Image { url } => {
+            // Percentages size against the positioning area, the padding box by default.
+            let [top, right, bottom, left] = sizing::border_sides(style);
+            image_layer(
+                url,
+                (
+                    style.background_size,
+                    style.background_position,
+                    style.background_repeat,
+                ),
+                (width - left - right).max(0.0),
+                (height - top - bottom).max(0.0),
+            )
+        }
     }
 }
 /** An image layer (background or mask) with its size rule, position and tiling resolved
@@ -1090,17 +1097,21 @@ fn image_layer(
         },
     };
     let [x, y] = position;
-    let repeat = match repeat {
-        BackgroundRepeat::Repeat => [true, true],
-        BackgroundRepeat::NoRepeat => [false, false],
-        BackgroundRepeat::RepeatX => [true, false],
-        BackgroundRepeat::RepeatY => [false, true],
+    use crate::document::style::RepeatStyle::{self, NoRepeat, Repeat, Round, Space};
+    let [rx, ry]: [RepeatStyle; 2] = match repeat {
+        BackgroundRepeat::Repeat => [Repeat, Repeat],
+        BackgroundRepeat::NoRepeat => [NoRepeat, NoRepeat],
+        BackgroundRepeat::RepeatX => [Repeat, NoRepeat],
+        BackgroundRepeat::RepeatY => [NoRepeat, Repeat],
+        BackgroundRepeat::Axes(x, y) => [x, y],
     };
     DisplayBackground::Image {
         url: url.to_owned(),
         size,
         position: [x.px, x.percent, y.px, y.percent],
-        repeat,
+        repeat: [rx != NoRepeat, ry != NoRepeat],
+        space: [rx == Space, ry == Space],
+        round: [rx == Round, ry == Round],
     }
 }
 /** Stops a repeating gradient may expand to before the pattern stops tiling. */

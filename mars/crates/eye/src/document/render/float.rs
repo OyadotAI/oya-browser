@@ -140,16 +140,34 @@ pub(super) fn float(
     y = flow.floats.iter().map(|f| f.top).fold(y, f64::max);
     let x = loop {
         let (start, room) = flow.room_at_height(y, 1.0);
-        let crowded = flow.floats.iter().any(|f| f.top <= y && f.bottom > y);
-        if room >= outer || !crowded {
-            break if left { start } else { start + room - outer };
-        }
-        y = flow
+        let row: Vec<_> = flow
             .floats
             .iter()
             .filter(|f| f.top <= y && f.bottom > y)
-            .map(|f| f.bottom)
-            .fold(f64::INFINITY, f64::min);
+            .collect();
+        // The opportunity is the BFC's shelf at this row: on the side the float does not hug, it
+        // ends at the nearest opposite float even past this box's edge, so a float that overhangs
+        // its containing block still fits beside a float outside that block (CSS2
+        // floats-rule3-outside); with no opposite float it ends at the box edge (rule 7).
+        let reach = if left {
+            row.iter()
+                .filter(|f| !f.left)
+                .map(|f| f.x0)
+                .fold(f64::INFINITY, f64::min)
+                - start
+        } else {
+            start + room
+                - row
+                    .iter()
+                    .filter(|f| f.left)
+                    .map(|f| f.x1)
+                    .fold(f64::NEG_INFINITY, f64::max)
+        };
+        let fits = room.max(if reach.is_finite() { reach } else { room }) >= outer;
+        if fits || row.is_empty() {
+            break if left { start } else { start + room - outer };
+        }
+        y = row.iter().map(|f| f.bottom).fold(f64::INFINITY, f64::min);
     };
     let bounds = BorderBox {
         x: x + margins.0,

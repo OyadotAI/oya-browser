@@ -60,6 +60,8 @@ pub(in crate::v9) enum Class {
     Arguments,
     Generator(Box<GeneratorData>),
     Async(Box<AsyncData>),
+    /** An async generator object: its body and its queue of next/throw/return requests. */
+    AsyncGenerator(Box<AsyncGeneratorData>),
     Iter(Box<IterState>),
     Host(Box<HostData>),
     /** An ArrayBuffer's bytes. */
@@ -428,6 +430,8 @@ pub(in crate::v9) enum GeneratorState {
     Yielded,
     Running,
     Done,
+    /** An async generator awaiting a return request's value after it completed. */
+    AwaitingReturn,
 }
 
 /** A generator object's suspended body. */
@@ -435,6 +439,27 @@ pub(in crate::v9) enum GeneratorState {
 pub(in crate::v9) struct GeneratorData {
     pub state: GeneratorState,
     pub frame: Option<SavedFrame>,
+}
+
+/** One AsyncGeneratorRequest: the completion to resume with and the promise it settles. */
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(in crate::v9) struct AsyncRequest {
+    /// 0 next, 1 throw, 2 return (the generator's Resume mode).
+    pub mode: u8,
+    pub value: JsValue,
+    pub promise: ObjectId,
+}
+
+/** An async generator's state, suspended body and pending requests (spec 27.6). */
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(in crate::v9) struct AsyncGeneratorData {
+    /// Start, Yielded, Running (executing or awaiting in its body), Done (completed), and
+    /// AwaitingReturn while a return request's value settles after completion.
+    pub state: GeneratorState,
+    pub frame: Option<SavedFrame>,
+    pub queue: std::collections::VecDeque<AsyncRequest>,
+    /// The body awaits a return request's value at a yield; it resumes with a return completion.
+    pub returning: bool,
 }
 
 /** A suspended async function and the promise it settles. */

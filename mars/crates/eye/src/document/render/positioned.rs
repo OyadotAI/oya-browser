@@ -283,7 +283,8 @@ fn width(
         Some(fit),
     ))
 }
-/** The nearest positioned or transformed ancestor's padding box; the viewport for fixed and for none. */
+/** The nearest positioned or transformed ancestor's padding box; for a fixed box the nearest
+ * one that contains fixed boxes (`contains_fixed`); the viewport when there is none. */
 fn containing(
     context: &LayoutContext<'_>,
     node: &Node,
@@ -296,14 +297,14 @@ fn containing(
         width,
         height,
     };
-    if node.style.position == Position::Fixed {
-        // ponytail: fixed boxes use the unscrolled viewport; follow scroll_y when scrolling is layered.
-        return Ok(viewport);
-    }
+    // ponytail: fixed boxes use the unscrolled viewport; follow scroll_y when scrolling is layered.
+    let fixed = node.style.position == Position::Fixed;
     let mut current = node.parent;
     while let Some(local) = current {
         let ancestor = context.node(local)?;
-        if ancestor.style.position != Position::Static || ancestor.style.transform.is_some() {
+        if contains_fixed(&ancestor.style)
+            || (!fixed && ancestor.style.position != Position::Static)
+        {
             let Some(item) = items.iter().find(|item| item.local_id == local) else {
                 return Ok(viewport);
             };
@@ -317,6 +318,11 @@ fn containing(
         current = ancestor.parent;
     }
     Ok(viewport)
+}
+/** Blink's CanContainFixedPositionObjects: a transform, a filter or paint containment makes a
+ * box the containing block of its fixed descendants as well as its absolute ones. */
+fn contains_fixed(style: &crate::document::ComputedStyle) -> bool {
+    style.transform.is_some() || style.filter_blur > 0.0 || style.contain_paint
 }
 /** Runs whose tops differ by less than this share a line. */
 const LINE_TOLERANCE: f64 = 0.5;
