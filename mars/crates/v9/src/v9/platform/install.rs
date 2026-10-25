@@ -308,7 +308,7 @@ fn document(b: &mut Builder, node: u32) {
         b.value(proto, name, string(value), CONFIGURABLE);
     }
     b.value(proto, "hidden", JsValue::Boolean(false), CONFIGURABLE);
-    b.value(proto, "doctype", JsValue::Null, CONFIGURABLE);
+    b.getter(proto, "doctype", dom::document_get);
     methods(
         b,
         proto,
@@ -671,7 +671,10 @@ fn network(b: &mut Builder) {
         &["text", "json", "arrayBuffer", "blob", "formData", "clone"],
         net::response_method,
     );
-    let ctor = b.constructor("Response", 0, dom::illegal_constructor, response, None);
+    let ctor = b.constructor("Response", 0, net::response_construct, response, None);
+    b.method(ctor, "error", 0, net::response_static);
+    b.method(ctor, "redirect", 1, net::response_static);
+    b.method(ctor, "json", 1, net::response_static);
     b.global("Response", ctor);
     let headers = b.object(Some(object_prototype));
     b.ids.headers_prototype = headers;
@@ -679,7 +682,15 @@ fn network(b: &mut Builder) {
         b,
         headers,
         &[
-            "get", "has", "set", "append", "delete", "forEach", "keys", "values",
+            "get",
+            "has",
+            "set",
+            "append",
+            "delete",
+            "forEach",
+            "keys",
+            "values",
+            "getSetCookie",
         ],
         net::headers_method,
     );
@@ -1106,6 +1117,7 @@ fn global_object(b: &mut Builder) {
     });
     super::channel::install(b);
     super::dom_parser::install(b);
+    super::frames::install(b);
     super::scripts::install(b);
     super::components::install(b);
     // Absent APIs (FormData, Blob, typed arrays, WebSocket, Worker, Intl, Proxy...)

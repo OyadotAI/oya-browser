@@ -13,6 +13,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(ctor, "isArray", 1, is_array);
     b.method(ctor, "of", 0, of);
     b.method(ctor, "from", 1, from);
+    super::typed::species_getter(b, ctor);
     let methods: [(&'static str, u32, NativeFn); 38] = [
         ("at", 1, at),
         ("concat", 1, concat),
@@ -712,12 +713,12 @@ fn push(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn reduce_with(vm: &mut Vm, call: Call, reverse: bool) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.reduce")?;
     let function = callback(vm, &call, "Array.prototype.reduce")?;
-    let order: Vec<usize> = if reverse {
-        (0..length).rev().collect()
+    // Lazy index order: an array-like may claim length 2^53 - 1, which must never be allocated.
+    let mut steps: Box<dyn Iterator<Item = usize>> = if reverse {
+        Box::new((0..length).rev())
     } else {
-        (0..length).collect()
+        Box::new(0..length)
     };
-    let mut steps = order.into_iter();
     let mut accumulator = if call.args.len() > 1 {
         call.arg(1)
     } else {
@@ -732,6 +733,7 @@ fn reduce_with(vm: &mut Vm, call: Call, reverse: bool) -> Res<JsValue> {
         }
     };
     for index in steps {
+        vm.charge(1)?;
         if !has_index(vm, &object, index)? {
             continue;
         }

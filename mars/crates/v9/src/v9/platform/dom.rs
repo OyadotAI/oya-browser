@@ -48,9 +48,13 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
         return Ok(JsValue::Null);
     }
     let tag = vm.page.tag(node);
+    if tag == super::frames::DOCUMENT_NODE {
+        return super::frames::wrap_document(vm, node);
+    }
     let ids = &realm().ids;
     let proto = match tag.as_str() {
         "#text" | "#comment" => ids.text_prototype,
+        super::frames::DOCTYPE => super::frames::doctype_prototype().unwrap_or(ids.node_prototype),
         components::FRAGMENT => components::ids().fragment,
         components::SHADOW_ROOT => components::ids().shadow_root,
         _ => super::interfaces::prototype_for(&tag).unwrap_or(ids.html_element_prototype),
@@ -841,6 +845,8 @@ pub(in crate::v9) fn node_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 "#text" => 3.0,
                 "#comment" => 8.0,
                 "#document-fragment" => 11.0,
+                super::frames::DOCUMENT_NODE => 9.0,
+                super::frames::DOCTYPE => 10.0,
                 _ => 1.0,
             },
         })),
@@ -850,7 +856,12 @@ pub(in crate::v9) fn node_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             } else {
                 vm.page.tag(node)
             };
-            let name = if tag.starts_with('#') {
+            let name = if tag == super::frames::DOCTYPE {
+                vm.page
+                    .view(node)
+                    .and_then(|view| view.attributes.get("name").cloned())
+                    .unwrap_or_default()
+            } else if tag.starts_with('#') {
                 tag
             } else {
                 qualified_name(vm, node)
@@ -883,20 +894,26 @@ pub(in crate::v9) fn node_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             wrap_option(vm, previous)
         }
         "ownerDocument" => {
-            if node == DOCUMENT {
-                Ok(JsValue::Null)
-            } else {
-                Ok(JsValue::Object(realm().ids.document))
+            if node == DOCUMENT || vm.page.tag(node) == super::frames::DOCUMENT_NODE {
+                return Ok(JsValue::Null);
+            }
+            let root = vm.page.ancestors(node).last().copied();
+            match root.filter(|root| vm.page.tag(*root) == super::frames::DOCUMENT_NODE) {
+                Some(document) => wrap(vm, document),
+                None => Ok(JsValue::Object(realm().ids.document)),
             }
         }
         "isConnected" => Ok(JsValue::Boolean(
             node == DOCUMENT || vm.page.connected(node),
         )),
         "textContent" | "innerText" | "nodeValue" | "data" => {
-            if node == DOCUMENT {
+            let tag = vm.page.tag(node);
+            if node == DOCUMENT
+                || tag == super::frames::DOCUMENT_NODE
+                || tag == super::frames::DOCTYPE
+            {
                 return Ok(JsValue::Null);
             }
-            let tag = vm.page.tag(node);
             if name == "nodeValue" && !tag.starts_with('#') {
                 return Ok(JsValue::Null);
             }
@@ -1279,6 +1296,7 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         ),
         "dataset" => host_object(vm, HostData::Dataset(node), realm().ids.dataset_prototype),
         "sheet" => super::sheets::element_sheet(vm, node),
+        "contentDocument" | "contentWindow" => super::frames::frame_get(vm, node, name),
         "sandbox" | "relList" | "part" => {
             let attribute = if name == "relList" { "rel" } else { name };
             host_object(
@@ -2102,7 +2120,7 @@ pub(super) fn search(
 }
 
 /** querySelector and querySelectorAll. */
-fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
+pub(super) fn query(vm: &mut Vm, node: usize, call: &Call) -> Res<JsValue> {
     let all = native_name(call) == "querySelectorAll";
     let text = vm.to_text(&call.arg(0))?;
     let list = selector::parse(&text).map_err(|message| {
@@ -2212,7 +2230,14 @@ pub(in crate::v9) fn document_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         let html = html?;
         vm.page.children(html).get(index).copied()
     };
+    if let Some(document) = html {
+        if native_name(&call) == "doctype" {
+            return super::frames::doctype_of(vm, document);
+        }
+        return super::frames::document_get(vm, document, call);
+    }
     match native_name(&call) {
+        "doctype" => Ok(JsValue::Null),
         "body" => match html {
             Some(_) => {
                 let body = virtual_child(vm, 1);
@@ -2365,6 +2390,11 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     {
         return Err(vm.type_error("Illegal invocation"));
     }
+    if let Some(HostData::Document(document)) = super::host_data(vm, &call.this)
+        && let Some(value) = super::frames::document_method(vm, document, &call)?
+    {
+        return Ok(value);
+    }
     let name = native_name(&call);
     match name {
         "getElementById" => {
@@ -2486,32 +2516,9 @@ fn document_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
-/** document.implementation.createHTMLDocument: a detached document with html, head and body. */
+/** document.implementation.createHTMLDocument, ported in frames. */
 pub(in crate::v9) fn create_html_document(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let _ = call;
-    let html = vm
-        .page
-        .create("html", None)
-        .map_err(|error| dom_error(vm, error))?;
-    let head = vm
-        .page
-        .create("head", None)
-        .map_err(|error| dom_error(vm, error))?;
-    let body = vm
-        .page
-        .create("body", None)
-        .map_err(|error| dom_error(vm, error))?;
-    vm.page
-        .insert(html, head, None)
-        .map_err(|error| dom_error(vm, error))?;
-    vm.page
-        .insert(html, body, None)
-        .map_err(|error| dom_error(vm, error))?;
-    let id = vm.alloc(Object::new(
-        Class::Host(Box::new(HostData::Document(html))),
-        Some(realm().ids.document_prototype),
-    ))?;
-    Ok(JsValue::Object(id))
+    super::frames::create_html_document(vm, call)
 }
 
 /** classList methods. */

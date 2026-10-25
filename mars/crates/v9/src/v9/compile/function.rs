@@ -1,7 +1,9 @@
 /** Function and class lowering, plus how names load and store wherever they live. */
 use super::scan;
 use super::*;
-use crate::v9::syntax::{Class, MemberKind, PropKey, SITE_CONSTRUCTOR, SITE_TAGS, VarKind};
+use crate::v9::syntax::{
+    Class, ExprKind, MemberKind, Pattern, PropKey, SITE_CONSTRUCTOR, SITE_TAGS, StmtKind, VarKind,
+};
 
 /** Method kinds for DefineMethod. */
 pub(in crate::v9) const METHOD: u8 = 0;
@@ -488,6 +490,13 @@ fn parameter_early_errors(func: &Func, params: &[Name]) -> EngineResult<()> {
             "Unexpected eval or arguments in strict mode",
         ));
     }
+    let simple = func.rest.is_none() && func.params.iter().all(|p| matches!(p, Pattern::Ident(..)));
+    if !simple && has_strict_directive(func) {
+        return Err(crate::v9::errors::syntax(
+            func.pos.location(),
+            "Illegal 'use strict' directive in function with non-simple parameter list",
+        ));
+    }
     let mut seen = std::collections::HashSet::new();
     if (func.strict || func.flags.arrow) && params.iter().any(|name| !seen.insert(name)) {
         return Err(crate::v9::errors::syntax(
@@ -496,6 +505,25 @@ fn parameter_early_errors(func: &Func, params: &[Name]) -> EngineResult<()> {
         ));
     }
     Ok(())
+}
+
+/** Whether the body's own directive prologue says "use strict" (spec 15.2.1 early error:
+ContainsUseStrict of a body with a non-simple parameter list). */
+// ponytail: compares cooked strings, so an escaped "use\x20strict" also counts; the AST keeps
+// no raw directive text. Thread the parser's exact_strict flag through Func if that matters.
+fn has_strict_directive(func: &Func) -> bool {
+    let Some(body) = block_body(func) else {
+        return false;
+    };
+    body.iter()
+        .map_while(|stmt| match &stmt.kind {
+            StmtKind::Expr(Expr {
+                kind: ExprKind::String(text),
+                ..
+            }) => Some(text),
+            _ => None,
+        })
+        .any(|text| text.as_units() == "use strict".encode_utf16().collect::<Vec<_>>())
 }
 
 /** Private keys start with a noncharacter unit no page string contains by accident. */

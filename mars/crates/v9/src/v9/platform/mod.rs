@@ -4,6 +4,7 @@
  * the document is the app's inert projection, network calls and navigations are recorded for the
  * app to perform, and time is a virtual clock the app advances.
  */
+mod blob;
 mod channel;
 pub(in crate::v9) mod components;
 mod console;
@@ -11,7 +12,10 @@ mod console;
 pub mod devtools;
 mod dom;
 mod dom_parser;
+mod encoding;
 pub(in crate::v9) mod events;
+mod form_data;
+mod frames;
 pub(in crate::v9) mod html;
 mod install;
 mod interfaces;
@@ -520,6 +524,12 @@ pub(in crate::v9) struct PageState {
     pub focused: Option<usize>,
     /** Custom element definitions, shadow and template bookkeeping, mutation observers. */
     pub components: components::State,
+    /** Each same-origin iframe's document node, made on first `contentDocument`. */
+    pub frames: BTreeMap<usize, usize>,
+    /** Each iframe's contentWindow object. */
+    pub frame_windows: BTreeMap<usize, ObjectId>,
+    /** Markup written to an open document, parsed when it closes. */
+    pub writes: BTreeMap<usize, String>,
 }
 
 /** Runtime platform state for one request. */

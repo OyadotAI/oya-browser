@@ -23,6 +23,7 @@ pub(super) fn install(b: &mut Builder) {
         JsValue::Number(0.0),
         crate::v9::vm::heap::CONFIGURABLE,
     );
+    install_thrower(b, proto);
     let ctor = b.constructor("Function", 1, construct, proto, None);
     b.global("Function", ctor);
     b.method(proto, "call", 1, call_method);
@@ -36,6 +37,33 @@ pub(super) fn install(b: &mut Builder) {
         1,
         has_instance,
     );
+}
+
+/** %ThrowTypeError% (spec 10.2.4.1) and AddRestrictedFunctionProperties (10.2.4): one frozen
+function whose `name` and `length` are fixed, used as both halves of Function.prototype's
+`caller` and `arguments` accessors and of a strict arguments object's `callee`. */
+fn install_thrower(b: &mut Builder, proto: ObjectId) {
+    let thrower = b.object(Some(proto));
+    let native = b.native("", 0, throw_type_error);
+    b.objects[(thrower - crate::v9::vm::heap::INTRINSIC_BASE) as usize].call = Some(native);
+    b.value(thrower, "length", JsValue::Number(0.0), 0);
+    b.value(thrower, "name", crate::v9::vm::realm::string(""), 0);
+    b.ids.throw_type_error = thrower;
+    for name in ["caller", "arguments"] {
+        b.put(
+            proto,
+            crate::v9::vm::heap::Key::from(name),
+            crate::v9::vm::realm::Static::Accessor(Some(thrower), Some(thrower)),
+            crate::v9::vm::heap::CONFIGURABLE,
+        );
+    }
+}
+
+/** The body of %ThrowTypeError%. */
+fn throw_type_error(vm: &mut Vm, _: Call) -> Res<JsValue> {
+    Err(vm.type_error(
+        "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions or the arguments objects for calls to them",
+    ))
 }
 
 /** Function.prototype is callable and returns undefined. */

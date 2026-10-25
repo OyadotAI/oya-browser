@@ -6,7 +6,6 @@
  */
 use super::*;
 use crate::v9::value::{to_int32, to_uint32};
-use crate::v9::vm::convert::Hint;
 use crate::v9::vm::data::{Bytes, Class, ElementKind, ViewData};
 use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{NativeFn, Static, realm, string, symbol};
@@ -47,6 +46,7 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
     b.builtin_accessor(buffer, "byteLength", Some(buffer_length), None);
     b.method(buffer, "slice", 2, buffer_slice);
     tag(b, buffer, "ArrayBuffer");
+    species_getter(b, ctor);
     let typed = b.object(Some(b.ids.object_prototype));
     for name in ["length", "byteLength", "byteOffset", "buffer"] {
         b.builtin_accessor(typed, name, Some(view_get), None);
@@ -62,7 +62,10 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
             );
         }
     }
-    let methods: [(&'static str, u32, NativeFn); 6] = [
+    let methods: [(&'static str, u32, NativeFn); 9] = [
+        ("toReversed", 0, typed_to_reversed),
+        ("toSorted", 1, typed_to_sorted),
+        ("with", 2, typed_with),
         ("set", 1, typed_set),
         ("subarray", 2, subarray),
         ("slice", 2, typed_slice),
@@ -74,6 +77,14 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
         b.method(typed, name, length, function);
     }
     let base = b.constructor("TypedArray", 0, abstract_typed, typed, None);
+    species_getter(b, base);
+    let tag_getter = b.function("get [Symbol.toStringTag]", 0, typed_tag);
+    b.put(
+        typed,
+        Key::Sym(symbol::TO_STRING_TAG),
+        Static::Accessor(Some(tag_getter), None),
+        CONFIGURABLE,
+    );
     for (index, (_, name, size)) in KINDS.iter().enumerate() {
         let proto = b.object(Some(typed));
         b.ids.view_prototypes[index] = proto;
@@ -82,7 +93,6 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
         b.value(proto, "BYTES_PER_ELEMENT", JsValue::Number(*size as f64), 0);
         b.method(ctor, "from", 1, typed_from);
         b.method(ctor, "of", 0, typed_of);
-        tag(b, proto, name);
         b.global(name, ctor);
     }
     data_view(b);
@@ -96,6 +106,33 @@ fn tag(b: &mut Builder, target: u32, name: &'static str) {
         Static::Value(string(name)),
         CONFIGURABLE,
     );
+}
+
+/** `get [Symbol.species]() { return this }` on a constructor (ArraySpeciesCreate's hook). */
+pub(super) fn species_getter(b: &mut Builder, ctor: ObjectId) {
+    let getter = b.function("get [Symbol.species]", 0, species);
+    b.put(
+        ctor,
+        Key::Sym(symbol::SPECIES),
+        Static::Accessor(Some(getter), None),
+        CONFIGURABLE,
+    );
+}
+
+/** The species getter: the receiver itself. */
+fn species(_: &mut Vm, call: Call) -> Res<JsValue> {
+    Ok(call.this)
+}
+
+/** %TypedArray%.prototype[Symbol.toStringTag]: the kind's name, or undefined for non-views. */
+fn typed_tag(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let view = call.this.object().and_then(|id| view_of(vm, id));
+    Ok(
+        match view.and_then(|view| KINDS.iter().find(|(kind, ..)| *kind == view.kind)) {
+            Some((_, name, _)) => string(name),
+            None => JsValue::Undefined,
+        },
+    )
 }
 
 /** DataView and its typed accessors. */
@@ -493,9 +530,7 @@ fn decode(kind: ElementKind, bytes: &[u8], little: bool) -> JsValue {
 /** Convert a value to one element's little-endian bytes (this may run script valueOf). */
 fn encode(vm: &mut Vm, kind: ElementKind, value: &JsValue) -> Res<Vec<u8>> {
     if matches!(kind, ElementKind::BigInt64 | ElementKind::BigUint64) {
-        let JsValue::BigInt(big) = vm.to_primitive(value, Hint::Number)? else {
-            return Err(vm.type_error("Cannot convert a Number to a BigInt"));
-        };
+        let big = super::bigint::to_bigint(vm, value)?;
         return Ok((big as i64).to_le_bytes().to_vec());
     }
     let number = vm.to_number(value)?;
@@ -582,6 +617,62 @@ fn typed_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
         store(vm, id, offset + index, value)?;
     }
     Ok(JsValue::Undefined)
+}
+
+/** %TypedArray%.prototype.toReversed: a fresh array of the same kind, reversed. */
+fn typed_to_reversed(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (id, view) = this_typed(vm, &call)?;
+    let mut values = values_of(vm, id, view.length);
+    values.reverse();
+    Ok(JsValue::Object(typed_from_values(
+        vm, view.kind, &values, None,
+    )?))
+}
+
+/** %TypedArray%.prototype.toSorted: validates the comparator first, then sorts a copy. */
+fn typed_to_sorted(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let comparator = call.arg(0);
+    if !matches!(comparator, JsValue::Undefined) && !vm.is_callable(&comparator) {
+        return Err(vm.type_error("The comparison function must be either a function or undefined"));
+    }
+    let (id, view) = this_typed(vm, &call)?;
+    let values = values_of(vm, id, view.length);
+    let copy = typed_from_values(vm, view.kind, &values, None)?;
+    let sort_call = Call {
+        this: JsValue::Object(copy),
+        ..call
+    };
+    typed_sort(vm, sort_call)
+}
+
+/**
+ * %TypedArray%.prototype.with(index, value): the value converts (ToNumber or ToBigInt) before
+ * the index is checked against the length, and an out-of-range index is a RangeError.
+ */
+fn typed_with(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let (id, view) = this_typed(vm, &call)?;
+    let relative = vm.to_integer(&call.arg(0))?;
+    let length = view.length as f64;
+    let actual = if relative >= 0.0 {
+        relative
+    } else {
+        length + relative
+    };
+    let value = match view.kind {
+        ElementKind::BigInt64 | ElementKind::BigUint64 => {
+            JsValue::BigInt(super::bigint::to_bigint(vm, &call.arg(1))?)
+        }
+        _ => JsValue::Number(vm.to_number(&call.arg(1))?),
+    };
+    let length = view_of(vm, id).map_or(0, |view| view.length);
+    if !(0.0..length as f64).contains(&actual) {
+        return Err(vm.range_error("Invalid typed array index"));
+    }
+    let mut values = values_of(vm, id, length);
+    values[actual as usize] = value;
+    Ok(JsValue::Object(typed_from_values(
+        vm, view.kind, &values, None,
+    )?))
 }
 
 /** %TypedArray%.prototype.subarray(begin, end): a view sharing this one's bytes. */

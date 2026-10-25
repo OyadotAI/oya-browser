@@ -113,7 +113,7 @@ impl Vm<'_> {
             }
             object
         };
-        object.extensible = true;
+        object.extensible = id != realm().ids.throw_type_error;
         self.heap.insert_at(id, object);
         Ok(())
     }
@@ -185,7 +185,7 @@ impl Vm<'_> {
         if let Some(prop) = object.props.get(key) {
             return Ok(Some(prop.clone()));
         }
-        if object.function().is_some() {
+        if object.function().is_some() && !self.virtual_deleted(id, key) {
             return self.function_virtual(id, key);
         }
         Ok(None)
@@ -217,6 +217,14 @@ impl Vm<'_> {
             attrs: *attrs,
         })
     }
+    /** Whether a function's virtual `name` or `length` was deleted. */
+    fn virtual_deleted(&self, id: ObjectId, key: &Key) -> bool {
+        (key_is(key, "name") || key_is(key, "length"))
+            && self
+                .heap
+                .get(id)
+                .is_some_and(|o| o.props.get(&deleted_mark(key)).is_some())
+    }
     /** `name`, `length` and a lazily created `prototype` of functions. */
     fn function_virtual(&mut self, id: ObjectId, key: &Key) -> Res<Option<Prop>> {
         let readonly = |value: JsValue| Prop {
@@ -243,6 +251,19 @@ impl Vm<'_> {
                     return Ok(Some(readonly(JsValue::Number(f64::from(code.length)))));
                 }
                 let flags = code.flags;
+                let plain = !flags.arrow && !flags.method && !flags.asynchronous;
+                if plain
+                    && !flags.generator
+                    && !code.strict
+                    && (key_is(key, "caller") || key_is(key, "arguments"))
+                {
+                    // V8 gives sloppy functions their own null `caller` and `arguments`, so
+                    // pages reading `f.caller` never reach Function.prototype's thrower.
+                    return Ok(Some(Prop {
+                        slot: Slot::Data(JsValue::Null),
+                        attrs: 0,
+                    }));
+                }
                 if key_is(key, "prototype")
                     && !flags.arrow
                     && !flags.method
@@ -293,7 +314,13 @@ impl Vm<'_> {
                     return Ok(Some(readonly(JsValue::String(bound))));
                 }
                 if key_is(key, "length") {
-                    let length = self.get(&JsValue::Object(target), &Key::from("length"))?;
+                    // BoundFunctionCreate reads `length` only when the target owns it.
+                    let length_key = Key::from("length");
+                    let length = if self.own(target, &length_key)?.is_some() {
+                        self.get(&JsValue::Object(target), &length_key)?
+                    } else {
+                        JsValue::Undefined
+                    };
                     let length = match length {
                         JsValue::Number(length) => (length - args.len() as f64).max(0.0),
                         _ => 0.0,
@@ -637,6 +664,20 @@ impl Vm<'_> {
         {
             return Ok(true);
         }
+        let virtual_slot = self
+            .heap
+            .get(id)
+            .is_some_and(|o| o.function().is_some() && o.props.get(key).is_none());
+        if virtual_slot && (key_is(key, "name") || key_is(key, "length")) {
+            // A function's `name` and `length` live outside its property table until written;
+            // deleting one leaves a hidden mark so the virtual value stops answering (spec:
+            // SetFunctionName and SetFunctionLength define ordinary configurable properties).
+            let mark = Prop {
+                slot: Slot::Data(JsValue::Undefined),
+                attrs: 0,
+            };
+            self.heap.put(id, deleted_mark(key), mark);
+        }
         self.heap.remove(id, key);
         Ok(true)
     }
@@ -717,7 +758,7 @@ impl Vm<'_> {
         if is_function {
             for name in ["length", "name"] {
                 let key = Key::from(name);
-                if !own.contains(&key) {
+                if !own.contains(&key) && !own.contains(&deleted_mark(&key)) {
                     keys.push(key);
                 }
             }
@@ -850,4 +891,14 @@ pub(in crate::v9) fn key_text(key: &Key) -> String {
             None => "Symbol()".into(),
         },
     }
+}
+
+/** The hidden key that records a deleted virtual `name` or `length` of a function. */
+fn deleted_mark(key: &Key) -> Key {
+    let mut units = vec![crate::v9::compile::PRIVATE_MARK];
+    units.extend_from_slice(b"deleted:".map(u16::from).as_slice());
+    if let Key::Str(text) = key {
+        units.extend_from_slice(text.as_units());
+    }
+    Key::Str(JsString::from_slice(&units).expect("short key"))
 }

@@ -93,6 +93,11 @@ fn write_node(page: &mut Page, id: usize, out: &mut String, depth: usize, shadow
                 escape_text(&text, out);
             }
         }
+        super::frames::DOCTYPE => {
+            out.push_str("<!DOCTYPE ");
+            out.push_str(view.attributes.get("name").map_or("", String::as_str));
+            out.push('>');
+        }
         "#comment" => {
             out.push_str("<!--");
             out.push_str(view.text.as_deref().unwrap_or(""));

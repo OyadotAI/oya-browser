@@ -224,6 +224,9 @@ impl<'h> Vm<'h> {
                 .insert_at(GLOBAL, Object::new(Class::Plain, Some(proto)));
             vm.heap.next_object = vm.heap.next_object.max(GLOBAL + 1);
         }
+        // %ThrowTypeError% is frozen from the start; the reflection builtins read
+        // extensibility from the heap, so it lives there before any script can see it.
+        let _ = vm.materialize(realm::realm().ids.throw_type_error);
         vm
     }
     /** Allocate an object, pinning it while native code runs, collecting first when full. */
