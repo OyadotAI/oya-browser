@@ -27,7 +27,7 @@ fn modern_syntax_parses() {
         "do x++; while (x < 3) var after = 1;",
         "var big = 10n, legacy = 010, sep = 1_000, hex = 0xFFn;",
         "label: { break label; }",
-        "var i = import.meta; var j = import('./x.js');",
+        "var j = import('./x.js');",
         "async function* gen() { for await (const x of y) yield* x; }",
         "#!/usr/bin/env node\nvar shebang = 1;",
         "with (o) { x; }",
@@ -86,10 +86,22 @@ fn regex_literals_are_opaque_objects() {
     assert_eq!(t.to_dom().unwrap(), "object");
 }
 
-/** Unsupported code fails only when it runs, with the parser's unsupported error. */
+/** `import.meta` is only valid in module code: a classic script holding it is an early error. */
 #[test]
-fn unsupported_code_fails_when_reached() {
-    assert!(load("var ok = 1; function later() { with ({}) {} }", &[]).is_ok());
-    let error = load("var ok = 1; with ({}) {}", &[]).unwrap_err();
-    assert_eq!(error.code, "unsupported_feature");
+fn import_meta_outside_a_module_is_a_syntax_error() {
+    let error = check("var i = import.meta;").unwrap_err();
+    assert_eq!(error.code, "script_syntax_error");
+}
+
+/** `with` runs in sloppy code, both at the top level and inside a function. */
+#[test]
+fn with_statements_run() {
+    assert!(load("var o = {x: 1}; var y; with (o) { y = x; }", &[]).is_ok());
+    assert!(
+        load(
+            "var ok = 1; function later() { with ({}) {} } later();",
+            &[]
+        )
+        .is_ok()
+    );
 }
