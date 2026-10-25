@@ -14,9 +14,11 @@ use crate::v9::vm::realm::{Builder, realm};
 use crate::v9::vm::{Call, Res, Vm};
 use std::collections::BTreeMap;
 
+mod decimal;
 mod display_names;
 mod locale;
 mod locale_info;
+mod number_format;
 mod tag;
 
 /** The formatter kinds, each a constructor on `Intl`. */
@@ -112,8 +114,12 @@ pub(super) fn install(b: &mut Builder) {
     b.method(intl, "supportedValuesOf", 1, supported_values);
     locale::install(b, intl);
     display_names::install(b, intl);
+    number_format::install(b, intl);
     to_string_tag(b, intl, "Intl");
     for kind in KINDS {
+        if kind == "NumberFormat" || kind == "PluralRules" {
+            continue;
+        }
         let proto = b.object(Some(b.ids.object_prototype));
         for name in [
             "format",

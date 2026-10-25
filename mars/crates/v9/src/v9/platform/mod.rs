@@ -15,6 +15,7 @@ mod dom_parser;
 mod encoding;
 pub(in crate::v9) mod events;
 mod form_data;
+mod form_submit;
 mod frames;
 pub(in crate::v9) mod html;
 mod install;
@@ -219,6 +220,11 @@ pub struct PageEnvironment {
     /// `HostEffects::stale_geometry` and the app may lay out and run the step again. None
     /// when the app gives no such promise, and no read is reported.
     pub laid_out_before: Option<usize>,
+    /// The cascaded `position` of each element the last style pass left non-static, by node:
+    /// what `getComputedStyle(el).position` answers when no inline declaration overrides it.
+    /// Pages branch on it (GitHub sizes its fixed header only when the wrapper computes to
+    /// `fixed`), so the inline-only fallback of `static` hides layout from them.
+    pub positions: BTreeMap<usize, String>,
 }
 
 /// One painted box the app's layout gave a node, in document coordinates.
@@ -262,6 +268,7 @@ impl Default for PageEnvironment {
             geometry: Vec::new(),
             scroll_y: 0.0,
             laid_out_before: None,
+            positions: BTreeMap::new(),
         }
     }
 }

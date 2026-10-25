@@ -434,7 +434,7 @@ fn collections(b: &mut Builder) {
     methods(
         b,
         list,
-        &["item", "forEach", "entries", "keys"],
+        &["item", "namedItem", "forEach", "entries", "keys"],
         dom::list_method,
     );
     let values = b.method(list, "values", 0, dom::list_method);
@@ -643,7 +643,15 @@ fn network(b: &mut Builder) {
     methods(
         b,
         request,
-        &["clone", "text", "json", "arrayBuffer", "blob", "formData"],
+        &[
+            "clone",
+            "text",
+            "json",
+            "arrayBuffer",
+            "blob",
+            "formData",
+            "bytes",
+        ],
         net::request_member,
     );
     let ctor = b.constructor("Request", 1, net::request_construct, request, None);
@@ -668,7 +676,15 @@ fn network(b: &mut Builder) {
     methods(
         b,
         response,
-        &["text", "json", "arrayBuffer", "blob", "formData", "clone"],
+        &[
+            "text",
+            "json",
+            "arrayBuffer",
+            "blob",
+            "formData",
+            "bytes",
+            "clone",
+        ],
         net::response_method,
     );
     let ctor = b.constructor("Response", 0, net::response_construct, response, None);

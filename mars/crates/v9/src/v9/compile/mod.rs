@@ -60,6 +60,9 @@ pub(in crate::v9) enum Op {
     SetEnvChecked(Slot, Slot, u32),
     /** Push a fresh block environment with this many slots, all in their dead zone. */
     PushEnv(Slot),
+    /** Mark the current environment as the scope of the class at this source offset, so its
+    private names are fresh for this evaluation of the class. */
+    ClassScope(u32),
     PopEnv,
     /** Replace the current environment with a copy, for per-iteration loop bindings. */
     CopyEnv,
@@ -554,6 +557,10 @@ struct FnState {
     targets: Vec<Target>,
     /// Labels waiting for the next loop or statement.
     pending_labels: Vec<Name>,
+    /// Script and eval code: the register holding the completion value (spec 8.? UpdateEmpty).
+    /// Every expression statement stores into it and every statement whose empty completion
+    /// becomes undefined resets it first, as V8's Rewriter does.
+    completion: Option<Slot>,
     last_pos: Option<Pos>,
     /// Index of the first scope of this function in the shared stack.
     scope_base: usize,

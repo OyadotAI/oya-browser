@@ -190,8 +190,14 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         "justify-items" => style.justify_items = source.justify_items,
         "justify-self" => style.justify_self = source.justify_self,
         "order" => style.order = source.order,
-        "row-gap" | "grid-row-gap" => style.row_gap = source.row_gap,
-        "column-gap" | "grid-column-gap" => style.column_gap = source.column_gap,
+        "row-gap" | "grid-row-gap" => {
+            style.row_gap = source.row_gap;
+            style.gap_set[1] = source.gap_set[1];
+        }
+        "column-gap" | "grid-column-gap" => {
+            style.column_gap = source.column_gap;
+            style.gap_set[0] = source.gap_set[0];
+        }
         "grid-template-columns" => style.grid_columns = source.grid_columns.clone(),
         "grid-template-rows" => style.grid_rows = source.grid_rows.clone(),
         "grid-template-areas" => style.grid_areas = source.grid_areas.clone(),

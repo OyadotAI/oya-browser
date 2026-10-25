@@ -1,7 +1,7 @@
 /** Box sizing, floats, inline alignment, lists, grid and background geometry longhands. */
 use super::{
     AlignItems, BackgroundRepeat, BackgroundSize, Clear, ComputedStyle, Extent, Float, GridArea,
-    GridLine, GridTemplate, ListStyle, ObjectFit, Track, TrackSize, VerticalAlign,
+    GridLine, GridTemplate, LineName, ListStyle, ObjectFit, Track, TrackSize, VerticalAlign,
     constants::{ASPECT_RATIO_MAX, GRID_LINE_MAX, GRID_NAME_BYTES, GRID_TRACKS},
     syntax::{split_top, tokens},
     unsupported,
@@ -36,8 +36,8 @@ pub(super) fn apply(
         }
         "grid-template-columns" => style.grid_columns = template(value, font, context)?,
         "grid-template-rows" => style.grid_rows = template(value, font, context)?,
-        "grid-auto-rows" => style.grid_auto_rows = template(value, font, context)?,
-        "grid-auto-columns" => style.grid_auto_columns = template(value, font, context)?,
+        "grid-auto-rows" => style.grid_auto_rows = auto_tracks(value, font, context)?,
+        "grid-auto-columns" => style.grid_auto_columns = auto_tracks(value, font, context)?,
         "grid-row" => axis(style, 0, value)?,
         "grid-column" => axis(style, 1, value)?,
         "grid-column-start" => style.grid_column.start = line(value)?,
@@ -225,6 +225,7 @@ fn gap(
     let px = px.max(0.0);
     let axis = usize::from(key.contains("row"));
     style.gap_percent[axis] = percent.max(0.0);
+    style.gap_set[axis] = value != "normal";
     if axis == 1 {
         style.row_gap = px;
     } else {
@@ -232,11 +233,24 @@ fn gap(
     }
     Ok(())
 }
+/** `grid-auto-*` track lists, which take no `subgrid`. */
+fn auto_tracks(value: &str, font: f64, context: RenderContext) -> EngineResult<GridTemplate> {
+    let template = template(value, font, context)?;
+    if template.subgrid {
+        return Err(unsupported());
+    }
+    Ok(template)
+}
 /** Track lists with lengths, `fr`, `auto`, `minmax()`, `repeat()` and line names skipped. */
 fn template(value: &str, font: f64, context: RenderContext) -> EngineResult<GridTemplate> {
     let mut template = GridTemplate::default();
     if value == "none" {
         return Ok(template);
+    }
+    if let Some(rest) = value.strip_prefix("subgrid")
+        && (rest.is_empty() || rest.starts_with([' ', '[', '\t', '\n']))
+    {
+        return subgrid(rest);
     }
     super::flex::begin_track_exprs();
     for token in split_tracks(value) {
@@ -244,15 +258,10 @@ fn template(value: &str, font: f64, context: RenderContext) -> EngineResult<Grid
             .strip_prefix('[')
             .and_then(|rest| rest.strip_suffix(']'))
         {
-            let line = u16::try_from(template.tracks.len() + 1).map_err(|_| unsupported())?;
-            for name in names
-                .split_whitespace()
-                .filter(|name| super::layout_props::name(name))
-            {
-                if template.names.len() < GRID_TRACKS {
-                    template.names.push((name.to_owned(), line));
-                }
-            }
+            // An auto-repeat group counts once here; layout moves the names past it.
+            let line = template.tracks.len() + template.repeat.len() + 1;
+            let line = u16::try_from(line).map_err(|_| unsupported())?;
+            push_names(&mut template.names, names, line);
             continue;
         }
         if let Some(inner) = token
@@ -269,6 +278,76 @@ fn template(value: &str, font: f64, context: RenderContext) -> EngineResult<Grid
     }
     template.exprs = super::flex::take_track_exprs();
     Ok(template)
+}
+/**
+ * `subgrid` followed by line-name lists, `repeat(<integer>, <lists>)` among them (css-grid-2
+ * 7.2, Blink's `ConsumeGridLineNames` in subgrid mode). Line `n` is the `n`th list; any track
+ * size or `repeat(auto-fill, ...)` beyond the first makes the declaration invalid.
+ */
+fn subgrid(rest: &str) -> EngineResult<GridTemplate> {
+    let mut lists: Vec<Vec<&str>> = Vec::new();
+    let mut auto_fill = false;
+    for token in split_tracks(rest) {
+        if let Some(inner) = token
+            .strip_prefix("repeat(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            let parts = split_top(inner, b',');
+            let [count, body] = parts.as_slice() else {
+                return Err(unsupported());
+            };
+            let group = name_lists(body)?;
+            let count = count.trim();
+            let times = if count == "auto-fill" && !auto_fill {
+                // ponytail: an auto-fill group of names repeats once; Blink fills the span.
+                auto_fill = true;
+                1
+            } else {
+                let times = number(count)?;
+                if times < 1.0 || times.fract() != 0.0 {
+                    return Err(unsupported());
+                }
+                times as usize
+            };
+            if group.is_empty() || lists.len() + times * group.len() > GRID_TRACKS {
+                return Err(unsupported());
+            }
+            for _ in 0..times {
+                lists.extend(group.iter().cloned());
+            }
+        } else {
+            lists.extend(name_lists(token)?);
+        }
+    }
+    let mut template = GridTemplate {
+        subgrid: true,
+        subgrid_lines: u16::try_from(lists.len()).map_err(|_| unsupported())?,
+        ..GridTemplate::default()
+    };
+    for (index, list) in lists.iter().enumerate() {
+        for name in list {
+            template.names.push(((*name).to_owned(), index as u16 + 1));
+        }
+    }
+    Ok(template)
+}
+/** Consecutive `[...]` lists with their names; anything else is not a subgrid line list. */
+fn name_lists(value: &str) -> EngineResult<Vec<Vec<&str>>> {
+    split_tracks(value)
+        .into_iter()
+        .map(|token| {
+            let names = token
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+                .ok_or_else(unsupported)?;
+            let names = names.split_whitespace().collect::<Vec<_>>();
+            if names.iter().all(|name| self::name(name)) {
+                Ok(names)
+            } else {
+                Err(unsupported())
+            }
+        })
+        .collect()
 }
 /**
  * Tokens that keep parenthesized functions and bracketed names whole. A closing `)` or `]` ends
@@ -310,19 +389,30 @@ fn repeat(
     template: &mut GridTemplate,
 ) -> EngineResult<()> {
     let parts = split_top(inner, b',');
-    let [count, tracks] = parts.as_slice() else {
+    let [count, body] = parts.as_slice() else {
         return Err(unsupported());
     };
-    let tracks = split_tracks(tracks)
-        .into_iter()
-        .filter(|token| !token.starts_with('['))
-        .map(|token| track(token, font, context))
-        .collect::<EngineResult<Vec<_>>>()?;
+    // The group's tracks, and its line names numbered from 1 at the line before its first track.
+    let mut tracks = Vec::new();
+    let mut names = Vec::new();
+    for token in split_tracks(body) {
+        match token
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            Some(list) => {
+                let line = u16::try_from(tracks.len() + 1).map_err(|_| unsupported())?;
+                push_names(&mut names, list, line);
+            }
+            None => tracks.push(track(token, font, context)?),
+        }
+    }
     let count = count.trim();
     if ["auto-fill", "auto-fit"].contains(&count) {
         template.repeat_at = template.tracks.len();
         template.repeat = tracks;
         template.repeat_fit = count == "auto-fit";
+        template.repeat_names = names;
         return Ok(());
     }
     let times = number(count)? as usize;
@@ -330,9 +420,22 @@ fn repeat(
         return Err(unsupported());
     }
     for _ in 0..times {
+        let before = template.tracks.len() + template.repeat.len();
+        for (name, offset) in &names {
+            let line = u16::try_from(before).map_err(|_| unsupported())? + offset;
+            push_names(&mut template.names, name, line);
+        }
         template.tracks.extend_from_slice(&tracks);
     }
     Ok(())
+}
+/** Adds the valid names of a `[...]` list at `line`, up to `GRID_TRACKS` names in all. */
+fn push_names(names: &mut Vec<(String, u16)>, list: &str, line: u16) {
+    for name in list.split_whitespace().filter(|name| self::name(name)) {
+        if names.len() < GRID_TRACKS {
+            names.push((name.to_owned(), line));
+        }
+    }
 }
 /** One track: a size or `minmax(min, max)`; `fit-content()` behaves as auto. */
 fn track(token: &str, font: f64, context: RenderContext) -> EngineResult<Track> {
@@ -448,11 +551,16 @@ fn placement(value: &str) -> EngineResult<GridLine> {
     }
     Ok(placed)
 }
-/** `span n`, or None for a non-span value. */
+/** `span n`, or None for a non-span value. A named span (`span a`, `span 2 a`) is a span of 1
+ * here, which is what it places as with no definite line (css-grid-2 8.3.1); its name and count
+ * are kept by `line_name`. */
 fn span(value: &str) -> EngineResult<Option<u16>> {
     let Some(count) = value.strip_prefix("span") else {
         return Ok(None);
     };
+    if line_name(value).is_some() {
+        return Ok(Some(1));
+    }
     let count = count.trim();
     let count = if count.is_empty() {
         1.0
@@ -460,6 +568,32 @@ fn span(value: &str) -> EngineResult<Option<u16>> {
         number(count)?
     };
     Ok(Some((count as u16).clamp(1, GRID_TRACKS as u16)))
+}
+/** One side's named line: `name`, `name <integer>` (either order), or `span` with a name and
+ * an optional positive count; None for a number, `auto` or anything invalid. */
+fn line_name(value: &str) -> Option<LineName> {
+    let mut parts = value.split_whitespace().peekable();
+    let span = parts.next_if_eq(&"span").is_some();
+    let (mut ident, mut nth) = (None, None);
+    for part in parts {
+        match part.parse::<i32>() {
+            Ok(n) if nth.is_none() && n != 0 && (!span || n > 0) => nth = Some(n),
+            Err(_) if ident.is_none() && !["auto", "span"].contains(&part) && name(part) => {
+                ident = Some(part)
+            }
+            _ => return None,
+        }
+    }
+    let limit = if span {
+        GRID_TRACKS as i32
+    } else {
+        GRID_LINE_MAX
+    };
+    Some(LineName {
+        name: ident?.to_owned(),
+        nth: nth.unwrap_or(i32::from(span)).clamp(-limit, limit),
+        span,
+    })
 }
 /** A numeric line, or None for `auto` and named lines. */
 fn line(value: &str) -> EngineResult<Option<i32>> {
@@ -488,12 +622,10 @@ fn axis(style: &mut ComputedStyle, index: usize, value: &str) -> EngineResult<()
         placement(value)?
     };
     style.grid_area_names[index] = named.then(|| value.into());
-    // `name-start / name-end` line names; numbers and spans stay in `line`.
+    // Named lines (`name-start / name-end`, `a 2`, `span a`); numbers and spans stay in `line`.
     let mut parts = value.split('/').map(str::trim);
-    style.grid_line_names[index] = [parts.next(), parts.next()].map(|part| {
-        part.filter(|part| !named && *part != "auto" && !part.starts_with("span") && name(part))
-            .map(str::to_owned)
-    });
+    style.grid_line_names[index] =
+        [parts.next(), parts.next()].map(|part| part.filter(|_| !named).and_then(line_name));
     if index == 0 {
         style.grid_row = line;
     } else {

@@ -62,20 +62,51 @@ fn lane_tracks<'a>(
         width,
     );
     let mut contributions = Vec::new();
+    let mut measure = |context: &mut LayoutContext<'_>, kid: &Placed<'_>, _: f64| {
+        super::column_contribution(context, kid, &defs)
+    };
+    let sizing = super::subgrid::Sizing {
+        axis: 1,
+        gap: style.column_gap,
+        content: 0.0,
+    };
     for &(node, start, span) in &lanes {
         let starts = start.map_or(0..=count - span, |start| start..=start);
         for column in starts {
-            let item = Placed {
-                node,
-                row: 0,
-                column,
-                rows: 1,
-                columns: span,
-            };
-            contributions.push(super::column_contribution(context, &item, &defs)?);
+            let item = lane_item(node, column, span, 1);
+            // A column subgrid's items size the lanes it spans (css-grid-3 subgrids).
+            match super::subgrid::contributions(
+                context,
+                style,
+                start.is_some(),
+                &item,
+                sizing,
+                0,
+                &mut measure,
+            )? {
+                Some(list) => contributions.extend(list),
+                None => contributions.push(super::column_contribution(context, &item, &defs)?),
+            }
         }
     }
     Ok((defs, lanes, contributions))
+}
+
+/** An item at lane `start` spanning `span` lanes in the grid `axis` (0 rows, 1 columns), one
+ * track in the stacking axis, which has none. */
+fn lane_item(node: &Node, start: usize, span: usize, axis: usize) -> Placed<'_> {
+    let (row, rows, column, columns) = if axis == 0 {
+        (start, span, 0, 1)
+    } else {
+        (0, 1, start, span)
+    };
+    Placed {
+        node,
+        row,
+        column,
+        rows,
+        columns,
+    }
 }
 
 /** Whether the auto-repeat group has a track with no fixed size, which grid-lanes repeats as
@@ -148,23 +179,287 @@ fn intrinsic_columns(
     Ok(columns)
 }
 
-/** The start lane of an auto-placed item spanning `span` lanes: the first, walking from the
- * cursor and wrapping, whose highest spanned running position is within `tolerance` of the
- * lowest such position (Blink's `GetFirstEligibleLine`). */
-fn first_eligible(running: &[f64], span: usize, cursor: usize, tolerance: f64) -> usize {
-    let last = running.len() - span;
-    let highest = |start: usize| {
-        running[start..start + span]
+/** Two used sizes the same within layout rounding. */
+fn same(a: f64, b: f64) -> bool {
+    (a - b).abs() < 0.01
+}
+
+/**
+ * The stacking state of every lane, after Blink's `GridLanesRunningPositions`: each lane is a
+ * list of openings `(start, end)` whose last one is the open end at the lane's running
+ * position. Dense packing keeps the gaps a spanner leaves above itself as openings later
+ * items may fill; track-reverse breaks ties towards the last lane and walks the cursor back.
+ */
+struct Running {
+    /** Each lane's openings `(start, end, item above)` in stacking order; the last one ends
+     * at infinity. The item above is the one stacking-axis alignment gives the opening to. */
+    openings: Vec<Vec<(f64, f64, Option<usize>)>>,
+    /** Each lane's used size in the grid axis, which a dense item's span must keep. */
+    sizes: Vec<f64>,
+    /** The auto-placement cursor: a line, the start of the next search. */
+    cursor: usize,
+    /** How far above the shortest lane an eligible lane may be (`flow-tolerance`). */
+    tolerance: f64,
+    /** `grid-lanes-direction: track-reverse`. */
+    reverse: bool,
+    /** `grid-lanes-pack: dense`. */
+    dense: bool,
+    /** Whether some item aligns in the stacking axis, which keeps the openings below items. */
+    align: bool,
+}
+
+impl Running {
+    /** Fresh lanes for a container; the cursor starts at the last line under track-reverse. */
+    fn new(sizes: &[f64], style: &crate::document::ComputedStyle, tolerance: f64) -> Self {
+        let reverse = style.grid_lanes_track_reverse;
+        Self {
+            openings: vec![vec![(0.0, f64::INFINITY, None)]; sizes.len()],
+            sizes: sizes.to_vec(),
+            cursor: if reverse { sizes.len() } else { 0 },
+            tolerance,
+            reverse,
+            dense: style.grid_lanes_dense,
+            align: false,
+        }
+    }
+
+    /** A lane's running position: the start of its open end. */
+    fn position(&self, lane: usize) -> f64 {
+        self.openings[lane].last().map_or(0.0, |opening| opening.0)
+    }
+
+    /** The highest running position among the lanes `start..start + span`. */
+    fn max_for(&self, start: usize, span: usize) -> f64 {
+        (start..start + span)
+            .map(|lane| self.position(lane))
+            .fold(0.0, f64::max)
+    }
+
+    /** Every start a span may take, from `from` on in the track direction, wrapping once
+     * (Blink's `RunningPositionsIterator`). */
+    fn starts(&self, span: usize, from: usize) -> Vec<usize> {
+        let last = self.openings.len() - span;
+        let count = last + 1;
+        if self.reverse {
+            let first = if from < span { last } else { from - span };
+            (0..count)
+                .map(|step| (first + count - step) % count)
+                .collect()
+        } else {
+            let first = if from > last { 0 } else { from };
+            (0..count).map(|step| (first + step) % count).collect()
+        }
+    }
+
+    /** The start lane of an auto-placed item spanning `span` lanes and its top: the first,
+     * from the cursor, whose highest spanned running position is within the tolerance of the
+     * lowest such position (Blink's `GetFirstEligibleLine`). */
+    fn first_eligible(&self, span: usize) -> (usize, f64) {
+        let last = self.openings.len() - span;
+        let lowest = (0..=last)
+            .map(|start| self.max_for(start, span))
+            .fold(f64::INFINITY, f64::min);
+        let allowed = lowest + self.tolerance;
+        let starts = self.starts(span, self.cursor);
+        let start = starts
             .iter()
             .copied()
+            .find(|&start| self.max_for(start, span) <= allowed)
+            .unwrap_or(starts[0]);
+        (start, self.max_for(start, span))
+    }
+
+    /** The openings, one per lane from `lane` on, that together hold `size` within the range
+     * `(low, high)`, and the highest top they share (Blink's
+     * `AccumulateTrackOpeningsToAccommodateItem`). Indices come back last lane first. */
+    fn fit(
+        &self,
+        lane: usize,
+        left: usize,
+        size: f64,
+        low: f64,
+        high: f64,
+    ) -> Option<(f64, Vec<usize>)> {
+        for (index, &(start, end, _)) in self.openings[lane].iter().enumerate() {
+            let (top, bottom) = (low.max(start), high.min(end));
+            if top > bottom || bottom - top < size {
+                continue;
+            }
+            let found = if left == 0 {
+                Some((top, Vec::new()))
+            } else {
+                self.fit(lane + 1, left - 1, size, top, bottom)
+            };
+            if let Some((top, mut indices)) = found {
+                indices.push(index);
+                return Some((top, indices));
+            }
+        }
+        None
+    }
+
+    /**
+     * Dense packing: the highest opening, from the first lane in the track direction, that
+     * holds an item of stacking size `size` across lanes of the same used size as its
+     * placement `(start, span)` at `top`, and only when it is above that placement (or level
+     * and earlier). The opening is then split around the item (Blink's
+     * `GetEligibleTrackOpeningAndUpdateGridLanesItemSpan`).
+     */
+    fn dense_opening(
+        &mut self,
+        item: usize,
+        start: usize,
+        span: usize,
+        auto: bool,
+        size: f64,
+        top: f64,
+    ) -> Option<(usize, f64)> {
+        let used = self.sizes[start..start + span].iter().sum::<f64>();
+        let from = if self.reverse { self.openings.len() } else { 0 };
+        let mut best: Option<(usize, f64, Vec<usize>)> = None;
+        for lane in self.starts(span, from) {
+            let lane = if auto { lane } else { start };
+            if !same(self.sizes[lane..lane + span].iter().sum(), used) {
+                continue;
+            }
+            let (best_lane, best_top) = best.as_ref().map_or((start, top), |b| (b.0, b.1));
+            if self.openings[lane].first().is_some_and(|o| o.0 >= best_top) {
+                continue;
+            }
+            let Some((found, indices)) = self.fit(lane, span - 1, size, 0.0, f64::INFINITY) else {
+                continue;
+            };
+            let earlier = if self.reverse {
+                lane > best_lane
+            } else {
+                lane < best_lane
+            };
+            if found < best_top || (found == best_top && earlier) {
+                best = Some((lane, found, indices));
+            }
+        }
+        let (lane, found, indices) = best?;
+        for (offset, index) in indices.into_iter().rev().enumerate() {
+            let openings = &mut self.openings[lane + offset];
+            let (start, end, above) = openings[index];
+            let mut at = index;
+            if start < found {
+                openings.insert(at, (start, found, above));
+                at += 1;
+            }
+            if end.is_finite() && found + size >= end - 0.01 {
+                openings.remove(at);
+            } else {
+                openings[at].0 = found + size;
+                openings[at].2 = Some(item);
+            }
+        }
+        Some((lane, found))
+    }
+
+    /** Stacks an item of stacking contribution `size` at `top` across `start..start + span`;
+     * under dense packing the gap each lane had below `top` stays an opening. */
+    fn place(&mut self, item: usize, start: usize, span: usize, top: f64, size: f64) {
+        for lane in start..start + span {
+            let current = self.position(lane);
+            let openings = &mut self.openings[lane];
+            let last = openings.len() - 1;
+            if (self.dense || self.align) && current < top {
+                openings[last].1 = top;
+                openings.push((top + size, f64::INFINITY, Some(item)));
+            } else {
+                openings[last].0 = top + size;
+                openings[last].2 = Some(item);
+            }
+        }
+        self.cursor = if self.reverse { start } else { start + span };
+    }
+
+    /** Places one item of stacking contribution `size` and returns its start lane and top. */
+    fn next(&mut self, item: usize, start: Option<usize>, span: usize, size: f64) -> (usize, f64) {
+        let (lane, top) = match start {
+            Some(start) => (start, self.max_for(start, span)),
+            None => self.first_eligible(span),
+        };
+        if self.dense
+            && let Some(found) = self.dense_opening(item, lane, span, start.is_none(), size, top)
+        {
+            return found;
+        }
+        self.place(item, lane, span, top, size);
+        (lane, top)
+    }
+
+    /**
+     * The free space below `item` in the stacking axis once the lanes end at `extent`: the
+     * smallest opening it is above across `start..start + span`, nothing when a spanned lane
+     * has another item right below it (Blink's `GetAvailableAlignmentSpaceForItem`, after
+     * `FinalizeTrackOpeningsForStackingAxisAlignment` takes the trailing gap off).
+     */
+    fn alignment_space(
+        &self,
+        item: usize,
+        start: usize,
+        span: usize,
+        extent: f64,
+        gap: f64,
+    ) -> f64 {
+        let mut space = f64::INFINITY;
+        for lane in start..start + span {
+            let openings = &self.openings[lane];
+            let Some(index) = openings.iter().position(|o| o.2 == Some(item)) else {
+                return 0.0;
+            };
+            let (top, end, _) = openings[index];
+            let (top, end) = if index + 1 == openings.len() {
+                (top - gap, extent)
+            } else {
+                (top, end)
+            };
+            space = space.min(end - top);
+        }
+        space.max(0.0)
+    }
+
+    /** The stacking size the lanes reach. */
+    fn extent(&self) -> f64 {
+        (0..self.openings.len())
+            .map(|lane| self.position(lane))
             .fold(0.0, f64::max)
-    };
-    let lowest = (0..=last).map(highest).fold(f64::INFINITY, f64::min);
-    let from = if cursor > last { 0 } else { cursor };
-    (0..=last)
-        .map(|step| (from + step) % (last + 1))
-        .find(|&start| highest(start) <= lowest + tolerance)
-        .unwrap_or(from)
+    }
+}
+
+/** Whether an item's stacking-axis alignment moves it within the space below it; `normal`
+ * and `stretch` share a value here and stay at the start. */
+fn stacking_aligned(align: AlignItems) -> bool {
+    matches!(align, AlignItems::Center | AlignItems::End)
+}
+
+/** How far an item moves in the stacking axis within the free `space` below it (above it
+ * under fill-reverse, where items already sit at the end), after Blink's
+ * `ApplyStackingAxisAlignment`. */
+fn stacking_shift(align: AlignItems, space: f64, reverse: bool) -> f64 {
+    let space = if space.is_finite() { space } else { 0.0 };
+    match (align, reverse) {
+        (AlignItems::Center, false) => space / 2.0,
+        (AlignItems::End, false) => space,
+        (AlignItems::Center, true) => -space / 2.0,
+        (AlignItems::Start | AlignItems::Baseline, true) => -space,
+        _ => 0.0,
+    }
+}
+
+/** The used `flow-tolerance`, its percentage against the stacking axis's available size
+ * (zero when indefinite), else 1em (Blink's `ResolveFlowToleranceForGridLanes`). */
+fn tolerance(style: &crate::document::ComputedStyle, available: Option<f64>) -> f64 {
+    match style.flow_tolerance {
+        None => style.font_size,
+        Some(px) if px.is_infinite() => px,
+        Some(px) => {
+            let percent = style.flow_tolerance_percent.unwrap_or(0.0);
+            (px + percent * available.unwrap_or(0.0) / 100.0).max(0.0)
+        }
+    }
 }
 
 /** Lays out a column grid-lanes container's in-flow `kids` and advances `inner` past it. */
@@ -197,28 +492,71 @@ pub(super) fn children(
         false,
     );
     let lefts = super::offsets(inner.x + lead, &widths, gap + between);
-    let tolerance = style.flow_tolerance.unwrap_or(style.font_size);
-    let mut running = vec![0.0; widths.len()];
-    let mut cursor = 0;
-    for (child, start, span) in lanes {
+    let mut running = Running::new(&widths, style, tolerance(style, inner.definite));
+    let stacking = |child: &Node| child.style.align_self.unwrap_or(style.align_items);
+    running.align = kids.iter().any(|child| stacking_aligned(stacking(child)));
+    let mut plan = Vec::with_capacity(lanes.len());
+    for (index, (child, start, span)) in lanes.into_iter().enumerate() {
         context.charge(1)?;
-        let column = start.unwrap_or_else(|| first_eligible(&running, span, cursor, tolerance));
-        let top = running[column..column + span]
-            .iter()
-            .copied()
-            .fold(0.0, f64::max);
+        let margins = child.style.margin;
+        // The item's width does not depend on the lane it lands in once the span's used size is
+        // known, so measure against the span at its first candidate start.
+        let probe = start.unwrap_or_else(|| running.first_eligible(span).0);
+        let probe_area = super::span(&widths, probe, span, gap + between);
+        // A column subgrid takes the lanes it spans as its columns (css-grid-3 subgrids).
+        // An auto-placed one inherits no line names: its lanes are not known up front.
+        let names = start.is_some();
+        super::subgrid::offer(
+            style,
+            names,
+            &lane_item(child, probe, span, 1),
+            1,
+            &widths,
+            gap + between,
+        );
+        let justify = super::justify_of(style, child);
+        let width = super::item_width(context, child, probe_area, justify)?;
+        let height = super::super::flex_layout::item_height(context, child, width)?;
+        // Margins never move the running position backwards (Blink clamps the contribution).
+        let size = (height + margins[0] + margins[2] + stack_gap).max(0.0);
+        let (column, top) = running.next(index, start, span, size);
+        if column != probe {
+            // ponytail: the height stays the one measured in the probe lanes, exact while lanes
+            // of one span share a used size; measure again here if a page mixes lane sizes.
+            let item = lane_item(child, column, span, 1);
+            super::subgrid::offer(style, names, &item, 1, &widths, gap + between);
+        }
+        plan.push((child, column, span, top, width, height));
+    }
+    let placed = plan
+        .iter()
+        .map(|&(child, column, span, ..)| lane_item(child, column, span, 1))
+        .collect::<Vec<_>>();
+    let total = if kids.is_empty() {
+        0.0
+    } else {
+        (running.extent() - stack_gap).max(0.0)
+    };
+    let extent = inner.definite.unwrap_or(total);
+    for (index, (child, column, span, top, width, height)) in plan.into_iter().enumerate() {
+        let space = running.alignment_space(index, column, span, extent, stack_gap);
+        let shift = stacking_shift(stacking(child), space, style.grid_lanes_fill_reverse);
         let area = super::span(&widths, column, span, gap + between);
         let justify = super::justify_of(style, child);
-        let width = super::item_width(context, child, area, justify)?;
         let margins = child.style.margin;
-        let height = super::super::flex_layout::item_height(context, child, width)?;
         let auto = child.style.margin_auto;
         let free = (area - width - margins[1] - margins[3]).max(0.0);
         let x = lefts[column]
             + margins[3]
             + super::super::flex::auto_cross_offset(auto[3], auto[1], free)
                 .unwrap_or_else(|| super::offset(justify, free));
-        let y = inner.y + top + margins[0];
+        // fill-reverse stacks from the end edge, the item's margin box mirrored.
+        let y = shift
+            + if style.grid_lanes_fill_reverse {
+                inner.y + extent - top - height - margins[2]
+            } else {
+                inner.y + top + margins[0]
+            };
         let mut target = Flow::new(x, y, width);
         let border_box = BorderBox {
             x,
@@ -227,20 +565,11 @@ pub(super) fn children(
             height: None,
         };
         node_layout(context, child, &mut target, items, Some(border_box))?;
-        // Margins never move the running position backwards (Blink clamps the contribution).
-        let next = top + (height + margins[0] + margins[2] + stack_gap).max(0.0);
-        running[column..column + span].fill(next);
-        cursor = column + span;
     }
-    let total = running.iter().copied().fold(0.0, f64::max);
-    let total = if kids.is_empty() {
-        0.0
-    } else {
-        (total - stack_gap).max(0.0)
-    };
     for child in out_of_flow_kids {
         context.defer(child.local_id, (inner.x, inner.y));
     }
+    super::subgrid::withdraw(&placed);
     inner.y += total;
     inner.bottom = inner.bottom.max(inner.y);
     Ok(())
@@ -269,11 +598,15 @@ pub(super) fn intrinsic(
     })
 }
 
-/** Whether the lanes are rows: `grid-template-rows` is set and `grid-template-columns` is not
- * (Blink's `GridLanesTrackSizingDirection` for `grid-lanes-direction: normal`). */
+/** Whether the lanes are rows: `grid-lanes-direction: row`, or under `normal` when
+ * `grid-template-rows` is set and `grid-template-columns` is not (Blink's
+ * `GridLanesTrackSizingDirection`). */
 pub(super) fn row_lanes(style: &crate::document::ComputedStyle) -> bool {
     let set = |template: &GridTemplate| !template.tracks.is_empty() || !template.repeat.is_empty();
-    style.grid_lanes && !set(&style.grid_columns) && set(&style.grid_rows)
+    style.grid_lanes
+        && style
+            .grid_lanes_rows
+            .unwrap_or_else(|| !set(&style.grid_columns) && set(&style.grid_rows))
 }
 
 /**
@@ -325,15 +658,26 @@ fn rows(
         lane.2 = lane.2.min(count);
         lane.1 = lane.1.map(|start| start.min(count - lane.2));
         let margins = lane.0.style.margin[0] + lane.0.style.margin[2];
+        // A row subgrid's items are measured in its own columns, at its shrink-to-fit width.
+        let sizing = super::subgrid::Sizing {
+            axis: 0,
+            gap,
+            content: lane.3 - horizontal_edges(lane.0),
+        };
         for row in lane.1.map_or(0..=count - lane.2, |start| start..=start) {
-            let item = Placed {
-                node: lane.0,
-                row,
-                column: 0,
-                rows: lane.2,
-                columns: 1,
-            };
-            contributions.push(super::row_contribution(&item, lane.4 + margins));
+            let item = lane_item(lane.0, row, lane.2, 0);
+            match super::subgrid::contributions(
+                context,
+                style,
+                lane.1.is_some(),
+                &item,
+                sizing,
+                0,
+                &mut super::row_measure,
+            )? {
+                Some(list) => contributions.extend(list),
+                None => contributions.push(super::row_contribution(&item, lane.4 + margins)),
+            }
         }
     }
     let space = inner.definite.map_or(
@@ -352,21 +696,38 @@ fn rows(
     };
     let row_gap = gap + between + late;
     let tops = super::offsets(inner.y + lead, &heights, row_gap);
-    let tolerance = style.flow_tolerance.unwrap_or(style.font_size);
-    let mut running = vec![0.0; heights.len()];
-    let mut cursor = 0;
-    for (child, start, span, width, height) in lanes {
+    let mut running = Running::new(&heights, style, tolerance(style, Some(inner.width)));
+    let stacking = |child: &Node| super::justify_of(style, child);
+    running.align = kids.iter().any(|child| stacking_aligned(stacking(child)));
+    let mut plan = Vec::with_capacity(lanes.len());
+    let mut auto = Vec::with_capacity(lanes.len());
+    for (index, (child, start, span, width, height)) in lanes.into_iter().enumerate() {
         context.charge(1)?;
-        let row = start.unwrap_or_else(|| first_eligible(&running, span, cursor, tolerance));
-        let left = running[row..row + span].iter().copied().fold(0.0, f64::max);
+        let size = (width + child.style.margin[1] + child.style.margin[3] + stack_gap).max(0.0);
+        let (row, left) = running.next(index, start, span, size);
+        plan.push((child, row, span, left, width, height));
+        auto.push(start.is_none());
+    }
+    let placed = plan
+        .iter()
+        .map(|&(child, row, span, ..)| lane_item(child, row, span, 0))
+        .collect::<Vec<_>>();
+    for (index, (child, row, span, left, width, height)) in plan.into_iter().enumerate() {
+        // A row subgrid takes the rows it spans as its own (css-grid-3 subgrids), and their
+        // line names unless it was auto-placed.
+        super::subgrid::offer(style, !auto[index], &placed[index], 0, &heights, row_gap);
+        let space = running.alignment_space(index, row, span, inner.width, stack_gap);
+        let along = stacking_shift(stacking(child), space, style.grid_lanes_fill_reverse);
         let area = super::span(&heights, row, span, row_gap);
         let margins = child.style.margin;
         let align = child.style.align_self.unwrap_or(style.align_items);
-        let stretch = align == AlignItems::Stretch
-            && child.style.height.is_none()
-            && child.style.aspect_ratio.is_none()
-            && !child.style.margin_auto[0]
-            && !child.style.margin_auto[2];
+        // A subgrid fills its area in a subgridded axis whatever its alignment.
+        let stretch = super::subgrid::inherits(child, 0)
+            || (align == AlignItems::Stretch
+                && child.style.height.is_none()
+                && child.style.aspect_ratio.is_none()
+                && !child.style.margin_auto[0]
+                && !child.style.margin_auto[2]);
         let free = (area - height - margins[0] - margins[2]).max(0.0);
         let auto = child.style.margin_auto;
         let shift = super::super::flex::auto_cross_offset(auto[0], auto[2], free);
@@ -377,7 +738,13 @@ fn rows(
             } else {
                 shift.unwrap_or_else(|| super::offset(align, free))
             };
-        let x = inner.x + left + margins[3];
+        // fill-reverse stacks from the end edge, the item's margin box mirrored.
+        let x = along
+            + if style.grid_lanes_fill_reverse {
+                inner.x + inner.width - left - width - margins[1]
+            } else {
+                inner.x + left + margins[3]
+            };
         let mut target = Flow::new(x, y, width);
         target.definite = Some((area - margins[0] - margins[2]).max(0.0));
         let forced = stretch.then_some((area - margins[0] - margins[2]).max(0.0));
@@ -388,13 +755,11 @@ fn rows(
             height: forced,
         };
         node_layout(context, child, &mut target, items, Some(border_box))?;
-        let next = left + (width + margins[1] + margins[3] + stack_gap).max(0.0);
-        running[row..row + span].fill(next);
-        cursor = row + span;
     }
     for child in out_of_flow_kids {
         context.defer(child.local_id, (inner.x, inner.y));
     }
+    super::subgrid::withdraw(&placed);
     inner.y += used;
     inner.bottom = inner.bottom.max(inner.y);
     Ok(())
@@ -402,15 +767,75 @@ fn rows(
 
 #[cfg(test)]
 mod tests {
-    use super::first_eligible;
+    use super::{Running, stacking_shift};
+    use crate::document::AlignItems;
+    use crate::document::ComputedStyle;
+
+    fn lanes(count: usize, configure: impl FnOnce(&mut ComputedStyle), tolerance: f64) -> Running {
+        let mut style = ComputedStyle::default();
+        configure(&mut style);
+        Running::new(&vec![100.0; count], &style, tolerance)
+    }
 
     #[test]
     fn auto_placement_takes_the_first_lane_within_tolerance_from_the_cursor() {
+        let mut running = lanes(3, |_| {}, 5.0);
+        running.openings = vec![
+            vec![(20.0, f64::INFINITY, None)],
+            vec![(10.0, f64::INFINITY, None)],
+            vec![(12.0, f64::INFINITY, None)],
+        ];
+        running.cursor = 2;
         // Shortest is lane 1 (10); lane 2 (12) is within a 5px tolerance and after the cursor.
-        assert_eq!(first_eligible(&[20.0, 10.0, 12.0], 1, 2, 5.0), 2);
+        assert_eq!(running.first_eligible(1).0, 2);
         // With no tolerance only the shortest lane qualifies.
-        assert_eq!(first_eligible(&[20.0, 10.0, 12.0], 1, 2, 0.0), 1);
+        running.tolerance = 0.0;
+        assert_eq!(running.first_eligible(1).0, 1);
         // A cursor past the last start wraps to the first lane.
-        assert_eq!(first_eligible(&[0.0, 0.0, 0.0], 2, 3, 0.0), 0);
+        let mut wrap = lanes(3, |_| {}, 0.0);
+        wrap.cursor = 3;
+        assert_eq!(wrap.first_eligible(2).0, 0);
+    }
+
+    #[test]
+    fn track_reverse_breaks_ties_towards_the_last_lane_and_walks_back() {
+        let mut running = lanes(3, |style| style.grid_lanes_track_reverse = true, 0.0);
+        assert_eq!(running.next(0, None, 1, 10.0), (2, 0.0));
+        assert_eq!(running.next(0, None, 1, 10.0), (1, 0.0));
+        assert_eq!(running.next(0, None, 1, 10.0), (0, 0.0));
+        assert_eq!(running.next(0, None, 2, 10.0), (1, 10.0));
+    }
+
+    #[test]
+    fn dense_packing_fills_the_opening_a_spanner_left_above_itself() {
+        let mut running = lanes(2, |style| style.grid_lanes_dense = true, 0.0);
+        assert_eq!(running.next(0, None, 1, 50.0), (0, 0.0));
+        // The spanner sits below lane 0's item, leaving 50px open in lane 1.
+        assert_eq!(running.next(0, None, 2, 10.0), (0, 50.0));
+        assert_eq!(running.next(0, None, 1, 30.0), (1, 0.0));
+        assert_eq!(running.next(0, None, 1, 30.0), (0, 60.0));
+        // Without dense packing the hole stays empty.
+        let mut sparse = lanes(2, |_| {}, 0.0);
+        sparse.next(0, None, 1, 50.0);
+        sparse.next(0, None, 2, 10.0);
+        assert_eq!(sparse.next(0, None, 1, 30.0), (0, 60.0));
+    }
+
+    #[test]
+    fn stacking_alignment_takes_the_space_below_the_last_item_in_each_lane() {
+        let mut running = lanes(2, |_| {}, 0.0);
+        running.align = true;
+        running.next(0, None, 1, 50.0);
+        running.next(1, None, 1, 20.0);
+        // Lanes end at 100: item 1 has 100 - (20 - 0 gap) = 80 below it, item 0 has 50.
+        assert_eq!(running.alignment_space(1, 1, 1, 100.0, 0.0), 80.0);
+        assert_eq!(running.alignment_space(0, 0, 1, 100.0, 0.0), 50.0);
+        // A spanner under item 0 leaves it only the opening it sits above.
+        running.next(2, None, 2, 10.0);
+        assert_eq!(running.alignment_space(0, 0, 1, 100.0, 0.0), 0.0);
+        assert_eq!(running.alignment_space(1, 1, 1, 100.0, 0.0), 30.0);
+        assert_eq!(stacking_shift(AlignItems::Center, 30.0, false), 15.0);
+        assert_eq!(stacking_shift(AlignItems::Start, 30.0, true), -30.0);
+        assert_eq!(stacking_shift(AlignItems::End, 30.0, true), 0.0);
     }
 }

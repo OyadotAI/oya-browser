@@ -178,6 +178,10 @@ pub(in crate::v9) struct Env {
     pub parent: Option<EnvId>,
     #[serde(rename = "s")]
     pub slots: Vec<JsValue>,
+    /// The source offset of the class whose scope this is, so each evaluation of that class
+    /// mints its own private names (spec 15.7.14 step 6: a fresh Private Name per evaluation).
+    #[serde(rename = "c", default, skip_serializing_if = "Option::is_none")]
+    pub class_site: Option<u32>,
 }
 
 /** One heap object. */
@@ -323,7 +327,14 @@ impl Heap {
         self.counts.environments += 1;
         self.counts.bindings += slots.len();
         self.counts.units += slots.iter().map(JsValue::string_units).sum::<usize>();
-        self.envs.insert(id, Env { parent, slots });
+        self.envs.insert(
+            id,
+            Env {
+                parent,
+                slots,
+                class_site: None,
+            },
+        );
         Ok(id)
     }
     /** Read an object. */
@@ -337,6 +348,12 @@ impl Heap {
     /** Read an environment. */
     pub fn env(&self, id: EnvId) -> Option<&Env> {
         self.envs.get(&id)
+    }
+    /** Mark an environment as the scope of the class at `site`. */
+    pub fn mark_class_env(&mut self, env: EnvId, site: u32) {
+        if let Some(record) = self.envs.get_mut(&env) {
+            record.class_site = Some(site);
+        }
     }
     /** Replace one environment slot, keeping counts. */
     pub fn set_slot(&mut self, env: EnvId, slot: usize, value: JsValue) -> bool {

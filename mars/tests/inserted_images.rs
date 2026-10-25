@@ -137,3 +137,18 @@ fn created_frame_does_not_stop_scripts() {
     scripts_ran(&page);
     assert_eq!(node(&page, "out")["text"], "after", "{page}");
 }
+
+/** A script's class change on an ancestor that gives an untouched element a background loads
+that background, as a style recalc does in Blink (Wikipedia's table-of-contents icon appears
+once its script swaps `client-nojs` for `client-js` on <html>). */
+#[test]
+fn background_revealed_by_an_ancestor_class_change_loads() {
+    let (_fixture, runtime, page) = load(
+        "<style>.icon{display:none;width:20px;height:20px}\
+         .js .icon{display:block;background:url(/a.png)}</style>\
+         <span id=icon class=icon></span>\
+         <script>document.documentElement.className='js';</script>",
+    );
+    scripts_ran(&page);
+    assert_eq!(runtime.snapshot().images.len(), 1, "{page}");
+}

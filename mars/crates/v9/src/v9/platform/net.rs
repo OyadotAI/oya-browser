@@ -16,7 +16,9 @@ use crate::v9::vm::{Call, Res, Thrown, Vm};
 use headers::Guard;
 use serde::{Deserialize, Serialize};
 
+mod body;
 mod headers;
+use body::Body;
 
 /** Parse an absolute URL. */
 pub(in crate::v9) fn parse_url(text: &str) -> Option<url::Url> {
@@ -75,68 +77,6 @@ fn record(vm: &mut Vm, mut request: HostRequest, owner: ObjectId, xhr: bool) -> 
     }
     vm.page.effects.requests.push(request);
     Ok(true)
-}
-
-/** A URLSearchParams body is a form: label it so unless the page set its own Content-Type.
-(The app labels any other text body text/plain, as browsers do.) */
-fn form_type(vm: &mut Vm, body: &JsValue, headers: &mut Vec<(String, String)>) {
-    if matches!(super::host_data(vm, body), Some(HostData::SearchParams(_)))
-        && !headers.iter().any(|(name, _)| name == "content-type")
-    {
-        headers.push((
-            "content-type".into(),
-            "application/x-www-form-urlencoded;charset=UTF-8".into(),
-        ));
-    }
-}
-
-/** A request body: text, or bytes when a BufferSource holds something other than UTF-8. */
-#[derive(Default)]
-struct Body {
-    text: Option<String>,
-    bytes: Vec<u8>,
-}
-
-/** A request body as a browser reads it: strings and URLSearchParams as text, and an
-ArrayBuffer, typed array or DataView as its bytes (as text when they are UTF-8, so the common
-case stays a text body). Other objects are refused as unsupported. */
-fn request_body(vm: &mut Vm, value: &JsValue) -> Res<Body> {
-    if value.nullish() {
-        return Ok(Body::default());
-    }
-    if let Some(HostData::SearchParams(pairs)) = super::host_data(vm, value) {
-        return Ok(Body {
-            text: Some(encode_pairs(&pairs)),
-            bytes: Vec::new(),
-        });
-    }
-    if let Some(bytes) = crate::v9::builtins::typed::source_bytes(vm, value) {
-        return Ok(match String::from_utf8(bytes) {
-            Ok(text) => Body {
-                text: Some(text),
-                bytes: Vec::new(),
-            },
-            Err(binary) => Body {
-                text: None,
-                bytes: binary.into_bytes(),
-            },
-        });
-    }
-    if matches!(value, JsValue::Object(_))
-        && super::host_data(vm, value).is_none()
-        && !matches!(
-            vm.heap.get(value.object().unwrap_or(0)).map(|o| &o.class),
-            Some(Class::String(_))
-        )
-    {
-        return Err(
-            vm.unsupported_error("request bodies other than strings, URLSearchParams and buffers")
-        );
-    }
-    Ok(Body {
-        text: Some(vm.to_text(value)?),
-        bytes: Vec::new(),
-    })
 }
 
 /** fetch(input, init). */
@@ -221,18 +161,15 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
         base.as_ref().map_or_else(Body::default, |r| Body {
             text: r.body.clone(),
             bytes: r.body_bytes.clone(),
+            kind: None,
         })
     } else {
         if matches!(method.as_str(), "GET" | "HEAD") {
             return Ok(Err("Request with GET/HEAD method cannot have body.".into()));
         }
-        form_type(vm, &body, &mut headers);
-        if matches!(body, JsValue::String(_))
-            && !headers.iter().any(|(name, _)| name == "content-type")
-        {
-            headers.push(("content-type".into(), "text/plain;charset=UTF-8".into()));
-        }
-        request_body(vm, &body)?
+        let body = body::extract(vm, &body)?;
+        body::label(&mut headers, body.kind.as_deref());
+        body
     };
     if let Err(message) = check_init(vm, init, &url, &method, &mode)? {
         return Ok(Err(message));
@@ -281,7 +218,8 @@ fn normalize_method(method: &str) -> Result<String, String> {
 }
 
 /** The values each RequestInit enum member accepts (WebIDL enums, so others are TypeErrors). */
-const INIT_ENUMS: [(&str, &[&str]); 5] = [
+const INIT_ENUMS: [(&str, &[&str]); 6] = [
+    ("duplex", &["half"]),
     ("mode", &["navigate", "same-origin", "no-cors", "cors"]),
     ("credentials", &["omit", "same-origin", "include"]),
     (
@@ -465,8 +403,29 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
             Ok(JsValue::Object(promise))
         }
-        name => Err(vm.unsupported_error(&format!("Request.{name}"))),
+        name => {
+            let mut bytes = request.body_bytes.clone();
+            if let Some(text) = &request.body {
+                bytes = text.clone().into_bytes();
+            }
+            let headers = live_headers(vm, &call.this).unwrap_or(request.headers.clone());
+            match body::consume(vm, name, bytes, &headers) {
+                Some(outcome) => settled(vm, outcome),
+                None => Err(vm.unsupported_error(&format!("Request.{name}"))),
+            }
+        }
     }
+}
+
+/** A promise settled by a body reader's outcome: fulfilled, or rejected with what it threw. */
+fn settled(vm: &mut Vm, outcome: Res<JsValue>) -> Res<JsValue> {
+    let promise = vm.new_promise()?;
+    match outcome {
+        Ok(value) => vm.resolve_promise(promise, value)?,
+        Err(Thrown::Value(error)) => vm.settle(promise, PromiseState::Rejected(error))?,
+        Err(fatal) => return Err(fatal),
+    }
+    Ok(JsValue::Object(promise))
 }
 
 /** Reject a promise with a TypeError. */
@@ -484,13 +443,15 @@ pub(in crate::v9) fn send_beacon(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let Some(url) = resolve(vm, &target) else {
         return Err(vm.type_error("Failed to execute 'sendBeacon': Invalid URL"));
     };
-    let body = request_body(vm, &call.arg(1))?;
+    let body = body::extract(vm, &call.arg(1))?;
+    let mut headers = Vec::new();
+    body::label(&mut headers, body.kind.as_deref());
     let request = HostRequest {
         id: 0,
         kind: "beacon".into(),
         method: "POST".into(),
         url,
-        headers: Vec::new(),
+        headers,
         body: body.text,
         body_bytes: body.bytes,
         credentials: "include".into(),
@@ -729,17 +690,22 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             xhr_set_header(vm, id, &name, &value)?;
         }
         "send" => {
-            let body = request_body(vm, &call.arg(0))?;
             let Some(mut state) = vm.page.state.xhrs.get(&id).cloned() else {
                 return Ok(JsValue::Undefined);
             };
-            form_type(vm, &call.arg(0), &mut state.headers);
             if state.ready != 1 || state.sent {
                 return Err(vm.dom_exception(
                     "InvalidStateError",
                     "Failed to execute 'send' on 'XMLHttpRequest': The object's state must be OPENED.",
                 ));
             }
+            // XHR send() steps 3 and 4: GET and HEAD send no body; any other extracts one.
+            let body = if matches!(state.method.as_str(), "GET" | "HEAD") {
+                Body::default()
+            } else {
+                body::extract(vm, &call.arg(0))?
+            };
+            body::label(&mut state.headers, body.kind.as_deref());
             if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
                 state.sent = true;
             }
@@ -1206,12 +1172,12 @@ fn response_text(
     if NULL_BODY_STATUSES.contains(&status) {
         return Err(vm.type_error("Response with null body status cannot have body"));
     }
-    let is_text = matches!(body, JsValue::String(_));
-    form_type(vm, body, pairs);
-    if is_text && !pairs.iter().any(|(name, _)| name == "content-type") {
-        pairs.push(("content-type".into(), label.into()));
-    }
-    let read = request_body(vm, body)?;
+    let read = body::extract(vm, body)?;
+    let kind = match body {
+        JsValue::String(_) => Some(label),
+        _ => read.kind.as_deref(),
+    };
+    body::label(pairs, kind);
     Ok(read
         .text
         .unwrap_or_else(|| String::from_utf8_lossy(&read.bytes).into_owned()))
@@ -1307,7 +1273,11 @@ pub(in crate::v9) fn response_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             .map(JsValue::String)
             .map_err(Thrown::from),
         "json" => crate::v9::builtins::json_parse_text(vm, &data.body),
-        _ => Err(vm.unsupported_error(&format!("Response.{name}"))),
+        _ => {
+            let headers = live_headers(vm, &call.this).unwrap_or(data.headers.clone());
+            body::consume(vm, name, data.body.clone().into_bytes(), &headers)
+                .unwrap_or_else(|| Err(vm.unsupported_error(&format!("Response.{name}"))))
+        }
     };
     match outcome {
         Ok(value) => vm.resolve_promise(promise, value)?,

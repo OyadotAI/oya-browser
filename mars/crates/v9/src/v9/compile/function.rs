@@ -228,6 +228,9 @@ impl Compiler {
         self.push_scope(true, false);
         self.f().envs += 1;
         let push = self.emit(Op::PushEnv(0));
+        if !class.privates.is_empty() {
+            self.emit(Op::ClassScope(class.pos.offset));
+        }
         if let Some(name) = &named {
             self.declare(name, Declared::ClassInner)?;
         }

@@ -23,6 +23,7 @@ mod regexp;
 mod streams;
 mod string;
 mod symbol;
+mod temporal;
 pub(in crate::v9) mod typed;
 mod weak;
 
@@ -68,6 +69,7 @@ pub(in crate::v9) fn install(builder: &mut Builder) {
     streams::install(builder);
     weak::install(builder);
     proxy::install(builder);
+    temporal::install(builder);
 }
 
 /** A string argument, converted. */

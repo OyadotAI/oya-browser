@@ -242,10 +242,36 @@ impl Vm<'_> {
     fn constant_key(&mut self, index: u32) -> Key {
         let text = self.constant(index);
         if self.frame().code.privates.contains(&index) {
-            Key::Private(text)
+            Key::Private(self.private_for_evaluation(text))
         } else {
             Key::Str(text)
         }
+    }
+    /** A compiled private name (`site:name`) made unique to the class evaluation in scope: the
+    nearest environment marked for that class site adds its identity, so two evaluations of one
+    class body never share a private name. */
+    fn private_for_evaluation(&self, text: JsString) -> JsString {
+        let units = text.as_units();
+        let Some(colon) = units.iter().position(|&u| u == u16::from(b':')) else {
+            return text;
+        };
+        let site = String::from_utf16_lossy(&units[..colon])
+            .parse::<u32>()
+            .ok();
+        let mut env = self.frames.last().and_then(|frame| frame.env);
+        for _ in 0..super::property::CHAIN_STEPS {
+            let Some(id) = env else { break };
+            let Some(record) = self.heap.env(id) else {
+                break;
+            };
+            if record.class_site.is_some() && record.class_site == site {
+                let name = String::from_utf16_lossy(&units[colon + 1..]);
+                let spelled = format!("{}:{id}:{name}", site.unwrap_or(0));
+                return JsString::from_utf8(&spelled).unwrap_or(text);
+            }
+            env = record.parent;
+        }
+        text
     }
     /** The environment `hops` levels out. */
     fn env_at(&mut self, hops: u16) -> Res<u32> {
@@ -366,6 +392,11 @@ impl Vm<'_> {
                 let frame = self.frame();
                 frame.env = Some(env);
                 frame.envs += 1;
+            }
+            Op::ClassScope(site) => {
+                if let Some(env) = self.frame().env {
+                    self.heap.mark_class_env(env, site);
+                }
             }
             Op::PopEnv => {
                 let env = self.frame().env;
@@ -1552,7 +1583,7 @@ impl Vm<'_> {
             return false;
         }
         let index = *index as usize;
-        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible)), Some((Class::Array(elements), true)) if index <= elements.len() && index < self.limits.array_length);
+        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if index <= elements.len() && index < self.limits.array_length);
         if fits {
             self.array_store(*id, index, value.clone());
         }

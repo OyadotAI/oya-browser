@@ -83,15 +83,21 @@ pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> 
             // colleagues" street scene is a `::after` background).
             // ponytail: one image per identity; an element and its pseudo with two images keep
             // the element's.
+            // A pseudo's `url()` mask counts like its background (Wikipedia's dropdown chevron
+            // is a `::after` mask over its color).
             let image = first(&node.style.backgrounds).or_else(|| {
-                node.style
-                    .generated
-                    .iter()
-                    .find_map(|generated| first(&generated.style.backgrounds))
+                node.style.generated.iter().find_map(|generated| {
+                    let style = &generated.style;
+                    (!style.hidden)
+                        .then(|| style.mask.as_ref().map(|mask| &mask.url))
+                        .flatten()
+                        .or_else(|| first(&style.backgrounds))
+                })
             });
             let url = node.style.mask.as_ref().map(|mask| &mask.url).or(image)?;
             let joined = base.join(url.trim()).ok()?;
-            ["http", "https"]
+            // `data:` images decode locally in the app, within the same image budget.
+            ["http", "https", "data"]
                 .contains(&joined.scheme())
                 .then(|| (node.local_id, joined.to_string()))
         })

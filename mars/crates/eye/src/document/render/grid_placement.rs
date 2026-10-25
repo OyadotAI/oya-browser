@@ -6,7 +6,7 @@ use super::super::flow::*;
 use super::GRID_COLUMNS;
 use crate::document::ComputedStyle;
 use crate::document::style::{
-    ContentKeyword, GridArea, GridLine, GridTemplate, Track, TrackContent, TrackSize,
+    ContentKeyword, GridArea, GridLine, GridTemplate, LineName, Track, TrackContent, TrackSize,
 };
 
 /** One in-flow item and its resolved area in track indexes. */
@@ -92,11 +92,17 @@ pub(super) fn place<'a>(
     // `-1` is then line 1 (LinkedIn's header is `grid-area: 1 / -1` in a template-less grid).
     let explicit_columns = columns.len();
     let explicit_rows = explicit_rows(style, rows);
-    let line_names = [&style.grid_rows.names[..], &style.grid_columns.names[..]];
+    let row_names = style.grid_rows.line_names(rows);
+    let column_names = style.grid_columns.line_names(explicit_columns);
+    let line_names = [&row_names[..], &column_names[..]];
     let column_flow = style.grid_flow_column;
     let mut resolved = Vec::with_capacity(kids.len());
     for node in kids {
-        let (row_line, column_line) = lines(node, areas, line_names);
+        let explicit = [explicit_rows, explicit_columns];
+        let (mut row_line, mut column_line) = lines(node, areas, line_names, explicit);
+        for (axis, line) in [(0, &mut row_line), (1, &mut column_line)] {
+            subgrid_span(node, axis, line);
+        }
         let (row, rows) = resolve(row_line, explicit_rows);
         let (column, cols) = resolve(column_line, explicit_columns);
         let cols = cols.min(GRID_COLUMNS);
@@ -256,23 +262,31 @@ fn auto_place(
 }
 
 /**
- * An item's row and column lines: those of the named area it asks for, else its own. A name
- * the container does not define places the item automatically.
+ * An item's row and column lines: those of the named area it asks for, else its own, with
+ * named lines resolved against the `explicit` `[row, column]` track counts.
  */
 fn lines(
     node: &Node,
     areas: &[GridArea],
     line_names: [&[(String, u16)]; 2],
+    explicit: [usize; 2],
 ) -> (GridLine, GridLine) {
     let style = &node.style;
     let axis = |index: usize, own: GridLine| {
+        let names = line_names[index];
         let Some(name) = style.grid_area_names[index].as_deref() else {
-            return named_lines(&style.grid_line_names[index], line_names[index], own);
+            let sides = &style.grid_line_names[index];
+            return named_lines(sides, names, own, explicit[index]);
         };
         let Some(area) = areas.iter().find(|area| area.name == name) else {
             // No such area: the name may still name lines (`name-start` and `name-end`).
-            let both = [Some(name.to_owned()), Some(name.to_owned())];
-            return named_lines(&both, line_names[index], GridLine::default());
+            let line = LineName {
+                name: name.to_owned(),
+                nth: 0,
+                span: false,
+            };
+            let both = [Some(line.clone()), Some(line)];
+            return named_lines(&both, names, GridLine::default(), explicit[index]);
         };
         let (start, count) = if index == 0 {
             (area.row, area.rows)
@@ -287,30 +301,108 @@ fn lines(
     };
     (axis(0, style.grid_row), axis(1, style.grid_column))
 }
-/** An item's named lines resolved against the container's: `name`, else `name-start` for a
- * start and `name-end` for an end, as CSS Grid matches implicit names. Notion's hero places
- * every region by names like `content-start / content-end`; unresolved names stay automatic. */
-fn named_lines(names: &[Option<String>; 2], lines: &[(String, u16)], own: GridLine) -> GridLine {
-    let find = |name: &str, suffix: &str| {
-        let line = |wanted: &str| {
-            lines
-                .iter()
-                .find(|(n, _)| n == wanted)
-                .map(|(_, l)| i32::from(*l))
-        };
-        line(name).or_else(|| line(&format!("{name}{suffix}")))
-    };
+/**
+ * An item's named lines resolved against the container's `lines` in an axis of `count`
+ * explicit tracks, after Blink's `GridLineResolver`: a bare `name` is `name-start` (or
+ * `name-end`), else the first `name`, else the first implicit line; `name n` counts lines of
+ * that name with every implicit line taken to carry it; `span name` counts from the opposite
+ * line once that is definite, and is a span of 1 otherwise (css-grid-2 8.3). A subgrid then
+ * clamps what lands past its edges.
+ */
+fn named_lines(
+    sides: &[Option<LineName>; 2],
+    lines: &[(String, u16)],
+    own: GridLine,
+    count: usize,
+) -> GridLine {
+    let last = i32::try_from(count).unwrap_or(i32::MAX - 1) + 1;
+    let [start, end] = sides;
     let mut placed = own;
-    if let Some(start) = names[0].as_deref().and_then(|name| find(name, "-start")) {
-        placed.start = Some(start);
-        if names[1].is_none() && placed.end.is_none() {
-            placed.end = names[0].as_deref().and_then(|name| find(name, "-end"));
+    if let Some(line) = start.as_ref().filter(|line| !line.span) {
+        placed.start = Some(named_line(line, "-start", lines, last));
+        if end.is_none() && placed.end.is_none() && line.nth == 0 {
+            let name = format!("{}-end", line.name);
+            placed.end = named(lines, &name, last).first().copied();
         }
     }
-    if let Some(end) = names[1].as_deref().and_then(|name| find(name, "-end")) {
-        placed.end = Some(end);
+    if let Some(line) = end.as_ref().filter(|line| !line.span) {
+        placed.end = Some(named_line(line, "-end", lines, last));
+    }
+    // A negative numeric line counts back from the last explicit one.
+    let positive = |n: i32| if n > 0 { n } else { (last + 1 + n).max(1) };
+    if let (Some(line), Some(opposite)) = (start.as_ref().filter(|l| l.span), placed.end) {
+        placed.start = Some(named_span(line, positive(opposite), true, lines, last));
+    }
+    if let (Some(line), Some(opposite)) = (end.as_ref().filter(|l| l.span), placed.start) {
+        placed.end = Some(named_span(line, positive(opposite), false, lines, last));
     }
     placed
+}
+/** The explicit lines, at most `last`, that carry `name`, ascending. */
+fn named(lines: &[(String, u16)], name: &str, last: i32) -> Vec<i32> {
+    let mut found = lines
+        .iter()
+        .filter(|(line_name, _)| line_name == name)
+        .map(|(_, line)| i32::from(*line))
+        .filter(|line| *line <= last)
+        .collect::<Vec<_>>();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+/** A definite named side, `last` being the last explicit line (Blink's `ResolveGridPosition`
+ * and `ResolveNamedGridLinePosition`). */
+fn named_line(line: &LineName, suffix: &str, lines: &[(String, u16)], last: i32) -> i32 {
+    if line.nth == 0 {
+        let first = |name: &str| named(lines, name, last).first().copied();
+        return first(&format!("{}{suffix}", line.name))
+            .or_else(|| first(&line.name))
+            .unwrap_or(last + 1);
+    }
+    let found = named(lines, &line.name, last);
+    let (have, wanted) = (found.len() as i32, line.nth.abs());
+    match (line.nth > 0, wanted <= have) {
+        (true, true) => found[(wanted - 1) as usize],
+        (true, false) => last + wanted - have,
+        (false, true) => found[(have - wanted) as usize],
+        // ponytail: lines before the explicit grid would add implicit tracks there, which this
+        // grid never makes; they clamp to its first line.
+        (false, false) => 1,
+    }
+}
+/** The line `span name` reaches from the definite `opposite` line, backwards for a start side
+ * (Blink's `LookBackForNamedGridLine` and `LookAheadForNamedGridLine`). */
+fn named_span(
+    line: &LineName,
+    opposite: i32,
+    start_side: bool,
+    lines: &[(String, u16)],
+    last: i32,
+) -> i32 {
+    let found = named(lines, &line.name, last);
+    let wanted = line.nth.max(1) as usize;
+    if start_side {
+        let from = (opposite - 1).min(last);
+        let before = found
+            .iter()
+            .rev()
+            .filter(|line| **line <= from)
+            .collect::<Vec<_>>();
+        let missing = wanted.saturating_sub(before.len()) as i32;
+        before
+            .get(wanted - 1)
+            .map_or(1 - missing, |line| **line)
+            .max(1)
+    } else {
+        let after = found
+            .iter()
+            .filter(|line| **line > opposite)
+            .collect::<Vec<_>>();
+        let missing = wanted.saturating_sub(after.len()) as i32;
+        after
+            .get(wanted - 1)
+            .map_or(opposite.max(last) + missing, |line| **line)
+    }
 }
 /** The explicit row count: the template's `rows`, or more when a named area reaches past them. */
 fn explicit_rows(style: &ComputedStyle, rows: usize) -> usize {
@@ -343,8 +435,13 @@ pub(super) fn out_of_flow_lines(
     style: &ComputedStyle,
     [rows, columns]: [usize; 2],
 ) -> [(Option<usize>, Option<usize>); 2] {
-    let line_names = [&style.grid_rows.names[..], &style.grid_columns.names[..]];
-    let (row, column) = lines(node, &style.grid_areas, line_names);
+    let names = [
+        style.grid_rows.line_names(rows),
+        style.grid_columns.line_names(columns),
+    ];
+    let line_names = [&names[0][..], &names[1][..]];
+    let explicit = [explicit_rows(style, rows), columns];
+    let (row, column) = lines(node, &style.grid_areas, line_names, explicit);
     let axis = |line: GridLine, count: usize| {
         let span = usize::from(line.span.max(1));
         // A negative line before the first one does not exist, so it is `auto` too.
@@ -360,7 +457,17 @@ pub(super) fn out_of_flow_lines(
             lines => lines,
         }
     };
-    [axis(row, explicit_rows(style, rows)), axis(column, columns)]
+    [axis(row, explicit[0]), axis(column, explicit[1])]
+}
+/** An auto-spanned subgrid's span in a subgridded axis follows its line-name lists
+ * (css-grid-2 9.1); with both lines given the span is theirs. */
+fn subgrid_span(node: &Node, axis: usize, line: &mut GridLine) {
+    if line.span <= 1
+        && (line.start.is_none() || line.end.is_none())
+        && let Some(span) = super::subgrid::auto_span(node, axis)
+    {
+        line.span = span;
+    }
 }
 /** Zero-based start (None for auto) and span of one axis, against `count` explicit tracks. */
 fn resolve(line: GridLine, count: usize) -> (Option<usize>, usize) {
@@ -386,7 +493,11 @@ pub(super) fn lane_lines(
     axis: usize,
     count: usize,
 ) -> (Option<usize>, usize) {
-    let line_names = [&style.grid_rows.names[..], &style.grid_columns.names[..]];
-    let (row, column) = lines(node, &style.grid_areas, line_names);
+    let names = [
+        style.grid_rows.line_names(count),
+        style.grid_columns.line_names(count),
+    ];
+    let line_names = [&names[0][..], &names[1][..]];
+    let (row, column) = lines(node, &style.grid_areas, line_names, [count, count]);
     resolve(if axis == 0 { row } else { column }, count)
 }

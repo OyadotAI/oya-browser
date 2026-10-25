@@ -247,6 +247,20 @@ fn aspect_height(node: &Node, width: f64) -> Option<f64> {
         },
     )
 }
+/** The content-box width `aspect-ratio` transfers from an authored height, which Blink uses for
+an auto width before shrink-to-fit (Wikipedia's video play button is `width:auto;
+height:min(50px,70%);aspect-ratio:1/1`, and fit-content of its empty box would be 0). */
+fn aspect_width(node: &Node, block: Block) -> Option<f64> {
+    let ratio = node.style.aspect_ratio?;
+    let height = node.style.height?.resolve_size(Some(block.height))?;
+    Some(
+        if node.style.box_sizing == crate::document::BoxSizing::BorderBox {
+            (height.max(vertical_edges(node)) * ratio - horizontal_edges(node)).max(0.0)
+        } else {
+            height * ratio
+        },
+    )
+}
 /** One inset side in px against its containing basis: px plus percentage; None is `auto`. */
 pub(super) fn inset(
     style: &crate::document::ComputedStyle,
@@ -270,6 +284,9 @@ fn width(
     let available = axis.available();
     if node.style.width.is_some() || axis.stretches() {
         return Ok(border_width(node, block.width, available, None));
+    }
+    if let Some(width) = aspect_width(node, block) {
+        return Ok(border_width(node, block.width, available, Some(width)));
     }
     let intrinsic = super::flex_layout::item_intrinsic(context, node)?;
     let edges = horizontal_edges(node);

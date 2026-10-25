@@ -110,15 +110,44 @@ pub(super) fn apply(
             style.grid_flow_column = words.contains(&"column");
             style.grid_flow_dense = words.contains(&"dense");
         }
+        "grid-lanes-pack" => {
+            style.grid_lanes_dense = match value {
+                "normal" => false,
+                "dense" => true,
+                _ => return Err(unsupported()),
+            }
+        }
+        "grid-lanes-direction" => {
+            let words = value.split_whitespace().collect::<Vec<_>>();
+            let mut axis = None;
+            let (mut fill, mut track) = (false, false);
+            for (index, word) in words.iter().enumerate() {
+                match *word {
+                    "normal" if words.len() == 1 => {}
+                    "row" | "column" if index == 0 => axis = Some(*word == "row"),
+                    "fill-reverse" if index > 0 && !fill => fill = true,
+                    "track-reverse" if index > 0 && !track => track = true,
+                    _ => return Err(unsupported()),
+                }
+            }
+            if words.is_empty() {
+                return Err(unsupported());
+            }
+            style.grid_lanes_rows = axis;
+            style.grid_lanes_fill_reverse = fill;
+            style.grid_lanes_track_reverse = track;
+        }
         "flow-tolerance" => {
+            style.flow_tolerance_percent = None;
             style.flow_tolerance = match value {
                 "normal" => None,
                 "infinite" => Some(f64::INFINITY),
-                _ => Some(
-                    super::values::dimension(value, style.font_size, context)?
-                        .px
-                        .max(0.0),
-                ),
+                _ => {
+                    let length = super::values::dimension(value, style.font_size, context)?;
+                    style.flow_tolerance_percent =
+                        (length.percent != 0.0).then_some(length.percent);
+                    Some(length.px)
+                }
             }
         }
         "align-items" => style.align_items = align(value)?,

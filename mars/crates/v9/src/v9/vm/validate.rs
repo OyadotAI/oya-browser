@@ -121,11 +121,18 @@ impl Vm<'_> {
         let functions = self.heap.objects.len();
         for (id, object) in &self.heap.objects {
             match &object.class {
-                Class::Array(_)
-                    if object
-                        .props
-                        .iter()
-                        .any(|(key, _)| key.index().is_some() || *key == Key::from("length")) =>
+                // A property-list element (an attributed or accessor element, V8's dictionary
+                // elements) must sit over a hole inside the length; a value in both places, or
+                // a stored `length`, is forged.
+                Class::Array(elements)
+                    if object.props.iter().any(|(key, _)| {
+                        *key == Key::from("length")
+                            || key.index().is_some_and(|index| {
+                                elements
+                                    .get(index as usize)
+                                    .is_none_or(|value| *value != JsValue::Hole)
+                            })
+                    }) =>
                 {
                     return Err(forged("array property map"));
                 }

@@ -160,6 +160,69 @@ const SVG_CHILDREN: [&str; 18] = [
     "pattern",
     "marker",
 ];
+/** Start tags that break out of foreign content (the tree builder's "any other start tag" list
+in the rules for parsing tokens in foreign content): they pop SVG and MathML elements until an
+HTML element or integration point is current, then go through the HTML rules. */
+const FOREIGN_BREAKOUT: [&str; 45] = [
+    "b",
+    "big",
+    "blockquote",
+    "body",
+    "br",
+    "center",
+    "code",
+    "dd",
+    "div",
+    "dl",
+    "dt",
+    "em",
+    "embed",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "head",
+    "hr",
+    "i",
+    "img",
+    "li",
+    "listing",
+    "menu",
+    "meta",
+    "nobr",
+    "ol",
+    "p",
+    "pre",
+    "ruby",
+    "s",
+    "small",
+    "span",
+    "strong",
+    "strike",
+    "sub",
+    "sup",
+    "table",
+    "tt",
+    "u",
+    "ul",
+    "var",
+    "font",
+];
+/** MathML text integration points: their children are HTML, except mglyph and malignmark. */
+const MATH_TEXT_POINTS: [&str; 5] = ["mi", "mo", "mn", "ms", "mtext"];
+/** SVG HTML integration points: their children are HTML. */
+const SVG_HTML_POINTS: [&str; 3] = ["foreignobject", "desc", "title"];
+
+/** The namespace an open element was created in, as the tree builder tracks it. */
+#[derive(Clone, Copy, PartialEq)]
+enum Namespace {
+    Html,
+    Svg,
+    MathMl,
+}
+
 /** Elements that may stay in the head; any other start tag implies the body. */
 const HEAD_CONTENT: [&str; 9] = [
     "title", "style", "link", "meta", "script", "base", "noscript", "template", "head",
@@ -236,7 +299,10 @@ impl<'a> Tree<'a> {
     /** Every token is consumed, then every still-open element closes at end of input. */
     fn run(&mut self) -> EngineResult<()> {
         loop {
-            let foreign = self.in_svg();
+            let foreign = self.in_svg()
+                || self
+                    .current_namespace()
+                    .is_some_and(|(_, namespace)| namespace != Namespace::Html);
             self.tokens.set_foreign(foreign);
             let Some(token) = self.tokens.next() else {
                 break;
@@ -270,6 +336,84 @@ impl<'a> Tree<'a> {
                 .stack
                 .iter()
                 .any(|index| self.document.nodes[*index].tag == "svg")
+    }
+    /** The namespace a `tag` start token creates its element in under the open element at
+    stack position `parent` (None: the top level, or a fragment's context): HTMLTreeBuilder's
+    integration points hand their children back to HTML, and `svg` and `math` open their own. */
+    fn child_namespace(&self, parent: Option<(usize, Namespace)>, tag: &str) -> Namespace {
+        let inherited = match parent {
+            None if self.foreign_context => Namespace::Svg,
+            None => Namespace::Html,
+            Some((position, namespace)) => {
+                let node = &self.document.nodes[self.stack[position]];
+                let point = match namespace {
+                    Namespace::Html => true,
+                    Namespace::Svg => SVG_HTML_POINTS.contains(&node.tag.as_str()),
+                    Namespace::MathMl => {
+                        (MATH_TEXT_POINTS.contains(&node.tag.as_str())
+                            && !["mglyph", "malignmark"].contains(&tag))
+                            || (node.tag == "annotation-xml"
+                                && (tag == "svg" || html_annotation(node)))
+                    }
+                };
+                if point { Namespace::Html } else { namespace }
+            }
+        };
+        match (inherited, tag) {
+            (Namespace::Html, "svg") => Namespace::Svg,
+            (Namespace::Html, "math") => Namespace::MathMl,
+            (namespace, _) => namespace,
+        }
+    }
+    /** Each open element's namespace, from the root of the stack down. */
+    fn namespaces(&self) -> Vec<Namespace> {
+        let mut out: Vec<Namespace> = Vec::with_capacity(self.stack.len());
+        for (position, index) in self.stack.iter().enumerate() {
+            let parent = position.checked_sub(1).map(|p| (p, out[p]));
+            out.push(self.child_namespace(parent, &self.document.nodes[*index].tag));
+        }
+        out
+    }
+    /** The current node and its namespace, when any SVG or MathML element is open; None means
+    the current node is HTML (or nothing is open outside a foreign fragment context). */
+    fn current_namespace(&self) -> Option<(usize, Namespace)> {
+        let foreign = self.stack.iter().any(|index| {
+            let tag = self.document.nodes[*index].tag.as_str();
+            tag == "svg" || tag == "math"
+        });
+        if !foreign {
+            return None;
+        }
+        let namespaces = self.namespaces();
+        namespaces.last().map(|ns| (namespaces.len() - 1, *ns))
+    }
+    /// The foreign-content breakout: an HTML start tag (or a `font` with color, face or size)
+    /// whose current node is SVG or MathML and no integration point pops open elements until
+    /// an HTML element or integration point is current, so `<svg><p>` and `<math><mrow><p>`
+    /// put the paragraph beside the drawing instead of losing it inside one.
+    fn foreign_breakout(&mut self, tag: &str, attrs: &markup::Attributes) {
+        if self.tokens.xml()
+            || !FOREIGN_BREAKOUT.contains(&tag)
+            || (tag == "font"
+                && !["color", "face", "size"]
+                    .iter()
+                    .any(|a| attrs.contains_key(*a)))
+        {
+            return;
+        }
+        let Some(current) = self.current_namespace() else {
+            return;
+        };
+        if self.child_namespace(Some(current), "div") == Namespace::Html {
+            return;
+        }
+        self.diagnose("An HTML start tag inside SVG or MathML ended the drawing or formula.");
+        let namespaces = self.namespaces();
+        let keep = (0..namespaces.len())
+            .rev()
+            .find(|p| self.child_namespace(Some((*p, namespaces[*p])), "div") == Namespace::Html)
+            .map_or(0, |p| p + 1);
+        self.close(keep);
     }
     /** One value-free, deduplicated note, bounded like the cascade's diagnostics. */
     fn diagnose(&mut self, message: impl Into<String>) {
@@ -387,6 +531,7 @@ impl<'a> Tree<'a> {
         if self.fragment && self.fragment_start(&tag, &attrs)? {
             return Ok(());
         }
+        self.foreign_breakout(&tag, &attrs);
         if self.in_svg() && !SVG_CHILDREN.contains(&tag.as_str()) {
             self.diagnose("SVG content outside the supported drawing subset is not drawn.");
             if !closed {
@@ -971,6 +1116,10 @@ impl<'a> Tree<'a> {
             attrs.retain(|key, _| !key.starts_with("on"));
         }
         self.resolve_addresses(&tag, &mut attrs);
+        // A self-closing start tag is acknowledged only for a foreign element, which then
+        // closes at once: `<math><mrow/><mi/></math>` holds two siblings.
+        let foreign_math = !self.tokens.xml()
+            && self.child_namespace(self.current_namespace(), &tag) == Namespace::MathMl;
         let parent = self.insertion_parent(&tag)?;
         let index = self.document.nodes.len();
         let mut node = markup::node(&tag, self.base + index, parent, attrs)?;
@@ -985,7 +1134,7 @@ impl<'a> Tree<'a> {
             return Ok(false);
         }
         self.document.nodes.push(node);
-        let foreign = self.in_svg() || tag == "svg";
+        let foreign = self.in_svg() || tag == "svg" || foreign_math;
         if VOID.contains(&tag.as_str()) || (closed && foreign) {
             return Ok(true);
         }
@@ -1296,5 +1445,13 @@ fn executable(attrs: &markup::Attributes) -> bool {
 fn declarative_shadow(attrs: &markup::Attributes) -> bool {
     attrs.get("shadowrootmode").is_some_and(|mode| {
         mode.eq_ignore_ascii_case("open") || mode.eq_ignore_ascii_case("closed")
+    })
+}
+
+/** An `annotation-xml` whose encoding names HTML is an HTML integration point. */
+fn html_annotation(node: &super::Node) -> bool {
+    node.attributes.get("encoding").is_some_and(|encoding| {
+        encoding.eq_ignore_ascii_case("text/html")
+            || encoding.eq_ignore_ascii_case("application/xhtml+xml")
     })
 }

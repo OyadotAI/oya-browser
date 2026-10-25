@@ -483,14 +483,63 @@ pub struct GridTemplate {
     /// The group is `auto-fit`: its repetitions no item occupies collapse.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repeat_fit: bool,
-    /// `[name]` line names with their one-based line numbers, in source order.
+    /// `[name]` line names with their one-based line numbers, in source order, an auto-repeat
+    /// group counted as one repetition.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<(String, u16)>,
+    /// Line names inside the auto-repeat group, numbered from 1 at the line before its first
+    /// track; layout repeats them with the group (`line_names`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repeat_names: Vec<(String, u16)>,
     /// Math-function track sizes `TrackSize::Expr` indexes, units other than `%` already px.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exprs: Vec<String>,
+    /// The `subgrid` keyword: this axis takes its tracks and line names from the parent grid.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub subgrid: bool,
+    /// The number of `[...]` line-name lists after `subgrid`, which an auto-placed subgrid's
+    /// span follows (css-grid-2 9.1: one less than the lists).
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub subgrid_lines: u16,
+}
+/// Whether a count is zero, for skipping it when serializing.
+fn is_zero_u16(value: &u16) -> bool {
+    *value == 0
 }
 impl GridTemplate {
+    /// The line names of the grid once its auto-repeat group is repeated into `explicit` tracks:
+    /// the group's names once per repetition, and the names after it moved past them
+    /// (css-grid-2 7.2.3.2). Without a group these are `names`.
+    pub fn line_names(&self, explicit: usize) -> Vec<(String, u16)> {
+        let group = self.repeat.len();
+        if group == 0 {
+            return self.names.clone();
+        }
+        let times = (explicit.saturating_sub(self.tracks.len()) / group).max(1);
+        let first = self.repeat_at + 1;
+        let shift = (times - 1) * group;
+        let moved = |line: u16| {
+            let line = usize::from(line);
+            let line = if line >= first + group {
+                line + shift
+            } else {
+                line
+            };
+            u16::try_from(line).unwrap_or(u16::MAX)
+        };
+        let mut names = self
+            .names
+            .iter()
+            .map(|(name, line)| (name.clone(), moved(*line)))
+            .collect::<Vec<_>>();
+        for time in 0..times {
+            for (name, offset) in &self.repeat_names {
+                let line = first + time * group + usize::from(*offset) - 1;
+                names.push((name.clone(), u16::try_from(line).unwrap_or(u16::MAX)));
+            }
+        }
+        names
+    }
     /// Pixels of a track size against the grid's `basis`, expression tracks included.
     pub fn length(&self, size: TrackSize, basis: Option<f64>) -> Option<f64> {
         match size {
@@ -533,6 +582,19 @@ impl Default for GridLine {
             span: 1,
         }
     }
+}
+/// A named side of `grid-row` or `grid-column` (css-grid-2 8.3): `name`, `name <integer>` or
+/// `span [<integer>] name`, resolved against the container's line names at layout because a
+/// subgrid only learns its names from its parent then.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct LineName {
+    /// The line name.
+    pub name: String,
+    /// Which line of that name, negative counting from the end; 0 when no integer was given,
+    /// which means `name-start` / `name-end` first, then the first `name`.
+    pub nth: i32,
+    /// `span name`: count `nth` lines of that name from the opposite side.
+    pub span: bool,
 }
 /// `container-type`: which axes of a box `@container` size queries may read.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
