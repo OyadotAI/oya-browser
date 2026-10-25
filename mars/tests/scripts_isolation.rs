@@ -70,13 +70,13 @@ fn a_throwing_script_stops_only_itself() {
     assert!(noted(&page, "Script 2 (inline) did not run"));
 }
 
-/** A syntax error and an unsupported construct each fail alone. */
+/** Two different syntax errors each fail alone; `with` is supported, so code using it runs. */
 #[test]
 fn syntax_errors_and_unsupported_features_fail_alone() {
     let (page, _) = load(
         "<p id=a>a</p><p id=c>c</p>\
          <script>var x = ;</script>\
-         <script>with ({}) {}</script>\
+         <script>return 1;</script>\
          <script>document.getElementById('a').textContent='one';</script>\
          <script>var later = function() { with ({}) {} }; document.getElementById('c').textContent='ran';</script>",
         Vec::new(),
@@ -85,7 +85,7 @@ fn syntax_errors_and_unsupported_features_fail_alone() {
     assert_eq!(
         text(&page, "c"),
         "ran",
-        "unsupported code that never runs costs nothing"
+        "a later script using with still runs"
     );
     assert!(noted(&page, "Script 1 (inline)"));
     assert!(noted(&page, "Script 2 (inline)"));

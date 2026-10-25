@@ -146,3 +146,127 @@ fn an_export_name_with_a_lone_surrogate_is_a_syntax_error() {
     let message = syntax_error("var a; export { a as '\\uD83D' }; console.log('ran');");
     assert!(message.contains("well-formed"), "{message}");
 }
+
+#[test]
+fn import_meta_is_a_syntax_error_outside_module_code_and_when_escaped() {
+    let (console, failures) = load(&[(
+        "main.js",
+        "const r = [];\n\
+         for (const s of ['import.meta', '() => import.meta']) {\n\
+           try { new Function(s); r.push('parsed'); } catch (e) { r.push(e.name); }\n\
+           try { eval(s); r.push('parsed'); } catch (e) { r.push(e.name); }\n\
+         }\n\
+         console.log(r.join(), typeof new import.meta.constructor);",
+    )]);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        console,
+        ["SyntaxError,SyntaxError,SyntaxError,SyntaxError object"]
+    );
+    syntax_error("console.log('ran'); import.m\\u0065ta;");
+    syntax_error("console.log('ran'); new import('./lib.js');");
+}
+
+#[test]
+fn a_nested_class_reads_an_outer_classs_private_name() {
+    let (console, failures) = load(&[(
+        "main.js",
+        "class Outer { #x = 42; f() { const self = this; \
+           return class Inner { g() { return self.#x; } }; } }\n\
+         const Inner = new Outer().f(); console.log(new Inner().g());",
+    )]);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(console, ["42"]);
+}
+
+#[test]
+fn namespace_define_delete_and_has_follow_the_exotic_rules() {
+    let (console, failures) = load(&[(
+        "main.js",
+        "import * as ns from './main.js';\n\
+         const r = [\n\
+           Reflect.defineProperty(ns, 'a', {}),\n\
+           Reflect.defineProperty(ns, 'a', { value: undefined }),\n\
+           Reflect.defineProperty(ns, 'a', { value: 123 }),\n\
+           Reflect.defineProperty(ns, 'a', { configurable: true }),\n\
+           Reflect.defineProperty(ns, 'missing', {}),\n\
+           'late' in ns,\n\
+           Reflect.deleteProperty(ns, 'late'),\n\
+           Reflect.deleteProperty(ns, 'missing'),\n\
+         ];\n\
+         try { Object.freeze(ns); r.push('frozen'); } catch (e) { r.push(e.name); }\n\
+         class A { constructor() { return ns; } }\n\
+         class B extends A { constructor() { super(); super.late = 1; } }\n\
+         try { new B(); r.push('set'); } catch (e) { r.push(e.name); }\n\
+         console.log(r.join());\n\
+         export var a = 1; export let late = 2;",
+    )]);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        console,
+        ["true,true,false,false,false,true,false,true,TypeError,ReferenceError"]
+    );
+}
+
+#[test]
+fn an_importer_of_a_cycle_member_waits_for_the_cycle_root() {
+    let (console, failures) = load(&[
+        (
+            "main.js",
+            "import './setup.js'; import './root.js'; import './importer.js';\n\
+             console.log(logs.join());",
+        ),
+        (
+            "root.js",
+            "import './leaf.js'; logs.push('root start'); await 1; logs.push('root end');",
+        ),
+        (
+            "leaf.js",
+            "import './root.js'; logs.push('leaf start'); await 1; logs.push('leaf end');",
+        ),
+        ("importer.js", "import './leaf.js'; logs.push('importer');"),
+        ("setup.js", "globalThis.logs = [];"),
+    ]);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        console,
+        ["leaf start,leaf end,root start,root end,importer"]
+    );
+}
+
+#[test]
+fn a_dynamic_import_of_a_failed_cycles_member_rejects_with_the_cycle_error() {
+    let (console, _) = load(&[
+        (
+            "main.js",
+            "let first, second;\n\
+             try { await import('./b.js'); } catch (e) { first = e; }\n\
+             try { await import('./c.js'); } catch (e) { second = e; }\n\
+             console.log(first.message, second === first);",
+        ),
+        ("b.js", "import './c.js'; await 0; throw new Error('in b');"),
+        ("c.js", "import './b.js'; await 0;"),
+    ]);
+    assert_eq!(console, ["in b true"]);
+}
+
+#[test]
+fn import_attributes_are_checked_statically_and_by_import_options() {
+    syntax_error("import './lib.js' with { type: 'json', type: 'json' }; console.log('ran');");
+    syntax_error("import './lib.js' with { type: 1 }; console.log('ran');");
+    let (console, failures) = load(&[
+        (
+            "main.js",
+            "import './lib.js' with { 'type': 'js', other: 'x', };\n\
+             const r = [];\n\
+             for (const o of [null, { with: 1 }, { with: { type: 1 } }, \
+               { get with() { throw new RangeError(); } }, { with: {} }]) {\n\
+               try { await import('./lib.js', o); r.push('ok'); } catch (e) { r.push(e.name); }\n\
+             }\n\
+             console.log(r.join());",
+        ),
+        ("lib.js", "export {};"),
+    ]);
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(console, ["TypeError,TypeError,TypeError,RangeError,ok"]);
+}

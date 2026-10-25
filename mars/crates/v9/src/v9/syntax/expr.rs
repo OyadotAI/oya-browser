@@ -261,22 +261,18 @@ impl Parser {
         };
         self.chain(base, pos, true)
     }
-    /** `import(...)` loads a module from any script; `import.meta` is a module's own (in a
-    classic script it parses but running it fails as unsupported). */
+    /** `import(...)` loads a module from any script; `import.meta` is a module's own: anywhere
+    else (a classic script, `Function` or eval code) it is an early SyntaxError, as is an escaped
+    `meta`. */
     fn import_expression(&mut self) -> EngineResult<Expr> {
         let pos = self.pos();
         self.next();
         if self.eat(".") {
-            let name = self.property_name()?;
-            if &*name != "meta" {
-                return Err(self.error_at(pos, "unexpected token"));
+            if !self.at_name("meta") || self.module.is_none() {
+                return Err(self.error_at(pos, "import.meta is only valid in a module"));
             }
-            let kind = if self.module.is_some() {
-                ExprKind::ImportMeta
-            } else {
-                ExprKind::Opaque("import.meta")
-            };
-            return self.node(kind, pos);
+            self.next();
+            return self.node(ExprKind::ImportMeta, pos);
         }
         if !self.at("(") {
             return Err(self.unexpected());
@@ -311,6 +307,13 @@ impl Parser {
             self.new_expression()?
         } else if self.at_name("super") {
             self.super_expression()?
+        } else if self.at_name("import") {
+            // `new import.meta` is a MemberExpression; `new import(...)` is an early error.
+            let callee = self.import_expression()?;
+            if !matches!(callee.kind, ExprKind::ImportMeta) {
+                return Err(self.error_at(callee_pos, "Cannot use new with import"));
+            }
+            callee
         } else {
             self.primary()?
         };

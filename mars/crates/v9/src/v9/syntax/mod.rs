@@ -449,15 +449,16 @@ impl Parser {
         scope.declared.push((name.clone(), kind));
         Ok(())
     }
-    /** Close a class body: references it does not declare belong to the enclosing class. */
-    fn close_privates(&mut self) -> EngineResult<()> {
+    /** Close a class body: references it does not declare belong to the enclosing class.
+    Returns the names the body declares, so the compiler can bind each reference to its class. */
+    fn close_privates(&mut self) -> EngineResult<Vec<Name>> {
         let scope = self.privates.pop().unwrap_or_default();
         for (name, pos) in scope.used {
             if !scope.declared.iter().any(|(seen, _)| *seen == name) {
                 self.use_private(&name, pos)?;
             }
         }
-        Ok(())
+        Ok(scope.declared.into_iter().map(|(name, _)| name).collect())
     }
     /** Any identifier name, including keywords, as after a dot. */
     fn property_name(&mut self) -> EngineResult<Name> {

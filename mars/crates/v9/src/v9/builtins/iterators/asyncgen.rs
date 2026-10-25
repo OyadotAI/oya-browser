@@ -3,7 +3,7 @@ constructors, and %AsyncFromSyncIteratorPrototype% (spec 27.1.4, 27.3, 27.4, 27.
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::{Class, IterState, PromiseState, ReactionHandler};
 use crate::v9::vm::heap::{CONFIGURABLE, Key};
-use crate::v9::vm::realm::{Builder, Static, string, symbol};
+use crate::v9::vm::realm::{Builder, NativeFn, Static, string, symbol};
 use crate::v9::vm::{Call, Res, Resume, Thrown, Vm};
 
 /** Native slots captured by AsyncFromSyncIteratorContinuation's closures. */
@@ -83,7 +83,7 @@ fn constructors(b: &mut Builder, async_generator: ObjectId) {
         CONFIGURABLE,
     );
     tag(b, async_function, "AsyncGeneratorFunction");
-    let kinds: [(&'static str, ObjectId, fn(&mut Vm, Call) -> Res<JsValue>); 3] = [
+    let kinds: [(&'static str, ObjectId, NativeFn); 3] = [
         (
             "AsyncGeneratorFunction",
             async_function,

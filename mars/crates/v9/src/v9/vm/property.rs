@@ -484,6 +484,17 @@ impl Vm<'_> {
         let JsValue::Object(target) = receiver else {
             return Ok(false);
         };
+        // A namespace receiver reached through `super` or Reflect.set: [[GetOwnProperty]] (which
+        // throws for an export in its TDZ), then [[DefineOwnProperty]] (spec 10.1.9.2).
+        if *target != start {
+            let desc = Descriptor {
+                value: Some(value.clone()),
+                ..Descriptor::default()
+            };
+            if let Some(done) = crate::v9::modules::namespace_define(self, *target, &key, &desc)? {
+                return Ok(done);
+            }
+        }
         self.write_own(*target, key, value)
     }
     /** One step of the ordinary [[Get]] walk answered straight from a heap object's property
@@ -669,6 +680,9 @@ impl Vm<'_> {
         if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             return self.proxy_define(&proxy, key, desc);
         }
+        if let Some(done) = crate::v9::modules::namespace_define(self, id, &key, &desc)? {
+            return Ok(done);
+        }
         self.materialize(id)?;
         let existing = self.own(id, &key)?;
         let is_array = matches!(self.heap.get(id).map(|o| &o.class), Some(Class::Array(_)));
@@ -725,6 +739,9 @@ impl Vm<'_> {
         if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             return self.proxy_delete(&proxy, key);
         }
+        if let Some(exported) = crate::v9::modules::namespace_has(self, id, key) {
+            return Ok(!exported);
+        }
         let Some(prop) = self.own(id, key)? else {
             return Ok(true);
         };
@@ -763,6 +780,9 @@ impl Vm<'_> {
         for _ in 0..CHAIN_STEPS {
             if let Some(proxy) = self.proxy_of(current).filter(|_| !key.hidden()) {
                 return self.proxy_has(&proxy, key);
+            }
+            if crate::v9::modules::namespace_has(self, current, key) == Some(true) {
+                return Ok(true);
             }
             if self.own(current, key)?.is_some() {
                 return Ok(true);

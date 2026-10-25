@@ -417,5 +417,7 @@ pub(in crate::v9) struct Class {
     pub fields: Option<Rc<Func>>,
     /// Static fields and static blocks, in order, run once with the class as `this`.
     pub statics: Option<Rc<Func>>,
+    /// The `#names` this class body declares; a reference to any other belongs to an outer class.
+    pub privates: Vec<Name>,
     pub pos: Pos,
 }

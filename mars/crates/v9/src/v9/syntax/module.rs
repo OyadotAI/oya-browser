@@ -286,13 +286,42 @@ impl Parser {
             },
         )
     }
-    /** Import attributes (`with { type: 'json' }`) are read and ignored, then the semicolon. */
+    /** Import attributes (`with { type: 'json' }`), checked and then ignored, then the
+    semicolon. Each entry is `key: 'value'` with an identifier-name or string key, and a key
+    given twice is an early error (spec 16.2.2.1). */
     fn module_end(&mut self) -> EngineResult<()> {
         if (self.at_name("with") || self.at_name("assert")) && !self.peek().line_terminator_before {
             self.next();
             self.expect("{")?;
+            let mut keys = Vec::new();
             while !self.eat("}") {
-                self.next();
+                let token = self.next();
+                let key = match token.kind {
+                    Kind::Name(name) => name.as_str().to_string(),
+                    Kind::String(value) => value
+                        .to_dom()
+                        .map_err(|error| errors::located(error, token.location, "parse"))?,
+                    _ => {
+                        self.position -= 1;
+                        return Err(self.unexpected());
+                    }
+                };
+                if keys.contains(&key) {
+                    return Err(errors::syntax(
+                        token.location,
+                        "Import attribute has duplicate key",
+                    ));
+                }
+                keys.push(key);
+                self.expect(":")?;
+                if !matches!(self.next().kind, Kind::String(_)) {
+                    self.position -= 1;
+                    return Err(self.unexpected());
+                }
+                if !self.eat(",") {
+                    self.expect("}")?;
+                    break;
+                }
             }
         }
         self.semicolon()

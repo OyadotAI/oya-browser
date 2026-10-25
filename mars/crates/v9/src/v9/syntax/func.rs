@@ -410,7 +410,7 @@ impl Parser {
         let body = self.class_body(derived);
         let closed = self.close_privates();
         let (members, constructor, fields, statics) = body?;
-        closed?;
+        let privates = closed?;
         let display = name.clone().unwrap_or_else(|| Name::from(""));
         let constructor = match constructor {
             Some(func) => {
@@ -442,6 +442,7 @@ impl Parser {
             members,
             fields: initializer(pos, SITE_FIELDS, fields),
             statics: initializer(pos, SITE_STATICS, statics),
+            privates,
             pos,
         }))
     }

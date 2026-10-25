@@ -124,23 +124,29 @@ impl Vm<'_> {
     /** GetIterator(value, async): Symbol.asyncIterator, else CreateAsyncFromSyncIterator over the
     sync iterator. The AsyncFromSyncIterator holds the sync record as its own iterator state. */
     pub(in crate::v9) fn get_async_iterator(&mut self, value: &JsValue) -> Res<ObjectId> {
-        let ids = &realm().ids;
-        let (plain, wrapper) = (
-            ids.iterator_prototype,
-            ids.async_from_sync_iterator_prototype,
-        );
-        if let Some(method) = self.get_method(value, &Key::Sym(symbol::ASYNC_ITERATOR))? {
-            let (iterator, next) = self.open_iterator(method, value)?;
-            return self.iterator_record(iterator, next, plain);
-        }
-        let Some(method) = self.get_method(value, &Key::Sym(symbol::ITERATOR))? else {
+        let Some((iterator, next)) = self.async_iterator_parts(value)? else {
             return Err(self.type_error("object is not async iterable"));
         };
+        self.iterator_record(iterator, next, realm().ids.iterator_prototype)
+    }
+    /** The iterator and next method GetIterator(value, async) opens, or None when the value has
+    neither Symbol.asyncIterator nor Symbol.iterator (Array.fromAsync then reads an array-like). */
+    pub(in crate::v9) fn async_iterator_parts(
+        &mut self,
+        value: &JsValue,
+    ) -> Res<Option<(JsValue, JsValue)>> {
+        if let Some(method) = self.get_method(value, &Key::Sym(symbol::ASYNC_ITERATOR))? {
+            return self.open_iterator(method, value).map(Some);
+        }
+        let Some(method) = self.get_method(value, &Key::Sym(symbol::ITERATOR))? else {
+            return Ok(None);
+        };
         let (iterator, next) = self.open_iterator(method, value)?;
+        let wrapper = realm().ids.async_from_sync_iterator_prototype;
         let sync = JsValue::Object(self.iterator_record(iterator, next, wrapper)?);
         self.pin(sync.clone());
         let next = self.get(&sync, &Key::from("next"))?;
-        self.iterator_record(sync, next, plain)
+        Ok(Some((sync, next)))
     }
     /** Forward a resumption to the inner iterator of an async `yield*` and await its result. */
     fn async_yield_star(&mut self) -> Res<Flow> {

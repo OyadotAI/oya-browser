@@ -16,6 +16,7 @@ pub(in crate::v9) mod property;
 pub(in crate::v9) mod proxy;
 pub(in crate::v9) mod realm;
 pub(in crate::v9) mod run;
+pub(in crate::v9) mod shape;
 pub(in crate::v9) mod validate;
 
 /** How far the object and function counts may overshoot their bounds between a full heap

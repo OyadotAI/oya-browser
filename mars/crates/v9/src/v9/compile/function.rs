@@ -231,7 +231,8 @@ impl Compiler {
         if let Some(name) = &named {
             self.declare(name, Declared::ClassInner)?;
         }
-        self.classes.push(class.pos.offset);
+        self.classes
+            .push((class.pos.offset, class.privates.clone()));
         let result = self.class_body(class);
         self.classes.pop();
         let scope = self.scopes.pop().expect("class scope");
@@ -341,9 +342,12 @@ impl Compiler {
             PropKey::Computed(_) => Err(EngineError::invalid("Computed key has no index.")),
         }
     }
-    /** Private names become keys scripts cannot spell or enumerate. */
+    /** Private names become keys scripts cannot spell or enumerate, keyed by the innermost
+    enclosing class that declares the name (a nested class may use an outer class's `#x`). */
     pub(super) fn private_name(&mut self, name: &str) -> EngineResult<u32> {
-        let class = self.classes.last().copied().unwrap_or(0);
+        let class = (self.classes.iter().rev())
+            .find(|(_, names)| names.iter().any(|n| &**n == name))
+            .map_or(0, |(site, _)| *site);
         let key = JsString::from_utf8(&format!("{class}:{name}"))?;
         Ok(self.private_string(&key))
     }

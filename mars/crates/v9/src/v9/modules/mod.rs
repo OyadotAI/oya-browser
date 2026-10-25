@@ -162,6 +162,10 @@ pub(in crate::v9) struct Record {
     /// Dependencies on a cycle back to it, which it never waits for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cycle: Vec<String>,
+    /// The first-entered module of the cycle it belongs to (itself when on none), whose
+    /// completion stands for its own to importers outside the cycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle_root: Option<String>,
     /// Why its graph failed and was rolled back; importing it again fails the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
@@ -514,10 +518,18 @@ fn compile(vm: &mut Vm, source: &str, offset: usize) -> EngineResult<ModuleCompi
 
 /** `import(specifier)`: a promise for the namespace, once the graph loads and evaluates. The
 graph evaluates in a microtask when it is all here, and otherwise after the app delivers it. */
-pub(in crate::v9) fn dynamic_import(vm: &mut Vm, specifier: JsValue, site: u32) -> Res<JsValue> {
+pub(in crate::v9) fn dynamic_import(
+    vm: &mut Vm,
+    specifier: JsValue,
+    options: JsValue,
+    site: u32,
+) -> Res<JsValue> {
     let promise = vm.new_promise()?;
     vm.pin(JsValue::Object(promise));
-    let text = match vm.to_string(&specifier) {
+    let text = match vm
+        .to_string(&specifier)
+        .and_then(|text| import_options(vm, &options).map(|()| text))
+    {
         Ok(text) => text.lossy(),
         Err(super::vm::Thrown::Value(error)) => {
             vm.settle(promise, super::vm::data::PromiseState::Rejected(error))?;
@@ -545,6 +557,31 @@ pub(in crate::v9) fn dynamic_import(vm: &mut Vm, specifier: JsValue, site: u32) 
     let advance = vm.native_closure(natives().advance, Vec::new())?;
     vm.enqueue(super::vm::data::Job::Callback(JsValue::Object(advance)))?;
     Ok(JsValue::Object(promise))
+}
+
+/** `import()`'s second argument (spec EvaluateImportCall step 10): undefined, or an object whose
+`with` is undefined or an object of string values. A failure rejects the import's promise. The
+attributes are then ignored: only JavaScript modules load. */
+fn import_options(vm: &mut Vm, options: &JsValue) -> Res<()> {
+    if *options == JsValue::Undefined {
+        return Ok(());
+    }
+    if !matches!(options, JsValue::Object(_)) {
+        return Err(vm.type_error("The second argument of import() must be an object"));
+    }
+    let attributes = vm.get(options, &Key::from("with"))?;
+    let JsValue::Object(id) = attributes else {
+        if attributes == JsValue::Undefined {
+            return Ok(());
+        }
+        return Err(vm.type_error("The 'with' option of import() must be an object"));
+    };
+    for key in vm.enumerable_keys(id)? {
+        if !matches!(vm.get(&attributes, &key)?, JsValue::String(_)) {
+            return Err(vm.type_error("Import attribute values must be strings"));
+        }
+    }
+    Ok(())
 }
 
 /** `import.meta.resolve(specifier)`: the URL an import of it would load. */
@@ -605,6 +642,54 @@ pub(in crate::v9) fn namespace_own(vm: &mut Vm, module: &str, key: &Key) -> Res<
         slot: HeapSlot::Data(value),
         attrs: WRITABLE | ENUMERABLE,
     }))
+}
+
+/** The module a namespace object names, when `key` takes its exotic string-key path (spec
+10.4.6); symbol keys such as @@toStringTag stay ordinary. */
+fn namespace_module(vm: &Vm, id: ObjectId, key: &Key) -> Option<(String, Name)> {
+    match (vm.heap.get(id).map(|object| &object.class), key) {
+        (Some(super::vm::data::Class::Namespace(module)), Key::Str(name)) => {
+            Some((module.clone(), Name::from(name.lossy().as_str())))
+        }
+        _ => None,
+    }
+}
+
+/** Namespace [[HasProperty]]: whether the module exports the name, without reading the binding,
+so an export still in its TDZ answers true (and `delete` refuses it) instead of throwing. None
+when `id` is not a namespace or the key is a symbol. */
+pub(in crate::v9) fn namespace_has(vm: &mut Vm, id: ObjectId, key: &Key) -> Option<bool> {
+    let (module, name) = namespace_module(vm, id, key)?;
+    Some(export_target(vm, &module, &name).is_some())
+}
+
+/** Namespace [[DefineOwnProperty]] for string keys (spec 10.4.6.6): exports are writable,
+enumerable, non-configurable data properties whose value never changes through a define, so a
+descriptor succeeds only when it asks for no change. Reading the current value throws for an
+export in its TDZ, as the spec's [[GetOwnProperty]] does. */
+pub(in crate::v9) fn namespace_define(
+    vm: &mut Vm,
+    id: ObjectId,
+    key: &Key,
+    desc: &super::vm::property::Descriptor,
+) -> Res<Option<bool>> {
+    if namespace_module(vm, id, key).is_none() {
+        return Ok(None);
+    }
+    let Some(Prop {
+        slot: HeapSlot::Data(current),
+        ..
+    }) = vm.own(id, key)?
+    else {
+        return Ok(Some(false));
+    };
+    let refused = desc.accessor()
+        || desc.configurable == Some(true)
+        || desc.enumerable == Some(false)
+        || desc.writable == Some(false);
+    Ok(Some(
+        !refused && desc.value.as_ref().is_none_or(|v| v.same_value(&current)),
+    ))
 }
 
 /** A namespace's export names, sorted, without ambiguous star exports. */

@@ -111,6 +111,27 @@ fn polymorphic_sites_read_each_shape() {
     assert_eq!(eval(source, "r"), "123412341234");
 }
 
+/** A cached site stays exact when objects leave their shape: a key deleted from the middle
+(dictionary mode), many keys (dictionary mode), and a data property redefined as an accessor. */
+#[test]
+fn cached_sites_follow_dictionary_objects_and_redefinitions() {
+    let source = "function get(o){return o.v}function put(o,x){o.v=x}const a={u:0,v:1,w:2};\
+        const seen=[];for(let i=0;i<3;i++)seen.push(get(a));delete a.u;seen.push(get(a));\
+        put(a,5);seen.push(a.v);const big={};for(let i=0;i<40;i++)big['k'+i]=i;big.v=7;\
+        seen.push(get(big));put(big,8);seen.push(big.v);const b={u:0,v:1,w:2};get(b);put(b,3);\
+        Object.defineProperty(b,'v',{get(){return 'g'},set(x){seen.push('s'+x)}});\
+        seen.push(get(b));put(b,9);const r=seen.join();";
+    assert_eq!(eval(source, "r"), "1,1,1,1,5,7,8,g,s9");
+}
+
+/** A read of a lexical global before its declaration still throws, now that the found-binding
+path builds its message only on that error. */
+#[test]
+fn global_reads_keep_their_dead_zone() {
+    let source = "let r;try{x}catch(e){r=e instanceof ReferenceError}let x=1;";
+    assert_eq!(eval(source, "r"), "true");
+}
+
 /** Time WPT's reflection-text page scripts (testharness.js, the reflection harnesses and
 reflection.js) in one V9 request, the workload that hit the script deadline. Ignored: it reads
 the upstream checkout at ~/Dev/upstream/wpt and measures rather than checks. */

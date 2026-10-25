@@ -291,6 +291,8 @@ pub(in crate::v9) struct Code {
     pub templates: Vec<Vec<(Option<JsString>, JsString)>>,
     /// Instruction index to source position, sorted.
     pub positions: Vec<(u32, Pos)>,
+    /// Inline caches of the property loads and stores, one per entry of `strings`.
+    pub caches: crate::v9::vm::shape::SiteCaches,
 }
 
 impl Code {
@@ -321,6 +323,7 @@ impl Code {
             + strings(&self.strings)
             + templates
             + self.positions.len() * std::mem::size_of::<(u32, Pos)>()
+            + self.caches.bytes()
     }
 }
 
@@ -574,8 +577,8 @@ struct Compiler {
     scopes: Vec<Scope>,
     functions: Vec<FnState>,
     done: Vec<Code>,
-    /// Sites of enclosing classes, innermost last, for private names.
-    classes: Vec<u32>,
+    /// Enclosing classes, innermost last, for private names: each one's site and declared names.
+    classes: Vec<(u32, Vec<Name>)>,
     /// The module body being compiled, if any.
     module: Option<module::ModuleScope>,
 }
@@ -771,6 +774,7 @@ impl Compiler {
             ops: state.ops,
             registers: state.max_registers,
             env,
+            caches: crate::v9::vm::shape::SiteCaches::new(state.strings.len()),
             strings: state.strings,
             privates: state.private_index.into_values().collect(),
             templates: state.templates,

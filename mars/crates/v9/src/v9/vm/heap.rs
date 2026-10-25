@@ -169,110 +169,7 @@ impl Prop {
     }
 }
 
-/** Own properties in insertion order, indexed once an object grows. */
-#[derive(Clone, Debug, Default)]
-pub(in crate::v9) struct Props {
-    entries: Vec<(Key, Prop)>,
-    index: Option<FastMap<Key, usize>>,
-}
-
-/** Objects with more properties than this keep a hash index. */
-const INDEX_THRESHOLD: usize = 12;
-
-impl Props {
-    /** Number of own properties. */
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-    /** No own properties. */
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-    /** Position of a key. */
-    fn position(&self, key: &Key) -> Option<usize> {
-        match &self.index {
-            Some(index) => index.get(key).copied(),
-            None => self.entries.iter().position(|(found, _)| found == key),
-        }
-    }
-    /** Look up a property. */
-    pub fn get(&self, key: &Key) -> Option<&Prop> {
-        self.position(key).map(|index| &self.entries[index].1)
-    }
-    /** Change a property in place: the interpreter's store fast path updates a value without
-    the remove and insert a replacement would cost. */
-    pub fn get_mut(&mut self, key: &Key) -> Option<&mut Prop> {
-        self.position(key).map(|index| &mut self.entries[index].1)
-    }
-    /** Insert or replace, returning the old property. */
-    pub fn insert(&mut self, key: Key, prop: Prop) -> Option<Prop> {
-        if let Some(index) = self.position(&key) {
-            return Some(std::mem::replace(&mut self.entries[index].1, prop));
-        }
-        if let Some(index) = &mut self.index {
-            index.insert(key.clone(), self.entries.len());
-        }
-        self.entries.push((key, prop));
-        if self.index.is_none() && self.entries.len() > INDEX_THRESHOLD {
-            self.reindex();
-        }
-        None
-    }
-    /** Remove a property. */
-    pub fn remove(&mut self, key: &Key) -> Option<Prop> {
-        let index = self.position(key)?;
-        let (_, prop) = self.entries.remove(index);
-        if self.index.is_some() {
-            self.reindex();
-        }
-        Some(prop)
-    }
-    /** Rebuild the hash index. */
-    fn reindex(&mut self) {
-        if self.entries.len() <= INDEX_THRESHOLD {
-            self.index = None;
-            return;
-        }
-        self.index = Some(
-            self.entries
-                .iter()
-                .enumerate()
-                .map(|(position, (key, _))| (key.clone(), position))
-                .collect(),
-        );
-    }
-    /** Entries in insertion order. */
-    pub fn iter(&self) -> impl Iterator<Item = (&Key, &Prop)> {
-        self.entries.iter().map(|(key, prop)| (key, prop))
-    }
-    /** String units retained by data values. */
-    pub fn units(&self) -> usize {
-        self.entries.iter().map(|(_, prop)| prop.units()).sum()
-    }
-    /** Keys in spec order: integer indexes ascending, then strings, then symbols, as inserted. */
-    pub fn ordered_keys(&self) -> Vec<Key> {
-        let mut indexes: Vec<(u32, &Key)> = self
-            .entries
-            .iter()
-            .filter_map(|(key, _)| key.index().map(|index| (index, key)))
-            .collect();
-        indexes.sort_by_key(|(index, _)| *index);
-        let mut keys: Vec<Key> = indexes.into_iter().map(|(_, key)| key.clone()).collect();
-        keys.extend(
-            self.entries
-                .iter()
-                .filter(|(key, _)| matches!(key, Key::Str(_)) && key.index().is_none())
-                .map(|(key, _)| key.clone()),
-        );
-        keys.extend(
-            self.entries
-                .iter()
-                .filter(|(key, _)| matches!(key, Key::Sym(_)))
-                .map(|(key, _)| key.clone()),
-        );
-        keys
-    }
-}
+pub(in crate::v9) use super::shape::Props;
 
 /** A captured environment record. */
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -543,8 +440,8 @@ impl Heap {
 impl Serialize for Props {
     /** Entries as `[key, value]`, `[key, value, attrs]` or `[key, [get, set], attrs]`. */
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut seq = serializer.serialize_seq(Some(self.entries.len()))?;
-        for (key, prop) in &self.entries {
+        let mut seq = serializer.serialize_seq(Some(self.len()))?;
+        for (key, prop) in self.iter() {
             match &prop.slot {
                 Slot::Data(value) if prop.attrs == DEFAULT_ATTRS => {
                     seq.serialize_element(&(key, value))?

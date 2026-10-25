@@ -248,3 +248,15 @@ fn semantics_probe_passes() {
         ["probe2 done"]
     );
 }
+
+/** A destructuring assignment evaluates each member target's reference before it reads the
+value (GetV or IteratorStep), and converts a computed target key only when it stores. */
+#[test]
+fn destructuring_targets_evaluate_before_values() {
+    let source = "const log=[];const o={set q(v){log.push('set'+v)}};\
+        const t=()=>(log.push('t'),o);const k={toString(){log.push('k');return 'q'}};\
+        ({a:t().q,b:t()[k]}={get a(){log.push('a');return 1},get b(){log.push('b');return 2}});\
+        [t().q]={[Symbol.iterator](){return {next(){log.push('n');return {value:3,done:false}},return(){return {}}}}};\
+        const r=log.join();";
+    assert_eq!(eval(source, "r"), "t,a,set1,t,b,k,set2,t,n,set3");
+}

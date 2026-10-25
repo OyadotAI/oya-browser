@@ -1,6 +1,6 @@
 /** Destructuring: binding declarations and assignment targets share one lowering. */
 use super::*;
-use crate::v9::syntax::{Pattern, PropKey};
+use crate::v9::syntax::{ExprKind, MemberProp, Pattern, PropKey};
 
 /** How a pattern stores each name it reaches. */
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -9,6 +9,19 @@ enum Store {
     Initialize,
     /** Ordinary assignment (var bindings, existing references). */
     Assign,
+}
+
+/** A member assignment target whose base (and computed key) sit in registers. */
+struct Target {
+    base: Slot,
+    key: TargetKey,
+    pos: Pos,
+}
+
+/** The property a `Target` names: a constant or private name index, or a key register. */
+enum TargetKey {
+    Name(u32),
+    Computed(Slot),
 }
 
 impl Compiler {
@@ -29,7 +42,75 @@ impl Compiler {
     }
     /** One pattern level. */
     fn pattern(&mut self, pattern: &Pattern, store: Store) -> EngineResult<()> {
+        self.pattern_into(pattern, store, None)
+    }
+    /** Evaluate a member target's reference into registers before its value is read: spec
+    order is lref, then GetV or IteratorStep, then PutValue (13.15.5.5, 13.15.5.6). Super
+    targets and nested patterns keep the late evaluation. */
+    fn early_target(&mut self, pattern: &Pattern) -> EngineResult<Option<Target>> {
+        let member = match pattern {
+            Pattern::Expr(member) => member,
+            Pattern::Default(inner, _) => match inner.as_ref() {
+                Pattern::Expr(member) => member,
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        let ExprKind::Member(object, prop, _) = &member.kind else {
+            return Ok(None);
+        };
+        if matches!(object.kind, ExprKind::Super) {
+            return Ok(None);
+        }
+        let base = self.temp()?;
+        self.expr(object)?;
+        self.emit(Op::SetReg(base));
+        self.emit(Op::Pop);
+        let key = match prop {
+            MemberProp::Computed(key) => {
+                let slot = self.temp()?;
+                self.expr(key)?;
+                self.emit(Op::SetReg(slot));
+                self.emit(Op::Pop);
+                TargetKey::Computed(slot)
+            }
+            MemberProp::Name(name) => TargetKey::Name(self.name(name)?),
+            MemberProp::Private(name) => TargetKey::Name(self.private_name(name)?),
+        };
+        Ok(Some(Target {
+            base,
+            key,
+            pos: member.pos,
+        }))
+    }
+    /** PutValue into a reference evaluated by `early_target`; the value stays on the stack. */
+    fn store_target(&mut self, target: Target) -> EngineResult<()> {
+        let value = self.temp()?;
+        self.emit(Op::SetReg(value));
+        self.emit(Op::GetReg(target.base));
+        let op = match target.key {
+            TargetKey::Computed(slot) => {
+                self.emit(Op::GetReg(slot));
+                self.emit(Op::ToPropertyKey);
+                Op::SetElem
+            }
+            TargetKey::Name(index) => Op::SetProp(index),
+        };
+        self.emit(Op::GetReg(value));
+        self.at(target.pos);
+        self.emit(op);
+        self.emit(Op::Pop);
+        Ok(())
+    }
+    /** One pattern level, storing into `target` when its reference was evaluated early. */
+    fn pattern_into(
+        &mut self,
+        pattern: &Pattern,
+        store: Store,
+        target: Option<Target>,
+    ) -> EngineResult<()> {
         match pattern {
+            Pattern::Expr(_) if target.is_some() => self.store_target(target.expect("target")),
             Pattern::Ident(name, pos) => match store {
                 Store::Initialize => self.initialize(name, *pos),
                 Store::Assign => self.assign_name(name, *pos),
@@ -47,7 +128,7 @@ impl Compiler {
                 self.release(mark);
                 Ok(())
             }
-            Pattern::Default(target, default) => {
+            Pattern::Default(inner, default) => {
                 self.emit(Op::Dup);
                 self.emit(Op::Undefined);
                 self.emit(Op::StrictEq);
@@ -55,7 +136,7 @@ impl Compiler {
                 self.emit(Op::Pop);
                 self.expr(default)?;
                 self.patch(skip);
-                self.pattern(target, store)
+                self.pattern_into(inner, store, target)
             }
             Pattern::Object(props, rest, pos) => {
                 self.object_pattern(props, rest.as_deref(), *pos, store)
@@ -92,14 +173,16 @@ impl Compiler {
         self.emit(Op::Pop);
         for (index, prop) in props.iter().enumerate() {
             self.emit(Op::Dup);
-            match &prop.key {
+            let target = match &prop.key {
                 PropKey::Computed(key) => {
                     self.expr(key)?;
                     self.emit(Op::ToPropertyKey);
                     if let Some(slot) = keys.get(index) {
                         self.emit(Op::SetReg(*slot));
                     }
+                    let target = self.early_target(&prop.value)?;
                     self.emit(Op::GetElem);
+                    target
                 }
                 key => {
                     let name = self.key_index(key)?;
@@ -108,10 +191,12 @@ impl Compiler {
                         self.emit(Op::SetReg(*slot));
                         self.emit(Op::Pop);
                     }
+                    let target = self.early_target(&prop.value)?;
                     self.emit(Op::GetProp(name));
+                    target
                 }
-            }
-            self.pattern(&prop.value, store)?;
+            };
+            self.pattern_into(&prop.value, store, target)?;
             self.emit(Op::Pop);
         }
         if let Some(rest) = rest {
@@ -142,17 +227,22 @@ impl Compiler {
         self.emit(Op::SetReg(iterator));
         self.emit(Op::Pop);
         for item in items {
+            let target = match item {
+                Some(item) => self.early_target(item)?,
+                None => None,
+            };
             self.emit(Op::GetReg(iterator));
             self.emit(Op::IterStep);
             if let Some(item) = item {
-                self.pattern(item, store)?;
+                self.pattern_into(item, store, target)?;
             }
             self.emit(Op::Pop);
         }
         if let Some(rest) = rest {
+            let target = self.early_target(rest)?;
             self.emit(Op::GetReg(iterator));
             self.emit(Op::IterRest);
-            self.pattern(rest, store)?;
+            self.pattern_into(rest, store, target)?;
             self.emit(Op::Pop);
         } else {
             self.emit(Op::GetReg(iterator));

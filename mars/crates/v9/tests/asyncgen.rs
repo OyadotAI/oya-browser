@@ -121,3 +121,28 @@ fn hidden_constructor_length_deletes() {
         const r=[delete G.length,G.hasOwnProperty('length'),delete G.name,G.hasOwnProperty('name')].join();";
     assert_eq!(common::eval(source, "r"), "true,false,true,false");
 }
+
+/** Array.fromAsync reads async iterables, sync iterables (awaiting values) and array-likes,
+awaits mapped values, and keeps `this` as the constructor. */
+#[test]
+fn array_from_async_collects_every_source() {
+    let source = "async function* g(){yield 1;yield Promise.resolve(2)}\
+        function C(n){this.made=n}\
+        Promise.all([Array.fromAsync(g()),Array.fromAsync([Promise.resolve('a'),'b']),\
+        Array.fromAsync({length:2,0:3,1:Promise.resolve(4)},async x=>x*10),\
+        Array.fromAsync.call(C,{length:1,0:'z'})])\
+        .then(([a,b,c,d])=>console.log([a,b,c,d.made+':'+d[0]+':'+d.length].join('|')));";
+    assert_eq!(logged(source), vec!["1,2|a,b|30,40|1:z:1"]);
+}
+
+/** Array.fromAsync rejects rather than throws, and a failing mapper closes the iterator after
+its return() settles. */
+#[test]
+fn array_from_async_rejects_and_closes() {
+    let source = "const log=[];const it={[Symbol.asyncIterator](){return this},\
+        next(){return {done:false,value:1}},return(){log.push('return');return {}}};\
+        const p=Array.fromAsync(it,()=>{throw new Error('map')});\
+        Array.fromAsync([],5).catch(e=>log.push(e.name))\
+        .then(()=>p).catch(e=>{log.push(e.message);console.log(log.join())});";
+    assert_eq!(logged(source), vec!["return,TypeError,map"]);
+}

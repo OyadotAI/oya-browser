@@ -172,9 +172,11 @@ impl Compiler {
             ExprKind::ImportMeta => self.load_name(&Name::from(super::module::META), expr.pos)?,
             ExprKind::Import(specifier, options) => {
                 self.expr(specifier)?;
-                if let Some(options) = options {
-                    self.expr(options)?;
-                    self.emit(Op::Pop);
+                match options {
+                    Some(options) => self.expr(options)?,
+                    None => {
+                        self.emit(Op::Undefined);
+                    }
                 }
                 self.at(expr.pos);
                 self.emit(Op::Import);

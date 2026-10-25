@@ -628,13 +628,9 @@ impl Vm<'_> {
                     }
                 }
             }
-            Op::GetProp(key) => {
-                let key = self.constant_key(key);
+            Op::GetProp(site) => {
                 let object = self.peek(0);
-                if key.hidden() {
-                    self.private_brand(&object, &key, false)?;
-                }
-                let value = self.get(&object, &key)?;
+                let value = self.load_named(site, &object)?;
                 self.pop();
                 self.push(value);
             }
@@ -651,15 +647,10 @@ impl Vm<'_> {
                 self.drop_n(2);
                 self.push(value);
             }
-            Op::SetProp(key) => {
-                let key = self.constant_key(key);
+            Op::SetProp(site) => {
                 let value = self.peek(0);
                 let object = self.peek(1);
-                if key.hidden() {
-                    self.private_brand(&object, &key, true)?;
-                }
-                let strict = self.frame().code.strict;
-                self.set(&object, key, value.clone(), strict)?;
+                self.store_named(site, &object, &value)?;
                 self.drop_n(2);
                 self.push(value);
             }
@@ -1174,9 +1165,10 @@ impl Vm<'_> {
                 return Ok(self.suspend(Exit::Yield(JsValue::Undefined)));
             }
             Op::Import => {
+                let options = self.pop();
                 let specifier = self.pop();
                 let site = self.frame().code.site;
-                let promise = crate::v9::modules::dynamic_import(self, specifier, site)?;
+                let promise = crate::v9::modules::dynamic_import(self, specifier, options, site)?;
                 self.push(promise);
             }
             Op::Initial => {
@@ -1238,8 +1230,8 @@ impl Vm<'_> {
             self.globals.get(text).map(|binding| binding.value.clone())
         });
         if let Some(value) = found {
-            let text = name.lossy();
             return value.ok_or_else(|| {
+                let text = name.lossy();
                 self.reference_error(&format!("Cannot access '{text}' before initialization"))
             });
         }
@@ -1253,13 +1245,13 @@ impl Vm<'_> {
         {
             return Ok(value);
         }
-        let text = name.lossy();
         if self.has_property(GLOBAL, &key)? {
             return self.get_from(GLOBAL, &key, &JsValue::Object(GLOBAL));
         }
         if typeof_only {
             return Ok(JsValue::Undefined);
         }
+        let text = name.lossy();
         Err(self.reference_error(&format!("{text} is not defined")))
     }
     /** Assign a global name. */
@@ -1419,6 +1411,117 @@ impl Vm<'_> {
             self.jump_out(target as u32, handlers, envs)?;
         }
         Ok(Flow::Next)
+    }
+    /** `object.name`: the property-load inline cache. A hit is a shape compare and an indexed
+    read; a miss on an ordinary object looks the key up once, caches an own data property under
+    the object's shape, and walks on from the prototype when the key is absent. */
+    fn load_named(&mut self, site: u32, base: &JsValue) -> Res<JsValue> {
+        if let Some(value) = self.load_hit(site, base) {
+            return Ok(value);
+        }
+        let key = self.constant_key(site);
+        if key.hidden() {
+            self.private_brand(base, &key, false)?;
+            return self.get(base, &key);
+        }
+        let JsValue::Object(id) = base else {
+            return self.get(base, &key);
+        };
+        let Some(object) = self.heap.get(*id).filter(|o| cacheable(&o.class)) else {
+            return self.get(base, &key);
+        };
+        match object.props.position(&key) {
+            Some(slot) => {
+                if let Some(Slot::Data(value)) = object.props.slot(slot).map(|p| &p.slot) {
+                    let value = value.clone();
+                    let shape = object.props.shape_id();
+                    self.frame().code.caches.record(site, shape, slot);
+                    return Ok(value);
+                }
+            }
+            None if object.function().is_none() => {
+                return match object.proto {
+                    Some(proto) => self.get_from(proto, &key, base),
+                    None => Ok(JsValue::Undefined),
+                };
+            }
+            None => {}
+        }
+        self.get(base, &key)
+    }
+    /** A cached own data property of an ordinary object, if the site knows its shape. */
+    fn load_hit(&self, site: u32, base: &JsValue) -> Option<JsValue> {
+        let JsValue::Object(id) = base else {
+            return None;
+        };
+        let object = self.heap.get(*id).filter(|o| cacheable(&o.class))?;
+        let code = &self.frames.last()?.code;
+        let slot = code.caches.lookup(site, object.props.shape_id())?;
+        match &object.props.slot(slot)?.slot {
+            Slot::Data(value) => Some(value.clone()),
+            Slot::Accessor(..) => None,
+        }
+    }
+    /** `object.name = value`: the property-store inline cache. It writes in place only an own
+    writable data property of an ordinary object (attributes live in the slot, so a frozen or
+    read-only property, a setter, or a new key always takes the full [[Set]]). */
+    fn store_named(&mut self, site: u32, base: &JsValue, value: &JsValue) -> Res<()> {
+        if self.store_cached(site, base, value, None) {
+            return Ok(());
+        }
+        let key = self.constant_key(site);
+        if key.hidden() {
+            self.private_brand(base, &key, true)?;
+        } else if self.store_cached(site, base, value, Some(&key)) {
+            return Ok(());
+        }
+        let strict = self.frame().code.strict;
+        self.set(base, key, value.clone(), strict)
+    }
+    /** One store attempt: through the cache when `key` is None, else by looking the key up and
+    caching the slot it finds. False means the full [[Set]] must run. */
+    fn store_cached(
+        &mut self,
+        site: u32,
+        base: &JsValue,
+        value: &JsValue,
+        key: Option<&Key>,
+    ) -> bool {
+        let JsValue::Object(id) = base else {
+            return false;
+        };
+        let Some(frame) = self.frames.last() else {
+            return false;
+        };
+        let Some(object) = self
+            .heap
+            .objects
+            .get_mut(id)
+            .filter(|o| cacheable(&o.class))
+        else {
+            return false;
+        };
+        let shape = object.props.shape_id();
+        let slot = match key {
+            None => frame.code.caches.lookup(site, shape),
+            Some(key) => object.props.position(key),
+        };
+        let Some(prop) = slot.and_then(|slot| object.props.slot_mut(slot)) else {
+            return false;
+        };
+        let Slot::Data(old) = &mut prop.slot else {
+            return false;
+        };
+        if prop.attrs & WRITABLE == 0 {
+            return false;
+        }
+        let delta = value.string_units() as isize - old.string_units() as isize;
+        *old = value.clone();
+        if let (Some(slot), Some(_)) = (slot, key) {
+            frame.code.caches.record(site, shape, slot);
+        }
+        self.heap.adjust(0, delta);
+        true
     }
     /** Array element read without key conversion when possible. */
     fn fast_element(&self, object: &JsValue, key: &JsValue) -> Option<JsValue> {
@@ -1807,4 +1910,19 @@ fn with_text<R>(name: &JsString, body: impl FnOnce(&str) -> R) -> R {
         }
     }
     body(&name.lossy())
+}
+
+/** Whether an object's named keys live only in its property list, so an inline cache may
+answer for it: proxies, host objects and namespaces have their own lookups, and arrays, strings
+and typed views answer index and `length` keys themselves. */
+fn cacheable(class: &Class) -> bool {
+    !matches!(
+        class,
+        Class::Proxy(_)
+            | Class::Host(_)
+            | Class::Namespace(_)
+            | Class::Array(_)
+            | Class::String(_)
+            | Class::View(_)
+    )
 }
