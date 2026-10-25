@@ -298,7 +298,9 @@ impl Compiler {
             self.eval_conflicts(&names, var_scope)?;
             let mut annex = Vec::new();
             scan::var_names(body, false, true, &mut annex);
-            annex.retain(|name| !vars.contains(name) && !self.eval_blocked(name, var_scope));
+            // A set, not `vars.contains`: an eval of n vars would otherwise cost n squared.
+            let declared: super::super::vm::heap::FastSet<&Name> = vars.iter().collect();
+            annex.retain(|name| !declared.contains(name) && !self.eval_blocked(name, var_scope));
             names.extend(annex);
             self.eval_vars(&names, var_scope)?;
         }

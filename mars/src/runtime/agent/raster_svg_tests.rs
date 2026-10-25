@@ -240,3 +240,16 @@ fn a_drawing_is_drawn_at_a_bounded_number_of_sizes() {
     assert!(canvas.drawing(&markup, 4.0, 4.0).is_some());
     assert!(canvas.drawing(&markup, 100.0, 4.0).is_none());
 }
+
+/** A span that starts at or past the right edge paints nothing instead of panicking. */
+#[test]
+fn a_span_past_the_right_edge_is_empty() {
+    let mut bitmap = Bitmap {
+        width: 4,
+        height: 1,
+        rgba: vec![0; 16],
+    };
+    bitmap.span(0, 10.0, 12.0, [255, 0, 0, 255]);
+    bitmap.span(0, 3.9, 3.2, [255, 0, 0, 255]);
+    assert!(bitmap.rgba.iter().all(|&byte| byte == 0));
+}

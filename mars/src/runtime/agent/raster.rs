@@ -402,7 +402,13 @@ impl Canvas {
             return;
         }
         let baseline = glyphs::baseline_offset(item);
-        for line in &item.lines {
+        // A run of only white space (a tab's empty run, hanging preserved spaces) has no ink;
+        // the fallback bar is for runs with glyphs the rasterizer could not draw.
+        for line in item
+            .lines
+            .iter()
+            .filter(|line| !line.text.trim().is_empty())
+        {
             let canvas = [self.left, self.top, self.width as f64, self.height as f64];
             match glyphs::rasterize(item, line, baseline, canvas, &mut self.glyph_pixels) {
                 Some(coverage) => self.glyphs(&coverage, item.clip.as_ref(), ink),
@@ -1094,7 +1100,9 @@ impl Bitmap {
     fn columns(&self, x0: f64, x1: f64) -> std::ops::Range<u32> {
         let start = (x0 - 0.5).ceil().max(0.0) as u32;
         let end = ((x1 - 0.5).ceil().max(0.0) as u32).min(self.width);
-        start..end
+        // A span starting at or past the right edge is empty, never an inverted range: slicing
+        // the pixel row with start > end would panic the screenshot.
+        start.min(end)..end
     }
     /** Blend `color` over the pixels of `row` whose centers lie in [x0, x1). */
     fn span(&mut self, row: u32, x0: f64, x1: f64, color: [u8; 4]) {
