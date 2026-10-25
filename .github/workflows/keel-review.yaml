@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
       # Posts as Keel-ADE rather than github-actions: a token minted from the org's Keel-ADE app,
       # scoped to this repository and to the three permissions the review uses.
-      - uses: actions/create-github-app-token@v2
+      - uses: actions/create-github-app-token@v3
         id: keel
         if: env.HAS_APP == 'true'
         with:
