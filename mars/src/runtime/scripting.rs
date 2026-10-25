@@ -94,6 +94,8 @@ pub(super) struct Scripting {
     pub loading: bool,
     /// Image work steps brought in and have not fetched yet.
     pub pending_images: Option<PendingImages>,
+    /// The viewport scrolled since the page last heard: the next run fires `scroll` first.
+    pub scroll_pending: bool,
 }
 
 /// What a step changed that may need images: the first node identity its insertions took, and
@@ -161,6 +163,7 @@ impl Default for Scripting {
             modules: super::modules::Modules::default(),
             loading: false,
             pending_images: None,
+            scroll_pending: false,
         }
     }
 }
@@ -174,7 +177,8 @@ impl Scripting {
     }
     /** Whether the page has script work waiting. */
     fn pending(&self) -> bool {
-        self.loaded && (self.next_timer_ms.is_some() || !self.requests.is_empty())
+        self.loaded
+            && (self.scroll_pending || self.next_timer_ms.is_some() || !self.requests.is_empty())
     }
 }
 
@@ -571,7 +575,10 @@ impl Runtime {
             if Instant::now() >= until || !page.scripting.loaded {
                 break;
             }
-            let action = if !page.scripting.requests.is_empty() {
+            let action = if page.scripting.scroll_pending {
+                page.scripting.scroll_pending = false;
+                json!({"kind":"event","event":"scroll"})
+            } else if !page.scripting.requests.is_empty() {
                 let requests = std::mem::take(&mut page.scripting.requests);
                 let responses = self.perform_requests(page, requests, until)?;
                 if responses.is_empty() {

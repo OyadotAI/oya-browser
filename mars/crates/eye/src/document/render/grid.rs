@@ -368,7 +368,10 @@ fn item_width(
     if node.style.width.is_some() {
         return Ok(border_width(node, area, room, None));
     }
-    if justify == AlignItems::Stretch && !["img", "svg"].contains(&node.tag.as_str()) {
+    if justify == AlignItems::Stretch
+        && !node.style.width_fit
+        && !["img", "svg"].contains(&node.tag.as_str())
+    {
         return Ok(border_width(node, area, room, None));
     }
     if !super::generated::is_generated(node) {

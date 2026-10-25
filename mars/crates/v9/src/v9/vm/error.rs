@@ -32,6 +32,10 @@ impl Vm<'_> {
             ErrorKind::Syntax => ids.syntax_error_prototype,
             ErrorKind::Uri => ids.uri_error_prototype,
         };
+        self.make_error_from(proto, message)
+    }
+    /** An error object under `proto` carrying `message` and the current trace. */
+    fn make_error_from(&mut self, proto: ObjectId, message: &str) -> Result<ObjectId, EngineError> {
         let id = self.heap.insert(Object::new(Class::Error, Some(proto)))?;
         if self.pinning {
             self.pins.push(JsValue::Object(id));
@@ -68,23 +72,29 @@ impl Vm<'_> {
             Err(error) => Thrown::Fatal(error),
         }
     }
-    /** A thrown DOMException-style error: an Error whose `name` is the exception name
-    (QuotaExceededError, DataCloneError), which is what pages test for. */
+    /** A thrown DOMException (QuotaExceededError, DataCloneError): `instanceof DOMException`
+    and `instanceof Error` both hold, and `name` and `code` are what pages test for. */
     pub fn dom_exception(&mut self, name: &str, message: &str) -> Thrown {
-        let id = match self.make_error(ErrorKind::Error, message) {
+        let id = match self.make_error_from(realm().ids.dom_exception_prototype, message) {
             Ok(id) => id,
             Err(error) => return Thrown::Fatal(error),
         };
+        let code = f64::from(crate::v9::builtins::legacy_code(name));
         match JsString::from_utf8(name) {
             Ok(text) => {
-                self.heap.put(
-                    id,
-                    Key::from("name"),
-                    Prop {
-                        slot: Slot::Data(JsValue::String(text)),
-                        attrs: HIDDEN_ATTRS,
-                    },
-                );
+                for (property, value) in [
+                    ("name", JsValue::String(text)),
+                    ("code", JsValue::Number(code)),
+                ] {
+                    self.heap.put(
+                        id,
+                        Key::from(property),
+                        Prop {
+                            slot: Slot::Data(value),
+                            attrs: HIDDEN_ATTRS,
+                        },
+                    );
+                }
                 Thrown::Value(JsValue::Object(id))
             }
             Err(error) => Thrown::Fatal(error),

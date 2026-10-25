@@ -76,6 +76,48 @@ impl Runtime {
         self.publish(move |runtime| {
             runtime.scroll_y = input.y;
             runtime.clamp_scroll();
+            runtime.scrolled();
+            runtime.inspection()
+        })
+    }
+    /** Scrolls one scroll container inside the page by `delta`, owner-checked and revision-scoped
+    like document scrolling. Layout is unchanged, so only Eye's paint pass runs again. */
+    pub(super) fn scroll_element(
+        &mut self,
+        page_id: &str,
+        revision: u64,
+        local_id: usize,
+        delta: [f64; 2],
+    ) -> EngineResult<Value> {
+        let page = self.current()?;
+        if page.id() != page_id || page.revision != revision {
+            return Err(EngineError::new(
+                "invalid_target",
+                "Scroll targets a stale page/revision or invalid offset.",
+                "Inspect the current page and viewport.",
+            ));
+        }
+        let mut offsets = page.element_scroll.clone();
+        let offset = offsets.entry(local_id).or_default();
+        offset[0] += delta[0];
+        offset[1] += delta[1];
+        let document = page.document.clone();
+        let display = self.render_scrolled(&document, &offsets)?;
+        // Keep what Eye clamped to, so a wheel past the end does not bank distance.
+        let offsets = display
+            .scrollers
+            .iter()
+            .filter(|area| area.scroll_x != 0.0 || area.scroll_y != 0.0)
+            .map(|area| (area.local_id, [area.scroll_x, area.scroll_y]))
+            .collect();
+        self.publish(move |runtime| {
+            if let Some(page) = runtime.page.as_mut() {
+                page.display = Some(display);
+                page.element_scroll = offsets;
+                page.layout_generation = page.layout_generation.saturating_add(1);
+                page.refresh_inspection();
+            }
+            // ponytail: Blink fires `scroll` at the container; V9 has no element scroll event yet.
             runtime.inspection()
         })
     }
@@ -84,6 +126,17 @@ impl Runtime {
         if y.is_finite() {
             self.scroll_y = y;
             self.clamp_scroll();
+            self.scrolled();
+        }
+    }
+    /** Tell the page's scripts the viewport moved: its next background run fires `scroll`, so
+    lazy loaders that watch it (LinkedIn's `data-delayed-url` images) load what came into view. */
+    fn scrolled(&mut self) {
+        if let Some(page) = self.page.as_mut()
+            && page.scripting.loaded
+        {
+            page.scripting.scroll_pending = true;
+            page.scripting.wake();
         }
     }
     /** Offsets always remain within the exact current display height. */

@@ -143,7 +143,7 @@ impl Window {
             return;
         };
         let _ = snapshot;
-        let quiet = matches!(action, Action::Tap(..));
+        let quiet = matches!(action, Action::Tap(..) | Action::Wheel(..));
         let (op, params, target) = match action {
             Action::Edit(id, text, observed) => {
                 ("page.type", self.target(id, Some(text)), Some(observed))
@@ -160,6 +160,12 @@ impl Window {
                 ("page.select", params, Some(observed))
             }
             Action::Submit(id, observed) => ("page.submit", self.target(id, None), Some(observed)),
+            Action::Wheel(x, y, [dx, dy], observed) => {
+                let inspection = &snapshot.inspection;
+                let params = json!({"page_id":inspection["page_id"],"expected_revision":inspection["revision"],
+                    "x":x,"y":y,"delta_x":dx,"delta_y":dy});
+                ("page.scroll_at", params, Some(observed))
+            }
             Action::Activate(mars::BACK) => ("page.back", json!({}), None),
             Action::Activate(mars::FORWARD) => ("page.forward", json!({}), None),
             Action::Activate(mars::RELOAD) => ("page.reload", json!({}), None),

@@ -75,7 +75,7 @@ impl Painted {
 
 /** First and last band of an item's painted extent, or None when it must always paint. */
 fn extent(item: &DisplayItem) -> Option<(usize, usize)> {
-    if item.transform.is_some() || !item.shadows.is_empty() {
+    if item.transform.is_some() || !item.shadows.is_empty() || item.pin.is_some() {
         return None;
     }
     let bottom = item.y

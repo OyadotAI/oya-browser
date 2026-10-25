@@ -1,6 +1,7 @@
 /** After layout: relative offsets, transforms, overflow clips, decorations and stacking paint order. */
 use super::{
-    ClipRect, DisplayBackground, DisplayItem, DisplayShadow, GradientStop, OpacityGroup, sizing,
+    ClipRect, DisplayBackground, DisplayItem, DisplayShadow, GradientStop, OpacityGroup, Pin,
+    ScrollArea, sizing,
 };
 use crate::{
     document::{BackgroundLayer, ColorStop, Document, Node, Overflow, Position},
@@ -38,6 +39,8 @@ struct Tree<'a> {
     boxes: Vec<Option<usize>>,
     /// Memoized absolute matrices per identity.
     matrices: Vec<Option<Matrix>>,
+    /// Clamped scroll offsets per scroll container identity; empty paints everything unscrolled.
+    offsets: ScrollOffsets,
 }
 impl<'a> Tree<'a> {
     /** Identity lookup never assumes identities equal vector indexes. */
@@ -70,11 +73,18 @@ impl<'a> Tree<'a> {
     }
 }
 
-/// Resolves effects on the laid-out items and returns them in final paint order.
+/// Scroll offsets `[x, y]` the host holds per scroll container identity. Like Blink's
+/// `PaintLayerScrollableArea`, they never change layout: paint translates the container's
+/// contents by them, and Eye clamps each to the container's scroll range.
+pub type ScrollOffsets = std::collections::BTreeMap<usize, [f64; 2]>;
+
+/// Resolves effects on the laid-out items and returns them in final paint order, with every
+/// scroll container whose content overflows it.
 pub(super) fn stack(
     document: &Document,
     items: Vec<DisplayItem>,
-) -> EngineResult<Vec<DisplayItem>> {
+    offsets: &ScrollOffsets,
+) -> EngineResult<(Vec<DisplayItem>, Vec<ScrollArea>)> {
     let positions = sizing::positions(document);
     let mut boxes = vec![None; positions.len()];
     for (index, item) in items.iter().enumerate() {
@@ -89,19 +99,24 @@ pub(super) fn stack(
         matrices: vec![None; positions.len()],
         positions,
         boxes,
+        offsets: ScrollOffsets::new(),
     };
+    let ranges = scroll_ranges(&mut tree, &items)?;
+    tree.offsets = clamp_offsets(&ranges, offsets);
+    let areas = scroll_areas(&mut tree, &items, &ranges)?;
     let mut resolved = Vec::with_capacity(items.len());
     for (index, item) in items.iter().enumerate() {
         let node = tree.node(item.local_id)?;
-        let matrix = absolute(&mut tree, &items, node)?;
+        let matrix = painted(&mut tree, &items, node)?;
         let clip = clip(&mut tree, &items, node)?;
         let key = key(&tree, node, item)?;
-        resolved.push((key, index, matrix, clip));
+        let pin = pin(&tree, &items, node)?;
+        resolved.push((key, index, matrix, clip, pin));
     }
     resolved.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     let mut slots = items.into_iter().map(Some).collect::<Vec<_>>();
     let mut ordered = Vec::with_capacity(slots.len());
-    for (key, index, matrix, clip) in resolved {
+    for (key, index, matrix, clip, pin) in resolved {
         let Some(mut item) = slots[index].take() else {
             continue;
         };
@@ -123,9 +138,10 @@ pub(super) fn stack(
         item.clip = content_clip(node, &item, matrix, clip);
         let matrix = generated_matrix(node, &item, matrix);
         place(&mut item, matrix);
+        item.pin = pin;
         ordered.push(item);
     }
-    Ok(ordered)
+    Ok((ordered, areas))
 }
 
 /** Vector content of an img or inline svg stays inside the content box, as Blink's replaced
@@ -375,18 +391,22 @@ fn sticky_offset(
     node: &Node,
     own: Option<&DisplayItem>,
 ) -> f64 {
-    let Some(own) = own else {
-        return 0.0;
-    };
+    sticky_pin(tree, items, node, own).map_or(0.0, |pin| pin.offset(0.0))
+}
+/** A sticky box's constraint against the viewport (Blink's StickyPositionScrollingConstraints):
+ * its `top` inset, where it sits unstuck, and how far its containing block lets it travel. */
+fn sticky_pin(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    own: Option<&DisplayItem>,
+) -> Option<Pin> {
+    let own = own?;
     let parent = node
         .parent
         .and_then(|parent| tree.boxes.get(parent).copied().flatten())
         .map(|index| &items[index]);
-    let Some(top) = super::positioned::inset(&node.style, 0, parent.map_or(0.0, |p| p.height))
-    else {
-        return 0.0;
-    };
-    let wanted = (top - own.y).max(0.0);
+    let top = super::positioned::inset(&node.style, 0, parent.map_or(0.0, |p| p.height))?;
     // A top-level box's containing block is the body, which ends where the content does.
     let bottom = parent.map_or_else(
         || {
@@ -398,7 +418,46 @@ fn sticky_offset(
         |p| p.y + p.height,
     );
     let room = (bottom - own.y - own.height).max(0.0);
-    wanted.min(room)
+    Some(Pin {
+        top,
+        start: own.y,
+        room,
+    })
+}
+/** How a box follows the viewport's scroll: the nearest sticky or fixed box at or above it that
+ * the viewport, not an inner scroller or a transform, moves. Painters shift it by
+ * `Pin::shift(scroll)`; layout and the rest of the display stay at scroll 0. */
+fn pin(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Option<Pin>> {
+    let mut chain = vec![node];
+    chain.extend(tree.ancestors(node)?);
+    for (depth, anchor) in chain.iter().enumerate() {
+        let style = &anchor.style;
+        if style.position != Position::Sticky && style.position != Position::Fixed {
+            continue;
+        }
+        let above = &chain[depth + 1..];
+        if above.iter().any(|a| a.style.transform.is_some())
+            || (style.position == Position::Sticky
+                && above.iter().any(|a| a.style.overflow != Overflow::Visible))
+        {
+            return Ok(None);
+        }
+        if style.position == Position::Fixed {
+            return Ok(Some(Pin {
+                top: 0.0,
+                start: 0.0,
+                room: crate::constants::LAYOUT_EXTENT,
+            }));
+        }
+        let own = tree
+            .boxes
+            .get(anchor.local_id)
+            .copied()
+            .flatten()
+            .map(|index| &items[index]);
+        return Ok(sticky_pin(tree, items, anchor, own));
+    }
+    Ok(None)
 }
 /** Whether a style moves its box with `transform` or a percentage `translate`. */
 fn transformed(style: &crate::document::ComputedStyle) -> bool {
@@ -467,6 +526,168 @@ fn absolute(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineRe
     }
     Ok(base)
 }
+/** Where a box paints: its offsets and transforms, then the scroll translation of every scroll
+ * container it scrolls with (Blink's ScrollTranslation paint property node).
+ * ponytail: the scroll translation applies after ancestor transforms, exact unless a transformed
+ * box sits between a scroller and its content; per-node property trees are the upgrade. */
+fn painted(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Matrix> {
+    let mut matrix = absolute(tree, items, node)?;
+    if !tree.offsets.is_empty() {
+        for ancestor in clipping_ancestors(tree, node)? {
+            if let Some([x, y]) = tree.offsets.get(&ancestor.local_id) {
+                matrix[4] -= x;
+                matrix[5] -= y;
+            }
+        }
+    }
+    Ok(matrix)
+}
+/** Whether overflow makes a box a scroll container (`hidden` scrolls programmatically; `clip`
+ * never does), as Blink's `IsScrollContainer`. */
+fn scrolls(style: &crate::document::ComputedStyle) -> bool {
+    matches!(
+        style.overflow,
+        Overflow::Auto | Overflow::Scroll | Overflow::Hidden
+    )
+}
+/** A scroll container's unscrolled padding box and how far its contents reach right and down. */
+struct Range {
+    client: ClipRect,
+    reach: [f64; 2],
+}
+/** Each scroll container's range from its scrollable overflow: the padding box united with every
+ * box that scrolls with it, plus its end padding (css-overflow-3 2.2). A box counts toward its
+ * innermost scroll container only, since an inner one clips its own contents. */
+fn scroll_ranges(
+    tree: &mut Tree<'_>,
+    items: &[DisplayItem],
+) -> EngineResult<std::collections::BTreeMap<usize, Range>> {
+    let mut ranges = std::collections::BTreeMap::new();
+    for item in items
+        .iter()
+        .filter(|item| item.width > 0.0 && item.height > 0.0)
+    {
+        let node = tree.node(item.local_id)?;
+        let Some(scroller) = clipping_ancestors(tree, node)?
+            .into_iter()
+            .find(|ancestor| scrolls(&ancestor.style))
+        else {
+            continue;
+        };
+        let range = match ranges.entry(scroller.local_id) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let Some(client) = unscrolled_padding_box(tree, items, scroller)? else {
+                    continue;
+                };
+                let [_, right, bottom, _] = scroller.style.padding;
+                entry.insert(Range {
+                    reach: [
+                        client.x + client.width - right,
+                        client.y + client.height - bottom,
+                    ],
+                    client,
+                })
+            }
+        };
+        let matrix = absolute(tree, items, node)?;
+        let own = ClipRect {
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height,
+            radius: [0.0; 4],
+        };
+        let own = super::display::transform_rect(&own, Some(matrix));
+        range.reach[0] = range.reach[0].max(own.x + own.width);
+        range.reach[1] = range.reach[1].max(own.y + own.height);
+    }
+    for (local, range) in ranges.iter_mut() {
+        let [_, right, bottom, _] = tree.node(*local)?.style.padding;
+        range.reach[0] += right;
+        range.reach[1] += bottom;
+    }
+    Ok(ranges)
+}
+/** A scroll container's padding box before any scrolling moved it. */
+fn unscrolled_padding_box(
+    tree: &mut Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+) -> EngineResult<Option<ClipRect>> {
+    let Some(index) = tree.boxes.get(node.local_id).copied().flatten() else {
+        return Ok(None);
+    };
+    let item = &items[index];
+    let [top, right, bottom, left] = sizing::border_sides(&node.style);
+    let padding = ClipRect {
+        x: item.x + left,
+        y: item.y + top,
+        width: (item.width - left - right).max(0.0),
+        height: (item.height - top - bottom).max(0.0),
+        radius: [0.0; 4],
+    };
+    let matrix = absolute(tree, items, node)?;
+    Ok(Some(super::display::transform_rect(&padding, Some(matrix))))
+}
+/** The furthest a container scrolls along each axis: its scroll size less its client size. */
+fn max_offset(range: &Range) -> [f64; 2] {
+    [
+        (range.reach[0] - range.client.x - range.client.width).max(0.0),
+        (range.reach[1] - range.client.y - range.client.height).max(0.0),
+    ]
+}
+/** Requested offsets held to each container's range; offsets for boxes that do not scroll drop. */
+fn clamp_offsets(
+    ranges: &std::collections::BTreeMap<usize, Range>,
+    requested: &ScrollOffsets,
+) -> ScrollOffsets {
+    requested
+        .iter()
+        .filter_map(|(local, [x, y])| {
+            let [max_x, max_y] = max_offset(ranges.get(local)?);
+            let clamped = [x.clamp(0.0, max_x), y.clamp(0.0, max_y)];
+            (clamped != [0.0; 2]).then_some((*local, clamped))
+        })
+        .collect()
+}
+/** Every scroll container with somewhere to scroll, where it paints and how far it can go, so
+ * hosts route a wheel to the innermost one under the pointer and clamp what they ask for. */
+fn scroll_areas(
+    tree: &mut Tree<'_>,
+    items: &[DisplayItem],
+    ranges: &std::collections::BTreeMap<usize, Range>,
+) -> EngineResult<Vec<ScrollArea>> {
+    let mut areas = Vec::new();
+    for (local, range) in ranges {
+        let max = max_offset(range);
+        if max == [0.0; 2] {
+            continue;
+        }
+        let node = tree.node(*local)?;
+        let style = &node.style;
+        // `visible` beside a scrolling axis computes to `auto` (css-overflow-3 3.1).
+        let user =
+            |axis: Overflow| matches!(axis, Overflow::Auto | Overflow::Scroll | Overflow::Visible);
+        let shift = painted(tree, items, node)?;
+        let unshifted = absolute(tree, items, node)?;
+        let offset = tree.offsets.get(local).copied().unwrap_or_default();
+        areas.push(ScrollArea {
+            local_id: *local,
+            x: range.client.x + shift[4] - unshifted[4],
+            y: range.client.y + shift[5] - unshifted[5],
+            width: range.client.width,
+            height: range.client.height,
+            max_x: max[0],
+            max_y: max[1],
+            scroll_x: offset[0],
+            scroll_y: offset[1],
+            user_x: user(style.overflow_x),
+            user_y: user(style.overflow_y),
+        });
+    }
+    Ok(areas)
+}
 /** Overflow clips, then the `clip-path` and `clip` shapes of this element and every ancestor. */
 fn clip(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Option<ClipRect>> {
     let mut result = overflow_clip(tree, items, node)?;
@@ -521,40 +742,48 @@ fn shape(
     let Some(own) = result else {
         return Ok(None);
     };
-    let matrix = absolute(tree, items, node)?;
+    let matrix = painted(tree, items, node)?;
     Ok(Some(super::display::transform_rect(&own, Some(matrix))))
 }
-/** Ancestors that clip this element, honoring that absolute boxes escape clips below their containing
- * block and fixed boxes escape all of them. Scroll containers clip at scroll offset 0. */
-fn overflow_clip(
-    tree: &mut Tree<'_>,
-    items: &[DisplayItem],
-    node: &Node,
-) -> EngineResult<Option<ClipRect>> {
+/** Ancestors whose overflow clips this element, innermost first: absolute boxes escape those
+ * below their containing block and fixed boxes escape all of them (Blink's containing-block
+ * chain). The same chain decides which scroll containers move the element. */
+fn clipping_ancestors<'a>(tree: &Tree<'a>, node: &'a Node) -> EngineResult<Vec<&'a Node>> {
     let mut escaping = match node.style.position {
-        Position::Fixed => return Ok(None),
+        Position::Fixed => return Ok(Vec::new()),
         Position::Absolute => true,
         _ => false,
     };
-    let mut result: Option<ClipRect> = None;
+    let mut chain = Vec::new();
     for ancestor in tree.ancestors(node)? {
         let style = &ancestor.style;
         if escaping && (style.position != Position::Static || style.transform.is_some()) {
             escaping = false;
         }
-        if !escaping
-            && style.overflow != Overflow::Visible
-            && let Some(rect) = clip_box(tree, items, ancestor)?
-        {
-            result = Some(match result {
-                Some(inner) => inner.intersect(&rect),
-                None => rect,
-            });
+        if !escaping && style.overflow != Overflow::Visible {
+            chain.push(ancestor);
         }
         match style.position {
             Position::Absolute => escaping = true,
             Position::Fixed => break,
             _ => {}
+        }
+    }
+    Ok(chain)
+}
+/** Ancestors that clip this element. Scroll containers clip their padding box where it paints. */
+fn overflow_clip(
+    tree: &mut Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+) -> EngineResult<Option<ClipRect>> {
+    let mut result: Option<ClipRect> = None;
+    for ancestor in clipping_ancestors(tree, node)? {
+        if let Some(rect) = clip_box(tree, items, ancestor)? {
+            result = Some(match result {
+                Some(inner) => inner.intersect(&rect),
+                None => rect,
+            });
         }
     }
     // A clipping box's own text stays inside its border box too, so screen-reader-only text stays unseen.
@@ -570,7 +799,7 @@ fn overflow_clip(
             height: item.height,
             radius: [0.0; 4],
         };
-        let matrix = absolute(tree, items, node)?;
+        let matrix = painted(tree, items, node)?;
         let own = super::display::transform_rect(&own, Some(matrix));
         result = Some(match result {
             Some(inner) => inner.intersect(&own),
@@ -590,7 +819,7 @@ fn clip_box(
     };
     let item = &items[index];
     let [top, right, bottom, left] = sizing::border_sides(&node.style);
-    let matrix = absolute(tree, items, node)?;
+    let matrix = painted(tree, items, node)?;
     let padding = ClipRect {
         x: item.x + left,
         y: item.y + top,

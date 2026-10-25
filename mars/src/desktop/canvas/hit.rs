@@ -9,12 +9,25 @@ use objc2_foundation::NSPoint;
 pub(super) const CLICK_SLOP: f64 = 4.0;
 
 /** The topmost visible, interactive item containing the point, by node identity. */
+#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn node_at(display: &DisplayList, document: &Document, point: NSPoint) -> Option<usize> {
+    node_at_scrolled(display, document, point, 0.0)
+}
+/** As `node_at` with the viewport scrolled to `top`, where sticky and fixed boxes have moved. */
+pub(super) fn node_at_scrolled(
+    display: &DisplayList,
+    document: &Document,
+    point: NSPoint,
+    top: f64,
+) -> Option<usize> {
     display
         .items
         .iter()
         .rev()
-        .filter(|item| contains(item, point))
+        .filter(|item| {
+            let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
+            contains(item, NSPoint::new(point.x, point.y - shift))
+        })
         .find(|item| {
             document
                 .nodes

@@ -21,6 +21,13 @@ pub(super) fn place(
     let mut placed = std::collections::BTreeSet::new();
     let mut bottom: f64 = 0.0;
     loop {
+        for (local, position) in context.take_deferred_generated() {
+            let node = context.node(local)?;
+            for synthetic in super::generated::deferred(node) {
+                context.charge(1)?;
+                one(context, &synthetic, position, items, viewport)?;
+            }
+        }
         let pending = context.take_deferred();
         let pending = pending
             .into_iter()

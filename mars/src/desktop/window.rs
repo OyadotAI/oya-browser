@@ -369,6 +369,7 @@ impl Window {
     }
     /** Native input, immutable updates and presentation changes are processed without blocking RPC. */
     fn tick(&mut self) {
+        self.canvas.follow_viewport();
         if self.broker.transport == Transport::Mcp
             && (!self.broker.connected.load(Ordering::Acquire)
                 || self.broker.cancel.load(Ordering::Acquire))
@@ -418,7 +419,14 @@ impl Window {
                 {
                     self.pending.pop_back();
                 }
-                if self.pending.len() < 32 {
+                // Wheels arriving while the engine repaints merge, so momentum never fills the queue.
+                if let Action::Wheel(_, _, delta, page) = &action
+                    && let Some(Action::Wheel(_, _, queued, observed)) = self.pending.back_mut()
+                    && observed == page
+                {
+                    queued[0] += delta[0];
+                    queued[1] += delta[1];
+                } else if self.pending.len() < 32 {
                     self.pending.push_back(action);
                 }
             }

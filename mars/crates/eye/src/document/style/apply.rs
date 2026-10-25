@@ -33,9 +33,14 @@ pub(super) fn apply(
         super::border::check(part, value)?;
         return Ok(true);
     }
-    if key == "min-width" && !["auto", "min-content", "max-content", "fit-content"].contains(&value)
-    {
-        style.min_width = Some(contextual_length(value, style.font_size, context)?);
+    if key == "min-width" {
+        style.min_width_percent = None;
+        style.min_width = None;
+        if let Some(percent) = value.strip_suffix('%') {
+            style.min_width_percent = Some(number(percent)?);
+        } else if !["auto", "min-content", "max-content", "fit-content"].contains(&value) {
+            style.min_width = Some(contextual_length(value, style.font_size, context)?);
+        }
         return Ok(true);
     }
     if super::layout_props::apply(style, key, value, context)?
@@ -190,6 +195,15 @@ fn layout(
 fn width(style: &mut ComputedStyle, value: &str, context: RenderContext) -> EngineResult<()> {
     style.width_offset = 0.0;
     style.percent_width = value.ends_with('%');
+    style.width_stretch = matches!(value, "stretch" | "-webkit-fill-available");
+    style.width_fit = matches!(value, "min-content" | "max-content" | "fit-content");
+    if style.width_stretch {
+        // A definite percentage-like size, so flex bases and blocks resolve it against the
+        // containing block; sizing subtracts the margins and edges.
+        style.percent_width = true;
+        style.width = Some(100.0);
+        return Ok(());
+    }
     style.width = match value {
         "auto" | "min-content" | "max-content" | "fit-content" => {
             style.percent_width = false;

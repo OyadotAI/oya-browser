@@ -194,6 +194,73 @@ pub(super) fn transform_rect(rect: &ClipRect, matrix: Option<[f64; 6]>) -> ClipR
         radius: rect.radius,
     }
 }
+/// How a sticky or fixed box follows the viewport's scroll. The display is painted at scroll 0;
+/// at scroll `s` painters move the box down by `shift(s)`, as Blink's sticky and fixed paint
+/// offsets do. A fixed box is a pin with no `top`, no start and unlimited room.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Pin {
+    /// The `top` inset it sticks at, from the viewport's top edge.
+    pub top: f64,
+    /// Its unstuck top edge in document coordinates.
+    pub start: f64,
+    /// How far its containing block lets it travel.
+    pub room: f64,
+}
+impl Pin {
+    /// The sticky offset at viewport scroll `scroll`.
+    pub fn offset(&self, scroll: f64) -> f64 {
+        (scroll.max(0.0) + self.top - self.start).clamp(0.0, self.room.max(0.0))
+    }
+    /// How much further than at scroll 0 the box moves at `scroll`.
+    pub fn shift(&self, scroll: f64) -> f64 {
+        self.offset(scroll) - self.offset(0.0)
+    }
+}
+/// A scroll container whose contents overflow it: its padding box where it paints, its scroll
+/// range and the offset its contents are painted at. Hosts hit-test wheels against these.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ScrollArea {
+    /// The container's node identity, the key hosts scroll it by.
+    pub local_id: usize,
+    /// Padding box in document coordinates, after any outer scrolling.
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// Furthest offsets along each axis (scroll size less client size).
+    pub max_x: f64,
+    pub max_y: f64,
+    /// The clamped offsets this display was painted at.
+    pub scroll_x: f64,
+    pub scroll_y: f64,
+    /// Whether a person's wheel scrolls each axis: `auto` or `scroll`, not `hidden`.
+    pub user_x: bool,
+    pub user_y: bool,
+}
+/// The scroll container a wheel at document point (`x`, `y`) moving by `delta` scrolls: the
+/// innermost one under the point that can still move that way, as Blink's scroll chaining
+/// bubbles from the innermost scroller. None leaves the wheel to the viewport.
+/// ponytail: innermost is the smallest containing area, which nesting guarantees; a z-order
+/// hit test is the upgrade for overlapping siblings.
+pub fn wheel_target(areas: &[ScrollArea], x: f64, y: f64, delta: [f64; 2]) -> Option<usize> {
+    let room = |user: bool, offset: f64, max: f64, delta: f64| {
+        user && ((delta > 0.0 && offset < max) || (delta < 0.0 && offset > 0.0))
+    };
+    areas
+        .iter()
+        .filter(|area| {
+            (area.x..area.x + area.width).contains(&x)
+                && (area.y..area.y + area.height).contains(&y)
+        })
+        .filter(|area| {
+            room(area.user_x, area.scroll_x, area.max_x, delta[0])
+                || room(area.user_y, area.scroll_y, area.max_y, delta[1])
+        })
+        .min_by(|a, b| (a.width * a.height).total_cmp(&(b.width * b.height)))
+        .map(|area| area.local_id)
+}
 /// Agents target only what a person could see: not fully transparent and not clipped away.
 #[allow(dead_code)]
 pub fn agent_visible(item: &DisplayItem) -> bool {

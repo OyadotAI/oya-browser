@@ -58,10 +58,18 @@ fn rebased(base: &url::Url, reference: &str) -> Option<String> {
 /// resolved against the document URL `base`, keyed by the element's local identity. Images are
 /// skipped (they paint their own bytes under the same key). An element with a `url()` mask lists
 /// the mask instead (icons are usually a mask over a background color), so the bytes stored
-/// under its identity are the mask whenever `style.mask` is set. At most BACKGROUND_IMAGES entries.
+/// under its identity are the mask whenever `style.mask` is set. An element that paints none
+/// lists its `::before` or `::after` image instead. At most BACKGROUND_IMAGES entries.
 /// The app fetches each like an `<img>` and stores the bytes under that identity; painters draw a
 /// background `Image` layer with the bytes stored under its item's identity.
 pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> {
+    /** The first image layer's URL. */
+    fn first(layers: &[BackgroundLayer]) -> Option<&String> {
+        layers.iter().find_map(|layer| match layer {
+            BackgroundLayer::Image { url } => Some(url),
+            _ => None,
+        })
+    }
     let Ok(base) = url::Url::parse(base) else {
         return Vec::new();
     };
@@ -70,9 +78,16 @@ pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> 
         .iter()
         .filter(|node| node.tag != "img" && !node.hidden())
         .filter_map(|node| {
-            let image = node.style.backgrounds.iter().find_map(|layer| match layer {
-                BackgroundLayer::Image { url } => Some(url),
-                _ => None,
+            // A `::before` or `::after` shares its element's identity, so its image is fetched
+            // under that key when the element paints none (LinkedIn's lazy-loaded "Join your
+            // colleagues" street scene is a `::after` background).
+            // ponytail: one image per identity; an element and its pseudo with two images keep
+            // the element's.
+            let image = first(&node.style.backgrounds).or_else(|| {
+                node.style
+                    .generated
+                    .iter()
+                    .find_map(|generated| first(&generated.style.backgrounds))
             });
             let url = node.style.mask.as_ref().map(|mask| &mask.url).or(image)?;
             let joined = base.join(url.trim()).ok()?;

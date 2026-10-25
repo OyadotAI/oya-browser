@@ -42,6 +42,8 @@ const ACTION_LIMIT: usize = 32;
 /// longer than laying the page out; a settled scroll republishes the snapshot, which creates the
 /// ones that came into reach.
 const WIDGET_REACH: f64 = 1.0;
+/// Points one mouse-wheel line scrolls, Chromium's `kScrollbarPixelsPerLine` on macOS.
+const WHEEL_LINE: f64 = 40.0;
 
 /// Ordered intentions retain the visible page identity until worker admission.
 #[derive(Clone)]
@@ -58,6 +60,9 @@ pub(super) enum Action {
     Rejected,
     Select(usize, usize, String),
     Submit(usize, String),
+    /** A wheel over a scroll container inside the page: viewport point, accumulated delta in
+    points (positive scrolls content up and left), and the page it was seen on. */
+    Wheel(f64, f64, [f64; 2], String),
 }
 
 /** Main-thread-only mutable view state contains no engine or RPC transport. */
@@ -70,6 +75,9 @@ pub(super) struct CanvasIvars {
     reconciling: std::cell::Cell<bool>,
     /** Whether the person currently holds control; agent control blocks input without greying controls. */
     human: std::cell::Cell<bool>,
+    /** The viewport top that pinned widgets were last moved for; None while they sit where the
+    last snapshot put them (scroll 0 geometry). */
+    pinned_top: std::cell::Cell<Option<f64>>,
     /** Band index, text and images for the current display list; None until the next paint. */
     painted: RefCell<Option<painted::Painted>>,
     /** The node and point a mouse press landed on; a release on the same node nearby is a tap. */
@@ -113,6 +121,12 @@ define_class!(
             if let Some((node,down))=self.ivars().pressed.take()
                 && hit::is_click(down,point) && self.node_at(point)==Some(node)
                 && let Some(page)=self.page_id() {self.push(Action::Tap(node,page));}
+        }
+        /** A wheel over an inner scroll container that can move goes to the engine, which paints
+        its contents moved; any other wheel scrolls the document natively. */
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self,event:&objc2_app_kit::NSEvent) {
+            if !self.wheel(event) {unsafe {let _:()=msg_send![super(self),scrollWheel:event];}}
         }
         /** Only fixed native selectors turn OS actions into bounded UI intentions. */
         #[unsafe(method(activate:))]
@@ -164,11 +178,46 @@ impl Canvas {
     fn node_at(&self, point: NSPoint) -> Option<usize> {
         let snapshot = self.ivars().snapshot.borrow();
         let snapshot = snapshot.as_ref()?;
-        hit::node_at(
+        hit::node_at_scrolled(
             snapshot.display.as_ref()?,
             snapshot.document.as_ref()?,
             point,
+            self.visibleRect().origin.y,
         )
+    }
+    /** Queues a wheel for the scroll container under it, true when one takes it. Precise
+    (trackpad) deltas are points; a mouse wheel's are lines. */
+    fn wheel(&self, event: &objc2_app_kit::NSEvent) -> bool {
+        let point = self.convertPoint_fromView(event.locationInWindow(), None);
+        let scale = if event.hasPreciseScrollingDeltas() {
+            1.0
+        } else {
+            WHEEL_LINE
+        };
+        let delta = [
+            -event.scrollingDeltaX() * scale,
+            -event.scrollingDeltaY() * scale,
+        ];
+        self.wheel_at(point, delta)
+    }
+    /** Queues `delta` for the scroll container under the canvas `point`; false when none of
+    them can move that way, leaving the wheel to the document. */
+    pub(super) fn wheel_at(&self, point: NSPoint, delta: [f64; 2]) -> bool {
+        let target = {
+            let snapshot = self.ivars().snapshot.borrow();
+            snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.display.as_ref())
+                .and_then(|display| {
+                    crate::document::wheel_target(&display.scrollers, point.x, point.y, delta)
+                })
+        };
+        let (Some(_), Some(page)) = (target, self.page_id()) else {
+            return false;
+        };
+        let top = self.visibleRect().origin.y;
+        self.push(Action::Wheel(point.x, point.y - top, delta, page));
+        true
     }
     /** Native callbacks stamp the current visible generation before entering a queue. */
     fn page_id(&self) -> Option<String> {
@@ -190,6 +239,14 @@ impl Canvas {
             && matches!(actions.back(),Some(Action::Edit(previous,_,_)) if previous==id)
         {
             actions.pop_back();
+        }
+        if let Action::Wheel(_, _, delta, page) = &action
+            && let Some(Action::Wheel(_, _, queued, observed)) = actions.back_mut()
+            && observed == page
+        {
+            queued[0] += delta[0];
+            queued[1] += delta[1];
+            return;
         }
         if actions.len() < ACTION_LIMIT {
             actions.push_back(action);
@@ -302,9 +359,51 @@ impl Canvas {
         }
         drop(stored);
 
+        // Sync put every widget back at its scroll-0 box.
+        self.ivars().pinned_top.set(None);
+        self.follow_viewport();
         if !unchanged {
             self.setNeedsDisplay(true);
         }
+    }
+    /** Sticky and fixed boxes follow the viewport: when it moved, repaint what is visible and move
+    their native widgets by the same shift, as Blink re-applies sticky offsets every scroll frame. */
+    pub fn follow_viewport(&self) {
+        let top = self.visibleRect().origin.y;
+        let previous = self.ivars().pinned_top.get();
+        if previous == Some(top) {
+            return;
+        }
+        let snapshot = self.ivars().snapshot.borrow();
+        let Some(display) = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.display.as_ref())
+        else {
+            return;
+        };
+        self.ivars().pinned_top.set(Some(top));
+        let mut pinned = display
+            .items
+            .iter()
+            .filter(|item| item.pin.is_some())
+            .peekable();
+        if pinned.peek().is_none() {
+            return;
+        }
+        let widgets = self.ivars().widgets.borrow();
+        for item in pinned {
+            let (Some(pin), Some(widget)) = (item.pin, widgets.get(&item.local_id)) else {
+                continue;
+            };
+            let moved = pin.shift(top) - previous.map_or(0.0, |previous| pin.shift(previous));
+            if moved != 0.0 {
+                let frame = widget.view().frame();
+                widget
+                    .view()
+                    .setFrameOrigin(NSPoint::new(frame.origin.x, frame.origin.y + moved));
+            }
+        }
+        self.setNeedsDisplayInRect(self.visibleRect());
     }
     /** Hosted controls draw in the page's used scheme, as Chromium's do, so a light page keeps light
      * fields and buttons while the OS (and the browser chrome around the page) is dark. */
@@ -357,14 +456,20 @@ impl Canvas {
         };
         let mut painted = self.ivars().painted.borrow_mut();
         let painted = painted.get_or_insert_with(|| painted::Painted::new(display));
+        let top = self.visibleRect().origin.y;
         for index in painted.visible(dirty) {
             let item = &display.items[index as usize];
-            if item.opacity <= 0.0 || !intersects(item, dirty) {
+            let shift = item.pin.map_or(0.0, |pin| pin.shift(top));
+            let seen = NSRect::new(
+                NSPoint::new(dirty.origin.x, dirty.origin.y - shift),
+                dirty.size,
+            );
+            if item.opacity <= 0.0 || !intersects(item, seen) {
                 continue;
             }
             painter.groups(item);
-            painter.enter(item);
-            self.paint_item(&painter, painted, index, snapshot, display, dirty);
+            painter.enter(item, shift);
+            self.paint_item(&painter, painted, index, snapshot, display, seen);
             painter.leave();
         }
         painter.finish();

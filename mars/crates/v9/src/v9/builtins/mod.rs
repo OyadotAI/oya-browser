@@ -18,11 +18,13 @@ pub(in crate::v9) mod promise;
 mod proxy;
 mod reflect;
 mod regexp;
+mod streams;
 mod string;
 mod symbol;
 pub(in crate::v9) mod typed;
 mod weak;
 
+pub(in crate::v9) use error::legacy_code;
 pub(in crate::v9) use function::{dynamic_base, evaluate as evaluate_source};
 pub(in crate::v9) use json::json_parse_text;
 pub(in crate::v9) use object::{from_descriptor, to_descriptor};
@@ -66,6 +68,7 @@ pub(in crate::v9) fn install(builder: &mut Builder) {
     globals::install(builder);
     clone::install(builder);
     encoding::install(builder);
+    streams::install(builder);
     weak::install(builder);
     proxy::install(builder);
 }

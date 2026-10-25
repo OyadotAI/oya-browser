@@ -99,6 +99,7 @@ pub(in crate::v9) struct Ids {
     pub eval_error_prototype: ObjectId,
     pub uri_error_prototype: ObjectId,
     pub aggregate_error_prototype: ObjectId,
+    pub dom_exception_prototype: ObjectId,
     pub date_prototype: ObjectId,
     pub regexp_prototype: ObjectId,
     pub map_prototype: ObjectId,

@@ -754,6 +754,15 @@ impl Window {
                 self.canvas.scrollPoint(NSPoint::new(0.0, y));
                 return Ok(self.human_observation());
             }
+            "wheel" => {
+                // points: viewport x, y and the wheel's delta, through the person's wheel path.
+                let [x, y, dx, dy] = input.points.unwrap_or_default();
+                let top = self.canvas.visibleRect().origin.y;
+                if !self.canvas.wheel_at(NSPoint::new(x, y + top), [dx, dy]) {
+                    self.canvas.scrollPoint(NSPoint::new(0.0, top + dy));
+                }
+                return Ok(self.human_observation());
+            }
             _ => return Err(EngineError::invalid("Unknown human feature.")),
         };
         if !self.human_action(tag) {

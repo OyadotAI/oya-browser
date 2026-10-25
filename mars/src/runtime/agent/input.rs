@@ -35,7 +35,8 @@ struct Hover {
     y: f64,
 }
 
-/** A wheel turn at a point; the document is the only scroller this engine has. */
+/** A wheel turn at a point: it scrolls the innermost scroll container under the point that can
+still move that way, else the document. */
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Wheel {
@@ -43,6 +44,8 @@ struct Wheel {
     expected_revision: u64,
     x: f64,
     y: f64,
+    #[serde(default)]
+    delta_x: f64,
     delta_y: f64,
 }
 
@@ -125,12 +128,25 @@ impl Runtime {
         Ok(result)
     }
 
-    /** page.scroll_at: a wheel turn over the page scrolls the document by delta_y points. */
+    /** page.scroll_at: a wheel turn over the page scrolls the innermost scroll container under
+    the point that can still move that way, as Blink's scroll chaining does, and the document
+    once none can. LinkedIn's sign-in variant scrolls only its `<main>`. */
     pub(super) fn scroll_at(&mut self, params: Value) -> EngineResult<Value> {
         let input: Wheel = parameters(params)?;
-        self.document_point(input.x, input.y)?;
-        if !input.delta_y.is_finite() {
-            return Err(EngineError::invalid("delta_y must be a finite number."));
+        let (x, y) = self.document_point(input.x, input.y)?;
+        if !input.delta_y.is_finite() || !input.delta_x.is_finite() {
+            return Err(EngineError::invalid(
+                "delta_x and delta_y must be finite numbers.",
+            ));
+        }
+        let delta = [input.delta_x, input.delta_y];
+        let target = self
+            .current()?
+            .display
+            .as_ref()
+            .and_then(|display| crate::document::wheel_target(&display.scrollers, x, y, delta));
+        if let Some(local_id) = target {
+            return self.scroll_element(&input.page_id, input.expected_revision, local_id, delta);
         }
         self.scroll_to(
             &input.page_id,

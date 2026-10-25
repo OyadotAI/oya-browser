@@ -229,6 +229,9 @@ struct Render {
     /** Same-build desktop callers supply all host presentation facts together. */
     #[serde(default)]
     context: Option<document::RenderContext>,
+    /** Scroll container offsets by node identity; Eye clamps them. */
+    #[serde(default)]
+    scroll: document::ScrollOffsets,
 }
 /** CSS sources have already passed resource acquisition and byte limits. */
 #[derive(Deserialize)]
@@ -617,7 +620,7 @@ fn run_render(input: Render) -> EngineResult<document::DisplayList> {
     if input.width.is_some_and(|width| width != context.width) {
         return Err(EngineError::invalid("Conflicting native viewport widths."));
     }
-    document::render_with_context(&input.document, context)
+    document::render_scrolled(&input.document, context, &input.scroll)
 }
 /** Type actions and human input use the same literal-value validator. */
 fn value(params: Value) -> EngineResult<Value> {

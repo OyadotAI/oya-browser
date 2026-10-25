@@ -165,8 +165,8 @@ fn row_item(
         FlexBasis::Percent(value) => content_size(node, inner * value / 100.0, true),
     };
     let max = super::sizing::max_width(node, Some(inner));
-    let minimum = match node.style.min_width {
-        Some(value) => content_size(node, value, true),
+    let minimum = match super::sizing::min_width(node, Some(inner)) {
+        Some(value) => value,
         // A scroll container's automatic minimum is zero (Flexbox 4.5; Blink's
         // `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items shrink below content.
         None if flex::scroll_container(node) => 0.0,
@@ -580,8 +580,11 @@ fn place_row_line(
         }
         let [auto_start, auto_end] = record.auto_margins;
         x += record.margin_start + if auto_start { share } else { 0.0 };
-        let free_cross =
-            (cross - heights[index] - child.style.margin[0] - child.style.margin[2]).max(0.0);
+        // Self-alignment is unsafe by default, as in Blink's `AlignmentOffset`: an item taller
+        // than its line centers or ends past the line's edges (LinkedIn's 840px image in a 720px
+        // row sits 60px above it). Auto margins never go negative.
+        let overflowing = cross - heights[index] - child.style.margin[0] - child.style.margin[2];
+        let free_cross = overflowing.max(0.0);
         let align = self_alignment(parent, child);
         let auto_cross = flex::auto_cross_offset(
             child.style.margin_auto[0],
@@ -594,8 +597,8 @@ fn place_row_line(
         let offset = auto_cross
             .or(baseline)
             .unwrap_or(match physical_align(parent, align) {
-                AlignItems::Center => free_cross / 2.0,
-                AlignItems::End => free_cross,
+                AlignItems::Center => overflowing / 2.0,
+                AlignItems::End => overflowing,
                 _ => 0.0,
             });
         // Only an automatic height stretches; an authored height or a cross auto margin keeps
