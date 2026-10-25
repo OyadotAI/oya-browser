@@ -2,18 +2,49 @@ use super::Document;
 /** XML documents (XHTML and SVG), ported from the essentials of Blink's XMLDocumentParser over
 libxml2: a well-formed XML 1.0 tokenizer that feeds the same tree builder the HTML parser uses, so
 an `.xht` page builds the same Document. Self-closing tags close, CDATA is text everywhere,
-namespaces resolve (XHTML elements are HTML elements, SVG elements are SVG), and the first
-well-formedness error stops parsing, as Blink does, with Blink's parse-error block shown above
-what was built up to it. */
+namespaces resolve (XHTML elements are HTML elements, SVG elements are SVG, any other is inert),
+and the first well-formedness error stops parsing, as Blink does, with Blink's parse-error block
+shown above what was built up to it. */
 use super::entities::decode;
 use super::markup::{self, Attributes};
 use super::recovery::VOID;
 use super::tokenizer::{Token, Tokenizer};
 use crate::constants::NODES;
 use crate::protocol::{EngineError, EngineResult};
+use std::collections::{HashMap, HashSet};
 
-/** The XHTML namespace; only its void elements are void. */
+/** The XHTML namespace: only its elements get HTML semantics, and only its void elements are void. */
 const XHTML_NS: &str = "http://www.w3.org/1999/xhtml";
+/** The SVG namespace: only its elements get SVG semantics. */
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
+/// The SVG elements Eye draws, as SVG spells them (names are case-sensitive in XML). The tree
+/// builder knows them lowercased, as the HTML parser hands them over.
+const SVG_NAMES: [&str; 19] = [
+    "svg",
+    "g",
+    "path",
+    "use",
+    "rect",
+    "circle",
+    "ellipse",
+    "line",
+    "polyline",
+    "polygon",
+    "symbol",
+    "defs",
+    "linearGradient",
+    "radialGradient",
+    "stop",
+    "clipPath",
+    "mask",
+    "pattern",
+    "marker",
+];
+/** Nodes Blink's parse-error block adds above the page. */
+const ERROR_NODES: usize = 4;
+/// Start tags one document may hold, raw-text content included, so the error block still fits
+/// under the node bound. It also bounds nesting depth, which can never exceed it.
+const ELEMENTS: usize = NODES - ERROR_NODES;
 /** A parse error message is cut here, so a hostile name cannot grow the error block. */
 const MESSAGE_CHARS: usize = 256;
 /** Media types whose documents Blink parses as XML rather than HTML. */
@@ -32,11 +63,11 @@ pub fn xml_mime(essence: &str) -> bool {
 }
 
 /** One open element: its qualified name as written, the tag the tree builder sees, and the
-namespace bindings its start tag declared. */
+prefixes its start tag bound, unbound again when it closes. */
 struct Scope {
     qname: String,
     tag: String,
-    bindings: Vec<(String, String)>,
+    bindings: Vec<String>,
     /** An XHTML void element written with an end tag: the builder never opened it. */
     void: bool,
 }
@@ -46,6 +77,10 @@ pub(super) struct XmlTokenizer<'a> {
     source: &'a str,
     rest: &'a str,
     stack: Vec<Scope>,
+    /** Each prefix's in-scope namespaces, innermost last, so a lookup never walks the stack. */
+    bound: HashMap<String, Vec<String>>,
+    /** Start tags read so far, bounded by ELEMENTS. */
+    elements: usize,
     /** The end tag a self-closing start tag implies, delivered next. */
     pending: Option<Token>,
     seen_root: bool,
@@ -60,6 +95,8 @@ impl<'a> XmlTokenizer<'a> {
             source,
             rest: source,
             stack: Vec::new(),
+            bound: HashMap::new(),
+            elements: 0,
             pending: None,
             seen_root: false,
             error: None,
@@ -194,11 +231,21 @@ impl<'a> XmlTokenizer<'a> {
         }
         self.rest = rest;
         let open = self.stack.pop().ok_or("expected '>'")?;
+        for prefix in &open.bindings {
+            self.bound.get_mut(prefix).and_then(Vec::pop);
+        }
         Ok((!open.void).then_some(Token::End(open.tag)))
     }
-    /** A start tag with quoted, unique attributes; `/>` implies its end tag. */
+    /// A start tag with quoted, unique attributes; `/>` implies its end tag. Its namespace
+    /// decides its tag: see `element_tag`.
     fn start_tag(&mut self, after: &'a str) -> Result<Token, String> {
         let (qname, rest) = name(after).ok_or("StartTag: invalid element name")?;
+        if self.elements >= ELEMENTS {
+            return Err(format!(
+                "Excessive depth or size in document: {ELEMENTS} elements"
+            ));
+        }
+        self.elements += 1;
         let (written, closed, rest) = attributes(qname, rest)?;
         if self.stack.is_empty() && self.seen_root {
             return Err("Extra content at the end of the document".into());
@@ -223,27 +270,37 @@ impl<'a> XmlTokenizer<'a> {
         }
         self.rest = rest;
         self.seen_root = true;
-        let tag = local.to_ascii_lowercase();
+        let (tag, inert) = element_tag(namespace.as_deref(), qname, local);
         let mut attrs = Attributes::new();
         for (key, value) in written {
             if key != "xmlns" && !key.starts_with("xmlns:") {
-                attrs.entry(key.to_ascii_lowercase()).or_insert(value);
+                let key = if inert { key } else { key.to_ascii_lowercase() };
+                attrs.entry(key).or_insert(value);
             }
         }
         let void = namespace.as_deref() == Some(XHTML_NS) && VOID.contains(&tag.as_str());
         if void || !closed {
             if !closed {
-                self.stack.push(Scope {
-                    qname: qname.to_owned(),
-                    tag: tag.clone(),
-                    bindings,
-                    void,
-                });
+                self.open(qname, &tag, bindings, void);
             }
             return Ok(Token::Start(tag, attrs, void));
         }
         self.pending = Some(Token::End(tag.clone()));
         Ok(Token::Start(tag, attrs, false))
+    }
+    /** Opens an element and brings its namespace bindings into scope. */
+    fn open(&mut self, qname: &str, tag: &str, bindings: Vec<(String, String)>, void: bool) {
+        let mut prefixes = Vec::with_capacity(bindings.len());
+        for (prefix, uri) in bindings {
+            self.bound.entry(prefix.clone()).or_default().push(uri);
+            prefixes.push(prefix);
+        }
+        self.stack.push(Scope {
+            qname: qname.to_owned(),
+            tag: tag.to_owned(),
+            bindings: prefixes,
+            void,
+        });
     }
     /** The namespace a prefix (empty for the default) is bound to here, nearest binding first. */
     fn namespace(&self, prefix: &str, own: &[(String, String)]) -> Option<String> {
@@ -251,15 +308,27 @@ impl<'a> XmlTokenizer<'a> {
             return Some("http://www.w3.org/XML/1998/namespace".into());
         }
         own.iter()
-            .chain(
-                self.stack
-                    .iter()
-                    .rev()
-                    .flat_map(|scope| scope.bindings.iter()),
-            )
             .find(|(bound, _)| bound == prefix)
-            .map(|(_, uri)| uri.clone())
+            .map(|(_, uri)| uri)
+            .or_else(|| self.bound.get(prefix)?.last())
             .filter(|uri| !uri.is_empty())
+            .cloned()
+    }
+}
+
+/// The tag the tree builder sees for an element, and whether it is inert. HTML semantics
+/// (script, style, link, base, meta, forms, raw text) belong only to the XHTML namespace and
+/// SVG drawing only to SVG's, both matched case-sensitively, so a `<script>` in any other
+/// namespace, or none, never runs. Every other element is inert and generic, as in Blink: it
+/// keeps its name as written, and an unprefixed one is marked with a leading `:` so it can never
+/// equal an HTML or SVG tag. ponytail: the mark shows in tagName; a namespace field on Node
+/// would let foreign elements keep their bare local names.
+fn element_tag(namespace: Option<&str>, qname: &str, local: &str) -> (String, bool) {
+    match namespace {
+        Some(XHTML_NS) => (local.to_owned(), false),
+        Some(SVG_NS) if SVG_NAMES.contains(&local) => (local.to_ascii_lowercase(), false),
+        _ if qname.contains(':') => (qname.to_owned(), true),
+        _ => (format!(":{qname}"), true),
     }
 }
 
@@ -269,6 +338,7 @@ type Parsed<'a> = (Vec<(String, String)>, bool, &'a str);
 /** Reads attributes up to `>` or `/>`; each needs whitespace before it and a quoted value. */
 fn attributes<'a>(qname: &str, mut rest: &'a str) -> Result<Parsed<'a>, String> {
     let mut written: Vec<(String, String)> = Vec::new();
+    let mut seen = HashSet::new();
     loop {
         let trimmed = rest.trim_start_matches(is_space);
         let spaced = trimmed.len() < rest.len();
@@ -286,7 +356,7 @@ fn attributes<'a>(qname: &str, mut rest: &'a str) -> Result<Parsed<'a>, String> 
             .filter(|_| spaced)
             .ok_or("attributes construct error")?;
         let (value, after) = attribute_value(key, after)?;
-        if written.iter().any(|(seen, _)| seen == key) {
+        if !seen.insert(key) {
             return Err(format!("Attribute {key} redefined"));
         }
         written.push((key.to_owned(), value));
@@ -423,7 +493,7 @@ const MESSAGE_STYLE: &str = "display:block;font-family:monospace;font-size:12px"
 /// note that what follows is the page up to the first error. Existing nodes are renumbered
 /// after it, keeping preorder identities. Refuses rather than exceed the node bound.
 pub(super) fn error_block(document: &mut Document, message: &str) -> EngineResult<()> {
-    const BLOCK: usize = 4;
+    const BLOCK: usize = ERROR_NODES;
     if document.nodes.len() + BLOCK > NODES {
         return Err(EngineError::limit("document nodes", NODES));
     }
