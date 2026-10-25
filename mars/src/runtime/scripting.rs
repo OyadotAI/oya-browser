@@ -106,6 +106,8 @@ pub(super) struct PendingImages {
     pub first_new: usize,
     /// Attributes scripts set, as (node, attribute name).
     pub changed: Vec<(usize, String)>,
+    /// A script set an attribute of <html> or <body>, which can restyle any element.
+    pub root: bool,
 }
 
 impl PendingImages {
@@ -130,7 +132,14 @@ impl PendingImages {
                 _ => None,
             }))
             .collect();
-        Self { first_new, changed }
+        let root = script_changes
+            .iter()
+            .any(|change| matches!(change, ScriptChange::RootAttribute { .. }));
+        Self {
+            first_new,
+            changed,
+            root,
+        }
     }
     /** Both steps' facts: identities are monotonic, so the earlier first identity covers both. */
     fn merge(self, later: Self) -> Self {
@@ -139,6 +148,7 @@ impl PendingImages {
         Self {
             first_new: self.first_new.min(later.first_new),
             changed,
+            root: self.root || later.root,
         }
     }
 }
@@ -363,7 +373,11 @@ impl Runtime {
     /// Steps that touched no node cost nothing. Ordinary failures show alt text; only authority
     /// and engine-service failures stop the step.
     pub(super) fn flush_inserted_images(&mut self, page: &mut Page) -> EngineResult<()> {
-        let Some(PendingImages { first_new, changed }) = page.scripting.pending_images.take()
+        let Some(PendingImages {
+            first_new,
+            changed,
+            root,
+        }) = page.scripting.pending_images.take()
         else {
             return Ok(());
         };
@@ -371,7 +385,10 @@ impl Runtime {
         if budget.exhausted() {
             return Ok(());
         }
-        if changed.is_empty() && !page.document.nodes.iter().any(|n| n.local_id >= first_new) {
+        if changed.is_empty()
+            && !root
+            && !page.document.nodes.iter().any(|n| n.local_id >= first_new)
+        {
             return Ok(());
         }
         let parent = |id: usize| {
@@ -393,15 +410,29 @@ impl Runtime {
         let touched: std::collections::BTreeSet<usize> =
             changed.iter().map(|(node, _)| *node).collect();
         let loaded: std::collections::BTreeSet<usize> = page.images.keys().copied().collect();
+        // Backgrounds before the restyle: a class change on an ancestor (Wikipedia's client-js
+        // switch on <html>) can give an untouched element a background or mask it lacked, and a
+        // style recalc starts that image loading in Blink.
+        let backgrounds_before: std::collections::BTreeSet<(usize, String)> =
+            crate::document::background_urls(&page.document, &page.url)
+                .into_iter()
+                .collect();
         page.document = self.styled(
             &page.document,
             &page.resolved_stylesheets,
             self.render_context,
         )?;
         page.styled = true;
+        let restyled: std::collections::BTreeSet<usize> =
+            crate::document::background_urls(&page.document, &page.url)
+                .into_iter()
+                .filter(|pair| !backgrounds_before.contains(pair) && !loaded.contains(&pair.0))
+                .map(|(id, _)| id)
+                .collect();
         let wanted = |node: &crate::document::Node| {
             let id = node.local_id;
             id >= first_new
+                || restyled.contains(&id)
                 || (node.tag == "img"
                     && (sourced.contains(&id) || node.parent.is_some_and(|p| sourced.contains(&p))))
                 || (touched.contains(&id) && !loaded.contains(&id))
@@ -557,6 +588,7 @@ impl Runtime {
         // that measures one is laid out and run again (`forced_geometry`).
         environment.geometry = page.display.as_ref().map(boxes).unwrap_or_default();
         environment.laid_out_before = page.display.is_some().then_some(page.laid_out_before);
+        environment.positions = positions(&page.document);
         environment.scroll_y = self.scroll_y;
         Ok(environment)
     }
@@ -1006,8 +1038,26 @@ fn random_seed() -> u64 {
 }
 
 /** Inline style sheets scripts inserted join the page's sheets, as before. */
+/** Each element's cascaded `position` where it is not static, for `getComputedStyle`. */
+pub(super) fn positions(document: &Document) -> std::collections::BTreeMap<usize, String> {
+    use crate::document::Position;
+    document
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let name = match node.style.position {
+                Position::Static => return None,
+                Position::Relative => "relative",
+                Position::Absolute => "absolute",
+                Position::Fixed => "fixed",
+                Position::Sticky => "sticky",
+            };
+            Some((node.local_id, name.to_owned()))
+        })
+        .collect()
+}
 /** A display list's boxes as V9 reads them, in paint order. */
-fn boxes(display: &crate::document::DisplayList) -> Vec<crate::v9::NodeBox> {
+pub(super) fn boxes(display: &crate::document::DisplayList) -> Vec<crate::v9::NodeBox> {
     display
         .items
         .iter()

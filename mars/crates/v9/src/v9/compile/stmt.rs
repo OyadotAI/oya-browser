@@ -51,18 +51,19 @@ impl Compiler {
         body: &[Stmt],
         result: Option<Slot>,
     ) -> EngineResult<()> {
-        for stmt in body {
-            match (&stmt.kind, result) {
-                (StmtKind::Expr(value), Some(result)) => {
-                    self.at(stmt.pos);
-                    self.expr(value)?;
-                    self.emit(Op::SetReg(result));
-                    self.emit(Op::Pop);
-                }
-                _ => self.stmt(stmt)?,
-            }
+        let outer = std::mem::replace(&mut self.f().completion, result);
+        let done = self.statements(body);
+        self.f().completion = outer;
+        done
+    }
+    /** Reset the completion value to undefined: the statement about to run produces undefined
+    unless something inside it stores a value (spec UpdateEmpty(stmtResult, undefined)). */
+    fn reset_completion(&mut self) {
+        if let Some(slot) = self.f().completion {
+            self.emit(Op::Undefined);
+            self.emit(Op::SetReg(slot));
+            self.emit(Op::Pop);
         }
-        Ok(())
     }
     /** Statements in order. */
     pub(super) fn statements(&mut self, body: &[Stmt]) -> EngineResult<()> {
@@ -75,9 +76,26 @@ impl Compiler {
     pub(super) fn stmt(&mut self, stmt: &Stmt) -> EngineResult<()> {
         self.at(stmt.pos);
         let labels = std::mem::take(&mut self.f().pending_labels);
+        if matches!(
+            stmt.kind,
+            StmtKind::If(..)
+                | StmtKind::For { .. }
+                | StmtKind::ForIn(..)
+                | StmtKind::ForOf(..)
+                | StmtKind::While(..)
+                | StmtKind::DoWhile(..)
+                | StmtKind::Try { .. }
+                | StmtKind::Switch(..)
+                | StmtKind::With(..)
+        ) {
+            self.reset_completion();
+        }
         match &stmt.kind {
             StmtKind::Expr(value) => {
                 self.expr(value)?;
+                if let Some(slot) = self.f().completion {
+                    self.emit(Op::SetReg(slot));
+                }
                 self.emit(Op::Pop);
             }
             StmtKind::Var(kind, list) => self.declarations(*kind, list)?,
@@ -712,6 +730,7 @@ impl Compiler {
             let skip = self.emit(Op::Jump(0));
             let catch = self.here() as u32;
             self.f().ops[inner] = Op::PushTry(catch, 0, 0);
+            self.reset_completion();
             self.catch_clause(param, handler)?;
             self.patch(skip);
         }
@@ -721,7 +740,23 @@ impl Compiler {
             self.emit(Op::Normal(slot));
             let start = self.here() as u32;
             self.f().ops[outer] = Op::PushTry(0, start, slot);
+            // A finally block that completes normally keeps the try's completion value.
+            let saved = match self.f().completion {
+                Some(result) => {
+                    let saved = self.temp()?;
+                    self.emit(Op::GetReg(result));
+                    self.emit(Op::SetReg(saved));
+                    self.emit(Op::Pop);
+                    Some((result, saved))
+                }
+                None => None,
+            };
             self.statements_scoped(finalizer)?;
+            if let Some((result, saved)) = saved {
+                self.emit(Op::GetReg(saved));
+                self.emit(Op::SetReg(result));
+                self.emit(Op::Pop);
+            }
             self.emit(Op::EndFinally(slot));
         }
         self.release(mark);

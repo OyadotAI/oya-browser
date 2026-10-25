@@ -7,6 +7,8 @@ use crate::document::{AlignItems, JustifyContent};
 mod lanes;
 #[path = "grid_placement.rs"]
 mod placement;
+#[path = "grid_subgrid.rs"]
+mod subgrid;
 #[path = "grid_tracks.rs"]
 mod tracks;
 use placement::{Placed, implicit_track, place};
@@ -21,7 +23,9 @@ pub(super) fn children(
     inner: &mut Flow,
     items: &mut Vec<DisplayItem>,
 ) -> EngineResult<()> {
-    let style = &node.style;
+    // A subgrid lays out in the tracks its parent offered (css-grid-2 9).
+    let adopted = subgrid::adopt(node);
+    let style = adopted.as_ref().unwrap_or(&node.style);
     // `::before` is the first item and `::after` the last (Blink's pseudo-element children).
     let [before, after] = super::generated::items(node);
     let mut kids: Vec<&Node> = before.iter().collect();
@@ -54,6 +58,7 @@ pub(super) fn children(
     // Rows repeat into a definite height, else once (css-grid-2 7.2.3.2).
     let mut row_explicit = expand(&style.grid_rows, inner.definite.unwrap_or(0.0), gap.1);
     let mut placed = place(context, &kids, style, &mut columns, row_explicit.len())?;
+    subgrid::clamp(node, &mut placed, &mut columns, row_explicit.len());
     let fit = fit_range(&style.grid_columns, explicit_columns);
     let column_lines = collapse(
         &mut columns,
@@ -77,10 +82,7 @@ pub(super) fn children(
         &columns,
         Some(inner.width),
     );
-    let column_items = placed
-        .iter()
-        .map(|item| column_contribution(context, item, &column_defs))
-        .collect::<EngineResult<Vec<_>>>()?;
+    let column_items = column_items(context, style, &placed, &column_defs, gap.0)?;
     let widths = tracks::size_tracks(
         &column_defs,
         &column_items,
@@ -96,6 +98,9 @@ pub(super) fn children(
         false,
     );
     let lefts = offsets(inner.x + lead, &widths, gap.0 + between);
+    for item in &placed {
+        subgrid::offer(style, true, item, 1, &widths, gap.0 + between);
+    }
     let span_width = |p: &Placed<'_>| span(&widths, p.column, p.columns, gap.0 + between);
     // The explicit rows exist with or without items in them (css-grid-2 7.1).
     let row_count = placed
@@ -143,7 +148,15 @@ pub(super) fn children(
         let height =
             super::flex_layout::item_height(context, item.node, width)? + margins[0] + margins[2];
         natural.push((width, height));
-        row_items.push(row_contribution(item, height));
+        let sizing = subgrid::Sizing {
+            axis: 0,
+            gap: gap.1,
+            content: width - horizontal_edges(item.node),
+        };
+        match subgrid::contributions(context, style, true, item, sizing, 0, &mut row_measure)? {
+            Some(list) => row_items.extend(list),
+            None => row_items.push(row_contribution(item, height)),
+        }
     }
     let heights = tracks::size_tracks(
         &row_defs,
@@ -171,6 +184,9 @@ pub(super) fn children(
     };
     let row_gap = gap.1 + row_between + late_gap;
     let tops = offsets(inner.y + row_lead, &heights, row_gap);
+    for item in &placed {
+        subgrid::offer(style, true, item, 0, &heights, row_gap);
+    }
     for (item, (width, height)) in placed.iter().zip(natural) {
         context.charge(1)?;
         let area_width = span_width(item);
@@ -186,11 +202,13 @@ pub(super) fn children(
         let align = node_style.align_self.unwrap_or(style.align_items);
         let auto_y =
             super::flex::auto_cross_offset(auto[0], auto[2], (area_height - height).max(0.0));
-        let stretch = align == AlignItems::Stretch
-            && auto_y.is_none()
-            && node_style.height.is_none()
-            && node_style.aspect_ratio.is_none()
-            && !["img", "svg"].contains(&item.node.tag.as_str());
+        // A subgrid fills its area in a subgridded axis whatever its alignment.
+        let stretch = subgrid::inherits(item.node, 0)
+            || (align == AlignItems::Stretch
+                && auto_y.is_none()
+                && node_style.height.is_none()
+                && node_style.aspect_ratio.is_none()
+                && !["img", "svg"].contains(&item.node.tag.as_str()));
         let free_y = (area_height - height).max(0.0);
         let y = tops[item.row]
             + margins[0]
@@ -240,9 +258,105 @@ pub(super) fn children(
         let at = out_of_flow_static_position(context, node, child, &frame, explicit, lines)?;
         context.defer(child.local_id, at);
     }
+    subgrid::withdraw(&placed);
     inner.y += total;
     inner.bottom = inner.bottom.max(inner.y);
     Ok(())
+}
+/** In-flow items of a grid in layout order: `::before` first and `::after` last (Blink's
+ * pseudo-element children), then sorted by `order`. */
+fn items_of<'a>(
+    context: &LayoutContext<'a>,
+    node: &'a Node,
+    [before, after]: &'a [Vec<Node>; 2],
+) -> Vec<&'a Node> {
+    let mut kids: Vec<&Node> = before.iter().collect();
+    kids.extend(context.children(node.local_id));
+    kids.extend(after);
+    kids.retain(|child| !super::flow::blank_text(child) && !out_of_flow(child));
+    kids.sort_by_key(|child| child.style.order);
+    kids
+}
+/** Every item's column contributions; a column subgrid contributes its own items instead. */
+fn column_items(
+    context: &mut LayoutContext<'_>,
+    style: &crate::document::ComputedStyle,
+    placed: &[Placed<'_>],
+    defs: &[tracks::TrackSizing],
+    gap: f64,
+) -> EngineResult<Vec<tracks::Contribution>> {
+    let mut out = Vec::with_capacity(placed.len());
+    let mut measure = |context: &mut LayoutContext<'_>, kid: &Placed<'_>, _: f64| {
+        // ponytail: the kid's fixed-maximum clamp reads the parent's defs at the kid's own
+        // index; shift them by the subgrid's start if a page needs it.
+        column_contribution(context, kid, defs)
+    };
+    let sizing = subgrid::Sizing {
+        axis: 1,
+        gap,
+        content: 0.0,
+    };
+    for item in placed {
+        match subgrid::contributions(context, style, true, item, sizing, 0, &mut measure)? {
+            Some(list) => out.extend(list),
+            None => out.push(column_contribution(context, item, defs)?),
+        }
+    }
+    Ok(out)
+}
+/** A row subgrid's item's row contribution, at the width of its area in the subgrid's
+ * inherited columns, or `own_area` wide when the subgrid sized its own columns. */
+fn row_measure(
+    context: &mut LayoutContext<'_>,
+    kid: &Placed<'_>,
+    own_area: f64,
+) -> EngineResult<tracks::Contribution> {
+    let parent = kid
+        .node
+        .parent
+        .map(|parent| context.node(parent))
+        .transpose()?;
+    let columns = parent.filter(|parent| subgrid::inherits(parent, 1));
+    let adopted = parent.and_then(subgrid::adopt);
+    let area = adopted
+        .as_ref()
+        .filter(|_| columns.is_some())
+        .map_or(own_area.max(0.0), |style| {
+            let widths = style
+                .grid_columns
+                .tracks
+                .iter()
+                .map(|track| track.min.length(None).unwrap_or(0.0));
+            let widths = widths.collect::<Vec<_>>();
+            span(&widths, kid.column, kid.columns, style.column_gap)
+        });
+    let justify = adopted
+        .as_ref()
+        .map_or(AlignItems::Stretch, |style| justify_of(style, kid.node));
+    let width = item_width(context, kid.node, area, justify)?;
+    let margins = kid.node.style.margin;
+    let height =
+        super::flex_layout::item_height(context, kid.node, width)? + margins[0] + margins[2];
+    Ok(row_contribution(kid, height))
+}
+/** A grid's column widths and used column gap at a `content` width for its `placed` items, as
+ * `children` sizes them; a row subgrid's items are measured in them before it lays out. */
+fn column_widths(
+    context: &mut LayoutContext<'_>,
+    style: &crate::document::ComputedStyle,
+    placed: &[Placed<'_>],
+    columns: &[Track],
+    explicit: usize,
+    content: f64,
+) -> EngineResult<(Vec<f64>, f64)> {
+    let content = content.max(0.0);
+    let gap = style.column_gap + style.gap_percent[0] * content / 100.0;
+    let sources = [&style.grid_columns, &style.grid_auto_columns];
+    let defs = track_sizing(sources, explicit, columns, Some(content));
+    let items = column_items(context, style, placed, &defs, gap)?;
+    let stretch = style.justify_content == JustifyContent::Stretch;
+    let space = tracks::Space::Definite(content);
+    Ok((tracks::size_tracks(&defs, &items, space, gap, stretch), gap))
 }
 /** One axis of a laid-out grid, for placing its out-of-flow children: where each track starts
  * and its size, and the content and padding edges. */
@@ -332,6 +446,10 @@ fn min_rows(node: &Node) -> f64 {
 }
 /** An item's inline-axis self alignment: `justify-self`, or the container's `justify-items`. */
 fn justify_of(container: &crate::document::ComputedStyle, node: &Node) -> AlignItems {
+    if subgrid::inherits(node, 1) {
+        // A subgrid fills its area in a subgridded axis whatever its alignment.
+        return AlignItems::Stretch;
+    }
     node.style.justify_self.unwrap_or(container.justify_items)
 }
 /** Sizing functions against the grid's size in this axis; a percentage of an indefinite size
@@ -591,14 +709,10 @@ pub(super) fn intrinsic(
     node: &Node,
 ) -> EngineResult<super::sizing::IntrinsicWidths> {
     let style = &node.style;
-    // The same items `children` lays out, `::before` first and `::after` last, so a
-    // shrink-to-fit grid is never narrower than its generated items.
-    let [before, after] = super::generated::items(node);
-    let mut kids: Vec<&Node> = before.iter().collect();
-    kids.extend(context.children(node.local_id));
-    kids.extend(&after);
-    kids.retain(|child| !super::flow::blank_text(child) && !out_of_flow(child));
-    kids.sort_by_key(|child| child.style.order);
+    // The same items `children` lays out, so a shrink-to-fit grid is never narrower than its
+    // generated items.
+    let generated = super::generated::items(node);
+    let kids = items_of(context, node, &generated);
     if style.grid_lanes && !lanes::row_lanes(style) {
         return lanes::intrinsic(context, node, &kids);
     }
@@ -624,11 +738,9 @@ pub(super) fn intrinsic(
         &columns,
         None,
     );
-    let mut items = Vec::with_capacity(placed.len());
-    for item in &placed {
-        let mut contribution = column_contribution(context, item, &defs)?;
-        contribution.minimum = limited_min_content(&contribution, &defs);
-        items.push(contribution);
+    let mut items = column_items(context, style, &placed, &defs, gap)?;
+    for contribution in &mut items {
+        contribution.minimum = limited_min_content(contribution, &defs);
     }
     let total = |space| {
         let widths = tracks::size_tracks(&defs, &items, space, gap, false);

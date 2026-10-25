@@ -88,3 +88,14 @@ fn positioned_image_uses_replaced_sizing() {
     let item = display.items.iter().find(|i| i.local_id == local).unwrap();
     assert_eq!((item.width, item.height), (225.0, 150.0));
 }
+
+/** An auto width takes the width `aspect-ratio` transfers from a definite height instead of
+shrinking an empty box to nothing (Wikipedia's video play button). */
+#[test]
+fn aspect_ratio_transfers_an_authored_height_to_an_auto_width() {
+    let r = abs(
+        "<span id=a style='position:absolute;left:50%;top:50%;height:50px;\
+         aspect-ratio:1/1;transform:translate(-50%,-50%)'></span>",
+    );
+    assert_eq!((r.2, r.3), (50.0, 50.0));
+}

@@ -213,16 +213,13 @@ fn has_index(vm: &mut Vm, object: &JsValue, index: usize) -> Res<bool> {
     let JsValue::Object(id) = object else {
         return Ok(false);
     };
-    if let Some(Class::Array(elements)) = vm.heap.get(*id).map(|o| &o.class) {
-        if elements
+    // A hole walks the chain: Array.prototype or a property-list element may answer.
+    if let Some(Class::Array(elements)) = vm.heap.get(*id).map(|o| &o.class)
+        && elements
             .get(index)
             .is_some_and(|value| *value != JsValue::Hole)
-        {
-            return Ok(true);
-        }
-        if vm.proto_of(*id) == Some(crate::v9::vm::realm::realm().ids.array_prototype) {
-            return Ok(false);
-        }
+    {
+        return Ok(true);
     }
     vm.has_property(*id, &index_key(index)?)
 }
@@ -784,6 +781,7 @@ fn write_back(vm: &mut Vm, object: &JsValue, values: Vec<JsValue>, old_length: u
     let length = values.len();
     if let JsValue::Object(id) = object
         && is_array_value(vm, object)
+        && vm.heap.get(*id).is_some_and(|o| o.props.is_empty())
     {
         if let Some(Class::Array(elements)) = vm.heap.get(*id).map(|o| &o.class) {
             let count = elements
@@ -815,9 +813,44 @@ fn write_back(vm: &mut Vm, object: &JsValue, values: Vec<JsValue>, old_length: u
 /** Array.prototype.reverse. */
 fn reverse(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (object, length) = receiver(vm, &call, "Array.prototype.reverse")?;
+    let dense = matches!(&object, JsValue::Object(id) if is_array_value(vm, &object)
+        && vm.heap.get(*id).is_some_and(|o| o.props.is_empty()));
+    if !dense {
+        return reverse_generic(vm, object, length);
+    }
     let mut values = snapshot(vm, &object, length)?;
     values.reverse();
     write_back(vm, &object, values, length)?;
+    Ok(object)
+}
+
+/** Array.prototype.reverse's spec loop (23.1.3.26) for anything but a plain dense array: each
+pair is read then written or deleted, and an odd length's middle element is never touched. */
+fn reverse_generic(vm: &mut Vm, object: JsValue, length: usize) -> Res<JsValue> {
+    for lower in 0..length / 2 {
+        let upper = length - 1 - lower;
+        let low = has_index(vm, &object, lower)?;
+        let low_value = if low {
+            Some(get_index(vm, &object, lower)?)
+        } else {
+            None
+        };
+        let high = has_index(vm, &object, upper)?;
+        let high_value = if high {
+            Some(get_index(vm, &object, upper)?)
+        } else {
+            None
+        };
+        match high_value {
+            Some(value) => set_index(vm, &object, lower, value)?,
+            None if low => delete_index(vm, &object, lower)?,
+            None => continue,
+        }
+        match low_value {
+            Some(value) => set_index(vm, &object, upper, value)?,
+            None => delete_index(vm, &object, upper)?,
+        }
+    }
     Ok(object)
 }
 

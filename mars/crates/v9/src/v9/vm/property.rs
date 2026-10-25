@@ -153,15 +153,19 @@ impl Vm<'_> {
             }
             Class::Array(elements) => {
                 if let Some(index) = key.index() {
+                    // An element with its own attributes or an accessor lives in the property
+                    // list (V8's dictionary elements), its dense slot a hole.
                     return Ok(elements
                         .get(index as usize)
                         .filter(|value| **value != JsValue::Hole)
-                        .map(|value| Prop::data(value.clone())));
+                        .map(|value| Prop::data(value.clone()))
+                        .or_else(|| object.props.get(key).cloned()));
                 }
                 if key_is(key, "length") {
+                    let fixed = object.props.get(&fixed_length_mark()).is_some();
                     return Ok(Some(Prop {
                         slot: Slot::Data(JsValue::Number(elements.len() as f64)),
-                        attrs: WRITABLE,
+                        attrs: if fixed { 0 } else { WRITABLE },
                     }));
                 }
             }
@@ -598,16 +602,24 @@ impl Vm<'_> {
                     if index >= limit {
                         return Err(EngineError::limit("V9 array length", limit).into());
                     }
-                    if index >= elements.len() && !object.extensible {
+                    let fixed = object.props.get(&fixed_length_mark()).is_some();
+                    if index >= elements.len() && (!object.extensible || fixed) {
                         return Ok(Some(false));
+                    }
+                    if object.props.get(key).is_some() {
+                        return Ok(None);
                     }
                     self.array_store(id, index, value.clone());
                     return Ok(Some(true));
                 }
                 if key_is(key, "length") {
+                    let current = elements.len();
+                    let fixed = object.props.get(&fixed_length_mark()).is_some();
                     let length = self.array_length_value(value)?;
-                    self.set_array_length(id, length)?;
-                    return Ok(Some(true));
+                    if fixed {
+                        return Ok(Some(length == current));
+                    }
+                    return self.set_array_length(id, length).map(Some);
                 }
                 Ok(None)
             }
@@ -652,14 +664,16 @@ impl Vm<'_> {
         }
         Ok(number as usize)
     }
-    /** Truncate or extend an array. */
-    pub fn set_array_length(&mut self, id: ObjectId, length: usize) -> Res<()> {
+    /** Truncate or extend an array (spec ArraySetLength): deleting stops above the highest
+    non-configurable element, and false reports that the length could not shrink that far. */
+    pub fn set_array_length(&mut self, id: ObjectId, length: usize) -> Res<bool> {
         if length > self.limits.array_length {
             return Err(EngineError::limit("V9 array length", self.limits.array_length).into());
         }
+        let (length, done) = self.trim_dictionary_elements(id, length);
         let Some(Class::Array(elements)) = self.heap.get_mut(id).map(|object| &mut object.class)
         else {
-            return Ok(());
+            return Ok(done);
         };
         let removed: Vec<JsValue> = if length < elements.len() {
             elements.drain(length..).collect()
@@ -673,7 +687,34 @@ impl Vm<'_> {
             .count() as isize;
         let units = removed.iter().map(JsValue::string_units).sum::<usize>() as isize;
         self.heap.adjust(-properties, -units);
-        Ok(())
+        Ok(done)
+    }
+    /** Remove an array's property-list elements at or above `length`, highest first, stopping
+    at a non-configurable one; returns the length reached and whether it is `length`. */
+    fn trim_dictionary_elements(&mut self, id: ObjectId, length: usize) -> (usize, bool) {
+        let Some(object) = self.heap.get(id) else {
+            return (length, true);
+        };
+        let mut above: Vec<(usize, Key)> = object
+            .props
+            .ordered_keys()
+            .into_iter()
+            .filter_map(|key| key.index().map(|index| (index as usize, key)))
+            .filter(|(index, _)| *index >= length)
+            .collect();
+        above.sort_by(|a, b| b.0.cmp(&a.0));
+        for (index, key) in above {
+            let fixed = self
+                .heap
+                .get(id)
+                .and_then(|object| object.props.get(&key))
+                .is_some_and(|prop| prop.attrs & CONFIGURABLE == 0);
+            if fixed {
+                return (index + 1, false);
+            }
+            self.heap.remove(id, &key);
+        }
+        (length, true)
     }
     /** [[DefineOwnProperty]] with a partial descriptor. Returns false when refused. */
     pub fn define(&mut self, id: ObjectId, key: Key, desc: Descriptor) -> Res<bool> {
@@ -686,16 +727,22 @@ impl Vm<'_> {
         self.materialize(id)?;
         let existing = self.own(id, &key)?;
         let is_array = matches!(self.heap.get(id).map(|o| &o.class), Some(Class::Array(_)));
-        if is_array && (key.index().is_some() || key_is(&key, "length")) {
-            if let Some(value) = desc.value.clone() {
+        if is_array && key_is(&key, "length") {
+            return self.define_array_length(id, &desc);
+        }
+        if is_array && let Some(index) = key.index() {
+            if self.dense_element_define(id, &key, &desc, existing.is_some()) {
+                let value = desc.value.clone().unwrap_or(JsValue::Undefined);
+                if existing.is_some() && desc.value.is_none() {
+                    return Ok(true);
+                }
                 return self
                     .exotic_write(id, &key, &value)
                     .map(|done| done.unwrap_or(true));
             }
-            if desc.accessor() && key.index().is_some() {
-                return Err(self.unsupported_error("accessor properties on array elements"));
+            if index as usize >= self.limits.array_length {
+                return Err(EngineError::limit("V9 array length", self.limits.array_length).into());
             }
-            return Ok(true);
         }
         if let Some(existing) = &existing
             && existing.attrs & CONFIGURABLE == 0
@@ -725,6 +772,11 @@ impl Vm<'_> {
             check_key(&key)?;
         }
         let prop = merge(existing, desc);
+        if is_array && let Some(index) = key.index() {
+            // The element moves to the property list; its dense slot becomes a hole that still
+            // counts toward the length.
+            self.array_store(id, index as usize, JsValue::Hole);
+        }
         if let Some(Class::Host(_)) = self.heap.get(id).map(|object| &object.class)
             && let Slot::Data(value) = &prop.slot
             && let Some(done) = super::super::platform::host_write(self, id, &key, value)?
@@ -733,6 +785,58 @@ impl Vm<'_> {
         }
         self.heap.put(id, key, prop);
         Ok(true)
+    }
+    /** [[DefineOwnProperty]] for an array's `length` (spec 10.4.2.1 ArraySetLength): it stays
+    a non-enumerable, non-configurable data property, and once non-writable it never changes. */
+    fn define_array_length(&mut self, id: ObjectId, desc: &Descriptor) -> Res<bool> {
+        // The new length converts (and throws RangeError) before any validation.
+        let length = match &desc.value {
+            Some(value) => Some(self.array_length_value(value)?),
+            None => None,
+        };
+        let fixed = self
+            .heap
+            .get(id)
+            .is_some_and(|object| object.props.get(&fixed_length_mark()).is_some());
+        if desc.accessor()
+            || desc.configurable == Some(true)
+            || desc.enumerable == Some(true)
+            || fixed && desc.writable == Some(true)
+        {
+            return Ok(false);
+        }
+        let mut done = true;
+        if let Some(length) = length {
+            done = self
+                .exotic_write(id, &Key::from("length"), &JsValue::Number(length as f64))?
+                .unwrap_or(true);
+        }
+        if desc.writable == Some(false) && !fixed {
+            let mark = Prop {
+                slot: Slot::Data(JsValue::Undefined),
+                attrs: 0,
+            };
+            self.heap.put(id, fixed_length_mark(), mark);
+        }
+        Ok(done)
+    }
+    /** Whether an array element definition can stay in the dense elements: a plain data
+    element with every attribute (given, or kept from a dense element) and no property-list
+    entry already. Anything else takes the ordinary validation and moves to the property list. */
+    fn dense_element_define(
+        &self,
+        id: ObjectId,
+        key: &Key,
+        desc: &Descriptor,
+        exists: bool,
+    ) -> bool {
+        let in_list = self
+            .heap
+            .get(id)
+            .is_some_and(|object| object.props.get(key).is_some());
+        let attrs = [desc.writable, desc.enumerable, desc.configurable];
+        let plain = !desc.accessor() && attrs.iter().all(|a| *a != Some(false));
+        !in_list && plain && (exists || attrs.iter().all(|a| *a == Some(true)))
     }
     /** [[Delete]]; non-configurable properties stay. */
     pub fn delete(&mut self, id: ObjectId, key: &Key) -> Res<bool> {
@@ -746,13 +850,16 @@ impl Vm<'_> {
             return Ok(true);
         };
         if prop.attrs & CONFIGURABLE == 0 {
-            if matches!(self.heap.get(id).map(|o| &o.class), Some(Class::Array(_)))
-                && key.index().is_some()
-            {
-                self.array_store(id, key.index().unwrap_or(0) as usize, JsValue::Hole);
-                return Ok(true);
-            }
             return Ok(false);
+        }
+        if let Some(Class::Array(elements)) = self.heap.get(id).map(|object| &object.class)
+            && let Some(index) = key.index().map(|index| index as usize)
+            && elements
+                .get(index)
+                .is_some_and(|value| *value != JsValue::Hole)
+        {
+            self.array_store(id, index, JsValue::Hole);
+            return Ok(true);
         }
         self.materialize(id)?;
         if let Some(Class::Host(_)) = self.heap.get(id).map(|object| &object.class)
@@ -857,6 +964,9 @@ impl Vm<'_> {
             .collect();
         indexes.sort_by_key(|key| key.index());
         keys.splice(0..0, indexes);
+        // An array's property-list elements interleave with its dense ones.
+        let leading = keys.iter().take_while(|key| key.index().is_some()).count();
+        keys[..leading].sort_by_key(|key| key.index());
         for name in virtual_names {
             let key = Key::from(name);
             if !own.contains(&key) {
@@ -995,6 +1105,12 @@ pub(in crate::v9) fn key_text(key: &Key) -> String {
 }
 
 /** The hidden key that records a deleted virtual `name` or `length` of a function. */
+/** The hidden mark an array carries once its `length` is non-writable. Private names compile
+to `site:name` with a numeric site, so no script name can spell it. */
+fn fixed_length_mark() -> Key {
+    Key::Private(JsString::from_utf8("fixed:length").expect("short key"))
+}
+
 fn deleted_mark(key: &Key) -> Key {
     let mut units: Vec<u16> = "deleted:".encode_utf16().collect();
     if let Key::Str(text) = key {

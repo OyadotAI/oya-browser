@@ -200,6 +200,10 @@ impl ComputedStyle {
             t.tracks.len() + t.repeat.len() <= super::constants::GRID_TRACKS
                 && t.exprs.len() <= super::constants::GRID_TRACKS
                 && t.repeat_at <= t.tracks.len()
+                && t.repeat_names.len() <= super::constants::GRID_TRACKS
+                && t.repeat_names
+                    .iter()
+                    .all(|(_, line)| *line >= 1 && usize::from(*line) <= t.repeat.len() + 1)
                 && t.tracks
                     .iter()
                     .chain(&t.repeat)
@@ -269,8 +273,20 @@ impl ComputedStyle {
             && self
                 .grid_area_names
                 .iter()
-                .chain(self.grid_line_names.iter().flatten())
                 .flatten()
+                .chain(
+                    self.grid_line_names
+                        .iter()
+                        .flatten()
+                        .flatten()
+                        .map(|line| &line.name),
+                )
                 .all(|name| name.len() <= GRID_NAME_BYTES)
+            && self
+                .grid_line_names
+                .iter()
+                .flatten()
+                .flatten()
+                .all(|line| line.nth.abs() <= super::constants::GRID_LINE_MAX)
     }
 }

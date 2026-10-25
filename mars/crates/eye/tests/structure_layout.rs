@@ -57,7 +57,9 @@ fn grid_template_shorthand_sets_areas_and_tracks() {
     assert!(close(a.height, 40.0) && close(a.y, b.y));
 }
 
-/** Areas that are not rectangles invalidate the declaration, and the items auto-place. */
+/** Areas that are not rectangles invalidate the declaration. `grid-area: b` then names no area
+ * and no line, so it resolves to the first implicit lines past the explicit grid (css-grid-2
+ * 8.3, Blink's `ResolveGridPosition`), below and right of the auto-placed item. */
 #[test]
 fn non_rectangular_areas_are_ignored() {
     let (document, display) = layout(
@@ -69,7 +71,8 @@ fn non_rectangular_areas_are_ignored() {
         find(&document, &display, "x").unwrap(),
         find(&document, &display, "y").unwrap(),
     );
-    assert!(close(x.y, y.y) && x.x < y.x);
+    // The two `1fr` columns share what the implicit third column leaves.
+    assert!(x.y > y.y && close(x.x, y.x + 2.0 * y.width));
 }
 
 /** A `display: contents` wrapper's children become items of the flex container around it. */

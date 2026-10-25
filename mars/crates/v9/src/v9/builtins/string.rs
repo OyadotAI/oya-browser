@@ -15,7 +15,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(ctor, "fromCharCode", 1, from_char_code);
     b.method(ctor, "fromCodePoint", 1, from_code_point);
     b.method(ctor, "raw", 1, raw);
-    let methods: [(&'static str, u32, NativeFn); 38] = [
+    let methods: [(&'static str, u32, NativeFn); 50] = [
         ("at", 1, at),
         ("charAt", 1, char_at),
         ("charCodeAt", 1, char_code_at),
@@ -53,7 +53,29 @@ pub(super) fn install(b: &mut Builder) {
         ("trimRight", 0, trim_end),
         ("isWellFormed", 0, is_well_formed),
         ("toWellFormed", 0, to_well_formed),
-        ("link", 1, link),
+        ("anchor", 1, |vm, call| {
+            create_html(vm, &call, "a", Some("name"))
+        }),
+        ("big", 0, |vm, call| create_html(vm, &call, "big", None)),
+        ("blink", 0, |vm, call| create_html(vm, &call, "blink", None)),
+        ("bold", 0, |vm, call| create_html(vm, &call, "b", None)),
+        ("fixed", 0, |vm, call| create_html(vm, &call, "tt", None)),
+        ("fontcolor", 1, |vm, call| {
+            create_html(vm, &call, "font", Some("color"))
+        }),
+        ("fontsize", 1, |vm, call| {
+            create_html(vm, &call, "font", Some("size"))
+        }),
+        ("italics", 0, |vm, call| create_html(vm, &call, "i", None)),
+        ("link", 1, |vm, call| {
+            create_html(vm, &call, "a", Some("href"))
+        }),
+        ("small", 0, |vm, call| create_html(vm, &call, "small", None)),
+        ("strike", 0, |vm, call| {
+            create_html(vm, &call, "strike", None)
+        }),
+        ("sub", 0, |vm, call| create_html(vm, &call, "sub", None)),
+        ("sup", 0, |vm, call| create_html(vm, &call, "sup", None)),
     ];
     for (name, length, function) in methods {
         b.method(proto, name, length, function);
@@ -696,11 +718,28 @@ fn to_well_formed(vm: &mut Vm, call: Call) -> Res<JsValue> {
     )
 }
 
-/** String.prototype.link (legacy HTML method). */
-fn link(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let text = this_string(vm, &call)?.lossy();
-    let href = arg_string(vm, &call, 0)?.lossy().replace('"', "&quot;");
-    super::text(vm, &format!("<a href=\"{href}\">{text}</a>"))
+/** CreateHTML (spec B.2.2.2.1), behind the legacy String.prototype HTML methods: the string
+wrapped in `<tag>`, with the argument as a quoted attribute whose `"` become `&quot;`. Works
+on UTF-16 units so lone surrogates survive. */
+fn create_html(vm: &mut Vm, call: &Call, tag: &str, attribute: Option<&str>) -> Res<JsValue> {
+    let text = this_string(vm, call)?;
+    let mut out: Vec<u16> = format!("<{tag}").encode_utf16().collect();
+    if let Some(attribute) = attribute {
+        let value = arg_string(vm, call, 0)?;
+        out.extend(format!(" {attribute}=\"").encode_utf16());
+        for &unit in value.as_units() {
+            if unit == u16::from(b'"') {
+                out.extend("&quot;".encode_utf16());
+            } else {
+                out.push(unit);
+            }
+        }
+        out.push(u16::from(b'"'));
+    }
+    out.push(u16::from(b'>'));
+    out.extend_from_slice(text.as_units());
+    out.extend(format!("</{tag}>").encode_utf16());
+    Ok(JsValue::String(JsString::from_slice(&out)?))
 }
 
 /** String.prototype[Symbol.iterator]. */

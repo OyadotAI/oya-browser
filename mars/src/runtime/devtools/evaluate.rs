@@ -251,6 +251,13 @@ impl Runtime {
         environment.viewport_height = self.render_context.height;
         environment.title = page.document.title.clone();
         environment.node_text = node_text(&page.document);
+        environment.geometry = page
+            .display
+            .as_ref()
+            .map(scripting::boxes)
+            .unwrap_or_default();
+        environment.scroll_y = self.scroll_y;
+        environment.positions = scripting::positions(&page.document);
         Ok(environment)
     }
 
@@ -266,6 +273,7 @@ impl Runtime {
         page.scripting.pending_images = Some(scripting::PendingImages {
             first_new,
             changed: touched,
+            ..Default::default()
         });
         self.flush_inserted_images(page)
     }

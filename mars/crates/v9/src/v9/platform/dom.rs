@@ -703,7 +703,8 @@ const BLOCK_TAGS: [&str; 31] = [
     "ul",
 ];
 
-/** A computed value without layout: the inline declaration, else the CSS initial or UA default. */
+/** A computed value: the inline declaration, else the last style pass's `position`, else the CSS
+initial or UA default. */
 pub(in crate::v9) fn computed_value(vm: &mut Vm, node: usize, property: &str) -> String {
     if let Some((_, value)) = style_map(vm, node)
         .into_iter()
@@ -741,7 +742,14 @@ pub(in crate::v9) fn computed_value(vm: &mut Vm, node: usize, property: &str) ->
         }
         "display" => "inline",
         "visibility" => "visible",
-        "position" => "static",
+        "position" => {
+            return vm
+                .page
+                .environment
+                .positions
+                .get(&node)
+                .map_or_else(|| "static".to_owned(), Clone::clone);
+        }
         "opacity" => "1",
         "float" => "none",
         "overflow" | "overflow-x" | "overflow-y" => "visible",
@@ -1773,6 +1781,10 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 Ok(JsValue::Null)
             }
         }
+        "elements" if vm.page.tag(node) == "form" => {
+            let controls = super::form_submit::controls(vm, node);
+            node_list(vm, controls)
+        }
         "form" => {
             let form = vm
                 .page
@@ -2328,6 +2340,9 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "checkValidity" | "reportValidity" => Ok(JsValue::Boolean(true)),
         "setCustomValidity" => Ok(JsValue::Undefined),
+        "submit" | "requestSubmit" if vm.page.tag(node) == "form" => {
+            super::form_submit::submit(vm, node, &call, native_name(&call) == "requestSubmit")
+        }
         "submit" | "requestSubmit" | "reset" => {
             Err(vm.unsupported_error("form submission from script"))
         }
@@ -3085,6 +3100,10 @@ pub(in crate::v9) fn list_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .then(|| nodes.get(index as usize).copied())
                 .flatten();
             wrap_option(vm, node)
+        }
+        "namedItem" => {
+            let key = vm.to_text(&call.arg(0))?;
+            super::form_submit::named(vm, &nodes, &key)
         }
         "forEach" => {
             let callback = call.arg(0);

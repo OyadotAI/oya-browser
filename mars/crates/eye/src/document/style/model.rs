@@ -89,6 +89,10 @@ pub struct ComputedStyle {
     /// content box in that axis (zero against an indefinite one, as Blink's GridGap does).
     #[serde(skip_serializing_if = "default")]
     pub gap_percent: [f64; 2],
+    /// Whether `column-gap` and `row-gap` are set to something other than `normal`; a subgrid's
+    /// `normal` gap is its parent's (css-grid-2 9.2).
+    #[serde(skip_serializing_if = "default")]
+    pub gap_set: [bool; 2],
     /// Main-axis content distribution (`justify-content`); `normal` is `Stretch`.
     pub justify_content: JustifyContent,
     /// Cross-axis content distribution of flex lines and grid rows (`align-content`).
@@ -269,6 +273,21 @@ pub struct ComputedStyle {
     /// Grid-lanes `flow-tolerance` in pixels; None is `normal` (1em), infinity `infinite`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_tolerance: Option<f64>,
+    /// Grid-lanes `flow-tolerance` percentage of the stacking-axis available size, when given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_tolerance_percent: Option<f64>,
+    /// `grid-lanes-direction` orientation: None is `normal`, Some(true) `row`, Some(false) `column`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grid_lanes_rows: Option<bool>,
+    /// `grid-lanes-direction: fill-reverse`: items stack from the stacking axis's end.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_lanes_fill_reverse: bool,
+    /// `grid-lanes-direction: track-reverse`: ties go to the last lane and the cursor walks back.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_lanes_track_reverse: bool,
+    /// `grid-lanes-pack: dense`: items may fill openings earlier items left behind.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_lanes_dense: bool,
     /// Placement of a grid item along the columns.
     #[serde(skip_serializing_if = "default")]
     pub grid_column: GridLine,
@@ -282,10 +301,10 @@ pub struct ComputedStyle {
     /// over the numeric lines of that axis when the container defines them.
     #[serde(skip_serializing_if = "default")]
     pub grid_area_names: [Option<String>; 2],
-    /// Named start and end lines of `grid-row` and `grid-column` (`content-start / content-end`),
-    /// resolved against the container's line names at layout.
+    /// Named start and end lines of `grid-row` and `grid-column` (`content-start / content-end`,
+    /// `a 2`, `span a`), resolved against the container's line names at layout.
     #[serde(default, skip_serializing_if = "default")]
-    pub grid_line_names: [[Option<String>; 2]; 2],
+    pub grid_line_names: [[Option<LineName>; 2]; 2],
     /// Inline-axis alignment of grid items in their areas.
     #[serde(skip_serializing_if = "default")]
     pub justify_items: AlignItems,
@@ -558,6 +577,7 @@ impl Default for ComputedStyle {
             row_gap: 0.0,
             column_gap: 0.0,
             gap_percent: [0.0; 2],
+            gap_set: [false; 2],
             justify_content: JustifyContent::Stretch,
             align_content: JustifyContent::Stretch,
             align_items: AlignItems::Stretch,
@@ -616,6 +636,11 @@ impl Default for ComputedStyle {
             grid_flow_dense: false,
             grid_lanes: false,
             flow_tolerance: None,
+            flow_tolerance_percent: None,
+            grid_lanes_rows: None,
+            grid_lanes_fill_reverse: false,
+            grid_lanes_track_reverse: false,
+            grid_lanes_dense: false,
             grid_column: GridLine::default(),
             grid_row: GridLine::default(),
             grid_areas: Vec::new(),

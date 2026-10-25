@@ -64,9 +64,9 @@ pub use model::{ComputedStyle, Generated, SizeKeyword, StyleSource};
 pub use urls::{BACKGROUND_IMAGES, background_urls, rebase_urls};
 pub use visual_model::{
     BackgroundLayer, BackgroundRepeat, BackgroundSize, BoxShadow, Clear, ColorStop, ContainerType,
-    Extent, Float, FontFamily, GridArea, GridLine, GridTemplate, ListStyle, MaskLayer, ObjectFit,
-    Overflow, Position, RadialShape, RadialSize, RepeatStyle, TableBox, TextTransform, Track,
-    TrackSize, VerticalAlign, WhiteSpace,
+    Extent, Float, FontFamily, GridArea, GridLine, GridTemplate, LineName, ListStyle, MaskLayer,
+    ObjectFit, Overflow, Position, RadialShape, RadialSize, RepeatStyle, TableBox, TextTransform,
+    Track, TrackSize, VerticalAlign, WhiteSpace,
 };
 pub use visual_model::{ContentKeyword, TrackContent};
 /** Internal value failures; never include arbitrary declarations or selectors in an error. */

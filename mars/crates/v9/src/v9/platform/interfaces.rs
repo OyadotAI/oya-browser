@@ -263,6 +263,7 @@ const INTERFACES: &[Interface] = &[
     },
     Interface {
         reflected: &["name", "rel", "target", "action"],
+        getters: &["elements"],
         accessors: &["relList"],
         methods: &[
             "submit",

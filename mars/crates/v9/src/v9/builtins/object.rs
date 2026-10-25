@@ -399,7 +399,8 @@ fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     // Proxies and module namespaces (whose exports refuse to freeze) answer through their own
     // [[DefineOwnProperty]].
     let namespace = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Namespace(_)));
-    if namespace || vm.proxy_of(id).is_some() {
+    let array = matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Array(_)));
+    if namespace || array || vm.proxy_of(id).is_some() {
         return restrict_generic(vm, id, clear);
     }
     vm.materialize(id)?;

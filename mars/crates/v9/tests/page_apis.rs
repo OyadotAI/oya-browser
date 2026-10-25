@@ -62,7 +62,7 @@ fn intl_formats_in_english() {
     );
     assert_eq!(
         r,
-        "1,234,567.891|07|25.6%|$1,234.50|1.2M|1/5/2024|Jan 5, 2024|one|two|yesterday|a, b, and c|-1|en-US|[object Intl.NumberFormat]"
+        "1,234,567.891|07|26%|$1,234.50|1.2M|1/5/2024|Jan 5, 2024|one|two|yesterday|a, b, and c|-1|en-US|[object Intl.NumberFormat]"
     );
 }
 

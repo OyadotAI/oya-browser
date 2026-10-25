@@ -59,3 +59,42 @@ fn mask_urls_are_listed_for_fetching() {
         )]
     );
 }
+
+#[test]
+fn css_escapes_in_a_quoted_url_are_decoded() {
+    let document = styled(
+        "<span id=a>a</span>",
+        r#"span{mask-image:url("data:image/svg+xml;utf8,<svg a=\"1\" b=\31 0>")}"#,
+    );
+    let mask = by_id(&document, "a").style.mask.clone().unwrap();
+    assert_eq!(mask.url, r#"data:image/svg+xml;utf8,<svg a="1" b=10>"#);
+}
+
+#[test]
+fn a_pseudo_elements_mask_is_listed_under_its_element() {
+    let document = styled(
+        "<label id=a>145 languages</label>",
+        "label::after{content:'';display:inline-block;width:12px;height:12px;\
+         background-color:#36c;mask-image:url(/chevron.svg)}",
+    );
+    let urls = background_urls(&document, "https://example.com/page");
+    assert_eq!(
+        urls,
+        vec![(
+            by_id(&document, "a").local_id,
+            "https://example.com/chevron.svg".into()
+        )]
+    );
+}
+
+#[test]
+fn data_url_backgrounds_are_listed_for_local_decoding() {
+    let document = styled(
+        "<span id=a></span>",
+        "span{display:block;width:50px;height:50px;\
+         background:#000c url(\"data:image/svg+xml,%3Csvg%3E%3C/svg%3E\") center no-repeat}",
+    );
+    let urls = background_urls(&document, "https://example.com/page");
+    assert_eq!(urls.len(), 1);
+    assert!(urls[0].1.starts_with("data:image/svg+xml,"));
+}

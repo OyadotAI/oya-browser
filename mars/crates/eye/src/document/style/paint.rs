@@ -144,7 +144,41 @@ fn url(source: &str) -> EngineResult<String> {
     if unquoted.is_empty() || unquoted.len() > URL_BYTES || unquoted.chars().any(char::is_control) {
         return Err(unsupported());
     }
-    Ok(unquoted.into())
+    Ok(unescape(unquoted))
+}
+/** CSS Syntax escapes in a string or url token: `\` and up to six hex digits (plus one
+ * whitespace) is that code point, `\` before a newline is dropped, and `\` before anything else
+ * is that character. Wikipedia's dropdown chevron is `url("data:image/svg+xml;utf8,<svg
+ * xmlns=\"...\">")`, which Blink hands to the image loader with plain quotes. */
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let mut code = 0u32;
+        let mut digits = 0;
+        while digits < 6
+            && let Some(digit) = chars.peek().and_then(|c| c.to_digit(16))
+        {
+            code = code * 16 + digit;
+            digits += 1;
+            chars.next();
+        }
+        if digits > 0 {
+            chars.next_if(|c| c.is_ascii_whitespace());
+            out.push(
+                char::from_u32(code)
+                    .filter(|c| *c != '\0')
+                    .unwrap_or('\u{fffd}'),
+            );
+        } else if let Some(next) = chars.next().filter(|c| *c != '\n') {
+            out.push(next);
+        }
+    }
+    out
 }
 /** An optional angle or `to side` direction, then stops; the default points down (180). A
  * `to <corner>` direction keeps the corner, since its angle depends on the box. */

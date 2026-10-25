@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 type Outcomes = Arc<Mutex<Vec<Option<Result<(), String>>>>>;
 
 /** Features V9 does not claim (its README: no modules, with, async generators, for await,
-SharedArrayBuffer, Atomics, Intl; language support stops at ES2023), plus host hooks it lacks. */
+SharedArrayBuffer, Atomics; language support stops at ES2023; Intl and Temporal are claimed),
+plus host hooks it lacks. */
 const UNCLAIMED: &[&str] = &[
     "SharedArrayBuffer",
     "Atomics",
@@ -40,7 +41,6 @@ const UNCLAIMED: &[&str] = &[
     "source-phase-imports",
     "source-phase-imports-module-source",
     "ShadowRealm",
-    "Temporal",
     "decorators",
     "explicit-resource-management",
     "iterator-helpers",
@@ -811,17 +811,20 @@ fn mjsunit() {
     score("mjsunit", cases, skips);
 }
 
-/** The frontmatter reader handles flow and block lists and the negative block. */
+/** The frontmatter reader handles flow and block lists and the negative block, an unclaimed
+feature skips a test, and Temporal (claimed since round 7) runs. */
 #[test]
 fn frontmatter_parses() {
     let m = meta(
-        "/*---\nincludes: [a.js, b.js]\nflags:\n  - onlyStrict\nnegative:\n  phase: parse\n  type: SyntaxError\nfeatures: [Temporal]\n---*/",
+        "/*---\nincludes: [a.js, b.js]\nflags:\n  - onlyStrict\nnegative:\n  phase: parse\n  type: SyntaxError\nfeatures: [ShadowRealm]\n---*/",
     );
     assert_eq!(m.includes, ["a.js", "b.js"]);
     assert_eq!(m.flags, ["onlyStrict"]);
     assert_eq!(m.negative, Some(("parse".into(), "SyntaxError".into())));
     assert_eq!(
         skip262("built-ins/x.js", &m).as_deref(),
-        Some("feature:Temporal")
+        Some("feature:ShadowRealm")
     );
+    let temporal = meta("/*---\nfeatures: [Temporal, Intl.NumberFormat-v3]\n---*/");
+    assert_eq!(skip262("built-ins/Temporal/x.js", &temporal), None);
 }

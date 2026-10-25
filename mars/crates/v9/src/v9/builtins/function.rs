@@ -152,7 +152,8 @@ pub(in crate::v9) fn list_from_array_like(vm: &mut Vm, value: &JsValue) -> Res<V
         return Err(vm.type_error("CreateListFromArrayLike called on non-object"));
     }
     if let JsValue::Object(id) = value
-        && let Some(Class::Array(elements)) = vm.heap.get(*id).map(|o| &o.class)
+        && let Some(object) = vm.heap.get(*id).filter(|o| o.props.is_empty())
+        && let Class::Array(elements) = &object.class
     {
         return Ok(elements
             .iter()

@@ -1,6 +1,5 @@
 /** Layout shapes Eye cannot place exactly fall back to block layout instead of refusing the page. */
 use crate::document::{Document, Node};
-use std::collections::BTreeMap;
 
 /** Noted when a flex container falls back to block layout. */
 const FLEX_AS_BLOCK: &str =
@@ -44,13 +43,13 @@ fn demote(document: &mut Document) -> Vec<&'static str> {
     .collect()
 }
 
-/** Flex on table internals, controls, inside tables, or over bare text or tables becomes block. */
+/** Flex on table internals, controls, or over bare text or tables becomes block. Flex inside a
+table cell stays flex, as Blink lays it out. */
 fn demote_flex(document: &mut Document) -> bool {
-    let index = positions(document);
     let mut changed = false;
     for position in 0..document.nodes.len() {
         let node = &document.nodes[position];
-        if node.style.display_flex && unsupported_flex(document, &index, node) {
+        if node.style.display_flex && unsupported_flex(document, node) {
             document.nodes[position].style.display_flex = false;
             changed = true;
         }
@@ -59,14 +58,13 @@ fn demote_flex(document: &mut Document) -> bool {
 }
 
 /** The shapes the flex layout code refuses. */
-fn unsupported_flex(document: &Document, index: &BTreeMap<usize, usize>, node: &Node) -> bool {
+fn unsupported_flex(document: &Document, node: &Node) -> bool {
     NO_FLEX_TAGS.contains(&node.tag.as_str())
         || (node.tag == "button"
             && !document
                 .nodes
                 .iter()
                 .any(|child| child.parent == Some(node.local_id) && !child.hidden()))
-        || ancestors(document, index, node).any(|ancestor| ancestor.tag == "table")
         || document
             .nodes
             .iter()
@@ -86,29 +84,4 @@ fn clear_auto_margins(document: &mut Document) -> bool {
         }
     }
     changed
-}
-
-/** Vec position of each node identity. */
-fn positions(document: &Document) -> BTreeMap<usize, usize> {
-    document
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(position, node)| (node.local_id, position))
-        .collect()
-}
-
-/** Ancestors nearest first, bounded by the tree validation that runs later. */
-fn ancestors<'a>(
-    document: &'a Document,
-    index: &'a BTreeMap<usize, usize>,
-    node: &Node,
-) -> impl Iterator<Item = &'a Node> + 'a {
-    let mut parent = node.parent;
-    std::iter::from_fn(move || {
-        let node = &document.nodes[*index.get(&parent?)?];
-        parent = node.parent;
-        Some(node)
-    })
-    .take(crate::constants::DOCUMENT_DEPTH)
 }
