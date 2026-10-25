@@ -128,9 +128,12 @@ fn cross_origin_fetch_without_allow_origin_fails() {
     assert!(!texts(&page).contains("secret"), "{page}");
 }
 
-/** A same-origin request that redirects to another origin fails and sends nothing there. */
+/** A same-origin request redirected to another origin follows the redirect as Fetch's CORS
+mode does (Chrome sends it, with an Origin header), and with no Access-Control-Allow-Origin
+the page cannot read the response. Cookies are host-scoped, not port-scoped (RFC 6265), so
+the two loopback fixtures share them, as they would in Chrome. */
 #[test]
-fn redirect_to_another_origin_fails_and_sends_no_cookies() {
+fn redirect_to_another_origin_is_unreadable_without_cors() {
     let other = Fixture::routes(vec![("/data", reply("text/plain", "", "secret"))]);
     let target: &'static str = Box::leak(format!("{}/data", other.url).into_boxed_str());
     let fixture = Fixture::routes(vec![
@@ -149,7 +152,11 @@ fn redirect_to_another_origin_fails_and_sends_no_cookies() {
     let page = agent_call(&mut runtime, "page.navigate", json!({"url":fixture.url})).unwrap();
     assert!(texts(&page).contains("failed"), "{page}");
     assert!(!texts(&page).contains("secret"), "{page}");
-    assert_eq!(other.requests.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let sent = other.last_request.lock().unwrap().clone();
+    assert!(
+        sent.contains(&format!("Origin: {}", fixture.url.trim_end_matches('/'))),
+        "{sent}"
+    );
 }
 
 /** `credentials: 'omit'` sends no cookies even to the page's own origin. */
