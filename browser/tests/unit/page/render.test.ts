@@ -821,3 +821,41 @@ describe('gap rows and clipping in TOON and JSONL', () => {
     }
   });
 });
+
+/** A results page cut by the analyzer to products 250 to 2749, products 1476 to 1523 on screen: each a link row and a price row. */
+function shopResults() {
+  const on = (n: number) => n >= 1476 && n <= 1523;
+  const rows = (n: number): Block[] => [
+    {
+      id: n + 401,
+      index: 2 * n + 400,
+      kind: 'link',
+      region: 'main',
+      state: on(n) ? '' : 'off-screen',
+      target: `/p/${n}`,
+      text: `Product ${n}`,
+      screen: on(n),
+    },
+    { index: 2 * n + 401, kind: 'text', region: 'main', text: `$${n}`, screen: on(n) },
+  ];
+  const facts = {
+    elements: '3400 total, 48 visible',
+    scroll: '50% (26584px of 54016px)',
+    title: 'Results',
+    url: 'file:///tmp/oya-analyzer-dom-D4Daf7/long-results.html',
+    viewport: '1200x849',
+  };
+  return { facts, totalBlocks: 6400, blocks: Array.from({ length: 2500 }, (_, i) => rows(i + 250)).flat() };
+}
+
+describe('a cut a few characters over its budget', () => {
+  it('keeps the products on screen instead of falling back to no rows', () => {
+    // The first pick lands 4 characters over, less than one row; the refit must still take a row off.
+    const page = shopResults();
+    for (const format of ['toon', 'jsonl']) {
+      const text = createRenderer(format).forAgent(page, 20000);
+      assert.ok(text.length <= 20000, format);
+      for (const n of [1476, 1500, 1523]) assert.ok(text.includes(`Product ${n}`), `${format} keeps Product ${n}`);
+    }
+  });
+});
