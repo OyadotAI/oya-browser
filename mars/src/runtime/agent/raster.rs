@@ -17,6 +17,7 @@ use crate::document::{
 use crate::protocol::{EngineError, EngineResult, parameters};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::rc::Rc;
 
 /// Longest edge a screenshot may have, bounding its memory to a few megabytes.
 const SHOT_EDGE: f64 = 2048.0;
@@ -39,6 +40,22 @@ struct Shot {
     node_id: Option<String>,
 }
 
+/// Blur taps (mask samples plus both convolution passes) one screenshot may spend on box
+/// shadows; a shadow that does not fit in what is left paints nothing.
+const SHOT_BLUR_WORK: usize = 1 << 28;
+/// Widest Gaussian a shadow blurs with: sigma SHOT_EDGE, a blur radius of twice the shot edge,
+/// already wider than any canvas it could shade.
+const MAX_SIGMA: f64 = SHOT_EDGE;
+/// SVG drawing work (tile pixels plus edge rows filled) one screenshot may spend; a drawing that
+/// does not fit in what is left paints nothing, like a broken image.
+const SHOT_DRAW_WORK: usize = 1 << 25;
+/// Flattened edges (each cubic counts CUBIC_STEPS) one drawing may fill; past them it paints
+/// nothing, like a broken image.
+const DRAWN_EDGES: usize = 1 << 16;
+
+/** SVG tiles drawn this screenshot, by markup and tile size; None when the budget refused one. */
+type Drawn = std::collections::HashMap<(Rc<str>, u64, u64), Option<Rc<Bitmap>>>;
+
 /** A window onto document coordinates, one pixel per logical point. */
 struct Canvas {
     left: f64,
@@ -48,6 +65,14 @@ struct Canvas {
     pixels: Vec<u8>,
     /** Glyph bitmap pixels this screenshot may still draw; past them runs paint as bars. */
     glyph_pixels: usize,
+    /** Blur taps this screenshot may still spend; past them blurred shadows paint nothing. */
+    blur_work: usize,
+    /** SVG drawing work this screenshot may still spend; past it drawings paint nothing. */
+    draw_work: usize,
+    /** Drawings already rasterized, so a tile repeated across layers or boxes draws once. */
+    drawn: Drawn,
+    /** Natural sizes of drawings already parsed, by markup. */
+    naturals: std::collections::HashMap<Rc<str>, Natural>,
 }
 
 impl Canvas {
@@ -65,6 +90,10 @@ impl Canvas {
             height,
             pixels,
             glyph_pixels: glyphs::SHOT_GLYPH_PIXELS,
+            blur_work: SHOT_BLUR_WORK,
+            draw_work: SHOT_DRAW_WORK,
+            drawn: Drawn::new(),
+            naturals: std::collections::HashMap::new(),
         }
     }
     /** Blend one color over a document rectangle, clipped to the canvas and an optional clip. */
@@ -235,7 +264,7 @@ impl Canvas {
         keep: &dyn Fn(f64, f64) -> bool,
         color: [u8; 4],
     ) {
-        let sigma = blur.max(0.0) / 2.0;
+        let sigma = (blur.max(0.0) / 2.0).min(MAX_SIGMA);
         if sigma <= 0.0 {
             self.shade(rect, clip, |x, y| {
                 (shape(x, y) && keep(x, y)).then_some(color)
@@ -243,12 +272,14 @@ impl Canvas {
             return;
         }
         let reach = (sigma * BLUR_REACH).ceil();
-        let region = [
-            (rect[0] - reach).floor(),
-            (rect[1] - reach).floor(),
-            (rect[2] + 2.0 * reach).ceil() + 1.0,
-            (rect[3] + 2.0 * reach).ceil() + 1.0,
-        ];
+        let Some(region) = self.blur_region(rect, clip, reach) else {
+            return;
+        };
+        let work = region[2] * region[3] * (4.0 * reach + 3.0);
+        if work > self.blur_work as f64 {
+            return;
+        }
+        self.blur_work -= work as usize;
         let coverage = blurred(region, sigma, shape);
         let columns = region[2] as usize;
         self.shade(region, clip, |x, y| {
@@ -261,6 +292,40 @@ impl Canvas {
             out[3] = (f64::from(color[3]) * alpha.min(1.0)).round() as u8;
             Some(out)
         });
+    }
+    /**
+     * The whole-pixel region a shadow over `rect` blurs: the rect grown by `reach`, cut to the
+     * canvas and the clip grown by `reach` (plus a pixel of slack), since pixels farther out
+     * cannot reach a painted one. The grid stays on the uncut region's whole pixels, so every
+     * painted pixel's coverage is unchanged; None when nothing is left.
+     */
+    fn blur_region(&self, rect: [f64; 4], clip: Option<&ClipRect>, reach: f64) -> Option<[f64; 4]> {
+        let mut seen = [
+            self.left,
+            self.top,
+            self.left + self.width as f64,
+            self.top + self.height as f64,
+        ];
+        if let Some(c) = clip {
+            seen = [
+                seen[0].max(c.x),
+                seen[1].max(c.y),
+                seen[2].min(c.x + c.width),
+                seen[3].min(c.y + c.height),
+            ];
+        }
+        let (x0, y0) = ((rect[0] - reach).floor(), (rect[1] - reach).floor());
+        let x1 = x0 + (rect[2] + 2.0 * reach).ceil() + 1.0;
+        let y1 = y0 + (rect[3] + 2.0 * reach).ceil() + 1.0;
+        let (x0, y0) = (
+            x0.max((seen[0] - reach).floor() - 1.0),
+            y0.max((seen[1] - reach).floor() - 1.0),
+        );
+        let (x1, y1) = (
+            x1.min((seen[2] + reach).ceil() + 1.0),
+            y1.min((seen[3] + reach).ceil() + 1.0),
+        );
+        (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
     }
     /** Inset shadows inside the padding box: everything but the hole, the padding box moved by
      * the offset and shrunk by the spread with its inner radii shrunk to match. */
@@ -423,7 +488,7 @@ impl Canvas {
             (item.width - bl - br).max(0.0),
             (item.height - bt - bb).max(0.0),
         ];
-        let (w, h) = concrete_size(*size, [origin[2], origin[3]], picture.natural());
+        let (w, h) = concrete_size(*size, [origin[2], origin[3]], self.natural(picture));
         let auto = match *size {
             ImageSize::Auto => [true; 2],
             ImageSize::Fixed { width, height } => [width.is_none(), height.is_none()],
@@ -434,13 +499,39 @@ impl Canvas {
         let bitmap = match picture {
             Picture::Raster(bitmap) => bitmap,
             Picture::Vector(markup) => {
-                drawn = Bitmap::draw(markup, w, h);
-                &drawn
+                let Some(bitmap) = self.drawing(markup, w, h) else {
+                    return;
+                };
+                drawn = bitmap;
+                &*drawn
             }
         };
         let tiling = Tiling::place(origin, (w, h), *position, *repeat, *space);
         let bounds = [item.x, item.y, item.width, item.height];
         self.tile(bounds, item.clip.as_ref(), tiling, bitmap, fade);
+    }
+    /** A picture's natural size, parsing each drawing's markup once per screenshot. */
+    fn natural(&mut self, picture: &Picture) -> Natural {
+        let Picture::Vector(markup) = picture else {
+            return picture.natural();
+        };
+        if let Some(natural) = self.naturals.get(markup) {
+            return *natural;
+        }
+        let natural = picture.natural();
+        self.naturals.insert(markup.clone(), natural);
+        natural
+    }
+    /** `markup` drawn into a `w` by `h` tile, once per screenshot and size, within the drawing
+     * budget; None when the budget or the edge bound refused it. */
+    fn drawing(&mut self, markup: &Rc<str>, w: f64, h: f64) -> Option<Rc<Bitmap>> {
+        let key = (markup.clone(), w.to_bits(), h.to_bits());
+        if let Some(drawn) = self.drawn.get(&key) {
+            return drawn.clone();
+        }
+        let drawn = Bitmap::draw(markup, w, h, &mut self.draw_work).map(Rc::new);
+        self.drawn.insert(key, drawn.clone());
+        drawn
     }
     /**
      * Borders as Blink's `BoxBorderPainter` draws them: each side owns the part of the border
@@ -770,7 +861,7 @@ fn blurred(region: [f64; 4], sigma: f64, shape: &dyn Fn(f64, f64) -> bool) -> Ve
 /** A background picture: a decoded bitmap, or an SVG drawing rasterized at its tile size. */
 enum Picture {
     Raster(Bitmap),
-    Vector(String),
+    Vector(Rc<str>),
 }
 /** Natural width, height and aspect ratio (width over height); any may be absent. */
 type Natural = (Option<f64>, Option<f64>, Option<f64>);
@@ -778,7 +869,7 @@ impl Picture {
     /** A bitmap by its signature, or `image/svg+xml` markup kept for drawing. */
     fn decode(mime: &str, bytes: &[u8]) -> Option<Self> {
         if mime.eq_ignore_ascii_case("image/svg+xml") {
-            return Some(Self::Vector(String::from_utf8_lossy(bytes).into_owned()));
+            return Some(Self::Vector(String::from_utf8_lossy(bytes).into()));
         }
         Bitmap::decode(bytes).map(Self::Raster)
     }
@@ -874,41 +965,74 @@ fn concrete_size(size: ImageSize, [aw, ah]: [f64; 2], (nw, nh, ratio): Natural) 
 
 impl Bitmap {
     /** An SVG drawing's fills rasterized into a `width` by `height` tile (capped at
-     * DRAWN_EDGE a side), each pixel painted whose center the path's winding rule covers. */
-    fn draw(markup: &str, width: f64, height: f64) -> Self {
+     * DRAWN_EDGE a side), each pixel painted whose center the path's winding rule covers. The
+     * tile's pixels and every edge row filled are charged to `work`; a drawing that does not fit,
+     * or flattens to more than DRAWN_EDGES edges, is None and paints nothing. */
+    fn draw(markup: &str, width: f64, height: f64, work: &mut usize) -> Option<Self> {
         let edge = |v: f64| v.ceil().clamp(1.0, DRAWN_EDGE) as u32;
         let (bw, bh) = (edge(width), edge(height));
         let (sx, sy) = (
             f64::from(bw) / width.max(f64::MIN_POSITIVE),
             f64::from(bh) / height.max(f64::MIN_POSITIVE),
         );
+        *work = work.checked_sub(bw as usize * bh as usize)?;
         let mut bitmap = Self {
             width: bw,
             height: bh,
             rgba: vec![0; (bw * bh * 4) as usize],
         };
+        let mut edges_left = DRAWN_EDGES;
         for path in crate::document::VectorPath::from_image(markup, [0.0, 0.0, width, height]) {
             let Some(mut color) = path.fill.as_deref().and_then(painter_rgba) else {
                 continue;
             };
             color[3] = (f64::from(color[3]) * path.fill_opacity.clamp(0.0, 1.0)).round() as u8;
+            edges_left = edges_left.checked_sub(pieces(&path.commands))?;
             let edges = flatten(&path.commands, sx, sy);
-            bitmap.fill(
-                &edges,
-                path.fill_rule == crate::document::FillRule::EvenOdd,
-                color,
-            );
+            let even_odd = path.fill_rule == crate::document::FillRule::EvenOdd;
+            bitmap.fill(&edges, even_odd, color, work)?;
         }
-        bitmap
+        Some(bitmap)
     }
-    /** Source-over `color` into every pixel whose center the edges enclose. */
-    fn fill(&mut self, edges: &[[f64; 4]], even_odd: bool, color: [u8; 4]) {
+    /**
+     * Source-over `color` into every pixel whose center the edges enclose, scanning an active
+     * edge table so each edge is visited only on the rows it crosses. Those rows are charged to
+     * `work` first; None, painting nothing, when they do not fit.
+     */
+    fn fill(
+        &mut self,
+        edges: &[[f64; 4]],
+        even_odd: bool,
+        color: [u8; 4],
+        work: &mut usize,
+    ) -> Option<()> {
+        // A row's center y crosses an edge when min(y0, y1) <= y < max(y0, y1).
+        let height = f64::from(self.height);
+        let first = |y: f64| (y - 0.5).ceil().clamp(0.0, height) as u32;
+        let mut spans: Vec<(u32, u32, usize)> = edges
+            .iter()
+            .enumerate()
+            .map(|(at, [_, y0, _, y1])| (first(y0.min(*y1)), first(y0.max(*y1)), at))
+            .filter(|(start, end, _)| start < end)
+            .collect();
+        let rows: usize = spans.iter().map(|(s, e, _)| (e - s) as usize).sum();
+        *work = work.checked_sub(rows)?;
+        spans.sort_by_key(|span| span.0);
+        let (mut next, mut active) = (0, Vec::<(u32, usize)>::new());
         for row in 0..self.height {
+            while spans.get(next).is_some_and(|span| span.0 <= row) {
+                active.push((spans[next].1, spans[next].2));
+                next += 1;
+            }
+            active.retain(|(end, _)| *end > row);
+            if active.is_empty() {
+                continue;
+            }
             let y = f64::from(row) + 0.5;
-            let mut crossings: Vec<(f64, i32)> = edges
+            let mut crossings: Vec<(f64, i32)> = active
                 .iter()
-                .filter(|[_, y0, _, y1]| (*y0 <= y) != (*y1 <= y))
-                .map(|[x0, y0, x1, y1]| {
+                .map(|(_, at)| {
+                    let [x0, y0, x1, y1] = edges[*at];
                     let x = x0 + (y - y0) * (x1 - x0) / (y1 - y0);
                     (x, if y1 > y0 { 1 } else { -1 })
                 })
@@ -927,6 +1051,7 @@ impl Bitmap {
                 }
             }
         }
+        Some(())
     }
     /** Blend `color` over the pixels of `row` whose centers lie in [x0, x1). */
     fn span(&mut self, row: u32, x0: f64, x1: f64, color: [u8; 4]) {
@@ -949,6 +1074,16 @@ impl Bitmap {
             self.rgba[at + 3] = (out * 255.0).round() as u8;
         }
     }
+}
+
+/** The edges `flatten` makes of `commands`: one per command, CUBIC_STEPS per cubic, plus the
+ * closing edge, counted before any are built. */
+fn pieces(commands: &[crate::document::PathCommand]) -> usize {
+    let piece = |command: &crate::document::PathCommand| match command {
+        crate::document::PathCommand::Cubic { .. } => CUBIC_STEPS,
+        _ => 1,
+    };
+    commands.iter().map(piece).sum::<usize>() + 1
 }
 
 /** Path commands as straight edges `[x0, y0, x1, y1]` scaled by `sx`, `sy`, every subpath

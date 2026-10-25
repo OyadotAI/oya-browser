@@ -53,7 +53,7 @@ fn a_missing_dimension_without_ratio_takes_the_area() {
  * gives the ratio. */
 #[test]
 fn svg_natural_size_reads_the_root() {
-    let svg = |attrs: &str| Picture::Vector(format!("<svg {attrs}></svg>")).natural();
+    let svg = |attrs: &str| Picture::Vector(format!("<svg {attrs}></svg>").into()).natural();
     assert_eq!(
         svg(r#"width="8px" height="32px" viewBox="0 0 4 64""#),
         (Some(8.0), Some(32.0), Some(0.25))
@@ -68,7 +68,7 @@ fn svg_natural_size_reads_the_root() {
 #[test]
 fn drawing_fills_the_tile() {
     let markup = r#"<svg width="8" height="32" viewBox="0 0 4 64" preserveAspectRatio="none"><rect y="0" width="100%" height="50%" fill="lime"/><rect y="50%" width="100%" height="50%" fill="aqua"/></svg>"#;
-    let bitmap = Bitmap::draw(markup, 16.0, 64.0);
+    let bitmap = Bitmap::draw(markup, 16.0, 64.0, &mut SHOT_DRAW_WORK.clone()).unwrap();
     assert_eq!((bitmap.width, bitmap.height), (16, 64));
     assert_eq!(bitmap.sample(0.5, 0.25), [0, 255, 0, 255]);
     assert_eq!(bitmap.sample(0.5, 0.75), [0, 255, 255, 255]);
@@ -134,4 +134,82 @@ fn round_fits_whole_tiles() {
         rounded([100.0, 100.0], (30.0, 40.0), [true, true], [true, true]),
         (100.0 / 3.0, 100.0 / 3.0)
     );
+}
+
+/** A shadow cut to the canvas paints the same pixels as one blurred over its whole region: a
+ * canvas far larger than the shadow keeps the uncut region, and its window must match. */
+#[test]
+fn clipped_shadow_blur_matches_the_whole_region() {
+    let rect = [80.0, 30.0, 60.0, 40.0];
+    let paint = |canvas: &mut Canvas| {
+        let shape = |x: f64, y: f64| inside_rounded(x, y, rect, [[6.0; 2]; 4]);
+        canvas.shadow(rect, None, 20.0, &shape, &|_, _| true, [255, 0, 0, 255]);
+    };
+    let mut small = Canvas::new(0.0, 0.0, 100.0, 100.0, WHITE);
+    let mut large = Canvas::new(-200.0, -200.0, 500.0, 500.0, WHITE);
+    paint(&mut small);
+    paint(&mut large);
+    for y in 0..100 {
+        let row = |canvas: &Canvas, left: usize, top: usize| {
+            let at = ((y + top) * canvas.width + left) * 3;
+            canvas.pixels[at..at + 300].to_vec()
+        };
+        assert_eq!(row(&small, 0, 0), row(&large, 200, 200), "row {y}");
+    }
+}
+
+/** The active edge table fills exactly the pixels a scan of every edge on every row does. */
+#[test]
+fn active_edge_fill_matches_a_full_scan() {
+    let star: Vec<(f64, f64)> = (0..11)
+        .map(|i| {
+            let (angle, radius) = (f64::from(i) * 0.4 * std::f64::consts::PI, 30.0);
+            (32.3 + radius * angle.cos(), 31.7 + radius * angle.sin())
+        })
+        .collect();
+    let edges: Vec<[f64; 4]> = star
+        .windows(2)
+        .map(|p| [p[0].0, p[0].1, p[1].0, p[1].1])
+        .collect();
+    let blank = || Bitmap {
+        width: 64,
+        height: 64,
+        rgba: vec![0; 64 * 64 * 4],
+    };
+    for even_odd in [false, true] {
+        let mut fast = blank();
+        fast.fill(&edges, even_odd, [9, 99, 199, 200], &mut usize::MAX.clone())
+            .unwrap();
+        let mut slow = blank();
+        for row in 0..64 {
+            let y = f64::from(row) + 0.5;
+            let mut crossings: Vec<(f64, i32)> = edges
+                .iter()
+                .filter(|[_, y0, _, y1]| (*y0 <= y) != (*y1 <= y))
+                .map(|[x0, y0, x1, y1]| {
+                    (
+                        x0 + (y - y0) * (x1 - x0) / (y1 - y0),
+                        if y1 > y0 { 1 } else { -1 },
+                    )
+                })
+                .collect();
+            crossings.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut winding = 0;
+            for pair in crossings.windows(2) {
+                winding += pair[0].1;
+                if (even_odd && winding % 2 != 0) || (!even_odd && winding != 0) {
+                    slow.span(row, pair[0].0, pair[1].0, [9, 99, 199, 200]);
+                }
+            }
+        }
+        assert!(fast.rgba == slow.rgba, "even_odd {even_odd}");
+    }
+}
+
+/** A drawing whose fill rows pass the budget paints nothing instead of stalling. */
+#[test]
+fn a_drawing_past_the_budget_paints_nothing() {
+    let markup = r#"<svg width="8" height="8"><rect width="8" height="8" fill="lime"/></svg>"#;
+    assert!(Bitmap::draw(markup, 64.0, 64.0, &mut 100).is_none());
+    assert!(Bitmap::draw(markup, 64.0, 64.0, &mut (64 * 64 + 64 * 2)).is_some());
 }
