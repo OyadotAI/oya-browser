@@ -50,7 +50,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** ToBigInt over a primitive (Numbers refuse, as BigInt.asIntN's argument does). */
-fn to_bigint(vm: &mut Vm, value: &JsValue) -> Res<i128> {
+pub(in crate::v9) fn to_bigint(vm: &mut Vm, value: &JsValue) -> Res<i128> {
     match vm.to_primitive(value, Hint::Number)? {
         JsValue::BigInt(big) => Ok(big),
         JsValue::Boolean(flag) => Ok(i128::from(flag)),

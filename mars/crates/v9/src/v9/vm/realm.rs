@@ -119,6 +119,8 @@ pub(in crate::v9) struct Ids {
     pub iterator_prototype: ObjectId,
     pub window_prototype: ObjectId,
     pub array_values: ObjectId,
+    /** %ThrowTypeError%: the frozen thrower behind restricted `caller`, `arguments` and `callee`. */
+    pub throw_type_error: ObjectId,
     pub event_target_prototype: ObjectId,
     pub node_prototype: ObjectId,
     pub element_prototype: ObjectId,

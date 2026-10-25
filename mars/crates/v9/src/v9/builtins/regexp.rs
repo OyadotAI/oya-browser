@@ -4,31 +4,59 @@ use crate::protocol::EngineError;
 use crate::v9::regexp::{self, Captures, MatchError};
 use crate::v9::vm::data::{Class, IterState, RegExpData};
 use crate::v9::vm::heap::{Object, Prop, Slot, WRITABLE};
+use crate::v9::vm::realm::Static;
 use crate::v9::vm::realm::{realm, symbol};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/** The %RegExp% constructor and the builtin exec, recorded at install so SpeciesConstructor and
+RegExpExec can tell the intrinsic from a script's replacement. The realm is built once per process,
+so the identities are the same in every VM. */
+static REGEXP_CTOR: AtomicU32 = AtomicU32::new(0);
+static BUILTIN_EXEC: AtomicU32 = AtomicU32::new(0);
 
 /** RegExp and RegExp.prototype. */
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
     b.ids.regexp_prototype = proto;
     let ctor = b.constructor("RegExp", 2, construct, proto, None);
+    REGEXP_CTOR.store(ctor, Ordering::Relaxed);
     b.global("RegExp", ctor);
-    b.method(proto, "exec", 1, exec);
+    let species = b.function("get [Symbol.species]", 0, species);
+    b.put(
+        ctor,
+        Key::Sym(symbol::SPECIES),
+        Static::Accessor(Some(species), None),
+        crate::v9::vm::heap::CONFIGURABLE,
+    );
+    let exec_id = b.method(proto, "exec", 1, exec);
+    BUILTIN_EXEC.store(exec_id, Ordering::Relaxed);
     b.method(proto, "test", 1, test);
     b.method(proto, "toString", 0, to_string);
     b.method(proto, "compile", 2, recompile);
-    b.builtin_accessor(proto, "source", Some(source), None);
-    b.builtin_accessor(proto, "flags", Some(flags), None);
-    for (name, getter) in [
-        ("global", global as crate::v9::vm::realm::NativeFn),
-        ("ignoreCase", ignore_case),
-        ("multiline", multiline),
-        ("dotAll", dot_all),
-        ("unicode", unicode),
-        ("sticky", sticky),
-        ("hasIndices", has_indices),
+    for (name, getter_name, getter) in [
+        (
+            "source",
+            "get source",
+            source as crate::v9::vm::realm::NativeFn,
+        ),
+        ("flags", "get flags", flags),
+        ("global", "get global", global),
+        ("ignoreCase", "get ignoreCase", ignore_case),
+        ("multiline", "get multiline", multiline),
+        ("dotAll", "get dotAll", dot_all),
+        ("unicode", "get unicode", unicode),
+        ("unicodeSets", "get unicodeSets", unicode_sets),
+        ("sticky", "get sticky", sticky),
+        ("hasIndices", "get hasIndices", has_indices),
     ] {
-        b.builtin_accessor(proto, name, Some(getter), None);
+        let get = b.function(getter_name, 0, getter);
+        b.put(
+            proto,
+            Key::from(name),
+            Static::Accessor(Some(get), None),
+            crate::v9::vm::heap::CONFIGURABLE,
+        );
     }
     b.symbol_method(
         proto,
@@ -49,16 +77,41 @@ pub(super) fn install(b: &mut Builder) {
     b.symbol_method(proto, symbol::SEARCH, "[Symbol.search]", 1, symbol_search);
 }
 
+/** The largest ToLength result, 2^53 - 1. */
+const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
+
+/** The %RegExp% intrinsic as a value. */
+fn regexp_ctor() -> JsValue {
+    JsValue::Object(REGEXP_CTOR.load(Ordering::Relaxed))
+}
+
+/** ToLength, which lastIndex and every index read back from a match go through. */
+fn to_length(vm: &mut Vm, value: &JsValue) -> Res<f64> {
+    Ok(vm.to_integer(value)?.clamp(0.0, MAX_LENGTH))
+}
+
+/** AdvanceStringIndex over a ToLength index, which can sit past the string's end. */
+fn advance_index(text: &JsString, index: f64, unicode: bool) -> f64 {
+    if index + 1.0 >= text.len() as f64 {
+        return index + 1.0;
+    }
+    advance(text, index as usize, unicode) as f64
+}
+
 impl Vm<'_> {
     /** A new RegExp object; a bad pattern throws SyntaxError. */
     pub fn new_regexp(&mut self, source: JsString, flags: &str) -> Res<ObjectId> {
+        self.alloc_regexp(source, flags, realm().ids.regexp_prototype)
+    }
+    /** RegExpAlloc plus RegExpInitialize: compile first, so a bad pattern allocates nothing. */
+    fn alloc_regexp(&mut self, source: JsString, flags: &str, proto: ObjectId) -> Res<ObjectId> {
         self.regexp_compile(&source, flags)?;
         let id = self.alloc(Object::new(
             Class::RegExp(Box::new(RegExpData {
                 source,
                 flags: flags.to_string(),
             })),
-            Some(realm().ids.regexp_prototype),
+            Some(proto),
         ))?;
         self.heap.put(
             id,
@@ -109,42 +162,33 @@ impl Vm<'_> {
             EngineError::limit("regular expression steps", crate::constants::REGEXP_STEPS).into()
         })
     }
-    /** RegExpBuiltinExec: honors lastIndex for global and sticky patterns. */
+    /** RegExpBuiltinExec: lastIndex is always read through ToLength (it is observable), but only
+    global and sticky patterns start from it or write it back. */
     pub fn regexp_exec_raw(&mut self, id: ObjectId, text: &JsString) -> Res<Option<Captures>> {
         let (_, data) = self.regexp_data(&JsValue::Object(id))?;
         let program = self.regexp_compile(&data.source, &data.flags)?;
+        let this = JsValue::Object(id);
+        let value = self.get(&this, &key("lastIndex"))?;
+        let last = to_length(self, &value)?;
         let uses_last = program.global || program.sticky;
-        let last = if uses_last {
-            let value = self.get(&JsValue::Object(id), &key("lastIndex"))?;
-            self.to_integer(&value)?.max(0.0) as usize
-        } else {
-            0
-        };
-        if last > text.len() {
-            self.set(
-                &JsValue::Object(id),
-                key("lastIndex"),
-                JsValue::Number(0.0),
-                true,
-            )?;
+        let start = if uses_last { last } else { 0.0 };
+        if start > text.len() as f64 {
+            if uses_last {
+                self.set(&this, key("lastIndex"), JsValue::Number(0.0), true)?;
+            }
             return Ok(None);
         }
-        let result = self.run_regexp(&program, text, last)?;
+        let result = self.run_regexp(&program, text, start as usize)?;
         if uses_last {
             let next = match &result {
                 Some(captures) => captures[0].map_or(0, |(_, end)| end),
                 None => 0,
             };
-            self.set(
-                &JsValue::Object(id),
-                key("lastIndex"),
-                JsValue::Number(next as f64),
-                true,
-            )?;
+            self.set(&this, key("lastIndex"), JsValue::Number(next as f64), true)?;
         }
         Ok(result)
     }
-    /** The match array exec returns. */
+    /** The match array exec returns, with `indices` when the pattern has the d flag. */
     pub fn match_array(
         &mut self,
         id: ObjectId,
@@ -163,32 +207,65 @@ impl Vm<'_> {
             });
         }
         let array = self.new_array(elements.clone())?;
+        self.pin(JsValue::Object(array));
         let index = captures[0].map_or(0, |(start, _)| start);
         self.put(array, "index", JsValue::Number(index as f64))?;
         self.put(array, "input", JsValue::String(text.clone()))?;
-        let groups = if program.names.is_empty() {
-            JsValue::Undefined
-        } else {
-            let groups = self.alloc(Object::new(Class::Plain, None))?;
-            for (name, index) in &program.names {
-                self.put(
-                    groups,
-                    name,
-                    elements.get(*index).cloned().unwrap_or(JsValue::Undefined),
-                )?;
+        let groups = self.groups_object(&program, &elements)?;
+        self.put(array, "groups", groups)?;
+        if program.indices {
+            let indices = self.match_indices(&program, captures)?;
+            self.put(array, "indices", indices)?;
+        }
+        Ok(JsValue::Object(array))
+    }
+    /** The null-prototype `groups` object mapping each name to its entry, or undefined. */
+    fn groups_object(&mut self, program: &regexp::Program, values: &[JsValue]) -> Res<JsValue> {
+        if program.names.is_empty() {
+            return Ok(JsValue::Undefined);
+        }
+        let groups = self.alloc(Object::new(Class::Plain, None))?;
+        for (name, index) in &program.names {
+            let value = values.get(*index).cloned().unwrap_or(JsValue::Undefined);
+            self.put(groups, name, value)?;
+        }
+        Ok(JsValue::Object(groups))
+    }
+    /** MakeMatchIndicesIndexPairArray: a [start, end] pair (or undefined) per capture, plus
+    `groups` of the same pairs by name. */
+    fn match_indices(&mut self, program: &regexp::Program, captures: &Captures) -> Res<JsValue> {
+        let mut pairs = Vec::with_capacity(captures.len());
+        for capture in captures {
+            pairs.push(match capture {
+                Some((start, end)) => JsValue::Object(self.new_array(vec![
+                    JsValue::Number(*start as f64),
+                    JsValue::Number(*end as f64),
+                ])?),
+                None => JsValue::Undefined,
+            });
+            if let Some(JsValue::Object(pair)) = pairs.last() {
+                self.pin(JsValue::Object(*pair));
             }
-            JsValue::Object(groups)
-        };
+        }
+        let array = self.new_array(pairs.clone())?;
+        self.pin(JsValue::Object(array));
+        let groups = self.groups_object(program, &pairs)?;
         self.put(array, "groups", groups)?;
         Ok(JsValue::Object(array))
     }
-    /** RegExpExec: a user `exec` if overridden, else the builtin. */
+    /** RegExpExec: a script's `exec` must return an object or null; without one the receiver
+    must be a real RegExp. */
     pub fn regexp_exec(&mut self, regexp: &JsValue, text: &JsString) -> Res<JsValue> {
         let exec = self.get(regexp, &key("exec"))?;
-        let builtin =
-            matches!(&exec, JsValue::Object(id) if *id >= crate::v9::vm::heap::NATIVE_BASE);
+        let builtin = exec == JsValue::Object(BUILTIN_EXEC.load(Ordering::Relaxed));
         if !builtin && self.is_callable(&exec) {
-            return self.call(exec, regexp.clone(), vec![JsValue::String(text.clone())]);
+            let result = self.call(exec, regexp.clone(), vec![JsValue::String(text.clone())])?;
+            if !matches!(result, JsValue::Object(_) | JsValue::Null) {
+                return Err(self.type_error(
+                    "RegExp exec method returned something other than an Object or null",
+                ));
+            }
+            return Ok(result);
         }
         let (id, _) = self.regexp_data(regexp)?;
         match self.regexp_exec_raw(id, text)? {
@@ -196,7 +273,7 @@ impl Vm<'_> {
             None => Ok(JsValue::Null),
         }
     }
-    /** Step a matchAll iterator. */
+    /** %RegExpStringIteratorPrototype%.next: one RegExpExec per step. */
     pub fn matches_step(&mut self, iterator: ObjectId) -> Res<Option<JsValue>> {
         let Some(Class::Iter(state)) = self.heap.get(iterator).map(|o| &o.class) else {
             return Ok(None);
@@ -231,17 +308,8 @@ impl Vm<'_> {
             return Ok(Some(result));
         }
         let matched = self.get(&result, &key("0"))?;
-        let matched = self.to_string(&matched)?;
-        if matched.is_empty() {
-            let last = self.get(&JsValue::Object(regexp), &key("lastIndex"))?;
-            let last = self.to_integer(&last)? as usize;
-            let next = advance(&text, last, unicode);
-            self.set(
-                &JsValue::Object(regexp),
-                key("lastIndex"),
-                JsValue::Number(next as f64),
-                true,
-            )?;
+        if self.to_string(&matched)?.is_empty() {
+            advance_last_index(self, &JsValue::Object(regexp), &text, unicode)?;
         }
         Ok(Some(result))
     }
@@ -260,40 +328,134 @@ pub(in crate::v9) fn advance(text: &JsString, index: usize, unicode: bool) -> us
     index + 1
 }
 
-/** `RegExp(pattern, flags)` and `new RegExp(...)`. */
+/** After an empty match: lastIndex = AdvanceStringIndex(ToLength(lastIndex)), so global loops
+make progress. */
+fn advance_last_index(vm: &mut Vm, rx: &JsValue, text: &JsString, unicode: bool) -> Res<()> {
+    let last = vm.get(rx, &key("lastIndex"))?;
+    let last = to_length(vm, &last)?;
+    let next = advance_index(text, last, unicode);
+    vm.set(rx, key("lastIndex"), JsValue::Number(next), true)
+}
+
+/** IsRegExp: an object whose @@match is truthy, or, with @@match undefined, a real RegExp. */
+pub(in crate::v9) fn is_regexp(vm: &mut Vm, value: &JsValue) -> Res<bool> {
+    let JsValue::Object(id) = value else {
+        return Ok(false);
+    };
+    let matcher = vm.get(value, &Key::Sym(symbol::MATCH))?;
+    if matcher != JsValue::Undefined {
+        return Ok(matcher.truthy());
+    }
+    Ok(matches!(
+        vm.heap.get(*id).map(|o| &o.class),
+        Some(Class::RegExp(_))
+    ))
+}
+
+/** `this` for the generic protocol methods: any object, else a TypeError. */
+fn object_this(vm: &mut Vm, call: &Call, method: &str) -> Res<JsValue> {
+    match &call.this {
+        JsValue::Object(_) => Ok(call.this.clone()),
+        _ => Err(vm.type_error(&format!("{method} called on a non-object"))),
+    }
+}
+
+/** ToString(Get(rx, "flags")): the protocol methods read flags this way, never the slot. */
+fn flags_of(vm: &mut Vm, rx: &JsValue) -> Res<String> {
+    let flags = vm.get(rx, &key("flags"))?;
+    vm.to_text(&flags)
+}
+
+/** SpeciesConstructor(rx, %RegExp%). */
+fn species_constructor(vm: &mut Vm, rx: &JsValue) -> Res<JsValue> {
+    let ctor = vm.get(rx, &key("constructor"))?;
+    if ctor == JsValue::Undefined {
+        return Ok(regexp_ctor());
+    }
+    if !matches!(ctor, JsValue::Object(_)) {
+        return Err(vm.type_error("object.constructor is not an object"));
+    }
+    let species = vm.get(&ctor, &Key::Sym(symbol::SPECIES))?;
+    if species.nullish() {
+        return Ok(regexp_ctor());
+    }
+    if vm.is_constructor(&species) {
+        return Ok(species);
+    }
+    Err(vm.type_error("object.constructor[Symbol.species] is not a constructor"))
+}
+
+/** get RegExp[Symbol.species]: the receiver, so subclasses build their own kind. */
+fn species(_vm: &mut Vm, call: Call) -> Res<JsValue> {
+    Ok(call.this)
+}
+
+/** `RegExp(pattern, flags)` and `new RegExp(...)`, per the spec's RegExp constructor. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let pattern = call.arg(0);
     let flags_arg = call.arg(1);
-    if let JsValue::Object(id) = &pattern
-        && let Some(Class::RegExp(data)) = vm.heap.get(*id).map(|o| &o.class)
-    {
-        let data = (**data).clone();
-        if call.new_target.is_none() && flags_arg == JsValue::Undefined {
-            return Ok(pattern);
+    let pattern_is_regexp = is_regexp(vm, &pattern)?;
+    let new_target = match &call.new_target {
+        Some(target) => target.clone(),
+        None => {
+            let active = JsValue::Object(call.callee);
+            if pattern_is_regexp && flags_arg == JsValue::Undefined {
+                let pattern_ctor = vm.get(&pattern, &key("constructor"))?;
+                if pattern_ctor.same_value(&active) {
+                    return Ok(pattern);
+                }
+            }
+            active
         }
+    };
+    let slot = match &pattern {
+        JsValue::Object(id) => match vm.heap.get(*id).map(|o| &o.class) {
+            Some(Class::RegExp(data)) => Some((**data).clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let (source, flags) = if let Some(data) = slot {
         let flags = if flags_arg == JsValue::Undefined {
-            data.flags.clone()
+            JsValue::String(JsString::from_utf8(&data.flags)?)
         } else {
-            vm.to_text(&flags_arg)?
+            flags_arg
         };
-        return vm.new_regexp(data.source, &flags).map(JsValue::Object);
-    }
-    let source = if pattern == JsValue::Undefined {
+        (JsValue::String(data.source), flags)
+    } else if pattern_is_regexp {
+        let source = vm.get(&pattern, &key("source"))?;
+        let flags = if flags_arg == JsValue::Undefined {
+            vm.get(&pattern, &key("flags"))?
+        } else {
+            flags_arg
+        };
+        (source, flags)
+    } else {
+        (pattern, flags_arg)
+    };
+    let proto = vm.prototype_for(&new_target, realm().ids.regexp_prototype)?;
+    initialize(vm, &source, &flags, proto).map(JsValue::Object)
+}
+
+/** RegExpInitialize's coercions: undefined pattern and flags are empty. */
+fn initialize(vm: &mut Vm, source: &JsValue, flags: &JsValue, proto: ObjectId) -> Res<ObjectId> {
+    let (source, flags) = coerce_source(vm, source, flags)?;
+    vm.alloc_regexp(source, &flags, proto)
+}
+
+/** ToString of a pattern and its flags, with undefined meaning empty. */
+fn coerce_source(vm: &mut Vm, source: &JsValue, flags: &JsValue) -> Res<(JsString, String)> {
+    let source = if *source == JsValue::Undefined {
         JsString::empty()
     } else {
-        vm.to_string(&pattern)?
+        vm.to_string(source)?
     };
-    let flags = if flags_arg == JsValue::Undefined {
+    let flags = if *flags == JsValue::Undefined {
         String::new()
     } else {
-        vm.to_text(&flags_arg)?
+        vm.to_text(flags)?
     };
-    let source = if source.is_empty() {
-        JsString::from_utf8("(?:)")?
-    } else {
-        source
-    };
-    vm.new_regexp(source, &flags).map(JsValue::Object)
+    Ok((source, flags))
 }
 
 /** RegExp.prototype.exec. */
@@ -306,43 +468,105 @@ fn exec(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
 }
 
-/** RegExp.prototype.test. */
+/** RegExp.prototype.test: skips building the match array when exec is the builtin. */
 fn test(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let rx = object_this(vm, &call, "RegExp.prototype.test")?;
     let text = arg_string(vm, &call, 0)?;
-    if let Ok((id, _)) = vm.regexp_data(&call.this) {
-        let exec = vm.get(&call.this, &key("exec"))?;
-        if matches!(&exec, JsValue::Object(f) if *f >= crate::v9::vm::heap::NATIVE_BASE) {
+    if let Ok((id, _)) = vm.regexp_data(&rx) {
+        let exec = vm.get(&rx, &key("exec"))?;
+        if exec == JsValue::Object(BUILTIN_EXEC.load(Ordering::Relaxed)) {
             return Ok(JsValue::Boolean(vm.regexp_exec_raw(id, &text)?.is_some()));
         }
     }
-    let result = vm.regexp_exec(&call.this, &text)?;
+    let result = vm.regexp_exec(&rx, &text)?;
     Ok(JsValue::Boolean(result != JsValue::Null))
 }
 
-/** RegExp.prototype.toString. */
+/** RegExp.prototype.toString: generic over any object's source and flags. */
 fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let source = vm.get(&call.this, &key("source"))?;
-    let source = vm.to_text(&source)?;
-    let flags = vm.get(&call.this, &key("flags"))?;
-    let flags = vm.to_text(&flags)?;
-    text(vm, &format!("/{source}/{flags}"))
+    let rx = object_this(vm, &call, "RegExp.prototype.toString")?;
+    let source = vm.get(&rx, &key("source"))?;
+    let source = vm.to_string(&source)?;
+    let flags = vm.get(&rx, &key("flags"))?;
+    let flags = vm.to_string(&flags)?;
+    let mut out = vec![u16::from(b'/')];
+    out.extend_from_slice(source.as_units());
+    out.push(u16::from(b'/'));
+    out.extend_from_slice(flags.as_units());
+    Ok(JsValue::String(JsString::from_units(out)?))
 }
 
-/** RegExp.prototype.compile (legacy): replace pattern and flags in place. */
+/** RegExp.prototype.compile (Annex B): reinitialize in place; a RegExp pattern lends its slots
+and refuses separate flags, and lastIndex resets through a throwing Set. */
 fn recompile(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let (id, _) = vm.regexp_data(&call.this)?;
-    let source = arg_string(vm, &call, 0)?;
-    let flags = if call.arg(1) == JsValue::Undefined {
-        String::new()
-    } else {
-        arg_string(vm, &call, 1)?.lossy()
+    let pattern = call.arg(0);
+    let flags = call.arg(1);
+    let slot = match &pattern {
+        JsValue::Object(p) => match vm.heap.get(*p).map(|o| &o.class) {
+            Some(Class::RegExp(data)) => Some((**data).clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let (source, flags) = match slot {
+        Some(_) if flags != JsValue::Undefined => {
+            return Err(
+                vm.type_error("Cannot supply flags when constructing one RegExp from another")
+            );
+        }
+        Some(data) => (data.source, data.flags),
+        None => coerce_source(vm, &pattern, &flags)?,
     };
     vm.regexp_compile(&source, &flags)?;
     if let Some(Class::RegExp(data)) = vm.heap.get_mut(id).map(|o| &mut o.class) {
         data.source = source;
         data.flags = flags;
     }
+    vm.set(&call.this, key("lastIndex"), JsValue::Number(0.0), true)?;
     Ok(call.this)
+}
+
+/** EscapeRegExpPattern: `/` outside a class and line terminators are escaped so the source
+reparses as a literal; the empty pattern reads `(?:)`. */
+fn escape_source(source: &JsString) -> Res<JsString> {
+    let units = source.as_units();
+    if units.is_empty() {
+        return Ok(JsString::from_utf8("(?:)")?);
+    }
+    let mut out = Vec::with_capacity(units.len());
+    let (mut escaped, mut class) = (false, false);
+    for &unit in units {
+        let terminator = match unit {
+            0x0a => Some("n"),
+            0x0d => Some("r"),
+            0x2028 => Some("u2028"),
+            0x2029 => Some("u2029"),
+            _ => None,
+        };
+        if let Some(spelling) = terminator {
+            if !escaped {
+                out.push(u16::from(b'\\'));
+            }
+            out.extend(spelling.encode_utf16());
+            escaped = false;
+            continue;
+        }
+        if unit == u16::from(b'/') && !escaped && !class {
+            out.push(u16::from(b'\\'));
+        }
+        out.push(unit);
+        if escaped {
+            escaped = false;
+        } else if unit == u16::from(b'\\') {
+            escaped = true;
+        } else if unit == u16::from(b'[') {
+            class = true;
+        } else if unit == u16::from(b']') {
+            class = false;
+        }
+    }
+    Ok(JsString::from_units(out)?)
 }
 
 /** RegExp.prototype.source. */
@@ -351,23 +575,31 @@ fn source(vm: &mut Vm, call: Call) -> Res<JsValue> {
         return text(vm, "(?:)");
     }
     let (_, data) = vm.regexp_data(&call.this)?;
-    Ok(JsValue::String(data.source))
+    Ok(JsValue::String(escape_source(&data.source)?))
 }
 
-/** RegExp.prototype.flags in canonical order. */
+/** RegExp.prototype.flags: generic, reading each flag getter in the spec's order. */
 fn flags(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if call.this == JsValue::Object(realm().ids.regexp_prototype) {
-        return text(vm, "");
+    let rx = object_this(vm, &call, "RegExp.prototype.flags getter")?;
+    let mut out = String::new();
+    for (name, flag) in [
+        ("hasIndices", 'd'),
+        ("global", 'g'),
+        ("ignoreCase", 'i'),
+        ("multiline", 'm'),
+        ("dotAll", 's'),
+        ("unicode", 'u'),
+        ("unicodeSets", 'v'),
+        ("sticky", 'y'),
+    ] {
+        if vm.get(&rx, &key(name))?.truthy() {
+            out.push(flag);
+        }
     }
-    let (_, data) = vm.regexp_data(&call.this)?;
-    let canonical: String = "dgimsuvy"
-        .chars()
-        .filter(|flag| data.flags.contains(*flag))
-        .collect();
-    text(vm, &canonical)
+    text(vm, &out)
 }
 
-/** A boolean flag getter. */
+/** A boolean flag getter: undefined on the prototype itself, a TypeError on other objects. */
 fn flag(vm: &mut Vm, call: &Call, flag: char) -> Res<JsValue> {
     if call.this == JsValue::Object(realm().ids.regexp_prototype) {
         return Ok(JsValue::Undefined);
@@ -395,6 +627,10 @@ fn dot_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** RegExp.prototype.unicode. */
 fn unicode(vm: &mut Vm, call: Call) -> Res<JsValue> {
     flag(vm, &call, 'u')
+}
+/** RegExp.prototype.unicodeSets. */
+fn unicode_sets(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    flag(vm, &call, 'v')
 }
 /** RegExp.prototype.sticky. */
 fn sticky(vm: &mut Vm, call: Call) -> Res<JsValue> {
@@ -500,10 +736,21 @@ pub(in crate::v9) fn expand(
     Ok(out)
 }
 
-/** RegExp.prototype[Symbol.replace]. */
+/** The string-length guard every replacement builder checks. */
+fn check_length(out: &[u16]) -> Res<()> {
+    if out.len() > crate::constants::JS_STRING_UNITS {
+        return Err(EngineError::limit(
+            "JavaScript string UTF-16 units",
+            crate::constants::JS_STRING_UNITS,
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/** RegExp.prototype[Symbol.replace]: collect every RegExpExec result, then substitute. */
 fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let regexp = call.this.clone();
-    let (id, data) = vm.regexp_data(&regexp)?;
+    let rx = object_this(vm, &call, "RegExp.prototype[Symbol.replace]")?;
     let text = arg_string(vm, &call, 0)?;
     let replacement = call.arg(1);
     let functional = vm.is_callable(&replacement);
@@ -512,14 +759,15 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
     } else {
         vm.to_string(&replacement)?
     };
-    let global = data.flags.contains('g');
-    let unicode = data.flags.contains('u');
+    let flags = flags_of(vm, &rx)?;
+    let global = flags.contains('g');
+    let unicode = flags.contains('u') || flags.contains('v');
     if global {
-        vm.set(&regexp, key("lastIndex"), JsValue::Number(0.0), true)?;
+        vm.set(&rx, key("lastIndex"), JsValue::Number(0.0), true)?;
     }
     let mut results = Vec::new();
     loop {
-        let result = vm.regexp_exec(&regexp, &text)?;
+        let result = vm.regexp_exec(&rx, &text)?;
         if result == JsValue::Null {
             break;
         }
@@ -529,22 +777,10 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             break;
         }
         let matched = vm.get(&result, &key("0"))?;
-        let matched = vm.to_string(&matched)?;
-        if matched.is_empty() {
-            let last = vm.get(&regexp, &key("lastIndex"))?;
-            let last = vm.to_integer(&last)? as usize;
-            vm.set(
-                &regexp,
-                key("lastIndex"),
-                JsValue::Number(advance(&text, last, unicode) as f64),
-                true,
-            )?;
-        }
-        if results.len() > text.len() + 1 {
-            break;
+        if vm.to_string(&matched)?.is_empty() {
+            advance_last_index(vm, &rx, &text, unicode)?;
         }
     }
-    let _ = id;
     let source = text.as_units();
     let mut out: Vec<u16> = Vec::new();
     let mut next = 0;
@@ -553,7 +789,7 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
         let matched = vm.get(&result, &key("0"))?;
         let matched = vm.to_string(&matched)?;
         let position = vm.get(&result, &key("index"))?;
-        let position = (vm.to_integer(&position)?.max(0.0) as usize).min(source.len());
+        let position = vm.to_integer(&position)?.clamp(0.0, source.len() as f64) as usize;
         let mut captures = Vec::new();
         for index in 1..length {
             let value = vm.get(&result, &key(&index.to_string()))?;
@@ -575,6 +811,11 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let value = vm.call(replacement.clone(), JsValue::Undefined, args)?;
             vm.to_string(&value)?.as_units().to_vec()
         } else {
+            let groups = if groups == JsValue::Undefined {
+                groups
+            } else {
+                JsValue::Object(vm.to_object(&groups)?)
+            };
             expand(vm, &template, &text, position, &matched, &captures, &groups)?
         };
         if position >= next {
@@ -582,146 +823,215 @@ fn symbol_replace(vm: &mut Vm, call: Call) -> Res<JsValue> {
             out.extend_from_slice(&replaced);
             next = (position + matched.len()).min(source.len());
         }
-        if out.len() > crate::constants::JS_STRING_UNITS {
-            return Err(EngineError::limit(
-                "JavaScript string UTF-16 units",
-                crate::constants::JS_STRING_UNITS,
-            )
-            .into());
-        }
+        check_length(&out)?;
     }
-    out.extend_from_slice(&source[next..]);
+    if next < source.len() {
+        out.extend_from_slice(&source[next..]);
+    }
     Ok(JsValue::String(JsString::from_units(out)?))
 }
 
-/** RegExp.prototype[Symbol.split]. */
+/** The splitter's own program when nothing a script can observe differs from the spec loop:
+the intrinsic constructor built it and exec is the builtin. Then the split runs on the engine
+directly instead of one RegExpExec per position. */
+fn fast_splitter(
+    vm: &mut Vm,
+    ctor: &JsValue,
+    splitter: &JsValue,
+) -> Res<Option<Rc<regexp::Program>>> {
+    if *ctor != regexp_ctor() {
+        return Ok(None);
+    }
+    let exec = vm.get(splitter, &key("exec"))?;
+    if exec != JsValue::Object(BUILTIN_EXEC.load(Ordering::Relaxed)) {
+        return Ok(None);
+    }
+    let (_, data) = vm.regexp_data(splitter)?;
+    vm.regexp_compile(&data.source, &data.flags).map(Some)
+}
+
+/** RegExp.prototype[Symbol.split]: a sticky splitter from the species constructor, tried at
+every position. */
 fn symbol_split(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, data) = vm.regexp_data(&call.this)?;
+    let rx = object_this(vm, &call, "RegExp.prototype[Symbol.split]")?;
     let text = arg_string(vm, &call, 0)?;
+    let ctor = species_constructor(vm, &rx)?;
+    let flags = flags_of(vm, &rx)?;
+    let unicode = flags.contains('u') || flags.contains('v');
+    let new_flags = if flags.contains('y') {
+        flags
+    } else {
+        format!("{flags}y")
+    };
+    let splitter = vm.construct(
+        ctor.clone(),
+        vec![rx, JsValue::String(JsString::from_utf8(&new_flags)?)],
+        None,
+    )?;
+    vm.pin(splitter.clone());
+    let result = JsValue::Object(vm.new_array(Vec::new())?);
+    vm.pin(result.clone());
     let limit = if call.arg(1) == JsValue::Undefined {
         u32::MAX
     } else {
         crate::v9::value::to_uint32(vm.to_number(&call.arg(1))?)
     };
-    let flags: String = data
-        .flags
-        .chars()
-        .filter(|flag| *flag != 'g' && *flag != 'y')
-        .collect();
-    let program = vm.regexp_compile(&data.source, &format!("{flags}y"))?;
-    let result = vm.new_array(Vec::new())?;
     if limit == 0 {
-        return Ok(JsValue::Object(result));
+        return Ok(result);
     }
-    let units = text.as_units();
-    if units.is_empty() {
-        if vm.run_regexp(&program, &text, 0)?.is_none() {
-            vm.array_append(&JsValue::Object(result), JsValue::String(text))?;
+    let size = text.len();
+    if size == 0 {
+        if vm.regexp_exec(&splitter, &text)? == JsValue::Null {
+            vm.array_append(&result, JsValue::String(text))?;
         }
-        return Ok(JsValue::Object(result));
+        return Ok(result);
     }
-    let mut start = 0;
-    let mut position = 0;
-    let mut count = 0u32;
-    while position < units.len() {
-        let Some(captures) = vm.run_regexp(&program, &text, position)? else {
-            position = advance(&text, position, program.unicode);
+    let fast = fast_splitter(vm, &ctor, &splitter)?;
+    let units = text.as_units();
+    let (mut p, mut q, mut count) = (0usize, 0usize, 0u32);
+    while q < size {
+        let (end, captures) = match &fast {
+            Some(program) => match vm.run_regexp(program, &text, q)? {
+                Some(found) => {
+                    let end = found[0].map_or(q, |(_, end)| end);
+                    let mut values = Vec::with_capacity(found.len());
+                    for capture in found.iter().skip(1) {
+                        values.push(match capture {
+                            Some((a, b)) => JsValue::String(JsString::from_slice(&units[*a..*b])?),
+                            None => JsValue::Undefined,
+                        });
+                    }
+                    (Some(end), values)
+                }
+                None => (None, Vec::new()),
+            },
+            None => split_step(vm, &splitter, &text, q)?,
+        };
+        let Some(end) = end.map(|end| end.min(size)) else {
+            q = advance(&text, q, unicode);
             continue;
         };
-        let end = captures[0]
-            .map_or(position, |(_, end)| end)
-            .min(units.len());
-        if end == start {
-            position = advance(&text, position, program.unicode);
+        if end == p {
+            q = advance(&text, q, unicode);
             continue;
         }
-        let piece = JsString::from_slice(&units[start..position])?;
-        vm.array_append(&JsValue::Object(result), JsValue::String(piece))?;
+        let piece = JsString::from_slice(&units[p.min(q)..q])?;
+        vm.array_append(&result, JsValue::String(piece))?;
         count += 1;
         if count == limit {
-            return Ok(JsValue::Object(result));
+            return Ok(result);
         }
-        for capture in captures.iter().skip(1) {
-            let value = match capture {
-                Some((a, b)) => JsValue::String(JsString::from_slice(&units[*a..*b])?),
-                None => JsValue::Undefined,
-            };
-            vm.array_append(&JsValue::Object(result), value)?;
+        p = end;
+        for value in captures {
+            vm.array_append(&result, value)?;
             count += 1;
             if count == limit {
-                return Ok(JsValue::Object(result));
+                return Ok(result);
             }
         }
-        start = end;
-        position = end;
+        q = p;
     }
-    let tail = JsString::from_slice(&units[start..])?;
-    vm.array_append(&JsValue::Object(result), JsValue::String(tail))?;
-    Ok(JsValue::Object(result))
+    let tail = JsString::from_slice(&units[p.min(size)..])?;
+    vm.array_append(&result, JsValue::String(tail))?;
+    Ok(result)
+}
+
+/** One spec split step: lastIndex = q, RegExpExec, then the end from lastIndex and the
+captures from the result. */
+fn split_step(
+    vm: &mut Vm,
+    splitter: &JsValue,
+    text: &JsString,
+    q: usize,
+) -> Res<(Option<usize>, Vec<JsValue>)> {
+    vm.set(splitter, key("lastIndex"), JsValue::Number(q as f64), true)?;
+    let found = vm.regexp_exec(splitter, text)?;
+    if found == JsValue::Null {
+        return Ok((None, Vec::new()));
+    }
+    vm.pin(found.clone());
+    let end = vm.get(splitter, &key("lastIndex"))?;
+    let end = to_length(vm, &end)?.min(text.len() as f64) as usize;
+    let count = vm.length_of(&found)?;
+    let mut captures = Vec::new();
+    for index in 1..count {
+        captures.push(vm.get(&found, &key(&index.to_string()))?);
+    }
+    Ok((Some(end), captures))
 }
 
 /** RegExp.prototype[Symbol.match]. */
 fn symbol_match(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let regexp = call.this.clone();
-    let (_, data) = vm.regexp_data(&regexp)?;
+    let rx = object_this(vm, &call, "RegExp.prototype[Symbol.match]")?;
     let text = arg_string(vm, &call, 0)?;
-    if !data.flags.contains('g') {
-        return vm.regexp_exec(&regexp, &text);
+    let flags = flags_of(vm, &rx)?;
+    if !flags.contains('g') {
+        return vm.regexp_exec(&rx, &text);
     }
-    vm.set(&regexp, key("lastIndex"), JsValue::Number(0.0), true)?;
-    let result = vm.new_array(Vec::new())?;
+    let unicode = flags.contains('u') || flags.contains('v');
+    vm.set(&rx, key("lastIndex"), JsValue::Number(0.0), true)?;
+    let result = JsValue::Object(vm.new_array(Vec::new())?);
+    vm.pin(result.clone());
+    let mut count = 0usize;
     loop {
-        let found = vm.regexp_exec(&regexp, &text)?;
+        let found = vm.regexp_exec(&rx, &text)?;
         if found == JsValue::Null {
-            break;
+            return Ok(if count == 0 { JsValue::Null } else { result });
         }
         let matched = vm.get(&found, &key("0"))?;
         let matched = vm.to_string(&matched)?;
         if matched.is_empty() {
-            let last = vm.get(&regexp, &key("lastIndex"))?;
-            let last = vm.to_integer(&last)? as usize;
-            vm.set(
-                &regexp,
-                key("lastIndex"),
-                JsValue::Number(advance(&text, last, data.flags.contains('u')) as f64),
-                true,
-            )?;
+            advance_last_index(vm, &rx, &text, unicode)?;
         }
-        vm.array_append(&JsValue::Object(result), JsValue::String(matched))?;
+        vm.array_append(&result, JsValue::String(matched))?;
+        count += 1;
     }
-    let empty = matches!(vm.heap.get(result).map(|o| &o.class), Some(Class::Array(elements)) if elements.is_empty());
-    Ok(if empty {
-        JsValue::Null
-    } else {
-        JsValue::Object(result)
-    })
 }
 
-/** RegExp.prototype[Symbol.matchAll]. */
+/** RegExp.prototype[Symbol.matchAll]: a matcher from the species constructor, carrying over
+lastIndex. */
 fn symbol_match_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let (_, data) = vm.regexp_data(&call.this)?;
+    let rx = object_this(vm, &call, "RegExp.prototype[Symbol.matchAll]")?;
     let text = arg_string(vm, &call, 0)?;
-    let clone = vm.new_regexp(data.source.clone(), &data.flags)?;
-    let last = vm.get(&call.this, &key("lastIndex"))?;
-    vm.set(&JsValue::Object(clone), key("lastIndex"), last, true)?;
+    let ctor = species_constructor(vm, &rx)?;
+    let flags = flags_of(vm, &rx)?;
+    let matcher = vm.construct(
+        ctor,
+        vec![rx.clone(), JsValue::String(JsString::from_utf8(&flags)?)],
+        None,
+    )?;
+    vm.pin(matcher.clone());
+    let last = vm.get(&rx, &key("lastIndex"))?;
+    let last = to_length(vm, &last)?;
+    vm.set(&matcher, key("lastIndex"), JsValue::Number(last), true)?;
+    let JsValue::Object(matcher) = matcher else {
+        return Err(vm.type_error("RegExp species constructor returned a non-object"));
+    };
     vm.new_iterator(IterState::Matches {
-        regexp: clone,
+        regexp: matcher,
         text,
-        global: data.flags.contains('g'),
-        unicode: data.flags.contains('u'),
+        global: flags.contains('g'),
+        unicode: flags.contains('u') || flags.contains('v'),
         done: false,
     })
     .map(JsValue::Object)
 }
 
-/** RegExp.prototype[Symbol.search]. */
+/** RegExp.prototype[Symbol.search]: lastIndex is written only when it is not already the
+value being restored. */
 fn symbol_search(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let regexp = call.this.clone();
+    let rx = object_this(vm, &call, "RegExp.prototype[Symbol.search]")?;
     let text = arg_string(vm, &call, 0)?;
-    let previous = vm.get(&regexp, &key("lastIndex"))?;
-    vm.set(&regexp, key("lastIndex"), JsValue::Number(0.0), true)?;
-    let result = vm.regexp_exec(&regexp, &text)?;
-    vm.set(&regexp, key("lastIndex"), previous, true)?;
+    let previous = vm.get(&rx, &key("lastIndex"))?;
+    let zero = JsValue::Number(0.0);
+    if !previous.same_value(&zero) {
+        vm.set(&rx, key("lastIndex"), zero, true)?;
+    }
+    let result = vm.regexp_exec(&rx, &text)?;
+    let current = vm.get(&rx, &key("lastIndex"))?;
+    if !current.same_value(&previous) {
+        vm.set(&rx, key("lastIndex"), previous, true)?;
+    }
     if result == JsValue::Null {
         return Ok(JsValue::Number(-1.0));
     }

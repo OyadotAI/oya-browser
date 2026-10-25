@@ -13,7 +13,10 @@ use crate::v9::vm::data::{Class, HostData, PromiseState, ResponseData};
 use crate::v9::vm::heap::{Key, Object};
 use crate::v9::vm::realm::realm;
 use crate::v9::vm::{Call, Res, Thrown, Vm};
+use headers::Guard;
 use serde::{Deserialize, Serialize};
+
+mod headers;
 
 /** Parse an absolute URL. */
 pub(in crate::v9) fn parse_url(text: &str) -> Option<url::Url> {
@@ -218,13 +221,26 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
         vm,
         method,
         base.as_ref().map_or("GET".into(), |r| r.method.clone()),
-    )?
-    .to_ascii_uppercase();
+    )?;
+    let method = match normalize_method(&method) {
+        Ok(method) => method,
+        Err(message) => return Ok(Err(message)),
+    };
+    let mode = read(vm, "mode")?;
+    let mode = text(
+        vm,
+        mode,
+        base.as_ref().map_or("cors".into(), |r| r.mode.clone()),
+    )?;
     let headers = read(vm, "headers")?;
     let mut headers = if headers.nullish() {
-        base.as_ref().map(|r| r.headers.clone()).unwrap_or_default()
+        live_headers(vm, input)
+            .unwrap_or_else(|| base.as_ref().map(|r| r.headers.clone()).unwrap_or_default())
     } else {
-        header_list(vm, &headers)?
+        match guarded_pairs(vm, &headers, request_guard(&mode))? {
+            Ok(pairs) => pairs,
+            Err(message) => return Ok(Err(message.into())),
+        }
     };
     let body = read(vm, "body")?;
     let body = if body.nullish() {
@@ -233,21 +249,26 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
             bytes: r.body_bytes.clone(),
         })
     } else {
+        if matches!(method.as_str(), "GET" | "HEAD") {
+            return Ok(Err("Request with GET/HEAD method cannot have body.".into()));
+        }
         form_type(vm, &body, &mut headers);
+        if matches!(body, JsValue::String(_))
+            && !headers.iter().any(|(name, _)| name == "content-type")
+        {
+            headers.push(("content-type".into(), "text/plain;charset=UTF-8".into()));
+        }
         request_body(vm, &body)?
     };
+    if let Err(message) = check_init(vm, init, &url, &method, &mode)? {
+        return Ok(Err(message));
+    }
     let credentials = read(vm, "credentials")?;
     let credentials = text(
         vm,
         credentials,
         base.as_ref()
             .map_or("same-origin".into(), |r| r.credentials.clone()),
-    )?;
-    let mode = read(vm, "mode")?;
-    let mode = text(
-        vm,
-        mode,
-        base.as_ref().map_or("cors".into(), |r| r.mode.clone()),
     )?;
     Ok(Ok(HostRequest {
         id: 0,
@@ -262,8 +283,141 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
     }))
 }
 
+/** Methods Fetch normalises to upper case; any other method keeps the page's spelling. */
+const NORMALIZED_METHODS: [&str; 6] = ["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"];
+
+/** Fetch's method check: a token, not CONNECT, TRACE or TRACK, and normalised; Err is the
+TypeError's message. */
+fn normalize_method(method: &str) -> Result<String, String> {
+    if !headers::valid_name(method) {
+        return Err(format!("'{method}' is not a valid HTTP method."));
+    }
+    let upper = method.to_ascii_uppercase();
+    if ["CONNECT", "TRACE", "TRACK"].contains(&upper.as_str()) {
+        return Err(format!("'{method}' HTTP method is unsupported."));
+    }
+    Ok(if NORMALIZED_METHODS.contains(&upper.as_str()) {
+        upper
+    } else {
+        method.to_owned()
+    })
+}
+
+/** The values each RequestInit enum member accepts (WebIDL enums, so others are TypeErrors). */
+const INIT_ENUMS: [(&str, &[&str]); 5] = [
+    ("mode", &["navigate", "same-origin", "no-cors", "cors"]),
+    ("credentials", &["omit", "same-origin", "include"]),
+    (
+        "cache",
+        &[
+            "default",
+            "no-store",
+            "reload",
+            "no-cache",
+            "force-cache",
+            "only-if-cached",
+        ],
+    ),
+    ("redirect", &["follow", "error", "manual"]),
+    (
+        "referrerPolicy",
+        &[
+            "",
+            "no-referrer",
+            "no-referrer-when-downgrade",
+            "same-origin",
+            "origin",
+            "strict-origin",
+            "origin-when-cross-origin",
+            "strict-origin-when-cross-origin",
+            "unsafe-url",
+        ],
+    ),
+];
+
+/** The Request constructor's init checks, in Blink's Request::CreateRequestWithRequestOrString
+order: enum values, a non-null window, a navigate mode, credentials in the URL, an unparsable
+referrer, only-if-cached outside same-origin, and a no-cors method other than GET, HEAD or
+POST. Err is the TypeError's message. */
+fn check_init(
+    vm: &mut Vm,
+    init: &JsValue,
+    url: &str,
+    method: &str,
+    mode: &str,
+) -> Res<Result<(), String>> {
+    let mut cache = String::new();
+    for (name, allowed) in INIT_ENUMS {
+        let value = member(vm, init, name)?;
+        if matches!(value, JsValue::Undefined) {
+            continue;
+        }
+        let value = vm.to_text(&value)?;
+        if !allowed.contains(&value.as_str()) {
+            return Ok(Err(format!(
+                "The provided value '{value}' is not a valid {name}."
+            )));
+        }
+        if name == "cache" {
+            cache = value;
+        }
+    }
+    let window = member(vm, init, "window")?;
+    let referrer = member(vm, init, "referrer")?;
+    let referrer = if matches!(referrer, JsValue::Undefined) {
+        None
+    } else {
+        Some(vm.to_text(&referrer)?)
+    };
+    Ok(request_rules(
+        vm,
+        url,
+        method,
+        mode,
+        &cache,
+        !window.nullish(),
+        referrer.as_deref(),
+    ))
+}
+
+/** The checks of `check_init` that need no further script values. */
+fn request_rules(
+    vm: &Vm,
+    url: &str,
+    method: &str,
+    mode: &str,
+    cache: &str,
+    window: bool,
+    referrer: Option<&str>,
+) -> Result<(), String> {
+    let parsed = parse_url(url);
+    if window {
+        Err("'window' must be null.".into())
+    } else if mode == "navigate" {
+        Err(
+            "Cannot construct a Request with a RequestInit whose mode member is set as 'navigate'."
+                .into(),
+        )
+    } else if parsed.is_some_and(|u| !u.username().is_empty() || u.password().is_some()) {
+        Err(format!(
+            "Request cannot be constructed from a URL that includes credentials: {url}"
+        ))
+    } else if referrer.is_some_and(|r| !r.is_empty() && resolve(vm, r).is_none()) {
+        Err("The referrer is not a valid URL.".into())
+    } else if cache == "only-if-cached" && mode != "same-origin" {
+        Err("'only-if-cached' can be set only with 'same-origin' mode".into())
+    } else if mode == "no-cors" && !matches!(method, "GET" | "HEAD" | "POST") {
+        Err(format!("'{method}' is unsupported in no-cors mode."))
+    } else {
+        Ok(())
+    }
+}
+
 /** `new Request(input, init)`: the request fetch would send, kept for `fetch(request)`. */
 pub(in crate::v9) fn request_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.new_target.is_none() {
+        return Err(vm.type_error("Failed to construct 'Request': Please use the 'new' operator."));
+    }
     let request = match request_from(vm, &call.arg(0), &call.arg(1))? {
         Ok(request) => request,
         Err(message) => return Err(vm.type_error(&message)),
@@ -288,7 +442,10 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match native_name(&call) {
         "url" => JsValue::string(&request.url).map_err(Into::into),
         "method" => JsValue::string(&request.method).map_err(Into::into),
-        "headers" => headers_object(vm, request.headers.clone()),
+        "headers" => {
+            let guard = request_guard(&request.mode);
+            owned_headers(vm, &call.this, request.headers.clone(), guard)
+        }
         "credentials" => JsValue::string(&request.credentials).map_err(Into::into),
         "mode" => JsValue::string(&request.mode).map_err(Into::into),
         "cache" => JsValue::string("default").map_err(Into::into),
@@ -307,7 +464,13 @@ pub(in crate::v9) fn request_member(vm: &mut Vm, call: Call) -> Res<JsValue> {
             vm.put(signal, "onabort", JsValue::Null)?;
             Ok(JsValue::Object(signal))
         }
-        "clone" => request_object(vm, *request),
+        "clone" => {
+            let mut copy = *request;
+            if let Some(pairs) = live_headers(vm, &call.this) {
+                copy.headers = pairs;
+            }
+            request_object(vm, copy)
+        }
         name @ ("text" | "json") => {
             let promise = vm.new_promise()?;
             let body = request.body.clone().unwrap_or_default();
@@ -644,18 +807,28 @@ pub(in crate::v9) fn response_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "statusText" => JsValue::string(&data.status_text)?,
         "url" => JsValue::string(&data.url)?,
         "redirected" => JsValue::Boolean(false),
-        "type" => JsValue::string(response_type(vm, &data))?,
+        "type" => JsValue::string(&response_type(vm, &call.this, &data))?,
         "bodyUsed" => JsValue::Boolean(data.used),
-        "headers" => headers_object(vm, data.headers)?,
+        "headers" => {
+            let guard = response_guard(vm, &call.this);
+            owned_headers(vm, &call.this, data.headers, guard)?
+        }
         _ => JsValue::Undefined,
     })
 }
 
 /// What kind of response the app handed back: an opaque one has status 0 and no URL, a CORS
-/// one ended on another origin, and anything else is basic.
+/// one ended on another origin, and anything else is basic. A Response script built says so
+/// in its private type ("default" or "error").
 // ponytail: a CORS response redirected back to the page's own origin reads as "basic"; carry the
 // tainting on HostResponse if a page ever depends on it.
-fn response_type(vm: &Vm, data: &ResponseData) -> &'static str {
+fn response_type(vm: &Vm, this: &JsValue, data: &ResponseData) -> String {
+    if let Some(JsValue::String(kind)) = this
+        .object()
+        .and_then(|id| headers::get_private(vm, id, "responseType"))
+    {
+        return String::from_utf16_lossy(kind.as_units());
+    }
     let page = parse_url(&vm.page.state.href).map(|url| url.origin());
     let own = parse_url(&data.url).map(|url| url.origin());
     if data.status == 0 && data.url.is_empty() {
@@ -665,6 +838,210 @@ fn response_type(vm: &Vm, data: &ResponseData) -> &'static str {
     } else {
         "basic"
     }
+    .into()
+}
+
+/** A Response's headers guard: "response" for one script built with `new Response`, and
+immutable for fetched, error and redirect responses (Fetch's Response constructor and statics). */
+fn response_guard(vm: &Vm, this: &JsValue) -> Guard {
+    let built = this
+        .object()
+        .and_then(|id| headers::get_private(vm, id, "responseGuard"));
+    if matches!(built, Some(JsValue::Boolean(true))) {
+        Guard::Response
+    } else {
+        Guard::Immutable
+    }
+}
+
+/** A Response object script built: its type, and whether its headers stay writable. */
+fn built_response(vm: &mut Vm, data: ResponseData, kind: &str, writable: bool) -> Res<JsValue> {
+    let id = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::Response(Box::new(data)))),
+        Some(realm().ids.response_prototype),
+    ))?;
+    headers::put_private(vm, id, "responseType", JsValue::string(kind)?);
+    headers::put_private(vm, id, "responseGuard", JsValue::Boolean(writable));
+    Ok(JsValue::Object(id))
+}
+
+/** Statuses whose responses have no body (Fetch's null body status). */
+const NULL_BODY_STATUSES: [u16; 5] = [101, 103, 204, 205, 304];
+/** Statuses `Response.redirect` accepts (Fetch's redirect status). */
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
+/** The range `new Response` accepts for `status`. */
+const RESPONSE_STATUSES: std::ops::RangeInclusive<u16> = 200..=599;
+/** Response.redirect's default status. */
+const DEFAULT_REDIRECT: u16 = 302;
+
+/** RFC 9110 reason-phrase: tab, space, visible ASCII and obs-text. */
+fn reason_phrase(text: &str) -> bool {
+    text.chars().all(|c| {
+        let c = u32::from(c);
+        c == 0x09 || c == 0x20 || (0x21..=0x7E).contains(&c) || (0x80..=0xFF).contains(&c)
+    })
+}
+
+/** WebIDL unsigned short from a value, or `fallback` when undefined. */
+fn unsigned_short(vm: &mut Vm, value: &JsValue, fallback: u16) -> Res<u16> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(fallback);
+    }
+    let number = vm.to_number(value)?;
+    Ok(if number.is_finite() {
+        (number.trunc().rem_euclid(65536.0)) as u16
+    } else {
+        0
+    })
+}
+
+/** Read one member of an init dictionary. */
+fn member(vm: &mut Vm, init: &JsValue, name: &str) -> Res<JsValue> {
+    if matches!(init, JsValue::Object(_)) {
+        vm.get(init, &Key::from(name))
+    } else {
+        Ok(JsValue::Undefined)
+    }
+}
+
+/** `new Response(body, init)`: Fetch's Response constructor and "initialize a response". */
+pub(in crate::v9) fn response_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.new_target.is_none() {
+        return Err(vm.type_error("Failed to construct 'Response': Please use the 'new' operator."));
+    }
+    initialize_response(vm, &call.arg(0), &call.arg(1), "text/plain;charset=UTF-8")
+}
+
+/** Fetch's "initialize a response" over a body and init; `label` is the Content-Type a text
+body gets when the init's headers set none. */
+fn initialize_response(vm: &mut Vm, body: &JsValue, init: &JsValue, label: &str) -> Res<JsValue> {
+    let status = member(vm, init, "status")?;
+    let status = unsigned_short(vm, &status, 200)?;
+    if !RESPONSE_STATUSES.contains(&status) {
+        return Err(vm.range_error("The status provided is outside the range [200, 599]."));
+    }
+    let text = member(vm, init, "statusText")?;
+    let status_text = if matches!(text, JsValue::Undefined) {
+        String::new()
+    } else {
+        vm.to_text(&text)?
+    };
+    if !reason_phrase(&status_text) {
+        return Err(vm.type_error("Invalid statusText"));
+    }
+    let given = member(vm, init, "headers")?;
+    let mut pairs = if given.nullish() {
+        Vec::new()
+    } else {
+        match guarded_pairs(vm, &given, Guard::Response)? {
+            Ok(pairs) => pairs,
+            Err(message) => return Err(vm.type_error(message)),
+        }
+    };
+    let text = response_text(vm, body, status, &mut pairs, label)?;
+    let data = ResponseData {
+        status,
+        status_text,
+        url: String::new(),
+        headers: pairs,
+        body: text,
+        used: false,
+    };
+    built_response(vm, data, "default", true)
+}
+
+/** A constructed Response's body as text, labelling its Content-Type the way Fetch's "extract a
+body" does when the page set none. */
+fn response_text(
+    vm: &mut Vm,
+    body: &JsValue,
+    status: u16,
+    pairs: &mut Vec<(String, String)>,
+    label: &str,
+) -> Res<String> {
+    if body.nullish() {
+        return Ok(String::new());
+    }
+    if NULL_BODY_STATUSES.contains(&status) {
+        return Err(vm.type_error("Response with null body status cannot have body"));
+    }
+    let is_text = matches!(body, JsValue::String(_));
+    form_type(vm, body, pairs);
+    if is_text && !pairs.iter().any(|(name, _)| name == "content-type") {
+        pairs.push(("content-type".into(), label.into()));
+    }
+    let read = request_body(vm, body)?;
+    Ok(read
+        .text
+        .unwrap_or_else(|| String::from_utf8_lossy(&read.bytes).into_owned()))
+}
+
+/** `Response.json(data, init)`: the data as JSON text, labelled application/json; data JSON
+cannot represent is a TypeError. */
+fn response_json(vm: &mut Vm, data: &JsValue, init: &JsValue) -> Res<JsValue> {
+    let json = vm.global_get(&JsString::from_utf8("JSON")?, false)?;
+    let stringify = vm.get(&json, &Key::from("stringify"))?;
+    let text = vm.call(stringify, json, vec![data.clone()])?;
+    if !matches!(text, JsValue::String(_)) {
+        return Err(vm.type_error("Value is not JSON serializable"));
+    }
+    initialize_response(vm, &text, init, "application/json")
+}
+
+/** `Response.json(data, init)`, `Response.error()` and `Response.redirect(url, status)`. */
+pub(in crate::v9) fn response_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let blank = |status, headers| ResponseData {
+        status,
+        status_text: String::new(),
+        url: String::new(),
+        headers,
+        body: String::new(),
+        used: false,
+    };
+    if native_name(&call) == "json" {
+        return response_json(vm, &call.arg(0), &call.arg(1));
+    }
+    if native_name(&call) == "error" {
+        return built_response(vm, blank(0, Vec::new()), "error", false);
+    }
+    let target = vm.to_text(&call.arg(0))?;
+    let Some(url) = resolve(vm, &target) else {
+        return Err(vm.type_error(&format!("Failed to parse URL from {target}")));
+    };
+    let status = unsigned_short(vm, &call.arg(1), DEFAULT_REDIRECT)?;
+    if !REDIRECT_STATUSES.contains(&status) {
+        return Err(vm.range_error("Invalid status code"));
+    }
+    built_response(
+        vm,
+        blank(status, vec![("location".into(), url)]),
+        "default",
+        false,
+    )
+}
+
+/** `response.clone()`: the same status, type and body, with its own copy of the headers. */
+fn clone_response(vm: &mut Vm, this: &JsValue, mut data: ResponseData) -> Res<JsValue> {
+    if data.used {
+        return Err(
+            vm.type_error("Failed to execute 'clone' on 'Response': Response body is already used")
+        );
+    }
+    if let Some(pairs) = live_headers(vm, this) {
+        data.headers = pairs;
+    }
+    let copy = vm.alloc(Object::new(
+        Class::Host(Box::new(HostData::Response(Box::new(data)))),
+        Some(realm().ids.response_prototype),
+    ))?;
+    if let Some(source) = this.object() {
+        for key in ["responseType", "responseGuard"] {
+            if let Some(value) = headers::get_private(vm, source, key) {
+                headers::put_private(vm, copy, key, value);
+            }
+        }
+    }
+    Ok(JsValue::Object(copy))
 }
 
 /** Response body methods. */
@@ -673,11 +1050,7 @@ pub(in crate::v9) fn response_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let promise = vm.new_promise()?;
     let name = native_name(&call);
     if name == "clone" {
-        let copy = vm.alloc(Object::new(
-            Class::Host(Box::new(HostData::Response(Box::new(data)))),
-            Some(realm().ids.response_prototype),
-        ))?;
-        return Ok(JsValue::Object(copy));
+        return clone_response(vm, &call.this, data);
     }
     if data.used {
         reject(vm, promise, "Failed to execute: body stream already read")?;
@@ -709,19 +1082,101 @@ pub(in crate::v9) fn response_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Object(promise))
 }
 
-/** A Headers object over pairs. */
-fn headers_object(vm: &mut Vm, pairs: Vec<(String, String)>) -> Res<JsValue> {
+/** A Headers object over pairs under a guard. */
+fn headers_object(vm: &mut Vm, pairs: Vec<(String, String)>, guard: Guard) -> Res<JsValue> {
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Headers(pairs))),
         Some(realm().ids.headers_prototype),
     ))?;
+    headers::set_guard(vm, id, guard);
     Ok(JsValue::Object(id))
+}
+
+/** The guard a Request's headers get from its mode. */
+fn request_guard(mode: &str) -> Guard {
+    if mode == "no-cors" {
+        Guard::RequestNoCors
+    } else {
+        Guard::Request
+    }
+}
+
+/** Pairs from a HeadersInit filled in under `guard`, as Fetch's "fill" does: an invalid name or
+value is a TypeError (the Err message) and a guarded name is dropped. */
+fn guarded_pairs(
+    vm: &mut Vm,
+    init: &JsValue,
+    guard: Guard,
+) -> Res<Result<Vec<(String, String)>, &'static str>> {
+    let source = match super::host_data(vm, init) {
+        Some(HostData::Headers(pairs)) => pairs,
+        _ => match headers::init_pairs(vm, init)? {
+            Ok(pairs) => pairs,
+            Err(message) => return Ok(Err(message)),
+        },
+    };
+    let mut pairs = Vec::new();
+    for (name, value) in source {
+        if let Err(headers::Refusal::Throw(message)) =
+            headers::append(&mut pairs, guard, &name, &value)
+        {
+            return Ok(Err(message));
+        }
+    }
+    Ok(Ok(pairs))
+}
+
+/** The pairs of the Headers object a Request or Response handed out, which script may have
+changed since. */
+fn live_headers(vm: &Vm, owner: &JsValue) -> Option<Vec<(String, String)>> {
+    let owner = owner.object()?;
+    let held = headers::get_private(vm, owner, "headers")?;
+    match super::host_data(vm, &held) {
+        Some(HostData::Headers(pairs)) => Some(pairs),
+        _ => None,
+    }
+}
+
+/** A Request's or Response's one Headers object, made on first read, so `r.headers` is the same
+object each time and changes to it stick. */
+fn owned_headers(
+    vm: &mut Vm,
+    owner: &JsValue,
+    pairs: Vec<(String, String)>,
+    guard: Guard,
+) -> Res<JsValue> {
+    let Some(id) = owner.object() else {
+        return headers_object(vm, pairs, guard);
+    };
+    if let Some(held) = headers::get_private(vm, id, "headers") {
+        return Ok(held);
+    }
+    let made = headers_object(vm, pairs, guard)?;
+    headers::put_private(vm, id, "headers", made.clone());
+    Ok(made)
 }
 
 /** `new Headers(init)`. */
 pub(in crate::v9) fn headers_construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let pairs = header_list(vm, &call.arg(0))?;
-    headers_object(vm, pairs)
+    let init = call.arg(0);
+    let pairs = if matches!(init, JsValue::Undefined) {
+        Vec::new()
+    } else {
+        match guarded_pairs(vm, &init, Guard::None)? {
+            Ok(pairs) => pairs,
+            Err(message) => return Err(vm.type_error(message)),
+        }
+    };
+    headers_object(vm, pairs, Guard::None)
+}
+
+/** A guarded write's outcome: a TypeError when refused loudly, nothing when dropped. */
+fn written(vm: &mut Vm, outcome: Result<(), headers::Refusal>) -> Res<bool> {
+    match outcome {
+        Ok(()) => Ok(true),
+        Err(headers::Refusal::Drop) => Ok(false),
+        Err(headers::Refusal::Throw(message)) => Err(vm.type_error(message)),
+    }
 }
 
 /** Headers methods. */
@@ -731,46 +1186,52 @@ pub(in crate::v9) fn headers_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     else {
         return Err(vm.type_error("Illegal invocation"));
     };
-    let name = if call.args.is_empty() {
-        String::new()
+    let guard = headers::guard(vm, id);
+    let method = native_name(&call);
+    let name = if matches!(method, "get" | "has" | "set" | "append" | "delete") {
+        vm.to_text(&call.arg(0))?
     } else {
-        vm.to_text(&call.arg(0))?.to_ascii_lowercase()
+        String::new()
     };
-    let result = match native_name(&call) {
+    if matches!(method, "get" | "has") && !headers::valid_name(&name) {
+        return Err(vm.type_error("Invalid header name."));
+    }
+    let lower = name.to_ascii_lowercase();
+    let changed = match method {
         "get" => {
-            let values: Vec<String> = pairs
-                .iter()
-                .filter(|(header, _)| *header == name)
-                .map(|(_, value)| value.clone())
-                .collect();
-            return if values.is_empty() {
-                Ok(JsValue::Null)
-            } else {
-                JsValue::string(&values.join(", ")).map_err(Into::into)
+            return match headers::combined(&pairs, &lower) {
+                Some(value) => JsValue::string(&value).map_err(Into::into),
+                None => Ok(JsValue::Null),
             };
         }
-        "has" => {
-            return Ok(JsValue::Boolean(
-                pairs.iter().any(|(header, _)| *header == name),
-            ));
+        "has" => return Ok(JsValue::Boolean(pairs.iter().any(|(h, _)| *h == lower))),
+        "getSetCookie" => {
+            let mut values = Vec::new();
+            for (_, value) in pairs.iter().filter(|(h, _)| h == "set-cookie") {
+                values.push(JsValue::string(value)?);
+            }
+            return Ok(JsValue::Object(vm.new_array(values)?));
         }
-        "set" => {
+        "set" | "append" => {
             let value = vm.to_text(&call.arg(1))?;
-            pairs.retain(|(header, _)| *header != name);
-            pairs.push((name, value));
-            JsValue::Undefined
-        }
-        "append" => {
-            let value = vm.to_text(&call.arg(1))?;
-            pairs.push((name, value));
-            JsValue::Undefined
+            let outcome = if method == "set" {
+                headers::set(&mut pairs, guard, &name, &value)
+            } else {
+                headers::append(&mut pairs, guard, &name, &value)
+            };
+            written(vm, outcome)?
         }
         "delete" => {
-            pairs.retain(|(header, _)| *header != name);
-            JsValue::Undefined
+            let outcome = headers::delete(&mut pairs, guard, &name);
+            written(vm, outcome)?
         }
         "forEach" => {
-            for (header, value) in pairs.clone() {
+            if !vm.is_callable(&call.arg(0)) {
+                return Err(
+                    vm.type_error("The callback provided as parameter 1 is not a function.")
+                );
+            }
+            for (header, value) in headers::sort_and_combine(&pairs) {
                 vm.call(
                     call.arg(0),
                     call.arg(1),
@@ -783,12 +1244,12 @@ pub(in crate::v9) fn headers_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
             return Ok(JsValue::Undefined);
         }
-        kind => return pair_iterator(vm, &pairs, kind),
+        kind => return pair_iterator(vm, &headers::sort_and_combine(&pairs), kind),
     };
-    if let Some(Class::Host(host)) = vm.heap.get_mut(id).map(|o| &mut o.class) {
+    if changed && let Some(Class::Host(host)) = vm.heap.get_mut(id).map(|o| &mut o.class) {
         **host = HostData::Headers(pairs);
     }
-    Ok(result)
+    Ok(JsValue::Undefined)
 }
 
 /** entries/keys/values over pairs, as an array iterator. */

@@ -5,12 +5,15 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{Static, string, symbol};
 
+mod helpers;
+
 /** %IteratorPrototype%, the native iterator prototypes, and generator prototypes. */
 pub(super) fn install(b: &mut Builder) {
     let object_prototype = b.ids.object_prototype;
     let iterator = b.object(Some(object_prototype));
     b.ids.iterator_prototype = iterator;
     b.symbol_method(iterator, symbol::ITERATOR, "[Symbol.iterator]", 0, identity);
+    helpers::install(b, iterator);
     for (tag, slot) in [
         ("Array Iterator", 0),
         ("String Iterator", 1),

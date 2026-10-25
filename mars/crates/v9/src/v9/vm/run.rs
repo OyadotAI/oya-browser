@@ -599,6 +599,9 @@ impl Vm<'_> {
             Op::GetProp(key) => {
                 let key = Key::Str(self.constant(key));
                 let object = self.peek(0);
+                if key.hidden() {
+                    self.private_brand(&object, &key, false)?;
+                }
                 let value = self.get(&object, &key)?;
                 self.pop();
                 self.push(value);
@@ -620,6 +623,9 @@ impl Vm<'_> {
                 let key = Key::Str(self.constant(key));
                 let value = self.peek(0);
                 let object = self.peek(1);
+                if key.hidden() {
+                    self.private_brand(&object, &key, true)?;
+                }
                 let strict = self.frame().code.strict;
                 self.set(&object, key, value.clone(), strict)?;
                 self.drop_n(2);
@@ -1488,6 +1494,35 @@ impl Vm<'_> {
             self.define(*target, key, Descriptor::data(value))?;
         }
         Ok(())
+    }
+    /** PrivateElementFind for `obj.#x` (spec 7.3.27, V8's LoadIC private-name miss): a private
+    name the object never received throws a TypeError instead of reading undefined or creating
+    it, and a private method (kept on the class prototype here) cannot be assigned. */
+    fn private_brand(&mut self, object: &JsValue, key: &Key, write: bool) -> Res<()> {
+        let JsValue::Object(start) = object else {
+            return Err(self.type_error("Cannot access a private member of a non-object"));
+        };
+        let mut current = *start;
+        for _ in 0..super::property::CHAIN_STEPS {
+            if let Some(prop) = self.own(current, key)? {
+                let method = current != *start && matches!(prop.slot, Slot::Data(_));
+                let getter_only = matches!(prop.slot, Slot::Accessor(_, None));
+                if write && (method || getter_only) {
+                    return Err(self.type_error("Private method is not writable"));
+                }
+                if !write && matches!(prop.slot, Slot::Accessor(None, _)) {
+                    return Err(self.type_error("'#' was defined without a getter"));
+                }
+                return Ok(());
+            }
+            match self.proto_of(current) {
+                Some(proto) => current = proto,
+                None => break,
+            }
+        }
+        Err(self.type_error(
+            "Cannot read or write a private member of an object whose class did not declare it",
+        ))
     }
     /** `delete` on any value. */
     fn delete_value(&mut self, object: &JsValue, key: &Key) -> Res<bool> {

@@ -504,9 +504,9 @@ impl Compiler {
                         let index = self.name(name)?;
                         self.emit(Op::DeleteProp(index));
                     }
-                    MemberProp::Private(name) => {
-                        let index = self.private_name(name)?;
-                        self.emit(Op::DeleteProp(index));
+                    MemberProp::Private(_) => {
+                        // Early error (spec 13.5.1.1): `delete` of a private reference.
+                        return Err(self.error(operand.pos, "Private fields can not be deleted"));
                     }
                     MemberProp::Computed(key) => {
                         self.expr(key)?;

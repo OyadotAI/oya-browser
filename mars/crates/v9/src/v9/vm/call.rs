@@ -411,6 +411,29 @@ impl Vm<'_> {
     }
     /** An arguments object over a frame's arguments. */
     pub fn arguments_object(&mut self, args: &[JsValue]) -> Res<ObjectId> {
+        let id = self.arguments_list(args)?;
+        // CreateUnmappedArgumentsObject (strict code) guards `callee` with %ThrowTypeError%;
+        // CreateMappedArgumentsObject (sloppy code) exposes the running function.
+        let frame = self.frames.last();
+        let strict = frame.is_some_and(|frame| frame.code.strict);
+        let callee = frame.map_or(JsValue::Undefined, |frame| frame.callee.clone());
+        let thrower = realm().ids.throw_type_error;
+        let prop = if strict {
+            Prop {
+                slot: Slot::Accessor(Some(thrower), Some(thrower)),
+                attrs: 0,
+            }
+        } else {
+            Prop {
+                slot: Slot::Data(callee),
+                attrs: HIDDEN_ATTRS,
+            }
+        };
+        self.heap.put(id, Key::from("callee"), prop);
+        Ok(id)
+    }
+    /** The indexed elements, `length` and iterator every arguments object carries. */
+    fn arguments_list(&mut self, args: &[JsValue]) -> Res<ObjectId> {
         let id = self.alloc(Object::new(
             Class::Arguments,
             Some(realm().ids.object_prototype),

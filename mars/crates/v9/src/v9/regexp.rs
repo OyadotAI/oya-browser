@@ -38,7 +38,8 @@ enum Node {
     NamedBack(String),
     Concat(Vec<Node>),
     Alt(Vec<Node>),
-    Repeat(Box<Node>, u32, Option<u32>, bool),
+    /// Atom, min, max, greedy, and the capture indexes inside the atom (reset each iteration).
+    Repeat(Box<Node>, u32, Option<u32>, bool, (usize, usize)),
 }
 
 /** A pattern or flag error, reported to scripts as a SyntaxError. */
@@ -233,6 +234,7 @@ impl PatternParser<'_> {
     /** An atom with an optional quantifier. */
     fn term(&mut self) -> Result<Node, PatternError> {
         self.count()?;
+        let before = self.groups;
         let atom = match self.peek_char() {
             Some('^') => {
                 self.position += 1;
@@ -263,12 +265,17 @@ impl PatternParser<'_> {
                     "Invalid regular expression: nothing to repeat".into(),
                 ));
             }
+            Some(']' | '}') if self.unicode => {
+                return Err(PatternError(
+                    "Invalid regular expression: lone quantifier brackets".into(),
+                ));
+            }
             _ => Node::Char(self.next_point().unwrap_or(0)),
         };
-        self.quantifier(atom)
+        self.quantifier(atom, (before + 1, self.groups + 1))
     }
     /** `*`, `+`, `?`, `{n,m}` and their lazy forms. */
-    fn quantifier(&mut self, atom: Node) -> Result<Node, PatternError> {
+    fn quantifier(&mut self, atom: Node, captures: (usize, usize)) -> Result<Node, PatternError> {
         let (min, max) = match self.peek_char() {
             Some('*') => {
                 self.position += 1;
@@ -288,11 +295,13 @@ impl PatternParser<'_> {
             },
             _ => return Ok(atom),
         };
-        if matches!(
-            atom,
-            Node::Start | Node::End | Node::Boundary(_) | Node::Look(_, _, true)
-        ) && self.unicode
-        {
+        // Lookbehinds never take a quantifier; lookaheads do only under Annex B (no u flag).
+        let unquantifiable = match atom {
+            Node::Start | Node::End | Node::Boundary(_) => self.unicode,
+            Node::Look(_, ahead, _) => self.unicode || !ahead,
+            _ => false,
+        };
+        if unquantifiable {
             return Err(PatternError(
                 "Invalid regular expression: nothing to repeat".into(),
             ));
@@ -303,7 +312,7 @@ impl PatternParser<'_> {
                 "Invalid regular expression: numbers out of order in {} quantifier".into(),
             ));
         }
-        Ok(Node::Repeat(Box::new(atom), min, max, greedy))
+        Ok(Node::Repeat(Box::new(atom), min, max, greedy, captures))
     }
     /** `{n}`, `{n,}`, `{n,m}`; anything else leaves `{` literal (web compatibility). */
     fn braces(&mut self) -> Option<(u32, Option<u32>)> {
@@ -394,20 +403,87 @@ impl PatternParser<'_> {
             Err(PatternError("Invalid regular expression: missing )".into()))
         }
     }
-    /** A group name up to `>`. */
+    /** A group name up to `>`: surrogate pairs and `\u` escapes decode to one code point, and
+    the name must be an IdentifierName (approximated with Rust's alphabetic/alphanumeric). */
     fn group_name(&mut self) -> Result<String, PatternError> {
+        let invalid = || PatternError("Invalid capture group name".into());
         let mut name = String::new();
         loop {
-            match self.next() {
-                Some(0x3e) => break,
-                Some(unit) => name.push(char::from_u32(u32::from(unit)).unwrap_or('_')),
-                None => return Err(PatternError("Invalid capture group name".into())),
+            let point = match self.peek() {
+                None => return Err(invalid()),
+                Some(0x3e) => {
+                    self.position += 1;
+                    break;
+                }
+                Some(0x5c) => {
+                    self.position += 1;
+                    if !self.eat('u') {
+                        return Err(invalid());
+                    }
+                    self.name_escape().ok_or_else(invalid)?
+                }
+                Some(_) => self.name_point(),
+            };
+            let c = char::from_u32(point).ok_or_else(invalid)?;
+            let valid = c == '$'
+                || c == '_'
+                || if name.is_empty() {
+                    c.is_alphabetic()
+                } else {
+                    c.is_alphanumeric() || c == '\u{200c}' || c == '\u{200d}'
+                };
+            if !valid {
+                return Err(invalid());
             }
+            name.push(c);
         }
         if name.is_empty() {
-            return Err(PatternError("Invalid capture group name".into()));
+            return Err(invalid());
         }
         Ok(name)
+    }
+    /** One code point of a group name: a surrogate pair always combines, as in V8. */
+    fn name_point(&mut self) -> u32 {
+        let unit = u32::from(self.next().unwrap_or(0));
+        if (0xd800..=0xdbff).contains(&unit)
+            && let Some(low) = self.peek().filter(|low| (0xdc00..=0xdfff).contains(low))
+        {
+            self.position += 1;
+            return 0x10000 + ((unit - 0xd800) << 10) + (u32::from(low) - 0xdc00);
+        }
+        unit
+    }
+    /** `\uXXXX`, `\uXXXX\uXXXX` (a pair) or `\u{...}` inside a group name. */
+    fn name_escape(&mut self) -> Option<u32> {
+        if self.eat('{') {
+            let mut value = 0u32;
+            while let Some(digit) = self.peek_char().and_then(|c| c.to_digit(16)) {
+                value = value.saturating_mul(16).saturating_add(digit);
+                self.position += 1;
+            }
+            return (self.eat('}') && value <= 0x10ffff).then_some(value);
+        }
+        let high = self.hex(4)?;
+        if (0xd800..=0xdbff).contains(&high) {
+            let save = self.position;
+            if self.eat('\\')
+                && self.eat('u')
+                && let Some(low) = self.hex(4).filter(|low| (0xdc00..=0xdfff).contains(low))
+            {
+                return Some(0x10000 + ((high - 0xd800) << 10) + (low - 0xdc00));
+            }
+            self.position = save;
+        }
+        Some(high)
+    }
+    /** Whether the pattern declares any `(?<name>` group; without one, Annex B reads `\k` as a
+    literal `k`. */
+    fn has_named_groups(&self) -> bool {
+        self.units.windows(3).enumerate().any(|(index, window)| {
+            window == [0x28, 0x3f, 0x3c]
+                && !matches!(self.units.get(index + 3), Some(0x3d | 0x21))
+                && (index == 0 || self.units[index - 1] != 0x5c)
+        })
     }
     /** An escape outside a class. */
     fn escape(&mut self) -> Result<Node, PatternError> {
@@ -432,8 +508,11 @@ impl PatternParser<'_> {
             self.position = start;
             return Ok(Node::Char(self.legacy_octal()));
         }
-        if c == 'k' && self.units.get(self.position + 1) == Some(&0x3c) {
-            self.position += 2;
+        if c == 'k' && (self.unicode || self.has_named_groups()) {
+            self.position += 1;
+            if !self.eat('<') {
+                return Err(PatternError("Invalid named reference".into()));
+            }
             let name = self.group_name()?;
             return Ok(Node::NamedBack(name));
         }
@@ -500,6 +579,7 @@ impl PatternParser<'_> {
             'v' => 11,
             'f' => 12,
             '0' if !self.peek_char().is_some_and(|d| d.is_ascii_digit()) => 0,
+            '0' if self.unicode => return Err(PatternError("Invalid decimal escape".into())),
             '0' => {
                 self.position -= 1;
                 self.legacy_octal()
@@ -509,20 +589,26 @@ impl PatternParser<'_> {
                     self.position += 1;
                     letter as u32 % 32
                 }
+                _ if self.unicode => return Err(PatternError("Invalid unicode escape".into())),
                 _ => {
                     self.position -= 1;
                     u32::from(b'\\')
                 }
             },
-            'x' => self.hex(2).unwrap_or('x' as u32),
+            'x' => match self.hex(2) {
+                Some(value) => value,
+                None if self.unicode => return Err(PatternError("Invalid escape".into())),
+                None => 'x' as u32,
+            },
             'u' => {
                 if self.unicode && self.eat('{') {
+                    let digits = self.position;
                     let mut value = 0u32;
                     while let Some(digit) = self.peek_char().and_then(|c| c.to_digit(16)) {
                         value = value.saturating_mul(16).saturating_add(digit);
                         self.position += 1;
                     }
-                    if !self.eat('}') || value > 0x10ffff {
+                    if self.position == digits || !self.eat('}') || value > 0x10ffff {
                         return Err(PatternError("Invalid Unicode escape".into()));
                     }
                     value
@@ -548,6 +634,10 @@ impl PatternParser<'_> {
                         None => 'u' as u32,
                     }
                 }
+            }
+            // With the u flag only syntax characters and `/` may be identity-escaped.
+            other if self.unicode && !"^$\\.*+?()[]{}|/".contains(other) => {
+                return Err(PatternError("Invalid escape".into()));
             }
             other => other as u32,
         })
@@ -602,6 +692,9 @@ impl PatternParser<'_> {
             }
             let low = match self.class_atom()? {
                 ClassAtom::Set(set) => {
+                    if self.unicode && self.class_range_follows() {
+                        return Err(PatternError("Invalid character class".into()));
+                    }
                     ranges.extend(set);
                     continue;
                 }
@@ -622,6 +715,9 @@ impl PatternParser<'_> {
                         }
                         ranges.push((low, high));
                     }
+                    ClassAtom::Set(_) if self.unicode => {
+                        return Err(PatternError("Invalid character class".into()));
+                    }
                     ClassAtom::Set(set) => {
                         ranges.push((low, low));
                         ranges.push((u32::from(b'-'), u32::from(b'-')));
@@ -633,6 +729,14 @@ impl PatternParser<'_> {
             }
         }
         Ok(Node::Class(ranges, negated))
+    }
+    /** A `-` that would make a range with the member just read. */
+    fn class_range_follows(&self) -> bool {
+        self.peek_char() == Some('-')
+            && self
+                .units
+                .get(self.position + 1)
+                .is_some_and(|unit| *unit != 0x5d)
     }
     /** One class member. */
     fn class_atom(&mut self) -> Result<ClassAtom, PatternError> {
@@ -871,6 +975,15 @@ struct Matcher<'a> {
     exceeded: bool,
 }
 
+/** A quantifier's operands, borrowed from its node for the matching recursion. */
+struct Repeat<'n> {
+    inner: &'n Node,
+    min: u32,
+    max: Option<u32>,
+    greedy: bool,
+    captures: (usize, usize),
+}
+
 /** A continuation: what must match after the current node. */
 type Next<'k, 'a> = &'k mut dyn FnMut(&mut Matcher<'a>, usize) -> bool;
 
@@ -990,9 +1103,18 @@ impl<'a> Matcher<'a> {
                 }
                 false
             }
-            Node::Repeat(inner, min, max, greedy) => {
-                self.repeat(inner, *min, *max, *greedy, position, 0, next)
-            }
+            Node::Repeat(inner, min, max, greedy, captures) => self.repeat(
+                &Repeat {
+                    inner,
+                    min: *min,
+                    max: *max,
+                    greedy: *greedy,
+                    captures: *captures,
+                },
+                position,
+                0,
+                next,
+            ),
         }
     }
     /** Match nodes in order. */
@@ -1007,30 +1129,20 @@ impl<'a> Matcher<'a> {
         }
     }
     /** Quantified matching; an iteration that consumes nothing ends the loop. */
-    #[allow(clippy::too_many_arguments)]
-    fn repeat(
-        &mut self,
-        inner: &Node,
-        min: u32,
-        max: Option<u32>,
-        greedy: bool,
-        position: usize,
-        count: u32,
-        next: Next<'_, 'a>,
-    ) -> bool {
-        if count < min {
-            return self.node(inner, position, &mut |matcher: &mut Matcher<'a>, end| {
-                if end == position && count + 1 >= min {
-                    return matcher.repeat(inner, min, max, greedy, end, min, next);
+    fn repeat(&mut self, r: &Repeat<'_>, position: usize, count: u32, next: Next<'_, 'a>) -> bool {
+        if count < r.min {
+            return self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
+                if end == position && count + 1 >= r.min {
+                    return matcher.repeat(r, end, r.min, next);
                 }
-                matcher.repeat(inner, min, max, greedy, end, count + 1, next)
+                matcher.repeat(r, end, count + 1, next)
             });
         }
-        let more = max.is_none_or(|max| count < max);
-        if greedy {
+        let more = r.max.is_none_or(|max| count < max);
+        if r.greedy {
             if more
-                && self.node(inner, position, &mut |matcher: &mut Matcher<'a>, end| {
-                    end != position && matcher.repeat(inner, min, max, greedy, end, count + 1, next)
+                && self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
+                    end != position && matcher.repeat(r, end, count + 1, next)
                 })
             {
                 return true;
@@ -1041,10 +1153,25 @@ impl<'a> Matcher<'a> {
                 return true;
             }
             more && !self.exceeded
-                && self.node(inner, position, &mut |matcher: &mut Matcher<'a>, end| {
-                    end != position && matcher.repeat(inner, min, max, greedy, end, count + 1, next)
+                && self.iterate(r, position, &mut |matcher: &mut Matcher<'a>, end| {
+                    end != position && matcher.repeat(r, end, count + 1, next)
                 })
         }
+    }
+    /** One iteration of a quantified atom: RepeatMatcher clears the atom's captures first, so a
+    group that does not take part in this iteration reads undefined; they come back on failure. */
+    fn iterate(&mut self, r: &Repeat<'_>, position: usize, next: Next<'_, 'a>) -> bool {
+        let (first, last) = r.captures;
+        if first >= last {
+            return self.node(r.inner, position, next);
+        }
+        let saved = self.captures[first..last].to_vec();
+        self.captures[first..last].fill(None);
+        if self.node(r.inner, position, next) {
+            return true;
+        }
+        self.captures[first..last].copy_from_slice(&saved);
+        false
     }
     /** Lookahead and lookbehind; captures from a successful positive look are kept. */
     fn look(

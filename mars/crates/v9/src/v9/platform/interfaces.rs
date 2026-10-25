@@ -88,7 +88,8 @@ const INTERFACES: &[Interface] = &[
         ..interface("HTMLScriptElement", &["script"])
     },
     Interface {
-        reflected: &["src", "name", "width", "height"],
+        reflected: &["src", "srcdoc", "name", "width", "height"],
+        getters: &["contentDocument", "contentWindow"],
         accessors: &["sandbox"],
         ..interface("HTMLIFrameElement", &["iframe"])
     },
@@ -352,6 +353,9 @@ pub(super) fn install(b: &mut Builder, html: u32) {
         }
     }
     let _ = PROTOTYPES.set(tags);
+    super::blob::install(b);
+    super::form_data::install(b);
+    super::encoding::install(b);
 }
 
 /** One interface's own members. */

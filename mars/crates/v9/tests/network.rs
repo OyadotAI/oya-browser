@@ -35,7 +35,17 @@ fn fetch_records_and_resumes() {
     assert_eq!(request.kind, "fetch");
     assert_eq!(request.method, "POST");
     assert_eq!(request.url, "https://example.com/api/items?x=1");
-    assert_eq!(request.headers, [("x-test".to_string(), "1".to_string())]);
+    // Fetch's "extract a body" labels a string body text/plain in the request's own headers.
+    assert_eq!(
+        request.headers,
+        [
+            ("x-test".to_string(), "1".to_string()),
+            (
+                "content-type".to_string(),
+                "text/plain;charset=UTF-8".to_string()
+            )
+        ]
+    );
     assert_eq!(request.body.as_deref(), Some("a=b"));
     let response = HostResponse {
         id: request.id,
