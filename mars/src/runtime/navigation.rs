@@ -474,8 +474,14 @@ impl Runtime {
         perf::record("page.scripts", phase, || restyle.to_string());
         phase = Instant::now();
         gaps.record(&mut page.document);
-        page.degraded = gaps.degraded;
-        page.untrusted_styles = gaps.untrusted_styles;
+        // Script steps already noted what they inserted and could not apply (sheets, images);
+        // the load's own gaps join them rather than replace them.
+        for feature in std::mem::replace(&mut page.degraded, gaps.degraded) {
+            if page.degraded.len() < DIAGNOSTICS && !page.degraded.contains(&feature) {
+                page.degraded.push(feature);
+            }
+        }
+        page.untrusted_styles |= gaps.untrusted_styles;
         page.scripting.wake();
         // `styled` alone cannot say the first paint stands: inserted images restyle the page
         // without laying it out, which left example.com's script-built link with no box.

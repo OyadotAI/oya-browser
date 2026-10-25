@@ -18,6 +18,8 @@ const MIN_MODULUS_BYTES: usize = 256;
 const MAX_MODULUS_BYTES: usize = 1024;
 /// PKCS #1 v1.5 needs 0x00 0x02, eight nonzero padding bytes and a 0x00 separator.
 const PADDING_OVERHEAD: usize = 11;
+/// The longest public exponent accepted; 65537 needs three.
+const MAX_EXPONENT_BYTES: usize = 4;
 
 /** A leaf certificate's RSA public key. */
 pub(crate) struct PublicKey {
@@ -91,7 +93,7 @@ fn leaf_key_parts(certificate: &[u8]) -> Option<PublicKey> {
 }
 
 /** SubjectPublicKeyInfo holding an rsaEncryption RSAPublicKey. */
-fn spki(body: &[u8]) -> Option<PublicKey> {
+pub(super) fn spki(body: &[u8]) -> Option<PublicKey> {
     let mut spki = Der(body);
     let mut algorithm = Der(spki.expect(0x30)?);
     if algorithm.expect(0x06)? != RSA_ENCRYPTION {
@@ -105,7 +107,17 @@ fn spki(body: &[u8]) -> Option<PublicKey> {
     let n = unsigned(key.expect(0x02)?)?;
     let e = unsigned(key.expect(0x02)?)?;
     let sized = (MIN_MODULUS_BYTES..=MAX_MODULUS_BYTES).contains(&n.len());
-    (sized && n.last()? & 1 == 1 && !e.is_empty()).then_some(PublicKey { n, e })
+    (sized && n.last()? & 1 == 1 && exponent_ok(&e)).then_some(PublicKey { n, e })
+}
+
+/**
+ * A public exponent is odd, at least 3 and at most 4 bytes: e = 1 would send the premaster in
+ * the clear, an even e is not invertible, and a long one only slows the bignum down.
+ */
+fn exponent_ok(e: &[u8]) -> bool {
+    (1..=MAX_EXPONENT_BYTES).contains(&e.len())
+        && e.last().is_some_and(|byte| byte & 1 == 1)
+        && e != [1]
 }
 
 /** A positive DER INTEGER without its sign byte; None for a negative or zero value. */

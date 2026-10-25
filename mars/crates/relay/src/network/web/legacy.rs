@@ -1,13 +1,17 @@
 /**
  * TLS 1.2 with RSA key exchange (TLS_RSA_WITH_AES_128_GCM_SHA256 and _256_GCM_SHA384), for
- * servers that refuse every suite Rustls offers. Chromium's cipher string
- * (`ALL:!aPSK:!ECDSA+SHA1:!3DES` in net/socket/ssl_client_socket_impl.cc) still includes these
- * kRSA suites, so Chrome reaches such servers (www.fsf.org, linked from gnu.org, negotiates
- * only DHE or kRSA). Rustls never offers them, so the transport retries here after a
- * handshake_failure. Verification is not relaxed: the chain, name and validity go through the
- * same Rustls WebPKI verifier and roots, the leaf must allow keyEncipherment, both Finished
- * messages are checked, and Extended Master Secret (RFC 7627) is used whenever offered back.
- * Renegotiation is never performed; a server HelloRequest is ignored.
+ * servers that refuse every suite Rustls offers. Chromium's cipher string in
+ * net/socket/ssl_client_socket_impl.cc (`ALL:!aPSK:!ECDSA+SHA1:!3DES`) keeps kRSA unless
+ * `SSLConfig::require_ecdhe`, which defaults to false (checked against the pinned Chromium
+ * source of 2026-09), so Chrome reaches such servers (www.fsf.org, linked from gnu.org,
+ * negotiates only DHE or kRSA). Rustls never offers them, so the transport retries here only
+ * after a handshake_failure alert. The retry is guarded against downgrade: it sends
+ * TLS_FALLBACK_SCSV (RFC 7507) and refuses a ServerHello carrying the RFC 8446 downgrade
+ * sentinel. Verification is not relaxed: the chain, name and validity go through the same
+ * Rustls WebPKI verifier and roots, the leaf must allow keyEncipherment, both Finished messages
+ * are checked, and Extended Master Secret (RFC 7627) is used whenever offered back. Parsing is
+ * strict: no trailing bytes, duplicate extensions or handshake bytes left after
+ * ServerHelloDone. Renegotiation is never performed; a server HelloRequest is ignored.
  */
 mod rsa;
 
@@ -42,6 +46,13 @@ const SIGNATURE_ALGORITHMS: u16 = 13;
 const ALPN: u16 = 16;
 const EXTENDED_MASTER_SECRET: u16 = 23;
 const RENEGOTIATION_INFO: u16 = 0xff01;
+/// TLS_FALLBACK_SCSV (RFC 7507): tells a server that also speaks a newer version to refuse.
+const FALLBACK_SCSV: u16 = 0x5600;
+/// RFC 8446 4.1.3: the last 8 bytes of a ServerHello random from a TLS 1.3 server that was
+/// downgraded to TLS 1.2 (final byte 01) or to TLS 1.1 and below (final byte 00).
+const DOWNGRADE_SENTINEL: [u8; 7] = *b"DOWNGRD";
+/// A session id is at most 32 bytes (RFC 5246 7.4.1.2).
+const SESSION_ID_LIMIT: u8 = 32;
 /// Chrome's signature_algorithms list, as hello.rs offers through Rustls.
 const SCHEMES: [u16; 8] = [
     0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601,
@@ -354,7 +365,10 @@ pub(super) fn connect(
     })
 }
 
-/** The ClientHello body: TLS 1.2, both suites, null compression and five extensions. */
+/**
+ * The ClientHello body: TLS 1.2, both suites plus TLS_FALLBACK_SCSV, null compression and five
+ * extensions.
+ */
 fn client_hello(random: &[u8; RANDOM], name: &str) -> Vec<u8> {
     let mut body = TLS12.to_vec();
     body.extend_from_slice(random);
@@ -363,7 +377,9 @@ fn client_hello(random: &[u8; RANDOM], name: &str) -> Vec<u8> {
         &mut body,
         &SUITES
             .iter()
-            .flat_map(|suite| suite.id.to_be_bytes())
+            .map(|suite| suite.id)
+            .chain([FALLBACK_SCSV])
+            .flat_map(u16::to_be_bytes)
             .collect::<Vec<_>>(),
     );
     body.extend_from_slice(&[1, 0]);
@@ -402,7 +418,8 @@ fn alpn() -> Vec<u8> {
 
 /**
  * Reads the ServerHello: TLS 1.2, an offered suite, null compression, and only extensions
- * that were offered, with renegotiation_info empty (RFC 5746) and ALPN http/1.1.
+ * that were offered, each once, with renegotiation_info empty (RFC 5746) and ALPN http/1.1.
+ * A downgrade sentinel in the random is refused, as are trailing bytes.
  */
 fn server_hello(handshake: &mut Handshake<'_>) -> io::Result<Hello> {
     let (kind, body) = handshake.next()?;
@@ -417,7 +434,13 @@ fn server_hello(handshake: &mut Handshake<'_>) -> io::Result<Hello> {
         .take(RANDOM)?
         .try_into()
         .map_err(|_| invalid("random"))?;
+    if random[RANDOM - 8..RANDOM - 1] == DOWNGRADE_SENTINEL && random[RANDOM - 1] <= 1 {
+        return Err(invalid("downgrade sentinel in ServerHello random"));
+    }
     let session = reader.take(1)?[0];
+    if session > SESSION_ID_LIMIT {
+        return Err(invalid("session id too long"));
+    }
     reader.take(usize::from(session))?;
     let id = u16::from_be_bytes(reader.take(2)?.try_into().map_err(|_| invalid("suite"))?);
     let suite = *SUITES
@@ -430,6 +453,7 @@ fn server_hello(handshake: &mut Handshake<'_>) -> io::Result<Hello> {
     let mut extended_master_secret = false;
     if !reader.0.is_empty() {
         let mut extensions = Reader(reader.vector16()?);
+        let mut seen = Vec::new();
         while !extensions.0.is_empty() {
             let id = u16::from_be_bytes(
                 extensions
@@ -438,6 +462,10 @@ fn server_hello(handshake: &mut Handshake<'_>) -> io::Result<Hello> {
                     .map_err(|_| invalid("extension"))?,
             );
             let value = extensions.vector16()?;
+            if seen.contains(&id) {
+                return Err(invalid("duplicate ServerHello extension"));
+            }
+            seen.push(id);
             match id {
                 EXTENDED_MASTER_SECRET if value.is_empty() => extended_master_secret = true,
                 RENEGOTIATION_INFO if value == [0] => {}
@@ -447,6 +475,7 @@ fn server_hello(handshake: &mut Handshake<'_>) -> io::Result<Hello> {
             }
         }
     }
+    finish(&reader, "ServerHello")?;
     Ok(Hello {
         suite,
         random,
@@ -468,7 +497,9 @@ fn certificates(
     if kind != CERTIFICATE {
         return Err(invalid("expected Certificate"));
     }
-    let mut list = Reader(Reader(&body).vector24()?);
+    let mut message = Reader(&body);
+    let mut list = Reader(message.vector24()?);
+    finish(&message, "Certificate")?;
     let mut chain = Vec::new();
     while !list.0.is_empty() {
         chain.push(CertificateDer::from(list.vector24()?.to_vec()));
@@ -486,6 +517,9 @@ fn certificates(
     }
     if kind != SERVER_HELLO_DONE {
         return Err(invalid("expected ServerHelloDone"));
+    }
+    if !handshake.pending.is_empty() {
+        return Err(invalid("handshake bytes after ServerHelloDone"));
     }
     Ok((key, requested))
 }
@@ -681,6 +715,15 @@ impl<'a> Reader<'a> {
     fn vector24(&mut self) -> io::Result<&'a [u8]> {
         let length = self.take(3)?;
         self.take(u32::from_be_bytes([0, length[0], length[1], length[2]]) as usize)
+    }
+}
+
+/** Refuses bytes left over after a message's last field. */
+fn finish(reader: &Reader<'_>, what: &str) -> io::Result<()> {
+    if reader.0.is_empty() {
+        Ok(())
+    } else {
+        Err(invalid(&format!("trailing bytes after {what}")))
     }
 }
 

@@ -4,8 +4,9 @@ use super::*;
 /** This is a synthetic styled fixture; the original example source is separately tested unchanged at document stages. */
 const STYLED: &str = "<style>html{color-scheme:light dark;background:light-dark(#eee,#222)}body{font:16px/1.6 system-ui,sans-serif;max-width:26em;margin:auto;padding:25vh 2em 2em;text-align:center}</style><p id=out>Initial counter</p><input id=name><button id=step type=button onclick='step()'>Step</button><button id=probe type=button onclick='probe()'>Probe</button><script>var count=1;window.localStorage.setItem('count',count);function step(){count++;window.localStorage.setItem('count',count);document.getElementById('out').textContent=count;}function probe(){document.getElementById('out').textContent=count+' '+window.localStorage.getItem('count');}</script>";
 
-/** The UA's 1em paragraph top margin; body padding keeps it from collapsing, as in Chromium. */
-const P_MARGIN: f64 = 16.0;
+/** The fixture has no doctype, so it lays out in quirks mode: the paragraph's UA top margin is a
+ * quirky margin at the start of the body and counts as zero, as in Chromium. */
+const P_MARGIN: f64 = 0.0;
 
 /** Context reflow preserves edited inputs, page/revision identity and both script and Storage state. */
 #[test]

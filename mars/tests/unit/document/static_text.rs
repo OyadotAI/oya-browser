@@ -194,11 +194,14 @@ fn forged_cycles_fail_before_native_label_recursion() {
     );
 }
 
-/** UTF-8 and combining scalars remain complete across narrow long-word wrapping without fake nodes. */
+/** UTF-8 and combining scalars remain complete across narrow long-word wrapping without fake nodes.
+ * `overflow-wrap:anywhere` asks for the break: by default a word with no break opportunity
+ * overflows on one line, as in Chromium. */
 #[test]
 fn narrow_long_word_wrapping_preserves_unicode_and_source_identity() {
     let word = "e\u{301}🐙".repeat(320);
-    let document = compute_styles(&parse(&format!("<p>{word}</p>")).unwrap(), &[]).unwrap();
+    let source = format!("<p style='overflow-wrap:anywhere'>{word}</p>");
+    let document = compute_styles(&parse(&source).unwrap(), &[]).unwrap();
     let display = render(&document, 280.0).unwrap();
     let item = display
         .items

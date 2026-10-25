@@ -25,7 +25,10 @@ fn flex_defaults_are_explicit_and_preserve_legacy_styles() {
     assert_eq!(computed.flex_basis, FlexBasis::Auto);
     assert_eq!((computed.flex_grow, computed.flex_shrink), (0.0, 1.0));
     assert_eq!((computed.row_gap, computed.column_gap), (0.0, 0.0));
-    assert_eq!(computed.justify_content, JustifyContent::Start);
+    // `normal`, which Blink keeps distinct from `flex-start`: flex items pack at the start,
+    // while flex lines and auto grid tracks stretch.
+    assert_eq!(computed.justify_content, JustifyContent::Stretch);
+    assert_eq!(computed.justify_content, JustifyContent::normal());
     assert_eq!(computed.align_items, AlignItems::Stretch);
     assert_eq!(computed.min_width, None);
 }
@@ -189,21 +192,21 @@ fn unsupported_flex_values_and_excluded_structures_are_dropped_with_a_diagnostic
     };
     for (declaration, kept, named) in [
         (
-            "display:flex;flex-direction:column;flex-wrap:wrap",
+            "display:flex;flex-direction:column;gap:10",
             "display:flex;flex-direction:column",
-            "Wrapped flex columns",
+            "gap",
         ),
         ("flex:1 auto 2", "", "flex"),
         ("flex:1 2 3", "", "flex"),
         ("flex:1 2 0 0", "", "flex"),
         ("flex-basis:1em", "", "flex-basis"),
-        ("flex-basis:content", "", "flex-basis"),
+        ("flex-basis:fit-content(10px)", "", "flex-basis"),
         ("flex-grow:-1", "", "flex-grow"),
         ("flex-shrink:NaN", "", "flex-shrink"),
         ("flex-grow:4097", "", "flex-grow"),
         ("gap:10", "", "gap"),
         ("gap:1px 2px 3px", "", "gap"),
-        ("align-content:stretch", "", "align-content"),
+        ("align-content:10px", "", "align-content"),
         ("padding:auto", "", "padding"),
     ] {
         let document = computed(declaration);

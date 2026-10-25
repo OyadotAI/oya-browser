@@ -392,6 +392,11 @@ fn nth_of<'a>(
         .children
         .get(&node.parent)
         .map_or(&[][..], Vec::as_slice);
+    // Each candidate scans its siblings, so the scan shares the `:has()` budget and fails closed.
+    if siblings.len() > HAS_VISITS {
+        tree.exhausted.set(true);
+        return false;
+    }
     let mut order = siblings.iter().filter(|sibling| matching(sibling));
     let at = if last {
         order

@@ -186,7 +186,7 @@ impl Connection {
                     .set_write_timeout(Some(remaining))
                     .map_err(io_error)?;
                 if let Err(error) = stream.conn.complete_io(&mut stream.sock) {
-                    if refused_suites(&error) {
+                    if retry_with_rsa(&error) {
                         return Ok(false);
                     }
                     return Err(io_error(error));
@@ -293,6 +293,22 @@ fn io_error(error: std::io::Error) -> EngineError {
         );
     }
     network_error()
+}
+
+/**
+ * Only a handshake_failure alert retries over kRSA: it is how a server says no suite matched.
+ * A protocol_version or insufficient_security refusal is not one a different TLS 1.2 suite
+ * can answer, and retrying on it would widen the downgrade surface for nothing.
+ */
+pub(super) fn retry_with_rsa(error: &std::io::Error) -> bool {
+    matches!(
+        error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>()),
+        Some(rustls::Error::AlertReceived(
+            rustls::AlertDescription::HandshakeFailure
+        ))
+    )
 }
 
 /**

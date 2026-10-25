@@ -49,60 +49,17 @@ pub(super) fn absolute(
     if node.style.position == Position::Static || node.style.generated.is_empty() {
         return Ok(());
     }
-    let (x, y, width, height) = {
-        let item = &items[index];
-        let sides = super::sizing::border_sides(&node.style);
-        (
-            item.x + sides[3],
-            item.y + sides[0],
-            (item.width - sides[1] - sides[3]).max(0.0),
-            (item.height - sides[0] - sides[2]).max(0.0),
-        )
-    };
+    let block = super::positioned::padding_box(node, &items[index]);
     for generated in &node.style.generated {
         let style = &generated.style;
         if style.hidden || style.position != Position::Absolute {
             continue;
         }
+        // The same out-of-flow sizing as elements, at the padding box's origin as the static
+        // position; Static keeps the stand-in from being deferred again.
         let mut synthetic = synthetic(node, generated);
         synthetic.style.position = Position::Static;
-        let inset = |side: usize, basis: f64| super::positioned::inset(style, side, basis);
-        let [top, right, bottom, left] = [
-            inset(0, height),
-            inset(1, width),
-            inset(2, height),
-            inset(3, width),
-        ];
-        let box_width = match (style.width, left, right) {
-            (Some(_), _, _) => border_width(&synthetic, width, width, None),
-            (None, Some(l), Some(r)) => (width - l - r).max(0.0),
-            _ => super::float::shrink_width(context, &synthetic, width, 0.0)?,
-        };
-        let box_height = match (style.height, top, bottom) {
-            (Some(h), _, _) => h
-                .resolve_size(Some(height))
-                .map(|h| super::sizing::border_height(&synthetic, h)),
-            (None, Some(t), Some(b)) => Some((height - t - b).max(0.0)),
-            _ => None,
-        };
-        let bx = match (left, right) {
-            (Some(l), _) => x + l,
-            (None, Some(r)) => x + width - r - box_width,
-            _ => x,
-        };
-        let by = match (top, bottom, box_height) {
-            (Some(t), _, _) => y + t,
-            (None, Some(b), Some(h)) => y + height - b - h,
-            _ => y,
-        };
-        let mut flow = Flow::new(bx, by, box_width);
-        let bounds = BorderBox {
-            x: bx,
-            y: by,
-            width: box_width,
-            height: box_height,
-        };
-        node_layout(context, &synthetic, &mut flow, items, Some(bounds))?;
+        super::positioned::place_in(context, &synthetic, block, (block.x, block.y), items)?;
     }
     Ok(())
 }

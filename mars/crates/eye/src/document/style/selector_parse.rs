@@ -587,6 +587,9 @@ impl<'a> Cursor<'a> {
                 if let Some((formula, of)) = split_of(inner) {
                     let (a, b) = nth(formula).ok_or("nth-child")?;
                     let of = arguments(of, self.in_has, self.depth, false)?;
+                    if of.iter().any(nests_nth_of) {
+                        return Err(":nth-child(of S) inside S");
+                    }
                     return Ok(Simple::NthOf { a, b, last, of });
                 }
                 let (a, b) = nth(inner).ok_or("nth-child")?;
@@ -661,6 +664,23 @@ fn foreign(selector: &str) -> bool {
  * dropped and the rest still match (an empty list matches nothing); in `:not()` it fails.
  * Eye only forgives what Blink itself rejects (see `foreign`), so masks stay fail-closed.
  */
+/**
+ * Whether a selector holds `:nth-child(of S)` anywhere inside it. Each such argument scans every
+ * sibling of every candidate, so nesting one in another multiplies the work by the sibling count
+ * per level; a nested one is refused (the rule falls back to its mask) to keep matching linear.
+ */
+fn nests_nth_of(selector: &Selector) -> bool {
+    selector
+        .compounds
+        .iter()
+        .flat_map(|c| &c.simples)
+        .any(|simple| match simple {
+            Simple::NthOf { .. } => true,
+            Simple::Not(list) | Simple::Is(list, _) => list.iter().any(nests_nth_of),
+            Simple::Has(list) => list.iter().any(|(_, s)| nests_nth_of(s)),
+            _ => false,
+        })
+}
 fn arguments(
     source: &str,
     in_has: bool,

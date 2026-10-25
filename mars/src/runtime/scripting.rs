@@ -460,11 +460,14 @@ impl Runtime {
         let mut added = false;
         for href in hrefs {
             let deadline = Instant::now() + SCRIPT_REQUEST_WALL;
+            let total: usize = page.resolved_stylesheets.iter().map(String::len).sum();
             let Some(css) = self.inserted_sheet(&base, href, deadline)? else {
+                note_degraded(page);
                 continue;
             };
-            let total: usize = page.resolved_stylesheets.iter().map(String::len).sum();
             if total + css.len() > crate::constants::STYLE_TOTAL_BYTES {
+                note_degraded(page);
+                page.untrusted_styles = true;
                 continue;
             }
             page.resolved_stylesheets.push(css);
@@ -1022,4 +1025,14 @@ pub(super) fn inserted_sheets(
             StyleSource::Inline(css) => Some(css.clone()),
             StyleSource::Linked(_) | StyleSource::LinkedMedia { .. } => None,
         })
+}
+
+/** A script-inserted sheet that never applied is reported as navigation reports a linked one. A
+ * failed load is only degraded, as a browser drops it too; one skipped for the style allowance
+ * leaves its hiding rules unknown, so the caller also marks the page's styles untrusted and
+ * agents fail closed. */
+fn note_degraded(page: &mut Page) {
+    if page.degraded.len() < DIAGNOSTICS && !page.degraded.iter().any(|f| f == "stylesheets") {
+        page.degraded.push("stylesheets".into());
+    }
 }

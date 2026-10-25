@@ -265,7 +265,9 @@ impl<'a> LayoutContext<'a> {
             maxes.push(max + extra);
         }
         let mut generated_max = 0.0;
-        for generated in self.generated_widths(node)? {
+        let generated = self.generated_widths(node)?;
+        let generated_items = generated.len();
+        for generated in generated {
             size.min_content = size.min_content.max(generated.min_content);
             size.max_content = size.max_content.max(generated.max_content);
             sum.min_content += generated.min_content;
@@ -275,7 +277,9 @@ impl<'a> LayoutContext<'a> {
         if node.style.display_grid {
             size = self.grid_intrinsic(node, &children, size)?;
         } else if node.style.display_flex && node.style.flex_direction == FlexDirection::Row {
-            let items = children.len() + usize::from(!node.text.trim().is_empty());
+            // `::before` and `::after` are items too, so each one adds a gap.
+            let items =
+                children.len() + generated_items + usize::from(!node.text.trim().is_empty());
             let gaps = node.style.column_gap * items.saturating_sub(1) as f64;
             size.max_content = size.max_content.max(sum.max_content + gaps);
             if node.style.flex_wrap == FlexWrap::NoWrap {
@@ -296,7 +300,7 @@ impl<'a> LayoutContext<'a> {
     fn generated_widths(&mut self, node: &Node) -> EngineResult<Vec<IntrinsicWidths>> {
         let mut widths = Vec::new();
         for generated in super::generated::items(node).into_iter().flatten() {
-            let raw = text_intrinsic(self, &generated)?;
+            let raw = super::flex_layout::item_intrinsic(self, &generated)?;
             let value = intrinsic_contribution(node, &generated, raw);
             let extra = horizontal_edges(&generated)
                 + generated.style.margin[1]

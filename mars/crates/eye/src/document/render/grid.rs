@@ -403,7 +403,12 @@ pub(super) fn intrinsic(
     node: &Node,
 ) -> EngineResult<super::sizing::IntrinsicWidths> {
     let style = &node.style;
-    let mut kids = context.children(node.local_id);
+    // The same items `children` lays out, `::before` first and `::after` last, so a
+    // shrink-to-fit grid is never narrower than its generated items.
+    let [before, after] = super::generated::items(node);
+    let mut kids: Vec<&Node> = before.iter().collect();
+    kids.extend(context.children(node.local_id));
+    kids.extend(&after);
     kids.retain(|child| !super::flow::blank_text(child) && !out_of_flow(child));
     kids.sort_by_key(|child| child.style.order);
     let gap = style.column_gap;

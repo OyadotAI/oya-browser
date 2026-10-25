@@ -546,3 +546,57 @@ fn script_linked_stylesheet_applies_and_fires_load() {
         .find(|node| node["html_id"] == "hide");
     assert!(hidden.is_none_or(|node| node["visible"] == false), "{page}");
 }
+
+/** A sheet a script links that never loads is reported in `degraded`, as a linked one is. */
+#[test]
+fn script_linked_stylesheet_that_fails_is_degraded() {
+    let (_fixture, _runtime, page) = load(
+        "<a href=/next id=go>Next</a><script>const l=document.createElement('link');\
+         l.rel='stylesheet';l.href='/missing.css';document.head.appendChild(l)</script>",
+        vec![],
+    );
+    assert!(
+        page["degraded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "stylesheets"),
+        "{page}"
+    );
+}
+
+/** A script-linked sheet past the style allowance leaves its hiding rules unknown, so no node
+ * on the page may be acted on: the same fail-closed rule navigation applies to linked sheets. */
+#[test]
+fn script_linked_stylesheet_past_the_allowance_fails_closed() {
+    let filler = format!(
+        "<style>/*{}*/</style>",
+        "x".repeat(mars::constants::STYLE_TOTAL_BYTES - 64)
+    );
+    let body = format!(
+        "{filler}<a href=/next id=go>Next</a><script>const l=document.createElement('link');\
+         l.rel='stylesheet';l.href='/more.css';document.head.appendChild(l)</script>"
+    );
+    let (_fixture, mut runtime, page) = load(
+        &body,
+        vec![(
+            "/more.css",
+            reply(
+                "text/css",
+                "",
+                &format!("#go{{color:red}}/*{}*/", "y".repeat(256)),
+            ),
+        )],
+    );
+    assert!(
+        page["degraded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f == "stylesheets"),
+        "{page}"
+    );
+    let found = agent_call(&mut runtime, "page.find", json!({"text":"Next"})).unwrap();
+    let link = &found["matches"][0];
+    assert_eq!(link["disabled"], true, "{found}");
+}

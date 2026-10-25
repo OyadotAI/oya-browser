@@ -4,9 +4,9 @@ use crate::document::Position;
 
 /** A containing block's padding box in document points. */
 #[derive(Clone, Copy)]
-struct Block {
-    x: f64,
-    y: f64,
+pub(super) struct Block {
+    pub(super) x: f64,
+    pub(super) y: f64,
     width: f64,
     height: f64,
 }
@@ -122,16 +122,31 @@ impl Axis {
 fn margin(style: &crate::document::ComputedStyle, side: usize) -> Option<f64> {
     (!style.margin_auto[side]).then_some(style.margin[side])
 }
-/** One box, after Blink's ComputeOofInlineDimensions and ComputeOofBlockDimensions. */
+/** One box placed in its nearest positioned ancestor's padding box. */
 fn one(
     context: &mut LayoutContext<'_>,
     node: &Node,
-    (static_x, static_y): (f64, f64),
+    static_position: (f64, f64),
     items: &mut Vec<DisplayItem>,
     viewport: (f64, f64),
 ) -> EngineResult<()> {
     context.charge(items.len())?;
     let block = containing(context, node, items, viewport)?;
+    place_in(context, node, block, static_position, items)
+}
+/**
+ * Lays one absolutely positioned box out in `block`, after Blink's ComputeOofInlineDimensions and
+ * ComputeOofBlockDimensions. Generated `::before` and `::after` boxes come through here too, so
+ * insets, auto margins and `aspect-ratio` treat them like elements (nodejs.org's glowing
+ * backdrop, an `inset: 0; margin: auto` square, was 400px tall and stuck to the corner).
+ */
+pub(super) fn place_in(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    block: Block,
+    (static_x, static_y): (f64, f64),
+    items: &mut Vec<DisplayItem>,
+) -> EngineResult<()> {
     let style = &node.style;
     let inline = Axis::new(
         block.width,
@@ -153,39 +168,55 @@ fn one(
     };
     let height = match replaced {
         Some((_, height)) => Some(height),
-        None => block_size(node, block, vertical),
+        None => block_size(node, block, vertical, width),
     };
     let x = block.x + inline.offset(width, false);
     let needs_height = vertical.end_biased
         || (vertical.stretches() && (vertical.margins.0.is_none() || vertical.margins.1.is_none()));
     let laid_height = match height {
         Some(height) => height,
-        None if needs_height => context.measure_height(node.local_id, width)?,
+        None if needs_height => super::flex_layout::item_height(context, node, width)?,
         None => 0.0,
     };
     let y = block.y + vertical.offset(laid_height, true);
-    context.layout_at(
-        node.local_id,
-        BorderBox {
-            x,
-            y,
-            width,
-            height,
-        },
-        items,
-    )?;
+    let bounds = BorderBox {
+        x,
+        y,
+        width,
+        height,
+    };
+    super::flex_layout::place_item(context, node, bounds, items)?;
     Ok(())
 }
 /** The border-box height when it needs no layout: an authored height (a percentage of the
-containing block), else a stretch between two set insets, clamped by min and max height. */
-fn block_size(node: &Node, block: Block, axis: Axis) -> Option<f64> {
+containing block), else the one `aspect-ratio` transfers from the used width, else a stretch
+between two set insets, clamped by min and max height. Blink sizes an auto height with an
+aspect ratio as fit-content rather than stretching it (CanComputeBlockSizeWithoutLayout). */
+fn block_size(node: &Node, block: Block, axis: Axis, width: f64) -> Option<f64> {
     let authored = node
         .style
         .height
         .and_then(|height| height.resolve_size(Some(block.height)))
         .map(|height| super::sizing::border_height(node, height));
-    let size = authored.or_else(|| axis.stretches().then(|| axis.available()))?;
+    // ponytail: content taller than the ratio does not grow the box (css-sizing-4's automatic
+    // minimum); lay the box out at the ratio height and take the larger when a page needs it.
+    let size = authored
+        .or_else(|| aspect_height(node, width))
+        .or_else(|| axis.stretches().then(|| axis.available()))?;
     Some(clamp_height(node, size, Some(block.height)))
+}
+/** The border-box height `aspect-ratio` gives at this border-box width: the ratio sizes the
+content box unless `box-sizing: border-box` makes it size the border box. */
+fn aspect_height(node: &Node, width: f64) -> Option<f64> {
+    let ratio = node.style.aspect_ratio?;
+    let edges = vertical_edges(node);
+    Some(
+        if node.style.box_sizing == crate::document::BoxSizing::BorderBox {
+            (width / ratio).max(edges)
+        } else {
+            (width - horizontal_edges(node)).max(0.0) / ratio + edges
+        },
+    )
 }
 /** One inset side in px against its containing basis: px plus percentage; None is `auto`. */
 pub(super) fn inset(
@@ -211,7 +242,7 @@ fn width(
     if node.style.width.is_some() || axis.stretches() {
         return Ok(border_width(node, block.width, available, None));
     }
-    let intrinsic = context.intrinsic_widths(node.local_id)?;
+    let intrinsic = super::flex_layout::item_intrinsic(context, node)?;
     let edges = horizontal_edges(node);
     let fit = intrinsic
         .max_content
@@ -255,7 +286,7 @@ fn containing(
     Ok(viewport)
 }
 /** Borders are inside the border box, so the padding box starts past them. */
-fn padding_box(node: &Node, item: &DisplayItem) -> Block {
+pub(super) fn padding_box(node: &Node, item: &DisplayItem) -> Block {
     let [top, right, bottom, left] = super::sizing::border_sides(&node.style);
     Block {
         x: item.x + left,
