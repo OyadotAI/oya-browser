@@ -73,12 +73,14 @@ impl Occupancy {
 }
 
 /** Places `kids` in `style`'s grid. `columns` holds the explicit column tracks on entry and
- * every column, implicit ones included, on return. */
+ * every column, implicit ones included, on return; `rows` is the explicit row template's track
+ * count once its auto-repeat group is repeated. */
 pub(super) fn place<'a>(
     context: &mut LayoutContext<'_>,
     kids: &[&'a Node],
     style: &ComputedStyle,
     columns: &mut Vec<Track>,
+    rows: usize,
 ) -> EngineResult<Vec<Placed<'a>>> {
     let areas = &style.grid_areas;
     let named = areas.iter().map(|a| usize::from(a.column + a.columns));
@@ -89,12 +91,7 @@ pub(super) fn place<'a>(
     // Negative lines count back from the end of the explicit grid, which may have no tracks:
     // `-1` is then line 1 (LinkedIn's header is `grid-area: 1 / -1` in a template-less grid).
     let explicit_columns = columns.len();
-    let explicit_rows = areas
-        .iter()
-        .map(|area| usize::from(area.row + area.rows))
-        .max()
-        .unwrap_or(0)
-        .max(style.grid_rows.tracks.len());
+    let explicit_rows = explicit_rows(style, rows);
     let line_names = [&style.grid_rows.names[..], &style.grid_columns.names[..]];
     let column_flow = style.grid_flow_column;
     let mut resolved = Vec::with_capacity(kids.len());
@@ -315,16 +312,59 @@ fn named_lines(names: &[Option<String>; 2], lines: &[(String, u16)], own: GridLi
     }
     placed
 }
-/** Zero-based start (None for auto) and span of one axis, against `count` explicit tracks. */
-fn resolve(line: GridLine, count: usize) -> (Option<usize>, usize) {
-    let index = |n: i32| -> usize {
-        if n > 0 {
-            (n - 1) as usize
-        } else {
-            let lines = count.saturating_add(1).min(GRID_COLUMNS + 1) as i32;
-            (lines + n).max(0) as usize
+/** The explicit row count: the template's `rows`, or more when a named area reaches past them. */
+fn explicit_rows(style: &ComputedStyle, rows: usize) -> usize {
+    let areas = style
+        .grid_areas
+        .iter()
+        .map(|area| usize::from(area.row + area.rows));
+    areas.max().unwrap_or(0).max(rows)
+}
+/** A 1-based line number as a zero-based line index; negative numbers count back from the end
+ * of the `count` explicit tracks. */
+fn line_index(n: i32, count: usize) -> usize {
+    if n > 0 {
+        (n - 1) as usize
+    } else {
+        let lines = count.saturating_add(1).min(GRID_COLUMNS + 1) as i32;
+        (lines + n).max(0) as usize
+    }
+}
+/**
+ * An absolutely positioned child's `[row, column]` start and end line indexes, following Blink's
+ * `ComputeOutOfFlowItemPlacement` (css-grid-2 9.1): there is no auto-placement, and an `auto`
+ * line, or a span with nothing to count from, is None, which the caller takes as the padding
+ * edge. `explicit` is the explicit `[row, column]` track count after auto-repeat.
+ * ponytail: `span 1` reads as `auto` next to a line, since the style keeps no "span authored"
+ * bit; keep one in GridLine if a page needs `2 / span 1` on an abspos child.
+ */
+pub(super) fn out_of_flow_lines(
+    node: &Node,
+    style: &ComputedStyle,
+    [rows, columns]: [usize; 2],
+) -> [(Option<usize>, Option<usize>); 2] {
+    let line_names = [&style.grid_rows.names[..], &style.grid_columns.names[..]];
+    let (row, column) = lines(node, &style.grid_areas, line_names);
+    let axis = |line: GridLine, count: usize| {
+        let span = usize::from(line.span.max(1));
+        // A negative line before the first one does not exist, so it is `auto` too.
+        let index = |n: i32| (n > 0 || count as i32 + 1 + n >= 0).then(|| line_index(n, count));
+        match (line.start.and_then(index), line.end.and_then(index)) {
+            (Some(a), Some(b)) => (Some(a.min(b)), Some(a.max(b).max(a.min(b) + 1))),
+            (Some(start), None) if line.end.is_none() => {
+                (Some(start), (span > 1).then(|| start + span))
+            }
+            (None, Some(end)) if line.start.is_none() => {
+                ((span > 1).then(|| end.saturating_sub(span)), Some(end))
+            }
+            lines => lines,
         }
     };
+    [axis(row, explicit_rows(style, rows)), axis(column, columns)]
+}
+/** Zero-based start (None for auto) and span of one axis, against `count` explicit tracks. */
+fn resolve(line: GridLine, count: usize) -> (Option<usize>, usize) {
+    let index = |n: i32| line_index(n, count);
     let span = usize::from(line.span.max(1));
     match (line.start, line.end) {
         (Some(start), Some(end)) => {

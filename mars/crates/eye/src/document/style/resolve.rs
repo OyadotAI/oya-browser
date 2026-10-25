@@ -17,6 +17,8 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         used_scheme: parent.used_scheme,
         rtl: parent.rtl,
         letter_spacing: parent.letter_spacing,
+        word_spacing: parent.word_spacing,
+        text_indent: parent.text_indent,
         text_transform: parent.text_transform,
         white_space: parent.white_space,
         font_family: parent.font_family,
@@ -41,6 +43,8 @@ fn inherits(key: &str) -> bool {
             "line-height",
             "text-align",
             "letter-spacing",
+            "word-spacing",
+            "text-indent",
             "text-transform",
             "white-space",
             "cursor",
@@ -213,6 +217,8 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
         "line-height" => style.line_height = source.line_height,
         "text-align" => style.align = source.align.clone(),
         "letter-spacing" => style.letter_spacing = source.letter_spacing,
+        "word-spacing" => style.word_spacing = source.word_spacing,
+        "text-indent" => style.text_indent = source.text_indent,
         "text-transform" => style.text_transform = source.text_transform,
         "white-space" => style.white_space = source.white_space,
         "cursor" => style.cursor_pointer = source.cursor_pointer,
@@ -267,6 +273,10 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
         "object-position" => style.object_position = source.object_position,
         "clip" => style.clip_rect = source.clip_rect,
         "clip-path" => style.clip_path = source.clip_path,
+        "overflow-clip-margin" => {
+            style.overflow_clip_margin = source.overflow_clip_margin;
+            style.overflow_clip_box = source.overflow_clip_box;
+        }
         "background-color" => style.background = source.background.clone(),
         "background-image" => style.backgrounds = source.backgrounds.clone(),
         "background-size" => style.background_size = source.background_size,

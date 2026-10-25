@@ -268,6 +268,14 @@ pub enum TableBox {
     Cell,
     /// `display: table-caption`: spans the table above or below its grid.
     Caption,
+    /// `display: table-row-group`: a section of rows; a block outside a table.
+    RowGroup,
+    /// `display: table-header-group`: the section a table places first.
+    HeaderGroup,
+    /// `display: table-footer-group`: the section a table places last.
+    FooterGroup,
+    /// `display: table-column` or `table-column-group`: no box of its own in the grid.
+    Column,
 }
 /// `float` sides; floats leave normal flow and shorten the line boxes beside them.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -452,6 +460,9 @@ pub struct GridTemplate {
     pub repeat: Vec<Track>,
     /// Index in `tracks` where the auto-repeat group goes.
     pub repeat_at: usize,
+    /// The group is `auto-fit`: its repetitions no item occupies collapse.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeat_fit: bool,
     /// `[name]` line names with their one-based line numbers, in source order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub names: Vec<(String, u16)>,

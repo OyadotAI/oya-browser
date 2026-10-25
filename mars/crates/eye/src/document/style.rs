@@ -48,6 +48,8 @@ mod visual;
 mod visual_model;
 use crate::constants::DIAGNOSTICS;
 use crate::protocol::EngineError;
+pub use border::BorderStyle;
+pub use colors::painter_rgba;
 pub use cascade::{compute_styles, compute_styles_with_context};
 pub use flex_model::{AlignItems, BoxSizing, FlexBasis, FlexDirection, FlexWrap, JustifyContent};
 pub use font_face::{

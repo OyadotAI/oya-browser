@@ -10,8 +10,16 @@ use crate::{
     document::{Appearance, RenderContext},
     protocol::EngineResult,
 };
-/** Properties other values depend on, computed first in this order. */
-const FIRST: [&str; 4] = ["font-size", "color-scheme", "font-weight", "color"];
+/** Properties other values depend on, computed first in this order. The font properties come
+ * first, as in Blink's high-priority set, so `ch` and `ic` below see the element's own face. */
+const FIRST: [&str; 6] = [
+    "font-family",
+    "font-style",
+    "font-size",
+    "font-weight",
+    "color-scheme",
+    "color",
+];
 /** Corner radii resolve after width so percentages can use it. */
 const LAST: [&str; 4] = [
     "border-top-left-radius",
@@ -60,9 +68,16 @@ impl Resolver<'_> {
             }
             false
         });
+        // Font-relative units in the font properties themselves resolve against the parent face.
+        // Picking a face costs a font match, so only elements that name `ch` or `ic` pay it.
+        let measured = chosen.values().any(|(_, value)| font_unit(value));
+        super::values::set_font_face(measured.then(|| super::values::style_face(parent)));
         for key in FIRST {
             if let Some((_, value)) = chosen.remove(key) {
                 hides |= self.apply(style, key, &value, diagnostics);
+            }
+            if key == "font-weight" && measured {
+                super::values::set_font_face(Some(super::values::style_face(style)));
             }
             if key == "color-scheme" {
                 style.used_scheme =
@@ -86,6 +101,7 @@ impl Resolver<'_> {
         for (key, value) in values.into_iter().chain(late) {
             hides |= self.apply(style, &key, &value, diagnostics);
         }
+        super::values::set_font_face(None);
         default_foreground(style);
         style.validate()?;
         Ok(hides)
@@ -136,6 +152,13 @@ impl Resolver<'_> {
         dropped(key, drop, diagnostics);
         hiding(key, value)
     }
+}
+/** Whether a value may use `ch` or `ic`, the units that measure the element's face. */
+fn font_unit(value: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(2)
+        .any(|pair| pair.eq_ignore_ascii_case(b"ch") || pair.eq_ignore_ascii_case(b"ic"))
 }
 /** A painted background without an authored color gets the scheme's default text color. */
 fn default_foreground(style: &mut ComputedStyle) {

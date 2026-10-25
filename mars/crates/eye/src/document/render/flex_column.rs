@@ -360,8 +360,14 @@ fn place_line(
     let (offset, between) = if share > 0.0 {
         (0.0, 0.0)
     } else {
+        // A horizontal column's main axis runs top down, so `left` and `right` fall back to
+        // `start` (Blink's `ResolvedJustifyContent`).
+        let kind = match parent.style.justify_content {
+            JustifyContent::Left | JustifyContent::Right => JustifyContent::LogicalStart,
+            kind => kind,
+        };
         justification(
-            parent.style.justify_content,
+            kind,
             extent - used,
             records.len(),
             parent.style.flex_reverse,

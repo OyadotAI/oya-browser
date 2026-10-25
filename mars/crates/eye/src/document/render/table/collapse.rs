@@ -1,11 +1,10 @@
 /** `border-collapse: collapse`, after Blink's TableBorders (layout/table/table_borders.cc): every
- * grid edge takes the widest border any cell, row or the table puts on it (css-tables-3 border
+ * grid edge takes the widest border any cell, row, row group or the table puts on it (css-tables-3 border
  * conflict resolution by width), each cell then uses half of the edges around it, and the table
  * half of its outer edges. Resolved once before layout by rewriting those widths into a copy of
  * the document, so sizing and painting both see them.
  *
- * ponytail: width wins and nothing else (no style ranking, `hidden`, column or row-group
- * borders); the winning edge paints in each cell's own color. */
+ * ponytail: width wins and nothing else (no style ranking, `hidden` or column borders); the winning edge paints in each cell's own color. */
 use super::super::flow::*;
 use super::{Grid, grid, is_table};
 
@@ -92,8 +91,23 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
     }
     let mut edges = Edges::new(rows, columns);
     edges.merge((0, rows), (0, columns), sides(table));
-    for (index, row) in grid.rows.iter().enumerate().filter(|_| !grid.anonymous) {
-        edges.merge((index, index + 1), (0, columns), sides(row));
+    // Blink's collapsed borders take the widest of table, row group, row and cell borders.
+    for section in &grid.sections {
+        if let Some(group) = section.node.filter(|_| !section.rows.is_empty()) {
+            edges.merge(
+                (section.rows.start, section.rows.end),
+                (0, columns),
+                sides(group),
+            );
+        }
+    }
+    for (index, row) in grid
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| !row.anonymous)
+    {
+        edges.merge((index, index + 1), (0, columns), sides(row.node));
     }
     for slot in &grid.cells {
         let area = (slot.row, slot.row + slot.rows);

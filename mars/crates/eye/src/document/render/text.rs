@@ -11,15 +11,17 @@ pub(super) fn inline(
     if node.style.inline_block {
         return atomic(context, node, flow, items);
     }
+    indent_first_line(context, node, flow, false);
     let index = items.len();
     let y = flow.y;
     let sides = super::sizing::border_sides(&node.style);
     // Inline start and end edges take room on the line; vertical ones paint outside it.
     // A space pending from before the box (the previous run's, or source whitespace between
     // elements) stays outside it, so the box starts after it, as Blink attributes spaces.
-    let outside = flow.cursor > 0.0 && (flow.space == Some(true) || node.space_leading);
+    let outside = started(flow) && (flow.space == Some(true) || node.space_leading);
     let before = if outside {
         context.measure(" ", super::sizing::face_for(&node.style, Some(" ")))?
+            + node.style.word_spacing
     } else {
         0.0
     };
@@ -99,7 +101,8 @@ fn atomic(
     let margins = (style.margin[3], style.margin[1]);
     let width = super::float::shrink_width(context, node, flow.width, margins.0 + margins.1)?;
     let outer = width + margins.0 + margins.1;
-    if flow.cursor > 0.0 && !flow.fits(outer) {
+    indent_first_line(context, node, flow, false);
+    if started(flow) && !flow.fits(outer) {
         flow.newline();
     }
     flow.fit(outer);
@@ -229,6 +232,10 @@ pub(super) fn text(
     let source = transformed(&node.style, source);
     let space = node.style.white_space;
     let mut lines: Vec<PaintLine> = Vec::new();
+    let preserves = matches!(space, WhiteSpace::Pre | WhiteSpace::PreWrap);
+    if item != usize::MAX && (preserves || css_words(&source).next().is_some()) {
+        indent_first_line(context, node, flow, true);
+    }
     if !matches!(
         space,
         WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::PreLine
@@ -270,7 +277,7 @@ fn preserved(
     let width = context.measure(
         &segment,
         super::sizing::face_for(&node.style, Some(&segment)),
-    )?;
+    )? + spaces(&segment) * node.style.word_spacing;
     let frag = text_frag(context, node, item, lines.len());
     flow.push(frag);
     lines.push(PaintLine {
@@ -292,8 +299,8 @@ fn words(
 ) -> EngineResult<()> {
     let face = super::sizing::face_for(&node.style, Some(source));
     let nowrap = node.style.white_space == crate::document::WhiteSpace::Nowrap;
-    let space = if source.split_whitespace().next().is_some() {
-        context.measure(" ", face)?
+    let space = if css_words(source).next().is_some() {
+        context.measure(" ", face)? + node.style.word_spacing
     } else {
         0.0
     };
@@ -304,28 +311,21 @@ fn words(
         flow.width.max(1.0)
     };
     // Only source whitespace separates runs: `one<b>two</b>` stays one word.
-    let mut spaced =
-        source.starts_with(char::is_whitespace) || flow.space.unwrap_or(node.tag != "#text");
-    for word in source.split_whitespace() {
+    let mut spaced = source.starts_with(css_space) || flow.space.unwrap_or(node.tag != "#text");
+    for word in css_words(source) {
         let chunks = super::wrap::lines(word, limit, face, breakable, context)?;
         let count = chunks.len();
-        for (index, chunk) in chunks.into_iter().enumerate() {
-            let gap = if flow.cursor > 0.0 && spaced {
-                space
-            } else {
-                0.0
-            };
-            if !nowrap && flow.cursor > 0.0 && !flow.fits(gap + chunk.width) {
+        for (index, mut chunk) in chunks.into_iter().enumerate() {
+            // A no-break space does not collapse and takes word-spacing like a space does.
+            chunk.width += spaces(&chunk.text) * node.style.word_spacing;
+            let gap = if started(flow) && spaced { space } else { 0.0 };
+            if !nowrap && started(flow) && !flow.fits(gap + chunk.width) {
                 flow.newline();
             }
             if !nowrap {
                 flow.fit(chunk.width);
             }
-            let gap = if flow.cursor > 0.0 && spaced {
-                space
-            } else {
-                0.0
-            };
+            let gap = if started(flow) && spaced { space } else { 0.0 };
             let x = flow.left() + flow.cursor + gap;
             if let Some(line) = lines.last_mut().filter(|line| line.y == flow.y) {
                 context.charge(chunk.text.chars().count())?;
@@ -353,8 +353,8 @@ fn words(
         }
         spaced = true;
     }
-    flow.space = if source.split_whitespace().next().is_some() {
-        Some(source.ends_with(char::is_whitespace))
+    flow.space = if css_words(source).next().is_some() {
+        Some(source.ends_with(css_space))
     } else if spaced || !source.is_empty() {
         Some(true)
     } else {
@@ -401,4 +401,83 @@ pub(super) fn transformed<'a>(
             result.into()
         }
     }
+}
+/** Whether the current line already holds a fragment. Blink removes spaces at the start of a
+ * line and never breaks before its first item, whatever indent or inline-start edge precedes it. */
+fn started(flow: &Flow) -> bool {
+    !flow.frags.is_empty()
+}
+/** Spaces in a preserved run, each widened by `word-spacing`. */
+fn spaces(segment: &str) -> f64 {
+    segment
+        .chars()
+        .filter(|c| *c == ' ' || *c == '\u{a0}')
+        .count() as f64
+}
+/**
+ * CSS `text-indent` after Blink's InlineLayoutAlgorithm: the first formatted line of a block
+ * container starts `text-indent` (a length, or a percentage of the container's content width)
+ * along the inline axis. Only the first line qualifies: no line finished yet in this flow, and
+ * no in-flow block-level box before `node` inside its container (a line after a block child
+ * is in an anonymous block that is not the first). `own` says `node` itself may be the
+ * container (its own text); an atomic inline looks from its parent.
+ */
+// ponytail: LTR only and not counted in intrinsic widths or replaced first items; add each-line/hanging when needed.
+fn indent_first_line(context: &LayoutContext<'_>, node: &Node, flow: &mut Flow, own: bool) {
+    if flow.cursor != 0.0 || !flow.frags.is_empty() || !flow.finished.is_empty() {
+        return;
+    }
+    let container_of =
+        |n: &Node| (!n.style.inline || n.style.inline_block) && !n.style.display_contents;
+    // The path from `node` up to its container, found before any sibling scan so a page
+    // without an indent pays only this short walk.
+    let mut path = vec![node];
+    if !(own && container_of(node)) {
+        for _ in 0..crate::constants::DOCUMENT_DEPTH {
+            let Some(parent) = path[path.len() - 1]
+                .parent
+                .and_then(|id| context.node(id).ok())
+            else {
+                return;
+            };
+            path.push(parent);
+            if container_of(parent) {
+                break;
+            }
+        }
+    }
+    let container = path[path.len() - 1];
+    let (px, percent) = container.style.text_indent;
+    if (px, percent) == (0.0, 0.0)
+        || path
+            .windows(2)
+            .any(|pair| block_before(context, pair[1], pair[0]))
+    {
+        return;
+    }
+    flow.cursor = px + percent / 100.0 * flow.width;
+}
+/** Whether an in-flow block-level sibling precedes `child` among `parent`'s children. */
+fn block_before(context: &LayoutContext<'_>, parent: &Node, child: &Node) -> bool {
+    use crate::document::style::{Float, Position};
+    context
+        .all_children(parent.local_id)
+        .into_iter()
+        .take_while(|sibling| sibling.local_id != child.local_id)
+        .any(|sibling| {
+            !sibling.style.inline
+                && !sibling.style.hidden
+                && sibling.style.float == Float::None
+                && !matches!(sibling.style.position, Position::Absolute | Position::Fixed)
+        })
+}
+/** CSS document white space (space, tab, line feed, carriage return, form feed): the only
+ * characters that collapse. A no-break space and other Unicode spaces stay in their word, as in
+ * Blink's whitespace collapsing. */
+fn css_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0c')
+}
+/** The runs between collapsible white space. */
+fn css_words(source: &str) -> impl Iterator<Item = &str> {
+    source.split(css_space).filter(|word| !word.is_empty())
 }

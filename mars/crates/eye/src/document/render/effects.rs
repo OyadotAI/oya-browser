@@ -363,21 +363,72 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
     if style.position == Position::Sticky {
         matrix[5] = sticky_offset(tree, items, node, own);
     } else if style.position == Position::Relative {
-        let parent_box = node
-            .parent
-            .and_then(|parent| tree.boxes.get(parent).copied().flatten())
-            .map(|index| &items[index])
-            .or(own);
-        let (pw, ph) = parent_box.map_or((0.0, 0.0), |item| (item.width, item.height));
-        let inset = |side: usize, basis: f64| super::positioned::inset(style, side, basis);
-        let (top, right, bottom, left) = (inset(0, ph), inset(1, pw), inset(2, ph), inset(3, pw));
-        matrix[4] = left.or(right.map(|right| -right)).unwrap_or(0.0);
-        matrix[5] = top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0);
+        let [x, y] = relative_offset(tree, items, node);
+        matrix[4] = x;
+        matrix[5] = y;
     }
     if transformed(style) {
         matrix = multiply(matrix, own_transform(style, own));
     }
     matrix
+}
+/**
+ * A relatively positioned box's offset, after Blink's ComputeRelativeOffset: insets resolve
+ * against the parent's content box, and a percentage against an indefinite height (the parent's
+ * `height` is auto) counts as `auto`, so `top: 100%` in an auto-height table row stays put
+ * instead of moving by the row's own height. With both `left` and `right` set, the parent's
+ * direction picks the winner.
+ */
+fn relative_offset(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> [f64; 2] {
+    let style = &node.style;
+    let parent = node.parent.and_then(|local| tree.node(local).ok());
+    let (width, height) =
+        parent.map_or((None, None), |parent| containing_size(tree, items, parent));
+    let inset = |side: usize, basis: Option<f64>| {
+        if style.inset_percent[side] != 0.0 {
+            basis.and_then(|basis| super::positioned::inset(style, side, basis))
+        } else {
+            super::positioned::inset(style, side, 0.0)
+        }
+    };
+    let (left, right) = (inset(3, width), inset(1, width));
+    let (top, bottom) = (inset(0, height), inset(2, height));
+    let rtl = parent.is_some_and(|parent| parent.style.rtl);
+    let x = match (left, right) {
+        (Some(_), Some(right)) if rtl => -right,
+        (Some(left), _) => left,
+        (None, right) => right.map_or(0.0, |right| -right),
+    };
+    [x, top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0)]
+}
+/** The content-box size a parent offers its relatively positioned children: the width of its
+ * box (or the nearest boxed ancestor's), and a height only when an authored one makes it
+ * definite. ponytail: a percentage height counts as definite without checking its own basis. */
+fn containing_size(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    parent: &Node,
+) -> (Option<f64>, Option<f64>) {
+    let item = |node: &Node| {
+        tree.boxes
+            .get(node.local_id)
+            .copied()
+            .flatten()
+            .map(|index| &items[index])
+    };
+    let width = std::iter::once(parent)
+        .chain(tree.ancestors(parent).unwrap_or_default())
+        .find_map(|node| {
+            item(node).map(|own| (own.width - sizing::horizontal_edges(node)).max(0.0))
+        });
+    let height = parent
+        .style
+        .height
+        .and_then(|height| match height.resolve_size(None) {
+            Some(px) => Some(sizing::content_height(&parent.style, px)),
+            None => item(parent).map(|own| (own.height - sizing::vertical_edges(parent)).max(0.0)),
+        });
+    (width, height)
 }
 /**
  * How far a sticky box moves down in the unscrolled page Eye renders: only far enough that its
@@ -760,7 +811,7 @@ fn clipping_ancestors<'a>(tree: &Tree<'a>, node: &'a Node) -> EngineResult<Vec<&
         if escaping && (style.position != Position::Static || style.transform.is_some()) {
             escaping = false;
         }
-        if !escaping && style.overflow != Overflow::Visible {
+        if !escaping && (style.overflow != Overflow::Visible || style.contain_paint) {
             chain.push(ancestor);
         }
         match style.position {
@@ -808,7 +859,13 @@ fn overflow_clip(
     }
     Ok(result)
 }
-/** A clipping ancestor's padding box in document space; rotated boxes clip to their bounding box. */
+/**
+ * A clipping ancestor's overflow clip rect in document space, after Blink's
+ * LayoutBox::OverflowClipRect: the padding box; on an axis left `visible` beside `clip` it does
+ * not clip at all; and an `overflow: clip` or paint-contained box that is not a scroll container
+ * moves the edge to its `overflow-clip-margin` reference box, outset by the margin. Rotated
+ * boxes clip to their bounding box.
+ */
 fn clip_box(
     tree: &mut Tree<'_>,
     items: &[DisplayItem],
@@ -818,23 +875,61 @@ fn clip_box(
         return Ok(None);
     };
     let item = &items[index];
-    let [top, right, bottom, left] = sizing::border_sides(&node.style);
-    let matrix = painted(tree, items, node)?;
-    let padding = ClipRect {
-        x: item.x + left,
-        y: item.y + top,
-        width: (item.width - left - right).max(0.0),
-        height: (item.height - top - bottom).max(0.0),
+    let style = &node.style;
+    let border = sizing::border_sides(style);
+    let mut outsets = border.map(|side| -side);
+    let mut radius = inner_radius(radii(style, item.width, item.height), border);
+    if let Some(margin) = clip_margin(style) {
+        match style.overflow_clip_box {
+            1 => {
+                outsets = [0.0; 4];
+                radius = radii(style, item.width, item.height);
+            }
+            2 => outsets = std::array::from_fn(|side| outsets[side] - style.padding[side]),
+            _ => {}
+        }
+        outsets = outsets.map(|side| side + margin);
+        radius = radius.map(|r| if r > 0.0 { r + margin } else { r });
+    }
+    let [top, right, bottom, left] = outsets;
+    let mut rect = ClipRect {
+        x: item.x - left,
+        y: item.y - top,
+        width: (item.width + left + right).max(0.0),
+        height: (item.height + top + bottom).max(0.0),
         radius: [0.0; 4],
     };
-    let mut rect = super::display::transform_rect(&padding, Some(matrix));
+    // `clip` on one axis with `visible` on the other clips only the first (Blink's
+    // ApplyVisibleOverflowToClipRect); `visible` beside any other value computes to `auto`.
+    // Half the layout extent each way keeps the span inside display validation's bound.
+    let open = crate::constants::LAYOUT_EXTENT / 2.0;
+    let visible = |axis: Overflow, other: Overflow| {
+        axis == Overflow::Visible && other == Overflow::Clip && !style.contain_paint
+    };
+    if visible(style.overflow_x, style.overflow_y) {
+        (rect.x, rect.width) = (-open, open * 2.0);
+    }
+    if visible(style.overflow_y, style.overflow_x) {
+        (rect.y, rect.height) = (-open, 2.0 * open);
+    }
+    let matrix = painted(tree, items, node)?;
+    let mut rect = super::display::transform_rect(&rect, Some(matrix));
     if matrix[..4] == IDENTITY[..4] {
-        rect.radius = inner_radius(
-            radii(&node.style, item.width, item.height),
-            [top, right, bottom, left],
-        );
+        rect.radius = radius;
     }
     Ok(Some(rect))
+}
+/** The `overflow-clip-margin` that applies to a box (Blink's ShouldApplyOverflowClipMargin):
+ * only `overflow: clip` on both axes or paint containment, never a scroll container. */
+fn clip_margin(style: &crate::document::ComputedStyle) -> Option<f64> {
+    let clip_both = style.overflow_x == Overflow::Clip && style.overflow_y == Overflow::Clip;
+    let scroller = matches!(
+        style.overflow,
+        Overflow::Auto | Overflow::Scroll | Overflow::Hidden
+    );
+    let effect = style.overflow_clip_margin != 0.0 || style.overflow_clip_box != 0;
+    ((clip_both || style.contain_paint) && !scroller && effect)
+        .then_some(style.overflow_clip_margin)
 }
 /** Inner padding-edge radii shrink by the adjacent border widths. */
 fn inner_radius(outer: [f64; 4], [top, right, bottom, left]: [f64; 4]) -> [f64; 4] {

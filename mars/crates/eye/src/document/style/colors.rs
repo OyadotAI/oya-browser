@@ -329,6 +329,29 @@ fn predefined(arguments: &str) -> EngineResult<String> {
         alpha(&parts)?,
     ]))
 }
+/**
+ * Any CSS color, or a painter literal, as 8-bit sRGB and alpha. Painters outside Eye (the
+ * headless rasterizer, the desktop canvas) decode through this so they read every color the
+ * cascade accepts exactly as Eye's style resolved it, with no second parser to drift.
+ */
+pub fn painter_rgba(value: &str) -> Option<[u8; 4]> {
+    let literal = parse(value).ok()?;
+    if literal == "transparent" {
+        return Some([0; 4]);
+    }
+    let digits = match NAMED.iter().find(|(name, _)| *name == literal) {
+        Some((_, rgb)) => format!("{rgb:06x}"),
+        None => literal.strip_prefix('#')?.to_owned(),
+    };
+    let expanded: String = match digits.len() {
+        3 => digits.chars().flat_map(|c| [c, c]).collect(),
+        6 => digits + "ff",
+        8 => digits,
+        _ => return None,
+    };
+    let byte = |i: usize| u8::from_str_radix(expanded.get(i..i + 2)?, 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?, byte(6)?])
+}
 /** A stored value is a literal the painter and validators accept without reparsing CSS. */
 pub(super) fn literal(value: &str) -> bool {
     PALETTE.contains(&value)

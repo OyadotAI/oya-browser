@@ -5,7 +5,7 @@
  * the min / percentage / specified / max guesses. `table-layout: fixed` uses the first row only
  * and Blink's fixed synchronisation.
  *
- * ponytail: no merged columns and no `<col>` elements; a column only spanned is sized like any. */
+ * ponytail: merged columns only trim trailing `<col>`s; a column only spanned is sized like any. */
 /** One cell's inline constraint, border box: Blink's CellInlineConstraint. */
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Cell {
@@ -26,6 +26,25 @@ pub(super) struct Column {
     seen: bool,
 }
 impl Column {
+    /** Blink's TableTypes::CreateColumn for a `<col>` or `<colgroup>`: min-width is its min, an
+     * authored length (raised by min-width) its max and constraint, a nonzero percentage its
+     * percentage. */
+    pub(super) fn element(min: f64, length: Option<f64>, percent: Option<f64>) -> Self {
+        let length = length.map(|length| length.max(min));
+        Self {
+            min,
+            max: length.unwrap_or(0.0),
+            percent: percent.filter(|percent| *percent != 0.0),
+            constrained: length.is_some(),
+            // A width-less column still takes a spanning cell's share, as Blink's unset max does.
+            seen: length.is_some() || min > 0.0,
+        }
+    }
+    /** Blink's is_mergeable: in an auto table a column element with no width or percentage
+     * adds no column of its own past the cells. */
+    pub(super) fn mergeable(&self, fixed_table: bool) -> bool {
+        !fixed_table && self.max == 0.0 && self.percent.is_none()
+    }
     /** Blink's Column::Encompass: a column grows to hold a single-column cell. */
     fn encompass(&mut self, cell: Cell, fixed_table: bool) {
         if self.constrained && fixed_table {
@@ -61,13 +80,15 @@ impl Column {
 /** Column constraints from single cells `(column, cell)` and spanning cells
  * `(start, span, cell)`, in Blink's order: singles, spans by length then start, percent clamp. */
 pub(super) fn constraints(
+    elements: &[Column],
     count: usize,
     singles: &[(usize, Cell)],
     spans: &[(usize, usize, Cell)],
     spacing: f64,
     fixed: bool,
 ) -> Vec<Column> {
-    let mut columns = vec![Column::default(); count];
+    let mut columns = elements.to_vec();
+    columns.resize(count, Column::default());
     for (index, cell) in singles {
         columns[*index].encompass(*cell, fixed);
     }

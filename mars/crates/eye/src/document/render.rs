@@ -165,6 +165,10 @@ pub struct DisplayItem {
     /// Per-side literal border colors matching `border_widths`; None paints `border_color`.
     #[serde(default, skip_serializing_if = "display::no_colors")]
     pub border_colors: [Option<String>; 4],
+    /// Per-side line styles matching `border_widths`, so painters draw dotted, dashed, double and
+    /// the 3D styles as Blink's `BoxBorderPainter` does instead of one solid band.
+    #[serde(default, skip_serializing_if = "solid_borders")]
+    pub border_styles: [crate::document::BorderStyle; 4],
     /// Box shadows, first listed on top as in CSS.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shadows: Vec<DisplayShadow>,
@@ -225,6 +229,10 @@ pub struct DisplayItem {
     /// scroll, which hosts apply at paint time without a new layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin: Option<Pin>,
+}
+/** All-solid sides keep the established serialized shape. */
+fn solid_borders(styles: &[crate::document::BorderStyle; 4]) -> bool {
+    styles.iter().all(|style| *style == crate::document::BorderStyle::Solid)
 }
 /** Items default to fully opaque. */
 fn full_opacity() -> f64 {

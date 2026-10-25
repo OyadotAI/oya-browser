@@ -11,7 +11,48 @@ use crate::{
     document::RenderContext,
     protocol::EngineResult,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+/**
+ * A painted border side's line style. `none` and `hidden` never reach the painter, since they
+ * zero the width; Blink's `EBorderStyle` keeps the rest, and `BoxBorderPainter` draws each.
+ */
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BorderStyle {
+    /// One filled band, the initial painted style.
+    #[default]
+    Solid,
+    /// Round dots spaced along the side.
+    Dotted,
+    /// Dashes about three widths long.
+    Dashed,
+    /// Two bands of a third of the width each, with the middle third left clear.
+    Double,
+    /// Carved in: dark outer half, light inner half.
+    Groove,
+    /// Raised: light outer half, dark inner half.
+    Ridge,
+    /// The box looks pressed in: top and left dark, bottom and right light.
+    Inset,
+    /// The box looks raised: top and left light, bottom and right dark.
+    Outset,
+}
+impl BorderStyle {
+    /** The painted style a keyword names; `none`, `hidden` and anything unknown paint solid. */
+    fn of(keyword: &str) -> Self {
+        match keyword {
+            "dotted" => Self::Dotted,
+            "dashed" => Self::Dashed,
+            "double" => Self::Double,
+            "groove" => Self::Groove,
+            "ridge" => Self::Ridge,
+            "inset" => Self::Inset,
+            "outset" => Self::Outset,
+            _ => Self::Solid,
+        }
+    }
+}
 /** Width keywords or a nonnegative length, before the style is known. */
 pub(super) fn width(value: &str) -> EngineResult<f64> {
     width_in(value, CSS_ROOT_FONT_SIZE, RenderContext::default())
@@ -93,6 +134,7 @@ pub(super) fn resolve(
             .as_deref()
             .unwrap_or(if control { "solid" } else { "none" });
         let invisible = ["none", "hidden"].contains(&kind);
+        style.border_styles[side] = BorderStyle::of(kind);
         none += usize::from(invisible);
         let width = sides.width[side]
             .as_deref()
@@ -120,6 +162,7 @@ pub(super) fn copy(style: &mut ComputedStyle, source: &ComputedStyle, side: usiz
         "color" => style.border_colors[side] = source.border_colors[side].clone(),
         _ => {
             style.border_widths[side] = source.border_widths[side];
+            style.border_styles[side] = source.border_styles[side];
             style.border_style_none = source.border_style_none;
         }
     }

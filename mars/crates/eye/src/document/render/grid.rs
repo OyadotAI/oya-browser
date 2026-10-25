@@ -25,11 +25,12 @@ pub(super) fn children(
     let mut kids: Vec<&Node> = before.iter().collect();
     kids.extend(context.children(node.local_id));
     kids.extend(&after);
+    let mut out_of_flow_kids = Vec::new();
     kids.retain(|child| {
         if super::flow::blank_text(child) {
             false
         } else if out_of_flow(child) {
-            context.defer(child.local_id, (inner.x, inner.y));
+            out_of_flow_kids.push(*child);
             false
         } else {
             true
@@ -40,7 +41,26 @@ pub(super) fn children(
     let gap = (style.column_gap, style.row_gap);
     let mut columns = expand(&style.grid_columns, inner.width, gap.0);
     let explicit_columns = columns.len();
-    let placed = place(context, &kids, style, &mut columns)?;
+    // Rows repeat into a definite height, else once (css-grid-2 7.2.3.2).
+    let mut row_explicit = expand(&style.grid_rows, inner.definite.unwrap_or(0.0), gap.1);
+    let mut placed = place(context, &kids, style, &mut columns, row_explicit.len())?;
+    let fit = fit_range(&style.grid_columns, explicit_columns);
+    let column_lines = collapse(
+        &mut columns,
+        fit,
+        placed.iter().map(|p| (p.column, p.columns)),
+    );
+    let fit = fit_range(&style.grid_rows, row_explicit.len());
+    let row_lines = collapse(
+        &mut row_explicit,
+        fit,
+        placed.iter().map(|p| (p.row, p.rows)),
+    );
+    for item in &mut placed {
+        item.column = remap(&column_lines, item.column);
+        item.row = remap(&row_lines, item.row);
+    }
+    let explicit_columns = remap(&column_lines, explicit_columns);
     let column_defs = track_sizing(
         [&style.grid_columns, &style.grid_auto_columns],
         explicit_columns,
@@ -67,8 +87,13 @@ pub(super) fn children(
     );
     let lefts = offsets(inner.x + lead, &widths, gap.0 + between);
     let span_width = |p: &Placed<'_>| span(&widths, p.column, p.columns, gap.0 + between);
-    let row_count = placed.iter().map(|p| p.row + p.rows).max().unwrap_or(0);
-    let row_explicit = &style.grid_rows.tracks;
+    // The explicit rows exist with or without items in them (css-grid-2 7.1).
+    let row_count = placed
+        .iter()
+        .map(|p| p.row + p.rows)
+        .max()
+        .unwrap_or(0)
+        .max(row_explicit.len());
     let row_tracks = (0..row_count)
         .map(|index| {
             row_explicit
@@ -87,7 +112,7 @@ pub(super) fn children(
     // items resolve against (BBC's `height: 100%` NEWS logo was drawn at 300px wide).
     let row_definite = inner
         .definite
-        .filter(|_| style.grid_rows.tracks.is_empty() && row_count == 1);
+        .filter(|_| row_explicit.is_empty() && row_count == 1);
     let mut natural = Vec::with_capacity(placed.len());
     let mut row_items = Vec::with_capacity(placed.len());
     for item in &placed {
@@ -177,9 +202,106 @@ pub(super) fn children(
         )?;
     }
     let total = heights.iter().sum::<f64>() + gap.1 * heights.len().saturating_sub(1) as f64;
+    let padding = style.padding;
+    let content_height = inner.definite.unwrap_or(total);
+    let frame = [
+        Edges {
+            starts: &tops,
+            sizes: &heights,
+            content: (inner.y, inner.y + content_height),
+            padding: (inner.y - padding[0], inner.y + content_height + padding[2]),
+        },
+        Edges {
+            starts: &lefts,
+            sizes: &widths,
+            content: (inner.x, inner.x + inner.width),
+            padding: (inner.x - padding[3], inner.x + inner.width + padding[1]),
+        },
+    ];
+    for child in out_of_flow_kids {
+        let explicit = [row_explicit.len(), explicit_columns];
+        let lines = [&row_lines[..], &column_lines[..]];
+        let at = out_of_flow_static_position(context, node, child, &frame, explicit, lines)?;
+        context.defer(child.local_id, at);
+    }
     inner.y += total;
     inner.bottom = inner.bottom.max(inner.y);
     Ok(())
+}
+/** One axis of a laid-out grid, for placing its out-of-flow children: where each track starts
+ * and its size, and the content and padding edges. */
+struct Edges<'a> {
+    starts: &'a [f64],
+    sizes: &'a [f64],
+    content: (f64, f64),
+    padding: (f64, f64),
+}
+impl Edges<'_> {
+    /** The span from line `start` to line `end`; a missing line, or one past the grid, is the
+     * padding edge (Blink's `ComputeOutOfFlowItemContainingRect`). */
+    fn area(&self, (start, end): (Option<usize>, Option<usize>)) -> (f64, f64) {
+        let count = self.sizes.len();
+        let after = |track: usize| self.starts[track] + self.sizes[track];
+        let from = match start.filter(|line| *line <= count && count > 0) {
+            Some(line) if line < count => self.starts[line],
+            Some(_) => after(count - 1),
+            None => self.padding.0,
+        };
+        let to = match end.filter(|line| *line <= count && count > 0) {
+            Some(0) => self.starts[0],
+            Some(line) => after(line - 1),
+            None => self.padding.1,
+        };
+        (from, to.max(from))
+    }
+}
+/**
+ * Where an absolutely positioned grid child's margin box starts when its insets are `auto`,
+ * after Blink's `GridLayoutAlgorithm::PlaceOutOfFlowItems`: the static position rectangle is the
+ * child's grid area when the grid is its containing block, else the grid's content box, and the
+ * child's `justify-self` and `align-self` (or the grid's `*-items`) align it in there. The
+ * alignment is unsafe, so a child larger than the rectangle overflows both sides when centered.
+ */
+fn out_of_flow_static_position(
+    context: &mut LayoutContext<'_>,
+    grid: &Node,
+    child: &Node,
+    [rows, columns]: &[Edges<'_>; 2],
+    explicit: [usize; 2],
+    lines: [&[usize]; 2],
+) -> EngineResult<(f64, f64)> {
+    let style = &grid.style;
+    let contains = child.style.position == crate::document::Position::Absolute
+        && (style.position != crate::document::Position::Static || style.transform.is_some());
+    let ((left, right), (top, bottom)) = if contains {
+        // The lines count every track, collapsed `auto-fit` ones included.
+        let [row_lines, column_lines] = placement::out_of_flow_lines(child, style, explicit);
+        let map = |(start, end): (Option<usize>, Option<usize>), lines: &[usize]| {
+            (start.map(|l| remap(lines, l)), end.map(|l| remap(lines, l)))
+        };
+        (
+            columns.area(map(column_lines, lines[1])),
+            rows.area(map(row_lines, lines[0])),
+        )
+    } else {
+        (columns.content, rows.content)
+    };
+    let margins = child.style.margin;
+    let justify = justify_of(style, child);
+    let align = child.style.align_self.unwrap_or(style.align_items);
+    let aligned = |a| matches!(a, AlignItems::Center | AlignItems::End);
+    let mut width = 0.0;
+    if aligned(justify) || aligned(align) {
+        width = item_width(context, child, right - left, AlignItems::Start)?;
+    }
+    let x = left + offset(justify, right - left - width - margins[1] - margins[3]);
+    let y = if aligned(align) {
+        let height = super::flex_layout::item_height(context, child, width)?;
+        top + offset(align, bottom - top - height - margins[0] - margins[2])
+    } else {
+        top
+    };
+    Ok((x, y))
 }
 /** The content-box height a grid's `min-height` gives, which `auto` rows stretch to when its
  * height is indefinite (Blink's `StretchAutoTracks` uses `min_available_size_`). A percentage
@@ -311,7 +433,8 @@ fn row_contribution(item: &Placed<'_>, height: f64) -> tracks::Contribution {
         max_content: height,
     }
 }
-/** Explicit tracks with any auto-fill group repeated as often as it fits the width. */
+/** Explicit tracks with any auto-fill group repeated as often as it fits `width`, the grid's
+ * size in that axis (columns or rows). */
 fn expand(template: &GridTemplate, width: f64, gap: f64) -> Vec<Track> {
     let mut tracks = template.tracks.clone();
     if !template.repeat.is_empty() {
@@ -338,6 +461,52 @@ fn expand(template: &GridTemplate, width: f64, gap: f64) -> Vec<Track> {
     }
     tracks.truncate(GRID_COLUMNS);
     tracks
+}
+/** The expanded tracks an `auto-fit` group repeated into, of `expanded` explicit tracks. */
+fn fit_range(template: &GridTemplate, expanded: usize) -> std::ops::Range<usize> {
+    if !template.repeat_fit || template.repeat.is_empty() {
+        return 0..0;
+    }
+    let at = template.repeat_at.min(template.tracks.len());
+    at..(at + expanded.saturating_sub(template.tracks.len())).min(expanded)
+}
+/** Removes the `fit` tracks no item spans: css-grid-2 7.2.3.2 collapses empty `auto-fit`
+ * repetitions to zero with their gutters, and content distribution then ignores them (Blink's
+ * `GridTrackCollection` collapsed ranges). Returns, for each old line index, the new one. */
+fn collapse(
+    tracks: &mut Vec<Track>,
+    fit: std::ops::Range<usize>,
+    spans: impl Iterator<Item = (usize, usize)>,
+) -> Vec<usize> {
+    let mut keep = (0..tracks.len())
+        .map(|i| !fit.contains(&i))
+        .collect::<Vec<_>>();
+    for (start, count) in spans {
+        let end = (start + count).min(keep.len());
+        keep[start.min(end)..end].fill(true);
+    }
+    let mut lines = Vec::with_capacity(keep.len() + 1);
+    let mut kept = 0;
+    for &k in &keep {
+        lines.push(kept);
+        kept += usize::from(k);
+    }
+    lines.push(kept);
+    let mut index = 0;
+    tracks.retain(|_| {
+        index += 1;
+        keep[index - 1]
+    });
+    lines
+}
+/** A line or track index once collapsed tracks are gone; past the mapped lines, implicit
+ * tracks shift down by every collapsed one. */
+fn remap(lines: &[usize], index: usize) -> usize {
+    let last = lines.len().saturating_sub(1);
+    lines
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| index - (last - lines.last().copied().unwrap_or(0)))
 }
 /** Start offsets of consecutive tracks separated by `gap`. */
 fn offsets(start: f64, sizes: &[f64], gap: f64) -> Vec<f64> {
@@ -418,7 +587,18 @@ pub(super) fn intrinsic(
     // With no definite width an auto-repeat group repeats once (css-grid-2 7.2.3.2).
     let mut columns = expand(&style.grid_columns, 0.0, gap);
     let explicit_columns = columns.len();
-    let placed = place(context, &kids, style, &mut columns)?;
+    let rows = expand(&style.grid_rows, 0.0, style.row_gap).len();
+    let mut placed = place(context, &kids, style, &mut columns, rows)?;
+    let fit = fit_range(&style.grid_columns, explicit_columns);
+    let column_lines = collapse(
+        &mut columns,
+        fit,
+        placed.iter().map(|p| (p.column, p.columns)),
+    );
+    for item in &mut placed {
+        item.column = remap(&column_lines, item.column);
+    }
+    let explicit_columns = remap(&column_lines, explicit_columns);
     let defs = track_sizing(
         [&style.grid_columns, &style.grid_auto_columns],
         explicit_columns,
