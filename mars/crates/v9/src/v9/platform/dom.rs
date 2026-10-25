@@ -1635,6 +1635,8 @@ fn reflect_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
     result.map_err(|error| dom_error(vm, error))?;
     if attribute == "src" {
         super::scripts::after_insert(vm, node)?;
+    } else if attribute == "media" {
+        super::scripts::media_changed(vm, node);
     }
     Ok(JsValue::Undefined)
 }
@@ -1731,6 +1733,8 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .map_err(|error| dom_error(vm, error))?;
             if name.eq_ignore_ascii_case("src") {
                 super::scripts::after_insert(vm, node)?;
+            } else if name.eq_ignore_ascii_case("media") {
+                super::scripts::media_changed(vm, node);
             }
             Ok(JsValue::Undefined)
         }

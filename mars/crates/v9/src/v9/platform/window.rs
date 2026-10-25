@@ -646,7 +646,7 @@ const UUID_VERSION_BYTE: usize = 6;
 const UUID_VARIANT_BYTE: usize = 8;
 
 /** Evaluate simple width and color-scheme media queries against the viewport. */
-fn media_matches(vm: &Vm, query: &str) -> bool {
+pub(super) fn media_matches(vm: &Vm, query: &str) -> bool {
     let width = vm.page.environment.viewport_width;
     let query = query.to_ascii_lowercase();
     query.split(" and ").all(|part| {

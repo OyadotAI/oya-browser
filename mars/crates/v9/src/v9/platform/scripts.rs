@@ -100,9 +100,16 @@ pub(super) fn install(b: &mut crate::v9::vm::realm::Builder) {
  * apart once V9 hears back about sheets.
  */
 fn connected_sheet(vm: &mut Vm, node: usize) -> Res<()> {
-    let Some(view) = vm.page.view(node) else {
+    let Some(href) = sheet_href(vm, node) else {
         return Ok(());
     };
+    request_sheet(vm, href);
+    schedule_load(vm, node)
+}
+
+/** The resolved `href` of a `<link rel=stylesheet>`, or None for any other node. */
+fn sheet_href(vm: &mut Vm, node: usize) -> Option<String> {
+    let view = vm.page.view(node).filter(|view| view.tag == "link")?;
     let sheet = view.attributes.get("rel").is_some_and(|rel| {
         rel.split_ascii_whitespace()
             .any(|token| token.eq_ignore_ascii_case("stylesheet"))
@@ -110,16 +117,62 @@ fn connected_sheet(vm: &mut Vm, node: usize) -> Res<()> {
     let href = view
         .attributes
         .get("href")
-        .filter(|href| !href.trim().is_empty())
-        .and_then(|href| super::net::resolve(vm, href));
-    let (Some(native), Some(href)) = (SHEET_LOADED.get().copied().filter(|_| sheet), href) else {
-        return Ok(());
-    };
+        .filter(|href| !href.trim().is_empty())?;
+    sheet.then(|| super::net::resolve(vm, href)).flatten()
+}
+
+/** Ask the app to fetch and apply a sheet, once per address and within the module bound. */
+fn request_sheet(vm: &mut Vm, href: String) {
     if vm.page.effects.stylesheets.len() < MODULES && !vm.page.effects.stylesheets.contains(&href) {
         vm.page.effects.stylesheets.push(href);
     }
+}
+
+/** Queue the link's `load` event as a later task, as a browser fires it once the sheet arrives. */
+fn schedule_load(vm: &mut Vm, node: usize) -> Res<()> {
+    let Some(native) = SHEET_LOADED.get().copied() else {
+        return Ok(());
+    };
     let link = super::dom::wrap(vm, node)?;
     super::timers::schedule(vm, JsValue::Object(native), vec![link])
+}
+
+/**
+ * Parsed `<link rel=stylesheet>` elements were fetched by navigation; each still gets its `load`
+ * event in a later task, after the parser's scripts, as Blink fires it when the sheet arrives.
+ * Pages defer a sheet as `media=print` and set `media='all'` from that `load` (google.com shows
+ * its Gmail and Images links this way). Runs once per fresh load, before its scripts.
+ * scripts.
+ */
+pub(in crate::v9) fn parsed_sheets(vm: &mut Vm) -> Res<()> {
+    let mut nodes = vm.page.descendants(super::HEAD);
+    nodes.extend(vm.page.descendants(super::BODY));
+    for node in nodes {
+        if sheet_href(vm, node).is_some() {
+            schedule_load(vm, node)?;
+        }
+    }
+    Ok(())
+}
+
+/**
+ * A connected sheet link's `media` changed: once it holds, the sheet applies, as Blink
+ * re-evaluates a link's media list on mutation. ponytail: the app appends the sheet after the
+ * others rather than at the link's place in the cascade, and a sheet whose media stops holding
+ * keeps applying; track sheets per link when a page needs either.
+ */
+pub(in crate::v9) fn media_changed(vm: &mut Vm, node: usize) {
+    let media = vm
+        .page
+        .view(node)
+        .and_then(|view| view.attributes.get("media").cloned())
+        .unwrap_or_default();
+    if !vm.page.connected(node) || !super::window::media_matches(vm, &media) {
+        return;
+    }
+    if let Some(href) = sheet_href(vm, node) {
+        request_sheet(vm, href);
+    }
 }
 
 /** Fire `load` on the link a sheet task names, if it is still in the page. */

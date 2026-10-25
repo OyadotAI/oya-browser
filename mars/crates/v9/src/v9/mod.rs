@@ -807,7 +807,7 @@ fn load_isolated(
         Some(0)
     };
     if let Some(from) = from {
-        run_sources(&mut vm, &codes, from, &mut failed, &mut ran)?;
+        run_sources(&mut vm, &codes, from, !resume, &mut failed, &mut ran)?;
     }
     if resume {
         platform::scripts::run_delivered(&mut vm)?;
@@ -854,15 +854,20 @@ fn load_isolated(
 
 /** Run page sources in order from `from`, each classic script rolled back alone on failure. A
 deferred module script runs its whole graph the same way; while that graph is still loading the
-load pauses there (later scripts wait, as they would in a browser) until `load_modules`. */
+load pauses there (later scripts wait, as they would in a browser) until `load_modules`. A
+`fresh` load also queues the parsed sheets' `load` events once their elements exist. */
 fn run_sources(
     vm: &mut Vm,
     codes: &[EngineResult<Arc<Code>>],
     from: usize,
+    fresh: bool,
     failed: &mut Vec<ScriptFailure>,
     ran: &mut Vec<usize>,
 ) -> EngineResult<()> {
     let elements = vm.page.script_elements(codes.len())?;
+    if fresh {
+        platform::scripts::parsed_sheets(vm).map_err(fatal)?;
+    }
     for (index, code) in codes.iter().enumerate().skip(from) {
         if let Some(kind) = vm.modules.entry(index) {
             if kind == EntryKind::Module {

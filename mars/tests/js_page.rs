@@ -547,6 +547,26 @@ fn script_linked_stylesheet_applies_and_fires_load() {
     assert!(hidden.is_none_or(|node| node["visible"] == false), "{page}");
 }
 
+/** The deferred-sheet idiom: a parsed `<link media=print>` gets its `load` event, and the script
+that then sets `media = 'all'` makes the sheet apply. google.com hides its Gmail and Images links
+until its header sheet loads this way. */
+#[test]
+fn parsed_print_sheet_applies_once_its_load_sets_media_all() {
+    let (_fixture, _runtime, page) = load(
+        "<style>#late{display:none}</style><p id=late>late link</p>\
+         <link id=ss rel=stylesheet media=print href=/late.css><script>\
+         const l=document.getElementById('ss');l.onload=()=>{l.media='all'};\
+         l.removeAttribute('id')</script>",
+        vec![("/late.css", reply("text/css", "", "#late{display:block}"))],
+    );
+    let late = page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == "late");
+    assert!(late.is_some_and(|node| node["visible"] == true), "{page}");
+}
+
 /** A sheet a script links that never loads is reported in `degraded`, as a linked one is. */
 #[test]
 fn script_linked_stylesheet_that_fails_is_degraded() {

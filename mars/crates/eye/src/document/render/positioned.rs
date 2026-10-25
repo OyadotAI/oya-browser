@@ -42,12 +42,34 @@ pub(super) fn place(
             let start = items.len();
             one(context, node, position, items, viewport)?;
             if node.style.position == Position::Absolute
+                && !clipped(context, node)?
                 && let Some(item) = items.get(start)
             {
                 bottom = bottom.max(item.y + item.height + node.style.margin[2]);
             }
         }
     }
+}
+/** Whether an ancestor at or above this absolute box's containing block clips its overflow, so
+ * the box adds nothing to the document's scrollable extent (Blink propagates scrollable overflow
+ * up the containing-block chain and stops at overflow clips). An opacity-0 ripple inside an
+ * `overflow: hidden` search box made Google's home page scroll. Mirrors effects' clip chain. */
+fn clipped(context: &LayoutContext<'_>, node: &Node) -> EngineResult<bool> {
+    let mut escaping = true;
+    let mut parent = node.parent;
+    while let Some(local) = parent {
+        let style = &context.node(local)?.style;
+        escaping &= style.position == Position::Static && style.transform.is_none();
+        if !escaping && style.overflow != crate::document::Overflow::Visible {
+            return Ok(true);
+        }
+        escaping |= style.position == Position::Absolute;
+        if style.position == Position::Fixed {
+            return Ok(false);
+        }
+        parent = context.node(local)?.parent;
+    }
+    Ok(false)
 }
 /** One axis of an absolutely positioned box, Blink's inset-modified containing block (IMCB). */
 #[derive(Clone, Copy)]

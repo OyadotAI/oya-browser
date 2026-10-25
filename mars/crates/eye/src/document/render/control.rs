@@ -62,14 +62,19 @@ pub(super) fn content_box(
     let start = items.len();
     block(context, &boxed, flow, items, forced)?;
     if plain {
-        center_content(&boxed, &mut items[start..]);
+        // Out-of-flow boxes are placed after this, from static positions recorded before the
+        // shift; Blink moves the whole content box, so an `top: auto` icon in the button's
+        // content stayed 8px above its text on Google's "AI Mode" pill.
+        let shift = center_content(&boxed, &mut items[start..]);
+        context.shift_deferred_within(boxed.local_id, shift)?;
     }
     Ok(())
 }
-/** Chromium centers a button's content block vertically in a taller button box. */
-fn center_content(node: &Node, items: &mut [DisplayItem]) {
+/** Chromium centers a button's content block vertically in a taller button box; returns the
+ * downward shift applied. */
+fn center_content(node: &Node, items: &mut [DisplayItem]) -> f64 {
     let Some((own, content)) = items.split_first_mut() else {
-        return;
+        return 0.0;
     };
     let sides = super::sizing::border_sides(&node.style);
     let top = own.y + node.style.padding[0] + sides[0];
@@ -79,11 +84,13 @@ fn center_content(node: &Node, items: &mut [DisplayItem]) {
         .map(|item| item.y + item.height)
         .fold(top, f64::max);
     let free = bottom - used;
-    if free > 0.0 {
-        for item in content {
-            super::line::translate(item, 0.0, free / 2.0);
-        }
+    if free <= 0.0 {
+        return 0.0;
     }
+    for item in content {
+        super::line::translate(item, 0.0, free / 2.0);
+    }
+    free / 2.0
 }
 /** Space between a control's border box and its title on each side (top, right, bottom,
  * left): the page's padding and borders when it set them, else the native inset. */
