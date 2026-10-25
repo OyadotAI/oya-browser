@@ -127,11 +127,10 @@ impl Parser {
         if no_in || !self.eat_name("in") {
             return Err(self.unexpected());
         }
+        let name = Name::from(name.as_str());
+        self.use_private(&name, pos)?;
         let object = self.binary(9, no_in)?;
-        self.node(
-            ExprKind::PrivateIn(Name::from(name.as_str()), Box::new(object)),
-            pos,
-        )
+        self.node(ExprKind::PrivateIn(name, Box::new(object)), pos)
     }
     /** The binary operator at the cursor with its precedence. */
     fn binary_operator(&self, no_in: bool) -> Option<(u8, Binary)> {
@@ -210,6 +209,9 @@ impl Parser {
                 return Err(
                     self.error_at(pos, "Delete of an unqualified identifier in strict mode.")
                 );
+            }
+            if operator == UnaryOp::Delete && deletes_private(&operand) {
+                return Err(self.error_at(pos, "Private fields can not be deleted"));
             }
             if self.at("**") {
                 return Err(self.unexpected());
@@ -404,7 +406,9 @@ impl Parser {
     fn member_name(&mut self) -> EngineResult<MemberProp> {
         if let Kind::Private(name) = &self.peek().kind {
             let name = Name::from(name.as_str());
+            let pos = self.pos();
             self.next();
+            self.use_private(&name, pos)?;
             return Ok(MemberProp::Private(name));
         }
         Ok(MemberProp::Name(self.property_name()?))
@@ -495,7 +499,11 @@ impl Parser {
                     let class = self.class(false)?;
                     ExprKind::Class(class)
                 }
-                _ => ExprKind::Ident(self.identifier()?),
+                _ => {
+                    let name = self.identifier()?;
+                    self.check_arguments(&name, pos)?;
+                    ExprKind::Ident(name)
+                }
             },
             _ => return Err(self.unexpected()),
         };
@@ -604,6 +612,7 @@ impl Parser {
             && matches!(self.peek_at(1).kind, Kind::Symbol(',' | '}' | '='));
         if shorthand {
             let name = self.identifier()?;
+            self.check_arguments(&name, pos)?;
             if self.eat("=") {
                 let mut value = self.assignment(false)?;
                 infer_name(&mut value, &name);
@@ -612,6 +621,9 @@ impl Parser {
             return Ok(PropDef::Shorthand(name, pos));
         }
         let key = self.property_key()?;
+        if matches!(key, PropKey::Private(_)) {
+            return Err(self.error_at(pos, "unexpected private name"));
+        }
         if let Some(getter) = accessor {
             let func = self.method(pos, &key, false, false, Some(getter))?;
             return Ok(if getter {
@@ -684,7 +696,10 @@ impl Parser {
                     match element {
                         Element::Hole => items.push(None),
                         Element::Value(value) => items.push(Some(self.pattern_of(value)?)),
-                        Element::Spread(value) if index + 1 == count => {
+                        Element::Spread(value)
+                            if index + 1 == count
+                                && !matches!(value.kind, ExprKind::Assign(..)) =>
+                        {
                             rest = Some(Box::new(self.pattern_of(value)?));
                         }
                         Element::Spread(_) => {
@@ -791,6 +806,15 @@ impl Parser {
         self.tokens
             .get(close as usize + 1)
             .is_some_and(|token| matches!(token.kind, Kind::Arrow) && !token.line_terminator_before)
+    }
+}
+
+/** `delete x.#y` (also inside an optional chain) is an early error: private names never go away. */
+fn deletes_private(operand: &Expr) -> bool {
+    match &operand.kind {
+        ExprKind::Member(_, MemberProp::Private(_), _) => true,
+        ExprKind::Chain(inner) => deletes_private(inner),
+        _ => false,
     }
 }
 

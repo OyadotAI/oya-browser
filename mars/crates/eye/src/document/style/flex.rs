@@ -90,6 +90,17 @@ pub(super) fn apply(
             style.grid_flow_column = words.contains(&"column");
             style.grid_flow_dense = words.contains(&"dense");
         }
+        "flow-tolerance" => {
+            style.flow_tolerance = match value {
+                "normal" => None,
+                "infinite" => Some(f64::INFINITY),
+                _ => Some(
+                    super::values::dimension(value, style.font_size, context)?
+                        .px
+                        .max(0.0),
+                ),
+            }
+        }
         "align-items" => style.align_items = align(value)?,
         "align-self" | "justify-self" => {
             let own = (value != "auto").then(|| align(value)).transpose()?;
@@ -247,6 +258,7 @@ pub(super) fn track_expr_size(
             super::calc::Token::Open(name) => text.push_str(&format!("{name}(")),
             super::calc::Token::Close => text.push(')'),
             super::calc::Token::Comma => text.push(','),
+            super::calc::Token::Word(word) => text.push_str(&format!(" {word} ")),
         }
     }
     resolve_track_expr(&text, TRACK_EXPR_PROBE)?;

@@ -6,7 +6,7 @@
  *
  * ponytail: width wins and nothing else (no style ranking, `hidden` or column borders); the winning edge paints in each cell's own color. */
 use super::super::flow::*;
-use super::{Grid, grid, is_table};
+use super::{Grid, grid, is_anonymous, is_table};
 
 /** Widest border on each horizontal and vertical edge of one table's grid. */
 struct Edges {
@@ -90,7 +90,11 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
         return Vec::new();
     }
     let mut edges = Edges::new(rows, columns);
-    edges.merge((0, rows), (0, columns), sides(table));
+    // An anonymous table has no border of its own; its wrapping block keeps its border.
+    let anonymous = is_anonymous(table);
+    if !anonymous {
+        edges.merge((0, rows), (0, columns), sides(table));
+    }
     // Blink's collapsed borders take the widest of table, row group, row and cell borders.
     for section in &grid.sections {
         if let Some(group) = section.node.filter(|_| !section.rows.is_empty()) {
@@ -126,7 +130,9 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [f64; 4], bool)> 
             (slot.cell.local_id, edges.half(area, span), false)
         })
         .collect();
-    out.push((table.local_id, edges.half((0, rows), (0, columns)), true));
+    if !anonymous {
+        out.push((table.local_id, edges.half((0, rows), (0, columns)), true));
+    }
     out
 }
 /** A box's border widths `[top, right, bottom, left]`. */

@@ -188,14 +188,20 @@ fn inherited_shift(context: &LayoutContext<'_>, node: &Node) -> f64 {
     let mut shift = 0.0;
     let mut current = Some(node);
     for _ in 0..crate::constants::DOCUMENT_DEPTH {
-        let Some(node) = current.filter(|node| node.style.inline && !node.style.inline_block)
-        else {
+        let Some(node) = current.filter(|node| inline_box(node) && !node.style.inline_block) else {
             break;
         };
         shift += super::sizing::baseline_shift(&node.style);
         current = node.parent.and_then(|parent| context.node(parent).ok());
     }
     shift
+}
+/** An inline box in flow. Blink's StyleAdjuster blockifies absolutely positioned and floated
+ * boxes, so their own `vertical-align` never shifts the text inside them. */
+fn inline_box(node: &Node) -> bool {
+    node.style.inline
+        && !super::flow::out_of_flow(node)
+        && node.style.float == crate::document::style::Float::None
 }
 /** vertical-align applies to an inline box and everything inside it, so the nearest non-baseline inline ancestor wins. */
 fn effective_align(
@@ -208,8 +214,8 @@ fn effective_align(
         let Some(node) = current else {
             break;
         };
-        if node.style.vertical_align != VerticalAlign::Baseline || !node.style.inline {
-            return if node.style.inline {
+        if node.style.vertical_align != VerticalAlign::Baseline || !inline_box(node) {
+            return if inline_box(node) {
                 node.style.vertical_align
             } else {
                 VerticalAlign::Baseline

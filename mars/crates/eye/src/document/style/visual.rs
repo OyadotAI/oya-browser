@@ -52,7 +52,14 @@ pub(super) fn apply(
                 style.strikethrough |= value.split_whitespace().any(|part| part == "line-through");
             }
         }
-        "letter-spacing" => style.letter_spacing = letter_spacing(value, style.font_size, context)?,
+        "letter-spacing" => {
+            (style.letter_spacing, style.spacing_percent[0]) =
+                spacing(value, style.font_size, context)?
+        }
+        "word-spacing" => {
+            (style.word_spacing, style.spacing_percent[1]) =
+                spacing(value, style.font_size, context)?
+        }
         "text-transform" => style.text_transform = text_transform(value)?,
         "white-space" => style.white_space = white_space(value)?,
         "cursor" => style.cursor_pointer = value.split(',').any(|part| part.trim() == "pointer"),
@@ -263,17 +270,31 @@ fn filter_blur(value: &str, font: f64, context: RenderContext) -> f64 {
     }
     variance.sqrt()
 }
-/** `normal` is zero; lengths are signed and bounded by the largest font size. */
-fn letter_spacing(value: &str, font: f64, context: RenderContext) -> EngineResult<f64> {
+/**
+ * `letter-spacing` and `word-spacing` as (used px, percentage), after Blink's ConvertSpacing and
+ * FontDescription::LetterSpacing/WordSpacing: `normal` is zero, and a percentage (alone or in
+ * `calc()`) is of the element's computed font size. The percentage is kept so a child with
+ * another font size re-resolves it (see `respace`). Bounded by the largest font size.
+ */
+fn spacing(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64, f64)> {
     if value == "normal" {
-        return Ok(0.0);
+        return Ok((0.0, 0.0));
     }
-    let spacing = signed_length(value, font, context)?;
-    if spacing.abs() <= LETTER_SPACING_MAX {
-        Ok(spacing)
+    let length = dimension(value, font, context)?;
+    let used = length.of(font);
+    if used.is_finite() && used.abs() <= LETTER_SPACING_MAX {
+        Ok((used, length.percent))
     } else {
         Err(unsupported())
     }
+}
+/** After the font size changes from `old`, inherited percentage spacing follows the new size,
+ * as Blink's inherited Length resolves against each element's own font. */
+pub(super) fn respace(style: &mut ComputedStyle, old: f64) {
+    let delta = (style.font_size - old) / PERCENT;
+    let bound = |v: f64| v.clamp(-LETTER_SPACING_MAX, LETTER_SPACING_MAX);
+    style.letter_spacing = bound(style.letter_spacing + style.spacing_percent[0] * delta);
+    style.word_spacing = bound(style.word_spacing + style.spacing_percent[1] * delta);
 }
 /** Case mapping keywords. */
 fn text_transform(value: &str) -> EngineResult<TextTransform> {
@@ -344,7 +365,12 @@ fn radius(
     let Some(corner) = corners.iter().position(|corner| *corner == key) else {
         return Ok(false);
     };
-    let first = value.split_whitespace().next().ok_or_else(unsupported)?;
+    // The horizontal radius is the first top-level token, so `calc(10px + 5%)` stays whole.
+    let value = value.trim();
+    let first = &value[..super::syntax::find_top(value, 0, b" \t\n")];
+    if first.is_empty() {
+        return Err(unsupported());
+    }
     let length = dimension(first, style.font_size, context)?;
     let basis = match style.width {
         Some(width) if !style.percent_width => width,
@@ -352,6 +378,11 @@ fn radius(
         _ => RADIUS_PERCENT_BASIS,
     };
     let px = length.of(basis);
+    let px = if super::values::is_math(first) {
+        px.max(0.0)
+    } else {
+        px
+    };
     if !px.is_finite() || px < 0.0 {
         return Err(unsupported());
     }

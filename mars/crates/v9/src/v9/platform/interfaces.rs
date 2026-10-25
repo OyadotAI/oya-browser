@@ -6,7 +6,10 @@
  * have, which blanked every `data` and `text` binding while all elements shared one prototype.
  */
 use super::dom;
+#[path = "reflect.rs"]
+mod reflect;
 use crate::v9::vm::realm::{Builder, NativeFn};
+use reflect::Attr;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -24,6 +27,8 @@ struct Interface {
     accessors: &'static [&'static str],
     /// Methods (`element_method`).
     methods: &'static [&'static str],
+    /// The typed [Reflect] table; its entries replace a same-named member above.
+    table: &'static [Attr],
 }
 
 /// URL decomposition members of anchors and areas.
@@ -48,6 +53,7 @@ const fn interface(name: &'static str, tags: &'static [&'static str]) -> Interfa
         getters: &[],
         accessors: &[],
         methods: &[],
+        table: &[],
     }
 }
 
@@ -60,61 +66,73 @@ const INTERFACES: &[Interface] = &[
             "username", "password", "text",
         ],
         accessors: &["relList"],
+        table: reflect::ANCHOR,
         ..interface("HTMLAnchorElement", &["a"])
     },
     Interface {
         reflected: &["href", "alt", "rel", "target"],
         getters: &URL_PARTS,
         accessors: &["relList"],
+        table: reflect::AREA,
         ..interface("HTMLAreaElement", &["area"])
     },
     Interface {
         reflected: &["href", "rel", "type", "media", "disabled"],
         getters: &["sheet"],
         accessors: &["relList"],
+        table: reflect::LINK,
         ..interface("HTMLLinkElement", &["link"])
     },
     Interface {
         reflected: &["href", "target"],
+        table: reflect::BASE,
         ..interface("HTMLBaseElement", &["base"])
     },
     Interface {
         reflected: &["src", "alt", "name", "width", "height"],
+        table: reflect::IMAGE,
         ..interface("HTMLImageElement", &["img"])
     },
     Interface {
         reflected: &["src", "type", "defer", "async"],
         getters: &["text"],
+        table: reflect::SCRIPT,
         ..interface("HTMLScriptElement", &["script"])
     },
     Interface {
         reflected: &["src", "srcdoc", "name", "width", "height"],
         getters: &["contentDocument", "contentWindow"],
         accessors: &["sandbox"],
+        table: reflect::IFRAME,
         ..interface("HTMLIFrameElement", &["iframe"])
     },
     Interface {
         reflected: &["src", "name"],
+        table: reflect::FRAME,
         ..interface("HTMLFrameElement", &["frame"])
     },
     Interface {
         reflected: &["src", "type", "name", "width", "height"],
+        table: reflect::EMBED,
         ..interface("HTMLEmbedElement", &["embed"])
     },
     Interface {
         reflected: &["data", "type", "name", "width", "height"],
         getters: &["form", "validity", "willValidate", "validationMessage"],
         methods: &VALIDATION_METHODS,
+        table: reflect::OBJECT,
         ..interface("HTMLObjectElement", &["object"])
     },
     Interface {
         reflected: &["src"],
         methods: &MEDIA_METHODS,
+        table: reflect::MEDIA,
         ..interface("HTMLMediaElement", &[])
     },
     Interface {
         parent: Some("HTMLMediaElement"),
         reflected: &["width", "height"],
+        table: reflect::VIDEO,
         ..interface("HTMLVideoElement", &["video"])
     },
     Interface {
@@ -123,14 +141,17 @@ const INTERFACES: &[Interface] = &[
     },
     Interface {
         reflected: &["src", "type", "width", "height"],
+        table: reflect::SOURCE,
         ..interface("HTMLSourceElement", &["source"])
     },
     Interface {
         reflected: &["src"],
+        table: reflect::TRACK,
         ..interface("HTMLTrackElement", &["track"])
     },
     Interface {
         reflected: &["width", "height"],
+        table: reflect::CANVAS,
         ..interface("HTMLCanvasElement", &["canvas"])
     },
     Interface {
@@ -157,6 +178,7 @@ const INTERFACES: &[Interface] = &[
             "setCustomValidity",
             "reportValidity",
         ],
+        table: reflect::INPUT,
         ..interface("HTMLInputElement", &["input"])
     },
     Interface {
@@ -176,6 +198,7 @@ const INTERFACES: &[Interface] = &[
             "setCustomValidity",
             "reportValidity",
         ],
+        table: reflect::TEXTAREA,
         ..interface("HTMLTextAreaElement", &["textarea"])
     },
     Interface {
@@ -189,6 +212,7 @@ const INTERFACES: &[Interface] = &[
         ],
         accessors: &["value", "selectedIndex"],
         methods: &VALIDATION_METHODS,
+        table: reflect::SELECT,
         ..interface("HTMLSelectElement", &["select"])
     },
     Interface {
@@ -196,22 +220,26 @@ const INTERFACES: &[Interface] = &[
         getters: &["form", "validity", "willValidate", "validationMessage"],
         accessors: &["value"],
         methods: &VALIDATION_METHODS,
+        table: reflect::BUTTON,
         ..interface("HTMLButtonElement", &["button"])
     },
     Interface {
         reflected: &["selected", "disabled"],
         getters: &["form", "text"],
         accessors: &["value"],
+        table: reflect::OPTION,
         ..interface("HTMLOptionElement", &["option"])
     },
     Interface {
         reflected: &["disabled"],
+        table: reflect::OPTGROUP,
         ..interface("HTMLOptGroupElement", &["optgroup"])
     },
     Interface {
         reflected: &["name", "disabled"],
         getters: &["form", "validity", "willValidate", "validationMessage"],
         methods: &VALIDATION_METHODS,
+        table: reflect::FIELDSET,
         ..interface("HTMLFieldSetElement", &["fieldset"])
     },
     Interface {
@@ -219,15 +247,18 @@ const INTERFACES: &[Interface] = &[
         getters: &["form", "validity", "willValidate", "validationMessage"],
         accessors: &["value"],
         methods: &VALIDATION_METHODS,
+        table: reflect::OUTPUT,
         ..interface("HTMLOutputElement", &["output"])
     },
     Interface {
         reflected: &["htmlFor"],
         getters: &["form"],
+        table: reflect::LABEL,
         ..interface("HTMLLabelElement", &["label"])
     },
     Interface {
         getters: &["form"],
+        table: reflect::ALIGN_ONLY,
         ..interface("HTMLLegendElement", &["legend"])
     },
     Interface {
@@ -240,64 +271,79 @@ const INTERFACES: &[Interface] = &[
             "checkValidity",
             "reportValidity",
         ],
+        table: reflect::FORM,
         ..interface("HTMLFormElement", &["form"])
     },
     Interface {
         reflected: &["type", "disabled"],
         getters: &["sheet"],
+        table: reflect::STYLE,
         ..interface("HTMLStyleElement", &["style"])
     },
     Interface {
         reflected: &["name"],
+        table: reflect::META,
         ..interface("HTMLMetaElement", &["meta"])
     },
     Interface {
         reflected: &["name"],
+        table: reflect::NAME_ONLY,
         ..interface("HTMLMapElement", &["map"])
     },
     Interface {
         reflected: &["name"],
+        table: reflect::NAME_ONLY,
         ..interface("HTMLSlotElement", &["slot"])
     },
     Interface {
         reflected: &["name"],
+        table: reflect::DETAILS,
         ..interface("HTMLDetailsElement", &["details"])
     },
     Interface {
         reflected: &["name", "type"],
         accessors: &["value"],
+        table: reflect::PARAM,
         ..interface("HTMLParamElement", &["param"])
     },
     Interface {
         accessors: &["value"],
+        table: reflect::LI,
         ..interface("HTMLLIElement", &["li"])
     },
     Interface {
         accessors: &["value"],
+        table: reflect::DATA,
         ..interface("HTMLDataElement", &["data"])
     },
     Interface {
         accessors: &["value"],
+        table: reflect::METER,
         ..interface("HTMLMeterElement", &["meter"])
     },
     Interface {
         accessors: &["value"],
+        table: reflect::PROGRESS,
         ..interface("HTMLProgressElement", &["progress"])
     },
     Interface {
         reflected: &["cite"],
+        table: reflect::CITE,
         ..interface("HTMLQuoteElement", &["blockquote", "q"])
     },
     Interface {
         reflected: &["cite"],
+        table: reflect::MOD,
         ..interface("HTMLModElement", &["del", "ins"])
     },
     Interface {
         reflected: &["colSpan"],
+        table: reflect::TABLE_CELL,
         ..interface("HTMLTableCellElement", &["td", "th"])
     },
     Interface {
         reflected: &["type"],
+        table: reflect::OLIST,
         ..interface("HTMLOListElement", &["ol"])
     },
     Interface {
@@ -307,6 +353,82 @@ const INTERFACES: &[Interface] = &[
     Interface {
         getters: &["options"],
         ..interface("HTMLDataListElement", &["datalist"])
+    },
+    Interface {
+        table: reflect::ALIGN_ONLY,
+        ..interface("HTMLParagraphElement", &["p"])
+    },
+    Interface {
+        table: reflect::HR,
+        ..interface("HTMLHRElement", &["hr"])
+    },
+    Interface {
+        table: reflect::PRE,
+        ..interface("HTMLPreElement", &["pre", "listing", "xmp"])
+    },
+    Interface {
+        table: reflect::ULIST,
+        ..interface("HTMLUListElement", &["ul"])
+    },
+    Interface {
+        table: reflect::COMPACT,
+        ..interface("HTMLDListElement", &["dl"])
+    },
+    Interface {
+        table: reflect::COMPACT,
+        ..interface("HTMLMenuElement", &["menu"])
+    },
+    Interface {
+        table: reflect::COMPACT,
+        ..interface("HTMLDirectoryElement", &["dir"])
+    },
+    Interface {
+        table: reflect::OPEN,
+        ..interface("HTMLDialogElement", &["dialog"])
+    },
+    Interface {
+        table: reflect::ALIGN_ONLY,
+        ..interface("HTMLHeadingElement", &["h1", "h2", "h3", "h4", "h5", "h6"])
+    },
+    Interface {
+        table: reflect::BR,
+        ..interface("HTMLBRElement", &["br"])
+    },
+    Interface {
+        table: reflect::TIME,
+        ..interface("HTMLTimeElement", &["time"])
+    },
+    Interface {
+        table: reflect::FONT,
+        ..interface("HTMLFontElement", &["font"])
+    },
+    Interface {
+        table: reflect::FRAMESET,
+        ..interface("HTMLFrameSetElement", &["frameset"])
+    },
+    Interface {
+        table: reflect::MARQUEE,
+        ..interface("HTMLMarqueeElement", &["marquee"])
+    },
+    Interface {
+        table: reflect::TABLE,
+        ..interface("HTMLTableElement", &["table"])
+    },
+    Interface {
+        table: reflect::ALIGN_ONLY,
+        ..interface("HTMLTableCaptionElement", &["caption"])
+    },
+    Interface {
+        table: reflect::TABLE_COL,
+        ..interface("HTMLTableColElement", &["colgroup", "col"])
+    },
+    Interface {
+        table: reflect::TABLE_SECTION,
+        ..interface("HTMLTableSectionElement", &["tbody", "thead", "tfoot"])
+    },
+    Interface {
+        table: reflect::TABLE_ROW,
+        ..interface("HTMLTableRowElement", &["tr"])
     },
     // SVG keeps the width and height it had on the shared prototype, so `svg.width` reads stay.
     Interface {
@@ -338,6 +460,8 @@ pub(super) fn prototype_for(tag: &str) -> Option<u32> {
 pub(super) fn install(b: &mut Builder, html: u32) {
     let mut made: BTreeMap<&'static str, u32> = BTreeMap::new();
     let mut tags = BTreeMap::new();
+    let mut registry = reflect::Registry::default();
+    registry.define(b, html, reflect::HTML_ELEMENT);
     for interface in INTERFACES {
         let parent = interface
             .parent
@@ -345,6 +469,7 @@ pub(super) fn install(b: &mut Builder, html: u32) {
             .unwrap_or(html);
         let proto = b.object(Some(parent));
         members(b, proto, interface);
+        registry.define(b, proto, interface.table);
         let ctor = b.constructor(interface.name, 0, dom::illegal_constructor, proto, None);
         b.global(interface.name, ctor);
         made.insert(interface.name, proto);
@@ -353,6 +478,7 @@ pub(super) fn install(b: &mut Builder, html: u32) {
         }
     }
     let _ = PROTOTYPES.set(tags);
+    registry.finish();
     super::blob::install(b);
     super::form_data::install(b);
     super::encoding::install(b);

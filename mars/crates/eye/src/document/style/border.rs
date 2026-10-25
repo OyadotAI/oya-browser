@@ -67,6 +67,17 @@ fn width_in(value: &str, font: f64, context: RenderContext) -> EngineResult<f64>
         _ => contextual_length(value, font, context),
     }
 }
+/**
+ * Blink's `ClampLineWidth`: a hairline below one pixel still paints one pixel, and anything wider
+ * floors to whole pixels, so 0.5in and 48px borders land on the same device rows.
+ */
+fn clamp_line_width(width: f64) -> f64 {
+    if width > 0.0 && width < 1.0 {
+        1.0
+    } else {
+        width.max(0.0).floor()
+    }
+}
 /** Whether `key` is a per-side border longhand, and which side and part. */
 pub(super) fn longhand(key: &str) -> Option<(usize, &str)> {
     let rest = key.strip_prefix("border-")?;
@@ -139,7 +150,7 @@ pub(super) fn resolve(
         let width = sides.width[side]
             .as_deref()
             .map_or(Ok(BORDER_MEDIUM), |w| width_in(w, style.font_size, context))
-            .unwrap_or(0.0)
+            .map_or(0.0, clamp_line_width)
             .min(CSS_MAX_BORDER_WIDTH);
         let declared = sides.width[side].is_some() || sides.style[side].is_some();
         style.border_widths[side] = if invisible || !declared { 0.0 } else { width };

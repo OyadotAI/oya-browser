@@ -137,6 +137,10 @@ pub struct ComputedStyle {
     /// Inherited extra advance per space (CSS `word-spacing`) in px, may be negative.
     #[serde(skip_serializing_if = "default")]
     pub word_spacing: f64,
+    /// The percentage part of `letter-spacing` and `word-spacing`, inherited as Blink inherits
+    /// their Length, so each element re-resolves it against its own font size.
+    #[serde(skip_serializing_if = "default")]
+    pub spacing_percent: [f64; 2],
     /// Inherited first-line indent (CSS `text-indent`) as px plus a percentage of the block's width.
     #[serde(skip_serializing_if = "default")]
     pub text_indent: (f64, f64),
@@ -230,6 +234,12 @@ pub struct ComputedStyle {
     /// `grid-auto-flow: dense`: auto-placement restarts from the grid's start for every item.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub grid_flow_dense: bool,
+    /// `display: grid-lanes` (css-grid-3): the grid container stacks items into lanes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_lanes: bool,
+    /// Grid-lanes `flow-tolerance` in pixels; None is `normal` (1em), infinity `infinite`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_tolerance: Option<f64>,
     /// Placement of a grid item along the columns.
     #[serde(skip_serializing_if = "default")]
     pub grid_column: GridLine,
@@ -379,6 +389,14 @@ pub struct ComputedStyle {
     /// the room is narrower or wider than the content.
     #[serde(default, skip_serializing_if = "default")]
     pub width_fit: bool,
+    /// The content keyword of `width`, `min-width` and `max-width`, in that order: which
+    /// intrinsic size the box takes, or the `fit-content(<length-percentage>)` limit.
+    #[serde(default, skip_serializing_if = "default")]
+    pub size_keywords: [SizeKeyword; 3],
+    /// Inherited: `writing-mode` is vertical, so `width` sizes the block axis. Layout stays
+    /// horizontal; sizing reads it only to treat block-axis content keywords as `auto`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub vertical_writing: bool,
     /// SVG paint properties (`fill`, `stroke`, `stroke-width`, ...) authored in CSS, by name.
     /// The SVG painter reads them before presentation attributes, as the cascade orders them;
     /// without this a stylesheet `fill` loses to `<svg fill="none">` and icons paint nothing.
@@ -405,6 +423,22 @@ pub struct ComputedStyle {
     /// clip edge like `overflow: clip`, without becoming a scroll container.
     #[serde(default, skip_serializing_if = "default")]
     pub contain_paint: bool,
+}
+/// A sizing content keyword (css-sizing-3 4.1): `min-content`, `max-content`, `fit-content`
+/// (stretch-fit clamped by both), or `fit-content(<length-percentage>)` (that limit clamped).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub enum SizeKeyword {
+    /// A length, a percentage or `auto`: no content keyword.
+    #[default]
+    None,
+    /// `min-content`.
+    MinContent,
+    /// `max-content`.
+    MaxContent,
+    /// `fit-content`.
+    FitContent,
+    /// `fit-content(<length-percentage>)`.
+    FitContentLimit(Extent),
 }
 /// A generated `::before` or `::after` box: its text and its own computed style.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -493,6 +527,7 @@ impl Default for ComputedStyle {
             font_weight: super::constants::WEIGHT_NORMAL,
             letter_spacing: 0.0,
             word_spacing: 0.0,
+            spacing_percent: [0.0; 2],
             text_indent: (0.0, 0.0),
             text_transform: TextTransform::None,
             white_space: WhiteSpace::Normal,
@@ -523,6 +558,8 @@ impl Default for ComputedStyle {
             grid_auto_columns: GridTemplate::default(),
             grid_flow_column: false,
             grid_flow_dense: false,
+            grid_lanes: false,
+            flow_tolerance: None,
             grid_column: GridLine::default(),
             grid_row: GridLine::default(),
             grid_areas: Vec::new(),
@@ -570,6 +607,8 @@ impl Default for ComputedStyle {
             width_offset: 0.0,
             width_stretch: false,
             width_fit: false,
+            size_keywords: [SizeKeyword::None; 3],
+            vertical_writing: false,
             svg_paint: std::collections::BTreeMap::new(),
             stacking: 0,
             filter_blur: 0.0,

@@ -764,9 +764,7 @@ pub(in crate::v9) fn legacy_element(vm: &mut Vm, id: &str) -> Res<Option<usize>>
 
 /** The hidden slot an observer keeps its callback in. */
 fn observer_callback_key() -> crate::v9::vm::heap::Key {
-    let mut units = vec![crate::v9::compile::PRIVATE_MARK];
-    units.extend("observerCallback".encode_utf16());
-    crate::v9::vm::heap::Key::Str(crate::v9::value::JsString::from_units(units).expect("short key"))
+    crate::v9::vm::heap::Key::private("observerCallback")
 }
 
 /** Remember an observer's callback for later deliveries. */

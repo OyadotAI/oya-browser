@@ -304,15 +304,100 @@ fn containing(
     while let Some(local) = current {
         let ancestor = context.node(local)?;
         if ancestor.style.position != Position::Static || ancestor.style.transform.is_some() {
-            return Ok(items
-                .iter()
-                .find(|item| item.local_id == local)
-                .map(|item| padding_box(ancestor, item))
-                .unwrap_or(viewport));
+            let Some(item) = items.iter().find(|item| item.local_id == local) else {
+                return Ok(viewport);
+            };
+            let block = padding_box(ancestor, item);
+            return Ok(if splittable_inline(ancestor) {
+                inline_container(context, ancestor, items, block)
+            } else {
+                block
+            });
         }
         current = ancestor.parent;
     }
     Ok(viewport)
+}
+/** Runs whose tops differ by less than this share a line. */
+const LINE_TOLERANCE: f64 = 0.5;
+/** A non-atomic inline box, which may break across lines into several fragments. */
+fn splittable_inline(node: &Node) -> bool {
+    node.style.inline
+        && !node.style.inline_block
+        && !["img", "svg", "input", "button", "select", "textarea", "br"]
+            .contains(&node.tag.as_str())
+}
+/** Whether `node` sits inside the inline `container` through inline boxes only, so its runs are
+ * part of the container's fragments. */
+fn inside_inline(context: &LayoutContext<'_>, node: &Node, container: usize) -> bool {
+    let mut current = Some(node);
+    while let Some(node) = current {
+        if node.local_id == container {
+            return true;
+        }
+        if !node.style.inline || matches!(node.style.position, Position::Absolute | Position::Fixed)
+        {
+            return false;
+        }
+        current = node.parent.and_then(|parent| context.node(parent).ok());
+    }
+    false
+}
+/**
+ * Blink's AddInlineContainingBlockInfo: the containing block an inline box forms when it breaks
+ * across lines runs from the logical start of its first fragment to the logical end of its last
+ * one (padding edges), never negative, rather than the union of every line. `block` is the
+ * union's padding box, whose block-axis edges already are the first line's top and the last
+ * line's bottom.
+ */
+fn inline_container(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    items: &[DisplayItem],
+    block: Block,
+) -> Block {
+    let mut runs: Vec<(f64, f64, f64)> = Vec::new();
+    for item in items {
+        let Ok(owner) = context.node(item.local_id) else {
+            continue;
+        };
+        if !inside_inline(context, owner, node.local_id) {
+            continue;
+        }
+        if splittable_inline(owner) || owner.tag == "#text" {
+            runs.extend(item.lines.iter().map(|l| (l.y, l.x, l.x + l.width)));
+        } else {
+            runs.push((item.y, item.x, item.x + item.width));
+        }
+    }
+    let (Some(first), Some(last)) = (
+        runs.iter().map(|r| r.0).reduce(f64::min),
+        runs.iter().map(|r| r.0).reduce(f64::max),
+    ) else {
+        return block;
+    };
+    if last - first < LINE_TOLERANCE {
+        return block;
+    }
+    let line = |y: f64| {
+        runs.iter()
+            .filter(move |r| (r.0 - y).abs() < LINE_TOLERANCE)
+    };
+    let pad = node.style.padding;
+    let (left, right) = if node.style.rtl {
+        let start = line(first).map(|r| r.2).fold(f64::MIN, f64::max) + pad[1];
+        let end = line(last).map(|r| r.1).fold(f64::MAX, f64::min) - pad[3];
+        (end.min(start), start)
+    } else {
+        let start = line(first).map(|r| r.1).fold(f64::MAX, f64::min) - pad[3];
+        let end = line(last).map(|r| r.2).fold(f64::MIN, f64::max) + pad[1];
+        (start, end.max(start))
+    };
+    Block {
+        x: left,
+        width: right - left,
+        ..block
+    }
 }
 /** Borders are inside the border box, so the padding box starts past them. */
 pub(super) fn padding_box(node: &Node, item: &DisplayItem) -> Block {

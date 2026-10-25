@@ -123,7 +123,8 @@ impl Vm<'_> {
             return Ok(self.intrinsic_own(id, key));
         };
         match &object.class {
-            Class::Proxy(proxy) => {
+            // Private keys live on the proxy object itself and never reach a trap.
+            Class::Proxy(proxy) if !key.hidden() => {
                 let proxy = (**proxy).clone();
                 return self.proxy_own(&proxy, key);
             }
@@ -367,7 +368,7 @@ impl Vm<'_> {
     pub fn get_from(&mut self, start: ObjectId, key: &Key, receiver: &JsValue) -> Res<JsValue> {
         let mut id = start;
         for _ in 0..CHAIN_STEPS {
-            if let Some(proxy) = self.proxy_of(id) {
+            if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_get(&proxy, key, receiver);
             }
             if let Some(prop) = self.own(id, key)? {
@@ -426,7 +427,7 @@ impl Vm<'_> {
     ) -> Res<bool> {
         let mut id = start;
         for _ in 0..CHAIN_STEPS {
-            if let Some(proxy) = self.proxy_of(id) {
+            if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_set(id, &proxy, key, value, receiver);
             }
             if let Some(prop) = self.own(id, &key)? {
@@ -452,7 +453,7 @@ impl Vm<'_> {
     }
     /** Create or update an own data property as assignment does. */
     pub fn write_own(&mut self, id: ObjectId, key: Key, value: JsValue) -> Res<bool> {
-        if let Some(proxy) = self.proxy_of(id) {
+        if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             let desc = Descriptor {
                 value: Some(value),
                 writable: Some(true),
@@ -587,7 +588,7 @@ impl Vm<'_> {
     }
     /** [[DefineOwnProperty]] with a partial descriptor. Returns false when refused. */
     pub fn define(&mut self, id: ObjectId, key: Key, desc: Descriptor) -> Res<bool> {
-        if let Some(proxy) = self.proxy_of(id) {
+        if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             return self.proxy_define(&proxy, key, desc);
         }
         self.materialize(id)?;
@@ -643,7 +644,7 @@ impl Vm<'_> {
     }
     /** [[Delete]]; non-configurable properties stay. */
     pub fn delete(&mut self, id: ObjectId, key: &Key) -> Res<bool> {
-        if let Some(proxy) = self.proxy_of(id) {
+        if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
             return self.proxy_delete(&proxy, key);
         }
         let Some(prop) = self.own(id, key)? else {
@@ -685,7 +686,7 @@ impl Vm<'_> {
     pub fn has_property(&mut self, id: ObjectId, key: &Key) -> Res<bool> {
         let mut current = id;
         for _ in 0..CHAIN_STEPS {
-            if let Some(proxy) = self.proxy_of(current) {
+            if let Some(proxy) = self.proxy_of(current).filter(|_| !key.hidden()) {
                 return self.proxy_has(&proxy, key);
             }
             if self.own(current, key)?.is_some() {
@@ -748,6 +749,12 @@ impl Vm<'_> {
         let object = self.heap.get(id).expect("checked above");
         let is_function = object.function().is_some();
         let own: Vec<Key> = object.props.ordered_keys();
+        // Deletion marks are private keys, which `ordered_keys` leaves out, so ask the map.
+        let deleted = |name: &str| object.props.get(&deleted_mark(&Key::from(name))).is_some();
+        let virtual_names: Vec<&str> = ["length", "name"]
+            .into_iter()
+            .filter(|name| is_function && !deleted(name))
+            .collect();
         let mut indexes: Vec<Key> = own
             .iter()
             .filter(|key| key.index().is_some())
@@ -755,12 +762,10 @@ impl Vm<'_> {
             .collect();
         indexes.sort_by_key(|key| key.index());
         keys.splice(0..0, indexes);
-        if is_function {
-            for name in ["length", "name"] {
-                let key = Key::from(name);
-                if !own.contains(&key) && !own.contains(&deleted_mark(&key)) {
-                    keys.push(key);
-                }
+        for name in virtual_names {
+            let key = Key::from(name);
+            if !own.contains(&key) {
+                keys.push(key);
             }
         }
         keys.extend(
@@ -890,15 +895,15 @@ pub(in crate::v9) fn key_text(key: &Key) -> String {
             Some(name) => format!("Symbol({name})"),
             None => "Symbol()".into(),
         },
+        Key::Private(name) => format!("#{}", name.lossy().rsplit(':').next().unwrap_or("")),
     }
 }
 
 /** The hidden key that records a deleted virtual `name` or `length` of a function. */
 fn deleted_mark(key: &Key) -> Key {
-    let mut units = vec![crate::v9::compile::PRIVATE_MARK];
-    units.extend_from_slice(b"deleted:".map(u16::from).as_slice());
+    let mut units: Vec<u16> = "deleted:".encode_utf16().collect();
     if let Key::Str(text) = key {
         units.extend_from_slice(text.as_units());
     }
-    Key::Str(JsString::from_slice(&units).expect("short key"))
+    Key::Private(JsString::from_slice(&units).expect("short key"))
 }

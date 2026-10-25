@@ -1,4 +1,7 @@
-/** Bounded `calc()`, `min()`, `max()` and `clamp()` over lengths, percentages and numbers. */
+/** Bounded math functions over lengths, percentages and numbers, after Blink's
+ * CSSMathExpressionNode: `calc()`, `min()`, `max()`, `clamp()`, the stepped `round()`, `mod()`
+ * and `rem()`, the sign-related `abs()` and `sign()`, and the constants `pi`, `e` and
+ * `infinity`. */
 use super::{
     constants::{CALC_DEPTH, CALC_TOKENS},
     unsupported,
@@ -18,6 +21,8 @@ pub(super) enum Token {
     Close,
     /// Argument separator.
     Comma,
+    /// A bare identifier: a math constant or a `round()` strategy.
+    Word(String),
 }
 /** Intermediate values keep plain numbers apart from lengths, as CSS type checking does. */
 #[derive(Clone, Copy, Debug)]
@@ -73,18 +78,21 @@ fn number(source: &str, start: usize, tokens: &mut Vec<Token>) -> usize {
     tokens.push(Token::Number(source[start..end].into()));
     end
 }
-/** Identifiers are only function names here. */
+/** An identifier opens a function when `(` follows it, and is a bare word otherwise. Blink
+ * matches math function names and keywords ASCII case-insensitively. */
 fn function(source: &str, start: usize, tokens: &mut Vec<Token>) -> EngineResult<usize> {
     let bytes = source.as_bytes();
     let mut end = start;
     while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'-') {
         end += 1;
     }
-    if bytes.get(end) != Some(&b'(') {
-        return Err(unsupported());
+    let name = source[start..end].to_ascii_lowercase();
+    if bytes.get(end) == Some(&b'(') {
+        tokens.push(Token::Open(name));
+        return Ok(end + 1);
     }
-    tokens.push(Token::Open(source[start..end].into()));
-    Ok(end + 1)
+    tokens.push(Token::Word(name));
+    Ok(end)
 }
 /** Evaluates a whole token list to one plain number, as `span calc(10 - 3 + 1)` or `opacity: calc(1 / 2)` need. */
 pub(super) fn evaluate_number(tokens: &[Token]) -> EngineResult<f64> {
@@ -124,8 +132,13 @@ pub(super) fn evaluate(
         },
         Value::Number(_) => return Err(unsupported()),
     };
-    if dimension.px.is_finite() && dimension.percent.is_finite() {
-        Ok(dimension)
+    // Blink keeps lengths as floats, so `calc(infinity * 1px)` saturates at the largest one.
+    let saturate = |v: f64| v.clamp(-f64::from(f32::MAX), f64::from(f32::MAX));
+    if !dimension.px.is_nan() && !dimension.percent.is_nan() {
+        Ok(Dimension {
+            px: saturate(dimension.px),
+            percent: saturate(dimension.percent),
+        })
     } else {
         Err(unsupported())
     }
@@ -176,11 +189,35 @@ impl Parser<'_> {
         match self.next().cloned() {
             Some(Token::Number(text)) => leaf(&text, self.font, self.context),
             Some(Token::Open(name)) => self.call(&name, depth + 1),
+            Some(Token::Word(word)) => constant(&word),
             _ => Err(unsupported()),
         }
     }
+    /** `round()`'s optional leading strategy keyword, `nearest` when absent. */
+    fn strategy(&mut self) -> Rounding {
+        let Some(Token::Word(word)) = self.tokens.get(self.index) else {
+            return Rounding::Nearest;
+        };
+        let strategy = match word.as_str() {
+            "nearest" => Rounding::Nearest,
+            "up" => Rounding::Up,
+            "down" => Rounding::Down,
+            "to-zero" => Rounding::ToZero,
+            _ => return Rounding::Nearest,
+        };
+        self.index += 1;
+        if self.tokens.get(self.index) == Some(&Token::Comma) {
+            self.index += 1;
+        }
+        strategy
+    }
     /** `calc` and parentheses hold one sum; `min`, `max` and `clamp` take comma lists. */
     fn call(&mut self, name: &str, depth: usize) -> EngineResult<Value> {
+        let strategy = if name == "round" {
+            self.strategy()
+        } else {
+            Rounding::Nearest
+        };
         let mut arguments = vec![self.sum(depth)?];
         while self.tokens.get(self.index) == Some(&Token::Comma) {
             self.index += 1;
@@ -197,9 +234,99 @@ impl Parser<'_> {
                 let value = extreme(&[*value, *high], f64::min)?;
                 extreme(&[*low, value], f64::max)
             }
+            ("round", [Value::Number(a)]) => {
+                stepped(Value::Number(*a), Value::Number(1.0), strategy)
+            }
+            ("round", [a, b]) => stepped(*a, *b, strategy),
+            ("mod", [a, b]) => stepped(*a, *b, Rounding::Mod),
+            ("rem", [a, b]) => stepped(*a, *b, Rounding::Rem),
+            ("abs", [value]) => sign_related(*value, f64::abs),
+            ("sign", [value]) => match sign_related(*value, sign)? {
+                Value::Length(dimension) => Ok(Value::Number(dimension.px)),
+                number => Ok(number),
+            },
             _ => Err(unsupported()),
         }
     }
+}
+/** How a stepped-value function turns A and step B into a multiple of B, after Blink's
+ * EvaluateSteppedValueFunction. */
+#[derive(Clone, Copy, Debug)]
+enum Rounding {
+    /// `round(nearest)`: the closer multiple, ties toward positive infinity.
+    Nearest,
+    /// `round(up)`: toward positive infinity.
+    Up,
+    /// `round(down)`: toward negative infinity.
+    Down,
+    /// `round(to-zero)`: toward zero.
+    ToZero,
+    /// `mod()`: the remainder takes B's sign (floored division).
+    Mod,
+    /// `rem()`: the remainder takes A's sign (truncated division).
+    Rem,
+}
+/** `pi`, `e`, `infinity` and `-infinity`; `NaN` is never a valid used value here. */
+fn constant(word: &str) -> EngineResult<Value> {
+    Ok(Value::Number(match word {
+        "pi" => std::f64::consts::PI,
+        "e" => std::f64::consts::E,
+        "infinity" => f64::INFINITY,
+        "-infinity" => f64::NEG_INFINITY,
+        _ => return Err(unsupported()),
+    }))
+}
+/** The scalar of a same-typed pair: both numbers, or both pure px lengths. Percentages need
+ * the layout's basis first, so mixing them in is left unsupported. */
+fn scalars(a: Value, b: Value) -> EngineResult<(f64, f64, bool)> {
+    match (a, b) {
+        (Value::Number(a), Value::Number(b)) => Ok((a, b, false)),
+        (Value::Length(a), Value::Length(b)) if a.percent == 0.0 && b.percent == 0.0 => {
+            Ok((a.px, b.px, true))
+        }
+        _ => Err(unsupported()),
+    }
+}
+/** `round()`, `mod()` and `rem()`: A stepped by B. A zero step has no answer (NaN in Blink), so
+ * the declaration is dropped. */
+fn stepped(a: Value, b: Value, rounding: Rounding) -> EngineResult<Value> {
+    let (a, b, length) = scalars(a, b)?;
+    // ponytail: an infinite step (spec'd to 0, A or NaN by case) is dropped instead.
+    if b == 0.0 || !a.is_finite() || !b.is_finite() {
+        return Err(unsupported());
+    }
+    let step = b.abs();
+    let value = match rounding {
+        Rounding::Nearest => (a / step + 0.5).floor() * step,
+        Rounding::Up => (a / step).ceil() * step,
+        Rounding::Down => (a / step).floor() * step,
+        Rounding::ToZero => (a / step).trunc() * step,
+        Rounding::Mod => a - b * (a / b).floor(),
+        Rounding::Rem => a - b * (a / b).trunc(),
+    };
+    Ok(if length {
+        Value::Length(Dimension {
+            px: value,
+            percent: 0.0,
+        })
+    } else {
+        Value::Number(value)
+    })
+}
+/** -1, 0 or 1; Rust's `signum` gives 1 for zero, CSS gives 0. */
+fn sign(value: f64) -> f64 {
+    if value == 0.0 { 0.0 } else { value.signum() }
+}
+/** `abs()` and `sign()` read a number or a pure px length. */
+fn sign_related(value: Value, apply: fn(f64) -> f64) -> EngineResult<Value> {
+    Ok(match value {
+        Value::Number(number) => Value::Number(apply(number)),
+        Value::Length(dimension) if dimension.percent == 0.0 => Value::Length(Dimension {
+            px: apply(dimension.px),
+            percent: 0.0,
+        }),
+        _ => return Err(unsupported()),
+    })
 }
 /** A unitless token is a number; anything else is a length. */
 fn leaf(text: &str, font: f64, context: RenderContext) -> EngineResult<Value> {

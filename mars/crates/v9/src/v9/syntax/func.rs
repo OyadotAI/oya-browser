@@ -24,6 +24,7 @@ impl Parser {
             if !declaration {
                 self.context.generator = generator;
                 self.context.asynchronous = is_async;
+                self.context.static_block = false;
             }
             let name = self.identifier();
             self.context = saved;
@@ -60,13 +61,26 @@ impl Parser {
             Some(false) => format!("set {base}"),
             None => base,
         };
-        self.function_tail(
+        let func = self.function_tail(
             pos,
             site(pos, SITE_SOURCE),
             None,
             Name::from(display.as_str()),
             flags,
-        )
+        )?;
+        // A getter takes no parameters; a setter exactly one, which is not a rest parameter.
+        let arity = match accessor {
+            Some(true) => func.params.is_empty() && func.rest.is_none(),
+            Some(false) => func.params.len() == 1 && func.rest.is_none(),
+            None => true,
+        };
+        if !arity {
+            return Err(self.error_at(
+                pos,
+                "Getter must not have parameters; setter must have exactly one",
+            ));
+        }
+        Ok(func)
     }
     /** Parameters and a block body under a fresh function context. */
     fn function_tail(
@@ -87,8 +101,9 @@ impl Parser {
             continuable: false,
             method: flags.method || flags.constructor || saved.0.method && flags.arrow,
             derived: flags.derived,
+            ..Context::default()
         };
-        let result = self.params_and_body();
+        let result = self.params_and_body(flags.method || flags.constructor);
         let strict = self.strict;
         self.context = saved.0;
         self.strict = saved.1;
@@ -109,13 +124,70 @@ impl Parser {
         }))
     }
     /** `(params) { body }`; a body directive makes the function strict. */
-    fn params_and_body(&mut self) -> EngineResult<(Vec<Pattern>, Option<Pattern>, Vec<Stmt>)> {
+    fn params_and_body(
+        &mut self,
+        unique: bool,
+    ) -> EngineResult<(Vec<Pattern>, Option<Pattern>, Vec<Stmt>)> {
+        let pos = self.pos();
         let (params, rest) = self.parameters()?;
         self.expect("{")?;
-        self.strict |= self.directives();
+        self.body_directives(pos, &params, rest.as_ref(), unique)?;
         let body = self.statement_list(false)?;
         self.expect("}")?;
         Ok((params, rest, body))
+    }
+    /** Read the body's directive prologue, then apply the parameter early errors: a `"use strict"`
+    body needs a simple parameter list, and strict code re-checks the names it already bound. */
+    fn body_directives(
+        &mut self,
+        pos: Pos,
+        params: &[Pattern],
+        rest: Option<&Pattern>,
+        unique: bool,
+    ) -> EngineResult<()> {
+        let directive = self.directives();
+        let simple = rest.is_none() && params.iter().all(|p| matches!(p, Pattern::Ident(..)));
+        if directive && !simple {
+            return Err(self.error_at(
+                pos,
+                "Illegal 'use strict' directive in function with non-simple parameter list",
+            ));
+        }
+        self.strict |= directive;
+        self.check_params(pos, params, rest, unique)
+    }
+    /** Duplicate parameter names are an error unless the function is sloppy with a simple list
+    (`unique` marks arrows and methods, which never allow them); strict code also forbids
+    `eval`, `arguments` and the strict reserved words as parameter names. */
+    fn check_params(
+        &self,
+        pos: Pos,
+        params: &[Pattern],
+        rest: Option<&Pattern>,
+        unique: bool,
+    ) -> EngineResult<()> {
+        let mut names = Vec::new();
+        for param in params.iter().chain(rest) {
+            bound_names(param, &mut names);
+        }
+        if self.strict
+            && names
+                .iter()
+                .any(|name| matches!(&**name, "eval" | "arguments") || reserved(name, true))
+        {
+            return Err(self.error_at(pos, "Unexpected eval or arguments in strict mode"));
+        }
+        let simple = rest.is_none() && params.iter().all(|p| matches!(p, Pattern::Ident(..)));
+        let strict_names = self.strict || unique || !simple;
+        if strict_names
+            && names
+                .iter()
+                .enumerate()
+                .any(|(i, name)| names[..i].contains(name))
+        {
+            return Err(self.error_at(pos, "Duplicate parameter name not allowed in this context"));
+        }
+        Ok(())
     }
     /** `( a, b = 1, {c}, ...rest )` */
     fn parameters(&mut self) -> EngineResult<(Vec<Pattern>, Option<Pattern>)> {
@@ -164,6 +236,8 @@ impl Parser {
             continuable: false,
             method: outer.method,
             derived: outer.derived,
+            no_arguments: outer.no_arguments,
+            static_block: false,
         };
         let result = self.arrow_parts(simple, no_in);
         let strict = self.strict;
@@ -196,6 +270,7 @@ impl Parser {
         simple: bool,
         no_in: bool,
     ) -> EngineResult<(Vec<Pattern>, Option<Pattern>, Body)> {
+        let pos = self.pos();
         let (params, rest) = if simple {
             let pos = self.pos();
             let name = self.identifier()?;
@@ -206,11 +281,12 @@ impl Parser {
         self.expect("=>")?;
         let body = if self.at("{") {
             self.next();
-            self.strict |= self.directives();
+            self.body_directives(pos, &params, rest.as_ref(), true)?;
             let body = self.statement_list(false)?;
             self.expect("}")?;
             Body::Block(body)
         } else {
+            self.check_params(pos, &params, rest.as_ref(), true)?;
             // A concise body is a return statement in disguise, so it costs one.
             self.count_statement(self.pos())?;
             Body::Expr(Box::new(self.assignment(no_in)?))
@@ -261,6 +337,9 @@ impl Parser {
                     (PropKey::Name(name.clone()), Pattern::Ident(name, key_pos))
                 } else {
                     let key = self.property_key()?;
+                    if matches!(key, PropKey::Private(_)) {
+                        return Err(self.error_at(key_pos, "unexpected private name"));
+                    }
                     self.expect(":")?;
                     (key, self.binding_target()?)
                 };
@@ -319,23 +398,11 @@ impl Parser {
             None
         };
         let derived = superclass.is_some();
-        self.expect("{")?;
-        let mut members = Vec::new();
-        let mut constructor = None;
-        let mut fields = Vec::new();
-        let mut statics = Vec::new();
-        while !self.eat("}") {
-            if self.eat(";") {
-                continue;
-            }
-            self.class_member(
-                derived,
-                &mut members,
-                &mut constructor,
-                &mut fields,
-                &mut statics,
-            )?;
-        }
+        self.privates.push(PrivateScope::default());
+        let body = self.class_body(derived);
+        let closed = self.close_privates();
+        let (members, constructor, fields, statics) = body?;
+        closed?;
         let display = name.clone().unwrap_or_else(|| Name::from(""));
         let constructor = match constructor {
             Some(func) => {
@@ -369,6 +436,31 @@ impl Parser {
             statics: initializer(pos, SITE_STATICS, statics),
             pos,
         }))
+    }
+    /** `{ members }`: methods, the constructor, instance fields and static elements. */
+    #[allow(clippy::type_complexity)]
+    fn class_body(
+        &mut self,
+        derived: bool,
+    ) -> EngineResult<(Vec<ClassMember>, Option<Rc<Func>>, Vec<Stmt>, Vec<Stmt>)> {
+        self.expect("{")?;
+        let mut members = Vec::new();
+        let mut constructor = None;
+        let mut fields = Vec::new();
+        let mut statics = Vec::new();
+        while !self.eat("}") {
+            if self.eat(";") {
+                continue;
+            }
+            self.class_member(
+                derived,
+                &mut members,
+                &mut constructor,
+                &mut fields,
+                &mut statics,
+            )?;
+        }
+        Ok((members, constructor, fields, statics))
     }
     /** The heritage expression is a LeftHandSideExpression. */
     fn left_hand_side_for_class(&mut self) -> EngineResult<Expr> {
@@ -416,7 +508,19 @@ impl Parser {
             None
         };
         let key = self.property_key()?;
-        if self.at("(") {
+        let method = self.at("(");
+        if let Some(reason) = class_key_error(&key, is_static, method, accessor.is_some()) {
+            return Err(self.error_at(pos, reason));
+        }
+        if let PropKey::Private(name) = &key {
+            let kind = match accessor {
+                Some(true) => PrivateKind::Getter(is_static),
+                Some(false) => PrivateKind::Setter(is_static),
+                None => PrivateKind::Other,
+            };
+            self.declare_private(name, kind, pos)?;
+        }
+        if method {
             let is_constructor = !is_static
                 && accessor.is_none()
                 && matches!(&key, PropKey::Name(name) if &**name == "constructor");
@@ -475,6 +579,7 @@ impl Parser {
         self.context = Context {
             function: true,
             method: true,
+            no_arguments: true,
             ..Context::default()
         };
         let value = self.assignment(false);
@@ -487,12 +592,64 @@ impl Parser {
         self.context = Context {
             function: false,
             method: true,
+            no_arguments: true,
+            static_block: true,
             ..Context::default()
         };
         let body = self.block();
         self.context = saved.0;
         self.labels = saved.1;
         body
+    }
+}
+
+/** Every name a binding pattern binds, in source order. */
+pub(super) fn bound_names(pattern: &Pattern, names: &mut Vec<Name>) {
+    match pattern {
+        Pattern::Ident(name, _) => names.push(name.clone()),
+        Pattern::Expr(_) => {}
+        Pattern::Object(items, rest, _) => {
+            for item in items {
+                bound_names(&item.value, names);
+            }
+            if let Some(rest) = rest {
+                bound_names(rest, names);
+            }
+        }
+        Pattern::Array(items, rest, _) => {
+            for item in items.iter().flatten() {
+                bound_names(item, names);
+            }
+            if let Some(rest) = rest {
+                bound_names(rest, names);
+            }
+        }
+        Pattern::Default(target, _) => bound_names(target, names),
+    }
+}
+
+/** Names a class element may not take: no field or accessor named `constructor`, no static
+member named `prototype`, no static field named `constructor`, and no `#constructor`. */
+fn class_key_error(
+    key: &PropKey,
+    is_static: bool,
+    method: bool,
+    accessor: bool,
+) -> Option<&'static str> {
+    let name = match key {
+        PropKey::Name(name) => &**name,
+        PropKey::Private(name) if &**name == "constructor" => {
+            return Some("Classes may not have a private field named '#constructor'");
+        }
+        _ => return None,
+    };
+    match name {
+        "prototype" if is_static => {
+            Some("Classes may not have a static property named 'prototype'")
+        }
+        "constructor" if !method => Some("Classes may not have a field named 'constructor'"),
+        "constructor" if accessor && !is_static => Some("Class constructor may not be an accessor"),
+        _ => None,
     }
 }
 

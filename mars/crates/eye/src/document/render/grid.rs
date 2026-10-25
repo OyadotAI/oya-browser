@@ -3,6 +3,8 @@ use super::flow::*;
 use crate::document::style::{ContentKeyword, GridTemplate, Track, TrackSize};
 use crate::document::{AlignItems, JustifyContent};
 
+#[path = "grid_lanes.rs"]
+mod lanes;
 #[path = "grid_placement.rs"]
 mod placement;
 #[path = "grid_tracks.rs"]
@@ -38,6 +40,9 @@ pub(super) fn children(
     });
     // `order` changes auto-placement order only; the stable sort keeps source order among equals.
     kids.sort_by_key(|child| child.style.order);
+    if style.grid_lanes {
+        return lanes::children(context, node, inner, items, &kids, &out_of_flow_kids);
+    }
     let gap = (style.column_gap, style.row_gap);
     let mut columns = expand(&style.grid_columns, inner.width, gap.0);
     let explicit_columns = columns.len();
@@ -583,6 +588,9 @@ pub(super) fn intrinsic(
     kids.extend(&after);
     kids.retain(|child| !super::flow::blank_text(child) && !out_of_flow(child));
     kids.sort_by_key(|child| child.style.order);
+    if style.grid_lanes && !lanes::row_lanes(style) {
+        return lanes::intrinsic(context, node, &kids);
+    }
     let gap = style.column_gap;
     // With no definite width an auto-repeat group repeats once (css-grid-2 7.2.3.2).
     let mut columns = expand(&style.grid_columns, 0.0, gap);

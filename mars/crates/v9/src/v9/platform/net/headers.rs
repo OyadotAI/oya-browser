@@ -7,8 +7,7 @@
  * Set-Cookie. Without the guard a page could forge Cookie or Host on a request, or read
  * Set-Cookie off a response.
  */
-use crate::v9::compile::PRIVATE_MARK;
-use crate::v9::value::{JsString, JsValue, ObjectId};
+use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Prop, Slot};
 use crate::v9::vm::{Res, Vm};
 
@@ -52,11 +51,9 @@ impl Guard {
     }
 }
 
-/** A private key script cannot reach: Object.keys and reflection skip PRIVATE_MARK keys. */
+/** A private key script cannot reach: no script value converts to one and reflection skips them. */
 pub(in crate::v9) fn private_key(name: &str) -> Key {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend(name.encode_utf16());
-    Key::Str(JsString::from_units(units).expect("short key"))
+    Key::private(name)
 }
 
 /** Store a hidden value on an object. */

@@ -347,10 +347,14 @@ pub const LAYOUT_EPSILON: f64 = 1e-7;
 pub const CSS_MAX_SCALAR: f64 = 4096.0;
 /** Native text remains readable under the supported bounded CSS font range. */
 pub const CSS_MIN_FONT_SIZE: f64 = 8.0;
-/** Upper font sizing limits bound glyph measurement and line allocation. */
-pub const CSS_MAX_FONT_SIZE: f64 = 72.0;
-/** Supported borders cannot consume unbounded native paint work. */
-pub const CSS_MAX_BORDER_WIDTH: f64 = 8.0;
+/** Upper font sizing limits bound glyph measurement and line allocation. Reftests draw Ahem
+ * squares at 100px and 200px, so a 72px cap shrank every one of them. */
+pub const CSS_MAX_FONT_SIZE: f64 = 1024.0;
+/** Unitless line-height factors stay bounded through inheritance (the old 4096 / 72 range). */
+pub const CSS_MAX_LINE_HEIGHT_FACTOR: f64 = 56.0;
+/** Border widths share the finite geometry bound; Blink caps none below it, and paint work
+ * already scales with the bounded box, so a 96px reftest border paints whole. */
+pub const CSS_MAX_BORDER_WIDTH: f64 = CSS_MAX_SCALAR;
 /** Font-relative CSS lengths share the owned default root font size. */
 pub const CSS_ROOT_FONT_SIZE: f64 = 16.0;
 /// ToLength clamps to ECMAScript's maximum safe integer before the smaller invocation cap applies.

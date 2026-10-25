@@ -213,7 +213,7 @@ impl CookieJar {
         records.sort_by_key(|c| std::cmp::Reverse(c.path.len()));
         records
             .iter()
-            .map(|c| format!("{}={}", c.name, c.value))
+            .map(|c| serialize(&c.name, &c.value))
             .collect::<Vec<_>>()
             .join("; ")
     }
@@ -462,18 +462,12 @@ impl StoredCookie {
 }
 /** Invalid records are rejected whole; secrets are never included in the reason. */
 fn parse(url: &Url, field: &str, api: Api, now: SystemTime) -> Result<Cookie, &'static str> {
-    if field.len() > COOKIE_FIELD_BYTES
-        || !field.is_ascii()
-        || field.chars().any(|c| c.is_control() && c != '\t')
+    if field.len() > COOKIE_FIELD_BYTES || field.chars().any(|c| c.is_ascii_control() && c != '\t')
     {
         return Err("A response cookie is invalid or too large.");
     }
     let mut parts = field.split(';');
-    let (name, value) = parts
-        .next()
-        .and_then(|p| p.split_once('='))
-        .map(|(name, value)| (name.trim(), value.trim()))
-        .ok_or("A response cookie is invalid.")?;
+    let (name, value) = pair(parts.next().unwrap_or_default());
     if !valid_pair(name, value) {
         return Err("A response cookie is invalid or too large.");
     }
@@ -501,16 +495,23 @@ fn parse(url: &Url, field: &str, api: Api, now: SystemTime) -> Result<Cookie, &'
     Ok(cookie)
 }
 
-/** Names are tokens; values are printable ASCII without `;` (browsers accept spaces and quotes). */
+/** RFC 6265bis section 5.6 steps 3 to 5: a pair without `=` is a nameless cookie whose value
+is the whole pair; name and value lose their surrounding spaces and tabs. */
+fn pair(text: &str) -> (&str, &str) {
+    let blank = |c: char| c == ' ' || c == '\t';
+    let (name, value) = text.split_once('=').unwrap_or(("", text));
+    (name.trim_matches(blank), value.trim_matches(blank))
+}
+
+/** Chromium accepts any non-control bytes in a name or value (the `;` split already happened,
+and a name cannot hold `=`). Both empty is no cookie, and a nameless one cannot pose as a
+prefixed cookie (RFC 6265bis section 5.6 step 6 and 5.7 step 21). */
 fn valid_pair(name: &str, value: &str) -> bool {
-    !name.is_empty()
+    let prefixed = ["__secure-", "__host-"]
+        .iter()
+        .any(|prefix| value.to_ascii_lowercase().starts_with(prefix));
+    !(name.is_empty() && (value.is_empty() || prefixed))
         && name.len() + value.len() <= COOKIE_PAIR_BYTES
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
-        && value
-            .bytes()
-            .all(|b| (0x20..0x7f).contains(&b) && b != b';')
 }
 
 /** Attribute values the parser carries out of the attribute loop. */
@@ -529,6 +530,7 @@ fn attributes<'a>(
     now: SystemTime,
 ) -> Attributes {
     let mut found = Attributes::default();
+    let fallback = cookie.path.clone();
     let mut age = None;
     let mut expires = None;
     for part in parts {
@@ -543,9 +545,13 @@ fn attributes<'a>(
             }
             "secure" => cookie.secure = true,
             "httponly" => cookie.http_only = true,
-            "path" if value.starts_with('/') => {
-                cookie.path = value.into();
-                found.explicit_path = true;
+            "path" => {
+                found.explicit_path = value.starts_with('/');
+                cookie.path = if found.explicit_path {
+                    value.into()
+                } else {
+                    fallback.clone()
+                };
             }
             "max-age" => age = max_age(value).or(age),
             "expires" => expires = cookie_date(value).or(expires),
@@ -664,6 +670,15 @@ fn same_site(url: &Url, initiator: &Url) -> bool {
     url.scheme() == initiator.scheme()
         && site(url.host_str().unwrap_or_default())
             == site(initiator.host_str().unwrap_or_default())
+}
+
+/** A cookie as the Cookie header and document.cookie write it: a nameless one is its value. */
+fn serialize(name: &str, value: &str) -> String {
+    if name.is_empty() {
+        value.into()
+    } else {
+        format!("{name}={value}")
+    }
 }
 
 /** Slash boundaries prevent /account from matching /accounting. */

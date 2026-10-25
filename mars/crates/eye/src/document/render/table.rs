@@ -40,7 +40,7 @@ pub(super) fn is_table(context: &LayoutContext<'_>, node: &Node) -> bool {
         return true;
     }
     if node.style.table_box != TableBox::Table {
-        return false;
+        return wraps_anonymous_table(context, node);
     }
     let children = context.children(node.local_id);
     let parts = |kinds: &[TableBox]| {
@@ -61,6 +61,40 @@ pub(super) fn is_table(context: &LayoutContext<'_>, node: &Node) -> bool {
         TableBox::FooterGroup,
     ]) > 0
         || (parts(&[TableBox::Caption]) > 0 && others == 1)
+}
+/** A block whose in-flow children are all table parts, with a row, cell or row group among
+ * them: CSS 2.1 17.2.1 (Blink's LayoutTable::CreateAnonymousWithParent) wraps them in one
+ * anonymous table, which this box lays out in place, so its cells sit side by side.
+ *
+ * ponytail: only the all-table-parts case; a run of parts between other content still stacks. */
+fn wraps_anonymous_table(context: &LayoutContext<'_>, node: &Node) -> bool {
+    let style = &node.style;
+    if style.table_box != TableBox::None
+        || style.display_flex
+        || style.display_grid
+        || !node.text.trim().is_empty()
+        || [
+            "td", "th", "tr", "thead", "tbody", "tfoot", "caption", "col", "colgroup",
+        ]
+        .contains(&node.tag.as_str())
+    {
+        return false;
+    }
+    let children = context.children(node.local_id);
+    let mut in_flow = children
+        .iter()
+        .filter(|c| !super::flow::out_of_flow(c))
+        .peekable();
+    in_flow.peek().is_some()
+        && in_flow
+            .clone()
+            .all(|child| !matches!(child.style.table_box, TableBox::None | TableBox::Table))
+        && in_flow
+            .any(|child| !matches!(child.style.table_box, TableBox::Caption | TableBox::Column))
+}
+/** Whether this table box is the anonymous table its block wraps around its table parts. */
+fn is_anonymous(node: &Node) -> bool {
+    node.tag != "table" && node.style.table_box != TableBox::Table
 }
 /** A caption: `<caption>` or a CSS `table-caption`. */
 fn is_caption(node: &Node) -> bool {
@@ -106,8 +140,11 @@ pub(super) fn table(
     let (minimum, maximum) = columns::grid_min_max(&columns, fixed_layout);
     let (minimum, maximum) = (minimum + edges, maximum + edges);
     let room = (flow.width - style.margin[1] - style.margin[3]).max(0.0);
+    let anonymous = is_anonymous(node);
     let width = match forced {
         Some(bounds) => bounds.width,
+        // The wrapping block keeps its own width; the anonymous table inside it is auto.
+        None if anonymous => border_width(node, flow.width, room, None),
         // A table's authored width is its border box, as in Chromium's table layout.
         None if style.width.is_some() => {
             let mut sized = node.clone();
@@ -132,42 +169,94 @@ pub(super) fn table(
     let index = items.len();
     items.push(box_item(node, x, y, width, 0.0, Vec::new()));
     let sides = super::sizing::border_sides(style);
-    let mut inner = Flow::new(
-        x + sides[3] + style.padding[3],
-        y + sides[0] + style.padding[0],
-        (width - horizontal_edges(node)).max(0.0),
-    );
+    // Captions sit outside the table box's border and padding (CSS 2.1 17.4), in the wrapper.
     let (bottom_captions, top_captions): (Vec<_>, Vec<_>) = context
         .all_children(node.local_id)
         .into_iter()
         .filter(|child| is_caption(child))
         .partition(|caption| caption.style.caption_bottom);
+    // An anonymous table's box is its wrapping block, whose captions stay in its content box.
+    let content = (
+        x + sides[3] + style.padding[3],
+        y + sides[0] + style.padding[0],
+    );
+    let inner_width = (width - horizontal_edges(node)).max(0.0);
+    let frame = if anonymous {
+        (content.0, content.1, inner_width)
+    } else {
+        (x, y, width)
+    };
+    let mut above = Flow::new(frame.0, frame.1, frame.2);
     for caption in top_captions {
-        node_layout(context, caption, &mut inner, items, None)?;
+        node_layout(context, caption, &mut above, items, None)?;
     }
-    inner.newline();
+    above.newline();
+    let after = if above.bottom > frame.1 {
+        above.bottom.max(above.y)
+    } else {
+        frame.1
+    };
+    let top = if anonymous { y } else { after };
+    let inner_top = if anonymous {
+        after
+    } else {
+        top + sides[0] + style.padding[0]
+    };
+    let grid_width = if anonymous {
+        let own = horizontal_edges(node);
+        (maximum - own).min(inner_width).max(minimum - own)
+    } else {
+        inner_width
+    };
     let widths = columns::widths(
-        (inner.width - spacing * (grid.columns + 1) as f64).max(0.0),
+        (grid_width - spacing * (grid.columns + 1) as f64).max(0.0),
         &columns,
         fixed_layout,
     );
-    let mut bottom = place(context, &grid, &widths, (inner.x, inner.y, spacing), items)?;
-    if !bottom_captions.is_empty() {
-        let mut below = Flow::new(inner.x, bottom, inner.width);
-        for caption in bottom_captions {
+    let mut bottom = place(
+        context,
+        &grid,
+        &widths,
+        (content.0, inner_top, spacing),
+        items,
+    )?;
+    if anonymous {
+        let mut below = Flow::new(frame.0, bottom, frame.2);
+        for caption in &bottom_captions {
             node_layout(context, caption, &mut below, items, None)?;
         }
         below.newline();
         bottom = below.bottom.max(below.y);
     }
-    let natural = bottom - y + style.padding[2] + sides[2];
+    let natural = bottom - top + style.padding[2] + sides[2];
+    // Blink's table block size counts the captions, which subtract from the grid's share.
     let specified = style
         .height
         .and_then(|height| height.resolve_size(flow.definite))
         .map(|height| super::sizing::border_height(node, height));
-    let height = forced
+    let mut below = Flow::new(x, top + natural, width);
+    // Only an authored or forced height needs the bottom captions measured ahead of placing.
+    let sized = specified.is_some() || forced.is_some_and(|bounds| bounds.height.is_some());
+    let captions = (top - y)
+        + if sized && !anonymous {
+            caption_heights(context, &bottom_captions, width)?
+        } else {
+            0.0
+        };
+    let total = forced
         .and_then(|bounds| bounds.height)
-        .unwrap_or(natural.max(specified.unwrap_or(0.0)));
+        .unwrap_or((natural + captions).max(specified.unwrap_or(0.0)));
+    let grid_height = (total - captions).max(natural);
+    below.y = top + grid_height;
+    if !anonymous {
+        for caption in bottom_captions {
+            node_layout(context, caption, &mut below, items, None)?;
+        }
+    }
+    below.newline();
+    let height = (below.bottom.max(below.y) - y).max(total);
+    // ponytail: the one item is the table wrapper box (floats and lookups read its extent), so
+    // the table background still covers its captions; paint the grid box apart to fix that.
     items[index].height = height;
     if forced.is_some() {
         flow.y = y + height;
@@ -177,6 +266,20 @@ pub(super) fn table(
         flow.after_block(y + height, style.margin[2]);
     }
     Ok(())
+}
+/** The block size bottom captions take at the table's width, measured before they are placed. */
+fn caption_heights(
+    context: &mut LayoutContext<'_>,
+    captions: &[&Node],
+    width: f64,
+) -> EngineResult<f64> {
+    let mut probe = Flow::new(0.0, 0.0, width);
+    let mut scratch = Vec::new();
+    for caption in captions {
+        node_layout(context, caption, &mut probe, &mut scratch, None)?;
+    }
+    probe.newline();
+    Ok(probe.bottom.max(probe.y))
 }
 /** Old `<center>` and `align=center` parents center a table like Chromium's -webkit-center. */
 fn centered(context: &LayoutContext<'_>, node: &Node) -> bool {
@@ -531,6 +634,8 @@ fn place(
         })
         .collect::<Vec<f64>>();
     let mut measured = Vec::with_capacity(grid.cells.len());
+    let mut baselines = Vec::with_capacity(grid.cells.len());
+    let mut rows = vec![RowBaseline::default(); heights.len()];
     for slot in &grid.cells {
         let width = span_width(slot);
         let height = if slot.cell.hidden() {
@@ -538,10 +643,18 @@ fn place(
         } else {
             context.measure_height(slot.cell.local_id, width)?
         };
+        let baseline = cell_baseline(context, slot, width, height)?;
+        if let Some(baseline) = baseline {
+            rows[slot.row].add(baseline, (slot.rows == 1).then_some(height - baseline));
+        }
         measured.push(height);
+        baselines.push(baseline);
         if slot.rows == 1 {
             heights[slot.row] = heights[slot.row].max(height);
         }
+    }
+    for (height, row) in heights.iter_mut().zip(&rows) {
+        *height = height.max(row.size());
     }
     for (slot, height) in grid.cells.iter().zip(&measured) {
         if slot.rows > 1 {
@@ -575,7 +688,7 @@ fn place(
             Vec::new(),
         ));
     }
-    for (slot, natural) in grid.cells.iter().zip(measured) {
+    for ((slot, natural), baseline) in grid.cells.iter().zip(measured).zip(baselines) {
         if slot.cell.hidden() {
             continue;
         }
@@ -600,7 +713,10 @@ fn place(
         let offset = match row_align(context, slot.cell) {
             VerticalAlign::Top | VerticalAlign::TextTop => 0.0,
             VerticalAlign::Bottom | VerticalAlign::TextBottom => height - natural,
-            VerticalAlign::Baseline => 0.0,
+            VerticalAlign::Baseline => rows[slot.row]
+                .ascent
+                .zip(baseline)
+                .map_or(0.0, |(a, b)| a - b),
             _ => (height - natural) / 2.0,
         }
         .max(0.0);
@@ -616,6 +732,42 @@ fn place(
         }
     }
     Ok(y)
+}
+/** Blink's RowBaselineTabulator: the tallest ascent and descent of a row's baseline-aligned
+ * cells (a row-spanning cell adds its ascent only). */
+#[derive(Clone, Copy, Default)]
+struct RowBaseline {
+    ascent: Option<f64>,
+    descent: f64,
+}
+impl RowBaseline {
+    /** Takes one baseline-aligned cell's baseline and, unless it spans rows, its descent. */
+    fn add(&mut self, baseline: f64, descent: Option<f64>) {
+        self.ascent = Some(self.ascent.map_or(baseline, |a| a.max(baseline)));
+        self.descent = self.descent.max(descent.unwrap_or(0.0));
+    }
+    /** The block size the aligned cells need: ascent plus descent. */
+    fn size(&self) -> f64 {
+        self.ascent.map_or(0.0, |a| a + self.descent)
+    }
+}
+/** A baseline-aligned cell's baseline from its border-box top: its first line's, else the end of
+ * its content box (css-tables-3 row layout); None for other alignments and for empty cells. */
+fn cell_baseline(
+    context: &mut LayoutContext<'_>,
+    slot: &Slot<'_>,
+    width: f64,
+    height: f64,
+) -> EngineResult<Option<f64>> {
+    let cell = slot.cell;
+    let empty = cell.text.trim().is_empty() && context.children(cell.local_id).is_empty();
+    if cell.hidden() || empty || row_align(context, cell) != VerticalAlign::Baseline {
+        return Ok(None);
+    }
+    let end = height - cell.style.padding[2] - super::sizing::border_sides(&cell.style)[2];
+    Ok(Some(
+        super::flex_layout::first_baseline(context, cell, width)?.unwrap_or(end),
+    ))
 }
 /** A cell's vertical-align, or its row's `valign` when the cell keeps the default. */
 fn row_align(context: &LayoutContext<'_>, cell: &Node) -> VerticalAlign {

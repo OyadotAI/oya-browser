@@ -171,9 +171,8 @@ impl Compiler {
             }
             ExprKind::PrivateIn(name, object) => {
                 let key = self.private_name(name)?;
-                self.emit(Op::String(key));
                 self.expr(object)?;
-                self.emit(Op::In);
+                self.emit(Op::PrivateIn(key));
             }
         }
         Ok(())
@@ -267,6 +266,16 @@ impl Compiler {
             self.emit(Op::Swap);
         } else {
             self.emit(Op::Undefined);
+        }
+        let direct = !optional
+            && !spreads(args)
+            && matches!(&callee.kind, ExprKind::Ident(name) if &**name == "eval");
+        if direct {
+            for arg in args {
+                self.element_value(arg)?;
+            }
+            self.at(pos);
+            return self.direct_eval_call(count(args)?);
         }
         if spreads(args) {
             self.spread_array(args)?;
@@ -458,8 +467,15 @@ impl Compiler {
                 if let ExprKind::Ident(name) = &operand.kind
                     && matches!(self.resolve(name), None | Some((Place::Global, ..)))
                 {
+                    let ext = self.ext_loads(name)?;
                     let index = self.name(name)?;
                     self.emit(Op::TypeofGlobal(index));
+                    if !ext.is_empty() {
+                        let end = self.emit(Op::Jump(0));
+                        self.patch_all(ext);
+                        self.emit(Op::Typeof);
+                        self.patch(end);
+                    }
                 } else {
                     self.expr(operand)?;
                     self.emit(Op::Typeof);

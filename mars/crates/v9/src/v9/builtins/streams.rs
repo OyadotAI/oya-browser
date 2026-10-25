@@ -110,9 +110,7 @@ pub(super) fn install(b: &mut Builder) {
 
 /** A private slot key, invisible to scripts as `#name` fields are. */
 fn slot(name: &str) -> Key {
-    let mut units = vec![crate::v9::compile::PRIVATE_MARK];
-    units.extend(name.encode_utf16());
-    Key::Str(crate::v9::value::JsString::from_units(units).expect("short key"))
+    Key::private(name)
 }
 
 /** Read a private slot. */

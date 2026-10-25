@@ -49,12 +49,19 @@ fn apply(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Reflect.construct. */
 fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let args = super::function::list_from_array_like(vm, &call.arg(1))?;
+    if !vm.is_constructor(&call.arg(0)) {
+        return Err(vm.type_error("Reflect.construct target is not a constructor"));
+    }
     let new_target = if call.args.len() > 2 {
         Some(call.arg(2))
     } else {
         None
     };
+    // Both are checked before the argument list is read, as the specification orders it.
+    if new_target.as_ref().is_some_and(|t| !vm.is_constructor(t)) {
+        return Err(vm.type_error("Reflect.construct newTarget is not a constructor"));
+    }
+    let args = super::function::list_from_array_like(vm, &call.arg(1))?;
     vm.construct(call.arg(0), args, new_target)
 }
 
@@ -99,7 +106,7 @@ fn own_descriptor(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Reflect.getPrototypeOf. */
 fn get_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = target(vm, &call)?;
-    Ok(vm.proto_of(id).map_or(JsValue::Null, JsValue::Object))
+    Ok(super::integrity::get_prototype_of(vm, id)?.map_or(JsValue::Null, JsValue::Object))
 }
 
 /** Reflect.has. */
@@ -113,9 +120,7 @@ fn has(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Reflect.isExtensible. */
 fn is_extensible(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = target(vm, &call)?;
-    Ok(JsValue::Boolean(
-        vm.heap.get(id).is_none_or(|object| object.extensible),
-    ))
+    super::integrity::is_extensible(vm, id).map(JsValue::Boolean)
 }
 
 /** Reflect.ownKeys. */
@@ -128,11 +133,7 @@ fn own_keys(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Reflect.preventExtensions. */
 fn prevent_extensions(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = target(vm, &call)?;
-    vm.materialize(id)?;
-    if let Some(object) = vm.heap.get_mut(id) {
-        object.extensible = false;
-    }
-    Ok(JsValue::Boolean(true))
+    super::integrity::prevent_extensions(vm, id).map(JsValue::Boolean)
 }
 
 /** Reflect.set. */
@@ -157,5 +158,5 @@ fn set_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
         JsValue::Null => None,
         _ => return Err(vm.type_error("Object prototype may only be an Object or null")),
     };
-    vm.set_proto(id, proto).map(JsValue::Boolean)
+    super::integrity::set_prototype_of(vm, id, proto).map(JsValue::Boolean)
 }

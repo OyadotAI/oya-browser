@@ -355,14 +355,16 @@ impl Runtime {
         deadline: Instant,
         sensitive: bool,
     ) -> EngineResult<Page> {
-        if acquired.response.mime != "text/html" {
+        // XHTML and SVG documents take Eye's XML parser, as Blink picks XMLDocumentParser.
+        let xml = crate::document::xml_mime(&acquired.response.mime);
+        if acquired.response.mime != "text/html" && !xml {
             return Err(EngineError::unsupported(
                 "The document requires UTF-8 text/html.",
             ));
         }
         let total = Instant::now();
         let mut phase = Instant::now();
-        let parse = json!({"source":acquired.response.source,"charset":acquired.response.charset});
+        let parse = json!({"source":acquired.response.source,"charset":acquired.response.charset,"xml":xml});
         let mut document: Document = self.call_typed("document", "document.parse", &parse, None)?;
         perf::record("page.parse", phase, || document.nodes.len().to_string());
         phase = Instant::now();

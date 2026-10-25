@@ -59,7 +59,7 @@ pub use font_face::{
 pub(crate) use font_match::select as select_font;
 pub use font_match::{FontRequest, font_requests, install_fonts};
 pub use formatting::{ColorScheme, DocumentFormatting, FormattingElement, LineHeight};
-pub use model::{ComputedStyle, Generated, StyleSource};
+pub use model::{ComputedStyle, Generated, SizeKeyword, StyleSource};
 pub use urls::{BACKGROUND_IMAGES, background_urls, rebase_urls};
 pub use visual_model::{
     BackgroundLayer, BackgroundRepeat, BackgroundSize, BoxShadow, Clear, ColorStop, ContainerType,

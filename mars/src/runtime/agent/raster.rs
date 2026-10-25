@@ -1,9 +1,12 @@
 /**
  * page.screenshot without a window: a PNG painted from the same display list the native window
  * draws, so a headless or attached agent can see layout. It paints boxes, borders, images and
- * text runs as bars (there is no font rasterizer outside AppKit); the desktop window answers
- * page.screenshot itself with real pixels.
+ * text runs as real glyphs (CoreText on macOS, bars where no rasterizer exists); the desktop
+ * window answers page.screenshot itself with real pixels.
  */
+#[path = "glyphs.rs"]
+mod glyphs;
+
 use super::super::supervisor::Runtime;
 use crate::document::{
     BorderStyle, ClipRect, DisplayBackground, DisplayItem, ImageSize, agent_visible, painter_rgba,
@@ -122,6 +125,7 @@ impl Canvas {
     /** Paint one display item in Blink's box order: shadow, background color, background
      * layers bottom first, border, then the image placeholder and text runs. */
     fn item(&mut self, item: &DisplayItem, foreground: [u8; 4], image: Option<&Bitmap>) {
+        let item = &snapped(item);
         let clip = item.clip;
         let fade = |mut color: [u8; 4]| {
             color[3] = (f64::from(color[3]) * item.opacity.clamp(0.0, 1.0)).round() as u8;
@@ -205,14 +209,64 @@ impl Canvas {
                 .unwrap_or(foreground),
         );
         self.border(item, ink, &fade);
-        let clip = clip.map(|c| [c.x, c.y, c.width, c.height]);
+        self.text(item, ink);
+    }
+    /**
+     * Text runs as real glyphs drawn by the platform's font rasterizer at their laid-out places;
+     * a run nothing can draw (no rasterizer, or AppKit refused the bitmap) paints as a bar over
+     * the middle of its line box, roughly where glyph ink sits.
+     */
+    fn text(&mut self, item: &DisplayItem, ink: [u8; 4]) {
+        if item.lines.is_empty() {
+            return;
+        }
+        let baseline = glyphs::baseline_offset(item);
         for line in &item.lines {
-            let top = line.y + item.font_size * INK_TOP;
-            self.fill(
-                [line.x, top, line.width, item.font_size * INK_HEIGHT],
-                clip,
-                ink,
-            );
+            match glyphs::rasterize(item, line, baseline, (self.left, self.top)) {
+                Some(coverage) => self.glyphs(&coverage, item.clip.as_ref(), ink),
+                None => self.fill(
+                    [
+                        line.x,
+                        line.y + item.font_size * INK_TOP,
+                        line.width,
+                        item.font_size * INK_HEIGHT,
+                    ],
+                    item.clip.map(|c| [c.x, c.y, c.width, c.height]),
+                    ink,
+                ),
+            }
+        }
+    }
+    /** Blend `ink` through a run's coverage, inside the canvas and the item's clip. */
+    fn glyphs(&mut self, coverage: &glyphs::Coverage, clip: Option<&ClipRect>, ink: [u8; 4]) {
+        for row in 0..coverage.height {
+            let y = coverage.top + row as i64;
+            if y < 0 || y as usize >= self.height {
+                continue;
+            }
+            for column in 0..coverage.width {
+                let (x, alpha) = (
+                    coverage.left + column as i64,
+                    coverage.alpha[row * coverage.width + column],
+                );
+                if alpha == 0 || x < 0 || x as usize >= self.width {
+                    continue;
+                }
+                let (px, py) = (self.left + x as f64 + 0.5, self.top + y as f64 + 0.5);
+                if clip.is_some_and(|c| {
+                    !inside_rounded(
+                        px,
+                        py,
+                        [c.x, c.y, c.width, c.height],
+                        c.radius.map(|r| [r, r]),
+                    )
+                }) {
+                    continue;
+                }
+                let mut color = ink;
+                color[3] = ((u32::from(ink[3]) * u32::from(alpha) + 127) / 255) as u8;
+                self.blend(x as usize, y as usize, color);
+            }
         }
     }
     /**
@@ -367,6 +421,8 @@ impl Runtime {
     pub(super) fn screenshot(&mut self, params: Value) -> EngineResult<Value> {
         let input: Shot = parameters(params)?;
         let page = self.current()?;
+        // Web fonts live in a per-thread registry; the page's faces must be there to draw.
+        crate::document::install_fonts(&page.document.formatting);
         let display = page.display.as_ref().ok_or_else(|| {
             EngineError::new("no_page", "The page has no layout yet.", "Navigate first.")
         })?;
@@ -506,6 +562,34 @@ impl Bitmap {
     }
 }
 
+/** One edge pair `[start, length]` snapped as Blink's `PixelSnappedIntRect` does: both edges
+ * round to whole pixels and the length is what lies between them. */
+fn snap(start: f64, length: f64) -> (f64, f64) {
+    let (low, high) = (start.round(), (start + length).round());
+    (low, high - low)
+}
+
+/**
+ * The item with its border box, content box and clip pixel-snapped, as Blink snaps box geometry
+ * before painting backgrounds and borders. Without it a box at y = 50.5 lost a row: pixel
+ * centers decided coverage, so a 20px box covered only 19 rows while its text covered 20.
+ * Text runs keep their exact positions; the glyph rasterizer places those.
+ */
+fn snapped(item: &DisplayItem) -> DisplayItem {
+    let mut item = item.clone();
+    (item.x, item.width) = snap(item.x, item.width);
+    (item.y, item.height) = snap(item.y, item.height);
+    if let Some(clip) = &mut item.clip {
+        (clip.x, clip.width) = snap(clip.x, clip.width);
+        (clip.y, clip.height) = snap(clip.y, clip.height);
+    }
+    if let Some([x, y, w, h]) = item.content_box {
+        let ((x, w), (y, h)) = (snap(x, w), snap(y, h));
+        item.content_box = Some([x, y, w, h]);
+    }
+    item
+}
+
 /** Whether a point lies inside a rectangle whose corners (tl, tr, br, bl) are ellipses `[rx, ry]`. */
 fn inside_rounded(px: f64, py: f64, [x, y, w, h]: [f64; 4], radii: [[f64; 2]; 4]) -> bool {
     if px < x || py < y || px >= x + w || py >= y + h {
@@ -566,7 +650,11 @@ impl Ring {
     /** Distance along `side` from its start: the left end of a row, the top end of a column. */
     fn along(&self, side: usize, px: f64, py: f64) -> f64 {
         let [x, y, ..] = self.outer;
-        if side.is_multiple_of(2) { px - x } else { py - y }
+        if side.is_multiple_of(2) {
+            px - x
+        } else {
+            py - y
+        }
     }
     /** Which side owns a point of the ring: the one whose miter-normalized depth is least. */
     fn side(&self, px: f64, py: f64) -> Option<usize> {

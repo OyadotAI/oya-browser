@@ -14,6 +14,7 @@ mod shadow;
 mod style;
 mod table;
 mod tokenizer;
+mod xml;
 use crate::constants::LAYOUT_UNIT;
 use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
@@ -25,7 +26,7 @@ pub use mars_core::dom::{
     ScriptMode, ScriptNode, TextChange, validate_text,
 };
 pub use mutation::{apply_changes, apply_script_changes};
-pub use parser::{Fragment, parse, parse_fragment, parse_with_charset};
+pub use parser::{Fragment, parse, parse_fragment, parse_with_charset, parse_xml};
 pub use render::{
     ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
     FillRule, GradientStop, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine, PathCommand,
@@ -49,6 +50,7 @@ pub use style::{
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,
     install_fonts,
 };
+pub use xml::xml_mime;
 
 /** Private computed values are validated before layout even when a Rust caller bypasses CSS parsing. */
 pub fn validate_styles(document: &Document) -> EngineResult<()> {

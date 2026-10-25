@@ -241,8 +241,8 @@ fn private_computed_styles_reject_nonfinite_negative_and_excessive_values() {
         |s| s.font_size = f64::NAN,
         // Zero is `font-size: 0`, which hides text; sizes between it and the minimum are invalid.
         |s| s.font_size = 4.0,
-        |s| s.font_size = 73.0,
-        |s| s.border = 9.0,
+        |s| s.font_size = 1025.0,
+        |s| s.border = 5000.0,
         |s| s.margin[0] = -4097.0,
         |s| s.padding[0] = f64::INFINITY,
         |s| s.width = Some(4097.0),

@@ -48,6 +48,10 @@ struct Context {
     method: bool,
     /// `super()` is legal.
     derived: bool,
+    /// A class field initializer or static block: `arguments` is an early error here.
+    no_arguments: bool,
+    /// Directly inside a class static block, where `await` is reserved.
+    static_block: bool,
 }
 
 /** A recursive-descent parser over the scanner's tokens. */
@@ -74,6 +78,26 @@ pub(in crate::v9) struct Parser {
     labels: Vec<(Name, bool)>,
     /// A module's imports and exports as they are parsed; None for a classic script.
     module: Option<Box<ModuleSyntax>>,
+    /// The private-name environment: one scope per enclosing class body, innermost last.
+    privates: Vec<PrivateScope>,
+}
+
+/** The `#names` one class body declares and the ones its code references. */
+#[derive(Default)]
+struct PrivateScope {
+    declared: Vec<(Name, PrivateKind)>,
+    used: Vec<(Name, Pos)>,
+}
+
+/** What a `#name` declaration is: a getter and a setter of the same placement may share one. */
+#[derive(Clone, Copy, PartialEq)]
+enum PrivateKind {
+    /// A field or method.
+    Other,
+    /// A getter; true when static.
+    Getter(bool),
+    /// A setter; true when static.
+    Setter(bool),
 }
 
 /** Nesting inside one function body, bounded by EXPRESSION_DEPTH and STATEMENT_DEPTH. Each
@@ -119,6 +143,7 @@ impl Parser {
             outer_levels: Vec::new(),
             labels: Vec::new(),
             module: None,
+            privates: Vec::new(),
         }
     }
     /** A whole script: a directive prologue and a statement list. */
@@ -370,12 +395,63 @@ impl Parser {
         };
         if reserved(name, self.strict)
             || name == "yield" && (self.context.generator || self.strict)
-            || name == "await" && self.context.asynchronous
+            || name == "await" && (self.context.asynchronous || self.context.static_block)
         {
             return Err(errors::syntax(token.location, "unexpected reserved word"));
         }
         self.next();
         Ok(Name::from(name.as_str()))
+    }
+    /** `arguments` cannot be referenced from a class field initializer or static block. */
+    fn check_arguments(&self, name: &str, pos: Pos) -> EngineResult<()> {
+        if self.context.no_arguments && name == "arguments" {
+            return Err(self.error_at(pos, "'arguments' is not allowed in class field initializer or static initialization block"));
+        }
+        Ok(())
+    }
+    /** Record a `#name` reference; outside every class body it is an early error. */
+    fn use_private(&mut self, name: &Name, pos: Pos) -> EngineResult<()> {
+        match self.privates.last_mut() {
+            Some(scope) => {
+                scope.used.push((name.clone(), pos));
+                Ok(())
+            }
+            None => Err(self.error_at(
+                pos,
+                &format!("Private field '#{name}' must be declared in an enclosing class"),
+            )),
+        }
+    }
+    /** Declare a `#name` in the innermost class body; only a getter and setter pair may share one. */
+    fn declare_private(&mut self, name: &Name, kind: PrivateKind, pos: Pos) -> EngineResult<()> {
+        let Some(scope) = self.privates.last_mut() else {
+            return Err(self.error_at(pos, "unexpected private name"));
+        };
+        let mut earlier = scope.declared.iter().filter(|(seen, _)| seen == name);
+        let clash = match (earlier.next(), earlier.next()) {
+            (None, _) => false,
+            (Some((_, first)), None) => !matches!(
+                (*first, kind),
+                (PrivateKind::Getter(a), PrivateKind::Setter(b))
+                    | (PrivateKind::Setter(a), PrivateKind::Getter(b)) if a == b
+            ),
+            _ => true,
+        };
+        if clash {
+            return Err(self.error_at(pos, "Identifier has already been declared"));
+        }
+        scope.declared.push((name.clone(), kind));
+        Ok(())
+    }
+    /** Close a class body: references it does not declare belong to the enclosing class. */
+    fn close_privates(&mut self) -> EngineResult<()> {
+        let scope = self.privates.pop().unwrap_or_default();
+        for (name, pos) in scope.used {
+            if !scope.declared.iter().any(|(seen, _)| *seen == name) {
+                self.use_private(&name, pos)?;
+            }
+        }
+        Ok(())
     }
     /** Any identifier name, including keywords, as after a dot. */
     fn property_name(&mut self) -> EngineResult<Name> {

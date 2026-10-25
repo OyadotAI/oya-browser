@@ -8,7 +8,6 @@
  * x-user-defined only; the other legacy encodings need their index tables and stay RangeErrors.
  */
 use crate::v9::builtins::typed;
-use crate::v9::compile::PRIVATE_MARK;
 use crate::v9::value::{JsString, JsValue, ObjectId};
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Object, Prop, Slot};
@@ -107,9 +106,7 @@ fn lookup(label: &str) -> Option<Encoding> {
 
 /** A private slot key. */
 fn slot(name: &str) -> Key {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend(name.encode_utf16());
-    Key::Str(JsString::from_units(units).expect("short key"))
+    Key::private(name)
 }
 
 /** Read a private slot. */
@@ -187,10 +184,14 @@ fn encoding_of(vm: &mut Vm, this: &JsValue) -> Res<Encoding> {
         Encoding::Windows1252,
         Encoding::UserDefined,
     ];
-    match read_slot(vm, this, "decEncoding") {
-        Some(JsValue::Number(index)) => Ok(all[index as usize]),
-        _ => Err(vm.type_error("Illegal invocation: the receiver is not a TextDecoder")),
-    }
+    // The slot is engine-written, but a bad value must still be a TypeError, never a panic.
+    let encoding = match read_slot(vm, this, "decEncoding") {
+        Some(JsValue::Number(index)) if index.fract() == 0.0 && index >= 0.0 => {
+            all.get(index as usize).copied()
+        }
+        _ => None,
+    };
+    encoding.ok_or_else(|| vm.type_error("Illegal invocation: the receiver is not a TextDecoder"))
 }
 
 /** `encoding`, `fatal` and `ignoreBOM`. */

@@ -179,7 +179,7 @@ fn day_to_day_visual_upgrades_resolve_into_display_items() {
 /** Private wire data cannot bypass CSS numeric ranges and poison native geometry. */
 #[test]
 fn forged_computed_dimensions_are_rejected_at_the_render_boundary() {
-    for (field, value) in [("width", -1.0), ("font_size", 5000.0), ("border", 99.0)] {
+    for (field, value) in [("width", -1.0), ("font_size", 5000.0), ("border", 5000.0)] {
         let mut wire = serde_json::to_value(parse("<div></div>").unwrap()).unwrap();
         wire["nodes"][0]["style"] = serde_json::json!({field:value});
         let document: Document = serde_json::from_value(wire).unwrap();

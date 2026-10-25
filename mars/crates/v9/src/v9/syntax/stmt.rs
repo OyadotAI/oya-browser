@@ -1,4 +1,5 @@
 /** Statement grammar: declarations, control flow, exceptions and labels. */
+use super::func::bound_names;
 use super::*;
 
 impl Parser {
@@ -139,7 +140,7 @@ impl Parser {
                     return Err(self.error_at(pos, "with is not allowed in strict mode"));
                 }
                 self.parenthesized()?;
-                let body = self.statement(false)?;
+                let body = self.sub_statement(false)?;
                 Ok(StmtKind::With(Box::new(body)))
             }
             "import" | "export" if !matches!(self.peek_at(1).kind, Kind::Symbol('(' | '.')) => {
@@ -167,7 +168,66 @@ impl Parser {
         self.expect("{")?;
         let body = self.statement_list(false)?;
         self.expect("}")?;
+        self.check_redeclarations(&body)?;
         Ok(body)
+    }
+    /** The body of `if`, a loop or `with`: never a declaration, except that sloppy code may
+    give `if` a plain function declaration (Annex B.3.3). */
+    fn sub_statement(&mut self, if_branch: bool) -> EngineResult<Stmt> {
+        let async_function = self.at_name("async")
+            && matches!(&self.peek_at(1).kind, Kind::Name(n) if n == "function")
+            && !self.peek_at(1).line_terminator_before;
+        let function = self.at_name("function")
+            && (!if_branch
+                || self.strict
+                || matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply)));
+        if async_function || function {
+            return Err(self.error_at(
+                self.pos(),
+                "In strict mode code, functions can only be declared at top level or inside a block.",
+            ));
+        }
+        self.statement(false)
+    }
+    /** A block's (or case block's) lexical names must be unique, apart from sloppy plain
+    function pairs, and no `var` in the same list may reuse one. */
+    fn check_redeclarations<'a>(
+        &self,
+        body: impl IntoIterator<Item = &'a Stmt>,
+    ) -> EngineResult<()> {
+        let mut lexical: Vec<(Name, bool, Pos)> = Vec::new();
+        let mut vars = Vec::new();
+        for stmt in body {
+            let mut names = Vec::new();
+            let mut plain = false;
+            match &stmt.kind {
+                StmtKind::Var(VarKind::Var, list) => {
+                    list.iter().for_each(|d| bound_names(&d.target, &mut vars));
+                }
+                StmtKind::Var(_, list) => {
+                    list.iter().for_each(|d| bound_names(&d.target, &mut names))
+                }
+                StmtKind::Class(class) => names.extend(class.name.clone()),
+                StmtKind::Function(func) => {
+                    names.extend(func.name.clone());
+                    plain = !self.strict && !func.flags.generator && !func.flags.asynchronous;
+                }
+                _ => {}
+            }
+            for name in names {
+                let clash = lexical
+                    .iter()
+                    .any(|(seen, merges, _)| *seen == name && !(plain && *merges));
+                if clash {
+                    return Err(self.error_at(stmt.pos, "Identifier has already been declared"));
+                }
+                lexical.push((name, plain, stmt.pos));
+            }
+        }
+        match lexical.iter().find(|(name, _, _)| vars.contains(name)) {
+            Some((_, _, pos)) => Err(self.error_at(*pos, "Identifier has already been declared")),
+            None => Ok(()),
+        }
     }
     /** Expression statements, including the leading-`let` identifier case. */
     fn expression_statement(&mut self) -> EngineResult<StmtKind> {
@@ -182,8 +242,23 @@ impl Parser {
         for_head: bool,
     ) -> EngineResult<Vec<Declarator>> {
         let mut list = Vec::new();
+        let mut names = Vec::new();
         loop {
+            let pos = self.pos();
             let target = self.binding_target()?;
+            if kind != VarKind::Var {
+                bound_names(&target, &mut names);
+                let duplicate = names
+                    .iter()
+                    .enumerate()
+                    .any(|(i, n)| names[..i].contains(n));
+                if duplicate || names.iter().any(|n| &**n == "let") {
+                    return Err(self.error_at(
+                        pos,
+                        "let is disallowed as a lexically bound name, and names may not repeat",
+                    ));
+                }
+            }
             let init = if self.eat("=") {
                 let mut value = self.assignment(for_head)?;
                 if let Pattern::Ident(name, _) = &target {
@@ -216,9 +291,9 @@ impl Parser {
     fn if_statement(&mut self) -> EngineResult<StmtKind> {
         self.next();
         let test = self.parenthesized()?;
-        let yes = self.statement(false)?;
+        let yes = self.sub_statement(true)?;
         let no = if self.eat_name("else") {
-            Some(Box::new(self.statement(false)?))
+            Some(Box::new(self.sub_statement(true)?))
         } else {
             None
         };
@@ -229,7 +304,7 @@ impl Parser {
         let saved = self.context;
         self.context.breakable = true;
         self.context.continuable = true;
-        let body = self.statement(false);
+        let body = self.sub_statement(false);
         self.context = saved;
         body
     }
@@ -252,6 +327,17 @@ impl Parser {
             let list = self.declarations(kind, true)?;
             if list.len() == 1 && (self.at_name("in") || self.at_name("of")) {
                 let declarator = list.into_iter().next().expect("one declarator");
+                // Only sloppy `for (var x = init in ...)` keeps an initializer (Annex B.3.5).
+                let legacy = self.at_name("in")
+                    && !self.strict
+                    && kind == VarKind::Var
+                    && matches!(declarator.target, Pattern::Ident(..));
+                if declarator.init.is_some() && !legacy {
+                    return Err(self.error_at(
+                        self.pos(),
+                        "for-in/of loop variable declaration may not have an initializer.",
+                    ));
+                }
                 return self.for_each(ForHead::Declare(kind, declarator.target), is_await);
             }
             // Only a for-in/of head may omit initializers; a plain for head follows the
@@ -356,7 +442,15 @@ impl Parser {
         self.expect(":")?;
         let is_loop = matches!(&self.peek().kind, Kind::Name(n) if ["for", "while", "do"].contains(&n.as_str()));
         self.labels.push((name.clone(), is_loop));
+        // A labelled function is sloppy Annex B grammar, and only where a declaration may stand.
         let body = if self.at_name("function") {
+            if !list_item
+                || self.strict
+                || matches!(self.peek_at(1).kind, Kind::Operator(Operator::Multiply))
+            {
+                self.labels.pop();
+                return Err(self.error_at(self.pos(), "In strict mode code, functions can only be declared at top level or inside a block."));
+            }
             self.statement(list_item)
         } else {
             self.statement(false)
@@ -427,6 +521,7 @@ impl Parser {
             cases.push(Case { test, body });
         }
         self.context = saved;
+        self.check_redeclarations(cases.iter().flat_map(|case| &case.body))?;
         Ok(StmtKind::Switch(discriminant, cases))
     }
 }

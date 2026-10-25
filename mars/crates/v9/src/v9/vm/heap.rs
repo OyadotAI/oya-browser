@@ -8,7 +8,7 @@ use crate::protocol::{EngineError, EngineResult};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error as _, SeqAccess, Visitor},
-    ser::SerializeSeq,
+    ser::{SerializeMap, SerializeSeq},
 };
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -71,11 +71,15 @@ pub(in crate::v9) type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHash
 /** A set keyed the same way, for the collector's marks and distinct-string counts. */
 pub(in crate::v9) type FastSet<T> = std::collections::HashSet<T, BuildHasherDefault<FastHasher>>;
 
-/** A property key: a string or a symbol. */
+/** A property key: a string, a symbol, or an engine-private name. */
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(in crate::v9) enum Key {
     Str(JsString),
     Sym(u32),
+    /// Class `#names` and platform-internal slots. No script value converts to this variant
+    /// (`to_key` only yields `Str` and `Sym`), so a page can never spell one: any string,
+    /// including one that starts with U+FFFF, stays an ordinary `Str` key.
+    Private(JsString),
 }
 
 impl Key {
@@ -102,15 +106,20 @@ impl Key {
         }
         (value < u64::from(u32::MAX)).then_some(value as u32)
     }
+    /** The one constructor of engine-private keys, for class `#names` and platform slots. */
+    pub fn private(name: &str) -> Self {
+        Self::Private(JsString::from_utf8(name).expect("short key"))
+    }
     /** Private names and internal keys are invisible to reflection. */
     pub fn hidden(&self) -> bool {
-        matches!(self, Self::Str(text) if text.as_units().first() == Some(&super::super::compile::PRIVATE_MARK))
+        matches!(self, Self::Private(_))
     }
-    /** The value form of the key. */
+    /** The value form of the key; a private key has none a script may hold, so undefined. */
     pub fn value(&self) -> JsValue {
         match self {
             Self::Str(text) => JsValue::String(text.clone()),
             Self::Sym(id) => JsValue::Symbol(*id),
+            Self::Private(_) => JsValue::Undefined,
         }
     }
 }
@@ -319,6 +328,23 @@ impl Object {
     }
 }
 
+/** Whether an object's own properties are variable bindings: the global object's are the page's
+global vars and functions (an object environment record), and an eval-var object's are the vars a
+sloppy direct eval declared. Without this a single `var a,b,...` or repeated eval could declare
+bindings past VM_BINDINGS, bounded only by the much larger property budget. */
+fn holds_bindings(id: ObjectId, object: &Object) -> bool {
+    id == crate::constants::VM_GLOBAL_OBJECT_ID || matches!(object.class, Class::EvalVars)
+}
+
+/** The bindings an object holds: its own property count when it holds bindings, else none. */
+fn binding_props(id: ObjectId, object: &Object) -> usize {
+    if holds_bindings(id, object) {
+        object.props.len()
+    } else {
+        0
+    }
+}
+
 /** Live counts the bounds apply to. */
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::v9) struct Counts {
@@ -327,6 +353,7 @@ pub(in crate::v9) struct Counts {
     pub properties: usize,
     pub units: usize,
     pub environments: usize,
+    /** Environment slots plus the own properties of binding holders (see `holds_bindings`). */
     pub bindings: usize,
 }
 
@@ -351,19 +378,20 @@ impl Heap {
             ));
         }
         self.next_object += 1;
-        self.count_object(&object, true);
+        self.count_object(id, &object, true);
         self.objects.insert(id, object);
         Ok(id)
     }
     /** Store an object under a fixed identity (the global object or a materialized intrinsic). */
     pub fn insert_at(&mut self, id: ObjectId, object: Object) {
-        self.count_object(&object, true);
+        self.count_object(id, &object, true);
         if let Some(old) = self.objects.insert(id, object) {
-            self.count_object(&old, false);
+            self.count_object(id, &old, false);
         }
     }
     /** Add or remove an object's contribution to the counts. */
-    fn count_object(&mut self, object: &Object, add: bool) {
+    fn count_object(&mut self, id: ObjectId, object: &Object, add: bool) {
+        let bindings = binding_props(id, object);
         let (objects, functions) = if object.function().is_some() {
             (0, 1)
         } else {
@@ -375,11 +403,13 @@ impl Heap {
             counts.functions += functions;
             counts.properties += object.property_count();
             counts.units += object.units();
+            counts.bindings += bindings;
         } else {
             counts.objects = counts.objects.saturating_sub(objects);
             counts.functions = counts.functions.saturating_sub(functions);
             counts.properties = counts.properties.saturating_sub(object.property_count());
             counts.units = counts.units.saturating_sub(object.units());
+            counts.bindings = counts.bindings.saturating_sub(bindings);
         }
     }
     /** A new environment record. */
@@ -423,6 +453,7 @@ impl Heap {
     /** Set an own property, keeping counts; returns the previous property. */
     pub fn put(&mut self, id: ObjectId, key: Key, prop: Prop) -> Option<Prop> {
         let object = self.objects.get_mut(&id)?;
+        let binding = usize::from(holds_bindings(id, object));
         let added = prop.units();
         let old = object.props.insert(key, prop);
         let counts = &mut self.counts;
@@ -431,15 +462,19 @@ impl Heap {
             None => {
                 counts.units += added;
                 counts.properties += 1;
+                counts.bindings += binding;
             }
         }
         old
     }
     /** Remove an own property, keeping counts. */
     pub fn remove(&mut self, id: ObjectId, key: &Key) -> Option<Prop> {
-        let old = self.objects.get_mut(&id)?.props.remove(key)?;
+        let object = self.objects.get_mut(&id)?;
+        let binding = usize::from(holds_bindings(id, object));
+        let old = object.props.remove(key)?;
         self.counts.units = self.counts.units.saturating_sub(old.units());
         self.counts.properties = self.counts.properties.saturating_sub(1);
+        self.counts.bindings = self.counts.bindings.saturating_sub(binding);
         Some(old)
     }
     /** Adjust counts after changing an object's internal class data in place. */
@@ -454,7 +489,8 @@ impl Heap {
     counts between collections count every reference and so only ever overestimate. */
     pub fn recount(&mut self) {
         let mut counts = Counts::default();
-        for object in self.objects.values() {
+        for (id, object) in &self.objects {
+            counts.bindings += binding_props(*id, object);
             if object.function().is_some() {
                 counts.functions += 1;
             } else {
@@ -471,7 +507,7 @@ impl Heap {
             };
         }
         counts.environments = self.envs.len();
-        counts.bindings = self.envs.values().map(|env| env.slots.len()).sum();
+        counts.bindings += self.envs.values().map(|env| env.slots.len()).sum::<usize>();
         counts.units += self.distinct_units();
         self.counts = counts;
     }
@@ -580,19 +616,38 @@ fn entry_from(entry: serde_json::Value) -> Result<(Key, Prop), String> {
 }
 
 impl Serialize for Key {
-    /** Keys serialize as their value form. */
+    /** Keys serialize as their value form; a private key as a one-key `p` map, which no value
+    form uses, so a restored string never turns into a private key. */
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.value().serialize(serializer)
+        match self {
+            Self::Private(name) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("p", name.as_units())?;
+                map.end()
+            }
+            _ => self.value().serialize(serializer),
+        }
     }
 }
 
+/** The wire form of a key: a private `p` map or a value. */
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum KeyWire {
+    Private { p: Vec<u16> },
+    Value(JsValue),
+}
+
 impl<'de> Deserialize<'de> for Key {
-    /** Strings and symbols only. */
+    /** Strings, symbols and private names only. */
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        match JsValue::deserialize(deserializer)? {
-            JsValue::String(text) => Ok(Key::Str(text)),
-            JsValue::Symbol(id) => Ok(Key::Sym(id)),
-            _ => Err(D::Error::custom("invalid property key")),
+        match KeyWire::deserialize(deserializer)? {
+            KeyWire::Private { p } => JsString::from_units(p)
+                .map(Key::Private)
+                .map_err(|error| D::Error::custom(error.message)),
+            KeyWire::Value(JsValue::String(text)) => Ok(Key::Str(text)),
+            KeyWire::Value(JsValue::Symbol(id)) => Ok(Key::Sym(id)),
+            KeyWire::Value(_) => Err(D::Error::custom("invalid property key")),
         }
     }
 }

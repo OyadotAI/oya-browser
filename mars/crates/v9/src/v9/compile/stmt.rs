@@ -11,7 +11,7 @@ impl Compiler {
         scan::var_names(body, self.f().strict, true, &mut vars);
         for name in &vars {
             let index = self.name(name)?;
-            self.emit(Op::DeclareVar(index));
+            self.emit(Op::DeclareVar(index, false));
             self.declare(name, Declared::Var)?;
         }
         // Hoisted, yet a redeclaration error points at the declaration's own line.
@@ -32,7 +32,7 @@ impl Compiler {
             let name = func.name.clone().expect("declaration name");
             self.closure(&func, false)?;
             let index = self.name(&name)?;
-            self.emit(Op::DeclareFunction(index));
+            self.emit(Op::DeclareFunction(index, false));
             self.declare(&name, Declared::Var)?;
         }
         Ok(())

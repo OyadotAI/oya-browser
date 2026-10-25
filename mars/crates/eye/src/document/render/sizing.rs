@@ -3,7 +3,7 @@ use super::validation::bounded;
 use super::{DisplayItem, flow};
 use crate::{
     constants::{LAYOUT_EXTENT, LAYOUT_MEASURES, LAYOUT_WORK},
-    document::{BoxSizing, Document, FlexDirection, FlexWrap, Node},
+    document::{BoxSizing, Document, FlexDirection, FlexWrap, Node, style::SizeKeyword},
     platform::{Face, Family, measure},
     protocol::{EngineError, EngineResult},
 };
@@ -67,7 +67,7 @@ impl<'a> LayoutContext<'a> {
                 kids[parent].push(position);
             }
         }
-        Ok(Self {
+        let mut context = Self {
             document,
             positions,
             kids,
@@ -83,7 +83,27 @@ impl<'a> LayoutContext<'a> {
             ordinals: BTreeMap::new(),
             content_heights: BTreeMap::new(),
             inline_edges: BTreeMap::new(),
-        })
+        };
+        context.measure_keyword_boxes();
+        Ok(context)
+    }
+    /** Measures every box whose width, min-width or max-width is a content keyword, so the
+     * free sizing functions can resolve the keyword against its intrinsic widths. A box past the
+     * work bound keeps no entry, and its keyword then behaves as `auto`. */
+    fn measure_keyword_boxes(&mut self) {
+        let keyword = |node: &&Node| {
+            node.style
+                .size_keywords
+                .iter()
+                .any(|keyword| *keyword != SizeKeyword::None)
+        };
+        let mut measured = BTreeMap::new();
+        for node in self.document.nodes.iter().filter(keyword) {
+            if let Ok(widths) = self.intrinsic_widths(node.local_id) {
+                measured.insert(node.local_id, widths);
+            }
+        }
+        KEYWORD_WIDTHS.with(|cache| *cache.borrow_mut() = measured);
     }
     /** Shared work charges include repeated measurement rather than resetting in a dry run. */
     pub fn charge(&mut self, amount: usize) -> EngineResult<()> {
@@ -674,8 +694,80 @@ pub(super) fn content_height(style: &crate::document::ComputedStyle, value: f64)
         value
     }
 }
-/** Percent widths resolve against the definite containing content extent. */
+thread_local! {
+    /** Intrinsic widths of the current layout's keyword-sized boxes, by identity, replaced each
+     * time a layout context is built (contexts on one thread never interleave).
+     * ponytail: a per-thread side table because the sizing helpers take no context; thread the
+     * context through `border_width` and friends if a nested layout ever needs its own. */
+    static KEYWORD_WIDTHS: std::cell::RefCell<BTreeMap<usize, IntrinsicWidths>> =
+        const { std::cell::RefCell::new(BTreeMap::new()) };
+}
+/** Which property a content keyword sizes, for its indefinite-percentage fallback. */
+#[derive(Clone, Copy, PartialEq)]
+enum Bound {
+    Preferred,
+    Min,
+    Max,
+}
+/**
+ * The content width a sizing keyword gives `node` (Blink's ResolveInlineLengthInternal for
+ * kMinContent, kMaxContent, kFitContent and the fit-content() limit): min- or max-content, or a
+ * limit clamped between them. `containing` is None while measuring contributions, where a
+ * percentage limit is cyclic: it behaves as the property's initial value (`auto`, 0 or `none`).
+ * None means the keyword leaves the size to the caller's ordinary path.
+ */
+fn keyword_width(
+    node: &Node,
+    keyword: SizeKeyword,
+    containing: Option<f64>,
+    bound: Bound,
+    widths: IntrinsicWidths,
+) -> Option<f64> {
+    let fit = |limit: f64| limit.min(widths.max_content).max(widths.min_content);
+    // The stretch-fit size of an indefinite container: `auto` as a preferred size (the caller's
+    // own path), 0 as a minimum and unbounded as a maximum.
+    let indefinite = match bound {
+        Bound::Preferred => None,
+        Bound::Min => Some(0.0),
+        Bound::Max => Some(LAYOUT_EXTENT),
+    };
+    Some(match keyword {
+        SizeKeyword::None => return None,
+        SizeKeyword::MinContent => widths.min_content,
+        SizeKeyword::MaxContent => widths.max_content,
+        SizeKeyword::FitContent if bound == Bound::Preferred => return None,
+        SizeKeyword::FitContent => fit(containing
+            .map(|c| stretch_content(node, c))
+            .or(indefinite)?),
+        SizeKeyword::FitContentLimit(limit) => fit(match containing {
+            Some(c) => content_size(
+                node,
+                limit.px + layout_unit_floor(c * limit.percent / 100.0),
+                true,
+            ),
+            None if limit.percent != 0.0 => {
+                return keyword_width(node, SizeKeyword::FitContent, None, bound, widths);
+            }
+            None => content_size(node, limit.px, true),
+        }),
+    })
+}
+/** `keyword_width` for one of the node's own properties, with the widths measured for it. */
+fn own_keyword(node: &Node, bound: Bound, containing: Option<f64>) -> Option<f64> {
+    let keyword = node.style.size_keywords[bound as usize];
+    // On the block axis (a vertical writing mode) a content keyword behaves as the initial value.
+    if keyword == SizeKeyword::None || node.style.vertical_writing {
+        return None;
+    }
+    let widths = KEYWORD_WIDTHS.with(|cache| cache.borrow().get(&node.local_id).copied())?;
+    keyword_width(node, keyword, containing, bound, widths)
+}
+/** Percent widths resolve against the definite containing content extent; a content keyword
+ * resolves against the box's own intrinsic widths. */
 pub(super) fn specified_content(node: &Node, available: f64) -> Option<f64> {
+    if let Some(width) = own_keyword(node, Bound::Preferred, Some(available)) {
+        return Some(width);
+    }
     if node.style.width_stretch {
         return Some(stretch_content(node, available));
     }
@@ -715,6 +807,9 @@ pub(super) fn layout_unit_ceil(length: f64) -> f64 {
 /** The authored content-box min-width, a percentage resolved against `containing`; None when it
  * is `auto`, or a percentage with no containing width (intrinsic sizing treats that as zero). */
 pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
+    if let Some(width) = own_keyword(node, Bound::Min, containing) {
+        return Some(width);
+    }
     if let Some(percent) = node.style.min_width_percent {
         return containing.map(|containing| {
             content_size(node, layout_unit_floor(containing * percent / 100.0), true)
@@ -726,6 +821,9 @@ pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
 }
 /** The content-box max-width, a percentage resolved against `containing` (unconstrained without one). */
 pub(super) fn max_width(node: &Node, containing: Option<f64>) -> f64 {
+    if let Some(width) = own_keyword(node, Bound::Max, containing) {
+        return width;
+    }
     let Some(value) = node.style.max_width else {
         return LAYOUT_EXTENT;
     };
@@ -849,15 +947,31 @@ pub(super) fn place_own_text(
 
 /** Intrinsic contributions clamp child constraints before adding decorations and margins. */
 fn intrinsic_contribution(parent: &Node, child: &Node, raw: IntrinsicWidths) -> IntrinsicWidths {
-    let preferred = (!child.style.percent_width)
-        .then(|| specified_content(child, 0.0))
-        .flatten();
-    let minimum = child
-        .style
-        .min_width
-        .map(|value| content_size(child, value, true))
+    let [width, min, max] = if child.style.vertical_writing {
+        [SizeKeyword::None; 3]
+    } else {
+        child.style.size_keywords
+    };
+    let keyword = |keyword, bound| keyword_width(child, keyword, None, bound, raw);
+    let preferred = if width == SizeKeyword::None {
+        (!child.style.percent_width)
+            .then(|| specified_content(child, 0.0))
+            .flatten()
+            .or_else(|| ratio_contribution(child, raw))
+    } else {
+        keyword(width, Bound::Preferred)
+    };
+    let minimum = keyword(min, Bound::Min)
+        .or_else(|| {
+            child
+                .style
+                .min_width
+                .map(|value| content_size(child, value, true))
+        })
         .unwrap_or(0.0);
-    let maximum = max_width(child, None).max(minimum);
+    let maximum = keyword(max, Bound::Max)
+        .unwrap_or_else(|| max_width(child, None))
+        .max(minimum);
     let clamp = |value: f64| value.max(minimum).min(maximum);
     let mut contribution = IntrinsicWidths {
         min_content: clamp(preferred.unwrap_or(raw.min_content)),
@@ -869,6 +983,39 @@ fn intrinsic_contribution(parent: &Node, child: &Node, raw: IntrinsicWidths) -> 
     contribution
 }
 
+/**
+ * The content width an automatic-width box's `aspect-ratio` transfers from its definite height,
+ * as Blink's ComputeMinAndMaxContentContribution does through InlineSizeFromAspectRatio. The
+ * height is clamped by min- and max-height first, the ratio sizes the border box under
+ * `box-sizing: border-box`, and min-width `auto` keeps it from going below the min-content
+ * width (css-sizing-4's automatic minimum for ratio boxes). None without a ratio or with a
+ * height that is `auto` or a percentage of the indefinite height being measured in.
+ */
+fn ratio_contribution(node: &Node, raw: IntrinsicWidths) -> Option<f64> {
+    let ratio = node.style.aspect_ratio?;
+    let height = node.style.height?.resolve_size(None)?;
+    let bound = |extent: Option<crate::document::style::Extent>| {
+        extent.and_then(|extent| extent.resolve_size(None))
+    };
+    let mut height = border_height(node, height);
+    if let Some(max) = bound(node.style.max_height) {
+        height = height.min(border_height(node, max));
+    }
+    if let Some(min) = bound(node.style.min_height) {
+        height = height.max(border_height(node, min));
+    }
+    let width = if node.style.box_sizing == BoxSizing::BorderBox {
+        (height * ratio - horizontal_edges(node)).max(0.0)
+    } else {
+        (height - vertical_edges(node)).max(0.0) * ratio
+    };
+    let automatic = node.style.min_width.is_none() && node.style.min_width_percent.is_none();
+    Some(if automatic {
+        width.max(raw.min_content)
+    } else {
+        width
+    })
+}
 /** Pinned Blink row intrinsic rules preserve definite bases that zero flex factors cannot move. */
 fn row_basis_contribution(
     parent: &Node,

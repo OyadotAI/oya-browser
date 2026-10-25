@@ -4,7 +4,6 @@
  * callbacks never run; both are behaviours the specification allows.
  */
 use super::*;
-use crate::v9::compile::PRIVATE_MARK;
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Object, Prop, Slot};
 use crate::v9::vm::realm::realm;
@@ -32,9 +31,7 @@ pub(super) fn install(b: &mut Builder) {
 
 /** The hidden slot a WeakRef keeps its target in. */
 fn target_key() -> Key {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend("weakRefTarget".encode_utf16());
-    Key::Str(JsString::from_units(units).expect("short key"))
+    Key::private("weakRefTarget")
 }
 
 /** A new ordinary object for `new_target`. */

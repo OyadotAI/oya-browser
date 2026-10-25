@@ -158,11 +158,7 @@ pub(in crate::v9) enum Mutation {
 
 /** A private key: scripts can neither name nor enumerate it, so internal state stays internal. */
 fn slot_key(name: &str) -> crate::v9::vm::heap::Key {
-    let mut units = vec![crate::v9::compile::PRIVATE_MARK];
-    units.extend(name.encode_utf16());
-    crate::v9::vm::heap::Key::Str(
-        crate::v9::value::JsString::from_units(units).expect("short private key"),
-    )
+    crate::v9::vm::heap::Key::private(name)
 }
 
 /** Store an internal value on an object. */

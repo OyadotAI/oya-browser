@@ -93,12 +93,12 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Compile and run dynamic source at the top level, returning its completion value. */
 pub(in crate::v9) fn evaluate(vm: &mut Vm, source: String) -> Res<JsValue> {
-    let used: usize = vm.dynamic.iter().map(String::len).sum();
+    let used: usize = vm.dynamic.iter().map(|d| d.source.len()).sum();
     if vm.dynamic.len() >= VM_DYNAMIC_SOURCES || used + source.len() > VM_DYNAMIC_BYTES {
         return Err(EngineError::limit("V9 dynamic code", VM_DYNAMIC_BYTES).into());
     }
     let base = dynamic_base(&vm.dynamic);
-    let code = match crate::v9::compile_dynamic(&mut vm.registry, &source, base) {
+    let code = match crate::v9::compile_dynamic(&mut vm.registry, &source, base, None) {
         Ok(code) => code,
         Err(error) if error.code == "script_syntax_error" => {
             return Err(vm.syntax_error(&error.message));
@@ -108,13 +108,20 @@ pub(in crate::v9) fn evaluate(vm: &mut Vm, source: String) -> Res<JsValue> {
         }
         Err(error) => return Err(error.into()),
     };
-    vm.dynamic.push(source);
+    vm.dynamic.push(crate::v9::vm::DynamicSource {
+        source,
+        context: None,
+    });
     vm.run_script(code)
 }
 
 /** Where the next dynamic source's offsets start: past every page source and earlier dynamic code. */
-pub(in crate::v9) fn dynamic_base(sources: &[String]) -> usize {
-    crate::v9::DYNAMIC_OFFSET + sources.iter().map(|source| source.len() + 1).sum::<usize>()
+pub(in crate::v9) fn dynamic_base(sources: &[crate::v9::vm::DynamicSource]) -> usize {
+    crate::v9::DYNAMIC_OFFSET
+        + sources
+            .iter()
+            .map(|dynamic| dynamic.source.len() + 1)
+            .sum::<usize>()
 }
 
 /** Function.prototype.call. */
