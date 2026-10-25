@@ -10,6 +10,9 @@ use support::{Fixture, agent_call, desktop, html};
 
 /** The screenshot bound, generous for debug builds on a loaded machine. */
 const LIMIT: Duration = Duration::from_secs(2);
+/** The bound for a page that spends the whole drawing budget painting: the budget's worst
+ * case in a debug build, still far under the minute such a page took unbudgeted. */
+const BUDGET_LIMIT: Duration = Duration::from_secs(5);
 /** Copies of one SVG background on the repeated-image page. */
 const COPIES: usize = 500;
 /** Cubic segments in the many-edge drawing; each flattens into 16 edges. */
@@ -19,6 +22,14 @@ const PER_PATH: usize = 1_000;
 /** Distinct tile sizes the many-edge drawing is drawn at, and the shortest one's height. */
 const SIZES: usize = 3;
 const TALL: usize = 1_000;
+/** Overlapping full-tile paths on the stacked page. */
+const STACKED: usize = 1_000;
+/** Boxes showing one drawing, and the layers (the most a box may have) each draws it in, every
+ * layer at its own size. */
+const BOXES: usize = 60;
+const LAYERS: usize = 8;
+/** Cubics in the heaviest drawing a page may carry, about 60,000 edges. */
+const HEAVY: usize = 3_800;
 /** The drawing's fill, which must show in the shot. */
 const FILL: [u8; 3] = [0x00, 0x88, 0xff];
 
@@ -147,4 +158,43 @@ fn a_many_edge_drawing_is_bounded() {
     let (elapsed, pixels) = shot_time(page, Some(wavy(CUBICS)));
     assert!(elapsed < LIMIT, "screenshot took {elapsed:?}");
     assert!(shows_fill(&pixels), "the drawing did not paint");
+}
+
+/** Translucent paths stacked over a whole tile, so every one paints every tile pixel. */
+fn stacked(paths: usize) -> String {
+    let path = "<path fill=\"#0088ff\" fill-opacity=\".5\" d=\"M0 0H9V9H0Z\"/>";
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 9 9\" \
+         preserveAspectRatio=\"none\">{}</svg>",
+        path.repeat(paths)
+    )
+}
+
+/** A thousand overlapping full-tile paths are charged for the pixels they paint, not only the
+ * rows they span. */
+#[test]
+fn overlapping_full_tile_paths_are_bounded() {
+    let page = "<style>body{margin:0}div{width:400px;height:300px;\
+                background:url(/a.svg) 0 0/400px 300px}</style><div></div>"
+        .to_string();
+    let (elapsed, _) = shot_time(page, Some(stacked(STACKED)));
+    assert!(elapsed < BUDGET_LIMIT, "screenshot took {elapsed:?}");
+}
+
+/** One heavy drawing painted as hundreds of small layers, each at its own size, is parsed and
+ * drawn a bounded number of times. */
+#[test]
+fn one_drawing_at_many_sizes_is_bounded() {
+    let boxes: String = (0..BOXES)
+        .map(|at| {
+            let layers: Vec<String> = (0..LAYERS)
+                .map(|layer| format!("url(/a.svg) 0 0/{}px 4px", 10 + at * LAYERS + layer))
+                .collect();
+            format!("<i style=\"background:{}\"></i>", layers.join(","))
+        })
+        .collect();
+    let page =
+        format!("<style>body{{margin:0}}i{{display:block;width:400px;height:4px}}</style>{boxes}");
+    let (elapsed, _) = shot_time(page, Some(wavy(HEAVY)));
+    assert!(elapsed < LIMIT, "screenshot took {elapsed:?}");
 }

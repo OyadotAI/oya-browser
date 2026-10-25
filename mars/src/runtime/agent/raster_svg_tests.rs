@@ -68,7 +68,7 @@ fn svg_natural_size_reads_the_root() {
 #[test]
 fn drawing_fills_the_tile() {
     let markup = r#"<svg width="8" height="32" viewBox="0 0 4 64" preserveAspectRatio="none"><rect y="0" width="100%" height="50%" fill="lime"/><rect y="50%" width="100%" height="50%" fill="aqua"/></svg>"#;
-    let bitmap = Bitmap::draw(markup, 16.0, 64.0, &mut SHOT_DRAW_WORK.clone()).unwrap();
+    let bitmap = Bitmap::draw(markup, 16.0, 64.0, &mut budget(SHOT_DRAW_WORK)).unwrap();
     assert_eq!((bitmap.width, bitmap.height), (16, 64));
     assert_eq!(bitmap.sample(0.5, 0.25), [0, 255, 0, 255]);
     assert_eq!(bitmap.sample(0.5, 0.75), [0, 255, 255, 255]);
@@ -206,10 +206,37 @@ fn active_edge_fill_matches_a_full_scan() {
     }
 }
 
-/** A drawing whose fill rows pass the budget paints nothing instead of stalling. */
+/** A drawing budget of `work` units with every edge allowed. */
+fn budget(work: usize) -> DrawBudget {
+    DrawBudget {
+        work,
+        edges: SHOT_DRAWN_EDGES,
+    }
+}
+
+/** A drawing whose parse, pixels, edges, rows and painted pixels pass the budget paints
+ * nothing instead of stalling; exactly enough paints it. */
 #[test]
 fn a_drawing_past_the_budget_paints_nothing() {
     let markup = r#"<svg width="8" height="8"><rect width="8" height="8" fill="lime"/></svg>"#;
-    assert!(Bitmap::draw(markup, 64.0, 64.0, &mut 100).is_none());
-    assert!(Bitmap::draw(markup, 64.0, 64.0, &mut (64 * 64 + 64 * 2)).is_some());
+    let paths = crate::document::VectorPath::from_image(markup, [0.0, 0.0, 64.0, 64.0]);
+    // Parse, tile pixels, edges built, two sides' rows scanned, every pixel painted.
+    let needed =
+        markup.len() * PARSE_WEIGHT + 64 * 64 + pieces(&paths[0].commands) + 2 * 64 + 64 * 64;
+    assert!(Bitmap::draw(markup, 64.0, 64.0, &mut budget(needed - 1)).is_none());
+    assert!(Bitmap::draw(markup, 64.0, 64.0, &mut budget(needed)).is_some());
+}
+
+/** One drawing rasterizes at no more than DRAWN_SIZES sizes per screenshot; a size already
+ * drawn comes from the cache, and a further size paints nothing. */
+#[test]
+fn a_drawing_is_drawn_at_a_bounded_number_of_sizes() {
+    let markup: Rc<str> =
+        r#"<svg width="8" height="8"><rect width="8" height="8" fill="lime"/></svg>"#.into();
+    let mut canvas = Canvas::new(0.0, 0.0, 10.0, 10.0, WHITE);
+    for size in 0..DRAWN_SIZES {
+        assert!(canvas.drawing(&markup, 4.0 + size as f64, 4.0).is_some());
+    }
+    assert!(canvas.drawing(&markup, 4.0, 4.0).is_some());
+    assert!(canvas.drawing(&markup, 100.0, 4.0).is_none());
 }

@@ -46,12 +46,34 @@ const SHOT_BLUR_WORK: usize = 1 << 28;
 /// Widest Gaussian a shadow blurs with: sigma SHOT_EDGE, a blur radius of twice the shot edge,
 /// already wider than any canvas it could shade.
 const MAX_SIGMA: f64 = SHOT_EDGE;
-/// SVG drawing work (tile pixels plus edge rows filled) one screenshot may spend; a drawing that
-/// does not fit in what is left paints nothing, like a broken image.
-const SHOT_DRAW_WORK: usize = 1 << 25;
-/// Flattened edges (each cubic counts CUBIC_STEPS) one drawing may fill; past them it paints
-/// nothing, like a broken image.
-const DRAWN_EDGES: usize = 1 << 16;
+/// SVG drawing work one screenshot may spend: markup bytes parsed, tile pixels allocated,
+/// flattened edges built, edge rows scanned and pixels painted. A drawing that does not fit in
+/// what is left paints nothing, like a broken image.
+const SHOT_DRAW_WORK: usize = 1 << 24;
+/// Flattened edges (each cubic counts CUBIC_STEPS) one screenshot's drawings may fill in all;
+/// past them drawings paint nothing, like a broken image.
+const SHOT_DRAWN_EDGES: usize = 1 << 18;
+/// Distinct tile sizes one drawing may be rasterized at per screenshot; each size parses and
+/// flattens it again, so past them further sizes paint nothing.
+const DRAWN_SIZES: usize = 8;
+/// Work units one markup byte costs to parse: parsing a byte takes about as long as blending a
+/// dozen or more pixels, so bytes are weighted to keep the budget a bound on time.
+const PARSE_WEIGHT: usize = 16;
+
+/** What SVG drawing may still spend this screenshot. */
+struct DrawBudget {
+    /** Work units left, as SHOT_DRAW_WORK counts them. */
+    work: usize,
+    /** Flattened edges left, out of SHOT_DRAWN_EDGES. */
+    edges: usize,
+}
+impl DrawBudget {
+    /** Spends `work` units; None, spending nothing, when they do not fit. */
+    fn charge(&mut self, work: usize) -> Option<()> {
+        self.work = self.work.checked_sub(work)?;
+        Some(())
+    }
+}
 
 /** SVG tiles drawn this screenshot, by markup and tile size; None when the budget refused one. */
 type Drawn = std::collections::HashMap<(Rc<str>, u64, u64), Option<Rc<Bitmap>>>;
@@ -68,7 +90,9 @@ struct Canvas {
     /** Blur taps this screenshot may still spend; past them blurred shadows paint nothing. */
     blur_work: usize,
     /** SVG drawing work this screenshot may still spend; past it drawings paint nothing. */
-    draw_work: usize,
+    draw: DrawBudget,
+    /** Distinct tile sizes each drawing has been rasterized at this screenshot. */
+    sizes: std::collections::HashMap<Rc<str>, usize>,
     /** Drawings already rasterized, so a tile repeated across layers or boxes draws once. */
     drawn: Drawn,
     /** Natural sizes of drawings already parsed, by markup. */
@@ -91,7 +115,11 @@ impl Canvas {
             pixels,
             glyph_pixels: glyphs::SHOT_GLYPH_PIXELS,
             blur_work: SHOT_BLUR_WORK,
-            draw_work: SHOT_DRAW_WORK,
+            draw: DrawBudget {
+                work: SHOT_DRAW_WORK,
+                edges: SHOT_DRAWN_EDGES,
+            },
+            sizes: std::collections::HashMap::new(),
             drawn: Drawn::new(),
             naturals: std::collections::HashMap::new(),
         }
@@ -522,14 +550,20 @@ impl Canvas {
         self.naturals.insert(markup.clone(), natural);
         natural
     }
-    /** `markup` drawn into a `w` by `h` tile, once per screenshot and size, within the drawing
-     * budget; None when the budget or the edge bound refused it. */
+    /** `markup` drawn into a `w` by `h` tile, once per screenshot and size and at no more than
+     * DRAWN_SIZES sizes, within the drawing budget; None when a bound refused it. */
     fn drawing(&mut self, markup: &Rc<str>, w: f64, h: f64) -> Option<Rc<Bitmap>> {
         let key = (markup.clone(), w.to_bits(), h.to_bits());
         if let Some(drawn) = self.drawn.get(&key) {
             return drawn.clone();
         }
-        let drawn = Bitmap::draw(markup, w, h, &mut self.draw_work).map(Rc::new);
+        let sizes = self.sizes.entry(markup.clone()).or_default();
+        *sizes += 1;
+        let drawn = if *sizes > DRAWN_SIZES {
+            None
+        } else {
+            Bitmap::draw(markup, w, h, &mut self.draw).map(Rc::new)
+        };
         self.drawn.insert(key, drawn.clone());
         drawn
     }
@@ -966,38 +1000,40 @@ fn concrete_size(size: ImageSize, [aw, ah]: [f64; 2], (nw, nh, ratio): Natural) 
 impl Bitmap {
     /** An SVG drawing's fills rasterized into a `width` by `height` tile (capped at
      * DRAWN_EDGE a side), each pixel painted whose center the path's winding rule covers. The
-     * tile's pixels and every edge row filled are charged to `work`; a drawing that does not fit,
-     * or flattens to more than DRAWN_EDGES edges, is None and paints nothing. */
-    fn draw(markup: &str, width: f64, height: f64, work: &mut usize) -> Option<Self> {
+     * markup parsed, the tile's pixels and every edge built, scanned and painted are charged to
+     * `budget` before the work is done; a drawing that does not fit is None and paints nothing. */
+    fn draw(markup: &str, width: f64, height: f64, budget: &mut DrawBudget) -> Option<Self> {
         let edge = |v: f64| v.ceil().clamp(1.0, DRAWN_EDGE) as u32;
         let (bw, bh) = (edge(width), edge(height));
         let (sx, sy) = (
             f64::from(bw) / width.max(f64::MIN_POSITIVE),
             f64::from(bh) / height.max(f64::MIN_POSITIVE),
         );
-        *work = work.checked_sub(bw as usize * bh as usize)?;
+        budget.charge(markup.len().saturating_mul(PARSE_WEIGHT))?;
+        budget.charge(bw as usize * bh as usize)?;
         let mut bitmap = Self {
             width: bw,
             height: bh,
             rgba: vec![0; (bw * bh * 4) as usize],
         };
-        let mut edges_left = DRAWN_EDGES;
         for path in crate::document::VectorPath::from_image(markup, [0.0, 0.0, width, height]) {
             let Some(mut color) = path.fill.as_deref().and_then(painter_rgba) else {
                 continue;
             };
             color[3] = (f64::from(color[3]) * path.fill_opacity.clamp(0.0, 1.0)).round() as u8;
-            edges_left = edges_left.checked_sub(pieces(&path.commands))?;
+            let pieces = pieces(&path.commands);
+            budget.edges = budget.edges.checked_sub(pieces)?;
+            budget.charge(pieces)?;
             let edges = flatten(&path.commands, sx, sy);
             let even_odd = path.fill_rule == crate::document::FillRule::EvenOdd;
-            bitmap.fill(&edges, even_odd, color, work)?;
+            bitmap.fill(&edges, even_odd, color, &mut budget.work)?;
         }
         Some(bitmap)
     }
     /**
      * Source-over `color` into every pixel whose center the edges enclose, scanning an active
      * edge table so each edge is visited only on the rows it crosses. Those rows are charged to
-     * `work` first; None, painting nothing, when they do not fit.
+     * `work` first and each span's pixels before it paints; None once they do not fit.
      */
     fn fill(
         &mut self,
@@ -1047,33 +1083,58 @@ impl Bitmap {
                     winding != 0
                 };
                 if inside {
+                    *work = work.checked_sub(self.columns(pair[0].0, pair[1].0).len())?;
                     self.span(row, pair[0].0, pair[1].0, color);
                 }
             }
         }
         Some(())
     }
-    /** Blend `color` over the pixels of `row` whose centers lie in [x0, x1). */
-    fn span(&mut self, row: u32, x0: f64, x1: f64, color: [u8; 4]) {
+    /** The columns whose pixel centers lie in [x0, x1). */
+    fn columns(&self, x0: f64, x1: f64) -> std::ops::Range<u32> {
         let start = (x0 - 0.5).ceil().max(0.0) as u32;
         let end = ((x1 - 0.5).ceil().max(0.0) as u32).min(self.width);
-        let alpha = f64::from(color[3]) / 255.0;
-        for column in start..end {
-            let at = ((row * self.width + column) * 4) as usize;
-            let under = f64::from(self.rgba[at + 3]) / 255.0;
-            let out = alpha + under * (1.0 - alpha);
-            for (channel, &paint) in color.iter().enumerate().take(3) {
-                let mixed = f64::from(paint) * alpha
-                    + f64::from(self.rgba[at + channel]) * under * (1.0 - alpha);
-                self.rgba[at + channel] = if out > 0.0 {
-                    (mixed / out).round() as u8
-                } else {
-                    0
-                };
-            }
-            self.rgba[at + 3] = (out * 255.0).round() as u8;
+        start..end
+    }
+    /** Blend `color` over the pixels of `row` whose centers lie in [x0, x1). */
+    fn span(&mut self, row: u32, x0: f64, x1: f64, color: [u8; 4]) {
+        let columns = self.columns(x0, x1);
+        let line = (row * self.width) as usize;
+        let texels = &mut self.rgba[(line + columns.start as usize) * 4..][..columns.len() * 4];
+        // A run of equal pixels (every pixel of a fresh or flatly filled tile) blends alike, so
+        // the last result is reused; the arithmetic per pixel is unchanged.
+        let mut last: Option<([u8; 4], [u8; 4])> = None;
+        for texel in texels.chunks_exact_mut(4) {
+            let under = [texel[0], texel[1], texel[2], texel[3]];
+            let out = match last {
+                Some((seen, out)) if seen == under => out,
+                _ => source_over(under, color),
+            };
+            last = Some((under, out));
+            texel.copy_from_slice(&out);
         }
     }
+}
+
+/** Straight-alpha source-over of `color` onto one RGBA texel `under`. */
+fn source_over(under: [u8; 4], color: [u8; 4]) -> [u8; 4] {
+    let alpha = f64::from(color[3]) / 255.0;
+    let coverage = f64::from(under[3]) / 255.0;
+    let out = alpha + coverage * (1.0 - alpha);
+    let channel = |c: usize| {
+        let mixed = f64::from(color[c]) * alpha + f64::from(under[c]) * coverage * (1.0 - alpha);
+        if out > 0.0 {
+            (mixed / out).round() as u8
+        } else {
+            0
+        }
+    };
+    [
+        channel(0),
+        channel(1),
+        channel(2),
+        (out * 255.0).round() as u8,
+    ]
 }
 
 /** The edges `flatten` makes of `commands`: one per command, CUBIC_STEPS per cubic, plus the
