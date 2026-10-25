@@ -735,6 +735,9 @@ fn property_ranges(name: &str) -> Option<Vec<(u32, u32)>> {
         .strip_prefix("Script=")
         .or_else(|| name.strip_prefix("sc="))
         .unwrap_or(name);
+    if let Some(ranges) = exact_category(name) {
+        return Some(ranges.to_vec());
+    }
     let predicate: fn(char) -> bool = match name {
         "L" | "Letter" | "Alphabetic" | "Alpha" => char::is_alphabetic,
         "Lu" | "Uppercase_Letter" | "Uppercase" => char::is_uppercase,
@@ -777,6 +780,48 @@ fn property_ranges(name: &str) -> Option<Vec<(u32, u32)>> {
         ranges.push((low, PROPERTY_SCAN_END));
     }
     Some(ranges)
+}
+
+/** Space_Separator, exactly as the Unicode Character Database lists it (UnicodeData.txt, Zs). */
+const SPACE_SEPARATOR: &[(u32, u32)] = &[
+    (0x20, 0x20),
+    (0xa0, 0xa0),
+    (0x1680, 0x1680),
+    (0x2000, 0x200a),
+    (0x202f, 0x202f),
+    (0x205f, 0x205f),
+    (0x3000, 0x3000),
+];
+/** Line_Separator (Zl). */
+const LINE_SEPARATOR: &[(u32, u32)] = &[(0x2028, 0x2028)];
+/** Paragraph_Separator (Zp). */
+const PARAGRAPH_SEPARATOR: &[(u32, u32)] = &[(0x2029, 0x2029)];
+/** Separator (Z): Zs, Zl and Zp. */
+const SEPARATOR: &[(u32, u32)] = &[
+    (0x20, 0x20),
+    (0xa0, 0xa0),
+    (0x1680, 0x1680),
+    (0x2000, 0x200a),
+    (0x2028, 0x2029),
+    (0x202f, 0x202f),
+    (0x205f, 0x205f),
+    (0x3000, 0x3000),
+];
+/** Control (Cc): the C0 and C1 controls and DEL. */
+const CONTROL: &[(u32, u32)] = &[(0x0, 0x1f), (0x7f, 0x9f)];
+
+/** General categories small enough to list exactly, as V8's ICU tables give them. LinkedIn's
+ * whitespace trimmer is `/[\t\n\u000B\f\r\u001C-\u001F\p{Zs}\p{Zl}\p{Zp}]/gu`, and the
+ * SyntaxError for `Zs` stopped its app modules. */
+fn exact_category(name: &str) -> Option<&'static [(u32, u32)]> {
+    Some(match name {
+        "Zs" | "Space_Separator" => SPACE_SEPARATOR,
+        "Zl" | "Line_Separator" => LINE_SEPARATOR,
+        "Zp" | "Paragraph_Separator" => PARAGRAPH_SEPARATOR,
+        "Z" | "Separator" => SEPARATOR,
+        "Cc" | "Control" | "cntrl" => CONTROL,
+        _ => return None,
+    })
 }
 
 /** Property sets are computed over the first planes, where page text lives. */

@@ -39,17 +39,24 @@ pub(super) fn generated(
     Ok(())
 }
 /** Absolutely positioned generated boxes of a positioned element, placed in its padding box once
- * the element's own box is final. Others need an ancestor's box and are skipped. */
+ * the element's own box is final. A static element's wait, like any out-of-flow box, until their
+ * containing block (an ancestor, or the viewport for fixed ones) is laid out. */
 pub(super) fn absolute(
     context: &mut LayoutContext<'_>,
     node: &Node,
     items: &mut Vec<DisplayItem>,
     index: usize,
 ) -> EngineResult<()> {
-    if node.style.position == Position::Static || node.style.generated.is_empty() {
+    if node.style.generated.is_empty() {
         return Ok(());
     }
     let block = super::positioned::padding_box(node, &items[index]);
+    if node.style.position == Position::Static && node.style.transform.is_none() {
+        if out_of_flow(node).next().is_some() {
+            context.defer_generated(node.local_id, (block.x, block.y));
+        }
+        return Ok(());
+    }
     for generated in &node.style.generated {
         let style = &generated.style;
         if style.hidden || style.position != Position::Absolute {
@@ -62,6 +69,25 @@ pub(super) fn absolute(
         super::positioned::place_in(context, &synthetic, block, (block.x, block.y), items)?;
     }
     Ok(())
+}
+/** A static element's absolute and fixed generated boxes. */
+fn out_of_flow(node: &Node) -> impl Iterator<Item = &crate::document::style::Generated> {
+    node.style.generated.iter().filter(|generated| {
+        !generated.style.hidden
+            && matches!(
+                generated.style.position,
+                Position::Absolute | Position::Fixed
+            )
+    })
+}
+/** Stand-ins for a static element's absolute and fixed generated boxes, placed by the
+ * out-of-flow pass in the nearest positioned ancestor's padding box (Blink makes them children of
+ * the element, whose containing block is that ancestor's). LinkedIn's full-bleed section bands
+ * are `::after { position: absolute; width: 100vw }` on a static flex row. */
+pub(super) fn deferred(node: &Node) -> Vec<Node> {
+    out_of_flow(node)
+        .map(|generated| synthetic(node, generated))
+        .collect()
 }
 /** The element's `::before` and `::after` boxes as flex or grid items, in that order. CSS Display 3
  * blockifies them and Blink makes them the container's first and last children, so they size,

@@ -20,6 +20,9 @@ pub(super) struct StylesCall<'a> {
 struct RenderCall<'a> {
     document: &'a Document,
     context: crate::document::RenderContext,
+    /// Scroll container offsets the person or page set; omitted when nothing scrolled.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    scroll: &'a crate::document::ScrollOffsets,
 }
 /** document.apply parameters, written straight to the frame. */
 #[derive(serde::Serialize)]
@@ -66,6 +69,9 @@ pub(super) struct Page {
     pub laid_out_before: usize,
     /** Presentation generation is independent of document revision. */
     pub layout_generation: u64,
+    /** Offsets of scroll containers inside the page by node identity, presentation state like
+    the viewport's own offset: Eye paints their contents moved and clamps them. */
+    pub element_scroll: crate::document::ScrollOffsets,
     /** The node styles are the cascade of this document under the page's sheets and the current
     context; false once a change replaced the document without restyling it, so presentation
     knows whether Eye must cascade again or already did. */
@@ -322,6 +328,7 @@ impl Runtime {
         let call = RenderCall {
             document: &page.document,
             context: self.render_context,
+            scroll: &page.element_scroll,
         };
         page.display = Some(self.call_typed("document", "document.render", &call, None)?);
         page.laid_out_before = next_node(&page.document);
@@ -333,6 +340,23 @@ impl Runtime {
         let call = RenderCall {
             document,
             context: self.render_context,
+            // ponytail: script measurement sees unscrolled inner containers; pass the page's
+            // offsets here once element.scrollTop writes reach them.
+            scroll: &crate::document::ScrollOffsets::new(),
+        };
+        self.call_typed("document", "document.render", &call, None)
+    }
+    /** Eye's layout of a styled `document` with scroll containers at `scroll`. */
+    pub(super) fn render_scrolled(
+        &mut self,
+        document: &Document,
+        scroll: &crate::document::ScrollOffsets,
+    ) -> EngineResult<DisplayList> {
+        crate::document::validate_content(document)?;
+        let call = RenderCall {
+            document,
+            context: self.render_context,
+            scroll,
         };
         self.call_typed("document", "document.render", &call, None)
     }
@@ -449,6 +473,7 @@ impl Runtime {
             let call = RenderCall {
                 document: &page.document,
                 context,
+                scroll: &page.element_scroll,
             };
             page.display = Some(self.call_typed("document", "document.render", &call, None)?);
             page.laid_out_before = next_node(&page.document);

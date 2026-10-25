@@ -49,6 +49,122 @@ pub(super) fn install(b: &mut Builder) {
             _ => ids.aggregate_error_prototype = sub,
         }
     }
+    install_dom_exception(b, proto);
+}
+
+/** WebIDL's `DOMException`: an interface whose prototype inherits `Error.prototype`, so
+ * `new DOMException(message, name)` and `instanceof DOMException` work as in Blink.
+ * LinkedIn's app bundle builds `new DOMException("cancelled by new navigation", "AbortError")`
+ * at module top level, and the ReferenceError stopped every module of its sign-in page. */
+fn install_dom_exception(b: &mut Builder, error_prototype: ObjectId) {
+    let proto = b.object(Some(error_prototype));
+    let ctor = b.constructor("DOMException", 0, dom_exception, proto, None);
+    b.value(proto, "name", string("Error"), HIDDEN_ATTRS);
+    b.value(proto, "message", string(""), HIDDEN_ATTRS);
+    b.value(proto, "code", JsValue::Number(0.0), HIDDEN_ATTRS);
+    for (name, code) in LEGACY_CODES {
+        b.value(
+            ctor,
+            legacy_constant(name),
+            JsValue::Number(f64::from(*code)),
+            0,
+        );
+    }
+    b.global("DOMException", ctor);
+    b.ids.dom_exception_prototype = proto;
+}
+
+/** The legacy `code` of each DOMException name that has one (WebIDL's error names table). */
+const LEGACY_CODES: &[(&str, u8)] = &[
+    ("IndexSizeError", 1),
+    ("HierarchyRequestError", 3),
+    ("WrongDocumentError", 4),
+    ("InvalidCharacterError", 5),
+    ("NoModificationAllowedError", 7),
+    ("NotFoundError", 8),
+    ("NotSupportedError", 9),
+    ("InvalidStateError", 11),
+    ("SyntaxError", 12),
+    ("InvalidModificationError", 13),
+    ("NamespaceError", 14),
+    ("InvalidAccessError", 15),
+    ("TypeMismatchError", 17),
+    ("SecurityError", 18),
+    ("NetworkError", 19),
+    ("AbortError", 20),
+    ("URLMismatchError", 21),
+    ("QuotaExceededError", 22),
+    ("TimeoutError", 23),
+    ("InvalidNodeTypeError", 24),
+    ("DataCloneError", 25),
+];
+
+/** The constant WebIDL names after a legacy code: `AbortError` is `ABORT_ERR`. */
+fn legacy_constant(name: &str) -> &'static str {
+    match name {
+        "IndexSizeError" => "INDEX_SIZE_ERR",
+        "HierarchyRequestError" => "HIERARCHY_REQUEST_ERR",
+        "WrongDocumentError" => "WRONG_DOCUMENT_ERR",
+        "InvalidCharacterError" => "INVALID_CHARACTER_ERR",
+        "NoModificationAllowedError" => "NO_MODIFICATION_ALLOWED_ERR",
+        "NotFoundError" => "NOT_FOUND_ERR",
+        "NotSupportedError" => "NOT_SUPPORTED_ERR",
+        "InvalidStateError" => "INVALID_STATE_ERR",
+        "SyntaxError" => "SYNTAX_ERR",
+        "InvalidModificationError" => "INVALID_MODIFICATION_ERR",
+        "NamespaceError" => "NAMESPACE_ERR",
+        "InvalidAccessError" => "INVALID_ACCESS_ERR",
+        "TypeMismatchError" => "TYPE_MISMATCH_ERR",
+        "SecurityError" => "SECURITY_ERR",
+        "NetworkError" => "NETWORK_ERR",
+        "AbortError" => "ABORT_ERR",
+        "URLMismatchError" => "URL_MISMATCH_ERR",
+        "QuotaExceededError" => "QUOTA_EXCEEDED_ERR",
+        "TimeoutError" => "TIMEOUT_ERR",
+        "InvalidNodeTypeError" => "INVALID_NODE_TYPE_ERR",
+        _ => "DATA_CLONE_ERR",
+    }
+}
+
+/** The legacy code of a DOMException name, 0 for names without one. */
+pub(in crate::v9) fn legacy_code(name: &str) -> u8 {
+    LEGACY_CODES
+        .iter()
+        .find(|(known, _)| *known == name)
+        .map_or(0, |(_, code)| *code)
+}
+
+/** `new DOMException(message = "", name = "Error")`; WebIDL constructors need `new`. */
+fn dom_exception(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    if call.new_target.is_none() {
+        return Err(
+            vm.type_error("Failed to construct 'DOMException': Please use the 'new' operator.")
+        );
+    }
+    let id = make(vm, &call, call.arg(0), JsValue::Undefined)?;
+    let name = match call.arg(1) {
+        JsValue::Undefined => "Error".to_string(),
+        name => vm.to_text(&name)?,
+    };
+    let code = legacy_code(&name);
+    for (property, value) in [
+        ("name", text(vm, &name)?),
+        ("code", JsValue::Number(f64::from(code))),
+    ] {
+        vm.define(
+            id,
+            key(property),
+            Descriptor {
+                value: Some(value),
+                writable: Some(false),
+                enumerable: Some(false),
+                configurable: Some(true),
+                ..Descriptor::default()
+            },
+        )?;
+    }
+    vm.record_trace(id)?;
+    Ok(JsValue::Object(id))
 }
 
 /** What V8 reports for Error.stackTraceLimit. */

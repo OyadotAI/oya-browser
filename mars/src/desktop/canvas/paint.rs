@@ -129,8 +129,12 @@ impl Painter {
         }
     }
     /// Saves state and applies the item's clip, then its transform.
-    pub fn enter(&self, item: &DisplayItem) {
+    pub fn enter(&self, item: &DisplayItem, shift: f64) {
         CGContext::save_g_state(self.cg());
+        // A sticky or fixed box moves with the viewport, clip and all.
+        if shift != 0.0 {
+            CGContext::translate_ctm(self.cg(), 0.0, shift);
+        }
         if let Some(clip) = &item.clip {
             self.path(&Shape {
                 x: clip.x,

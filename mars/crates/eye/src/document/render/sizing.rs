@@ -44,6 +44,9 @@ pub(super) struct LayoutContext<'a> {
     wrapped: BTreeMap<(u64, FaceKey, bool), BTreeMap<String, Vec<super::wrap::MeasuredText>>>,
     /** Out-of-flow boxes by identity with their latest static position, placed after normal flow. */
     deferred: BTreeMap<usize, (f64, f64)>,
+    /** Static elements whose absolute or fixed `::before`/`::after` need an ancestor's box, with
+    the element's padding-box origin as the static position; placed with the other out-of-flow boxes. */
+    deferred_generated: BTreeMap<usize, (f64, f64)>,
     /** A bound ran out; the rest of the page is not laid out. */
     exhausted: bool,
     /** List item ordinals by identity, computed once per list. */
@@ -75,6 +78,7 @@ impl<'a> LayoutContext<'a> {
             measured: BTreeMap::new(),
             wrapped: BTreeMap::new(),
             deferred: BTreeMap::new(),
+            deferred_generated: BTreeMap::new(),
             exhausted: false,
             ordinals: BTreeMap::new(),
             content_heights: BTreeMap::new(),
@@ -155,6 +159,18 @@ impl<'a> LayoutContext<'a> {
     /** Records an absolute or fixed box at its static position; the final layout pass overwrites dry runs. */
     pub fn defer(&mut self, local: usize, position: (f64, f64)) {
         self.deferred.insert(local, position);
+    }
+    /** Records a static element whose positioned generated boxes wait for their containing block. */
+    pub fn defer_generated(&mut self, local: usize, position: (f64, f64)) {
+        self.deferred_generated.insert(local, position);
+    }
+    /** Takes every element recorded by `defer_generated`, in document order. */
+    pub fn take_deferred_generated(&mut self) -> Vec<(usize, (f64, f64))> {
+        let mut taken = std::mem::take(&mut self.deferred_generated)
+            .into_iter()
+            .collect::<Vec<_>>();
+        taken.sort_by_key(|(local, _)| self.positions.get(*local).copied().flatten());
+        taken
     }
     /** Records a block's content-derived border-box height from its latest layout. */
     pub fn record_content_height(&mut self, local: usize, height: f64) {
@@ -651,6 +667,9 @@ pub(super) fn content_height(style: &crate::document::ComputedStyle, value: f64)
 }
 /** Percent widths resolve against the definite containing content extent. */
 pub(super) fn specified_content(node: &Node, available: f64) -> Option<f64> {
+    if node.style.width_stretch {
+        return Some(stretch_content(node, available));
+    }
     node.style.width.map(|width| {
         content_size(
             node,
@@ -663,6 +682,15 @@ pub(super) fn specified_content(node: &Node, available: f64) -> Option<f64> {
         )
     })
 }
+/** `width: stretch`: the content width left once margins (auto ones as zero), border and padding
+ * take their share of the containing block (Blink's `FillAvailableMeasure`). */
+fn stretch_content(node: &Node, available: f64) -> f64 {
+    let style = &node.style;
+    let margin = |side: usize| {
+        style.margin[side] + layout_unit_floor(available * style.margin_percent[side] / 100.0)
+    };
+    (available - margin(1) - margin(3) - horizontal_edges(node)).max(0.0)
+}
 /** Sub-pixel steps per CSS px in Chromium's fixed-point LayoutUnit. */
 const LAYOUT_UNITS: f64 = 64.0;
 /** A resolved percentage truncated to Chromium's 1/64 px LayoutUnit, so six `16.6666667%` floats
@@ -674,6 +702,18 @@ pub(super) fn layout_unit_floor(length: f64) -> f64 {
 /** A text width rounded up to Chromium's 1/64 px LayoutUnit. */
 pub(super) fn layout_unit_ceil(length: f64) -> f64 {
     (length * LAYOUT_UNITS).ceil() / LAYOUT_UNITS
+}
+/** The authored content-box min-width, a percentage resolved against `containing`; None when it
+ * is `auto`, or a percentage with no containing width (intrinsic sizing treats that as zero). */
+pub(super) fn min_width(node: &Node, containing: Option<f64>) -> Option<f64> {
+    if let Some(percent) = node.style.min_width_percent {
+        return containing.map(|containing| {
+            content_size(node, layout_unit_floor(containing * percent / 100.0), true)
+        });
+    }
+    node.style
+        .min_width
+        .map(|width| content_size(node, width, true))
 }
 /** The content-box max-width, a percentage resolved against `containing` (unconstrained without one). */
 pub(super) fn max_width(node: &Node, containing: Option<f64>) -> f64 {
@@ -695,11 +735,7 @@ pub(super) fn border_width(
     natural: Option<f64>,
 ) -> f64 {
     let edges = horizontal_edges(node);
-    let min = node
-        .style
-        .min_width
-        .map(|width| content_size(node, width, true))
-        .unwrap_or(0.0);
+    let min = min_width(node, Some(containing)).unwrap_or(0.0);
     let max = max_width(node, Some(containing)).max(min);
     let content = specified_content(node, containing).unwrap_or_else(|| {
         natural

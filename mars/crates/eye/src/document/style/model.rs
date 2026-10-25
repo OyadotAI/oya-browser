@@ -84,6 +84,11 @@ pub struct ComputedStyle {
     pub align_items: AlignItems,
     /// None retains the content minimum; explicit zero permits supported shrinking.
     pub min_width: Option<f64>,
+    /// A percentage `min-width` of the containing block's width, which only layout resolves;
+    /// `min_width` is None then. LinkedIn's "Who is LinkedIn for?" column is `min-width: 50%`
+    /// beside an 840px image, and shrank under it without this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_width_percent: Option<f64>,
     /// Own opacity in [0, 1]; it is not inherited, and display multiplies ancestors.
     #[serde(skip_serializing_if = "opaque")]
     pub opacity: f64,
@@ -102,6 +107,12 @@ pub struct ComputedStyle {
     /// The stricter of overflow-x and overflow-y.
     #[serde(skip_serializing_if = "default")]
     pub overflow: Overflow,
+    /// Each axis on its own, so a wheel scrolls `overflow-x: hidden; overflow-y: scroll`
+    /// vertically even though `overflow` says hidden.
+    #[serde(default, skip_serializing_if = "default")]
+    pub overflow_x: Overflow,
+    #[serde(default, skip_serializing_if = "default")]
+    pub overflow_y: Overflow,
     /// Corner radii in px: top-left, top-right, bottom-right, bottom-left.
     #[serde(skip_serializing_if = "default")]
     pub radius: [f64; 4],
@@ -347,6 +358,18 @@ pub struct ComputedStyle {
     /// was refused and a two-column row stacked.
     #[serde(skip_serializing_if = "default")]
     pub width_offset: f64,
+    /// `width: stretch` (`-webkit-fill-available`): the margin box fills the containing block
+    /// whatever `box-sizing` says, as Blink's fill-available size does. Without it LinkedIn's
+    /// header row shrank to its content and the nav ended mid-page.
+    #[serde(default, skip_serializing_if = "default")]
+    pub width_stretch: bool,
+    /// `width: fit-content` (or `min-content`, `max-content`): content-sized, so unlike `auto`
+    /// a flex or grid item is not stretched and a block shrinks to fit. Without it LinkedIn's
+    /// "Show more" pill spanned its whole column.
+    /// ponytail: all three size as fit-content; min-content and max-content differ only when
+    /// the room is narrower or wider than the content.
+    #[serde(default, skip_serializing_if = "default")]
+    pub width_fit: bool,
     /// SVG paint properties (`fill`, `stroke`, `stroke-width`, ...) authored in CSS, by name.
     /// The SVG painter reads them before presentation attributes, as the cascade orders them;
     /// without this a stylesheet `fill` loses to `<svg fill="none">` and icons paint nothing.
@@ -432,12 +455,15 @@ impl Default for ComputedStyle {
             align_content: JustifyContent::Stretch,
             align_items: AlignItems::Stretch,
             min_width: None,
+            min_width_percent: None,
             opacity: 1.0,
             rtl: false,
             position: Position::Static,
             inset: [None; 4],
             z_index: None,
             overflow: Overflow::Visible,
+            overflow_x: Overflow::Visible,
+            overflow_y: Overflow::Visible,
             radius: [0.0; 4],
             shadows: Vec::new(),
             backgrounds: Vec::new(),
@@ -518,6 +544,8 @@ impl Default for ComputedStyle {
             radius_percent: [0.0; 4],
             translate_percent: [0.0; 2],
             width_offset: 0.0,
+            width_stretch: false,
+            width_fit: false,
             svg_paint: std::collections::BTreeMap::new(),
             stacking: 0,
             filter_blur: 0.0,

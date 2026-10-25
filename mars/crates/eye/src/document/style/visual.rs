@@ -25,7 +25,14 @@ pub(super) fn apply(
                 inset(value, style.font_size, context)?;
         }
         "z-index" => style.z_index = z_index(value)?,
-        "overflow-x" | "overflow-y" => style.overflow = style.overflow.max(overflow(value)?),
+        "overflow-x" | "overflow-y" => {
+            let axis = overflow(value)?;
+            style.overflow = style.overflow.max(axis);
+            match key {
+                "overflow-x" => style.overflow_x = axis,
+                _ => style.overflow_y = axis,
+            }
+        }
         "box-shadow" => style.shadows = super::paint::shadows(value, style, context)?,
         "background-image" => {
             style.backgrounds = super::paint::backgrounds(value, style, context, diagnostics)?

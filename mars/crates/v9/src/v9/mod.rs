@@ -382,6 +382,9 @@ pub enum PageEvent {
     DomContentLoaded,
     /// readyState becomes "complete"; load fires at the window.
     Load,
+    /// The viewport scrolled: `scroll` fires at the document and bubbles to the window, as
+    /// Blink's `ScrollableArea` queues it once per frame that moved. Lazy loaders listen for it.
+    Scroll,
 }
 
 /**
@@ -1022,6 +1025,9 @@ fn page_event_with(
                 )?;
                 fire_lifecycle(&mut vm, platform::Target::Window, "load", false)?;
                 fire_lifecycle(&mut vm, platform::Target::Window, "pageshow", false)?;
+            }
+            PageEvent::Scroll => {
+                fire_lifecycle(&mut vm, platform::Target::Document, "scroll", true)?;
             }
         }
         finish(vm)

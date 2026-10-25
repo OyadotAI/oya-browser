@@ -439,6 +439,7 @@ impl Runtime {
             display: None,
             laid_out_before: 0,
             layout_generation: 1,
+            element_scroll: Default::default(),
             styled: true,
             inspection: None,
             origin,

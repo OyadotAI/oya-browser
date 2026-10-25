@@ -60,6 +60,7 @@ fn cross_width(
     let auto_cross = child.style.margin_auto[1] || child.style.margin_auto[3];
     let natural = if self_alignment(parent, child) == AlignItems::Stretch
         && child.style.width.is_none()
+        && !child.style.width_fit
         && !auto_cross
     {
         None
@@ -396,13 +397,15 @@ fn place_line(
             }
             continue;
         }
-        let free =
-            (line_width - widths[index] - child.style.margin[1] - child.style.margin[3]).max(0.0);
+        // Unsafe self-alignment, as in rows: an item wider than the line centers past both edges.
+        let overflowing =
+            line_width - widths[index] - child.style.margin[1] - child.style.margin[3];
+        let free = overflowing.max(0.0);
         let auto_cross =
             flex::auto_cross_offset(child.style.margin_auto[3], child.style.margin_auto[1], free);
         let offset = auto_cross.unwrap_or(match self_alignment(parent, child) {
-            AlignItems::Center => free / 2.0,
-            AlignItems::End => free,
+            AlignItems::Center => overflowing / 2.0,
+            AlignItems::End => overflowing,
             _ => 0.0,
         });
         let [auto_start, auto_end] = records[index].auto_margins;

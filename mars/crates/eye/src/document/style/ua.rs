@@ -154,6 +154,18 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
     if node.href.is_some() {
         out.push(("cursor", "pointer"));
     }
+    // html.css sizes push buttons by their border box, so an author `min-height: 32px` with
+    // padding stays 32px tall (LinkedIn's "Show more" pill was 14px taller).
+    let push_input = tag == "input"
+        && ["button", "submit", "reset"].contains(&node.input_type().to_ascii_lowercase().as_str());
+    if tag == "button" || push_input {
+        out.push(("box-sizing", "border-box"));
+    }
+    // html.css gives form controls `font: -webkit-small-control`, whose shorthand resets the
+    // inherited line height to `normal`; a page's `line-height: 1.5` never reaches a button.
+    if ["button", "input", "select", "textarea"].contains(&tag) {
+        out.push(("line-height", "normal"));
+    }
     out
 }
 /** `hr`: half-em block margins, centered, a one pixel inset gray rule. */

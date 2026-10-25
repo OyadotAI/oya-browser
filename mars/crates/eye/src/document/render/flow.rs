@@ -468,14 +468,22 @@ pub(super) fn block(
     } else {
         (flow.x, flow.width)
     };
-    let width = forced.map(|bounds| bounds.width).unwrap_or_else(|| {
-        border_width(
+    let width = match forced {
+        Some(bounds) => bounds.width,
+        // A content-sized width shrinks to fit the room, as floats do.
+        None if style.width_fit => super::float::shrink_width(
+            context,
+            node,
+            room.min(flow.width),
+            style.margin[1] + style.margin[3],
+        )?,
+        None => border_width(
             node,
             flow.width,
             (room - style.margin[1] - style.margin[3]).max(0.0),
             None,
-        )
-    });
+        ),
+    };
     let x = forced
         .map(|bounds| bounds.x)
         .unwrap_or_else(|| left + start_margin(context, node, room, width));
@@ -724,6 +732,7 @@ pub(super) fn box_item(
         backgrounds: Vec::new(),
         clip: None,
         transform: None,
+        pin: None,
         z: 0,
         stacking_opacity: Vec::new(),
         font_weight: face.weight,

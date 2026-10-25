@@ -29,11 +29,13 @@ use crate::{
     protocol::{EngineError, EngineResult},
 };
 pub use display::{
-    ClipRect, DisplayBackground, DisplayShadow, GradientStop, ImageSize, OpacityGroup,
+    ClipRect, DisplayBackground, DisplayShadow, GradientStop, ImageSize, OpacityGroup, Pin,
+    ScrollArea,
 };
 /// Agent-visibility helpers for the app; the document facade exports them when the app wires them.
 #[allow(unused_imports)]
-pub use display::{agent_visible, painted_bounds};
+pub use display::{agent_visible, painted_bounds, wheel_target};
+pub use effects::ScrollOffsets;
 use serde::{Deserialize, Serialize};
 pub use svg::{FillRule, LineCap, LineJoin, PathCommand, VectorPath};
 
@@ -76,6 +78,9 @@ pub struct DisplayList {
     /// A layout bound cut the page short: later content, out-of-range boxes or excess lines are missing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
+    /// Scroll containers with somewhere to scroll, in no particular order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scrollers: Vec<ScrollArea>,
 }
 
 /// A formatting box can paint author decoration without inventing a DOM or agent identity.
@@ -211,6 +216,10 @@ pub struct DisplayItem {
     /// svg, otherwise paints as a solid square or not at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<DisplayBackground>,
+    /// Set on sticky and fixed boxes and everything inside them: how they follow the viewport's
+    /// scroll, which hosts apply at paint time without a new layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pin: Option<Pin>,
 }
 /** Items default to fully opaque. */
 fn full_opacity() -> f64 {
@@ -250,6 +259,15 @@ pub fn render_with_context(
     document: &Document,
     context: RenderContext,
 ) -> EngineResult<DisplayList> {
+    render_scrolled(document, context, &ScrollOffsets::new())
+}
+/// As `render_with_context`, painting each scroll container's contents at the offset `offsets`
+/// asks for, clamped to its range. Layout never depends on them.
+pub fn render_scrolled(
+    document: &Document,
+    context: RenderContext,
+    offsets: &ScrollOffsets,
+) -> EngineResult<DisplayList> {
     context.validate()?;
     super::validate_styles(document)?;
     // Hosts lay out their shadow content with slotted light children in place.
@@ -274,7 +292,7 @@ pub fn render_with_context(
         item.line_height = item.line_height.filter(|advance| *advance > 0.0);
     }
     effects(document, &mut items)?;
-    let mut items = effects::stack(document, items)?;
+    let (mut items, scrollers) = effects::stack(document, items, offsets)?;
     validate_decoration(body_decoration.as_ref())?;
     // Boxes outside the geometry bound or past the paint-line bound are dropped, not the page.
     let before = items.len();
@@ -312,6 +330,7 @@ pub fn render_with_context(
         canvas_scheme: root.used_scheme,
         body_decoration,
         truncated,
+        scrollers,
     })
 }
 /** A copy with the quirks-mode margin quirk applied: the UA top margin of the first box in the

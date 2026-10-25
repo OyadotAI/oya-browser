@@ -126,12 +126,17 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
             style.width = source.width;
             style.percent_width = source.percent_width;
             style.width_offset = source.width_offset;
+            style.width_stretch = source.width_stretch;
+            style.width_fit = source.width_fit;
         }
         "max-width" => {
             style.max_width = source.max_width;
             style.percent_max_width = source.percent_max_width;
         }
-        "min-width" => style.min_width = source.min_width,
+        "min-width" => {
+            style.min_width = source.min_width;
+            style.min_width_percent = source.min_width_percent;
+        }
         "height" => style.height = source.height,
         "min-height" => style.min_height = source.min_height,
         "max-height" => style.max_height = source.max_height,
@@ -248,7 +253,11 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
         "opacity" => style.opacity = source.opacity,
         "position" => style.position = source.position,
         "z-index" => style.z_index = source.z_index,
-        "overflow-x" | "overflow-y" => style.overflow = source.overflow,
+        "overflow-x" | "overflow-y" => {
+            style.overflow = source.overflow;
+            style.overflow_x = source.overflow_x;
+            style.overflow_y = source.overflow_y;
+        }
         "box-shadow" => style.shadows = source.shadows.clone(),
         "transform" => {
             style.transform = source.transform;

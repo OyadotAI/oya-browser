@@ -40,8 +40,10 @@ pub(in crate::v9) fn window_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "innerWidth" | "outerWidth" => JsValue::Number(environment.viewport_width),
         "innerHeight" | "outerHeight" => JsValue::Number(environment.viewport_height),
         "devicePixelRatio" => JsValue::Number(environment.device_pixel_ratio),
-        "scrollX" | "scrollY" | "pageXOffset" | "pageYOffset" | "screenX" | "screenY"
-        | "screenLeft" | "screenTop" => JsValue::Number(0.0),
+        "scrollY" | "pageYOffset" => JsValue::Number(environment.scroll_y),
+        "scrollX" | "pageXOffset" | "screenX" | "screenY" | "screenLeft" | "screenTop" => {
+            JsValue::Number(0.0)
+        }
         "length" => JsValue::Number(0.0),
         "closed" => JsValue::Boolean(false),
         "isSecureContext" => JsValue::Boolean(vm.page.state.href.starts_with("https:")),

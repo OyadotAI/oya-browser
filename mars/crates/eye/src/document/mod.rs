@@ -29,7 +29,8 @@ pub use parser::{Fragment, parse, parse_fragment, parse_with_charset};
 pub use render::{
     ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
     FillRule, GradientStop, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine, PathCommand,
-    VectorPath, agent_hidden, agent_visible, painted_bounds, render, render_with_context, role,
+    Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible, painted_bounds,
+    render, render_scrolled, render_with_context, role, wheel_target,
 };
 pub use script::{DomFragments, Fragments, script_document};
 use serde::{Deserialize, Serialize};

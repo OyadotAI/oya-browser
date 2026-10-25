@@ -31,7 +31,8 @@ pub(super) fn image(
             fixed.style.box_sizing = crate::document::BoxSizing::ContentBox;
             image_size(&fixed, bounds.width, flow.definite).1
         } else {
-            inner.bottom - bounds.y + node.style.padding[2] + node.style.border
+            authored_height(node, flow.definite)
+                .unwrap_or(inner.bottom - bounds.y + node.style.padding[2] + node.style.border)
         };
         let height = bounds.height.unwrap_or(natural_height);
         let item = box_item(node, bounds.x, bounds.y, bounds.width, height, lines);
@@ -62,7 +63,8 @@ fn block_image(
             .map(|line| line.x + line.width)
             .fold(flow.x, f64::max)
             - flow.x;
-        let height = flow.line.max(super::sizing::advance(&node.style));
+        let height = authored_height(node, flow.definite)
+            .unwrap_or_else(|| flow.line.max(super::sizing::advance(&node.style)));
         items.push(box_item(node, flow.x, flow.y, width, height, lines));
         flow.after_block(flow.y + height, node.style.margin[2]);
         flow.newline();
@@ -92,6 +94,13 @@ fn sized(node: &Node, definite: Option<f64>) -> bool {
         .and_then(|height| height.resolve_size(definite))
         .is_some();
     width && height
+}
+/** An image with nothing to show still takes its authored height, as Blink sizes each specified
+ * axis of a broken or not-yet-loaded image (LinkedIn's lazy `h-[840px]` image is 840px tall
+ * before its source arrives, so it reaches the viewport where Chromium's does). */
+fn authored_height(node: &Node, definite: Option<f64>) -> Option<f64> {
+    let height = node.style.height?.resolve_size(definite)?;
+    Some(super::sizing::border_height(node, height))
 }
 /** Border-box size from CSS sizes, then HTML dimensions, then intrinsic size, keeping the aspect ratio. */
 pub(super) fn image_size(node: &Node, available: f64, definite: Option<f64>) -> (f64, f64) {
@@ -162,7 +171,8 @@ fn inline_alt(
         left,
         y,
         right - left,
-        (flow.y + flow.line - y).max(super::sizing::advance(&node.style)),
+        authored_height(node, flow.definite)
+            .unwrap_or_else(|| (flow.y + flow.line - y).max(super::sizing::advance(&node.style))),
         lines,
     ));
     Ok(())
