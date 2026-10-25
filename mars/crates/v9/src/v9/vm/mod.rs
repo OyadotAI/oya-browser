@@ -104,6 +104,54 @@ pub(in crate::v9) enum Exit {
     Await(JsValue),
 }
 
+/**
+ * One dynamic source (`new Function`, indirect or direct eval) kept so restored state can
+ * recompile it. A direct eval's caller scopes ride beside the text, never inside it, so no page
+ * string can claim them.
+ */
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(from = "DynamicWire")]
+pub(in crate::v9) struct DynamicSource {
+    pub source: String,
+    /// The compiler-made caller context of direct eval code; None for ordinary dynamic code.
+    pub context: Option<String>,
+}
+
+/** The stored form: plain text for ordinary code (the older form too), a pair for direct eval. */
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum DynamicWire {
+    Plain(String),
+    Eval(String, String),
+}
+
+impl From<DynamicWire> for DynamicSource {
+    /** Either stored form. */
+    fn from(wire: DynamicWire) -> Self {
+        match wire {
+            DynamicWire::Plain(source) => Self {
+                source,
+                context: None,
+            },
+            DynamicWire::Eval(source, context) => Self {
+                source,
+                context: Some(context),
+            },
+        }
+    }
+}
+
+impl serde::Serialize for DynamicSource {
+    /** Plain text unless it carries a context. */
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.context {
+            None => DynamicWire::Plain(self.source.clone()),
+            Some(context) => DynamicWire::Eval(self.source.clone(), context.clone()),
+        }
+        .serialize(serializer)
+    }
+}
+
 /** Symbols beyond the well-known ones. */
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(in crate::v9) struct Symbols {
@@ -178,7 +226,7 @@ pub(in crate::v9) struct Vm<'h> {
     pub limits: Limits,
     pub page: Page<'h>,
     /** Dynamic sources compiled by `new Function` and indirect eval, kept so state can recompile. */
-    pub dynamic: Vec<String>,
+    pub dynamic: Vec<DynamicSource>,
     /** Whether any Proxy exists, so ordinary property access skips the proxy check entirely. */
     pub proxies: bool,
     /** The page's module map: compiled module sources and their committed records. */

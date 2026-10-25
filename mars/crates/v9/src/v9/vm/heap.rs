@@ -8,7 +8,7 @@ use crate::protocol::{EngineError, EngineResult};
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{Error as _, SeqAccess, Visitor},
-    ser::SerializeSeq,
+    ser::{SerializeMap, SerializeSeq},
 };
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -71,11 +71,15 @@ pub(in crate::v9) type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHash
 /** A set keyed the same way, for the collector's marks and distinct-string counts. */
 pub(in crate::v9) type FastSet<T> = std::collections::HashSet<T, BuildHasherDefault<FastHasher>>;
 
-/** A property key: a string or a symbol. */
+/** A property key: a string, a symbol, or an engine-private name. */
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(in crate::v9) enum Key {
     Str(JsString),
     Sym(u32),
+    /// Class `#names` and platform-internal slots. No script value converts to this variant
+    /// (`to_key` only yields `Str` and `Sym`), so a page can never spell one: any string,
+    /// including one that starts with U+FFFF, stays an ordinary `Str` key.
+    Private(JsString),
 }
 
 impl Key {
@@ -102,15 +106,20 @@ impl Key {
         }
         (value < u64::from(u32::MAX)).then_some(value as u32)
     }
+    /** The one constructor of engine-private keys, for class `#names` and platform slots. */
+    pub fn private(name: &str) -> Self {
+        Self::Private(JsString::from_utf8(name).expect("short key"))
+    }
     /** Private names and internal keys are invisible to reflection. */
     pub fn hidden(&self) -> bool {
-        matches!(self, Self::Str(text) if text.as_units().first() == Some(&super::super::compile::PRIVATE_MARK))
+        matches!(self, Self::Private(_))
     }
-    /** The value form of the key. */
+    /** The value form of the key; a private key has none a script may hold, so undefined. */
     pub fn value(&self) -> JsValue {
         match self {
             Self::Str(text) => JsValue::String(text.clone()),
             Self::Sym(id) => JsValue::Symbol(*id),
+            Self::Private(_) => JsValue::Undefined,
         }
     }
 }
@@ -580,19 +589,38 @@ fn entry_from(entry: serde_json::Value) -> Result<(Key, Prop), String> {
 }
 
 impl Serialize for Key {
-    /** Keys serialize as their value form. */
+    /** Keys serialize as their value form; a private key as a one-key `p` map, which no value
+    form uses, so a restored string never turns into a private key. */
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.value().serialize(serializer)
+        match self {
+            Self::Private(name) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("p", name.as_units())?;
+                map.end()
+            }
+            _ => self.value().serialize(serializer),
+        }
     }
 }
 
+/** The wire form of a key: a private `p` map or a value. */
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum KeyWire {
+    Private { p: Vec<u16> },
+    Value(JsValue),
+}
+
 impl<'de> Deserialize<'de> for Key {
-    /** Strings and symbols only. */
+    /** Strings, symbols and private names only. */
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        match JsValue::deserialize(deserializer)? {
-            JsValue::String(text) => Ok(Key::Str(text)),
-            JsValue::Symbol(id) => Ok(Key::Sym(id)),
-            _ => Err(D::Error::custom("invalid property key")),
+        match KeyWire::deserialize(deserializer)? {
+            KeyWire::Private { p } => JsString::from_units(p)
+                .map(Key::Private)
+                .map_err(|error| D::Error::custom(error.message)),
+            KeyWire::Value(JsValue::String(text)) => Ok(Key::Str(text)),
+            KeyWire::Value(JsValue::Symbol(id)) => Ok(Key::Sym(id)),
+            KeyWire::Value(_) => Err(D::Error::custom("invalid property key")),
         }
     }
 }

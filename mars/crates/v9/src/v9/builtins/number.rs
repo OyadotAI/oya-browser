@@ -102,6 +102,8 @@ fn is_safe_integer(_: &mut Vm, call: Call) -> Res<JsValue> {
 fn this_number(vm: &mut Vm, call: &Call) -> Res<f64> {
     match &call.this {
         JsValue::Number(value) => Ok(*value),
+        // Number.prototype is itself a Number object whose [[NumberData]] is +0.
+        JsValue::Object(id) if *id == realm().ids.number_prototype => Ok(0.0),
         JsValue::Object(id) => match vm.heap.get(*id).map(|o| &o.class) {
             Some(Class::Number(value)) => Ok(*value),
             _ => Err(vm.type_error("Number.prototype method called on incompatible receiver")),
@@ -286,6 +288,8 @@ fn construct_boolean(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn this_boolean(vm: &mut Vm, call: &Call) -> Res<bool> {
     match &call.this {
         JsValue::Boolean(value) => Ok(*value),
+        // Boolean.prototype is itself a Boolean object whose [[BooleanData]] is false.
+        JsValue::Object(id) if *id == realm().ids.boolean_prototype => Ok(false),
         JsValue::Object(id) => match vm.heap.get(*id).map(|o| &o.class) {
             Some(Class::Boolean(value)) => Ok(*value),
             _ => Err(vm.type_error("Boolean.prototype method called on incompatible receiver")),

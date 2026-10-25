@@ -4,6 +4,8 @@
  * identified by its source site, so serialized state never carries executable code.
  */
 mod cache;
+mod eval;
+pub(in crate::v9) use eval::env_sizes;
 mod expr;
 mod function;
 mod module;
@@ -16,7 +18,6 @@ use super::syntax::{Body, Expr, Func, FuncFlags, Name, Pos, Program, Stmt};
 use super::value::JsString;
 use super::vm::heap::FastMap;
 use crate::protocol::{EngineError, EngineResult};
-pub(in crate::v9) use function::PRIVATE_MARK;
 pub(in crate::v9) use module::{Export, ModuleInfo};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -66,10 +67,24 @@ pub(in crate::v9) enum Op {
     TypeofGlobal(u32),
     SetGlobal(u32),
     DeleteGlobal(u32),
-    /** Top-level `var`: define the global property if it is missing. */
-    DeclareVar(u32),
-    /** Top-level `function`: define or overwrite the global property with the closure on the stack. */
-    DeclareFunction(u32),
+    /** Top-level `var`: define the global property if it is missing; the flag marks a sloppy
+    direct eval's var, which stays deletable. */
+    DeclareVar(u32, bool),
+    /** Top-level `function`: define or overwrite the global property with the closure on the
+    stack; the flag marks a sloppy direct eval's function, which stays deletable. */
+    DeclareFunction(u32, bool),
+    /** callee this args... -> result: `eval(...)`, a direct eval when the callee is the
+    intrinsic eval, run in the caller's scopes that the string operand describes. */
+    DirectEval(u16, u32),
+    /** Look a name up in the eval-var object in env slot (hops, slot): pushes the value and
+    true when it holds the name, else false. */
+    GetExt(u32, Slot, Slot),
+    /** value -> value bool: store into the eval-var object when it holds the name. */
+    SetExt(u32, Slot, Slot),
+    /** Create a sloppy eval's var in the eval-var object (undefined) unless it is there. */
+    DeclareExt(u32, Slot, Slot),
+    /** Throw a SyntaxError with this message, for eval's runtime declaration conflicts. */
+    ThrowSyntax(u32),
     /** Top-level `let`/`const`/`class`: create the dead-zone global binding; flag is const. */
     DeclareLexical(u32, bool),
     /** Initialize a top-level lexical binding with the value on the stack (popped). */
@@ -112,6 +127,8 @@ pub(in crate::v9) enum Op {
     DeleteProp(u32),
     DeleteElem,
     In,
+    /** obj -> bool: `#name in obj`, the name a private-key string index. */
+    PrivateIn(u32),
     InstanceOf,
     /** this home -> value, looking the name up from the home object's prototype. */
     GetSuper(u32),
@@ -242,6 +259,9 @@ pub(in crate::v9) struct Code {
     pub env: Option<Slot>,
     /// Strings and names the instructions reference.
     pub strings: Vec<JsString>,
+    /// Indexes into `strings` that name private keys (class `#names`). Only the compiler adds
+    /// one, so a script string with the same text is a different entry and an ordinary key.
+    pub privates: Vec<u32>,
     /// Tagged template chunks: cooked (None when invalid) and raw.
     pub templates: Vec<Vec<(Option<JsString>, JsString)>>,
     /// Instruction index to source position, sorted.
@@ -316,6 +336,32 @@ impl Registry {
         Ok(unit.entry.clone())
     }
     /**
+     * Direct eval code at `offset`, compiled in the caller scopes `context` describes. The
+     * context is the compiler's own text, handed over beside the source and part of the cache
+     * key; the source itself is never searched for one.
+     */
+    pub fn eval(
+        &mut self,
+        source: &str,
+        offset: usize,
+        context: &str,
+        parse: impl FnOnce() -> EngineResult<Program>,
+    ) -> EngineResult<Arc<Code>> {
+        let scopes = eval::context(context)
+            .ok_or_else(|| EngineError::invalid("Malformed V9 eval context."))?;
+        let key = cache::eval_key(offset, context, source);
+        let unit = match cache::get(&key) {
+            Some(unit) => unit,
+            None => {
+                let unit = compile_eval(&parse()?, scopes)?;
+                cache::put(key, unit.clone());
+                unit
+            }
+        };
+        self.adopt(&unit)?;
+        Ok(unit.entry.clone())
+    }
+    /**
      * The code and link facts `source` compiles to as a module at `offset`, cached like
      * `script`. A parse or compile failure is the module's own outcome, not a request failure,
      * and is not cached; the same text fails the same way next time.
@@ -369,6 +415,13 @@ fn compile_script(program: &Program) -> EngineResult<Arc<cache::Unit>> {
     Ok(Arc::new(cache::Unit::new(compiler.done, script, None)))
 }
 
+/** Compile direct eval code in its caller's scopes. */
+fn compile_eval(program: &Program, context: eval::Context) -> EngineResult<Arc<cache::Unit>> {
+    let mut compiler = Compiler::default();
+    let script = compiler.eval_script(program, context)?;
+    Ok(Arc::new(cache::Unit::new(compiler.done, script, None)))
+}
+
 /** Compile a module and its nested functions into one shareable unit with its link facts. */
 fn compile_module(program: Program) -> EngineResult<Arc<cache::Unit>> {
     let mut compiler = Compiler::default();
@@ -383,7 +436,7 @@ fn compile_module(program: Program) -> EngineResult<Arc<cache::Unit>> {
 }
 
 /** Where a binding lives. */
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Place {
     Register(Slot),
     Env(Slot),
@@ -459,6 +512,8 @@ struct FnState {
     positions: Vec<(u32, Pos)>,
     strings: Vec<JsString>,
     string_index: FastMap<Vec<u16>, u32>,
+    /// Private names interned apart from `string_index`, so they never share an entry.
+    private_index: FastMap<Vec<u16>, u32>,
     templates: Vec<Vec<(Option<JsString>, JsString)>>,
     registers: Slot,
     max_registers: Slot,
@@ -476,6 +531,8 @@ struct FnState {
     flags: FuncFlags,
     /// Open optional chains.
     chains: Vec<expr::Chain>,
+    /// Compiling the parameter list, where a sloppy direct eval may not declare `arguments`.
+    in_params: bool,
 }
 
 /** The compiler: a stack of functions over one shared scope stack. */
@@ -551,6 +608,17 @@ impl Compiler {
         let index = state.strings.len() as u32;
         state.strings.push(value.clone());
         state.string_index.insert(value.as_units().to_vec(), index);
+        index
+    }
+    /** Intern a private name in its own table: its index means a private key, never a string. */
+    fn private_string(&mut self, value: &JsString) -> u32 {
+        let state = self.f();
+        if let Some(index) = state.private_index.get(value.as_units()) {
+            return *index;
+        }
+        let index = state.strings.len() as u32;
+        state.strings.push(value.clone());
+        state.private_index.insert(value.as_units().to_vec(), index);
         index
     }
     /** Intern a name. */
@@ -669,6 +737,7 @@ impl Compiler {
             registers: state.max_registers,
             env,
             strings: state.strings,
+            privates: state.private_index.into_values().collect(),
             templates: state.templates,
             positions: state.positions,
         }

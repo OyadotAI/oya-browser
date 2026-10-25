@@ -13,6 +13,8 @@ use crate::v9::binding::{Binding, BindingKind};
 use crate::v9::compile::Op;
 use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
 
+mod eval;
+
 /** Completion kinds a finally block's registers hold. */
 const NORMAL: f64 = 0.0;
 const THROW: f64 = 1.0;
@@ -231,6 +233,15 @@ impl Vm<'_> {
             .cloned()
             .unwrap_or_else(JsString::empty)
     }
+    /** A named-key constant as a key: private only when the compiler interned it as one. */
+    fn constant_key(&mut self, index: u32) -> Key {
+        let text = self.constant(index);
+        if self.frame().code.privates.contains(&index) {
+            Key::Private(text)
+        } else {
+            Key::Str(text)
+        }
+    }
     /** The environment `hops` levels out. */
     fn env_at(&mut self, hops: u16) -> Res<u32> {
         let mut env = self.frame().env;
@@ -394,7 +405,7 @@ impl Vm<'_> {
                 };
                 self.push(JsValue::Boolean(deleted));
             }
-            Op::DeclareVar(name) => {
+            Op::DeclareVar(name, deletable) => {
                 let name = self.constant(name);
                 self.no_global_lexical(&name)?;
                 let key = Key::Str(name);
@@ -408,13 +419,13 @@ impl Vm<'_> {
                             value: Some(JsValue::Undefined),
                             writable: Some(true),
                             enumerable: Some(true),
-                            configurable: Some(false),
+                            configurable: Some(deletable),
                             ..Descriptor::default()
                         },
                     )?;
                 }
             }
-            Op::DeclareFunction(name) => {
+            Op::DeclareFunction(name, deletable) => {
                 let name = self.constant(name);
                 self.no_global_lexical(&name)?;
                 let value = self.pop();
@@ -426,12 +437,20 @@ impl Vm<'_> {
                         value: Some(value.clone()),
                         writable: Some(true),
                         enumerable: Some(true),
-                        configurable: Some(false),
+                        configurable: Some(deletable),
                         ..Descriptor::default()
                     },
                 )? {
                     self.write_own(GLOBAL, key, value)?;
                 }
+            }
+            Op::DirectEval(count, context) => return self.direct_eval(count, context),
+            Op::GetExt(name, hops, slot) => self.get_ext(name, hops, slot)?,
+            Op::SetExt(name, hops, slot) => self.set_ext(name, hops, slot)?,
+            Op::DeclareExt(name, hops, slot) => self.declare_ext(name, hops, slot)?,
+            Op::ThrowSyntax(message) => {
+                let message = self.constant(message).lossy();
+                return Err(self.syntax_error(&message));
             }
             Op::DeclareLexical(name, constant) => {
                 let name = self.constant(name);
@@ -527,7 +546,7 @@ impl Vm<'_> {
                 self.drop_n(2);
             }
             Op::DefineField(key) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let value = self.peek(0);
                 let object = self.peek(1);
                 self.create_data(&object, key, value)?;
@@ -542,7 +561,7 @@ impl Vm<'_> {
                 self.drop_n(2);
             }
             Op::DefineMethod(key, kind, enumerable) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let function = self.peek(0);
                 let object = self.peek(1);
                 self.define_method(&object, key, function, kind, enumerable)?;
@@ -597,7 +616,7 @@ impl Vm<'_> {
                 }
             }
             Op::GetProp(key) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let object = self.peek(0);
                 if key.hidden() {
                     self.private_brand(&object, &key, false)?;
@@ -620,7 +639,7 @@ impl Vm<'_> {
                 self.push(value);
             }
             Op::SetProp(key) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let value = self.peek(0);
                 let object = self.peek(1);
                 if key.hidden() {
@@ -644,7 +663,7 @@ impl Vm<'_> {
                 self.push(value);
             }
             Op::DeleteProp(key) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let object = self.peek(0);
                 let result = self.delete_value(&object, &key)?;
                 self.pop();
@@ -671,6 +690,17 @@ impl Vm<'_> {
                 self.drop_n(2);
                 self.push(JsValue::Boolean(result));
             }
+            Op::PrivateIn(key) => {
+                let key = self.constant_key(key);
+                let JsValue::Object(id) = self.peek(0) else {
+                    return Err(self.type_error(
+                        "Cannot use 'in' operator to search for a key in a non-object",
+                    ));
+                };
+                let result = self.has_property(id, &key)?;
+                self.pop();
+                self.push(JsValue::Boolean(result));
+            }
             Op::InstanceOf => {
                 let constructor = self.peek(0);
                 let value = self.peek(1);
@@ -679,7 +709,7 @@ impl Vm<'_> {
                 self.push(JsValue::Boolean(result));
             }
             Op::GetSuper(key) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let home = self.peek(0);
                 let this = self.peek(1);
                 let value = self.super_get(&this, &home, &key)?;
@@ -696,7 +726,7 @@ impl Vm<'_> {
                 self.push(value);
             }
             Op::SetSuper(key) => {
-                let key = Key::Str(self.constant(key));
+                let key = self.constant_key(key);
                 let value = self.peek(0);
                 let home = self.peek(1);
                 let this = self.peek(2);

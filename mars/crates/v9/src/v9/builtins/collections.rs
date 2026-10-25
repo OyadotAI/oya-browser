@@ -26,24 +26,32 @@ pub(super) fn install(b: &mut Builder) {
         None,
     );
     b.global("Map", ctor);
+    super::typed::species_getter(b, ctor);
     let methods: [(&'static str, u32, NativeFn); 6] = [
-        ("get", 1, map_get),
-        ("set", 2, map_set),
-        ("has", 1, has),
-        ("delete", 1, delete),
-        ("clear", 0, clear),
-        ("forEach", 1, for_each),
+        ("get", 1, |vm, call| map_get(vm, call, Kind::Map)),
+        ("set", 2, |vm, call| map_set(vm, call, Kind::Map)),
+        ("has", 1, |vm, call| has(vm, call, Kind::Map)),
+        ("delete", 1, |vm, call| delete(vm, call, Kind::Map)),
+        ("clear", 0, |vm, call| clear(vm, call, Kind::Map)),
+        ("forEach", 1, |vm, call| for_each(vm, call, Kind::Map)),
     ];
     for (name, length, function) in methods {
         b.method(map, name, length, function);
     }
-    b.builtin_accessor(map, "size", Some(size), None);
-    b.method(map, "keys", 0, |vm, call| iterate(vm, call, IterKind::Keys));
+    b.builtin_accessor(
+        map,
+        "size",
+        Some(|vm, call| size(vm, call, Kind::Map)),
+        None,
+    );
+    b.method(map, "keys", 0, |vm, call| {
+        iterate(vm, call, Kind::Map, IterKind::Keys)
+    });
     b.method(map, "values", 0, |vm, call| {
-        iterate(vm, call, IterKind::Values)
+        iterate(vm, call, Kind::Map, IterKind::Values)
     });
     let entries = b.method(map, "entries", 0, |vm, call| {
-        iterate(vm, call, IterKind::Entries)
+        iterate(vm, call, Kind::Map, IterKind::Entries)
     });
     b.put(
         map,
@@ -69,21 +77,31 @@ pub(super) fn install(b: &mut Builder) {
         None,
     );
     b.global("Set", ctor);
+    super::typed::species_getter(b, ctor);
     for (name, length, function) in [
-        ("add", 1, set_add as NativeFn),
-        ("has", 1, has),
-        ("delete", 1, delete),
-        ("clear", 0, clear),
-        ("forEach", 1, for_each),
+        (
+            "add",
+            1,
+            (|vm, call| set_add(vm, call, Kind::Set)) as NativeFn,
+        ),
+        ("has", 1, |vm, call| has(vm, call, Kind::Set)),
+        ("delete", 1, |vm, call| delete(vm, call, Kind::Set)),
+        ("clear", 0, |vm, call| clear(vm, call, Kind::Set)),
+        ("forEach", 1, |vm, call| for_each(vm, call, Kind::Set)),
     ] {
         b.method(set, name, length, function);
     }
-    b.builtin_accessor(set, "size", Some(size), None);
+    b.builtin_accessor(
+        set,
+        "size",
+        Some(|vm, call| size(vm, call, Kind::Set)),
+        None,
+    );
     b.method(set, "entries", 0, |vm, call| {
-        iterate(vm, call, IterKind::Entries)
+        iterate(vm, call, Kind::Set, IterKind::Entries)
     });
     let values = b.method(set, "values", 0, |vm, call| {
-        iterate(vm, call, IterKind::Values)
+        iterate(vm, call, Kind::Set, IterKind::Values)
     });
     b.alias(set, "keys", values);
     b.put(
@@ -110,10 +128,14 @@ pub(super) fn install(b: &mut Builder) {
     );
     b.global("WeakMap", ctor);
     for (name, length, function) in [
-        ("get", 1, map_get as NativeFn),
-        ("set", 2, map_set),
-        ("has", 1, has),
-        ("delete", 1, delete),
+        (
+            "get",
+            1,
+            (|vm, call| map_get(vm, call, Kind::WeakMap)) as NativeFn,
+        ),
+        ("set", 2, |vm, call| map_set(vm, call, Kind::WeakMap)),
+        ("has", 1, |vm, call| has(vm, call, Kind::WeakMap)),
+        ("delete", 1, |vm, call| delete(vm, call, Kind::WeakMap)),
     ] {
         b.method(weak_map, name, length, function);
     }
@@ -135,9 +157,13 @@ pub(super) fn install(b: &mut Builder) {
     );
     b.global("WeakSet", ctor);
     for (name, length, function) in [
-        ("add", 1, set_add as NativeFn),
-        ("has", 1, has),
-        ("delete", 1, delete),
+        (
+            "add",
+            1,
+            (|vm, call| set_add(vm, call, Kind::WeakSet)) as NativeFn,
+        ),
+        ("has", 1, |vm, call| has(vm, call, Kind::WeakSet)),
+        ("delete", 1, |vm, call| delete(vm, call, Kind::WeakSet)),
     ] {
         b.method(weak_set, name, length, function);
     }
@@ -203,6 +229,17 @@ fn table<'v>(vm: &'v mut Vm, call: &Call) -> Option<(ObjectId, &'v mut Table, Ki
     }
 }
 
+/** The table of a receiver that must be exactly this kind: Map methods refuse a Set and the
+weak collections refuse the strong ones, as each method checks its own internal slot. */
+fn table_of<'v>(vm: &'v mut Vm, call: &Call, want: Kind) -> Res<(ObjectId, &'v mut Table)> {
+    let ok = matches!(table(vm, call), Some((_, _, kind)) if kind == want);
+    if !ok {
+        return Err(incompatible(vm));
+    }
+    let (id, table, _) = table(vm, call).expect("checked above");
+    Ok((id, table))
+}
+
 /** The receiver error. */
 fn incompatible(vm: &mut Vm) -> crate::v9::vm::Thrown {
     vm.type_error("Method called on incompatible receiver")
@@ -219,21 +256,16 @@ fn check_weak(vm: &mut Vm, kind: Kind, value: &JsValue) -> Res<()> {
 }
 
 /** Map.prototype.get. */
-fn map_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn map_get(vm: &mut Vm, call: Call, want: Kind) -> Res<JsValue> {
     let key_value = call.arg(0);
-    let Some((_, table, _)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
+    let (_, table) = table_of(vm, &call, want)?;
     Ok(table.get(&key_value).cloned().unwrap_or(JsValue::Undefined))
 }
 
 /** Map.prototype.set. */
-fn map_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn map_set(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
     let (key_value, value) = (call.arg(0), call.arg(1));
-    let kind = table(vm, &call).map(|(_, _, kind)| kind);
-    let Some(kind) = kind.filter(|kind| matches!(kind, Kind::Map | Kind::WeakMap)) else {
-        return Err(incompatible(vm));
-    };
+    table_of(vm, &call, kind)?;
     check_weak(vm, kind, &key_value)?;
     let units = (key_value.string_units() + value.string_units()) as isize;
     let added = table(vm, &call)
@@ -244,12 +276,9 @@ fn map_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** Set.prototype.add. */
-fn set_add(vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn set_add(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
     let value = call.arg(0);
-    let kind = table(vm, &call).map(|(_, _, kind)| kind);
-    let Some(kind) = kind.filter(|kind| matches!(kind, Kind::Set | Kind::WeakSet)) else {
-        return Err(incompatible(vm));
-    };
+    table_of(vm, &call, kind)?;
     check_weak(vm, kind, &value)?;
     let units = value.string_units() as isize;
     let added = table(vm, &call)
@@ -262,20 +291,16 @@ fn set_add(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** has. */
-fn has(vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn has(vm: &mut Vm, call: Call, want: Kind) -> Res<JsValue> {
     let key_value = call.arg(0);
-    let Some((_, table, _)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
+    let (_, table) = table_of(vm, &call, want)?;
     Ok(JsValue::Boolean(table.has(&key_value)))
 }
 
 /** delete. */
-fn delete(vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn delete(vm: &mut Vm, call: Call, want: Kind) -> Res<JsValue> {
     let key_value = call.arg(0);
-    let Some((_, table, _)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
+    let (_, table) = table_of(vm, &call, want)?;
     let removed = table.delete(&key_value);
     if let Some((k, v)) = &removed {
         let units = (k.string_units() + v.string_units()) as isize;
@@ -285,10 +310,8 @@ fn delete(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** clear. */
-fn clear(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let Some((_, table, _)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
+fn clear(vm: &mut Vm, call: Call, want: Kind) -> Res<JsValue> {
+    let (_, table) = table_of(vm, &call, want)?;
     let live = table.live as isize;
     table.clear();
     vm.heap.adjust(-live, 0);
@@ -296,22 +319,18 @@ fn clear(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** size. */
-fn size(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let Some((_, table, _)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
+fn size(vm: &mut Vm, call: Call, want: Kind) -> Res<JsValue> {
+    let (_, table) = table_of(vm, &call, want)?;
     Ok(JsValue::Number(table.live as f64))
 }
 
 /** forEach over live entries, including ones added during the walk. */
-fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
+fn for_each(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
+    let (id, _) = table_of(vm, &call, kind)?;
     let function = call.arg(0);
     if !vm.is_callable(&function) {
         return Err(vm.type_error("forEach callback is not a function"));
     }
-    let Some((id, _, kind)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
     let mut index = 0;
     while let Some(Class::Map(table) | Class::Set(table)) = vm.heap.get(id).map(|o| &o.class) {
         let Some(entry) = table.entries.get(index).cloned() else {
@@ -336,10 +355,8 @@ fn for_each(vm: &mut Vm, call: Call) -> Res<JsValue> {
 }
 
 /** keys, values and entries iterators. */
-fn iterate(vm: &mut Vm, call: Call, kind: IterKind) -> Res<JsValue> {
-    let Some((id, _, _)) = table(vm, &call) else {
-        return Err(incompatible(vm));
-    };
+fn iterate(vm: &mut Vm, call: Call, want: Kind, kind: IterKind) -> Res<JsValue> {
+    let (id, _) = table_of(vm, &call, want)?;
     vm.new_iterator(IterState::Table {
         table: id,
         index: 0,

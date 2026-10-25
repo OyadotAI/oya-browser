@@ -8,7 +8,6 @@
  * the iterators walk a snapshot taken when they are made rather than the live list.
  */
 use super::blob;
-use crate::v9::compile::PRIVATE_MARK;
 use crate::v9::value::{JsString, JsValue, ObjectId};
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{CONFIGURABLE, HIDDEN_ATTRS, Key, Object, Prop, Slot};
@@ -51,9 +50,7 @@ pub(super) fn install(b: &mut Builder) {
 
 /** The private key of the entry list. */
 fn list_key() -> Key {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend("formEntries".encode_utf16());
-    Key::Str(JsString::from_units(units).expect("short key"))
+    Key::private("formEntries")
 }
 
 /** One entry: its name and its value (a string or a File). */

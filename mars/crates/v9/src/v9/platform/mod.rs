@@ -712,7 +712,7 @@ impl Vm<'_> {
             .and_then(|object| {
                 object
                     .props
-                    .get(&Key::from(crate::v9::vm::error::TRACE_KEY))
+                    .get(&Key::private(crate::v9::vm::error::TRACE_KEY))
             })
             .and_then(|prop| match &prop.slot {
                 crate::v9::vm::heap::Slot::Data(JsValue::String(text)) => Some(text.lossy()),

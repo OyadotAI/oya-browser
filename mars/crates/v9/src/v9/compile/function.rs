@@ -56,6 +56,10 @@ impl Compiler {
         for name in &params {
             self.declare(name, Declared::Var)?;
         }
+        if uses.eval && !func.strict {
+            // A sloppy direct eval's new vars live in this object, made on its first `var`.
+            self.declare(&Name::from(super::eval::EXT), Declared::Hidden)?;
+        }
         let body: &[Stmt] = block_body(func).unwrap_or(&[]);
         super::stmt::early_conflict(body, func.strict, true, &params)?;
         let mut vars = Vec::new();
@@ -181,6 +185,13 @@ impl Compiler {
     }
     /** Bind arguments to parameters, evaluating defaults and patterns in order. */
     fn parameters(&mut self, func: &Func) -> EngineResult<()> {
+        self.f().in_params = true;
+        let result = self.parameter_values(func);
+        self.f().in_params = false;
+        result
+    }
+    /** The parameter bindings themselves, in order. */
+    fn parameter_values(&mut self, func: &Func) -> EngineResult<()> {
         for (index, param) in func.params.iter().enumerate() {
             self.emit(Op::Arg(index as Slot));
             self.bind_pattern(param, false)?;
@@ -317,13 +328,11 @@ impl Compiler {
     /** Private names become keys scripts cannot spell or enumerate. */
     pub(super) fn private_name(&mut self, name: &str) -> EngineResult<u32> {
         let class = self.classes.last().copied().unwrap_or(0);
-        let mut units = vec![PRIVATE_MARK];
-        units.extend(format!("{class}:{name}").encode_utf16());
-        let key = JsString::from_units(units)?;
-        Ok(self.string(&key))
+        let key = JsString::from_utf8(&format!("{class}:{name}"))?;
+        Ok(self.private_string(&key))
     }
     /** Store the top of stack into a resolved place, keeping it. */
-    fn set_place(&mut self, place: Place, hops: Slot) {
+    pub(super) fn set_place(&mut self, place: Place, hops: Slot) {
         match place {
             Place::Register(slot) => {
                 self.emit(Op::SetReg(slot));
@@ -340,6 +349,13 @@ impl Compiler {
         if let Some((_, Declared::Import, _)) = self.resolve(name) {
             return self.load_import(name, pos);
         }
+        let ext = self.ext_loads(name)?;
+        self.load_static(name)?;
+        self.patch_all(ext);
+        Ok(())
+    }
+    /** Push a name's value from its static place. */
+    fn load_static(&mut self, name: &Name) -> EngineResult<()> {
         match self.resolve(name) {
             Some((Place::Register(slot), declared, _)) => {
                 if checked(declared) {
@@ -372,6 +388,13 @@ impl Compiler {
     /** Assign the top of stack to a name, keeping it; constants throw. */
     pub(super) fn assign_name(&mut self, name: &Name, pos: Pos) -> EngineResult<()> {
         self.at(pos);
+        let ext = self.ext_stores(name)?;
+        self.assign_static(name)?;
+        self.patch_all(ext);
+        Ok(())
+    }
+    /** Assign the top of stack to a name's static place, keeping it. */
+    fn assign_static(&mut self, name: &Name) -> EngineResult<()> {
         let index = self.name(name)?;
         match self.resolve(name) {
             Some((_, Declared::Const | Declared::Import, _)) => {
@@ -405,6 +428,13 @@ impl Compiler {
     /** Initialize a declared binding with the top of stack, keeping it. */
     pub(super) fn initialize(&mut self, name: &Name, pos: Pos) -> EngineResult<()> {
         self.at(pos);
+        let ext = self.ext_stores(name)?;
+        self.initialize_static(name)?;
+        self.patch_all(ext);
+        Ok(())
+    }
+    /** Initialize a binding's static place with the top of stack, keeping it. */
+    fn initialize_static(&mut self, name: &Name) -> EngineResult<()> {
         match self.resolve(name) {
             Some((Place::Register(slot), ..)) => {
                 self.emit(Op::SetReg(slot));
@@ -525,9 +555,6 @@ fn has_strict_directive(func: &Func) -> bool {
         })
         .any(|text| text.as_units() == "use strict".encode_utf16().collect::<Vec<_>>())
 }
-
-/** Private keys start with a noncharacter unit no page string contains by accident. */
-pub(in crate::v9) const PRIVATE_MARK: u16 = 0xffff;
 
 /** Bindings that need dead-zone checks. */
 fn checked(declared: Declared) -> bool {

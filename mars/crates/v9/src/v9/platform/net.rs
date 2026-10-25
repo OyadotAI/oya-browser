@@ -270,6 +270,9 @@ fn request_from(vm: &mut Vm, input: &JsValue, init: &JsValue) -> Res<Result<Host
         base.as_ref()
             .map_or("same-origin".into(), |r| r.credentials.clone()),
     )?;
+    // Inherited headers were admitted under the input Request's mode; the outgoing list must pass
+    // this request's own guard, so no-cors cannot inherit a non-safelisted header.
+    let headers = refiltered(headers, request_guard(&mode));
     Ok(Ok(HostRequest {
         id: 0,
         kind: "fetch".into(),
@@ -631,16 +634,17 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = this_xhr(vm, &call)?;
     match native_name(&call) {
         "open" => {
-            let method = vm.to_text(&call.arg(0))?.to_ascii_uppercase();
+            let method = xhr_method_name(vm, &call.arg(0))?;
             let target = vm.to_text(&call.arg(1))?;
+            let Some(url) = resolve(vm, &target) else {
+                return Err(vm.dom_exception(
+                    "SyntaxError",
+                    "Failed to execute 'open' on 'XMLHttpRequest': Invalid URL",
+                ));
+            };
             if call.args.len() > 2 && !call.arg(2).truthy() {
                 return Err(vm.unsupported_error("synchronous XMLHttpRequest"));
             }
-            let Some(url) = resolve(vm, &target) else {
-                return Err(
-                    vm.syntax_error("Failed to execute 'open' on 'XMLHttpRequest': Invalid URL")
-                );
-            };
             if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
                 *state = XhrState {
                     method,
@@ -654,11 +658,9 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             fire(vm, Target::Object(id), "readystatechange", false, false)?;
         }
         "setRequestHeader" => {
-            let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
+            let name = vm.to_text(&call.arg(0))?;
             let value = vm.to_text(&call.arg(1))?;
-            if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
-                state.headers.push((name, value));
-            }
+            xhr_set_header(vm, id, &name, &value)?;
         }
         "send" => {
             let body = request_body(vm, &call.arg(0))?;
@@ -667,9 +669,9 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
             };
             form_type(vm, &call.arg(0), &mut state.headers);
             if state.ready != 1 || state.sent {
-                return Err(vm.throw(
-                    crate::v9::vm::error::ErrorKind::Error,
-                    "InvalidStateError: The object's state must be OPENED.",
+                return Err(vm.dom_exception(
+                    "InvalidStateError",
+                    "Failed to execute 'send' on 'XMLHttpRequest': The object's state must be OPENED.",
                 ));
             }
             if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
@@ -712,30 +714,87 @@ pub(in crate::v9) fn xhr_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "getResponseHeader" => {
             let name = vm.to_text(&call.arg(0))?.to_ascii_lowercase();
             let state = vm.page.state.xhrs.get(&id).cloned().unwrap_or_default();
-            let values: Vec<String> = state
-                .response_headers
-                .iter()
-                .filter(|(header, _)| *header == name)
-                .map(|(_, value)| value.clone())
-                .collect();
-            return if values.is_empty() {
-                Ok(JsValue::Null)
-            } else {
-                JsValue::string(&values.join(", ")).map_err(Into::into)
+            let value = (state.ready >= XHR_HEADERS_RECEIVED)
+                .then(|| headers::combined(&state.response_headers, &name))
+                .flatten();
+            return match value {
+                Some(value) => JsValue::string(&value).map_err(Into::into),
+                None => Ok(JsValue::Null),
             };
         }
         "getAllResponseHeaders" => {
             let state = vm.page.state.xhrs.get(&id).cloned().unwrap_or_default();
-            let text: String = state
-                .response_headers
-                .iter()
-                .map(|(name, value)| format!("{name}: {value}\r\n"))
-                .collect();
+            let text = all_response_headers(&state);
             return JsValue::string(&text).map_err(Into::into);
         }
         _ => {}
     }
     Ok(JsValue::Undefined)
+}
+
+/** XMLHttpRequest's HEADERS_RECEIVED state: response headers are readable from here on. */
+const XHR_HEADERS_RECEIVED: u8 = 2;
+
+/** `open()`'s method, checked and normalised as Fetch does (Blink's
+XMLHttpRequest::open): not a token is a SyntaxError, CONNECT, TRACE or TRACK a SecurityError. */
+fn xhr_method_name(vm: &mut Vm, value: &JsValue) -> Res<String> {
+    let method = vm.to_text(value)?;
+    if !headers::valid_name(&method) {
+        let message = format!("'{method}' is not a valid HTTP method.");
+        return Err(vm.dom_exception("SyntaxError", &message));
+    }
+    normalize_method(&method).map_err(|message| vm.dom_exception("SecurityError", &message))
+}
+
+/** `setRequestHeader()` (XHR standard): only while OPENED and unsent, a bad name or value is a
+SyntaxError, a forbidden header is ignored, and a repeated name joins its values with ", ". */
+fn xhr_set_header(vm: &mut Vm, id: ObjectId, name: &str, value: &str) -> Res<()> {
+    let opened = vm
+        .page
+        .state
+        .xhrs
+        .get(&id)
+        .is_some_and(|state| state.ready == 1 && !state.sent);
+    if !opened {
+        return Err(vm.dom_exception(
+            "InvalidStateError",
+            "Failed to execute 'setRequestHeader' on 'XMLHttpRequest': The object's state must be OPENED.",
+        ));
+    }
+    let (name, value) = match headers::checked(name, value) {
+        Ok(pair) => pair,
+        Err(message) => return Err(vm.dom_exception("SyntaxError", message)),
+    };
+    if headers::forbidden_request(&name, &value) {
+        return Ok(());
+    }
+    if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
+        match state.headers.iter_mut().find(|(header, _)| *header == name) {
+            Some((_, existing)) => {
+                existing.push_str(", ");
+                existing.push_str(&value);
+            }
+            None => state.headers.push((name, value)),
+        }
+    }
+    Ok(())
+}
+
+/** `getAllResponseHeaders()`: empty before HEADERS_RECEIVED, then lowercase names in byte
+order, repeats joined with ", ", each line ending in CRLF. */
+fn all_response_headers(state: &XhrState) -> String {
+    if state.ready < XHR_HEADERS_RECEIVED {
+        return String::new();
+    }
+    let lowered: Vec<(String, String)> = state
+        .response_headers
+        .iter()
+        .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+        .collect();
+    headers::sort_and_combine(&lowered)
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect()
 }
 
 /** XMLHttpRequest accessors. */
@@ -779,6 +838,13 @@ pub(in crate::v9) fn xhr_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
             }
         }
         "withCredentials" => {
+            let state = vm.page.state.xhrs.get(&id).cloned().unwrap_or_default();
+            if state.ready > 1 || state.sent {
+                return Err(vm.dom_exception(
+                    "InvalidStateError",
+                    "Failed to set the 'withCredentials' property on 'XMLHttpRequest': The value may only be set if the object's state is UNSENT or OPENED.",
+                ));
+            }
             if let Some(state) = vm.page.state.xhrs.get_mut(&id) {
                 state.with_credentials = value.truthy();
             }
@@ -1124,6 +1190,15 @@ fn guarded_pairs(
         }
     }
     Ok(Ok(pairs))
+}
+
+/** Header pairs passed again through `guard`, dropping any it refuses. */
+fn refiltered(source: Vec<(String, String)>, guard: Guard) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for (name, value) in source {
+        let _ = headers::append(&mut pairs, guard, &name, &value);
+    }
+    pairs
 }
 
 /** The pairs of the Headers object a Request or Response handed out, which script may have

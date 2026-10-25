@@ -53,6 +53,7 @@ pub(super) fn install(b: &mut Builder) {
     b.method(proto, "__defineGetter__", 2, define_getter);
     b.method(proto, "__defineSetter__", 2, define_setter);
     b.method(proto, "__lookupGetter__", 1, lookup_getter);
+    b.method(proto, "__lookupSetter__", 1, lookup_setter);
     b.builtin_accessor(proto, "__proto__", Some(proto_get), Some(proto_set));
 }
 
@@ -136,7 +137,7 @@ fn create(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let id = vm.alloc(Object::new(Class::Plain, proto))?;
     let properties = call.arg(1);
-    if !properties.nullish() {
+    if !matches!(properties, JsValue::Undefined) {
         apply_properties(vm, id, &properties)?;
     }
     Ok(JsValue::Object(id))
@@ -196,6 +197,48 @@ fn with_defaults(mut desc: Descriptor, existing: bool) -> Descriptor {
     desc
 }
 
+/** DefinePropertyOrThrow. A refused define still succeeds when every field the descriptor
+gives already holds that value (ValidateAndApplyPropertyDescriptor's "nothing changes" step),
+which the VM's check does not always see for non-configurable accessors. */
+fn define_or_throw(vm: &mut Vm, id: ObjectId, name: Key, desc: Descriptor) -> Res<()> {
+    let existing = vm.own(id, &name)?;
+    if vm.define(
+        id,
+        name.clone(),
+        with_defaults(desc.clone(), existing.is_some()),
+    )? {
+        return Ok(());
+    }
+    if existing.is_some_and(|prop| unchanged(&prop, &desc)) {
+        return Ok(());
+    }
+    Err(vm.type_error(&format!(
+        "Cannot redefine property: {}",
+        crate::v9::vm::property::key_text(&name)
+    )))
+}
+
+/** Whether each field the descriptor gives matches the current property. */
+fn unchanged(prop: &crate::v9::vm::heap::Prop, desc: &Descriptor) -> bool {
+    let flag = |want: Option<bool>, bit: u8| want.is_none_or(|w| w == (prop.attrs & bit != 0));
+    let flags = flag(desc.enumerable, ENUMERABLE) && flag(desc.configurable, CONFIGURABLE);
+    flags
+        && match &prop.slot {
+            Slot::Data(value) => {
+                desc.get.is_none()
+                    && desc.set.is_none()
+                    && flag(desc.writable, WRITABLE)
+                    && desc.value.as_ref().is_none_or(|v| v.same_value(value))
+            }
+            Slot::Accessor(get, set) => {
+                desc.value.is_none()
+                    && desc.writable.is_none()
+                    && desc.get.is_none_or(|g| g == *get)
+                    && desc.set.is_none_or(|s| s == *set)
+            }
+        }
+}
+
 /** Object.defineProperty. */
 fn define_property(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let JsValue::Object(id) = call.arg(0) else {
@@ -204,24 +247,28 @@ fn define_property(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let name = call.arg(1);
     let property = vm.to_key(&name)?;
     let desc = to_descriptor(vm, &call.arg(2))?;
-    let existing = vm.own(id, &property)?.is_some();
-    if !vm.define(id, property.clone(), with_defaults(desc, existing))? {
-        return Err(vm.type_error(&format!(
-            "Cannot redefine property: {}",
-            crate::v9::vm::property::key_text(&property)
-        )));
-    }
+    define_or_throw(vm, id, property, desc)?;
     Ok(JsValue::Object(id))
 }
 
-/** Apply a property-descriptor map. */
+/** ObjectDefineProperties: read every enumerable own descriptor (strings and symbols) first,
+then define each one, throwing on the first refusal. Defining as it read let a later bad
+descriptor leave earlier properties half applied, and a refused define passed silently. */
 fn apply_properties(vm: &mut Vm, id: ObjectId, properties: &JsValue) -> Res<()> {
     let source = vm.to_object(properties)?;
-    for name in vm.enumerable_keys(source)? {
+    let mut descriptors = Vec::new();
+    for name in vm.own_keys(source)? {
+        if vm
+            .own(source, &name)?
+            .is_none_or(|p| p.attrs & ENUMERABLE == 0)
+        {
+            continue;
+        }
         let desc_value = vm.get(&JsValue::Object(source), &name)?;
-        let desc = to_descriptor(vm, &desc_value)?;
-        let existing = vm.own(id, &name)?.is_some();
-        vm.define(id, name, with_defaults(desc, existing))?;
+        descriptors.push((name, to_descriptor(vm, &desc_value)?));
+    }
+    for (name, desc) in descriptors {
+        define_or_throw(vm, id, name, desc)?;
     }
     Ok(())
 }
@@ -322,27 +369,36 @@ fn own_descriptors(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Object.getPrototypeOf. */
 fn get_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = object_arg(vm, &call.arg(0))?;
-    Ok(vm.proto_of(id).map_or(JsValue::Null, JsValue::Object))
+    Ok(super::integrity::get_prototype_of(vm, id)?.map_or(JsValue::Null, JsValue::Object))
 }
 
 /** Object.setPrototypeOf. */
 fn set_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let target = call.arg(0);
+    if target.nullish() {
+        return Err(vm.type_error("Object.setPrototypeOf called on null or undefined"));
+    }
     let proto = match call.arg(1) {
         JsValue::Object(id) => Some(id),
         JsValue::Null => None,
         _ => return Err(vm.type_error("Object prototype may only be an Object or null")),
     };
     if let JsValue::Object(id) = target
-        && !vm.set_proto(id, proto)?
+        && !super::integrity::set_prototype_of(vm, id, proto)?
     {
-        return Err(vm.type_error("Cyclic __proto__ value"));
+        return Err(vm.type_error("Object.setPrototypeOf could not set the prototype"));
     }
     Ok(target)
 }
 
 /** Clear attribute bits on every own property and stop extension. */
 fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
+    if !super::integrity::prevent_extensions(vm, id)? {
+        return Err(vm.type_error("Cannot prevent extensions"));
+    }
+    if vm.proxy_of(id).is_some() {
+        return restrict_generic(vm, id, clear);
+    }
     vm.materialize(id)?;
     for property in vm.own_keys(id)? {
         if let Some(mut prop) = vm.own(id, &property)? {
@@ -358,6 +414,30 @@ fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     }
     if let Some(object) = vm.heap.get_mut(id) {
         object.extensible = false;
+    }
+    Ok(())
+}
+
+/** SetIntegrityLevel through the internal methods, for proxies: each own key is redefined
+non-configurable (and data properties non-writable when freezing). */
+fn restrict_generic(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
+    for property in vm.own_keys(id)? {
+        let mut desc = Descriptor {
+            configurable: Some(false),
+            ..Descriptor::default()
+        };
+        if clear & WRITABLE != 0
+            && let Some(prop) = vm.own(id, &property)?
+            && !matches!(prop.slot, Slot::Accessor(..))
+        {
+            desc.writable = Some(false);
+        }
+        if !vm.define(id, property.clone(), desc)? {
+            return Err(vm.type_error(&format!(
+                "Cannot redefine property: {}",
+                crate::v9::vm::property::key_text(&property)
+            )));
+        }
     }
     Ok(())
 }
@@ -383,11 +463,10 @@ fn seal(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Object.preventExtensions. */
 fn prevent_extensions(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = call.arg(0);
-    if let JsValue::Object(id) = value {
-        vm.materialize(id)?;
-        if let Some(object) = vm.heap.get_mut(id) {
-            object.extensible = false;
-        }
+    if let JsValue::Object(id) = value
+        && !super::integrity::prevent_extensions(vm, id)?
+    {
+        return Err(vm.type_error("Cannot prevent extensions"));
     }
     Ok(value)
 }
@@ -397,7 +476,7 @@ fn test_restricted(vm: &mut Vm, value: &JsValue, bits: u8) -> Res<bool> {
     let JsValue::Object(id) = value else {
         return Ok(true);
     };
-    if vm.heap.get(*id).is_none_or(|object| object.extensible) {
+    if super::integrity::is_extensible(vm, *id)? {
         return Ok(false);
     }
     for property in vm.own_keys(*id)? {
@@ -428,7 +507,7 @@ fn is_sealed(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Object.isExtensible. */
 fn is_extensible(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Boolean(match call.arg(0) {
-        JsValue::Object(id) => vm.heap.get(id).is_none_or(|object| object.extensible),
+        JsValue::Object(id) => super::integrity::is_extensible(vm, id)?,
         _ => false,
     }))
 }
@@ -538,6 +617,17 @@ pub(in crate::v9) fn builtin_tag(vm: &mut Vm, value: &JsValue) -> Res<String> {
     if let Some(tag) = crate::v9::platform::interface_tag(vm, id) {
         return Ok(tag);
     }
+    let ids = &crate::v9::vm::realm::realm().ids;
+    // The Number, Boolean and String prototypes are wrapper objects of their own kind.
+    if id == ids.number_prototype {
+        return Ok("Number".into());
+    }
+    if id == ids.boolean_prototype {
+        return Ok("Boolean".into());
+    }
+    if id == ids.string_prototype {
+        return Ok("String".into());
+    }
     Ok(match vm.heap.get(id).map(|o| &o.class) {
         Some(Class::Array(_)) => "Array",
         Some(Class::Error) => "Error",
@@ -576,14 +666,17 @@ fn value_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** __defineGetter__. */
 fn define_getter(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = this_object(vm, &call, "__defineGetter__")?;
+    let getter = match call.arg(1) {
+        JsValue::Object(f) if vm.is_callable(&JsValue::Object(f)) => f,
+        _ => {
+            return Err(vm.type_error("Object.prototype.__defineGetter__: Expecting function"));
+        }
+    };
     let name = call.arg(0);
     let property = vm.to_key(&name)?;
-    let JsValue::Object(getter) = call.arg(1) else {
-        return Err(vm.type_error("Object.prototype.__defineGetter__: Expecting function"));
-    };
-    vm.define(
+    let defined = vm.define(
         id,
-        property,
+        property.clone(),
         Descriptor {
             get: Some(Some(getter)),
             enumerable: Some(true),
@@ -591,20 +684,29 @@ fn define_getter(vm: &mut Vm, call: Call) -> Res<JsValue> {
             ..Descriptor::default()
         },
     )?;
+    if !defined {
+        return Err(vm.type_error(&format!(
+            "Cannot redefine property: {}",
+            crate::v9::vm::property::key_text(&property)
+        )));
+    }
     Ok(JsValue::Undefined)
 }
 
 /** __defineSetter__. */
 fn define_setter(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let id = this_object(vm, &call, "__defineSetter__")?;
+    let setter = match call.arg(1) {
+        JsValue::Object(f) if vm.is_callable(&JsValue::Object(f)) => f,
+        _ => {
+            return Err(vm.type_error("Object.prototype.__defineSetter__: Expecting function"));
+        }
+    };
     let name = call.arg(0);
     let property = vm.to_key(&name)?;
-    let JsValue::Object(setter) = call.arg(1) else {
-        return Err(vm.type_error("Object.prototype.__defineSetter__: Expecting function"));
-    };
-    vm.define(
+    let defined = vm.define(
         id,
-        property,
+        property.clone(),
         Descriptor {
             set: Some(Some(setter)),
             enumerable: Some(true),
@@ -612,22 +714,41 @@ fn define_setter(vm: &mut Vm, call: Call) -> Res<JsValue> {
             ..Descriptor::default()
         },
     )?;
+    if !defined {
+        return Err(vm.type_error(&format!(
+            "Cannot redefine property: {}",
+            crate::v9::vm::property::key_text(&property)
+        )));
+    }
     Ok(JsValue::Undefined)
 }
 
 /** __lookupGetter__. */
 fn lookup_getter(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let mut id = this_object(vm, &call, "__lookupGetter__")?;
+    lookup_accessor(vm, call, "__lookupGetter__", false)
+}
+
+/** __lookupSetter__. */
+fn lookup_setter(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    lookup_accessor(vm, call, "__lookupSetter__", true)
+}
+
+/** The getter or setter the first own property along the [[GetPrototypeOf]] chain has. */
+fn lookup_accessor(vm: &mut Vm, call: Call, method: &str, setter: bool) -> Res<JsValue> {
+    let mut id = this_object(vm, &call, method)?;
     let name = call.arg(0);
     let property = vm.to_key(&name)?;
     for _ in 0..crate::v9::vm::property::CHAIN_STEPS {
         if let Some(prop) = vm.own(id, &property)? {
             return Ok(match prop.slot {
-                Slot::Accessor(Some(getter), _) => JsValue::Object(getter),
+                Slot::Accessor(get, set) => {
+                    let f = if setter { set } else { get };
+                    f.map_or(JsValue::Undefined, JsValue::Object)
+                }
                 _ => JsValue::Undefined,
             });
         }
-        match vm.proto_of(id) {
+        match super::integrity::get_prototype_of(vm, id)? {
             Some(proto) => id = proto,
             None => break,
         }

@@ -285,7 +285,7 @@ fn stack_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         },
     )?;
     let summary = vm.to_text(&summary)?;
-    let trace = vm.get(&call.this, &key(crate::v9::vm::error::TRACE_KEY))?;
+    let trace = vm.get(&call.this, &Key::private(crate::v9::vm::error::TRACE_KEY))?;
     let trace = match trace {
         JsValue::String(trace) if !trace.as_units().is_empty() => trace
             .lossy()

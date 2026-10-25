@@ -10,7 +10,6 @@ use super::{Page, dom, interface_tag, nodes};
 use crate::protocol::{EngineError, EngineResult, SourceLocation};
 use crate::v9::Compiled;
 use crate::v9::builtins::{self, dynamic_base};
-use crate::v9::compile::PRIVATE_MARK;
 use crate::v9::value::{JsString, JsValue, ObjectId, number_to_string};
 use crate::v9::vm::data::{Class, FunctionKind, HostData, PromiseState};
 use crate::v9::vm::heap::{Key, Slot};
@@ -249,7 +248,7 @@ fn site_offset(site: u32) -> usize {
 fn prune_dynamic(vm: &mut Vm) {
     while let Some(last) = vm.dynamic.last() {
         let start = dynamic_base(&vm.dynamic[..vm.dynamic.len() - 1]);
-        if references(vm, start, start + last.len()) {
+        if references(vm, start, start + last.source.len()) {
             break;
         }
         vm.dynamic.pop();
@@ -624,6 +623,7 @@ fn describe_property(
     let name = match key {
         Key::Str(text) => text.lossy(),
         Key::Sym(id) => format!("Symbol({})", builtins::symbol_text(vm, *id)),
+        Key::Private(_) => return Ok(None),
     };
     let mut entry = json!({
         "name": name,
@@ -694,11 +694,9 @@ fn hidden_array(vm: &mut Vm, name: &str) -> EngineResult<ObjectId> {
     Ok(array)
 }
 
-/** A key no script can spell: the private mark followed by the name. */
+/** A key no script can spell: an engine-private key. */
 fn hidden_key(name: &str) -> EngineResult<Key> {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend(name.encode_utf16());
-    Ok(Key::Str(JsString::from_units(units)?))
+    Ok(Key::private(name))
 }
 
 /** Bind a value to a new handle (ids count up from 1, as V8's `bindObject`). */

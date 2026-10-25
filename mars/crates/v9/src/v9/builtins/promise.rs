@@ -11,11 +11,6 @@ use crate::v9::vm::realm::{Static, realm, string, symbol};
 struct Natives {
     resolve: u32,
     reject: u32,
-    all_element: u32,
-    settled_element: u32,
-    any_element: u32,
-    finally_fulfilled: u32,
-    finally_rejected: u32,
 }
 
 /** Native indexes captured by closures, set once at install. */
@@ -33,22 +28,9 @@ pub(super) fn install(b: &mut Builder) {
     let ctor = b.constructor("Promise", 1, construct, proto, None);
     b.ids.promise = ctor;
     b.global("Promise", ctor);
-    b.method(ctor, "resolve", 1, resolve_static);
-    b.method(ctor, "reject", 1, reject_static);
-    b.method(ctor, "all", 1, |vm, call| {
-        combinator(vm, call, Combinator::All)
-    });
-    b.method(ctor, "allSettled", 1, |vm, call| {
-        combinator(vm, call, Combinator::AllSettled)
-    });
-    b.method(ctor, "any", 1, |vm, call| {
-        combinator(vm, call, Combinator::Any)
-    });
-    b.method(ctor, "race", 1, race);
-    b.method(ctor, "withResolvers", 0, with_resolvers);
-    b.method(proto, "then", 2, then);
+    super::typed::species_getter(b, ctor);
+    super::promise_combinators::install(b, ctor, proto);
     b.method(proto, "catch", 1, catch);
-    b.method(proto, "finally", 1, finally);
     b.put(
         proto,
         Key::Sym(symbol::TO_STRING_TAG),
@@ -58,11 +40,6 @@ pub(super) fn install(b: &mut Builder) {
     let _ = NATIVES.set(Natives {
         resolve: b.native("", 1, resolve_function),
         reject: b.native("", 1, reject_function),
-        all_element: b.native("", 1, all_element),
-        settled_element: b.native("", 1, settled_element),
-        any_element: b.native("", 1, any_element),
-        finally_fulfilled: b.native("", 1, finally_fulfilled),
-        finally_rejected: b.native("", 1, finally_rejected),
     });
 }
 
@@ -365,56 +342,6 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(JsValue::Object(promise))
 }
 
-/** Promise.resolve. */
-fn resolve_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    vm.promise_resolve(call.arg(0)).map(JsValue::Object)
-}
-
-/** Promise.reject. */
-fn reject_static(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let promise = vm.new_promise()?;
-    vm.settle(promise, PromiseState::Rejected(call.arg(0)))?;
-    Ok(JsValue::Object(promise))
-}
-
-/** Promise.withResolvers. */
-fn with_resolvers(vm: &mut Vm, _: Call) -> Res<JsValue> {
-    let promise = vm.new_promise()?;
-    let (resolve, reject) = vm.resolving_functions(promise)?;
-    let result = vm.new_object()?;
-    vm.put(result, "promise", JsValue::Object(promise))?;
-    vm.put(result, "resolve", JsValue::Object(resolve))?;
-    vm.put(result, "reject", JsValue::Object(reject))?;
-    Ok(JsValue::Object(result))
-}
-
-/** The promise a receiver is. */
-fn this_promise(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
-    if let JsValue::Object(id) = call.this
-        && matches!(vm.heap.get(id).map(|o| &o.class), Some(Class::Promise(_)))
-    {
-        return Ok(id);
-    }
-    Err(vm.type_error("Method Promise.prototype.then called on incompatible receiver"))
-}
-
-/** Promise.prototype.then. */
-fn then(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let promise = this_promise(vm, &call)?;
-    let target = vm.new_promise()?;
-    let handler = |vm: &Vm, value: JsValue| {
-        ReactionHandler::Function(if vm.is_callable(&value) {
-            value
-        } else {
-            JsValue::Undefined
-        })
-    };
-    let fulfilled = handler(vm, call.arg(0));
-    let rejected = handler(vm, call.arg(1));
-    vm.perform_then(promise, fulfilled, rejected, Some(target))?;
-    Ok(JsValue::Object(target))
-}
-
 /** Promise.prototype.catch. */
 fn catch(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let method = vm.get(&call.this, &key("then"))?;
@@ -423,196 +350,4 @@ fn catch(vm: &mut Vm, call: Call) -> Res<JsValue> {
         call.this.clone(),
         vec![JsValue::Undefined, call.arg(0)],
     )
-}
-
-/** Promise.prototype.finally. */
-fn finally(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let on_finally = call.arg(0);
-    let method = vm.get(&call.this, &key("then"))?;
-    if !vm.is_callable(&on_finally) {
-        return vm.call(
-            method,
-            call.this.clone(),
-            vec![on_finally.clone(), on_finally],
-        );
-    }
-    let fulfilled = vm.native_closure(natives().finally_fulfilled, vec![on_finally.clone()])?;
-    let rejected = vm.native_closure(natives().finally_rejected, vec![on_finally])?;
-    vm.call(
-        method,
-        call.this.clone(),
-        vec![JsValue::Object(fulfilled), JsValue::Object(rejected)],
-    )
-}
-
-/** finally's fulfillment pass-through. */
-fn finally_fulfilled(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let on_finally = vm
-        .slots(call.callee)
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined);
-    vm.call(on_finally, JsValue::Undefined, Vec::new())?;
-    Ok(call.arg(0))
-}
-
-/** finally's rejection pass-through. */
-fn finally_rejected(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let on_finally = vm
-        .slots(call.callee)
-        .first()
-        .cloned()
-        .unwrap_or(JsValue::Undefined);
-    vm.call(on_finally, JsValue::Undefined, Vec::new())?;
-    Err(Thrown::Value(call.arg(0)))
-}
-
-/** Which aggregate. */
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Combinator {
-    All,
-    AllSettled,
-    Any,
-}
-
-/** Promise.all, allSettled and any share one shape: element functions fill a values array. */
-fn combinator(vm: &mut Vm, call: Call, kind: Combinator) -> Res<JsValue> {
-    let result = vm.new_promise()?;
-    let items = match vm.iterate_to_vec(&call.arg(0)) {
-        Ok(items) => items,
-        Err(Thrown::Value(error)) => {
-            vm.settle(result, PromiseState::Rejected(error))?;
-            return Ok(JsValue::Object(result));
-        }
-        Err(fatal) => return Err(fatal),
-    };
-    let values = vm.new_array(vec![JsValue::Undefined; items.len()])?;
-    let counter = vm.new_object()?;
-    vm.put(counter, "remaining", JsValue::Number(items.len() as f64))?;
-    if items.is_empty() {
-        if kind == Combinator::Any {
-            let error = vm.make_error(
-                crate::v9::vm::error::ErrorKind::Error,
-                "All promises were rejected",
-            )?;
-            vm.settle(result, PromiseState::Rejected(JsValue::Object(error)))?;
-        } else {
-            vm.resolve_promise(result, JsValue::Object(values))?;
-        }
-        return Ok(JsValue::Object(result));
-    }
-    let (_, reject) = vm.resolving_functions(result)?;
-    for (index, item) in items.into_iter().enumerate() {
-        let promise = vm.promise_resolve(item)?;
-        let slots = vec![
-            JsValue::Number(index as f64),
-            JsValue::Object(values),
-            JsValue::Object(counter),
-            JsValue::Object(result),
-        ];
-        let (fulfilled, rejected) = match kind {
-            Combinator::All => (vm.native_closure(natives().all_element, slots)?, reject),
-            Combinator::AllSettled => {
-                let mut rejected_slots = slots.clone();
-                rejected_slots.push(JsValue::Boolean(true));
-                (
-                    vm.native_closure(natives().settled_element, slots)?,
-                    vm.native_closure(natives().settled_element, rejected_slots)?,
-                )
-            }
-            Combinator::Any => {
-                let (resolve, _) = vm.resolving_functions(result)?;
-                (resolve, vm.native_closure(natives().any_element, slots)?)
-            }
-        };
-        vm.perform_then(
-            promise,
-            ReactionHandler::Function(JsValue::Object(fulfilled)),
-            ReactionHandler::Function(JsValue::Object(rejected)),
-            None,
-        )?;
-    }
-    Ok(JsValue::Object(result))
-}
-
-/** Store one element; settle the aggregate when the last arrives. */
-fn store_element(
-    vm: &mut Vm,
-    call: &Call,
-    value: JsValue,
-    finish: impl FnOnce(&mut Vm, ObjectId, JsValue) -> Res<()>,
-) -> Res<JsValue> {
-    let slots = vm.slots(call.callee);
-    let index = match slots.first() {
-        Some(JsValue::Number(index)) => *index as usize,
-        _ => return Ok(JsValue::Undefined),
-    };
-    let (Some(values), Some(counter), Some(JsValue::Object(result))) =
-        (slots.get(1), slots.get(2), slots.get(3))
-    else {
-        return Ok(JsValue::Undefined);
-    };
-    if let JsValue::Object(id) = values {
-        vm.array_store(*id, index, value);
-    }
-    let remaining = vm.get(counter, &key("remaining"))?;
-    let remaining = vm.to_number(&remaining)? - 1.0;
-    if let JsValue::Object(counter) = counter {
-        vm.put(*counter, "remaining", JsValue::Number(remaining))?;
-    }
-    if remaining == 0.0 {
-        finish(vm, *result, values.clone())?;
-    }
-    Ok(JsValue::Undefined)
-}
-
-/** Promise.all element function. */
-fn all_element(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    store_element(vm, &call, call.arg(0), |vm, result, values| {
-        vm.resolve_promise(result, values)
-    })
-}
-
-/** Promise.allSettled element function (slot 4 marks the rejection branch). */
-fn settled_element(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let rejected = vm.slots(call.callee).get(4).is_some_and(JsValue::truthy);
-    let record = vm.new_object()?;
-    let status = super::text(vm, if rejected { "rejected" } else { "fulfilled" })?;
-    vm.put(record, "status", status)?;
-    vm.put(
-        record,
-        if rejected { "reason" } else { "value" },
-        call.arg(0),
-    )?;
-    store_element(vm, &call, JsValue::Object(record), |vm, result, values| {
-        vm.resolve_promise(result, values)
-    })
-}
-
-/** Promise.any rejection element function. */
-fn any_element(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    store_element(vm, &call, call.arg(0), |vm, result, values| {
-        let error = vm.make_error(
-            crate::v9::vm::error::ErrorKind::Error,
-            "All promises were rejected",
-        )?;
-        vm.put(error, "errors", values)?;
-        vm.settle(result, PromiseState::Rejected(JsValue::Object(error)))
-    })
-}
-
-/** Promise.race. */
-fn race(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let result = vm.new_promise()?;
-    let (resolve, reject) = vm.resolving_functions(result)?;
-    for item in vm.iterate_to_vec(&call.arg(0))? {
-        let promise = vm.promise_resolve(item)?;
-        vm.perform_then(
-            promise,
-            ReactionHandler::Function(JsValue::Object(resolve)),
-            ReactionHandler::Function(JsValue::Object(reject)),
-            None,
-        )?;
-    }
-    Ok(JsValue::Object(result))
 }

@@ -17,9 +17,9 @@ pub(in crate::v9) enum ErrorKind {
     Uri,
 }
 
-/** The hidden own property an error's creation trace lives under; `stack` reads it. The leading
-control character keeps it clear of any name a page would use. */
-pub(in crate::v9) const TRACE_KEY: &str = "\u{1}trace";
+/** The private key an error's creation trace lives under; `stack` reads it. A page can neither
+name nor forge it. */
+pub(in crate::v9) const TRACE_KEY: &str = "errorTrace";
 impl Vm<'_> {
     /** A new error object of a kind with a message. */
     pub fn make_error(&mut self, kind: ErrorKind, message: &str) -> Result<ObjectId, EngineError> {
@@ -57,7 +57,7 @@ impl Vm<'_> {
         let trace = self.throw_trace().join("\n");
         self.heap.put(
             id,
-            Key::from(TRACE_KEY),
+            Key::private(TRACE_KEY),
             Prop {
                 slot: Slot::Data(JsValue::String(JsString::from_utf8(&trace)?)),
                 attrs: HIDDEN_ATTRS,

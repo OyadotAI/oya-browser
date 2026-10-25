@@ -81,6 +81,22 @@ pub(super) fn key(grammar: Grammar, offset: usize, source: &str) -> Key {
     key
 }
 
+/** The key of direct eval `source` at `offset` in caller scopes `scopes`: the same text in other
+scopes is other code. Length prefixes keep the two texts from running into each other. */
+pub(super) fn eval_key(offset: usize, scopes: &str, source: &str) -> Key {
+    const EVAL_TAG: u8 = 2;
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    context.update(&[EVAL_TAG]);
+    context.update(&(offset as u64).to_le_bytes());
+    for text in [scopes, source] {
+        context.update(&(text.len() as u64).to_le_bytes());
+        context.update(text.as_bytes());
+    }
+    let mut key = Key::default();
+    key.copy_from_slice(context.finish().as_ref());
+    key
+}
+
 /** The unit under `key`, now the most recently used. */
 pub(super) fn get(key: &Key) -> Option<Arc<Unit>> {
     let mut cache = cache();

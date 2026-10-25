@@ -65,7 +65,7 @@ pub struct VmState {
     #[serde(default)]
     page: platform::PageState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    dynamic: Vec<String>,
+    dynamic: Vec<vm::DynamicSource>,
     #[serde(default, skip_serializing_if = "modules::ModuleState::is_empty")]
     modules: modules::ModuleState,
 }
@@ -427,11 +427,13 @@ pub(in crate::v9) fn parse_at(
     })
 }
 
-/** Compile dynamic source at `base` into the registry; returns its top-level code. */
+/** Compile dynamic source at `base` into the registry; returns its top-level code. `context` is
+the compiler-made caller context of direct eval code, never read from the source. */
 pub(in crate::v9) fn compile_dynamic(
     registry: &mut Registry,
     source: &str,
     base: usize,
+    context: Option<&str>,
 ) -> EngineResult<Arc<Code>> {
     let site = syntax::site_of(syntax::Pos {
         offset: base as u32,
@@ -441,7 +443,10 @@ pub(in crate::v9) fn compile_dynamic(
     if let Some(code) = registry.get(site) {
         return Ok(code.clone());
     }
-    registry.script(source, base, || on_parse(source, base))
+    match context {
+        Some(context) => registry.eval(source, base, context, || on_parse(source, base)),
+        None => registry.script(source, base, || on_parse(source, base)),
+    }
 }
 
 /** Parse dynamic or handler source. */
@@ -552,7 +557,12 @@ fn session<'h>(
     let compiled = compile_sources(&mut vm, sources, isolated)?;
     for (index, source) in state.dynamic.iter().enumerate() {
         let base = builtins::dynamic_base(&state.dynamic[..index]);
-        compile_dynamic(&mut vm.registry, source, base)?;
+        compile_dynamic(
+            &mut vm.registry,
+            &source.source,
+            base,
+            source.context.as_deref(),
+        )?;
     }
     vm.dynamic = state.dynamic;
     vm.validate_graph()?;
@@ -653,7 +663,7 @@ struct Snapshot {
     changes: Vec<DomChange>,
     script_changes: Vec<ScriptChange>,
     effects: HostEffects,
-    dynamic: Vec<String>,
+    dynamic: Vec<vm::DynamicSource>,
     modules: modules::ModuleState,
     next_id: usize,
     change_bytes: usize,

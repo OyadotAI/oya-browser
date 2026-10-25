@@ -595,6 +595,11 @@ fn set(vm: &mut Vm, call: Call, which: Field, local: bool) -> Res<JsValue> {
     for index in 0..call.args.len().clamp(1, max) {
         fields[start + index] = vm.to_number(&call.arg(index))?;
     }
+    // An invalid date stays as it is (the arguments were still converted, which may have
+    // changed it); only setFullYear starts over from +0.
+    if time.is_nan() && !matches!(which, Field::Year) {
+        return Ok(JsValue::Number(f64::NAN));
+    }
     let local_time = make_date(
         fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6],
     );
@@ -774,11 +779,27 @@ fn to_locale_time_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Date.prototype[Symbol.toPrimitive]: "number" gives the time, otherwise the string. */
 fn to_primitive(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let hint = arg_string(vm, &call, 0)?.lossy();
-    if hint == "number" {
-        let method = vm.get(&call.this, &key("valueOf"))?;
-        return vm.call(method, call.this.clone(), Vec::new());
+    if !matches!(call.this, JsValue::Object(_)) {
+        return Err(vm.type_error("Date.prototype[Symbol.toPrimitive] called on non-object"));
     }
-    let method = vm.get(&call.this, &key("toString"))?;
-    vm.call(method, call.this.clone(), Vec::new())
+    let hint = match call.arg(0) {
+        JsValue::String(hint) => hint.lossy(),
+        _ => String::new(),
+    };
+    let order = match hint.as_str() {
+        "number" => ["valueOf", "toString"],
+        "string" | "default" => ["toString", "valueOf"],
+        _ => return Err(vm.type_error("Invalid hint")),
+    };
+    // OrdinaryToPrimitive: the first callable method whose result is not an object wins.
+    for name in order {
+        let method = vm.get(&call.this, &key(name))?;
+        if vm.is_callable(&method) {
+            let result = vm.call(method, call.this.clone(), Vec::new())?;
+            if !matches!(result, JsValue::Object(_)) {
+                return Ok(result);
+            }
+        }
+    }
+    Err(vm.type_error("Cannot convert object to primitive value"))
 }

@@ -12,6 +12,8 @@ pub(super) struct Uses {
     pub home: bool,
     /// Any nested function, arrow, method or class exists.
     pub closure: bool,
+    /// A call spelled `eval(...)`: it may be a direct eval that sees every binding in scope.
+    pub eval: bool,
 }
 
 /** A walker; `into_arrows` follows `this`-sharing arrows, never ordinary functions. */
@@ -272,6 +274,20 @@ impl Walker {
                 self.expr(no);
             }
             ExprKind::Call(callee, args, _) | ExprKind::New(callee, args) => {
+                if matches!(&expr.kind, ExprKind::Call(..))
+                    && matches!(&callee.kind, ExprKind::Ident(name) if &**name == "eval")
+                {
+                    // Direct eval reads any binding, `this`, `arguments`, `new.target` and
+                    // `super`, so every scope it can see lives in an environment.
+                    self.uses = Uses {
+                        this: true,
+                        arguments: true,
+                        new_target: true,
+                        home: true,
+                        closure: true,
+                        eval: true,
+                    };
+                }
                 self.expr(callee);
                 self.elements(args);
             }

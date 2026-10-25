@@ -7,7 +7,6 @@
  * ponytail: no `stream()` and no blob: URLs; the data is in memory, never in a blob registry.
  */
 use crate::v9::builtins::typed;
-use crate::v9::compile::PRIVATE_MARK;
 use crate::v9::value::{JsString, JsValue, ObjectId};
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{CONFIGURABLE, HIDDEN_ATTRS, Key, Object, Prop, Slot};
@@ -65,9 +64,7 @@ fn tag(b: &mut Builder, target: u32, name: &'static str) {
 
 /** A private slot key; scripts cannot name it. */
 fn slot(name: &str) -> Key {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend(name.encode_utf16());
-    Key::Str(JsString::from_units(units).expect("short key"))
+    Key::private(name)
 }
 
 /** Read a private slot. */

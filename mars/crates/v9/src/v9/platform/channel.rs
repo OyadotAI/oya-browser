@@ -5,8 +5,7 @@
  * across it.
  */
 use super::{Target, events, timers};
-use crate::v9::compile::PRIVATE_MARK;
-use crate::v9::value::{JsString, JsValue, ObjectId};
+use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Key, Object, Prop, Slot};
 use crate::v9::vm::realm::Builder;
@@ -53,9 +52,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
 
 /** The private key holding a port's entangled peer. */
 fn peer_key() -> Key {
-    let mut units = vec![PRIVATE_MARK];
-    units.extend("messagePeer".encode_utf16());
-    Key::Str(JsString::from_units(units).expect("short key"))
+    Key::private("messagePeer")
 }
 
 /** `new MessageChannel()`: port1 and port2, each the other's peer. */
