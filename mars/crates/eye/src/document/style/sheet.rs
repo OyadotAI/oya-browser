@@ -105,6 +105,8 @@ struct Parser<'a> {
     layer: usize,
     /// `@property` registrations, shared by every sheet.
     properties: &'a mut Registrations,
+    /// The sheet declared `@namespace`, which Eye does not resolve: prefixed selectors drop.
+    namespaced: bool,
 }
 /** Bounds the sheet, then parses every rule it can. */
 pub(super) fn parse_sheet(
@@ -146,6 +148,7 @@ pub(super) fn parse_sheet(
         layers,
         layer: layer::OUTER,
         properties,
+        namespaced: false,
     };
     parser.list(&source, None, Mode::Apply, 0)
 }
@@ -213,6 +216,7 @@ impl Parser<'_> {
                 self.layers.declare(self.layer, layer.trim());
             }
         } else if name != "charset" {
+            self.namespaced |= name == "namespace";
             note(self.diagnostics, unsupported_at(&name));
         }
     }
@@ -325,7 +329,12 @@ impl Parser<'_> {
         }
         for text in selectors {
             let (text, pseudo) = generated(text);
-            let rules: Vec<Rule> = match (selector_parse::parse(&text), mode) {
+            // Under `@namespace` a prefix (or the default namespace) changes what `*|E` means.
+            let parsed = match self.namespaced && prefixed(&text) {
+                true => Err("namespace selector"),
+                false => selector_parse::parse(&text),
+            };
+            let rules: Vec<Rule> = match (parsed, mode) {
                 (Ok(selector), Mode::Apply) => vec![Rule {
                     specificity: selector_parse::specificity(&selector),
                     target: Target::Selector(selector),
@@ -549,4 +558,10 @@ fn splice(selector: &str, at: &[usize], parent: &str) -> String {
     }
     out.push_str(&selector[from..]);
     out
+}
+/** Whether a selector carries a namespace prefix (`|` other than the `|=` operator). */
+fn prefixed(selector: &str) -> bool {
+    selector
+        .match_indices('|')
+        .any(|(at, _)| selector.as_bytes().get(at + 1) != Some(&b'='))
 }

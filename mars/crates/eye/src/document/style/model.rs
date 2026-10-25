@@ -134,6 +134,12 @@ pub struct ComputedStyle {
     /// Inherited extra advance per character in px, may be negative.
     #[serde(skip_serializing_if = "default")]
     pub letter_spacing: f64,
+    /// Inherited extra advance per space (CSS `word-spacing`) in px, may be negative.
+    #[serde(skip_serializing_if = "default")]
+    pub word_spacing: f64,
+    /// Inherited first-line indent (CSS `text-indent`) as px plus a percentage of the block's width.
+    #[serde(skip_serializing_if = "default")]
+    pub text_indent: (f64, f64),
     /// Inherited case mapping.
     #[serde(skip_serializing_if = "default")]
     pub text_transform: TextTransform,
@@ -162,6 +168,9 @@ pub struct ComputedStyle {
     /// Per-side literal border colors; None paints the default border color.
     #[serde(skip_serializing_if = "default")]
     pub border_colors: [Option<String>; 4],
+    /// Per-side painted line style top, right, bottom, left (solid unless authored).
+    #[serde(default, skip_serializing_if = "default")]
+    pub border_styles: [super::BorderStyle; 4],
     /// Authored height; a percentage resolves only against a definite containing height.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<Extent>,
@@ -384,6 +393,18 @@ pub struct ComputedStyle {
     /// Paint spreads a blurred solid box into a soft glow instead of a hard shape.
     #[serde(default, skip_serializing_if = "default")]
     pub filter_blur: f64,
+    /// `overflow-clip-margin` length in px: how far past its reference box an `overflow: clip`
+    /// or paint-contained box lets content paint (css-overflow-4). Scroll containers ignore it.
+    #[serde(default, skip_serializing_if = "default")]
+    pub overflow_clip_margin: f64,
+    /// The `overflow-clip-margin` reference box: 0 padding box (initial), 1 border box,
+    /// 2 content box.
+    #[serde(default, skip_serializing_if = "default")]
+    pub overflow_clip_box: u8,
+    /// `contain: paint` (or `strict`, `content`): the box clips its content at its overflow
+    /// clip edge like `overflow: clip`, without becoming a scroll container.
+    #[serde(default, skip_serializing_if = "default")]
+    pub contain_paint: bool,
 }
 /// A generated `::before` or `::after` box: its text and its own computed style.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -471,6 +492,8 @@ impl Default for ComputedStyle {
             text_decoration_none: false,
             font_weight: super::constants::WEIGHT_NORMAL,
             letter_spacing: 0.0,
+            word_spacing: 0.0,
+            text_indent: (0.0, 0.0),
             text_transform: TextTransform::None,
             white_space: WhiteSpace::Normal,
             font_family: FontFamily::Serif,
@@ -480,6 +503,7 @@ impl Default for ComputedStyle {
             border_style_none: false,
             border_widths: [0.0; 4],
             border_colors: [None, None, None, None],
+            border_styles: [super::BorderStyle::Solid; 4],
             height: None,
             min_height: None,
             max_height: None,
@@ -549,6 +573,9 @@ impl Default for ComputedStyle {
             svg_paint: std::collections::BTreeMap::new(),
             stacking: 0,
             filter_blur: 0.0,
+            overflow_clip_margin: 0.0,
+            overflow_clip_box: 0,
+            contain_paint: false,
         }
     }
 }

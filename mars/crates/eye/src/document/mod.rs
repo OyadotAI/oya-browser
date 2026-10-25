@@ -43,6 +43,7 @@ pub use style::{
     TextTransform, WhiteSpace, background_urls, compute_styles, compute_styles_with_context,
     rebase_urls,
 };
+pub use style::{BorderStyle, painter_rgba};
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,

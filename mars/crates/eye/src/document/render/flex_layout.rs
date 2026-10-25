@@ -489,7 +489,28 @@ pub(super) fn justification(
         }
         JustifyContent::Center => (free / 2.0, 0.0),
         JustifyContent::End => (if reverse { 0.0 } else { free }, 0.0),
+        JustifyContent::LogicalStart | JustifyContent::Left => (0.0, 0.0),
+        JustifyContent::LogicalEnd | JustifyContent::Right => (free, 0.0),
     }
+}
+
+/** A row's `justify-content` with `left` and `right` coerced to their logical sides, as Blink's
+`ResolvedJustifyContent`: `left` is the start of a left-to-right row and the end of a
+right-to-left one. */
+fn row_justify(parent: &Node) -> JustifyContent {
+    match (parent.style.justify_content, parent.style.rtl) {
+        (JustifyContent::Left, false) | (JustifyContent::Right, true) => {
+            JustifyContent::LogicalStart
+        }
+        (JustifyContent::Left, true) | (JustifyContent::Right, false) => JustifyContent::LogicalEnd,
+        (kind, _) => kind,
+    }
+}
+
+/** Whether a row's items run right to left physically: `row-reverse` in a left-to-right
+container, or `row` in a right-to-left one, whose main-start is its right edge. */
+fn physically_reversed(parent: &Node) -> bool {
+    parent.style.flex_reverse != parent.style.rtl
 }
 
 /** One measured line and where it goes, as one placement input. */
@@ -506,10 +527,10 @@ struct RowLine<'a> {
     container_index: usize,
 }
 
-/** Main-axis order of a line's items: source order, or reversed for `row-reverse`, which is
-placed left to right with `justify-content` start and end swapped. */
+/** Physical left-to-right order of a line's items: source order, or reversed when the main axis
+runs right to left (`row-reverse`, or `row` under `direction: rtl`). */
 fn line_order(parent: &Node, count: usize) -> Vec<usize> {
-    if parent.style.flex_reverse {
+    if physically_reversed(parent) {
         (0..count).rev().collect()
     } else {
         (0..count).collect()
@@ -548,15 +569,24 @@ fn place_row_line(
         .sum::<f64>()
         + parent.style.column_gap * records.len().saturating_sub(1) as f64;
     let share = flex::auto_margin_share(records, flow.width - used);
+    let free = flow.width - used;
     let (offset, between) = if share > 0.0 {
         (0.0, 0.0)
     } else {
-        justification(
-            parent.style.justify_content,
-            flow.width - used,
+        // Blink computes the offset along the inline direction; a right-to-left row measures it
+        // from the right edge, so the physical lead is what the logical trail leaves.
+        let (lead, between) = justification(
+            row_justify(parent),
+            free,
             records.len(),
             parent.style.flex_reverse,
-        )
+        );
+        if parent.style.rtl {
+            let gaps = records.len().saturating_sub(1) as f64;
+            (free - lead - between * gaps, between)
+        } else {
+            (lead, between)
+        }
     };
     let mut x = flow.x + offset;
     for index in line_order(parent, records.len()) {

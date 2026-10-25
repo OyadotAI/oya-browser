@@ -142,6 +142,10 @@ pub(super) fn settle(
         let Some((left, right)) = extent else {
             continue;
         };
+        // The line's content starts at its start edge: a text-indent or an inline box's start
+        // margin, border and padding before the first fragment take part of the line, as in
+        // Blink's line offset, so alignment distributes only what is left.
+        let left = left.min(line.left);
         let free = (line.width - (right - left)).max(0.0);
         let dx = line.left - left
             + match align {

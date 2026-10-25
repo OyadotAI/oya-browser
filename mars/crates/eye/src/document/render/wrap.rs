@@ -31,7 +31,11 @@ pub(super) fn lines(
         width: 0.0,
     };
     let gap = context.measure(" ", face)?;
-    for word in text.split_whitespace() {
+    // Only CSS white space separates words; a no-break space stays inside its word.
+    let words = text
+        .split([' ', '\t', '\n', '\r', '\x0c'])
+        .filter(|word| !word.is_empty());
+    for word in words {
         let mut chunks = word_parts(word, (width, breakable), face, context)?
             .into_iter()
             .peekable();
@@ -206,7 +210,7 @@ fn break_offsets(word: &str, breakable: bool) -> Vec<usize> {
         } else {
             hyphen_break(previous, before, after)
         };
-        if breakable || opportunity || before == '\u{200b}' {
+        if breakable || opportunity || before == '\u{200b}' || breaking_space(before) {
             offsets.push(offset);
         }
     }
@@ -239,3 +243,9 @@ const CLOSING: [char; 16] = [
 ];
 /** A line never ends with opening punctuation. */
 const OPENING: [char; 8] = ['（', '「', '『', '【', '《', '〈', '〔', '“'];
+/** UAX #14 BA spaces that do not collapse in CSS (ogham, the en/em quads and spaces except the
+figure space, the medium mathematical space, the ideographic space): a line may break after
+each, as Blink's line breaker allows. */
+fn breaking_space(c: char) -> bool {
+    matches!(c, '\u{1680}' | '\u{2000}'..='\u{2006}' | '\u{2008}'..='\u{200a}' | '\u{205f}' | '\u{3000}')
+}

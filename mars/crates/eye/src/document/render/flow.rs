@@ -134,28 +134,40 @@ fn position_floats(inner: &mut Flow, items: &mut [DisplayItem], delta: f64) {
     }
 }
 /** The highest top at or below `y` where a formatting-context root with an authored width fits
- * between the floats; an auto-width one fits anywhere, shrinking to the room. */
-fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> f64 {
+ * between the floats, with that opportunity's left edge and width; an auto-width one fits
+ * anywhere, shrinking to the room. Blink's LayoutNewFormattingContext also rejects an
+ * opportunity shorter than the fragment, so an authored height is checked over its whole
+ * extent; ponytail: an auto height is checked over one line, a trial layout per opportunity
+ * would cover it. */
+fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> (f64, f64, f64) {
     let style = &node.style;
+    let height = specified_height(node, None, flow.definite);
+    let room = |y: f64| match height {
+        Some(height) => flow.room_at_height(y, height.max(super::float::LINE_FIT_SLACK)),
+        None => flow.room_at(y),
+    };
     if style.width.is_none() {
-        return y;
+        let (left, width) = room(y);
+        return (y, left, width);
     }
     let margins = style.margin[1] + style.margin[3];
     let needed = border_width(node, flow.width, flow.width, None) + margins;
+    let extent = height.unwrap_or(0.0);
     for _ in 0..=flow.floats.len() {
-        let (_, room) = flow.room_at(y);
+        let (_, width) = room(y);
         let next = flow
             .floats
             .iter()
-            .filter(|f| f.top <= y && f.bottom > y)
+            .filter(|f| f.top < y + extent.max(super::float::LINE_FIT_SLACK) && f.bottom > y)
             .map(|f| f.bottom)
             .fold(f64::INFINITY, f64::min);
-        if room + super::float::LINE_FIT_SLACK >= needed || !next.is_finite() {
+        if width + super::float::LINE_FIT_SLACK >= needed || !next.is_finite() {
             break;
         }
         y = next;
     }
-    y
+    let (left, width) = room(y);
+    (y, left, width)
 }
 /** css-overflow-3: `text-overflow` applies only to a block container that clips its overflow. */
 pub(super) fn ellipsis_owner(node: &Node) -> Option<usize> {
@@ -469,8 +481,9 @@ pub(super) fn block(
     // A new formatting context sits beside floats instead of under them, in the first layout
     // opportunity its authored width fits (Blink's LayoutNewFormattingContext).
     let (left, room) = if fresh && forced.is_none() {
-        y = beside_floats(flow, node, y);
-        flow.room_at(y)
+        let (top, left, room) = beside_floats(flow, node, y);
+        y = top;
+        (left, room)
     } else {
         (flow.x, flow.width)
     };
@@ -578,6 +591,9 @@ pub(super) fn block(
     let specified = specified.map(|height| if cell { height.max(natural) } else { height });
     context.record_content_height(node.local_id, natural);
     let height = clamp_height(node, specified.unwrap_or(natural), flow.definite);
+    // Blink's FinishLayout: a block size other than the intrinsic one (min-height grew it, or
+    // max-height cut it) separates the last child's bottom margin, which is then dropped.
+    let trailing = if height == natural { trailing } else { 0.0 };
     items[index].height = height;
     super::generated::absolute(context, node, items, index)?;
     if forced.is_some() {
@@ -734,6 +750,7 @@ pub(super) fn box_item(
         } else {
             Default::default()
         },
+        border_styles: node.style.border_styles,
         shadows: Vec::new(),
         backgrounds: Vec::new(),
         clip: None,

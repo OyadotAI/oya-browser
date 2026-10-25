@@ -43,8 +43,19 @@ pub(super) fn apply(
         }
         return Ok(true);
     }
+    if key == "overflow-clip-margin" {
+        (style.overflow_clip_box, style.overflow_clip_margin) =
+            overflow_clip_margin(value, style.font_size, context)?;
+        return Ok(true);
+    }
+    if key == "contain" {
+        // Paint containment clips like `overflow: clip`; `contain` still groups the box below.
+        style.contain_paint = value
+            .split_whitespace()
+            .any(|word| ["paint", "strict", "content"].contains(&word));
+    }
     if super::layout_props::apply(style, key, value, context)?
-        || super::flex::apply(style, key, value)?
+        || super::flex::apply(style, key, value, context)?
         || super::visual::apply(style, key, value, context, diagnostics)?
     {
         return Ok(true);
@@ -53,6 +64,29 @@ pub(super) fn apply(
         return Ok(true);
     }
     layout(style, key, value, context, diagnostics)
+}
+/** `overflow-clip-margin: <visual-box> || <length [0,inf]>` as (reference box, px): 0 is the
+ * padding box (the initial), 1 the border box, 2 the content box. */
+fn overflow_clip_margin(value: &str, font: f64, context: RenderContext) -> EngineResult<(u8, f64)> {
+    let (mut reference, mut margin) = (None, None);
+    for word in value.split_whitespace() {
+        let boxed = match word {
+            "padding-box" => Some(0),
+            "border-box" => Some(1),
+            "content-box" => Some(2),
+            _ => None,
+        };
+        match boxed {
+            Some(_) if reference.is_some() => return Err(unsupported()),
+            Some(boxed) => reference = Some(boxed),
+            None if margin.is_some() => return Err(unsupported()),
+            None => margin = Some(contextual_length(word, font, context)?),
+        }
+    }
+    if reference.is_none() && margin.is_none() {
+        return Err(unsupported());
+    }
+    Ok((reference.unwrap_or(0), margin.unwrap_or(0.0)))
 }
 /**
  * Margins (signed, `auto` allowed) and paddings (nonnegative). A percentage, alone or inside
@@ -119,6 +153,13 @@ fn text(
             }
         }
         "line-height" => style.line_height = line_height(value, style.font_size, context)?,
+        "word-spacing" => {
+            style.word_spacing = match value {
+                "normal" => 0.0,
+                _ => super::values::signed_length(value, style.font_size, context)?,
+            }
+        }
+        "text-indent" => style.text_indent = side_length(value, style.font_size, context)?,
         "font-style" => {
             style.font_style = match value.split_whitespace().next().unwrap_or_default() {
                 "normal" => super::FontStyle::Normal,
@@ -284,9 +325,15 @@ fn display(
         | "table-column-group" => {
             note(
                 diagnostics,
-                format!("CSS display {outer} lays out as block."),
+                format!("CSS display {outer} lays out as block outside a table."),
             );
             set_display(style, false, false, false, false);
+            style.table_box = match outer.as_str() {
+                "table-row-group" => TableBox::RowGroup,
+                "table-header-group" => TableBox::HeaderGroup,
+                "table-footer-group" => TableBox::FooterGroup,
+                _ => TableBox::Column,
+            };
         }
         _ => return Err(unsupported()),
     }

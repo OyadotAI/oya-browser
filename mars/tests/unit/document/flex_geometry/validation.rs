@@ -40,7 +40,7 @@ fn unsupported_layout_declarations_degrade_with_a_diagnostic() {
             "A CSS value for gap is not supported and was ignored.",
         ),
         (
-            "display:flex;flex-basis:calc(100px - 2px)",
+            "display:flex;flex-basis:fit-content(10px)",
             "A CSS value for flex-basis is not supported and was ignored.",
         ),
     ] {

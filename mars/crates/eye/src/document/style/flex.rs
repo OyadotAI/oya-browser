@@ -5,7 +5,12 @@ use super::{
 };
 use crate::protocol::EngineResult;
 /** New flex values are explicit; unrelated properties remain owned by the legacy declaration strategy. */
-pub(super) fn apply(style: &mut ComputedStyle, key: &str, value: &str) -> EngineResult<bool> {
+pub(super) fn apply(
+    style: &mut ComputedStyle,
+    key: &str,
+    value: &str,
+    context: crate::document::RenderContext,
+) -> EngineResult<bool> {
     match key {
         "box-sizing" => {
             style.box_sizing = match value {
@@ -38,7 +43,7 @@ pub(super) fn apply(style: &mut ComputedStyle, key: &str, value: &str) -> Engine
                 } else {
                     "flex-direction"
                 };
-                apply(style, key, word)?;
+                apply(style, key, word, context)?;
             }
         }
         "place-items" | "place-self" => {
@@ -50,7 +55,7 @@ pub(super) fn apply(style: &mut ComputedStyle, key: &str, value: &str) -> Engine
             let mut words = value.split_whitespace();
             let first = words.next().ok_or_else(unsupported)?;
             let second = words.next().unwrap_or(first);
-            apply(style, align_key, first)?;
+            apply(style, align_key, first, context)?;
             if justify_key == "justify-items" {
                 style.justify_items = if second == "legacy" {
                     AlignItems::Stretch
@@ -58,7 +63,7 @@ pub(super) fn apply(style: &mut ComputedStyle, key: &str, value: &str) -> Engine
                     align(second)?
                 };
             } else {
-                apply(style, justify_key, second)?;
+                apply(style, justify_key, second, context)?;
             }
         }
         "place-content" => {
@@ -68,7 +73,7 @@ pub(super) fn apply(style: &mut ComputedStyle, key: &str, value: &str) -> Engine
             style.align_content = content(align)?;
             style.justify_content = content(justify)?;
         }
-        "flex-basis" => style.flex_basis = basis(value)?,
+        "flex-basis" => style.flex_basis = basis_in(value, style.font_size, context)?,
         "flex-grow" => style.flex_grow = number(value)?,
         "flex-shrink" => style.flex_shrink = number(value)?,
         "justify-content" => style.justify_content = content(value)?,
@@ -121,9 +126,13 @@ fn content(value: &str) -> EngineResult<JustifyContent> {
         .trim();
     Ok(match value {
         "normal" | "stretch" => JustifyContent::Stretch,
-        "start" | "flex-start" | "left" | "baseline" | "first baseline" => JustifyContent::Start,
+        "flex-start" | "baseline" | "first baseline" => JustifyContent::Start,
+        "start" => JustifyContent::LogicalStart,
+        "left" => JustifyContent::Left,
         "center" => JustifyContent::Center,
-        "end" | "flex-end" | "right" | "last baseline" => JustifyContent::End,
+        "flex-end" | "last baseline" => JustifyContent::End,
+        "end" => JustifyContent::LogicalEnd,
+        "right" => JustifyContent::Right,
         "space-between" => JustifyContent::SpaceBetween,
         "space-around" => JustifyContent::SpaceAround,
         "space-evenly" => JustifyContent::SpaceEvenly,
@@ -141,8 +150,23 @@ fn align(value: &str) -> EngineResult<AlignItems> {
         _ => return Err(unsupported()),
     })
 }
-/** Basis percentages remain unresolved until layout knows whether the main extent is definite. */
+/** Whether `value` is a valid `flex-basis`, judged with a default font: the `flex` shorthand
+checks its tokens before the cascade has the element's font. */
 pub(super) fn basis(value: &str) -> EngineResult<FlexBasis> {
+    basis_in(
+        value,
+        crate::constants::CSS_ROOT_FONT_SIZE,
+        crate::document::RenderContext::default(),
+    )
+}
+/** A `flex-basis` with any length unit resolved to pixels, as Blink's `ConvertLengthOrAuto` does;
+percentages stay unresolved until layout knows whether the main extent is definite. Without the
+units, `flex: 0 0 4em` was dropped whole and the item kept its width. */
+pub(super) fn basis_in(
+    value: &str,
+    font: f64,
+    context: crate::document::RenderContext,
+) -> EngineResult<FlexBasis> {
     // ponytail: `content` and the intrinsic keywords size from content like `auto` with an
     // automatic width; an authored width then wins where `content` would ignore it.
     if [
@@ -159,7 +183,7 @@ pub(super) fn basis(value: &str) -> EngineResult<FlexBasis> {
     if let Some(value) = value.strip_suffix('%') {
         return number(value).map(FlexBasis::Percent);
     }
-    pixels(value).map(FlexBasis::Pixels)
+    super::values::contextual_length(value, font, context).map(FlexBasis::Pixels)
 }
 /** New structural lengths accept pixels or unitless zero; unsupported units cannot guess layout. */
 pub(super) fn pixels(value: &str) -> EngineResult<f64> {

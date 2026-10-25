@@ -37,9 +37,21 @@ pub enum JustifyContent {
     /// `normal` and `stretch`: flex lines and `auto` grid tracks take the free space; items in
     /// a flex line pack at the start.
     Stretch,
+    /// `flex-start`: the main-start edge, the far end on a reversed axis.
     Start,
     Center,
+    /// `flex-end`.
     End,
+    /// `start`: the container's own start edge whatever the flex direction (Blink's `kStart`),
+    /// so `row-reverse` with `start` packs items at the left.
+    LogicalStart,
+    /// `end`: the container's own end edge (Blink's `kEnd`).
+    LogicalEnd,
+    /// `left`: the start edge in a left-to-right row, the end in a right-to-left one, and the
+    /// start in a column (Blink's `ResolvedJustifyContent`).
+    Left,
+    /// `right`: the mirror of `left`.
+    Right,
     SpaceBetween,
     SpaceAround,
     SpaceEvenly,

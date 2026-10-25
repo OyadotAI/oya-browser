@@ -181,7 +181,7 @@ pub(super) fn float(
 }
 impl Flow {
     /** Room at `y` for a box `height` tall. */
-    fn room_at_height(&self, y: f64, height: f64) -> (f64, f64) {
+    pub(super) fn room_at_height(&self, y: f64, height: f64) -> (f64, f64) {
         let (mut left, mut right) = (self.x, self.x + self.width);
         for float in self
             .floats

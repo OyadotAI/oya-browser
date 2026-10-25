@@ -22,12 +22,13 @@ struct Slot<'a> {
 }
 /** Rows in source order and their placed cells. */
 struct Grid<'a> {
-    rows: Vec<&'a Node>,
+    rows: Vec<Row<'a>>,
     cells: Vec<Slot<'a>>,
     columns: usize,
-    /** The only row is the anonymous one CSS wraps around a `display: table` box's direct
-     * cells; it is the table itself, so it paints no row box of its own. */
-    anonymous: bool,
+    /** Row groups in grid order, each over its range of rows. */
+    sections: Vec<Section<'a>>,
+    /** Constraints the `<col>` and `<colgroup>` elements set, one per column they span. */
+    elements: Vec<columns::Column>,
 }
 /** Whether a box lays out as a table: a `<table>`, or a `display: table` box with a
  * `table-row` or `table-cell` child, or with a caption beside one other child (MediaWiki's
@@ -52,7 +53,14 @@ pub(super) fn is_table(context: &LayoutContext<'_>, node: &Node) -> bool {
         .iter()
         .filter(|child| !is_caption(child) && !super::flow::out_of_flow(child))
         .count();
-    parts(&[TableBox::Row, TableBox::Cell]) > 0 || (parts(&[TableBox::Caption]) > 0 && others == 1)
+    parts(&[
+        TableBox::Row,
+        TableBox::Cell,
+        TableBox::RowGroup,
+        TableBox::HeaderGroup,
+        TableBox::FooterGroup,
+    ]) > 0
+        || (parts(&[TableBox::Caption]) > 0 && others == 1)
 }
 /** A caption: `<caption>` or a CSS `table-caption`. */
 fn is_caption(node: &Node) -> bool {
@@ -74,7 +82,11 @@ fn is_cell(row: &Node, cell: &Node) -> bool {
     }
     ["td", "th"].contains(&cell.tag.as_str())
         || cell.style.table_box == TableBox::Cell
-        || (row.tag != "tr" && !super::flow::out_of_flow(cell))
+        || (!["table", "thead", "tbody", "tfoot", "tr"].contains(&row.tag.as_str())
+            && !super::flow::out_of_flow(cell)
+            && !is_row(cell)
+            && group_kind(cell).is_none()
+            && !is_column(cell))
 }
 /** A table: caption above, then the grid inside the table's own border and padding. */
 pub(super) fn table(
@@ -187,40 +199,195 @@ fn spacing(node: &Node) -> f64 {
         node.style.border_spacing
     }
 }
+/** A grid row: a row box, or the anonymous row CSS 2.1 17.2.1 wraps around a run of cells
+ * outside one, which borrows its parent's node and paints no box of its own. */
+#[derive(Clone, Copy)]
+struct Row<'a> {
+    node: &'a Node,
+    anonymous: bool,
+}
+/** One row group in grid order: its box (none for an anonymous group) and its grid rows. */
+pub(super) struct Section<'a> {
+    pub node: Option<&'a Node>,
+    pub rows: std::ops::Range<usize>,
+}
+/** A row group's rows, each with its cells, before they are placed into the grid. */
+type Rows<'a> = Vec<(Row<'a>, Vec<&'a Node>)>;
+/** The section kind Blink orders by: the first header group goes first, the first footer
+ * group last, the rest in source order. */
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Body,
+    Header,
+    Footer,
+}
+/** A row group: `<tbody>`, `<thead>`, `<tfoot>` or a CSS `table-*-group`. */
+fn group_kind(node: &Node) -> Option<Kind> {
+    match (node.tag.as_str(), node.style.table_box) {
+        ("thead", _) | (_, TableBox::HeaderGroup) => Some(Kind::Header),
+        ("tfoot", _) | (_, TableBox::FooterGroup) => Some(Kind::Footer),
+        ("tbody", _) | (_, TableBox::RowGroup) => Some(Kind::Body),
+        _ => None,
+    }
+}
+/** A column or column group, which takes no grid slot. */
+fn is_column(node: &Node) -> bool {
+    ["col", "colgroup"].contains(&node.tag.as_str()) || node.style.table_box == TableBox::Column
+}
+/** Blink's table box tree (CSS 2.1 17.2.1): a row joins as it is, and each run of cells
+ * outside a row shares one anonymous row. */
+fn add_row<'a>(
+    context: &LayoutContext<'a>,
+    rows: &mut Rows<'a>,
+    parent: &'a Node,
+    child: &'a Node,
+) {
+    if is_row(child) {
+        let cells = context.children(child.local_id);
+        let cells = cells
+            .into_iter()
+            .filter(|cell| is_cell(child, cell))
+            .collect();
+        rows.push((
+            Row {
+                node: child,
+                anonymous: false,
+            },
+            cells,
+        ));
+    } else if is_cell(parent, child) {
+        match rows.last_mut() {
+            Some((row, cells)) if row.anonymous => cells.push(child),
+            _ => rows.push((
+                Row {
+                    node: parent,
+                    anonymous: true,
+                },
+                vec![child],
+            )),
+        }
+    }
+}
+/** The table's row groups in grid order; a run of rows or cells directly in the table forms
+ * an anonymous row group. */
+fn sections<'a>(
+    context: &LayoutContext<'a>,
+    table: &'a Node,
+) -> Vec<(Option<&'a Node>, Kind, Rows<'a>)> {
+    let mut groups = Vec::new();
+    let mut loose: Rows<'a> = Vec::new();
+    for child in context.children(table.local_id) {
+        if is_caption(child) || is_column(child) || super::flow::out_of_flow(child) {
+            continue;
+        }
+        let Some(kind) = group_kind(child) else {
+            add_row(context, &mut loose, table, child);
+            continue;
+        };
+        if !loose.is_empty() {
+            groups.push((None, Kind::Body, std::mem::take(&mut loose)));
+        }
+        let mut rows = Vec::new();
+        for row in context.children(child.local_id) {
+            add_row(context, &mut rows, child, row);
+        }
+        groups.push((Some(child), kind, rows));
+    }
+    if !loose.is_empty() {
+        groups.push((None, Kind::Body, loose));
+    }
+    if let Some(at) = groups.iter().position(|group| group.1 == Kind::Header) {
+        let header = groups.remove(at);
+        groups.insert(0, header);
+    }
+    if let Some(at) = groups.iter().position(|group| group.1 == Kind::Footer) {
+        let footer = groups.remove(at);
+        groups.push(footer);
+    }
+    groups
+}
+/** A column element's span: its `span` attribute, at least one. */
+fn column_span(node: &Node) -> usize {
+    node.attributes
+        .get("span")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, GRID_COLUMNS)
+}
+/** Blink's CreateColumn from one element's style, with a group's width as the fallback length
+ * (auto tables only, as in Blink's VisitCol). */
+fn column_element(node: &Node, fallback: Option<f64>) -> columns::Column {
+    let style = &node.style;
+    let length = style.width.filter(|_| !style.percent_width).or(fallback);
+    let percent = style.width.filter(|_| style.percent_width);
+    let min = style.min_width.unwrap_or(0.0);
+    columns::Column::element(min, length, percent)
+}
+/** Blink's ColumnConstraintsBuilder: each `<col>` sets the columns it spans; a `<colgroup>`
+ * without columns spans its own `span`, and its width falls to columns without one. */
+fn column_elements(context: &LayoutContext<'_>, table: &Node, fixed: bool) -> Vec<columns::Column> {
+    let mut out = Vec::new();
+    for child in context.children(table.local_id) {
+        if !is_column(child) {
+            continue;
+        }
+        let kids = context.children(child.local_id);
+        let cols: Vec<_> = kids.into_iter().filter(|kid| is_column(kid)).collect();
+        if cols.is_empty() || child.tag == "col" {
+            let column = column_element(child, None);
+            out.extend(std::iter::repeat_n(column, column_span(child)));
+            continue;
+        }
+        let group = column_element(child, None);
+        let fallback = (!fixed && group.constrained).then_some(group.max);
+        for col in cols {
+            let column = column_element(col, fallback);
+            out.extend(std::iter::repeat_n(column, column_span(col)));
+        }
+        if out.len() > GRID_COLUMNS {
+            break;
+        }
+    }
+    out
+}
 /** Rows and cells placed into grid slots, skipping slots taken by earlier row spans. */
 fn grid<'a>(context: &mut LayoutContext<'a>, table: &Node) -> EngineResult<Grid<'a>> {
-    let mut rows = context.descendants(table.local_id);
-    rows.retain(|node| {
-        is_row(node) && !node.hidden() && owner(context, node) == Some(table.local_id)
-    });
-    let anonymous = rows.is_empty() && table.tag != "table";
-    if anonymous {
-        rows.push(context.node(table.local_id)?);
+    let table = context.node(table.local_id)?;
+    let mut rows = Vec::new();
+    let mut sections = Vec::new();
+    for (node, _, group) in self::sections(context, table) {
+        let start = rows.len().min(GRID_ROWS);
+        rows.extend(group);
+        rows.truncate(GRID_ROWS);
+        sections.push(Section {
+            node,
+            rows: start..rows.len(),
+        });
     }
-    rows.truncate(GRID_ROWS);
+    let ends = sections
+        .iter()
+        .flat_map(|section| section.rows.clone().map(|_| section.rows.end))
+        .collect::<Vec<_>>();
     let mut taken: Vec<Vec<bool>> = vec![Vec::new(); rows.len()];
     let mut cells = Vec::new();
     let mut columns = 0;
-    for (row, node) in rows.iter().enumerate() {
+    for (row, (_, row_cells)) in rows.iter().enumerate() {
         context.charge(1)?;
         let mut column = 0;
-        for cell in context.children(node.local_id) {
-            if !is_cell(node, cell) {
-                continue;
-            }
+        for &cell in row_cells {
             while taken[row].get(column).copied().unwrap_or(false) {
                 column += 1;
             }
-            let span = |name: &str, limit: usize| {
+            let span = |name: &str| {
                 cell.attributes
                     .get(name)
                     .and_then(|v| v.trim().parse::<usize>().ok())
-                    .unwrap_or(1)
-                    .clamp(1, limit.max(1))
             };
+            // A row span stops at the end of its section; `rowspan=0` reaches it.
+            let left = ends[row] - row;
             let spans = (
-                span("rowspan", rows.len() - row),
-                span("colspan", GRID_COLUMNS),
+                span("rowspan").map_or(1, |n| if n == 0 { left } else { n.min(left) }),
+                span("colspan").unwrap_or(1).clamp(1, GRID_COLUMNS),
             );
             if column + spans.1 > GRID_COLUMNS {
                 break;
@@ -243,24 +410,20 @@ fn grid<'a>(context: &mut LayoutContext<'a>, table: &Node) -> EngineResult<Grid<
             columns = columns.max(column);
         }
     }
-    Ok(Grid {
-        rows,
-        cells,
-        columns: columns.max(1),
-        anonymous,
-    })
-}
-/** The nearest table ancestor, so a nested table's rows belong to it and not to the outer grid. */
-fn owner(context: &LayoutContext<'_>, node: &Node) -> Option<usize> {
-    let mut current = node.parent;
-    while let Some(local) = current {
-        let ancestor = context.node(local).ok()?;
-        if ancestor.tag == "table" || ancestor.style.table_box == TableBox::Table {
-            return Some(local);
-        }
-        current = ancestor.parent;
+    // Column elements past the cells stay unless they are mergeable (Blink trims those).
+    let fixed = fixed_layout(table);
+    let mut elements = column_elements(context, table, fixed);
+    while elements.len() > columns && elements.last().is_some_and(|c| c.mergeable(fixed)) {
+        elements.pop();
     }
-    None
+    elements.truncate(GRID_COLUMNS);
+    Ok(Grid {
+        rows: rows.into_iter().map(|(row, _)| row).collect(),
+        cells,
+        columns: columns.max(elements.len()).max(1),
+        sections,
+        elements,
+    })
 }
 /** `table-layout: fixed` applies only to a table with an authored width (Blink's
  * IsFixedTableLayout). */
@@ -326,6 +489,7 @@ fn column_constraints(
         }
     }
     Ok(columns::constraints(
+        &grid.elements,
         grid.columns,
         &singles,
         &spans,
@@ -358,9 +522,10 @@ fn place(
         .rows
         .iter()
         .map(|row| {
-            row.style
+            row.node
+                .style
                 .height
-                .filter(|_| !grid.anonymous)
+                .filter(|_| !row.anonymous)
                 .and_then(|h| h.resolve(None))
                 .unwrap_or(0.0)
         })
@@ -394,10 +559,15 @@ fn place(
     }
     // A row box spans its columns, inside the outer border spacing (Blink's row fragments).
     let total = (x - x0 - 2.0 * spacing).max(0.0);
-    for (row, node) in grid.rows.iter().enumerate().filter(|_| !grid.anonymous) {
+    for (row, node) in grid
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| !row.anonymous)
+    {
         context.charge(1)?;
         items.push(box_item(
-            node,
+            node.node,
             x0 + spacing,
             tops[row],
             total,

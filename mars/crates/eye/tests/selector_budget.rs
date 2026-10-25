@@ -31,3 +31,12 @@ fn nth_child_of_over_a_huge_sibling_list_stops() {
     );
     assert!(!hit(&markup, "li:nth-child(1 of .x)"));
 }
+
+/** Multibyte text inside `:nth-child(...)` is parsed, never sliced inside a character. */
+#[test]
+fn multibyte_nth_child_argument_does_not_panic() {
+    let markup = "<ul><li class=x id=t>a</li></ul>";
+    assert!(!hit(markup, "li:nth-child(1 of .é😀)"));
+    assert!(!hit(markup, "li:nth-child(ü😀of .x)"));
+    assert!(hit(markup, "li:nth-child(1 of .x)"));
+}

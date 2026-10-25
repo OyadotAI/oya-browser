@@ -290,12 +290,31 @@ impl<'a> Cursor<'a> {
         }
         None
     }
+    /**
+     * A namespace-prefixed type selector, as Blink resolves it with no `@namespace` rules:
+     * `*|E` matches E in any namespace, `|E` only elements without one (never an HTML, SVG or
+     * MathML element), and a named prefix is undeclared, which makes the selector invalid.
+     */
+    fn namespaced(
+        &mut self,
+        prefix: Option<Option<String>>,
+        compound: &mut Compound,
+    ) -> Result<Option<Option<String>>, Unsupported> {
+        self.index += 1;
+        let local = self.type_selector().ok_or("namespace selector")?;
+        match prefix {
+            Some(None) => {}
+            None => compound.simples.push(Simple::Pseudo(Pseudo::Never)),
+            Some(Some(_)) => return Err("namespace selector"),
+        }
+        Ok(Some(local))
+    }
     /** A compound must contain at least one selector. */
     fn compound(&mut self) -> Result<Compound, Unsupported> {
         let mut compound = Compound::default();
-        let typed = self.type_selector();
+        let mut typed = self.type_selector();
         if self.peek() == Some(b'|') {
-            return Err("namespace selector");
+            typed = self.namespaced(typed, &mut compound)?;
         }
         if let Some(tag) = typed.clone() {
             compound.tag = tag;
@@ -703,11 +722,25 @@ fn arguments(
     }
     Ok(out)
 }
-/** `An+B of S` split at the `of` keyword, when there is one. */
+/**
+ * `An+B of S` split at the `of` keyword, as Blink's tokenizer sees it: `of` is its own ident
+ * token, so whitespace (or a comment) precedes it and no ident character follows it. `3 of.x`
+ * and `3 of/* c */x` split; `1of x` (a dimension) and `n of` with nothing after do not.
+ */
 fn split_of(source: &str) -> Option<(&str, &str)> {
-    let lower = source.to_ascii_lowercase();
-    let at = lower.find(" of ")?;
-    Some((&source[..at], &source[at + 4..]))
+    let bytes = source.as_bytes();
+    let ident =
+        |b: u8| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b >= 0x80 || b == b'\\';
+    (1..bytes.len().saturating_sub(1)).find_map(|at| {
+        // Checked on bytes, and the ASCII "of" first: only then are `at` and `at + 2` char
+        // boundaries, so slicing a selector holding multibyte text never panics.
+        if !bytes[at..at + 2].eq_ignore_ascii_case(b"of") {
+            return None;
+        }
+        let before = bytes[at - 1].is_ascii_whitespace() || bytes[..at].ends_with(b"*/");
+        let after = bytes.get(at + 2).is_some_and(|&b| !ident(b));
+        (before && after).then(|| (&source[..at], &source[at + 2..]))
+    })
 }
 /** `:lang()` ranges: identifiers or strings, comma-separated, lowercased; None when empty. */
 fn lang(source: &str) -> Option<Vec<String>> {

@@ -248,17 +248,6 @@ impl<'a> LayoutContext<'a> {
         }
         out
     }
-    /** Strict descendants in vector order, costing the subtree's size instead of the whole tree. */
-    pub fn descendants(&self, local: usize) -> Vec<&'a Node> {
-        let mut found = Vec::new();
-        let mut pending = self.kids.get(local).cloned().unwrap_or_default();
-        while let Some(position) = pending.pop() {
-            found.push(position);
-            pending.extend(&self.kids[self.document.nodes[position].local_id]);
-        }
-        found.sort_unstable();
-        found.into_iter().map(|i| &self.document.nodes[i]).collect()
-    }
     /** Intrinsic measurement is memoized per stable node for the entire request. */
     pub fn intrinsic_widths(&mut self, local: usize) -> EngineResult<IntrinsicWidths> {
         if let Some(value) = self.intrinsic.get(&local) {

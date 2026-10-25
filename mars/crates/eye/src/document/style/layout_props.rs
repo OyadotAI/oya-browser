@@ -311,6 +311,7 @@ fn repeat(
     if ["auto-fill", "auto-fit"].contains(&count) {
         template.repeat_at = template.tracks.len();
         template.repeat = tracks;
+        template.repeat_fit = count == "auto-fit";
         return Ok(());
     }
     let times = number(count)? as usize;
