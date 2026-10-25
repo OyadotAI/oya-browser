@@ -48,3 +48,30 @@ fn native_block_button_honours_min_height() {
         layout("<button id=a style='display:block;min-height:32px'>Go</button>");
     assert!(close(find(&document, &display, "a").height, 32.0));
 }
+
+/** A taller button centers its whole content box, so an absolutely positioned icon with `top:
+ * auto` inside it moves with the text beside it (Google's "AI Mode" pill drew its icon 8px
+ * above the label when only in-flow boxes were shifted). */
+#[test]
+fn centered_button_content_carries_its_positioned_icon() {
+    let (document, display) = layout(
+        "<button id=b style='display:block;height:36px;padding:0 8px;border:0;font:14px/20px Arial;\
+         position:relative'><div id=c style='display:flex;position:relative'>\
+         <span id=i style='position:absolute;left:0;width:20px;height:20px'></span>\
+         <span style='margin-left:20px'>AI Mode</span></div></button>",
+    );
+    let button = find(&document, &display, "b");
+    let content = find(&document, &display, "c");
+    let icon = find(&document, &display, "i");
+    assert!(
+        close(content.y - button.y, 8.0),
+        "content {}",
+        content.y - button.y
+    );
+    assert!(
+        close(icon.y, content.y),
+        "icon {} content {}",
+        icon.y,
+        content.y
+    );
+}

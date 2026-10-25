@@ -188,6 +188,26 @@ impl<'a> LayoutContext<'a> {
     pub fn content_height(&self, local: usize) -> Option<f64> {
         self.content_heights.get(&local).copied()
     }
+    /** Moves the recorded static position of every out-of-flow box inside `root` down by `dy`,
+     * for a layout that shifts `root`'s content after the fact (a button centering its content):
+     * the boxes are placed later and would otherwise keep the unshifted position. */
+    pub fn shift_deferred_within(&mut self, root: usize, dy: f64) -> EngineResult<()> {
+        let locals = self.deferred.keys().copied().collect::<Vec<_>>();
+        for local in locals {
+            let mut parent = self.node(local)?.parent;
+            for _ in 0..crate::constants::DOCUMENT_DEPTH {
+                let Some(ancestor) = parent else { break };
+                if ancestor == root {
+                    if let Some(position) = self.deferred.get_mut(&local) {
+                        position.1 += dy;
+                    }
+                    break;
+                }
+                parent = self.node(ancestor)?.parent;
+            }
+        }
+        Ok(())
+    }
     /** Takes every recorded out-of-flow box, in document order. */
     pub fn take_deferred(&mut self) -> Vec<(usize, (f64, f64))> {
         let mut taken = std::mem::take(&mut self.deferred)
@@ -782,11 +802,17 @@ pub(super) fn text_intrinsic(
     // Max-content is the words and spaces line layout places, not the whole run shaped at once:
     // kerning across a space makes the run narrower, so a box sized to it wrapped its own text
     // (Google's "AI Mode" chip broke onto two lines).
-    let maximum = if words.len() <= 1 {
+    let mut maximum = if words.len() <= 1 {
         minimum
     } else {
         sum + context.measure(" ", face)? * (words.len() - 1) as f64
     };
+    // `pre-wrap` preserves a run's trailing spaces; they hang at a wrap but Blink still counts
+    // them in max-content, so `<span>Day: </span><a>` keeps its gap as a flex item.
+    if node.style.white_space == crate::document::WhiteSpace::PreWrap && !words.is_empty() {
+        let trailing = text.len() - text.trim_end_matches([' ', '\t']).len();
+        maximum += context.measure(" ", face)? * trailing as f64;
+    }
     if matches!(
         node.style.white_space,
         crate::document::WhiteSpace::Nowrap | crate::document::WhiteSpace::Pre

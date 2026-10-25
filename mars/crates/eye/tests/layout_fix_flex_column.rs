@@ -85,3 +85,16 @@ fn a_percentage_height_item_takes_its_share_of_the_column() {
     );
     assert_eq!(height(&document, &display, "a"), 200.0);
 }
+
+/** An absolute box inside an `overflow: hidden` containing block adds nothing to the document's
+height, so a full-height page does not scroll (Google's search-box ripple made it 186 px taller). */
+#[test]
+fn an_absolute_box_clipped_by_its_containing_block_does_not_extend_the_document() {
+    let ripple = "<div id=c><div style='height:200px;position:relative;overflow:hidden'>\
+                  <div style='position:absolute;top:300px;width:688px;height:688px'></div></div></div>";
+    let (_, display) = layout(ripple, COLUMN);
+    assert_eq!(display.height, 800.0);
+    let unclipped = ripple.replace("overflow:hidden", "overflow:visible");
+    let (_, display) = layout(&unclipped, COLUMN);
+    assert_eq!(display.height, 988.0);
+}

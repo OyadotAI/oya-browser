@@ -58,3 +58,14 @@ fn spaces_between_runs_count_once_each() {
     let text = width("#t{float:left}", "<div id=t>ab c d</div>");
     assert!((words - text).abs() < 0.05, "{words} {text}");
 }
+
+/** Under `pre-wrap` a run's trailing spaces are preserved and Blink counts them in max-content,
+ * so a flex item `<span>Day: </span>` keeps its gap before the next item (Google's promo line
+ * read "Day:Find" when they were dropped). */
+#[test]
+fn pre_wrap_trailing_spaces_count_in_max_content() {
+    let css = "#t{float:left;white-space:pre-wrap}";
+    let spaced = width(css, "<span id=t>Day:   </span>");
+    let bare = width(css, "<span id=t>Day:</span>");
+    assert!(spaced > bare + 8.0, "{spaced} {bare}");
+}

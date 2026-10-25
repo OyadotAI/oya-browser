@@ -69,7 +69,7 @@ const INTERFACES: &[Interface] = &[
         ..interface("HTMLAreaElement", &["area"])
     },
     Interface {
-        reflected: &["href", "rel", "type", "disabled"],
+        reflected: &["href", "rel", "type", "media", "disabled"],
         getters: &["sheet"],
         accessors: &["relList"],
         ..interface("HTMLLinkElement", &["link"])
