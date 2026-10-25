@@ -15,8 +15,19 @@ pub(super) fn inline(
     let y = flow.y;
     let sides = super::sizing::border_sides(&node.style);
     // Inline start and end edges take room on the line; vertical ones paint outside it.
+    // A space pending from before the box (the previous run's, or source whitespace between
+    // elements) stays outside it, so the box starts after it, as Blink attributes spaces.
+    let outside = flow.cursor > 0.0 && (flow.space == Some(true) || node.space_leading);
+    let before = if outside {
+        context.measure(" ", super::sizing::face_for(&node.style, Some(" ")))?
+    } else {
+        0.0
+    };
     flow.cursor += node.style.margin[3] + node.style.padding[3] + sides[3];
-    let x = flow.left() + flow.cursor;
+    let x = flow.left() + flow.cursor + before;
+    if node.space_leading {
+        flow.space = Some(true);
+    }
     items.push(box_item(node, x, y, 0.0, 0.0, Vec::new()));
     super::generated::generated(context, node, flow, items, false)?;
     let lines = text(context, &node.text, node, flow, index)?;
@@ -28,9 +39,6 @@ pub(super) fn inline(
     }
     super::generated::generated(context, node, flow, items, true)?;
     flow.cursor += node.style.margin[1] + node.style.padding[1] + sides[1];
-    if flow.space == Some(false) {
-        flow.space = None;
-    }
     let descendants = &items[index..];
     let left = descendants
         .iter()
@@ -42,10 +50,43 @@ pub(super) fn inline(
         .flat_map(|i| i.lines.iter())
         .map(|line| line.x + line.width)
         .fold(flow.left() + flow.cursor, f64::max);
+    record_edges(
+        context,
+        node,
+        &items[index..],
+        (x, y),
+        flow.left() + flow.cursor,
+    );
     items[index].x = left;
     items[index].width = (right - left).max(0.0);
     items[index].height = (flow.y + flow.line - y).max(super::sizing::advance(&node.style));
     Ok(())
+}
+/** How far the box's content start sits before its first run on its first line, and its end
+ * after its last run on the last line, so `refit_inlines` keeps child margins and the box's
+ * own leading and trailing spaces inside it, as Blink's inline box fragments do. */
+fn record_edges(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    descendants: &[DisplayItem],
+    (start, top): (f64, f64),
+    end: f64,
+) {
+    let sides = super::sizing::border_sides(&node.style);
+    let end = end - node.style.margin[1] - node.style.padding[1] - sides[1];
+    let runs = || descendants.iter().flat_map(|item| item.lines.iter());
+    let first = runs()
+        .filter(|line| line.y == top)
+        .map(|line| line.x)
+        .reduce(f64::min);
+    let bottom = runs().map(|line| line.y).reduce(f64::max);
+    let last = runs()
+        .filter(|line| Some(line.y) == bottom)
+        .map(|line| line.x + line.width)
+        .reduce(f64::max);
+    let lead = first.map_or(0.0, |first| (first - start).max(0.0));
+    let trail = last.map_or(0.0, |last| (end - last).max(0.0));
+    context.record_inline_edges(node.local_id, (lead, trail));
 }
 /** An inline-block, inline-flex or inline-grid: laid out as a block, then placed on the line as one unit. */
 fn atomic(
@@ -58,7 +99,7 @@ fn atomic(
     let margins = (style.margin[3], style.margin[1]);
     let width = super::float::shrink_width(context, node, flow.width, margins.0 + margins.1)?;
     let outer = width + margins.0 + margins.1;
-    if flow.cursor > 0.0 && flow.cursor + outer > flow.room() {
+    if flow.cursor > 0.0 && !flow.fits(outer) {
         flow.newline();
     }
     flow.fit(outer);
@@ -105,6 +146,7 @@ pub(super) fn place_atomic(
         ascent,
         height,
         align: style.vertical_align,
+        shift: super::sizing::baseline_shift(style),
         margin: margins,
     });
     flow.cursor += outer;
@@ -133,8 +175,24 @@ fn text_frag(context: &LayoutContext<'_>, node: &Node, item: usize, line: usize)
         ascent: super::sizing::text_ascent(&node.style),
         height: super::sizing::advance(&node.style),
         align: effective_align(context, node),
+        shift: inherited_shift(context, node),
         margin: (0.0, 0.0),
     }
+}
+/** A run sits on its inline boxes' baselines, so every `vertical-align` length between it and
+ * its block adds up. */
+fn inherited_shift(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    let mut shift = 0.0;
+    let mut current = Some(node);
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(node) = current.filter(|node| node.style.inline && !node.style.inline_block)
+        else {
+            break;
+        };
+        shift += super::sizing::baseline_shift(&node.style);
+        current = node.parent.and_then(|parent| context.node(parent).ok());
+    }
+    shift
 }
 /** vertical-align applies to an inline box and everything inside it, so the nearest non-baseline inline ancestor wins. */
 fn effective_align(
@@ -201,12 +259,14 @@ fn preserved(
     (item, lines): (usize, &mut Vec<PaintLine>),
 ) -> EngineResult<()> {
     let segment = segment.replace('\t', "        ");
-    let advance = super::sizing::advance(&node.style);
-    flow.line = flow.line.max(advance);
-    flow.bottom = flow.bottom.max(flow.y + flow.line);
+    // An empty run opens no line box of its own, so a trailing newline adds no blank line at the
+    // end of a `<pre>` as in Chromium; a blank line inside still advances through `newline`.
     if segment.is_empty() {
         return Ok(());
     }
+    let advance = super::sizing::advance(&node.style);
+    flow.line = flow.line.max(advance);
+    flow.bottom = flow.bottom.max(flow.y + flow.line);
     let width = context.measure(
         &segment,
         super::sizing::face_for(&node.style, Some(&segment)),
@@ -237,6 +297,7 @@ fn words(
     } else {
         0.0
     };
+    let breakable = breaks_words(context, node);
     let limit = if nowrap {
         crate::constants::LAYOUT_EXTENT
     } else {
@@ -246,7 +307,7 @@ fn words(
     let mut spaced =
         source.starts_with(char::is_whitespace) || flow.space.unwrap_or(node.tag != "#text");
     for word in source.split_whitespace() {
-        let chunks = super::wrap::lines(word, limit, face, context)?;
+        let chunks = super::wrap::lines(word, limit, face, breakable, context)?;
         let count = chunks.len();
         for (index, chunk) in chunks.into_iter().enumerate() {
             let gap = if flow.cursor > 0.0 && spaced {
@@ -254,7 +315,7 @@ fn words(
             } else {
                 0.0
             };
-            if !nowrap && flow.cursor > 0.0 && flow.cursor + gap + chunk.width > flow.room() {
+            if !nowrap && flow.cursor > 0.0 && !flow.fits(gap + chunk.width) {
                 flow.newline();
             }
             if !nowrap {
@@ -300,6 +361,21 @@ fn words(
         flow.space
     };
     Ok(())
+}
+/** Whether `overflow-wrap` or `word-break`, inherited from the nearest ancestor that declares
+it, lets a line break inside a word. */
+fn breaks_words(context: &LayoutContext<'_>, node: &Node) -> bool {
+    let declared = |pick: fn(&crate::document::ComputedStyle) -> Option<bool>| {
+        let mut current = Some(node);
+        while let Some(node) = current {
+            if let Some(value) = pick(&node.style) {
+                return value;
+            }
+            current = node.parent.and_then(|parent| context.node(parent).ok());
+        }
+        false
+    };
+    declared(|style| style.overflow_wrap_break) || declared(|style| style.word_break_all)
 }
 /** CSS text-transform changes what is measured and painted, never the agent-visible text. */
 pub(super) fn transformed<'a>(

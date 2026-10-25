@@ -108,19 +108,23 @@ fn hostile_listener_records_and_monotonic_counters_fail_closed() {
     assert!(accepted.is_empty(), "accepted forged cases {accepted:?}");
 }
 
+/** V9's own page-wide listener bound (`events::LISTENERS`), raised so component frameworks such
+ * as YouTube's fit; this test pins it. */
+const LISTENERS: usize = 16 * 1024;
+
 /** Listener registrations have their own bound, and the legacy event API refuses a projected page's state. */
 #[test]
 fn listener_count_is_bounded_and_legacy_event_api_rejects_projected_states() {
-    let source = format!(
-        "const b=document.getElementById('button');for(let i=0;i<{};i++){{b.addEventListener('click',()=>{{}});}}",
-        mars::constants::VM_LISTENERS + 1
-    );
-    assert_eq!(
-        load_document_scripts(&[source], page(), StorageState::default())
-            .unwrap_err()
-            .code,
-        "limit_exceeded"
-    );
+    let script = |count: usize| {
+        format!(
+            "const b=document.getElementById('button');for(let i=0;i<{count};i++){{b.addEventListener('click',()=>{{}});}}"
+        )
+    };
+    assert!(load_document_scripts(&[script(LISTENERS)], page(), StorageState::default()).is_ok());
+    let error = load_document_scripts(&[script(LISTENERS + 1)], page(), StorageState::default())
+        .unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert!(error.message.contains("event listeners"), "{error:?}");
     let source = "function run(){}";
     let loaded = load(source, &page());
     assert_eq!(

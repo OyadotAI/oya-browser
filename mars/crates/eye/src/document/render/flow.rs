@@ -23,6 +23,8 @@ pub(super) struct Flow {
     pub strut: Option<super::line::Strut>,
     /** The containing block's text-align. */
     pub align: super::line::Align,
+    /** The block whose `text-overflow: ellipsis` truncates this flow's overflowing lines. */
+    pub ellipsis: Option<usize>,
     /** Floats of this block formatting context that can still shorten lines. */
     pub floats: Vec<super::float::FloatBox>,
     /** Lowest bottom of floats pruned from `floats`, still honored by clearance. */
@@ -32,6 +34,17 @@ pub(super) struct Flow {
     /** Whether a space separates the next run: Some(true) after trailing whitespace, Some(false)
      * right after text, None after an element closed, where the parser dropped any whitespace-only text. */
     pub space: Option<bool>,
+    /** Blink's unresolved BFC block offset: the parent's top margin collapses through to the first
+     * child, so the parent's border edge is not placed until in-flow content resolves it. */
+    pub strut_open: bool,
+    /** Where the margin strut resolved, the first in-flow block's border top (Blink's resolved
+     * BFC block offset); None while still open or when a line box resolved it in place. */
+    pub resolved: Option<f64>,
+    /** The border top `block_top` last computed, which `after_block` records on resolution. */
+    last_top: std::cell::Cell<f64>,
+    /** Floats placed while the margin strut was open, as (index in `floats`, item range, top
+     * they were given); Blink positions them only once the BFC block offset resolves. */
+    pub unpositioned: Vec<(usize, std::ops::Range<usize>, f64)>,
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -48,10 +61,15 @@ impl Flow {
             finished: Vec::new(),
             strut: None,
             align: super::line::Align::Left,
+            ellipsis: None,
             floats: Vec::new(),
             cleared: None,
             definite: None,
             space: Some(false),
+            strut_open: false,
+            resolved: None,
+            last_top: std::cell::Cell::new(y),
+            unpositioned: Vec::new(),
         }
     }
     /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
@@ -69,10 +87,19 @@ impl Flow {
     }
     /** The top of a block whose top margin collapses with the margin already counted above it. */
     pub fn block_top(&self, margin: f64) -> f64 {
-        self.y - self.collapsible + collapse(self.collapsible, margin)
+        let top = self.y - self.collapsible + collapse(self.collapsible, margin);
+        self.last_top.set(top);
+        top
+    }
+    /** A block placed somewhere other than `block_top`, such as below floats it clears. */
+    pub fn placed_at(&self, top: f64) {
+        self.last_top.set(top);
     }
     /** Advances past a block and remembers its bottom margin for collapsing with the next one. */
     pub fn after_block(&mut self, bottom: f64, margin: f64) {
+        if std::mem::take(&mut self.strut_open) {
+            self.resolved = Some(self.last_top.get());
+        }
         self.y = bottom + margin;
         self.collapsible = margin;
         self.bottom = self.bottom.max(self.y);
@@ -80,6 +107,8 @@ impl Flow {
     /** A completed line advances by its baseline-aligned height. */
     pub fn newline(&mut self) {
         if self.cursor > 0.0 || self.line > 0.0 || !self.frags.is_empty() {
+            // A line box resolves an open margin strut where it stands.
+            self.strut_open = false;
             let aligned = super::line::finish(self);
             self.y += self.line.max(aligned);
             self.bottom = self.bottom.max(self.y);
@@ -89,6 +118,49 @@ impl Flow {
         self.line = 0.0;
         self.space = Some(false);
     }
+}
+/** Moves floats placed before the margin strut resolved down by `delta`, where the resolved
+ * block offset puts them (Blink's PositionPendingFloats). A float before a block whose top
+ * margin collapses through its parent sat that margin too high. */
+fn position_floats(inner: &mut Flow, items: &mut [DisplayItem], delta: f64) {
+    for (index, range, _) in std::mem::take(&mut inner.unpositioned) {
+        if let Some(float) = inner.floats.get_mut(index) {
+            float.top += delta;
+            float.bottom += delta;
+        }
+        for item in items.iter_mut().take(range.end).skip(range.start) {
+            super::line::translate(item, 0.0, delta);
+        }
+    }
+}
+/** The highest top at or below `y` where a formatting-context root with an authored width fits
+ * between the floats; an auto-width one fits anywhere, shrinking to the room. */
+fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> f64 {
+    let style = &node.style;
+    if style.width.is_none() {
+        return y;
+    }
+    let margins = style.margin[1] + style.margin[3];
+    let needed = border_width(node, flow.width, flow.width, None) + margins;
+    for _ in 0..=flow.floats.len() {
+        let (_, room) = flow.room_at(y);
+        let next = flow
+            .floats
+            .iter()
+            .filter(|f| f.top <= y && f.bottom > y)
+            .map(|f| f.bottom)
+            .fold(f64::INFINITY, f64::min);
+        if room + super::float::LINE_FIT_SLACK >= needed || !next.is_finite() {
+            break;
+        }
+        y = next;
+    }
+    y
+}
+/** css-overflow-3: `text-overflow` applies only to a block container that clips its overflow. */
+pub(super) fn ellipsis_owner(node: &Node) -> Option<usize> {
+    let clips = node.style.overflow != crate::document::style::Overflow::Visible;
+    (node.style.text_overflow_ellipsis && clips).then_some(node.local_id)
 }
 /** CSS 2.1 margin collapsing: the largest positive margin plus the most negative one. */
 pub(super) fn collapse(a: f64, b: f64) -> f64 {
@@ -112,6 +184,8 @@ pub(super) fn layout(
 ) -> EngineResult<Laid> {
     // The page's loaded fonts must be on this thread before any run is measured.
     crate::document::style::install_fonts(&document.formatting);
+    let collapsed = super::table::collapse_borders(document)?;
+    let document = collapsed.as_ref().unwrap_or(document);
     let body = super::sizing::has_percent_sides(&document.formatting.body.style);
     let nodes = document
         .nodes
@@ -202,7 +276,7 @@ fn layout_once(
         flow.bottom = flow.bottom.max(painted);
     }
     let bottom = if authored {
-        body.padding[2] + body.border + body.margin[2]
+        body.padding[2] + super::sizing::border_sides(body)[2] + body.margin[2]
     } else {
         MARGIN
     };
@@ -240,8 +314,36 @@ pub(super) fn alignment(style: &crate::document::ComputedStyle) -> super::line::
         _ => Align::Left,
     }
 }
-/** Forced flex border boxes bypass authored sizing, while ordinary flow preserves its cursor. */
+/** Lays out one node, then records whether source whitespace separates it from the next run:
+ * only when its own text ended in a space or whitespace followed it in the source, so adjacent
+ * inline elements (highlighted code tokens) touch as in Chromium. */
 pub(super) fn node_layout(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &mut Flow,
+    items: &mut Vec<DisplayItem>,
+    forced: Option<BorderBox>,
+) -> EngineResult<()> {
+    let inline_run = forced.is_none()
+        && !node.hidden()
+        && !out_of_flow(node)
+        && node.style.float == crate::document::style::Float::None
+        && inline_level(node);
+    if inline_run && atomic_inline(node) && flow.cursor > 0.0 && flow.space == Some(true) {
+        // The space a preceding run ended with is drawn before an atomic box too; only words
+        // added it, so Google's "Day: <a inline-block>" ran together.
+        let face = super::sizing::face_for(&node.style, Some(" "));
+        flow.cursor += context.measure(" ", face)?;
+        flow.space = Some(false);
+    }
+    dispatch(context, node, flow, items, forced)?;
+    if inline_run {
+        flow.space = Some(node.space_after || flow.space == Some(true));
+    }
+    Ok(())
+}
+/** Forced flex border boxes bypass authored sizing, while ordinary flow preserves its cursor. */
+fn dispatch(
     context: &mut LayoutContext<'_>,
     node: &Node,
     flow: &mut Flow,
@@ -256,7 +358,16 @@ pub(super) fn node_layout(
         let position = if flow.cursor > 0.0 && !inline_level(node) {
             (flow.x, flow.y + flow.line)
         } else {
-            (flow.left() + flow.cursor, flow.y)
+            // A collapsible space before the box is kept (the box is no break), so the static
+            // position is after it, as Blink's inline static positions are.
+            let pending = flow.cursor > 0.0 && flow.space == Some(true);
+            let space = if pending {
+                let face = super::sizing::face_for(&node.style, Some(" "));
+                context.measure(" ", face)?
+            } else {
+                0.0
+            };
+            (flow.left() + flow.cursor + space, flow.y)
         };
         context.defer(node.local_id, position);
         return Ok(());
@@ -275,7 +386,7 @@ pub(super) fn node_layout(
     if node.tag == "svg" {
         return super::svg::svg(context, node, flow, items, forced);
     }
-    if node.tag == "table" {
+    if super::table::is_table(context, node) {
         return super::table::table(context, node, flow, items, forced);
     }
     if super::control::has_content(context, node) {
@@ -288,6 +399,16 @@ pub(super) fn node_layout(
         return super::text::inline(context, node, flow, items);
     }
     block(context, node, flow, items, forced)
+}
+/** Boxes placed on a line as one unit: inline-blocks, replaced elements and controls. */
+fn atomic_inline(node: &Node) -> bool {
+    node.style.inline_block
+        || ["img", "svg", "input", "button", "select", "textarea"].contains(&node.tag.as_str())
+}
+/** Whitespace-only text, which a flex or grid container never makes an item of, even under
+ * `white-space: pre` (the newlines between nodejs.org's grid code lines added blank rows). */
+pub(super) fn blank_text(node: &Node) -> bool {
+    node.tag == "#text" && node.text.trim().is_empty()
 }
 /** Absolute and fixed boxes leave normal flow and are placed against their containing block later. */
 pub(super) fn out_of_flow(node: &Node) -> bool {
@@ -317,19 +438,32 @@ pub(super) fn block(
     flow.newline();
     let style = &node.style;
     let fresh = forced.is_some() || new_context(node);
-    if forced.is_none()
-        && let Some(clear) = flow.clearance(style.clear)
-        && clear > flow.block_top(style.margin[0])
-    {
+    // CSS 2.1 9.5.2: clearance places the border edge at the cleared floats' bottom, absorbing
+    // the top margin, when the collapsed position would be above it.
+    let clearing = forced
+        .is_none()
+        .then(|| flow.clearance(style.clear))
+        .flatten();
+    if clearing.is_some() {
+        // A cleared child past adjoining floats resolves its parent's open strut first, where the
+        // parent stands, so its own margin no longer collapses through (Blink's clearance rules).
+        flow.strut_open = false;
+    }
+    let cleared = clearing.filter(|clear| *clear > flow.block_top(style.margin[0]));
+    if let Some(clear) = cleared {
         flow.y = clear;
         flow.collapsible = 0.0;
+        flow.placed_at(clear);
     }
     let above = (flow.y - flow.collapsible, flow.collapsible);
-    let y = forced
+    let mut y = forced
         .map(|bounds| bounds.y)
+        .or(cleared)
         .unwrap_or_else(|| flow.block_top(style.margin[0]));
-    // A new formatting context sits beside floats instead of under them.
+    // A new formatting context sits beside floats instead of under them, in the first layout
+    // opportunity its authored width fits (Blink's LayoutNewFormattingContext).
     let (left, room) = if fresh && forced.is_none() {
+        y = beside_floats(flow, node, y);
         flow.room_at(y)
     } else {
         (flow.x, flow.width)
@@ -356,12 +490,15 @@ pub(super) fn block(
     );
     inner.strut = Some(strut(style));
     inner.align = alignment(style);
+    inner.ellipsis = ellipsis_owner(node);
     inner.definite = specified.map(|height| (height - vertical_edges(node)).max(0.0));
     // A flex container is its own formatting context, so no margin collapses through it.
     let collapses = forced.is_none() && !fresh;
-    if collapses && style.padding[0] == 0.0 && sides[0] == 0.0 {
+    let through_top = collapses && style.padding[0] == 0.0 && sides[0] == 0.0;
+    if through_top {
         // A first child's top margin collapses through a parent with no top padding or border.
         inner.collapsible = y - flow.y + flow.collapsible;
+        inner.strut_open = true;
     }
     let index = items.len();
     items.push(box_item(node, x, y, width, 0.0, Vec::new()));
@@ -389,6 +526,17 @@ pub(super) fn block(
     }
     inner.newline();
     super::line::settle(context, &mut inner, items, index + 1)?;
+    if through_top && let Some(top) = inner.resolved {
+        // The collapsed margins resolved at the first child's border edge, which is where this
+        // box's border edge sits too (Blink resolves both at one BFC block offset).
+        position_floats(&mut inner, items, top - y);
+        y = top;
+        items[index].y = top;
+        flow.placed_at(top);
+    } else if through_top && inner.strut_open && flow.strut_open {
+        // Still unresolved: the floats wait for the outer box, which shares their list.
+        flow.unpositioned.append(&mut inner.unpositioned);
+    }
     if style.list_item
         && let Some(line) = super::marker::marker(context, node, (inner.x, y), &items[index..])?
     {
@@ -409,6 +557,12 @@ pub(super) fn block(
     let trailing = if through { inner.collapsible } else { 0.0 };
     let natural =
         (inner.bottom - trailing - y + style.padding[2] + sides[2]).max(vertical_edges(node));
+    // A table cell's authored height is a minimum: Blink sizes the cell to the larger of it and
+    // its content, and aligns the content by its own height (recorded here for the table).
+    let cell =
+        forced.is_none_or(|bounds| bounds.height.is_none()) && super::table::is_cell_box(node);
+    let specified = specified.map(|height| if cell { height.max(natural) } else { height });
+    context.record_content_height(node.local_id, natural);
     let height = clamp_height(node, specified.unwrap_or(natural), flow.definite);
     items[index].height = height;
     super::generated::absolute(context, node, items, index)?;
@@ -449,6 +603,8 @@ pub(super) fn new_context(node: &Node) -> bool {
         || style.display_flex
         || style.display_grid
         || style.inline_block
+        || style.flow_root
+        || style.table_box == crate::document::style::TableBox::Table
         || style.float != crate::document::style::Float::None
         || out_of_flow(node)
         || ["td", "th", "caption", "button", "fieldset"].contains(&node.tag.as_str())
@@ -479,7 +635,7 @@ fn aspect_height(node: &Node, width: f64, definite: Option<f64>) -> Option<f64> 
     Some(clamp_height(node, height, definite))
 }
 /** min-height and max-height bound the border-box height; min wins over max. */
-fn clamp_height(node: &Node, height: f64, definite: Option<f64>) -> f64 {
+pub(super) fn clamp_height(node: &Node, height: f64, definite: Option<f64>) -> f64 {
     let bound = |extent: Option<crate::document::style::Extent>| {
         extent
             .and_then(|extent| extent.resolve_size(definite))
@@ -545,7 +701,7 @@ pub(super) fn box_item(
         border: if node.style.border_style_none {
             0.0
         } else {
-            node.style.border
+            super::sizing::snap_border(node.style.border)
         },
         border_color: node.style.border_color.clone(),
         validation: Vec::new(),
@@ -555,7 +711,7 @@ pub(super) fn box_item(
         vector: Vec::new(),
         radius: [0.0; 4],
         border_widths: if node.style.border == 0.0 && !node.style.border_style_none {
-            node.style.border_widths
+            node.style.border_widths.map(super::sizing::snap_border)
         } else {
             [0.0; 4]
         },

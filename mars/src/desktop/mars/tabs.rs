@@ -6,11 +6,11 @@ use super::{
     TAB_CLOSE_BASE, TAB_CLOSE_OTHERS_BASE, TAB_CLOSE_RIGHT_BASE, TAB_DUPLICATE_BASE, TAB_NEW,
     TAB_REOPEN, TAB_SELECT_BASE,
 };
-use objc2::{DefinedClass, MainThreadOnly, rc::Retained};
+use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained};
 use objc2_app_kit::{
     NSAccessibility, NSButton, NSCellImagePosition, NSColor, NSScrollView, NSTextAlignment, NSView,
 };
-use objc2_foundation::NSString;
+use objc2_foundation::{MainThreadMarker, NSObjectProtocol, NSPoint, NSRect, NSString};
 
 /// Room on the left for the macOS traffic lights, as Oya's strip pads for them.
 pub(super) const TRAFFIC_LIGHTS: f64 = 78.0;
@@ -26,6 +26,67 @@ const DRAG_RESERVE: f64 = 48.0;
 const CLOSE: f64 = 18.0;
 /// Inset of the favicon and title from the tab body's leading edge.
 const INSET: f64 = 10.0;
+
+define_class!(
+    /** The strip's scroll view. A plain NSScrollView in the title bar hands every mouse-down to
+    the window as a drag, so no tab underneath it would ever get a click. */
+    #[unsafe(super(NSScrollView))]
+    #[thread_kind = MainThreadOnly]
+    struct StripScroll;
+    unsafe impl NSObjectProtocol for StripScroll {}
+    impl StripScroll {
+        /** Clicks inside the strip belong to the tabs, never to window dragging. */
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        fn moves_window(&self) -> bool {
+            false
+        }
+        /** The clip view answers no hit test inside the title bar, so a press would fall through
+        to the theme frame and drag the window; the tabs are asked directly instead. */
+        #[unsafe(method(hitTest:))]
+        fn hit_test(&self, point: NSPoint) -> *mut NSView {
+            let Some(document) = self.documentView() else {
+                return std::ptr::null_mut();
+            };
+            let superview = unsafe { self.superview() };
+            let local = document.convertPoint_fromView(point, superview.as_deref());
+            match document.hitTest(local) {
+                Some(view) => Retained::into_raw(view),
+                None => unsafe { msg_send![super(self), hitTest: point] },
+            }
+        }
+    }
+);
+
+define_class!(
+    /** The scroll view's document view holding the tab shapes; it declines drags for the same reason. */
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    struct StripContent;
+    unsafe impl NSObjectProtocol for StripContent {}
+    impl StripContent {
+        /** Clicks inside the strip belong to the tabs, never to window dragging. */
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        fn moves_window(&self) -> bool {
+            false
+        }
+    }
+);
+
+impl StripScroll {
+    /** An empty frame; the strip lays itself out on every pass. */
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] }
+    }
+}
+
+impl StripContent {
+    /** The document view starts strip-high and zero wide; width follows the tabs. */
+    fn new(mtm: MainThreadMarker, frame: NSRect) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        unsafe { msg_send![super(this), initWithFrame: frame] }
+    }
+}
 
 /** One tab: its painted shape, the select button carrying icon and title, and its close button. */
 struct Tab {
@@ -48,12 +109,12 @@ impl TabStrip {
     /** Scrollers stay hidden: the strip scrolls with a trackpad and keeps the selected tab in view. */
     pub fn new(target: &Canvas) -> Self {
         let mtm = target.mtm();
-        let scroll =
-            NSScrollView::initWithFrame(NSScrollView::alloc(mtm), rect(0.0, 0.0, 0.0, 0.0));
+        let scroll: Retained<NSScrollView> = Retained::into_super(StripScroll::new(mtm));
         scroll.setHasHorizontalScroller(false);
         scroll.setHasVerticalScroller(false);
         scroll.setDrawsBackground(false);
-        let content = NSView::initWithFrame(NSView::alloc(mtm), rect(0.0, 0.0, 0.0, STRIP_HEIGHT));
+        let content: Retained<NSView> =
+            Retained::into_super(StripContent::new(mtm, rect(0.0, 0.0, 0.0, STRIP_HEIGHT)));
         scroll.setDocumentView(Some(&content));
         let new = theme::icon("plus", 13.0, "New tab (⌘T)", TAB_NEW, target);
         Self {

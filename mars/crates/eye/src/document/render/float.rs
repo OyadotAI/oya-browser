@@ -2,6 +2,8 @@
 use super::flow::*;
 use crate::document::style::{Clear, Float};
 
+/** Overflow a line forgives: one Chromium LayoutUnit. */
+pub(super) const LINE_FIT_SLACK: f64 = 1.0 / 64.0;
 /** Floats one formatting context remembers; older ones above the cursor are pruned first. */
 pub(super) const FLOATS: usize = 64;
 
@@ -42,6 +44,13 @@ impl Flow {
     /** The current line's width between floats. */
     pub fn room(&self) -> f64 {
         self.room_at(self.y).1
+    }
+    /** Whether `extent` more fits on the current line. A run overflowing by less than one of
+     * Chromium's 1/64 px layout units still fits: sums of the same widths in another order
+     * differ in the last bits, and a flex item sized to its text's max-content wrapped it
+     * (BBC's "Watch Live"). */
+    pub fn fits(&self, extent: f64) -> bool {
+        self.cursor + extent <= self.room() + LINE_FIT_SLACK
     }
     /** Moves an empty line below floats until `width` fits or no float narrows it. */
     pub fn fit(&mut self, width: f64) {
@@ -119,14 +128,16 @@ pub(super) fn float(
     let margins = (style.margin[3], style.margin[1]);
     let width = shrink_width(context, node, flow.width, margins.0 + margins.1)?;
     let outer = width + margins.0 + margins.1;
-    let mut y = if flow.cursor > 0.0 && (left || outer > flow.room() - flow.cursor) {
-        flow.y + flow.line
-    } else {
-        flow.y
-    };
+    // Blink's PositionFloat: a float met mid-line goes beside that line when it fits next to
+    // the content already there (a left one pushes that content over), else below the line.
+    let beside = flow.cursor == 0.0 || outer <= flow.room() - flow.cursor + LINE_FIT_SLACK;
+    let mut y = if beside { flow.y } else { flow.y + flow.line };
     if let Some(clear) = flow.clearance(style.clear) {
         y = y.max(clear);
     }
+    // CSS 2.1 9.5.1 rule 5 (Blink's exclusion space floats_top): a float's top is never above
+    // an earlier float's, so a right float after a wrapped left one starts on its row.
+    y = flow.floats.iter().map(|f| f.top).fold(y, f64::max);
     let x = loop {
         let (start, room) = flow.room_at_height(y, 1.0);
         let crowded = flow.floats.iter().any(|f| f.top <= y && f.bottom > y);
@@ -159,6 +170,13 @@ pub(super) fn float(
         top: y,
         bottom,
     });
+    if flow.strut_open {
+        let index = flow.floats.len() - 1;
+        flow.unpositioned.push((index, start..items.len(), y));
+    }
+    if left && flow.cursor > 0.0 && y == flow.y {
+        super::line::shift_current(flow, items, outer);
+    }
     Ok(())
 }
 impl Flow {

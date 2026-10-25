@@ -12,6 +12,9 @@ use super::{
 /** Every superset subject with the ancestors it needs; empty when the selector matches nothing. */
 pub(super) fn subjects(text: &str) -> Vec<(Compound, usize)> {
     let mut out = Vec::new();
+    if dynamic_only(text) {
+        return out;
+    }
     collect(text.trim(), 0, 0, &mut out);
     out
 }
@@ -56,4 +59,40 @@ fn ancestors(text: &str) -> usize {
         index = end + 1;
     }
     pieces.saturating_sub(1).saturating_sub(siblings)
+}
+/** User-action states no static frame is in, so a rule needing one never applies here. */
+const DYNAMIC: [&str; 7] = [
+    "hover",
+    "active",
+    "focus",
+    "focus-within",
+    "focus-visible",
+    "target",
+    "visited",
+];
+/** Whether the selector applies only under a user-action state named outside any parentheses
+ * (so not under `:not()`), as MDN's `:is(.a11y-menu a):focus-within` does: it never matches the
+ * frame agents act on, so it must not mask every link. */
+fn dynamic_only(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    (0..bytes.len()).any(|index| {
+        match bytes[index] {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        let single = bytes[index] == b':'
+            && bytes.get(index + 1) != Some(&b':')
+            && (index == 0 || bytes[index - 1] != b':');
+        depth == 0
+            && single
+            && DYNAMIC.iter().any(|name| {
+                let rest = &text[index + 1..];
+                rest.len() >= name.len()
+                    && rest[..name.len()].eq_ignore_ascii_case(name)
+                    && !rest[name.len()..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '(')
+            })
+    })
 }

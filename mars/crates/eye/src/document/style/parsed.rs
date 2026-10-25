@@ -12,7 +12,9 @@ use super::{
     animation::Keyframes,
     bucket::Buckets,
     font_face::FontFaces,
+    layer::Layers,
     sheet::{Budget, Rule, parse_sheet},
+    vars::Registrations,
 };
 use crate::{
     constants::{STYLE_BYTES, STYLE_SHEETS},
@@ -42,6 +44,10 @@ pub(super) struct Parsed {
     pub untrusted: bool,
     /// The parse's value-free notes, replayed into each document that uses it.
     pub diagnostics: Vec<String>,
+    /// Each cascade layer's rank: a rule's `layer` indexes it, and higher ranks win.
+    pub layer_ranks: Vec<usize>,
+    /// `@property` registrations, which give custom properties initial values.
+    pub properties: Rc<Registrations>,
 }
 
 impl Parsed {
@@ -56,6 +62,8 @@ impl Parsed {
             keyframes: state.keyframes.clone(),
             font_faces: state.font_faces.faces.clone(),
             diagnostics: state.diagnostics.clone(),
+            layer_ranks: state.layers.ranks(),
+            properties: Rc::new(state.properties.clone()),
         }
     }
 }
@@ -72,6 +80,10 @@ struct State {
     keyframes: Keyframes,
     font_faces: FontFaces,
     diagnostics: Vec<String>,
+    /// Cascade layers in declaration order, shared by every sheet.
+    layers: Layers,
+    /// `@property` registrations, shared by every sheet.
+    properties: Registrations,
 }
 
 impl Default for State {
@@ -85,6 +97,8 @@ impl Default for State {
             keyframes: Keyframes::default(),
             font_faces: FontFaces::default(),
             diagnostics: Vec::new(),
+            layers: Layers::default(),
+            properties: Registrations::default(),
         }
     }
 }
@@ -191,6 +205,8 @@ fn parse(
             &mut state.budget,
             &mut state.keyframes,
             &mut state.font_faces,
+            &mut state.layers,
+            &mut state.properties,
         );
         parse_sheet(sheet, context, shared, &mut state.diagnostics, skipped)?;
         state.count = index + 1;
@@ -204,6 +220,8 @@ fn parse(
                 &mut state.budget,
                 &mut state.keyframes,
                 &mut state.font_faces,
+                &mut state.layers,
+                &mut state.properties,
             );
             parse_sheet(sheet, context, shared, &mut state.diagnostics, false)?;
             groups.resize(state.rules.len(), *group);

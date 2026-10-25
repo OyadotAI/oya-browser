@@ -95,42 +95,8 @@ fn sized(node: &Node, definite: Option<f64>) -> bool {
 }
 /** Border-box size from CSS sizes, then HTML dimensions, then intrinsic size, keeping the aspect ratio. */
 pub(super) fn image_size(node: &Node, available: f64, definite: Option<f64>) -> (f64, f64) {
-    let intrinsic = node
-        .image_size
-        .map(|(width, height)| (f64::from(width), f64::from(height)));
-    let available = available.max(0.0);
-    let css_height = node
-        .style
-        .height
-        .and_then(|height| height.resolve_size(definite))
-        .map(|height| super::sizing::content_size(node, height, false));
-    // HTML width and height arrive as presentational hints, so an author's `auto` overrides them.
-    let height = css_height;
-    let width = super::sizing::specified_content(node, available);
-    let ratio = match (
-        intrinsic,
-        dimension(node, "width"),
-        dimension(node, "height"),
-    ) {
-        (Some((w, h)), _, _) => h / w.max(1.0),
-        (None, Some(w), Some(h)) => h / w.max(1.0),
-        _ => 1.0,
-    };
-    let content_width = match (width, height) {
-        (Some(width), _) => width,
-        (None, Some(height)) => height / ratio.max(f64::EPSILON),
-        (None, None) => intrinsic.map_or(0.0, |(w, _)| w),
-    };
-    let border = border_width(node, available, available, Some(content_width));
-    let clamped = (border - horizontal_edges(node)).max(0.0);
-    let content_height = match height {
-        Some(height) if clamped >= content_width => height,
-        _ => clamped * ratio,
-    };
-    (
-        border,
-        content_height.min(LAYOUT_LIMIT) + vertical_edges(node),
-    )
+    let (width, height) = super::sizing::replaced_size(node, Some(available.max(0.0)), definite);
+    (width, height.min(LAYOUT_LIMIT + vertical_edges(node)))
 }
 /** Image heights stay inside layout geometry bounds even for extreme aspect ratios. */
 const LAYOUT_LIMIT: f64 = crate::constants::LAYOUT_EXTENT;
@@ -147,7 +113,7 @@ fn inline_image(
     }
     let style = &node.style;
     let outer = width + style.margin[1] + style.margin[3];
-    if flow.cursor > 0.0 && flow.cursor + outer > flow.room() {
+    if flow.cursor > 0.0 && !flow.fits(outer) {
         flow.newline();
     }
     flow.fit(outer);
@@ -201,15 +167,6 @@ fn inline_alt(
     ));
     Ok(())
 }
-/** HTML dimensions accept only positive integers; malformed values fall back to intrinsic size. */
-fn dimension(node: &Node, name: &str) -> Option<f64> {
-    node.attributes
-        .get(name)?
-        .parse::<u32>()
-        .ok()
-        .filter(|value| *value > 0)
-        .map(f64::from)
-}
 /// An img showing an SVG drawing carries its paths fitted to the content box, painted in the
 /// img's text color for `currentColor`; any other img is returned unchanged.
 fn drawn(
@@ -232,6 +189,57 @@ fn drawn(
         (item.height - vertical_edges(node)).max(0.0),
     );
     let current = item.color.clone().unwrap_or_else(|| "#000000".into());
-    item.vector = super::svg::image_paths(context, source, content, &current)?;
+    let natural = node
+        .image_size
+        .map(|(width, height)| (f64::from(width), f64::from(height)))
+        .unwrap_or((content.2, content.3));
+    let object = object_rect(&node.style, natural, content);
+    item.vector = super::svg::image_paths(context, source, object, &current)?;
     Ok(item)
+}
+/// Where replaced content paints inside its content box under `object-fit` and
+/// `object-position`, a port of Blink's `LayoutReplaced::ComputeReplacedContentRect`: `fill`
+/// stretches to the box, `contain` and `cover` scale the natural size uniformly to fit inside or
+/// to cover it, `none` keeps the natural size, `scale-down` is the smaller of `none` and
+/// `contain`; the result is then placed by `object-position` within the leftover room.
+pub(super) fn object_rect(
+    style: &crate::document::ComputedStyle,
+    (natural_width, natural_height): (f64, f64),
+    (x, y, width, height): (f64, f64, f64, f64),
+) -> (f64, f64, f64, f64) {
+    use crate::document::style::ObjectFit;
+    if natural_width <= 0.0 || natural_height <= 0.0 || style.object_fit == ObjectFit::Fill {
+        return (x, y, width, height);
+    }
+    let fit = |cover: bool| {
+        let scale = if cover {
+            (width / natural_width).max(height / natural_height)
+        } else {
+            (width / natural_width).min(height / natural_height)
+        };
+        (natural_width * scale, natural_height * scale)
+    };
+    let (used_width, used_height) = match style.object_fit {
+        ObjectFit::Contain => fit(false),
+        ObjectFit::Cover => fit(true),
+        ObjectFit::None => (natural_width, natural_height),
+        _ => {
+            let contained = fit(false);
+            if contained.0 < natural_width {
+                contained
+            } else {
+                (natural_width, natural_height)
+            }
+        }
+    };
+    let [px, py] = style.object_position;
+    let place = |extent: crate::document::style::Extent, room: f64| {
+        extent.px + room * extent.percent / 100.0
+    };
+    (
+        x + place(px, width - used_width),
+        y + place(py, height - used_height),
+        used_width,
+        used_height,
+    )
 }

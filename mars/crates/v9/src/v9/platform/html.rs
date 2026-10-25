@@ -15,7 +15,7 @@ const VOID: [&str; 14] = [
     "track", "wbr",
 ];
 /** Elements whose content is raw text. */
-const RAW: [&str; 4] = ["script", "style", "textarea", "title"];
+pub(super) const RAW: [&str; 4] = ["script", "style", "textarea", "title"];
 
 /** Escape text content. */
 fn escape_text(text: &str, out: &mut String) {

@@ -24,6 +24,53 @@ pub struct FontRequest {
 
 /** Keys of local fonts are tagged so a file and a name never collide. */
 const LOCAL_TAG: u64 = 0x4c4f_4341_4c00_0000;
+/** Keys of installed families are tagged apart from `local()` names. */
+const FAMILY_TAG: u64 = 0x4641_4d49_4c59_0000;
+/** Installed macOS families pages commonly name, which Chromium shapes with the real font when
+ * no web font comes first. Others fall to the generic family the list ends with. */
+const INSTALLED: [&str; 26] = [
+    "arial",
+    "arial black",
+    "avenir",
+    "avenir next",
+    "baskerville",
+    "comic sans ms",
+    "courier new",
+    "didot",
+    "futura",
+    "geneva",
+    "georgia",
+    "gill sans",
+    "helvetica neue",
+    "impact",
+    "lucida grande",
+    "menlo",
+    "monaco",
+    "optima",
+    "palatino",
+    "sf mono",
+    "tahoma",
+    "times new roman",
+    "trebuchet ms",
+    "verdana",
+    "american typewriter",
+    "charter",
+];
+/** Generic and system keywords, where family matching stops and the generic face applies. */
+const GENERIC: [&str; 12] = [
+    "serif",
+    "sans-serif",
+    "monospace",
+    "cursive",
+    "fantasy",
+    "system-ui",
+    "-apple-system",
+    "blinkmacsystemfont",
+    "ui-sans-serif",
+    "ui-serif",
+    "ui-monospace",
+    "emoji",
+];
 
 /// The files the document's visible text needs, in document order and within FONT_FILES: for
 /// each text node the first listed family that has faces, then per character the face nearest
@@ -176,6 +223,8 @@ fn weight_rank((low, high): (u16, u16), wanted: u16) -> (u8, u16) {
 struct Table {
     /// Loaded faces by family name.
     families: BTreeMap<String, Vec<(u64, FontFace)>>,
+    /// Installed families this thread registered, by lowercase name.
+    installed: BTreeMap<&'static str, u64>,
 }
 thread_local! {
     /** The current document's loaded faces; replaced by every `install_fonts`. */
@@ -212,6 +261,12 @@ pub fn install_fonts(formatting: &DocumentFormatting) {
                 .push((key, face.clone()));
         }
     }
+    for name in INSTALLED {
+        let key = content_key(name.as_bytes()) ^ FAMILY_TAG;
+        if platform::has_font(key) || platform::register_family(key, name) {
+            table.installed.insert(name, key);
+        }
+    }
     TABLE.with(|current| *current.borrow_mut() = table);
 }
 /** Whether the platform holds the font, registering it from its bytes on first sight. An entry
@@ -236,12 +291,23 @@ pub(crate) fn select(
 ) -> Option<(u64, u16)> {
     TABLE.with(|table| {
         let table = table.borrow();
-        let family = first_family(families, table.families.keys())?;
-        let faces = table.families.get(family)?;
-        let covering = faces
-            .iter()
-            .filter(|(_, face)| sample.is_none_or(|c| face.covers(c)))
-            .map(|(key, face)| ((*key, face.weight), face));
-        best(covering, weight, style).map(|(key, (low, high))| (key, weight.clamp(low, high)))
+        // Families in the page's order: a loaded web family, else an installed one, until a
+        // generic keyword hands the run to the generic face.
+        for family in families {
+            if let Some(faces) = table.families.get(family) {
+                let covering = faces
+                    .iter()
+                    .filter(|(_, face)| sample.is_none_or(|c| face.covers(c)))
+                    .map(|(key, face)| ((*key, face.weight), face));
+                if let Some((key, (low, high))) = best(covering, weight, style) {
+                    return Some((key, weight.clamp(low, high)));
+                }
+            } else if GENERIC.contains(&family.as_str()) {
+                return None;
+            } else if let Some(key) = table.installed.get(family.as_str()) {
+                return Some((*key, weight));
+            }
+        }
+        None
     })
 }

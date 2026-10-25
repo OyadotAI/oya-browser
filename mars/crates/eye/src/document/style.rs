@@ -10,6 +10,7 @@ mod bucket;
 mod calc;
 mod cascade;
 mod clip;
+mod color_spaces;
 mod colors;
 mod compute;
 mod constants;
@@ -24,6 +25,7 @@ mod font_match;
 mod formatting;
 mod hiding;
 mod hints;
+mod layer;
 mod layout_props;
 mod logical;
 mod media;
@@ -60,9 +62,10 @@ pub use urls::{BACKGROUND_IMAGES, background_urls, rebase_urls};
 pub use visual_model::{
     BackgroundLayer, BackgroundRepeat, BackgroundSize, BoxShadow, Clear, ColorStop, ContainerType,
     Extent, Float, FontFamily, GridArea, GridLine, GridTemplate, ListStyle, MaskLayer, ObjectFit,
-    Overflow, Position, RadialShape, RadialSize, TextTransform, Track, TrackSize, VerticalAlign,
-    WhiteSpace,
+    Overflow, Position, RadialShape, RadialSize, TableBox, TextTransform, Track, TrackSize,
+    VerticalAlign, WhiteSpace,
 };
+pub use visual_model::{ContentKeyword, TrackContent};
 /** Internal value failures; never include arbitrary declarations or selectors in an error. */
 fn unsupported() -> EngineError {
     EngineError::unsupported(

@@ -211,6 +211,8 @@ impl Parser {
             self.expect("}")?;
             Body::Block(body)
         } else {
+            // A concise body is a return statement in disguise, so it costs one.
+            self.count_statement(self.pos())?;
             Body::Expr(Box::new(self.assignment(no_in)?))
         };
         Ok((params, rest, body))

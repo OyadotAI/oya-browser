@@ -155,6 +155,7 @@ impl Vm<'_> {
             JsValue::String(_) => "string",
             JsValue::Symbol(_) => "symbol",
             JsValue::BigInt(_) => "bigint",
+            JsValue::Object(id) if crate::v9::value::is_html_dda(*id) => "undefined",
             JsValue::Object(_) => {
                 if self.is_callable(value) {
                     "function"
@@ -169,6 +170,9 @@ impl Vm<'_> {
         use JsValue::*;
         Ok(match (left, right) {
             (Undefined | Null | Hole, Undefined | Null | Hole) => true,
+            (Undefined | Null | Hole, Object(id)) | (Object(id), Undefined | Null | Hole) => {
+                crate::v9::value::is_html_dda(*id)
+            }
             (Undefined | Null | Hole, _) | (_, Undefined | Null | Hole) => false,
             (BigInt(big), Number(number)) | (Number(number), BigInt(big)) => {
                 crate::v9::value::bigint_equals_number(*big, *number)

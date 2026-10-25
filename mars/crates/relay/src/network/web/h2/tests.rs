@@ -166,6 +166,37 @@ fn concurrent_requests_share_one_connection_and_complete_out_of_order() {
     server.join().expect("server");
 }
 
+/** Response field names are tokens: netflix.com's dotted name completes the response. */
+#[test]
+fn dotted_response_field_names_are_accepted() {
+    let (session, server) = connect(|peer| {
+        let (stream, _) = peer.request();
+        let fields = [
+            (":status", "200"),
+            ("x-netflix.request.growth.session.id", "5ddc"),
+        ];
+        peer.respond(stream, &fields, false);
+        peer.send(frame::DATA, frame::END_STREAM, stream, b"ok");
+    });
+    let response = get(&session, "/", 1024, DEADLINE).ok().expect("response");
+    assert_eq!(response.body, b"ok");
+    server.join().expect("server");
+}
+
+/** HTTP/2 still refuses an uppercase response field name (RFC 9113 section 8.2.1). */
+#[test]
+fn uppercase_response_field_names_reset_the_stream() {
+    let (session, server) = connect(|peer| {
+        let (stream, _) = peer.request();
+        peer.respond(stream, &[(":status", "200"), ("X-Upper", "1")], true);
+    });
+    assert_eq!(
+        failure(get(&session, "/", 1024, DEADLINE)),
+        (false, "network_error".into())
+    );
+    server.join().expect("server");
+}
+
 #[test]
 fn goaway_makes_unprocessed_streams_retryable_and_closes_the_session_to_new_ones() {
     let (session, server) = connect(|peer| {

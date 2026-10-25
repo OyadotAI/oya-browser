@@ -17,7 +17,7 @@ use super::{
 };
 use std::collections::BTreeMap;
 /** Animated values override every normal declaration and lose to `!important` ones, as in CSS. */
-const ANIMATED: Priority = (false, true, true, usize::MAX, usize::MAX);
+const ANIMATED: Priority = (false, true, true, usize::MAX, usize::MAX, usize::MAX);
 /** Longhands the `animation` shorthand sets, each a comma-separated list. */
 pub(super) const LONGHANDS: [&str; 8] = [
     "animation-name",

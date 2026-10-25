@@ -90,6 +90,13 @@ define_class!(
             };
             painter(self);
         }
+        /** In a full-size-content window the strip sits in the title bar, where AppKit turns a
+        mouse-down into a window drag unless the view declines. Tabs, fields, the pill and panels
+        decline so their buttons receive the click; the bare surface and bands keep dragging. */
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        fn moves_window(&self) -> bool {
+            matches!(self.ivars().kind, Kind::Surface | Kind::Band)
+        }
         /** Highlights and marks never take a click meant for the page or the window. */
         #[unsafe(method(hitTest:))]
         fn hit(&self, point: NSPoint) -> *mut NSView {

@@ -39,6 +39,7 @@ pub fn parse_with_charset(source: &str, charset: Option<&str>) -> EngineResult<D
     let mut tree = Tree::new(source, 0, false);
     tree.decoded = charset.map_or(Some(UTF_8), encoding_for_label);
     tree.run()?;
+    tree.document.formatting.quirks = super::quirks::quirks(source);
     super::validate_content(&tree.document)?;
     super::forms::normalize(&mut tree.document)?;
     super::table::annotate(&mut tree.document)?;
@@ -116,8 +117,25 @@ const CONTEXT_REFUSED: [&str; 9] = [
     "plaintext",
 ];
 /** Only this drawing subset may appear, and only inside an `svg` element. */
-const SVG_CHILDREN: [&str; 9] = [
-    "g", "path", "use", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+const SVG_CHILDREN: [&str; 18] = [
+    "g",
+    "path",
+    "use",
+    "rect",
+    "circle",
+    "ellipse",
+    "line",
+    "polyline",
+    "polygon",
+    "symbol",
+    "defs",
+    "lineargradient",
+    "radialgradient",
+    "stop",
+    "clippath",
+    "mask",
+    "pattern",
+    "marker",
 ];
 /** Elements that may stay in the head; any other start tag implies the body. */
 const HEAD_CONTENT: [&str; 9] = [
@@ -677,7 +695,7 @@ impl<'a> Tree<'a> {
             self.diagnose("Metadata past the page bound is not visible to scripts.");
             return;
         }
-        let text = if fits(self.metadata_bytes + bytes, text.len()) && text.len() <= TEXT_BYTES {
+        let text = if fits(self.metadata_bytes + bytes, text.len()) {
             text
         } else {
             self.diagnose("Metadata past the page bound is not visible to scripts.");
@@ -947,7 +965,14 @@ impl<'a> Tree<'a> {
                 || self.document.nodes[index + 1..].iter().any(|child| {
                     child.tag != "#comment" && !MEDIA_RESOURCES.contains(&child.tag.as_str())
                 }));
-        if fallback {
+        // A video with a poster shows the poster frame, painted as its own background (see the
+        // presentational hints), so it needs no stand-in box or label.
+        let posted = node.tag == "video"
+            && node
+                .attributes
+                .get("poster")
+                .is_some_and(|url| !url.trim().is_empty());
+        if fallback || posted {
             return;
         }
         if let Some((width, height)) = placeholder_size(node) {
@@ -1000,7 +1025,8 @@ impl<'a> Tree<'a> {
     }
     /** Literal text stays attached to its source element where unambiguous. */
     fn text(&mut self, text: String) -> EngineResult<()> {
-        if text.trim().is_empty() {
+        if text.trim().is_empty() && !self.in_preformatted() {
+            self.space_after_sibling();
             return Ok(());
         }
         self.head = false;
@@ -1036,6 +1062,40 @@ impl<'a> Tree<'a> {
         node.text = text;
         self.document.nodes.push(node);
         Ok(())
+    }
+    /** Whether an open `<pre>` or `<listing>` keeps whitespace-only text as text: its newlines
+     * and spaces between highlighted spans are content (nodejs.org's code ran together). */
+    fn in_preformatted(&self) -> bool {
+        self.stack
+            .iter()
+            .any(|index| ["pre", "listing"].contains(&self.document.nodes[*index].tag.as_str()))
+    }
+    /** Dropped whitespace-only text marks the element it follows, the last node's ancestor that
+     * is a child of the open element, or the open element itself when it has no content yet, so
+     * layout keeps the space between two inline elements. */
+    fn space_after_sibling(&mut self) {
+        let parent = self.stack.last().map(|index| self.local(*index));
+        let mut current = self.document.nodes.len().checked_sub(1);
+        if let Some(open) = self.stack.last().copied()
+            && current == Some(open)
+            && self.document.nodes[open].text.is_empty()
+        {
+            self.document.nodes[open].space_leading = true;
+            return;
+        }
+        while let Some(index) = current {
+            let node = &self.document.nodes[index];
+            if node.parent == parent {
+                if node.tag != "#text" && !self.stack.contains(&index) {
+                    self.document.nodes[index].space_after = true;
+                }
+                return;
+            }
+            current = node
+                .parent
+                .and_then(|local| local.checked_sub(self.base))
+                .filter(|position| *position < index);
+        }
     }
     /** Text past a per-node bound is cut at a character boundary and noted, never refused. */
     fn truncated(&mut self, mut text: String, limit: usize) -> String {

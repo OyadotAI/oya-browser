@@ -10,9 +10,11 @@ mod console;
 /** DevTools evaluation (Runtime.evaluate and friends) over the page's realm; new entry points only. */
 pub mod devtools;
 mod dom;
-mod events;
+mod dom_parser;
+pub(in crate::v9) mod events;
 pub(in crate::v9) mod html;
 mod install;
+mod interfaces;
 mod net;
 mod nodes;
 mod range;
@@ -205,6 +207,12 @@ pub struct PageEnvironment {
     pub geometry: Vec<NodeBox>,
     /// The document's scroll offset, which client coordinates subtract.
     pub scroll_y: f64,
+    /// The first node identity the last layout never saw: a node at or above it was inserted
+    /// since, so `geometry` cannot hold its box. A browser would force a layout when script
+    /// reads such a node's geometry; V9 cannot, so it reports the read in
+    /// `HostEffects::stale_geometry` and the app may lay out and run the step again. None
+    /// when the app gives no such promise, and no read is reported.
+    pub laid_out_before: Option<usize>,
 }
 
 /// One painted box the app's layout gave a node, in document coordinates.
@@ -247,6 +255,7 @@ impl Default for PageEnvironment {
             body_attributes: BTreeMap::new(),
             geometry: Vec::new(),
             scroll_y: 0.0,
+            laid_out_before: None,
         }
     }
 }
@@ -277,6 +286,10 @@ pub struct HostRequest {
     pub headers: Vec<(String, String)>,
     /// Text body, if any.
     pub body: Option<String>,
+    /// A binary body (an ArrayBuffer or typed array whose bytes are not UTF-8 text, such as
+    /// YouTube's gzipped Innertube requests). `body` is then None.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_bytes: Vec<u8>,
     /// "omit", "same-origin" or "include".
     pub credentials: String,
     /// "cors", "no-cors" or "same-origin" (fetch's `mode`; XMLHttpRequest is always "cors").
@@ -361,6 +374,14 @@ pub struct HostEffects {
     pub unsupported: Vec<String>,
     /// `document.title` when a script changed it.
     pub title: Option<String>,
+    /// Script read the geometry of a connected node inserted after the app's last layout, so
+    /// it saw an empty box where a browser would have laid the page out first.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stale_geometry: bool,
+    /// Absolute URLs of `<link rel=stylesheet>` elements scripts connected (in the head too,
+    /// which stays V9's), for the app to fetch and apply, as a browser loads an inserted sheet.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stylesheets: Vec<String>,
 }
 
 /** A scheduled callback. */

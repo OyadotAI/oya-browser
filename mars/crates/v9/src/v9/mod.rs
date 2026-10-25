@@ -195,7 +195,7 @@ impl VmState {
             return Err(EngineError::invalid("Invalid V9 heap identities."));
         }
         if self.page.timers.len() > crate::constants::VM_TIMERS
-            || self.page.listeners.len() > crate::constants::VM_LISTENERS
+            || self.page.listeners.len() > platform::events::LISTENERS
             || self.page.pending.len() > crate::constants::VM_HOST_REQUESTS
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
             || self.jobs.len() > limits.jobs
@@ -498,7 +498,10 @@ enum Compiled {
     Each(Vec<EngineResult<Arc<Code>>>),
 }
 
-/** Open a VM for a request: restore state, compile sources, set the clock and deadline. */
+/** Open a VM for a request: restore state, compile sources, set the clock and deadline. The
+deadline is armed once compilation is done: scanning and parsing are already bounded by
+SCRIPT_BYTES, TOKENS and STATEMENTS, and a max-token script takes several times SCRIPT_DEADLINE
+to compile in an unoptimized build, so charging it would refuse admitted sources. */
 #[allow(clippy::too_many_arguments)]
 fn session<'h>(
     limits: Limits,
@@ -541,7 +544,6 @@ fn session<'h>(
     vm.globals = state.globals;
     vm.symbols = state.symbols;
     vm.jobs = state.jobs.into();
-    vm.deadline = Some(std::time::Instant::now() + SCRIPT_DEADLINE);
     initialize_page(&mut vm);
     modules::Modules::open(&mut vm, modules, sources, &offsets(sources), state.modules)?;
     let compiled = compile_sources(&mut vm, sources, isolated)?;
@@ -558,6 +560,7 @@ fn session<'h>(
     };
     scripts.extend(loaded.iter().map(|code| &**code));
     vm.validate_globals(&scripts)?;
+    vm.deadline = Some(std::time::Instant::now() + SCRIPT_DEADLINE);
     Ok((vm, compiled))
 }
 
@@ -596,8 +599,6 @@ fn compile_sources(vm: &mut Vm, sources: &[String], isolated: bool) -> EngineRes
             Err(EngineError::limit("script bytes", SCRIPT_BYTES))
         } else if total > SCRIPT_TOTAL_BYTES {
             Err(EngineError::limit("page script bytes", SCRIPT_TOTAL_BYTES))
-        } else if vm.expired() {
-            Err(platform::timeout())
         } else if vm.modules.entry(index).is_some() {
             // Module scripts and import maps compiled with the module map; never as classic.
             Err(EngineError::invalid("V9 module entry."))

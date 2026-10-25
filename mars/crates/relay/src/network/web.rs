@@ -3,10 +3,12 @@ mod batch;
 mod body;
 mod cache;
 mod encoding;
+mod eyeballs;
 mod fields;
 mod h2;
 mod hello;
 mod lease;
+mod legacy;
 mod pool;
 #[cfg(test)]
 mod testing;
@@ -114,8 +116,10 @@ impl Prepared {
     ) -> EngineResult<Self> {
         request.validate()?;
         let url = web_url(&request.url)?;
-        let deadline =
-            Instant::now() + std::time::Duration::from_millis(remaining_ms).min(WEB_TIMEOUT);
+        let budget = std::time::Duration::from_millis(remaining_ms)
+            .saturating_sub(super::constants::REPLY_MARGIN)
+            .min(WEB_TIMEOUT);
+        let deadline = Instant::now() + budget;
         let fixture = fixture_granted(&url, grants);
         let key = cache::Key::of(&request, &url, fixture);
         let get = request.method == Method::Get;

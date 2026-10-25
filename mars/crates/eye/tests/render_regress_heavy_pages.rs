@@ -127,3 +127,25 @@ fn url_mask_keeps_fill_and_geometry() {
         other => panic!("{other:?}"),
     }
 }
+
+/** A `calc()` width mixing a percentage and a length resolves both parts against the containing
+block (CNN's 7-3 zones: `width:calc(70% - 12px)` and `calc(30% - 12px)` beside each other). Before,
+the declaration was refused and the two columns stacked at full width. */
+#[test]
+fn calc_width_mixing_percent_and_length_resolves_both_parts() {
+    let markup = "<div id=row style='display:flex;justify-content:space-between;width:1000px'>\
+        <div id=a>a</div><div id=b>b</div></div>\
+        <div id=c style='width:calc(50% + 10px)'>c</div>";
+    let (document, display) = layout(
+        markup,
+        "#a{width:calc(70% - 12px)}#b{width:calc(30% - 12px)}#c{margin:0 auto}",
+    );
+    let (a, b) = (
+        find(&document, &display, "a"),
+        find(&document, &display, "b"),
+    );
+    assert_eq!((a.width, b.width), (688.0, 288.0));
+    assert_eq!(b.x - a.x, 712.0, "the columns sit side by side");
+    // 800 wide viewport, 8px body margins: 50% of 784 plus 10.
+    assert_eq!(find(&document, &display, "c").width, 402.0);
+}

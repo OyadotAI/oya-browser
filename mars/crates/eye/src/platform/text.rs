@@ -7,8 +7,9 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAttributedStringNSStringDrawing, NSColor, NSFont, NSFontAttributeName, NSFontDescriptor,
-    NSFontVariationAttribute, NSForegroundColorAttributeName, NSKernAttributeName,
-    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSWritingDirection,
+    NSFontDescriptorSymbolicTraits, NSFontVariationAttribute, NSForegroundColorAttributeName,
+    NSKernAttributeName, NSMutableParagraphStyle, NSParagraphStyleAttributeName,
+    NSWritingDirection,
 };
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_text::CTFontManagerCreateFontDescriptorFromData;
@@ -26,6 +27,8 @@ enum WebFont {
     Data(Retained<NSFontDescriptor>),
     /// An installed font, by the name `local()` gave.
     Local(String),
+    /// An installed family a page names in `font-family`, styled per run by weight and posture.
+    Family(String),
 }
 thread_local! {
     /** Fonts registered from documents, by content key; never reaches the system registry. */
@@ -61,6 +64,15 @@ pub fn register_local(key: u64, name: &str) -> bool {
     insert(key, WebFont::Local(name.to_owned()));
     true
 }
+/// Registers an installed family by name under `key`, so `font-family: Verdana` shapes with
+/// Verdana as Chromium does instead of a generic face; false when it is not installed.
+pub fn register_family(key: u64, name: &str) -> bool {
+    if !local_font_exists(name) {
+        return false;
+    }
+    insert(key, WebFont::Family(name.to_owned()));
+    true
+}
 /// Whether a font with this full or PostScript name is installed.
 pub fn local_font_exists(name: &str) -> bool {
     name.len() <= crate::document::FONT_NAME_BYTES
@@ -85,10 +97,30 @@ fn insert(key: u64, font: WebFont) {
 fn web_font(key: u64, face: Face) -> Option<Retained<NSFont>> {
     WEB_FONTS.with(|fonts| match fonts.borrow().get(&key)? {
         WebFont::Local(name) => NSFont::fontWithName_size(&NSString::from_str(name), face.size),
+        WebFont::Family(name) => styled_family(name, face),
         WebFont::Data(descriptor) => {
             NSFont::fontWithDescriptor_size(&varied(descriptor, f64::from(face.weight)), face.size)
         }
     })
+}
+/** An installed family's regular face, or its bold or italic member when the run asks for one
+ * and the family has it. */
+fn styled_family(name: &str, face: Face) -> Option<Retained<NSFont>> {
+    let regular = NSFont::fontWithName_size(&NSString::from_str(name), face.size)?;
+    let mut traits = NSFontDescriptorSymbolicTraits::empty();
+    if face.bold() {
+        traits |= NSFontDescriptorSymbolicTraits::TraitBold;
+    }
+    if face.italic {
+        traits |= NSFontDescriptorSymbolicTraits::TraitItalic;
+    }
+    if traits.is_empty() {
+        return Some(regular);
+    }
+    let descriptor = regular
+        .fontDescriptor()
+        .fontDescriptorWithSymbolicTraits(traits);
+    NSFont::fontWithDescriptor_size(&descriptor, face.size).or(Some(regular))
 }
 /** The descriptor with `wght` set, so one variable file serves every weight the page uses. */
 fn varied(descriptor: &NSFontDescriptor, weight: f64) -> Retained<NSFontDescriptor> {
@@ -238,6 +270,10 @@ fn cached_font(face: Face) -> Retained<NSFont> {
 
 /// Exact complete-run measurement is reused by wrapping and native painting.
 pub fn measure(text: &str, face: Face) -> f64 {
+    // AppKit reads a zero point size as the default size, so zero is answered here.
+    if face.size <= 0.0 {
+        return 0.0;
+    }
     autoreleasepool(|_| {
         styled(text, face, &NSColor::textColor(), false)
             .size()
@@ -251,6 +287,9 @@ const CLASSIC_ASCENT: f64 = 0.15;
 
 /// Ascender and CSS `line-height: normal` of a face, as Chromium computes them on macOS.
 pub fn metrics(face: Face) -> (f64, f64) {
+    if face.size <= 0.0 {
+        return (0.0, 0.0);
+    }
     autoreleasepool(|_| {
         let font = cached_font(face);
         let (ascent, descent) = (font.ascender(), -font.descender());

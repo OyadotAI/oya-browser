@@ -101,8 +101,9 @@ pub const CSS_NORMAL_LINE_HEIGHT: f64 = 1.5;
 /// (CNN inlines 2.3 MB, YouTube's app bundle is several MB). A larger script is skipped, never page-fatal.
 pub const SCRIPT_BYTES: usize = 12 * 1024 * 1024;
 /// Bounds the number of executable scripts accepted in one candidate document; later ones are
-/// skipped with a diagnostic.
-pub const SCRIPT_COUNT: usize = 64;
+/// skipped with a diagnostic. Chromium has no count cap, and real apps ship many chunks (Twitch
+/// loads 78), so this sits well past them; SCRIPT_TOTAL_BYTES still bounds the work.
+pub const SCRIPT_COUNT: usize = 512;
 /// All of a page's sources cross the V9 pipe in one frame, so they share this allowance; a
 /// script that would cross it is skipped and the page keeps the ones before it.
 pub const SCRIPT_TOTAL_BYTES: usize = 2 * SCRIPT_BYTES;
@@ -194,8 +195,10 @@ pub const OWNER_PID_ENV: &str = "OYA_NATIVE_OWNER_PID";
 /// One stylesheet's bytes Eye applies in full; CNN inlines a 2.94 MB sheet. A larger sheet still
 /// reaches Eye, which keeps only its hiding rules (as agent masks) or fails closed for agents.
 pub const STYLE_BYTES: usize = 4 * 1024 * 1024;
-/// Linked sheets fetched for one candidate; later ones are skipped with a diagnostic.
-pub const STYLE_SHEETS: usize = 32;
+/// Linked sheets fetched for one candidate; later ones are skipped with a diagnostic. Chromium
+/// has no count limit, and The Verge links 66 sheets, so this is a sanity bound well above real
+/// pages; STYLE_TOTAL_BYTES still caps what they carry together.
+pub const STYLE_SHEETS: usize = 256;
 /// All of a page's sheets cross the document pipe together, so they share this allowance (the
 /// largest the frame assert below admits beside a maximum document). Sheets past it cannot
 /// reach Eye, so the runtime fails that page closed for agents instead of dropping hiding rules.

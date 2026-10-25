@@ -430,19 +430,15 @@ fn javascript_urls_are_inert() {
     assert!(by_id(&document, "i").image_src.is_none());
 }
 
-/** Unsupported SVG content is dropped while the supported drawing subset stays. */
+/** Unsupported SVG content is dropped while the supported drawing subset stays; `defs`,
+`symbol` and paint servers (gradients, patterns and their stops) stay for references. */
 #[test]
 fn unsupported_svg_content_is_dropped() {
     let document = parse(
         "<svg width=16 height=16><title>Icon</title><pattern id=pt /><defs><linearGradient id=g><stop/></linearGradient></defs><path id=p d='M0 0'/></svg><p id=after>after</p>",
     )
     .unwrap();
-    assert!(
-        !document
-            .nodes
-            .iter()
-            .any(|node| ["pattern", "defs", "title", "stop"].contains(&node.tag.as_str()))
-    );
+    assert!(!document.nodes.iter().any(|node| node.tag == "title"));
     assert_eq!(parent_tag(&document, by_id(&document, "p")), Some("svg"));
     assert_eq!(by_id(&document, "after").parent, None);
 }

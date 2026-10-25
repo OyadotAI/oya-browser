@@ -1,6 +1,6 @@
 /** Box shadows, background layers and 2D transforms parse into bounded painter data. */
 use super::{
-    BackgroundLayer, BoxShadow, ColorStop, ComputedStyle, RadialShape, RadialSize,
+    BackgroundLayer, BoxShadow, ColorStop, ComputedStyle, Extent, RadialShape, RadialSize,
     constants::{
         BACKGROUND_LAYERS, GRADIENT_STOPS, PERCENT, SHADOWS, TRANSFORM_FUNCTIONS, TRANSFORM_MAX,
     },
@@ -108,9 +108,11 @@ fn image(
         .and_then(|value| value.split_once('('))
         .ok_or_else(unsupported)?;
     let arguments = split_top(inner, b',');
-    let layer = match name.trim_start_matches("-webkit-") {
-        "linear-gradient" | "repeating-linear-gradient" => linear(&arguments, style)?,
-        "radial-gradient" | "repeating-radial-gradient" => radial(&arguments, style, context)?,
+    let name = name.trim_start_matches("-webkit-");
+    let repeating = name.starts_with("repeating-");
+    let layer = match name.trim_start_matches("repeating-") {
+        "linear-gradient" => linear(&arguments, style, context, repeating)?,
+        "radial-gradient" => radial(&arguments, style, context, repeating)?,
         _ => return Err(unsupported()),
     };
     Ok(Some(layer))
@@ -142,17 +144,26 @@ fn url(source: &str) -> EngineResult<String> {
     }
     Ok(unquoted.into())
 }
-/** An optional angle or `to side` direction, then stops; the default points down (180). */
-fn linear(arguments: &[&str], style: &ComputedStyle) -> EngineResult<BackgroundLayer> {
+/** An optional angle or `to side` direction, then stops; the default points down (180). A
+ * `to <corner>` direction keeps the corner, since its angle depends on the box. */
+fn linear(
+    arguments: &[&str],
+    style: &ComputedStyle,
+    context: RenderContext,
+    repeating: bool,
+) -> EngineResult<BackgroundLayer> {
     let first = arguments.first().ok_or_else(unsupported)?;
-    let direction = if let Some(sides) = first.strip_prefix("to ") {
-        Some(to_angle(sides)?)
+    let (direction, corner) = if let Some(sides) = first.strip_prefix("to ") {
+        let (angle, corner) = to_angle(sides)?;
+        (Some(angle), corner)
     } else {
-        angle(first).ok()
+        (angle(first).ok(), None)
     };
     Ok(BackgroundLayer::Linear {
         angle: direction.unwrap_or(180.0).rem_euclid(360.0),
-        stops: stops(arguments, style, direction.is_some())?,
+        stops: stops(arguments, style, context, direction.is_some())?,
+        corner,
+        repeating,
     })
 }
 /** An optional `[shape] [size] [at position]` configuration, then stops. */
@@ -160,12 +171,14 @@ fn radial(
     arguments: &[&str],
     style: &ComputedStyle,
     context: RenderContext,
+    repeating: bool,
 ) -> EngineResult<BackgroundLayer> {
     let first = arguments.first().ok_or_else(unsupported)?;
     let shape = radial_shape(first, style.font_size, context).ok();
     Ok(BackgroundLayer::Radial {
-        stops: stops(arguments, style, shape.is_some())?,
+        stops: stops(arguments, style, context, shape.is_some())?,
         shape: shape.unwrap_or_default(),
+        repeating,
     })
 }
 /** Parses a radial configuration such as `circle at 50% 0` or `60% 40% at top`; Err when it is a stop. */
@@ -202,19 +215,20 @@ fn radial_shape(config: &str, font: f64, context: RenderContext) -> EngineResult
     };
     Ok(shape)
 }
-/** `to` keywords as CSS angles; corners use the square-box diagonal. */
-fn to_angle(sides: &str) -> EngineResult<f64> {
+/** `to` keywords as CSS angles, and for a corner its (x, y) signs; the corner's angle here is
+ * the square-box diagonal, which the painter replaces with the real box's. */
+fn to_angle(sides: &str) -> EngineResult<(f64, Option<[i8; 2]>)> {
     let mut words: Vec<&str> = sides.split_whitespace().collect();
     words.sort_unstable();
     Ok(match words.as_slice() {
-        ["top"] => 0.0,
-        ["right"] => 90.0,
-        ["bottom"] => 180.0,
-        ["left"] => 270.0,
-        ["right", "top"] => 45.0,
-        ["bottom", "right"] => 135.0,
-        ["bottom", "left"] => 225.0,
-        ["left", "top"] => 315.0,
+        ["top"] => (0.0, None),
+        ["right"] => (90.0, None),
+        ["bottom"] => (180.0, None),
+        ["left"] => (270.0, None),
+        ["right", "top"] => (45.0, Some([1, -1])),
+        ["bottom", "right"] => (135.0, Some([1, 1])),
+        ["bottom", "left"] => (225.0, Some([-1, 1])),
+        ["left", "top"] => (315.0, Some([-1, -1])),
         _ => return Err(unsupported()),
     })
 }
@@ -222,6 +236,7 @@ fn to_angle(sides: &str) -> EngineResult<f64> {
 fn stops(
     arguments: &[&str],
     style: &ComputedStyle,
+    context: RenderContext,
     skip_first: bool,
 ) -> EngineResult<Vec<ColorStop>> {
     let mut out = Vec::new();
@@ -243,16 +258,19 @@ fn stops(
             }
             Err(error) => return Err(error),
         };
-        let positions: Vec<Option<f64>> =
-            parts[1..].iter().map(|part| stop_position(part)).collect();
-        for position in if positions.is_empty() {
-            vec![None]
+        let positions: Vec<(Option<f64>, Option<f64>)> = parts[1..]
+            .iter()
+            .map(|part| stop_position(part, style.font_size, context))
+            .collect();
+        for (position, px) in if positions.is_empty() {
+            vec![(None, None)]
         } else {
             positions
         } {
             out.push(ColorStop {
                 color: color.clone(),
                 position,
+                px,
             });
         }
     }
@@ -262,12 +280,28 @@ fn stops(
     }
     Ok(out)
 }
-/** Percent positions as 0..1 fractions; lengths need the box, so they are left to the painter as None. */
-fn stop_position(part: &str) -> Option<f64> {
-    let percent = part.strip_suffix('%')?.trim().parse::<f64>().ok()?;
-    percent
-        .is_finite()
-        .then(|| (percent / PERCENT).clamp(0.0, 1.0))
+/** How many gradient lines before 0% or past 100% a stop may sit; farther ones clamp there. */
+pub(super) const GRADIENT_STOP_REACH: f64 = 10.0;
+/** A stop position as (fraction of the line, px): `40%` is (0.4, None), `12px` is (None, 12)
+ * and `calc(100% - 4px)` is (1.0, -4). Positions outside the line are kept, as CSS allows, and
+ * the painter clips the ramp; an unparseable position counts as absent. */
+fn stop_position(part: &str, font: f64, context: RenderContext) -> (Option<f64>, Option<f64>) {
+    let Ok(length) = dimension(part, font, context) else {
+        return (None, None);
+    };
+    if !length.px.is_finite() || !length.percent.is_finite() {
+        return (None, None);
+    }
+    let reach = GRADIENT_STOP_REACH;
+    let fraction = (length.percent / PERCENT).clamp(-reach, 1.0 + reach);
+    let px = length.px.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR);
+    match (length.percent != 0.0, length.px != 0.0) {
+        (true, true) => (Some(fraction), Some(px)),
+        (true, false) => (Some(fraction), None),
+        (false, true) => (None, Some(px)),
+        // A bare `0`, `0%` or `0px` is the start of the line.
+        (false, false) => (Some(0.0), None),
+    }
 }
 /** `none`, or a composed list of 2D transform functions and percentage translations. */
 pub(super) fn transform(
@@ -429,4 +463,82 @@ fn transform_function(
         }
         _ => return Err(unsupported()),
     })
+}
+/** A `<bg-position>` keyword: which axis it pins (None for `center`) and how far along it. */
+fn position_keyword(word: &str) -> Option<(Option<bool>, f64)> {
+    Some(match word {
+        "left" => (Some(true), 0.0),
+        "right" => (Some(true), PERCENT),
+        "top" => (Some(false), 0.0),
+        "bottom" => (Some(false), PERCENT),
+        "center" => (None, PERCENT / 2.0),
+        _ => return None,
+    })
+}
+/**
+ * The first layer of a `<bg-position>` as x and y offsets, per CSS Backgrounds 3 and Blink's
+ * `ConsumePosition`: one value (the other axis centered), two values in either keyword order,
+ * and the three- and four-value forms where a length after `right` or `bottom` measures from
+ * that edge (`right 10px` is `calc(100% - 10px)`). Without the edge forms `right 10px top`
+ * put 10px into y.
+ */
+pub(super) fn position(
+    value: &str,
+    font: f64,
+    context: RenderContext,
+) -> EngineResult<[Extent; 2]> {
+    let first = split_top(value, b',')
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let words = tokens(first.trim());
+    let percent = |percent: f64| Extent { px: 0.0, percent };
+    let length = |word: &str| extent(word, font, context);
+    // Each entry: the axis a keyword pins (Some(None) for `center`), and its offset.
+    // Offsets from an edge exist only in the three- and four-value forms.
+    let edges = words.len() > 2;
+    let mut parts: Vec<(Option<Option<bool>>, Extent)> = Vec::new();
+    let mut index = 0;
+    while let Some(word) = words.get(index) {
+        if let Some((axis, along)) = position_keyword(word) {
+            let offset = words
+                .get(index + 1)
+                .filter(|next| edges && position_keyword(next).is_none() && axis.is_some())
+                .map(|next| length(next))
+                .transpose()?;
+            index += if offset.is_some() { 2 } else { 1 };
+            let from_end = along == PERCENT;
+            let value = match offset {
+                Some(offset) if from_end => Extent {
+                    px: -offset.px,
+                    percent: PERCENT - offset.percent,
+                },
+                Some(offset) => offset,
+                None => percent(along),
+            };
+            parts.push((Some(axis), value));
+        } else {
+            parts.push((None, length(word)?));
+            index += 1;
+        }
+    }
+    let center = percent(PERCENT / 2.0);
+    let (mut x, mut y) = (None, None);
+    let mut loose = Vec::new();
+    for (axis, value) in parts {
+        match axis {
+            Some(Some(true)) if x.is_none() => x = Some(value),
+            Some(Some(false)) if y.is_none() => y = Some(value),
+            Some(Some(_)) => return Err(unsupported()),
+            // `center` and bare lengths fill whichever axis is still open, x first.
+            _ => loose.push(value),
+        }
+    }
+    let mut loose = loose.into_iter();
+    let x = x.or_else(|| loose.next()).unwrap_or(center);
+    let y = y.or_else(|| loose.next()).unwrap_or(center);
+    if loose.next().is_some() {
+        return Err(unsupported());
+    }
+    Ok([x, y])
 }

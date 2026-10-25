@@ -514,6 +514,7 @@ dependencies = [
  "httpdate",
  "mars-core",
  "psl",
+ "ring",
  "rustls",
  "ruzstd",
  "serde",

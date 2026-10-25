@@ -20,23 +20,12 @@ pub(super) fn hiding(name: &str, value: &str) -> bool {
         | "inset-block-start" | "inset-block-end" | "inset-inline-start" | "inset-inline-end" => {
             value != "auto" && !zero()
         }
-        "text-indent"
-        | "margin"
-        | "margin-top"
-        | "margin-left"
-        | "margin-right"
-        | "margin-bottom"
-        | "margin-inline-start"
-        | "margin-inline-end"
-        | "margin-inline"
-        | "margin-block-start"
-        | "margin-block-end"
-        | "margin-block" => negative(&value),
+        // Margins only shift a box within its flow, and spacing utilities write negative ones
+        // on every page (X's `-space-x-3` masked everything); a far-off text indent hides text.
+        "text-indent" => negative(&value),
         "width" | "height" | "max-width" | "max-height" | "font-size" | "block-size"
         | "inline-size" | "max-block-size" | "max-inline-size" => zero(),
         "z-index" => value.starts_with('-'),
-        // Which keyframes a name runs is only known per element, so any animation could hide.
-        "animation" | "animation-name" => value != "none",
         "filter" => value.contains("opacity(0"),
         _ => false,
     }

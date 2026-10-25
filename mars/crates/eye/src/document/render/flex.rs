@@ -7,7 +7,6 @@ use crate::{
 /** One item's content sizes remain distinct from margins and border/padding. */
 #[derive(Clone, Debug)]
 pub(super) struct FlexItem {
-    pub local_id: usize,
     pub base_content: f64,
     pub hypothetical_content: f64,
     pub min_content: f64,
@@ -28,6 +27,11 @@ impl FlexItem {
     }
 }
 
+/** A scroll container's automatic minimum size is zero (css-grid-2 6.6, Blink's
+ * `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items never widen their tracks. */
+pub(super) fn scroll_container(node: &crate::document::Node) -> bool {
+    node.style.overflow != crate::document::style::Overflow::Visible
+}
 /** Positive free space split equally over the line's auto margins; zero when there are none
 or the line overflows, where auto margins collapse to zero and alignment proceeds as usual. */
 pub(super) fn auto_margin_share(items: &[FlexItem], free: f64) -> f64 {

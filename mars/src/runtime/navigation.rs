@@ -437,6 +437,7 @@ impl Runtime {
             state: Default::default(),
             images,
             display: None,
+            laid_out_before: 0,
             layout_generation: 1,
             styled: true,
             inspection: None,
@@ -473,10 +474,18 @@ impl Runtime {
         perf::record("page.scripts", phase, || restyle.to_string());
         phase = Instant::now();
         gaps.record(&mut page.document);
-        page.degraded = gaps.degraded;
-        page.untrusted_styles = gaps.untrusted_styles;
+        // Script steps already noted what they inserted and could not apply (sheets, images);
+        // the load's own gaps join them rather than replace them.
+        for feature in std::mem::replace(&mut page.degraded, gaps.degraded) {
+            if page.degraded.len() < DIAGNOSTICS && !page.degraded.contains(&feature) {
+                page.degraded.push(feature);
+            }
+        }
+        page.untrusted_styles |= gaps.untrusted_styles;
         page.scripting.wake();
-        if page.styled && page.display.is_some() && !page.untrusted_styles {
+        // `styled` alone cannot say the first paint stands: inserted images restyle the page
+        // without laying it out, which left example.com's script-built link with no box.
+        if !restyle && page.styled && page.display.is_some() && !page.untrusted_styles {
             // Scripts left the first paint's document as it was: its layout stands, only the
             // page's notes changed.
             page.refresh_inspection();
@@ -760,6 +769,16 @@ impl Runtime {
         }
         Ok(sheets)
     }
+    /** A stylesheet a page script linked after load, fetched as a linked sheet is; None when it
+    cannot be loaded as text/css. */
+    pub(super) fn inserted_sheet(
+        &mut self,
+        base: &url::Url,
+        href: &str,
+        deadline: Instant,
+    ) -> EngineResult<Option<String>> {
+        self.linked_sheet(base, href, deadline, &mut Gaps::default())
+    }
     /** One linked sheet; only authority, service and deadline failures stop the navigation. */
     fn linked_sheet(
         &mut self,
@@ -778,6 +797,12 @@ impl Runtime {
         let Ok(url) = base.join(href) else {
             return skipped(gaps);
         };
+        if url.scheme() == "data" {
+            return match data_text(url.as_str(), crate::constants::STYLE_TOTAL_BYTES) {
+                Some((mime, css)) if mime == "text/css" => Ok(Some(css)),
+                _ => skipped(gaps),
+            };
+        }
         match self.acquire(
             WebRequest {
                 destination: crate::network::Destination::Style,
@@ -947,6 +972,15 @@ impl Runtime {
         let Ok(url) = base.join(src) else {
             return Ok(Err("its URL is invalid"));
         };
+        if url.scheme() == "data" {
+            return Ok(
+                match data_text(url.as_str(), crate::constants::SCRIPT_BYTES) {
+                    Some((mime, source)) if javascript_mime(&mime) => Ok(source),
+                    Some(_) => Err("it did not return JavaScript"),
+                    None => Err("it could not be loaded"),
+                },
+            );
+        }
         let acquired = match self.acquire(
             WebRequest {
                 destination: crate::network::Destination::Script,
@@ -971,6 +1005,15 @@ impl Runtime {
     }
 }
 
+/**
+ * A stylesheet or script carried in a `data:` URL, decoded here as images are: Relay fetches
+ * only network URLs, and facebook.com ships its sheets and scripts this way. The media type
+ * essence and UTF-8 text, or None when it is malformed, past `limit` or not UTF-8.
+ */
+fn data_text(url: &str, limit: usize) -> Option<(String, String)> {
+    let (mime, bytes) = super::images::data_body(url, limit).ok()?;
+    Some((mime, String::from_utf8(bytes).ok()?))
+}
 /** Characters of an engine reason a diagnostic quotes. */
 const REASON_CHARS: usize = 240;
 /** A navigation-stopping script error names the script's document position, never its URL. */
@@ -1004,6 +1047,7 @@ fn javascript_mime(mime: &str) -> bool {
     [
         "text/javascript",
         "application/javascript",
+        "application/x-javascript",
         "text/ecmascript",
         "application/ecmascript",
     ]

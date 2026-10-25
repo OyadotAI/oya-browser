@@ -18,6 +18,8 @@ const SELECT_EDGES: f64 = 28.0;
 const BUTTON_HEIGHT: f64 = 21.0;
 /// Inner inset between a control's border box and its measured title.
 const TITLE_INSET: (f64, f64) = (8.0, 3.0);
+/// Chromium's UA padding plus border around a text field's content, each side (1px + 2px).
+const FIELD_EDGE: f64 = 3.0;
 
 /** Push buttons, including submit and button inputs, paint a measured title. */
 pub(super) fn is_button(node: &Node) -> bool {
@@ -28,7 +30,13 @@ pub(super) fn is_button(node: &Node) -> bool {
 inline-block, as Chromium does; only a text-only button is a measured native title. Without this
 every child of such a button is dropped and icon buttons paint empty. */
 pub(super) fn has_content(context: &LayoutContext<'_>, node: &Node) -> bool {
-    node.tag == "button" && !context.children(node.local_id).is_empty()
+    node.tag == "button" && (!context.children(node.local_id).is_empty() || restyled(node))
+}
+/** A button whose page set both its font and its edges (Tailwind's preflight does for every
+ * button) has no native look left, so it is a CSS box drawn like any other; drawn as a native
+ * title, nodejs.org's highlighted code tokens were set in the system font. */
+fn restyled(node: &Node) -> bool {
+    node.style.font_authored && node.style.edges_authored
 }
 /** A content button is an inline-block (or the block, flex or grid box it was styled as). */
 pub(super) fn content_box(
@@ -70,12 +78,26 @@ fn center_content(node: &Node, items: &mut [DisplayItem]) {
         }
     }
 }
+/** Space between a control's border box and its title on each side (top, right, bottom,
+ * left): the page's padding and borders when it set them, else the native inset. */
+fn title_inset(node: &Node) -> [f64; 4] {
+    if node.style.edges_authored {
+        let sides = super::sizing::border_sides(&node.style);
+        return std::array::from_fn(|side| node.style.padding[side] + sides[side]);
+    }
+    let border = node.style.border;
+    let (x, y) = (TITLE_INSET.0 + border, TITLE_INSET.1 + border);
+    [y, x, y, x]
+}
 /** Checkboxes and radios keep their fixed glyph size regardless of font. */
 fn is_choice(node: &Node) -> bool {
     node.tag == "input" && ["checkbox", "radio"].contains(&node.input_type())
 }
 /** Chromium does not inherit the page font into controls; an authored size still wins. */
 pub(super) fn control_font(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    if node.style.font_authored {
+        return node.style.font_size;
+    }
     let inherited = node
         .parent
         .and_then(|parent| context.node(parent).ok())
@@ -140,6 +162,9 @@ pub(super) fn natural_size(
         return Ok(TEXTAREA_SIZE);
     }
     let scale = font / CONTROL_FONT;
+    if node.style.edges_authored && node.tag != "select" {
+        return authored_size(context, node, font, scale);
+    }
     if is_button(node) || node.tag == "select" {
         let text = title(context, node);
         let edges = if node.tag == "select" {
@@ -154,6 +179,36 @@ pub(super) fn natural_size(
         FIELD_SIZE.0 * scale,
         (FIELD_SIZE.1 * scale).max(FIELD_SIZE.1),
     ))
+}
+/** The border box of a button or field whose page set its padding or border: those edges around
+ * the title (or the default field width) and one line, as Chromium sizes a styled control; the
+ * native metrics made Tailwind buttons and padded search boxes the wrong size. */
+fn authored_size(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    font: f64,
+    scale: f64,
+) -> EngineResult<(f64, f64)> {
+    let style = title_style(node, font);
+    let content = if is_button(node) {
+        context.measure(&title(context, node), super::sizing::face_for(&style, None))?
+    } else {
+        (FIELD_SIZE.0 - FIELD_EDGE * 2.0) * scale
+    };
+    let height = super::sizing::advance(&style) + vertical_edges(node);
+    Ok((content + horizontal_edges(node), height))
+}
+/** The style a control's title is measured and drawn in: the page's font when it set one,
+ * otherwise Chromium's system control face at `font`. */
+fn title_style(node: &Node, font: f64) -> crate::document::ComputedStyle {
+    let mut style = node.style.clone();
+    style.font_size = font;
+    if !node.style.font_authored {
+        style.font_family = crate::document::FontFamily::SystemUi;
+        style.letter_spacing = 0.0;
+        style.text_transform = crate::document::TextTransform::None;
+    }
+    style
 }
 /** A control's baseline sits this share of its font below its vertical middle, times two. */
 const CONTROL_BASELINE: f64 = 0.7;
@@ -185,7 +240,7 @@ pub(super) fn control(
     let (x, y) = match forced {
         Some(bounds) => (bounds.x, bounds.y),
         None => {
-            if flow.cursor > 0.0 && flow.cursor + outer > flow.room() {
+            if flow.cursor > 0.0 && !flow.fits(outer) {
                 flow.newline();
             }
             flow.fit(outer);
@@ -195,18 +250,17 @@ pub(super) fn control(
             )
         }
     };
+    let inset = title_inset(node);
     let mut local = Flow::new(
-        x + style.border + TITLE_INSET.0,
-        y + style.border + TITLE_INSET.1,
-        (width - style.border * 2.0 - TITLE_INSET.0 * 2.0).max(1.0),
+        x + inset[3],
+        y + inset[0],
+        (width - inset[1] - inset[3]).max(1.0),
     );
     let lines = if is_button(node) {
-        // Controls draw their titles in the system face, as Chromium's macOS theme does.
+        // Controls draw their titles in the system face, as Chromium's macOS theme does, unless
+        // the page set their font.
         let mut sized = node.clone();
-        sized.style.font_size = font;
-        sized.style.font_family = crate::document::FontFamily::SystemUi;
-        sized.style.letter_spacing = 0.0;
-        sized.style.text_transform = crate::document::TextTransform::None;
+        sized.style = title_style(node, font);
         // A naturally sized button fits its title measured whole; word-by-word sums can exceed
         // that by kerning, so it never wraps.
         if style.width.is_none() && style.max_width.is_none() && fits {
@@ -222,7 +276,7 @@ pub(super) fn control(
     } else {
         Vec::new()
     };
-    let height = natural_box.max(local.bottom - y + TITLE_INSET.1 + style.border);
+    let height = natural_box.max(local.bottom - y + inset[2]);
     let mut validation = Vec::new();
     let mut validation_extent = 0.0;
     if let Some(error) = &node.validation {

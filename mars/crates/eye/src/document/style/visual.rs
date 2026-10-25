@@ -83,11 +83,111 @@ pub(super) fn apply(
             super::layout_props::mask_geometry(&mut layer, key, value, style.font_size, context)?;
             style.mask = (!layer.url.is_empty()).then_some(layer);
         }
+        "filter"
+        | "backdrop-filter"
+        | "-webkit-backdrop-filter"
+        | "mix-blend-mode"
+        | "isolation"
+        | "will-change"
+        | "contain"
+        | "clip-path"
+        | "-webkit-clip-path" => {
+            // A shape Eye cannot clip by may hide most of the box, so it leaves agent reach.
+            if key.ends_with("clip-path") && value != "none" {
+                style.interactive = false;
+            }
+            if key == "filter" {
+                style.filter_blur = filter_blur(value, style.font_size, context);
+            }
+            stacking(style, key, value)
+        }
         "fill" | "stroke" | "stroke-width" | "stroke-linejoin" | "stroke-linecap" | "fill-rule"
-        | "fill-opacity" | "stroke-opacity" => {}
+        | "fill-opacity" | "stroke-opacity" => svg_paint(style, key, value),
         _ => return radius(style, key, value, context),
     }
     Ok(true)
+}
+/**
+ * Keeps an SVG paint property for the painter. A `fill` or `stroke` it cannot paint (an
+ * external `url()`, a malformed color) is left out so the shape keeps its attribute paint
+ * rather than vanishing, as a browser keeps drawing with an invalid declaration dropped.
+ */
+fn svg_paint(style: &mut ComputedStyle, key: &str, value: &str) {
+    let value = value.trim();
+    let paintable = value.eq_ignore_ascii_case("none")
+        || value.eq_ignore_ascii_case("currentcolor")
+        || value
+            .get(..5)
+            .is_some_and(|head| head.eq_ignore_ascii_case("url(#"))
+        || super::literal_color(&value.to_ascii_lowercase()).is_ok();
+    if matches!(key, "fill" | "stroke") && !paintable {
+        return;
+    }
+    style.svg_paint.insert(key.to_owned(), value.to_owned());
+}
+/** `filter` or `backdrop-filter` other than `none`. */
+pub const STACKING_FILTER: u8 = 1;
+/** `mix-blend-mode` other than `normal`. */
+pub const STACKING_BLEND: u8 = 2;
+/** `isolation: isolate`. */
+pub const STACKING_ISOLATION: u8 = 4;
+/** `will-change` naming a property that would itself create a stacking context. */
+pub const STACKING_WILL_CHANGE: u8 = 8;
+/** `contain` with paint or layout containment (`paint`, `layout`, `strict`, `content`). */
+pub const STACKING_CONTAIN: u8 = 16;
+/** A `clip-path` shape Eye does not clip by (`circle()`, `url()`, ...), still a grouping property. */
+pub const STACKING_CLIP_PATH: u8 = 32;
+/** `backdrop-filter`, kept apart from `filter` so either one's `none` clears only itself. */
+pub const STACKING_BACKDROP: u8 = 64;
+/** Properties `will-change` can name that make Blink create a stacking context
+ * (`HasPropertyThatCreatesStackingContext`). */
+const WILL_CHANGE_STACKING: [&str; 12] = [
+    "opacity",
+    "transform",
+    "translate",
+    "rotate",
+    "scale",
+    "filter",
+    "backdrop-filter",
+    "mix-blend-mode",
+    "isolation",
+    "clip-path",
+    "mask",
+    "perspective",
+];
+/**
+ * Records one grouping property that makes the box a stacking context, as Blink's
+ * `CalculateIsStackingContextWithoutContainment` and `HasStackingGroupingProperty` read them.
+ * Without it a `filter` or `isolation: isolate` card painted interleaved with its siblings'
+ * positioned children instead of as one unit.
+ */
+fn stacking(style: &mut ComputedStyle, key: &str, value: &str) {
+    let value = value.trim();
+    let (bit, on) = match key {
+        "filter" => (STACKING_FILTER, value != "none"),
+        "backdrop-filter" | "-webkit-backdrop-filter" => (STACKING_BACKDROP, value != "none"),
+        "mix-blend-mode" => (STACKING_BLEND, value != "normal"),
+        "isolation" => (STACKING_ISOLATION, value == "isolate"),
+        "will-change" => (
+            STACKING_WILL_CHANGE,
+            value
+                .split(',')
+                .any(|name| WILL_CHANGE_STACKING.contains(&name.trim())),
+        ),
+        "contain" => (
+            STACKING_CONTAIN,
+            value
+                .split_whitespace()
+                .any(|word| ["paint", "layout", "strict", "content"].contains(&word)),
+        ),
+        // `inset()` and `none` are applied above; any other shape still groups the box.
+        _ => (STACKING_CLIP_PATH, value != "none"),
+    };
+    if on {
+        style.stacking |= bit;
+    } else {
+        style.stacking &= !bit;
+    }
 }
 /** Positioning keywords. */
 fn position(value: &str) -> EngineResult<Position> {
@@ -139,6 +239,22 @@ fn overflow(value: &str) -> EngineResult<Overflow> {
         "auto" | "overlay" => Overflow::Auto,
         _ => return Err(unsupported()),
     })
+}
+/** The summed `blur()` radii of a filter list (successive Gaussian blurs add their variances,
+ * so the deviations combine as a root sum of squares); 0 for none or an unreadable length. */
+fn filter_blur(value: &str, font: f64, context: RenderContext) -> f64 {
+    let mut variance = 0.0;
+    let mut rest = value;
+    while let Some(start) = rest.find("blur(") {
+        let after = &rest[start + "blur(".len()..];
+        let Some(end) = after.find(')') else { break };
+        let radius = signed_length(after[..end].trim(), font, context).unwrap_or(0.0);
+        if radius.is_finite() && radius > 0.0 && radius <= CSS_MAX_SCALAR {
+            variance += radius * radius;
+        }
+        rest = &after[end..];
+    }
+    variance.sqrt()
 }
 /** `normal` is zero; lengths are signed and bounded by the largest font size. */
 fn letter_spacing(value: &str, font: f64, context: RenderContext) -> EngineResult<f64> {
@@ -239,4 +355,36 @@ fn radius(
         length.percent.clamp(0.0, CSS_MAX_SCALAR)
     };
     Ok(true)
+}
+
+/** Whether the winning `background-clip` (or its `-webkit-` alias) clips to text. */
+pub(super) fn clips_to_text(chosen: &super::cascade::Chosen) -> bool {
+    ["background-clip", "-webkit-background-clip"]
+        .iter()
+        .filter_map(|key| chosen.get(*key))
+        .any(|(_, value)| {
+            value
+                .split(',')
+                .any(|layer| layer.trim().eq_ignore_ascii_case("text"))
+        })
+}
+/**
+ * `background-clip: text` paints the background only through the glyphs. The painter has no
+ * clipped gradient text, so the text takes the gradient's middle stop (or the background
+ * color) and no box is painted; before, headings like nodejs.org's painted as a dark slab over
+ * transparent text.
+ */
+pub(super) fn clip_to_text(style: &mut ComputedStyle) {
+    use super::BackgroundLayer;
+    let stop = style.backgrounds.iter().find_map(|layer| match layer {
+        BackgroundLayer::Linear { stops, .. } | BackgroundLayer::Radial { stops, .. } => {
+            stops.get(stops.len() / 2).map(|stop| stop.color.clone())
+        }
+        BackgroundLayer::Image { .. } => None,
+    });
+    if let Some(color) = stop.or_else(|| style.background.clone()) {
+        style.color = Some(color);
+    }
+    style.background = None;
+    style.backgrounds.clear();
 }

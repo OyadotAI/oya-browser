@@ -72,6 +72,8 @@ pub(super) fn node(
         image_size: None,
         table_cell: None,
         defined: false,
+        space_after: false,
+        space_leading: false,
     })
 }
 

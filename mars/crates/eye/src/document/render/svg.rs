@@ -182,6 +182,11 @@ pub(super) fn svg(
 pub(super) fn intrinsic_width(node: &Node) -> EngineResult<f64> {
     Ok(natural_width(node, None, None))
 }
+/** The content width an auto-width svg takes when its height resolves against `definite`,
+ * through its viewBox ratio. */
+pub(super) fn width_for_height(node: &Node, definite: Option<f64>) -> f64 {
+    natural_width(node, None, definite)
+}
 
 /// The content width Chrome gives an svg: CSS width, then the width attribute, then its height
 /// (CSS, then attribute) through the viewBox ratio. With only a ratio it stretches to the
@@ -248,7 +253,7 @@ fn inline_box(node: &Node, flow: &mut Flow) -> (f64, f64, f64, f64) {
     let content = (width - horizontal_edges(node)).max(0.0);
     let height = content_height(node, content, flow.definite) + vertical_edges(node);
     let outer = width + node.style.margin[1] + node.style.margin[3];
-    if flow.cursor > 0.0 && flow.cursor + outer > flow.room() {
+    if flow.cursor > 0.0 && !flow.fits(outer) {
         flow.newline();
     }
     flow.fit(outer);
@@ -289,8 +294,19 @@ fn drawing(
     let members = descendants(document, svg.local_id);
     let mut result = Vec::new();
     for node in &members {
-        if let Ok(Some((path, segments))) = shape(document, svg, &members, node, viewport, current)
-        {
+        if definition(document, node, svg.local_id) {
+            continue;
+        }
+        let shapes = if node.tag == "use" {
+            use_copies(document, svg, node, viewport, current).unwrap_or_default()
+        } else {
+            shape(document, svg, node, viewport, current)
+                .ok()
+                .flatten()
+                .into_iter()
+                .collect()
+        };
+        for (path, segments) in shapes {
             context.charge(segments + 1)?;
             result.push(path);
         }
@@ -298,11 +314,145 @@ fn drawing(
     Ok(result)
 }
 
+/** Containers whose content draws only where something references it, never in place. */
+const DEFINITIONS: [&str; 8] = [
+    "defs",
+    "symbol",
+    "clippath",
+    "mask",
+    "pattern",
+    "marker",
+    "lineargradient",
+    "radialgradient",
+];
+/** Shapes a `use` copies out of one referenced container, so a sprite cannot multiply work. */
+const USE_SHAPES: usize = 256;
+
+/** Whether a node sits inside a definition container of its drawing, which paints nothing. */
+fn definition(document: &Document, node: &Node, svg: usize) -> bool {
+    ancestors(document, node, svg)
+        .map(|chain| chain.iter().any(|a| DEFINITIONS.contains(&a.tag.as_str())))
+        .unwrap_or(true)
+}
+
+/**
+ * The shapes a `use` draws: the referenced shape, or every shape of a referenced `symbol` or
+ * `g`, wherever in the document it is defined (icon sprites keep their symbols in a hidden
+ * svg). A symbol's viewBox maps into the use's width and height, by default the drawing's own
+ * user space. Fill and stroke inherit through the referenced content, then the use.
+ */
+fn use_copies(
+    document: &Document,
+    svg: &Node,
+    node: &Node,
+    viewport: Affine,
+    current: &str,
+) -> EngineResult<Vec<(VectorPath, usize)>> {
+    let id = ["href", "xlink:href"]
+        .iter()
+        .find_map(|name| node.attributes.get(*name))
+        .and_then(|href| href.trim().strip_prefix('#'))
+        .ok_or_else(unsupported)?;
+    let target = document
+        .nodes
+        .iter()
+        .find(|candidate| {
+            candidate
+                .attributes
+                .get("id")
+                .is_some_and(|value| value == id)
+        })
+        .ok_or_else(unsupported)?;
+    let mut outer = vec![node];
+    outer.extend(ancestors(document, node, svg.local_id)?);
+    let mut base = use_offset(node)?;
+    for element in &outer {
+        base = multiply(transform(element)?, base);
+    }
+    if target.tag == "symbol" {
+        base = multiply(base, symbol_map(target, node, svg));
+    }
+    let shapes: Vec<&Node> = if DRAWN.contains(&target.tag.as_str()) {
+        vec![target]
+    } else {
+        descendants(document, target.local_id)
+            .into_iter()
+            .filter(|shape| DRAWN.contains(&shape.tag.as_str()))
+            .take(USE_SHAPES)
+            .collect()
+    };
+    let mut copies = Vec::with_capacity(shapes.len());
+    for shape in shapes {
+        let inner = if std::ptr::eq(shape, target) {
+            Vec::new()
+        } else {
+            ancestors(document, shape, target.local_id)?
+        };
+        let mut matrix = transform(shape)?;
+        for element in &inner {
+            matrix = multiply(transform(element)?, matrix);
+        }
+        if !std::ptr::eq(shape, target) && target.tag != "symbol" {
+            matrix = multiply(transform(target)?, matrix);
+        }
+        let mut paint = vec![shape];
+        paint.extend(&inner);
+        if !std::ptr::eq(shape, target) {
+            paint.push(target);
+        }
+        paint.extend(&outer);
+        paint.push(svg);
+        let segments = parse(&path_data(shape)?)?;
+        let matrix = multiply(viewport, multiply(base, matrix));
+        copies.push((
+            vector(document, &segments, matrix, &paint, current, viewport[0])?,
+            segments.len(),
+        ));
+    }
+    Ok(copies)
+}
+
+/** A symbol's viewBox fitted into the use's width and height by the symbol's own
+ * `preserveAspectRatio`; those default to the referencing drawing's viewBox size, the user space
+ * a `use` fills at 100%. */
+fn symbol_map(symbol: &Node, node: &Node, svg: &Node) -> Affine {
+    let Some(numbers) = view_box_numbers(symbol) else {
+        return IDENTITY;
+    };
+    let room = view_box_numbers(svg).map(|[_, _, w, h]| (w, h));
+    let size = |name: &str, fallback: Option<f64>| {
+        node.attributes
+            .get(name)
+            .and_then(|value| value.trim().trim_end_matches("px").parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .or(fallback)
+    };
+    let width = size("width", room.map(|r| r.0)).unwrap_or(numbers[2]);
+    let height = size("height", room.map(|r| r.1)).unwrap_or(numbers[3]);
+    aspect_transform(numbers, aspect_ratio(symbol), (0.0, 0.0, width, height))
+}
+
+/** Whether replaced vector content is clipped to its content box: always for an img, and for
+ * inline svg unless it asks for `overflow: visible`, as Blink's UA sheet gives
+ * `svg:not(:root)` hidden overflow. */
+pub(super) fn clips_content(node: &Node) -> bool {
+    if node.tag != "svg" {
+        return true;
+    }
+    let visible = |value: &str| {
+        let value = value.trim();
+        value.eq_ignore_ascii_case("visible") || value.eq_ignore_ascii_case("auto")
+    };
+    !(node.attributes.get("overflow").is_some_and(|v| visible(v))
+        || inline_style_prop(node, "overflow").is_some_and(visible))
+}
+
 /** The data URL prefix of a drawing an img shows; the coordinator writes it percent-escaped. */
 const SVG_DATA: &str = "data:image/svg+xml,";
 
 /// The vector paint of an img whose source is an `image/svg+xml` data URL, fitted into its
-/// content box the way inline svg is. Eye parses the markup itself; a drawing that does not
+/// object rectangle (the content box after `object-fit`) by the drawing's own viewBox and
+/// `preserveAspectRatio`, as Blink sizes an `SVGImage` to its container. Eye parses the markup itself; a drawing that does not
 /// parse paints nothing, like a broken image. Base64 drawings are not read: the coordinator
 /// rewrites every drawing it admits to this percent-escaped form.
 pub(super) fn image_paths(
@@ -324,7 +474,30 @@ pub(super) fn image_paths(
     let Some(svg) = document.nodes.iter().find(|node| node.tag == "svg") else {
         return Ok(Vec::new());
     };
-    drawing(context, &document, svg, content, current)
+    let mut svg = svg.clone();
+    synthesize_view_box(&mut svg);
+    drawing(context, &document, &svg, content, current)
+}
+
+/** An SVG image without a `viewBox` scales its `width` by `height` canvas into the img box, as
+ * Chromium synthesizes a view box for SVG drawn as an image (rustdoc's 106px logo painted at
+ * full size over a 48px box). Inline svg keeps CSS's unscaled user space. */
+fn synthesize_view_box(svg: &mut Node) {
+    if view_box_numbers(svg).is_some() {
+        return;
+    }
+    let length = |name: &str| {
+        let value = svg.attributes.get(name)?.trim();
+        let value = value.strip_suffix("px").unwrap_or(value);
+        value
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && *v > 0.0)
+    };
+    if let (Some(width), Some(height)) = (length("width"), length("height")) {
+        svg.attributes
+            .insert("viewbox".into(), format!("0 0 {width} {height}"));
+    }
 }
 
 /** URL percent-decoding to UTF-8 text; a `%` without two hex digits stays literal. */
@@ -347,17 +520,13 @@ fn percent_decode(text: &str) -> String {
 fn shape(
     document: &Document,
     svg: &Node,
-    members: &[&Node],
     node: &Node,
     viewport: Affine,
     current: &str,
 ) -> EngineResult<Option<(VectorPath, usize)>> {
+    // `use` copies are drawn by `use_copies`.
     let (shape, inner) = match node.tag.as_str() {
         tag if DRAWN.contains(&tag) => (node, IDENTITY),
-        "use" => {
-            let shape = referenced(members, node)?;
-            (shape, multiply(use_offset(node)?, transform(shape)?))
-        }
         _ => return Ok(None),
     };
     let mut chain = vec![node];
@@ -366,15 +535,11 @@ fn shape(
     for element in &chain {
         matrix = multiply(transform(element)?, matrix);
     }
-    let mut paint = if node.tag == "use" {
-        vec![shape]
-    } else {
-        Vec::new()
-    };
-    paint.extend(&chain);
+    let mut paint = chain.clone();
     paint.push(svg);
     let segments = parse(&path_data(shape)?)?;
     let path = vector(
+        document,
         &segments,
         multiply(viewport, matrix),
         &paint,
@@ -501,9 +666,10 @@ pub(super) fn notes(document: &Document) -> Vec<&'static str> {
             notes.push(IGNORED_SIZE);
         }
         let members = descendants(document, svg.local_id);
-        let dropped = members
-            .iter()
-            .any(|node| shape(document, svg, &members, node, IDENTITY, "#000000").is_err());
+        let dropped = members.iter().any(|node| match node.tag.as_str() {
+            "use" => use_copies(document, svg, node, IDENTITY, "#000000").is_err(),
+            _ => shape(document, svg, node, IDENTITY, "#000000").is_err(),
+        });
         if dropped && !notes.contains(&DROPPED_SHAPE) {
             notes.push(DROPPED_SHAPE);
         }
@@ -541,25 +707,6 @@ fn ancestors<'a>(document: &'a Document, node: &Node, svg: usize) -> EngineResul
         parent = ancestor.parent;
     }
     Ok(result)
-}
-
-/** `use` resolves only to a path in the same svg, so references never nest past `SVG_USE_DEPTH` (one). */
-fn referenced<'a>(members: &[&'a Node], node: &Node) -> EngineResult<&'a Node> {
-    let id = node
-        .attributes
-        .get("href")
-        .and_then(|href| href.strip_prefix('#'))
-        .ok_or_else(unsupported)?;
-    let target = members
-        .iter()
-        .find(|member| member.attributes.get("id").is_some_and(|value| value == id))
-        .ok_or_else(unsupported)?;
-    if !DRAWN.contains(&target.tag.as_str()) {
-        return Err(EngineError::unsupported(
-            "SVG use may reference only a shape in the same drawing.",
-        ));
-    }
-    Ok(target)
 }
 
 /** A `use` copy translates by its x and y before any enclosing transform. */
@@ -642,20 +789,72 @@ fn rotation(angle: f64, cx: f64, cy: f64) -> Affine {
     ]
 }
 
-/// xMidYMid meet: one uniform scale, centred in the content box. Index 0 doubles as that scale.
-/// A missing or malformed viewBox maps user units straight onto the content box.
-fn view_box(svg: &Node, (x, y, width, height): (f64, f64, f64, f64)) -> Affine {
-    let Some([min_x, min_y, box_width, box_height]) = view_box_numbers(svg) else {
-        return [1.0, 0.0, 0.0, 1.0, x, y];
+/// The viewBox-to-viewport transform of SVG's `preserveAspectRatio`, a port of Blink's
+/// `SVGPreserveAspectRatio::ComputeTransform`: `none` scales each axis on its own; otherwise one
+/// scale (the smaller for `meet`, the larger for `slice`) and the box aligned by its
+/// x/y Min, Mid or Max edge. Index 0 doubles as the stroke scale. A missing or malformed viewBox
+/// maps user units straight onto the viewport.
+fn view_box(svg: &Node, viewport: (f64, f64, f64, f64)) -> Affine {
+    match view_box_numbers(svg) {
+        Some(numbers) => aspect_transform(numbers, aspect_ratio(svg), viewport),
+        None => [1.0, 0.0, 0.0, 1.0, viewport.0, viewport.1],
+    }
+}
+/** One axis alignment of `preserveAspectRatio`, as a fraction of the leftover room. */
+type Align = Option<(f64, f64)>;
+/** `preserveAspectRatio` as (alignment, slice): None alignment is `none`; the initial value is
+ * `xMidYMid meet`, and a malformed value keeps it, as an invalid attribute does. */
+fn aspect_ratio(svg: &Node) -> (Align, bool) {
+    const MID: (Align, bool) = (Some((0.5, 0.5)), false);
+    let Some(value) = svg.attributes.get("preserveaspectratio") else {
+        return MID;
     };
-    let scale = (width / box_width).min(height / box_height);
+    let mut words = value.split_whitespace();
+    let mut align = words.next().unwrap_or("xMidYMid");
+    if align == "defer" {
+        align = words.next().unwrap_or("xMidYMid");
+    }
+    let slice = match words.next() {
+        None | Some("meet") => false,
+        Some("slice") => true,
+        Some(_) => return MID,
+    };
+    if align == "none" {
+        return (None, slice);
+    }
+    let fraction = |part: &str| match part {
+        "Min" => Some(0.0),
+        "Mid" => Some(0.5),
+        "Max" => Some(1.0),
+        _ => None,
+    };
+    let parsed = align
+        .strip_prefix('x')
+        .and_then(|rest| Some((fraction(rest.get(..3)?)?, rest.get(3..)?)))
+        .and_then(|(x, rest)| Some((x, fraction(rest.strip_prefix('Y')?)?)));
+    match parsed {
+        Some(pair) => (Some(pair), slice),
+        None => MID,
+    }
+}
+/** The transform placing viewBox `[min_x, min_y, width, height]` into a viewport rectangle. */
+fn aspect_transform(
+    [min_x, min_y, box_width, box_height]: [f64; 4],
+    (align, slice): (Align, bool),
+    (x, y, width, height): (f64, f64, f64, f64),
+) -> Affine {
+    let (sx, sy) = (width / box_width, height / box_height);
+    let Some((ax, ay)) = align else {
+        return [sx, 0.0, 0.0, sy, x - min_x * sx, y - min_y * sy];
+    };
+    let scale = if slice { sx.max(sy) } else { sx.min(sy) };
     [
         scale,
         0.0,
         0.0,
         scale,
-        x + (width - box_width * scale) / 2.0 - min_x * scale,
-        y + (height - box_height * scale) / 2.0 - min_y * scale,
+        x + (width - box_width * scale) * ax - min_x * scale,
+        y + (height - box_height * scale) * ay - min_y * scale,
     ]
 }
 
@@ -699,8 +898,13 @@ fn apply(matrix: Affine, x: f64, y: f64) -> (f64, f64) {
     (a * x + c * y + e, b * x + d * y + f)
 }
 
-/** Paint properties inherit through the element chain, nearest first, then fall back to SVG defaults. */
+/**
+ * Paint properties inherit through the element chain, nearest first, then fall back to SVG
+ * defaults. On one element the inline style wins, then stylesheet CSS, then the presentation
+ * attribute, as the cascade ranks them.
+ */
 fn vector(
+    document: &Document,
     segments: &[Segment],
     matrix: Affine,
     chain: &[&Node],
@@ -709,7 +913,15 @@ fn vector(
 ) -> EngineResult<VectorPath> {
     let inherited = |name: &str| {
         chain.iter().find_map(|node| {
-            inline_style_prop(node, name).or_else(|| node.attributes.get(name).map(String::as_str))
+            inline_style_prop(node, name)
+                .or_else(|| {
+                    node.style
+                        .svg_paint
+                        .get(name)
+                        .map(String::as_str)
+                        .filter(|value| resolvable(document, value))
+                })
+                .or_else(|| node.attributes.get(name).map(String::as_str))
         })
     };
     let width = match inherited("stroke-width") {
@@ -764,7 +976,11 @@ fn vector(
                 .or_else(|| node.attributes.get("opacity").map(String::as_str));
             parse_opacity(attr)
         })
-        .product();
+        .product::<f64>()
+        * chain
+            .iter()
+            .map(|node| mask_coverage(document, node, current))
+            .product::<f64>();
     let fill_opacity = (group_opacity * parse_opacity(inherited("fill-opacity"))).clamp(0.0, 1.0);
     let stroke_opacity =
         (group_opacity * parse_opacity(inherited("stroke-opacity"))).clamp(0.0, 1.0);
@@ -773,8 +989,8 @@ fn vector(
             .iter()
             .map(|segment| command(*segment, matrix))
             .collect(),
-        fill: paint(inherited("fill").unwrap_or("black"), current)?,
-        stroke: paint(inherited("stroke").unwrap_or("none"), current)?,
+        fill: paint(document, inherited("fill").unwrap_or("black"), current)?,
+        stroke: paint(document, inherited("stroke").unwrap_or("none"), current)?,
         stroke_width: width * scale,
         line_join,
         line_cap,
@@ -783,6 +999,65 @@ fn vector(
         stroke_opacity,
     })
 }
+
+/**
+ * How much of a masked element shows, as one factor on its opacity: SVG Masking's luminance or
+ * alpha coverage of the referenced `<mask>`, averaged over its content's solid or mean gradient
+ * paint (Blink's SVGMaskPainter composites the mask image; one mean value stands in for it). 1.0
+ * when the element has no `mask` or names none Eye can read.
+ * ponytail: the mean of the first painted shape, not a per-pixel mask; a mask image on
+ * `VectorPath` that the desktop painter applies is the upgrade.
+ */
+fn mask_coverage(document: &Document, node: &Node, current: &str) -> f64 {
+    let Some(id) = inline_style_prop(node, "mask")
+        .or_else(|| node.attributes.get("mask").map(String::as_str))
+        .and_then(|value| value.trim().strip_prefix("url(#"))
+        .and_then(|rest| rest.split_once(')'))
+        .map(|(id, _)| id.trim_matches(['"', '\'']))
+    else {
+        return 1.0;
+    };
+    let Some(mask) = document.nodes.iter().find(|candidate| {
+        candidate.tag == "mask"
+            && candidate
+                .attributes
+                .get("id")
+                .is_some_and(|value| value == id)
+    }) else {
+        return 1.0;
+    };
+    let alpha_only = inline_style_prop(mask, "mask-type")
+        .or_else(|| mask.attributes.get("mask-type").map(String::as_str))
+        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("alpha"));
+    let Some(fill) = document
+        .nodes
+        .iter()
+        .filter(|child| child.parent == Some(mask.local_id))
+        .map(|child| {
+            inline_style_prop(child, "fill")
+                .or_else(|| child.attributes.get("fill").map(String::as_str))
+                .unwrap_or("black")
+        })
+        .next()
+    else {
+        // An empty mask hides the element entirely.
+        return 0.0;
+    };
+    let Some([r, g, b, a]) = paint(document, fill, current)
+        .ok()
+        .flatten()
+        .and_then(|literal| channels(&literal))
+    else {
+        return 0.0;
+    };
+    if alpha_only {
+        a
+    } else {
+        a * (LUMINANCE[0] * r + LUMINANCE[1] * g + LUMINANCE[2] * b)
+    }
+}
+/** The luminance weights SVG Masking gives `mask-type: luminance` (sRGB coefficients). */
+const LUMINANCE: [f64; 3] = [0.2125, 0.7154, 0.0721];
 
 /** Extracts an inline `style="prop: value"` property from an SVG element when present. */
 fn inline_style_prop<'a>(node: &'a Node, prop: &str) -> Option<&'a str> {
@@ -831,13 +1106,204 @@ fn command(segment: Segment, matrix: Affine) -> PathCommand {
     }
 }
 
-/** `none` paints nothing, `currentColor` is the svg's used text color, literals use the CSS validator. */
-fn paint(value: &str, current: &str) -> EngineResult<Option<String>> {
-    let value = value.trim().to_ascii_lowercase();
+/** `none` paints nothing, `currentColor` is the svg's used text color, literals use the CSS
+ * validator, and `url(#id) [fallback]` resolves a paint server as Blink's
+ * `SVGResources::GetPaint` does: a gradient paints, and a missing or unusable reference paints
+ * the fallback. */
+fn paint(document: &Document, value: &str, current: &str) -> EngineResult<Option<String>> {
+    let value = value.trim();
+    if value
+        .get(..4)
+        .is_some_and(|head| head.eq_ignore_ascii_case("url("))
+    {
+        let close = value.find(')').ok_or_else(unsupported)?;
+        let reference = value[4..close].trim().trim_matches(['"', '\'']);
+        let fallback = value[close + 1..].trim();
+        if let Some(color) = reference
+            .strip_prefix('#')
+            .and_then(|id| gradient_color(document, id))
+        {
+            return Ok(color);
+        }
+        // A missing server without a fallback paints nothing in Blink; the shape is dropped
+        // with the unsupported-shape note instead, since the parser keeps no pattern, mask or
+        // clip content for Eye to tell an author error from a server it cannot draw.
+        return match fallback {
+            "" => Err(unsupported()),
+            fallback => paint(document, fallback, current),
+        };
+    }
+    let value = value.to_ascii_lowercase();
     match value.as_str() {
         "none" => Ok(None),
         "currentcolor" => Ok(Some(current.into())),
         _ => crate::document::style::literal_color(&value).map(Some),
+    }
+}
+
+/** A stylesheet `url(#id)` paint without a fallback whose gradient is missing is dropped like
+ * an invalid declaration, so the shape keeps its presentation attribute paint. */
+fn resolvable(document: &Document, value: &str) -> bool {
+    let Some(rest) = value
+        .get(..5)
+        .filter(|head| head.eq_ignore_ascii_case("url(#"))
+        .map(|_| &value[5..])
+    else {
+        return true;
+    };
+    let Some((id, fallback)) = rest.split_once(')') else {
+        return false;
+    };
+    !fallback.trim().is_empty() || gradient_color(document, id.trim_matches(['"', '\''])).is_some()
+}
+/** Gradients a paint server's `href` chain follows for inherited stops before giving up. */
+const GRADIENT_HREFS: usize = 8;
+/**
+ * The paint of a `linearGradient` or `radialGradient` by id: Some(None) for one without stops
+ * (SVG paints nothing), its only stop's color, or else its mean color along the gradient, the
+ * average of the piecewise-linear ramp with premultiplied alpha. None when `id` names no gradient.
+ * ponytail: one solid color stands in for the ramp because `VectorPath` carries solid paint
+ * only; a gradient field on `VectorPath` that the desktop painter draws is the upgrade.
+ */
+fn gradient_color(document: &Document, id: &str) -> Option<Option<String>> {
+    let by_id = |id: &str| {
+        document.nodes.iter().find(|node| {
+            node.html_id == id || node.attributes.get("id").is_some_and(|value| value == id)
+        })
+    };
+    let mut gradient = by_id(id).filter(|node| GRADIENTS.contains(&node.tag.as_str()))?;
+    for _ in 0..GRADIENT_HREFS {
+        let stops = gradient_stops(document, gradient);
+        if !stops.is_empty() {
+            return Some(mean_color(&stops));
+        }
+        let Some(next) = ["href", "xlink:href"]
+            .iter()
+            .find_map(|name| gradient.attributes.get(*name))
+            .and_then(|href| href.trim().strip_prefix('#'))
+            .and_then(by_id)
+            .filter(|node| GRADIENTS.contains(&node.tag.as_str()))
+        else {
+            break;
+        };
+        gradient = next;
+    }
+    Some(None)
+}
+/** Paint servers Eye resolves to a color. */
+const GRADIENTS: [&str; 2] = ["lineargradient", "radialgradient"];
+/** A gradient's stops as (offset, [r, g, b, a]) with offsets clamped to [0, 1] and kept
+ * nondecreasing, as SVG orders them. */
+fn gradient_stops(document: &Document, gradient: &Node) -> Vec<(f64, [f64; 4])> {
+    let mut floor: f64 = 0.0;
+    let mut stops = Vec::new();
+    for stop in document
+        .nodes
+        .iter()
+        .filter(|node| node.parent == Some(gradient.local_id) && node.tag == "stop")
+    {
+        let property = |name: &str| {
+            inline_style_prop(stop, name).or_else(|| stop.attributes.get(name).map(String::as_str))
+        };
+        let offset = property("offset").map_or(0.0, |value| {
+            let value = value.trim();
+            match value.strip_suffix('%') {
+                Some(percent) => percent.trim().parse::<f64>().map_or(0.0, |p| p / 100.0),
+                None => value.parse::<f64>().unwrap_or(0.0),
+            }
+        });
+        floor = floor.max(if offset.is_finite() {
+            offset.clamp(0.0, 1.0)
+        } else {
+            0.0
+        });
+        let color = property("stop-color")
+            .unwrap_or("black")
+            .trim()
+            .to_ascii_lowercase();
+        let Some(mut rgba) = crate::document::style::literal_color(&color)
+            .ok()
+            .and_then(|literal| channels(&literal))
+        else {
+            continue;
+        };
+        let opacity = property("stop-opacity")
+            .and_then(|value| value.trim().parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+            .map_or(1.0, |value| value.clamp(0.0, 1.0));
+        rgba[3] *= opacity;
+        stops.push((floor, rgba));
+    }
+    stops
+}
+/** The CSS values of the color names the style validator keeps as names. */
+const PALETTE_HEX: [(&str, &str); 9] = [
+    ("black", "#000000"),
+    ("white", "#ffffff"),
+    ("red", "#ff0000"),
+    ("green", "#008000"),
+    ("blue", "#0000ff"),
+    ("gray", "#808080"),
+    ("grey", "#808080"),
+    ("navy", "#000080"),
+    ("teal", "#008080"),
+];
+/** RGBA channels in 0..1 of a hex, palette name or `transparent` literal. */
+pub(super) fn channels(literal: &str) -> Option<[f64; 4]> {
+    if literal == "transparent" {
+        return Some([0.0; 4]);
+    }
+    let named = PALETTE_HEX
+        .iter()
+        .find(|(name, _)| *name == literal)
+        .map(|(_, hex)| *hex);
+    let digits = named.unwrap_or(literal).strip_prefix('#')?;
+    let expanded: String = match digits.len() {
+        3 => digits.chars().flat_map(|c| [c, c]).collect(),
+        6 | 8 => digits.into(),
+        _ => return None,
+    };
+    let byte = |at: usize| {
+        expanded
+            .get(at..at + 2)
+            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+    };
+    let alpha = if expanded.len() == 8 {
+        byte(6)?
+    } else {
+        u8::MAX
+    };
+    Some([byte(0)?, byte(2)?, byte(4)?, alpha].map(|v| f64::from(v) / f64::from(u8::MAX)))
+}
+/** The mean of the ramp the stops describe over [0, 1], padded with the end colors. */
+fn mean_color(stops: &[(f64, [f64; 4])]) -> Option<String> {
+    let premultiplied = |[r, g, b, a]: [f64; 4]| [r * a, g * a, b * a, a];
+    let mut points: Vec<(f64, [f64; 4])> = stops
+        .iter()
+        .map(|(at, c)| (*at, premultiplied(*c)))
+        .collect();
+    let (first, last) = (*points.first()?, *points.last()?);
+    points.insert(0, (0.0, first.1));
+    points.push((1.0, last.1));
+    let mut sum = [0.0; 4];
+    for pair in points.windows(2) {
+        let ((from, a), (to, b)) = (pair[0], pair[1]);
+        for channel in 0..4 {
+            sum[channel] += (to - from) * (a[channel] + b[channel]) / 2.0;
+        }
+    }
+    Some(literal(sum))
+}
+/** The painter literal of premultiplied RGBA channels in 0..1. */
+pub(super) fn literal([r, g, b, alpha]: [f64; 4]) -> String {
+    if alpha <= 0.0 {
+        return "transparent".into();
+    }
+    let byte = |value: f64| (value * f64::from(u8::MAX)).round().clamp(0.0, 255.0) as u8;
+    let [r, g, b] = [r / alpha, g / alpha, b / alpha].map(byte);
+    match byte(alpha) {
+        u8::MAX => format!("#{r:02x}{g:02x}{b:02x}"),
+        a => format!("#{r:02x}{g:02x}{b:02x}{a:02x}"),
     }
 }
 

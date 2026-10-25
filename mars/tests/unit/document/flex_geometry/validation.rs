@@ -36,8 +36,8 @@ fn inline_flex_is_an_atomic_inline_flex_container() {
 fn unsupported_layout_declarations_degrade_with_a_diagnostic() {
     for (css, diagnostic) in [
         (
-            "display:flex;flex-direction:column;flex-wrap:wrap",
-            "Wrapped flex columns lay out without wrapping.",
+            "display:flex;flex-direction:column;gap:10",
+            "A CSS value for gap is not supported and was ignored.",
         ),
         (
             "display:flex;flex-basis:calc(100px - 2px)",
@@ -68,17 +68,22 @@ fn wrapped_columns_lay_out_as_one_nowrap_column() {
     assert!(b.y >= a.y + a.height);
 }
 
+/** The UA stylesheet's 2px table border-spacing. */
+const TABLE_SPACING: f64 = 2.0;
+
 /** Flex over tables or table structure falls back to block flow, keeping every box, with a diagnostic. */
 #[test]
 fn unsupported_flex_tree_shapes_fall_back_to_block_flow() {
-    for (body, boxes) in [
+    for (body, boxes, inset) in [
         (
             "<div style='display:flex'><table><tr><td>cell</td></tr></table></div>",
             4,
+            0.0,
         ),
         (
             "<table style='display:flex'><tr><td>cell</td></tr></table>",
             3,
+            TABLE_SPACING,
         ),
     ] {
         let document = compute_styles(&parse(body).unwrap(), &[]).unwrap();
@@ -90,9 +95,9 @@ fn unsupported_flex_tree_shapes_fall_back_to_block_flow() {
         let display = render(&document, 500.0).unwrap();
         assert_eq!(display.items.len(), boxes, "{body}");
         // Block flow keeps the first child at the container's left edge; a table's own
-        // border-spacing may inset its cells.
+        // border-spacing insets its rows, as Blink's table layout does.
         let first = &display.items[0];
-        assert_eq!(display.items[1].x, first.x, "{body}");
+        assert_eq!(display.items[1].x, first.x + inset, "{body}");
         assert!(
             display.items[1..]
                 .iter()

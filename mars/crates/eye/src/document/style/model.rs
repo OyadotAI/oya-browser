@@ -59,6 +59,12 @@ pub struct ComputedStyle {
     pub flex_direction: FlexDirection,
     /// Wrapped rows form lines without introducing unsupported column heights.
     pub flex_wrap: FlexWrap,
+    /// `row-reverse` or `column-reverse`: items run from the main-end edge.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flex_reverse: bool,
+    /// `wrap-reverse`: lines stack from the cross-end edge.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wrap_reverse: bool,
     /// Automatic, pixel and percentage bases retain distinct layout meaning.
     pub flex_basis: FlexBasis,
     /// Nonnegative growth distributes only real positive main-axis free space.
@@ -69,8 +75,11 @@ pub struct ComputedStyle {
     pub row_gap: f64,
     /// Only between-item separation contributes to the line's horizontal budget.
     pub column_gap: f64,
-    /// Main-axis alignment consumes only remaining nonnegative free space.
+    /// Main-axis content distribution (`justify-content`); `normal` is `Stretch`.
     pub justify_content: JustifyContent,
+    /// Cross-axis content distribution of flex lines and grid rows (`align-content`).
+    #[serde(default = "JustifyContent::normal")]
+    pub align_content: JustifyContent,
     /// Cross-axis alignment controls the allocated item subtree as one unit.
     pub align_items: AlignItems,
     /// None retains the content minimum; explicit zero permits supported shrinking.
@@ -176,12 +185,31 @@ pub struct ComputedStyle {
     /// back to an inline box when it has text or generated content of its own.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub display_contents: bool,
+    /// `display: flow-root`: a block that starts its own formatting context, so it contains its
+    /// floats (IANA's header grew around its floated logo and navigation in Chromium).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flow_root: bool,
+    /// The CSS table part `display` names; `None` for every other display.
+    #[serde(skip_serializing_if = "default")]
+    pub table_box: TableBox,
     /// Column tracks of a grid container.
     #[serde(skip_serializing_if = "default")]
     pub grid_columns: GridTemplate,
     /// Row tracks of a grid container.
     #[serde(skip_serializing_if = "default")]
     pub grid_rows: GridTemplate,
+    /// Sizes of implicit row tracks (`grid-auto-rows`), cycled; empty is `auto`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub grid_auto_rows: GridTemplate,
+    /// Sizes of implicit column tracks (`grid-auto-columns`), cycled; empty is `auto`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub grid_auto_columns: GridTemplate,
+    /// `grid-auto-flow: column`: auto-placement fills columns before rows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_flow_column: bool,
+    /// `grid-auto-flow: dense`: auto-placement restarts from the grid's start for every item.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub grid_flow_dense: bool,
     /// Placement of a grid item along the columns.
     #[serde(skip_serializing_if = "default")]
     pub grid_column: GridLine,
@@ -195,6 +223,10 @@ pub struct ComputedStyle {
     /// over the numeric lines of that axis when the container defines them.
     #[serde(skip_serializing_if = "default")]
     pub grid_area_names: [Option<String>; 2],
+    /// Named start and end lines of `grid-row` and `grid-column` (`content-start / content-end`),
+    /// resolved against the container's line names at layout.
+    #[serde(default, skip_serializing_if = "default")]
+    pub grid_line_names: [[Option<String>; 2]; 2],
     /// Inline-axis alignment of grid items in their areas.
     #[serde(skip_serializing_if = "default")]
     pub justify_items: AlignItems,
@@ -210,6 +242,24 @@ pub struct ComputedStyle {
     /// Inherited: adjacent table cell borders collapse and cells touch.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub border_collapse: bool,
+    /// `table-layout: fixed` (not inherited): column widths come from the first row alone.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub table_layout_fixed: bool,
+    /// A form control whose font the page set (`font: inherit` included), so it is drawn in that
+    /// font rather than Chromium's 13.33px control font.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub font_authored: bool,
+    /// A form control whose padding or border the page set, so its box is those edges around its
+    /// title rather than the native button metrics.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub edges_authored: bool,
+    /// Quirks mode drops this box's UA top margin in layout, as the first box of the body or a
+    /// table cell; the computed margin stays, as `getComputedStyle` reports it in Chromium.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quirk_top: bool,
+    /// Inherited `caption-side: bottom`: the caption follows the grid instead of leading it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub caption_bottom: bool,
     /// `::before` and `::after` boxes with content, in that order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub generated: Vec<Generated>,
@@ -241,6 +291,23 @@ pub struct ComputedStyle {
     /// Preferred width-to-height ratio for an automatic height; None is `auto`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect_ratio: Option<f64>,
+    /// `aspect-ratio: auto && <ratio>`: a replaced box with a natural ratio uses that ratio instead.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub aspect_ratio_auto: bool,
+    /// Declared `overflow-wrap`: Some(true) for `break-word` or `anywhere`, None when this
+    /// element declares nothing and inherits it (layout walks the ancestors).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overflow_wrap_break: Option<bool>,
+    /// Declared `word-break`: Some(true) for `break-all` or `break-word`, None when inherited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_break_all: Option<bool>,
+    /// `text-overflow: ellipsis` (not inherited): a clipping block ends overflowing lines in "…".
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub text_overflow_ellipsis: bool,
+    /// `vertical-align: <length-percentage>` as (px, percent of the element's line-height); the
+    /// box's baseline rises by it. None for the keywords.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_shift: Option<(f64, f64)>,
     /// `clip: rect()` as insets from the border box top, right, bottom, left; only absolute and
     /// fixed boxes honor it, as in CSS.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -275,6 +342,25 @@ pub struct ComputedStyle {
     /// Percentage translation `[tx_percent, ty_percent]` of the box's own size.
     #[serde(skip_serializing_if = "default")]
     pub translate_percent: [f64; 2],
+    /// Pixel part of a mixed `calc()` width such as `calc(70% - 12px)`, added once the
+    /// percentage in `width` resolves; 0 for a plain width. Without it the whole declaration
+    /// was refused and a two-column row stacked.
+    #[serde(skip_serializing_if = "default")]
+    pub width_offset: f64,
+    /// SVG paint properties (`fill`, `stroke`, `stroke-width`, ...) authored in CSS, by name.
+    /// The SVG painter reads them before presentation attributes, as the cascade orders them;
+    /// without this a stylesheet `fill` loses to `<svg fill="none">` and icons paint nothing.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub svg_paint: std::collections::BTreeMap<String, String>,
+    /// Bits of the grouping properties that make this box a stacking context in Blink without
+    /// positioning (`filter`, `backdrop-filter`, `mix-blend-mode`, `isolation`, `will-change`,
+    /// `contain`, a shaped `clip-path`); see `visual::STACKING_*`. Paint order reads it.
+    #[serde(skip_serializing_if = "default")]
+    pub stacking: u8,
+    /// The standard deviation of a `filter: blur()` in px, 0 when the box is not blurred.
+    /// Paint spreads a blurred solid box into a soft glow instead of a hard shape.
+    #[serde(default, skip_serializing_if = "default")]
+    pub filter_blur: f64,
 }
 /// A generated `::before` or `::after` box: its text and its own computed style.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -335,12 +421,15 @@ impl Default for ComputedStyle {
             display_flex: false,
             flex_direction: FlexDirection::Row,
             flex_wrap: FlexWrap::NoWrap,
+            flex_reverse: false,
+            wrap_reverse: false,
             flex_basis: FlexBasis::Auto,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             row_gap: 0.0,
             column_gap: 0.0,
-            justify_content: JustifyContent::Start,
+            justify_content: JustifyContent::Stretch,
+            align_content: JustifyContent::Stretch,
             align_items: AlignItems::Stretch,
             min_width: None,
             opacity: 1.0,
@@ -376,12 +465,19 @@ impl Default for ComputedStyle {
             list_style: ListStyle::Disc,
             display_grid: false,
             display_contents: false,
+            table_box: TableBox::None,
+            flow_root: false,
             grid_columns: GridTemplate::default(),
             grid_rows: GridTemplate::default(),
+            grid_auto_rows: GridTemplate::default(),
+            grid_auto_columns: GridTemplate::default(),
+            grid_flow_column: false,
+            grid_flow_dense: false,
             grid_column: GridLine::default(),
             grid_row: GridLine::default(),
             grid_areas: Vec::new(),
             grid_area_names: [None, None],
+            grid_line_names: Default::default(),
             justify_items: AlignItems::Stretch,
             background_size: BackgroundSize::Auto,
             background_position: [Extent::default(); 2],
@@ -391,12 +487,22 @@ impl Default for ComputedStyle {
             mask: None,
             border_spacing: 0.0,
             border_collapse: false,
+            table_layout_fixed: false,
+            caption_bottom: false,
+            quirk_top: false,
+            font_authored: false,
+            edges_authored: false,
             align_self: None,
             justify_self: None,
             order: 0,
             padding_percent: [0.0; 4],
             margin_percent: [0.0; 4],
             aspect_ratio: None,
+            aspect_ratio_auto: false,
+            overflow_wrap_break: None,
+            word_break_all: None,
+            text_overflow_ellipsis: false,
+            vertical_shift: None,
             clip_rect: None,
             clip_path: None,
             container_type: ContainerType::Normal,
@@ -411,6 +517,10 @@ impl Default for ComputedStyle {
             inset_percent: [0.0; 4],
             radius_percent: [0.0; 4],
             translate_percent: [0.0; 2],
+            width_offset: 0.0,
+            svg_paint: std::collections::BTreeMap::new(),
+            stacking: 0,
+            filter_blur: 0.0,
         }
     }
 }

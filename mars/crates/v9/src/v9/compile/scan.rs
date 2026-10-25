@@ -1,5 +1,6 @@
 /** Read-only syntax-tree walks the compiler uses to place bindings before emitting code. */
 use super::super::syntax::*;
+use super::super::vm::heap::FastSet;
 use std::rc::Rc;
 
 /** What a function body (including nested arrows) refers to. */
@@ -491,10 +492,7 @@ pub(super) fn function_declarations(body: &[Stmt]) -> Vec<Rc<Func>> {
  * body, where function declarations are var-scoped.
  */
 pub(super) fn conflict(body: &[Stmt], strict: bool, top: bool, outer: &[Name]) -> Option<Name> {
-    let lexical: Vec<Name> = lexical_names(body, false)
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect();
+    let lexical = lexical_names(body, false);
     let functions: Vec<Name> = function_declarations(body)
         .iter()
         .filter_map(|func| func.name.clone())
@@ -502,25 +500,28 @@ pub(super) fn conflict(body: &[Stmt], strict: bool, top: bool, outer: &[Name]) -
     let mut vars = Vec::new();
     // Strict scanning leaves out Annex B block functions, which never conflict.
     var_names(body, true, true, &mut vars);
-    let mut seen: Vec<&Name> = Vec::new();
-    for name in &lexical {
-        if seen.contains(&name)
-            || functions.contains(name)
-            || vars.contains(name)
-            || outer.contains(name)
-        {
+    // Hashed, as a minified bundle declares thousands of names in one scope.
+    let taken: FastSet<&Name> = functions.iter().chain(&vars).chain(outer).collect();
+    let mut seen = FastSet::default();
+    for (name, _) in &lexical {
+        if taken.contains(name) || !seen.insert(name) {
             return Some(name.clone());
         }
-        seen.push(name);
     }
-    if !top {
-        for (index, name) in functions.iter().enumerate() {
-            if vars.contains(name) || strict && functions[..index].contains(name) {
-                return Some(name.clone());
-            }
-        }
+    if top {
+        return None;
     }
-    None
+    function_conflict(&functions, &vars, strict)
+}
+
+/** The first block function that repeats a `var`, or in strict code another block function. */
+fn function_conflict(functions: &[Name], vars: &[Name], strict: bool) -> Option<Name> {
+    let vars: FastSet<&Name> = vars.iter().collect();
+    let mut seen = FastSet::default();
+    functions
+        .iter()
+        .find(|name| vars.contains(name) || strict && !seen.insert(*name))
+        .cloned()
 }
 
 /** `var` names a single statement declares, for loop heads that hold their own lexical names. */

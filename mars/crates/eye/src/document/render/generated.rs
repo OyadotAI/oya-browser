@@ -19,6 +19,7 @@ pub(super) fn generated(
         }
         let mut synthetic = synthetic(node, generated);
         synthetic.style.float = crate::document::style::Float::None;
+        let atomic = synthetic.style.inline_block;
         if synthetic.style.inline_block && synthetic.style.width.is_none() {
             synthetic.style.inline_block = false;
         }
@@ -27,6 +28,13 @@ pub(super) fn generated(
             synthetic.style.display_grid = false;
         }
         node_layout(context, &synthetic, flow, items, None)?;
+        if atomic && synthetic.style.inline {
+            // An inline-block, even an empty one, opens a line box, so an element holding only
+            // `content: ""; display: inline-block` is one line tall (nodejs.org's blank code
+            // lines collapsed to nothing).
+            flow.line = flow.line.max(super::sizing::advance(&synthetic.style));
+            flow.bottom = flow.bottom.max(flow.y + flow.line);
+        }
     }
     Ok(())
 }
@@ -41,56 +49,43 @@ pub(super) fn absolute(
     if node.style.position == Position::Static || node.style.generated.is_empty() {
         return Ok(());
     }
-    let (x, y, width, height) = {
-        let item = &items[index];
-        let sides = super::sizing::border_sides(&node.style);
-        (
-            item.x + sides[3],
-            item.y + sides[0],
-            (item.width - sides[1] - sides[3]).max(0.0),
-            (item.height - sides[0] - sides[2]).max(0.0),
-        )
-    };
+    let block = super::positioned::padding_box(node, &items[index]);
     for generated in &node.style.generated {
         let style = &generated.style;
         if style.hidden || style.position != Position::Absolute {
             continue;
         }
+        // The same out-of-flow sizing as elements, at the padding box's origin as the static
+        // position; Static keeps the stand-in from being deferred again.
         let mut synthetic = synthetic(node, generated);
         synthetic.style.position = Position::Static;
-        let [top, right, bottom, left] = style.inset;
-        let box_width = match (style.width, left, right) {
-            (Some(_), _, _) => border_width(&synthetic, width, width, None),
-            (None, Some(l), Some(r)) => (width - l - r).max(0.0),
-            _ => super::float::shrink_width(context, &synthetic, width, 0.0)?,
-        };
-        let box_height = match (style.height, top, bottom) {
-            (Some(h), _, _) => h
-                .resolve_size(Some(height))
-                .map(|h| super::sizing::border_height(&synthetic, h)),
-            (None, Some(t), Some(b)) => Some((height - t - b).max(0.0)),
-            _ => None,
-        };
-        let bx = match (left, right) {
-            (Some(l), _) => x + l,
-            (None, Some(r)) => x + width - r - box_width,
-            _ => x,
-        };
-        let by = match (top, bottom, box_height) {
-            (Some(t), _, _) => y + t,
-            (None, Some(b), Some(h)) => y + height - b - h,
-            _ => y,
-        };
-        let mut flow = Flow::new(bx, by, box_width);
-        let bounds = BorderBox {
-            x: bx,
-            y: by,
-            width: box_width,
-            height: box_height,
-        };
-        node_layout(context, &synthetic, &mut flow, items, Some(bounds))?;
+        super::positioned::place_in(context, &synthetic, block, (block.x, block.y), items)?;
     }
     Ok(())
+}
+/** The element's `::before` and `::after` boxes as flex or grid items, in that order. CSS Display 3
+ * blockifies them and Blink makes them the container's first and last children, so they size,
+ * align, flex and auto-place like any item (MDN's nav chevrons were never painted). */
+pub(super) fn items(node: &Node) -> [Vec<Node>; 2] {
+    [false, true].map(|after| {
+        node.style
+            .generated
+            .iter()
+            .filter(|g| g.after == after && !g.style.hidden)
+            .filter(|g| !matches!(g.style.position, Position::Absolute | Position::Fixed))
+            .map(|generated| {
+                let mut item = synthetic(node, generated);
+                item.style.float = crate::document::style::Float::None;
+                item.style.inline = false;
+                item.style.inline_block = false;
+                // ponytail: a generated flex or grid container lays out as a block of its text;
+                // its own items would need identities of their own.
+                item.style.display_flex = false;
+                item.style.display_grid = false;
+                item
+            })
+            .collect()
+    })
 }
 /** A stand-in node carrying a generated box's text and style under its element's identity. */
 fn synthetic(node: &Node, generated: &crate::document::style::Generated) -> Node {

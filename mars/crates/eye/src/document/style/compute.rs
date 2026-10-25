@@ -127,6 +127,7 @@ impl Resolver<'_> {
         value: &str,
         diagnostics: &mut Vec<String>,
     ) -> bool {
+        let value = &super::values::integer_math(key, value);
         let drop = match super::apply::apply(style, key, value, self.context, diagnostics) {
             Ok(true) => return false,
             Ok(false) => Drop::Property,

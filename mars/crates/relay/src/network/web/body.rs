@@ -91,11 +91,7 @@ fn headers(
             return Ok((headers, cookies));
         }
         let (name, value) = line.split_once(':').ok_or_else(unsupported)?;
-        if name.is_empty()
-            || !name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            || value.chars().any(|c| c.is_control() && c != '\t')
+        if !crate::network::mime::token(name) || value.chars().any(|c| c.is_control() && c != '\t')
         {
             return Err(unsupported());
         }

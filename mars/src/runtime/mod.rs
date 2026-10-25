@@ -21,6 +21,7 @@ mod lifetime;
 /** The Oya server link's way into the runtime, under the same ownership checks as local agents. */
 pub mod link;
 mod modules;
+mod names;
 mod navigation;
 mod observe;
 mod page;

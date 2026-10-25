@@ -745,6 +745,10 @@ impl Window {
                 self.click_page_point(x, y)?;
                 return Ok(self.human_observation());
             }
+            "hit" => {
+                let [x, y] = input.point.unwrap_or_default();
+                return Ok(self.hit_report(x, y));
+            }
             "scroll" => {
                 let [_, y] = input.point.unwrap_or_default();
                 self.canvas.scrollPoint(NSPoint::new(0.0, y));
@@ -774,6 +778,28 @@ impl Window {
             app.postEvent_atStart(&event, false);
         }
         Ok(())
+    }
+
+    /** Which control a mouse-down at a page point reaches, hit-tested from the window's own root
+    (the title bar included), and whether that view lets the press drag the window instead. */
+    fn hit_report(&self, x: f64, y: f64) -> Value {
+        let location = self.canvas.convertPoint_toView(NSPoint::new(x, y), None);
+        let frame = self
+            .window
+            .contentView()
+            .and_then(|view| unsafe { view.superview() });
+        let Some(view) = frame.and_then(|frame| frame.hitTest(location)) else {
+            return json!({"class": null});
+        };
+        let moves: bool = unsafe { objc2::msg_send![&*view, mouseDownCanMoveWindow] };
+        let tag: Option<isize> = view
+            .downcast_ref::<objc2_app_kit::NSControl>()
+            .map(|control| control.tag());
+        json!({
+            "class": view.class().name().to_string_lossy(),
+            "tag": tag,
+            "moves_window": moves,
+        })
     }
 
     /** Capture the main, Library or Settings window, frame included so the window background paints, into the startup capture directory. */

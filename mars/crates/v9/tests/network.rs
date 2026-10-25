@@ -150,3 +150,21 @@ fn url_and_search_params() {
         "https://a.example/b?x=1&y=2#h|/b|2|1,3|a=1&b=2&a=3&c=x+y"
     );
 }
+
+/** A typed array body is sent as bytes, as browsers send a BufferSource: text when the bytes
+are UTF-8, and `body_bytes` otherwise (YouTube posts its guide request gzipped this way). */
+#[test]
+fn buffer_bodies_are_sent_as_bytes() {
+    let loaded = common::load(
+        "fetch('/text', {method: 'POST', body: new TextEncoder().encode('hi')});
+         fetch('/gzip', {method: 'POST', headers: {'Content-Encoding': 'gzip'}, body: new Uint8Array([31, 139, 8, 0, 255])});
+         const x = new XMLHttpRequest(); x.open('POST', '/xhr'); x.send(new Uint8Array([200, 1]).buffer);",
+    );
+    assert!(loaded.failed.is_empty(), "{:?}", loaded.failed);
+    let requests = &loaded.effects.requests;
+    assert_eq!(requests[0].body.as_deref(), Some("hi"));
+    assert!(requests[0].body_bytes.is_empty());
+    assert_eq!(requests[1].body, None);
+    assert_eq!(requests[1].body_bytes, vec![31, 139, 8, 0, 255]);
+    assert_eq!(requests[2].body_bytes, vec![200, 1]);
+}

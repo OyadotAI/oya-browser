@@ -59,6 +59,22 @@ pub(super) enum Pseudo {
     Enabled,
     /// `:defined`: built-in elements, and custom elements a script upgraded.
     Defined,
+    /// `:dir(ltr)` (false) or `:dir(rtl)` (true): the element's directionality.
+    Dir(bool),
+    /// `:placeholder-shown`: a text control showing its placeholder.
+    PlaceholderShown,
+    /// `:read-write` (true) or `:read-only` (false).
+    ReadWrite(bool),
+    /// `:required` (true) or `:optional` (false), on form controls only.
+    Required(bool),
+    /// `:valid` (true) or `:invalid` (false), on form controls only.
+    Valid(bool),
+    /// `:indeterminate`: a `<progress>` without a value.
+    Indeterminate,
+    /// `:default`: a checkbox, radio or option selected by its markup.
+    Default,
+    /// `:open`: a `<details>` or `<dialog>` with `open`.
+    Open,
     /// `:hover`, `:focus` and other user-state classes: the rule is kept and never matches.
     Never,
 }
@@ -78,12 +94,22 @@ pub(super) enum Simple {
     },
     /// Tree and state pseudo-classes.
     Pseudo(Pseudo),
-    /// `:not(a, b)`: matches when no argument matches.
-    Not(Vec<Compound>),
-    /// `:is()` (counts specificity) or `:where()` (zero specificity).
-    Is(Vec<Compound>, bool),
+    /// `:not(a, b)`: matches when no argument matches. Arguments are complex selectors whose
+    /// subject is the element itself, as in Blink's SelectorChecker.
+    Not(Vec<Selector>),
+    /// `:is()` (counts specificity) or `:where()` (zero specificity), over complex selectors.
+    Is(Vec<Selector>, bool),
     /// `:has()`: relative selectors, each a leading combinator and a selector for the far element.
     Has(Vec<(Combinator, Selector)>),
+    /// `:lang()`: language ranges, lowercased, matched by RFC 4647 extended filtering.
+    Lang(Vec<String>),
+    /// `:nth-child(an+b of S)` or `:nth-last-child(an+b of S)`: position among siblings matching S.
+    NthOf {
+        a: i64,
+        b: i64,
+        last: bool,
+        of: Vec<Selector>,
+    },
 }
 /// A type selector (None is `*` or omitted) plus simple selectors.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -109,8 +135,18 @@ pub(super) fn parse(source: &str) -> Result<Selector, Unsupported> {
 }
 /** Parses one complex selector; inside `:has()` a nested `:has()` is refused, as CSS requires. */
 fn parse_in(source: &str, in_has: bool) -> Result<Selector, Unsupported> {
+    parse_nested(source, in_has, 0)
+}
+/// Selector functions nest at most this deep (`:is(:not(:is(…)))`), bounding parse recursion.
+const SELECTOR_NESTING: usize = 32;
+/** Parses one complex selector `depth` selector functions deep. */
+fn parse_nested(source: &str, in_has: bool, depth: usize) -> Result<Selector, Unsupported> {
+    if depth > SELECTOR_NESTING {
+        return Err("selector length");
+    }
     let mut cursor = Cursor::new(source.trim());
     cursor.in_has = in_has;
+    cursor.depth = depth;
     let mut compounds = vec![cursor.compound()?];
     let mut combinators = Vec::new();
     while let Some(combinator) = cursor.combinator()? {
@@ -138,9 +174,12 @@ pub(super) fn has_free_subject(selector: &Selector) -> Compound {
 fn uses_has(simple: &Simple) -> bool {
     match simple {
         Simple::Has(_) => true,
-        Simple::Not(arguments) | Simple::Is(arguments, _) => arguments
-            .iter()
-            .any(|compound| compound.simples.iter().any(uses_has)),
+        Simple::Not(arguments) | Simple::Is(arguments, _) => arguments.iter().any(|selector| {
+            selector
+                .compounds
+                .iter()
+                .any(|compound| compound.simples.iter().any(uses_has))
+        }),
         _ => false,
     }
 }
@@ -159,6 +198,7 @@ pub(super) fn subject(source: &str) -> Option<Compound> {
         if cursor.pseudo_element() {
             return None;
         }
+        let start = cursor.index;
         match cursor.simple() {
             // `:has()` is dropped from a mask subject: a superset must not depend on a budget.
             Ok(Some(Simple::Has(_))) => {}
@@ -166,7 +206,12 @@ pub(super) fn subject(source: &str) -> Option<Compound> {
                 compound.simples.push(simple)
             }
             Ok(Some(_)) => {}
-            _ => cursor.skip_simple(),
+            _ => {
+                // A failed simple may have consumed part of the text; skip it from its start, so
+                // a following `::pseudo-element` is still seen (Google's view-transition rules).
+                cursor.index = start;
+                cursor.skip_simple();
+            }
         }
     }
     Some(compound)
@@ -179,6 +224,8 @@ struct Cursor<'a> {
     index: usize,
     /// Inside a `:has()` argument, where another `:has()` is invalid.
     in_has: bool,
+    /// Selector functions enclosing this selector.
+    depth: usize,
 }
 impl<'a> Cursor<'a> {
     /** Starts at the beginning. */
@@ -187,6 +234,7 @@ impl<'a> Cursor<'a> {
             source,
             index: 0,
             in_has: false,
+            depth: 0,
         }
     }
     /** Remaining bytes. */
@@ -485,8 +533,44 @@ impl<'a> Cursor<'a> {
             "disabled" => Pseudo::Disabled,
             "enabled" => Pseudo::Enabled,
             "defined" => Pseudo::Defined,
-            "hover" | "active" | "focus" | "visited" | "focus-visible" | "focus-within"
-            | "target" | "placeholder-shown" | "autofill" | "-webkit-autofill" => Pseudo::Never,
+            "-webkit-any-link" => Pseudo::Link,
+            "scope" => Pseudo::Root,
+            "placeholder-shown" => Pseudo::PlaceholderShown,
+            "read-write" => Pseudo::ReadWrite(true),
+            "read-only" => Pseudo::ReadWrite(false),
+            "required" => Pseudo::Required(true),
+            "optional" => Pseudo::Required(false),
+            "valid" => Pseudo::Valid(true),
+            "invalid" => Pseudo::Valid(false),
+            "indeterminate" => Pseudo::Indeterminate,
+            "default" => Pseudo::Default,
+            "open" => Pseudo::Open,
+            // States a page reaches only through a person or a script call Eye has not made.
+            "hover"
+            | "active"
+            | "focus"
+            | "visited"
+            | "focus-visible"
+            | "focus-within"
+            | "target"
+            | "autofill"
+            | "-webkit-autofill"
+            | "popover-open"
+            | "modal"
+            | "fullscreen"
+            | "-webkit-full-screen"
+            | "picture-in-picture"
+            | "user-invalid"
+            | "user-valid"
+            | "target-within"
+            | "playing"
+            | "paused"
+            | "seeking"
+            | "buffering"
+            | "stalled"
+            | "muted"
+            | "volume-locked"
+            | "closed" => Pseudo::Never,
             _ => return Err(pseudo_name(&name)),
         };
         Ok(Simple::Pseudo(pseudo))
@@ -499,13 +583,24 @@ impl<'a> Cursor<'a> {
         self.index = end;
         match name {
             "nth-child" | "nth-last-child" => {
+                let last = name == "nth-last-child";
+                if let Some((formula, of)) = split_of(inner) {
+                    let (a, b) = nth(formula).ok_or("nth-child")?;
+                    let of = arguments(of, self.in_has, self.depth, false)?;
+                    if of.iter().any(nests_nth_of) {
+                        return Err(":nth-child(of S) inside S");
+                    }
+                    return Ok(Simple::NthOf { a, b, last, of });
+                }
                 let (a, b) = nth(inner).ok_or("nth-child")?;
-                Ok(Simple::Pseudo(Pseudo::Nth {
-                    a,
-                    b,
-                    last: name == "nth-last-child",
-                }))
+                Ok(Simple::Pseudo(Pseudo::Nth { a, b, last }))
             }
+            "lang" => lang(inner).map(Simple::Lang).ok_or(":lang"),
+            "dir" => match inner.trim().to_ascii_lowercase().as_str() {
+                "ltr" => Ok(Simple::Pseudo(Pseudo::Dir(false))),
+                "rtl" => Ok(Simple::Pseudo(Pseudo::Dir(true))),
+                _ => Err(":dir"),
+            },
             "nth-of-type" | "nth-last-of-type" => {
                 let (a, b) = nth(inner).ok_or(":nth-of-type")?;
                 Ok(Simple::Pseudo(Pseudo::NthOfType {
@@ -514,11 +609,20 @@ impl<'a> Cursor<'a> {
                     last: name == "nth-last-of-type",
                 }))
             }
-            "not" => Ok(Simple::Not(compounds(inner, self.in_has)?)),
-            "is" | "matches" | "-webkit-any" => {
-                Ok(Simple::Is(compounds(inner, self.in_has)?, false))
-            }
-            "where" => Ok(Simple::Is(compounds(inner, self.in_has)?, true)),
+            "not" => Ok(Simple::Not(arguments(
+                inner,
+                self.in_has,
+                self.depth,
+                false,
+            )?)),
+            "is" | "matches" | "-webkit-any" => Ok(Simple::Is(
+                arguments(inner, self.in_has, self.depth, true)?,
+                false,
+            )),
+            "where" => Ok(Simple::Is(
+                arguments(inner, self.in_has, self.depth, true)?,
+                true,
+            )),
             // The name is escape-decoded and lowercased, so `:HAS(` and `:h\61s(` land here too.
             "has" if self.in_has => Err(":has"),
             "has" => Ok(Simple::Has(relative(inner)?)),
@@ -546,27 +650,80 @@ fn relative(source: &str) -> Result<Vec<(Combinator, Selector)>, Unsupported> {
         })
         .collect()
 }
-/** A comma list of compounds; complex arguments are unsupported. */
-fn compounds(source: &str, in_has: bool) -> Result<Vec<Compound>, Unsupported> {
+/** Whether a selector names another engine's prefixed pseudo-class or pseudo-element, which
+ * Blink never parses. */
+fn foreign(selector: &str) -> bool {
+    let lower = selector.to_ascii_lowercase();
+    [":-moz-", ":-ms-", ":-o-"]
+        .iter()
+        .any(|prefix| lower.contains(prefix))
+}
+/**
+ * A comma list of complex selectors, as Selectors 4 and Blink parse `:is()`, `:where()` and
+ * `:not()`. `:is()` and `:where()` take a forgiving list: an argument that does not parse is
+ * dropped and the rest still match (an empty list matches nothing); in `:not()` it fails.
+ * Eye only forgives what Blink itself rejects (see `foreign`), so masks stay fail-closed.
+ */
+/**
+ * Whether a selector holds `:nth-child(of S)` anywhere inside it. Each such argument scans every
+ * sibling of every candidate, so nesting one in another multiplies the work by the sibling count
+ * per level; a nested one is refused (the rule falls back to its mask) to keep matching linear.
+ */
+fn nests_nth_of(selector: &Selector) -> bool {
+    selector
+        .compounds
+        .iter()
+        .flat_map(|c| &c.simples)
+        .any(|simple| match simple {
+            Simple::NthOf { .. } => true,
+            Simple::Not(list) | Simple::Is(list, _) => list.iter().any(nests_nth_of),
+            Simple::Has(list) => list.iter().any(|(_, s)| nests_nth_of(s)),
+            _ => false,
+        })
+}
+fn arguments(
+    source: &str,
+    in_has: bool,
+    depth: usize,
+    forgiving: bool,
+) -> Result<Vec<Selector>, Unsupported> {
     let parts = super::syntax::split_top(source, b',');
-    if parts.is_empty() || parts.len() > SELECTOR_ARGUMENTS {
+    if (parts.is_empty() && !forgiving) || parts.len() > SELECTOR_ARGUMENTS {
         return Err("selector arguments");
     }
-    parts
-        .into_iter()
-        .map(|part| {
-            let mut cursor = Cursor::new(part.trim());
-            cursor.in_has = in_has;
-            let compound = cursor.compound()?;
-            if cursor.done() {
-                Ok(compound)
-            } else {
-                Err("complex selector argument")
-            }
-        })
-        .collect()
+    let mut out = Vec::new();
+    for part in parts {
+        match parse_nested(part, in_has, depth + 1) {
+            Ok(selector) => out.push(selector),
+            // Blink drops other engines' prefixed pseudos from a forgiving list too. Anything
+            // else Eye cannot parse fails the rule, so a hiding rule falls back to its mask.
+            Err(_) if forgiving && foreign(part) => {}
+            Err(feature) => return Err(feature),
+        }
+    }
+    Ok(out)
 }
-/** `odd`, `even`, `b`, `an`, `an+b` and `an-b`; an `of S` clause is unsupported. */
+/** `An+B of S` split at the `of` keyword, when there is one. */
+fn split_of(source: &str) -> Option<(&str, &str)> {
+    let lower = source.to_ascii_lowercase();
+    let at = lower.find(" of ")?;
+    Some((&source[..at], &source[at + 4..]))
+}
+/** `:lang()` ranges: identifiers or strings, comma-separated, lowercased; None when empty. */
+fn lang(source: &str) -> Option<Vec<String>> {
+    let ranges: Vec<String> = super::syntax::split_top(source, b',')
+        .into_iter()
+        .map(|range| {
+            range
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .replace('\\', "")
+                .to_ascii_lowercase()
+        })
+        .collect();
+    (!ranges.is_empty() && ranges.len() <= SELECTOR_ARGUMENTS).then_some(ranges)
+}
+/** `odd`, `even`, `b`, `an`, `an+b` and `an-b`. */
 fn nth(source: &str) -> Option<(i64, i64)> {
     let text: String = source
         .chars()
@@ -629,20 +786,30 @@ fn compound_specificity(compound: &Compound) -> (usize, usize, usize) {
             Simple::Is(_, true) => (0, 0, 0),
             Simple::Not(arguments) | Simple::Is(arguments, false) => arguments
                 .iter()
-                .map(compound_specificity)
+                .map(|selector| split(specificity(selector)))
                 .max()
                 .unwrap_or_default(),
             Simple::Has(arguments) => arguments
                 .iter()
-                .map(|(_, selector)| {
-                    let n = specificity(selector);
-                    (n / 1_000_000, n / 1000 % 1000, n % 1000)
-                })
+                .map(|(_, selector)| split(specificity(selector)))
                 .max()
                 .unwrap_or_default(),
+            // Selectors 4: the pseudo-class plus its most specific `of S` argument.
+            Simple::NthOf { of, .. } => {
+                let (ids, classes, types) = of
+                    .iter()
+                    .map(|selector| split(specificity(selector)))
+                    .max()
+                    .unwrap_or_default();
+                (ids, classes + 1, types)
+            }
             _ => (0, 1, 0),
         };
         triple = (triple.0 + add.0, triple.1 + add.1, triple.2 + add.2);
     }
     triple
+}
+/** A scalar specificity back as its (ids, classes, types) triple. */
+fn split(n: usize) -> (usize, usize, usize) {
+    (n / 1_000_000, n / 1000 % 1000, n % 1000)
 }

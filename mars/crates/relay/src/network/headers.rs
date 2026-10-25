@@ -45,7 +45,7 @@ fn fields<'a>(lines: impl Iterator<Item = &'a str>) -> EngineResult<BTreeMap<Str
     let mut headers = BTreeMap::new();
     for line in lines {
         let (name, value) = line.split_once(':').ok_or_else(unsupported)?;
-        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        if !mime::token(name) {
             return Err(unsupported());
         }
         if value.chars().any(|c| c.is_control() && c != '\t') {

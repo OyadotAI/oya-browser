@@ -1,13 +1,17 @@
 /** EventTarget, Event and CustomEvent, and dispatch through capture, target and bubble phases. */
 use super::dom::{DOCUMENT, native_name, node_of, wrap};
 use super::{Listener, Target};
-use crate::constants::VM_LISTENERS;
 use crate::protocol::EngineError;
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::{Class, EventData, HostData};
 use crate::v9::vm::heap::{Key, Object};
 use crate::v9::vm::realm::realm;
 use crate::v9::vm::{Call, GLOBAL, Res, Thrown, Vm};
+
+/// Event listeners one page may register on nodes, the document and the window together. A
+/// component framework adds several per element: YouTube's Polymer app passes 512 as soon as
+/// its guide and masthead render. Chromium has no such bound; this one only caps state size.
+pub(in crate::v9) const LISTENERS: usize = 16 * 1024;
 
 /** The listener target a value denotes. */
 pub(in crate::v9) fn target_of(vm: &Vm, value: &JsValue) -> Option<Target> {
@@ -82,8 +86,8 @@ pub(in crate::v9) fn event_target(vm: &mut Vm, call: Call) -> Res<JsValue> {
             if existing.is_some() {
                 return Ok(JsValue::Undefined);
             }
-            if listeners.len() >= VM_LISTENERS {
-                return Err(EngineError::limit("V9 event listeners", VM_LISTENERS).into());
+            if listeners.len() >= LISTENERS {
+                return Err(EngineError::limit("V9 event listeners", LISTENERS).into());
             }
             let id = vm.page.state.next_listener;
             vm.page.state.next_listener += 1;

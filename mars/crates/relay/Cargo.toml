@@ -12,6 +12,8 @@ serde_json = "=1.0.154"
 url = "=2.5.8"
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12", "brotli"] }
 webpki-roots = "=1.0.9"
+# Rustls's own crypto backend, used directly for the TLS 1.2 RSA key exchange Rustls lacks.
+ring = "=0.17.14"
 httpdate = "=1.0.3"
 # Pure-Rust content codings: gzip/deflate via miniz_oxide, Brotli via its reference decoder.
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }

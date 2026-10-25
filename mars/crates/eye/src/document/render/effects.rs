@@ -11,18 +11,24 @@ use crate::{
 type Matrix = [f64; 6];
 /** The identity leaves geometry where layout put it. */
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-/** One step of a paint-order key: bucket within a stacking layer, z-index, then document order. */
-type Step = (u8, i32, usize);
-/** A layer root's own background and border paint first. */
+/** One step of a paint-order key: phase within a painting layer, z-index, document order, then
+ * 0 for an element's own box, 1 for its `::before` box and 2 for its `::after` box. */
+type Step = (u8, i32, usize, u8);
+/** A painting layer's own background, border and text paint first. */
 const OWN: u8 = 0;
-/** Negative z-index layers paint below in-flow content. */
+/** The negative z-order list of a stacking context. */
 const NEGATIVE: u8 = 1;
-/** In-flow, non-positioned descendants paint in document order. */
-const FLOW: u8 = 2;
-/** Positioned boxes with z-index auto or 0, and other zero-level stacking contexts. */
-const ZERO: u8 = 3;
-/** Positive z-index layers paint on top. */
-const POSITIVE: u8 = 4;
+/** Normal-flow block-level descendants: their backgrounds paint in tree order. */
+const BLOCK: u8 = 2;
+/** Floats, each painted atomically after every block background. */
+const FLOAT: u8 = 3;
+/** Inline-level content: inline boxes, text runs and atomic inlines, in tree order.
+ * ponytail: equal to BLOCK because one display item carries a block's background together with
+ * its own text, and text selection reads items in tree order; splitting a block's text into its
+ * own item is the upgrade that lets inline content paint over later block backgrounds. */
+const INLINE: u8 = BLOCK;
+/** The positive z-order list: z-index 0 and auto stacked boxes in tree order, then higher z. */
+const POSITIVE: u8 = 5;
 
 /** Read-only facts about the laid-out tree, shared by every per-item computation. */
 struct Tree<'a> {
@@ -89,7 +95,7 @@ pub(super) fn stack(
         let node = tree.node(item.local_id)?;
         let matrix = absolute(&mut tree, &items, node)?;
         let clip = clip(&mut tree, &items, node)?;
-        let key = key(&tree, node)?;
+        let key = key(&tree, node, item)?;
         resolved.push((key, index, matrix, clip));
     }
     resolved.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
@@ -112,15 +118,42 @@ pub(super) fn stack(
         item.z = key
             .iter()
             .rev()
-            .find(|step| step.0 != FLOW && step.0 != OWN)
+            .find(|step| step.0 == NEGATIVE || step.0 == POSITIVE)
             .map_or(0, |s| s.1);
-        item.clip = clip;
+        item.clip = content_clip(node, &item, matrix, clip);
+        let matrix = generated_matrix(node, &item, matrix);
         place(&mut item, matrix);
         ordered.push(item);
     }
     Ok(ordered)
 }
 
+/** Vector content of an img or inline svg stays inside the content box, as Blink's replaced
+ * painters clip it (`object-fit: cover`, `preserveAspectRatio` slice, paths past the viewBox). */
+fn content_clip(
+    node: &Node,
+    item: &DisplayItem,
+    matrix: Matrix,
+    clip: Option<ClipRect>,
+) -> Option<ClipRect> {
+    if item.vector.is_empty() || !super::svg::clips_content(node) {
+        return clip;
+    }
+    let [top, right, bottom, left] = sizing::border_sides(&node.style);
+    let [pt, pr, pb, pl] = node.style.padding;
+    let content = ClipRect {
+        x: item.x + left + pl,
+        y: item.y + top + pt,
+        width: (item.width - left - right - pl - pr).max(0.0),
+        height: (item.height - top - bottom - pt - pb).max(0.0),
+        radius: [0.0; 4],
+    };
+    let content = super::display::transform_rect(&content, Some(matrix));
+    Some(match clip {
+        Some(outer) => outer.intersect(&content),
+        None => content,
+    })
+}
 /** The style of a `::before` or `::after` item, which shares its element's identity. */
 pub(super) fn generated_style<'a>(
     node: &'a Node,
@@ -137,45 +170,141 @@ pub(super) fn generated_style<'a>(
         .find(|generated| generated.after == after)
         .map(|generated| &*generated.style)
 }
-/** Positioned, translucent and transformed boxes form layers painted as a unit. */
-fn layer_root(node: &Node) -> bool {
-    node.style.position != Position::Static
-        || node.style.opacity < 1.0
-        || node.style.transform.is_some()
-        || node.style.translate_percent != [0.0; 2]
+/**
+ * Whether a box is a stacking context, as Blink's `IsStackingContext`: the root, a z-index on a
+ * box that allows one (positioned, or a flex or grid item), fixed and sticky boxes, transforms,
+ * opacity, and the grouping properties (filter, blend mode, isolation, clip-path, mask,
+ * will-change, paint or layout containment).
+ */
+fn stacking_context(
+    style: &crate::document::ComputedStyle,
+    parent: Option<&crate::document::ComputedStyle>,
+) -> bool {
+    let allows_z = style.position != Position::Static
+        || parent.is_some_and(|parent| parent.display_flex || parent.display_grid);
+    (allows_z && style.z_index.is_some())
+        || matches!(style.position, Position::Fixed | Position::Sticky)
+        || transformed(style)
+        || style.opacity < 1.0
+        || style.stacking != 0
+        || style.clip_path.is_some()
+        || style.masked
 }
-/** Where a layer root paints inside its parent layer. */
-fn layer_step(tree: &Tree<'_>, node: &Node) -> Step {
-    let z = if node.style.position == Position::Static {
+/** Whether a box is stacked, as Blink's `IsStacked`: positioned or a stacking context. It then
+ * paints from its stacking context's z-order lists instead of with the normal flow. */
+fn stacked(
+    style: &crate::document::ComputedStyle,
+    parent: Option<&crate::document::ComputedStyle>,
+) -> bool {
+    style.position != Position::Static || stacking_context(style, parent)
+}
+/** The z-index Blink stacks a box by (`EffectiveZIndex`): 0 unless the box allows one. */
+fn effective_z(
+    style: &crate::document::ComputedStyle,
+    parent: Option<&crate::document::ComputedStyle>,
+) -> i32 {
+    let allows_z = style.position != Position::Static
+        || parent.is_some_and(|parent| parent.display_flex || parent.display_grid);
+    if allows_z {
+        style.z_index.unwrap_or(0)
+    } else {
         0
-    } else {
-        node.style.z_index.unwrap_or(0)
-    };
-    let bucket = match z {
-        ..0 => NEGATIVE,
-        0 => ZERO,
-        _ => POSITIVE,
-    };
-    (bucket, z, tree.order(node.local_id))
-}
-/** The paint-order key: each enclosing layer from the outside in, then this item's place in its layer.
- * ponytail: a positioned z-index:auto box is treated as atomic like a real stacking context; split it
- * when interleaving its positioned descendants with siblings matters. */
-fn key(tree: &Tree<'_>, node: &Node) -> EngineResult<Vec<Step>> {
-    let mut chain = tree
-        .ancestors(node)?
-        .into_iter()
-        .filter(|ancestor| layer_root(ancestor))
-        .map(|ancestor| layer_step(tree, ancestor))
-        .collect::<Vec<_>>();
-    chain.reverse();
-    if layer_root(node) {
-        chain.push(layer_step(tree, node));
-        chain.push((OWN, 0, 0));
-    } else {
-        chain.push((FLOW, 0, tree.order(node.local_id)));
     }
-    Ok(chain)
+}
+/** A flex or grid item, which CSS paints exactly like an inline-block (css-flexbox 4.3). */
+fn layout_item(parent: Option<&crate::document::ComputedStyle>) -> bool {
+    parent.is_some_and(|parent| parent.display_flex || parent.display_grid)
+}
+/** The normal-flow phase a non-stacked box paints in: floats after block backgrounds, then
+ * inline-level content, per CSS 2.1 Appendix E and Blink's paint phases. */
+fn phase(link: &Link<'_>) -> u8 {
+    if link.style.float != crate::document::style::Float::None {
+        FLOAT
+    } else if link.text || link.style.inline || link.style.inline_block || layout_item(link.parent)
+    {
+        INLINE
+    } else {
+        BLOCK
+    }
+}
+/** Floats, atomic inlines and flex and grid items paint all their phases at once, as if they
+ * were stacking contexts (Blink's `PaintAllPhasesAtomically`). */
+fn atomic(link: &Link<'_>) -> bool {
+    link.style.float != crate::document::style::Float::None
+        || link.style.inline_block
+        || layout_item(link.parent)
+}
+/** One box on the path from the root to a painted item: its style, its parent's, its order. */
+struct Link<'a> {
+    style: &'a crate::document::ComputedStyle,
+    parent: Option<&'a crate::document::ComputedStyle>,
+    order: usize,
+    sub: u8,
+    text: bool,
+    /// The document element, which Blink always makes a stacking context.
+    root: bool,
+}
+/**
+ * The paint-order key of an item, a port of Blink's `PaintLayerPainter` and
+ * `PaintLayerStackingNode`. A stacked box enters the z-order list of its nearest stacking
+ * context, negative z below the normal flow and the rest above it, sorted by z then tree order;
+ * a positioned `z-index: auto` box is stacked but not a context, so its own stacked descendants
+ * join the same lists rather than painting inside it. Normal-flow boxes of a layer paint block
+ * backgrounds, then floats, then inline content; floats and atomic inlines paint atomically.
+ * A `::before` or `::after` item is a child box with its own style.
+ */
+fn key(tree: &Tree<'_>, node: &Node, item: &DisplayItem) -> EngineResult<Vec<Step>> {
+    let mut chain = tree.ancestors(node)?;
+    chain.reverse();
+    chain.push(node);
+    let mut path: Vec<Link<'_>> = Vec::with_capacity(chain.len() + 1);
+    for (index, element) in chain.iter().enumerate() {
+        path.push(Link {
+            style: &element.style,
+            parent: index.checked_sub(1).map(|parent| &chain[parent].style),
+            order: tree.order(element.local_id),
+            sub: 0,
+            text: element.tag == "#text",
+            root: index == 0 && element.tag == "html",
+        });
+    }
+    if let Some(style) = generated_style(node, item) {
+        path.push(Link {
+            style,
+            parent: Some(&node.style),
+            order: tree.order(node.local_id),
+            sub: if item.tag == "::after" { 2 } else { 1 },
+            text: false,
+            root: false,
+        });
+    }
+    Ok(path_key(&path))
+}
+/** The key of the last link of `path`, built from the root down. */
+fn path_key(path: &[Link<'_>]) -> Vec<Step> {
+    // The key prefix of each enclosing stacking context's members, innermost last.
+    let mut contexts: Vec<Vec<Step>> = vec![Vec::new()];
+    // The prefix under which the current painting layer's normal flow paints.
+    let mut layer: Vec<Step> = Vec::new();
+    let last = path.len().saturating_sub(1);
+    for (index, link) in path.iter().enumerate() {
+        if link.root || stacked(link.style, link.parent) {
+            let z = effective_z(link.style, link.parent);
+            let bucket = if z < 0 { NEGATIVE } else { POSITIVE };
+            layer.clone_from(contexts.last().unwrap_or(&Vec::new()));
+            layer.push((bucket, z, link.order, link.sub));
+            if link.root || stacking_context(link.style, link.parent) {
+                contexts.push(layer.clone());
+            }
+        } else if index == last {
+            layer.push((phase(link), 0, link.order, link.sub));
+            return layer;
+        } else if atomic(link) {
+            layer.push((phase(link), 0, link.order, link.sub));
+        }
+    }
+    layer.push((OWN, 0, 0, 0));
+    layer
 }
 /** Translucent stacking contexts around and including this element, outermost first. */
 fn groups(tree: &Tree<'_>, node: &Node) -> EngineResult<Vec<OpacityGroup>> {
@@ -215,57 +344,106 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
         .copied()
         .flatten()
         .map(|index| &items[index]);
-    if matches!(style.position, Position::Relative | Position::Sticky) {
-        // ponytail: sticky stays at its relative offset; pin it to the viewport when scrolling is layered.
+    if style.position == Position::Sticky {
+        matrix[5] = sticky_offset(tree, items, node, own);
+    } else if style.position == Position::Relative {
         let parent_box = node
             .parent
             .and_then(|parent| tree.boxes.get(parent).copied().flatten())
             .map(|index| &items[index])
             .or(own);
         let (pw, ph) = parent_box.map_or((0.0, 0.0), |item| (item.width, item.height));
-        let inset = |side: usize, basis: f64| -> Option<f64> {
-            if style.inset[side].is_some() || style.inset_percent[side] != 0.0 {
-                Some(style.inset[side].unwrap_or(0.0) + basis * style.inset_percent[side] / 100.0)
-            } else {
-                None
-            }
-        };
+        let inset = |side: usize, basis: f64| super::positioned::inset(style, side, basis);
         let (top, right, bottom, left) = (inset(0, ph), inset(1, pw), inset(2, ph), inset(3, pw));
         matrix[4] = left.or(right.map(|right| -right)).unwrap_or(0.0);
         matrix[5] = top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0);
     }
-    if style.transform.is_some() || style.translate_percent != [0.0; 2] {
-        let mut transform = style.transform.unwrap_or(IDENTITY);
-        let (x, y, w, h) = own
-            .map(|item| {
-                (
-                    item.x + item.width / 2.0,
-                    item.y + item.height / 2.0,
-                    item.width,
-                    item.height,
-                )
-            })
-            .unwrap_or_default();
-        if style.translate_percent != [0.0; 2] {
-            transform = multiply(
-                transform,
-                [
-                    1.0,
-                    0.0,
-                    0.0,
-                    1.0,
-                    w * style.translate_percent[0] / 100.0,
-                    h * style.translate_percent[1] / 100.0,
-                ],
-            );
-        }
-        let about = multiply(
-            [1.0, 0.0, 0.0, 1.0, x, y],
-            multiply(transform, [1.0, 0.0, 0.0, 1.0, -x, -y]),
-        );
-        matrix = multiply(matrix, about);
+    if transformed(style) {
+        matrix = multiply(matrix, own_transform(style, own));
     }
     matrix
+}
+/**
+ * How far a sticky box moves down in the unscrolled page Eye renders: only far enough that its
+ * top sits `top` below the viewport top, and never past its parent's bottom. Its insets are
+ * thresholds, not offsets; BBC's `top: 80px` navigation dropped 80px below its header.
+ * ponytail: the page is laid out at scroll zero, so `bottom` and horizontal stickiness stay put.
+ */
+fn sticky_offset(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    own: Option<&DisplayItem>,
+) -> f64 {
+    let Some(own) = own else {
+        return 0.0;
+    };
+    let parent = node
+        .parent
+        .and_then(|parent| tree.boxes.get(parent).copied().flatten())
+        .map(|index| &items[index]);
+    let Some(top) = super::positioned::inset(&node.style, 0, parent.map_or(0.0, |p| p.height))
+    else {
+        return 0.0;
+    };
+    let wanted = (top - own.y).max(0.0);
+    // A top-level box's containing block is the body, which ends where the content does.
+    let bottom = parent.map_or_else(
+        || {
+            items
+                .iter()
+                .map(|item| item.y + item.height)
+                .fold(0.0, f64::max)
+        },
+        |p| p.y + p.height,
+    );
+    let room = (bottom - own.y - own.height).max(0.0);
+    wanted.min(room)
+}
+/** Whether a style moves its box with `transform` or a percentage `translate`. */
+fn transformed(style: &crate::document::ComputedStyle) -> bool {
+    style.transform.is_some() || style.translate_percent != [0.0; 2]
+}
+/** A box's `transform` and percentage `translate` about its own center, in its layout coordinates. */
+fn own_transform(style: &crate::document::ComputedStyle, own: Option<&DisplayItem>) -> Matrix {
+    let mut transform = style.transform.unwrap_or(IDENTITY);
+    let (x, y, w, h) = own
+        .map(|item| {
+            (
+                item.x + item.width / 2.0,
+                item.y + item.height / 2.0,
+                item.width,
+                item.height,
+            )
+        })
+        .unwrap_or_default();
+    if style.translate_percent != [0.0; 2] {
+        transform = multiply(
+            transform,
+            [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                w * style.translate_percent[0] / 100.0,
+                h * style.translate_percent[1] / 100.0,
+            ],
+        );
+    }
+    multiply(
+        [1.0, 0.0, 0.0, 1.0, x, y],
+        multiply(transform, [1.0, 0.0, 0.0, 1.0, -x, -y]),
+    )
+}
+/**
+ * A `::before` or `::after` box shares its element's matrix and adds its own transform, so a
+ * placeholder `transform: translate(-50%, -50%)` centers the generated box, not its element.
+ */
+fn generated_matrix(node: &Node, item: &DisplayItem, matrix: Matrix) -> Matrix {
+    match generated_style(node, item) {
+        Some(style) if transformed(style) => multiply(matrix, own_transform(style, Some(item))),
+        _ => matrix,
+    }
 }
 /** Every ancestor's offsets and transforms, composed from the root down; memoized per identity. */
 fn absolute(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Matrix> {
@@ -503,8 +681,11 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
         let layer = (mask.size, mask.position, mask.repeat);
         image_layer(&mask.url, layer, item.width, item.height)
     });
+    super::blur::glow(item, style.filter_blur);
 }
-/** Gradient geometry per CSS Images: the line through the center whose ends touch the far corners. */
+/** Gradient geometry per CSS Images: the line through the center whose ends touch the far
+ * corners, with a `to <corner>` angle taken from the box so the 50% line joins the other two
+ * corners, as Blink's `CSSLinearGradientValue` computes it. */
 fn background(
     layer: &BackgroundLayer,
     style: &crate::document::ComputedStyle,
@@ -512,8 +693,18 @@ fn background(
     height: f64,
 ) -> DisplayBackground {
     match layer {
-        BackgroundLayer::Linear { angle, stops } => {
-            let radians = angle.to_radians();
+        BackgroundLayer::Linear {
+            angle,
+            stops,
+            corner,
+            repeating,
+        } => {
+            let degrees = corner.map_or(*angle, |[sx, sy]| {
+                (f64::from(sx) * height)
+                    .atan2(-f64::from(sy) * width)
+                    .to_degrees()
+            });
+            let radians = degrees.to_radians();
             let (dx, dy) = (radians.sin(), -radians.cos());
             let half = (width * dx.abs() + height * dy.abs()) / 2.0;
             let (cx, cy) = (width / 2.0, height / 2.0);
@@ -522,17 +713,21 @@ fn background(
                 y0: cy - dy * half,
                 x1: cx + dx * half,
                 y1: cy + dy * half,
-                stops: resolve_stops(stops),
+                stops: resolve_stops(stops, half * 2.0, *repeating),
             }
         }
-        BackgroundLayer::Radial { stops, shape } => {
+        BackgroundLayer::Radial {
+            stops,
+            shape,
+            repeating,
+        } => {
             let [cx, cy, rx, ry] = shape.geometry(width, height);
             DisplayBackground::Radial {
                 cx,
                 cy,
                 rx,
                 ry,
-                stops: resolve_stops(stops),
+                stops: resolve_stops(stops, rx, *repeating),
             }
         }
         BackgroundLayer::Image { url } => image_layer(
@@ -584,15 +779,57 @@ fn image_layer(
         repeat,
     }
 }
-/** Missing positions spread evenly between known neighbors; positions never decrease. */
-fn resolve_stops(stops: &[ColorStop]) -> Vec<GradientStop> {
-    let count = stops.len();
-    let mut positions = stops.iter().map(|stop| stop.position).collect::<Vec<_>>();
+/** Stops a repeating gradient may expand to before the pattern stops tiling. */
+const REPEATED_STOPS: usize = 1024;
+/**
+ * Stops as fractions of a gradient line `length` px long, per CSS Images' color stop fixup:
+ * lengths resolve against the line, a missing first or last position is 0% or 100%, a position
+ * below an earlier one moves up to it, and runs of missing positions spread evenly. A repeating
+ * gradient then tiles its first-to-last span along the line, and the ramp is clipped to the line
+ * with interpolated end colors, as Blink's `Gradient` does with its spread method.
+ */
+fn resolve_stops(stops: &[ColorStop], length: f64, repeating: bool) -> Vec<GradientStop> {
+    let mut positions = stops
+        .iter()
+        .map(|stop| match (stop.position, stop.px) {
+            (None, None) => None,
+            (fraction, px) => {
+                let px = px.unwrap_or(0.0);
+                let extra = if length > 0.0 { px / length } else { 0.0 };
+                Some(fraction.unwrap_or(0.0) + extra)
+            }
+        })
+        .collect::<Vec<_>>();
+    fix_up(&mut positions);
+    let mut ramp: Vec<(f64, [f64; 4])> = stops
+        .iter()
+        .zip(positions)
+        .map(|(stop, at)| (at.unwrap_or(0.0), color(&stop.color)))
+        .collect();
+    if repeating {
+        ramp = tile(&ramp);
+    }
+    clip_ramp(&ramp)
+        .into_iter()
+        .map(|(position, rgba)| GradientStop {
+            color: super::svg::literal(rgba),
+            position,
+        })
+        .collect()
+}
+/** Fills missing positions: ends at 0 and 1, nondecreasing, gaps spread evenly. */
+fn fix_up(positions: &mut [Option<f64>]) {
+    let count = positions.len();
     if let Some(first) = positions.first_mut() {
         first.get_or_insert(0.0);
     }
     if let Some(last) = positions.last_mut() {
         last.get_or_insert(1.0);
+    }
+    let mut floor = f64::MIN;
+    for slot in positions.iter_mut().flatten() {
+        floor = floor.max(*slot);
+        *slot = floor;
     }
     let mut index = 0;
     while index < count {
@@ -613,18 +850,64 @@ fn resolve_stops(stops: &[ColorStop]) -> Vec<GradientStop> {
         }
         index = end;
     }
-    let mut floor: f64 = 0.0;
-    stops
-        .iter()
-        .zip(positions)
-        .map(|(stop, position)| {
-            floor = floor.max(position.unwrap_or(floor).clamp(0.0, 1.0));
-            GradientStop {
-                color: stop.color.clone(),
-                position: floor,
+}
+/** Premultiplied RGBA of a stop color; a palette keyword the painter resolves counts as black. */
+fn color(literal: &str) -> [f64; 4] {
+    let [r, g, b, a] = super::svg::channels(literal).unwrap_or([0.0, 0.0, 0.0, 1.0]);
+    [r * a, g * a, b * a, a]
+}
+/** The ramp repeated so its first-to-last span covers [0, 1]; a zero span paints the last color. */
+fn tile(ramp: &[(f64, [f64; 4])]) -> Vec<(f64, [f64; 4])> {
+    let (Some(first), Some(last)) = (ramp.first(), ramp.last()) else {
+        return Vec::new();
+    };
+    let period = last.0 - first.0;
+    if period <= f64::EPSILON {
+        return vec![(0.0, last.1), (1.0, last.1)];
+    }
+    let mut copy = (-first.0 / period).floor() - 1.0;
+    let mut tiled = Vec::new();
+    while first.0 + copy * period <= 1.0 && tiled.len() < REPEATED_STOPS {
+        let shift = copy * period;
+        tiled.extend(ramp.iter().map(|(at, rgba)| (at + shift, *rgba)));
+        copy += 1.0;
+    }
+    tiled
+}
+/** The ramp restricted to [0, 1], with the colors at 0 and 1 interpolated where it crosses. */
+fn clip_ramp(ramp: &[(f64, [f64; 4])]) -> Vec<(f64, [f64; 4])> {
+    let at = |t: f64| -> [f64; 4] {
+        let after = ramp.iter().position(|(position, _)| *position > t);
+        match after {
+            None => ramp.last().map_or([0.0; 4], |stop| stop.1),
+            Some(0) => ramp[0].1,
+            Some(next) => {
+                let ((p0, c0), (p1, c1)) = (ramp[next - 1], ramp[next]);
+                let f = if p1 > p0 { (t - p0) / (p1 - p0) } else { 1.0 };
+                std::array::from_fn(|i| c0[i] + (c1[i] - c0[i]) * f)
             }
-        })
-        .collect()
+        }
+    };
+    let inside = ramp
+        .iter()
+        .filter(|(position, _)| (0.0..=1.0).contains(position));
+    let mut clipped = Vec::new();
+    if ramp.first().is_some_and(|stop| stop.0 > 0.0) || ramp.iter().any(|stop| stop.0 < 0.0) {
+        clipped.push((0.0, at(0.0)));
+    }
+    clipped.extend(inside.copied());
+    if ramp.last().is_some_and(|stop| stop.0 > 1.0) {
+        clipped.push((1.0, at(1.0)));
+    }
+    // Of stops sharing one position only the first and last matter: they make the hard edge.
+    let mut kept: Vec<(f64, [f64; 4])> = Vec::with_capacity(clipped.len());
+    for (index, stop) in clipped.iter().enumerate() {
+        let same = |other: Option<&(f64, [f64; 4])>| other.is_some_and(|o| o.0 == stop.0);
+        if !(same(index.checked_sub(1).map(|i| &clipped[i])) && same(clipped.get(index + 1))) {
+            kept.push(*stop);
+        }
+    }
+    kept
 }
 /** Pure translations move the item's geometry so agent bounds equal paint; anything else is carried. */
 fn place(item: &mut DisplayItem, matrix: Matrix) {

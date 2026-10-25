@@ -53,7 +53,7 @@ pub(in crate::v9) fn wrap(vm: &mut Vm, node: usize) -> Res<JsValue> {
         "#text" | "#comment" => ids.text_prototype,
         components::FRAGMENT => components::ids().fragment,
         components::SHADOW_ROOT => components::ids().shadow_root,
-        _ => ids.html_element_prototype,
+        _ => super::interfaces::prototype_for(&tag).unwrap_or(ids.html_element_prototype),
     };
     let id = vm.alloc(Object::new(
         Class::Host(Box::new(HostData::Node(node))),
@@ -826,7 +826,7 @@ pub(in crate::v9) fn node_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             let name = if tag.starts_with('#') {
                 tag
             } else {
-                tag.to_ascii_uppercase()
+                qualified_name(vm, node)
             };
             JsValue::string(&name).map_err(Into::into)
         }
@@ -1202,10 +1202,7 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             .and_then(|view| view.attributes.get(attribute).cloned())
     };
     match name {
-        "tagName" => {
-            let tag = vm.page.tag(node).to_ascii_uppercase();
-            JsValue::string(&tag).map_err(Into::into)
-        }
+        "tagName" => JsValue::string(&qualified_name(vm, node)).map_err(Into::into),
         "localName" => {
             let tag = vm.page.tag(node);
             JsValue::string(&tag).map_err(Into::into)
@@ -2112,7 +2109,23 @@ pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
     }
     match environment.geometry.iter().find(|b| b.node == node) {
         Some(b) => (b.x, b.y - environment.scroll_y, b.width, b.height),
-        None => (0.0, 0.0, 0.0, 0.0),
+        None => {
+            note_stale_geometry(vm, node);
+            (0.0, 0.0, 0.0, 0.0)
+        }
+    }
+}
+
+/** Reports a read of a connected node newer than the last layout, which had no chance to give
+it a box; display:none nodes the layout saw stay unreported, so they never cost a relayout. */
+fn note_stale_geometry(vm: &mut Vm, node: usize) {
+    let newer = vm
+        .page
+        .environment
+        .laid_out_before
+        .is_some_and(|first| node >= first);
+    if newer && !vm.page.effects.stale_geometry && vm.page.connected(node) {
+        vm.page.effects.stale_geometry = true;
     }
 }
 
@@ -2213,6 +2226,55 @@ pub(in crate::v9) fn document_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         _ => Ok(JsValue::Undefined),
     }
+}
+
+/** `document.all`'s members, over the document's elements in tree order: `length`,
+`item(index)` and `namedItem(id or name)`. Indexing it like an array is not supported. */
+pub(in crate::v9) fn document_all(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let elements = search(vm, DOCUMENT, |page, id| page.is_element(id));
+    match native_name(&call) {
+        "length" => Ok(JsValue::Number(elements.len() as f64)),
+        "item" => {
+            let index = vm.to_number(&call.arg(0))?;
+            let found = (index >= 0.0 && index.fract() == 0.0)
+                .then(|| elements.get(index as usize).copied())
+                .flatten();
+            found.map_or(Ok(JsValue::Null), |node| wrap(vm, node))
+        }
+        _ => {
+            let key = vm.to_text(&call.arg(0))?;
+            let found = elements.into_iter().find(|id| {
+                let view = vm.page.view(*id);
+                view.is_some_and(|view| {
+                    view.attributes.get("id") == Some(&key)
+                        || view.attributes.get("name") == Some(&key)
+                })
+            });
+            found.map_or(Ok(JsValue::Null), |node| wrap(vm, node))
+        }
+    }
+}
+
+/** An element's tagName: upper-case for HTML elements, as written for SVG ones (an `svg` and
+what it holds, short of a foreignObject), as Chromium gives it. Icon loaders compare it. */
+fn qualified_name(vm: &mut Vm, node: usize) -> String {
+    let tag = vm.page.tag(node);
+    let mut cursor = Some(node);
+    let mut depth = 0;
+    while let Some(current) = cursor {
+        let name = vm.page.tag(current);
+        if name == "svg" {
+            return tag;
+        }
+        if (current != node && name.eq_ignore_ascii_case("foreignobject"))
+            || depth > crate::constants::DOCUMENT_DEPTH
+        {
+            break;
+        }
+        depth += 1;
+        cursor = vm.page.parent(current);
+    }
+    tag.to_ascii_uppercase()
 }
 
 /** Document setters (cookie, title). */

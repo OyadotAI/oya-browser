@@ -156,6 +156,36 @@ fn absolute_after_is_placed_in_its_element() {
     assert!((after.x - painted[0].x).abs() < 0.01);
 }
 
+/** An absolute ::after resolves percentage insets against its element's padding box and applies
+its own transform: CNN's ad placeholder (`left:50%; transform:translate(-50%,-50%)`) centers on
+the slot instead of sitting at its left edge. */
+#[test]
+fn absolute_after_resolves_percent_insets_and_its_own_transform() {
+    let (document, display) = layout(
+        "<style>.slot{position:relative;height:0;width:1000px}\
+         .slot::after{content:'';display:block;position:absolute;width:728px;height:90px;\
+         top:0;left:50%;transform:translate(-50%,-50%);background:#262626}</style>\
+         <div id=s class=slot></div>",
+    );
+    let painted = items(&document, &display, "s");
+    let after = painted.iter().find(|item| item.tag == "::after").unwrap();
+    assert_eq!(after.transform, None, "a pure translation moves the box");
+    assert!(
+        (after.x - (painted[0].x + 136.0)).abs() < 0.01,
+        "x {}",
+        after.x
+    );
+    assert!(
+        (after.y - (painted[0].y - 45.0)).abs() < 0.01,
+        "y {}",
+        after.y
+    );
+    assert!(
+        (painted[0].x - painted[0].x).abs() < 0.01,
+        "the element itself does not move"
+    );
+}
+
 /** `rem` follows the root element's font size. */
 #[test]
 fn rem_follows_the_root_font_size() {

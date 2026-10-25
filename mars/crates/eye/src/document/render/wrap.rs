@@ -2,6 +2,8 @@
 use super::sizing::LayoutContext;
 use crate::{platform::Face, protocol::EngineResult};
 
+/** Overflow a wrapped line forgives, one Chromium 1/64 px layout unit, matching `Flow::fits`. */
+const FIT_SLACK: f64 = 1.0 / 64.0;
 /** Placement consumes the exact width from bounded shaping instead of measuring each chunk again. */
 #[derive(Clone)]
 pub(super) struct MeasuredText {
@@ -16,9 +18,10 @@ pub(super) fn lines(
     text: &str,
     width: f64,
     face: Face,
+    breakable: bool,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<Vec<MeasuredText>> {
-    if let Some(lines) = context.wrapped(text, width, face)? {
+    if let Some(lines) = context.wrapped(text, width, face, breakable)? {
         return Ok(lines);
     }
     context.charge(text.chars().count() + 1)?;
@@ -29,7 +32,7 @@ pub(super) fn lines(
     };
     let gap = context.measure(" ", face)?;
     for word in text.split_whitespace() {
-        let mut chunks = word_parts(word, width, face, context)?
+        let mut chunks = word_parts(word, (width, breakable), face, context)?
             .into_iter()
             .peekable();
         while let Some(chunk) = chunks.next() {
@@ -48,7 +51,7 @@ pub(super) fn lines(
     if !current.text.is_empty() {
         result.push(current);
     }
-    context.remember_wrapped(text, width, face, &result)?;
+    context.remember_wrapped(text, width, face, breakable, &result)?;
     Ok(result)
 }
 
@@ -60,7 +63,7 @@ fn append_chunk(
     width: f64,
     gap: f64,
 ) {
-    if !current.text.is_empty() && current.width + gap + chunk.width <= width {
+    if !current.text.is_empty() && current.width + gap + chunk.width <= width + FIT_SLACK {
         current.text.push(' ');
         current.text.push_str(&chunk.text);
         current.width += gap + chunk.width;
@@ -81,12 +84,12 @@ fn append_chunk(
 /** One boundary table and forward-only indexes avoid repeated whole-suffix scans and shaping. */
 fn word_parts(
     word: &str,
-    width: f64,
+    (width, breakable): (f64, bool),
     face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<Vec<MeasuredText>> {
     context.charge(word.chars().count() + 1)?;
-    let boundaries = break_offsets(word);
+    let boundaries = break_offsets(word, breakable);
     let mut start = 0;
     let mut hint = 1;
     let mut result = Vec::new();
@@ -182,19 +185,28 @@ fn search_prefix(
     Ok((fit, measured))
 }
 
-/** Byte offsets a long word may break at: CJK opportunities when the word has CJK, else every scalar. */
-// ponytail: owned CJK subset of UAX #14 (ideographs, kana, hangul, fullwidth); upgrade to unicode-linebreak for full rules.
-fn break_offsets(word: &str) -> Vec<usize> {
+/**
+ * Byte offsets a space-free run may break at, after Blink's line breaker: by default only UAX #14
+ * opportunities inside the run (CJK, after a hyphen or dash between letters, a zero-width space),
+ * so a long word overflows its line as in Chromium; `overflow-wrap: break-word | anywhere` or
+ * `word-break: break-all` (`breakable`) add every scalar.
+ */
+// ponytail: owned subset of UAX #14 (ideographs, kana, hangul, fullwidth, hyphens, dashes, ZWSP); upgrade to the full pair table when a page needs it.
+fn break_offsets(word: &str, breakable: bool) -> Vec<usize> {
     let cjk = word.chars().any(ideographic);
     let chars = word.char_indices().collect::<Vec<_>>();
     let mut offsets = vec![0];
-    for pair in chars.windows(2) {
+    for (index, pair) in chars.windows(2).enumerate() {
         let ((_, before), (offset, after)) = (pair[0], pair[1]);
-        if !cjk
-            || ((ideographic(before) || ideographic(after))
+        let previous = index.checked_sub(1).map(|i| chars[i].1);
+        let opportunity = if cjk {
+            (ideographic(before) || ideographic(after))
                 && !CLOSING.contains(&after)
-                && !OPENING.contains(&before))
-        {
+                && !OPENING.contains(&before)
+        } else {
+            hyphen_break(previous, before, after)
+        };
+        if breakable || opportunity || before == '\u{200b}' {
             offsets.push(offset);
         }
     }
@@ -202,6 +214,15 @@ fn break_offsets(word: &str) -> Vec<usize> {
         offsets.push(word.len());
     }
     offsets
+}
+/** UAX #14 LB21 and LB25: a hyphen (HY) or dash (BA, B2) breaks after itself when a letter
+precedes it and no digit follows it, so `well-known` may wrap but `-5` and `1-2` stay whole. */
+fn hyphen_break(previous: Option<char>, before: char, after: char) -> bool {
+    const DASHES: [char; 5] = ['-', '\u{2010}', '\u{2012}', '\u{2013}', '\u{2014}'];
+    DASHES.contains(&before)
+        && previous.is_some_and(char::is_alphabetic)
+        && !after.is_ascii_digit()
+        && !DASHES.contains(&after)
 }
 
 /** Han, kana, hangul, CJK punctuation and fullwidth forms allow breaks between characters. */
