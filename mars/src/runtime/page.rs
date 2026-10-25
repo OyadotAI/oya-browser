@@ -334,17 +334,17 @@ impl Runtime {
         page.laid_out_before = next_node(&page.document);
         Ok(())
     }
-    /** Eye's layout of a styled `document` in the current context, checked like any other. */
+    /** Eye's layout of a styled `document` in the current context, checked like any other.
+    Inner scroll containers keep the current page's offsets, so a script that forces layout
+    measures boxes where they are painted (CSSOM View: rects are viewport-relative after every
+    ancestor scroller's offset), not where they would sit unscrolled. */
     pub(super) fn render(&mut self, document: &Document) -> EngineResult<DisplayList> {
-        crate::document::validate_content(document)?;
-        let call = RenderCall {
-            document,
-            context: self.render_context,
-            // ponytail: script measurement sees unscrolled inner containers; pass the page's
-            // offsets here once element.scrollTop writes reach them.
-            scroll: &crate::document::ScrollOffsets::new(),
-        };
-        self.call_typed("document", "document.render", &call, None)
+        let scroll = self
+            .page
+            .as_ref()
+            .map(|page| page.element_scroll.clone())
+            .unwrap_or_default();
+        self.render_scrolled(document, &scroll)
     }
     /** Eye's layout of a styled `document` with scroll containers at `scroll`. */
     pub(super) fn render_scrolled(

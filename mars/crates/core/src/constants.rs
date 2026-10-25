@@ -243,13 +243,16 @@ pub const UTF16_LOW_SURROGATE_END: u16 = 0xdfff;
 /// response bodies beside that.
 pub const JS_ENVIRONMENT_UNITS: usize = 2 * 1024 * 1024;
 /// Live objects. Google's main bundle and YouTube's app need far more than Wikipedia's 5204:
-/// YouTube holds 47869 once loaded and allocates as it renders.
-pub const VM_OBJECTS: usize = 262_144;
+/// YouTube holds 47869 once loaded and allocates as it renders, and LinkedIn's React app keeps
+/// more than 262144 alive while it hydrates (Chromium has no count bound at all, only memory).
+/// VM_STATE_BYTES stays the memory cap on what a page commits; this only stops a runaway run.
+pub const VM_OBJECTS: usize = 1_048_576;
 /** The first allocation is the page's permanent global receiver, never a replaceable supplied object. */
 pub const VM_GLOBAL_OBJECT_ID: u32 = 0;
 /// Live properties. Google's main bundle needs more than 131072 and YouTube's loaded app holds
-/// 225108 before it renders anything; four per object keeps the ratio real pages show.
-pub const VM_PROPERTIES: usize = 4 * VM_OBJECTS;
+/// 225108 before it renders anything; four per object at the old 262144-object bound keeps the
+/// ratio real pages show (many objects a large app keeps are small: arrays, fibers, closures' data).
+pub const VM_PROPERTIES: usize = 1_048_576;
 /// UTF-16 units of one property key; CNN's inline scripts use keys past 64 units, and YouTube's
 /// app keys its caches by whole request URLs and serialized bodies past 1024.
 pub const VM_PROPERTY_KEY_UNITS: usize = 64 * 1024;
@@ -264,9 +267,9 @@ pub const FUNCTION_PARAMETERS: usize = 64;
 pub const VM_ENVIRONMENTS: usize = VM_FUNCTIONS;
 /// Closures are records rather than serialized executable callbacks. Five large libraries
 /// together hold 2458 live functions, but YouTube's app keeps over 65536 alive once it renders
-/// (one per module-level function, then one per bound handler of every stamped component), so
-/// closures may be as many as objects.
-pub const VM_FUNCTIONS: usize = VM_OBJECTS;
+/// (one per module-level function, then one per bound handler of every stamped component); kept
+/// at the old object bound, since environments and bindings scale with it.
+pub const VM_FUNCTIONS: usize = 262_144;
 /// Function literals one page's sources may contain, fetched scripts included; YouTube's app
 /// bundle and the chunks it loads declare tens of thousands.
 pub const VM_CODE_SITES: usize = 131_072;

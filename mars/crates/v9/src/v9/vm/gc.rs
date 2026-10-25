@@ -335,3 +335,54 @@ fn trace_class(class: &Class, marker: &mut Marker) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::document::ScriptDocument;
+    use crate::{DocumentHost, PageEnvironment, PageInput, SimpleFragmentParser, StorageState};
+
+    /** Arrays of this many empty objects each; the outer array stays under VM_ARRAY_LENGTH. */
+    const BATCH: usize = 32;
+    /** Live objects the test keeps: a React app's hydrated fiber tree and caches are this big. */
+    const KEPT: usize = 500_000;
+
+    /** A large app keeps half a million objects alive at once: the live-object bound allows it,
+    and the committed state still fits VM_STATE_BYTES, which is what bounds the memory. */
+    #[test]
+    fn half_a_million_live_objects_fit_the_bounds() {
+        let source = format!(
+            "const keep=[];for(let i=0;i<{};i++)keep.push([{}]);const kept=keep.length*{BATCH};",
+            KEPT / BATCH + 1,
+            vec!["{}"; BATCH].join(",")
+        );
+        let host = DocumentHost {
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment {
+            url: "https://example.com/".into(),
+            ..PageEnvironment::default()
+        };
+        let execution = crate::load_page(PageInput {
+            sources: &[source],
+            document: ScriptDocument {
+                identity: "page-1".into(),
+                nodes: Vec::new(),
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &environment,
+            modules: crate::ModuleInput::NONE,
+        })
+        .expect("page loads");
+        let failure = execution.failed.first().map(|f| f.error.message.clone());
+        assert_eq!(failure, None);
+        let bytes = serde_json::to_vec(&execution.state)
+            .expect("state encodes")
+            .len();
+        assert!(
+            bytes <= crate::constants::VM_STATE_BYTES,
+            "{bytes} state bytes"
+        );
+    }
+}

@@ -758,19 +758,7 @@ pub(super) fn text_intrinsic(
         });
     }
     if node.tag == "img" {
-        let dimensioned = node.style.height.is_some()
-            || node.style.width.is_some()
-            || node.attributes.contains_key("width");
-        let (min_content, max_content) = if node.image_size.is_some() || dimensioned {
-            replaced_contribution(node)
-        } else {
-            let width = context.measure(&node.text, face)?;
-            (width, width)
-        };
-        return Ok(IntrinsicWidths {
-            min_content,
-            max_content,
-        });
+        return super::image::intrinsic(context, node);
     }
     if ["input", "button", "select", "textarea"].contains(&node.tag.as_str())
         && !super::control::has_content(context, node)
