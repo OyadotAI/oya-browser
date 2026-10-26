@@ -1,4 +1,5 @@
-/** Embedded content is never loaded or run: frames and empty media show inert placeholder boxes. */
+/** Embedded content is never loaded or run by Eye: empty media show inert placeholder boxes, and
+frames are replaced boxes the runtime fills with their documents. */
 use mars_eye::{Document, Node, compute_styles, parse, render, role};
 
 /** The embeds fixture, parsed once per test. */
@@ -36,15 +37,13 @@ fn placeholder<'a>(document: &'a Document, id: &str) -> Option<&'a Node> {
         })
 }
 
-/** An iframe gets a labelled group placeholder; its raw content never becomes nodes. */
+/** An iframe is a replaced box of its own, with no placeholder child; its raw content never
+becomes nodes. */
 #[test]
-fn iframe_shows_a_labelled_placeholder() {
+fn iframe_has_no_placeholder() {
     let document = embeds();
-    let frame = placeholder(&document, "yt").unwrap();
-    assert_eq!(frame.text, "Embedded frame (not supported yet)");
-    assert_eq!(role(frame), "group");
-    assert!(frame.attributes["style"].contains("width:560px"));
-    assert_eq!(children(&document, by_id(&document, "yt")).len(), 1);
+    assert!(placeholder(&document, "yt").is_none());
+    assert!(children(&document, by_id(&document, "yt")).is_empty());
     assert!(!document.nodes.iter().any(|n| n.text.contains("inner text")));
 }
 
@@ -119,9 +118,9 @@ fn placeholders_are_not_actionable() {
     }
 }
 
-/** A frame placeholder reaches the display list at its author size. */
+/** A frame reaches the display list at its author size inside html.css's 2px inset border. */
 #[test]
-fn frame_placeholder_is_painted_at_its_size() {
+fn frame_is_painted_at_its_size() {
     let document =
         parse("<iframe src=https://example.com/embed width=400 height=200></iframe><p>after</p>")
             .unwrap();
@@ -129,19 +128,10 @@ fn frame_placeholder_is_painted_at_its_size() {
     let item = display
         .items
         .iter()
-        .find(|item| {
-            item.lines
-                .iter()
-                .any(|line| line.text.contains("Embedded frame"))
-        })
+        .find(|item| item.tag == "iframe")
         .unwrap();
-    assert_eq!(item.role, "group");
-    assert!(
-        item.width >= 400.0 && item.height >= 150.0,
-        "{} x {}",
-        item.width,
-        item.height
-    );
+    assert_eq!((item.width, item.height), (404.0, 204.0));
+    assert!(item.lines.is_empty());
 }
 
 /** Embedded content inside a hidden ancestor stays hidden with it. */
@@ -149,10 +139,6 @@ fn frame_placeholder_is_painted_at_its_size() {
 fn hidden_embeds_stay_hidden() {
     let document = parse("<div hidden><iframe src=x></iframe></div><p>shown</p>").unwrap();
     let styled = compute_styles(&document, &[]).unwrap();
-    let frame = styled
-        .nodes
-        .iter()
-        .find(|n| n.text.contains("Embedded frame"))
-        .unwrap();
+    let frame = styled.nodes.iter().find(|n| n.tag == "iframe").unwrap();
     assert!(frame.hidden());
 }

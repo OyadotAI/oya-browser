@@ -1046,9 +1046,6 @@ fn global_object(b: &mut Builder) {
             "stop",
             "focus",
             "blur",
-            "scroll",
-            "scrollTo",
-            "scrollBy",
             "moveTo",
             "moveBy",
             "resizeTo",
@@ -1057,6 +1054,12 @@ fn global_object(b: &mut Builder) {
             "releaseEvents",
         ],
         noop_method,
+    );
+    methods(
+        b,
+        proto,
+        &["scroll", "scrollTo", "scrollBy"],
+        super::scrolling::window_scroll,
     );
     for name in [
         "Node",

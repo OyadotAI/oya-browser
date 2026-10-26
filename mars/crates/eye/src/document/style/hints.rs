@@ -2,8 +2,17 @@
 use crate::document::{Document, Node};
 use std::collections::BTreeMap;
 
-/** Legacy `<font size>` 1 to 7 in CSS pixels, as Chromium maps them. */
-const FONT_SIZES: [&str; 7] = ["10px", "13px", "16px", "18px", "24px", "32px", "48px"];
+/** Legacy `<font size>` 1 to 7 as the keywords Chromium maps them to, so monospace text takes
+the fixed-font sizes. */
+const FONT_SIZES: [&str; 7] = [
+    "x-small",
+    "small",
+    "medium",
+    "large",
+    "x-large",
+    "xx-large",
+    "xxx-large",
+];
 /** The default `<font size>` that relative sizes count from. */
 const FONT_SIZE_BASE: i64 = 3;
 
@@ -17,6 +26,7 @@ pub(super) fn hints(node: &Node, document: &Document) -> Vec<(&'static str, Stri
         "table" => table(attrs, &mut out),
         "td" | "th" => cell(node, document, &mut out),
         "font" => font(attrs, &mut out),
+        "svg" if outermost_svg(node, document) => svg_size(attrs, &mut out),
         "img" | "object" | "embed" | "iframe" => replaced(attrs, &mut out),
         "video" => {
             replaced(attrs, &mut out);
@@ -60,11 +70,13 @@ fn common(tag: &str, attrs: &BTreeMap<String, String>, out: &mut Vec<(&'static s
     if let Some(color) = attrs.get("bgcolor") {
         out.push(("background-color", color.trim().to_string()));
     }
-    let sized = ["table", "td", "th", "col", "hr", "pre", "img"].contains(&tag);
+    // HTML maps the dimension attributes of embedded content (iframe, embed, object) too.
+    let embedded = ["iframe", "embed", "object"].contains(&tag);
+    let sized = embedded || ["table", "td", "th", "col", "hr", "pre", "img"].contains(&tag);
     if sized && let Some(width) = attrs.get("width").and_then(|v| length(v)) {
         out.push(("width", width));
     }
-    if ["table", "td", "th", "tr", "img"].contains(&tag)
+    if (embedded || ["table", "td", "th", "tr", "img"].contains(&tag))
         && let Some(height) = attrs.get("height").and_then(|v| length(v))
     {
         out.push(("height", height));
@@ -143,6 +155,48 @@ fn owning_table<'a>(node: &Node, document: &'a Document) -> Option<&'a Node> {
     let id = node.table_cell.as_ref().map(|cell| cell.table)?;
     mars_core::dom::local_position(&document.nodes, id, |node| node.local_id)
         .map(|position| &document.nodes[position])
+}
+/** An outermost `<svg>`'s `width` and `height` are presentation attributes for the CSS
+ * properties (SVG 2 geometry properties; Blink's SVGSVGElement maps them only on the outermost
+ * one), so CSS min and max sizes, `aspect-ratio` and keywords size the box around them. */
+fn svg_size(attrs: &BTreeMap<String, String>, out: &mut Vec<(&'static str, String)>) {
+    for name in ["width", "height"] {
+        let Some(value) = attrs.get(name).map(|v| v.trim()) else {
+            continue;
+        };
+        let number = value.strip_suffix("px").unwrap_or(value);
+        if let Ok(px) = number.parse::<f64>()
+            && px.is_finite()
+            && px >= 0.0
+        {
+            out.push((name, format!("{px}px")));
+        } else if let Some(percent) = value.strip_suffix('%').and_then(|v| v.parse::<f64>().ok())
+            && percent.is_finite()
+            && percent >= 0.0
+        {
+            out.push((name, format!("{percent}%")));
+        }
+    }
+}
+/** Whether no ancestor of this `<svg>` is an `<svg>`: an inner one is a viewport inside the
+ * drawing, not a CSS box. */
+fn outermost_svg(node: &Node, document: &Document) -> bool {
+    let mut parent = node.parent;
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(id) = parent else {
+            return true;
+        };
+        let Some(position) = mars_core::dom::local_position(&document.nodes, id, |n| n.local_id)
+        else {
+            return true;
+        };
+        let ancestor = &document.nodes[position];
+        if ancestor.tag == "svg" {
+            return false;
+        }
+        parent = ancestor.parent;
+    }
+    true
 }
 /** `<font color size face>`. */
 fn font(attrs: &BTreeMap<String, String>, out: &mut Vec<(&'static str, String)>) {

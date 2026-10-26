@@ -77,6 +77,10 @@ pub enum DisplayBackground {
         x1: f64,
         y1: f64,
         stops: Vec<GradientStop>,
+        /// Where the gradient paints when `background-size`, `-position` or `-repeat` place it;
+        /// its geometry is then relative to the tile's top-left. None fills the box.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tile: Option<GradientTile>,
     },
     /// Elliptical gradient centered at (cx, cy) with radii rx and ry.
     Radial {
@@ -85,6 +89,9 @@ pub enum DisplayBackground {
         rx: f64,
         ry: f64,
         stops: Vec<GradientStop>,
+        /// As for `Linear`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tile: Option<GradientTile>,
     },
     /// An image layer at its absolute or authored URL, drawn once the app fetched its bytes.
     Image {
@@ -105,8 +112,80 @@ pub enum DisplayBackground {
         /// Per axis, a repeating layer rescales its tile so whole tiles fill the area (`round`).
         #[serde(default, skip_serializing_if = "is_flush")]
         round: [bool; 2],
+        /// `background-attachment: fixed`: the positioning area `[x, y, width, height]` in
+        /// document points (the viewport) that replaces the box's own; painters still clip
+        /// the layer to the box. None positions it in the box.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<[f64; 4]>,
+        /// The key the app stores this layer's image under when it is not the item's own
+        /// identity: an element's later image layers and the canvas's (`layer_key`,
+        /// `canvas_key`). None is the first layer, under the item's identity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<usize>,
     },
 }
+/// One gradient tile, relative to the item's top-left: painted there, and repeated from there
+/// across the box along each axis that tiles.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GradientTile {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// Tiles horizontally and vertically.
+    pub repeat: [bool; 2],
+    /// Space left between repeated tiles per axis (`background-repeat: space`).
+    #[serde(default, skip_serializing_if = "is_gapless")]
+    pub gap: [f64; 2],
+}
+/** No space between tiles, left out of serialized items. */
+fn is_gapless(gap: &[f64; 2]) -> bool {
+    *gap == [0.0; 2]
+}
+impl GradientTile {
+    /// Maps a point relative to the item's top-left into the tile it falls in, relative to that
+    /// tile's top-left; None where no tile paints (outside a non-repeating axis, or an empty tile).
+    pub fn local(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        let axis = |at: f64, start: f64, size: f64, axis: usize| {
+            let offset = at - start;
+            let offset = match self.repeat[axis] {
+                true => offset.rem_euclid(size + self.gap[axis]),
+                false => offset,
+            };
+            (size > 0.0 && (0.0..size).contains(&offset)).then_some(offset)
+        };
+        Some((
+            axis(x, self.x, self.width, 0)?,
+            axis(y, self.y, self.height, 1)?,
+        ))
+    }
+    /// The top-left corners of the tiles that reach into a box `width` by `height`, relative to
+    /// its top-left, at most `GRADIENT_TILES` of them, for painters that draw tile by tile.
+    pub fn origins(&self, width: f64, height: f64) -> Vec<(f64, f64)> {
+        let axis = |start: f64, size: f64, extent: f64, axis: usize| -> Vec<f64> {
+            let step = size + self.gap[axis];
+            if !self.repeat[axis] || step <= 0.0 {
+                return vec![start];
+            }
+            let first = start - ((start / step).ceil() * step);
+            let count = ((extent - first) / step)
+                .ceil()
+                .clamp(0.0, GRADIENT_TILES as f64);
+            (0..count as usize)
+                .map(|i| first + i as f64 * step)
+                .collect()
+        };
+        let xs = axis(self.x, self.width, width, 0);
+        let ys = axis(self.y, self.height, height, 1);
+        ys.iter()
+            .flat_map(|y| xs.iter().map(move |x| (*x, *y)))
+            .take(GRADIENT_TILES)
+            .collect()
+    }
+}
+/// Gradient tiles a painter draws one by one at most; past it the rest of the box goes unpainted.
+pub const GRADIENT_TILES: usize = 4096;
 /** Neither axis set: the default `space` and `round`, left out of serialized items. */
 fn is_flush(axes: &[bool; 2]) -> bool {
     !axes[0] && !axes[1]
@@ -140,6 +219,7 @@ impl DisplayBackground {
                 x1,
                 y1,
                 stops,
+                ..
             } => Some((false, [*x0, *y0, *x1, *y1], stops)),
             Self::Radial {
                 cx,
@@ -147,7 +227,22 @@ impl DisplayBackground {
                 rx,
                 ry,
                 stops,
+                ..
             } => Some((true, [*cx, *cy, *rx, *ry], stops)),
+            Self::Image { .. } => None,
+        }
+    }
+    /// The layer painted in `tile` (a gradient whose geometry spans it); an image is unchanged.
+    pub fn with_tile(mut self, placed: GradientTile) -> Self {
+        if let Self::Linear { tile, .. } | Self::Radial { tile, .. } = &mut self {
+            *tile = Some(placed);
+        }
+        self
+    }
+    /// A gradient's tile, when size, position or repeat place it; None fills the box.
+    pub fn tile(&self) -> Option<GradientTile> {
+        match self {
+            Self::Linear { tile, .. } | Self::Radial { tile, .. } => *tile,
             Self::Image { .. } => None,
         }
     }
@@ -343,6 +438,7 @@ pub(super) fn validate(item: &DisplayItem) -> crate::protocol::EngineResult<()> 
     values.extend(item.radius);
     values.extend(item.border_widths);
     values.push(item.letter_spacing);
+    values.push(item.word_spacing);
     values.extend(item.object_position);
     if let Some(content) = item.content_box {
         values.extend(content);
@@ -358,9 +454,11 @@ pub(super) fn validate(item: &DisplayItem) -> crate::protocol::EngineResult<()> 
                 x1,
                 y1,
                 stops,
+                tile,
             } => {
                 values.extend([*x0, *y0, *x1, *y1]);
                 values.extend(stops.iter().map(|stop| stop.position));
+                values.extend(tile.iter().flat_map(|t| [t.x, t.y, t.width, t.height]));
             }
             DisplayBackground::Radial {
                 cx,
@@ -368,9 +466,11 @@ pub(super) fn validate(item: &DisplayItem) -> crate::protocol::EngineResult<()> 
                 rx,
                 ry,
                 stops,
+                tile,
             } => {
                 values.extend([*cx, *cy, *rx, *ry]);
                 values.extend(stops.iter().map(|stop| stop.position));
+                values.extend(tile.iter().flat_map(|t| [t.x, t.y, t.width, t.height]));
             }
             DisplayBackground::Image { size, position, .. } => {
                 values.extend(position);

@@ -1156,18 +1156,18 @@ impl<'a> Tree<'a> {
             attrs.insert(key.into(), value);
         }
     }
-    /// Closing an embedded element: frames always, and media or objects without fallback
-    /// content, get one inert placeholder box. Nothing is ever loaded or executed.
+    /// Closing an embedded element: media or objects without fallback content get one inert
+    /// placeholder box. An iframe needs none: it is a replaced box of its own, which the
+    /// runtime fills with its document. Nothing is loaded or executed here.
     fn finish(&mut self, index: usize) {
         let node = &self.document.nodes[index];
-        if !EMBEDDED.contains(&node.tag.as_str()) {
+        if !EMBEDDED.contains(&node.tag.as_str()) || node.tag == "iframe" {
             return;
         }
-        let fallback = node.tag != "iframe"
-            && (!node.text.is_empty()
-                || self.document.nodes[index + 1..].iter().any(|child| {
-                    child.tag != "#comment" && !MEDIA_RESOURCES.contains(&child.tag.as_str())
-                }));
+        let fallback = !node.text.is_empty()
+            || self.document.nodes[index + 1..].iter().any(|child| {
+                child.tag != "#comment" && !MEDIA_RESOURCES.contains(&child.tag.as_str())
+            });
         // A video with a poster shows the poster frame, painted as its own background (see the
         // presentational hints), so it needs no stand-in box or label.
         let posted = node.tag == "video"
@@ -1228,10 +1228,9 @@ impl<'a> Tree<'a> {
     }
     /** Literal text stays attached to its source element where unambiguous. */
     fn text(&mut self, text: String) -> EngineResult<()> {
-        // A no-break space is text, never dropped (`<td>&nbsp;</td>`).
-        // ponytail: other Unicode spaces (U+3000) still drop like HTML white space; keep them
-        // once collapsible layout hangs an ideographic space at a line's end.
-        if text.chars().all(|c| c.is_whitespace() && c != '\u{a0}') && !self.in_preformatted() {
+        // Only HTML's ASCII white space is droppable: a no-break space (`<td>&nbsp;</td>`) or
+        // an ideographic space is text, which layout keeps (and hangs at a line's end).
+        if text.chars().all(|c| c.is_ascii_whitespace()) && !self.in_preformatted() {
             self.space_after_sibling(&text);
             return Ok(());
         }

@@ -393,7 +393,8 @@ fn self_closing_flag_is_ignored_on_html_elements() {
     );
 }
 
-/** Inline handlers are stripped and never run; the button handler V9 supports is kept. */
+/** Inline handlers are stripped and never run; the handlers V9 supports are kept: a button's
+onclick and the body's, which HTML forwards to the window (`<body onload>`). */
 #[test]
 fn inline_event_handlers_are_stripped() {
     let document = parse(
@@ -408,7 +409,15 @@ fn inline_event_handlers_are_stripped() {
         );
         assert!(node.handler.is_none());
     }
-    assert!(!document.formatting.body.attributes.contains_key("onload"));
+    assert_eq!(
+        document
+            .formatting
+            .body
+            .attributes
+            .get("onload")
+            .map(String::as_str),
+        Some("boot()")
+    );
     assert_eq!(by_id(&document, "b").handler.as_deref(), Some("go()"));
     assert!(
         document

@@ -14,10 +14,13 @@ pub(super) fn generated(
         let style = &generated.style;
         // ponytail: positioned and floated generated boxes are skipped or laid out in flow;
         // they need their own identities to be placed later.
-        if style.hidden || matches!(style.position, Position::Absolute | Position::Fixed) {
+        if style.display_none || matches!(style.position, Position::Absolute | Position::Fixed) {
             continue;
         }
         let mut synthetic = synthetic(node, generated);
+        if synthetic.style.hidden {
+            invisible(&mut synthetic.style);
+        }
         synthetic.style.float = crate::document::style::Float::None;
         let atomic = synthetic.style.inline_block;
         if synthetic.style.inline_block && synthetic.style.width.is_none() {
@@ -129,6 +132,23 @@ fn synthetic(node: &Node, generated: &crate::document::style::Generated) -> Node
     synthetic.style = (*generated.style).clone();
     synthetic.style.generated.clear();
     synthetic
+}
+/** A `visibility: hidden` generated box still lays out (the clearfix `::after { content: "";
+ * display: block; visibility: hidden; clear: both }` clears floats), but paints nothing: its
+ * text, background, border and shadows are transparent. */
+fn invisible(style: &mut crate::document::ComputedStyle) {
+    const CLEAR: &str = "transparent";
+    style.hidden = false;
+    style.interactive = false;
+    style.color = Some(CLEAR.into());
+    style.background = None;
+    style.backgrounds.clear();
+    style.shadows.clear();
+    style.border_colors = std::array::from_fn(|_| Some(CLEAR.into()));
+    style.border_color = Some(CLEAR.into());
+    style.text_decoration_none = true;
+    style.underline = false;
+    style.strikethrough = false;
 }
 /** Generated boxes have no children of their own; their identity is their element's. */
 pub(super) fn is_generated(node: &Node) -> bool {

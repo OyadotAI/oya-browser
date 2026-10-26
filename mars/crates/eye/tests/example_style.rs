@@ -167,7 +167,7 @@ fn negative_margins_resolve_and_stay_bounded() {
     let document = parse("<p>x</p>").unwrap();
     let styled = compute_styles(&document, &["p{margin-top:-1.5em}".into()]).unwrap();
     assert_eq!(styled.nodes[0].style.margin[0], -24.0);
-    let styled = compute_styles(&document, &["p{margin-top:-5000px}".into()]).unwrap();
+    let styled = compute_styles(&document, &["p{margin-top:-99999px}".into()]).unwrap();
     let style = &styled.nodes[0].style;
     assert_eq!(style.margin[0], -mars_eye::constants::CSS_MAX_SCALAR);
     assert!(!style.interactive);

@@ -77,13 +77,19 @@ pub(super) enum Align {
     Left,
     Center,
     Right,
+    /** Free space spread over the line's expansion opportunities (`text-align: justify`). */
+    Justify(super::justify::Spread),
 }
 /** A finished line waiting for `settle`: each fragment with its vertical offset, and the room it had. */
 pub(super) struct Finished {
     frags: Vec<(Frag, f64)>,
+    /** Out-of-flow boxes on the line: (identity, fragments before it, line top). */
+    statics: Vec<(usize, usize, f64, f64)>,
     left: f64,
     width: f64,
     hang: Hang,
+    /** The line's `text-indent`, measured from its start edge. */
+    indent: f64,
 }
 /** Preserved white space (`pre-wrap` spaces and tabs) at the end of a line, which hangs past
  * its end edge, after Blink's LineInfo::ComputeTrailingSpaceWidth. */
@@ -120,10 +126,13 @@ const HALF_X_HEIGHT: f64 = 0.25;
 
 /** Baseline-aligns the current fragments; returns the line height and stores the offsets for `settle`. */
 pub(super) fn finish(flow: &mut Flow) -> f64 {
-    let frags = std::mem::take(&mut flow.frags);
+    let mut frags = std::mem::take(&mut flow.frags);
+    let statics = std::mem::take(&mut flow.statics);
+    let phantoms = std::mem::take(&mut flow.phantoms);
     if frags.is_empty() {
         return 0.0;
     }
+    frags.extend(phantoms);
     let strut = flow.strut;
     let font = strut.map_or(0.0, |strut| strut.font);
     // Blink shifts sub and super by a fifth and a third of the font plus one layout pixel,
@@ -195,9 +204,11 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
     let (left, width) = flow.room_at(flow.y);
     flow.finished.push(Finished {
         frags: placed,
+        statics,
         left,
         width,
         hang: flow.hang,
+        indent: std::mem::take(&mut flow.indent),
     });
     height
 }
@@ -263,13 +274,16 @@ pub(super) fn settle(
     items: &mut [DisplayItem],
     from: usize,
 ) -> EngineResult<()> {
-    let align = flow.align;
+    let aligned = flow.align;
     // A block of only blocks has no lines; its nested blocks already refit their own inlines.
     if flow.finished.is_empty() {
         return Ok(());
     }
     for line in std::mem::take(&mut flow.finished) {
         context.charge(line.frags.len() + 1)?;
+        if line.hang.soft {
+            super::hyphenate::mark(context, items, &line.frags)?;
+        }
         let mut extent: Option<(f64, f64)> = None;
         for (frag, dy) in &line.frags {
             move_piece(items, frag.piece, 0.0, *dy);
@@ -287,17 +301,34 @@ pub(super) fn settle(
         let left = left.min(line.left);
         let right = (right - line.hang.used(right - left, line.width)).max(left);
         let free = (line.width - (right - left)).max(0.0);
-        let dx = line.left - left
+        let align = match if line.hang.soft {
+            aligned.lines
+        } else {
+            aligned.last
+        } {
+            Align::Justify(_) if super::justify::spread(context, items, &line.frags, free)? => {
+                Align::Left
+            }
+            Align::Justify(how) => how.start(),
+            other => other,
+        };
+        let mut dx = line.left - left
             + match align {
-                Align::Left => 0.0,
                 Align::Center => free / 2.0,
                 Align::Right => free,
+                _ => 0.0,
             };
+        if flow.rtl && line.indent != 0.0 && align == Align::Right {
+            // A right-to-left indent comes off the right edge (CSS Text 3 text-indent).
+            dx = line.left + line.width - line.indent - right;
+        }
         if align != Align::Left && dx != 0.0 {
             for (frag, _) in &line.frags {
                 move_piece(items, frag.piece, dx, 0.0);
             }
         }
+        super::bidi::reorder(items, &line.frags, flow.rtl);
+        place_statics(context, items, &line, flow.rtl);
         if let Some(owner) = flow.ellipsis {
             truncate(context, items, &line, owner)?;
         }
@@ -305,7 +336,7 @@ pub(super) fn settle(
     refit_inlines(context, items, from)
 }
 /** The ellipsis string Blink uses for `text-overflow: ellipsis` (U+2026). */
-const ELLIPSIS: &str = "\u{2026}";
+pub(super) const ELLIPSIS: &str = "\u{2026}";
 /** Overflow below this is layout rounding, not content past the end edge. */
 const OVERFLOW_EPSILON: f64 = 0.01;
 /**
@@ -366,12 +397,23 @@ fn truncate(
 }
 /** Cuts one text run to the longest prefix ending by `limit` (at least one character when it
  * starts the line) and appends the ellipsis, measured in the run's own font. */
-fn ellipsize(
+pub(super) fn ellipsize(
+    context: &mut LayoutContext<'_>,
+    items: &mut [DisplayItem],
+    run: (usize, usize),
+    limit: f64,
+    first: bool,
+) -> EngineResult<()> {
+    ellipsize_with(context, items, run, limit, first, ELLIPSIS)
+}
+/** `ellipsize` with any marker string, as `block-ellipsis` gives one. */
+pub(super) fn ellipsize_with(
     context: &mut LayoutContext<'_>,
     items: &mut [DisplayItem],
     (item, line): (usize, usize),
     limit: f64,
     first: bool,
+    marker: &str,
 ) -> EngineResult<()> {
     let Some(run) = items
         .get(item)
@@ -405,7 +447,17 @@ fn ellipsize(
     } else {
         &run.text[..ends[low - 1]]
     };
-    let text = format!("{kept}{ELLIPSIS}");
+    let text = format!("{kept}{marker}");
+    write_run(context, items, (item, line), face, text)
+}
+/** Replaces one run's text and shaped width. */
+fn write_run(
+    context: &mut LayoutContext<'_>,
+    items: &mut [DisplayItem],
+    (item, line): (usize, usize),
+    face: crate::platform::Face,
+    text: String,
+) -> EngineResult<()> {
     let width = context.measure(&text, face)?;
     let target = &mut items[item].lines[line];
     target.text = text;
@@ -451,6 +503,40 @@ fn bounds(items: &[DisplayItem], frag: &Frag) -> Option<(f64, f64)> {
         }
     }
 }
+/** Re-derives the static position of each out-of-flow box on a settled line from the fragment
+before it in logical order, now aligned and in visual order: just after it (to its left in a
+right-to-left line), or at the line's start edge when it came first. */
+fn place_statics(
+    context: &mut LayoutContext<'_>,
+    items: &[DisplayItem],
+    line: &Finished,
+    rtl: bool,
+) {
+    for &(local, before, y, space) in &line.statics {
+        let edge = match before.checked_sub(1).and_then(|at| line.frags.get(at)) {
+            Some((frag, _)) => {
+                bounds(items, frag).map(|(l, r)| if rtl { l - space } else { r + space })
+            }
+            None => line
+                .frags
+                .iter()
+                .filter_map(|(frag, _)| bounds(items, frag))
+                .map(|(l, r)| if rtl { r } else { l })
+                .reduce(if rtl { f64::max } else { f64::min }),
+        };
+        if let Some(x) = edge {
+            context.defer(local, (x, y));
+        }
+    }
+}
+/** A fragment's horizontal extent, margins included for an atomic. */
+pub(super) fn extent(items: &[DisplayItem], frag: &Frag) -> Option<(f64, f64)> {
+    bounds(items, frag)
+}
+/** Moves one fragment along the line. */
+pub(super) fn shift(items: &mut [DisplayItem], piece: Piece, dx: f64) {
+    move_piece(items, piece, dx, 0.0);
+}
 /** Moves one fragment; atomics move with every item they painted. */
 fn move_piece(items: &mut [DisplayItem], piece: Piece, dx: f64, dy: f64) {
     match piece {
@@ -493,8 +579,11 @@ fn inline_box(context: &LayoutContext<'_>, item: &DisplayItem) -> bool {
             && !node.style.inline_block
             && node.style.float == crate::document::style::Float::None
             && !super::flow::out_of_flow(node)
-            && !["img", "svg", "input", "button", "select", "textarea", "br"]
-                .contains(&node.tag.as_str())
+            && !super::flow::frame(node)
+            && ![
+                "img", "canvas", "svg", "input", "button", "select", "textarea", "br",
+            ]
+            .contains(&node.tag.as_str())
     })
 }
 /** Inline boxes cover their own runs and their inline descendants, plus padding and borders. */
@@ -565,8 +654,11 @@ fn refit_inlines(
         if context.node(parent).is_ok_and(|parent| {
             parent.style.inline
                 && !parent.style.inline_block
-                && !["img", "svg", "input", "button", "select", "textarea", "br"]
-                    .contains(&parent.tag.as_str())
+                && !super::flow::frame(parent)
+                && ![
+                    "img", "canvas", "svg", "input", "button", "select", "textarea", "br",
+                ]
+                .contains(&parent.tag.as_str())
         }) {
             let current = extents.remove(&parent);
             extents.insert(parent, union(current, rect));

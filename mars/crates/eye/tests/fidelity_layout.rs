@@ -48,8 +48,7 @@ fn hidden(document: &Document, id: &str) -> bool {
         .iter()
         .find(|node| node.html_id == id)
         .unwrap()
-        .style
-        .hidden
+        .hidden()
 }
 
 /** Equal within layout rounding; the values are in the failure message. */

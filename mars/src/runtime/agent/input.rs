@@ -80,7 +80,8 @@ impl Runtime {
                 "Use viewport coordinates from page_find bounds minus the scroll offset.",
             ));
         }
-        Ok((x, y + self.scroll_y))
+        let left = self.page.as_ref().map_or(0.0, |page| page.scroll_x);
+        Ok((x + left, y + self.scroll_y))
     }
 
     /**

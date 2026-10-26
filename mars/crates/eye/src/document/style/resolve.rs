@@ -2,14 +2,23 @@
 use super::{ColorScheme, ComputedStyle};
 use crate::document::Appearance;
 /** Noninherited box fields always start fresh for each formatting subject. */
-pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
+pub(crate) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
     ComputedStyle {
         font_size: parent.font_size,
+        font_keyword: parent.font_keyword,
+        font_size_absolute: parent.font_size_absolute,
         bold: parent.bold,
         font_weight: parent.font_weight,
         color: parent.color.clone(),
         align: parent.align.clone(),
+        align_last: parent.align_last.clone(),
+        text_justify: parent.text_justify.clone(),
+        text_autospace: parent.text_autospace,
+        hyphens_none: parent.hyphens_none,
+        hyphenate_character: parent.hyphenate_character.clone(),
+        parent_rtl: Some(parent.rtl),
         hidden: parent.hidden,
+        invisible: parent.invisible,
         interactive: parent.interactive,
         inert: parent.inert,
         line_height: parent.line_height,
@@ -35,9 +44,13 @@ pub(super) fn inherited(parent: &ComputedStyle) -> ComputedStyle {
         strikethrough: parent.strikethrough,
         list_style: parent.list_style,
         border_spacing: parent.border_spacing,
+        border_spacing_rows: parent.border_spacing_rows,
         border_collapse: parent.border_collapse,
+        block_ellipsis: parent.block_ellipsis.clone(),
         caption_bottom: parent.caption_bottom,
         vertical_writing: parent.vertical_writing,
+        writing_lr: parent.writing_lr,
+        writing_sideways: parent.writing_sideways,
         text_box_edge: parent.text_box_edge,
         ..ComputedStyle::default()
     }
@@ -49,6 +62,11 @@ fn inherits(key: &str) -> bool {
             "color",
             "line-height",
             "text-align",
+            "text-align-last",
+            "text-justify",
+            "text-autospace",
+            "hyphens",
+            "hyphenate-character",
             "letter-spacing",
             "word-spacing",
             "text-indent",
@@ -86,7 +104,11 @@ pub(super) fn keyword(style: &mut ComputedStyle, parent: &ComputedStyle, key: &s
  * `visibility`, which never un-hides an inherited hidden subtree, keep their current value.
  */
 fn copy(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
-    if sided(style, source, key) || corner(style, source, key) || copy_box(style, source, key) {
+    if sided(style, source, key)
+        || corner(style, source, key)
+        || copy_box(style, source, key)
+        || super::multicol::copy(style, source, key)
+    {
         return;
     }
     if !copy_text(style, source, key) {
@@ -130,6 +152,8 @@ fn corner(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bool 
     };
     style.radius[corner] = source.radius[corner];
     style.radius_percent[corner] = source.radius_percent[corner];
+    style.radius_y[corner] = source.radius_y[corner];
+    style.radius_px[corner] = source.radius_px[corner];
     true
 }
 /** Box model, flex and grid fields. */
@@ -153,9 +177,21 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
             style.min_width_percent = source.min_width_percent;
             style.size_keywords[1] = source.size_keywords[1];
         }
-        "height" => style.height = source.height,
-        "min-height" => style.min_height = source.min_height,
-        "max-height" => style.max_height = source.max_height,
+        "height" => {
+            style.height = source.height;
+            style.height_fit = source.height_fit;
+            style.height_stretch[0] = source.height_stretch[0];
+        }
+        "min-height" => {
+            style.min_height = source.min_height;
+            style.height_bounds_fit[0] = source.height_bounds_fit[0];
+            style.height_stretch[1] = source.height_stretch[1];
+        }
+        "max-height" => {
+            style.max_height = source.max_height;
+            style.height_bounds_fit[1] = source.height_bounds_fit[1];
+            style.height_stretch[2] = source.height_stretch[2];
+        }
         "box-sizing" => style.box_sizing = source.box_sizing,
         "aspect-ratio" => style.aspect_ratio = source.aspect_ratio,
         "flex-direction" => {
@@ -174,21 +210,58 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         }
         "place-items" => {
             style.align_items = source.align_items;
+            style.align_stretch[0] = source.align_stretch[0];
+            style.align_safe[0] = source.align_safe[0];
+            style.align_side[0] = source.align_side[0];
             style.justify_items = source.justify_items;
+            style.align_stretch[2] = source.align_stretch[2];
+            style.align_safe[2] = source.align_safe[2];
+            style.align_side[2] = source.align_side[2];
         }
         "place-self" => {
             style.align_self = source.align_self;
+            style.align_self_safe = source.align_self_safe;
+            style.align_stretch[1] = source.align_stretch[1];
+            style.align_safe[1] = source.align_safe[1];
+            style.align_side[1] = source.align_side[1];
             style.justify_self = source.justify_self;
+            style.align_stretch[3] = source.align_stretch[3];
+            style.align_safe[3] = source.align_safe[3];
+            style.align_side[3] = source.align_side[3];
         }
         "place-content" => style.justify_content = source.justify_content,
         "flex-basis" => style.flex_basis = source.flex_basis,
         "flex-grow" => style.flex_grow = source.flex_grow,
         "flex-shrink" => style.flex_shrink = source.flex_shrink,
-        "justify-content" => style.justify_content = source.justify_content,
-        "align-items" => style.align_items = source.align_items,
-        "align-self" => style.align_self = source.align_self,
-        "justify-items" => style.justify_items = source.justify_items,
-        "justify-self" => style.justify_self = source.justify_self,
+        "justify-content" => {
+            style.justify_content = source.justify_content;
+            style.content_safe[1] = source.content_safe[1];
+        }
+        "align-items" => {
+            style.align_items = source.align_items;
+            style.align_stretch[0] = source.align_stretch[0];
+            style.align_safe[0] = source.align_safe[0];
+            style.align_side[0] = source.align_side[0];
+        }
+        "align-self" => {
+            style.align_self = source.align_self;
+            style.align_self_safe = source.align_self_safe;
+            style.align_stretch[1] = source.align_stretch[1];
+            style.align_safe[1] = source.align_safe[1];
+            style.align_side[1] = source.align_side[1];
+        }
+        "justify-items" => {
+            style.justify_items = source.justify_items;
+            style.align_stretch[2] = source.align_stretch[2];
+            style.align_safe[2] = source.align_safe[2];
+            style.align_side[2] = source.align_side[2];
+        }
+        "justify-self" => {
+            style.justify_self = source.justify_self;
+            style.align_stretch[3] = source.align_stretch[3];
+            style.align_safe[3] = source.align_safe[3];
+            style.align_side[3] = source.align_side[3];
+        }
         "order" => style.order = source.order,
         "row-gap" | "grid-row-gap" => {
             style.row_gap = source.row_gap;
@@ -213,6 +286,8 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
         }
         "container-type" => style.container_type = source.container_type,
         "container-name" => style.container_names = source.container_names.clone(),
+        "contain-intrinsic-width" => style.contain_intrinsic[0] = source.contain_intrinsic[0],
+        "contain-intrinsic-height" => style.contain_intrinsic[1] = source.contain_intrinsic[1],
         _ => return false,
     }
     true
@@ -221,9 +296,17 @@ fn copy_box(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> boo
 fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bool {
     match key {
         "color" => style.color = source.color.clone(),
-        "font-size" => style.font_size = source.font_size,
+        "font-size" => {
+            style.font_size = source.font_size;
+            style.font_keyword = source.font_keyword;
+            style.font_size_absolute = source.font_size_absolute;
+        }
         "direction" => style.rtl = source.rtl,
-        "writing-mode" => style.vertical_writing = source.vertical_writing,
+        "writing-mode" => {
+            style.vertical_writing = source.vertical_writing;
+            style.writing_lr = source.writing_lr;
+            style.writing_sideways = source.writing_sideways;
+        }
         "font-weight" => {
             style.font_weight = source.font_weight;
             style.bold = source.bold;
@@ -235,6 +318,13 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
         "font-style" => style.font_style = source.font_style,
         "line-height" => style.line_height = source.line_height,
         "text-align" => style.align = source.align.clone(),
+        "text-align-last" => style.align_last = source.align_last.clone(),
+        "text-justify" => style.text_justify = source.text_justify.clone(),
+        "text-autospace" => style.text_autospace = source.text_autospace,
+        "hyphens" => style.hyphens_none = source.hyphens_none,
+        "hyphenate-character" => {
+            style.hyphenate_character = source.hyphenate_character.clone();
+        }
         "letter-spacing" => {
             style.letter_spacing = source.letter_spacing;
             style.spacing_percent[0] = source.spacing_percent[0];
@@ -265,7 +355,10 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
             style.strikethrough = source.strikethrough;
         }
         "list-style" | "list-style-type" => style.list_style = source.list_style,
-        "border-spacing" => style.border_spacing = source.border_spacing,
+        "border-spacing" => {
+            style.border_spacing = source.border_spacing;
+            style.border_spacing_rows = source.border_spacing_rows;
+        }
         "border-collapse" => style.border_collapse = source.border_collapse,
         "caption-side" => style.caption_bottom = source.caption_bottom,
         _ => return false,
@@ -274,6 +367,9 @@ fn copy_text(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) -> bo
 }
 /** Display, positioning, paint and background fields. */
 fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
+    if super::border_image::copy(style, source, key) {
+        return;
+    }
     match key {
         "display" => {
             style.inline = source.inline;
@@ -282,6 +378,7 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
             style.display_grid = source.display_grid;
             style.grid_lanes = source.grid_lanes;
             style.display_contents = source.display_contents;
+            style.display_none = source.display_none;
             style.list_item = source.list_item;
             style.table_box = source.table_box;
             style.flow_root = source.flow_root;
@@ -312,10 +409,33 @@ fn copy_layout(style: &mut ComputedStyle, source: &ComputedStyle, key: &str) {
             style.overflow_clip_box = source.overflow_clip_box;
         }
         "background-color" => style.background = source.background.clone(),
-        "background-image" => style.backgrounds = source.backgrounds.clone(),
-        "background-size" => style.background_size = source.background_size,
-        "background-position" => style.background_position = source.background_position,
-        "background-repeat" => style.background_repeat = source.background_repeat,
+        "background-clip" | "-webkit-background-clip" => {
+            style.background_clip = source.background_clip;
+        }
+        "background-origin" | "-webkit-background-origin" => {
+            style.background_origin = source.background_origin;
+        }
+        "background-image" => {
+            style.backgrounds = source.backgrounds.clone();
+            style.background_geometry.slots = source.background_geometry.slots.clone();
+        }
+        "background-size" => {
+            style.background_size = source.background_size;
+            style.background_geometry.sizes = source.background_geometry.sizes.clone();
+        }
+        "background-position" => {
+            style.background_position = source.background_position;
+            style.background_geometry.positions = source.background_geometry.positions.clone();
+        }
+        "background-repeat" => {
+            style.background_repeat = source.background_repeat;
+            style.background_geometry.repeats = source.background_geometry.repeats.clone();
+        }
+        "background-attachment" => {
+            style.background_fixed = source.background_fixed;
+            style.background_local = source.background_local;
+        }
+        "initial-letter" => style.initial_letter = source.initial_letter,
         "mask-image" => {
             style.masked = source.masked;
             style.mask = source.mask.clone();

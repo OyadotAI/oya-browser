@@ -1,6 +1,7 @@
 /** Background image layers: the bytes the app fetched for an item, sized, positioned and tiled in its border box. */
 use super::{DisplayItem, rect};
 use crate::document::{DisplayBackground, ImageSize, ObjectFit};
+use objc2::rc::Retained;
 use objc2_app_kit::{
     NSBezierPath, NSColor, NSCompositingOperation, NSGraphicsContext, NSImage,
     NSRectFillUsingOperation,
@@ -76,26 +77,46 @@ pub(super) fn paint_replaced_image(
     context.restoreGraphicsState();
 }
 
-/// Draws the item's image layers, bottom first, clipped to its border box.
-pub(super) fn paint(item: &DisplayItem, image: Option<&NSImage>, alpha: f64) {
-    // Only the topmost image layer has fetched bytes; other image layers share them.
-    let Some(layer) = item
-        .backgrounds
-        .iter()
-        .find(|layer| matches!(layer, DisplayBackground::Image { .. }))
-    else {
-        return;
-    };
-    let Some(image) = image.filter(|image| usable(image)) else {
-        return;
-    };
+/// Draws the item's image layers, bottom first, clipped to its border box: the first with the
+/// item's own image, each layer keyed apart (later layers, the canvas's) with its image in
+/// `keyed`.
+pub(super) fn paint(
+    item: &DisplayItem,
+    image: Option<&NSImage>,
+    keyed: &std::collections::HashMap<usize, Retained<NSImage>>,
+    alpha: f64,
+) {
     let Some(context) = NSGraphicsContext::currentContext() else {
         return;
     };
     context.saveGraphicsState();
     NSBezierPath::clipRect(rect(item.x, item.y, item.width, item.height));
-    draw_layer(image, layer, item, alpha);
+    for layer in item.backgrounds.iter().rev() {
+        let picture = match layer {
+            DisplayBackground::Image { key: Some(key), .. } => keyed.get(key).map(|i| &**i),
+            DisplayBackground::Image { .. } => image,
+            _ => None,
+        };
+        if let Some(picture) = picture.filter(|picture| usable(picture)) {
+            draw_layer(picture, layer, item, alpha);
+        }
+    }
     context.restoreGraphicsState();
+}
+/// The images of an item's layers keyed apart from its identity, decoded once each.
+pub(super) fn keyed_images<'a>(
+    item: &DisplayItem,
+    bytes: &dyn Fn(usize) -> Option<&'a [u8]>,
+    painted: &mut super::painted::Painted,
+) -> std::collections::HashMap<usize, Retained<NSImage>> {
+    item.backgrounds
+        .iter()
+        .filter_map(|layer| match layer {
+            DisplayBackground::Image { key: Some(key), .. } => Some(*key),
+            _ => None,
+        })
+        .filter_map(|key| painted.image(key, bytes(key)).map(|image| (key, image)))
+        .collect()
 }
 /// Fills the item's border box with `color` only where its `url()` mask image is opaque: the
 /// mask tiles draw into a transparency layer and the color replaces them with source-in. Without
@@ -131,21 +152,20 @@ fn draw_layer(image: &NSImage, layer: &DisplayBackground, item: &DisplayItem, al
         size,
         position,
         repeat,
+        area,
         ..
     } = layer
     else {
         return;
     };
+    // A fixed layer is positioned in the viewport Eye gave it, then clipped to the box.
+    let [ax, ay, aw, ah] = area.unwrap_or([item.x, item.y, item.width, item.height]);
     let natural = image.size();
-    let tile = tile_size(
-        *size,
-        (natural.width, natural.height),
-        (item.width, item.height),
-    );
+    let tile = tile_size(*size, (natural.width, natural.height), (aw, ah));
     if tile.0 > 0.0 && tile.1 > 0.0 {
         let origin = (
-            item.x + position[0] + (item.width - tile.0) * position[1] / 100.0,
-            item.y + position[2] + (item.height - tile.1) * position[3] / 100.0,
+            ax + position[0] + (aw - tile.0) * position[1] / 100.0,
+            ay + position[2] + (ah - tile.1) * position[3] / 100.0,
         );
         draw_tiles(image, origin, tile, *repeat, item, alpha);
     }

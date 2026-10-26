@@ -65,7 +65,9 @@ fn cross_width(
     {
         None
     } else {
-        Some(intrinsic.max_content)
+        // A replaced item is laid out against the definite cross space, as Blink does, so one
+        // with only a ratio stretches into it rather than collapsing to its zero contribution.
+        super::sizing::replaced_fit(child, available).or(Some(intrinsic.max_content))
     };
     Ok(border_width(child, inner, available, natural))
 }
@@ -76,7 +78,7 @@ fn cross_width(
  * bound it; without an authored minimum the item keeps at least its content or its specified
  * height, whichever is smaller (Flexbox 4.5).
  */
-fn item(
+pub(super) fn item(
     context: &mut LayoutContext<'_>,
     parent: &Node,
     child: &Node,
@@ -105,8 +107,15 @@ fn item(
             .map(|value| content_size(child, value, false))
     };
     let specified = bound(child.style.height);
-    let natural_content = if specified.is_some() {
-        content_extent(context, child, width)?
+    let natural_content = if let Some(height) = replaced_content_height(child, width) {
+        height
+    } else if specified.is_some() {
+        // Content sizes are measured at an indefinite height (Blink's min-content block size):
+        // percentages and a nested column's flexing ignore the item's own height.
+        context.indefinite_item = Some(child.local_id);
+        let extent = content_extent(context, child, width);
+        context.indefinite_item = None;
+        extent?
     } else {
         (natural - vertical_edges(child)).max(0.0)
     };
@@ -117,6 +126,7 @@ fn item(
             definite_height.unwrap_or_default() * value / 100.0,
             false,
         ),
+        FlexBasis::Content => natural_content,
         _ => specified.unwrap_or(natural_content),
     };
     let max = bound(child.style.max_height).unwrap_or(LAYOUT_EXTENT);
@@ -161,6 +171,11 @@ fn content_extent(context: &mut LayoutContext<'_>, child: &Node, width: f64) -> 
         &mut items,
     )?;
     if !child.text.trim().is_empty() {
+        // Text alone is as tall as its lines, whatever the item's own height says.
+        if context.children(child.local_id).is_empty() {
+            let inner = width - super::sizing::horizontal_edges(child);
+            return super::sizing::measure_own_text_height(context, child, inner);
+        }
         return Ok((height - vertical_edges(child)).max(0.0));
     }
     let top = child.style.padding[0] + super::sizing::border_sides(&child.style)[0];
@@ -194,8 +209,11 @@ pub(super) fn column(
     // `max_sum_hypothetical_main_size`).
     let breaking = flex::Breaking::of(parent);
     let balanced = matches!(breaking, flex::Breaking::Balance(_));
-    let wrap =
-        parent.style.flex_wrap == FlexWrap::Wrap && (extent.definite().is_some() || balanced);
+    // Without a definite height the lines break at a fixed `max-height`, as in Blink.
+    let limit = extent
+        .definite()
+        .or_else(|| super::flex_column_intrinsic::break_size(parent));
+    let wrap = parent.style.flex_wrap == FlexWrap::Wrap && (limit.is_some() || balanced);
     let mut records = Vec::new();
     let mut widths = Vec::new();
     // Balancing into `flex-line-count` lines gives each item that share of the cross space to
@@ -218,7 +236,7 @@ pub(super) fn column(
     }
     let gap = parent.style.row_gap;
     let ranges = if wrap {
-        let size = extent.definite().unwrap_or(crate::constants::LAYOUT_EXTENT);
+        let size = limit.unwrap_or(crate::constants::LAYOUT_EXTENT);
         flex::break_lines_in(&records, size, gap, breaking)
     } else {
         std::iter::once(0..records.len()).collect()
@@ -233,6 +251,7 @@ pub(super) fn column(
                 + gap * range.len().saturating_sub(1) as f64
         })
         .fold(0.0_f64, f64::max);
+    let main_definite = extent.definite().is_some();
     let extent = extent.resolve(intrinsic);
     let mut bottom = flow.y;
     if !wrap {
@@ -242,6 +261,7 @@ pub(super) fn column(
             widths: &widths,
             x: flow.x,
             width: flow.width,
+            main_definite,
         };
         bottom = place_line(
             context,
@@ -268,13 +288,14 @@ pub(super) fn column(
         let mut free =
             flow.width - crosses.iter().sum::<f64>() - gap * crosses.len().saturating_sub(1) as f64;
         if free >= 0.0 && parent.style.align_content == JustifyContent::Stretch {
-            let share = free / crosses.len().max(1) as f64;
+            // Blink divides in 1/64 px LayoutUnits, truncating each share.
+            let share = super::sizing::layout_unit_floor(free / crosses.len().max(1) as f64);
             crosses.iter_mut().for_each(|cross| *cross += share);
             free = 0.0;
         }
         let (offset, between) = justification(
             parent.style.align_content,
-            free,
+            super::flex_layout::safe_content(free, parent.style.content_safe[0]),
             crosses.len(),
             parent.style.wrap_reverse,
         );
@@ -298,6 +319,7 @@ pub(super) fn column(
                 widths: &line_widths,
                 x,
                 width: cross,
+                main_definite,
             };
             let end = place_line(
                 context,
@@ -320,7 +342,7 @@ pub(super) fn column(
 max-content fitted into the space it may take, which is what a column line's cross size grows
 to. Percentages resolve against the container's inner width `basis`, while `fit` is the space
 to fit into (a balanced line's share of it). */
-fn fit_width(
+pub(super) fn fit_width(
     context: &mut LayoutContext<'_>,
     parent: &Node,
     child: &Node,
@@ -353,6 +375,8 @@ struct ColumnLine<'a> {
     x: f64,
     /** The line's cross size. */
     width: f64,
+    /** Whether the container's main size is definite, which makes flexed heights definite. */
+    main_definite: bool,
 }
 
 /** Resolves one column line's flexible heights into `extent` from `top`, justifies it and lays
@@ -371,6 +395,7 @@ fn place_line(
         widths,
         x: line_x,
         width: line_width,
+        main_definite,
     } = line;
     context.charge(
         records
@@ -396,7 +421,7 @@ fn place_line(
         };
         justification(
             kind,
-            extent - used,
+            super::flex_layout::safe_content(extent - used, parent.style.content_safe[1]),
             records.len(),
             parent.style.flex_reverse,
         )
@@ -432,8 +457,10 @@ fn place_line(
             continue;
         }
         // Unsafe self-alignment, as in rows: an item wider than the line centers past both edges.
-        let overflowing =
-            line_width - widths[index] - child.style.margin[1] - child.style.margin[3];
+        let overflowing = super::flex_layout::safe_free(
+            child,
+            line_width - widths[index] - child.style.margin[1] - child.style.margin[3],
+        );
         let free = overflowing.max(0.0);
         let auto_cross =
             flex::auto_cross_offset(child.style.margin_auto[3], child.style.margin_auto[1], free);
@@ -442,8 +469,16 @@ fn place_line(
             AlignItems::End => overflowing,
             _ => 0.0,
         });
+        // Under rtl the cross start is the right edge, so start-aligned items overflow left.
+        let offset = match (parent.style.rtl, auto_cross) {
+            (true, None) => overflowing - offset,
+            _ => offset,
+        };
         let [auto_start, auto_end] = records[index].auto_margins;
         y += child.style.margin[0] + if auto_start { share } else { 0.0 };
+        if !main_definite && indefinite_basis(child) {
+            context.indefinite_item = Some(child.local_id);
+        }
         place_item(
             context,
             child,
@@ -455,6 +490,7 @@ fn place_line(
             },
             output,
         )?;
+        context.indefinite_item = None;
         y += sizes[index]
             + records[index].main_edges
             + child.style.margin[2]
@@ -464,4 +500,37 @@ fn place_line(
         }
     }
     Ok(y)
+}
+
+/** Whether an item's used flex basis is indefinite in a column of indefinite height (Blink's
+`is_used_flex_basis_indefinite`): `content`, a percentage, or `auto` over an automatic or
+percentage height, unless an `aspect-ratio` gives the height. Such an item's flexed height does
+not make it definite, so its `height: 100%` children stay content-sized. */
+fn indefinite_basis(child: &Node) -> bool {
+    let indefinite = match child.style.flex_basis {
+        FlexBasis::Pixels(_) => false,
+        FlexBasis::Auto => child
+            .style
+            .height
+            .and_then(|height| height.resolve_size(None))
+            .is_none(),
+        FlexBasis::Content | FlexBasis::Percent(_) => true,
+    };
+    indefinite && child.style.aspect_ratio.is_none()
+}
+
+/** A replaced item's content height at border-box `width` through its aspect ratio, ignoring its
+own height: its content size suggestion (css-flexbox-1 4.5). It has no children to measure, so
+a `height: 100px` image in a 10px column otherwise had a zero automatic minimum and collapsed. */
+fn replaced_content_height(child: &Node, width: f64) -> Option<f64> {
+    if !super::flow::replaced_image(child) {
+        return None;
+    }
+    let (ratio, border_box) = super::sizing::replaced_ratio(child)?;
+    let edges = super::sizing::horizontal_edges(child);
+    Some(if border_box {
+        (width / ratio - vertical_edges(child)).max(0.0)
+    } else {
+        (width - edges).max(0.0) / ratio
+    })
 }

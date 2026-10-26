@@ -4,9 +4,6 @@ use super::path::{Segment, parse};
 use crate::constants::CSS_MAX_SCALAR;
 use serde::{Deserialize, Serialize};
 
-/// The SVG default replaced size when width or height is absent.
-const DEFAULT_SIZE: (f64, f64) = (300.0, 150.0);
-
 /// One painted path in document coordinates; the native drawing seam fills, then strokes.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -140,10 +137,9 @@ pub(super) fn svg(
     forced: Option<BorderBox>,
 ) -> EngineResult<()> {
     let (x, y, width, height) = if let Some(bounds) = forced {
-        let content = (bounds.width - horizontal_edges(node)).max(0.0);
         let height = bounds
             .height
-            .unwrap_or(content_height(node, content, flow.definite) + vertical_edges(node));
+            .unwrap_or_else(|| super::sizing::replaced_block_at(node, bounds.width, flow.definite));
         flow.y = bounds.y + height;
         (bounds.x, bounds.y, bounds.width, height)
     } else if node.style.inline {
@@ -178,67 +174,22 @@ pub(super) fn svg(
     Ok(())
 }
 
-/** Flex and table sizing see the same replaced width the svg box uses. */
-pub(super) fn intrinsic_width(node: &Node) -> EngineResult<f64> {
-    Ok(natural_width(node, None, None))
+/** Flex and table sizing see the same replaced widths the svg box uses: its min- and
+ * max-content contributions as a replaced box (sizing/replaced.rs). */
+pub(super) fn intrinsic_width(node: &Node) -> EngineResult<(f64, f64)> {
+    Ok(super::sizing::replaced_contribution(node, None))
 }
 /** The content width an auto-width svg takes when its height resolves against `definite`,
- * through its viewBox ratio. */
+ * through its ratio. */
 pub(super) fn width_for_height(node: &Node, definite: Option<f64>) -> f64 {
-    natural_width(node, None, definite)
-}
-
-/// The content width Chrome gives an svg: CSS width, then the width attribute, then its height
-/// (CSS, then attribute) through the viewBox ratio. With only a ratio it stretches to the
-/// `available` width; with nothing, or for intrinsic sizing without a ratio, it is 300 wide.
-fn natural_width(node: &Node, available: Option<f64>, definite: Option<f64>) -> f64 {
-    if let Some(width) = available
-        .and_then(|available| super::sizing::specified_content(node, available))
-        .or_else(|| dimension(node, "width"))
-    {
-        return width;
-    }
-    match (specified_height(node, definite), ratio(node)) {
-        (Some(height), Some(ratio)) => height / ratio,
-        (None, Some(_)) => available.unwrap_or(DEFAULT_SIZE.0),
-        _ => DEFAULT_SIZE.0,
-    }
-}
-
-/** The content height for a used content width: CSS height, the attribute, the viewBox ratio, then 150. */
-fn content_height(node: &Node, width: f64, definite: Option<f64>) -> f64 {
-    specified_height(node, definite)
-        .or_else(|| ratio(node).map(|ratio| width * ratio))
-        .unwrap_or(DEFAULT_SIZE.1)
-}
-
-/** A CSS height that resolves here as a content height, else the height attribute. */
-fn specified_height(node: &Node, definite: Option<f64>) -> Option<f64> {
-    node.style
-        .height
-        .and_then(|height| height.resolve_size(definite))
-        .map(|height| super::sizing::content_size(node, height, false))
-        .or_else(|| dimension(node, "height"))
-}
-
-/** Height over width from the viewBox, else from both size attributes. */
-fn ratio(node: &Node) -> Option<f64> {
-    view_box_numbers(node)
-        .map(|[_, _, width, height]| height / width)
-        .or_else(|| Some(dimension(node, "height")? / dimension(node, "width")?))
-        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+    (super::sizing::replaced_size(node, None, definite).0 - horizontal_edges(node)).max(0.0)
 }
 
 /** Block svg follows ordinary block flow: collapsing margins and auto horizontal margins. */
 fn block_box(node: &Node, flow: &mut Flow) -> (f64, f64, f64, f64) {
     flow.newline();
     let style = &node.style;
-    let available = (flow.width - style.margin[1] - style.margin[3]).max(0.0);
-    let inner = (available - horizontal_edges(node)).max(0.0);
-    let natural = natural_width(node, Some(inner), flow.definite);
-    let width = border_width(node, flow.width, available, Some(natural));
-    let content = (width - horizontal_edges(node)).max(0.0);
-    let height = content_height(node, content, flow.definite) + vertical_edges(node);
+    let (width, height) = super::sizing::replaced_size(node, Some(flow.width), flow.definite);
     let x = flow.x + super::body::margin_start(style, flow.width, width);
     let y = flow.block_top(style.margin[0]);
     flow.after_block(y + height, style.margin[2]);
@@ -247,11 +198,7 @@ fn block_box(node: &Node, flow: &mut Flow) -> (f64, f64, f64, f64) {
 
 /** Inline svg occupies replaced geometry on the current line, like an inline image. */
 fn inline_box(node: &Node, flow: &mut Flow) -> (f64, f64, f64, f64) {
-    let inner = (flow.width - horizontal_edges(node)).max(0.0);
-    let natural = natural_width(node, Some(inner), flow.definite);
-    let width = border_width(node, flow.width, flow.width, Some(natural));
-    let content = (width - horizontal_edges(node)).max(0.0);
-    let height = content_height(node, content, flow.definite) + vertical_edges(node);
+    let (width, height) = super::sizing::replaced_size(node, Some(flow.width), flow.definite);
     let outer = width + node.style.margin[1] + node.style.margin[3];
     if flow.cursor > 0.0 && !flow.fits(outer) {
         flow.wrap();
@@ -509,6 +456,7 @@ impl VectorPath {
         };
         let mut svg = svg.clone();
         synthesize_view_box(&mut svg);
+        unscaled_view_box(&mut svg, width, height);
         let mut left = IMAGE_WORK;
         let mut charge = |work: usize| {
             left = left
@@ -543,6 +491,18 @@ fn synthesize_view_box(svg: &mut Node) {
             .filter(|v| v.is_finite() && *v > 0.0)
     };
     if let (Some(width), Some(height)) = (length("width"), length("height")) {
+        svg.attributes
+            .insert("viewbox".into(), format!("0 0 {width} {height}"));
+    }
+}
+
+/** A background SVG with neither a viewBox nor two absolute dimensions draws unscaled in a
+ * viewport the size of its tile, so its percentages resolve against the tile (Blink's
+ * `SVGImage` lays its root out at the concrete object size). Without this, every shape with a
+ * percentage length was dropped and the layer painted nothing. An empty viewBox (zero width or
+ * height) disables rendering, so it is left alone and the drawing stays blank. */
+fn unscaled_view_box(svg: &mut Node, width: f64, height: f64) {
+    if !svg.attributes.contains_key("viewbox") && width > 0.0 && height > 0.0 {
         svg.attributes
             .insert("viewbox".into(), format!("0 0 {width} {height}"));
     }
@@ -602,6 +562,15 @@ const DRAWN: [&str; 7] = [
     "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
 ];
 
+/** A rect's `width` and `height` from CSS, which as SVG 2 geometry properties win over the
+attributes (rounded-overflow-clip-visible); None where CSS leaves it `auto` or gives a
+percentage. */
+fn css_size(node: &Node) -> [Option<f64>; 2] {
+    let style = &node.style;
+    let width = style.width.filter(|_| !style.percent_width);
+    let height = style.height.and_then(|height| height.resolve_size(None));
+    [width, height]
+}
 /// The path data a shape element stands for, per SVG 2's equivalent paths: a rect (with rx/ry
 /// as arcs), circle and ellipse as two arcs, line, polyline and polygon from their points. A
 /// missing length is 0; a malformed one drops the shape. A percentage resolves against the
@@ -633,11 +602,12 @@ fn path_data(node: &Node, view: Option<[f64; 4]>) -> EngineResult<String> {
     };
     Ok(match node.tag.as_str() {
         "rect" => {
+            let [css_width, css_height] = css_size(node);
             let (x, y, w, h) = (
                 length("x")?,
                 length("y")?,
-                length("width")?,
-                length("height")?,
+                css_width.map_or_else(|| length("width"), Ok)?,
+                css_height.map_or_else(|| length("height"), Ok)?,
             );
             let (rx, ry) = corner_radii(node, length("rx")?, length("ry")?, w, h);
             if rx > 0.0 && ry > 0.0 {

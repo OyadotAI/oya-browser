@@ -49,7 +49,8 @@ fn the_stronger_style_wins_a_tied_edge() {
     assert_eq!(edges.border_colors[3].as_deref(), Some("blue"));
 }
 
-/** A row group with a background paints one box under its rows. */
+/** A row group keeps one bare box over its rows and paints its background under each of its
+ * cells, clipped to the cell, so border spacing between them stays clear. */
 #[test]
 fn a_row_group_paints_its_background() {
     let group = items(
@@ -57,9 +58,16 @@ fn a_row_group_paints_its_background() {
          </tbody></table>",
         "g",
     );
-    assert_eq!(group.len(), 1);
-    assert_eq!(group[0].background.as_deref(), Some("#00ff00"));
-    assert!(group[0].height > 30.0, "{}", group[0].height);
+    assert_eq!(group.len(), 3);
+    assert!(
+        group[0].bare && group[0].height > 30.0,
+        "{}",
+        group[0].height
+    );
+    for piece in &group[1..] {
+        assert_eq!(piece.background.as_deref(), Some("#00ff00"));
+        assert!(piece.clip.is_some());
+    }
 }
 
 /** A transformed ancestor is the containing block of a fixed descendant (Blink's

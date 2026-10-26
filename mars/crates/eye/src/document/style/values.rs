@@ -85,9 +85,13 @@ pub(super) fn contextual_length(
     }
     let px = dimension(value, font, context)?.pixels()?;
     // A math function out of the property's range is clamped, not invalid (CSS Values 4
-    // section 10.12, Blink's CSSMathFunctionValue::ClampToPermittedRange).
+    // section 10.12, Blink's CSSMathFunctionValue::ClampToPermittedRange); a huge length is
+    // clamped too, as Blink saturates it at LayoutUnit's maximum, so `height: 100000px` is tall
+    // rather than ignored.
     let px = if is_math(value) {
         px.clamp(0.0, CSS_MAX_SCALAR)
+    } else if px > CSS_MAX_SCALAR {
+        CSS_MAX_SCALAR
     } else {
         px
     };
@@ -144,6 +148,16 @@ fn without_env(value: &str) -> EngineResult<std::borrow::Cow<'_, str>> {
 const PX_PER_IN: f64 = 96.0;
 /// Centimetres per inch.
 const CM_PER_IN: f64 = 2.54;
+/** The physical units, whose px factors are not binary fractions. */
+const PHYSICAL_UNITS: [&str; 6] = ["in", "cm", "mm", "q", "pt", "pc"];
+/** Physical unit conversions round to this many steps per px, far below a device pixel. */
+const UNIT_STEPS_PER_PX: f64 = 1.0e6;
+/** Drops the binary rounding error a unit conversion leaves: `25.4mm` is exactly 96px, not
+95.99999999999999, which a floored border width turned into 95px (CSS2 left-055). */
+fn snap_unit(px: f64) -> f64 {
+    let snapped = (px * UNIT_STEPS_PER_PX).round() / UNIT_STEPS_PER_PX;
+    if snapped.is_finite() { snapped } else { px }
+}
 /// Cap height as a share of the em, for `cap` (a typical Latin face's).
 const CAP_HEIGHT: f64 = 0.7;
 /// Blink's `line-height: normal` for the default faces, as a multiple of the font size.
@@ -153,6 +167,9 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
     // Blink stores lengths as floats and saturates them at layout, so a huge finite length such
     // as Tailwind's `calc(infinity * 1px)` (serialized `3.40282e38px`) is valid and as large as
     // a length can be; the caller's own bound then applies.
+    // Units are ASCII case-insensitive (`105Q`, `10PX`).
+    let lower = value.to_ascii_lowercase();
+    let value = lower.as_str();
     let scaled = |number: &str, scale: f64| -> EngineResult<Dimension> {
         Ok(Dimension {
             px: saturated(number)? * scale,
@@ -171,8 +188,8 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
     // as `em`. A desktop window has no dynamic toolbars, so the small, large and dynamic
     // viewport units equal the plain ones; `vi`/`vb` follow horizontal writing. `lh` uses the
     // `normal` line height, as the declared one is not known here.
-    // `ch` and `ic` measure the element's face (see `set_font_face`); ex and cap stay em ratios.
-    // ponytail: ex/cap/rch/ric from em ratios; use font metrics when the platform exposes them.
+    // `ch`, `ic`, `ex` and `cap` measure the element's face (see `set_font_face`).
+    // ponytail: rex/rcap/rch/ric from em ratios; measure the root face when a page needs them.
     let units: [(&str, f64); 37] = [
         ("svmin", width.min(height)),
         ("svmax", width.max(height)),
@@ -200,12 +217,12 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
         ("rex", root / 2.0),
         ("rch", root / 2.0),
         ("ric", root),
-        ("rlh", root * NORMAL_LINE_HEIGHT),
+        ("rlh", root_line()),
         ("em", font),
         ("ex", font / 2.0),
         ("ch", font / 2.0),
         ("ic", font),
-        ("lh", font * NORMAL_LINE_HEIGHT),
+        ("lh", own_line().unwrap_or(font * NORMAL_LINE_HEIGHT)),
         ("px", 1.0),
         ("pt", PX_PER_PT),
         ("pc", PX_PER_PT * 12.0),
@@ -225,9 +242,15 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
             let scale = match suffix {
                 "ch" => font * zero_advance(),
                 "ic" => font * ideograph_advance(),
+                "ex" => font * edge_per_em(false).unwrap_or(EX_HEIGHT),
+                "cap" => font * edge_per_em(true).unwrap_or(CAP_HEIGHT),
                 _ => scale,
             };
-            return scaled(number, scale);
+            let mut length = scaled(number, scale)?;
+            if PHYSICAL_UNITS.contains(&suffix) {
+                length.px = snap_unit(length.px);
+            }
+            return Ok(length);
         }
     }
     if signed_number(value)? == 0.0 {
@@ -356,6 +379,7 @@ pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face 
         },
         spacing: 0.0,
         italic: style.font_style != crate::document::FontStyle::Normal,
+        autospace: false,
     }
 }
 /** The current face's advance of `sample` per em, or None outside the cascade. */
@@ -364,6 +388,16 @@ fn advance_per_em(sample: &str) -> Option<f64> {
     let ratio = crate::platform::measure(sample, face) / face.size;
     (ratio.is_finite() && ratio > 0.0).then_some(ratio)
 }
+/** The primary font's cap height (`cap`) or x-height (`ex`) per em, as Blink's `FontMetrics`
+ * reads them; None before a face is known. */
+fn edge_per_em(cap: bool) -> Option<f64> {
+    let face = FONT_FACE.with(std::cell::Cell::get)?;
+    let (cap_height, x_height) = crate::platform::edges(face);
+    let ratio = if cap { cap_height } else { x_height } / face.size;
+    (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+}
+/// The x-height as a share of the em when no face is measured.
+const EX_HEIGHT: f64 = 0.5;
 /** Blink's `ch`: the advance of "0" in the primary font (FontMetrics zero width), else 0.5em. */
 fn zero_advance() -> f64 {
     advance_per_em("0").unwrap_or(0.5)
@@ -386,6 +420,33 @@ fn ideograph_advance() -> f64 {
 thread_local! {
     /** The root element's font size for `rem`, set by the cascade once `html` is resolved. */
     static ROOT_FONT: std::cell::Cell<f64> = const { std::cell::Cell::new(CSS_ROOT_FONT_SIZE) };
+    /** The root element's used line height for `rlh`. */
+    static ROOT_LINE: std::cell::Cell<f64> =
+        const { std::cell::Cell::new(CSS_ROOT_FONT_SIZE * NORMAL_LINE_HEIGHT) };
+    /** The element being resolved's used line height for `lh`, once its own is computed; None
+    while the font and line-height properties themselves resolve (against the parent's). */
+    static OWN_LINE: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+}
+/** The current cascade's `rlh` size. */
+fn root_line() -> f64 {
+    ROOT_LINE.with(std::cell::Cell::get)
+}
+/** The current element's `lh` size, if it is known yet. */
+fn own_line() -> Option<f64> {
+    OWN_LINE.with(std::cell::Cell::get)
+}
+/** Sets the `rlh` size for the rest of this cascade, as `set_root_font` does `rem`. */
+pub(super) fn set_root_line(size: f64) {
+    let size = if size.is_finite() && size > 0.0 {
+        size
+    } else {
+        CSS_ROOT_FONT_SIZE * NORMAL_LINE_HEIGHT
+    };
+    ROOT_LINE.with(|root| root.set(size));
+}
+/** Sets (or with None clears) the element's own `lh` size. */
+pub(super) fn set_own_line(size: Option<f64>) {
+    OWN_LINE.with(|own| own.set(size.filter(|size| size.is_finite() && *size > 0.0)));
 }
 /** The current cascade's `rem` size. */
 fn root_font() -> f64 {
@@ -405,13 +466,14 @@ pub(super) fn set_root_font(size: f64) {
  * integer, halves toward positive infinity (CSS Values 4 "Range Checking", Blink's
  * CSSMathFunctionValue::ComputeInteger), so `z-index: calc(-10)` is -10 rather than invalid.
  */
-const INTEGER: [&str; 6] = [
+const INTEGER: [&str; 7] = [
     "z-index",
     "order",
     "orphans",
     "widows",
     "column-count",
     "-webkit-line-clamp",
+    "max-lines",
 ];
 /** `value` with a numeric math function rounded to an integer for `<integer>` properties. */
 pub(super) fn integer_math<'v>(key: &str, value: &'v str) -> std::borrow::Cow<'v, str> {

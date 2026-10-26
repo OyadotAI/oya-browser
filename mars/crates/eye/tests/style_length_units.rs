@@ -45,8 +45,10 @@ fn root_relative_units_use_the_root_font() {
     assert_eq!(width("2ic"), Some(40.0));
 }
 
+/** `lh` and `rlh` are the element's and the root's used line heights: `normal` here (1.15 of
+the font size, Eye's normal advance), an authored one when set. */
 #[test]
 fn line_height_units_use_the_normal_line_height() {
-    assert_eq!(width("1lh"), Some(24.0));
-    assert_eq!(width("1rlh"), Some(12.0));
+    assert_eq!(width("1lh"), Some(23.0));
+    assert_eq!(width("1rlh"), Some(11.5));
 }

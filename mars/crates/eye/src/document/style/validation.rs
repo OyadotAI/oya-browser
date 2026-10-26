@@ -62,8 +62,16 @@ impl ComputedStyle {
             || self.display_flex && self.inline
             || self.display_grid && (self.inline || self.display_flex)
             || !self.layout_ok()
-            || !["left", "center", "right", "start", "end", "webkit-center"]
-                .contains(&self.align.as_str())
+            || ![
+                "left",
+                "center",
+                "right",
+                "start",
+                "end",
+                "webkit-center",
+                "justify",
+            ]
+            .contains(&self.align.as_str())
         {
             return Err(invalid());
         }
@@ -129,6 +137,7 @@ impl ComputedStyle {
             });
         if !shadows_ok
             || !layers_ok
+            || !self.border_image.valid()
             || !self.inset.iter().flatten().copied().all(signed)
             || !self.radius.iter().copied().all(scalar)
             || !self
@@ -246,6 +255,12 @@ impl ComputedStyle {
             && self.margin_percent.iter().all(signed)
             && self.inset_percent.iter().all(signed)
             && self.radius_percent.iter().all(|p| scalar(*p))
+            && self.radius_px.iter().all(signed)
+            && self
+                .radius_y
+                .iter()
+                .flatten()
+                .all(|(px, percent)| signed(px) && signed(percent))
             && self.translate_percent.iter().all(signed)
             && self
                 .aspect_ratio

@@ -96,7 +96,7 @@ fn hidden_inserted_image_is_not_fetched() {
     assert_eq!(runtime.snapshot().images.len(), 0, "{page}");
 }
 
-/** Inserted frames, video and forms keep the page running; frames are placeholders. */
+/** Inserted frames, video and forms keep the page running; frames are empty replaced boxes. */
 #[test]
 fn inserted_frames_and_controls_do_not_stop_scripts() {
     let (_fixture, _runtime, page) = load(
@@ -108,10 +108,7 @@ fn inserted_frames_and_controls_do_not_stop_scripts() {
     scripts_ran(&page);
     let text = page.to_string();
     assert!(text.contains("after"), "{page}");
-    assert!(
-        text.contains("Embedded frame (not supported yet)"),
-        "{page}"
-    );
+    assert!(text.contains("\"tag\":\"iframe\""), "{page}");
     assert!(text.contains("cell"), "{page}");
 }
 

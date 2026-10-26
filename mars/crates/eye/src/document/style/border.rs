@@ -75,9 +75,12 @@ fn clamp_line_width(width: f64) -> f64 {
     if width > 0.0 && width < 1.0 {
         1.0
     } else {
-        width.max(0.0).floor()
+        (width.max(0.0) + FLOOR_SLACK).floor()
     }
 }
+/** Unit conversion error a line width forgives before flooring: `25.4mm` is 95.99999px in
+ * binary floating point and must floor to 96px, as Blink's does (border-top-width-050). */
+const FLOOR_SLACK: f64 = 1e-6;
 /** Whether `key` is a per-side border longhand, and which side and part. */
 pub(super) fn longhand(key: &str) -> Option<(usize, &str)> {
     let rest = key.strip_prefix("border-")?;
@@ -154,9 +157,13 @@ pub(super) fn resolve(
             .min(CSS_MAX_BORDER_WIDTH);
         let declared = sides.width[side].is_some() || sides.style[side].is_some();
         style.border_widths[side] = if invisible || !declared { 0.0 } else { width };
+        style.border_specified[side] = width;
+        style.border_hidden[side] = kind == "hidden";
         let current = style.color.clone();
-        style.border_colors[side] = sides.color[side]
-            .as_deref()
+        let color = sides.color[side].as_deref();
+        style.border_current[side] =
+            color.is_none_or(|c| c.trim().eq_ignore_ascii_case("currentcolor"));
+        style.border_colors[side] = color
             .and_then(|c| contextual_color(c, style.used_scheme, current.as_deref()).ok())
             .flatten();
     }
@@ -169,11 +176,26 @@ pub(super) fn resolve(
  */
 pub(super) fn copy(style: &mut ComputedStyle, source: &ComputedStyle, side: usize, part: &str) {
     match part {
-        "width" => style.border_widths[side] = source.border_widths[side],
-        "color" => style.border_colors[side] = source.border_colors[side].clone(),
+        "width" => {
+            // The computed width inherits; this box's own style still decides if it paints.
+            style.border_specified[side] = source.border_specified[side];
+            if style.border_widths[side] > 0.0 {
+                style.border_widths[side] = source.border_specified[side];
+            }
+        }
+        // An inherited `currentcolor` is this box's own color, not its parent's (border-color-011).
+        "color" if source.border_current[side] => {
+            style.border_current[side] = true;
+            style.border_colors[side] = style.color.clone();
+        }
+        "color" => {
+            style.border_current[side] = false;
+            style.border_colors[side] = source.border_colors[side].clone();
+        }
         _ => {
             style.border_widths[side] = source.border_widths[side];
             style.border_styles[side] = source.border_styles[side];
+            style.border_hidden[side] = source.border_hidden[side];
             style.border_style_none = source.border_style_none;
         }
     }

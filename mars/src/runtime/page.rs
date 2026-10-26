@@ -62,6 +62,8 @@ pub(super) struct Page {
     pub state: crate::v9::VmState,
     /** Encoded image bytes remain page-owned and never cross the document service. */
     pub images: BTreeMap<usize, super::images::ImageAsset>,
+    /** Documents the page's frames show, laid out into every display of the page. */
+    pub frames: super::frames::Frames,
     /** Exact geometry consumed by the visible native window. */
     pub display: Option<DisplayList>,
     /** One past the highest node identity `display` laid out: a node at or above it was
@@ -72,6 +74,9 @@ pub(super) struct Page {
     /** Offsets of scroll containers inside the page by node identity, presentation state like
     the viewport's own offset: Eye paints their contents moved and clamps them. */
     pub element_scroll: crate::document::ScrollOffsets,
+    /** The viewport's horizontal scroll offset (CSSOM `scrollX`): negative in a page that
+    overflows to the left. The vertical one is the runtime's `scroll_y`. */
+    pub scroll_x: f64,
     /** The node styles are the cascade of this document under the page's sheets and the current
     context; false once a change replaced the document without restyling it, so presentation
     knows whether Eye must cascade again or already did. */
@@ -253,7 +258,7 @@ impl Page {
         json!({"page_id":self.id(),"revision":self.revision,"layout_generation":self.layout_generation,
             "unit":display.unit,"width":display.width,"height":display.height,"items":items,
             "canvas_background":display.canvas_background,"canvas_foreground":display.canvas_foreground,
-            "body_decoration":display.body_decoration})
+            "body_decoration":display.body_decoration,"root_decoration":display.root_decoration})
     }
 }
 
@@ -280,6 +285,8 @@ pub struct BrowserSnapshot {
     pub render_context: crate::document::RenderContext,
     /// Native document scroll offset.
     pub scroll_y: f64,
+    /// Native horizontal document scroll offset, negative in a page overflowing to the left.
+    pub scroll_x: f64,
     /// Bounded tab labels and selection state drive the native Mars tab strip.
     pub tabs: Value,
 }
@@ -330,21 +337,11 @@ impl Runtime {
             context: self.render_context,
             scroll: &page.element_scroll,
         };
-        page.display = Some(self.call_typed("document", "document.render", &call, None)?);
+        let mut display = self.call_typed("document", "document.render", &call, None)?;
+        self.embed_frames(&mut display, &page.frames)?;
+        page.display = Some(display);
         page.laid_out_before = next_node(&page.document);
         Ok(())
-    }
-    /** Eye's layout of a styled `document` in the current context, checked like any other.
-    Inner scroll containers keep the current page's offsets, so a script that forces layout
-    measures boxes where they are painted (CSSOM View: rects are viewport-relative after every
-    ancestor scroller's offset), not where they would sit unscrolled. */
-    pub(super) fn render(&mut self, document: &Document) -> EngineResult<DisplayList> {
-        let scroll = self
-            .page
-            .as_ref()
-            .map(|page| page.element_scroll.clone())
-            .unwrap_or_default();
-        self.render_scrolled(document, &scroll)
     }
     /** Eye's layout of a styled `document` with scroll containers at `scroll`. */
     pub(super) fn render_scrolled(
@@ -358,7 +355,10 @@ impl Runtime {
             context: self.render_context,
             scroll,
         };
-        self.call_typed("document", "document.render", &call, None)
+        let mut display = self.call_typed("document", "document.render", &call, None)?;
+        let frames = self.page.as_ref().map(|page| page.frames.clone());
+        self.embed_frames(&mut display, frames.as_deref().map_or(&[], Vec::as_slice))?;
+        Ok(display)
     }
     /** The window's view of `page` with its `inspection`. */
     fn snapshot_of(&self, page: Option<&Page>, inspection: Value) -> BrowserSnapshot {
@@ -375,6 +375,7 @@ impl Runtime {
             viewport: (self.render_context.width, self.render_context.height),
             render_context: self.render_context,
             scroll_y: self.scroll_y,
+            scroll_x: self.page.as_ref().map_or(0.0, |page| page.scroll_x),
             tabs: self.tabs_value().unwrap_or_else(|_| json!({"tabs":[]})),
         }
     }
@@ -388,6 +389,10 @@ impl Runtime {
     /** `inspection` without the measurement probe. */
     fn inspection_now(&self) -> Value {
         let mut value = Self::inspection_of(self.render_context, self.scroll_y, self.page.as_ref());
+        let scroll_x = self.page.as_ref().map_or(0.0, |page| page.scroll_x);
+        if value.get("viewport").is_some() {
+            value["viewport"]["scroll_x"] = json!(scroll_x);
+        }
         value["tab_id"] = json!(self.active_tab_id);
         value
     }
@@ -406,7 +411,8 @@ impl Runtime {
             value["appearance"] = json!(context.appearance);
             if let Some(nodes) = value["nodes"].as_array_mut() {
                 for node in nodes {
-                    node["visible"] = json!(in_viewport(node.get("bounds"), context, scroll_y));
+                    let scroll = [page.scroll_x, scroll_y];
+                    node["visible"] = json!(in_viewport(node.get("bounds"), context, scroll));
                 }
             }
         }
@@ -475,7 +481,9 @@ impl Runtime {
                 context,
                 scroll: &page.element_scroll,
             };
-            page.display = Some(self.call_typed("document", "document.render", &call, None)?);
+            let mut display = self.call_typed("document", "document.render", &call, None)?;
+            self.embed_frames(&mut display, &page.frames)?;
+            page.display = Some(display);
             page.laid_out_before = next_node(&page.document);
         }
         page.refresh_inspection();
@@ -532,21 +540,22 @@ impl Runtime {
     }
 }
 /**
- * Whether a node's box shows in the viewport scrolled to `scroll_y`, on both axes: inspect's
+ * Whether a node's box shows in the viewport scrolled to `[scroll_x, scroll_y]`: inspect's
  * `visible` and page.find's `visible_only` share it. A skip link parked at `left:-9999px` is
  * in the tree but not on screen, so it is not visible, though it stays actionable.
  */
 pub(super) fn in_viewport(
     bounds: Option<&Value>,
     context: crate::document::RenderContext,
-    scroll_y: f64,
+    [scroll_x, scroll_y]: [f64; 2],
 ) -> bool {
     let Some(bounds) = bounds else {
         return false;
     };
     let side = |key: &str| bounds[key].as_f64().unwrap_or_default();
     let (x, y, width, height) = (side("x"), side("y"), side("width"), side("height"));
-    y + height > scroll_y && y < scroll_y + context.height && x + width > 0.0 && x < context.width
+    let vertical = y + height > scroll_y && y < scroll_y + context.height;
+    vertical && x + width > scroll_x && x < scroll_x + context.width
 }
 /** One past the highest node identity in `document`: the identity the next inserted node gets
 at the earliest, since V9 never reuses one. */

@@ -35,7 +35,24 @@ thread_local! {
  * a non-grid never is. */
 pub(super) fn subgridded(node: &Node, axis: usize) -> bool {
     let style = &node.style;
-    style.display_grid && !style.grid_lanes && template(style, axis).subgrid
+    style.display_grid && !style.grid_lanes && template(style, own_axis(node, axis)).subgrid
+}
+/**
+ * The subgrid's own axis that a parent's `axis` is. A node still marked vertical is seen from a
+ * horizontal parent (render/vertical.rs lays a vertical subtree out with every style turned
+ * horizontal), so it is orthogonal and its rows run along the parent's columns (css-grid-2 9).
+ */
+fn own_axis(node: &Node, axis: usize) -> usize {
+    if node.style.vertical_writing {
+        1 - axis
+    } else {
+        axis
+    }
+}
+/** Whether an orthogonal subgrid's block axis runs against the parent's columns
+ * (`vertical-rl`), so the tracks it inherits come in reverse order. */
+fn reversed(node: &Node) -> bool {
+    node.style.vertical_writing && !node.style.writing_lr
 }
 /** The template of one axis. */
 fn template(style: &ComputedStyle, axis: usize) -> &GridTemplate {
@@ -49,7 +66,7 @@ fn template(style: &ComputedStyle, axis: usize) -> &GridTemplate {
  * lists, or 1 without any (css-grid-2 9.1). */
 pub(super) fn auto_span(node: &Node, axis: usize) -> Option<u16> {
     subgridded(node, axis).then(|| {
-        template(&node.style, axis)
+        template(&node.style, own_axis(node, axis))
             .subgrid_lines
             .saturating_sub(1)
             .max(1)
@@ -64,15 +81,18 @@ fn edges(node: &Node, axis: usize) -> (f64, f64) {
         super::super::sizing::border_sides(style),
         style.padding,
     );
-    if axis == 0 {
-        (m[0] + b[0] + p[0], m[2] + b[2] + p[2])
-    } else {
-        (m[3] + b[3] + p[3], m[1] + b[1] + p[1])
+    let (left, right) = (m[3] + b[3] + p[3], m[1] + b[1] + p[1]);
+    match (axis, style.rtl) {
+        (0, _) => (m[0] + b[0] + p[0], m[2] + b[2] + p[2]),
+        // Under rtl the columns start at the right edge.
+        (_, true) => (right, left),
+        _ => (left, right),
     }
 }
 /** The subgrid's gap in `axis`: its own when set, else the parent's (css-grid-2 9.2). */
 fn own_gap(node: &Node, axis: usize, parent_gap: f64) -> f64 {
     let style = &node.style;
+    let axis = own_axis(node, axis);
     // `gap_set` and `gap_percent` are `[column, row]`.
     let index = usize::from(axis == 0);
     if !style.gap_set[index] {
@@ -95,7 +115,7 @@ pub(super) fn offer(
     sizes: &[f64],
     gap: f64,
 ) {
-    if !subgridded(item.node, axis) || orthogonal(parent, item.node) {
+    if !subgridded(item.node, axis) || parent.vertical_writing != item.node.style.vertical_writing {
         return;
     }
     let (start, count) = if axis == 0 {
@@ -109,7 +129,7 @@ pub(super) fn offer(
     let half = (gap - own) / 2.0;
     let (lead, trail) = edges(item.node, axis);
     let last = spanned.len().saturating_sub(1);
-    let sizes = spanned
+    let mut sizes: Vec<f64> = spanned
         .iter()
         .enumerate()
         .map(|(index, size)| {
@@ -126,17 +146,26 @@ pub(super) fn offer(
             if index == last {
                 size -= trail;
             }
-            size.max(0.0)
+            // A gap wider than the parent's stays centered on the parent's line, so a narrow
+            // track may go negative: its neighbours keep the parent's line positions.
+            size
         })
         .collect();
-    let names = span_names(parent, names, axis, start, spanned.len());
+    let mut names = span_names(parent, names, axis, start, spanned.len());
+    if reversed(item.node) {
+        // ponytail: line names of a reversed span are dropped; renumber them from the end
+        // when a page needs them.
+        sizes.reverse();
+        names.clear();
+    }
     let inherited = Inherited {
         sizes,
         gap: own,
         names,
     };
     INHERITED.with(|map| {
-        map.borrow_mut().entry(item.node.local_id).or_default()[axis] = Some(inherited)
+        let slot = own_axis(item.node, axis);
+        map.borrow_mut().entry(item.node.local_id).or_default()[slot] = Some(inherited)
     });
 }
 /** The parent's line names on the `count` tracks from `start` in `axis`, renumbered from the
@@ -158,9 +187,9 @@ fn span_names(
         .map(|(name, line)| (name.clone(), *line - start as u16))
         .collect()
 }
-/** Whether `node`'s writing mode is orthogonal to its parent's, so its rows would subgrid the
- * parent's columns. Layout keeps vertical writing modes horizontal, so such a subgrid is not
- * supported and lays out as an independent grid in either kind of parent. */
+/** Whether `node`'s writing mode is orthogonal to its parent's, so its rows subgrid the
+ * parent's columns. Its items are laid out rotated, so they do not size the parent's tracks:
+ * the subgrid contributes as a plain item. */
 fn orthogonal(parent: &ComputedStyle, node: &Node) -> bool {
     parent.vertical_writing != node.style.vertical_writing
 }
@@ -245,9 +274,10 @@ pub(super) fn clamp(node: &Node, placed: &mut [Placed<'_>], columns: &mut Vec<Tr
 /** The inherited track count of an axis, when the parent offered one. */
 fn inherited_tracks(node: &Node, axis: usize) -> Option<usize> {
     INHERITED.with(|map| {
-        map.borrow()
-            .get(&node.local_id)
-            .and_then(|entry| entry[axis].as_ref().map(|inherited| inherited.sizes.len()))
+        map.borrow().get(&node.local_id).and_then(|entry| {
+            let slot = own_axis(node, axis);
+            entry[slot].as_ref().map(|inherited| inherited.sizes.len())
+        })
     })
 }
 /** Whether a grid parent offered `node` its tracks in `axis`; a subgrid of anything else, a

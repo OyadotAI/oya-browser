@@ -143,6 +143,21 @@ pub enum BackgroundLayer {
         url: String,
     },
 }
+/// The box a background paints within (`background-clip`) or is positioned in
+/// (`background-origin`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum BackgroundBox {
+    /// The border box, `background-clip`'s initial value.
+    #[default]
+    BorderBox,
+    /// Inside the border, `background-origin`'s initial value.
+    PaddingBox,
+    /// Inside the padding.
+    ContentBox,
+    /// Only under the border's ring (CSS Backgrounds 4 `border-area`).
+    BorderArea,
+}
 /// A radial gradient's ending shape: `circle` or ellipse, its size rule, and its center.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]

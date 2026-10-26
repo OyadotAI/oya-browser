@@ -22,8 +22,10 @@ mod install;
 mod interfaces;
 mod net;
 mod nodes;
+mod offsets;
 mod range;
 pub(in crate::v9) mod scripts;
+mod scrolling;
 mod selector;
 mod sheets;
 mod timers;
@@ -214,6 +216,18 @@ pub struct PageEnvironment {
     pub geometry: Vec<NodeBox>,
     /// The document's scroll offset, which client coordinates subtract.
     pub scroll_y: f64,
+    /// The document's horizontal scroll offset: negative in a document overflowing to the left.
+    pub scroll_x: f64,
+    /// The `[min, max]` horizontal offsets the document can scroll to, from the last layout;
+    /// None before one.
+    pub scroll_x_range: Option<[f64; 2]>,
+    /// Each scrolled scroll container's offset `[x, y]` by node, as the app last painted it:
+    /// what `scrollLeft`/`scrollTop` answer until a script moves it.
+    pub element_scroll: BTreeMap<usize, [f64; 2]>,
+    /// The furthest offsets `[x, y]` of each scroll container the last layout found overflowing,
+    /// by node. With `laid_out_before`, a script's scroll clamps to them (and a node that laid
+    /// out without one cannot scroll), so a loop that scrolls until `scrollTop` stops growing ends.
+    pub scroll_max: BTreeMap<usize, [f64; 2]>,
     /// The first node identity the last layout never saw: a node at or above it was inserted
     /// since, so `geometry` cannot hold its box. A browser would force a layout when script
     /// reads such a node's geometry; V9 cannot, so it reports the read in
@@ -267,6 +281,10 @@ impl Default for PageEnvironment {
             body_attributes: BTreeMap::new(),
             geometry: Vec::new(),
             scroll_y: 0.0,
+            scroll_x: 0.0,
+            scroll_x_range: None,
+            element_scroll: BTreeMap::new(),
+            scroll_max: BTreeMap::new(),
             laid_out_before: None,
             positions: BTreeMap::new(),
         }
@@ -395,6 +413,16 @@ pub struct HostEffects {
     /// which stays V9's), for the app to fetch and apply, as a browser loads an inserted sheet.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stylesheets: Vec<String>,
+    /// Offsets `[x, y]` scripts scrolled scroll containers to, by node: the app paints them
+    /// there (Eye clamps each to its container's range), as a browser scrolls on assignment.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub element_scroll: BTreeMap<usize, [f64; 2]>,
+    /// The document scroll offset a script scrolled the viewport to, for the app to adopt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scroll_y: Option<f64>,
+    /// The horizontal document scroll offset a script scrolled the viewport to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scroll_x: Option<f64>,
 }
 
 /** A scheduled callback. */

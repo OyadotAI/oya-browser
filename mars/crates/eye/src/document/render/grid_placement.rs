@@ -92,8 +92,8 @@ pub(super) fn place<'a>(
     // `-1` is then line 1 (LinkedIn's header is `grid-area: 1 / -1` in a template-less grid).
     let explicit_columns = columns.len();
     let explicit_rows = explicit_rows(style, rows);
-    let row_names = style.grid_rows.line_names(rows);
-    let column_names = style.grid_columns.line_names(explicit_columns);
+    let row_names = axis_names(style, 0, rows);
+    let column_names = axis_names(style, 1, explicit_columns);
     let line_names = [&row_names[..], &column_names[..]];
     let column_flow = style.grid_flow_column;
     let mut resolved = Vec::with_capacity(kids.len());
@@ -177,7 +177,7 @@ fn auto_place(
             .max(area.minor_span)
             .max(area.minor.map_or(0, |start| start + area.minor_span));
     }
-    let minors = minors.clamp(1, GRID_COLUMNS);
+    let mut minors = minors.clamp(1, GRID_COLUMNS);
     for area in areas.iter_mut() {
         area.minor_span = area.minor_span.min(minors);
         if let Some(start) = area.minor {
@@ -204,13 +204,14 @@ fn auto_place(
         } else {
             line_cursor.get(&major).copied().unwrap_or(0)
         };
-        while minor + area.minor_span <= minors
-            && !taken.free(major, minor, area.major_span, area.minor_span)
-        {
+        // Past the last minor line the grid grows implicit tracks (Blink's
+        // `PlaceGridItemsLockedToMajorAxis`), up to the track bound.
+        let last = GRID_COLUMNS.saturating_sub(area.minor_span);
+        while minor < last && !taken.free(major, minor, area.major_span, area.minor_span) {
             context.charge(1)?;
             minor += 1;
         }
-        let minor = minor.min(minors - area.minor_span);
+        minors = minors.max(minor + area.minor_span).min(GRID_COLUMNS);
         taken.mark(major, minor, area.major_span, area.minor_span);
         line_cursor.insert(major, minor + area.minor_span);
         positions[index] = Some((major, minor));
@@ -412,6 +413,27 @@ fn explicit_rows(style: &ComputedStyle, rows: usize) -> usize {
         .map(|area| usize::from(area.row + area.rows));
     areas.max().unwrap_or(0).max(rows)
 }
+/** An axis's line names (0 rows, 1 columns) for `count` tracks, then the implicit ones every
+ * named area gives its edges, `name-start` and `name-end` (css-grid-2 7.3.2). Explicit names
+ * come first, so a name on both kinds of line finds the explicit one first. */
+fn axis_names(style: &ComputedStyle, axis: usize, count: usize) -> Vec<(String, u16)> {
+    let template = if axis == 0 {
+        &style.grid_rows
+    } else {
+        &style.grid_columns
+    };
+    let mut names = template.line_names(count);
+    for area in style.grid_areas.iter().filter(|area| !area.name.is_empty()) {
+        let (start, span) = if axis == 0 {
+            (area.row, area.rows)
+        } else {
+            (area.column, area.columns)
+        };
+        names.push((format!("{}-start", area.name), start + 1));
+        names.push((format!("{}-end", area.name), start + span + 1));
+    }
+    names
+}
 /** A 1-based line number as a zero-based line index; negative numbers count back from the end
  * of the `count` explicit tracks. */
 fn line_index(n: i32, count: usize) -> usize {
@@ -434,13 +456,20 @@ pub(super) fn out_of_flow_lines(
     node: &Node,
     style: &ComputedStyle,
     [rows, columns]: [usize; 2],
+    subgrid: bool,
 ) -> [(Option<usize>, Option<usize>); 2] {
-    let names = [
-        style.grid_rows.line_names(rows),
-        style.grid_columns.line_names(columns),
-    ];
+    let names = [axis_names(style, 0, rows), axis_names(style, 1, columns)];
     let line_names = [&names[0][..], &names[1][..]];
-    let explicit = [explicit_rows(style, rows), columns];
+    // A template's areas extend the explicit grid, except a subgrid's, fixed at its span.
+    let named = style
+        .grid_areas
+        .iter()
+        .map(|a| usize::from(a.column + a.columns));
+    let explicit = if subgrid {
+        [rows, columns]
+    } else {
+        [explicit_rows(style, rows), named.fold(columns, usize::max)]
+    };
     let (row, column) = lines(node, &style.grid_areas, line_names, explicit);
     let axis = |line: GridLine, count: usize| {
         let span = usize::from(line.span.max(1));
@@ -493,10 +522,7 @@ pub(super) fn lane_lines(
     axis: usize,
     count: usize,
 ) -> (Option<usize>, usize) {
-    let names = [
-        style.grid_rows.line_names(count),
-        style.grid_columns.line_names(count),
-    ];
+    let names = [axis_names(style, 0, count), axis_names(style, 1, count)];
     let line_names = [&names[0][..], &names[1][..]];
     let (row, column) = lines(node, &style.grid_areas, line_names, [count, count]);
     resolve(if axis == 0 { row } else { column }, count)

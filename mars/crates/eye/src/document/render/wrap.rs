@@ -27,7 +27,32 @@ pub(super) struct Breaks {
     /** `word-break: keep-all`: ideographs do not break between each other (UAX #14 with ID
     resolved to AL), so CJK runs wrap like words. */
     pub keep_all: bool,
+    /** `white-space: break-spaces`: preserved ideographic spaces take room and wrap like
+    letters instead of hanging at the line's end. */
+    pub no_hang: bool,
+    /** `line-break: anywhere`: a break may fall anywhere, before a preserved space too. */
+    pub anywhere: bool,
+    /** The text is Chinese or Japanese, where `line-break: normal` lets a line break before the
+     * CJK hyphens (CSS Text 3 section 5.3). */
+    pub cjk: bool,
+    /** `line-break: loose` in CJK text: a line may break before any nonstarter or leader. */
+    pub loose: bool,
+    /** Soft hyphens are break opportunities (`hyphens` other than `none`). */
+    pub shy: bool,
 }
+
+/** The fullwidth exclamation and question marks, centered punctuation `line-break: loose`
+ * lets a line start with, as it does the nonstarters. */
+const LOOSE_CENTERED: [char; 2] = ['\u{ff01}', '\u{ff1f}'];
+
+/** Whether `line-break: loose` allows a break before `c` in CJK text. */
+fn loosened(c: char) -> bool {
+    class(c) == Class::Nonstarter || LOOSE_CENTERED.contains(&c)
+}
+
+/** CJK hyphens a line may break before in Chinese or Japanese text: the wave dash and the
+ * katakana double hyphen, class NS otherwise. */
+const CJK_HYPHENS: [char; 2] = ['\u{301c}', '\u{30a0}'];
 
 /** Whitespace-normalized text accumulates widths without remeasuring a growing merged line. */
 pub(super) fn lines(
@@ -40,7 +65,8 @@ pub(super) fn lines(
     let breakable = breaks.breakable;
     // ponytail: keep-all runs skip the wrap cache, whose key holds only `breakable`; key on the
     // whole `Breaks` if keep-all pages ever get long.
-    if breaks.keep_all {
+    if breaks.keep_all || breaks.no_hang || breaks.cjk || breaks.loose || !breaks.shy || breaks.fill
+    {
         return wrap_words(text, width, face, breaks, context);
     }
     if let Some(lines) = context.wrapped(text, width, face, breakable)? {
@@ -77,7 +103,7 @@ pub(super) fn head(
         inner,
         0,
         (1, inner.len(), first),
-        room + FIT_SLACK,
+        (room + FIT_SLACK, !breaks.no_hang),
         face,
         context,
     )?;
@@ -177,8 +203,14 @@ fn word_parts(
     let mut hint = 1;
     let mut result = Vec::new();
     while start + 1 < boundaries.len() {
-        let (end, measured) =
-            fitting_prefix(word, &boundaries, (start, hint), width, face, context)?;
+        let (end, measured) = fitting_prefix(
+            word,
+            &boundaries,
+            (start, hint),
+            (width, !breaks.no_hang),
+            face,
+            context,
+        )?;
         result.push(MeasuredText {
             text: word[boundaries[start]..boundaries[end]].into(),
             width: measured,
@@ -194,22 +226,32 @@ fn fitting_prefix(
     word: &str,
     boundaries: &[usize],
     position: (usize, usize),
-    width: f64,
+    (width, hang): (f64, bool),
     face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<(usize, f64)> {
     let (start, hint) = position;
     let last = boundaries.len() - 1;
     let mut fit = (start + hint).min(last);
-    let mut measured = context.measure(&word[boundaries[start]..boundaries[fit]], face)?;
-    if measured > width {
+    let (mut measured, ink) = hung(
+        context,
+        &word[boundaries[start]..boundaries[fit]],
+        face,
+        hang,
+    )?;
+    if ink > width {
         let first = start + 1;
-        let minimum = if fit == first {
-            measured
+        let (minimum, ink) = if fit == first {
+            (measured, ink)
         } else {
-            context.measure(&word[boundaries[start]..boundaries[first]], face)?
+            hung(
+                context,
+                &word[boundaries[start]..boundaries[first]],
+                face,
+                hang,
+            )?
         };
-        if minimum > width || fit == first {
+        if ink > width || fit == first {
             return Ok((first, minimum));
         }
         return search_prefix(
@@ -217,7 +259,7 @@ fn fitting_prefix(
             boundaries,
             start,
             (first, fit, minimum),
-            width,
+            (width, hang),
             face,
             context,
         );
@@ -225,14 +267,19 @@ fn fitting_prefix(
     let mut step = 1;
     while fit < last {
         let probe = (fit + step).min(last);
-        let candidate = context.measure(&word[boundaries[start]..boundaries[probe]], face)?;
-        if candidate > width {
+        let (candidate, ink) = hung(
+            context,
+            &word[boundaries[start]..boundaries[probe]],
+            face,
+            hang,
+        )?;
+        if ink > width {
             return search_prefix(
                 word,
                 boundaries,
                 start,
                 (fit, probe, measured),
-                width,
+                (width, hang),
                 face,
                 context,
             );
@@ -244,21 +291,47 @@ fn fitting_prefix(
     Ok((fit, measured))
 }
 
+/** U+3000, the space separator that hangs at a line's end even where white space collapses. */
+const IDEOGRAPHIC_SPACE: char = '\u{3000}';
+
+/** A piece's width, and the part of it that must fit its line: with `hang`, all of it but the
+ * ideographic spaces ending it, which hang past the end edge (Blink's
+ * LineBreaker::HandleTrailingSpaces) instead of carrying the piece's last letter to a line of
+ * its own. */
+fn hung(
+    context: &mut LayoutContext<'_>,
+    piece: &str,
+    face: Face,
+    hang: bool,
+) -> EngineResult<(f64, f64)> {
+    let width = context.measure(piece, face)?;
+    let body = piece.trim_end_matches(IDEOGRAPHIC_SPACE);
+    if !hang || body.len() == piece.len() {
+        return Ok((width, width));
+    }
+    Ok((width, context.measure(body, face)?))
+}
+
 /** Every binary-search substring is charged through the same context as final placement. */
 fn search_prefix(
     word: &str,
     boundaries: &[usize],
     start: usize,
     bracket: (usize, usize, f64),
-    width: f64,
+    (width, hang): (f64, bool),
     face: Face,
     context: &mut LayoutContext<'_>,
 ) -> EngineResult<(usize, f64)> {
     let (mut fit, mut overflow, mut measured) = bracket;
     while fit + 1 < overflow {
         let probe = fit + (overflow - fit) / 2;
-        let candidate = context.measure(&word[boundaries[start]..boundaries[probe]], face)?;
-        if candidate <= width {
+        let (candidate, ink) = hung(
+            context,
+            &word[boundaries[start]..boundaries[probe]],
+            face,
+            hang,
+        )?;
+        if ink <= width {
             fit = probe;
             measured = candidate;
         } else {
@@ -266,6 +339,34 @@ fn search_prefix(
         }
     }
     Ok((fit, measured))
+}
+
+/** The last break opportunity strictly inside `text`, as a byte offset. */
+pub(super) fn last_break(text: &str, breaks: Breaks) -> Option<usize> {
+    break_offsets(text, breaks)
+        .into_iter()
+        .rfind(|at| *at > 0 && *at < text.len())
+}
+
+/** The first break opportunity strictly inside `text`, as a byte offset. */
+pub(super) fn first_break(text: &str, breaks: Breaks) -> Option<usize> {
+    break_offsets(text, breaks)
+        .into_iter()
+        .find(|at| *at > 0 && *at < text.len())
+}
+
+/** Whether a line may break between `before` and `after`, the last scalar of one run and the
+ * first of the next one with no space between, by the rules a single run follows. */
+pub(super) fn between(before: char, after: char, breaks: Breaks) -> bool {
+    // A closing mark meeting an opening one (`）（`) breaks as it would beside ideographs.
+    let punctuation = |c: char| !matches!(class(c), Class::Other | Class::Ideographic);
+    if punctuation(before) && punctuation(after) {
+        return breaks.breakable || ideographic_break(before, after);
+    }
+    let mut pair = String::with_capacity(before.len_utf8() + after.len_utf8());
+    pair.push(before);
+    pair.push(after);
+    break_offsets(&pair, breaks).len() > 2
 }
 
 /**
@@ -292,8 +393,21 @@ fn break_offsets(word: &str, breaks: Breaks) -> Vec<usize> {
             hyphen_break(previous, before, after)
         };
         let cluster = joins(before, after) || (regional(after) && flags % 2 == 1);
+        // UAX #14 LB21: no break before a BA space separator (U+3000, U+1680, the en and em
+        // spaces), which stays at the end of the line it ends.
+        let opportunity = (opportunity && !breaking_space(after))
+            || (breaks.cjk && CJK_HYPHENS.contains(&after) && ideographic(before))
+            || (breaks.loose && loosened(after) && ideographic(before));
+        // Under `break-spaces` a preserved space breaks only after itself, so word-break's
+        // letter breaks never put one at the start of a line (CSS Text 3 section 5.2).
+        let held_space = breaks.no_hang && breaks.fill && !breaks.anywhere && after == ' ';
         if before == '\u{200b}'
-            || (!cluster && (breakable || opportunity || breaking_space(before)))
+            || (breaks.shy && before == super::hyphenate::SOFT_HYPHEN)
+            || (!cluster
+                && !held_space
+                && ((breakable && !punctuated(before, after, breaks))
+                    || opportunity
+                    || breaking_space(before)))
         {
             offsets.push(offset);
         }
@@ -307,7 +421,10 @@ fn break_offsets(word: &str, breaks: Breaks) -> Vec<usize> {
 LB9, LB30a): a mark, joiner, variation selector, emoji modifier or tag extends the scalar
 before it, and a zero-width joiner glues an emoji sequence (`👨‍💻`) together. */
 fn joins(before: char, after: char) -> bool {
-    extends(after) || (before == '\u{200d}' && pictographic(after))
+    extends(after)
+        || isolate(after)
+        || isolate(before)
+        || (before == '\u{200d}' && pictographic(after))
 }
 /** Grapheme Extend and SpacingMark scalars common in text: combining marks, Indic and Thai vowel
 signs, Hangul medial and final jamo, joiners, variation selectors, emoji modifiers and tags. */
@@ -322,6 +439,23 @@ fn extends(c: char) -> bool {
         | 0x1dc0..=0x1dff | 0x200c..=0x200d | 0x20d0..=0x20ff | 0x302a..=0x302f
         | 0x3099..=0x309a | 0xfe00..=0xfe0f | 0xfe20..=0xfe2f | 0x1f3fb..=0x1f3ff
         | 0xe0020..=0xe007f | 0xe0100..=0xe01ef)
+}
+/** `word-break: break-all` breaks between letters only: punctuation keeps UAX #14's rules, so
+no line starts with a closing mark or a solidus (LB13) and none ends with an opening mark or a
+prefix such as a backslash (LB14, LB24). `line-break: anywhere` and `overflow-wrap` breaks ignore
+this. */
+fn punctuated(before: char, after: char, breaks: Breaks) -> bool {
+    breaks.fill
+        && !breaks.anywhere
+        && (class(after) == Class::Close
+            || class(before) == Class::Open
+            || after == '/'
+            || before == '\\')
+}
+/** A bidi control the line holds on to: an isolate (LRI, RLI, FSI, PDI) or a directional mark
+(LRM, RLM), class CM in UAX #14 and invisible, so a line never breaks beside one. */
+fn isolate(c: char) -> bool {
+    ('\u{2066}'..='\u{2069}').contains(&c) || c == '\u{200e}' || c == '\u{200f}'
 }
 /** Extended_Pictographic, roughly: the symbol and emoji blocks a ZWJ sequence joins. */
 fn pictographic(c: char) -> bool {
@@ -433,11 +567,12 @@ const CLOSE: [char; 136] = [
     '\u{fe56}', '\u{fe57}', '\u{fe5a}', '\u{fe5c}', '\u{fe5e}', '\u{ff01}', '\u{ff09}', '\u{ff0c}',
     '\u{ff0e}', '\u{ff1f}', '\u{ff3d}', '\u{ff5d}', '\u{ff60}', '\u{ff61}', '\u{ff63}', '\u{ff64}',
 ];
-/** UAX #14 NS and BA marks seen in CJK and Southeast Asian text, and the IN ellipsis. Sorted for binary search. */
-const NONSTARTER: [char; 33] = [
-    '\u{0e5a}', '\u{0e5b}', '\u{17d4}', '\u{17d5}', '\u{17d6}', '\u{17d8}', '\u{17da}', '\u{2026}',
-    '\u{203c}', '\u{203d}', '\u{2047}', '\u{2048}', '\u{2049}', '\u{3005}', '\u{301c}', '\u{303b}',
-    '\u{303c}', '\u{309b}', '\u{309c}', '\u{309d}', '\u{309e}', '\u{30a0}', '\u{30fb}', '\u{30fd}',
-    '\u{30fe}', '\u{a015}', '\u{fe54}', '\u{fe55}', '\u{ff1a}', '\u{ff1b}', '\u{ff65}', '\u{ff9e}',
-    '\u{ff9f}',
+/** UAX #14 NS and BA marks seen in CJK and Southeast Asian text, and the IN leaders (LB22).
+ * Sorted for binary search. */
+const NONSTARTER: [char; 35] = [
+    '\u{0e5a}', '\u{0e5b}', '\u{17d4}', '\u{17d5}', '\u{17d6}', '\u{17d8}', '\u{17da}', '\u{2024}',
+    '\u{2025}', '\u{2026}', '\u{203c}', '\u{203d}', '\u{2047}', '\u{2048}', '\u{2049}', '\u{3005}',
+    '\u{301c}', '\u{303b}', '\u{303c}', '\u{309b}', '\u{309c}', '\u{309d}', '\u{309e}', '\u{30a0}',
+    '\u{30fb}', '\u{30fd}', '\u{30fe}', '\u{a015}', '\u{fe54}', '\u{fe55}', '\u{ff1a}', '\u{ff1b}',
+    '\u{ff65}', '\u{ff9e}', '\u{ff9f}',
 ];

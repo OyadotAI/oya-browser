@@ -18,9 +18,24 @@ pub(super) fn apply(
 ) -> EngineResult<bool> {
     let font = style.font_size;
     match key {
-        "height" => style.height = size(value, font, context, &["auto"])?,
-        "min-height" => style.min_height = size(value, font, context, &["auto", "0"])?,
-        "max-height" => style.max_height = size(value, font, context, &["none"])?,
+        "height" => {
+            style.height_fit = HEIGHT_FIT.contains(&value);
+            style.height_stretch[0] = STRETCH.contains(&value);
+            style.height = match style.height_fit {
+                true => None,
+                false => size(value, font, context, &["auto"])?,
+            };
+        }
+        "min-height" => {
+            style.height_bounds_fit[0] = HEIGHT_FIT.contains(&value);
+            style.height_stretch[1] = STRETCH.contains(&value);
+            style.min_height = size(value, font, context, &["auto", "0"])?;
+        }
+        "max-height" => {
+            style.height_bounds_fit[1] = HEIGHT_FIT.contains(&value);
+            style.height_stretch[2] = STRETCH.contains(&value);
+            style.max_height = size(value, font, context, &["none"])?;
+        }
         "float" => style.float = float(value)?,
         "clear" => style.clear = clear(value)?,
         "vertical-align" => {
@@ -45,39 +60,114 @@ pub(super) fn apply(
         "grid-column-end" => end(&mut style.grid_column, value)?,
         "grid-row-end" => end(&mut style.grid_row, value)?,
         "grid-template-areas" => style.grid_areas = areas(value)?,
-        "justify-items" => style.justify_items = justify_items(value)?,
-        "background-size" => style.background_size = background_size(value, font, context)?,
-        "background-position" => {
-            style.background_position = background_position(value, font, context)?
+        "justify-items" => {
+            style.justify_items = justify_items(value)?;
+            style.align_stretch[2] = value == "stretch";
+            style.align_safe[2] = value.starts_with("safe ");
+            style.align_side[2] = super::flex::side(value);
         }
-        "background-repeat" => style.background_repeat = background_repeat(value)?,
+        "background-size" => {
+            style.background_size = background_size(value, font, context)?;
+            style.background_geometry.sizes = super::background_layers::list(value, |entry| {
+                background_size(entry, font, context)
+            })?;
+        }
+        "background-position" => {
+            style.background_position = background_position(value, font, context)?;
+            style.background_geometry.positions =
+                super::background_layers::positions(value, font, context)?;
+        }
+        "background-repeat" => {
+            style.background_repeat = background_repeat(value)?;
+            style.background_geometry.repeats =
+                super::background_layers::list(value, background_repeat)?;
+        }
+        "background-attachment" => {
+            style.background_fixed = super::paint::fixed(value)?;
+            style.background_local = super::paint::local(value);
+        }
+        "initial-letter" => style.initial_letter = super::initial_letter::parse(value)?,
         "object-fit" => style.object_fit = object_fit(value)?,
         "object-position" => style.object_position = background_position(value, font, context)?,
         "aspect-ratio" => {
             style.aspect_ratio = aspect_ratio(value)?;
             style.aspect_ratio_auto = value.split_whitespace().any(|part| part == "auto");
         }
-        "overflow-wrap" => style.overflow_wrap_break = breaking(value, &["break-word", "anywhere"]),
+        "overflow-wrap" => {
+            style.overflow_wrap_break = breaking(value, &["break-word", "anywhere"]);
+            style.overflow_wrap_anywhere = breaking(value, &["anywhere"]);
+        }
         "word-break" => {
             style.word_break_all = breaking(value, &["break-all", "break-word"]);
             style.word_break_fill = breaking(value, &["break-all"]);
             style.word_break_keep_all = breaking(value, &["keep-all"]);
         }
-        "line-break" => style.line_break_anywhere = breaking(value, &["anywhere"]),
+        "line-break" => {
+            style.line_break_anywhere = breaking(value, &["anywhere"]);
+            style.line_break_loose = breaking(value, &["loose"]);
+        }
         // The end-edge value; a two-value form's second (end) value is the one LTR lines use.
         "text-overflow" => style.text_overflow_ellipsis = tokens(value).last() == Some(&"ellipsis"),
+        "unicode-bidi" => {
+            style.unicode_bidi = super::super::render::bidi_mode(value).ok_or_else(unsupported)?
+        }
+        "scroll-marker-group" => {
+            style.marker_group_side = match value {
+                "none" => None,
+                "before" => Some(false),
+                "after" => Some(true),
+                _ => return Err(unsupported()),
+            }
+        }
+        "max-lines" => {
+            style.max_lines = match value {
+                "none" => 0,
+                _ => value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(unsupported)?,
+            }
+        }
+        "block-ellipsis" => style.block_ellipsis = super::shorthand::ellipsis(value)?,
+        "continue" => {
+            (style.continue_collapse, style.continue_legacy) = match value {
+                "auto" | "discard" => (false, false),
+                "collapse" => (true, false),
+                "-webkit-legacy" => (false, true),
+                _ => return Err(unsupported()),
+            }
+        }
+        "-webkit-box-orient" => {
+            style.box_orient_vertical = matches!(value, "vertical" | "block-axis")
+        }
         "container-type" => style.container_type = super::container::kind(value)?,
         "container-name" => style.container_names = super::container::names(value)?,
         // Generated content is read by the cascade for `::before` and `::after` boxes only.
         "content" => {}
         // Read by the cascade from the winning declarations; only `text` changes the paint.
-        "background-clip" | "-webkit-background-clip" => {}
+        "background-clip" | "-webkit-background-clip" => {
+            // The color follows the bottom layer's clip; `text` is the cascade's (clip_to_text).
+            let last = value.rsplit(',').next().unwrap_or(value).trim();
+            if last != "text" {
+                style.background_clip = background_box(last)?;
+            }
+        }
+        "background-origin" | "-webkit-background-origin" => {
+            style.background_origin =
+                background_box(value.split(',').next().unwrap_or(value).trim())?;
+        }
         "table-layout" => style.table_layout_fixed = value == "fixed",
         "border-collapse" => style.border_collapse = value == "collapse",
         "caption-side" => style.caption_bottom = value == "bottom",
         "border-spacing" => {
-            let first = tokens(value).first().copied().ok_or_else(unsupported)?;
+            let lengths = tokens(value);
+            let first = lengths.first().copied().ok_or_else(unsupported)?;
             style.border_spacing = extent(first, font, context)?.px.max(0.0);
+            style.border_spacing_rows = match lengths.get(1) {
+                Some(second) => Some(extent(second, font, context)?.px.max(0.0)),
+                None => None,
+            };
         }
         _ => return Ok(false),
     }
@@ -126,7 +216,10 @@ fn size(
     context: RenderContext,
     none: &[&str],
 ) -> EngineResult<Option<Extent>> {
-    if none.contains(&value) || ["min-content", "max-content", "fit-content"].contains(&value) {
+    if none.contains(&value)
+        || ["min-content", "max-content", "fit-content"].contains(&value)
+        || STRETCH.contains(&value)
+    {
         return Ok(None);
     }
     let extent = extent(value, font, context)?;
@@ -137,16 +230,17 @@ fn size(
     }
     Ok(Some(extent))
 }
-/** Any bounded length, percentage or calc() of both. */
+/** Any length, percentage or calc() of both, clamped into the geometry bound as Blink saturates
+a size at LayoutUnit's maximum (a 10000px height was dropped, not just bounded). */
 pub(super) fn extent(value: &str, font: f64, context: RenderContext) -> EngineResult<Extent> {
     let dimension = dimension(value, font, context)?;
-    let bounded = |v: f64| v.is_finite() && v.abs() <= CSS_MAX_SCALAR;
-    if !bounded(dimension.px) || !bounded(dimension.percent) {
+    if !dimension.px.is_finite() || !dimension.percent.is_finite() {
         return Err(unsupported());
     }
+    let bound = |v: f64| v.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR);
     Ok(Extent {
-        px: dimension.px,
-        percent: dimension.percent,
+        px: bound(dimension.px),
+        percent: bound(dimension.percent),
     })
 }
 /** Float keywords; logical sides map to physical ones for left-to-right text. */
@@ -277,7 +371,33 @@ fn template(value: &str, font: f64, context: RenderContext) -> EngineResult<Grid
         }
     }
     template.exprs = super::flex::take_track_exprs();
+    if !template.repeat.is_empty() && !auto_repeat_valid(&template) {
+        return Err(unsupported());
+    }
     Ok(template)
+}
+/** Whether a breadth is fixed: a length, a percentage or a math function of them. */
+fn fixed_breadth(size: TrackSize) -> bool {
+    !matches!(size, TrackSize::Auto | TrackSize::Fr(_))
+}
+/** Whether a track has a fixed minimum or maximum (Blink's `IsGridTrackFixedSized`). */
+fn fixed_track(track: &Track) -> bool {
+    track.content.fit_limit.is_none() && (fixed_breadth(track.min) || fixed_breadth(track.max))
+}
+/** Whether both a track's bounds are content keywords (Blink's `IsGridTrackIntrinsicSized`). */
+fn intrinsic_track(track: &Track) -> bool {
+    track.content.fit_limit.is_some()
+        || (track.min == TrackSize::Auto && track.max == TrackSize::Auto)
+}
+/** With an auto-repeat group every other track must be fixed and the group's tracks fixed or
+ * intrinsic (css-grid-3 grid-lanes relaxes the latter); otherwise the declaration is invalid
+ * (Blink's `ConsumeGridTrackList`). */
+fn auto_repeat_valid(template: &GridTemplate) -> bool {
+    template.tracks.iter().all(fixed_track)
+        && template
+            .repeat
+            .iter()
+            .all(|track| fixed_track(track) || intrinsic_track(track))
 }
 /**
  * `subgrid` followed by line-name lists, `repeat(<integer>, <lists>)` among them (css-grid-2
@@ -635,6 +755,8 @@ fn axis(style: &mut ComputedStyle, index: usize, value: &str) -> EngineResult<()
 }
 /** Item alignment keywords inside grid areas. */
 fn justify_items(value: &str) -> EngineResult<AlignItems> {
+    let value = value.strip_prefix("unsafe ").unwrap_or(value).trim();
+    let value = value.strip_prefix("safe ").unwrap_or(value).trim();
     Ok(match value {
         "start" | "flex-start" | "self-start" | "left" => AlignItems::Start,
         "center" => AlignItems::Center,
@@ -659,7 +781,11 @@ pub(super) fn mask_geometry(
     Ok(())
 }
 /** `cover`, `contain`, or one or two lengths of the first layer. */
-fn background_size(value: &str, font: f64, context: RenderContext) -> EngineResult<BackgroundSize> {
+pub(super) fn background_size(
+    value: &str,
+    font: f64,
+    context: RenderContext,
+) -> EngineResult<BackgroundSize> {
     let first = split_top(value, b',')
         .into_iter()
         .next()
@@ -689,7 +815,7 @@ pub(super) fn background_position(
     super::paint::position(value, font, context)
 }
 /** Tiling keywords of the first layer; `space` and `round` tile like repeat. */
-fn background_repeat(value: &str) -> EngineResult<BackgroundRepeat> {
+pub(super) fn background_repeat(value: &str) -> EngineResult<BackgroundRepeat> {
     let first = split_top(value, b',')
         .into_iter()
         .next()
@@ -760,6 +886,15 @@ fn areas(value: &str) -> EngineResult<Vec<GridArea>> {
             out.push(rectangle(&grid, cell, r, c)?);
         }
     }
+    // The template sizes the explicit grid even where its cells are all `.`; an unnamed area
+    // covering it carries that size, and no `grid-area` name can match it.
+    out.push(GridArea {
+        name: String::new(),
+        row: 0,
+        column: 0,
+        rows: grid.len() as u16,
+        columns: width as u16,
+    });
     Ok(out)
 }
 /** The rectangle a name fills from its first cell; a name that is not one rectangle is invalid. */
@@ -791,3 +926,25 @@ fn rectangle(grid: &[Vec<&str>], cell: &str, row: usize, column: usize) -> Engin
         columns: index(columns),
     })
 }
+/** A `background-clip` or `background-origin` box keyword. */
+fn background_box(value: &str) -> EngineResult<super::BackgroundBox> {
+    use super::BackgroundBox;
+    Ok(match value {
+        "border-box" => BackgroundBox::BorderBox,
+        "padding-box" => BackgroundBox::PaddingBox,
+        "content-box" => BackgroundBox::ContentBox,
+        "border-area" => BackgroundBox::BorderArea,
+        _ => return Err(unsupported()),
+    })
+}
+/** `stretch` and its legacy alias: the block size fills the containing block's definite height
+less the margins (css-sizing-4 stretch-fit), or behaves as the initial value without one. */
+const STRETCH: [&str; 2] = ["stretch", "-webkit-fill-available"];
+/** Content-sized `height` keywords: the block size is the content's, and the box is not
+stretched (Blink treats them as `auto` in the block axis otherwise). */
+const HEIGHT_FIT: [&str; 4] = [
+    "fit-content",
+    "min-content",
+    "max-content",
+    "-webkit-fit-content",
+];

@@ -3,8 +3,10 @@ use super::BackgroundLayer;
 use crate::constants::URL_BYTES;
 use crate::document::Document;
 
-/** Background images one page asks the app to fetch, in document order. */
-pub const BACKGROUND_IMAGES: usize = 16;
+/** Background images one page asks the app to fetch, in document order: the page's whole image
+budget (IMAGE_COUNT, whose total bytes are bounded too), so pages and references with a few dozen
+background boxes are not left half painted. */
+pub const BACKGROUND_IMAGES: usize = crate::constants::IMAGE_COUNT;
 /** `url()` tokens one sheet rewrites; later ones stay as authored. */
 const SHEET_URLS: usize = 4096;
 
@@ -58,8 +60,9 @@ fn rebased(base: &url::Url, reference: &str) -> Option<String> {
 /// resolved against the document URL `base`, keyed by the element's local identity. Images are
 /// skipped (they paint their own bytes under the same key). An element with a `url()` mask lists
 /// the mask instead (icons are usually a mask over a background color), so the bytes stored
-/// under its identity are the mask whenever `style.mask` is set. An element that paints none
-/// lists its `::before` or `::after` image instead. At most BACKGROUND_IMAGES entries.
+/// under its identity are the mask whenever `style.mask` is set. An element without a
+/// background image lists its `border-image` url, and one with neither lists its `::before` or
+/// `::after` image instead. At most BACKGROUND_IMAGES entries.
 /// The app fetches each like an `<img>` and stores the bytes under that identity; painters draw a
 /// background `Image` layer with the bytes stored under its item's identity.
 pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> {
@@ -85,22 +88,36 @@ pub fn background_urls(document: &Document, base: &str) -> Vec<(usize, String)> 
             // the element's.
             // A pseudo's `url()` mask counts like its background (Wikipedia's dropdown chevron
             // is a `::after` mask over its color).
-            let image = first(&node.style.backgrounds).or_else(|| {
-                node.style.generated.iter().find_map(|generated| {
-                    let style = &generated.style;
-                    (!style.hidden)
-                        .then(|| style.mask.as_ref().map(|mask| &mask.url))
-                        .flatten()
-                        .or_else(|| first(&style.backgrounds))
-                })
-            });
+            // A `border-image` url comes next: its painter draws the bytes under this identity
+            // only when the element has no mask or background image of its own.
+            let image = first(&node.style.backgrounds)
+                .or_else(|| super::border_image::url(&node.style))
+                .or_else(|| {
+                    node.style.generated.iter().find_map(|generated| {
+                        let style = &generated.style;
+                        (!style.hidden)
+                            .then(|| style.mask.as_ref().map(|mask| &mask.url))
+                            .flatten()
+                            .or_else(|| first(&style.backgrounds))
+                    })
+                });
             let url = node.style.mask.as_ref().map(|mask| &mask.url).or(image)?;
-            let joined = base.join(url.trim()).ok()?;
-            // `data:` images decode locally in the app, within the same image budget.
-            ["http", "https", "data"]
-                .contains(&joined.scheme())
-                .then(|| (node.local_id, joined.to_string()))
+            fetchable(&base, url).map(|url| (node.local_id, url))
         })
+        // Further image layers and the canvas's follow, under keys of their own (layer_urls.rs).
+        .chain(
+            super::layer_urls::extra_layers(document)
+                .into_iter()
+                .filter_map(|(key, url)| fetchable(&base, url).map(|url| (key, url))),
+        )
         .take(BACKGROUND_IMAGES)
         .collect()
+}
+/** `url` resolved against `base` when the app may fetch it: http(s), or `data:` decoded
+ * locally in the app within the same image budget. */
+fn fetchable(base: &url::Url, url: &str) -> Option<String> {
+    let joined = base.join(url.trim()).ok()?;
+    ["http", "https", "data"]
+        .contains(&joined.scheme())
+        .then(|| joined.to_string())
 }

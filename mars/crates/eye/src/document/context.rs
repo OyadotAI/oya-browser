@@ -49,4 +49,17 @@ impl RenderContext {
         }
         Ok(())
     }
+    /// The viewport of a document embedded in a frame is the frame's content box, which may be
+    /// far smaller than any window (a 300 by 150 iframe, a 20px tall object) but never empty
+    /// and never past the window bounds.
+    pub fn validate_frame(self) -> EngineResult<()> {
+        let side = FRAME_VIEWPORT_MIN..=super::render::MAX_VIEWPORT;
+        if !side.contains(&self.width) || !side.contains(&self.height) {
+            return Err(EngineError::invalid("Invalid frame render context."));
+        }
+        Ok(())
+    }
 }
+/// The smallest frame viewport side Eye lays a nested document out in; a frame's content box
+/// smaller than one point paints nothing of its document, so it is never rendered.
+pub const FRAME_VIEWPORT_MIN: f64 = 1.0;

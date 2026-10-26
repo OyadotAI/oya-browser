@@ -92,6 +92,17 @@ pub(super) fn backgrounds(
     }
     Ok(layers)
 }
+/** For each layer `backgrounds` keeps, its index in the comma-separated list, which picks its
+ * entry of the size, position and repeat lists. */
+pub(super) fn slots(raw: &str, style: &ComputedStyle, context: RenderContext) -> Vec<usize> {
+    split_top(raw, b',')
+        .into_iter()
+        .take(BACKGROUND_LAYERS)
+        .enumerate()
+        .filter(|(_, layer)| matches!(image(layer, style, context), Ok(Some(_))))
+        .map(|(index, _)| index)
+        .collect()
+}
 /** One image: `none`, `url()`, or a (repeating) linear or radial gradient. */
 fn image(
     layer: &str,
@@ -577,4 +588,19 @@ pub(super) fn position(
         return Err(unsupported());
     }
     Ok([x, y])
+}
+/** `background-attachment`: whether the first layer is `fixed`. `local` scrolls with the
+ * contents, which a box that is not scrolled paints like `scroll`. */
+pub(super) fn fixed(value: &str) -> EngineResult<bool> {
+    let first = value.split(',').next().unwrap_or(value).trim();
+    match first.to_ascii_lowercase().as_str() {
+        "fixed" => Ok(true),
+        "scroll" | "local" => Ok(false),
+        _ => Err(unsupported()),
+    }
+}
+/** `background-attachment`: whether the first layer is `local` (`fixed` checks the value). */
+pub(super) fn local(value: &str) -> bool {
+    let first = value.split(',').next().unwrap_or(value).trim();
+    first.eq_ignore_ascii_case("local")
 }

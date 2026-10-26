@@ -253,3 +253,51 @@ fn a_span_past_the_right_edge_is_empty() {
     bitmap.span(0, 3.9, 3.2, [255, 0, 0, 255]);
     assert!(bitmap.rgba.iter().all(|&byte| byte == 0));
 }
+
+/** An inline svg's paths paint into the screenshot in their fill color, clipped to the item:
+ * the windowless painter used to leave every inline `<svg>` blank. */
+#[cfg(target_os = "macos")]
+#[test]
+fn inline_svg_paths_paint() {
+    let mut item: DisplayItem = serde_json::from_value(serde_json::json!({
+        "local_id": 0, "tag": "svg", "role": "image", "x": 2.0, "y": 2.0, "width": 8.0,
+        "height": 4.0, "font_size": 16.0, "bold": false, "lines": [],
+        "clip": {"x": 2.0, "y": 2.0, "width": 8.0, "height": 4.0},
+    }))
+    .unwrap();
+    item.vector = crate::document::VectorPath::from_image(
+        r#"<svg width="8" height="8"><rect width="8" height="8" fill="blue"/></svg>"#,
+        [2.0, 2.0, 8.0, 8.0],
+    );
+    let mut canvas = Canvas::new(0.0, 0.0, 12.0, 12.0, [255, 255, 255, 255]);
+    canvas.item(&item, [0, 0, 0, 255], None);
+    let pixel = |x: usize, y: usize| canvas.pixels[(y * 12 + x) * 3..][..3].to_vec();
+    assert_eq!(pixel(5, 3), [0, 0, 255]);
+    assert_eq!(pixel(5, 8), [255, 255, 255], "clipped below the item");
+}
+
+/** A background drawing with no viewBox and a percentage width resolves its percentages against
+ * the tile, unscaled; one whose viewBox is empty (zero height) draws nothing. */
+#[test]
+fn a_percentage_drawing_fills_its_tile_and_an_empty_view_box_draws_nothing() {
+    let percent = r#"<svg width="50%"><rect width="100%" height="50%" fill="lime"/></svg>"#;
+    let bitmap = Bitmap::draw(percent, 8.0, 4.0, &mut budget(1 << 20)).expect("drawn");
+    let lime = |x: u32, y: u32| bitmap.rgba[((y * 8 + x) * 4) as usize + 1] == 255;
+    assert!(lime(7, 1) && !lime(7, 2));
+    let empty =
+        r#"<svg width="8" viewBox="0 0 8 0"><rect width="100%" height="100%" fill="lime"/></svg>"#;
+    assert!(crate::document::VectorPath::from_image(empty, [0.0, 0.0, 8.0, 4.0]).is_empty());
+}
+
+/** A drawing's stroke paints along its outline, half inside and half outside the shape, and
+ * its fill paints the inside: background drawings used to lose every stroke. */
+#[test]
+fn a_drawing_strokes_its_outline() {
+    let markup = r#"<svg width="20" height="20"><rect x="5" y="5" width="10" height="10" fill="lime" stroke="blue" stroke-width="4"/></svg>"#;
+    let bitmap = Bitmap::draw(markup, 20.0, 20.0, &mut budget(1 << 20)).expect("drawn");
+    let pixel = |x: u32, y: u32| bitmap.rgba[((y * 20 + x) * 4) as usize..][..3].to_vec();
+    assert_eq!(pixel(10, 4), [0, 0, 255], "outer half of the stroke");
+    assert_eq!(pixel(10, 6), [0, 0, 255], "inner half of the stroke");
+    assert_eq!(pixel(10, 10), [0, 255, 0], "the fill");
+    assert_eq!(pixel(10, 1), [0, 0, 0], "outside");
+}

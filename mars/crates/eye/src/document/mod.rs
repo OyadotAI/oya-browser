@@ -18,7 +18,7 @@ mod xml;
 use crate::constants::LAYOUT_UNIT;
 use crate::protocol::{EngineError, EngineResult};
 pub use content::validate_content;
-pub use context::{Appearance, RenderContext};
+pub use context::{Appearance, FRAME_VIEWPORT_MIN, RenderContext};
 pub use forms::{Submission, form_owner, label, own_text, select, set_checked, submission};
 use mars_core::dom::descendant_ids;
 pub use mars_core::dom::{
@@ -27,12 +27,16 @@ pub use mars_core::dom::{
 };
 pub use mutation::{apply_changes, apply_script_changes};
 pub use parser::{Fragment, parse, parse_fragment, parse_with_charset, parse_xml};
+pub use render::vertical::{WRITING_CCW, WRITING_LR, WRITING_RL};
+pub use render::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_chains};
 pub use render::{
     ClipRect, DisplayBackground, DisplayDecoration, DisplayItem, DisplayList, DisplayShadow,
-    FillRule, GradientStop, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine, PathCommand,
-    Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible, painted_bounds,
-    render, render_scrolled, render_with_context, role, wheel_target,
+    FillRule, GradientStop, GradientTile, ImageSize, LineCap, LineJoin, OpacityGroup, PaintLine,
+    PathCommand, Pin, ScrollArea, ScrollOffsets, VectorPath, agent_hidden, agent_visible,
+    embed_frame, frame_viewport, painted_bounds, render, render_frame, render_scrolled,
+    render_with_context, role, wheel_target,
 };
+pub use render::{DisplayBorderImage, NinePiece, nine_pieces};
 pub use script::{DomFragments, Fragments, script_document};
 use serde::{Deserialize, Serialize};
 pub use shadow::{SHADOW_ROOT, flatten, has_shadow};
@@ -41,10 +45,10 @@ pub use style::{
     AlignItems, BACKGROUND_IMAGES, BackgroundLayer, BoxShadow, BoxSizing, ColorScheme, ColorStop,
     ComputedStyle, DocumentFormatting, FlexBasis, FlexDirection, FlexWrap, FontFamily,
     FormattingElement, JustifyContent, LineHeight, ObjectFit, Overflow, Position, StyleSource,
-    TextTransform, WhiteSpace, background_urls, compute_styles, compute_styles_with_context,
-    rebase_urls,
+    TextTransform, WhiteSpace, background_owner, background_urls, canvas_key, compute_frame_styles,
+    compute_styles, compute_styles_with_context, css_imports, layer_key, rebase_urls,
 };
-pub use style::{BorderStyle, painter_rgba};
+pub use style::{BorderImage, BorderImageLength, BorderImageRepeat, BorderStyle, painter_rgba};
 pub use style::{
     FONT_FACES, FONT_FILE_BYTES, FONT_FILES, FONT_NAME_BYTES, FONT_TOTAL_BYTES, FontDisplay,
     FontFace, FontRequest, FontSource, FontStyle, LoadedFont, content_key, font_requests,
@@ -199,6 +203,10 @@ pub struct Node {
     /// Intrinsic dimensions are set by the coordinator after bounded decode.
     #[serde(default)]
     pub image_size: Option<(u32, u32)>,
+    /// The image has a natural size but no natural aspect ratio (an SVG with at most one of a
+    /// width and a height and no viewBox), so a stretched box fills both axes freely.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub image_ratio_free: bool,
     /// A custom element V9 upgraded, for `:defined` (uncustomized elements count as defined
     /// too; only an undefined custom element is not).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -223,6 +231,10 @@ pub struct Node {
     /// `:focus-within`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub focused: bool,
+    /// The runtime loaded a document or drawing into this `<object>` or `<embed>`, so it lays
+    /// out as a replaced box (an iframe always does) and its fallback children do not render.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub embedded: bool,
 }
 
 /// Table relationships are derived from bounded source order during parsing.
@@ -260,8 +272,14 @@ impl Node {
     pub fn secret(&self) -> bool {
         self.tag == "input" && ["password", "hidden"].contains(&self.input_type())
     }
-    /// Inherited visibility is resolved before native targeting.
+    /// Inherited visibility is resolved before native targeting: an invisible box is hidden
+    /// from agents even though it still takes up room in layout.
     pub fn hidden(&self) -> bool {
+        self.removed() || self.style.invisible
+    }
+    /// Whether the node generates no box at all, so layout skips it; `visibility: hidden` boxes
+    /// are laid out and only not painted.
+    pub fn removed(&self) -> bool {
         self.style.hidden
             || self.attributes.contains_key("hidden")
             || (self.tag == "input" && self.input_type() == "hidden")

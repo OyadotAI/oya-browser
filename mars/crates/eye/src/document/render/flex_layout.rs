@@ -25,9 +25,12 @@ pub(super) fn children(
     definite_height: Option<f64>,
     min_height: f64,
 ) -> EngineResult<()> {
+    let resolved = resolved_gaps(node, flow.width, definite_height);
+    let node = resolved.as_ref().unwrap_or(node);
     // `::before` is the first item and `::after` the last (Blink's pseudo-element children).
     let [before, after] = super::generated::items(node);
     let mut children: Vec<&Node> = before.iter().collect();
+    let mut positioned = Vec::new();
     if !node.text.trim().is_empty() {
         children.push(node);
     }
@@ -36,7 +39,7 @@ pub(super) fn children(
             continue;
         }
         if super::flow::out_of_flow(child) {
-            context.defer(child.local_id, (flow.x, flow.y));
+            positioned.push(child);
         } else {
             children.push(child);
         }
@@ -50,25 +53,49 @@ pub(super) fn children(
             child.style.order
         }
     });
+    let origin = (flow.x, flow.y);
     if node.style.flex_direction == FlexDirection::Column {
-        return super::flex_column::column(
+        super::flex_column::column(
             context,
             node,
             &children,
             flow,
             output,
             definite_height.map_or(ColumnExtent::AtLeast(min_height), ColumnExtent::Definite),
-        );
+        )?;
+    } else {
+        row(
+            context,
+            node,
+            &children,
+            flow,
+            output,
+            definite_height.unwrap_or(min_height),
+            definite_height.is_some(),
+        )?;
     }
-    row(
-        context,
-        node,
-        &children,
-        flow,
-        output,
-        definite_height.unwrap_or(min_height),
-        definite_height.is_some(),
-    )
+    // Out-of-flow children wait for the container's size: they align as its sole item would.
+    let inner = (flow.width, flow.y - origin.1);
+    for child in positioned {
+        let at = super::flex_abspos::static_position(context, node, child, origin, inner)?;
+        context.defer(child.local_id, at);
+    }
+    Ok(())
+}
+
+/** The container with its percentage gaps resolved into lengths: a column gap against its
+inner width, a row gap against its definite inner height or zero without one (css-align-3 8.3).
+None when it has no percentage gap, the common case, which needs no copy. */
+fn resolved_gaps(node: &Node, width: f64, height: Option<f64>) -> Option<Node> {
+    let [column, row] = node.style.gap_percent;
+    if column == 0.0 && row == 0.0 {
+        return None;
+    }
+    let mut copy = node.clone();
+    copy.style.column_gap += column * width / 100.0;
+    copy.style.row_gap += row * height.unwrap_or(0.0) / 100.0;
+    copy.style.gap_percent = [0.0; 2];
+    Some(copy)
 }
 
 /** Whether an item is the container's own leading text, the one item that is not a box. Generated
@@ -151,8 +178,9 @@ fn row_item(
     let specified = specified_content(node, inner);
     // An item with an aspect ratio and a definite cross size has that size through the ratio as
     // its content size in the main axis (Blink's `ComputeFlexBasis` and its min-content size).
+    let transferred = transferred_width(parent, node, cross);
     if specified.is_none()
-        && let Some(width) = transferred_width(parent, node, cross)
+        && let Some(width) = transferred
     {
         intrinsic = IntrinsicWidths {
             min_content: width,
@@ -161,6 +189,7 @@ fn row_item(
     }
     let base = match node.style.flex_basis {
         FlexBasis::Auto => specified.unwrap_or(intrinsic.max_content),
+        FlexBasis::Content => transferred.unwrap_or(intrinsic.max_content),
         FlexBasis::Pixels(value) => content_size(node, value, true),
         FlexBasis::Percent(value) => content_size(node, inner * value / 100.0, true),
     };
@@ -170,10 +199,22 @@ fn row_item(
         // A scroll container's automatic minimum is zero (Flexbox 4.5; Blink's
         // `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items shrink below content.
         None if flex::scroll_container(node) => 0.0,
+        // A replaced item's content size ignores its authored width (its height through the ratio).
+        None if super::flow::replaced_image(node) => transferred
+            .unwrap_or_else(|| super::sizing::replaced_suggestion(node, cross))
+            .min(specified.unwrap_or(LAYOUT_EXTENT))
+            .min(max),
         None => intrinsic
             .min_content
             .min(specified.unwrap_or(LAYOUT_EXTENT))
             .min(max),
+    };
+    // A table is never narrower than its min-content width, whatever its `width`, `max-width`
+    // or flexing say (Blink sizes table boxes no smaller than their minimum inline size).
+    let minimum = if super::table::is_table(context, node) {
+        minimum.max(intrinsic.min_content)
+    } else {
+        minimum
     };
     let maximum = max.max(minimum);
     Ok(FlexItem {
@@ -194,7 +235,18 @@ fn row_item(
 `height`, or, in a single-line container with a definite height, the stretched line. The ratio
 sizes the border box under `box-sizing: border-box`. None without a ratio or a definite height. */
 fn transferred_width(parent: &Node, node: &Node, cross: Option<f64>) -> Option<f64> {
-    let ratio = node.style.aspect_ratio?;
+    let (ratio, border_box) = match node.style.aspect_ratio {
+        Some(ratio) => (
+            ratio,
+            node.style.box_sizing == crate::document::BoxSizing::BorderBox,
+        ),
+        // A stretched replaced item transfers through its natural ratio; with its own height,
+        // its replaced sizing already does, min- and max-height included.
+        None if super::flow::replaced_image(node) && node.style.height.is_none() => {
+            super::sizing::replaced_ratio(node)?
+        }
+        None => return None,
+    };
     let height = match node.style.height {
         Some(extent) => content_size(node, extent.resolve_size(cross)?, false),
         None => {
@@ -207,13 +259,36 @@ fn transferred_width(parent: &Node, node: &Node, cross: Option<f64>) -> Option<f
             (outer - margins - super::sizing::vertical_edges(node)).max(0.0)
         }
     };
-    Some(
-        if node.style.box_sizing == crate::document::BoxSizing::BorderBox {
-            let edges = super::sizing::vertical_edges(node);
-            ((height + edges) * ratio - horizontal_edges(node)).max(0.0)
-        } else {
-            height * ratio
-        },
+    Some(if border_box {
+        let edges = super::sizing::vertical_edges(node);
+        ((height + edges) * ratio - horizontal_edges(node)).max(0.0)
+    } else {
+        height * ratio
+    })
+}
+
+/** An item's intrinsic widths as a row container measures its own: an automatic-width item with
+an aspect ratio, stretched to the container's definite height, is as wide as the ratio makes that
+height (Blink's min/max-content contribution with the stretched block size), so an `inline-flex`
+of height 100px around a square item is 100px wide rather than empty. */
+pub(super) fn row_item_widths(
+    context: &mut LayoutContext<'_>,
+    parent: &Node,
+    child: &Node,
+) -> EngineResult<IntrinsicWidths> {
+    let raw = context.intrinsic_widths(child.local_id)?;
+    let row = parent.style.display_flex && parent.style.flex_direction == FlexDirection::Row;
+    let ratio = child.style.aspect_ratio.is_some() || super::flow::replaced_image(child);
+    if !row || child.style.width.is_some() || !ratio {
+        return Ok(raw);
+    }
+    let depth = crate::constants::DOCUMENT_DEPTH;
+    let cross = super::image::definite_content_height(context, parent, depth);
+    Ok(
+        transferred_width(parent, child, cross).map_or(raw, |width| IntrinsicWidths {
+            min_content: width,
+            max_content: width,
+        }),
     )
 }
 
@@ -261,13 +336,14 @@ fn row(
     );
     let mut lines = Vec::with_capacity(ranges.len());
     for range in ranges {
-        let line = measure_row_line(context, parent, children, &records, range, flow.width)?;
+        let space = (flow.width, definite.then_some(container_cross));
+        let line = measure_row_line(context, parent, children, &records, range, space)?;
         lines.push(line);
     }
     let content = distribute_lines(parent, &mut lines, container_cross, definite);
     let (offset, between) = justification(
         parent.style.align_content,
-        content.free,
+        safe_content(content.free, parent.style.content_safe[0]),
         lines.len(),
         parent.style.wrap_reverse,
     );
@@ -288,6 +364,7 @@ fn row(
                 line,
                 y,
                 container_index,
+                basis: definite.then_some(container_cross),
             },
             flow,
             output,
@@ -333,7 +410,8 @@ fn distribute_lines(
         return CrossContent { size, free: 0.0 };
     }
     if multi_line && free >= 0.0 && parent.style.align_content == JustifyContent::Stretch {
-        let share = free / lines.len().max(1) as f64;
+        // Blink divides in 1/64 px LayoutUnits, truncating each share.
+        let share = super::sizing::layout_unit_floor(free / lines.len().max(1) as f64);
         for line in lines.iter_mut() {
             line.cross += share;
         }
@@ -351,7 +429,7 @@ fn measure_row_line(
     children: &[&Node],
     all: &[FlexItem],
     range: std::ops::Range<usize>,
-    inner: f64,
+    (inner, basis): (f64, Option<f64>),
 ) -> EngineResult<MeasuredLine> {
     let records = &all[range.clone()];
     context.charge(
@@ -360,7 +438,8 @@ fn measure_row_line(
             .saturating_mul(records.len().saturating_add(1)),
     )?;
     let sizes = flex::resolve_line(records, inner, parent.style.column_gap)?;
-    let heights = measure_line(context, parent, &children[range.clone()], records, &sizes)?;
+    let line = (&children[range.clone()], records, sizes.as_slice());
+    let heights = measure_line(context, parent, line, basis)?;
     let (mut cross, mut ascent, mut descent) = (0.0_f64, 0.0_f64, 0.0_f64);
     let mut baselines = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
@@ -447,9 +526,8 @@ pub(super) fn first_baseline(
 fn measure_line(
     context: &mut LayoutContext<'_>,
     parent: &Node,
-    children: &[&Node],
-    records: &[FlexItem],
-    sizes: &[f64],
+    (children, records, sizes): (&[&Node], &[FlexItem], &[f64]),
+    basis: Option<f64>,
 ) -> EngineResult<Vec<f64>> {
     records
         .iter()
@@ -458,8 +536,11 @@ fn measure_line(
         .map(|((record, child), size)| {
             if own_text(parent, child) {
                 super::sizing::measure_own_text_height(context, parent, *size)
+            } else if let Some(height) = percent_height(child, basis) {
+                Ok(height)
             } else {
-                item_height(context, child, size + record.main_edges)
+                let height = item_height(context, child, size + record.main_edges)?;
+                Ok(super::flow::clamp_height(child, height, basis))
             }
         })
         .collect()
@@ -494,10 +575,16 @@ pub(super) fn justification(
     }
 }
 
+/** The free space content distribution aligns in: `safe` alignment never lets content that
+overflows its container spill past the start edge, so it packs at the start instead. */
+pub(super) fn safe_content(free: f64, safe: bool) -> f64 {
+    if safe { free.max(0.0) } else { free }
+}
+
 /** A row's `justify-content` with `left` and `right` coerced to their logical sides, as Blink's
 `ResolvedJustifyContent`: `left` is the start of a left-to-right row and the end of a
 right-to-left one. */
-fn row_justify(parent: &Node) -> JustifyContent {
+pub(super) fn row_justify(parent: &Node) -> JustifyContent {
     match (parent.style.justify_content, parent.style.rtl) {
         (JustifyContent::Left, false) | (JustifyContent::Right, true) => {
             JustifyContent::LogicalStart
@@ -525,6 +612,8 @@ struct RowLine<'a> {
     y: f64,
     /** Display-item index of the flex container, used when placing its own leading text. */
     container_index: usize,
+    /** The container's definite inner height, which items' percentage heights resolve against. */
+    basis: Option<f64>,
 }
 
 /** Physical left-to-right order of a line's items: source order, or reversed when the main axis
@@ -538,7 +627,7 @@ fn line_order(parent: &Node, count: usize) -> Vec<usize> {
 }
 
 /** Cross-axis alignment as placed top down: `wrap-reverse` swaps start and end. */
-fn physical_align(parent: &Node, align: AlignItems) -> AlignItems {
+pub(super) fn physical_align(parent: &Node, align: AlignItems) -> AlignItems {
     match (parent.style.wrap_reverse, align) {
         (true, AlignItems::Start | AlignItems::Baseline) => AlignItems::End,
         (true, AlignItems::End) => AlignItems::Start,
@@ -560,6 +649,7 @@ fn place_row_line(
         line,
         y,
         container_index,
+        basis,
     } = line;
     let (sizes, heights, cross) = (&line.sizes, &line.heights, line.cross);
     let used = records
@@ -577,7 +667,7 @@ fn place_row_line(
         // from the right edge, so the physical lead is what the logical trail leaves.
         let (lead, between) = justification(
             row_justify(parent),
-            free,
+            safe_content(free, parent.style.content_safe[1]),
             records.len(),
             parent.style.flex_reverse,
         );
@@ -613,7 +703,10 @@ fn place_row_line(
         // Self-alignment is unsafe by default, as in Blink's `AlignmentOffset`: an item taller
         // than its line centers or ends past the line's edges (LinkedIn's 840px image in a 720px
         // row sits 60px above it). Auto margins never go negative.
-        let overflowing = cross - heights[index] - child.style.margin[0] - child.style.margin[2];
+        let overflowing = safe_free(
+            child,
+            cross - heights[index] - child.style.margin[0] - child.style.margin[2],
+        );
         let free_cross = overflowing.max(0.0);
         let align = self_alignment(parent, child);
         let auto_cross = flex::auto_cross_offset(
@@ -634,9 +727,15 @@ fn place_row_line(
         // Only an automatic height stretches; an authored height or a cross auto margin keeps
         // its size at the line start. A stretched size wins over `aspect-ratio`, which then only
         // gave the main size (Blink treats the stretched cross size as definite).
-        let height =
-            (align == AlignItems::Stretch && auto_cross.is_none() && child.style.height.is_none())
-                .then_some((cross - child.style.margin[0] - child.style.margin[2]).max(0.0));
+        let height = (align == AlignItems::Stretch
+            && auto_cross.is_none()
+            && child.style.height.is_none()
+            && !child.style.height_fit)
+            .then(|| {
+                let stretched = (cross - child.style.margin[0] - child.style.margin[2]).max(0.0);
+                super::flow::clamp_height(child, stretched, basis)
+            })
+            .or_else(|| percent_bounded(child, basis).then_some(heights[index]));
         place_item(
             context,
             child,
@@ -660,5 +759,40 @@ fn place_row_line(
 
 /** An item's own cross-axis alignment: `align-self`, or the container's `align-items` for `auto`. */
 pub(super) fn self_alignment(parent: &Node, child: &Node) -> AlignItems {
-    child.style.align_self.unwrap_or(parent.style.align_items)
+    child
+        .style
+        .align_self_safe
+        .or(child.style.align_self)
+        .unwrap_or(parent.style.align_items)
+}
+
+/** The cross space an item aligns in: `safe` alignment (css-align-3 4.4) keeps an item that
+overflows its line at the start rather than past it. */
+pub(super) fn safe_free(child: &Node, free: f64) -> f64 {
+    if child.style.align_self_safe.is_some() {
+        free.max(0.0)
+    } else {
+        free
+    }
+}
+
+/** An item's border-box height from a percentage `height` resolved against the container's
+definite inner height, min- and max-height applied. Items lay out in a box of their own, which
+has no containing height to resolve it against, so a `height: 50%` item in a 200px row was only
+as tall as its content. None for any other height or an indefinite container. */
+fn percent_height(child: &Node, basis: Option<f64>) -> Option<f64> {
+    let extent = child.style.height.filter(|extent| extent.percent != 0.0)?;
+    let content = extent.resolve_size(basis)?;
+    let height = super::sizing::border_height(child, content);
+    Some(super::flow::clamp_height(child, height, basis))
+}
+
+/** Whether an item's height, min-height or max-height is a percentage the container's definite
+inner height resolves: its measured height then already holds them, and is placed as given. */
+fn percent_bounded(child: &Node, basis: Option<f64>) -> bool {
+    let style = &child.style;
+    basis.is_some()
+        && [style.height, style.min_height, style.max_height]
+            .iter()
+            .any(|extent| extent.is_some_and(|extent| extent.percent != 0.0))
 }

@@ -14,6 +14,9 @@ pub(super) struct Cell {
     pub percent: Option<f64>,
     /** An authored length width. */
     pub constrained: bool,
+    /** Border and padding a fixed table adds to a content-box percentage (Blink's
+     * percent_border_padding); zero in auto tables. */
+    pub percent_edges: f64,
 }
 /** One column's constraint after every cell is applied: Blink's TableTypes::Column. */
 #[derive(Clone, Copy, Debug, Default)]
@@ -22,6 +25,8 @@ pub(super) struct Column {
     pub max: f64,
     pub percent: Option<f64>,
     pub constrained: bool,
+    /** The percentage's cell border and padding, added when it resolves. */
+    percent_edges: f64,
     /** Whether any cell reached this column yet. */
     seen: bool,
 }
@@ -36,6 +41,7 @@ impl Column {
             max: length.unwrap_or(0.0),
             percent: percent.filter(|percent| *percent != 0.0),
             constrained: length.is_some(),
+            percent_edges: 0.0,
             // A width-less column still takes a spanning cell's share, as Blink's unset max does.
             seen: length.is_some() || min > 0.0,
         }
@@ -64,12 +70,14 @@ impl Column {
         self.max = self.max.max(self.min);
         if cell.percent > self.percent {
             self.percent = cell.percent;
+            self.percent_edges = cell.percent_edges;
         }
         self.constrained |= cell.constrained;
     }
-    /** Blink's ResolvePercentInlineSize, without border-padding (auto tables add none). */
+    /** Blink's ResolvePercentInlineSize: the percentage of the target plus its cell edges. */
     fn percent_size(&self, target: f64) -> f64 {
-        self.min.max(self.percent.unwrap_or(0.0) * target / 100.0)
+        self.min
+            .max(self.percent.unwrap_or(0.0) * target / 100.0 + self.percent_edges)
     }
     /** A column with an authored length and no percentage. */
     fn is_fixed(&self) -> bool {
@@ -191,7 +199,7 @@ pub(super) fn grid_min_max(columns: &[Column], fixed: bool) -> (f64, f64) {
         };
         match column.percent.filter(|percent| *percent > 0.0) {
             Some(percent) if column.max > 0.0 => {
-                estimate = estimate.max(100.0 / percent * column.max)
+                estimate = estimate.max(100.0 / percent * (column.max - column.percent_edges))
             }
             Some(_) => {}
             None => others += column.max,

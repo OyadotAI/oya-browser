@@ -1,8 +1,13 @@
 /** CSS grid: explicit and auto-repeated tracks, line and span placement, row auto-flow and item alignment. */
 use super::flow::*;
+use crate::document::style::SizeKeyword;
 use crate::document::style::{ContentKeyword, GridTemplate, Track, TrackSize};
 use crate::document::{AlignItems, JustifyContent};
 
+#[path = "grid_abspos.rs"]
+pub(super) mod abspos;
+#[path = "grid_baseline.rs"]
+pub(super) mod baseline;
 #[path = "grid_lanes.rs"]
 mod lanes;
 #[path = "grid_placement.rs"]
@@ -97,7 +102,9 @@ pub(super) fn children(
         widths.len(),
         false,
     );
-    let lefts = offsets(inner.x + lead, &widths, gap.0 + between);
+    let starts = offsets(inner.x + lead, &widths, gap.0 + between);
+    let rtl = style.rtl;
+    let lefts = physical_lefts(&starts, &widths, (inner.x, inner.width), rtl);
     for item in &placed {
         subgrid::offer(style, true, item, 1, &widths, gap.0 + between);
     }
@@ -130,8 +137,13 @@ pub(super) fn children(
         .filter(|_| row_explicit.is_empty() && row_count == 1);
     let mut natural = Vec::with_capacity(placed.len());
     let mut row_items = Vec::with_capacity(placed.len());
+    // Which row contributions are an item's own, by item index, to take its baseline shim.
+    let mut own = Vec::with_capacity(placed.len());
     for item in &placed {
-        let width = if item.node.tag == "svg"
+        let width = if replaced_stretch(style, item.node, 1) {
+            let margins = item.node.style.margin;
+            (span_width(item) - margins[1] - margins[3]).max(0.0)
+        } else if item.node.tag == "svg"
             && item.node.style.width.is_none()
             && row_definite.is_some()
         {
@@ -155,8 +167,18 @@ pub(super) fn children(
         };
         match subgrid::contributions(context, style, true, item, sizing, 0, &mut row_measure)? {
             Some(list) => row_items.extend(list),
-            None => row_items.push(row_contribution(item, height)),
+            None => {
+                own.push((row_items.len(), natural.len() - 1));
+                row_items.push(row_contribution(item, height));
+            }
         }
+    }
+    let shims = baseline::shims(context, style, &placed, &natural, &row_defs)?;
+    for (at, index) in own {
+        let contribution = &mut row_items[at];
+        contribution.minimum += shims[index];
+        contribution.min_content += shims[index];
+        contribution.max_content += shims[index];
     }
     let heights = tracks::size_tracks(
         &row_defs,
@@ -187,18 +209,20 @@ pub(super) fn children(
     for item in &placed {
         subgrid::offer(style, true, item, 0, &heights, row_gap);
     }
-    for (item, (width, height)) in placed.iter().zip(natural) {
+    for ((item, (width, height)), shim) in placed.iter().zip(natural).zip(shims) {
         context.charge(1)?;
         let area_width = span_width(item);
         let area_height = span(&heights, item.row, item.rows, row_gap);
         let node_style = &item.node.style;
+        let width = ratio_width(style, item.node, area_height).unwrap_or(width);
         let margins = node_style.margin;
         let auto = node_style.margin_auto;
         let free_x = (area_width - width - margins[1] - margins[3]).max(0.0);
-        let x = lefts[item.column]
+        let x = lefts[start_column(item, rtl)]
             + margins[3]
-            + super::flex::auto_cross_offset(auto[3], auto[1], free_x)
-                .unwrap_or_else(|| offset(justify_of(style, item.node), free_x));
+            + super::flex::auto_cross_offset(auto[3], auto[1], free_x).unwrap_or_else(|| {
+                inline_offset(offset(justify_of(style, item.node), free_x), free_x, rtl)
+            });
         let align = node_style.align_self.unwrap_or(style.align_items);
         let auto_y =
             super::flex::auto_cross_offset(auto[0], auto[2], (area_height - height).max(0.0));
@@ -207,15 +231,17 @@ pub(super) fn children(
             || (align == AlignItems::Stretch
                 && auto_y.is_none()
                 && node_style.height.is_none()
+                && !node_style.height_fit
                 && node_style.aspect_ratio.is_none()
-                && !["img", "svg"].contains(&item.node.tag.as_str()));
+                && (!["img", "canvas", "svg"].contains(&item.node.tag.as_str())
+                    || replaced_stretch(style, item.node, 0)));
         let free_y = (area_height - height).max(0.0);
         let y = tops[item.row]
             + margins[0]
             + if stretch {
                 0.0
             } else {
-                auto_y.unwrap_or_else(|| offset(align, free_y))
+                auto_y.unwrap_or_else(|| offset(align, free_y)) + shim
             };
         let forced_height = stretch.then_some((area_height - margins[0] - margins[2]).max(0.0));
         let mut target = Flow::new(x, y, width);
@@ -238,30 +264,115 @@ pub(super) fn children(
     let total = heights.iter().sum::<f64>() + gap.1 * heights.len().saturating_sub(1) as f64;
     let padding = style.padding;
     let content_height = inner.definite.unwrap_or(total);
-    let frame = [
-        Edges {
-            starts: &tops,
-            sizes: &heights,
-            content: (inner.y, inner.y + content_height),
-            padding: (inner.y - padding[0], inner.y + content_height + padding[2]),
-        },
-        Edges {
-            starts: &lefts,
-            sizes: &widths,
-            content: (inner.x, inner.x + inner.width),
-            padding: (inner.x - padding[3], inner.x + inner.width + padding[1]),
-        },
+    let origin = (inner.x - padding[3], inner.y - padding[0]);
+    // Columns are kept from the inline-start padding edge, the right one under rtl.
+    let start_padding = if rtl { padding[1] } else { padding[3] };
+    let relative = |starts: &[f64], from: f64| starts.iter().map(|s| s - from).collect();
+    let frame = abspos::Frame {
+        axes: [
+            abspos::Axis {
+                starts: relative(&tops, origin.1),
+                sizes: heights.clone(),
+            },
+            abspos::Axis {
+                starts: relative(&starts, inner.x - start_padding),
+                sizes: widths.clone(),
+            },
+        ],
+        explicit: [row_explicit.len(), explicit_columns],
+        lines: [row_lines, column_lines],
+        content: [
+            (padding[0], padding[0] + content_height),
+            (start_padding, start_padding + inner.width),
+        ],
+        adopted: adopted.clone(),
+        rtl,
+    };
+    let extent = [
+        content_height + padding[0] + padding[2],
+        inner.width + padding[1] + padding[3],
     ];
     for child in out_of_flow_kids {
-        let explicit = [row_explicit.len(), explicit_columns];
-        let lines = [&row_lines[..], &column_lines[..]];
-        let at = out_of_flow_static_position(context, node, child, &frame, explicit, lines)?;
+        let at = abspos::static_position(context, node, child, &frame, (origin, extent))?;
         context.defer(child.local_id, at);
     }
+    context.record_grid_frame(node.local_id, frame);
     subgrid::withdraw(&placed);
     inner.y += total;
     inner.bottom = inner.bottom.max(inner.y);
     Ok(())
+}
+/** Each column's physical left edge from `starts`, its left edge laid out from the content
+ * box's start, mirrored inside the content box `(x, width)` under `direction: rtl`, where
+ * columns run right to left (css-grid-2 7.1 follows the inline direction). */
+fn physical_lefts(starts: &[f64], widths: &[f64], (x, width): (f64, f64), rtl: bool) -> Vec<f64> {
+    if !rtl {
+        return starts.to_vec();
+    }
+    starts
+        .iter()
+        .zip(widths)
+        .map(|(start, size)| x + x + width - start - size)
+        .collect()
+}
+/** The column whose physical left edge an item's area starts at: its last one under rtl. */
+fn start_column(item: &Placed<'_>, rtl: bool) -> usize {
+    if rtl {
+        item.column + item.columns.max(1) - 1
+    } else {
+        item.column
+    }
+}
+/** An inline-axis alignment offset from the left: under rtl, `start` is the right edge. */
+fn inline_offset(offset: f64, free: f64, rtl: bool) -> f64 {
+    if rtl { free - offset } else { offset }
+}
+/** Whether a replaced item (an `<img>`, or an `<svg>` with no `viewBox`) stretches in `axis`
+ * (0 rows, 1 columns): only an authored `stretch` does, `normal` keeps its natural size
+ * (css-align-3 6.1, Blink's `IsStretchedReplaced`). An image with a natural aspect ratio then
+ * takes its other size from the ratio unless that axis stretches too. */
+pub(super) fn replaced_stretch(
+    container: &crate::document::ComputedStyle,
+    node: &Node,
+    axis: usize,
+) -> bool {
+    let ratio_free = match node.tag.as_str() {
+        "img" => true,
+        "svg" => !node.attributes.contains_key("viewbox"),
+        _ => false,
+    };
+    let auto = if axis == 0 {
+        node.style.height.is_none()
+    } else {
+        node.style.width.is_none()
+    };
+    ratio_free
+        && auto
+        && if axis == 0 {
+            lanes::explicit_stretch(container, node)
+        } else {
+            lanes::explicit_justify_stretch(container, node)
+        }
+}
+/** The border-box width an image stretched only in the block axis to `height` (its outer
+ * height in the area) takes from its natural aspect ratio; None when it keeps its width. */
+fn ratio_width(
+    container: &crate::document::ComputedStyle,
+    node: &Node,
+    height: f64,
+) -> Option<f64> {
+    let (natural_width, natural_height) = node.image_size.filter(|_| !node.image_ratio_free)?;
+    if node.tag != "img"
+        || natural_height == 0
+        || !replaced_stretch(container, node, 0)
+        || replaced_stretch(container, node, 1)
+    {
+        return None;
+    }
+    let margins = node.style.margin[0] + node.style.margin[2];
+    let content = (height - margins - vertical_edges(node)).max(0.0);
+    let ratio = f64::from(natural_width) / f64::from(natural_height);
+    Some(content * ratio + horizontal_edges(node))
 }
 /** In-flow items of a grid in layout order: `::before` first and `::after` last (Blink's
  * pseudo-element children), then sorted by `order`. */
@@ -358,81 +469,6 @@ fn column_widths(
     let space = tracks::Space::Definite(content);
     Ok((tracks::size_tracks(&defs, &items, space, gap, stretch), gap))
 }
-/** One axis of a laid-out grid, for placing its out-of-flow children: where each track starts
- * and its size, and the content and padding edges. */
-struct Edges<'a> {
-    starts: &'a [f64],
-    sizes: &'a [f64],
-    content: (f64, f64),
-    padding: (f64, f64),
-}
-impl Edges<'_> {
-    /** The span from line `start` to line `end`; a missing line, or one past the grid, is the
-     * padding edge (Blink's `ComputeOutOfFlowItemContainingRect`). */
-    fn area(&self, (start, end): (Option<usize>, Option<usize>)) -> (f64, f64) {
-        let count = self.sizes.len();
-        let after = |track: usize| self.starts[track] + self.sizes[track];
-        let from = match start.filter(|line| *line <= count && count > 0) {
-            Some(line) if line < count => self.starts[line],
-            Some(_) => after(count - 1),
-            None => self.padding.0,
-        };
-        let to = match end.filter(|line| *line <= count && count > 0) {
-            Some(0) => self.starts[0],
-            Some(line) => after(line - 1),
-            None => self.padding.1,
-        };
-        (from, to.max(from))
-    }
-}
-/**
- * Where an absolutely positioned grid child's margin box starts when its insets are `auto`,
- * after Blink's `GridLayoutAlgorithm::PlaceOutOfFlowItems`: the static position rectangle is the
- * child's grid area when the grid is its containing block, else the grid's content box, and the
- * child's `justify-self` and `align-self` (or the grid's `*-items`) align it in there. The
- * alignment is unsafe, so a child larger than the rectangle overflows both sides when centered.
- */
-fn out_of_flow_static_position(
-    context: &mut LayoutContext<'_>,
-    grid: &Node,
-    child: &Node,
-    [rows, columns]: &[Edges<'_>; 2],
-    explicit: [usize; 2],
-    lines: [&[usize]; 2],
-) -> EngineResult<(f64, f64)> {
-    let style = &grid.style;
-    let contains = child.style.position == crate::document::Position::Absolute
-        && (style.position != crate::document::Position::Static || style.transform.is_some());
-    let ((left, right), (top, bottom)) = if contains {
-        // The lines count every track, collapsed `auto-fit` ones included.
-        let [row_lines, column_lines] = placement::out_of_flow_lines(child, style, explicit);
-        let map = |(start, end): (Option<usize>, Option<usize>), lines: &[usize]| {
-            (start.map(|l| remap(lines, l)), end.map(|l| remap(lines, l)))
-        };
-        (
-            columns.area(map(column_lines, lines[1])),
-            rows.area(map(row_lines, lines[0])),
-        )
-    } else {
-        (columns.content, rows.content)
-    };
-    let margins = child.style.margin;
-    let justify = justify_of(style, child);
-    let align = child.style.align_self.unwrap_or(style.align_items);
-    let aligned = |a| matches!(a, AlignItems::Center | AlignItems::End);
-    let mut width = 0.0;
-    if aligned(justify) || aligned(align) {
-        width = item_width(context, child, right - left, AlignItems::Start)?;
-    }
-    let x = left + offset(justify, right - left - width - margins[1] - margins[3]);
-    let y = if aligned(align) {
-        let height = super::flex_layout::item_height(context, child, width)?;
-        top + offset(align, bottom - top - height - margins[0] - margins[2])
-    } else {
-        top
-    };
-    Ok((x, y))
-}
 /** The content-box height a grid's `min-height` gives, which `auto` rows stretch to when its
  * height is indefinite (Blink's `StretchAutoTracks` uses `min_available_size_`). A percentage
  * of an unknown containing block is zero. */
@@ -450,7 +486,29 @@ fn justify_of(container: &crate::document::ComputedStyle, node: &Node) -> AlignI
         // A subgrid fills its area in a subgridded axis whatever its alignment.
         return AlignItems::Stretch;
     }
-    node.style.justify_self.unwrap_or(container.justify_items)
+    let (align, side) = match node.style.justify_self {
+        Some(align) => (align, node.style.align_side[3]),
+        None => (container.justify_items, container.align_side[2]),
+    };
+    sided(align, side, container.rtl, node.style.rtl)
+}
+/** A start or end position whose keyword was `left`, `right`, `self-start` or `self-end`,
+ * turned into the container's start or end: `left` is the end under rtl, and an item's own
+ * start is the container's end when their directions differ. */
+fn sided(align: AlignItems, side: u8, rtl: bool, own_rtl: bool) -> AlignItems {
+    use crate::document::style::{SIDE_LEFT, SIDE_RIGHT, SIDE_SELF_END, SIDE_SELF_START};
+    let start = match side {
+        SIDE_LEFT => !rtl,
+        SIDE_RIGHT => rtl,
+        SIDE_SELF_START => rtl == own_rtl,
+        SIDE_SELF_END => rtl != own_rtl,
+        _ => return align,
+    };
+    if start {
+        AlignItems::Start
+    } else {
+        AlignItems::End
+    }
 }
 /** Sizing functions against the grid's size in this axis; a percentage of an indefinite size
  * behaves as `auto`, as css-grid-2 7.2 says. Tracks past `explicit` are implicit and resolve
@@ -504,12 +562,17 @@ fn column_contribution(
         .unwrap_or(0.0);
     let upper = super::sizing::max_width(node, None).max(lower);
     let clamp = |content: f64| content.max(lower).min(upper) + outer;
-    let fixed = node
-        .style
-        .width
-        .filter(|_| !node.style.percent_width)
-        .map(|width| super::sizing::content_size(node, width, true));
     let intrinsic = super::flex_layout::item_intrinsic(context, node)?;
+    // A `min-content` or `max-content` width is as definite a size as a length.
+    let fixed = match node.style.size_keywords[0] {
+        SizeKeyword::MinContent => Some(intrinsic.min_content),
+        SizeKeyword::MaxContent => Some(intrinsic.max_content),
+        _ => node
+            .style
+            .width
+            .filter(|_| !node.style.percent_width)
+            .map(|width| super::sizing::content_size(node, width, true)),
+    };
     let (min_content, max_content) = match fixed {
         Some(width) => (width, width),
         None => (intrinsic.min_content, intrinsic.max_content),
@@ -673,7 +736,7 @@ fn item_width(
     }
     if justify == AlignItems::Stretch
         && !node.style.width_fit
-        && !["img", "svg"].contains(&node.tag.as_str())
+        && !["img", "canvas", "svg"].contains(&node.tag.as_str())
     {
         return Ok(border_width(node, area, room, None));
     }
@@ -713,8 +776,12 @@ pub(super) fn intrinsic(
     // generated items.
     let generated = super::generated::items(node);
     let kids = items_of(context, node, &generated);
-    if style.grid_lanes && !lanes::row_lanes(style) {
-        return lanes::intrinsic(context, node, &kids);
+    if style.grid_lanes {
+        return if lanes::row_lanes(style) {
+            lanes::row_intrinsic(context, node, &kids)
+        } else {
+            lanes::intrinsic(context, node, &kids)
+        };
     }
     let gap = style.column_gap;
     // With no definite width an auto-repeat group repeats once (css-grid-2 7.2.3.2).

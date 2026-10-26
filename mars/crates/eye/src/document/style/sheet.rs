@@ -30,6 +30,24 @@ pub(super) enum Target {
     /// A superset of a dropped selector's subjects; only used for masks.
     Mask(Compound),
 }
+/** The pseudo-element box a rule styles instead of its subject. */
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PseudoBox {
+    /// `::before`
+    Before,
+    /// `::after`
+    After,
+    /// `::first-letter`
+    FirstLetter,
+    /// `::first-line`
+    FirstLine,
+    /// `::scroll-marker-group`
+    ScrollMarkerGroup,
+    /// `::scroll-marker`
+    ScrollMarker,
+    /// `::scroll-button(<direction>)`, by style/scroll_button.rs's direction number.
+    ScrollButton(u8),
+}
 /** One style rule per selector in a list, ordered for the cascade. */
 #[derive(Clone, Debug)]
 pub(super) struct Rule {
@@ -45,8 +63,8 @@ pub(super) struct Rule {
     pub hides: bool,
     /// Some declaration could hide its match, so an undecided match must mask it.
     pub hiding: bool,
-    /// Styles the subject's `::before` (Some(false)) or `::after` (Some(true)) box instead of it.
-    pub pseudo: Option<bool>,
+    /// Styles one of the subject's pseudo-element boxes instead of it.
+    pub pseudo: Option<PseudoBox>,
     /// Ancestors a mask's dropped selector demands of its subject: one rules out the root
     /// wrapper, two the body, so an unsupported selector deep in the page never masks it whole.
     pub ancestors: usize,
@@ -406,16 +424,25 @@ impl Parser<'_> {
         Ok(())
     }
 }
-/** Splits a trailing `::before` or `::after` off a selector: the subject's selector and which box it styles. */
-fn generated(text: &str) -> (String, Option<bool>) {
+/** Splits a trailing `::before`, `::after`, `::first-letter` or `::first-line` off a selector:
+ * the subject's selector and which box it styles. */
+fn generated(text: &str) -> (String, Option<PseudoBox>) {
     let trimmed = text.trim_end();
     let lower = trimmed.to_ascii_lowercase();
-    for (suffix, after) in [
-        ("::before", false),
-        (":before", false),
-        ("::after", true),
-        (":after", true),
-    ] {
+    let button = super::scroll_button::suffix(&lower);
+    let suffixes = button.map(|(length, pseudo)| (&lower[lower.len() - length..], pseudo));
+    for (suffix, after) in suffixes.into_iter().chain([
+        ("::before", PseudoBox::Before),
+        (":before", PseudoBox::Before),
+        ("::after", PseudoBox::After),
+        (":after", PseudoBox::After),
+        ("::first-letter", PseudoBox::FirstLetter),
+        (":first-letter", PseudoBox::FirstLetter),
+        ("::first-line", PseudoBox::FirstLine),
+        (":first-line", PseudoBox::FirstLine),
+        ("::scroll-marker-group", PseudoBox::ScrollMarkerGroup),
+        ("::scroll-marker", PseudoBox::ScrollMarker),
+    ]) {
         if lower.ends_with(suffix) {
             let rest = trimmed[..trimmed.len() - suffix.len()].trim_end();
             let subject = if rest.is_empty() || rest.ends_with([' ', '>', '+', '~']) {

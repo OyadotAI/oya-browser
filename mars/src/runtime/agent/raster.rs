@@ -4,11 +4,28 @@
  * text runs as real glyphs (CoreText on macOS, bars where no rasterizer exists); the desktop
  * window answers page.screenshot itself with real pixels.
  */
+#[path = "border_image.rs"]
+mod border_image;
+#[cfg(test)]
+#[path = "raster_border_image_tests.rs"]
+mod border_image_tests;
+#[cfg(test)]
+#[path = "raster_chain_tests.rs"]
+mod chain_tests;
 #[path = "glyphs.rs"]
 mod glyphs;
+#[path = "object_fit.rs"]
+mod object_fit;
+#[path = "raster_stroke.rs"]
+mod stroke;
 #[cfg(test)]
 #[path = "raster_svg_tests.rs"]
 mod svg_tests;
+#[cfg(test)]
+#[path = "raster_text_tests.rs"]
+mod text_tests;
+#[path = "vectors.rs"]
+mod vectors;
 
 use super::super::supervisor::Runtime;
 use crate::document::{
@@ -97,6 +114,13 @@ struct Canvas {
     drawn: Drawn,
     /** Natural sizes of drawings already parsed, by markup. */
     naturals: std::collections::HashMap<Rc<str>, Natural>,
+    /** Runs drawn as one joined text (Eye's text_chains). */
+    chains: crate::document::TextChains,
+    /** Each chain's joined coverage once rasterized; None when it could not be drawn. */
+    chain_cover: std::collections::HashMap<usize, Option<glyphs::Coverage>>,
+    /** Images of background layers stored under keys of their own (an element's later layers,
+     * the canvas's), by key. */
+    layer_pictures: std::collections::HashMap<usize, Rc<Picture>>,
 }
 
 impl Canvas {
@@ -122,6 +146,9 @@ impl Canvas {
             sizes: std::collections::HashMap::new(),
             drawn: Drawn::new(),
             naturals: std::collections::HashMap::new(),
+            chains: crate::document::TextChains::default(),
+            chain_cover: std::collections::HashMap::new(),
+            layer_pictures: std::collections::HashMap::new(),
         }
     }
     /** Blend one color over a document rectangle, clipped to the canvas and an optional clip. */
@@ -142,6 +169,32 @@ impl Canvas {
                     *pixel = ((over * alpha + under * (255 - alpha)) / 255) as u8;
                 }
             }
+        }
+    }
+    /** The root's or body's wrapper decoration: its background, then its border inside its
+     * border box, as the window paints them under every real box. */
+    fn decoration(&mut self, decoration: &crate::document::DisplayDecoration, ink: [u8; 4]) {
+        let (x, y) = (decoration.x, decoration.y);
+        let ((x, w), (y, h)) = (snap(x, decoration.width), snap(y, decoration.height));
+        if let Some(color) = decoration.color.as_deref().and_then(painter_rgba) {
+            self.fill([x, y, w, h], None, color);
+        }
+        let b = decoration.border.min(w / 2.0).min(h / 2.0).round();
+        if b <= 0.0 {
+            return;
+        }
+        let color = decoration
+            .border_color
+            .as_deref()
+            .and_then(painter_rgba)
+            .unwrap_or(ink);
+        for strip in [
+            [x, y, w, b],
+            [x, y + h - b, w, b],
+            [x, y + b, b, h - 2.0 * b],
+            [x + w - b, y + b, b, h - 2.0 * b],
+        ] {
+            self.fill(strip, None, color);
         }
     }
     /** Blend one color over the pixel at canvas column `x`, row `y`. */
@@ -195,7 +248,7 @@ impl Canvas {
             color
         };
         let bounds = [item.x, item.y, item.width, item.height];
-        let corners = item.radius.map(|r| [r, r]);
+        let corners = corner_radii(item);
         for shadow in item.shadows.iter().rev().filter(|s| !s.inset) {
             let Some(color) = painter_rgba(&shadow.color).map(fade) else {
                 continue;
@@ -207,7 +260,7 @@ impl Canvas {
                 item.width + 2.0 * spread,
                 item.height + 2.0 * spread,
             ];
-            let radii = item.radius.map(|r| [(r + spread).max(0.0); 2]);
+            let radii = corners.map(|corner| corner.map(|r| (r + spread).max(0.0)));
             self.shadow(
                 rect,
                 clip.as_ref(),
@@ -217,11 +270,25 @@ impl Canvas {
                 color,
             );
         }
+        // `background-clip`: the painting area, or the border's ring for `border-area`.
+        let area = inset(bounds, item.background_clip);
+        let area_corners = inset_radii(corners, item.background_clip);
+        let ring = if item.border > 0.0 {
+            [item.border; 4]
+        } else {
+            item.border_widths
+        };
+        let (inner, inner_corners) = (inset(bounds, ring), inset_radii(corners, ring));
+        let painted = |x: f64, y: f64| {
+            if item.background_border_area {
+                inside_rounded(x, y, bounds, corners) && !inside_rounded(x, y, inner, inner_corners)
+            } else {
+                inside_rounded(x, y, area, area_corners)
+            }
+        };
         if let Some(color) = item.background.as_deref().and_then(painter_rgba) {
             let color = fade(color);
-            self.shade(bounds, clip.as_ref(), |x, y| {
-                inside_rounded(x, y, bounds, corners).then_some(color)
-            });
+            self.shade(bounds, clip.as_ref(), |x, y| painted(x, y).then_some(color));
         }
         for layer in item.backgrounds.iter().rev() {
             let Some((radial, geometry, stops)) = layer.gradient() else {
@@ -234,26 +301,44 @@ impl Canvas {
             if stops.is_empty() {
                 continue;
             }
+            let tile = layer.tile();
             self.shade(bounds, clip.as_ref(), |x, y| {
-                let t = gradient_offset(radial, geometry, x - item.x, y - item.y);
-                inside_rounded(x, y, bounds, corners).then(|| stop_color(&stops, t))
+                let (u, v) = match tile {
+                    Some(tile) => tile.local(x - item.x, y - item.y)?,
+                    None => (x - item.x, y - item.y),
+                };
+                let t = gradient_offset(radial, geometry, u, v);
+                painted(x, y).then(|| stop_color(&stops, t))
             });
         }
-        if let Some(picture) = image.filter(|_| item.tag != "img") {
+        if item.tag != "img" {
             for layer in item.backgrounds.iter().rev() {
-                self.background_image(item, layer, picture, &fade);
+                // A layer keyed apart paints its own image; the first, the item's.
+                let keyed = match layer {
+                    DisplayBackground::Image { key: Some(key), .. } => {
+                        self.layer_pictures.get(key).cloned()
+                    }
+                    _ => None,
+                };
+                let keyed_apart = matches!(layer, DisplayBackground::Image { key: Some(_), .. });
+                let picture = if keyed_apart { keyed.as_deref() } else { image };
+                if let Some(picture) = picture {
+                    self.background_image(item, layer, picture, &fade);
+                }
             }
         }
         if item.tag == "img" {
             let dest = item.content_box.unwrap_or(bounds);
             match image.and_then(Picture::raster) {
-                // ponytail: object-fit and object-position paint as `fill`; add them when a
-                // replaced-content suite needs them.
                 Some(bitmap) => self.tile(
                     dest,
                     clip.as_ref(),
                     Tiling {
-                        tile: dest,
+                        tile: object_fit::object_rect(
+                            item,
+                            dest,
+                            (f64::from(bitmap.width), f64::from(bitmap.height)),
+                        ),
                         repeat: [false; 2],
                         gap: [0.0; 2],
                     },
@@ -274,8 +359,55 @@ impl Canvas {
                 .and_then(painter_rgba)
                 .unwrap_or(foreground),
         );
-        self.border(item, ink, &fade);
-        self.text(item, ink);
+        if !self.border_image(item, image, &fade) {
+            self.border(item, ink, &fade);
+        }
+        self.vectors(item, ink, &fade);
+        // A decorated block's own runs paint later, at its text echo (eye `text_echo`).
+        if !item.text_deferred {
+            self.text(item, ink);
+        }
+    }
+    /** The runs of `source`, a block whose text was deferred, painted at its echo's place in
+     * the paint order, in its own color and opacity. */
+    fn echo(&mut self, source: &DisplayItem, foreground: [u8; 4]) {
+        let source = &snapped(source);
+        let mut ink = source
+            .color
+            .as_deref()
+            .and_then(painter_rgba)
+            .unwrap_or(foreground);
+        ink[3] = (f64::from(ink[3]) * source.opacity.clamp(0.0, 1.0)).round() as u8;
+        self.text(source, ink);
+    }
+    /** An inline svg's paths in document order, each filled and then stroked, as the desktop
+     * canvas draws them; a `currentColor` paint is the item's own text color. */
+    fn vectors(&mut self, item: &DisplayItem, ink: [u8; 4], fade: &dyn Fn([u8; 4]) -> [u8; 4]) {
+        let canvas = [self.left, self.top, self.width as f64, self.height as f64];
+        for path in &item.vector {
+            let parts = [
+                (vectors::Part::Fill, &path.fill, path.fill_opacity),
+                (vectors::Part::Stroke, &path.stroke, path.stroke_opacity),
+            ];
+            for (part, paint, opacity) in parts {
+                let Some(paint) = paint.as_deref() else {
+                    continue;
+                };
+                let color = if paint.eq_ignore_ascii_case("currentcolor") {
+                    Some(ink)
+                } else {
+                    painter_rgba(paint).map(fade)
+                };
+                let Some(mut color) = color else {
+                    continue;
+                };
+                color[3] = (f64::from(color[3]) * opacity.clamp(0.0, 1.0)).round() as u8;
+                let budget = &mut self.glyph_pixels;
+                if let Some(coverage) = vectors::rasterize(item, path, part, canvas, budget) {
+                    self.glyphs(&coverage, item.clip.as_ref(), color);
+                }
+            }
+        }
     }
     /**
      * One box shadow as Blink's `BoxPainterBase::PaintNormalBoxShadow` and `PaintInsetBoxShadow`
@@ -369,7 +501,7 @@ impl Canvas {
             (item.width - bl - br).max(0.0),
             (item.height - bt - bb).max(0.0),
         ];
-        let inner = item.radius.map(|r| [(r - bt.max(bl)).max(0.0); 2]);
+        let inner = corner_radii(item).map(|corner| corner.map(|r| (r - bt.max(bl)).max(0.0)));
         for shadow in item.shadows.iter().rev().filter(|s| s.inset) {
             let Some(color) = painter_rgba(&shadow.color).map(fade) else {
                 continue;
@@ -409,8 +541,23 @@ impl Canvas {
             .iter()
             .filter(|line| !line.text.trim().is_empty())
         {
+            let member = self
+                .chains
+                .members
+                .get(&crate::document::chain_key(item, line))
+                .copied();
+            if let Some(member) = member
+                && self.chained(item, line, (member, baseline), ink)
+            {
+                continue;
+            }
             let canvas = [self.left, self.top, self.width as f64, self.height as f64];
-            match glyphs::rasterize(item, line, baseline, canvas, &mut self.glyph_pixels) {
+            let drawn = if item.writing == 0 {
+                glyphs::rasterize(item, line, baseline, canvas, &mut self.glyph_pixels)
+            } else {
+                glyphs::rasterize_vertical(item, line, baseline, canvas, &mut self.glyph_pixels)
+            };
+            match drawn {
                 Some(coverage) => self.glyphs(&coverage, item.clip.as_ref(), ink),
                 None => self.fill(
                     [
@@ -425,8 +572,53 @@ impl Canvas {
             }
         }
     }
+    /** A chained run's glyphs: its chain's joined coverage (rasterized once, from the chain's
+     * first run) over the columns this run owns, in its own ink. False when the chain could not
+     * be drawn, so the run draws alone. */
+    fn chained(
+        &mut self,
+        item: &DisplayItem,
+        line: &crate::document::PaintLine,
+        (member, baseline): (crate::document::ChainMember, f64),
+        ink: [u8; 4],
+    ) -> bool {
+        if !self.chain_cover.contains_key(&member.chain) {
+            let chain = &self.chains.chains[member.chain];
+            let joined = crate::document::PaintLine {
+                text: chain.text.clone(),
+                x: chain.x,
+                width: chain.width,
+                ..line.clone()
+            };
+            let canvas = [self.left, self.top, self.width as f64, self.height as f64];
+            let cover = glyphs::rasterize(item, &joined, baseline, canvas, &mut self.glyph_pixels);
+            self.chain_cover.insert(member.chain, cover);
+        }
+        let Some(Some(cover)) = self.chain_cover.remove(&member.chain) else {
+            return false;
+        };
+        let column = |x: f64| {
+            (x - self.left)
+                .round()
+                .clamp(i64::MIN as f64, i64::MAX as f64) as i64
+        };
+        let columns = (column(member.from), column(member.to));
+        self.glyphs_within(&cover, item.clip.as_ref(), ink, columns);
+        self.chain_cover.insert(member.chain, Some(cover));
+        true
+    }
     /** Blend `ink` through a run's coverage, inside the canvas and the item's clip. */
     fn glyphs(&mut self, coverage: &glyphs::Coverage, clip: Option<&ClipRect>, ink: [u8; 4]) {
+        self.glyphs_within(coverage, clip, ink, (i64::MIN, i64::MAX));
+    }
+    /** As `glyphs`, only over canvas columns `from..to`. */
+    fn glyphs_within(
+        &mut self,
+        coverage: &glyphs::Coverage,
+        clip: Option<&ClipRect>,
+        ink: [u8; 4],
+        (from, to): (i64, i64),
+    ) {
         for row in 0..coverage.height {
             let y = coverage.top + row as i64;
             if y < 0 || y as usize >= self.height {
@@ -437,7 +629,7 @@ impl Canvas {
                     coverage.left + column as i64,
                     coverage.alpha[row * coverage.width + column],
                 );
-                if alpha == 0 || x < 0 || x as usize >= self.width {
+                if alpha == 0 || x < 0 || x as usize >= self.width || x < from || x >= to {
                     continue;
                 }
                 let (px, py) = (self.left + x as f64 + 0.5, self.top + y as f64 + 0.5);
@@ -506,22 +698,21 @@ impl Canvas {
             repeat,
             space,
             round,
+            area,
             ..
         } = layer
         else {
             return;
         };
-        let [bt, br, bb, bl] = if item.border > 0.0 {
+        let ring = if item.border > 0.0 {
             [item.border; 4]
         } else {
             item.border_widths
         };
-        let origin = [
-            item.x + bl,
-            item.y + bt,
-            (item.width - bl - br).max(0.0),
-            (item.height - bt - bb).max(0.0),
-        ];
+        let border_box = [item.x, item.y, item.width, item.height];
+        // A fixed layer is positioned in the viewport Eye gave it, then clipped to the box.
+        let origin =
+            area.unwrap_or_else(|| inset(border_box, item.background_origin.unwrap_or(ring)));
         let (w, h) = concrete_size(*size, [origin[2], origin[3]], self.natural(picture));
         let auto = match *size {
             ImageSize::Auto => [true; 2],
@@ -541,7 +732,9 @@ impl Canvas {
             }
         };
         let tiling = Tiling::place(origin, (w, h), *position, *repeat, *space);
-        let bounds = [item.x, item.y, item.width, item.height];
+        // ponytail: a `border-area` image tiles over the whole border box; mask it by the ring
+        // when a page draws images that way.
+        let bounds = inset(border_box, item.background_clip);
         self.tile(bounds, item.clip.as_ref(), tiling, bitmap, fade);
     }
     /** A picture's natural size, parsing each drawing's markup once per screenshot. */
@@ -594,7 +787,7 @@ impl Canvas {
             Some(fade(literal.map_or(Some(current), painter_rgba)?))
         });
         let bounds = [item.x, item.y, item.width, item.height];
-        let ring = Ring::new(bounds, item.radius, widths);
+        let ring = Ring::new(bounds, corner_radii(item), widths);
         self.shade(bounds, item.clip.as_ref(), |x, y| {
             let side = ring.side(x, y)?;
             let style = BorderPaint {
@@ -639,7 +832,7 @@ impl Runtime {
             EngineError::new("no_page", "The page has no layout yet.", "Navigate first.")
         })?;
         let mut area = [
-            0.0,
+            page.scroll_x,
             self.scroll_y,
             self.render_context.width,
             self.render_context.height,
@@ -669,8 +862,46 @@ impl Runtime {
             .and_then(painter_rgba)
             .unwrap_or(BLACK);
         let mut canvas = Canvas::new(area[0], area[1], area[2], area[3], background);
+        // Images keyed apart from any element's identity: later layers and the canvas's.
+        canvas.layer_pictures = page
+            .images
+            .iter()
+            .filter(|(key, _)| crate::document::background_owner(**key) != Some(**key))
+            .filter_map(|(key, asset)| {
+                Picture::decode(&asset.mime, &asset.bytes).map(|picture| (*key, Rc::new(picture)))
+            })
+            .collect();
+        if let Some(layers) = &display.canvas_layers {
+            canvas.item(layers, foreground, None);
+        }
+        for decoration in [&display.root_decoration, &display.body_decoration]
+            .into_iter()
+            .flatten()
+        {
+            canvas.decoration(decoration, foreground);
+        }
         let mut bitmaps = std::collections::HashMap::new();
+        canvas.chains =
+            crate::document::text_chains(display.items.iter().filter(|item| agent_visible(item)));
+        // Each echo pairs with the earliest unpaired deferred item of its identity: the slices
+        // of one block keep their order in both phases.
+        let mut deferred: std::collections::HashMap<
+            usize,
+            std::collections::VecDeque<&DisplayItem>,
+        > = std::collections::HashMap::new();
         for item in display.items.iter().filter(|item| agent_visible(item)) {
+            if item.text_deferred {
+                deferred.entry(item.local_id).or_default().push_back(item);
+            }
+            if item.text_echo {
+                let source = deferred
+                    .get_mut(&item.local_id)
+                    .and_then(|queue| queue.pop_front());
+                if let Some(source) = source {
+                    canvas.echo(source, foreground);
+                }
+                continue;
+            }
             let bitmap = bitmaps.entry(item.local_id).or_insert_with(|| {
                 page.images
                     .get(&item.local_id)
@@ -1023,18 +1254,38 @@ impl Bitmap {
             rgba: vec![0; (bw * bh * 4) as usize],
         };
         for path in crate::document::VectorPath::from_image(markup, [0.0, 0.0, width, height]) {
-            let Some(mut color) = path.fill.as_deref().and_then(painter_rgba) else {
-                continue;
-            };
-            color[3] = (f64::from(color[3]) * path.fill_opacity.clamp(0.0, 1.0)).round() as u8;
-            let pieces = pieces(&path.commands);
-            budget.edges = budget.edges.checked_sub(pieces)?;
-            budget.charge(pieces)?;
-            let edges = flatten(&path.commands, sx, sy);
-            let even_odd = path.fill_rule == crate::document::FillRule::EvenOdd;
-            bitmap.fill(&edges, even_odd, color, &mut budget.work)?;
+            bitmap.paint_path(&path, (sx, sy), budget)?;
         }
         Some(bitmap)
+    }
+    /** One drawing path filled, then stroked, each charged to `budget` before it paints. */
+    fn paint_path(
+        &mut self,
+        path: &crate::document::VectorPath,
+        scale: (f64, f64),
+        budget: &mut DrawBudget,
+    ) -> Option<()> {
+        let paint = |color: Option<&str>, opacity: f64| {
+            let mut color = painter_rgba(color?)?;
+            color[3] = (f64::from(color[3]) * opacity.clamp(0.0, 1.0)).round() as u8;
+            Some(color)
+        };
+        let pieces = pieces(&path.commands);
+        if let Some(color) = paint(path.fill.as_deref(), path.fill_opacity) {
+            budget.edges = budget.edges.checked_sub(pieces)?;
+            budget.charge(pieces)?;
+            let edges = flatten(&path.commands, scale.0, scale.1);
+            let even_odd = path.fill_rule == crate::document::FillRule::EvenOdd;
+            self.fill(&edges, even_odd, color, &mut budget.work)?;
+        }
+        let stroke = paint(path.stroke.as_deref(), path.stroke_opacity);
+        if let Some(color) = stroke.filter(|_| path.stroke_width > 0.0) {
+            let edges = stroke::outline(&path.commands, path.stroke_width, scale, CUBIC_STEPS);
+            budget.edges = budget.edges.checked_sub(edges.len())?;
+            budget.charge(edges.len())?;
+            self.fill(&edges, false, color, &mut budget.work)?;
+        }
+        Some(())
     }
     /**
      * Source-over `color` into every pixel whose center the edges enclose, scanning an active
@@ -1204,6 +1455,28 @@ fn flatten(commands: &[crate::document::PathCommand], sx: f64, sy: f64) -> Vec<[
     edges
 }
 
+/** A rectangle `[x, y, width, height]` shrunk by (top, right, bottom, left) insets. */
+fn inset([x, y, w, h]: [f64; 4], [top, right, bottom, left]: [f64; 4]) -> [f64; 4] {
+    [
+        x + left,
+        y + top,
+        (w - left - right).max(0.0),
+        (h - top - bottom).max(0.0),
+    ]
+}
+
+/** Corner radii `[rx, ry]` (top-left, top-right, bottom-right, bottom-left) reduced by the
+insets of the adjacent sides, as an inner border edge's are. */
+fn inset_radii(radii: [[f64; 2]; 4], [top, right, bottom, left]: [f64; 4]) -> [[f64; 2]; 4] {
+    let sides = [(left, top), (right, top), (right, bottom), (left, bottom)];
+    std::array::from_fn(|i| {
+        [
+            (radii[i][0] - sides[i].0).max(0.0),
+            (radii[i][1] - sides[i].1).max(0.0),
+        ]
+    })
+}
+
 /** One edge pair `[start, length]` snapped as Blink's `PixelSnappedIntRect` does: both edges
  * round to whole pixels and the length is what lies between them. */
 fn snap(start: f64, length: f64) -> (f64, f64) {
@@ -1230,6 +1503,13 @@ fn snapped(item: &DisplayItem) -> DisplayItem {
         item.content_box = Some([x, y, w, h]);
     }
     item
+}
+
+/** An item's corners as `[rx, ry]` ellipses: its vertical radii when some corner is elliptical,
+ * else circles at its radii. */
+fn corner_radii(item: &DisplayItem) -> [[f64; 2]; 4] {
+    let vertical = item.radius_y.unwrap_or(item.radius);
+    std::array::from_fn(|corner| [item.radius[corner], vertical[corner]])
 }
 
 /** Whether a point lies inside a rectangle whose corners (tl, tr, br, bl) are ellipses `[rx, ry]`. */
@@ -1265,15 +1545,15 @@ struct Ring {
 }
 impl Ring {
     /** The padding edge's radii are the outer radii less the adjacent widths (CSS Backgrounds 5.2). */
-    fn new(outer: [f64; 4], radius: [f64; 4], widths: [f64; 4]) -> Self {
+    fn new(outer: [f64; 4], radius: [[f64; 2]; 4], widths: [f64; 4]) -> Self {
         let [t, r, b, l] = widths;
         let [x, y, w, h] = outer;
-        let shrink = |radius: f64, across: f64, down: f64| {
-            [(radius - across).max(0.0), (radius - down).max(0.0)]
+        let shrink = |[rx, ry]: [f64; 2], across: f64, down: f64| {
+            [(rx - across).max(0.0), (ry - down).max(0.0)]
         };
         Self {
             outer,
-            radii: radius.map(|r| [r, r]),
+            radii: radius,
             inner: [x + l, y + t, (w - l - r).max(0.0), (h - t - b).max(0.0)],
             inner_radii: [
                 shrink(radius[0], l, t),
@@ -1563,7 +1843,7 @@ mod tests {
     /** A zero-area padding box holds no pixel, so a lone 1px top border still paints. */
     #[test]
     fn inner_edge_is_half_open() {
-        let ring = Ring::new([0.0, 0.0, 10.0, 1.0], [0.0; 4], [1.0, 0.0, 0.0, 0.0]);
+        let ring = Ring::new([0.0, 0.0, 10.0, 1.0], [[0.0; 2]; 4], [1.0, 0.0, 0.0, 0.0]);
         assert_eq!(ring.side(5.5, 0.5), Some(0));
         assert!(!inside_rounded(
             5.0,
@@ -1576,7 +1856,11 @@ mod tests {
     /** Miter lines split a corner between the two sides by their widths. */
     #[test]
     fn corners_split_along_the_miter() {
-        let ring = Ring::new([0.0, 0.0, 100.0, 100.0], [0.0; 4], [10.0, 10.0, 10.0, 20.0]);
+        let ring = Ring::new(
+            [0.0, 0.0, 100.0, 100.0],
+            [[0.0; 2]; 4],
+            [10.0, 10.0, 10.0, 20.0],
+        );
         assert_eq!(ring.side(5.5, 8.5), Some(3));
         assert_eq!(ring.side(15.5, 2.5), Some(0));
         assert_eq!(ring.side(50.5, 50.5), None);
@@ -1585,7 +1869,7 @@ mod tests {
     /** A rounded corner leaves its outside unpainted. */
     #[test]
     fn radius_cuts_the_corner() {
-        let ring = Ring::new([0.0, 0.0, 100.0, 100.0], [20.0; 4], [5.0; 4]);
+        let ring = Ring::new([0.0, 0.0, 100.0, 100.0], [[20.0; 2]; 4], [5.0; 4]);
         assert_eq!(ring.side(0.5, 0.5), None);
         assert_eq!(ring.side(50.5, 0.5), Some(0));
     }
@@ -1646,6 +1930,27 @@ mod tests {
         };
         assert!(dots.color(red, 5.0, 5.0).is_some());
         assert!(dots.color(red, 0.5, 0.5).is_none());
+    }
+
+    /** An elliptical corner cuts the box along its own two radii, not a circle. */
+    #[test]
+    fn an_elliptical_corner_paints_its_ellipse() {
+        let item: crate::document::DisplayItem = serde_json::from_value(serde_json::json!({
+            "local_id": 0, "tag": "div", "role": "group", "x": 0.0, "y": 0.0, "width": 20.0,
+            "height": 10.0, "font_size": 16.0, "bold": false, "lines": [], "background": "#0000ff",
+            "radius": [20.0, 0.0, 0.0, 0.0], "radius_y": [10.0, 0.0, 0.0, 0.0],
+        }))
+        .unwrap();
+        let mut canvas = super::Canvas::new(0.0, 0.0, 20.0, 10.0, [255, 255, 255, 255]);
+        canvas.item(&item, [0, 0, 0, 255], None);
+        let pixel = |x: usize, y: usize| canvas.pixels[(y * 20 + x) * 3..][..3].to_vec();
+        assert_eq!(pixel(3, 1), [255, 255, 255], "outside the ellipse");
+        assert_eq!(
+            pixel(10, 1),
+            [0, 0, 255],
+            "inside it, where a 10px circle would also paint"
+        );
+        assert_eq!(pixel(1, 8), [0, 0, 255], "low on the left edge");
     }
 
     /** Gradients interpolate premultiplied, so a fade to transparent keeps its hue. */

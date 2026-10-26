@@ -16,6 +16,28 @@ fn rect(markup: &str, id: &str) -> (f64, f64, f64, f64) {
     (item.x, item.y, item.width, item.height)
 }
 
+/** The union of every box painted for `id`: a split inline paints one fragment per line. */
+fn union(markup: &str, id: &str) -> (f64, f64, f64, f64) {
+    let document = compute_styles(&parse(markup).unwrap(), &[]).unwrap();
+    let display = render(&document, 800.0).unwrap();
+    let local = document
+        .nodes
+        .iter()
+        .find(|n| n.html_id == id)
+        .unwrap()
+        .local_id;
+    let items = display.items.iter().filter(|i| i.local_id == local);
+    let (mut left, mut top) = (f64::INFINITY, f64::INFINITY);
+    let (mut right, mut bottom) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for item in items {
+        left = left.min(item.x);
+        top = top.min(item.y);
+        right = right.max(item.x + item.width);
+        bottom = bottom.max(item.y + item.height);
+    }
+    (left, top, right - left, bottom - top)
+}
+
 /** A 100px font with `line-height: 1` makes a 100px line, as Blink computes it. */
 #[test]
 fn font_sizes_above_seventy_two_pixels_are_kept() {
@@ -33,7 +55,7 @@ fn split_inline_containing_block_runs_first_start_to_last_end() {
     let markup = "<body style='margin:0'><div style='width:100px;font:20px/1 monospace'>XX \
         <span id=s style='position:relative'>XXXX<br>XXXXXXXX<br>X\
         <div id=a style='position:absolute;inset:0'></div></span></div>";
-    let span = rect(markup, "s");
+    let span = union(markup, "s");
     let abs = rect(markup, "a");
     assert!(
         abs.0 > span.0 + 1.0,

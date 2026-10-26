@@ -1,43 +1,90 @@
+mod bfc_fit;
 /** Oya owns point-based block flow, wrapping and control placement. */
+mod bidi;
+mod block_in_inline;
 mod blur;
 mod body;
+mod body_clip;
+mod border_image;
+mod canvas_layers;
+mod clearance;
 mod control;
 pub(crate) mod degrade;
 mod display;
 mod effects;
+mod first_letter;
+mod first_line;
+mod first_line_layout;
+mod fixed;
 mod flex;
+mod flex_abspos;
 mod flex_column;
+mod flex_column_intrinsic;
 mod flex_layout;
 mod float;
 mod flow;
+mod forced_lines;
+mod fragments;
+mod frame;
 mod generated;
+mod glue;
+mod gradient_tile;
 mod grid;
+mod hyphenate;
 mod image;
+mod initial_letter;
+mod inline_root;
+mod justify;
 mod line;
+mod line_clamp;
+mod line_clamp_align;
+mod lookahead;
 mod marker;
+mod multicol;
+mod multicol_balance;
+mod multicol_cut;
+mod multicol_fragment;
+mod multicol_intrinsic;
+mod multicol_oof;
+mod multicol_units;
+mod nine_piece;
+mod order;
 mod path;
 mod positioned;
+mod root_box;
+mod root_fit;
+mod root_flow;
+mod root_generated;
+mod scroll_markers;
 mod sizing;
+mod sticky_container;
 mod svg;
 mod table;
 mod text;
+mod text_chains;
+mod text_echo;
 mod validation;
+pub mod vertical;
 mod wrap;
 use super::{Appearance, ColorScheme, Document, Node, RenderContext};
 use crate::{
     constants::PAINT_LINES,
     protocol::{EngineError, EngineResult},
 };
+pub use border_image::DisplayBorderImage;
 pub use display::{
-    ClipRect, DisplayBackground, DisplayShadow, GradientStop, ImageSize, OpacityGroup, Pin,
-    ScrollArea,
+    ClipRect, DisplayBackground, DisplayShadow, GradientStop, GradientTile, ImageSize,
+    OpacityGroup, Pin, ScrollArea,
 };
 /// Agent-visibility helpers for the app; the document facade exports them when the app wires them.
 #[allow(unused_imports)]
 pub use display::{agent_visible, painted_bounds, wheel_target};
 pub use effects::ScrollOffsets;
+pub use frame::{embed_frame, frame_viewport};
+pub use nine_piece::{NinePiece, nine_pieces};
 use serde::{Deserialize, Serialize};
 pub use svg::{FillRule, LineCap, LineJoin, PathCommand, VectorPath};
+pub use text_chains::{ChainKey, ChainMember, TextChain, TextChains, chain_key, text_chains};
 
 /// Default document margin in logical points, shared by paint and inspection.
 pub const MARGIN: f64 = 32.0;
@@ -75,6 +122,13 @@ pub struct DisplayList {
     /// Non-target body decoration remains separate when the root already supplies the canvas background.
     #[serde(default)]
     pub body_decoration: Option<DisplayDecoration>,
+    /// The root element's border, painted under everything else like the body's decoration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_decoration: Option<DisplayDecoration>,
+    /// The canvas's propagated gradient layers on a stand-in box over the whole document
+    /// (render/canvas_layers.rs), painted over `canvas_background` and under everything else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas_layers: Option<DisplayItem>,
     /// A layout bound cut the page short: later content, out-of-range boxes or excess lines are missing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
@@ -159,6 +213,10 @@ pub struct DisplayItem {
     /// Corner radii top-left, top-right, bottom-right, bottom-left, clamped to the box.
     #[serde(default, skip_serializing_if = "display::is_square")]
     pub radius: [f64; 4],
+    /// Vertical corner radii in the same order when some corner is elliptical; None when every
+    /// corner is circular at `radius`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius_y: Option<[f64; 4]>,
     /// Per-side border widths top, right, bottom, left when they differ; `border` is 0 then.
     #[serde(default, skip_serializing_if = "display::is_square")]
     pub border_widths: [f64; 4],
@@ -199,6 +257,14 @@ pub struct DisplayItem {
     /// Extra advance after each character in points.
     #[serde(default, skip_serializing_if = "display::is_zero_f64")]
     pub letter_spacing: f64,
+    /// Extra advance after each space and no-break space (CSS `word-spacing`): layout widened
+    /// the runs by it, so painters must space the glyphs to match.
+    #[serde(default, skip_serializing_if = "display::is_zero_f64")]
+    pub word_spacing: f64,
+    /// CSS `text-autospace` shaped the runs: painters space ideograph-alpha boundaries as
+    /// layout measured them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub autospace: bool,
     /// Lines are underlined: links unless the author removed text decoration, or authored underline.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub underline: bool,
@@ -225,6 +291,48 @@ pub struct DisplayItem {
     /// svg, otherwise paints as a solid square or not at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<DisplayBackground>,
+    /// `border-image`: painters draw its `nine_pieces` instead of the border once its source can
+    /// paint (a gradient, or the image bytes fetched under this identity).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_image: Option<DisplayBorderImage>,
+    /// `background-clip` as (top, right, bottom, left) insets from the border box; the color
+    /// and every layer paint only inside them.
+    #[serde(default, skip_serializing_if = "is_zero_sides")]
+    pub background_clip: [f64; 4],
+    /// `background-clip: border-area`: backgrounds paint only under the border's ring.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background_border_area: bool,
+    /// A box kept only for its extent (a captioned table's wrapper, a table row or row group,
+    /// which floats, offsets and lookups read) whose decoration other items paint: cell-clipped
+    /// copies under each cell, or the table's grid box. Effects never decorate it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bare: bool,
+    /// A decorated block whose own text runs paint later, with the inline content (at its
+    /// `text_echo` item), so they are not covered by later sibling blocks' backgrounds. Its
+    /// lines stay here for agents and text selection; painters skip them on this item.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text_deferred: bool,
+    /// A stand-in with no lines or decoration marking where painters draw the text of the
+    /// nearest earlier item of this identity with `text_deferred`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text_echo: bool,
+    /// A fragment of an inline box that comes after a block inside it paints after that block's
+    /// content: this is the identity of the block's last descendant, whose tree order it takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paint_after: Option<usize>,
+    /// The block container whose inline formatting context holds this item's runs (its own
+    /// identity for a block): painters draw runs of one context as one shaped text, never runs
+    /// of two (table cells side by side). Zero when unknown.
+    #[serde(default, skip_serializing_if = "is_zero_identity")]
+    pub inline_root: usize,
+    /// `background-origin` as insets from the border box; None is the padding box.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_origin: Option<[f64; 4]>,
+    /// The box sits in a vertical writing mode (`vertical::WRITING_RL` or `WRITING_LR`; 0 is
+    /// horizontal): each line's `x`, `y` is the top-left of a run that reads top to bottom,
+    /// `width` long, which painters draw turned a quarter clockwise.
+    #[serde(default, skip_serializing_if = "is_horizontal")]
+    pub writing: u8,
     /// Set on sticky and fixed boxes and everything inside them: how they follow the viewport's
     /// scroll, which hosts apply at paint time without a new layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -259,6 +367,10 @@ pub struct PaintLine {
     pub width: f64,
 }
 
+/** Serde skips an unknown inline formatting root. */
+fn is_zero_identity(value: &usize) -> bool {
+    *value == 0
+}
 /// Produces bounded native geometry without delegating HTML or flow to AppKit.
 pub fn render(document: &Document, viewport: f64) -> EngineResult<DisplayList> {
     render_with_context(
@@ -284,23 +396,53 @@ pub fn render_scrolled(
     offsets: &ScrollOffsets,
 ) -> EngineResult<DisplayList> {
     context.validate()?;
+    laid_out(document, context, offsets)
+}
+/// As `render_scrolled` for a document embedded in a frame: `context` is the frame's content
+/// box, which `RenderContext::validate_frame` bounds instead of the window bounds.
+pub fn render_frame(document: &Document, context: RenderContext) -> EngineResult<DisplayList> {
+    context.validate_frame()?;
+    laid_out(document, context, &ScrollOffsets::new())
+}
+/** Layout and paint order for a context its caller already validated. */
+fn laid_out(
+    document: &Document,
+    context: RenderContext,
+    offsets: &ScrollOffsets,
+) -> EngineResult<DisplayList> {
     super::validate_styles(document)?;
     // Hosts lay out their shadow content with slotted light children in place.
     let flat = super::shadow::flatten(document);
     let document = flat.as_ref().unwrap_or(document);
     let degraded = degrade::degrade(document);
     let document = degraded.as_ref().unwrap_or(document);
+    let sized = canvases(document);
+    let document = sized.as_ref().unwrap_or(document);
     let quirky = quirk_margins(document);
     let document = quirky.as_ref().unwrap_or(document);
-    let rooted = body::container_root(document);
+    let generated = root_generated::with_root_generated(document);
+    let document = generated.as_ref().unwrap_or(document);
+    let fitted = root_fit::fit_table_root(document, context)?;
+    let document = fitted.as_ref().unwrap_or(document);
+    let marked = scroll_markers::expand(document);
+    let document = marked.as_ref().map_or(document, |marked| &marked.document);
+    // Layout sees the anonymous table boxes; everything after it sees the document again.
+    let anonymous = table::anonymous_boxes(document);
+    let laid = anonymous.as_ref().map_or(document, |(fixed, _)| fixed);
+    let rooted = body::container_root(laid);
     let (mut items, height, body_decoration, mut truncated) = match &rooted {
         Some((rooted, root)) => {
             let mut laid = flow::layout(rooted, context)?;
             laid.0.retain(|item| item.local_id != *root);
             laid
         }
-        None => flow::layout(document, context)?,
+        None => flow::layout(laid, context)?,
     };
+    if let Some((_, first)) = &anonymous {
+        items.retain(|item| item.local_id < *first);
+    }
+    fragments::split(document, &mut items);
+    inline_root::mark(document, &mut items);
     // Zero-size text takes no room and paints nothing; hosts must not draw it at a default size.
     for item in items.iter_mut().filter(|item| item.font_size == 0.0) {
         item.lines.clear();
@@ -309,7 +451,16 @@ pub fn render_scrolled(
     table_parts(document, &mut items)?;
     effects(document, &mut items)?;
     let (mut items, scrollers) = effects::stack(document, items, offsets)?;
+    fixed::anchor(document, &mut items, context);
+    fixed::scroll_with_contents(document, &mut items, &scrollers);
+    first_line::apply(document, &mut items);
+    body_clip::apply(document, context, &mut items)?;
+    scroll_markers::reclaim(marked.as_ref(), &mut items);
     validate_decoration(body_decoration.as_ref())?;
+    let root_decoration = body::root_decoration(document, (context.width, context.height), height);
+    validate_decoration(root_decoration.as_ref())?;
+    let canvas_layers =
+        canvas_layers::canvas_layers(document, (context.width, context.height), height);
     // Boxes outside the geometry bound or past the paint-line bound are dropped, not the page.
     let before = items.len();
     items.retain(|item| validate_geometry(std::slice::from_ref(item), 0.0).is_ok());
@@ -319,17 +470,14 @@ pub fn render_scrolled(
     validate_geometry(&items, height)?;
     let root = &document.formatting.html.style;
     let body = &document.formatting.body.style;
-    let canvas_background = opaque(&root.background)
-        .or_else(|| opaque(&body.background))
-        .cloned()
-        .or_else(|| {
-            // Chromium paints the initial canvas from the root's used scheme, which is light unless the
-            // page opts into dark; the OS appearance alone never darkens a page.
-            Some(match root.used_scheme {
-                Appearance::Light => "#ffffff".into(),
-                Appearance::Dark => "#000000".into(),
-            })
-        });
+    let canvas_background = propagated(root, body).cloned().or_else(|| {
+        // Chromium paints the initial canvas from the root's used scheme, which is light unless the
+        // page opts into dark; the OS appearance alone never darkens a page.
+        Some(match root.used_scheme {
+            Appearance::Light => "#ffffff".into(),
+            Appearance::Dark => "#000000".into(),
+        })
+    });
     let scheme = if root.color_scheme == ColorScheme::Normal {
         body
     } else {
@@ -345,6 +493,8 @@ pub fn render_scrolled(
         canvas_foreground,
         canvas_scheme: root.used_scheme,
         body_decoration,
+        root_decoration,
+        canvas_layers,
         truncated,
         scrollers,
         viewport_locked: viewport_locked(root, body),
@@ -358,6 +508,28 @@ fn viewport_locked(root: &super::ComputedStyle, body: &super::ComputedStyle) -> 
     let used = if visible { body } else { root };
     matches!(used.overflow_y, Hidden | Clip)
 }
+/** HTML's canvas natural size: its `width` and `height` attributes when they are valid
+non-negative integers, else 300 by 150, read at every layout so a script's resize applies. The
+bitmap itself is transparent until something draws on it. */
+fn canvases(document: &Document) -> Option<Document> {
+    let canvas = |node: &Node| node.tag == "canvas" && node.image_size.is_none();
+    if !document.nodes.iter().any(canvas) {
+        return None;
+    }
+    let mut copy = document.clone();
+    for node in copy.nodes.iter_mut().filter(|node| canvas(node)) {
+        let side = |name: &str, default: u32| {
+            node.attributes
+                .get(name)
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .unwrap_or(default)
+        };
+        node.image_size = Some((side("width", CANVAS_SIZE.0), side("height", CANVAS_SIZE.1)));
+    }
+    Some(copy)
+}
+/** HTML's default canvas bitmap size. */
+const CANVAS_SIZE: (u32, u32) = (300, 150);
 /** A copy with the quirks-mode margin quirk applied: the UA top margin of the first box in the
  * body or a table cell is laid out as zero. None when no box has it. */
 fn quirk_margins(document: &Document) -> Option<Document> {
@@ -393,12 +565,18 @@ fn effects(document: &Document, items: &mut [DisplayItem]) -> EngineResult<()> {
     let positions = sizing::positions(document);
     for item in items {
         let node = find(document, &positions, item.local_id)?;
-        item.rtl = node.style.rtl;
-        item.opacity = wrappers;
+        item.rtl = paragraph(document, &positions, node)?.style.rtl;
+        // Layout hides boxes by zeroing their opacity (a line clamp, an ellipsis), so keep that.
+        item.opacity *= wrappers;
         // A `::before`/`::after` box shares its element's identity but has its own opacity, which
         // pages use to hide hover and focus overlays; without it they paint as solid blocks.
-        if let Some(style) = effects::generated_style(node, item) {
+        let generated = effects::generated_style(node, item);
+        if let Some(style) = generated {
             item.opacity *= style.opacity;
+        }
+        // `visibility: hidden` keeps the box's room but paints nothing of it.
+        if generated.map_or(node.style.invisible, |style| style.invisible) {
+            item.opacity = 0.0;
         }
         let mut current = Some(node);
         while let Some(node) = current {
@@ -410,6 +588,24 @@ fn effects(document: &Document, items: &mut [DisplayItem]) -> EngineResult<()> {
         }
     }
     Ok(())
+}
+/** The box whose direction is a run's base direction when painted: an inline box's or text's
+nearest block or embedding inline (`unicode-bidi` other than normal, or a `dir` attribute, which
+isolates). A `unicode-bidi: normal` inline's own `direction` does nothing; shaping such an RTL
+span right to left reordered its text (bidi-normal-001). */
+fn paragraph<'a>(
+    document: &'a Document,
+    positions: &[Option<usize>],
+    mut node: &'a Node,
+) -> EngineResult<&'a Node> {
+    let embeds = |node: &Node| node.style.unicode_bidi != 0 || node.attributes.contains_key("dir");
+    while node.style.inline && !node.style.inline_block && !embeds(node) {
+        let Some(parent) = node.parent else {
+            break;
+        };
+        node = find(document, positions, parent)?;
+    }
+    Ok(node)
 }
 /** Filled table parts considered per render; later ones paint no background box. Real tables
  * have a handful; past this a page is hostile, and table_parts runs after layout's budget. */
@@ -686,7 +882,24 @@ fn validate_decoration(decoration: Option<&DisplayDecoration>) -> EngineResult<(
     }
     Ok(())
 }
-/** Transparent root paint delegates to the HTML body's canvas propagation rule. */
+/** The background color the canvas takes: the root's, else the body's (CSS Backgrounds 2.11.2).
+ * A root with no box (`display: none`) gives none, nor does its body; a body without a box
+ * of its own (`display: none` or `contents`) does not propagate. */
+fn propagated<'a>(
+    root: &'a super::ComputedStyle,
+    body: &'a super::ComputedStyle,
+) -> Option<&'a String> {
+    if root.hidden {
+        return None;
+    }
+    opaque(&root.background).or_else(|| {
+        (!body.hidden && !body.display_contents)
+            .then(|| opaque(&body.background))
+            .flatten()
+    })
+}
+/** A color that paints: neither absent nor `transparent`; a transparent root's paint
+ * delegates to the body's. */
 fn opaque(color: &Option<String>) -> Option<&String> {
     color
         .as_ref()
@@ -848,4 +1061,21 @@ fn validate_geometry(items: &[DisplayItem], height: f64) -> EngineResult<()> {
         }
     }
     Ok(())
+}
+/** Serde skip test for insets that are all zero. */
+fn is_zero_sides(sides: &[f64; 4]) -> bool {
+    *sides == [0.0; 4]
+}
+/** A `unicode-bidi` keyword as its `ComputedStyle::unicode_bidi` code. */
+pub(in crate::document) fn bidi_mode(value: &str) -> Option<u8> {
+    bidi::mode(value)
+}
+/** The used line advance layout gives a style (its font's normal line spacing for `normal`), so
+`lh` units match the lines they measure. */
+pub(in crate::document) fn line_advance(style: &super::ComputedStyle) -> f64 {
+    sizing::advance(style)
+}
+/** Serde skip test for horizontal text. */
+fn is_horizontal(writing: &u8) -> bool {
+    *writing == 0
 }

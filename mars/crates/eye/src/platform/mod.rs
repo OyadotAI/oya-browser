@@ -1,11 +1,12 @@
 /** Operating-system text primitives supply shaping, never document or navigation semantics. */
+pub mod autospace;
 #[cfg(target_os = "macos")]
 mod text;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 pub use text::{
     attributed, colored, directed, edges, font, has_font, local_font_exists, measure, metrics,
-    register_family, register_font, register_local, styled,
+    register_family, register_font, register_local, spaced, styled,
 };
 
 /// The generic face text is shaped and drawn with; System is the native interface font.
@@ -39,6 +40,8 @@ pub struct Face {
     pub spacing: f64,
     /// Italic or oblique posture.
     pub italic: bool,
+    /// CSS `text-autospace`: an eighth of an em between ideographs and letters or digits.
+    pub autospace: bool,
 }
 impl Face {
     /// The legacy selection: system face, regular or bold, no extra spacing.
@@ -49,6 +52,7 @@ impl Face {
             family: Family::System,
             spacing: 0.0,
             italic: false,
+            autospace: false,
         }
     }
     /// CSS treats 600 and above as bold for faces with only two weights.

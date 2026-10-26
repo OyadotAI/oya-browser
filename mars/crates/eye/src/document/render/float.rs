@@ -15,6 +15,9 @@ pub(super) struct FloatBox {
     pub x1: f64,
     pub top: f64,
     pub bottom: f64,
+    /// An initial letter's exclusion (render/initial_letter.rs), which later floats and blocks
+    /// clear.
+    pub initial: bool,
 }
 impl Flow {
     /** Left edge and width of line room at `y`, past every float that overlaps that line. */
@@ -51,6 +54,28 @@ impl Flow {
      * (BBC's "Watch Live"). */
     pub fn fits(&self, extent: f64) -> bool {
         self.cursor + extent <= self.room() + LINE_FIT_SLACK
+    }
+    /** Moves an empty line below floats until a box `width` wide and `height` tall fits beside
+     * every float its height reaches, not only those at the line's top (an inline-block on a new
+     * line that a lower float would overlap goes below it, floats-wrap-top-below-inline-002l). */
+    pub fn fit_tall(&mut self, width: f64, height: f64) {
+        for _ in 0..=self.floats.len() {
+            if self.cursor > 0.0 || self.room_at_height(self.y, height).1 >= width {
+                return;
+            }
+            let (y, extent) = (self.y, height);
+            let below = self
+                .floats
+                .iter()
+                .filter(|f| f.top < y + extent && f.bottom > y)
+                .map(|f| f.bottom)
+                .fold(f64::INFINITY, f64::min);
+            if !below.is_finite() {
+                return;
+            }
+            self.y = below;
+            self.collapsible = 0.0;
+        }
     }
     /** Moves an empty line below floats until `width` fits or no float narrows it. */
     pub fn fit(&mut self, width: f64) {
@@ -97,7 +122,7 @@ impl Flow {
             .fold(self.cleared.unwrap_or(f64::NEG_INFINITY), f64::max)
     }
     /** Remembers a float, pruning ones entirely above the cursor when the list is full. */
-    fn add_float(&mut self, float: FloatBox) {
+    pub(super) fn add_float(&mut self, float: FloatBox) {
         if self.floats.len() >= FLOATS {
             let y = self.y;
             let mut lowest = self.cleared.unwrap_or(f64::NEG_INFINITY);
@@ -138,6 +163,7 @@ pub(super) fn float(
     // CSS 2.1 9.5.1 rule 5 (Blink's exclusion space floats_top): a float's top is never above
     // an earlier float's, so a right float after a wrapped left one starts on its row.
     y = flow.floats.iter().map(|f| f.top).fold(y, f64::max);
+    y = y.max(super::initial_letter::clearance(flow).unwrap_or(y));
     let x = loop {
         let (start, room) = flow.room_at_height(y, 1.0);
         let row: Vec<_> = flow
@@ -187,6 +213,7 @@ pub(super) fn float(
         x1: x + outer,
         top: y,
         bottom,
+        initial: false,
     });
     if flow.strut_open {
         let index = flow.floats.len() - 1;
@@ -224,11 +251,18 @@ pub(super) fn shrink_width(
     margins: f64,
 ) -> EngineResult<f64> {
     let room = (available - margins).max(0.0);
+    let edges = horizontal_edges(node);
     if node.style.width.is_some() {
-        return Ok(border_width(node, available, room, None));
+        let authored = border_width(node, available, room, None);
+        // A table is never narrower than its grid's minimum, whatever its authored width
+        // (floated-table-wider-than-specified).
+        if super::table::is_table(context, node) {
+            let minimum = context.intrinsic_widths(node.local_id)?.min_content + edges;
+            return Ok(authored.max(minimum));
+        }
+        return Ok(authored);
     }
     let intrinsic = context.intrinsic_widths(node.local_id)?;
-    let edges = horizontal_edges(node);
     let fit = intrinsic
         .max_content
         .min((room - edges).max(intrinsic.min_content));

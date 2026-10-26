@@ -6,7 +6,10 @@
  * the ratio, and min/max constraints on one axis transfer through the ratio to the other. All
  * sizes here are border-box sizes, as in Blink. */
 use super::{content_size, horizontal_edges, layout_unit_floor, vertical_edges};
-use crate::document::{BoxSizing, Node, style::Extent};
+use crate::document::{
+    BoxSizing, Node,
+    style::{Extent, SizeKeyword},
+};
 
 /** No upper bound, Blink's `LayoutUnit::Max()`. */
 const UNBOUNDED: f64 = f64::INFINITY;
@@ -37,6 +40,9 @@ struct Replaced<'a> {
     ratio: Option<(f64, bool)>,
     /** Border-box natural size, coerced to the ratio when there is one. */
     natural: Option<(f64, f64)>,
+    /** A border-box width a flex, grid or table algorithm already settled, which replaces the
+    authored one and its min and max. */
+    fixed: Option<f64>,
 }
 
 /** Clamps `size` into [min, max], min winning, as `MinMaxSizes::ClampSizeToMinAndMax`. */
@@ -57,51 +63,113 @@ pub(in crate::document::render) fn replaced_size(
     Replaced::new(node, available, block_basis).size(Mode::Normal)
 }
 
+/** The content width an inline `<svg>` takes laid out in `available` border-box width, or None
+ * for any other box: a ratio-only svg stretches into a definite space (Blink's StretchFit) though
+ * its contributions are zero. */
+pub(in crate::document::render) fn replaced_fit(node: &Node, available: f64) -> Option<f64> {
+    (node.tag == "svg").then(|| {
+        let edges = horizontal_edges(node);
+        let margins = node.style.margin[1] + node.style.margin[3];
+        (replaced_size(node, Some(available + margins), None).0 - edges).max(0.0)
+    })
+}
+
+/** The border-box height of the replaced `node` once something else settled its border-box
+ * width at `inline`: Blink's ComputeReplacedSize with a fixed inline size. */
+pub(in crate::document::render) fn replaced_block_at(
+    node: &Node,
+    inline: f64,
+    block_basis: Option<f64>,
+) -> f64 {
+    let mut space = Replaced::new(node, Some(inline), block_basis);
+    space.fixed = Some(inline);
+    space.size(Mode::Normal).1
+}
+
 /**
  * Min- and max-content contributions of a replaced box, content box only, after Blink's
  * ComputeMinAndMaxContentContributionForReplaced: the max is its size at an indefinite width, and
  * a percentage width or max-width makes it compressible so its min shrinks to its min-width (an
  * `max-width: 100%` image no longer props its grid track or table column open).
  */
-pub(in crate::document::render) fn replaced_contribution(node: &Node) -> (f64, f64) {
+pub(in crate::document::render) fn replaced_contribution(
+    node: &Node,
+    block_basis: Option<f64>,
+) -> (f64, f64) {
     let edges = horizontal_edges(node);
-    let max = (replaced_size(node, None, None).0 - edges).max(0.0);
+    let max = (replaced_size(node, None, block_basis).0 - edges).max(0.0);
     let compressible = node.style.percent_width || node.style.percent_max_width;
     let min = if compressible {
-        let space = Replaced::new(node, None, None);
-        (space.min_inline() - edges).max(0.0).min(max)
+        let space = Replaced::new(node, None, block_basis);
+        (space.min_inline(Mode::Normal, None) - edges)
+            .max(0.0)
+            .min(max)
     } else {
         max
     };
     (min, max)
 }
 
+/**
+ * The content-box width a replaced box takes with its width properties ignored: its height
+ * through the ratio, or its natural width. It is a flex item's content size suggestion
+ * (css-flexbox-1 4.5), which an authored width never raises: a `width: 100px; height: 30px`
+ * square image may shrink to 30px.
+ */
+pub(in crate::document::render) fn replaced_suggestion(
+    node: &Node,
+    block_basis: Option<f64>,
+) -> f64 {
+    let size = Replaced::new(node, None, block_basis).size(Mode::IgnoreInline);
+    (size.0 - horizontal_edges(node)).max(0.0)
+}
+
+/** A replaced box's used aspect ratio and whether it sizes the border box, as `ratio` resolves
+it from its natural size; a stretched flex item transfers its cross size through it. */
+pub(in crate::document::render) fn replaced_ratio(node: &Node) -> Option<(f64, bool)> {
+    Replaced::new(node, None, None).ratio
+}
+
 impl<'a> Replaced<'a> {
     /** Normalises the ratio and natural size as Blink's ComputeNormalizedNaturalSize does. */
     fn new(node: &'a Node, available: Option<f64>, block_basis: Option<f64>) -> Self {
         let edges = (horizontal_edges(node), vertical_edges(node));
-        let natural = node
-            .image_size
-            .filter(|(w, h)| *w > 0 && *h > 0)
-            .map(|(w, h)| (f64::from(w), f64::from(h)));
+        let natural = super::natural::natural(node);
         let mut space = Self {
             node,
             available,
             block_basis,
             edges,
-            ratio: ratio(node, natural),
+            ratio: ratio(node, natural.ratio),
             natural: None,
+            fixed: None,
         };
-        space.natural = match (natural, space.ratio) {
-            (Some((w, _)), Some(_)) => {
-                let inline = w + edges.0;
-                Some((inline, space.block_from_ratio(inline)))
-            }
-            (Some((w, h)), None) => Some((w + edges.0, h + edges.1)),
-            (None, Some(_)) => None,
-            (None, None) => Some(unloaded(node, edges)),
-        };
+        space.natural = space.normalized(natural.width, natural.height);
         space
+    }
+    /** The border-box natural size: a missing dimension follows the ratio, or without one
+    takes CSS 2.1's 300 by 150 default; the block size is coerced to the ratio when there is
+    one. None when only a ratio is known. */
+    fn normalized(&self, width: Option<f64>, height: Option<f64>) -> Option<(f64, f64)> {
+        if width.is_none() && height.is_none() {
+            return self
+                .ratio
+                .is_none()
+                .then(|| unloaded(self.node, self.edges));
+        }
+        let unratioed = self.ratio.is_none();
+        let inline = width
+            .map(|w| w + self.edges.0)
+            .or_else(|| unratioed.then_some(DEFAULT_NATURAL.0 + self.edges.0));
+        let block = height
+            .map(|h| h + self.edges.1)
+            .or_else(|| unratioed.then_some(DEFAULT_NATURAL.1 + self.edges.1));
+        let inline = inline.or_else(|| Some(self.inline_from_ratio(block?)))?;
+        let block = match self.ratio {
+            Some(_) => self.block_from_ratio(inline),
+            None => block?,
+        };
+        Some((inline, block))
     }
     /** Blink's ComputeReplacedSizeInternal for one mode. */
     fn size(&self, mode: Mode) -> (f64, f64) {
@@ -143,18 +211,27 @@ impl<'a> Replaced<'a> {
         if mode == Mode::IgnoreBlock {
             return (0.0, UNBOUNDED, None);
         }
-        let min = self.block_length(self.node.style.min_height, Some(0.0));
+        let [min_fit, max_fit] = self.node.style.height_bounds_fit;
+        let min = match min_fit {
+            true => self.intrinsic_block(mode),
+            false => self.block_length(self.node.style.min_height, Some(0.0)),
+        };
         let min = min.unwrap_or(self.edges.1);
-        let max = self
-            .block_length(self.node.style.max_height, self.block_basis)
-            .unwrap_or(UNBOUNDED)
-            .max(min);
-        let main = self
-            .block_length(self.node.style.height, self.block_basis)
-            .or_else(|| self.intrinsic_block(mode));
+        let max = match max_fit {
+            true => self.intrinsic_block(mode),
+            false => self.block_length(self.node.style.max_height, self.block_basis),
+        };
+        let max = max.unwrap_or(UNBOUNDED).max(min);
+        let main = match self.node.style.height_fit {
+            true => self.intrinsic_block(mode),
+            false => self.block_length(self.node.style.height, self.block_basis),
+        };
+        let main = main.or_else(|| self.intrinsic_block(mode));
         (min, max, main.map(|size| clamp(size, min, max)))
     }
-    /** The block size an `auto` or unresolvable height takes, Blink's BlockSizeFunc. */
+    /** The block size an `auto` or unresolvable height takes, and what a content keyword
+    (`min-content`, `max-content`, `fit-content`) on a block property resolves to: a replaced
+    box has one intrinsic block size (Blink's BlockSizeFunc). */
     fn intrinsic_block(&self, mode: Mode) -> Option<f64> {
         match self.ratio {
             None => self.natural.map(|natural| natural.1),
@@ -170,10 +247,13 @@ impl<'a> Replaced<'a> {
         block: Option<f64>,
         transferred: (f64, f64),
     ) -> (f64, f64, Option<f64>) {
-        let mut min = self.min_inline();
-        let mut max = self.max_inline().max(min);
+        if let Some(fixed) = self.fixed {
+            return (fixed, fixed, Some(fixed));
+        }
+        let mut min = self.min_inline(mode, block);
+        let mut max = self.max_inline(mode, block).max(min);
         let main = self
-            .main_inline()
+            .main_inline(mode, block)
             .or_else(|| self.intrinsic_inline(mode, block));
         let inline = main.map(|size| clamp(size, min, max));
         if inline.is_none() {
@@ -182,7 +262,9 @@ impl<'a> Replaced<'a> {
         }
         (min, max, inline)
     }
-    /** The inline size an `auto` or unresolvable width takes, Blink's MinMaxSizesFunc. */
+    /** The inline size an `auto` or unresolvable width takes, and what a content keyword on an
+    inline property resolves to: its min- and max-content widths are one size (Blink's
+    MinMaxSizesFunc). */
     fn intrinsic_inline(&self, mode: Mode, block: Option<f64>) -> Option<f64> {
         if self.ratio.is_none() {
             return self.natural.map(|natural| natural.0);
@@ -222,8 +304,15 @@ impl<'a> Replaced<'a> {
     }
     /** The authored width as a border-box size; None for `auto` or a percentage of an indefinite
     width. */
-    fn main_inline(&self) -> Option<f64> {
+    fn main_inline(&self, mode: Mode, block: Option<f64>) -> Option<f64> {
         let style = &self.node.style;
+        if style.size_keywords[0] != SizeKeyword::None {
+            return self.intrinsic_inline(mode, block);
+        }
+        if style.width_stretch {
+            // `width: stretch` is the border box filling the available width less margins.
+            return self.available.map(|_| self.stretch_fit());
+        }
         let width = style.width?;
         let value = if style.percent_width {
             layout_unit_floor(self.available? * width / 100.0) + style.width_offset
@@ -233,15 +322,21 @@ impl<'a> Replaced<'a> {
         Some(self.inline_border(value))
     }
     /** The min-width as a border-box size; `auto` is the edges alone. */
-    fn min_inline(&self) -> f64 {
+    fn min_inline(&self, mode: Mode, block: Option<f64>) -> f64 {
+        if self.node.style.size_keywords[1] != SizeKeyword::None {
+            return self.intrinsic_inline(mode, block).unwrap_or(self.edges.0);
+        }
         self.node
             .style
             .min_width
             .map_or(self.edges.0, |width| self.inline_border(width))
     }
     /** The max-width as a border-box size; `none` or an unresolvable percentage is unbounded. */
-    fn max_inline(&self) -> f64 {
+    fn max_inline(&self, mode: Mode, block: Option<f64>) -> f64 {
         let style = &self.node.style;
+        if style.size_keywords[2] != SizeKeyword::None {
+            return self.intrinsic_inline(mode, block).unwrap_or(UNBOUNDED);
+        }
         let Some(value) = style.max_width else {
             return UNBOUNDED;
         };
@@ -295,10 +390,14 @@ impl<'a> Replaced<'a> {
  * one. An image not yet decoded takes its ratio from its HTML width and height, which Blink maps
  * to `aspect-ratio: auto w / h`.
  */
-fn ratio(node: &Node, natural: Option<(f64, f64)>) -> Option<(f64, bool)> {
-    let natural = natural
-        .map(|(w, h)| w / h)
-        .or_else(|| Some(dimension(node, "width")? / dimension(node, "height")?));
+fn ratio(node: &Node, natural: Option<f64>) -> Option<(f64, bool)> {
+    // Size containment drops the content's ratio but not the attributes' `auto w / h` hint,
+    // which an svg's own width and height attributes do not give.
+    let hinted = || {
+        let hinted = node.tag != "svg";
+        Some(dimension(node, "width").filter(|_| hinted)? / dimension(node, "height")?)
+    };
+    let natural = natural.or_else(hinted);
     let border_box = node.style.box_sizing == BoxSizing::BorderBox;
     match (node.style.aspect_ratio, natural) {
         (Some(_), Some(natural)) if node.style.aspect_ratio_auto => Some((natural, false)),

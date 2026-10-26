@@ -641,12 +641,15 @@ impl super::supervisor::Runtime {
             .collect::<Vec<_>>();
         let backgrounds = crate::document::background_urls(document, base.as_str())
             .into_iter()
+            // A later layer's key names its element; the canvas's is always wanted.
             .filter(|(id, _)| {
-                document
-                    .nodes
-                    .iter()
-                    .find(|node| node.local_id == *id)
-                    .is_some_and(wanted)
+                crate::document::background_owner(*id).is_none_or(|owner| {
+                    document
+                        .nodes
+                        .iter()
+                        .find(|node| node.local_id == owner)
+                        .is_some_and(wanted)
+                })
             })
             .collect::<Vec<_>>();
         let mut images = BTreeMap::new();
@@ -667,6 +670,7 @@ impl super::supervisor::Runtime {
                     images.insert(node.local_id, asset);
                 }
                 Some((Fetched::Vector(markup, size), _)) => {
+                    node.image_ratio_free = !vector_ratio(&markup);
                     node.image_src = Some(svg_url(&markup));
                     node.image_size = Some(size);
                 }
@@ -1086,6 +1090,21 @@ fn presentation(node: &Node) -> BTreeMap<String, String> {
     attributes
 }
 
+/// Whether reduced SVG markup has a natural aspect ratio: its root carries a viewBox, or both a
+/// width and a height (the serializer writes every root attribute into its start tag).
+fn vector_ratio(markup: &str) -> bool {
+    let root = markup.split('>').next().unwrap_or_default();
+    // A positive length; a zero or a percentage gives no ratio.
+    let has = |name: &str| {
+        let key = format!(" {name}=\"");
+        root.split_once(&key)
+            .and_then(|(_, rest)| rest.split('"').next())
+            .and_then(|value| value.trim().trim_end_matches("px").parse::<f64>().ok())
+            .is_some_and(|value| value > 0.0)
+    };
+    root.contains(" viewbox=\"") || (has("width") && has("height"))
+}
+
 /// The intrinsic size of an svg: its width and height, one of them with the viewBox ratio, the
 /// viewBox size, or 300x150; percentages count as absent. Clamped to 1..=IMAGE_DIMENSION.
 fn svg_size(svg: &Node) -> (u32, u32) {
@@ -1346,6 +1365,25 @@ mod tests {
     /** One header's decoded size. */
     fn size(mime: &str, bytes: &[u8]) -> Option<(u32, u32)> {
         dimensions(mime, bytes).ok().map(|d| (d.width, d.height))
+    }
+
+    /** An SVG has a natural aspect ratio from a viewBox or from both a positive width and a
+     * positive height; a lone height, or a zero width, gives none. */
+    #[test]
+    fn svg_ratio_needs_a_view_box_or_both_positive_sizes() {
+        let ratio = |text: &str| {
+            let Ok(Fetched::Vector(markup, _)) = vector("image/svg+xml", text) else {
+                panic!("expected a drawing");
+            };
+            vector_ratio(&markup)
+        };
+        let svg = |attributes: &str| {
+            format!("<svg xmlns='http://www.w3.org/2000/svg' {attributes}></svg>")
+        };
+        assert!(ratio(&svg("viewBox='0 0 5 10' height='20'")));
+        assert!(ratio(&svg("width='10' height='20'")));
+        assert!(!ratio(&svg("height='20px'")));
+        assert!(!ratio(&svg("width='0px' height='20px'")));
     }
 
     /** SVG reduces to the drawing subset and takes its size from width, height and viewBox. */

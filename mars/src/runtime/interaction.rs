@@ -395,6 +395,7 @@ impl Runtime {
             runtime.page = Some(page);
             runtime.sync_history_url();
             runtime.clamp_scroll();
+            runtime.adopt_script_scroll();
             runtime.inspection()
         });
         if published.is_err()

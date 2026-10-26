@@ -343,8 +343,9 @@ pub const LAYOUT_MEASURES: usize = 16_384;
 pub const LAYOUT_EXTENT: f64 = 1_048_576.0;
 /** Flexible-size freezing ignores only numerical noise beneath this tolerance. */
 pub const LAYOUT_EPSILON: f64 = 1e-7;
-/** CSS numeric inputs remain within the existing finite geometry range. */
-pub const CSS_MAX_SCALAR: f64 = 4096.0;
+/** CSS numeric inputs remain within the finite geometry range; larger lengths clamp to it. Long
+ * pages and reftests set `height: 10000px`, which a 4096 bound dropped. */
+pub const CSS_MAX_SCALAR: f64 = 65_536.0;
 /** Native text remains readable under the supported bounded CSS font range. */
 pub const CSS_MIN_FONT_SIZE: f64 = 8.0;
 /** Upper font sizing limits bound glyph measurement and line allocation. Reftests draw Ahem

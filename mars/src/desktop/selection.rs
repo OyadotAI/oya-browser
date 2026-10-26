@@ -155,6 +155,7 @@ impl PageSelection {
                         family: item.font_family,
                         spacing: item.letter_spacing,
                         italic: item.italic,
+                        autospace: item.autospace,
                     })
                     .collect(),
             ),

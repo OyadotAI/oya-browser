@@ -191,7 +191,7 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             let declarations = style_map(vm, *node);
             let value = declarations
                 .iter()
-                .find(|(property, _)| *property == kebab(&text))
+                .find(|(property, _)| *property == css_name(&text))
                 .map(|(_, value)| value.clone())
                 .unwrap_or_default();
             Ok(Some(Prop::data(JsValue::string(&value)?)))
@@ -201,7 +201,7 @@ pub(super) fn host_own(vm: &mut Vm, id: ObjectId, key: &Key) -> Res<Option<Prop>
             if !style_property(&text) {
                 return Ok(None);
             }
-            let value = computed_value(vm, *node, &kebab(&text));
+            let value = computed_value(vm, *node, &css_name(&text));
             Ok(Some(readonly(JsValue::string(&value)?)))
         }
         HostData::Dataset(node) => {
@@ -255,7 +255,7 @@ pub(super) fn host_write(
                 return Ok(None);
             }
             let text = vm.to_text(value)?;
-            set_style(vm, node, &kebab(&property), &text)?;
+            set_style(vm, node, &css_name(&property), &text)?;
             Ok(Some(true))
         }
         HostData::Dataset(node) => {
@@ -376,7 +376,7 @@ fn style_property(name: &str) -> bool {
 }
 
 /** CSS properties a style declaration exposes, camelCased and sorted for binary search. */
-const CSS_PROPERTIES: [&str; 239] = [
+const CSS_PROPERTIES: [&str; 240] = [
     "accentColor",
     "alignContent",
     "alignItems",
@@ -438,6 +438,7 @@ const CSS_PROPERTIES: [&str; 239] = [
     "borderWidth",
     "bottom",
     "boxDecorationBreak",
+    "boxOrient",
     "boxShadow",
     "boxSizing",
     "breakAfter",
@@ -617,6 +618,20 @@ const CSS_PROPERTIES: [&str; 239] = [
     "zIndex",
     "zoom",
 ];
+
+/** A style attribute's CSS property: kebab-case, with CSSOM's vendor prefix rule, so
+`webkitLineClamp` and `WebkitLineClamp` both name `-webkit-line-clamp`. */
+fn css_name(attribute: &str) -> String {
+    let prefixed = ["webkit", "Webkit"].iter().find_map(|prefix| {
+        attribute
+            .strip_prefix(prefix)
+            .filter(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
+    });
+    match prefixed {
+        Some(rest) => format!("-webkit{}", kebab(rest)),
+        None => kebab(attribute),
+    }
+}
 
 /** camelCase to kebab-case (`backgroundColor` to `background-color`, `cssFloat` to `float`). */
 pub(in crate::v9) fn kebab(name: &str) -> String {
@@ -1739,6 +1754,11 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 None => JsValue::string("").map_err(Into::into),
             }
         }
+        "scrollWidth" if node == HTML || node == BODY => {
+            let width = super::scrolling::document_width(vm);
+            let fallback = client_box(vm, node).2;
+            Ok(JsValue::Number(width.unwrap_or(fallback)))
+        }
         "offsetWidth" | "offsetHeight" | "clientWidth" | "clientHeight" | "scrollWidth"
         | "scrollHeight" => {
             let (_, _, width, height) = client_box(vm, node);
@@ -1759,28 +1779,16 @@ pub(in crate::v9) fn element_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Ok(JsValue::Number(size))
         }
         "offsetTop" | "offsetLeft" => {
-            // Offsets are relative to the body, which starts at the document origin.
-            let (x, y, ..) = client_box(vm, node);
-            let value = if name == "offsetTop" {
-                y + vm.page.environment.scroll_y
-            } else {
-                x
-            };
-            Ok(JsValue::Number(value))
+            let axis = usize::from(name == "offsetTop");
+            Ok(JsValue::Number(super::offsets::offset(vm, node, axis)))
         }
-        "scrollTop" => Ok(JsValue::Number(if node == HTML || node == BODY {
-            vm.page.environment.scroll_y
-        } else {
-            0.0
-        })),
-        "clientTop" | "clientLeft" | "scrollLeft" => Ok(JsValue::Number(0.0)),
-        "offsetParent" => {
-            if vm.page.connected(node) && node != BODY && node != HTML {
-                wrap(vm, BODY)
-            } else {
-                Ok(JsValue::Null)
-            }
-        }
+        "scrollTop" => Ok(JsValue::Number(super::scrolling::offset(vm, node)[1])),
+        "scrollLeft" => Ok(JsValue::Number(super::scrolling::offset(vm, node)[0])),
+        "clientTop" | "clientLeft" => Ok(JsValue::Number(0.0)),
+        "offsetParent" => match super::offsets::offset_parent(vm, node) {
+            Some(parent) => wrap(vm, parent),
+            None => Ok(JsValue::Null),
+        },
         "elements" if vm.page.tag(node) == "form" => {
             let controls = super::form_submit::controls(vm, node);
             node_list(vm, controls)
@@ -1890,7 +1898,10 @@ fn element_set_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
                 .set_attribute(node, "style", Some(&text))
                 .map_err(|error| dom_error(vm, error))?;
         }
-        "scrollTop" | "scrollLeft" | "selectedIndex" => {}
+        name @ ("scrollTop" | "scrollLeft") => {
+            super::scrolling::set_property(vm, node, name, &value)?;
+        }
+        "selectedIndex" => {}
         _ => {}
     }
     Ok(JsValue::Undefined)
@@ -2327,13 +2338,13 @@ fn element_method_steps(vm: &mut Vm, call: Call) -> Res<JsValue> {
             Ok(JsValue::Object(promise))
         }
         "canPlayType" => JsValue::string("").map_err(Into::into),
-        "scrollIntoView"
-        | "scrollTo"
-        | "scrollBy"
-        | "scroll"
-        | "setPointerCapture"
-        | "releasePointerCapture"
-        | "select" => Ok(JsValue::Undefined),
+        name @ ("scrollTo" | "scrollBy" | "scroll") => {
+            super::scrolling::scroll_method(vm, node, &call, name == "scrollBy")?;
+            Ok(JsValue::Undefined)
+        }
+        "scrollIntoView" | "setPointerCapture" | "releasePointerCapture" | "select" => {
+            Ok(JsValue::Undefined)
+        }
         "click" => {
             super::events::fire(vm, super::Target::Node(node), "click", true, true)?;
             Ok(JsValue::Undefined)
@@ -2559,7 +2570,7 @@ pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
     let environment = &vm.page.environment;
     if node == HTML || node == BODY {
         return (
-            0.0,
+            -environment.scroll_x,
             -environment.scroll_y,
             environment.viewport_width,
             environment
@@ -2570,7 +2581,12 @@ pub(super) fn client_box(vm: &mut Vm, node: usize) -> (f64, f64, f64, f64) {
         );
     }
     match environment.geometry.iter().find(|b| b.node == node) {
-        Some(b) => (b.x, b.y - environment.scroll_y, b.width, b.height),
+        Some(b) => (
+            b.x - environment.scroll_x,
+            b.y - environment.scroll_y,
+            b.width,
+            b.height,
+        ),
         None => {
             note_stale_geometry(vm, node);
             (0.0, 0.0, 0.0, 0.0)
@@ -2593,7 +2609,7 @@ fn note_stale_geometry(vm: &mut Vm, node: usize) {
 
 /** `elementFromPoint`: the last painted (topmost) box containing a client point, if any. */
 fn element_from_point(vm: &mut Vm, call: &Call) -> Res<Option<usize>> {
-    let x = vm.to_number(&call.arg(0))?;
+    let x = vm.to_number(&call.arg(0))? + vm.page.environment.scroll_x;
     let y = vm.to_number(&call.arg(1))? + vm.page.environment.scroll_y;
     let hit = vm
         .page
