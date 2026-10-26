@@ -258,3 +258,51 @@ fn mixed_stands_ideographs_upright() {
             .any(|i| i.writing != 0 && i.lines.iter().any(|l| l.text == "a"))
     );
 }
+
+/** In vertical-lr the line's over side is the physical right: a `vertical-align: top` box sits
+against the line box's right edge. */
+#[test]
+fn vertical_lr_top_aligns_to_the_right_of_the_line() {
+    let (document, display) = laid(
+        "<div id=d>A<span id=s>o</span></div>",
+        "#d{writing-mode:vertical-lr;font:40px/120px monospace}\
+         #s{font:20px/20px monospace;vertical-align:top}",
+    );
+    let (d, s) = (
+        item(&document, &display, "d"),
+        item(&document, &display, "s"),
+    );
+    // Its content area overhangs its 20px line box by half the font's extra height.
+    assert!(
+        (s.x + s.width - (d.x + d.width)).abs() < 2.0,
+        "{} vs {}",
+        s.x + s.width,
+        d.x + d.width
+    );
+}
+
+/** `unicode-bidi: plaintext` takes the block's direction from its first strong character, so a
+Hebrew-first paragraph aligns right. */
+#[test]
+fn plaintext_block_takes_its_first_strong_direction() {
+    let (document, display) = laid(
+        "<div id=p>&gt; \u{5d0} b</div>",
+        "#p{unicode-bidi:plaintext;width:400px}",
+    );
+    let p = item(&document, &display, "p");
+    let right = p.lines.iter().map(|l| l.x + l.width).fold(0.0, f64::max);
+    assert!(
+        (right - (p.x + p.width)).abs() < 1.0,
+        "lines end at the right edge"
+    );
+}
+
+/** An orthogonal box with no definite room takes its nearest scroller's max-height. */
+#[test]
+fn orthogonal_box_takes_its_scrollers_max_height() {
+    let (document, display) = laid(
+        "<div style='overflow:hidden;max-height:100px'><div id=v>aa aa aa aa aa aa aa</div></div>",
+        "#v{writing-mode:vertical-rl;font:20px/1 monospace}",
+    );
+    assert!(item(&document, &display, "v").height <= 100.0);
+}

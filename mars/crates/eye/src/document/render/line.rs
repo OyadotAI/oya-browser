@@ -198,6 +198,11 @@ pub(super) fn finish(flow: &mut Flow) -> f64 {
                 VerticalAlign::Bottom => height - frag.height,
                 _ => top_of(&frag) - lowest + down,
             };
+            // vertical-lr: the line's over edge is the far (physical right) side.
+            let top = match flow.mirror_lines {
+                true => height - (top - cut) - frag.height + cut,
+                false => top,
+            };
             (frag, top - cut)
         })
         .collect();

@@ -1,6 +1,7 @@
 /** CSS 2.1 absolute and fixed placement runs after normal flow, so out-of-flow boxes never move it. */
 use super::flow::*;
 use crate::document::Position;
+use crate::document::style::TableBox;
 
 /** A containing block's padding box in document points. */
 #[derive(Clone, Copy)]
@@ -297,9 +298,13 @@ fn block_size(node: &Node, block: Block, axis: Axis, width: f64) -> Option<f64> 
         .map(|height| super::sizing::border_height(node, height));
     // ponytail: content taller than the ratio does not grow the box (css-sizing-4's automatic
     // minimum); lay the box out at the ratio height and take the larger when a page needs it.
+    // A table is never stretched between its insets: its height is its rows', and auto margins
+    // then center it (position-absolute-center-007).
+    let table = node.tag == "table" || node.style.table_box == TableBox::Table;
+    let stretch = axis.stretches() && !node.style.height_fit && !table;
     let size = authored
         .or_else(|| aspect_height(node, width))
-        .or_else(|| (axis.stretches() && !node.style.height_fit).then(|| axis.available()))?;
+        .or_else(|| stretch.then(|| axis.available()))?;
     Some(clamp_height(node, size, Some(block.height)))
 }
 /** The border-box height `aspect-ratio` gives at this border-box width: the ratio sizes the

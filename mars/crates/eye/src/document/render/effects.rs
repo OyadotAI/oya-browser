@@ -135,6 +135,7 @@ pub(super) fn stack(
         let node = tree.node(item.local_id)?;
         let matrix = painted(&mut tree, &items, node)?;
         let clip = clip(&mut tree, &items, node)?;
+        let clip = generated_clip(&mut tree, &items, node, item, clip)?;
         // A column slice carries its own clip, which the overflow clips intersect.
         let clip = match (
             clip,
@@ -1138,6 +1139,29 @@ fn scroll_areas(
         });
     }
     Ok(areas)
+}
+/** A `::before` or `::after` box is its element's content, so the element's own overflow clip
+applies to it as to a child, though the box shares the element's identity
+(overflow-clip-margin-border-radius-002). */
+fn generated_clip(
+    tree: &mut Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    item: &DisplayItem,
+    clip: Option<ClipRect>,
+) -> EngineResult<Option<ClipRect>> {
+    let generated = matches!(item.tag.as_str(), "::before" | "::after");
+    let clips = node.style.overflow != Overflow::Visible || node.style.contain_paint;
+    if !generated || !clips {
+        return Ok(clip);
+    }
+    let Some(own) = clip_box(tree, items, node)? else {
+        return Ok(clip);
+    };
+    Ok(Some(match clip {
+        Some(outer) => outer.intersect(&own),
+        None => own,
+    }))
 }
 /** Overflow clips, then the `clip-path` and `clip` shapes of this element and every ancestor. */
 fn clip(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Option<ClipRect>> {

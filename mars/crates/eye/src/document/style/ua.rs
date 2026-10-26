@@ -176,6 +176,11 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
     if CLIPPED_REPLACED.contains(&tag) {
         out.extend([("overflow-x", "clip"), ("overflow-y", "clip")]);
     }
+    // svg.css: `svg:not(:root) { overflow: hidden }`, so a flex or grid item svg has no
+    // automatic minimum size (display-flex-svg-overflow-default).
+    if tag == "svg" {
+        out.extend([("overflow-x", "hidden"), ("overflow-y", "hidden")]);
+    }
     if tag == "pre" {
         out.push(("white-space", "pre"));
     }

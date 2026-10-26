@@ -150,7 +150,9 @@ pub(super) fn layout(
     let room = forced
         .and_then(|bounds| bounds.height)
         .or(flow.definite.map(|height| (height - margins).max(0.0)));
-    let available = room.unwrap_or(context.viewport.1);
+    let available = room
+        .or_else(|| scroller_room(context, node))
+        .unwrap_or(context.viewport.1);
     // A flex or grid item measured before its area is known has an indefinite containing
     // block, so its percentage height behaves as auto (css-grid-2 6.6; Blink resolves it once
     // the area is sized).
@@ -230,6 +232,32 @@ the subtree's own flow placed. */
 fn inset_both_axes(node: &Node) -> bool {
     let inset = &node.style.inset;
     (inset[0].is_some() || inset[2].is_some()) && (inset[1].is_some() || inset[3].is_some())
+}
+
+/** CSS Writing Modes 7.3.1: with no definite room from its container, an orthogonal box's
+available space is its nearest scroll container's fixed content height, else its fixed
+max-height (raised to its min-height), never more than the initial containing block; None when
+no scroller fixes either (the viewport then gives it). */
+fn scroller_room(context: &LayoutContext<'_>, node: &Node) -> Option<f64> {
+    let mut current = node.parent.and_then(|parent| context.node(parent).ok());
+    while let Some(ancestor) = current {
+        let style = &ancestor.style;
+        if style.overflow != crate::document::Overflow::Visible {
+            let bound = style.height.or(style.max_height)?.resolve_size(None)?;
+            // Its min-height wins over the max, and the initial containing block caps both.
+            let floor = style.min_height.and_then(|min| min.resolve_size(None));
+            let bound = floor.map_or(bound, |floor| bound.max(floor));
+            let content = match style.box_sizing {
+                crate::document::BoxSizing::BorderBox => {
+                    (bound - super::flow::vertical_edges(ancestor)).max(0.0)
+                }
+                _ => bound,
+            };
+            return Some(content.min(context.viewport.1));
+        }
+        current = ancestor.parent.and_then(|parent| context.node(parent).ok());
+    }
+    None
 }
 
 /** The border-box width a vertical root takes as an intrinsic size: its logical height,

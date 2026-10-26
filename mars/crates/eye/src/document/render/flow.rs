@@ -37,6 +37,9 @@ pub(super) struct Flow {
     pub ellipsis: Option<usize>,
     /** The block's `direction` is `rtl`, so its lines lay out right to left (render/bidi.rs). */
     pub rtl: bool,
+    /** `vertical-lr` text laid out turned: a line's over side is the physical right, while
+     * block flow runs left to right, so each line's contents mirror across it. */
+    pub mirror_lines: bool,
     /** The `text-indent` the current line started with, which a right-to-left line takes off
      * its right edge once it is aligned. */
     pub indent: f64,
@@ -116,6 +119,7 @@ impl Flow {
             align: Default::default(),
             ellipsis: None,
             rtl: false,
+            mirror_lines: false,
             indent: 0.0,
             floats: Vec::new(),
             cleared: None,
@@ -879,6 +883,13 @@ pub(super) fn block(
     inner.align = alignment(style);
     inner.ellipsis = ellipsis_owner(node);
     inner.rtl = style.rtl;
+    if let Some(rtl) = super::plaintext::paragraph_rtl(context, node) {
+        let mut paragraph = style.clone();
+        paragraph.rtl = rtl;
+        inner.align = alignment(&paragraph);
+        inner.rtl = rtl;
+    }
+    inner.mirror_lines = style.writing_lr && !style.writing_sideways;
     // A column flex item whose flexed height is indefinite lends its children no percentage basis.
     // A grid still stretches its tracks to that height: its items resolve against their areas.
     let indefinite = forced.is_some()

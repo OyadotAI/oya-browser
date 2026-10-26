@@ -53,6 +53,7 @@ mod nine_piece;
 mod order;
 mod path;
 mod phrase;
+mod plaintext;
 mod positioned;
 mod root_box;
 mod root_fit;
