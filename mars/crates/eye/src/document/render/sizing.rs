@@ -1,6 +1,7 @@
-/** Shared sizing caches and work limits keep intrinsic, dry-run and final layout bounded. */
 use super::validation::bounded;
 use super::{DisplayItem, flow};
+/** Shared sizing caches and work limits keep intrinsic, dry-run and final layout bounded. */
+use crate::document::style::{MIN_WIDTH, WIDTH, calc_size_through};
 use crate::{
     constants::{LAYOUT_EXTENT, LAYOUT_MEASURES, LAYOUT_WORK},
     document::{BoxSizing, Document, FlexDirection, FlexWrap, Node, style::SizeKeyword},
@@ -9,8 +10,22 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
+mod block_keywords;
+mod containment;
+mod natural;
+mod quirks;
 mod replaced;
-pub(super) use replaced::{replaced_contribution, replaced_size};
+mod stretch;
+mod transfer;
+pub(super) use block_keywords::{clamp_content_bounds, has_content_bounds};
+pub(super) use containment::contained_height;
+pub(super) use quirks::quirk_definite;
+pub(super) use replaced::{
+    replaced_block_at, replaced_contribution, replaced_fit, replaced_ratio, replaced_size,
+    replaced_suggestion,
+};
+pub(super) use stretch::{clamp_stretch, stretch_height, stretched};
+pub(super) use transfer::{min_width_auto, transferred_width};
 
 /** Assigned border boxes never reinterpret an item's authored width. */
 #[derive(Clone, Copy, Debug)]
@@ -47,6 +62,9 @@ pub(super) struct LayoutContext<'a> {
     /** Static elements whose absolute or fixed `::before`/`::after` need an ancestor's box, with
     the element's padding-box origin as the static position; placed with the other out-of-flow boxes. */
     deferred_generated: BTreeMap<usize, (f64, f64)>,
+    /** Each laid-out grid's track geometry, which its absolutely positioned descendants take
+    their grid area from once its own box is placed. */
+    grid_frames: BTreeMap<usize, super::grid::abspos::Frame>,
     /** A bound ran out; the rest of the page is not laid out. */
     exhausted: bool,
     /** List item ordinals by identity, computed once per list. */
@@ -55,6 +73,26 @@ pub(super) struct LayoutContext<'a> {
     content_heights: BTreeMap<usize, f64>,
     /** Inline boxes' extent past their first and last runs (child margins, own spaces). */
     inline_edges: BTreeMap<usize, (f64, f64)>,
+    /** The viewport (width, height): the initial containing block, whose height is the room
+    an orthogonal (vertical) flow gets when its container's height is not definite. */
+    pub viewport: (f64, f64),
+    /** The body's padding box `[x, y, width, height]` when the body is positioned: the
+    containing block of top-level absolute boxes instead of the viewport (CSS2 abspos-009). The
+    body is formatting data, not a node, so layout records it before placing them. */
+    pub body_block: Option<[f64; 4]>,
+    /** The column flex item being placed whose flexed height is not definite (Blink's
+    `IsInitialBlockSizeIndefinite`): its percentage-height children resolve as `auto`. */
+    pub indefinite_item: Option<usize>,
+    /** Out-of-flow boxes whose static position is their right edge (`mark_static_end`). */
+    static_end: std::collections::BTreeSet<usize>,
+    /** Out-of-flow boxes whose static position is their horizontal center (`mark_static_center`). */
+    static_center: std::collections::BTreeSet<usize>,
+    /** A `::first-letter` waiting for the first text of the block that set it: that block's
+    identity and the letter's style (render/first_letter.rs). */
+    pub first_letter: Option<(usize, Box<crate::document::ComputedStyle>)>,
+    /** The block whose first formatted line is open, with its `::first-line` fonts
+    (render/first_line_layout.rs). */
+    pub first_line: Option<super::first_line_layout::Pending>,
 }
 impl<'a> LayoutContext<'a> {
     /** Validate identities before any recursive layout, including direct Rust callers. */
@@ -79,10 +117,18 @@ impl<'a> LayoutContext<'a> {
             wrapped: BTreeMap::new(),
             deferred: BTreeMap::new(),
             deferred_generated: BTreeMap::new(),
+            grid_frames: BTreeMap::new(),
             exhausted: false,
             ordinals: BTreeMap::new(),
             content_heights: BTreeMap::new(),
             inline_edges: BTreeMap::new(),
+            viewport: (0.0, 0.0),
+            body_block: None,
+            indefinite_item: None,
+            static_end: std::collections::BTreeSet::new(),
+            static_center: std::collections::BTreeSet::new(),
+            first_letter: None,
+            first_line: None,
         };
         context.measure_keyword_boxes();
         Ok(context)
@@ -180,6 +226,32 @@ impl<'a> LayoutContext<'a> {
     pub fn defer(&mut self, local: usize, position: (f64, f64)) {
         self.deferred.insert(local, position);
     }
+    /** Marks an out-of-flow box whose static position a right-to-left line recorded: its right
+    edge, not its left, goes there. */
+    pub fn mark_static_end(&mut self, local: usize) {
+        self.static_end.insert(local);
+    }
+    /** Whether `mark_static_end` marked this box. */
+    pub fn static_end(&self, local: usize) -> bool {
+        self.static_end.contains(&local)
+    }
+    /** Marks an out-of-flow box whose horizontal static position is a center point (a flex
+    container's centered sole item): its inset-modified containing block is centered there. */
+    pub fn mark_static_center(&mut self, local: usize) {
+        self.static_center.insert(local);
+    }
+    /** Whether `mark_static_center` marked this box. */
+    pub fn static_center(&self, local: usize) -> bool {
+        self.static_center.contains(&local)
+    }
+    /** Records a grid's latest track geometry; the final layout pass overwrites dry runs. */
+    pub(super) fn record_grid_frame(&mut self, local: usize, frame: super::grid::abspos::Frame) {
+        self.grid_frames.insert(local, frame);
+    }
+    /** A grid's recorded track geometry, if it was laid out as a grid. */
+    pub(super) fn grid_frame(&self, local: usize) -> Option<&super::grid::abspos::Frame> {
+        self.grid_frames.get(&local)
+    }
     /** Records a static element whose positioned generated boxes wait for their containing block. */
     pub fn defer_generated(&mut self, local: usize, position: (f64, f64)) {
         self.deferred_generated.insert(local, position);
@@ -248,7 +320,7 @@ impl<'a> LayoutContext<'a> {
     /** Source-order children share their parent's already validated tree depth. */
     pub fn children(&self, local: usize) -> Vec<&'a Node> {
         let mut children = self.all_children(local);
-        children.retain(|node| !node.hidden());
+        children.retain(|node| !node.removed());
         children
     }
     /**
@@ -275,6 +347,20 @@ impl<'a> LayoutContext<'a> {
         }
         self.charge(1)?;
         let node = self.node(local)?;
+        if let Some(size) = containment::contained_widths(node) {
+            self.intrinsic.insert(local, size);
+            return Ok(size);
+        }
+        if super::vertical::is_root(self, node) {
+            let width = super::vertical::intrinsic_width(self, node)?;
+            let content = (width - horizontal_edges(node)).max(0.0);
+            let size = IntrinsicWidths {
+                min_content: content,
+                max_content: content,
+            };
+            self.intrinsic.insert(local, size);
+            return Ok(size);
+        }
         if super::table::is_table(self, node) {
             let size = super::table::intrinsic(self, node)?;
             self.intrinsic.insert(local, size);
@@ -283,6 +369,11 @@ impl<'a> LayoutContext<'a> {
         let mut size = text_intrinsic(self, node)?;
         let mut children = self.children(local);
         children.retain(|child| !flow::out_of_flow(child));
+        let indent = super::indent_intrinsic::indent(node, &children);
+        let own_first = size.min_content;
+        let mut first_min = None;
+        // The widest piece after the first one, which the indent does not widen.
+        let mut rest_min: f64 = 0.0;
         let mut sum = if node.style.display_flex && !node.text.trim().is_empty() {
             size
         } else {
@@ -290,10 +381,14 @@ impl<'a> LayoutContext<'a> {
         };
         let mut maxes = Vec::with_capacity(children.len());
         for child in &children {
-            let value = self.intrinsic_widths(child.local_id)?;
+            let value = super::flex_layout::row_item_widths(self, node, child)?;
             let contribution = intrinsic_contribution(node, child, value);
-            let extra = horizontal_edges(child) + child.style.margin[1] + child.style.margin[3];
+            let extra = intrinsic_extra(child);
             let minimum = contribution.min_content;
+            if first_min.is_some() {
+                rest_min = rest_min.max(minimum + extra);
+            }
+            first_min.get_or_insert(minimum + extra);
             // A table caption is as wide as its table, so only its min-content widens it
             // (Wikipedia thumbnails were as wide as their one-line caption).
             let caption = node.style.table_box == crate::document::style::TableBox::Table
@@ -326,14 +421,48 @@ impl<'a> LayoutContext<'a> {
             let items =
                 children.len() + generated_items + usize::from(!node.text.trim().is_empty());
             let gaps = node.style.column_gap * items.saturating_sub(1) as f64;
-            size.max_content = size.max_content.max(sum.max_content + gaps);
+            size.max_content = match super::flex::Breaking::of(node) {
+                super::flex::Breaking::Balance(min) => size.max_content.max(
+                    super::flex::balanced_max_content(&maxes, node.style.column_gap, min),
+                ),
+                _ => size.max_content.max(sum.max_content + gaps),
+            };
             if node.style.flex_wrap == FlexWrap::NoWrap {
                 size.min_content = size.min_content.max(sum.min_content + gaps);
             }
-        } else if children.iter().all(|child| flow::inline_level(child)) {
-            let line = self.longest_line(node, &children, &maxes, generated_max)?;
+        } else if let Some(width) =
+            super::flex_column_intrinsic::max_content(self, node, &children, size.max_content)?
+        {
+            size.max_content = width.max(size.min_content);
+        } else if children
+            .iter()
+            .all(|child| flow::inline_level(child) || floating(child))
+        {
+            let line = self.longest_line(node, &children, &maxes, generated_max + indent)?;
+            // An indent changes the first line, which `line` measured with every other line.
+            size.max_content = if indent != 0.0 {
+                line.max(0.0)
+            } else {
+                size.max_content.max(line)
+            };
+            let own = !node.text.trim().is_empty();
+            let (first, rest) = match own {
+                true => (Some(own_first), rest_min.max(first_min.unwrap_or(0.0))),
+                false => (first_min, rest_min),
+            };
+            size = super::indent_intrinsic::first_line(node, &children, (first, rest), size);
+        } else {
+            let line = self.longest_run(node, &children, &maxes, generated_max)?;
             size.max_content = size.max_content.max(line);
         }
+        if super::multicol::applies(node) {
+            size = super::multicol_intrinsic::intrinsic(self, node, size)?;
+        }
+        let basis = node
+            .style
+            .aspect_ratio
+            .and_then(|_| super::image::percent_basis(self, node));
+        let size = transfer::ratio_widths(node, size, basis);
         bounded(size.min_content)?;
         bounded(size.max_content)?;
         self.intrinsic.insert(local, size);
@@ -347,9 +476,7 @@ impl<'a> LayoutContext<'a> {
         for generated in super::generated::items(node).into_iter().flatten() {
             let raw = super::flex_layout::item_intrinsic(self, &generated)?;
             let value = intrinsic_contribution(node, &generated, raw);
-            let extra = horizontal_edges(&generated)
-                + generated.style.margin[1]
-                + generated.style.margin[3];
+            let extra = intrinsic_extra(&generated);
             widths.push(IntrinsicWidths {
                 min_content: value.min_content + extra,
                 max_content: value.max_content + extra,
@@ -366,6 +493,36 @@ impl<'a> LayoutContext<'a> {
     ) -> EngineResult<IntrinsicWidths> {
         super::grid::intrinsic(self, node)
     }
+    /** Max-content of inline content split by blocks (CSS 2.1 9.2.1.1): each run of inline
+     * children between blocks is a line of its own, so the widest run counts. Without it an
+     * inline-table beside text took only its own width and wrapped the text around it
+     * (inline-table-valign-001). */
+    fn longest_run(
+        &mut self,
+        node: &Node,
+        children: &[&Node],
+        maxes: &[f64],
+        generated: f64,
+    ) -> EngineResult<f64> {
+        let mut longest = 0.0_f64;
+        let mut start = 0;
+        for end in 0..=children.len() {
+            let block = children
+                .get(end)
+                .is_some_and(|c| super::block_in_inline::is_block(c));
+            if end < children.len() && !block {
+                continue;
+            }
+            if end > start {
+                let own = if start == 0 { generated } else { 0.0 };
+                let run =
+                    self.longest_line(node, &children[start..end], &maxes[start..end], own)?;
+                longest = longest.max(run);
+            }
+            start = end + 1;
+        }
+        Ok(longest)
+    }
     /** Max-content of inline children: a forced break (`<br>`) ends a line, so the widest
      * line counts, not their sum (Blink's ComputeMinMaxSizes breaks at forced breaks). A cell
      * holding "tall<br>cell<br>here" was as wide as all three words. */
@@ -376,21 +533,17 @@ impl<'a> LayoutContext<'a> {
         maxes: &[f64],
         generated: f64,
     ) -> EngineResult<f64> {
-        let (mut longest, mut start) = (0.0_f64, 0);
-        for end in (0..=children.len()).filter(|i| children.get(*i).is_none_or(|c| c.tag == "br")) {
-            let first = start == 0;
-            let own = if first { generated } else { 0.0 };
-            let segment = &children[start..end];
-            let extras = self.inline_extras(node, segment, first)?;
-            longest = longest.max(maxes[start..end].iter().sum::<f64>() + extras + own);
-            start = end + 1;
-        }
-        Ok(longest)
+        super::forced_lines::longest(self, node, (children, maxes), generated)
     }
     /** What one line of inline children adds beyond their own widths: the element's own leading
      * text and the spaces between runs. Without them HN's inner table was too narrow by its
      * " (" and ")" and wrapped a title Chromium keeps on one line. */
-    fn inline_extras(&mut self, node: &Node, children: &[&Node], first: bool) -> EngineResult<f64> {
+    pub(super) fn inline_extras(
+        &mut self,
+        node: &Node,
+        children: &[&Node],
+        first: bool,
+    ) -> EngineResult<f64> {
         let own = if first { node.text.trim() } else { "" };
         let mut extra = if own.is_empty() {
             0.0
@@ -400,13 +553,29 @@ impl<'a> LayoutContext<'a> {
         let space = self.measure(" ", face_for(&node.style, Some(" ")))?;
         // Collapsible spaces between adjacent runs count once per boundary, whichever side
         // holds them (`<a>new</a> | <a>past</a>` has two).
-        let leading =
-            |child: &Node| child.text.starts_with(char::is_whitespace) || child.space_leading;
+        // Preserved white space is measured with its own text, so it adds no boundary space.
+        let collapsible = |child: &Node| {
+            !matches!(
+                child.style.white_space,
+                crate::document::WhiteSpace::Pre
+                    | crate::document::WhiteSpace::PreWrap
+                    | crate::document::WhiteSpace::PreLine
+            )
+        };
+        let leading = |child: &Node| {
+            collapsible(child)
+                && (child.text.starts_with(char::is_whitespace) || child.space_leading)
+        };
         let trailing = |child: &Node| {
-            child.space_after || (child.tag == "#text" && child.text.ends_with(char::is_whitespace))
+            child.space_after
+                || (collapsible(child)
+                    && child.tag == "#text"
+                    && child.text.ends_with(char::is_whitespace))
         };
         let mut boundaries = children
             .windows(2)
+            // A space beside a float collapses: floats leave the line, so it starts or ends there.
+            .filter(|pair| !floating(pair[0]) && !floating(pair[1]))
             .filter(|pair| trailing(pair[0]) || leading(pair[1]))
             .count();
         if let Some(first) = children.first().filter(|_| !own.is_empty()) {
@@ -478,7 +647,7 @@ const LAYOUT_RESERVE: usize = crate::constants::NODES * 8;
 /** Native measurements left to finish placed content after a bound ran out. */
 const MEASURE_RESERVE: usize = 256;
 /** Cache identity of a face: size and spacing bits, weight, family and posture. */
-type FaceKey = (u64, u16, Family, u64, bool);
+type FaceKey = (u64, u16, Family, u64, bool, u8);
 /** Floats key by their bits so identical faces share cached shaping. */
 fn face_key(face: Face) -> FaceKey {
     (
@@ -487,6 +656,7 @@ fn face_key(face: Face) -> FaceKey {
         face.family,
         face.spacing.to_bits(),
         face.italic,
+        face.autospace,
     )
 }
 /** The face a computed style shapes its text with, for both measuring and painting. */
@@ -517,6 +687,11 @@ pub(super) fn face_for(style: &crate::document::ComputedStyle, text: Option<&str
         },
         spacing: style.letter_spacing,
         italic: style.font_style != crate::document::FontStyle::Normal,
+        autospace: crate::platform::autospace::mode(
+            style.text_autospace && style.glyphs_upright != crate::platform::upright::UPRIGHT,
+            &style.lang,
+        ),
+        upright: style.glyphs_upright,
     }
 }
 /// Distinct faces whose native metrics are cached; the cache resets rather than grow past this.
@@ -844,11 +1019,19 @@ pub(super) fn border_width(
     let edges = horizontal_edges(node);
     let min = min_width(node, Some(containing)).unwrap_or(0.0);
     let max = max_width(node, Some(containing)).max(min);
-    let content = specified_content(node, containing).unwrap_or_else(|| {
-        natural
-            .unwrap_or((available - edges).max(0.0))
-            .min((available - edges).max(0.0))
-    });
+    // `width: stretch` fills the room the caller already took the margins out of, which beside
+    // floats is the layout opportunity rather than the whole containing block.
+    let stretch = node
+        .style
+        .width_stretch
+        .then(|| (available - edges).max(0.0));
+    let content = stretch
+        .or_else(|| specified_content(node, containing))
+        .unwrap_or_else(|| {
+            natural
+                .unwrap_or((available - edges).max(0.0))
+                .min((available - edges).max(0.0))
+        });
     content.max(min).min(max) + edges
 }
 /** Native sizing preferences retain the established undecorated control dimensions. */
@@ -858,13 +1041,13 @@ pub(super) fn text_intrinsic(
 ) -> EngineResult<IntrinsicWidths> {
     let face = face_for(&node.style, Some(&node.text));
     if node.tag == "svg" {
-        let width = super::svg::intrinsic_width(node)?;
+        let (min_content, max_content) = super::svg::intrinsic_width(node)?;
         return Ok(IntrinsicWidths {
-            min_content: width,
-            max_content: width,
+            min_content,
+            max_content,
         });
     }
-    if node.tag == "img" {
+    if super::flow::replaced_image(node) {
         return super::image::intrinsic(context, node);
     }
     if ["input", "button", "select", "textarea"].contains(&node.tag.as_str())
@@ -877,28 +1060,43 @@ pub(super) fn text_intrinsic(
         });
     }
     context.charge(node.text.chars().count())?;
-    let text = super::text::transformed(&node.style, &node.text);
-    let words = text.split_whitespace().collect::<Vec<_>>();
+    let own = super::text::own_text(node);
+    let text = super::text::transformed(&node.style, &own);
+    // CSS white space only: a no-break or ideographic space is part of its word, and takes
+    // word-spacing as layout gives it.
+    let words = text
+        .split([' ', '\t', '\n', '\r', '\x0c'])
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
     let mut minimum: f64 = 0.0;
     let mut sum = 0.0;
+    let mut hang = 0.0;
+    let breaks = super::text::min_content_breaks(context, node);
     for word in &words {
-        let width = context.measure(word, face)?;
-        minimum = minimum.max(width);
+        let width =
+            context.measure(word, face)? + super::text::spaces(word) * node.style.word_spacing;
+        // Ideographic spaces ending a word hang at the end of the line it ends.
+        hang = super::text::hanging(context, word, face)?;
+        minimum = minimum.max(widest_piece(context, node, (word, breaks), face)? - hang);
         sum += width;
     }
+    sum -= hang;
     // Max-content is the words and spaces line layout places, not the whole run shaped at once:
     // kerning across a space makes the run narrower, so a box sized to it wrapped its own text
     // (Google's "AI Mode" chip broke onto two lines).
+    // One word is as wide as all of it, however finely it may break.
     let mut maximum = if words.len() <= 1 {
-        minimum
+        sum.max(minimum)
     } else {
-        sum + context.measure(" ", face)? * (words.len() - 1) as f64
+        let gap = context.measure(" ", face)? + node.style.word_spacing;
+        sum + gap * (words.len() - 1) as f64
     };
-    // `pre-wrap` preserves a run's trailing spaces; they hang at a wrap but Blink still counts
-    // them in max-content, so `<span>Day: </span><a>` keeps its gap as a flex item.
-    if node.style.white_space == crate::document::WhiteSpace::PreWrap && !words.is_empty() {
-        let trailing = text.len() - text.trim_end_matches([' ', '\t']).len();
-        maximum += context.measure(" ", face)? * trailing as f64;
+    // Preserved spaces and forced breaks count as line layout places them: max-content is the
+    // widest preserved line, spaces included (`pre-wrap`'s trailing spaces hang at a wrap but
+    // Blink still counts them, so `<span>Day: </span><a>` keeps its gap as a flex item, and a
+    // `pre` table cell holding one space is a space wide).
+    if let Some(widest) = preserved_max(context, node, &text, face)? {
+        maximum = widest;
     }
     if matches!(
         node.style.white_space,
@@ -912,6 +1110,70 @@ pub(super) fn text_intrinsic(
         min_content: layout_unit_ceil(minimum),
         max_content: layout_unit_ceil(maximum),
     })
+}
+
+/** The widest piece of `word` its break opportunities leave unbreakable (a CJK character, a
+phrase, the text between soft hyphens with its hyphen), which is the word's min-content. */
+fn widest_piece(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    (word, breaks): (&str, super::wrap::Breaks),
+    face: crate::platform::Face,
+) -> EngineResult<f64> {
+    let mut widest: f64 = 0.0;
+    for piece in super::hyphenate::pieces(node, word, breaks) {
+        let spacing = super::text::spaces(&piece) * node.style.word_spacing;
+        widest = widest.max(context.measure(&piece, face)? + spacing);
+    }
+    Ok(widest)
+}
+/** The widest line of text whose white space keeps its spaces or its newlines, None for
+collapsing white space, which the caller measures. A preserved line is one run, shaped whole
+as line layout shapes it; a `pre-line` line is its words and one space between each. */
+fn preserved_max(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    text: &str,
+    face: crate::platform::Face,
+) -> EngineResult<Option<f64>> {
+    use crate::document::WhiteSpace;
+    let style = &node.style;
+    let keeps_spaces = matches!(style.white_space, WhiteSpace::Pre | WhiteSpace::PreWrap);
+    if !keeps_spaces && style.white_space != WhiteSpace::PreLine {
+        return Ok(None);
+    }
+    let mut widest: f64 = 0.0;
+    for line in text.split('\n') {
+        widest = widest.max(preserved_line(context, node, line, face)?);
+    }
+    Ok(Some(widest))
+}
+/** One line of `node`'s text between preserved newlines, as line layout places it: whole with
+its tab stops where spaces are kept, its words and one space between each under `pre-line`. */
+pub(super) fn preserved_line(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    line: &str,
+    face: crate::platform::Face,
+) -> EngineResult<f64> {
+    use crate::document::WhiteSpace;
+    let style = &node.style;
+    if matches!(style.white_space, WhiteSpace::Pre | WhiteSpace::PreWrap) {
+        // Tabs advance to CSS tab stops, which CoreText would not place.
+        let mut width = 0.0;
+        for (at, segment) in line.split('\t').enumerate() {
+            if at > 0 {
+                width += super::text::tab_width(context, node, width)?;
+            }
+            width +=
+                context.measure(segment, face)? + super::text::spaces(segment) * style.word_spacing;
+        }
+        return Ok(width);
+    }
+    // CSS white space is space and tab only: a no-break space is a glyph.
+    let words: Vec<&str> = line.split([' ', '\t']).filter(|w| !w.is_empty()).collect();
+    let joined = words.join(" ");
+    Ok(context.measure(&joined, face)? + super::text::spaces(&joined) * style.word_spacing)
 }
 
 /** Measures a container's own leading text as an anonymous flex item at `width`. */
@@ -946,41 +1208,66 @@ pub(super) fn place_own_text(
 }
 
 /** Intrinsic contributions clamp child constraints before adding decorations and margins. */
-fn intrinsic_contribution(parent: &Node, child: &Node, raw: IntrinsicWidths) -> IntrinsicWidths {
+pub(super) fn intrinsic_contribution(
+    parent: &Node,
+    child: &Node,
+    raw: IntrinsicWidths,
+) -> IntrinsicWidths {
     let [width, min, max] = if child.style.vertical_writing {
         [SizeKeyword::None; 3]
     } else {
         child.style.size_keywords
     };
-    let keyword = |keyword, bound| keyword_width(child, keyword, None, bound, raw);
     let preferred = if width == SizeKeyword::None {
         (!child.style.percent_width)
             .then(|| specified_content(child, 0.0))
             .flatten()
             .or_else(|| ratio_contribution(child, raw))
     } else {
-        keyword(width, Bound::Preferred)
+        keyword_width(child, width, None, Bound::Preferred, raw)
     };
-    let minimum = keyword(min, Bound::Min)
-        .or_else(|| {
-            child
-                .style
-                .min_width
-                .map(|value| content_size(child, value, true))
-        })
-        .unwrap_or(0.0);
-    let maximum = keyword(max, Bound::Max)
-        .unwrap_or_else(|| max_width(child, None))
-        .max(minimum);
-    let clamp = |value: f64| value.max(minimum).min(maximum);
+    // Blink's FitContentMode::kMinContribution and kMaxContribution: with no available width a
+    // `fit-content` size is the min-content width in the min contribution and the max-content
+    // width in the max one, whichever property names it.
+    let side = |fit: f64| {
+        let keyword = |keyword, bound| match keyword {
+            SizeKeyword::FitContent => Some(fit),
+            _ => keyword_width(child, keyword, None, bound, raw),
+        };
+        let preferred = if width == SizeKeyword::None {
+            preferred
+        } else {
+            keyword(width, Bound::Preferred)
+        };
+        let minimum = keyword(min, Bound::Min)
+            .or_else(|| {
+                child
+                    .style
+                    .min_width
+                    .map(|value| content_size(child, value, true))
+            })
+            .unwrap_or(0.0);
+        let maximum = keyword(max, Bound::Max)
+            .unwrap_or_else(|| max_width(child, None))
+            .max(minimum);
+        // A `calc-size()` width maps the size its basis gives (CSS Values 5).
+        let preferred = calc_size_through(&child.style, WIDTH, preferred.unwrap_or(fit));
+        preferred.max(minimum).min(maximum)
+    };
     let mut contribution = IntrinsicWidths {
-        min_content: clamp(preferred.unwrap_or(raw.min_content)),
-        max_content: clamp(preferred.unwrap_or(raw.max_content)),
+        min_content: side(raw.min_content),
+        max_content: side(raw.max_content),
     };
     if parent.style.display_flex && parent.style.flex_direction == FlexDirection::Row {
         row_basis_contribution(parent, child, raw, preferred, &mut contribution);
     }
     contribution
+}
+
+/** Whether a child floats: floats sit side by side at max-content like inline content (Blink's
+ * `floats_inline_size`), so two 50px float divs make a 100px box, not a 50px one. */
+pub(super) fn floating(child: &Node) -> bool {
+    child.style.float != crate::document::style::Float::None
 }
 
 /**
@@ -1004,14 +1291,15 @@ fn ratio_contribution(node: &Node, raw: IntrinsicWidths) -> Option<f64> {
     if let Some(min) = bound(node.style.min_height) {
         height = height.max(border_height(node, min));
     }
-    let width = if node.style.box_sizing == BoxSizing::BorderBox {
+    let width = if flow::ratio_sizes_border_box(node) {
         (height * ratio - horizontal_edges(node)).max(0.0)
     } else {
         (height - vertical_edges(node)).max(0.0) * ratio
     };
-    let automatic = node.style.min_width.is_none() && node.style.min_width_percent.is_none();
+    let automatic = min_width_auto(&node.style);
+    let width = calc_size_through(&node.style, WIDTH, width);
     Some(if automatic {
-        width.max(raw.min_content)
+        width.max(calc_size_through(&node.style, MIN_WIDTH, raw.min_content))
     } else {
         width
     })
@@ -1027,7 +1315,7 @@ fn row_basis_contribution(
     let basis = match child.style.flex_basis {
         crate::document::FlexBasis::Pixels(value) => Some(content_size(child, value, true)),
         crate::document::FlexBasis::Auto => preferred,
-        crate::document::FlexBasis::Percent(_) => None,
+        crate::document::FlexBasis::Percent(_) | crate::document::FlexBasis::Content => None,
     };
     let Some(base) = basis else {
         return;
@@ -1060,7 +1348,21 @@ fn contents(node: &Node) -> bool {
     node.style.display_contents
         && node.text.trim().is_empty()
         && node.style.generated.is_empty()
-        && !node.hidden()
+        && !node.removed()
+}
+/** What a child's horizontal padding, border and margins add to its parent's min- and
+ * max-content widths: only their fixed parts, as a percentage of the width being measured is
+ * cyclic and Blink resolves it against zero there (`margin-left: calc(10% + 100px)` adds 100px). */
+fn intrinsic_extra(child: &Node) -> f64 {
+    let style = &child.style;
+    let [pad_right, pad_left, margin_right, margin_left] = style.fixed_inline_sides.unwrap_or([
+        style.padding[1],
+        style.padding[3],
+        style.margin[1],
+        style.margin[3],
+    ]);
+    let sides = border_sides(style);
+    pad_right + pad_left + sides[1] + sides[3] + margin_right + margin_left
 }
 /** Some padding or margin of this style is a percentage of its containing block's width. */
 pub(super) fn has_percent_sides(style: &crate::document::ComputedStyle) -> bool {
@@ -1125,15 +1427,26 @@ fn containing_width(
 }
 /** The body's content-box width, which top-level boxes resolve their percentages against. */
 fn root_content_width(document: &Document, viewport: f64) -> f64 {
+    // Only the horizontal edges are read, and they never depend on the viewport height.
+    let root = super::body::root_edges(document, (viewport, 0.0));
+    let inside = (viewport - root[1] - root[3]).max(0.0);
     if document.formatting.body_box_authored {
-        super::body::content(&document.formatting.body.style, viewport).2
+        super::body::content(&document.formatting.body.style, inside).2
     } else {
-        (viewport - super::MARGIN * 2.0).min(super::CONTENT_WIDTH)
+        (inside - super::MARGIN * 2.0).min(super::CONTENT_WIDTH)
     }
 }
 /** Folds each percentage side into its pixels against `basis`, leaving no percentage behind. */
 fn sides_to_pixels(style: &mut crate::document::ComputedStyle, basis: f64) {
     use crate::constants::CSS_MAX_SCALAR;
+    if has_percent_sides(style) {
+        style.fixed_inline_sides = Some([
+            style.padding[1],
+            style.padding[3],
+            style.margin[1],
+            style.margin[3],
+        ]);
+    }
     for side in 0..4 {
         let padding = style.padding[side] + basis * style.padding_percent[side] / 100.0;
         style.padding[side] = padding.clamp(0.0, CSS_MAX_SCALAR);

@@ -7,6 +7,15 @@ use {
     serde::{Deserialize, Serialize},
 };
 /// Required resources retain their document order before acquisition.
+/** `align_side`: `left`. */
+pub const SIDE_LEFT: u8 = 1;
+/** `align_side`: `right`. */
+pub const SIDE_RIGHT: u8 = 2;
+/** `align_side`: `self-start`. */
+pub const SIDE_SELF_START: u8 = 3;
+/** `align_side`: `self-end`. */
+pub const SIDE_SELF_END: u8 = 4;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum StyleSource {
     Inline(String),
@@ -23,12 +32,24 @@ pub enum StyleSource {
 #[serde(default, deny_unknown_fields)]
 pub struct ComputedStyle {
     pub hidden: bool,
+    /// Inherited `visibility: hidden` or `collapse`: the box takes part in layout but paints
+    /// nothing, and a `visibility: visible` descendant shows again. Agents still treat it as hidden.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub invisible: bool,
     pub interactive: bool,
     /// Inherited: inside an `inert` subtree, which no `pointer-events` value makes actionable.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub inert: bool,
     pub inline: bool,
     pub font_size: f64,
+    /// Inherited: the `font-size` keyword (1 = xx-small .. 8 = xxx-large) the size came from,
+    /// 0 for a length. Blink refetches a keyword size when the generic family switches to or
+    /// from `monospace`, which is how `<pre>` gets 13px and `font-family: monospace` text too.
+    #[serde(skip)]
+    pub font_keyword: u8,
+    /// Inherited: the size came from an absolute length, so a generic family change keeps it.
+    #[serde(skip)]
+    pub font_size_absolute: bool,
     pub bold: bool,
     pub color: Option<String>,
     pub background: Option<String>,
@@ -51,6 +72,33 @@ pub struct ComputedStyle {
     pub border: f64,
     pub border_color: Option<String>,
     pub align: String,
+    /// Inherited CSS `text-align-last`: how the last line and a line before a forced break
+    /// align; empty is `auto` (as `text-align`, except `justify` aligns those lines at start).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub align_last: String,
+    /// Inherited CSS `text-justify`: where justification adds space (`auto`, `inter-word`,
+    /// `inter-character` or `none`).
+    pub text_justify: String,
+    /// Inherited CSS `text-autospace` other than `no-autospace`: an eighth of an em between
+    /// ideographs and letters or digits.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub text_autospace: bool,
+    /// Inherited content language (the nearest `lang` attribute, lowercase), which tailors
+    /// `text-transform`'s case mapping.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub lang: String,
+    /// Inherited CSS `hyphens: none`: soft hyphens are no break opportunities.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hyphens_none: bool,
+    /// Inherited CSS `hyphenate-character`: the string a hyphenated line ends with; None is
+    /// `auto` (U+2010).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hyphenate_character: Option<String>,
+    /// The parent's direction, which `text-align: match-parent` resolves `start` and `end`
+    /// against; set as the style inherits, never authored. None on the root, whose
+    /// `match-parent` keeps the logical initial `start`.
+    #[serde(skip)]
+    pub parent_rtl: Option<bool>,
     /// Authored dimensions name either content or the complete painted border box.
     pub box_sizing: BoxSizing,
     /// Flex participation is explicit rather than inferred from child control types.
@@ -93,11 +141,18 @@ pub struct ComputedStyle {
     /// `normal` gap is its parent's (css-grid-2 9.2).
     #[serde(skip_serializing_if = "default")]
     pub gap_set: [bool; 2],
+    /// css-multicol: column count, width, fill, rule and span, inert unless a count or width is set.
+    #[serde(skip_serializing_if = "default")]
+    pub multicol: super::Multicol,
     /// Main-axis content distribution (`justify-content`); `normal` is `Stretch`.
     pub justify_content: JustifyContent,
     /// Cross-axis content distribution of flex lines and grid rows (`align-content`).
     #[serde(default = "JustifyContent::normal")]
     pub align_content: JustifyContent,
+    /// Whether `align-content` and `justify-content` (in that order) are `safe`: content that
+    /// overflows its flex container packs at the start instead of past it.
+    #[serde(default, skip_serializing_if = "default")]
+    pub content_safe: [bool; 2],
     /// Cross-axis alignment controls the allocated item subtree as one unit.
     pub align_items: AlignItems,
     /// None retains the content minimum; explicit zero permits supported shrinking.
@@ -202,6 +257,18 @@ pub struct ComputedStyle {
     /// Per-side painted border widths top, right, bottom, left; `border` equals them when uniform, else 0.
     #[serde(skip_serializing_if = "default")]
     pub border_widths: [f64; 4],
+    /// Per-side computed border widths before a `none` or `hidden` style zeroes the used ones:
+    /// what `border-width: inherit` passes down (border-width-012).
+    #[serde(skip_serializing_if = "default")]
+    pub border_specified: [f64; 4],
+    /// Per-side `border-style: hidden`, which in the collapsing model beats every other border
+    /// on its edge (border-conflict-style-101).
+    #[serde(skip_serializing_if = "default")]
+    pub border_hidden: [bool; 4],
+    /// Per-side border color is `currentcolor` (the initial value), which an inheriting child
+    /// resolves against its own color.
+    #[serde(skip_serializing_if = "default")]
+    pub border_current: [bool; 4],
     /// Per-side literal border colors; None paints the default border color.
     #[serde(skip_serializing_if = "default")]
     pub border_colors: [Option<String>; 4],
@@ -246,6 +313,10 @@ pub struct ComputedStyle {
     /// floats (IANA's header grew around its floated logo and navigation in Chromium).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub flow_root: bool,
+    /// `margin-trim` in the block axis: [block-start, block-end]. A block container drops the
+    /// margins of children adjoining that edge of its content box.
+    #[serde(default, skip_serializing_if = "default")]
+    pub margin_trim: [bool; 2],
     /// The CSS table part `display` names; `None` for every other display.
     #[serde(skip_serializing_if = "default")]
     pub table_box: TableBox,
@@ -314,9 +385,16 @@ pub struct ComputedStyle {
     /// Position of background image layers.
     #[serde(skip_serializing_if = "default")]
     pub background_position: [Extent; 2],
+    /// Every layer's own size, position and repeat, as their comma-separated lists give them.
+    #[serde(skip_serializing_if = "super::background_layers::LayerGeometry::is_empty")]
+    pub background_geometry: super::background_layers::LayerGeometry,
     /// Inherited gap between table cells, in px.
     #[serde(skip_serializing_if = "default")]
     pub border_spacing: f64,
+    /// Inherited vertical gap between table rows, in px, when `border-spacing` names two
+    /// lengths; None repeats the horizontal one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_spacing_rows: Option<f64>,
     /// Inherited: adjacent table cell borders collapse and cells touch.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub border_collapse: bool,
@@ -341,18 +419,54 @@ pub struct ComputedStyle {
     /// `::before` and `::after` boxes with content, in that order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub generated: Vec<Generated>,
+    /// `scroll-marker-group` (not inherited): Some(after) places the scroll container's
+    /// `::scroll-marker-group` box after it (true) or before it (false); None is `none`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_group_side: Option<bool>,
+    /// The `::scroll-marker-group` box's style, when `marker_group_side` asks for one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_group: Option<Box<ComputedStyle>>,
+    /// The element's `::scroll-marker` box, when a rule gives it content: it is laid out in its
+    /// scroll container's marker group (render/scroll_markers.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_marker: Option<Box<Generated>>,
+    /// The element's `::scroll-button()` boxes with content, in block-start, inline-start,
+    /// inline-end, block-end order; laid out as its next siblings (render/scroll_markers.rs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scroll_buttons: Vec<Generated>,
     /// A mask image shapes this box; Eye cannot apply masks, so its fills are not painted.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub masked: bool,
     /// The first `url()` mask layer and its geometry, painted with the box's fill as alpha.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mask: Option<super::MaskLayer>,
+    /// `border-image`: with a source, painters draw its nine slices instead of the border.
+    #[serde(skip_serializing_if = "super::BorderImage::is_initial")]
+    pub border_image: super::BorderImage,
     /// Tiling of background image layers.
     #[serde(skip_serializing_if = "default")]
     pub background_repeat: BackgroundRepeat,
     /// Own cross-axis alignment in a flex line or grid area; None is `auto` (the parent's `align-items`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align_self: Option<AlignItems>,
+    /// `align-self: safe <position>` on a flex item: the position, which falls back to the start
+    /// when the item overflows its line. Kept apart from `align_self`, which grid reads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align_self_safe: Option<AlignItems>,
+    /// Whether `align-items`, `align-self`, `justify-items` and `justify-self`, in that order,
+    /// were literally `stretch` rather than `normal`, which their values share: grid-lanes
+    /// stacking stretches only the former.
+    #[serde(default, skip_serializing_if = "default")]
+    pub align_stretch: [bool; 4],
+    /// Whether the same four properties carried `safe`, so an overflowing box aligns to the
+    /// start instead (css-align-3 overflow alignment).
+    #[serde(default, skip_serializing_if = "default")]
+    pub align_safe: [bool; 4],
+    /// For the same four properties, a keyword not relative to the container's direction:
+    /// `SIDE_LEFT`, `SIDE_RIGHT`, `SIDE_SELF_START` or `SIDE_SELF_END`, else zero. The
+    /// position itself is folded into start or end, which grid resolves against the sides.
+    #[serde(default, skip_serializing_if = "default")]
+    pub align_side: [u8; 4],
     /// Own inline-axis alignment in a grid area; None is `auto` (the parent's `justify-items`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub justify_self: Option<AlignItems>,
@@ -376,6 +490,10 @@ pub struct ComputedStyle {
     /// element declares nothing and inherits it (layout walks the ancestors).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overflow_wrap_break: Option<bool>,
+    /// Declared `overflow-wrap: anywhere` (Some(true)) or another value, None when inherited:
+    /// unlike `break-word`, its breaks count toward min-content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overflow_wrap_anywhere: Option<bool>,
     /// Declared `word-break`: Some(true) for `break-all` or `break-word`, None when inherited.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_break_all: Option<bool>,
@@ -388,13 +506,69 @@ pub struct ComputedStyle {
     /// ideographs then break only where letters would (UAX #14 with ID treated as AL).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub word_break_keep_all: Option<bool>,
+    /// Declared `word-break: auto-phrase` (Some(true)) or another value, None when inherited:
+    /// CJK text breaks only between phrases.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_break_auto_phrase: Option<bool>,
     /// Declared `line-break: anywhere` (Some(true)) or another value, None when inherited: a
     /// break opportunity between every two typographic letter units, preserved spaces included.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_break_anywhere: Option<bool>,
+    /// Declared `line-break: loose` (Some(true)) or another value, None when inherited: CJK
+    /// text may break before nonstarters and inseparable leaders.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_break_loose: Option<bool>,
     /// `text-overflow: ellipsis` (not inherited): a clipping block ends overflowing lines in "…".
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub text_overflow_ellipsis: bool,
+    /// `-webkit-box-orient: vertical` (not inherited), which with `-webkit-line-clamp` turns a
+    /// `-webkit-box` into a clamping flow-root.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub box_orient_vertical: bool,
+    /// `background-clip` (not inherited) of the bottom layer, which the color follows.
+    #[serde(skip_serializing_if = "default")]
+    pub background_clip: super::BackgroundBox,
+    /// `background-origin` (not inherited) of the image layer.
+    #[serde(skip_serializing_if = "is_padding_box")]
+    pub background_origin: super::BackgroundBox,
+    /// The element's `::first-letter` box style, when a rule styles it: layout gives the first
+    /// letter of its first formatted line this style instead of the text's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_letter: Option<Box<ComputedStyle>>,
+    /// `display: none` (not inherited): no box at all, where `hidden` alone may be
+    /// `visibility: hidden`, a box that takes part in layout but does not paint.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub display_none: bool,
+    /// The element's `::first-line` style, when a rule styles it: the first formatted line's
+    /// text takes its color (render/first_line.rs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub first_line: Option<Box<ComputedStyle>>,
+    /// `initial-letter` (not inherited), read on a `::first-letter` box; None is `normal`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_letter: Option<super::InitialLetter>,
+    /// `background-attachment: fixed` (not inherited) on the first layer: image layers are
+    /// positioned and sized against the viewport instead of the box.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub background_fixed: bool,
+    /// `background-attachment: local` (not inherited) on the first layer: in a scroll
+    /// container, image layers are positioned against the scrolled contents, not the box.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub background_local: bool,
+    /// `max-lines` (not inherited): the line count a collapsing `continue` clamps at; 0 is
+    /// `none`, which with `continue: collapse` clamps where the box's height runs out.
+    #[serde(skip_serializing_if = "default")]
+    pub max_lines: u32,
+    /// `block-ellipsis` (inherited): the string a clamp's last line ends in; None is
+    /// `no-ellipsis`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_ellipsis: Option<String>,
+    /// `continue: collapse` (not inherited): this block is a line-clamp container.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub continue_collapse: bool,
+    /// `continue: -webkit-legacy` (not inherited), which `-webkit-line-clamp` sets: it clamps
+    /// only a `-webkit-box` with a vertical `-webkit-box-orient`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub continue_legacy: bool,
     /// `text-box-trim` (not inherited) as whether the (block-start, block-end) edge trims.
     #[serde(skip_serializing_if = "super::text_box::untrimmed")]
     pub text_box_trim: [bool; 2],
@@ -436,6 +610,14 @@ pub struct ComputedStyle {
     /// Percentage parts of corner radii when no fixed px width was authored.
     #[serde(skip_serializing_if = "default")]
     pub radius_percent: [f64; 4],
+    /// The length part of a corner's horizontal radius whose percentage resolves at layout
+    /// (`calc(100% - 1px)` keeps its `-1px`); unused while `radius_percent` is zero.
+    #[serde(skip_serializing_if = "default")]
+    pub radius_px: [f64; 4],
+    /// Each authored corner's vertical radius as (px, percent of the box height); None leaves
+    /// the corner circular at its horizontal radius.
+    #[serde(skip_serializing_if = "default")]
+    pub radius_y: [Option<(f64, f64)>; 4],
     /// Percentage translation `[tx_percent, ty_percent]` of the box's own size.
     #[serde(skip_serializing_if = "default")]
     pub translate_percent: [f64; 2],
@@ -456,14 +638,58 @@ pub struct ComputedStyle {
     /// the room is narrower or wider than the content.
     #[serde(default, skip_serializing_if = "default")]
     pub width_fit: bool,
+    /// `height: fit-content`, `min-content` or `max-content` (or a vertical writing mode's
+    /// content-keyword `width`): content-sized, so a grid or flex item is not stretched.
+    #[serde(default, skip_serializing_if = "default")]
+    pub height_fit: bool,
+    /// `min-height` and `max-height` name a content keyword (`min-content`, `max-content`,
+    /// `fit-content`), in that order: on the block axis each is the content height, so a
+    /// `min-height: max-content` box grows to its content however small its `height`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub height_bounds_fit: [bool; 2],
+    /// `height`, `min-height` and `max-height` are `stretch` (or `-webkit-fill-available`), in
+    /// that order: the border box fills the containing block's definite height less margins.
+    #[serde(default, skip_serializing_if = "default")]
+    pub height_stretch: [bool; 3],
     /// The content keyword of `width`, `min-width` and `max-width`, in that order: which
     /// intrinsic size the box takes, or the `fit-content(<length-percentage>)` limit.
     #[serde(default, skip_serializing_if = "default")]
     pub size_keywords: [SizeKeyword; 3],
-    /// Inherited: `writing-mode` is vertical, so `width` sizes the block axis. Layout stays
-    /// horizontal; sizing reads it only to treat block-axis content keywords as `auto`.
+    /// The `calc-size()` sum of `width`, `min-width`, `max-width`, `height`, `min-height` and
+    /// `max-height`, in that order (style/calc_size.rs); None maps the basis size unchanged.
+    #[serde(default, skip_serializing_if = "default")]
+    pub calc_size: [Option<super::CalcSize>; 6],
+    /// Inherited: `writing-mode` is vertical, so `width` sizes the block axis. A box whose
+    /// parent is horizontal roots a vertical subtree, laid out in render/vertical.rs.
     #[serde(default, skip_serializing_if = "default")]
     pub vertical_writing: bool,
+    /// Inherited: the vertical mode stacks lines left to right (`vertical-lr`, `sideways-lr`)
+    /// rather than right to left.
+    #[serde(default, skip_serializing_if = "default")]
+    pub writing_lr: bool,
+    /// Inherited: `sideways-rl` or `sideways-lr`, whose dominant baseline stays alphabetic.
+    #[serde(default, skip_serializing_if = "default")]
+    pub writing_sideways: bool,
+    /// Inherited `text-orientation`: 0 `mixed`, 1 `upright`, 2 `sideways`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub text_orientation: u8,
+    /// Used glyph orientation inside a vertical subtree's rotated layout (`platform::upright`
+    /// codes); vertical.rs sets it on the rotated copy only, so measurement stands CJK upright.
+    #[serde(default, skip_serializing_if = "default")]
+    pub glyphs_upright: u8,
+    /// `unicode-bidi` (not inherited): which explicit embedding, override or isolate the
+    /// element's text takes (render/bidi.rs `controls`); 0 is `normal`.
+    #[serde(default, skip_serializing_if = "default")]
+    pub unicode_bidi: u8,
+    /// Layout only: the box sits in a rotated vertical subtree whose dominant baseline is
+    /// central (render/vertical.rs), so baseline-aligned atomics center on the line.
+    #[serde(skip)]
+    pub central_baseline: bool,
+    /// Layout only: a horizontal box inside a rotated vertical subtree, which lays out turned
+    /// back (render/vertical.rs `Turn::undo`): 0 none, else the `DisplayItem::writing` value of
+    /// the rotation it undoes.
+    #[serde(skip)]
+    pub counter_rotate: u8,
     /// SVG paint properties (`fill`, `stroke`, `stroke-width`, ...) authored in CSS, by name.
     /// The SVG painter reads them before presentation attributes, as the cascade orders them;
     /// without this a stylesheet `fill` loses to `<svg fill="none">` and icons paint nothing.
@@ -490,6 +716,20 @@ pub struct ComputedStyle {
     /// clip edge like `overflow: clip`, without becoming a scroll container.
     #[serde(default, skip_serializing_if = "default")]
     pub contain_paint: bool,
+    /// `contain: size` (or `strict`) contains both axes, `contain: inline-size` the width only:
+    /// a contained axis is sized as if the box were empty, so its content never props it open.
+    #[serde(default, skip_serializing_if = "default")]
+    pub contain_size: [bool; 2],
+    /// `contain-intrinsic-width` and `-height` in px, None for `none`: the size a
+    /// size-contained axis takes in place of its content's (css-sizing-4).
+    #[serde(default, skip_serializing_if = "default")]
+    pub contain_intrinsic: [Option<f64>; 2],
+    /// The fixed px parts of the right and left padding, then the right and left margin, once
+    /// layout folded their percentages into px; None when none had a percentage. Min- and
+    /// max-content contributions count only these, since a percentage of the width being
+    /// measured is cyclic (css-sizing-3 "cyclic percentage contribution").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_inline_sides: Option<[f64; 4]>,
 }
 /// A sizing content keyword (css-sizing-3 4.1): `min-content`, `max-content`, `fit-content`
 /// (stretch-fit clamped by both), or `fit-content(<length-percentage>)` (that limit clamped).
@@ -542,10 +782,13 @@ impl Default for ComputedStyle {
     fn default() -> Self {
         Self {
             hidden: false,
+            invisible: false,
             interactive: true,
             inert: false,
             inline: false,
             font_size: crate::constants::CSS_ROOT_FONT_SIZE,
+            font_keyword: super::font::MEDIUM_KEYWORD,
+            font_size_absolute: false,
             bold: false,
             color: None,
             background: None,
@@ -562,6 +805,13 @@ impl Default for ComputedStyle {
             border: 0.0,
             border_color: None,
             align: "start".into(),
+            align_last: String::new(),
+            text_justify: "auto".into(),
+            text_autospace: false,
+            lang: String::new(),
+            hyphens_none: false,
+            hyphenate_character: None,
+            parent_rtl: None,
             box_sizing: BoxSizing::ContentBox,
             display_flex: false,
             flex_direction: FlexDirection::Row,
@@ -578,8 +828,10 @@ impl Default for ComputedStyle {
             column_gap: 0.0,
             gap_percent: [0.0; 2],
             gap_set: [false; 2],
+            multicol: super::Multicol::default(),
             justify_content: JustifyContent::Stretch,
             align_content: JustifyContent::Stretch,
+            content_safe: [false; 2],
             align_items: AlignItems::Stretch,
             min_width: None,
             min_width_percent: None,
@@ -613,6 +865,9 @@ impl Default for ComputedStyle {
             cursor_pointer: false,
             border_style_none: false,
             border_widths: [0.0; 4],
+            border_specified: [0.0; 4],
+            border_hidden: [false; 4],
+            border_current: [false; 4],
             border_colors: [None, None, None, None],
             border_styles: [super::BorderStyle::Solid; 4],
             height: None,
@@ -628,6 +883,7 @@ impl Default for ComputedStyle {
             display_contents: false,
             table_box: TableBox::None,
             flow_root: false,
+            margin_trim: [false; 2],
             grid_columns: GridTemplate::default(),
             grid_rows: GridTemplate::default(),
             grid_auto_rows: GridTemplate::default(),
@@ -649,11 +905,18 @@ impl Default for ComputedStyle {
             justify_items: AlignItems::Stretch,
             background_size: BackgroundSize::Auto,
             background_position: [Extent::default(); 2],
+            background_geometry: Default::default(),
             background_repeat: BackgroundRepeat::Repeat,
             generated: Vec::new(),
+            marker_group_side: None,
+            marker_group: None,
+            scroll_marker: None,
+            scroll_buttons: Vec::new(),
             masked: false,
             mask: None,
+            border_image: super::BorderImage::default(),
             border_spacing: 0.0,
+            border_spacing_rows: None,
             border_collapse: false,
             table_layout_fixed: false,
             caption_bottom: false,
@@ -661,6 +924,10 @@ impl Default for ComputedStyle {
             font_authored: false,
             edges_authored: false,
             align_self: None,
+            align_self_safe: None,
+            align_stretch: [false; 4],
+            align_safe: [false; 4],
+            align_side: [0; 4],
             justify_self: None,
             order: 0,
             padding_percent: [0.0; 4],
@@ -668,11 +935,27 @@ impl Default for ComputedStyle {
             aspect_ratio: None,
             aspect_ratio_auto: false,
             overflow_wrap_break: None,
+            overflow_wrap_anywhere: None,
             word_break_all: None,
             word_break_fill: None,
             word_break_keep_all: None,
+            word_break_auto_phrase: None,
             line_break_anywhere: None,
+            line_break_loose: None,
             text_overflow_ellipsis: false,
+            box_orient_vertical: false,
+            background_clip: super::BackgroundBox::BorderBox,
+            background_origin: super::BackgroundBox::PaddingBox,
+            background_fixed: false,
+            background_local: false,
+            first_letter: None,
+            first_line: None,
+            display_none: false,
+            initial_letter: None,
+            max_lines: 0,
+            block_ellipsis: None,
+            continue_collapse: false,
+            continue_legacy: false,
             text_box_trim: [false, false],
             text_box_edge: [0, 0],
             vertical_shift: None,
@@ -689,18 +972,38 @@ impl Default for ComputedStyle {
             strikethrough: false,
             inset_percent: [0.0; 4],
             radius_percent: [0.0; 4],
+            radius_px: [0.0; 4],
+            radius_y: [None; 4],
             translate_percent: [0.0; 2],
             width_offset: 0.0,
             width_stretch: false,
             width_fit: false,
+            height_fit: false,
+            height_bounds_fit: [false; 2],
+            height_stretch: [false; 3],
             size_keywords: [SizeKeyword::None; 3],
+            calc_size: [None; 6],
             vertical_writing: false,
+            writing_lr: false,
+            writing_sideways: false,
+            text_orientation: 0,
+            glyphs_upright: 0,
+            unicode_bidi: 0,
+            central_baseline: false,
+            counter_rotate: 0,
             svg_paint: std::collections::BTreeMap::new(),
             stacking: 0,
             filter_blur: 0.0,
             overflow_clip_margin: 0.0,
             overflow_clip_box: 0,
             contain_paint: false,
+            contain_size: [false; 2],
+            contain_intrinsic: [None; 2],
+            fixed_inline_sides: None,
         }
     }
+}
+/** Serde skip test for the initial `background-origin`. */
+fn is_padding_box(value: &super::BackgroundBox) -> bool {
+    *value == super::BackgroundBox::PaddingBox
 }

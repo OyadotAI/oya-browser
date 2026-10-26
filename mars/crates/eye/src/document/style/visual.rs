@@ -35,7 +35,8 @@ pub(super) fn apply(
         }
         "box-shadow" => style.shadows = super::paint::shadows(value, style, context)?,
         "background-image" => {
-            style.backgrounds = super::paint::backgrounds(value, style, context, diagnostics)?
+            style.backgrounds = super::paint::backgrounds(value, style, context, diagnostics)?;
+            style.background_geometry.slots = super::paint::slots(value, style, context);
         }
         "transform" => {
             (style.transform, style.translate_percent) =
@@ -504,12 +505,34 @@ fn radius(
         return Err(unsupported());
     }
     style.radius[corner] = px.min(CSS_MAX_SCALAR);
-    style.radius_percent[corner] = if style.width.is_some() && !style.percent_width {
+    // A plain percentage resolves at layout against the border box; a mixed `calc()` against
+    // an authored width resolves here.
+    let mixed = length.px != 0.0;
+    style.radius_percent[corner] = if mixed && style.width.is_some() && !style.percent_width {
         0.0
     } else {
         length.percent.clamp(0.0, CSS_MAX_SCALAR)
     };
+    style.radius_px[corner] = length.px.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR);
+    let second = value[first.len()..].trim();
+    style.radius_y[corner] = Some(vertical_radius(
+        if second.is_empty() { first } else { second },
+        style.font_size,
+        context,
+    )?);
     Ok(true)
+}
+/** A corner's vertical radius as (px, percent of the box height). A negative length is
+ * invalid; a `calc()` may mix signs, its sum clamped at zero at layout. */
+fn vertical_radius(value: &str, font: f64, context: RenderContext) -> EngineResult<(f64, f64)> {
+    let length = dimension(value, font, context)?;
+    let (px, percent) = (length.px, length.percent);
+    let negative = px < 0.0 || percent < 0.0;
+    if !(px.is_finite() && percent.is_finite()) || (negative && !super::values::is_math(value)) {
+        return Err(unsupported());
+    }
+    let bound = |v: f64| v.clamp(-CSS_MAX_SCALAR, CSS_MAX_SCALAR);
+    Ok((bound(px), bound(percent)))
 }
 
 /** Whether the winning `background-clip` (or its `-webkit-` alias) clips to text. */

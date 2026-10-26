@@ -239,15 +239,7 @@ impl Parser {
                     .tokens
                     .get(index + 1)
                     .is_some_and(|token| token.line_terminator_before)
-                    && !matches!(
-                        next,
-                        Some(
-                            Kind::Symbol('.' | '[' | '(' | '?' | ',' | '=')
-                                | Kind::Operator(_)
-                                | Kind::Punct(_)
-                                | Kind::Template { .. }
-                        )
-                    );
+                    && !next.is_some_and(directive_continuation);
             if !ends {
                 return false;
             }
@@ -533,6 +525,19 @@ impl Parser {
     /** True if the token is an identifier that can start an expression or binding. */
     fn at_identifier(&self) -> bool {
         matches!(&self.peek().kind, Kind::Name(name) if !reserved(name, self.strict))
+    }
+}
+
+/** Only tokens that can extend the literal expression prevent ASI; unary ! and ~ begin the next statement. */
+fn directive_continuation(kind: &Kind) -> bool {
+    match kind {
+        Kind::Name(name) => matches!(name.as_str(), "in" | "instanceof"),
+        Kind::Operator(operator) => *operator != Operator::Not,
+        Kind::Punct(operator) => *operator != "~",
+        Kind::Symbol('.' | '[' | '(' | '?' | ',' | '=')
+        | Kind::Assignment(_)
+        | Kind::Template { .. } => true,
+        _ => false,
     }
 }
 

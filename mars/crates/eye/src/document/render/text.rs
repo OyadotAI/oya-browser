@@ -11,6 +11,10 @@ pub(super) fn inline(
     if node.style.inline_block {
         return atomic(context, node, flow, items);
     }
+    // `<wbr>` is a break opportunity: the next run never joins the text before it.
+    if node.tag == "wbr" {
+        flow.last = None;
+    }
     indent_first_line(context, node, flow, false);
     let index = items.len();
     let (y, frags) = (flow.y, flow.frags.len());
@@ -22,13 +26,21 @@ pub(super) fn inline(
         node.style.white_space,
         crate::document::WhiteSpace::Pre | crate::document::WhiteSpace::PreWrap
     );
-    let outside = !preserves && started(flow) && (flow.space == Some(true) || node.space_leading);
-    let before = if outside {
+    // A collapsible space the previous run ended with stays before preserved white space too:
+    // only a collapsible space after another one collapses (`X </span><pre-span> X` keeps both).
+    let outside = started(flow) && (flow.space == Some(true) || (!preserves && node.space_leading));
+    let mut before = if outside {
         context.measure(" ", super::sizing::face_for(&node.style, Some(" ")))?
             + node.style.word_spacing
     } else {
         0.0
     };
+    // Preserved text places itself at the cursor, so the pending space is taken here.
+    if preserves && outside {
+        flow.space = Some(false);
+        flow.cursor += before;
+        before = 0.0;
+    }
     flow.cursor += node.style.margin[3] + node.style.padding[3] + sides[3];
     let x = flow.left() + flow.cursor + before;
     if node.space_leading && !preserves {
@@ -36,14 +48,17 @@ pub(super) fn inline(
     }
     items.push(box_item(node, x, y, 0.0, 0.0, Vec::new()));
     super::generated::generated(context, node, flow, items, false)?;
-    let lines = text(context, &own_text(node), node, flow, index)?;
+    let own = super::first_letter::lead(context, node, flow, items)?;
+    let lines = text(context, &own, node, flow, index)?;
     items[index].lines = lines;
+    let mut ends_in_block = false;
     if !super::generated::is_generated(node) {
-        for child in context.all_children(node.local_id) {
-            node_layout(context, child, flow, items, None)?;
-        }
+        ends_in_block = children(context, node, (flow, items, index), (y, frags))?;
     }
     super::generated::generated(context, node, flow, items, true)?;
+    if super::block_in_inline::ends_in_block(node, ends_in_block) {
+        super::block_in_inline::after_last(context, node, (flow, items, index));
+    }
     // Floats inside place nothing on the line, so a box holding only floats is empty too.
     let empty = flow.y == y && flow.frags.len() == frags && items[index].lines.is_empty();
     if empty && opens_line(node, &sides) {
@@ -57,6 +72,14 @@ pub(super) fn inline(
         };
         items[index].lines.push(run);
         flow.push(text_frag(context, node, index, 0));
+    } else if empty {
+        // CSS 2.1 10.8: an empty inline box still has its line-height on a line with content.
+        let mut phantom = text_frag(context, node, index, 0);
+        phantom.piece = Piece::Atomic {
+            start: items.len(),
+            end: items.len(),
+        };
+        flow.phantoms.push(phantom);
     }
     flow.cursor += node.style.margin[1] + node.style.padding[1] + sides[1];
     let descendants = &items[index..];
@@ -81,6 +104,31 @@ pub(super) fn inline(
     items[index].width = (right - left).max(0.0);
     items[index].height = (flow.y + flow.line - y).max(super::sizing::advance(&node.style));
     Ok(())
+}
+/** Lays out an inline box's children; a block among them gets the box's start edge on a line
+ * of its own before it. Returns whether the last child that counts is a block. */
+fn children(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    (flow, items, index): (&mut Flow, &mut Vec<DisplayItem>, usize),
+    (y, frags): (f64, usize),
+) -> EngineResult<bool> {
+    let children = context.all_children(node.local_id);
+    let mut seen_block = false;
+    let mut ends_in_block = false;
+    for child in children {
+        let block = super::block_in_inline::is_block(child);
+        if block && !seen_block {
+            let placed = flow.y != y || flow.frags.len() != frags || !items[index].lines.is_empty();
+            super::block_in_inline::before_first(context, node, (flow, items, index), placed);
+        }
+        seen_block |= block;
+        node_layout(context, child, flow, items, None)?;
+        if block || !blank_text(child) {
+            ends_in_block = block;
+        }
+    }
+    Ok(ends_in_block)
 }
 /** How far the box's content start sits before its first run on its first line, and its end
  * after its last run on the last line, so `refit_inlines` keeps child margins and the box's
@@ -109,7 +157,7 @@ fn record_edges(
     context.record_inline_edges(node.local_id, (lead, trail));
 }
 /** An inline-block, inline-flex or inline-grid: laid out as a block, then placed on the line as one unit. */
-fn atomic(
+pub(super) fn atomic(
     context: &mut LayoutContext<'_>,
     node: &Node,
     flow: &mut Flow,
@@ -120,10 +168,17 @@ fn atomic(
     let width = super::float::shrink_width(context, node, flow.width, margins.0 + margins.1)?;
     let outer = width + margins.0 + margins.1;
     indent_first_line(context, node, flow, false);
-    if started(flow) && !flow.fits(outer) {
+    if started(flow) && wraps_before(context, node) && !super::glue::held(flow) && !flow.fits(outer)
+    {
         flow.wrap();
     }
     flow.fit(outer);
+    if !flow.floats.is_empty() && flow.cursor == 0.0 {
+        let tall =
+            context.measure_height(node.local_id, width)? + style.margin[0] + style.margin[2];
+        flow.fit_tall(outer, tall);
+        flow.start_past_tall_floats(tall);
+    }
     let bounds = BorderBox {
         x: flow.left() + flow.cursor + margins.0,
         y: flow.y + style.margin[0],
@@ -136,7 +191,20 @@ fn atomic(
     node_layout(context, node, &mut inner, items, Some(bounds))?;
     let height = items.get(start).map_or(0.0, |item| item.height);
     let margin_box = style.margin[0] + height + style.margin[2];
-    let ascent = if style.overflow == crate::document::Overflow::Visible {
+    let table = style.table_box == crate::document::style::TableBox::Table;
+    let ascent = if table {
+        // CSS 2.1 17.4: an inline table sits on its first row's baseline.
+        first_baseline(context, &items[start..])?
+            .map(|baseline| baseline - flow.y)
+            .unwrap_or(margin_box)
+    } else if style.central_baseline
+        && style.vertical_align == crate::document::style::VerticalAlign::Baseline
+        && last_central(&items[start..]).is_none()
+    {
+        // Vertical text: an inline-block with no line boxes centers on the line's central
+        // baseline; one with lines keeps its last line's baseline, which the line shares.
+        margin_box / 2.0 + central_offset(context, node)
+    } else if style.overflow == crate::document::Overflow::Visible {
         last_baseline(context, &items[start..])?
             .map(|baseline| baseline - flow.y)
             .unwrap_or(margin_box)
@@ -148,10 +216,59 @@ fn atomic(
         (start, items.len()),
         outer,
         (ascent, margin_box),
-        style,
+        (style, None),
         margins,
     );
     Ok(())
+}
+/** Whether the line may break before an atomic inline: its parent's `white-space: nowrap` or
+ * `pre` removes the soft wrap opportunity around it, so a nowrap row of inline-blocks overflows
+ * (and scrolls) instead of stacking (position-sticky-left-002). */
+fn wraps_before(context: &LayoutContext<'_>, node: &Node) -> bool {
+    use crate::document::WhiteSpace;
+    node.parent
+        .and_then(|parent| context.node(parent).ok())
+        .is_none_or(|parent| {
+            !matches!(
+                parent.style.white_space,
+                WhiteSpace::Nowrap | WhiteSpace::Pre
+            )
+        })
+}
+/** Runs of other fonts centering on the line's central baseline: off, since moving them broke
+ * 58 vertical abspos static-position tests; turn on once static positions follow. */
+const CENTER_RUNS: bool = false;
+/** How far a style's central baseline sits above its alphabetic one: halfway between the em
+box's over and under edges (CSS Inline 3 `central`). */
+fn central_lift(style: &crate::document::ComputedStyle) -> f64 {
+    let (ascent, normal) = super::sizing::face_metrics(style);
+    let descent = (normal - ascent).max(0.0);
+    (ascent - descent) / 2.0
+}
+
+/** The central lift of the line a node sits on, its nearest block's: in vertical text every
+box centers on that line's central baseline, which the shared alphabetic baseline lies below
+by this much. */
+pub(super) fn central_offset(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    let mut current = node.parent.and_then(|parent| context.node(parent).ok());
+    while let Some(parent) = current {
+        if !parent.style.inline || parent.style.inline_block {
+            return central_lift(&parent.style);
+        }
+        current = parent.parent.and_then(|up| context.node(up).ok());
+    }
+    central_lift(&node.style)
+}
+
+/** The middle of the last line box inside an atomic's items, in document coordinates. */
+fn last_central(items: &[DisplayItem]) -> Option<f64> {
+    items
+        .iter()
+        .flat_map(|item| {
+            let advance = item.line_height.unwrap_or(item.font_size);
+            item.lines.iter().map(move |line| line.y + advance / 2.0)
+        })
+        .reduce(f64::max)
 }
 /** Records an atomic fragment and advances the line past its margin box. */
 pub(super) fn place_atomic(
@@ -159,9 +276,20 @@ pub(super) fn place_atomic(
     (start, end): (usize, usize),
     outer: f64,
     (ascent, height): (f64, f64),
-    style: &crate::document::ComputedStyle,
+    (style, central): (&crate::document::ComputedStyle, Option<f64>),
     margins: (f64, f64),
 ) {
+    // Vertical text's central baseline: a baseline-aligned replaced box centers on the line's
+    // central baseline, `central` above the shared alphabetic one.
+    let ascent = match central {
+        Some(lift)
+            if style.central_baseline
+                && style.vertical_align == crate::document::style::VerticalAlign::Baseline =>
+        {
+            height / 2.0 + lift
+        }
+        _ => ascent,
+    };
     flow.push(Frag {
         piece: Piece::Atomic { start, end },
         ascent,
@@ -174,6 +302,27 @@ pub(super) fn place_atomic(
     flow.space = None;
     flow.line = flow.line.max(height);
     flow.bottom = flow.bottom.max(flow.y + flow.line);
+}
+/** The baseline of the first line box inside an atomic inline's items, in document coordinates. */
+fn first_baseline(
+    context: &mut LayoutContext<'_>,
+    items: &[DisplayItem],
+) -> EngineResult<Option<f64>> {
+    let mut first: Option<(f64, usize)> = None;
+    for item in items {
+        context.charge(1)?;
+        if let Some(line) = item.lines.iter().min_by(|a, b| a.y.total_cmp(&b.y))
+            && first.is_none_or(|(y, _)| line.y < y)
+        {
+            first = Some((line.y, item.local_id));
+        }
+    }
+    let Some((y, local)) = first else {
+        return Ok(None);
+    };
+    Ok(Some(
+        y + super::sizing::text_ascent(&context.node(local)?.style),
+    ))
 }
 /** The baseline of the last line box inside an atomic inline's items, in document coordinates. */
 fn last_baseline(
@@ -199,11 +348,25 @@ fn opens_line(node: &Node, sides: &[f64; 4]) -> bool {
         .iter()
         .any(|&side| style.margin[side] != 0.0 || style.padding[side] != 0.0 || sides[side] != 0.0)
 }
+/** A text run's distance from its top to the shared alphabetic baseline; in vertical text the
+run instead centers on its line's central baseline, so it moves by the two lifts' difference. */
+fn run_ascent(context: &LayoutContext<'_>, node: &Node) -> f64 {
+    let ascent = super::sizing::text_ascent(&node.style);
+    match node.style.central_baseline && CENTER_RUNS {
+        true => ascent + central_offset(context, node) - central_lift(&node.style),
+        false => ascent,
+    }
+}
 /** A text fragment for the run at `line` of the item at `item`, with its effective vertical alignment. */
-fn text_frag(context: &LayoutContext<'_>, node: &Node, item: usize, line: usize) -> Frag {
+pub(super) fn text_frag(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    item: usize,
+    line: usize,
+) -> Frag {
     Frag {
         piece: Piece::Text { item, line },
-        ascent: super::sizing::text_ascent(&node.style),
+        ascent: run_ascent(context, node),
         height: super::sizing::advance(&node.style),
         align: effective_align(context, node),
         shift: inherited_shift(context, node),
@@ -268,6 +431,16 @@ pub(super) fn own_text(node: &Node) -> std::borrow::Cow<'_, str> {
         node.text.as_str().into()
     }
 }
+/** The element whose `unicode-bidi` a run of text takes: the node itself, or for a text node
+its parent element (the property is not inherited, so the text node's own copy is `normal`). */
+fn bidi_owner<'a>(context: &LayoutContext<'a>, node: &'a Node) -> &'a Node {
+    if node.tag != "#text" {
+        return node;
+    }
+    node.parent
+        .and_then(|parent| context.node(parent).ok())
+        .unwrap_or(node)
+}
 /** Wrapping measures exact runs; whitespace collapses across adjacent inline elements unless preserved. */
 pub(super) fn text(
     context: &mut LayoutContext<'_>,
@@ -278,7 +451,14 @@ pub(super) fn text(
 ) -> EngineResult<Vec<PaintLine>> {
     use crate::document::WhiteSpace;
     context.charge(source.chars().count())?;
-    let mut source = transformed(&node.style, source);
+    // A run continues a word when the line's last letter abuts it, with no space pending.
+    let word_start = !flow.last.is_some_and(char::is_alphanumeric)
+        || flow.space == Some(true)
+        || node.space_leading;
+    let mut source = super::bidi::controls(
+        &bidi_owner(context, node).style,
+        transformed_from(&node.style, source, word_start),
+    );
     let space = node.style.white_space;
     // A carriage return lays out as a space, as it does where white space collapses
     // (control-chars-00D).
@@ -297,6 +477,9 @@ pub(super) fn text(
         words(context, &source, node, flow, (item, &mut lines))?;
         return Ok(lines);
     }
+    if space != WhiteSpace::PreLine {
+        pending_space(context, node, flow)?;
+    }
     for (index, segment) in source.split('\n').enumerate() {
         if index > 0 {
             flow.line = flow.line.max(super::sizing::advance(&node.style));
@@ -309,6 +492,21 @@ pub(super) fn text(
         }
     }
     Ok(lines)
+}
+/** A collapsible space an earlier run ended with stays before preserved text: only a collapsible
+ * space removes a collapsible space before it, and a preserved one is not (white-space-processing
+ * -031's `X ` then `<pre> X` keeps both spaces). */
+fn pending_space(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    flow: &mut Flow,
+) -> EngineResult<()> {
+    if flow.space == Some(true) && started(flow) {
+        let face = super::sizing::face_for(&node.style, Some(" "));
+        flow.cursor += context.measure(" ", face)? + node.style.word_spacing;
+        flow.space = Some(false);
+    }
+    Ok(())
 }
 /** One piece of preserved text between break opportunities, after Blink's
  * InlineItemsBuilder: a word (with, under `break-spaces`, the first space after it, since a
@@ -350,13 +548,103 @@ fn units(segment: &str, break_spaces: bool) -> Vec<Unit<'_>> {
     }
     units
 }
+/** Makes room after a word's last chunk for the letters the next element joins to it: when
+ * they would not fit beside it, the chunk breaks at its last opportunity, so the joined letters
+ * go to the next line with only its tail (`high&shy;wa<b>y</b>` breaks after the soft hyphen). */
+fn reserve(
+    context: &mut LayoutContext<'_>,
+    chunks: &mut Vec<super::wrap::MeasuredText>,
+    (room, limit, extra): (f64, f64, f64),
+    face: crate::platform::Face,
+    breaks: super::wrap::Breaks,
+) -> EngineResult<()> {
+    let Some(index) = chunks.len().checked_sub(1) else {
+        return Ok(());
+    };
+    let space = if index == 0 { room } else { limit };
+    let chunk = &chunks[index];
+    if extra <= 0.0 || chunk.width + extra <= space + FIT_SLACK {
+        return Ok(());
+    }
+    let Some(at) = super::wrap::last_break(&chunk.text, breaks) else {
+        return Ok(());
+    };
+    let (head, tail) = chunk.text.split_at(at);
+    let (head, tail) = (head.to_string(), tail.to_string());
+    let parts = [
+        super::wrap::MeasuredText {
+            width: context.measure(&head, face)?,
+            text: head,
+        },
+        super::wrap::MeasuredText {
+            width: context.measure(&tail, face)?,
+            text: tail,
+        },
+    ];
+    chunks.splice(index..=index, parts);
+    Ok(())
+}
+/** A first chunk that must stay on the line it continues (`glue::joined`) but does not fit there
+ * is cut at its first inner break opportunity, so only its unbreakable head stays and the rest
+ * wraps (`X<span>X</span>&#x200B;X` keeps the zero width space and moves the last X). */
+fn unjoin(
+    context: &mut LayoutContext<'_>,
+    chunks: &mut Vec<super::wrap::MeasuredText>,
+    (flow, room): (&Flow, f64),
+    face: crate::platform::Face,
+    breaks: super::wrap::Breaks,
+) -> EngineResult<()> {
+    let Some(first) = chunks.first() else {
+        return Ok(());
+    };
+    let ink = first.width - hanging(context, &first.text, face)?;
+    if ink <= room + FIT_SLACK || !super::glue::joined(flow, &first.text, breaks) {
+        return Ok(());
+    }
+    let Some(at) = super::wrap::first_break(&first.text, breaks) else {
+        return Ok(());
+    };
+    let (head, tail) = first.text.split_at(at);
+    let (head, tail) = (head.to_string(), tail.to_string());
+    let parts = [
+        super::wrap::MeasuredText {
+            width: context.measure(&head, face)?,
+            text: head,
+        },
+        super::wrap::MeasuredText {
+            width: context.measure(&tail, face)?,
+            text: tail,
+        },
+    ];
+    chunks.splice(0..1, parts);
+    Ok(())
+}
 /** U+3000, the one space separator besides U+0020 that hangs (Blink's IsOtherSpaceSeparator). */
 const IDEOGRAPHIC_SPACE: char = '\u{3000}';
+/** The width of the ideographic spaces ending a collapsed run, which hang at a line's end even
+ * where white space collapses (Blink's LineBreaker::HandleTrailingSpaces keeps them as
+ * preserved trailing space), so they neither push the run to the next line nor take part in
+ * its alignment. */
+pub(super) fn hanging(
+    context: &mut LayoutContext<'_>,
+    text: &str,
+    face: crate::platform::Face,
+) -> EngineResult<f64> {
+    let body = text.trim_end_matches(IDEOGRAPHIC_SPACE);
+    if body.len() == text.len() {
+        return Ok(0.0);
+    }
+    context.measure(&text[body.len()..], face)
+}
 /** CSS Text's tab stops after Blink's Font::TabWidth: a tab advances to the next multiple of
  * `tab-size` (spaces, or a length) from the line's start, skipping a stop nearer than half a
  * space so the tab always shows. The spaces are the block container's, as Blink's
  * InlineNode::FontForTab measures them, so a smaller font inside the block keeps its stops. */
-fn tab_width(context: &mut LayoutContext<'_>, node: &Node, position: f64) -> EngineResult<f64> {
+pub(super) fn tab_width(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    position: f64,
+) -> EngineResult<f64> {
     let block = &container(context, node).style;
     let (face, spacing) = (
         super::sizing::face_for(block, Some(" ")),
@@ -568,16 +856,22 @@ fn place(
         }
     }
     flow.cursor += width;
+    flow.last = text.chars().last().or(flow.last);
+    flow.last_fill = false;
     Ok(())
 }
 /** Collapsed words share line boxes; nowrap only breaks at forced newlines. */
 fn words(
     context: &mut LayoutContext<'_>,
     source: &str,
-    node: &Node,
+    original: &Node,
     flow: &mut Flow,
     (item, lines): (usize, &mut Vec<PaintLine>),
 ) -> EngineResult<()> {
+    // On a block's first formatted line the text takes its `::first-line` fonts; once the line
+    // ends, the rest of the text lays out in its own.
+    let styled = super::first_line_layout::styled(context, original, flow);
+    let node = styled.as_ref().unwrap_or(original);
     let face = super::sizing::face_for(&node.style, Some(source));
     let nowrap = node.style.white_space == crate::document::WhiteSpace::Nowrap;
     let space = if css_words(source).next().is_some() {
@@ -586,6 +880,7 @@ fn words(
         0.0
     };
     let breaks = breaks(context, node);
+    let anywhere = inherited(context, node, |style| style.line_break_anywhere);
     let limit = if nowrap {
         crate::constants::LAYOUT_EXTENT
     } else {
@@ -593,29 +888,72 @@ fn words(
     };
     // Only source whitespace separates runs: `one<b>two</b>` stays one word.
     let mut spaced = source.starts_with(css_space) || flow.space.unwrap_or(node.tag != "#text");
-    for word in css_words(source) {
+    let next = (!nowrap && !source.ends_with(css_space))
+        .then(|| super::lookahead::following(context, node))
+        .flatten();
+    let last = css_words(source).count().saturating_sub(1);
+    let enters_nowrap = nowrap && wrapping_parent(context, node);
+    for (number, word) in css_words(source).enumerate() {
         let room = flow.room() - flow.cursor - if spaced { space } else { 0.0 };
-        let chunks = filling(context, word, (limit, room), face, breaks, flow)?;
+        // A `nowrap` run never leaves part of a word on the line it starts.
+        let head_room = if nowrap { f64::INFINITY } else { room };
+        let mut chunks = filling(context, word, (limit, head_room), face, breaks, flow)?;
+        if !spaced && !nowrap && started(flow) {
+            unjoin(context, &mut chunks, (flow, room), face, breaks)?;
+        }
+        let mut extra = 0.0;
+        if let Some(next) = next.as_deref().filter(|_| number == last) {
+            let prefix = super::lookahead::joined_prefix(word, next, breaks);
+            extra = context.measure(&prefix, face)?;
+            reserve(context, &mut chunks, (room, limit, extra), face, breaks)?;
+        }
         let count = chunks.len();
         for (index, mut chunk) in chunks.into_iter().enumerate() {
             // A no-break space does not collapse and takes word-spacing like a space does.
             chunk.width += spaces(&chunk.text) * node.style.word_spacing;
             let gap = if started(flow) && spaced { space } else { 0.0 };
-            if !nowrap && started(flow) && !flow.fits(gap + chunk.width) {
+            let hang = hanging(context, &chunk.text, face)?;
+            // A run of only ideographic spaces joins the hanging end of the line it follows, and
+            // an invisible run (a bidi isolate's closing mark) never moves to a line of its own.
+            let only = (hang > 0.0 && hang >= chunk.width) || (gap == 0.0 && chunk.width == 0.0);
+            let hung = if only {
+                flow.hang.width + gap + hang
+            } else {
+                hang
+            };
+            let joined = index == 0
+                && !spaced
+                && !anywhere
+                && super::glue::joined(flow, &chunk.text, breaks);
+            let ends = chunk.text.chars().last();
+            // The letters the next element joins to this word's end need the room too.
+            let ahead = if index + 1 == count { extra } else { 0.0 };
+            let wraps = !nowrap || (number == 0 && index == 0 && enters_nowrap);
+            if wraps
+                && started(flow)
+                && !only
+                && !joined
+                && !flow.fits(gap + chunk.width - hang + ahead)
+            {
                 flow.wrap();
+                if index == 0 && styled.is_some() {
+                    let rest = &source[word.as_ptr() as usize - source.as_ptr() as usize..];
+                    return words(context, rest, original, flow, (item, lines));
+                }
             }
             if !nowrap {
-                flow.fit(chunk.width);
+                flow.fit(chunk.width - hang);
             }
             let gap = if started(flow) && spaced { space } else { 0.0 };
-            let x = flow.left() + flow.cursor + gap;
+            let auto = autospace(node, flow, &chunk.text, index == 0 && !spaced);
+            let x = flow.left() + flow.cursor + gap + auto;
             if let Some(line) = lines.last_mut().filter(|line| line.y == flow.y) {
                 context.charge(chunk.text.chars().count())?;
                 if gap > 0.0 {
                     line.text.push(' ');
                 }
                 line.text.push_str(&chunk.text);
-                line.width += gap + chunk.width;
+                line.width += gap + auto + chunk.width;
             } else {
                 let frag = text_frag(context, node, item, lines.len());
                 flow.push(frag);
@@ -626,7 +964,14 @@ fn words(
                     width: chunk.width,
                 });
             }
-            flow.cursor += gap + chunk.width;
+            flow.cursor += gap + auto + chunk.width;
+            flow.last = ends.or(flow.last);
+            flow.last_fill = breaks.breakable;
+            flow.hang = super::line::Hang {
+                width: hung,
+                rtl: node.style.rtl,
+                ..Default::default()
+            };
             flow.line = flow.line.max(super::sizing::advance(&node.style));
             flow.bottom = flow.bottom.max(flow.y + flow.line);
             if index + 1 < count {
@@ -644,9 +989,11 @@ fn words(
     };
     Ok(())
 }
-/** A collapsed word's line pieces: under a filling break (`word-break: break-all`, `line-break:
-anywhere`) a word that overflows a started line first leaves its longest fitting head there, as
-Blink's LineBreaker does; otherwise the pieces of `limit` wide lines. */
+/** A collapsed word's line pieces: a word that overflows a started line first leaves its longest
+head that fits there, ending at one of its ordinary break opportunities (between CJK or Hangul
+characters, after a hyphen, or anywhere under `word-break: break-all` and `line-break:
+anywhere`), as Blink's LineBreaker does; `overflow-wrap` breaks are emergencies, taken only once
+the word stands on a line of its own. The rest are the pieces of `limit` wide lines. */
 fn filling(
     context: &mut LayoutContext<'_>,
     word: &str,
@@ -655,10 +1002,15 @@ fn filling(
     breaks: super::wrap::Breaks,
     flow: &Flow,
 ) -> EngineResult<Vec<super::wrap::MeasuredText>> {
-    if breaks.fill
-        && started(flow)
-        && context.measure(word, face)? > room + FIT_SLACK
-        && let Some(head) = super::wrap::head(word, room, face, breaks, context)?
+    let ordinary = super::wrap::Breaks {
+        breakable: breaks.fill,
+        ..breaks
+    };
+    // Ideographic spaces ending the word hang, so they never make it overflow.
+    let ink = context.measure(word, face)? - hanging(context, word, face)?;
+    if started(flow)
+        && ink > room + FIT_SLACK
+        && let Some(head) = super::wrap::head(word, room, face, ordinary, context)?
     {
         let rest = &word[head.text.len()..];
         let mut chunks = vec![head];
@@ -672,13 +1024,74 @@ const FIT_SLACK: f64 = 1.0 / 64.0;
 /** How a text node's words may break, from `overflow-wrap`, `word-break` and `line-break`,
 each inherited from the nearest ancestor that declares it. */
 fn breaks(context: &LayoutContext<'_>, node: &Node) -> super::wrap::Breaks {
+    let phrase = inherited(context, node, |style| style.word_break_auto_phrase);
     let anywhere = inherited(context, node, |style| style.line_break_anywhere);
     let fill = anywhere || inherited(context, node, |style| style.word_break_fill);
     super::wrap::Breaks {
         breakable: fill || breaks_words(context, node),
         fill,
         keep_all: inherited(context, node, |style| style.word_break_keep_all),
+        anywhere,
+        shy: !node.style.hyphens_none,
+        phrase,
+        cjk: cjk_language(context, node),
+        loose: inherited(context, node, |style| style.line_break_loose),
+        no_hang: node.style.break_spaces
+            && node.style.white_space == crate::document::WhiteSpace::PreWrap,
     }
+}
+/** `text-autospace` across a run boundary: the eighth of an em between an ideograph ending the
+ * line so far and a letter or digit starting this run (or the reverse) when nothing separates
+ * them, as shaping inside one run adds it (`platform::autospace`). */
+fn autospace(node: &Node, flow: &Flow, text: &str, adjoining: bool) -> f64 {
+    let mode = super::sizing::face_for(&node.style, Some(text)).autospace;
+    let first = text.chars().next();
+    let meets = flow
+        .last
+        .zip(first)
+        .is_some_and(|(last, first)| crate::platform::autospace::spaced(last, first, mode));
+    if adjoining && started(flow) && meets {
+        crate::platform::autospace::space(node.style.font_size)
+    } else {
+        0.0
+    }
+}
+/** Whether `node`'s text opens a `nowrap` region inside wrapping content (`<nobr>`, or a nowrap
+span's first text): then the line may still break at the boundary before it, which belongs to
+the wrapping content, so the region moves to a new line whole. Each nowrap ancestor up to the
+wrapping one must start with it (nothing in flow before it but floats and positioned boxes). */
+fn wrapping_parent(context: &LayoutContext<'_>, node: &Node) -> bool {
+    let mut current = node;
+    for _ in 0..crate::constants::DOCUMENT_DEPTH {
+        let Some(parent) = current.parent.and_then(|id| context.node(id).ok()) else {
+            return false;
+        };
+        if parent.style.white_space != crate::document::WhiteSpace::Nowrap {
+            return true;
+        }
+        let first = context
+            .children(parent.local_id)
+            .into_iter()
+            .find(|c| !out_of_flow(c) && !super::sizing::floating(c));
+        let leads = first.is_some_and(|c| c.local_id == current.local_id);
+        if !leads || !parent.text.trim().is_empty() || !parent.style.inline {
+            return false;
+        }
+        current = parent;
+    }
+    false
+}
+/** Whether `node`'s content language (its nearest `lang` attribute) is Chinese or Japanese. */
+fn cjk_language(context: &LayoutContext<'_>, node: &Node) -> bool {
+    let mut current = Some(node);
+    while let Some(node) = current {
+        if let Some(lang) = node.attributes.get("lang") {
+            let lang = lang.to_ascii_lowercase();
+            return lang.starts_with("ja") || lang.starts_with("zh");
+        }
+        current = node.parent.and_then(|parent| context.node(parent).ok());
+    }
+    false
 }
 /** A boolean text property's value on `node`: its own declaration or its nearest declaring
 ancestor's, false when none declares it. */
@@ -695,6 +1108,22 @@ fn inherited(
         current = node.parent.and_then(|parent| context.node(parent).ok());
     }
     false
+}
+/** How `node`'s text may break for its min-content: as line layout breaks it, except that
+`overflow-wrap: break-word` breaks only to avoid overflow and so adds no opportunities. */
+pub(super) fn min_content_breaks(context: &LayoutContext<'_>, node: &Node) -> super::wrap::Breaks {
+    super::wrap::Breaks {
+        breakable: breaks_for_min_content(context, node),
+        ..breaks(context, node)
+    }
+}
+/** Whether every letter boundary is a break opportunity min-content counts (CSS Text 3 section
+5.5): `word-break: break-all | break-word`, `line-break: anywhere` or `overflow-wrap: anywhere`,
+each inherited. `overflow-wrap: break-word` breaks only to avoid overflow, so it does not. */
+pub(super) fn breaks_for_min_content(context: &LayoutContext<'_>, node: &Node) -> bool {
+    inherited(context, node, |style| style.word_break_all)
+        || inherited(context, node, |style| style.line_break_anywhere)
+        || inherited(context, node, |style| style.overflow_wrap_anywhere)
 }
 /** Whether `overflow-wrap` or `word-break`, inherited from the nearest ancestor that declares
 it, lets a line break inside a word. */
@@ -718,7 +1147,16 @@ pub(super) fn transformed<'a>(
     style: &crate::document::ComputedStyle,
     source: &'a str,
 ) -> std::borrow::Cow<'a, str> {
-    let cased = cased(style, source);
+    transformed_from(style, source, true)
+}
+/** As `transformed`, where `word_start` says whether the text starts a word: `capitalize` leaves
+ * a run that continues a word lowercase (text-transform-cap-002's `T<span>his`). */
+pub(super) fn transformed_from<'a>(
+    style: &crate::document::ComputedStyle,
+    source: &'a str,
+    word_start: bool,
+) -> std::borrow::Cow<'a, str> {
+    let cased = cased(style, source, word_start);
     let cased = widened(style, cased);
     if !cased.chars().any(hidden_control) {
         return cased;
@@ -966,25 +1404,25 @@ fn hidden_control(c: char) -> bool {
     c.is_control() && !css_space(c)
 }
 /** The text-transform case mapping. */
-fn cased<'a>(style: &crate::document::ComputedStyle, source: &'a str) -> std::borrow::Cow<'a, str> {
+fn cased<'a>(
+    style: &crate::document::ComputedStyle,
+    source: &'a str,
+    word_start: bool,
+) -> std::borrow::Cow<'a, str> {
     use crate::document::TextTransform;
     match style.text_transform {
         TextTransform::None => source.into(),
-        TextTransform::Uppercase => source.to_uppercase().into(),
-        TextTransform::Lowercase => source.to_lowercase().into(),
-        TextTransform::Capitalize => {
-            let mut result = String::with_capacity(source.len());
-            let mut start = true;
-            for c in source.chars() {
-                if start && c.is_alphanumeric() {
-                    result.extend(c.to_uppercase());
-                } else {
-                    result.push(c);
-                }
-                start = c.is_whitespace();
-            }
-            result.into()
+        TextTransform::Uppercase => super::casing::upper(source, &style.lang).into(),
+        TextTransform::Lowercase => super::casing::lower(source, &style.lang).into(),
+        // A run that continues an earlier element's word keeps that word's letters as they are.
+        TextTransform::Capitalize if !word_start => {
+            let cut = source
+                .find(|c: char| !c.is_alphanumeric())
+                .unwrap_or(source.len());
+            let rest = super::casing::capitalize(&source[cut..], &style.lang);
+            format!("{}{rest}", &source[..cut]).into()
         }
+        TextTransform::Capitalize => super::casing::capitalize(source, &style.lang).into(),
     }
 }
 /** Whether the current line already holds a fragment. Blink removes spaces at the start of a
@@ -993,7 +1431,7 @@ fn started(flow: &Flow) -> bool {
     !flow.frags.is_empty()
 }
 /** Spaces in a preserved run, each widened by `word-spacing`. */
-fn spaces(segment: &str) -> f64 {
+pub(super) fn spaces(segment: &str) -> f64 {
     segment
         .chars()
         .filter(|c| *c == ' ' || *c == '\u{a0}')
@@ -1012,8 +1450,11 @@ fn indent_first_line(context: &LayoutContext<'_>, node: &Node, flow: &mut Flow, 
     if flow.cursor != 0.0 || !flow.frags.is_empty() || !flow.finished.is_empty() {
         return;
     }
-    let container_of =
-        |n: &Node| (!n.style.inline || n.style.inline_block) && !n.style.display_contents;
+    // An absolutely positioned or floated `display: inline` box is blockified, so it starts its
+    // own block and its first line takes its own `text-indent`, not its parent's.
+    let container_of = |n: &Node| {
+        (!n.style.inline || n.style.inline_block || !inline_box(n)) && !n.style.display_contents
+    };
     // The path from `node` up to its container, found before any sibling scan so a page
     // without an indent pays only this short walk.
     let mut path = vec![node];
@@ -1041,6 +1482,7 @@ fn indent_first_line(context: &LayoutContext<'_>, node: &Node, flow: &mut Flow, 
         return;
     }
     flow.cursor = px + percent / 100.0 * flow.width;
+    flow.indent = flow.cursor;
 }
 /** Whether an in-flow block-level sibling precedes `child` among `parent`'s children. */
 fn block_before(context: &LayoutContext<'_>, parent: &Node, child: &Node) -> bool {

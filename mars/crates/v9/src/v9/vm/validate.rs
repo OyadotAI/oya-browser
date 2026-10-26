@@ -148,6 +148,18 @@ impl Vm<'_> {
     fn validate_objects(&self) -> EngineResult<()> {
         let functions = self.heap.objects.len();
         for (id, object) in &self.heap.objects {
+            // Older snapshots represented the empty intrinsic as Plain; its fixed native identity
+            // still supplies empty StringData, while no supplied payload may replace that data.
+            if *id == realm_for(*id).ids.string_prototype {
+                let valid = match &object.class {
+                    Class::Plain => true,
+                    Class::String(value) => value.is_empty(),
+                    _ => false,
+                };
+                if !valid {
+                    return Err(forged("String prototype"));
+                }
+            }
             #[cfg(feature = "conformance")]
             if !crate::v9::builtins::validate_native_test_object(self, *id) {
                 return Err(forged("native test-object brand"));

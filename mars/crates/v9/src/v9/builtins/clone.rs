@@ -54,7 +54,10 @@ fn clone(
     if super::conformance_host_object(vm, value) {
         return Err(uncloneable(vm, "A native test object"));
     }
-    let class = vm.heap.get(id).map(|object| object.class.clone());
+    let class = vm
+        .string_data(id)
+        .map(Class::String)
+        .or_else(|| vm.heap.get(id).map(|object| object.class.clone()));
     let copy = match &class {
         Some(Class::Array(_)) => JsValue::Object(vm.new_array(Vec::new())?),
         Some(Class::Plain | Class::Error) => JsValue::Object(vm.new_object()?),

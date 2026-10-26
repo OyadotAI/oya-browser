@@ -120,7 +120,11 @@ fn atom(
     if crate::v9::builtins::conformance_host_object(vm, value) {
         return Err(refused(vm, graph.worker));
     }
-    let Some(class) = vm.heap.get(id).map(|object| object.class.clone()) else {
+    let Some(class) = vm
+        .string_data(id)
+        .map(Class::String)
+        .or_else(|| vm.heap.get(id).map(|object| object.class.clone()))
+    else {
         return Err(refused(vm, graph.worker));
     };
     let index = graph.nodes.len();

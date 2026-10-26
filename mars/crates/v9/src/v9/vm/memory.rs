@@ -39,6 +39,7 @@ pub(in crate::v9) struct MemoryEstimate {
 enum Allocation {
     CpuProfile,
     String(usize),
+    StringNode(usize),
     BigInt(usize),
     Shared(u64),
     Environment(EnvId),
@@ -70,20 +71,16 @@ impl Tracker {
             .owners
             .insert(bank);
     }
-    /** Arc UTF-16 backing storage is deduplicated independently of the number of JsString handles. */
+    /** Flat buffers and concat nodes retain actual allocation sizes without forcing materialization. */
     fn string(&mut self, bank: u32, text: &JsString) {
-        if text.is_empty() {
-            return;
-        }
-        let bytes = text.len() * size_of::<u16>() + 2 * size_of::<usize>();
-        self.allocation(
-            bank,
-            Allocation::String(text.as_units().as_ptr() as usize),
-            BytesRange {
-                lower: bytes,
-                upper: bytes + std::mem::align_of::<usize>() - 1,
-            },
-        );
+        text.storage_allocations(|node, id, lower, upper| {
+            let id = if node {
+                Allocation::StringNode(id)
+            } else {
+                Allocation::String(id)
+            };
+            self.allocation(bank, id, BytesRange { lower, upper });
+        });
     }
     /** Symbol descriptions are language strings too; object edges are already accounted by the live heap walk. */
     fn value(&mut self, vm: &Vm, bank: u32, value: &JsValue) {

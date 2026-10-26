@@ -70,24 +70,29 @@ pub(super) fn node(
             .filter(|src| tag == "img" && !script_url(src)),
         image_alt: attributes.get("alt").cloned().unwrap_or_default(),
         image_size: None,
+        image_ratio_free: false,
         table_cell: None,
         defined: false,
         space_after: false,
         space_leading: false,
         leading_space: String::new(),
         focused: false,
+        embedded: false,
     })
 }
 
-/// Page-mode recovery applied before `node`: inline handlers are stripped rather than run or
+/// Page-mode recovery applied before `node`: other inline handlers are stripped rather than run or
 /// refused, oversized attribute values and identifiers are dropped, and input types without an
 /// implementation fall back the way HTML's do. Returns the value-free diagnostics to record.
 pub(super) fn recover(tag: &str, attributes: &mut Attributes) -> Vec<String> {
     let mut diagnostics = Vec::new();
     let before = attributes.len();
+    // A button's onclick and the body's handlers, which HTML forwards to the window (V9 runs
+    // only the window-event ones, so `<body onload>` starts a page as it does in Chromium).
     attributes.retain(|key, value| {
         !(key.starts_with("on")
-            && !(tag == "button" && key == "onclick" && value.len() <= SCRIPT_BYTES))
+            && !((tag == "button" && key == "onclick" || tag == "body")
+                && value.len() <= SCRIPT_BYTES))
     });
     if attributes.len() < before {
         diagnostics.push("Inline event handler attributes were removed and never run.".into());

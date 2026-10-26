@@ -723,9 +723,10 @@ impl Runtime {
         };
         query.validate()?;
         let limit = input.limit.unwrap_or(FIND_DEFAULT).clamp(1, FIND_MAX);
+        let left = self.page.as_ref().map_or(0.0, |page| page.scroll_x);
         let (context, top) = (self.render_context, self.scroll_y);
         let visible = |bounds: Option<&Value>| {
-            !input.visible_only || super::page::in_viewport(bounds, context, top)
+            !input.visible_only || super::page::in_viewport(bounds, context, [left, top])
         };
         Ok(self.current()?.find(&query, limit, visible))
     }

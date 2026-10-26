@@ -631,7 +631,7 @@ pub(in crate::v9) fn builtin_tag(vm: &mut Vm, value: &JsValue) -> Res<String> {
     if id == ids.boolean_prototype {
         return Ok("Boolean".into());
     }
-    if id == ids.string_prototype {
+    if vm.string_data(id).is_some() {
         return Ok("String".into());
     }
     Ok(match vm.heap.get(id).map(|o| &o.class) {

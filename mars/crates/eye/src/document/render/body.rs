@@ -39,6 +39,45 @@ pub(super) fn decoration(
         border_color: body.border_color.clone(),
     })
 }
+/** How far the root's content box sits inside the viewport per side (top, right, bottom, left):
+its margin, border and padding, narrowed by an authored width and moved by a positioned root's
+offsets (`root_box`). The body sits inside them. Root margins never collapse with the body's
+(CSS 2.1 8.3.1), so they simply add up. */
+pub(super) fn root_edges(document: &Document, viewport: (f64, f64)) -> [f64; 4] {
+    let root = &document.formatting.html.style;
+    let sides = super::sizing::border_sides(root);
+    let placed = super::root_box::root_box(document, viewport);
+    let [left, top] = placed.content;
+    let right = viewport.0 - left - placed.content_width;
+    [
+        top,
+        right,
+        root.margin[2] + sides[2] + root.padding[2],
+        left,
+    ]
+}
+/** The root element's border around its border box; its background is the canvas's already. */
+pub(super) fn root_decoration(
+    document: &Document,
+    viewport: (f64, f64),
+    height: f64,
+) -> Option<super::DisplayDecoration> {
+    let root = &document.formatting.html.style;
+    if root.hidden || root.border <= 0.0 {
+        return None;
+    }
+    let placed = super::root_box::root_box(document, viewport);
+    let auto = height - placed.y - root.margin[2];
+    Some(super::DisplayDecoration {
+        x: placed.x,
+        y: placed.y,
+        width: placed.width.max(0.0),
+        height: placed.height.unwrap_or(auto).max(0.0),
+        color: None,
+        border: root.border,
+        border_color: root.border_color.clone(),
+    })
+}
 /** The body's definite content height when body clips its own overflow, so content past it adds
  * nothing to the document's scrollable extent. Body keeps its overflow only while the root's is
  * not visible (otherwise it propagates to the viewport); a consent dialog's
@@ -127,7 +166,7 @@ pub(super) fn margin_start(
  */
 pub(super) fn container_root(document: &Document) -> Option<(Document, usize)> {
     let body = &document.formatting.body.style;
-    if !(body.display_flex || body.display_grid) || body.hidden {
+    if !(body.display_flex || body.display_grid || body.vertical_writing) || body.hidden {
         return None;
     }
     let id = document.nodes.iter().map(|node| node.local_id).max()? + 1;
@@ -145,8 +184,13 @@ pub(super) fn container_root(document: &Document) -> Option<(Document, usize)> {
 fn layout_only(body: &crate::document::ComputedStyle) -> crate::document::ComputedStyle {
     let initial = crate::document::ComputedStyle::default();
     let mut style = body.clone();
-    style.margin = initial.margin;
-    style.margin_auto = initial.margin_auto;
+    // A vertical body keeps its margins on this box, so in its rotated layout they collapse
+    // with its first and last children's as Blink's block-direction margins do; the wrapper
+    // then lays the body out without them (flow.rs `layout_once`).
+    if !body.vertical_writing {
+        style.margin = initial.margin;
+        style.margin_auto = initial.margin_auto;
+    }
     style.padding = initial.padding;
     style.border = initial.border;
     style.border_widths = initial.border_widths;

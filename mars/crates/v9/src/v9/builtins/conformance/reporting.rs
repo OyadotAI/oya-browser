@@ -1,13 +1,25 @@
 /** The shell reports caught host-callback and microtask exceptions in their real active context. */
+use crate::protocol::{EngineError, SourceLocation};
 use crate::v9::builtins::{key, text};
-use crate::v9::value::JsValue;
+use crate::v9::value::{JsString, JsValue};
 use crate::v9::vm::{Res, Thrown, Vm};
+
+mod diagnostics;
+mod terminal;
+use diagnostics::{describe, is_assertion};
+pub(super) use terminal::is_failed_exit;
+pub(in crate::v9) use terminal::terminal;
 
 /** Assertion/native provenance remains a scoring failure even though ordinary callback reporting is caught. */
 pub(super) fn exception(vm: &mut Vm, error: JsValue) -> Res<()> {
-    note(vm, &error);
+    detail(vm, error).map(|_| ())
+}
+
+/** The same real reporter supplies a terminal diagnostic without duplicate author evaluation. */
+fn detail(vm: &mut Vm, error: JsValue) -> Res<Option<JsString>> {
     let roots = vm.pins.len();
-    vm.pin(error.clone());
+    vm.pins.push(error.clone());
+    note(vm, &error);
     let result = report(vm, error);
     vm.pins.truncate(roots);
     result
@@ -16,9 +28,9 @@ pub(super) fn exception(vm: &mut Vm, error: JsValue) -> Res<()> {
 /** Native/assertion provenance cannot disappear inside another caught reporting callback. */
 fn note(vm: &mut Vm, error: &JsValue) {
     vm.note_conformance_native_error(error);
-    let assertion = vm.is_conformance_assertion(error);
+    let assertion = is_assertion(vm, error);
     if assertion {
-        let description = vm.describe(error);
+        let description = describe(vm, error);
         vm.page
             .effects
             .conformance_error
@@ -27,17 +39,22 @@ fn note(vm: &mut Vm, error: &JsValue) {
 }
 
 /** The pinned shell gives a real onerror callback the original value before formatting it for output. */
-fn report(vm: &mut Vm, error: JsValue) -> Res<()> {
+fn report(vm: &mut Vm, error: JsValue) -> Res<Option<JsString>> {
     if handled(vm, &error)? {
-        return Ok(());
+        return Ok(None);
     }
     match vm.to_string(&error) {
-        Ok(message) => vm.page.console("error", message.lossy()),
+        Ok(message) => {
+            vm.page.console("error", message.lossy());
+            Ok(Some(message))
+        }
         // ReportException's own non-verbose TryCatch catches failed author error formatting.
-        Err(Thrown::Value(error)) => note(vm, &error),
-        Err(fatal) => return Err(fatal),
+        Err(Thrown::Value(error)) => {
+            note(vm, &error);
+            Ok(None)
+        }
+        Err(fatal) => Err(fatal),
     }
-    Ok(())
 }
 
 /** ReportException runs in the caller's active context without entering another host context scope. */
@@ -55,7 +72,7 @@ fn handled(vm: &mut Vm, error: &JsValue) -> Res<bool> {
         return Ok(false);
     }
     let location = vm.page.throw_location.unwrap_or_default();
-    let message = format!("Uncaught {}", vm.describe(error));
+    let message = format!("Uncaught {}", describe(vm, error));
     let source = vm.modules.source_name(location.byte_offset);
     let args = vec![
         text(vm, &message)?,

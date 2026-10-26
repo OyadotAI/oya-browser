@@ -178,10 +178,12 @@ pub(super) fn size_tracks(
 }
 
 /** Step 1: a fixed minimum is the base size, a fixed maximum the growth limit, an intrinsic one
- * infinite; a flexible maximum's limit is the base size, and no limit falls below its base. */
+ * infinite; a flexible maximum's limit is the base size, and no limit falls below its base.
+ * Authored lengths are never negative; only a subgrid's inherited track can be, when its gap is
+ * wider than its parent's, and it keeps that size so later lines stay on the parent's. */
 fn initialize(sizing: TrackSizing) -> Track {
     let base = match sizing.min {
-        MinSizing::Fixed(length) => length.max(0.0),
+        MinSizing::Fixed(length) => length,
         MinSizing::Auto | MinSizing::MinContent | MinSizing::MaxContent => 0.0,
     };
     let limit = match sizing.max {

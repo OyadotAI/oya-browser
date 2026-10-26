@@ -12,8 +12,11 @@ request interception, each under the same ownership rules as every other agent o
 mod devtools;
 /** Saving files fetched through the governed network path. */
 pub mod downloads;
+mod exif;
+mod frames;
 /** Committed pages the person visited and address-field completion. */
 pub mod history;
+mod horizontal;
 mod images;
 mod integrity;
 mod interaction;

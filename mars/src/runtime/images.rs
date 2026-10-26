@@ -104,7 +104,13 @@ fn jpeg(bytes: &[u8]) -> EngineResult<DecodedImage> {
     if info.pixel_format == jpeg_decoder::PixelFormat::CMYK32 {
         return Err(invalid());
     }
-    checked(u32::from(info.width), u32::from(info.height))
+    // A quarter-turned EXIF orientation shows the picture with its width and height swapped.
+    let (width, height) = (u32::from(info.width), u32::from(info.height));
+    if super::exif::swaps_axes(super::exif::orientation(bytes)) {
+        checked(height, width)
+    } else {
+        checked(width, height)
+    }
 }
 
 /// WebP's size comes from its first chunk header (lossy VP8, lossless VP8L or extended VP8X);
@@ -564,6 +570,7 @@ fn range_feature(feature: &str, viewport: f64) -> Option<bool> {
 }
 
 /** What one image request produced. */
+#[derive(Clone)]
 pub(super) enum Fetched {
     /// Encoded bitmap bytes for AppKit's decoder, with their pixel size.
     Raster(ImageAsset, (u32, u32)),
@@ -613,6 +620,9 @@ impl super::supervisor::Runtime {
         };
         node.image_size = Some(size);
         node.text.clear();
+        // An SVG without a natural ratio stretches on both axes; a raster always has one.
+        node.image_ratio_free =
+            matches!(&fetched, Fetched::Vector(markup, _) if !vector_ratio(markup));
         if let Fetched::Vector(markup, _) = &fetched {
             node.image_src = Some(svg_url(markup));
         }
@@ -656,6 +666,10 @@ pub(super) struct Budget {
     requests: usize,
     bytes: usize,
     decoded: u64,
+    /// Images already fetched on this page by address: a repeated address reuses its result
+    /// instead of spending another request (CSS2 tables' references draw 130 swatches from four
+    /// files, and their sixty-fifth showed as alt text).
+    fetched: std::collections::HashMap<String, Fetched>,
 }
 impl Budget {
     /// Background or legacy image work may add assets between lifecycle batches; never undercount them.
@@ -687,7 +701,20 @@ impl Budget {
             requests: images.len(),
             bytes: images.values().map(|asset| asset.bytes.len()).sum(),
             decoded: images.values().map(|asset| asset.decoded).sum(),
+            fetched: std::collections::HashMap::new(),
         }
+    }
+    /// An image this page already fetched from `source`, reused without another request: Some
+    /// with the image (or None when its bytes no longer fit the byte budgets, which still count
+    /// every copy), or None when the address is new.
+    pub(super) fn reused(&mut self, source: &str) -> Option<Option<Fetched>> {
+        let seen = self.fetched.get(source.trim())?.clone();
+        Some(self.admit(&seen).then_some(seen))
+    }
+    /// Remembers what `source` fetched, for `reused`.
+    pub(super) fn remember(&mut self, source: &str, fetched: &Fetched) {
+        self.fetched
+            .insert(source.trim().to_owned(), fetched.clone());
     }
     /// Whether no request is left to make.
     pub(super) fn exhausted(&self) -> bool {
@@ -788,12 +815,15 @@ impl super::supervisor::Runtime {
             .collect::<Vec<_>>();
         let backgrounds = crate::document::background_urls(document, base.as_str())
             .into_iter()
+            // A later layer's key names its element; the canvas's is always wanted.
             .filter(|(id, _)| {
-                document
-                    .nodes
-                    .iter()
-                    .find(|node| node.local_id == *id)
-                    .is_some_and(wanted)
+                crate::document::background_owner(*id).is_none_or(|owner| {
+                    document
+                        .nodes
+                        .iter()
+                        .find(|node| node.local_id == owner)
+                        .is_some_and(wanted)
+                })
             })
             .collect::<Vec<_>>();
         let mut images = BTreeMap::new();
@@ -821,6 +851,7 @@ impl super::supervisor::Runtime {
                     images.insert(node.local_id, asset);
                 }
                 Some((Fetched::Vector(markup, size), _, _)) => {
+                    node.image_ratio_free = !vector_ratio(&markup);
                     node.image_src = Some(svg_url(&markup));
                     node.image_size = Some(size);
                 }
@@ -952,6 +983,9 @@ impl super::supervisor::Runtime {
         budget: &mut Budget,
         notes: &mut Vec<String>,
     ) -> EngineResult<Option<Fetched>> {
+        if let Some(seen) = budget.reused(source) {
+            return Ok(seen);
+        }
         if !budget.request() {
             notes.push(format!(
                 "Images after the first {IMAGE_COUNT} show their alt text."
@@ -970,7 +1004,10 @@ impl super::supervisor::Runtime {
             return Err(EngineError::navigation_timeout());
         }
         match fetched {
-            Ok(fetched) if budget.admit(&fetched) => Ok(Some(fetched)),
+            Ok(fetched) if budget.admit(&fetched) => {
+                budget.remember(source, &fetched);
+                Ok(Some(fetched))
+            }
             Ok(_) => {
                 notes.push("Images past the page image budget show their alt text.".into());
                 Ok(None)
@@ -1241,6 +1278,21 @@ fn presentation(node: &Node) -> BTreeMap<String, String> {
     attributes
 }
 
+/// Whether reduced SVG markup has a natural aspect ratio: its root carries a viewBox, or both a
+/// width and a height (the serializer writes every root attribute into its start tag).
+fn vector_ratio(markup: &str) -> bool {
+    let root = markup.split('>').next().unwrap_or_default();
+    // A positive length; a zero or a percentage gives no ratio.
+    let has = |name: &str| {
+        let key = format!(" {name}=\"");
+        root.split_once(&key)
+            .and_then(|(_, rest)| rest.split('"').next())
+            .and_then(|value| value.trim().trim_end_matches("px").parse::<f64>().ok())
+            .is_some_and(|value| value > 0.0)
+    };
+    root.contains(" viewbox=\"") || (has("width") && has("height"))
+}
+
 /// The intrinsic size of an svg: its width and height, one of them with the viewBox ratio, the
 /// viewBox size, or 300x150; percentages count as absent. Clamped to 1..=IMAGE_DIMENSION.
 fn svg_size(svg: &Node) -> (u32, u32) {
@@ -1503,6 +1555,25 @@ mod tests {
         dimensions(mime, bytes).ok().map(|d| (d.width, d.height))
     }
 
+    /** An SVG has a natural aspect ratio from a viewBox or from both a positive width and a
+     * positive height; a lone height, or a zero width, gives none. */
+    #[test]
+    fn svg_ratio_needs_a_view_box_or_both_positive_sizes() {
+        let ratio = |text: &str| {
+            let Ok(Fetched::Vector(markup, _)) = vector("image/svg+xml", text) else {
+                panic!("expected a drawing");
+            };
+            vector_ratio(&markup)
+        };
+        let svg = |attributes: &str| {
+            format!("<svg xmlns='http://www.w3.org/2000/svg' {attributes}></svg>")
+        };
+        assert!(ratio(&svg("viewBox='0 0 5 10' height='20'")));
+        assert!(ratio(&svg("width='10' height='20'")));
+        assert!(!ratio(&svg("height='20px'")));
+        assert!(!ratio(&svg("width='0px' height='20px'")));
+    }
+
     /** SVG reduces to the drawing subset and takes its size from width, height and viewBox. */
     #[test]
     fn svg_reduces_to_its_drawing_and_sizes_from_the_view_box() {
@@ -1527,6 +1598,19 @@ mod tests {
         assert!(data_url("data:image/png;base64,!!!").is_err());
     }
 
+    /** A repeated address reuses its image without a request, so a page drawing many copies of
+     * a few files is not cut off at IMAGE_COUNT elements (border-conflict-element-001d-ref). */
+    #[test]
+    fn repeated_addresses_reuse_their_image() {
+        let mut budget = Budget::default();
+        let gif = data_url("data:image/gif;base64,R0lGODlhAQABAAAAACw=").unwrap();
+        assert!(budget.reused("swatch.png").is_none());
+        budget.remember("swatch.png", &gif);
+        let copies =
+            (0..IMAGE_COUNT * 2).filter(|_| matches!(budget.reused(" swatch.png"), Some(Some(_))));
+        assert_eq!(copies.count(), IMAGE_COUNT * 2);
+        assert!(!budget.exhausted());
+    }
     /** A srcset choice lays out at CSS size, and the page budget refuses past its bounds. */
     #[test]
     fn density_scales_size_and_budget_bounds_the_page() {

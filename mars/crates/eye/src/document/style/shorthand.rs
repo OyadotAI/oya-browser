@@ -16,6 +16,8 @@ pub(super) const BORDER_STYLES: [&str; 10] = [
 pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
     let sides = |format: &dyn Fn(&str) -> String| Some(SIDES.iter().map(|s| format(s)).collect());
     match key {
+        "columns" | "column-rule" => Some(super::multicol::longhands(key)),
+        "all" => Some(super::all::longhands()),
         "margin" | "padding" => sides(&|side| format!("{key}-{side}")),
         "inset" => sides(&|side| side.to_string()),
         "border-width" | "border-style" | "border-color" => {
@@ -42,8 +44,10 @@ pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
         "overflow" => Some(vec!["overflow-x".into(), "overflow-y".into()]),
         "animation" => Some(super::animation::LONGHANDS.map(Into::into).into()),
         "mask" => Some(MASK.map(Into::into).into()),
+        "border-image" => Some(super::border_image::LONGHANDS.map(Into::into).into()),
         "grid-area" => Some(vec!["grid-row".into(), "grid-column".into()]),
         "container" => Some(vec!["container-name".into(), "container-type".into()]),
+        "contain-intrinsic-size" => Some(super::containment::LONGHANDS.map(Into::into).into()),
         "grid-template" | "grid" => Some(GRID_TEMPLATE.map(Into::into).into()),
         "list-style" => Some(vec!["list-style-type".into()]),
         "gap" => Some(vec!["row-gap".into(), "column-gap".into()]),
@@ -59,9 +63,17 @@ pub(super) fn longhands(key: &str) -> Option<Vec<String>> {
                 "background-size",
                 "background-position",
                 "background-repeat",
+                "background-attachment",
+                "background-origin",
+                "background-clip",
             ]
             .map(Into::into)
             .into(),
+        ),
+        "line-clamp" | "-webkit-line-clamp" => Some(
+            ["max-lines", "block-ellipsis", "continue"]
+                .map(Into::into)
+                .into(),
         ),
         "font" => Some(
             [
@@ -92,9 +104,15 @@ pub(super) fn expand(key: &str, raw: &str) -> Result<Vec<(String, String)>, bool
     let value = raw.to_ascii_lowercase();
     let value = value.as_str();
     let expanded = match key {
+        // `all` takes only the CSS-wide keywords, handled above.
+        "all" => None,
         "flex" => flex_values(value),
         "font" => super::font::shorthand(value).ok(),
+        "line-clamp" => line_clamp(raw.trim()),
+        "-webkit-line-clamp" => webkit_line_clamp(value.trim()),
         "gap" => gap_values(value),
+        "columns" => super::multicol::expand_columns(value),
+        "column-rule" => super::multicol::expand_rule(value),
         "margin" | "padding" => four(value).map(|v| sided(&|side| format!("{key}-{side}"), v)),
         "inset" => four(value).map(|v| sided(&|side| side.to_string(), v)),
         "border-width" | "border-style" | "border-color" => {
@@ -116,9 +134,11 @@ pub(super) fn expand(key: &str, raw: &str) -> Result<Vec<(String, String)>, bool
         "background" => background(raw),
         "animation" => super::animation::shorthand(raw),
         "mask" => Some(mask(raw)),
+        "border-image" => super::border_image::shorthand(raw.trim()),
         "grid-template" | "grid" => grid_template(value),
         "grid-area" => grid_area(value),
         "container" => super::container::shorthand(value),
+        "contain-intrinsic-size" => super::containment::shorthand(value),
         _ => match super::logical::expand(key, value) {
             Some(expanded) => expanded,
             None => return Ok(vec![(key.into(), raw.into())]),
@@ -249,6 +269,75 @@ fn parse_flex(value: &str) -> Option<(String, String, String)> {
         basis.unwrap_or_else(|| "0%".into()),
     ))
 }
+/** The ellipsis Blink draws for `block-ellipsis: auto` (U+2026). */
+pub(super) const ELLIPSIS: &str = "\u{2026}";
+/** `block-ellipsis` as the string drawn: `auto` is "…", `no-ellipsis` none, else the quoted
+string as written. */
+pub(super) fn ellipsis(value: &str) -> crate::protocol::EngineResult<Option<String>> {
+    let quoted = |q: char| value.strip_prefix(q).and_then(|v| v.strip_suffix(q));
+    match value.to_ascii_lowercase().as_str() {
+        "auto" => Ok(Some(ELLIPSIS.into())),
+        "no-ellipsis" => Ok(None),
+        _ => quoted('"')
+            .or_else(|| quoted('\''))
+            .map(|text| Some(text.to_string()))
+            .ok_or_else(super::unsupported),
+    }
+}
+/** CSS Overflow 4's `line-clamp`: `none`, or a line count and/or `auto` with an optional
+`block-ellipsis`; any clamp collapses what follows (`continue: collapse`). */
+fn line_clamp(raw: &str) -> Option<Vec<(String, String)>> {
+    let pair = |max: &str, ellipsis: &str, cont: &str| {
+        Some(vec![
+            ("max-lines".to_string(), max.to_string()),
+            ("block-ellipsis".to_string(), ellipsis.to_string()),
+            ("continue".to_string(), cont.to_string()),
+        ])
+    };
+    if raw.eq_ignore_ascii_case("none") {
+        return pair("none", "no-ellipsis", "auto");
+    }
+    let (mut count, mut ellipsis, mut auto) = (None, None, false);
+    let mut rest = raw;
+    while !rest.is_empty() {
+        let token = if rest.starts_with(['"', '\'']) {
+            let quote = rest.chars().next()?;
+            let end = rest[1..].find(quote)? + 2;
+            &rest[..end]
+        } else {
+            rest.split_whitespace().next()?
+        };
+        rest = rest[token.len()..].trim_start();
+        match token.to_ascii_lowercase().as_str() {
+            "auto" if !auto => auto = true,
+            "-webkit-legacy" => {}
+            _ if count.is_none() && token.parse::<u32>().is_ok_and(|n| n > 0) => {
+                count = Some(token.to_string());
+            }
+            _ if ellipsis.is_none() && ellipsis_token(token) => ellipsis = Some(token.to_string()),
+            _ => return None,
+        }
+    }
+    let max = count.unwrap_or_else(|| "none".into());
+    pair(&max, ellipsis.as_deref().unwrap_or("auto"), "collapse")
+}
+/** Blink's legacy `-webkit-line-clamp` as a shorthand: a line count with the "…" ellipsis and
+`continue: -webkit-legacy`, which clamps only a vertical `-webkit-box`. */
+fn webkit_line_clamp(value: &str) -> Option<Vec<(String, String)>> {
+    let max = match value {
+        "none" => "none".to_string(),
+        _ => value.parse::<u32>().ok().filter(|n| *n > 0)?.to_string(),
+    };
+    Some(vec![
+        ("max-lines".to_string(), max),
+        ("block-ellipsis".to_string(), "auto".to_string()),
+        ("continue".to_string(), "-webkit-legacy".to_string()),
+    ])
+}
+/** Whether a token is a `block-ellipsis` value other than `auto`. */
+fn ellipsis_token(token: &str) -> bool {
+    token.eq_ignore_ascii_case("no-ellipsis") || token.starts_with(['"', '\''])
+}
 /** A single gap sets both axes while two values retain row-then-column order. */
 fn gap_values(value: &str) -> Option<Vec<(String, String)>> {
     let (row, column) = match tokens(value).as_slice() {
@@ -302,16 +391,26 @@ fn side_parts(prefix: &str, [width, style, color]: &[String; 3]) -> Vec<(String,
         (format!("{prefix}-color"), color.clone()),
     ]
 }
-/** Horizontal radii only; the elliptical part after `/` is approximated away. */
+/** Horizontal radii, then after a `/` the vertical ones (each list expanding like `margin`);
+ * without a `/` every corner is circular. */
 fn radius(value: &str) -> Option<Vec<(String, String)>> {
     // Only a top-level `/` separates the axes; `calc(1/32 * 100%)` keeps its division.
-    let horizontal = &value[..super::syntax::find_top(value, 0, b"/")];
-    let values = four(horizontal)?;
+    let slash = super::syntax::find_top(value, 0, b"/");
+    let horizontal = four(&value[..slash])?;
+    let vertical = match value.get(slash + 1..) {
+        Some(rest) => four(rest)?,
+        None => horizontal.clone(),
+    };
     Some(
         CORNERS
             .iter()
             .map(|corner| format!("border-{corner}-radius"))
-            .zip(values)
+            .zip(
+                horizontal
+                    .into_iter()
+                    .zip(vertical)
+                    .map(|(h, v)| format!("{h} {v}")),
+            )
             .collect(),
     )
 }
@@ -324,14 +423,21 @@ fn overflow(value: &str) -> Option<Vec<(String, String)>> {
     };
     Some(vec![("overflow-x".into(), x), ("overflow-y".into(), y)])
 }
-/** The final layer's color, every layer's image, and the first layer's size, position and repeat. */
+/// One `background` layer's position, size and repeat words.
+type LayerParts = (Vec<String>, Vec<String>, Vec<String>);
+/** The final layer's color, every layer's image, and every layer's size, position and repeat
+ * (the first entries being the first painted layer's, which the first-layer fields read). */
 fn background(raw: &str) -> Option<Vec<(String, String)>> {
     let layers = split_top(raw, b',');
     let mut images = Vec::new();
     let mut color = None;
-    let mut geometry: Option<(Vec<String>, Vec<String>, Vec<String>)> = None;
+    let mut geometry: Option<LayerParts> = None;
+    let mut every = Vec::new();
+    let (mut origin, mut clip, mut attachment) = (None, None, None);
     for (index, layer) in layers.iter().enumerate() {
         let mut image = None;
+        // CSS Backgrounds: the first box keyword sets both origin and clip, a second the clip.
+        let mut boxes = Vec::new();
         let (mut position, mut size, mut repeat) = (Vec::new(), Vec::new(), Vec::new());
         let mut after_slash = false;
         for token in tokens(layer) {
@@ -340,6 +446,10 @@ fn background(raw: &str) -> Option<Vec<(String, String)>> {
                 image = Some(token.to_string());
             } else if REPEATS.contains(&lower.as_str()) {
                 repeat.push(lower);
+            } else if ATTACHMENTS.contains(&lower.as_str()) {
+                attachment = attachment.or((index == 0).then_some(lower));
+            } else if BOXES.contains(&lower.as_str()) {
+                boxes.push(lower);
             } else if index + 1 == layers.len()
                 && super::values::contextual_color(&lower, crate::document::Appearance::Light, None)
                     .is_ok()
@@ -361,18 +471,35 @@ fn background(raw: &str) -> Option<Vec<(String, String)>> {
                 }
             }
         }
-        if geometry.is_none() && image.as_deref().is_some_and(|image| image != "none") {
+        let painted = image.as_deref().is_some_and(|image| image != "none");
+        every.push((painted, (position.clone(), size.clone(), repeat.clone())));
+        if geometry.is_none() && painted {
             geometry = Some((position, size, repeat));
         }
         images.push(image.unwrap_or_else(|| "none".into()));
+        if index == 0 {
+            origin = boxes.first().cloned();
+        }
+        if index + 1 == layers.len() {
+            clip = boxes.get(1).or(boxes.first()).cloned();
+        }
     }
-    let (position, size, repeat) = geometry.unwrap_or_default();
-    let or = |parts: Vec<String>, fallback: &str| {
+    let first = geometry.unwrap_or_default();
+    let or = |parts: &Vec<String>, fallback: &str| {
         if parts.is_empty() {
             fallback.to_string()
         } else {
             parts.join(" ")
         }
+    };
+    // One entry per layer; a layer without an image takes the first painted layer's, so the
+    // first entry stays the geometry the first-layer fields have always read.
+    let lists = |pick: fn(&LayerParts) -> &Vec<String>, fallback: &str| {
+        every
+            .iter()
+            .map(|(painted, own)| or(pick(if *painted { own } else { &first }), fallback))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
     Some(vec![
         (
@@ -380,11 +507,31 @@ fn background(raw: &str) -> Option<Vec<(String, String)>> {
             color.unwrap_or_else(|| "transparent".into()),
         ),
         ("background-image".into(), images.join(", ")),
-        ("background-size".into(), or(size, "auto")),
-        ("background-position".into(), or(position, "0% 0%")),
-        ("background-repeat".into(), or(repeat, "repeat")),
+        ("background-size".into(), lists(|g| &g.1, "auto")),
+        ("background-position".into(), lists(|g| &g.0, "0% 0%")),
+        ("background-repeat".into(), lists(|g| &g.2, "repeat")),
+        (
+            "background-attachment".into(),
+            attachment.unwrap_or_else(|| "scroll".into()),
+        ),
+        (
+            "background-origin".into(),
+            origin.unwrap_or_else(|| "padding-box".into()),
+        ),
+        (
+            "background-clip".into(),
+            clip.unwrap_or_else(|| "border-box".into()),
+        ),
     ])
 }
+/** The box keywords a `background` layer may name for its origin and clip. */
+const BOXES: [&str; 5] = [
+    "border-box",
+    "padding-box",
+    "content-box",
+    "border-area",
+    "text",
+];
 /** What the `mask` shorthand sets. */
 const MASK: [&str; 4] = ["mask-image", "mask-size", "mask-position", "mask-repeat"];
 /** Mask keywords Eye does not model: mode, composite, origin and clip. */
@@ -420,12 +567,14 @@ fn mask(raw: &str) -> Vec<(String, String)> {
             .filter_map(|(name, value)| {
                 Some((name.strip_prefix("background-")?.to_string(), value))
             })
-            .filter(|(name, _)| name != "color")
+            .filter(|(name, _)| !["color", "origin", "clip", "attachment"].contains(&name.as_str()))
             .map(|(name, value)| (format!("mask-{name}"), value))
             .collect(),
         None => vec![("mask-image".into(), raw.into())],
     }
 }
+/** Attachment keywords inside a `background` shorthand layer. */
+const ATTACHMENTS: [&str; 3] = ["scroll", "fixed", "local"];
 /** Tiling keywords inside a `background` shorthand layer. */
 const REPEATS: [&str; 6] = [
     "repeat",

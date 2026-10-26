@@ -114,7 +114,8 @@ fn keywords_never_make_a_hidden_subtree_visible_or_a_masked_box_actionable() {
         "#p{visibility:hidden}#a{visibility:initial;pointer-events:initial}",
     );
     let a = &by_id(&document, "a").style;
-    assert!(a.hidden && !a.interactive);
+    // `visibility: hidden` is the inherited `invisible`; a keyword never clears it.
+    assert!(a.invisible && !a.interactive);
 }
 
 #[test]

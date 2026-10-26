@@ -30,10 +30,14 @@ fn a_collapsed_edge_paints_at_its_whole_width() {
          width:50px;height:50px;padding:0'></td></tr></table>",
         "c",
     );
-    let edges = cell.last().unwrap();
-    assert_eq!(edges.border_widths, [10.0; 4], "{:?}", edges.border_widths);
+    // Each edge paints as its own band (render/table/collapsed_paint.rs): the top one is a
+    // 10px band, the cell's box itself paints no border.
     assert!(cell[0].border_widths.iter().all(|w| *w == 0.0));
-    assert_eq!(edges.width - cell[0].width, 10.0);
+    let top = cell
+        .iter()
+        .find(|item| item.border_widths[0] > 0.0)
+        .unwrap();
+    assert_eq!((top.border_widths[0], top.height), (10.0, 10.0));
 }
 
 /** On a tie in width the stronger style wins the edge and paints in its own color. */
@@ -49,7 +53,8 @@ fn the_stronger_style_wins_a_tied_edge() {
     assert_eq!(edges.border_colors[3].as_deref(), Some("blue"));
 }
 
-/** A row group with a background paints one box under its rows. */
+/** A row group keeps one bare box over its rows and paints its background under each of its
+ * cells, clipped to the cell, so border spacing between them stays clear. */
 #[test]
 fn a_row_group_paints_its_background() {
     let group = items(
@@ -57,9 +62,16 @@ fn a_row_group_paints_its_background() {
          </tbody></table>",
         "g",
     );
-    assert_eq!(group.len(), 1);
-    assert_eq!(group[0].background.as_deref(), Some("#00ff00"));
-    assert!(group[0].height > 30.0, "{}", group[0].height);
+    assert_eq!(group.len(), 3);
+    assert!(
+        group[0].bare && group[0].height > 30.0,
+        "{}",
+        group[0].height
+    );
+    for piece in &group[1..] {
+        assert_eq!(piece.background.as_deref(), Some("#00ff00"));
+        assert!(piece.clip.is_some());
+    }
 }
 
 /** A transformed ancestor is the containing block of a fixed descendant (Blink's

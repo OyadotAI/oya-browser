@@ -77,6 +77,9 @@ pub(super) fn apply(
             let second = words.next().unwrap_or(first);
             apply(style, align_key, first, context)?;
             if justify_key == "justify-items" {
+                style.align_stretch[2] = second == "stretch";
+                style.align_safe[2] = second.starts_with("safe ");
+                style.align_side[2] = super::flex::side(second);
                 style.justify_items = if second == "legacy" {
                     AlignItems::Stretch
                 } else {
@@ -96,8 +99,14 @@ pub(super) fn apply(
         "flex-basis" => style.flex_basis = basis_in(value, style.font_size, context)?,
         "flex-grow" => style.flex_grow = number(value)?,
         "flex-shrink" => style.flex_shrink = number(value)?,
-        "justify-content" => style.justify_content = content(value)?,
-        "align-content" => style.align_content = content(value)?,
+        "justify-content" => {
+            style.justify_content = content(value)?;
+            style.content_safe[1] = value.starts_with("safe ");
+        }
+        "align-content" => {
+            style.align_content = content(value)?;
+            style.content_safe[0] = value.starts_with("safe ");
+        }
         "grid-auto-flow" => {
             let words = value.split_whitespace().collect::<Vec<_>>();
             if words.is_empty()
@@ -150,13 +159,37 @@ pub(super) fn apply(
                 }
             }
         }
-        "align-items" => style.align_items = align(value)?,
+        "align-items" => {
+            if matches!(super::flex::side(value), SIDE_LEFT | SIDE_RIGHT) {
+                return Err(unsupported());
+            }
+            style.align_items = align(value)?;
+            style.align_stretch[0] = value == "stretch";
+            style.align_safe[0] = value.starts_with("safe ");
+            style.align_side[0] = super::flex::side(value);
+        }
+        "align-self" if value.starts_with("safe ") => {
+            // Kept apart from `align_self`, which grid reads and does not make safe.
+            style.align_self_safe = Some(align(value.trim_start_matches("safe ").trim())?);
+            style.align_self = None;
+        }
         "align-self" | "justify-self" => {
+            // `left` and `right` exist only in the inline axis (css-align-3 6.1).
+            if key == "align-self" && matches!(super::flex::side(value), SIDE_LEFT | SIDE_RIGHT) {
+                return Err(unsupported());
+            }
             let own = (value != "auto").then(|| align(value)).transpose()?;
             if key == "align-self" {
                 style.align_self = own;
+                style.align_self_safe = None;
+                style.align_stretch[1] = value == "stretch";
+                style.align_safe[1] = value.starts_with("safe ");
+                style.align_side[1] = super::flex::side(value);
             } else {
                 style.justify_self = own;
+                style.align_stretch[3] = value == "stretch";
+                style.align_safe[3] = value.starts_with("safe ");
+                style.align_side[3] = super::flex::side(value);
             }
         }
         "order" => {
@@ -219,8 +252,12 @@ fn content(value: &str) -> EngineResult<JustifyContent> {
         _ => return Err(unsupported()),
     })
 }
-/** Cross-axis keywords shared by `align-items` and the per-item `align-self` and `justify-self`. */
+/** Cross-axis keywords shared by `align-items` and the per-item `align-self` and `justify-self`.
+`unsafe` is the default overflow behavior, so it changes nothing. */
 fn align(value: &str) -> EngineResult<AlignItems> {
+    // ponytail: `safe` only matters when an item overflows; it parses as the plain position.
+    let value = value.strip_prefix("unsafe ").unwrap_or(value).trim();
+    let value = value.strip_prefix("safe ").unwrap_or(value).trim();
     Ok(match value {
         "start" | "flex-start" | "self-start" | "left" => AlignItems::Start,
         "baseline" | "first baseline" => AlignItems::Baseline,
@@ -229,6 +266,19 @@ fn align(value: &str) -> EngineResult<AlignItems> {
         "stretch" | "normal" => AlignItems::Stretch,
         _ => return Err(unsupported()),
     })
+}
+use super::model::{SIDE_LEFT, SIDE_RIGHT};
+/** `align_side` for a self-alignment keyword that is not relative to the container's
+ * writing mode: `left`, `right`, `self-start` or `self-end`; zero for the rest. */
+pub(super) fn side(value: &str) -> u8 {
+    use super::model::{SIDE_LEFT, SIDE_RIGHT, SIDE_SELF_END, SIDE_SELF_START};
+    match value.rsplit(' ').next().unwrap_or(value) {
+        "left" => SIDE_LEFT,
+        "right" => SIDE_RIGHT,
+        "self-start" => SIDE_SELF_START,
+        "self-end" => SIDE_SELF_END,
+        _ => 0,
+    }
 }
 /** Whether `value` is a valid `flex-basis`, judged with a default font: the `flex` shorthand
 checks its tokens before the cascade has the element's font. */
@@ -247,17 +297,12 @@ pub(super) fn basis_in(
     font: f64,
     context: crate::document::RenderContext,
 ) -> EngineResult<FlexBasis> {
-    // ponytail: `content` and the intrinsic keywords size from content like `auto` with an
-    // automatic width; an authored width then wins where `content` would ignore it.
-    if [
-        "auto",
-        "content",
-        "max-content",
-        "fit-content",
-        "min-content",
-    ]
-    .contains(&value)
-    {
+    if value == "content" {
+        return Ok(FlexBasis::Content);
+    }
+    // ponytail: the intrinsic keywords size from content like `auto` with an automatic width;
+    // an authored width then wins where they would ignore it.
+    if ["auto", "max-content", "fit-content", "min-content"].contains(&value) {
         return Ok(FlexBasis::Auto);
     }
     if let Some(value) = value.strip_suffix('%') {

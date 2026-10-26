@@ -28,9 +28,11 @@ pub(super) struct HistoryEntry {
 struct Navigate {
     url: String,
 }
+#[path = "navigation_imports.rs"]
+mod imports;
 /** What a load skipped: bounded, deduplicated diagnostics and the feature names behind them. */
 #[derive(Default)]
-struct Gaps {
+pub(super) struct Gaps {
     /// Messages added to the document's diagnostics.
     diagnostics: Vec<String>,
     /// Feature names ("scripts", "stylesheets", "images") for `page.degraded`.
@@ -239,6 +241,7 @@ impl Runtime {
                 }
                 runtime.scroll_y = 0.0;
                 runtime.page = Some(page);
+                runtime.adopt_script_scroll();
                 runtime.inspection()
             });
             if published.is_err()
@@ -397,6 +400,11 @@ impl Runtime {
         }
         perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
+        let mut images = images;
+        let frames =
+            self.load_frames(&mut document, &acquired.response.url, deadline, &mut images)?;
+        perf::record("page.frames", phase, || frames.len().to_string());
+        phase = Instant::now();
         let resolved = self.resolve_scripts(
             script_resources,
             &acquired.response.url,
@@ -444,10 +452,12 @@ impl Runtime {
             status: acquired.response.status,
             state: Default::default(),
             images,
+            frames: std::sync::Arc::new(frames),
             display: None,
             laid_out_before: 0,
             layout_generation: 1,
             element_scroll: Default::default(),
+            scroll_x: 0.0,
             styled: true,
             inspection: None,
             origin,
@@ -690,12 +700,15 @@ impl Runtime {
             .map(|(src, _)| src);
         let backgrounds = crate::document::background_urls(document, base.as_str())
             .into_iter()
+            // A later layer's key names its element; the canvas's is always wanted.
             .filter(|(id, _)| {
-                document
-                    .nodes
-                    .iter()
-                    .find(|node| node.local_id == *id)
-                    .is_some_and(wanted)
+                crate::document::background_owner(*id).is_none_or(|owner| {
+                    document
+                        .nodes
+                        .iter()
+                        .find(|node| node.local_id == owner)
+                        .is_some_and(wanted)
+                })
             })
             .map(|(_, url)| url);
         let mut requests: Vec<(WebRequest, url::Url)> = firsts
@@ -765,7 +778,7 @@ impl Runtime {
      * would pass STYLE_TOTAL_BYTES (or a linked sheet past STYLE_SHEETS) cannot cross the pipe,
      * so its hiding rules are unknown and the page fails closed for agents.
      */
-    fn stylesheets(
+    pub(super) fn stylesheets(
         &mut self,
         document: &Document,
         base: &str,
@@ -779,7 +792,9 @@ impl Runtime {
         let mut total = 0usize;
         for source in &document.styles {
             let css = match source {
-                StyleSource::Inline(css) => Some(css.clone()),
+                StyleSource::Inline(css) => {
+                    Some(self.with_imports(&base, css.clone(), deadline, (gaps, 0))?)
+                }
                 StyleSource::Linked(href) | StyleSource::LinkedMedia { href, .. } => {
                     linked += 1;
                     if linked > STYLE_SHEETS {
@@ -787,7 +802,7 @@ impl Runtime {
                         gaps.untrusted_styles = true;
                         None
                     } else {
-                        self.linked_sheet(&base, href, deadline, gaps)?
+                        self.linked_sheet(&base, href, deadline, (gaps, 0))?
                             .map(|css| match source {
                                 StyleSource::LinkedMedia { media, .. } => {
                                     format!("@media {media} {{\n{css}\n}}")
@@ -819,15 +834,16 @@ impl Runtime {
         href: &str,
         deadline: Instant,
     ) -> EngineResult<Option<String>> {
-        self.linked_sheet(base, href, deadline, &mut Gaps::default())
+        self.linked_sheet(base, href, deadline, (&mut Gaps::default(), 0))
     }
-    /** One linked sheet; only authority, service and deadline failures stop the navigation. */
+    /** One linked sheet (`depth` imports deep) with its own imports placed before it; only
+    authority, service and deadline failures stop the navigation. */
     fn linked_sheet(
         &mut self,
         base: &url::Url,
         href: &str,
         deadline: Instant,
-        gaps: &mut Gaps,
+        (gaps, depth): (&mut Gaps, usize),
     ) -> EngineResult<Option<String>> {
         let skipped = |gaps: &mut Gaps| {
             gaps.note(
@@ -858,10 +874,13 @@ impl Runtime {
             Ok(acquired)
                 if acquired.response.status == 200 && acquired.response.mime == "text/css" =>
             {
-                Ok(Some(crate::document::rebase_urls(
-                    &acquired.response.source,
-                    url.as_str(),
-                )))
+                let css = crate::document::rebase_urls(&acquired.response.source, url.as_str());
+                Ok(Some(self.with_imports(
+                    &url,
+                    css,
+                    deadline,
+                    (gaps, depth),
+                )?))
             }
             Err(error) if fatal(&error) => Err(error),
             _ => skipped(gaps),

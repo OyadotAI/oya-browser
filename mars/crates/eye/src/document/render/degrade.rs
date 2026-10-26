@@ -64,7 +64,7 @@ fn unsupported_flex(document: &Document, node: &Node) -> bool {
             && !document
                 .nodes
                 .iter()
-                .any(|child| child.parent == Some(node.local_id) && !child.hidden()))
+                .any(|child| child.parent == Some(node.local_id) && !child.removed()))
         || document
             .nodes
             .iter()

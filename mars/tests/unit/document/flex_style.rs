@@ -17,7 +17,13 @@ fn style(declarations: &str) -> ComputedStyle {
 #[test]
 fn flex_defaults_are_explicit_and_preserve_legacy_styles() {
     let computed = style("");
-    assert_eq!(computed, ComputedStyle::default());
+    // An element under the body records its left-to-right parent; every other field is default.
+    assert_eq!(computed.parent_rtl, Some(false));
+    let unparented = ComputedStyle {
+        parent_rtl: None,
+        ..computed.clone()
+    };
+    assert_eq!(unparented, ComputedStyle::default());
     assert_eq!(computed.box_sizing, BoxSizing::ContentBox);
     assert!(!computed.display_flex);
     assert_eq!(computed.flex_direction, FlexDirection::Row);
@@ -203,7 +209,7 @@ fn unsupported_flex_values_and_excluded_structures_are_dropped_with_a_diagnostic
         ("flex-basis:fit-content(10px)", "", "flex-basis"),
         ("flex-grow:-1", "", "flex-grow"),
         ("flex-shrink:NaN", "", "flex-shrink"),
-        ("flex-grow:4097", "", "flex-grow"),
+        ("flex-grow:70000", "", "flex-grow"),
         ("gap:10", "", "gap"),
         ("gap:1px 2px 3px", "", "gap"),
         ("align-content:10px", "", "align-content"),
@@ -242,12 +248,12 @@ fn private_computed_styles_reject_nonfinite_negative_and_excessive_values() {
         // Zero is `font-size: 0`, which hides text; sizes between it and the minimum are invalid.
         |s| s.font_size = 4.0,
         |s| s.font_size = 1025.0,
-        |s| s.border = 5000.0,
-        |s| s.margin[0] = -4097.0,
+        |s| s.border = 70000.0,
+        |s| s.margin[0] = -70000.0,
         |s| s.padding[0] = f64::INFINITY,
-        |s| s.width = Some(4097.0),
+        |s| s.width = Some(70000.0),
         |s| s.max_width = Some(-1.0),
-        |s| s.min_width = Some(4097.0),
+        |s| s.min_width = Some(70000.0),
         |s| s.flex_grow = -1.0,
         |s| s.flex_shrink = f64::NAN,
         |s| s.row_gap = f64::INFINITY,

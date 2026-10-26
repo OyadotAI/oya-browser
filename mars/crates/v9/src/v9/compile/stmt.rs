@@ -17,9 +17,18 @@ impl Compiler {
         early_conflict(body, self.f().strict, true, &[])?;
         let mut vars = Vec::new();
         scan::var_names(body, self.f().strict, true, &mut vars);
+        let mut required = Vec::new();
+        scan::var_names(body, true, true, &mut required);
+        let functions = scan::function_declarations(body);
+        self.check_global_declarations(&required, &functions, false)?;
+        let required: std::collections::HashSet<&Name> = required.iter().collect();
         for name in &vars {
             let index = self.name(name)?;
-            self.emit(Op::DeclareVar(index, false));
+            self.emit(if required.contains(name) {
+                Op::DeclareVar(index, false)
+            } else {
+                Op::DeclareOptionalVar(index)
+            });
             self.declare(name, Declared::Var)?;
         }
         // Hoisted, yet a redeclaration error points at the declaration's own line.
@@ -36,12 +45,35 @@ impl Compiler {
                 },
             )?;
         }
-        for func in scan::function_declarations(body) {
+        for func in functions {
             let name = func.name.clone().expect("declaration name");
             self.closure(&func, false)?;
             let index = self.name(&name)?;
             self.emit(Op::DeclareFunction(index, false));
             self.declare(&name, Declared::Var)?;
+        }
+        Ok(())
+    }
+    /** Check each final function first, then ordinary vars, before declarations can mutate the global. */
+    pub(super) fn check_global_declarations(
+        &mut self,
+        vars: &[Name],
+        functions: &[Rc<Func>],
+        eval: bool,
+    ) -> EngineResult<()> {
+        let mut seen = std::collections::HashSet::new();
+        for function in functions.iter().rev() {
+            let name = function.name.as_ref().expect("declaration name");
+            if seen.insert(name) {
+                let index = self.name(name)?;
+                self.emit(Op::CheckGlobalFunction(index, eval));
+            }
+        }
+        for name in vars {
+            if seen.insert(name) {
+                let index = self.name(name)?;
+                self.emit(Op::CheckGlobalVar(index, eval));
+            }
         }
         Ok(())
     }

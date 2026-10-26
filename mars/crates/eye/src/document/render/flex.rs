@@ -28,9 +28,14 @@ impl FlexItem {
 }
 
 /** A scroll container's automatic minimum size is zero (css-grid-2 6.6, Blink's
- * `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items never widen their tracks. */
+ * `ShouldApplyMinSizeAutoForChild`), so `overflow: hidden` items never widen their tracks.
+ * `overflow: clip` makes no scroll container: a replaced element's UA clip keeps its minimum. */
 pub(super) fn scroll_container(node: &crate::document::Node) -> bool {
-    node.style.overflow != crate::document::style::Overflow::Visible
+    use crate::document::style::Overflow;
+    matches!(
+        node.style.overflow,
+        Overflow::Hidden | Overflow::Auto | Overflow::Scroll
+    )
 }
 /** Positive free space split equally over the line's auto margins; zero when there are none
 or the line overflows, where auto margins collapse to zero and alignment proceeds as usual. */
@@ -91,6 +96,31 @@ pub(super) fn break_lines_in(
         Breaking::Balance(min) if !items.is_empty() => balance(items, inner, gap, min),
         _ => break_lines(items, inner, gap, breaking != Breaking::Single),
     }
+}
+
+/** The max-content width of a balanced row (Blink's `ComputeMinMaxSizeOfRowContainer`): items
+of outer widths `outers` balanced into at least `min` lines at an unbounded line size; the
+longest line wins, so three 40px items in two lines with a 20px gap make 100px, not 160px. */
+pub(super) fn balanced_max_content(outers: &[f64], gap: f64, min: u32) -> f64 {
+    let items = outers
+        .iter()
+        .map(|outer| FlexItem {
+            base_content: *outer,
+            hypothetical_content: *outer,
+            min_content: 0.0,
+            max_content: LAYOUT_EXTENT,
+            margin_start: 0.0,
+            margin_end: 0.0,
+            auto_margins: [false, false],
+            main_edges: 0.0,
+            grow: 0.0,
+            shrink: 0.0,
+        })
+        .collect::<Vec<_>>();
+    break_lines_in(&items, LAYOUT_EXTENT, gap, Breaking::Balance(min))
+        .into_iter()
+        .map(|line| outers[line.clone()].iter().sum::<f64>() + gap * (line.len().max(1) - 1) as f64)
+        .fold(0.0, f64::max)
 }
 
 /** Greedy lines use hypothetical outer sizes and a gap only between neighboring items. */

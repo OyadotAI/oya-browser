@@ -77,6 +77,8 @@ fn media_type(kind: &str) -> Truth {
         "all" | "screen" => Truth::True,
         "print" | "speech" | "tty" | "tv" | "projection" | "handheld" | "braille" | "embossed"
         | "aural" => Truth::False,
+        // Media Queries 4: an unknown media type is a valid identifier that matches nothing.
+        unknown if unknown.chars().all(|c| c.is_ascii_alphabetic() || c == '-') => Truth::False,
         _ => Truth::Unknown,
     }
 }
@@ -186,15 +188,30 @@ fn dimension(name: &str, context: RenderContext) -> Option<f64> {
         _ => None,
     }
 }
-/** Media lengths: px, em and rem against the initial font size. */
+/** Media lengths: px, em and rem against the initial font size, and the absolute units
+ * (`in`, `cm`, `pt`, ...) as declarations resolve them. */
 fn length(value: &str) -> Option<f64> {
     let value = value.trim();
+    if super::values::is_math(value) {
+        // `calc()` and the other math functions, resolved as a declaration's length is.
+        let length = super::values::dimension(value, CSS_ROOT_FONT_SIZE, RenderContext::default());
+        return length
+            .ok()
+            .filter(|length| length.percent == 0.0 && length.px.is_finite())
+            .map(|length| length.px);
+    }
     let (number, scale) = if let Some(n) = value.strip_suffix("rem") {
         (n, CSS_ROOT_FONT_SIZE)
     } else if let Some(n) = value.strip_suffix("em") {
         (n, CSS_ROOT_FONT_SIZE)
     } else if let Some(n) = value.strip_suffix("px") {
         (n, 1.0)
+    } else if ABSOLUTE.iter().any(|unit| value.ends_with(unit)) {
+        let length = super::values::unit(value, CSS_ROOT_FONT_SIZE, RenderContext::default());
+        return length
+            .ok()
+            .map(|length| length.px)
+            .filter(|px| px.is_finite());
     } else {
         (value, if value == "0" { 1.0 } else { f64::NAN })
     };
@@ -205,6 +222,8 @@ fn length(value: &str) -> Option<f64> {
         .map(|n| n * scale)
         .filter(|n| n.is_finite())
 }
+/// Absolute length units a media feature may use besides px.
+const ABSOLUTE: [&str; 6] = ["in", "cm", "mm", "pt", "pc", "q"];
 /** `a/b` or a single number. */
 fn ratio(value: &str) -> Option<f64> {
     let (a, b) = value.split_once('/').unwrap_or((value, "1"));

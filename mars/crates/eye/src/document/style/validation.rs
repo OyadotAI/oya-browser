@@ -62,8 +62,16 @@ impl ComputedStyle {
             || self.display_flex && self.inline
             || self.display_grid && (self.inline || self.display_flex)
             || !self.layout_ok()
-            || !["left", "center", "right", "start", "end", "webkit-center"]
-                .contains(&self.align.as_str())
+            || ![
+                "left",
+                "center",
+                "right",
+                "start",
+                "end",
+                "webkit-center",
+                "justify",
+            ]
+            .contains(&self.align.as_str())
         {
             return Err(invalid());
         }
@@ -129,6 +137,7 @@ impl ComputedStyle {
             });
         if !shadows_ok
             || !layers_ok
+            || !self.border_image.valid()
             || !self.inset.iter().flatten().copied().all(signed)
             || !self.radius.iter().copied().all(scalar)
             || !self
@@ -199,11 +208,14 @@ impl ComputedStyle {
         let template = |t: &super::GridTemplate| {
             t.tracks.len() + t.repeat.len() <= super::constants::GRID_TRACKS
                 && t.exprs.len() <= super::constants::GRID_TRACKS
-                && t.repeat_at <= t.tracks.len()
+                && t.repeat_at <= t.tracks.len().max(usize::from(t.subgrid_lines))
+                && usize::from(t.subgrid_fill) <= super::constants::GRID_TRACKS
                 && t.repeat_names.len() <= super::constants::GRID_TRACKS
-                && t.repeat_names
-                    .iter()
-                    .all(|(_, line)| *line >= 1 && usize::from(*line) <= t.repeat.len() + 1)
+                && t.repeat_names.iter().all(|(_, line)| {
+                    // A subgrid's auto-fill names number its lists, a track group's its lines.
+                    let group = t.repeat.len().max(usize::from(t.subgrid_fill));
+                    *line >= 1 && usize::from(*line) <= group + 1
+                })
                 && t.tracks
                     .iter()
                     .chain(&t.repeat)
@@ -246,6 +258,12 @@ impl ComputedStyle {
             && self.margin_percent.iter().all(signed)
             && self.inset_percent.iter().all(signed)
             && self.radius_percent.iter().all(|p| scalar(*p))
+            && self.radius_px.iter().all(signed)
+            && self
+                .radius_y
+                .iter()
+                .flatten()
+                .all(|(px, percent)| signed(px) && signed(percent))
             && self.translate_percent.iter().all(signed)
             && self
                 .aspect_ratio

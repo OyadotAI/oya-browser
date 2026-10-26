@@ -238,7 +238,8 @@ impl Window {
                     .scroll
                     .adopt(previous_scroll, runtime_scroll, navigated || tab_changed)
                 {
-                    self.canvas.scrollPoint(NSPoint::new(0.0, runtime_scroll));
+                    let left = self.snapshot.as_ref().map_or(0.0, |s| s.scroll_x);
+                    self.canvas.scrollPoint(NSPoint::new(left, runtime_scroll));
                 }
                 if let Some(value) = result
                     .as_mut()

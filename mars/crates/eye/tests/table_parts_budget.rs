@@ -33,10 +33,11 @@ fn many_filled_colgroups_render_in_bounded_time() {
     let elapsed = started.elapsed();
     assert!(elapsed < LIMIT, "render took {elapsed:?}");
     assert!(list.items.iter().any(|i| i.height == 8.0));
-    // The first groups still cover the table's two leaf columns.
+    // The first groups still cover the table's two leaf columns, painting under each of their
+    // cells: two in the first column, one in the second.
     let painted = list
         .items
         .iter()
         .filter(|i| i.background.as_deref() == Some("black"));
-    assert_eq!(painted.count(), 2);
+    assert_eq!(painted.count(), 3);
 }

@@ -32,12 +32,15 @@ fn common_elements_are_accepted() {
     }
 }
 
-/** Frames, video and canvas carry the page's placeholder label as their own text, adding no
-node, so a script-built element parses back to the structure the script engine holds. */
+/** Video and canvas carry the page's placeholder label as their own text, adding no node, so a
+script-built element parses back to the structure the script engine holds; a frame, a replaced
+box of its own, carries no label. */
 #[test]
 fn embedded_content_is_labelled_without_extra_nodes() {
+    let frame = parse_fragment("body", "<iframe src=https://ads.example/x></iframe>", 10).unwrap();
+    assert_eq!(frame.nodes.len(), 1);
+    assert!(frame.nodes[0].text.is_empty());
     for (html, tag) in [
-        ("<iframe src=https://ads.example/x></iframe>", "iframe"),
         ("<video src=v.mp4></video>", "video"),
         ("<canvas></canvas>", "canvas"),
     ] {

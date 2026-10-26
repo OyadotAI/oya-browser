@@ -5,7 +5,7 @@
  */
 use super::{
     selector_parse::{Compound, Pseudo, Simple},
-    sheet::{Rule, Target},
+    sheet::{PseudoBox, Rule, Target},
 };
 use std::{collections::BTreeMap, rc::Rc};
 /** Which bucket a key selects. */
@@ -38,6 +38,11 @@ pub(super) struct Buckets {
     element: Keys,
     before: Keys,
     after: Keys,
+    first_letter: Keys,
+    first_line: Keys,
+    scroll_marker_group: Keys,
+    scroll_marker: Keys,
+    scroll_button: Keys,
 }
 impl Buckets {
     /** Indexes every rule once. */
@@ -53,11 +58,16 @@ impl Buckets {
         buckets
     }
     /** The index for one kind of box. */
-    fn keys_mut(&mut self, pseudo: Option<bool>) -> &mut Keys {
+    fn keys_mut(&mut self, pseudo: Option<PseudoBox>) -> &mut Keys {
         match pseudo {
             None => &mut self.element,
-            Some(false) => &mut self.before,
-            Some(true) => &mut self.after,
+            Some(PseudoBox::Before) => &mut self.before,
+            Some(PseudoBox::After) => &mut self.after,
+            Some(PseudoBox::FirstLetter) => &mut self.first_letter,
+            Some(PseudoBox::FirstLine) => &mut self.first_line,
+            Some(PseudoBox::ScrollMarkerGroup) => &mut self.scroll_marker_group,
+            Some(PseudoBox::ScrollMarker) => &mut self.scroll_marker,
+            Some(PseudoBox::ScrollButton(_)) => &mut self.scroll_button,
         }
     }
     /** Candidate rule indexes for an element (`pseudo` None) or one of its generated boxes, in
@@ -66,12 +76,17 @@ impl Buckets {
         &self,
         tag: &str,
         attributes: &BTreeMap<String, String>,
-        pseudo: Option<bool>,
+        pseudo: Option<PseudoBox>,
     ) -> Vec<usize> {
         let keys = match pseudo {
             None => &self.element,
-            Some(false) => &self.before,
-            Some(true) => &self.after,
+            Some(PseudoBox::Before) => &self.before,
+            Some(PseudoBox::After) => &self.after,
+            Some(PseudoBox::FirstLetter) => &self.first_letter,
+            Some(PseudoBox::FirstLine) => &self.first_line,
+            Some(PseudoBox::ScrollMarkerGroup) => &self.scroll_marker_group,
+            Some(PseudoBox::ScrollMarker) => &self.scroll_marker,
+            Some(PseudoBox::ScrollButton(_)) => &self.scroll_button,
         };
         keys.candidates(tag, attributes)
     }

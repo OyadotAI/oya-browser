@@ -104,6 +104,10 @@ pub(super) struct Scripting {
     pub pending_images: Option<PendingImages>,
     /// The viewport scrolled since the page last heard: the next run fires `scroll` first.
     pub scroll_pending: bool,
+    /// A document scroll offset the page's scripts asked for and the runtime has not adopted.
+    pub scroll_y: Option<f64>,
+    /// The horizontal document scroll offset the page's scripts asked for, not yet adopted.
+    pub scroll_x: Option<f64>,
 }
 
 /// What a step changed that may need images: the first node identity its insertions took, and
@@ -185,6 +189,8 @@ impl Default for Scripting {
             loading: false,
             pending_images: None,
             scroll_pending: false,
+            scroll_y: None,
+            scroll_x: None,
         }
     }
 }
@@ -372,6 +378,15 @@ impl Runtime {
             scripting.navigation = effects.navigation;
         }
         record_console(scripting, effects.console, effects.console_dropped);
+        // A scrolled container repaints like a changed document, as Blink scrolls on assignment.
+        changed |= !effects.element_scroll.is_empty();
+        page.element_scroll.extend(effects.element_scroll);
+        if effects.scroll_y.is_some() {
+            page.scripting.scroll_y = effects.scroll_y;
+        }
+        if effects.scroll_x.is_some() {
+            page.scripting.scroll_x = effects.scroll_x;
+        }
         if let Some(title) = effects.title {
             page.document.title = title;
         }
@@ -452,7 +467,7 @@ impl Runtime {
             crate::document::background_urls(&page.document, &page.url)
                 .into_iter()
                 .filter(|pair| !backgrounds_before.contains(pair) && !loaded.contains(&pair.0))
-                .map(|(id, _)| id)
+                .filter_map(|(id, _)| crate::document::background_owner(id))
                 .collect();
         let wanted = |node: &crate::document::Node| {
             let id = node.local_id;
@@ -606,11 +621,10 @@ impl Runtime {
         let mut sheets = page.resolved_stylesheets.clone();
         sheets.extend(inserted_sheets(&applied, page.document.styles.len()));
         let styled = self.styled(&applied, &sheets, self.render_context)?;
-        let display = self.render_effects(
-            &styled,
-            &page.element_scroll,
-            &execution.effects.opacity_effects,
-        )?;
+        // Boxes sit where the step's own scrolls put them, as the scripts that read them expect.
+        let mut scroll = page.element_scroll.clone();
+        scroll.extend(execution.effects.element_scroll.clone());
+        let display = self.render_effects(&styled, &scroll, &execution.effects.opacity_effects)?;
         Ok(boxes(&display))
     }
 
@@ -627,9 +641,28 @@ impl Runtime {
         // The last layout's boxes, in paint order. A node inserted since has none, and a step
         // that measures one is laid out and run again (`forced_geometry`).
         environment.geometry = page.display.as_ref().map(boxes).unwrap_or_default();
-        environment.laid_out_before = page.display.is_some().then_some(page.laid_out_before);
+        // Before the first layout no node has a box, so every node counts as new: a step that
+        // reads geometry is laid out and run again, as a browser forces layout, instead of
+        // measuring nominal 1px boxes (ref-rectangle.js in the sticky tests).
+        environment.laid_out_before = Some(match page.display {
+            Some(_) => page.laid_out_before,
+            None => 0,
+        });
         environment.positions = positions(&page.document);
-        environment.scroll_y = self.scroll_y;
+        environment.scroll_y = page.scripting.scroll_y.unwrap_or(self.scroll_y);
+        environment.scroll_x = page.scripting.scroll_x.unwrap_or(page.scroll_x);
+        let width = self.render_context.width;
+        environment.scroll_x_range = page
+            .display
+            .as_ref()
+            .map(|display| super::horizontal::scroll_x_range(&page.document, display, width));
+        environment.element_scroll.clone_from(&page.element_scroll);
+        environment.scroll_max = page
+            .display
+            .iter()
+            .flat_map(|display| &display.scrollers)
+            .map(|area| (area.local_id, [area.max_x, area.max_y]))
+            .collect();
         Ok(environment)
     }
 
@@ -839,6 +872,7 @@ impl Runtime {
             }
             page.storage_dirty = false;
             runtime.page = Some(page);
+            runtime.adopt_script_scroll();
         });
         if published.is_err()
             && let Some(previous) = rollback
@@ -846,6 +880,27 @@ impl Runtime {
             self.rollback_storage(previous);
         }
         published
+    }
+
+    /** Move the viewport where the committed page's scripts scrolled it (`window.scrollTo`, the
+    root's `scrollTop`), clamped to the page like any scroll. */
+    pub(super) fn adopt_script_scroll(&mut self) {
+        let Some(page) = self.page.as_mut() else {
+            return;
+        };
+        let (x, y) = (
+            page.scripting.scroll_x.take(),
+            page.scripting.scroll_y.take(),
+        );
+        if let Some(x) = x {
+            page.scroll_x = x;
+        }
+        if let Some(y) = y {
+            self.scroll_y = y;
+        }
+        if x.is_some() || y.is_some() {
+            self.clamp_scroll();
+        }
     }
 
     /// Perform the navigation a committed page's script asked for, through the ordinary

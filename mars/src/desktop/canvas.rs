@@ -1,5 +1,6 @@
 /** An OS view paints the engine's exact lines and hosts controls at its exact boxes. */
 mod background;
+mod border_image;
 mod choice_button;
 mod controls;
 mod editing;
@@ -18,8 +19,8 @@ use objc2::{
 };
 use objc2_app_kit::{
     NSAccessibility, NSAttributedStringNSStringDrawing, NSBezelStyle, NSBezierPath, NSButton,
-    NSColor, NSControlTextEditingDelegate, NSPopUpButton, NSTextDelegate, NSTextField,
-    NSTextFieldDelegate, NSTextViewDelegate, NSView,
+    NSColor, NSControlTextEditingDelegate, NSGraphicsContext, NSPopUpButton, NSTextDelegate,
+    NSTextField, NSTextFieldDelegate, NSTextViewDelegate, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
@@ -458,6 +459,19 @@ impl Canvas {
         let Some(display) = &snapshot.display else {
             return;
         };
+        if let Some(layers) = &display.canvas_layers
+            && let Some(painter) = paint::Painter::current()
+        {
+            painter.backgrounds(&paint::Shape::of(layers), layers, 1.0);
+            let bytes = |key: usize| snapshot.images.get(&key).map(|a| a.bytes.as_slice());
+            let mut painted = self.ivars().painted.borrow_mut();
+            let painted = painted.get_or_insert_with(|| painted::Painted::new(display));
+            let keyed = background::keyed_images(layers, &bytes, painted);
+            background::paint(layers, None, &keyed, 1.0);
+        }
+        if let Some(decoration) = &display.root_decoration {
+            paint_body_decoration(decoration);
+        }
         if let Some(decoration) = &display.body_decoration {
             paint_body_decoration(decoration);
         }
@@ -496,31 +510,59 @@ impl Canvas {
     ) {
         let item = &display.items[index as usize];
         let alpha = painter.residual(item);
+        if item.text_echo {
+            // A decorated block's deferred runs paint here, in the inline phase (eye `text_echo`).
+            let source = echo_source(display, index as usize);
+            if let Some(source) = source {
+                let text = TextPaint {
+                    display,
+                    dirty,
+                    index: source as u32,
+                };
+                paint_text(&display.items[source], alpha, text, painted);
+            }
+            return;
+        }
         let shape = paint::Shape::of(item);
+        // `background-clip`: the color and gradients paint inside these insets.
+        let area = shape.inset_sides(item.background_clip);
         painter.outer_shadows(&shape, item, alpha);
         let bytes = snapshot
             .images
             .get(&item.local_id)
             .map(|asset| asset.bytes.as_slice());
         let image = painted.image(item.local_id, bytes);
+        painter.clip_background(&area, item);
         if let Some(color) = item.background.as_deref().and_then(literal_color) {
             if item.mask.is_some() {
                 // The fetched bytes under a masked item's identity are its mask image.
                 background::paint_mask(item, image.as_deref(), &faded(&color, alpha));
+            } else if item.background_border_area {
+                let ring = if item.border > 0.0 {
+                    [item.border; 4]
+                } else {
+                    item.border_widths
+                };
+                painter.fill_ring(&shape, &shape.inset_sides(ring), &faded(&color, alpha));
             } else {
-                painter.fill(&shape, &faded(&color, alpha));
+                painter.fill(&area, &faded(&color, alpha));
             }
         }
-        painter.backgrounds(&shape, item, alpha);
+        painter.backgrounds(&area, item, alpha);
         if item.tag != "img" {
-            background::paint(item, image.as_deref(), alpha);
+            let bytes = |key: usize| snapshot.images.get(&key).map(|a| a.bytes.as_slice());
+            let keyed = background::keyed_images(item, &bytes, painted);
+            background::paint(item, image.as_deref(), &keyed, alpha);
         }
+        painter.unclip();
         painter.inset_shadows(&shape, item, alpha);
         let default_border = || {
             literal_color(item.border_color.as_deref().unwrap_or("gray"))
                 .unwrap_or_else(NSColor::separatorColor)
         };
-        if item.border > 0.0 {
+        if border_image::paint(item, painter, image.as_deref(), alpha) {
+            // The border image paints in place of the border.
+        } else if item.border > 0.0 {
             painter.stroke(&shape, item.border, &faded(&default_border(), alpha));
         } else if item.border_widths != [0.0; 4] {
             let colors = item.border_colors.clone().map(|color| {
@@ -545,23 +587,69 @@ impl Canvas {
             return;
         }
         paint_validation(item, dirty);
-        if ["input", "button", "select", "textarea"].contains(&item.tag.as_str()) {
+        if ["input", "button", "select", "textarea"].contains(&item.tag.as_str())
+            || item.text_deferred
+        {
             return;
         }
-        let color = if let Some(color) = item.color.as_deref().and_then(literal_color) {
-            color
-        } else if item.tag == "a" {
-            // Eye leaves only light-scheme links uncolored; Chromium's light LinkText, not the OS accent.
-            literal_color(LIGHT_LINK).unwrap_or_else(NSColor::blackColor)
-        } else {
-            display
-                .canvas_foreground
-                .as_deref()
-                .and_then(literal_color)
-                .unwrap_or_else(NSColor::blackColor)
-        };
-        paint_lines(item, &faded(&color, alpha), dirty, painted, index);
+        paint_text(
+            item,
+            alpha,
+            TextPaint {
+                display,
+                dirty,
+                index,
+            },
+            painted,
+        );
     }
+}
+/** The deferred item an echo at `index` paints: the k-th deferred item of its identity for the
+ * k-th echo, as one block's slices keep their order in both paint phases. */
+fn echo_source(display: &crate::document::DisplayList, index: usize) -> Option<usize> {
+    let id = display.items[index].local_id;
+    let rank = display.items[..index]
+        .iter()
+        .filter(|item| item.local_id == id && item.text_echo)
+        .count();
+    display
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.local_id == id && item.text_deferred)
+        .nth(rank)
+        .map(|(at, _)| at)
+}
+/// Where an item's text runs paint: the display list, the dirty region and the item's index.
+struct TextPaint<'a> {
+    display: &'a crate::document::DisplayList,
+    dirty: NSRect,
+    index: u32,
+}
+/** An item's text runs in its own color (a link's default, or the canvas foreground). */
+fn paint_text(
+    item: &DisplayItem,
+    alpha: f64,
+    TextPaint {
+        display,
+        dirty,
+        index,
+    }: TextPaint<'_>,
+    painted: &mut painted::Painted,
+) {
+    let color = if let Some(color) = item.color.as_deref().and_then(literal_color) {
+        color
+    } else if item.tag == "a" {
+        // Eye leaves only light-scheme links uncolored; Chromium's light LinkText, not the OS accent.
+        literal_color(LIGHT_LINK).unwrap_or_else(NSColor::blackColor)
+    } else {
+        display
+            .canvas_foreground
+            .as_deref()
+            .and_then(literal_color)
+            .unwrap_or_else(NSColor::blackColor)
+    };
+    paint_lines(item, &faded(&color, alpha), dirty, painted, index);
 }
 /** Each node by its identity, first occurrence winning, so widget sync is linear in the page
 instead of searching every node for every display item (quadratic on long pages). */
@@ -604,6 +692,8 @@ fn paint_lines(
         family: item.font_family,
         spacing: item.letter_spacing,
         italic: item.italic,
+        autospace: item.autospace,
+        upright: crate::platform::upright::TURNED,
     };
     let (ascender, natural) = platform::metrics(face);
     let advance = item
@@ -617,36 +707,117 @@ fn paint_lines(
         {
             continue;
         }
+        // A vertical run draws in a context turned a quarter clockwise about its top-left, so it
+        // is laid out here as a horizontal run at the origin (raster glyphs.rs turns the same way).
+        let turned = item.writing != 0;
+        if turned {
+            turn_for(line, advance, item.writing == crate::document::WRITING_CCW);
+        }
+        let line = &if turned {
+            crate::document::PaintLine {
+                text: line.text.clone(),
+                x: 0.0,
+                y: 0.0,
+                width: line.width,
+            }
+        } else {
+            line.clone()
+        };
         // Without the line-fragment option AppKit treats the origin as the baseline, so Chromium's
         // ascent (not AppKit's own line metrics) decides where glyphs sit.
         let baseline = line.y + leading + ascender;
+        if !turned && paint_chained(item, line, (face, color), (baseline, advance), painted) {
+            decorate_line(item, line, color, (baseline, ascender));
+            continue;
+        }
         objc2_app_kit::NSAttributedStringNSExtendedStringDrawing::drawWithRect_options_context(
             &*painted.text((index, number as u32), || {
-                platform::styled(&line.text, face, color, item.rtl)
+                platform::spaced(&line.text, face, color, item.rtl, item.word_spacing)
             }),
             rect(line.x, baseline, line.width + item.font_size, advance),
             objc2_app_kit::NSStringDrawingOptions(0),
             None,
         );
-        let thickness = (item.font_size / 16.0).clamp(1.0, 2.5);
-        if item.underline {
-            color.setStroke();
-            let underline = NSBezierPath::bezierPath();
-            let y = baseline + UNDERLINE_OFFSET;
-            underline.moveToPoint(NSPoint::new(line.x, y));
-            underline.lineToPoint(NSPoint::new(line.x + line.width, y));
-            underline.setLineWidth(thickness);
-            underline.stroke();
+        decorate_line(item, line, color, (baseline, ascender));
+        if turned {
+            NSGraphicsContext::restoreGraphicsState_class();
         }
-        if item.strikethrough {
-            color.setStroke();
-            let strike = NSBezierPath::bezierPath();
-            let y = baseline - ascender * 0.35;
-            strike.moveToPoint(NSPoint::new(line.x, y));
-            strike.lineToPoint(NSPoint::new(line.x + line.width, y));
-            strike.setLineWidth(thickness);
-            strike.stroke();
-        }
+    }
+}
+/** A run's underline and line-through, across its own width. */
+fn decorate_line(
+    item: &DisplayItem,
+    line: &crate::document::PaintLine,
+    color: &NSColor,
+    (baseline, ascender): (f64, f64),
+) {
+    let thickness = (item.font_size / 16.0).clamp(1.0, 2.5);
+    if item.underline {
+        color.setStroke();
+        let underline = NSBezierPath::bezierPath();
+        let y = baseline + UNDERLINE_OFFSET;
+        underline.moveToPoint(NSPoint::new(line.x, y));
+        underline.lineToPoint(NSPoint::new(line.x + line.width, y));
+        underline.setLineWidth(thickness);
+        underline.stroke();
+    }
+    if item.strikethrough {
+        color.setStroke();
+        let strike = NSBezierPath::bezierPath();
+        let y = baseline - ascender * 0.35;
+        strike.moveToPoint(NSPoint::new(line.x, y));
+        strike.lineToPoint(NSPoint::new(line.x + line.width, y));
+        strike.setLineWidth(thickness);
+        strike.stroke();
+    }
+}
+/** A chained run (Eye's text_chains): its chain's joined text drawn from the chain's start,
+clipped to the columns this run owns, so its glyphs sit where one shaped string's would. False
+when the run is in no chain. */
+fn paint_chained(
+    item: &DisplayItem,
+    line: &crate::document::PaintLine,
+    (face, color): (platform::Face, &NSColor),
+    (baseline, advance): (f64, f64),
+    painted: &painted::Painted,
+) -> bool {
+    let key = crate::document::chain_key(item, line);
+    let Some(member) = painted.chains.members.get(&key).copied() else {
+        return false;
+    };
+    let chain = &painted.chains.chains[member.chain];
+    let from = member.from.max(chain.x - item.font_size);
+    let to = member.to.min(chain.x + chain.width + item.font_size);
+    NSGraphicsContext::saveGraphicsState_class();
+    NSBezierPath::clipRect(rect(from, line.y - advance, to - from, advance * 3.0));
+    let text = platform::spaced(&chain.text, face, color, item.rtl, item.word_spacing);
+    objc2_app_kit::NSAttributedStringNSExtendedStringDrawing::drawWithRect_options_context(
+        &*text,
+        rect(chain.x, baseline, chain.width + item.font_size, advance),
+        objc2_app_kit::NSStringDrawingOptions(0),
+        None,
+    );
+    NSGraphicsContext::restoreGraphicsState_class();
+    true
+}
+/** Saves the graphics state and turns it a quarter clockwise (a positive angle in the flipped
+view) so a local point (u, v) draws at (x + advance - v, y + u) for a vertical run at `line`. */
+fn turn_for(line: &crate::document::PaintLine, advance: f64, back: bool) {
+    use objc2_core_graphics::CGContext;
+    use std::f64::consts::FRAC_PI_2;
+    NSGraphicsContext::saveGraphicsState_class();
+    if let Some(context) = NSGraphicsContext::currentContext() {
+        let cg = context.CGContext();
+        // Counter-clockwise (`back`): a local point (u, v) draws at (x + v, y + length - u).
+        // The run starts on a whole point along its inline axis, as the windowless painter does.
+        let start = line.y.round();
+        let (dx, dy, angle) = if back {
+            (line.x, start + line.width, -FRAC_PI_2)
+        } else {
+            (line.x + advance, start, FRAC_PI_2)
+        };
+        CGContext::translate_ctm(Some(&cg), dx, dy);
+        CGContext::rotate_ctm(Some(&cg), angle);
     }
 }
 /** Items far outside the dirty region are skipped; transformed, shadowed and clipped ones always paint. */

@@ -298,3 +298,17 @@ fn style_reports_chrome_properties() {
         "true,false,true,"
     );
 }
+
+/** A `webkit`-prefixed style attribute names the `-webkit-` property, as CSSOM maps it, so
+`style.webkitLineClamp = "none"` reaches `-webkit-line-clamp`. */
+#[test]
+fn webkit_style_attributes_name_dash_prefixed_properties() {
+    assert_eq!(
+        eval(
+            "const s=document.body.style;s.webkitLineClamp='2';s.WebkitBoxOrient='vertical';\
+             const r=[s.webkitLineClamp,s.getPropertyValue('-webkit-box-orient')].join();",
+            "r"
+        ),
+        "2,vertical"
+    );
+}

@@ -414,10 +414,41 @@ fn invoke(
     Ok(())
 }
 
+/** Window events whose `<body>` content attributes set the window's handler (HTML's
+WindowEventHandlers and the body-forwarded blur, error, focus, load, resize and scroll). */
+const BODY_FORWARDED: [&str; 22] = [
+    "afterprint",
+    "beforeprint",
+    "beforeunload",
+    "blur",
+    "error",
+    "focus",
+    "hashchange",
+    "languagechange",
+    "load",
+    "message",
+    "messageerror",
+    "offline",
+    "online",
+    "pagehide",
+    "pagereveal",
+    "pageshow",
+    "popstate",
+    "rejectionhandled",
+    "resize",
+    "scroll",
+    "storage",
+    "unload",
+];
+
 /** The markup `on<kind>` attribute source of a node target, if it has one. */
 fn inline_source(vm: &mut Vm, target: Target, kind: &str) -> Option<String> {
-    let Target::Node(node) = target else {
-        return None;
+    let node = match target {
+        Target::Node(node) => node,
+        // HTML forwards these `<body on...>` attributes to the window's handlers, so
+        // `<body onload="...">` runs on the window's load event.
+        Target::Window if BODY_FORWARDED.contains(&kind) => super::nodes::BODY,
+        _ => return None,
     };
     let name = format!("on{kind}");
     vm.page

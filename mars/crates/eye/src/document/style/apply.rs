@@ -6,7 +6,7 @@ use super::{
     values::{contextual_color, contextual_length, number},
 };
 use crate::{
-    constants::{CSS_MAX_FONT_SIZE, CSS_MAX_SCALAR, CSS_MIN_FONT_SIZE, CSS_ROOT_FONT_SIZE},
+    constants::{CSS_MAX_FONT_SIZE, CSS_MAX_SCALAR, CSS_MIN_FONT_SIZE},
     document::RenderContext,
     protocol::EngineResult,
 };
@@ -20,10 +20,19 @@ pub(super) fn apply(
 ) -> EngineResult<bool> {
     let raw = value.trim();
     let lower = raw.to_ascii_lowercase();
-    let value = if key == "background-image" || key == "mask-image" {
+    let value = if ["background-image", "mask-image", "border-image-source"].contains(&key) {
         raw
     } else {
         lower.as_str()
+    };
+    let sized;
+    let value = match super::calc_size::KEYS.iter().position(|name| *name == key) {
+        Some(index) => {
+            let font = style.font_size;
+            sized = super::calc_size::split(style, index, value, (font, context))?;
+            sized.as_str()
+        }
+        None => value,
     };
     // Animation longhands are consumed by the cascade's resting-frame step, never computed.
     if super::animation::LONGHANDS.contains(&key) {
@@ -50,16 +59,35 @@ pub(super) fn apply(
             overflow_clip_margin(value, style.font_size, context)?;
         return Ok(true);
     }
+    if key == "filter" {
+        style.multicol.spanner_barrier = value != "none";
+    }
+    if key == "content-visibility" && matches!(value, "auto" | "visible") {
+        // `content-visibility: auto` turns on layout, style and paint containment (css-contain-2),
+        // so the box clips its contents, as a nested scroller's marker group shows. `hidden`
+        // stays unsupported, so its rule keeps masking what it may hide.
+        style.contain_paint = value == "auto";
+        return Ok(true);
+    }
     if key == "contain" {
         // Paint containment clips like `overflow: clip`; `contain` still groups the box below.
         style.contain_paint = value
             .split_whitespace()
             .any(|word| ["paint", "strict", "content"].contains(&word));
+        style.multicol.spanner_barrier = value
+            .split_whitespace()
+            .any(|word| ["layout", "strict", "content"].contains(&word));
+        style.multicol.contain_size = value
+            .split_whitespace()
+            .any(|word| ["size", "strict"].contains(&word));
     }
     if super::layout_props::apply(style, key, value, context)?
+        || super::containment::apply(style, key, value, context)?
         || super::text_box::apply(style, key, value)?
+        || super::multicol::apply(style, key, value, context)?
         || super::flex::apply(style, key, value, context)?
         || super::visual::apply(style, key, value, context, diagnostics)?
+        || super::border_image::apply(style, key, value, context)?
     {
         return Ok(true);
     }
@@ -156,6 +184,16 @@ fn text(
                     true
                 }
                 _ => return Err(unsupported()),
+            };
+            style.writing_lr = matches!(value, "vertical-lr" | "sideways-lr");
+            style.writing_sideways = value.starts_with("sideways");
+        }
+        "text-orientation" | "-webkit-text-orientation" => {
+            style.text_orientation = match value {
+                "mixed" | "vertical-right" => 0,
+                "upright" => 1,
+                "sideways" | "sideways-right" => 2,
+                _ => return Err(unsupported()),
             }
         }
         "direction" => {
@@ -183,7 +221,12 @@ fn text(
         }
         "font-size" => {
             let old = style.font_size;
-            style.font_size = font_size(value, style.font_size, context)?;
+            let parent = (style.font_size, style.font_size_absolute);
+            (
+                style.font_size,
+                style.font_keyword,
+                style.font_size_absolute,
+            ) = font_size(value, parent, context)?;
             super::visual::respace(style, old);
         }
         "font-weight" => set_weight(style, weight(value, style.font_weight)?),
@@ -198,12 +241,20 @@ fn text(
         }
         "text-align" => {
             style.align = match value {
-                "left" | "center" | "right" | "start" | "end" => value,
-                "justify" | "justify-all" | "match-parent" => "start",
+                "left" | "center" | "right" | "start" | "end" | "justify" => value,
+                "match-parent" => super::text_align::matched(&style.align, style.parent_rtl),
+                "justify-all" => "start",
                 "-webkit-center" => "webkit-center",
                 _ => return Err(unsupported()),
             }
             .into()
+        }
+        "text-align-last" => style.align_last = super::text_align::last(value, style)?,
+        "text-justify" => style.text_justify = super::text_align::justify(value)?,
+        "text-autospace" => style.text_autospace = super::text_align::autospace(value)?,
+        "hyphens" | "-webkit-hyphens" => style.hyphens_none = super::text_align::hyphens(value)?,
+        "hyphenate-character" => {
+            style.hyphenate_character = super::text_align::hyphenate_character(value)?;
         }
         _ => return Ok(false),
     }
@@ -220,8 +271,11 @@ fn layout(
     match key {
         "display" => display(style, value, diagnostics)?,
         "visibility" => match value {
-            "hidden" | "collapse" => style.hidden = true,
-            "visible" => {}
+            "hidden" => style.invisible = true,
+            // ponytail: collapse removes the box everywhere, right for table rows and flex
+            // items; elsewhere it should act as hidden.
+            "collapse" => style.hidden = true,
+            "visible" => style.invisible = false,
             _ => return Err(unsupported()),
         },
         "pointer-events" => style.interactive = value != "none",
@@ -334,10 +388,13 @@ fn display(
 ) -> EngineResult<()> {
     let outer = value.split_whitespace().collect::<Vec<_>>().join(" ");
     match outer.as_str() {
-        "none" => style.hidden = true,
+        "none" => (style.hidden, style.display_none) = (true, true),
         "inline" | "inline flow" => set_display(style, true, false, false, false),
-        "inline-block" | "inline flow-root" | "inline-table" => {
-            set_display(style, true, true, false, false)
+        "inline-block" | "inline flow-root" => set_display(style, true, true, false, false),
+        // An inline-level table: atomic on its line, a table inside.
+        "inline-table" | "inline table" => {
+            set_display(style, true, true, false, false);
+            style.table_box = TableBox::Table;
         }
         "flex" | "block flex" | "-webkit-box" | "-webkit-flex" => {
             set_display(style, false, false, true, false);
@@ -400,6 +457,27 @@ fn display(
     }
     Ok(())
 }
+/** Blink's StyleAdjuster: a `-webkit-box` with a vertical `-webkit-box-orient` and a clamp
+(`-webkit-line-clamp`'s legacy `continue`, or a collapsing one) is a flow-root (a
+`-webkit-inline-box` an inline-block) whose block layout clamps its lines, not a flex container.
+The legacy `continue` clamps nothing else, and only a block container clamps at all. */
+pub(super) fn line_clamp_box(style: &mut ComputedStyle) {
+    let clamps = style.continue_legacy || style.continue_collapse;
+    if style.webkit_box && style.box_orient_vertical && clamps {
+        let inline = style.inline_block;
+        set_display(style, inline, inline, false, false);
+        style.flow_root = !inline;
+        style.continue_collapse = true;
+        return;
+    }
+    if style.continue_legacy
+        || style.display_flex
+        || style.display_grid
+        || style.table_box != super::TableBox::None
+    {
+        style.continue_collapse = false;
+    }
+}
 /** One display value sets every outer and inner display flag together, so none go stale. */
 fn set_display(style: &mut ComputedStyle, inline: bool, atomic: bool, flex: bool, grid: bool) {
     style.inline = inline;
@@ -432,23 +510,25 @@ fn color_scheme(value: &str) -> EngineResult<ColorScheme> {
         },
     )
 }
-/** Keywords, lengths and percentages of the parent size, clamped into the supported range. */
-fn font_size(value: &str, parent: f64, context: RenderContext) -> EngineResult<f64> {
-    let keyword = [
-        ("xx-small", 9.0),
-        ("x-small", 10.0),
-        ("small", 13.0),
-        ("medium", CSS_ROOT_FONT_SIZE),
-        ("large", 18.0),
-        ("x-large", 24.0),
-        ("xx-large", 32.0),
-        ("xxx-large", 48.0),
-        ("smaller", parent / 1.2),
-        ("larger", parent * 1.2),
-    ];
-    let size = match keyword.iter().find(|(name, _)| *name == value) {
-        Some((_, size)) => *size,
-        None => super::values::dimension(value, parent, context)?.of(parent),
+/** Keywords, lengths and percentages of the parent size, clamped into the supported range, with
+ * the keyword (0 for none) and whether the size is absolute, as Blink's ConvertFontSize tracks. */
+fn font_size(
+    value: &str,
+    (parent, parent_absolute): (f64, bool),
+    context: RenderContext,
+) -> EngineResult<(f64, u8, bool)> {
+    let (size, keyword, absolute) = match value {
+        "smaller" => (parent / 1.2, 0, parent_absolute),
+        "larger" => (parent * 1.2, 0, parent_absolute),
+        _ => match super::font::keyword(value) {
+            Some(keyword) => (super::font::keyword_size(keyword, false), keyword, false),
+            None => {
+                let dimension = super::values::dimension(value, parent, context)?;
+                let relative = dimension.percent != 0.0 || font_relative(value);
+                let absolute = parent_absolute || !relative || value.contains('(');
+                (dimension.of(parent), 0, absolute)
+            }
+        },
     };
     if !size.is_finite() || size < 0.0 {
         return Err(unsupported());
@@ -456,9 +536,18 @@ fn font_size(value: &str, parent: f64, context: RenderContext) -> EngineResult<f
     // `font-size: 0` hides text and the spaces between inline blocks, as in Chromium; only
     // sizes above it take the minimum.
     if size == 0.0 {
-        return Ok(0.0);
+        return Ok((0.0, keyword, absolute));
     }
-    Ok(size.clamp(CSS_MIN_FONT_SIZE, CSS_MAX_FONT_SIZE))
+    Ok((
+        size.clamp(CSS_MIN_FONT_SIZE, CSS_MAX_FONT_SIZE),
+        keyword,
+        absolute,
+    ))
+}
+/** `em`, `ex`, `ch`, `ic`, `cap` and `lh` follow the parent font; `rem` and the rest do not. */
+fn font_relative(value: &str) -> bool {
+    let unit = value.trim_start_matches(|c: char| c.is_ascii_digit() || "+-.".contains(c));
+    ["em", "ex", "ch", "ic", "cap", "lh"].contains(&unit)
 }
 /** Numeric weights 1..1000, keywords, and bolder/lighter relative to the inherited weight. */
 fn weight(value: &str, inherited: u16) -> EngineResult<u16> {

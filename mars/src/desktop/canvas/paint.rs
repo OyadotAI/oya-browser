@@ -11,6 +11,8 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 /// A segment between stops of different alpha is sampled this many times, so CoreGraphics'
 /// straight-alpha interpolation follows CSS's premultiplied one closely.
 const GRADIENT_STEPS: usize = 8;
+/// How far toward the corner a quarter ellipse's Bezier control points sit (4/3 (sqrt 2 - 1)).
+const BEZIER_ARC: f64 = 0.552_284_749_8;
 /// Shadow and inset-shadow paths are surrounded by this much canvas so even-odd fills cover the blur.
 const SHADOW_REACH: f64 = 10_000.0;
 
@@ -22,6 +24,8 @@ pub(super) struct Shape {
     pub width: f64,
     pub height: f64,
     pub radius: [f64; 4],
+    /// Vertical radii in the same order; equal to `radius` for circular corners.
+    pub radius_y: [f64; 4],
 }
 impl Shape {
     /// The item's border box.
@@ -32,6 +36,7 @@ impl Shape {
             width: item.width,
             height: item.height,
             radius: item.radius,
+            radius_y: item.radius_y.unwrap_or(item.radius),
         }
     }
     /// Grows (or with a negative amount shrinks) every edge; radii follow, never below zero.
@@ -41,10 +46,14 @@ impl Shape {
             y: self.y - amount,
             width: (self.width + amount * 2.0).max(0.0),
             height: (self.height + amount * 2.0).max(0.0),
-            radius: self
-                .radius
-                .map(|r| if r > 0.0 { (r + amount).max(0.0) } else { 0.0 }),
+            radius: std::array::from_fn(|i| self.spread_corner(i, amount)[0]),
+            radius_y: std::array::from_fn(|i| self.spread_corner(i, amount)[1]),
         }
+    }
+    /// Corner `index` (`[rx, ry]`) grown by `amount`, as a spread shadow's (eye `spread_radius`).
+    fn spread_corner(&self, index: usize, amount: f64) -> [f64; 2] {
+        let corner = [self.radius[index], self.radius_y[index]];
+        crate::document::spread_radius(corner, [self.width, self.height], amount)
     }
     /// Moves the box.
     fn offset(&self, x: f64, y: f64) -> Self {
@@ -62,10 +71,16 @@ impl Shape {
             width: (self.width - left - right).max(0.0),
             height: (self.height - top - bottom).max(0.0),
             radius: [
-                (self.radius[0] - top.max(left)).max(0.0),
-                (self.radius[1] - top.max(right)).max(0.0),
-                (self.radius[2] - bottom.max(right)).max(0.0),
-                (self.radius[3] - bottom.max(left)).max(0.0),
+                (self.radius[0] - left).max(0.0),
+                (self.radius[1] - right).max(0.0),
+                (self.radius[2] - right).max(0.0),
+                (self.radius[3] - left).max(0.0),
+            ],
+            radius_y: [
+                (self.radius_y[0] - top).max(0.0),
+                (self.radius_y[1] - top).max(0.0),
+                (self.radius_y[2] - bottom).max(0.0),
+                (self.radius_y[3] - bottom).max(0.0),
             ],
         }
     }
@@ -142,6 +157,7 @@ impl Painter {
                 width: clip.width,
                 height: clip.height,
                 radius: clip.radius,
+                radius_y: clip.radius,
             });
             CGContext::clip(self.cg());
         }
@@ -155,18 +171,26 @@ impl Painter {
     }
     /** Replaces the current path with a rounded rectangle. */
     fn path(&self, shape: &Shape) {
+        CGContext::begin_path(self.cg());
+        self.add(shape);
+    }
+    /** Adds a rounded rectangle to the current path as its own subpath. */
+    fn add(&self, shape: &Shape) {
         let cg = self.cg();
-        CGContext::begin_path(cg);
         let Shape {
             x,
             y,
             width: w,
             height: h,
             radius: [tl, tr, br, bl],
+            radius_y,
         } = *shape;
-        if [tl, tr, br, bl] == [0.0; 4] {
+        if [tl, tr, br, bl] == [0.0; 4] && radius_y == [0.0; 4] {
             CGContext::add_rect(cg, rect(x, y, w, h));
             return;
+        }
+        if radius_y != shape.radius {
+            return self.add_elliptical(shape);
         }
         CGContext::move_to_point(cg, x + tl, y);
         CGContext::add_arc_to_point(cg, x + w, y, x + w, y + h, tr);
@@ -175,11 +199,79 @@ impl Painter {
         CGContext::add_arc_to_point(cg, x, y, x + w, y, tl);
         CGContext::close_path(cg);
     }
+    /** Adds a box whose corners are quarter ellipses `[rx, ry]`, each a cubic Bezier. */
+    fn add_elliptical(&self, shape: &Shape) {
+        let cg = self.cg();
+        let (x, y, w, h) = (shape.x, shape.y, shape.width, shape.height);
+        let ([tl, tr, br, bl], [vtl, vtr, vbr, vbl]) = (shape.radius, shape.radius_y);
+        // Each corner: where the edge before it ends, the corner point, where the next begins.
+        let corners = [
+            ((x + w - tr, y), (x + w, y), (x + w, y + vtr)),
+            ((x + w, y + h - vbr), (x + w, y + h), (x + w - br, y + h)),
+            ((x + bl, y + h), (x, y + h), (x, y + h - vbl)),
+            ((x, y + vtl), (x, y), (x + tl, y)),
+        ];
+        CGContext::move_to_point(cg, x + tl, y);
+        for (start, corner, end) in corners {
+            CGContext::add_line_to_point(cg, start.0, start.1);
+            let control = |from: (f64, f64)| {
+                (
+                    from.0 + (corner.0 - from.0) * BEZIER_ARC,
+                    from.1 + (corner.1 - from.1) * BEZIER_ARC,
+                )
+            };
+            let (a, b) = (control(start), control(end));
+            CGContext::add_curve_to_point(cg, a.0, a.1, b.0, b.1, end.0, end.1);
+        }
+        CGContext::close_path(cg);
+    }
+    /// Fills the ring between two rounded boxes (`background-clip: border-area`).
+    pub fn fill_ring(&self, outer: &Shape, inner: &Shape, color: &NSColor) {
+        color.setFill();
+        self.path(outer);
+        self.add(inner);
+        CGContext::eo_fill_path(self.cg());
+    }
     /// Fills a rounded box with an AppKit color.
     pub fn fill(&self, shape: &Shape, color: &NSColor) {
         color.setFill();
         self.path(shape);
         CGContext::fill_path(self.cg());
+    }
+    /// Saves the state and clips what follows to an item's background painting area: the
+    /// rounded `background-clip` shape `area` (unless `border-area` paints the ring) and its
+    /// `background_rect`, as the raster painter clips the color, gradients and image layers.
+    /// Without it image layers spilled past rounded corners and `content-box` clips.
+    pub fn clip_background(&self, area: &Shape, item: &DisplayItem) {
+        CGContext::save_g_state(self.cg());
+        if item.background_border_area {
+            // The border's ring: inside the border box, outside the padding box.
+            let shape = Shape::of(item);
+            self.clip_shape(&shape);
+            let ring = if item.border > 0.0 {
+                [item.border; 4]
+            } else {
+                item.border_widths
+            };
+            self.outside(&shape.inset_sides(ring));
+        } else {
+            self.clip_shape(area);
+        }
+        if let Some([x, y, width, height]) = item.background_rect {
+            let (radius, radius_y) = ([0.0; 4], [0.0; 4]);
+            self.clip_shape(&Shape {
+                x,
+                y,
+                width,
+                height,
+                radius,
+                radius_y,
+            });
+        }
+    }
+    /// Restores the state `clip_background` saved.
+    pub fn unclip(&self) {
+        CGContext::restore_g_state(self.cg());
     }
     /// Intersects the current clipping region with a rounded shape.
     pub fn clip_shape(&self, shape: &Shape) {
@@ -230,7 +322,13 @@ impl Painter {
             CGContext::save_g_state(self.cg());
             self.outside(shape);
             self.shadowed(shadow.blur, &color);
-            let cast = shape.outset(shadow.spread).offset(shadow.x, shadow.y);
+            let mut cast = shape.outset(shadow.spread).offset(shadow.x, shadow.y);
+            let [x, _, width, _] = crate::document::sliced_shadow(
+                [cast.x, cast.y, cast.width, cast.height],
+                [shape.x, shape.width],
+                item.slice_cut,
+            );
+            (cast.x, cast.width) = (x, width);
             self.fill(&cast, &color);
             CGContext::restore_g_state(self.cg());
         }
@@ -314,24 +412,34 @@ impl Painter {
                 .flat_map(|([r, g, b, a], _)| [*r, *g, *b, a * alpha])
                 .collect::<Vec<_>>();
             let locations = resolved.iter().map(|(_, at)| *at).collect::<Vec<_>>();
-            CGContext::save_g_state(self.cg());
-            self.path(shape);
-            CGContext::clip(self.cg());
-            with_gradient(&colors, &locations, |gradient| {
-                if radial {
-                    self.radial(gradient, shape.x + a, shape.y + b, c, d);
-                } else {
-                    CGContext::draw_linear_gradient(
-                        self.cg(),
-                        Some(gradient),
-                        NSPoint::new(shape.x + a, shape.y + b),
-                        NSPoint::new(shape.x + c, shape.y + d),
-                        CGGradientDrawingOptions::DrawsBeforeStartLocation
-                            | CGGradientDrawingOptions::DrawsAfterEndLocation,
-                    );
-                }
+            let origins = layer.tile().map_or(vec![(0.0, 0.0)], |tile| {
+                tile.origins(shape.width, shape.height)
             });
-            CGContext::restore_g_state(self.cg());
+            for (ox, oy) in origins {
+                CGContext::save_g_state(self.cg());
+                self.path(shape);
+                CGContext::clip(self.cg());
+                if let Some(tile) = layer.tile() {
+                    let cell = rect(shape.x + ox, shape.y + oy, tile.width, tile.height);
+                    CGContext::clip_to_rect(self.cg(), cell);
+                }
+                let (x, y) = (shape.x + ox, shape.y + oy);
+                with_gradient(&colors, &locations, |gradient| {
+                    if radial {
+                        self.radial(gradient, x + a, y + b, c, d);
+                    } else {
+                        CGContext::draw_linear_gradient(
+                            self.cg(),
+                            Some(gradient),
+                            NSPoint::new(x + a, y + b),
+                            NSPoint::new(x + c, y + d),
+                            CGGradientDrawingOptions::DrawsBeforeStartLocation
+                                | CGGradientDrawingOptions::DrawsAfterEndLocation,
+                        );
+                    }
+                });
+                CGContext::restore_g_state(self.cg());
+            }
         }
     }
     /** An elliptical gradient is a unit circle scaled to the ellipse's radii. */

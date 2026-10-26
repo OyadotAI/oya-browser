@@ -37,10 +37,7 @@ fn module_scripts_are_kept_without_a_diagnostic() {
 #[test]
 fn unsupported_markup_degrades_with_a_diagnostic() {
     for (body, diagnostic) in [
-        (
-            "<iframe></iframe>",
-            Some("Embedded frame (not supported yet)"),
-        ),
+        ("<video></video>", Some("Video (not supported yet)")),
         (
             "<input onchange='host()'>",
             Some("Inline event handler attributes were removed and never run."),

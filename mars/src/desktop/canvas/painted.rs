@@ -21,12 +21,17 @@ pub(super) struct Painted {
     text: HashMap<(u32, u32), Retained<NSAttributedString>>,
     /// Decoded images per node identity; a failed decode is remembered too.
     images: HashMap<usize, Option<Retained<NSImage>>>,
+    /// Runs drawn as one joined text, as the windowless raster draws them.
+    pub chains: crate::document::TextChains,
 }
 
 impl Painted {
     /** Indexes every item by the bands its vertical extent covers. */
     pub fn new(display: &DisplayList) -> Self {
-        let mut painted = Self::default();
+        let mut painted = Self {
+            chains: crate::document::text_chains(display.items.iter()),
+            ..Self::default()
+        };
         for (index, item) in display.items.iter().enumerate() {
             let index = index as u32;
             let Some((first, last)) = extent(item) else {

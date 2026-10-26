@@ -39,6 +39,23 @@ const FORM: &str = r#"<html><head><title>Form</title></head><body>
 <p>Sixteen</p><p>Seventeen</p><p>Eighteen</p><p>Nineteen</p><p>Twenty</p><p>End</p>
 </body></html>"#;
 
+/** The page itself chooses focus and exposes trusted keyboard/default-action effects as ordinary DOM text. */
+const ESCAPE_FORM: &str = r#"<html><head><title>Escape</title></head><body>
+<input id="escape-focus" aria-label="Escape focus"><input id="other" aria-label="Other">
+<button id="cancel" type="button">Cancel closing</button><div id="popover" popover="auto">Popover</div>
+<p id="events">none</p><p id="open">unknown</p><script>
+const field=document.getElementById('escape-focus'),pop=document.getElementById('popover');
+let cancel=false;pop.showPopover();field.focus();
+document.getElementById('open').textContent=String(pop.matches(':popover-open'));
+document.getElementById('cancel').addEventListener('click',()=>{cancel=true;field.focus()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){
+document.getElementById('events').textContent='down:'+e.key+':'+e.isTrusted+':'+(e.target===field);
+if(cancel)e.preventDefault()}});
+document.addEventListener('keyup',e=>{if(e.key==='Escape'){
+document.getElementById('events').textContent+=',up:'+e.key+':'+e.isTrusted+':'+(e.target===field);
+document.getElementById('open').textContent=String(pop.matches(':popover-open'))}});
+</script></body></html>"#;
+
 /** One hermetic loopback site. */
 struct Site {
     origin: String,
@@ -49,6 +66,10 @@ struct Site {
 impl Site {
     /** Serve the form at every path except /done. */
     fn start() -> Self {
+        Self::with_page(FORM)
+    }
+    /** Each control fixture chooses its own immutable document without changing native admission. */
+    fn with_page(page: &'static str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -76,7 +97,7 @@ impl Site {
                 let body = if request.starts_with("GET /done") {
                     "<title>Welcome</title><h1>Welcome</h1>"
                 } else {
-                    FORM
+                    page
                 };
                 let _ = socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nSet-Cookie: sid={COOKIE}; Path=/\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
             }
@@ -440,10 +461,218 @@ fn keys_type_toggle_erase_and_submit() {
     assert_eq!(control(&at["summary"], "textbox")["value"], "Ada");
     assert_eq!(control(&at["summary"], "checkbox")["checked"], true);
     assert!(!at.to_string().contains(SECRET));
-    let unsupported = press(&mut runtime, "textbox", json!({"key":"Escape"}));
+    let unsupported = press(&mut runtime, "textbox", json!({"key":"ArrowLeft"}));
     assert_eq!(unsupported.unwrap_err().code, "unsupported_operation");
     let submitted = press(&mut runtime, "textbox", json!({"key":"Enter"})).unwrap();
     assert_eq!(submitted["title"], "Welcome");
+}
+
+/** Public native inspection supplies actual handles and authored event effects for a lane's own tab. */
+fn escape_page(runtime: &mut Runtime, authority: &SharedAuthority, tab: u64) -> Value {
+    agent(
+        runtime,
+        authority,
+        "a",
+        Some(tab),
+        "page.inspect",
+        json!({}),
+    )
+    .unwrap()
+}
+
+/** The synthetic HTML identity discovers its current native node; no test fabricates an actionable handle. */
+fn escape_node(page: &Value, html_id: &str) -> Value {
+    page["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|node| node["html_id"] == html_id)
+        .unwrap_or_else(|| panic!("missing escape fixture node {html_id}: {page}"))
+        .clone()
+}
+
+/** An explicit lane-scoped focused target receives trusted events and the actual popover close default. */
+#[test]
+fn lane_escape_closes_popover_at_its_actual_focused_target() {
+    let site = Site::with_page(ESCAPE_FORM);
+    let (mut runtime, authority) = site.runtime(Owner::Human);
+    let tab = open_form(&mut runtime, &authority, &site, "a");
+    let page = escape_page(&mut runtime, &authority, tab);
+    assert_eq!(escape_node(&page, "open")["text"], "true");
+    agent(
+        &mut runtime,
+        &authority,
+        "a",
+        Some(tab),
+        "page.press",
+        json!({
+            "page_id":page["page_id"],"expected_revision":page["revision"],
+            "node_id":escape_node(&page,"escape-focus")["node_id"],"key":"Escape"
+        }),
+    )
+    .unwrap();
+    let after = escape_page(&mut runtime, &authority, tab);
+    assert_eq!(
+        escape_node(&after, "events")["text"],
+        "down:Escape:true:true,up:Escape:true:true"
+    );
+    assert_eq!(escape_node(&after, "open")["text"], "false");
+    let tabs = agent(&mut runtime, &authority, "a", None, "tab.list", json!({})).unwrap();
+    assert_eq!(tabs["selected_tab_id"], "tab-1");
+}
+
+/** Omitting node_id follows actual focus; an authored keydown cancellation preserves the open popover. */
+#[test]
+fn lane_escape_without_a_target_honors_keydown_cancellation() {
+    let site = Site::with_page(ESCAPE_FORM);
+    let (mut runtime, authority) = site.runtime(Owner::Human);
+    let tab = open_form(&mut runtime, &authority, &site, "a");
+    let page = escape_page(&mut runtime, &authority, tab);
+    agent(
+        &mut runtime,
+        &authority,
+        "a",
+        Some(tab),
+        "page.click",
+        json!({
+            "page_id":page["page_id"],"expected_revision":page["revision"],
+            "node_id":escape_node(&page,"cancel")["node_id"]
+        }),
+    )
+    .unwrap();
+    let page = escape_page(&mut runtime, &authority, tab);
+    agent(
+        &mut runtime,
+        &authority,
+        "a",
+        Some(tab),
+        "page.press",
+        json!({
+            "page_id":page["page_id"],"expected_revision":page["revision"],"key":"Escape"
+        }),
+    )
+    .unwrap();
+    let after = escape_page(&mut runtime, &authority, tab);
+    assert_eq!(
+        escape_node(&after, "events")["text"],
+        "down:Escape:true:true,up:Escape:true:true"
+    );
+    assert_eq!(escape_node(&after, "open")["text"], "true");
+}
+
+/** Lane routing cannot bypass current page/revision checks or redirect Escape onto an unfocused node. */
+#[test]
+fn lane_escape_rejects_stale_page_revision_and_unfocused_targets() {
+    let site = Site::with_page(ESCAPE_FORM);
+    let (mut runtime, authority) = site.runtime(Owner::Human);
+    let tab = open_form(&mut runtime, &authority, &site, "a");
+    let page = escape_page(&mut runtime, &authority, tab);
+    let valid = json!({"page_id":page["page_id"],"expected_revision":page["revision"],
+        "node_id":escape_node(&page,"escape-focus")["node_id"],"key":"Escape"});
+    let mut wrong_page = valid.clone();
+    wrong_page["page_id"] = json!("page-wrong");
+    let mut stale = valid.clone();
+    stale["expected_revision"] = json!(page["revision"].as_u64().unwrap() + 1);
+    let mut unfocused = valid.clone();
+    unfocused["node_id"] = escape_node(&page, "other")["node_id"].clone();
+    let mut missing = valid.clone();
+    missing["node_id"] = json!(format!("{}:node-999999", page["page_id"].as_str().unwrap()));
+    for (params, code) in [
+        (wrong_page, "invalid_target"),
+        (stale, "revision_conflict"),
+        (unfocused, "invalid_target"),
+        (missing, "invalid_target"),
+    ] {
+        assert_eq!(
+            agent(
+                &mut runtime,
+                &authority,
+                "a",
+                Some(tab),
+                "page.press",
+                params
+            )
+            .unwrap_err()
+            .code,
+            code
+        );
+    }
+    let unchanged = escape_page(&mut runtime, &authority, tab);
+    assert_eq!(escape_node(&unchanged, "events")["text"], "none");
+    assert_eq!(escape_node(&unchanged, "open")["text"], "true");
+    agent(
+        &mut runtime,
+        &authority,
+        "a",
+        Some(tab),
+        "page.press",
+        valid,
+    )
+    .unwrap();
+    assert_eq!(
+        escape_node(&escape_page(&mut runtime, &authority, tab), "open")["text"],
+        "false"
+    );
+}
+
+/** Another lane, a stale control epoch, and human takeover all reject before any key event can fire. */
+#[test]
+fn lane_escape_retains_lane_epoch_and_human_ownership_admission() {
+    let site = Site::with_page(ESCAPE_FORM);
+    let (mut runtime, authority) = site.runtime(Owner::Human);
+    let tab = open_form(&mut runtime, &authority, &site, "a");
+    let page = escape_page(&mut runtime, &authority, tab);
+    let valid = json!({"page_id":page["page_id"],"expected_revision":page["revision"],
+        "node_id":escape_node(&page,"escape-focus")["node_id"],"key":"Escape"});
+    assert_eq!(
+        agent(
+            &mut runtime,
+            &authority,
+            "b",
+            Some(tab),
+            "page.press",
+            valid.clone()
+        )
+        .unwrap_err()
+        .code,
+        "control_denied"
+    );
+    let mut stale = valid.clone();
+    stale["control_epoch"] = json!(authority.lock().unwrap().tab_status(tab).unwrap().1 + 1);
+    assert_eq!(
+        agent(
+            &mut runtime,
+            &authority,
+            "a",
+            Some(tab),
+            "page.press",
+            stale
+        )
+        .unwrap_err()
+        .code,
+        "control_denied"
+    );
+    authority
+        .lock()
+        .unwrap()
+        .change_tab(tab, Owner::Human)
+        .unwrap();
+    assert_eq!(
+        agent(
+            &mut runtime,
+            &authority,
+            "a",
+            Some(tab),
+            "page.press",
+            valid
+        )
+        .unwrap_err()
+        .code,
+        "control_denied"
+    );
+    let unchanged = escape_page(&mut runtime, &authority, tab);
+    assert_eq!(escape_node(&unchanged, "events")["text"], "none");
+    assert_eq!(escape_node(&unchanged, "open")["text"], "true");
 }
 
 /** PageDown and the wheel scroll the document; a stale revision is refused. */

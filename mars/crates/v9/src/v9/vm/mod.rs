@@ -327,7 +327,8 @@ impl<'h> Vm<'h> {
     /** A VM over a heap, with the global object created if missing. */
     pub fn new(heap: Heap, page: Page<'h>, limits: Limits) -> Self {
         #[cfg(feature = "conformance")]
-        let profile_clock = crate::v9::builtins::ProfileClock::new(page.state.cpu_profile.last_time());
+        let profile_clock =
+            crate::v9::builtins::ProfileClock::new(page.state.cpu_profile.last_time());
         #[cfg(feature = "conformance")]
         realm::banks::select(0);
         let mut vm = Self {
@@ -526,7 +527,9 @@ impl<'h> Vm<'h> {
         let counts = self.heap.counts;
         let limits = self.limits;
         #[cfg(feature = "conformance")]
-        let units = counts.units.saturating_add(self.page.state.cpu_profile.units());
+        let units = counts
+            .units
+            .saturating_add(self.page.state.cpu_profile.units());
         #[cfg(not(feature = "conformance"))]
         let units = counts.units;
         // Global let, const and class bindings live outside the heap but are bindings too.
@@ -538,7 +541,9 @@ impl<'h> Vm<'h> {
             self.collect_now()?;
             let counts = self.heap.counts;
             #[cfg(feature = "conformance")]
-            let units = counts.units.saturating_add(self.page.state.cpu_profile.units());
+            let units = counts
+                .units
+                .saturating_add(self.page.state.cpu_profile.units());
             #[cfg(not(feature = "conformance"))]
             let units = counts.units;
             let bindings = counts.bindings + self.global_binding_count();

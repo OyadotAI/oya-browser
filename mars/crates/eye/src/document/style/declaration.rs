@@ -79,7 +79,9 @@ pub(super) fn declaration(item: &str, block: &mut Block, diagnostics: &mut Vec<S
     };
     let might_hide = hiding(&name, value);
     block.hiding |= might_hide;
-    let pending = value.to_ascii_lowercase().contains("var(");
+    // `var()` substitutes at computed-value time, as does `attr()` outside `content`.
+    let lower = value.to_ascii_lowercase();
+    let pending = lower.contains("var(") || (lower.contains("attr(") && name != "content");
     let longhands = if pending {
         Ok(vec![(name.clone(), value.to_owned())])
     } else {
@@ -262,7 +264,7 @@ pub(super) fn validate(name: &str, value: &str) -> Result<Vec<(String, String)>,
         }
         let mut scratch = ComputedStyle::default();
         let value = &super::values::integer_math(key, value);
-        let physical = super::logical::physical(key, false);
+        let physical = super::logical::physical(key, super::logical::Mode::default());
         match super::apply::apply(
             &mut scratch,
             physical.as_deref().unwrap_or(key),

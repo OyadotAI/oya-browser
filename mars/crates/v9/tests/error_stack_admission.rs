@@ -88,9 +88,20 @@ fn nonconfigurable_stack_descriptors_fail_before_collection() {
 fn proxy_capture_targets_are_rejected_without_traps() {
     assert_eq!(
         eval(
-            "let traps=0,refused=0;const handler={get(){traps++;throw 1},defineProperty(){traps++;throw 2},isExtensible(){traps++;throw 3},getOwnPropertyDescriptor(){traps++;throw 4}},proxy=new Proxy({},handler),revoked=Proxy.revocable({},handler);revoked.revoke();for(const target of [proxy,revoked.proxy])try{Error.captureStackTrace(target)}catch(e){if(e instanceof TypeError)refused++}let r=refused+','+traps;"
+            "let traps=0,refused=0;const handler={get(){traps++;throw 1},defineProperty(){traps++;throw 2},isExtensible(){traps++;throw 3},getOwnPropertyDescriptor(){traps++;throw 4}},proxy=new Proxy({},handler),revoked=Proxy.revocable({},handler);revoked.revoke();for(const target of [proxy,revoked.proxy])try{Error.captureStackTrace(target)}catch(e){if(e instanceof TypeError&&e.message==='invalid_argument')refused++}let r=refused+','+traps;"
         ),
         "2,0"
+    );
+}
+
+/** Every rejected primitive uses the native InvalidArgument diagnostic rather than converting the value. */
+#[test]
+fn primitive_capture_targets_keep_the_exact_invalid_argument_diagnostic() {
+    assert_eq!(
+        eval(
+            "let refused=0;for(const target of [undefined,null,false,0,'text',Symbol('s'),1n])try{Error.captureStackTrace(target)}catch(e){if(e instanceof TypeError&&e.message==='invalid_argument')refused++}let missing=false;try{Error.captureStackTrace()}catch(e){missing=e instanceof TypeError&&e.message==='invalid_argument'}let r=refused+','+missing;"
+        ),
+        "7,true"
     );
 }
 

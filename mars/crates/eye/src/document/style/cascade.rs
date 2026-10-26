@@ -7,7 +7,7 @@ use super::{
     note,
     parsed::Parsed,
     selectors::{Tree, matches, matches_compound, matches_wrapper, matches_wrapper_compound},
-    sheet::{Rule, Target},
+    sheet::{PseudoBox, Rule, Target},
     vars::{BODY, FIRST_NODE, HTML, Scopes},
 };
 use crate::{
@@ -36,12 +36,31 @@ pub fn compute_styles_with_context(
     context: RenderContext,
 ) -> EngineResult<Document> {
     context.validate()?;
+    cascade(document, sheets, context)
+}
+/// As `compute_styles_with_context` for a document embedded in a frame: viewport units and
+/// media queries see the frame's content box, which `RenderContext::validate_frame` bounds.
+pub fn compute_frame_styles(
+    document: &Document,
+    sheets: &[String],
+    context: RenderContext,
+) -> EngineResult<Document> {
+    context.validate_frame()?;
+    cascade(document, sheets, context)
+}
+/** The cascade under a context its caller already validated. */
+fn cascade(
+    document: &Document,
+    sheets: &[String],
+    context: RenderContext,
+) -> EngineResult<Document> {
     crate::document::validate_styles(document)?;
     // Shadow trees style as the flat tree; the styles then return to the document's own nodes.
     let flat = crate::document::shadow::flat(document, true);
     let original = document;
     let document = flat.as_ref().map_or(document, |flat| &flat.document);
     super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
+    super::values::set_root_line(0.0);
     let mut candidate = document.clone();
     let scoped = flat
         .as_ref()
@@ -80,6 +99,7 @@ pub fn compute_styles_with_context(
         cascade.widths = Some(widths);
         cascade.scopes = Scopes::registered(cascade.parsed.properties.clone());
         super::values::set_root_font(crate::constants::CSS_ROOT_FONT_SIZE);
+        super::values::set_root_line(0.0);
         cascade.wrappers(document, &mut candidate)?;
         cascade.nodes(document, &mut candidate)?;
     }
@@ -153,7 +173,7 @@ impl<'a> Cascade<'a> {
     /** Root and body are formatting subjects, never surrogate declarations on actual children. */
     fn wrappers(&mut self, document: &Document, candidate: &mut Document) -> EngineResult<()> {
         let formatting = &document.formatting;
-        let (mut html, hides) = self.winning(
+        let (html, hides) = self.winning(
             "html",
             &formatting.html.attributes,
             &[],
@@ -165,13 +185,7 @@ impl<'a> Cascade<'a> {
                 })
             },
         )?;
-        if html.keys().any(|key| body_box_key(key)) {
-            html.retain(|key, _| !body_box_key(key));
-            note(
-                &mut self.diagnostics,
-                "Root element box styles are not supported.".into(),
-            );
-        }
+        // The root's box frames the body (render/root_box.rs).
         let root = ComputedStyle::default();
         let mut style = root.clone();
         direction(&formatting.html.attributes, &mut style);
@@ -179,9 +193,16 @@ impl<'a> Cascade<'a> {
         style.interactive &= !hides;
         style.hidden |= formatting.html.attributes.contains_key("hidden");
         self.block_wrapper(&mut style, false);
+        // ponytail: a vertical root's flow is the writing-modes work's; its generated boxes wait
+        // for that root layout.
+        if !style.vertical_writing {
+            style.generated =
+                self.wrapper_generated("html", &formatting.html.attributes, (&style, HTML))?;
+        }
         candidate.formatting.html.style = style.clone();
         // `rem` below the root is relative to the root element's computed font size.
         super::values::set_root_font(style.font_size);
+        super::values::set_root_line(crate::document::render::line_advance(&style));
         let (body, hides) = self.winning(
             "body",
             &formatting.body.attributes,
@@ -201,6 +222,8 @@ impl<'a> Cascade<'a> {
         body_style.interactive &= !hides;
         body_style.hidden |= formatting.body.attributes.contains_key("hidden");
         self.block_wrapper(&mut body_style, true);
+        body_style.generated =
+            self.wrapper_generated("body", &formatting.body.attributes, (&body_style, BODY))?;
         candidate.formatting.body.style = body_style;
         Ok(())
     }
@@ -231,7 +254,7 @@ impl<'a> Cascade<'a> {
         direction(&node.attributes, &mut style);
         let ua = super::ua::declarations(node);
         let hints = super::hints::hints(node, candidate);
-        let (chosen, hides) = self.winning(
+        let (mut chosen, hides) = self.winning(
             &node.tag,
             &node.attributes,
             &ua,
@@ -241,13 +264,21 @@ impl<'a> Cascade<'a> {
                 Target::Mask(compound) => Ok(matches_compound(tree, node, compound)),
             },
         )?;
+        super::attr::substitute(&mut chosen, &node.attributes);
         let default_link_color = node.href.is_some() && !chosen.contains_key("color");
         let scope_parent = parent.map_or(BODY, |index| index + FIRST_NODE);
         let control = ["input", "button", "select", "textarea"].contains(&node.tag.as_str());
         let clip_text = super::visual::clips_to_text(&chosen);
-        self.ua_margin_top = chosen
-            .get("margin-top")
-            .is_some_and(|((_, author, ..), _)| !author);
+        // The UA sheet sets the top margin as `margin-block-start` (html.css); an author top
+        // margin in either spelling replaces it.
+        let from = |key: &str, by_author: bool| {
+            chosen
+                .get(key)
+                .is_some_and(|((_, author, ..), _)| *author == by_author)
+        };
+        self.ua_margin_top = (from("margin-block-start", false) || from("margin-top", false))
+            && !from("margin-top", true)
+            && !from("margin-block-start", true);
         let authored = control.then(|| authored_control(&chosen));
         self.resolve_in(
             &mut style,
@@ -279,7 +310,7 @@ impl<'a> Cascade<'a> {
             || (node.tag == "input" && node.input_type() == "hidden");
         // pointer-events:auto re-enables a box under pointer-events:none, as in CSS, but nothing
         // inside a hidden subtree is ever actionable.
-        style.interactive &= !style.hidden;
+        style.interactive &= !style.hidden && !style.invisible;
         if self.parsed.pseudo_rules && !style.hidden {
             let scope = self.scopes.len() - 1;
             for after in [false, true] {
@@ -287,6 +318,9 @@ impl<'a> Cascade<'a> {
                     style.generated.push(generated);
                 }
             }
+            style.first_letter = self.first_part(node, &style, scope, PseudoBox::FirstLetter)?;
+            style.first_line = self.first_part(node, &style, scope, PseudoBox::FirstLine)?;
+            self.scroll_marker_boxes(node, &mut style, scope)?;
         }
         if style.validate().is_err() {
             // One element's out-of-range author values must not fail the page's whole cascade:
@@ -310,15 +344,59 @@ impl<'a> Cascade<'a> {
         scope: usize,
         after: bool,
     ) -> EngineResult<Option<super::Generated>> {
+        let matcher = |target: &Target, tree: &Tree<'a>| match target {
+            Target::Selector(selector) => matches(tree, node, selector),
+            Target::Mask(_) => Ok(false),
+        };
+        let subject = (node.tag.as_str(), &node.attributes);
+        self.generated_for(subject, &matcher, (element, scope), after)
+    }
+    /** A wrapper's (`html` or `body`) `::before` and `::after` boxes, in that order: Blink
+     * generates them for the root and body like for any element (render/root_generated.rs
+     * lays them out). */
+    fn wrapper_generated(
+        &mut self,
+        tag: &'static str,
+        attributes: &BTreeMap<String, String>,
+        (element, scope): (&ComputedStyle, usize),
+    ) -> EngineResult<Vec<super::Generated>> {
+        if !self.parsed.pseudo_rules || element.hidden {
+            return Ok(Vec::new());
+        }
+        let matcher = |target: &Target, tree: &Tree<'a>| match target {
+            Target::Selector(selector) => Ok(matches_wrapper(tree, tag, selector)),
+            Target::Mask(_) => Ok(false),
+        };
+        let mut boxes = Vec::new();
+        for after in [false, true] {
+            boxes.extend(self.generated_for(
+                (tag, attributes),
+                &matcher,
+                (element, scope),
+                after,
+            )?);
+        }
+        Ok(boxes)
+    }
+    /** The `::before` (or `::after`) box of the subject `matcher` matches, when a rule gives it
+     * content. */
+    fn generated_for(
+        &mut self,
+        (tag, attributes): (&str, &BTreeMap<String, String>),
+        matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
+        (element, scope): (&ComputedStyle, usize),
+        after: bool,
+    ) -> EngineResult<Option<super::Generated>> {
         let (mut chosen, _) = self.winning_for(
-            &node.tag,
-            &node.attributes,
+            tag,
+            attributes,
             (&[], &[]),
-            Some(after),
-            &|target, tree| match target {
-                Target::Selector(selector) => matches(tree, node, selector),
-                Target::Mask(_) => Ok(false),
-            },
+            Some(if after {
+                PseudoBox::After
+            } else {
+                PseudoBox::Before
+            }),
+            matcher,
         )?;
         let Some((_, content)) = chosen.remove("content") else {
             return Ok(None);
@@ -333,14 +411,128 @@ impl<'a> Cascade<'a> {
             .collect();
         chosen.retain(|key, _| !key.starts_with("--"));
         self.scopes.push(Some(scope), custom);
-        let result = self.generated_box(node, element, chosen, &content, after);
+        let result = self.generated_box(attributes, element, chosen, &content, after);
+        self.scopes.pop();
+        result
+    }
+    /** The element's `::first-letter` or `::first-line` style when a rule styles it: inline,
+     * inheriting from the element, in a custom-property scope of its own like `::before`.
+     * Inline boxes, flex and grid containers have neither (only block containers do). */
+    fn first_part(
+        &mut self,
+        node: &Node,
+        element: &ComputedStyle,
+        scope: usize,
+        part: PseudoBox,
+    ) -> EngineResult<Option<Box<ComputedStyle>>> {
+        if (element.inline && !element.inline_block) || element.display_flex || element.display_grid
+        {
+            return Ok(None);
+        }
+        let (mut chosen, _) = self.winning_for(
+            &node.tag,
+            &node.attributes,
+            (&[], &[]),
+            Some(part),
+            &|target, tree| match target {
+                Target::Selector(selector) => matches(tree, node, selector),
+                Target::Mask(_) => Ok(false),
+            },
+        )?;
+        if chosen.is_empty() {
+            return Ok(None);
+        }
+        let custom: BTreeMap<Rc<str>, Rc<str>> = chosen
+            .iter()
+            .filter(|(key, _)| key.starts_with("--"))
+            .map(|(key, (_, value))| (Rc::from(key.as_str()), value.clone()))
+            .collect();
+        chosen.retain(|key, _| !key.starts_with("--"));
+        self.scopes.push(Some(scope), custom);
+        let mut style = super::resolve::inherited(element);
+        style.inline = true;
+        let resolver = super::compute::Resolver {
+            scopes: &self.scopes,
+            scope: self.scopes.len() - 1,
+            context: self.context,
+            control: false,
+            keyframes: &self.parsed.keyframes,
+        };
+        let resolved = resolver.resolve(&mut style, element, chosen, &mut self.diagnostics);
+        self.scopes.pop();
+        resolved?;
+        Ok(Some(Box::new(style)))
+    }
+    /** The element's `::scroll-marker` box (a generated box with content) and, when it asks
+     * for one with `scroll-marker-group`, its `::scroll-marker-group` box, a block. */
+    fn scroll_marker_boxes(
+        &mut self,
+        node: &Node,
+        style: &mut ComputedStyle,
+        scope: usize,
+    ) -> EngineResult<()> {
+        let marker = self.pseudo_box(node, style, scope, PseudoBox::ScrollMarker, true)?;
+        style.scroll_marker = marker.map(Box::new);
+        let mut buttons = Vec::new();
+        for button in super::scroll_button::BUTTONS {
+            let pseudo = PseudoBox::ScrollButton(button);
+            if let Some(mut generated) = self.pseudo_box(node, style, scope, pseudo, true)? {
+                // A button is an inline-block, like the `<button>` it stands for.
+                generated.style.inline_block |= generated.style.inline;
+                buttons.push(generated);
+            }
+        }
+        style.scroll_buttons = buttons;
+        if style.marker_group_side.is_some() {
+            let group = self.pseudo_box(node, style, scope, PseudoBox::ScrollMarkerGroup, false)?;
+            style.marker_group = group.map(|group| {
+                let mut group = group.style;
+                super::scroll_marker::adjust_group(&mut group);
+                group
+            });
+        }
+        Ok(())
+    }
+    /** One pseudo-element box of `node`, computed like `::before`; `needs_content` drops it
+     * without a `content` declaration. A group box needs none and starts as a block. */
+    fn pseudo_box(
+        &mut self,
+        node: &Node,
+        element: &ComputedStyle,
+        scope: usize,
+        pseudo: PseudoBox,
+        needs_content: bool,
+    ) -> EngineResult<Option<super::Generated>> {
+        let (mut chosen, _) = self.winning_for(
+            &node.tag,
+            &node.attributes,
+            (&[], &[]),
+            Some(pseudo),
+            &|target, tree| match target {
+                Target::Selector(selector) => matches(tree, node, selector),
+                Target::Mask(_) => Ok(false),
+            },
+        )?;
+        let content = match chosen.remove("content") {
+            Some((_, content)) => content.to_string(),
+            None if needs_content => return Ok(None),
+            None => "\"\"".to_string(),
+        };
+        let custom: BTreeMap<Rc<str>, Rc<str>> = chosen
+            .iter()
+            .filter(|(key, _)| key.starts_with("--"))
+            .map(|(key, (_, value))| (Rc::from(key.as_str()), value.clone()))
+            .collect();
+        chosen.retain(|key, _| !key.starts_with("--"));
+        self.scopes.push(Some(scope), custom);
+        let result = self.generated_box(&node.attributes, element, chosen, &content, false);
         self.scopes.pop();
         result
     }
     /** Computes a generated box's style in the pseudo-element scope pushed last. */
     fn generated_box(
         &mut self,
-        node: &Node,
+        attributes: &BTreeMap<String, String>,
         element: &ComputedStyle,
         chosen: Chosen,
         content: &str,
@@ -355,7 +547,7 @@ impl<'a> Cascade<'a> {
         } else {
             content.to_string()
         };
-        let Some(content) = super::content::content(&content, &node.attributes) else {
+        let Some(content) = super::content::content(&content, attributes) else {
             return Ok(None);
         };
         let mut style = super::resolve::inherited(element);
@@ -450,7 +642,7 @@ impl<'a> Cascade<'a> {
         tag: &str,
         attributes: &BTreeMap<String, String>,
         defaults: Defaults<'_>,
-        pseudo: Option<bool>,
+        pseudo: Option<PseudoBox>,
         matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
     ) -> EngineResult<(Chosen, bool)> {
         let mut rolled = Rolled::new();
@@ -480,7 +672,7 @@ impl<'a> Cascade<'a> {
         tag: &str,
         attributes: &BTreeMap<String, String>,
         (ua, hints): Defaults<'_>,
-        pseudo: Option<bool>,
+        pseudo: Option<PseudoBox>,
         matcher: &dyn Fn(&Target, &Tree<'a>) -> EngineResult<bool>,
         rolled: &Rolled,
     ) -> EngineResult<(Chosen, bool)> {
@@ -518,7 +710,7 @@ impl<'a> Cascade<'a> {
             // A mask demanding ancestors cannot match wrappers that lack them (see Rule).
             let rootless =
                 (tag == "html" && rule.ancestors >= 1) || (tag == "body" && rule.ancestors >= 2);
-            if rule.pseudo != pseudo || rootless {
+            if !super::scroll_button::matches(rule.pseudo, pseudo) || rootless {
                 continue;
             }
             self.tree.exhausted.set(false);
@@ -636,17 +828,8 @@ fn unreachable(style: &ComputedStyle) -> bool {
         .is_some_and(|[a, b, c, d, e, f]| (a * d - b * c).abs() < f64::EPSILON || far(e) || far(f));
     offset || shifted || degenerate
 }
-/** Root box geometry declarations, dropped because the root box keeps the viewport's geometry.
- * `box-sizing` stays: it changes nothing on the root itself, and the common
- * `html{box-sizing:border-box} *{box-sizing:inherit}` reset reads it from there. */
-fn body_box_key(key: &str) -> bool {
-    key.starts_with("margin-")
-        || key.starts_with("padding-")
-        || key.starts_with("border-")
-            && super::border::longhand(key).is_some_and(|(_, p)| p == "width")
-        || ["width", "min-width", "max-width"].contains(&key)
-}
-/** An explicit `dir` sets the inherited base direction; other values keep the parent's. */
+/** An explicit `dir` sets the inherited base direction and `lang` the inherited content
+language; elements without them keep the parent's. */
 fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
     // ponytail: `dir=auto` inherits instead of running first-strong detection; add it with bidi.
     match attributes
@@ -657,6 +840,9 @@ fn direction(attributes: &BTreeMap<String, String>, style: &mut ComputedStyle) {
         Some("rtl") => style.rtl = true,
         Some("ltr") => style.rtl = false,
         _ => {}
+    }
+    if let Some(lang) = attributes.get("lang") {
+        style.lang = lang.to_ascii_lowercase();
     }
 }
 /** How many times one element's cascade reruns for `revert`; each rerun drops one layer or

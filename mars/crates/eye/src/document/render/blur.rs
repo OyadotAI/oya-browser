@@ -66,6 +66,7 @@ pub(super) fn glow(item: &mut DisplayItem, sigma: f64) {
         rx: item.width / 2.0,
         ry: item.height / 2.0,
         stops,
+        tile: None,
     }];
     item.background = None;
     item.radius = [0.0; 4];

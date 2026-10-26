@@ -198,6 +198,27 @@ fn lifecycle_events_follow_ready_state() {
     assert_eq!(console(&done), ["load complete", "onload"]);
 }
 
+/** `<body onload="...">` is the window's load handler, as HTML forwards it; WPT's reftests end
+their wait with it. */
+#[test]
+fn body_onload_attribute_runs_on_window_load() {
+    let sources = vec!["console.log('script')".to_string()];
+    let mut environment = common::environment();
+    environment.body_attributes.insert(
+        "onload".into(),
+        "console.log('body onload', event.type)".into(),
+    );
+    let host = common::host();
+    let loaded = mars_v9::load_page(input(&sources, &host, &environment)).unwrap();
+    let done = mars_v9::page_event(
+        input(&sources, &host, &environment),
+        loaded.state,
+        PageEvent::Load,
+    )
+    .unwrap();
+    assert_eq!(console(&done), ["body onload load"]);
+}
+
 /** A script error inside a listener is reported, and other listeners still run. */
 #[test]
 fn listener_errors_are_reported_not_fatal() {

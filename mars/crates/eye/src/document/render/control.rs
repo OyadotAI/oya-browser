@@ -224,6 +224,27 @@ fn title_style(node: &Node, font: f64) -> crate::document::ComputedStyle {
     }
     style
 }
+/** A textarea's value laid out in its content box as its own text (`white-space: pre-wrap` from
+ * the UA sheet, or whatever the page set), so screenshots show it where Chromium draws it; the
+ * desktop window draws its native editor over the box and skips these runs. */
+fn textarea_lines(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    font: f64,
+    local: &mut Flow,
+) -> EngineResult<Vec<PaintLine>> {
+    let value = if node.value.is_empty() {
+        node.text.clone()
+    } else {
+        node.value.clone()
+    };
+    let mut sized = node.clone();
+    sized.style = title_style(node, font);
+    let (left, width) = (local.x, local.width);
+    let mut lines = super::text::text(context, &value, &sized, local, usize::MAX)?;
+    super::textarea_align::align(&mut lines, &sized.style, (left, width));
+    Ok(lines)
+}
 /** A control's baseline sits this share of its font below its vertical middle, times two. */
 const CONTROL_BASELINE: f64 = 0.7;
 /** Native controls are inline-blocks: they share line boxes with text and wrap like words. */
@@ -287,6 +308,9 @@ pub(super) fn control(
             &mut local,
             usize::MAX,
         )?
+    } else if node.tag == "textarea" && !node.style.display_contents {
+        // `display: contents` on a control renders nothing of it, its value included.
+        textarea_lines(context, node, font, &mut local)?
     } else {
         Vec::new()
     };
@@ -310,8 +334,9 @@ pub(super) fn control(
     let control_height = (total - validation_extent).max(0.0);
     // A taller authored box centers its title, as native buttons do.
     let mut lines = lines;
+    // A textarea's text starts at its top, like any block's; buttons center their title.
     let spare = (control_height - height) / 2.0;
-    if spare > 0.0 {
+    if spare > 0.0 && node.tag != "textarea" {
         for line in &mut lines {
             line.y += spare;
         }
@@ -333,7 +358,7 @@ pub(super) fn control(
             (start, start + 1),
             outer,
             (ascent, total + style.margin[0] + style.margin[2]),
-            style,
+            (style, Some(super::text::central_offset(context, node))),
             (style.margin[3], style.margin[1]),
         );
     }

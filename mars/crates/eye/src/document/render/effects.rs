@@ -14,20 +14,21 @@ type Matrix = [f64; 6];
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 /** One step of a paint-order key: phase within a painting layer, z-index, document order, then
  * 0 for an element's own box, 1 for its `::before` box and 2 for its `::after` box. */
-type Step = (u8, i32, usize, u8);
+pub(super) type Step = (u8, i32, usize, u8);
 /** A painting layer's own background, border and text paint first. */
 const OWN: u8 = 0;
 /** The negative z-order list of a stacking context. */
 const NEGATIVE: u8 = 1;
 /** Normal-flow block-level descendants: their backgrounds paint in tree order. */
-const BLOCK: u8 = 2;
+pub(super) const BLOCK: u8 = 2;
 /** Floats, each painted atomically after every block background. */
 const FLOAT: u8 = 3;
-/** Inline-level content: inline boxes, text runs and atomic inlines, in tree order.
- * ponytail: equal to BLOCK because one display item carries a block's background together with
- * its own text, and text selection reads items in tree order; splitting a block's text into its
- * own item is the upgrade that lets inline content paint over later block backgrounds. */
-const INLINE: u8 = BLOCK;
+/** Inline-level content: inline boxes, text runs and atomic inlines, in tree order, after
+ * every block background and float of the layer (CSS 2.1 Appendix E), so text overhanging a
+ * block paints over a later sibling block's background.
+ * ponytail: a block's own leading text rides on the block's item and so still paints in the
+ * block phase; splitting it into its own item would move it to this phase too. */
+pub(super) const INLINE: u8 = 4;
 /** The positive z-order list: z-index 0 and auto stacked boxes in tree order, then higher z. */
 const POSITIVE: u8 = 5;
 
@@ -35,6 +36,9 @@ const POSITIVE: u8 = 5;
 struct Tree<'a> {
     document: &'a Document,
     positions: Vec<Option<usize>>,
+    /// Paint order per identity: document order, with flex and grid items reordered among
+    /// their siblings by `order` (css-display-3 order-modified document order).
+    painting: Vec<Option<usize>>,
     /// The first item each identity painted, used for transform origins and clip boxes.
     boxes: Vec<Option<usize>>,
     /// Memoized absolute matrices per identity.
@@ -43,6 +47,12 @@ struct Tree<'a> {
     offsets: ScrollOffsets,
     /// How far each scroll container's contents reach right and down (its scrollable overflow).
     reach: std::collections::BTreeMap<usize, [f64; 2]>,
+    /// Set while scroll ranges are measured: sticky boxes count where layout put them, as
+    /// scrollable overflow ignores sticky offsets in Blink. Otherwise a `bottom: 0` sticky item
+    /// pulled up into view hid the very overflow it sticks within (position-sticky-flex-item).
+    measuring: bool,
+    /// The viewport's width and height: the view a sticky box under a fixed ancestor sticks to.
+    viewport: [f64; 2],
 }
 impl<'a> Tree<'a> {
     /** Identity lookup never assumes identities equal vector indexes. */
@@ -54,9 +64,9 @@ impl<'a> Tree<'a> {
             .map(|position| &self.document.nodes[position])
             .ok_or_else(|| EngineError::invalid("Invalid layout node identity."))
     }
-    /** Document order of an identity. */
+    /** Order-modified document order of an identity. */
     fn order(&self, local: usize) -> usize {
-        self.positions
+        self.painting
             .get(local)
             .copied()
             .flatten()
@@ -86,6 +96,7 @@ pub(super) fn stack(
     document: &Document,
     items: Vec<DisplayItem>,
     offsets: &ScrollOffsets,
+    viewport: [f64; 2],
 ) -> EngineResult<(Vec<DisplayItem>, Vec<ScrollArea>)> {
     let positions = sizing::positions(document);
     let mut boxes = vec![None; positions.len()];
@@ -96,15 +107,20 @@ pub(super) fn stack(
             *slot = Some(index);
         }
     }
+    let painting = super::order::modified(document, &positions);
     let mut tree = Tree {
         document,
+        painting,
         matrices: vec![None; positions.len()],
         positions,
         boxes,
         offsets: ScrollOffsets::new(),
         reach: std::collections::BTreeMap::new(),
+        measuring: true,
+        viewport,
     };
     let ranges = scroll_ranges(&mut tree, &items)?;
+    tree.measuring = false;
     tree.offsets = clamp_offsets(&ranges, offsets);
     // Sticky boxes inside scroll containers move with the offsets and the reach just learned, so
     // matrices memoized while measuring the ranges are recomputed.
@@ -119,25 +135,47 @@ pub(super) fn stack(
         let node = tree.node(item.local_id)?;
         let matrix = painted(&mut tree, &items, node)?;
         let clip = clip(&mut tree, &items, node)?;
+        let clip = generated_clip(&mut tree, &items, node, item, clip)?;
+        // A column slice carries its own clip, which the overflow clips intersect.
+        let clip = match (
+            clip,
+            item.clip
+                .map(|own| super::display::transform_rect(&own, Some(matrix))),
+        ) {
+            (Some(outer), Some(own)) => Some(outer.intersect(&own)),
+            (outer, own) => outer.or(own),
+        };
         let key = key(&tree, node, item)?;
         let pin = pin(&tree, &items, node)?;
+        if let Some(echo) = super::text_echo::inline_key(node, item, &key) {
+            resolved.push((echo, index, matrix, clip, pin));
+        }
         resolved.push((key, index, matrix, clip, pin));
     }
     resolved.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     let mut slots = items.into_iter().map(Some).collect::<Vec<_>>();
     let mut ordered = Vec::with_capacity(slots.len());
+    let mut echoes = std::collections::BTreeMap::new();
     for (key, index, matrix, clip, pin) in resolved {
         let Some(mut item) = slots[index].take() else {
+            // The second entry of a block whose text paints later: its echo goes here.
+            ordered.extend(echoes.remove(&index));
             continue;
         };
         let node = tree.node(item.local_id)?;
         match generated_style(node, &item) {
+            _ if item.bare => {}
             Some(style) => {
                 let mut generated = node.clone();
                 generated.style = style.clone();
                 decorate(&mut item, &generated);
             }
+            None if item.tag == super::multicol::RULE_TAG => {}
             None => decorate(&mut item, node),
+        }
+        let generated = generated_style(node, &item);
+        if !item.bare {
+            super::border_image::decorate(&mut item, node, generated);
         }
         item.stacking_opacity = groups(&tree, node)?;
         item.z = key
@@ -145,10 +183,26 @@ pub(super) fn stack(
             .rev()
             .find(|step| step.0 == NEGATIVE || step.0 == POSITIVE)
             .map_or(0, |s| s.1);
+        // Layout's own clip (a table part's background under one cell) narrows the ancestors';
+        // it moves with the box's own offset, as the cell it outlines moves with it.
+        let own = item.clip.take().map(|mut own| {
+            if matrix[..4] == IDENTITY[..4] {
+                own.x += matrix[4];
+                own.y += matrix[5];
+            }
+            own
+        });
+        let clip = match (own, clip) {
+            (Some(own), Some(outer)) => Some(own.intersect(&outer)),
+            (own, outer) => own.or(outer),
+        };
         item.clip = content_clip(node, &item, matrix, clip);
         let matrix = generated_matrix(node, &item, matrix);
         place(&mut item, matrix);
         item.pin = pin;
+        if super::text_echo::deferred(node, &item, &key) {
+            echoes.insert(index, super::text_echo::defer(&mut item));
+        }
         ordered.push(item);
     }
     Ok((ordered, areas))
@@ -165,20 +219,50 @@ fn content_clip(
     if item.vector.is_empty() || !super::svg::clips_content(node) {
         return clip;
     }
-    let [top, right, bottom, left] = sizing::border_sides(&node.style);
-    let [pt, pr, pb, pl] = node.style.padding;
-    let content = ClipRect {
-        x: item.x + left + pl,
-        y: item.y + top + pt,
-        width: (item.width - left - right - pl - pr).max(0.0),
-        height: (item.height - top - bottom - pt - pb).max(0.0),
+    let border = sizing::border_sides(&node.style);
+    let inset: [f64; 4] = std::array::from_fn(|side| {
+        border[side] + node.style.padding[side] - replaced_clip_outset(&node.style, side)
+    });
+    let [top, right, bottom, left] = inset;
+    let mut content = ClipRect {
+        x: item.x + left,
+        y: item.y + top,
+        width: (item.width - left - right).max(0.0),
+        height: (item.height - top - bottom).max(0.0),
         radius: [0.0; 4],
     };
+    open_visible_axis(&node.style, &mut content);
     let content = super::display::transform_rect(&content, Some(matrix));
     Some(match clip {
         Some(outer) => outer.intersect(&content),
         None => content,
     })
+}
+/** A replaced element with `overflow: clip` on one axis and `visible` on the other clips only the
+first, as boxes do (overflow-clip-y-visible-x-svg). */
+fn open_visible_axis(style: &crate::document::ComputedStyle, rect: &mut ClipRect) {
+    let open = crate::constants::LAYOUT_EXTENT / 2.0;
+    if style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Clip {
+        (rect.x, rect.width) = (-open, open * 2.0);
+    }
+    if style.overflow_y == Overflow::Visible && style.overflow_x == Overflow::Clip {
+        (rect.y, rect.height) = (-open, open * 2.0);
+    }
+}
+/** How far past its content box a replaced element's vector content may paint on `side`: its
+`overflow-clip-margin` measured from the reference box (padding box by default), as Blink
+applies the margin to replaced elements, which always clip (overflow-clip-margin-svg). */
+fn replaced_clip_outset(style: &crate::document::ComputedStyle, side: usize) -> f64 {
+    if style.overflow_clip_margin == 0.0 && style.overflow_clip_box == 0 {
+        return 0.0;
+    }
+    let padding = style.padding[side];
+    let reference = match style.overflow_clip_box {
+        1 => padding + sizing::border_sides(style)[side],
+        2 => 0.0,
+        _ => padding,
+    };
+    reference + style.overflow_clip_margin
 }
 /** The style of a `::before` or `::after` item, which shares its element's identity. */
 pub(super) fn generated_style<'a>(
@@ -188,6 +272,7 @@ pub(super) fn generated_style<'a>(
     let after = match item.tag.as_str() {
         "::before" => false,
         "::after" => true,
+        super::first_letter::FIRST_LETTER => return node.style.first_letter.as_deref(),
         _ => return None,
     };
     node.style
@@ -253,13 +338,44 @@ fn phase(link: &Link<'_>) -> u8 {
         BLOCK
     }
 }
+/** A block item (other than a table part, whose borders a collapsed table paints apart) that
+ * paints nothing but its own text runs (no background, border, shadow or other decoration): it paints with the inline content, after later sibling blocks'
+ * backgrounds, as its text would in Blink. A decorated block keeps its text in the block phase
+ * with its background.
+ * ponytail: splitting a decorated block's text into its own item would move that text too. */
+pub(super) fn only_text(item: &DisplayItem) -> bool {
+    let bare_background = item
+        .background
+        .as_deref()
+        .is_none_or(|color| color == "transparent");
+    !item.lines.is_empty()
+        && bare_background
+        && item.backgrounds.is_empty()
+        && item.border == 0.0
+        && item.border_widths == [0.0; 4]
+        && item.shadows.is_empty()
+        && item.border_image.is_none()
+        && item.vector.is_empty()
+        && item.mask.is_none()
+}
+/** A table cell or other table part, by tag or by `display`. */
+pub(super) fn table_part(node: &Node) -> bool {
+    node.table_cell.is_some()
+        || ["td", "th", "caption", "tr", "table"].contains(&node.tag.as_str())
+        || node.style.table_box != crate::document::style::TableBox::None
+}
 /** Floats, atomic inlines and flex and grid items paint all their phases at once, as if they
  * were stacking contexts (Blink's `PaintAllPhasesAtomically`). */
 fn atomic(link: &Link<'_>) -> bool {
     link.style.float != crate::document::style::Float::None
         || link.style.inline_block
+        || link.replaced
         || layout_item(link.parent)
 }
+/** Form controls and replaced elements, which lay out as atomic inlines by their tag. */
+const ATOMIC_TAGS: [&str; 7] = [
+    "button", "input", "select", "textarea", "img", "canvas", "svg",
+];
 /** One box on the path from the root to a painted item: its style, its parent's, its order. */
 struct Link<'a> {
     style: &'a crate::document::ComputedStyle,
@@ -267,9 +383,14 @@ struct Link<'a> {
     order: usize,
     sub: u8,
     text: bool,
+    /// A control or replaced element, an atomic inline whatever its display.
+    replaced: bool,
     /// The document element, which Blink always makes a stacking context.
     root: bool,
 }
+/** The sub-order of an inline fragment that follows a block: after the block's last descendant
+ * and its `::before` (1) and `::after` (2). */
+const AFTER_BLOCK: u8 = 3;
 /**
  * The paint-order key of an item, a port of Blink's `PaintLayerPainter` and
  * `PaintLayerStackingNode`. A stacked box enters the z-order list of its nearest stacking
@@ -284,13 +405,16 @@ fn key(tree: &Tree<'_>, node: &Node, item: &DisplayItem) -> EngineResult<Vec<Ste
     chain.reverse();
     chain.push(node);
     let mut path: Vec<Link<'_>> = Vec::with_capacity(chain.len() + 1);
+    let last = chain.len() - 1;
     for (index, element) in chain.iter().enumerate() {
         path.push(Link {
             style: &element.style,
             parent: index.checked_sub(1).map(|parent| &chain[parent].style),
             order: tree.order(element.local_id),
             sub: 0,
-            text: element.tag == "#text",
+            text: element.tag == "#text"
+                || (index == last && !table_part(element) && only_text(item)),
+            replaced: element.style.inline && ATOMIC_TAGS.contains(&element.tag.as_str()),
             root: index == 0 && element.tag == "html",
         });
     }
@@ -301,8 +425,14 @@ fn key(tree: &Tree<'_>, node: &Node, item: &DisplayItem) -> EngineResult<Vec<Ste
             order: tree.order(node.local_id),
             sub: if item.tag == "::after" { 2 } else { 1 },
             text: false,
+            replaced: false,
             root: false,
         });
+    }
+    // A fragment after a block inside its inline box paints after that block's content.
+    if let (Some(after), Some(last)) = (item.paint_after, path.last_mut()) {
+        last.order = tree.order(after);
+        last.sub = AFTER_BLOCK;
     }
     Ok(path_key(&path))
 }
@@ -370,10 +500,11 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
         .copied()
         .flatten()
         .map(|index| &items[index]);
-    if style.position == Position::Sticky {
+    if style.position == Position::Sticky && !tree.measuring {
         [matrix[4], matrix[5]] = match scroll_container(tree, node) {
             Some(scroller) => inner_sticky_offset(tree, items, node, own, scroller),
-            None => [0.0, sticky_offset(tree, items, node, own)],
+            None => fixed_sticky_offset(tree, items, node, own)
+                .unwrap_or([0.0, sticky_offset(tree, items, node, own)]),
         };
     } else if style.position == Position::Relative {
         let [x, y] = relative_offset(tree, items, node);
@@ -385,6 +516,16 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
     }
     matrix
 }
+/** The containing block a relatively positioned box resolves percentages against: its nearest
+ancestor that is no inline box, since a block inside an inline (position-relative-002) or an
+inline itself sits in the block around it. None for a top-level box (the body). */
+fn block_container<'a>(tree: &Tree<'a>, node: &Node) -> Option<&'a Node> {
+    let mut parent = node.parent.and_then(|local| tree.node(local).ok());
+    while let Some(inline) = parent.filter(|p| p.style.inline && !p.style.inline_block) {
+        parent = inline.parent.and_then(|local| tree.node(local).ok());
+    }
+    parent
+}
 /**
  * A relatively positioned box's offset, after Blink's ComputeRelativeOffset: insets resolve
  * against the parent's content box, and a percentage against an indefinite height (the parent's
@@ -394,9 +535,11 @@ fn local(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> Matrix {
  */
 fn relative_offset(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> [f64; 2] {
     let style = &node.style;
-    let parent = node.parent.and_then(|local| tree.node(local).ok());
-    let (width, height) =
-        parent.map_or((None, None), |parent| containing_size(tree, items, parent));
+    let parent = block_container(tree, node);
+    let (width, height) = parent.map_or_else(
+        || (None, body_height(tree.document)),
+        |parent| containing_size(tree, items, parent),
+    );
     let inset = |side: usize, basis: Option<f64>| {
         if style.inset_percent[side] != 0.0 {
             basis.and_then(|basis| super::positioned::inset(style, side, basis))
@@ -413,6 +556,15 @@ fn relative_offset(tree: &Tree<'_>, items: &[DisplayItem], node: &Node) -> [f64;
         (None, right) => right.map_or(0.0, |right| -right),
     };
     [x, top.or(bottom.map(|bottom| -bottom)).unwrap_or(0.0)]
+}
+/** The body's definite content height, the basis of a top-level box's percentage `top` and
+`bottom` (CSS2 top-113: `top: 100%` under `body { height: 1in }`).
+ponytail: a percentage body height (against the viewport) and the width basis are not resolved
+here, since stacking runs without the viewport size. */
+fn body_height(document: &crate::document::Document) -> Option<f64> {
+    let body = &document.formatting.body.style;
+    let height = body.height?.resolve_size(None)?;
+    Some(sizing::content_height(body, height))
 }
 /** The content-box size a parent offers its relatively positioned children: the width of its
  * box (or the nearest boxed ancestor's), and a height only when an authored one makes it
@@ -458,17 +610,28 @@ fn sticky_offset(
     sticky_pin(tree, items, node, own).map_or(0.0, |pin| pin.offset(0.0))
 }
 /** The nearest scroll container a sticky box sticks to, None for the viewport. A fixed box
- * between them pins to the viewport, so the walk stops there. */
+ * between them pins to the viewport, so the walk stops there. The walk follows containing blocks:
+ * above an absolutely positioned ancestor it skips to that box's containing block, so a scroller
+ * the absolute box escapes is not the sticky box's (position-sticky-escape-scroller-003). */
 fn scroll_container<'a>(tree: &Tree<'a>, node: &'a Node) -> Option<&'a Node> {
+    let mut escaping = false;
     for ancestor in tree.ancestors(node).ok()? {
-        if scrolls(&ancestor.style) {
+        let style = &ancestor.style;
+        escaping &= style.position == Position::Static && style.transform.is_none();
+        if !escaping && scrolls(style) {
             return Some(ancestor);
         }
-        if ancestor.style.position == Position::Fixed {
-            return None;
+        match style.position {
+            Position::Fixed => return None,
+            Position::Absolute => escaping = true,
+            _ => {}
         }
     }
     None
+}
+/** The containing block a sticky box travels within, never above `stop`. */
+fn container(tree: &Tree<'_>, node: &Node, stop: Option<usize>) -> Option<usize> {
+    super::sticky_container::sticky_container(tree.document, &tree.positions, node, stop)
 }
 /** A rectangle as [left, top, right, bottom] in layout coordinates. */
 type Edges = [f64; 4];
@@ -487,7 +650,9 @@ fn contract([l, t, r, b]: Edges, [top, right, bottom, left]: [f64; 4]) -> Edges 
  * is the container's content box at its scroll offset; the box may travel within its parent's
  * content box (the scrollable overflow when the parent is the scroller) less its own margins; a
  * start inset pushes it forward, then an end inset pulls it back, each limited by that room.
- * ponytail: transforms and nested sticky offsets between the box and the scroller are ignored.
+ * Sticky ancestors below the scroller move the box first (`moved`).
+ * ponytail: transforms between the box and the scroller are ignored, and nested offsets are
+ * recomputed per level (quadratic in sticky depth, which real pages keep tiny).
  */
 fn inner_sticky_offset(
     tree: &Tree<'_>,
@@ -507,7 +672,7 @@ fn inner_sticky_offset(
     let client = contract(outer, sizing::border_sides(&scroller.style));
     let [l, t, r, b] = contract(client, scroller.style.padding);
     let view = [l + sx, t + sy, r + sx, b + sy];
-    let parent = node.parent.unwrap_or(scroller.local_id);
+    let parent = container(tree, node, Some(scroller.local_id)).unwrap_or(scroller.local_id);
     let room = if parent == scroller.local_id {
         let [right, bottom] = tree
             .reach
@@ -539,8 +704,30 @@ fn inner_sticky_offset(
             style.margin[side]
         }
     });
+    // Sticky ancestors below the scroller already moved the box and maybe its containing block.
+    let [rx, ry] = moved(tree, items, parent, scroller);
     let room = contract(room, margins);
-    let rect = [own.x, own.y, own.x + own.width, own.y + own.height];
+    let room = [room[0] + rx, room[1] + ry, room[2] + rx, room[3] + ry];
+    let [dx, dy] = node
+        .parent
+        .map_or([0.0; 2], |up| moved(tree, items, up, scroller));
+    let rect = [
+        own.x + dx,
+        own.y + dy,
+        own.x + own.width + dx,
+        own.y + own.height + dy,
+    ];
+    sticky_axes(style, view, room, rect)
+}
+/** A sticky box's offset on both axes for its border box `rect` in the `view` it sticks to and
+the `room` its containing block allows (edges as left, top, right, bottom): a start inset pushes
+it forward, then an end inset pulls it back, each limited by the room. */
+fn sticky_axes(
+    style: &crate::document::ComputedStyle,
+    view: Edges,
+    room: Edges,
+    rect: Edges,
+) -> [f64; 2] {
     let axis = |start: usize, end: usize, low: usize, high: usize| {
         let size = view[high] - view[low];
         let mut min = super::positioned::inset(style, start, size);
@@ -565,6 +752,49 @@ fn inner_sticky_offset(
     };
     [axis(3, 1, 0, 2), axis(0, 2, 1, 3)]
 }
+/** A sticky box under a fixed ancestor with no scroller between: nothing scrolls it, so it
+sticks to the viewport as laid out, on every side (position-sticky-fixed-ancestor-002: a
+`bottom: 0` box pulled up into a full-viewport fixed container). None without such an ancestor. */
+fn fixed_sticky_offset(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    own: Option<&DisplayItem>,
+) -> Option<[f64; 2]> {
+    let ancestors = tree.ancestors(node).ok()?;
+    ancestors
+        .iter()
+        .find(|a| a.style.position == Position::Fixed)?;
+    let own = own?;
+    let parent = container(tree, node, None)?;
+    let parent_node = tree.node(parent).ok()?;
+    let style = &parent_node.style;
+    let edges = edges_of(tree, items, parent)?;
+    let room = contract(contract(edges, sizing::border_sides(style)), style.padding);
+    let view = [0.0, 0.0, tree.viewport[0], tree.viewport[1]];
+    let rect = [own.x, own.y, own.x + own.width, own.y + own.height];
+    Some(sticky_axes(&node.style, view, room, rect))
+}
+/** How far the sticky boxes at and above `local`, below `scroller`, move it: a nested sticky box
+starts from where its sticky ancestors put it (position-sticky-nested-thead-th). */
+fn moved(tree: &Tree<'_>, items: &[DisplayItem], local: usize, scroller: &Node) -> [f64; 2] {
+    let mut total = [0.0; 2];
+    let mut current = tree.node(local).ok();
+    while let Some(node) = current.filter(|node| node.local_id != scroller.local_id) {
+        if node.style.position == Position::Sticky {
+            let own = tree
+                .boxes
+                .get(node.local_id)
+                .copied()
+                .flatten()
+                .map(|index| &items[index]);
+            let [x, y] = inner_sticky_offset(tree, items, node, own, scroller);
+            total = [total[0] + x, total[1] + y];
+        }
+        current = node.parent.and_then(|up| tree.node(up).ok());
+    }
+    total
+}
 /** A sticky box's constraint against the viewport (Blink's StickyPositionScrollingConstraints):
  * its `top` inset, where it sits unstuck, and how far its containing block lets it travel. */
 fn sticky_pin(
@@ -574,8 +804,7 @@ fn sticky_pin(
     own: Option<&DisplayItem>,
 ) -> Option<Pin> {
     let own = own?;
-    let parent = node
-        .parent
+    let parent = container(tree, node, None)
         .and_then(|parent| tree.boxes.get(parent).copied().flatten())
         .map(|index| &items[index]);
     let top = super::positioned::inset(&node.style, 0, parent.map_or(0.0, |p| p.height))?;
@@ -735,9 +964,13 @@ fn scroll_ranges(
     items: &[DisplayItem],
 ) -> EngineResult<std::collections::BTreeMap<usize, Range>> {
     let mut ranges = std::collections::BTreeMap::new();
+    // Out-of-flow boxes reach as far as they paint; only in-flow content gets the end padding.
+    let mut unpadded: std::collections::BTreeMap<usize, [f64; 2]> = Default::default();
+    // Layout hides boxes with opacity 0 (lines past a line clamp, boxes in a hidden container);
+    // they are ink overflow at most and give the scroller no range (line-clamp-021).
     for item in items
         .iter()
-        .filter(|item| item.width > 0.0 && item.height > 0.0)
+        .filter(|item| item.width > 0.0 && item.height > 0.0 && item.opacity > 0.0)
     {
         let node = tree.node(item.local_id)?;
         let Some(scroller) = clipping_ancestors(tree, node)?
@@ -771,15 +1004,62 @@ fn scroll_ranges(
             radius: [0.0; 4],
         };
         let own = super::display::transform_rect(&own, Some(matrix));
-        range.reach[0] = range.reach[0].max(own.x + own.width);
-        range.reach[1] = range.reach[1].max(own.y + own.height);
+        let positioned = positioned_within(tree, node, scroller.local_id)?;
+        let mut bottom = own.y + own.height;
+        if !positioned && let Some(end) = clamp_bottom(tree, items, node, scroller.local_id) {
+            bottom = bottom.min(end);
+        }
+        let reach = if positioned {
+            unpadded.entry(scroller.local_id).or_default()
+        } else {
+            &mut range.reach
+        };
+        reach[0] = reach[0].max(own.x + own.width);
+        reach[1] = reach[1].max(bottom);
     }
     for (local, range) in ranges.iter_mut() {
         let [_, right, bottom, _] = tree.node(*local)?.style.padding;
-        range.reach[0] += right;
-        range.reach[1] += bottom;
+        let plain = unpadded.get(local).copied().unwrap_or_default();
+        range.reach[0] = (range.reach[0] + right).max(plain[0]);
+        range.reach[1] = (range.reach[1] + bottom).max(plain[1]);
     }
     Ok(ranges)
+}
+/** The border-box bottom of the nearest line-clamp container around `node` below `scroller`:
+in-flow content past the clamp (a float hanging off the last kept line) is clipped there and
+is no scrollable overflow (line-clamp-with-floats-010); absolute boxes still count (-019). */
+fn clamp_bottom(
+    tree: &Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    scroller: usize,
+) -> Option<f64> {
+    let mut current = node.parent;
+    while let Some(local) = current.filter(|local| *local != scroller) {
+        let ancestor = tree.node(local).ok()?;
+        if ancestor.style.continue_collapse {
+            return edges_of(tree, items, local).map(|edges| edges[3]);
+        }
+        current = ancestor.parent;
+    }
+    None
+}
+/** Whether `node` is out of flow inside the scroll container `scroller`: it or an ancestor below
+the scroller is absolutely positioned. Its box counts toward the scrollable overflow as painted,
+without the container's end padding that in-flow content gets (css-overflow-3 2.2;
+position-sticky-padding-001 scrolls an abspos marker exactly to the bottom edge). */
+fn positioned_within(tree: &Tree<'_>, node: &Node, scroller: usize) -> EngineResult<bool> {
+    let mut current = node;
+    while current.local_id != scroller {
+        if current.style.position == Position::Absolute {
+            return Ok(true);
+        }
+        let Some(parent) = current.parent else {
+            return Ok(false);
+        };
+        current = tree.node(parent)?;
+    }
+    Ok(false)
 }
 /** A scroll container's padding box before any scrolling moved it. */
 fn unscrolled_padding_box(
@@ -859,6 +1139,29 @@ fn scroll_areas(
         });
     }
     Ok(areas)
+}
+/** A `::before` or `::after` box is its element's content, so the element's own overflow clip
+applies to it as to a child, though the box shares the element's identity
+(overflow-clip-margin-border-radius-002). */
+fn generated_clip(
+    tree: &mut Tree<'_>,
+    items: &[DisplayItem],
+    node: &Node,
+    item: &DisplayItem,
+    clip: Option<ClipRect>,
+) -> EngineResult<Option<ClipRect>> {
+    let generated = matches!(item.tag.as_str(), "::before" | "::after");
+    let clips = node.style.overflow != Overflow::Visible || node.style.contain_paint;
+    if !generated || !clips {
+        return Ok(clip);
+    }
+    let Some(own) = clip_box(tree, items, node)? else {
+        return Ok(clip);
+    };
+    Ok(Some(match clip {
+        Some(outer) => outer.intersect(&own),
+        None => own,
+    }))
 }
 /** Overflow clips, then the `clip-path` and `clip` shapes of this element and every ancestor. */
 fn clip(tree: &mut Tree<'_>, items: &[DisplayItem], node: &Node) -> EngineResult<Option<ClipRect>> {
@@ -999,7 +1302,9 @@ fn clip_box(
     let style = &node.style;
     let border = sizing::border_sides(style);
     let mut outsets = border.map(|side| -side);
-    let mut radius = inner_radius(radii(style, item.width, item.height), border);
+    // ponytail: overflow clips round with the horizontal radii; elliptical clip corners come
+    // when a page clips content to them.
+    let mut radius = inner_radius(radii(style, item.width, item.height)[0], border);
     if let Some(margin) = clip_margin(style) {
         match style.overflow_clip_box {
             1 => outsets = [0.0; 4],
@@ -1086,33 +1391,44 @@ fn inner_radius(outer: [f64; 4], [top, right, bottom, left]: [f64; 4]) -> [f64; 
     ]
 }
 /** CSS scales all radii down together when adjacent corners would overlap. */
-fn radii(style: &crate::document::ComputedStyle, width: f64, height: f64) -> [f64; 4] {
-    let basis = width.min(height).max(0.0);
-    let [tl, tr, br, bl] = std::array::from_fn(|i| {
+fn radii(style: &crate::document::ComputedStyle, width: f64, height: f64) -> [[f64; 4]; 2] {
+    let (width, height) = (width.max(0.0), height.max(0.0));
+    let horizontal: [f64; 4] = std::array::from_fn(|i| {
         if style.radius_percent[i] > 0.0 {
-            (basis * style.radius_percent[i] / 100.0).max(0.0)
+            (style.radius_px[i] + width * style.radius_percent[i] / 100.0).max(0.0)
         } else {
             style.radius[i].max(0.0)
         }
     });
+    let vertical: [f64; 4] = std::array::from_fn(|i| match style.radius_y[i] {
+        Some((px, percent)) => (px + height * percent / 100.0).max(0.0),
+        None => horizontal[i],
+    });
+    let [[tl, tr, br, bl], [vtl, vtr, vbr, vbl]] = [horizontal, vertical];
+    // CSS Backgrounds 5.5: radii on one side that overlap scale down together.
     let mut scale: f64 = 1.0;
     for (sum, side) in [
         (tl + tr, width),
         (bl + br, width),
-        (tl + bl, height),
-        (tr + br, height),
+        (vtl + vbl, height),
+        (vtr + vbr, height),
     ] {
         if sum > 0.0 {
             scale = scale.min(side / sum);
         }
     }
-    [tl, tr, br, bl].map(|value| value * scale.max(0.0))
+    [horizontal, vertical].map(|axis| axis.map(|value| value * scale.max(0.0)))
 }
 /** Radius, shadows and gradient layers resolved against the item's final size. */
 fn decorate(item: &mut DisplayItem, node: &Node) {
     let style = &node.style;
-    item.radius = radii(style, item.width, item.height);
-    if item.tag == "img" {
+    let [horizontal, vertical] = radii(style, item.width, item.height);
+    item.radius = horizontal;
+    item.radius_y = (vertical != horizontal).then_some(vertical);
+    super::fragments::square_cut_corners(item);
+    if item.tag == "img" || super::flow::frame(node) {
+        item.overflow_visible =
+            style.overflow_x == Overflow::Visible && style.overflow_y == Overflow::Visible;
         item.object_fit = style.object_fit;
         let [ox, oy] = style.object_position;
         item.object_position = [ox.px, ox.percent, oy.px, oy.percent];
@@ -1131,6 +1447,7 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
     item.shadows = style
         .shadows
         .iter()
+        .filter(|_| !style.hidden)
         .map(|shadow| DisplayShadow {
             x: shadow.x,
             y: shadow.y,
@@ -1146,19 +1463,63 @@ fn decorate(item: &mut DisplayItem, node: &Node) {
     item.backgrounds = style
         .backgrounds
         .iter()
-        .filter(|_| !style.masked)
-        .map(|layer| background(layer, style, item.width, item.height))
+        .enumerate()
+        // A `visibility: hidden` box (a generated one still lays out) paints no layers.
+        .filter(|_| !style.masked && !style.hidden)
+        .map(|(index, layer)| tiled((index, layer), style, item.width, item.height))
         .collect();
+    key_layers(&mut item.backgrounds, |layer| {
+        (layer > 0).then(|| crate::document::layer_key(item.local_id, layer))
+    });
     item.mask = style.mask.as_ref().map(|mask| {
         let layer = (mask.size, mask.position, mask.repeat);
         image_layer(&mask.url, layer, item.width, item.height)
     });
     super::blur::glow(item, style.filter_blur);
 }
+/** A background layer of an item `width` by `height`: a gradient spans the tile its
+ * `background-size`, `-position` and `-repeat` place (`gradient_tile`), an image as `background`
+ * resolves it. */
+pub(super) fn tiled(
+    (index, layer): (usize, &BackgroundLayer),
+    style: &crate::document::ComputedStyle,
+    width: f64,
+    height: f64,
+) -> DisplayBackground {
+    let tile = match layer {
+        BackgroundLayer::Image { url } => {
+            // Each image layer takes its own entry of the size, position and repeat lists;
+            // percentages size against the positioning area (`background-origin`'s box).
+            let geometry = crate::document::style::background_layers::geometry(style, index);
+            let [top, right, bottom, left] = super::gradient_tile::origin(style);
+            let area = (
+                (width - left - right).max(0.0),
+                (height - top - bottom).max(0.0),
+            );
+            return image_layer(url, geometry, area.0, area.1);
+        }
+        _ => super::gradient_tile::tile(style, index, (width, height)),
+    };
+    let Some(tile) = tile else {
+        return background(layer, style, width, height);
+    };
+    background(layer, style, tile.width, tile.height).with_tile(tile)
+}
+/** Gives each image layer of `layers` the key `key` returns for its place among the image
+ * layers (counted from 0), so painters draw it with its own fetched image. */
+pub(super) fn key_layers(layers: &mut [DisplayBackground], key: impl Fn(usize) -> Option<usize>) {
+    let images = layers.iter_mut().filter_map(|layer| match layer {
+        DisplayBackground::Image { key, .. } => Some(key),
+        _ => None,
+    });
+    for (layer, slot) in images.enumerate() {
+        *slot = key(layer);
+    }
+}
 /** Gradient geometry per CSS Images: the line through the center whose ends touch the far
  * corners, with a `to <corner>` angle taken from the box so the 50% line joins the other two
  * corners, as Blink's `CSSLinearGradientValue` computes it. */
-fn background(
+pub(super) fn background(
     layer: &BackgroundLayer,
     style: &crate::document::ComputedStyle,
     width: f64,
@@ -1186,6 +1547,7 @@ fn background(
                 x1: cx + dx * half,
                 y1: cy + dy * half,
                 stops: resolve_stops(stops, half * 2.0, *repeating),
+                tile: None,
             }
         }
         BackgroundLayer::Radial {
@@ -1200,6 +1562,7 @@ fn background(
                 rx,
                 ry,
                 stops: resolve_stops(stops, rx, *repeating),
+                tile: None,
             }
         }
         BackgroundLayer::Image { url } => {
@@ -1257,6 +1620,8 @@ fn image_layer(
         repeat: [rx != NoRepeat, ry != NoRepeat],
         space: [rx == Space, ry == Space],
         round: [rx == Round, ry == Round],
+        area: None,
+        key: None,
     }
 }
 /** Stops a repeating gradient may expand to before the pattern stops tiling. */

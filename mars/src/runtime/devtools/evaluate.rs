@@ -257,6 +257,7 @@ impl Runtime {
             .map(scripting::boxes)
             .unwrap_or_default();
         environment.scroll_y = self.scroll_y;
+        environment.scroll_x = page.scroll_x;
         environment.positions = scripting::positions(&page.document);
         Ok(environment)
     }

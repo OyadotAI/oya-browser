@@ -4,7 +4,7 @@
  * half of its outer edges. Resolved once before layout by rewriting those widths into a copy of
  * the document, so sizing and painting both see them.
  *
- * ponytail: no `hidden` and no column borders. */
+ * ponytail: no `hidden`. */
 use super::super::flow::*;
 use super::{Grid, grid, is_anonymous, is_table};
 use crate::document::BorderStyle;
@@ -15,7 +15,9 @@ struct Edge {
     width: f64,
     color: Option<String>,
     style: BorderStyle,
-    /** Which kind of box set it: table 0, row group 1, row 2, cell 3. */
+    /** `border-style: hidden`, which wins its edge outright and paints nothing. */
+    hidden: bool,
+    /** Which kind of box set it, nearer the cell ranking higher: TABLE up to CELL. */
     rank: u8,
 }
 impl Edge {
@@ -33,6 +35,9 @@ impl Edge {
             BorderStyle::Groove => 2,
             BorderStyle::Inset => 1,
         };
+        if self.hidden || other.hidden {
+            return self.hidden && !other.hidden;
+        }
         if self.width != other.width {
             return self.width > other.width;
         }
@@ -95,7 +100,7 @@ impl Edges {
 }
 /** Keeps the winner of two borders on one edge. */
 fn raise(edge: &mut Edge, side: &Edge) {
-    if side.width > 0.0 && side.beats(edge) {
+    if (side.width > 0.0 || side.hidden) && side.beats(edge) {
         *edge = side.clone();
     }
 }
@@ -109,7 +114,7 @@ pub(in super::super) fn resolve(document: &Document) -> EngineResult<Option<Docu
     let mut context = LayoutContext::new(document)?;
     let mut changes = Vec::new();
     for node in &document.nodes {
-        if node.style.border_collapse && !node.hidden() && is_table(&context, node) {
+        if node.style.border_collapse && !node.removed() && is_table(&context, node) {
             let table = grid(&mut context, node)?;
             changes.extend(table_changes(node, &table));
         }
@@ -133,21 +138,31 @@ pub(in super::super) fn resolve(document: &Document) -> EngineResult<Option<Docu
 fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [Edge; 4], bool)> {
     let (rows, columns) = (grid.rows.len(), grid.columns);
     if rows == 0 {
-        return Vec::new();
+        // No grid edges: the table keeps half its own borders and, collapsed, no padding
+        // (collapsing-border-model-011).
+        if is_anonymous(table) {
+            return Vec::new();
+        }
+        let half = sides(table, TABLE).map(|mut edge| {
+            edge.width /= 2.0;
+            edge
+        });
+        return vec![(table.local_id, half, true)];
     }
     let mut edges = Edges::new(rows, columns);
     // An anonymous table has no border of its own; its wrapping block keeps its border.
     let anonymous = is_anonymous(table);
     if !anonymous {
-        edges.merge((0, rows), (0, columns), sides(table, 0));
+        edges.merge((0, rows), (0, columns), sides(table, TABLE));
     }
+    merge_columns(&mut edges, grid, rows);
     // Blink's collapsed borders take the widest of table, row group, row and cell borders.
     for section in &grid.sections {
         if let Some(group) = section.node.filter(|_| !section.rows.is_empty()) {
             edges.merge(
                 (section.rows.start, section.rows.end),
                 (0, columns),
-                sides(group, 1),
+                sides(group, ROW_GROUP),
             );
         }
     }
@@ -157,29 +172,90 @@ fn table_changes(table: &Node, grid: &Grid<'_>) -> Vec<(usize, [Edge; 4], bool)>
         .enumerate()
         .filter(|(_, row)| !row.anonymous)
     {
-        edges.merge((index, index + 1), (0, columns), sides(row.node, 2));
+        edges.merge((index, index + 1), (0, columns), sides(row.node, ROW));
     }
     for slot in &grid.cells {
         let area = (slot.row, slot.row + slot.rows);
-        edges.merge(
-            area,
-            (slot.column, slot.column + slot.columns),
-            sides(slot.cell, 3),
-        );
+        edges.merge(area, visual(grid, slot), sides(slot.cell, CELL));
     }
     let mut out: Vec<_> = grid
         .cells
         .iter()
         .map(|slot| {
             let area = (slot.row, slot.row + slot.rows);
-            let span = (slot.column, slot.column + slot.columns);
-            (slot.cell.local_id, edges.half(area, span), false)
+            (
+                slot.cell.local_id,
+                edges.half(area, visual(grid, slot)),
+                false,
+            )
         })
         .collect();
     if !anonymous {
         out.push((table.local_id, edges.half((0, rows), (0, columns)), true));
     }
     out
+}
+/** css-tables-3's conflict order by box kind: a cell's border beats its row's, then the row
+ * group's, the column's, the column group's and the table's. */
+const TABLE: u8 = 0;
+/** A column group's rank. */
+const COLUMN_GROUP: u8 = 1;
+/** A column's rank. */
+const COLUMN: u8 = 2;
+/** A row group's rank. */
+const ROW_GROUP: u8 = 3;
+/** A row's rank. */
+const ROW: u8 = 4;
+/** A cell's rank. */
+const CELL: u8 = 5;
+/** Column and column group borders join the conflict over every row of their columns: a group's
+ * start and end borders only at its outer columns (border-top-applies-to-005). */
+fn merge_columns(edges: &mut Edges, grid: &Grid<'_>, rows: usize) {
+    let boxes = &grid.column_boxes;
+    let mut start = 0;
+    for (index, (group, own)) in boxes.iter().enumerate() {
+        let rank = if group.is_some() {
+            COLUMN
+        } else {
+            COLUMN_GROUP
+        };
+        edges.merge(
+            (0, rows),
+            mirror(grid, (index, index + 1)),
+            sides(own, rank),
+        );
+        let same = |next: Option<&(Option<&Node>, &Node)>| {
+            next.and_then(|(g, _)| *g)
+                .zip(*group)
+                .is_some_and(|(a, b)| std::ptr::eq(a, b))
+        };
+        if same(boxes.get(index + 1)) {
+            continue;
+        }
+        if let Some(group) = group {
+            edges.merge(
+                (0, rows),
+                mirror(grid, (start, index + 1)),
+                sides(group, COLUMN_GROUP),
+            );
+        }
+        start = index + 1;
+    }
+}
+/** A cell's grid lines left to right: its column range, mirrored in an rtl table, whose first
+ * column sits at the right, so its start border is its right edge. */
+fn visual(grid: &Grid<'_>, slot: &super::Slot<'_>) -> (usize, usize) {
+    mirror(grid, (slot.column, slot.column + slot.columns))
+}
+/** A column range `[start, end)` left to right, mirrored in an rtl table. */
+fn mirror(grid: &Grid<'_>, (start, end): (usize, usize)) -> (usize, usize) {
+    let end = end.min(grid.columns);
+    let start = start.min(end);
+    if grid.rtl {
+        (grid.columns - end, grid.columns - start)
+    } else {
+        (start, end)
+    }
 }
 /** A box's borders `[top, right, bottom, left]`, a color it leaves unset being its text color. */
 fn sides(node: &Node, rank: u8) -> [Edge; 4] {
@@ -192,6 +268,7 @@ fn sides(node: &Node, rank: u8) -> [Edge; 4] {
             .or_else(|| style.border_color.clone())
             .or_else(|| style.color.clone()),
         style: style.border_styles[side],
+        hidden: style.border_hidden[side],
         rank,
     })
 }

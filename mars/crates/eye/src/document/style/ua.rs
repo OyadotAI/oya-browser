@@ -83,7 +83,7 @@ const HEADINGS: [(&str, &str); 6] = [
     ("h5", "0.83em"),
     ("h6", "0.67em"),
 ];
-/** Monospace text shrinks from 16px to Chromium's 13px default. */
+/** html.css gives these the monospace family; its 13px default size follows from the family. */
 const MONOSPACE: [&str; 5] = ["pre", "code", "kbd", "samp", "tt"];
 /** Initial display and other non-declarative defaults. */
 pub(super) fn defaults(node: &Node, style: &mut ComputedStyle) {
@@ -101,6 +101,8 @@ pub(super) fn defaults(node: &Node, style: &mut ComputedStyle) {
         _ => {}
     }
 }
+/** Replaced elements Chromium's html.css gives `overflow: clip`. */
+const CLIPPED_REPLACED: [&str; 6] = ["img", "video", "canvas", "iframe", "embed", "object"];
 /** UA declarations for one element, applied below every author declaration. */
 pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
     let tag = node.tag.as_str();
@@ -109,23 +111,44 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
         out.extend([("font-size", *size), ("font-weight", "bold")]);
     }
     if let Some((_, margin)) = VERTICAL.iter().find(|(name, _)| *name == tag) {
-        out.extend([("margin-top", *margin), ("margin-bottom", *margin)]);
+        out.extend([
+            ("margin-block-start", *margin),
+            ("margin-block-end", *margin),
+        ]);
     }
     if tag == "h6" {
-        out.extend([("margin-top", "2.33em"), ("margin-bottom", "2.33em")]);
+        out.extend([
+            ("margin-block-start", "2.33em"),
+            ("margin-block-end", "2.33em"),
+        ]);
     }
     match tag {
-        "ul" | "ol" | "menu" => out.push(("padding-left", "40px")),
-        "dd" => out.push(("margin-left", "40px")),
-        "blockquote" | "figure" => out.extend([("margin-left", "40px"), ("margin-right", "40px")]),
+        "ul" | "ol" | "menu" => out.push(("padding-inline-start", "40px")),
+        "dd" => out.push(("margin-inline-start", "40px")),
+        "blockquote" | "figure" => out.extend([
+            ("margin-inline-start", "40px"),
+            ("margin-inline-end", "40px"),
+        ]),
         "strong" | "b" | "th" => out.push(("font-weight", "bold")),
         "em" | "i" | "cite" | "dfn" | "var" | "address" => out.push(("font-style", "italic")),
         "u" | "ins" => out.push(("text-decoration-line", "underline")),
         "s" | "del" | "strike" => out.push(("text-decoration-line", "line-through")),
         "small" | "sub" | "sup" => out.push(("font-size", "smaller")),
         "center" => out.push(("text-align", "-webkit-center")),
-        "table" => out.push(("border-spacing", "2px")),
+        // Chromium's html.css sizes a table's border box: `table { box-sizing: border-box }`.
+        "table" => out.extend([("border-spacing", "2px"), ("box-sizing", "border-box")]),
         "video" => out.extend([("width", "300px"), ("height", "150px")]),
+        // html.css: `iframe { border: 2px inset }`, its color the current color.
+        "iframe" => out.extend([
+            ("border-top-width", "2px"),
+            ("border-right-width", "2px"),
+            ("border-bottom-width", "2px"),
+            ("border-left-width", "2px"),
+            ("border-top-style", "inset"),
+            ("border-right-style", "inset"),
+            ("border-bottom-style", "inset"),
+            ("border-left-style", "inset"),
+        ]),
         // Chromium's html.css hides these; script-inserted ones stay in the tree as DOM nodes.
         "script" | "style" | "template" => out.push(("display", "none")),
         // A slot's box is its assigned nodes', as Chromium's `slot { display: contents }`.
@@ -146,7 +169,17 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
         _ => {}
     }
     if MONOSPACE.contains(&tag) {
-        out.extend([("font-family", "monospace"), ("font-size", "0.8125em")]);
+        out.push(("font-family", "monospace"));
+    }
+    // html.css: replaced elements clip their content (`overflow: clip`), so an author's
+    // `overflow: visible` is what lets an `object-fit` image paint past its box (overflow-img).
+    if CLIPPED_REPLACED.contains(&tag) {
+        out.extend([("overflow-x", "clip"), ("overflow-y", "clip")]);
+    }
+    // svg.css: `svg:not(:root) { overflow: hidden }`, so a flex or grid item svg has no
+    // automatic minimum size (display-flex-svg-overflow-default).
+    if tag == "svg" {
+        out.extend([("overflow-x", "hidden"), ("overflow-y", "hidden")]);
     }
     if tag == "pre" {
         out.push(("white-space", "pre"));
@@ -171,10 +204,10 @@ pub(super) fn declarations(node: &Node) -> Vec<(&'static str, &'static str)> {
 /** `hr`: half-em block margins, centered, a one pixel inset gray rule. */
 fn rule() -> [(&'static str, &'static str); 16] {
     [
-        ("margin-top", "0.5em"),
-        ("margin-bottom", "0.5em"),
-        ("margin-left", "auto"),
-        ("margin-right", "auto"),
+        ("margin-block-start", "0.5em"),
+        ("margin-block-end", "0.5em"),
+        ("margin-inline-start", "auto"),
+        ("margin-inline-end", "auto"),
         ("border-top-width", "1px"),
         ("border-right-width", "1px"),
         ("border-bottom-width", "1px"),

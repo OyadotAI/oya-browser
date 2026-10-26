@@ -60,7 +60,6 @@ const UNCLAIMED: &[&str] = &[
     "regexp-v-flag",
     "regexp-modifiers",
     "regexp-duplicate-named-groups",
-    "RegExp.escape",
     "Float16Array",
     "Math.sumPrecise",
     "Error.isError",

@@ -107,6 +107,8 @@ pub(in crate::v9) use conformance::is_test_exit;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::measure_memory;
 #[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::report_terminal_exception;
+#[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{WorkerGraph, worker_activate, worker_decode};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::{

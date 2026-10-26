@@ -39,6 +39,8 @@ const SUITES: &[&str] = &[
     "css-cascade",
     "css-values",
     "css-nesting",
+    "css-multicol",
+    "css-writing-modes",
 ];
 /** The WPT default reftest viewport. */
 const VIEWPORT: (f64, f64) = (800.0, 600.0);
@@ -407,16 +409,25 @@ fn run(runtime: &mut mars::runtime::Runtime, origin: &str, case: &Case, blank: &
     let result = (|| -> Result<(bool, String), String> {
         let test = shoot(runtime, &format!("{origin}/{}", case.path))?;
         let mut any_match = None;
+        let mut nearest = usize::MAX;
         for (matching, reference) in &case.refs {
-            let same = shoot(runtime, &format!("{origin}/{reference}"))? == test;
+            let shot = shoot(runtime, &format!("{origin}/{reference}"))?;
+            let same = shot == test;
             if *matching {
                 any_match = Some(any_match.unwrap_or(false) || same);
+                if !same {
+                    nearest = nearest.min(pixel_diff(&test, &shot));
+                }
             } else if same {
                 return Ok((false, format!("matches mismatch reference {reference}")));
             }
         }
-        let note = if test == blank { "blank" } else { "" };
-        Ok((any_match.unwrap_or(true), note.to_string()))
+        let note = match (test == blank, any_match) {
+            (true, _) => "blank".to_string(),
+            (false, Some(false)) => format!("{nearest} px differ"),
+            _ => String::new(),
+        };
+        Ok((any_match.unwrap_or(true), note))
     })();
     let (status, detail) = match result {
         Ok((true, note)) => ("pass", note),
@@ -429,6 +440,53 @@ fn run(runtime: &mut mars::runtime::Runtime, origin: &str, case: &Case, blank: &
         detail,
         millis: started.elapsed().as_millis(),
     }
+}
+
+/** How many pixels two `WxH:base64png` shots differ in, so near misses (antialiasing, a
+sub-pixel offset) can be told from layout failures; usize::MAX when sizes differ. */
+fn pixel_diff(a: &str, b: &str) -> usize {
+    let (Some(a), Some(b)) = (pixels(a), pixels(b)) else {
+        return usize::MAX;
+    };
+    if a.len() != b.len() {
+        return usize::MAX;
+    }
+    a.chunks(4).zip(b.chunks(4)).filter(|(x, y)| x != y).count()
+}
+
+/** A shot's decoded RGBA pixels. */
+fn pixels(shot: &str) -> Option<Vec<u8>> {
+    let encoded = shot.split_once(':')?.1;
+    let mut bytes = Vec::with_capacity(encoded.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0);
+    for c in encoded.bytes().filter(|c| *c != b'=') {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        acc = (acc << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((acc >> bits) as u8);
+        }
+    }
+    let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .ok()?;
+    let mut out = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut out).ok()?;
+    out.truncate(info.buffer_size());
+    let channels = info.color_type.samples();
+    Some(
+        out.chunks(channels)
+            .flat_map(|p| [p[0], p[1], p[2], 0])
+            .collect(),
+    )
 }
 
 /** A runtime at the WPT viewport with only the server's origin granted. */
@@ -536,6 +594,36 @@ fn wpt_reftests() {
         let _ = worker.join();
     }
     report(&cases, &outcomes.lock().unwrap(), started.elapsed());
+}
+
+/** Debug one case: `WPT_PROBE=css/x/a.html` writes the test's and each reference's screenshot
+(base64 PNG, `*.b64`) and point layout (`*.json`) to `WPT_OUT/probe`, so a failure can be read
+instead of guessed. */
+#[test]
+#[ignore = "WPT debugging aid; run with WPT_PROBE=<path> --ignored"]
+fn wpt_probe() {
+    let Ok(path) = std::env::var("WPT_PROBE") else {
+        return;
+    };
+    let root = wpt_root();
+    let case = case(&root, &root.join(&path)).expect("a reftest");
+    let origin = serve(root);
+    let mut runtime = runtime(&origin);
+    let out = out_dir().join("probe");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut pages = vec![("test".to_string(), case.path.clone())];
+    for (at, (_, reference)) in case.refs.iter().enumerate() {
+        pages.push((format!("ref{at}"), reference.clone()));
+    }
+    for (name, page) in pages {
+        let shot = shoot(&mut runtime, &format!("{origin}/{page}")).unwrap();
+        let png = shot.split_once(':').map_or("", |(_, png)| png);
+        std::fs::write(out.join(format!("{name}.b64")), png).unwrap();
+        let layout = agent_call(&mut runtime, "page.layout", json!({})).unwrap();
+        let text = serde_json::to_string_pretty(&layout).unwrap();
+        std::fs::write(out.join(format!("{name}.json")), text).unwrap();
+        println!("{name}: {page}");
+    }
 }
 
 /** Per-suite counts on stdout and one JSON file per suite. */

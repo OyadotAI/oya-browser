@@ -65,13 +65,17 @@ fn css_table_rows_share_columns() {
     assert_eq!(d.x, c.x + c.width);
 }
 
-/** A `display: table` box without row or cell children is a block (the clearfix pattern). */
+/** A `display: table` box without row or cell children wraps them in an anonymous cell
+(CSS 2.1 17.2.1), so it shrinks to their width as Chromium does, and its one block fills it. */
 #[test]
-fn css_table_without_cells_stays_a_block() {
+fn css_table_without_cells_wraps_them_in_a_cell() {
     let (document, display) = layout("<div id=t style='display:table'><p id=p>text</p></div>", "");
-    let p = find(&document, &display, "p");
-    assert_eq!(p.width, 1084.0);
-    assert_eq!(find(&document, &display, "t").width, 1084.0);
+    let (p, t) = (
+        find(&document, &display, "p"),
+        find(&document, &display, "t"),
+    );
+    assert!(t.width < 1084.0, "{}", t.width);
+    assert_eq!(p.width, t.width);
 }
 
 /** A `display: table` figure is as wide as its image, and its `table-caption` wraps below it at

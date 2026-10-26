@@ -1,11 +1,15 @@
 /** Operating-system text primitives supply shaping, never document or navigation semantics. */
+pub mod autospace;
+pub mod ignorable;
+pub mod segment;
 #[cfg(target_os = "macos")]
 mod text;
+pub mod upright;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 pub use text::{
-    attributed, colored, directed, edges, font, has_font, local_font_exists, measure, metrics,
-    register_family, register_font, register_local, styled,
+    attributed, colored, directed, edges, font, has_font, local_font_exists, metrics,
+    register_family, register_font, register_local, spaced, styled,
 };
 
 /// The generic face text is shaped and drawn with; System is the native interface font.
@@ -39,6 +43,12 @@ pub struct Face {
     pub spacing: f64,
     /// Italic or oblique posture.
     pub italic: bool,
+    /// CSS `text-autospace` (`autospace::OFF`, `NORMAL` or `CHINESE`): an eighth of an em
+    /// between ideographs and letters or digits, and in Chinese around ASCII punctuation too.
+    pub autospace: u8,
+    /// Glyph orientation down a vertical line (`upright::TURNED`, `MIXED` or `UPRIGHT`): an
+    /// upright character advances one em instead of its width.
+    pub upright: u8,
 }
 impl Face {
     /// The legacy selection: system face, regular or bold, no extra spacing.
@@ -49,6 +59,8 @@ impl Face {
             family: Family::System,
             spacing: 0.0,
             italic: false,
+            autospace: autospace::OFF,
+            upright: upright::TURNED,
         }
     }
     /// CSS treats 600 and above as bold for faces with only two weights.
@@ -83,9 +95,23 @@ pub fn local_font_exists(_name: &str) -> bool {
     false
 }
 
+/// A run's advance in `face`: its width, or down a vertical line with upright glyphs.
+pub fn measure(text: &str, face: Face) -> f64 {
+    match face.upright {
+        upright::TURNED => plain(text, face),
+        _ => upright::measure(text, face, plain),
+    }
+}
+
+/// A horizontal run's shaped width on macOS.
+#[cfg(target_os = "macos")]
+fn plain(text: &str, face: Face) -> f64 {
+    text::measure(text, face)
+}
+
 /// Headless non-macOS builds keep deterministic geometry without claiming GUI parity.
 #[cfg(not(target_os = "macos"))]
-pub fn measure(text: &str, face: Face) -> f64 {
+fn plain(text: &str, face: Face) -> f64 {
     let count = text.chars().count() as f64;
     count * face.size * if face.bold() { 0.65 } else { 0.6 } + count * face.spacing
 }

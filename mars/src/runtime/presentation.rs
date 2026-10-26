@@ -150,5 +150,12 @@ impl Runtime {
         self.scroll_y = self
             .scroll_y
             .clamp(0.0, (height - self.render_context.height).max(0.0));
+        let width = self.render_context.width;
+        if let Some(page) = self.page.as_mut()
+            && let Some(display) = page.display.as_ref()
+        {
+            let [min, max] = super::horizontal::scroll_x_range(&page.document, display, width);
+            page.scroll_x = page.scroll_x.clamp(min, max);
+        }
     }
 }

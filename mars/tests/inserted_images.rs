@@ -223,7 +223,7 @@ fn hidden_image_load_can_reveal_its_decoded_pixels() {
     assert_eq!(attributes(&mut runtime, "pic")["data-loaded"], "2x1");
 }
 
-/** Inserted frames, video and forms keep the page running; frames are placeholders. */
+/** Inserted frames, video and forms keep the page running; frames are empty replaced boxes. */
 #[test]
 fn inserted_frames_and_controls_do_not_stop_scripts() {
     let (_fixture, _runtime, page) = load(
@@ -235,10 +235,7 @@ fn inserted_frames_and_controls_do_not_stop_scripts() {
     scripts_ran(&page);
     let text = page.to_string();
     assert!(text.contains("after"), "{page}");
-    assert!(
-        text.contains("Embedded frame (not supported yet)"),
-        "{page}"
-    );
+    assert!(text.contains("\"tag\":\"iframe\""), "{page}");
     assert!(text.contains("cell"), "{page}");
 }
 

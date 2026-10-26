@@ -81,11 +81,17 @@ pub(in crate::v9) enum Op {
     /** Top-level `var`: define the global property if it is missing; the flag marks a sloppy
     direct eval's var, which stays deletable. */
     DeclareVar(u32, bool),
+    /** Script Annex B compatibility declarations are optional when the global cannot acquire a property. */
+    DeclareOptionalVar(u32),
+    /** Check global var admission before any binding is created; the flag selects eval's TypeError. */
+    CheckGlobalVar(u32, bool),
     /** Eval's Annex B global declaration or copy is suppressed by an existing global lexical. */
     AnnexGlobal(u32, bool),
     /** Top-level `function`: define or overwrite the global property with the closure on the
     stack; the flag marks a sloppy direct eval's function, which stays deletable. */
     DeclareFunction(u32, bool),
+    /** Check global function admission before any binding is created; the flag selects eval's TypeError. */
+    CheckGlobalFunction(u32, bool),
     /** callee this args... -> result: `eval(...)`, a direct eval when the callee is the
     intrinsic eval, run in the caller's scopes that the string operand describes. */
     DirectEval(u16, u32),

@@ -25,14 +25,14 @@ fn parses_and_renders_html_without_the_browser_shell() {
 /** Unsupported CSS is dropped with a value-free diagnostic instead of refusing the page. */
 #[test]
 fn drops_unsupported_css_with_a_value_free_diagnostic() {
-    let document = parse("<p style='column-count:2;color:red'>Secret-free text</p>").unwrap();
+    let document = parse("<p style='offset-path:none;color:red'>Secret-free text</p>").unwrap();
     let document = compute_styles(&document, &[]).unwrap();
     assert_eq!(document.nodes[0].style.color.as_deref(), Some("red"));
     assert!(
         document
             .diagnostics
             .iter()
-            .any(|d| d.contains("column-count"))
+            .any(|d| d.contains("offset-path"))
     );
     assert!(
         document

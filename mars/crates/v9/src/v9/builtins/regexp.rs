@@ -9,6 +9,7 @@ use crate::v9::vm::realm::{realm, symbol};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+mod escape;
 mod legacy;
 
 /** The builtin exec dispatch index is shared by immutable realm templates. */
@@ -20,6 +21,7 @@ pub(super) fn install(b: &mut Builder) {
     b.ids.regexp_prototype = proto;
     let ctor = b.constructor("RegExp", 2, construct, proto, None);
     b.global("RegExp", ctor);
+    b.method(ctor, "escape", 1, escape::escape);
     legacy::install(b, ctor);
     let species = b.function("get [Symbol.species]", 0, species);
     b.put(

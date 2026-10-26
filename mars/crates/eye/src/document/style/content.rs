@@ -30,10 +30,7 @@ pub(super) fn content(value: &str, attributes: &BTreeMap<String, String>) -> Opt
                 "open-quote" => out.push('\u{201c}'),
                 "close-quote" => out.push('\u{201d}'),
                 "no-open-quote" | "no-close-quote" => {}
-                _ if token.starts_with("attr(") => {
-                    let name = token["attr(".len()..].trim_end_matches(')').trim();
-                    out.push_str(attributes.get(name).map_or("", String::as_str));
-                }
+                _ if token.starts_with("attr(") => out.push_str(&attr(&rest[..end], attributes)?),
                 _ if token.starts_with("counter") => {}
                 _ => return None,
             }
@@ -47,8 +44,28 @@ pub(super) fn content(value: &str, attributes: &BTreeMap<String, String>) -> Opt
         .collect::<String>();
     Some(text)
 }
+/** `attr(name[, fallback])` as text: the attribute's value, else the fallback string; a
+ * missing attribute whose fallback is no string makes the whole `content` invalid. */
+fn attr(token: &str, attributes: &BTreeMap<String, String>) -> Option<String> {
+    let inner = token["attr(".len()..].strip_suffix(')').unwrap_or_default();
+    let (name, fallback) = match inner.split_once(',') {
+        Some((name, fallback)) => (name, Some(fallback.trim())),
+        None => (inner, None),
+    };
+    if let Some(value) = attributes.get(&name.trim().to_ascii_lowercase()) {
+        return Some(value.clone());
+    }
+    match fallback {
+        None => Some(String::new()),
+        Some(text) => {
+            let quote = text.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+            let (text, rest) = string(&text[1..], quote)?;
+            rest.trim().is_empty().then_some(text)
+        }
+    }
+}
 /** A quoted string up to its closing quote, with CSS escapes decoded, and the text after it. */
-fn string(source: &str, quote: char) -> Option<(String, &str)> {
+pub(super) fn string(source: &str, quote: char) -> Option<(String, &str)> {
     let mut out = String::new();
     let mut chars = source.char_indices().peekable();
     while let Some((index, c)) = chars.next() {

@@ -15,16 +15,34 @@ pub(super) struct Flow {
     pub bottom: f64,
     /** The adjoining bottom (or parent top) margin already counted in `y`, which the next block collapses with. */
     pub collapsible: f64,
+    /** The most negative margin in `collapsible`'s strut, tagged with the `collapsible` it was
+     * recorded for: a strut adjoins its largest positive and most negative margins (CSS 2.1
+     * 8.3.1), which one sum loses. Any other `collapsible` (a reset) means its own sign. */
+    pub negative: (f64, f64),
     /** Fragments on the current line, aligned when it finishes. */
     pub frags: Vec<super::line::Frag>,
+    /** Empty inline boxes on the current line: they add their line-height to a line that has
+     * other content, but never make a line of their own (empty-inline-003). */
+    pub phantoms: Vec<super::line::Frag>,
+    /** Out-of-flow boxes met on the current line: (identity, fragments before it, line top),
+    so their static position follows the line's alignment and bidi order when it settles. */
+    pub statics: Vec<(usize, usize, f64, f64)>,
     /** Finished lines whose offsets `settle` still has to apply. */
     pub finished: Vec<super::line::Finished>,
     /** The containing block's own font metrics, part of every line. */
     pub strut: Option<super::line::Strut>,
     /** The containing block's text-align. */
-    pub align: super::line::Align,
+    pub align: super::justify::Aligned,
     /** The block whose `text-overflow: ellipsis` truncates this flow's overflowing lines. */
     pub ellipsis: Option<usize>,
+    /** The block's `direction` is `rtl`, so its lines lay out right to left (render/bidi.rs). */
+    pub rtl: bool,
+    /** `vertical-lr` text laid out turned: a line's over side is the physical right, while
+     * block flow runs left to right, so each line's contents mirror across it. */
+    pub mirror_lines: bool,
+    /** The `text-indent` the current line started with, which a right-to-left line takes off
+     * its right edge once it is aligned. */
+    pub indent: f64,
     /** Floats of this block formatting context that can still shorten lines. */
     pub floats: Vec<super::float::FloatBox>,
     /** Lowest bottom of floats pruned from `floats`, still honored by clearance. */
@@ -42,6 +60,9 @@ pub(super) struct Flow {
     pub resolved: Option<f64>,
     /** The border top `block_top` last computed, which `after_block` records on resolution. */
     last_top: std::cell::Cell<f64>,
+    /** `margin-trim: block-start` on this flow's container, until its first line or non-empty
+     * block: the children adjoining its start drop their margins. */
+    pub trim_start: bool,
     /** Floats placed while the margin strut was open, as (index in `floats`, item range, top
      * they were given); Blink positions them only once the BFC block offset resolves. */
     pub unpositioned: Vec<(usize, std::ops::Range<usize>, f64)>,
@@ -64,6 +85,19 @@ pub(super) struct Flow {
     /** An inline box left the current line empty: Blink wraps it in an anonymous block with no
      * formatted line, which still takes a pending `text-box-trim` start or end. */
     pub empty_run: bool,
+    /** The last scalar of the line's text when text (not an atomic inline) ends it, which
+     * decides whether the next atomic or element's run may break from it (`glue.rs`). */
+    pub last: Option<char>,
+    /** The run `last` ends may break between any two letters (`word-break: break-all`,
+     * `line-break: anywhere`, `overflow-wrap`), which makes its end a break opportunity too. */
+    pub last_fill: bool,
+    /** The multicol content box (left, width) a `column-span: all` box in this formatting
+     * context spans; None outside a multicol container. */
+    pub span: Option<(f64, f64)>,
+    /** The enclosing multicol's columns when their height is known: (the first column's top,
+     * the column height), in this flow's coordinates; a nested multicol's rows end where they
+     * do. None outside such columns. */
+    pub fragmentainer: Option<(f64, f64)>,
 }
 impl Flow {
     /** A block starts at its content origin with no invented glyph width. */
@@ -76,11 +110,17 @@ impl Flow {
             line: 0.0,
             bottom: y,
             collapsible: 0.0,
+            negative: (0.0, 0.0),
             frags: Vec::new(),
+            phantoms: Vec::new(),
+            statics: Vec::new(),
             finished: Vec::new(),
             strut: None,
-            align: super::line::Align::Left,
+            align: Default::default(),
             ellipsis: None,
+            rtl: false,
+            mirror_lines: false,
+            indent: 0.0,
             floats: Vec::new(),
             cleared: None,
             definite: None,
@@ -88,6 +128,7 @@ impl Flow {
             strut_open: false,
             resolved: None,
             last_top: std::cell::Cell::new(y),
+            trim_start: false,
             unpositioned: Vec::new(),
             adjoining: [false; 2],
             cleared_collapsing: false,
@@ -95,6 +136,10 @@ impl Flow {
             trim: [false, false],
             tail: None,
             empty_run: false,
+            last: None,
+            last_fill: false,
+            span: None,
+            fragmentainer: None,
         }
     }
     /** A child flow inside this one that shares its floats, unless it starts a new formatting context. */
@@ -103,18 +148,23 @@ impl Flow {
         if !fresh {
             inner.floats = self.floats.clone();
             inner.cleared = self.cleared;
+            inner.span = self.span;
         }
+        inner.fragmentainer = self.fragmentainer;
         inner
     }
     /** Records a fragment placed on the current line. */
     pub fn push(&mut self, frag: super::line::Frag) {
+        self.last = None;
+        self.last_fill = false;
         self.frags.push(frag);
         self.empty_run = false;
         self.hang = super::line::Hang::default();
     }
     /** The top of a block whose top margin collapses with the margin already counted above it. */
     pub fn block_top(&self, margin: f64) -> f64 {
-        let top = self.y - self.collapsible + collapse(self.collapsible, margin);
+        let margin = self.trimmed(margin);
+        let top = self.y - self.collapsible + join(self.strut(), margin).0;
         self.last_top.set(top);
         top
     }
@@ -124,11 +174,16 @@ impl Flow {
     }
     /** Advances past a block and remembers its bottom margin for collapsing with the next one. */
     pub fn after_block(&mut self, bottom: f64, margin: f64) {
+        self.after_block_strut(bottom, (margin, margin.min(0.0)));
+    }
+    /** As `after_block`, with the bottom strut as (total, most negative margin). */
+    pub fn after_block_strut(&mut self, bottom: f64, (margin, negative): (f64, f64)) {
+        self.trim_start = false;
         if std::mem::take(&mut self.strut_open) {
             self.resolved = Some(self.last_top.get());
         }
         self.y = bottom + margin;
-        self.collapsible = margin;
+        self.set_strut((margin, negative));
         self.bottom = self.bottom.max(self.y);
         self.cleared_collapsing = false;
     }
@@ -137,6 +192,7 @@ impl Flow {
         if self.cursor > 0.0 || self.line > 0.0 || !self.frags.is_empty() {
             // A line box resolves an open margin strut where it stands.
             self.strut_open = false;
+            self.trim_start = false;
             let aligned = super::line::finish(self);
             self.y += self.line.max(aligned);
             if let Some(tail) = &mut self.tail {
@@ -146,6 +202,7 @@ impl Flow {
             self.collapsible = 0.0;
             self.cleared_collapsing = false;
         }
+        self.phantoms.clear();
         self.cursor = 0.0;
         self.line = 0.0;
         self.space = Some(false);
@@ -205,6 +262,13 @@ fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> (f64, f64, f64) {
         // its border box over a float (CSS 2.1 9.5: a root's border box never overlaps a
         // float's margin box), even one past the containing block's edge.
         let border = border_width(node, flow.width, size, None);
+        // An auto height an `aspect-ratio` gives follows the width this opportunity allows.
+        let extent = match height {
+            None => {
+                aspect_height(node, border, flow.definite).map_or(extent, |h| h.max(LINE_FIT_SLACK))
+            }
+            Some(_) => extent,
+        };
         let (x0, x1) = (
             line_left + LINE_FIT_SLACK,
             line_left + border - LINE_FIT_SLACK,
@@ -214,11 +278,14 @@ fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> (f64, f64, f64) {
             .iter()
             .any(|f| f.x1 > f.x0 && f.top < y + extent && f.bottom > y && f.x0 < x1 && f.x1 > x0);
         let wide = (floats_left || floats_right) && border > width + LINE_FIT_SLACK;
-        let fits = !overlaps && !wide;
-        (fits, line_left - margin_left, room)
+        // Margins wider than the room beside the floats leave no opportunity there at all
+        // (floats-wrap-bfc-with-margin-005).
+        let squeezed = (floats_left || floats_right) && line_right - line_left < -LINE_FIT_SLACK;
+        let fits = !overlaps && !wide && !squeezed;
+        (fits, line_left - margin_left, room, extent)
     };
     for _ in 0..=flow.floats.len() {
-        let (fits, left, room) = place(y);
+        let (fits, left, room, extent) = place(y);
         let next = flow
             .floats
             .iter()
@@ -230,7 +297,7 @@ fn beside_floats(flow: &Flow, node: &Node, mut y: f64) -> (f64, f64, f64) {
         }
         y = next;
     }
-    let (_, left, room) = place(y);
+    let (_, left, room, _) = place(y);
     (y, left, room)
 }
 /** css-overflow-3: `text-overflow` applies only to a block container that clips its overflow. */
@@ -238,9 +305,34 @@ pub(super) fn ellipsis_owner(node: &Node) -> Option<usize> {
     let clips = node.style.overflow != crate::document::style::Overflow::Visible;
     (node.style.text_overflow_ellipsis && clips).then_some(node.local_id)
 }
-/** CSS 2.1 margin collapsing: the largest positive margin plus the most negative one. */
-pub(super) fn collapse(a: f64, b: f64) -> f64 {
-    a.max(b).max(0.0) + a.min(b).min(0.0)
+/** A margin strut `(total, most negative)` joined with one more margin: the largest positive
+ * margin plus the most negative one (CSS 2.1 8.3.1). abspos-022's 2, -4, 0, 14, -4 and 2px
+ * margins collapse to 10px, where pairwise sums gave 8. */
+pub(super) fn join((total, negative): (f64, f64), margin: f64) -> (f64, f64) {
+    let positive = (total - negative).max(0.0).max(margin);
+    let negative = negative.min(margin.min(0.0));
+    (positive + negative, negative)
+}
+impl Flow {
+    /** The open strut as (total, most negative margin). */
+    pub fn strut(&self) -> (f64, f64) {
+        let (tagged, negative) = self.negative;
+        if tagged == self.collapsible {
+            (self.collapsible, negative)
+        } else {
+            (self.collapsible, self.collapsible.min(0.0))
+        }
+    }
+    /** A child's margin as this flow's `margin-trim: block-start` leaves it: zero while the
+     * child still adjoins the container's start. */
+    pub fn trimmed(&self, margin: f64) -> f64 {
+        if self.trim_start { 0.0 } else { margin }
+    }
+    /** Records a strut as `collapsible` and its most negative margin. */
+    pub fn set_strut(&mut self, (total, negative): (f64, f64)) {
+        self.collapsible = total;
+        self.negative = (total, negative);
+    }
 }
 /** Items, document height, body decoration, and whether a bound cut layout short. */
 pub(super) type Laid = (
@@ -288,21 +380,29 @@ fn layout_once(
     presentation: crate::document::RenderContext,
 ) -> EngineResult<Laid> {
     let mut context = LayoutContext::new(document)?;
+    context.viewport = (presentation.width, presentation.height);
     let mut items = Vec::new();
-    let body = &document.formatting.body.style;
+    let body = &wrapper_body(document);
     let authored = document.formatting.body_box_authored;
+    // The body lays out inside the root element's margin, border and padding.
+    let root = super::body::root_edges(document, (presentation.width, presentation.height));
+    let inside = (presentation.width - root[1] - root[3]).max(0.0);
     let (x, y, width) = if authored {
-        super::body::content(body, presentation.width)
+        super::body::content(body, inside)
     } else {
-        (
-            MARGIN,
-            MARGIN,
-            (presentation.width - MARGIN * 2.0).min(CONTENT_WIDTH),
-        )
+        (MARGIN, MARGIN, (inside - MARGIN * 2.0).min(CONTENT_WIDTH))
     };
+    let viewport = (presentation.width, presentation.height);
+    // The root's `::before` boxes come first, above the body (render/root_flow.rs).
+    let content = (root[3], root[0], inside);
+    let before = super::root_flow::root_boxes(&mut context, document, &mut items, content, false)?;
+    let body_margin = if authored { body.margin[0] } else { MARGIN };
+    let y = y + super::root_flow::body_shift(&before, root[0], body_margin);
+    let [x, y] = super::root_box::body_origin(document, viewport, [x + root[3], y + root[0]]);
     let mut flow = Flow::new(x, y, width);
     flow.strut = Some(strut(body));
     flow.align = alignment(body);
+    flow.rtl = body.rtl;
     flow.definite = body
         .height
         .and_then(|height| height.resolve_size(Some(presentation.height)))
@@ -313,7 +413,8 @@ fn layout_once(
     }
     if !body.hidden {
         let mut run = None;
-        for node in document.nodes.iter().filter(|node| node.parent.is_none()) {
+        let top_level = document.nodes.iter().filter(|node| node.parent.is_none());
+        for node in top_level.filter(|node| !super::root_generated::is_root_box(node)) {
             if !inline_level(node) {
                 root_line(&mut context, &mut flow, &mut items, run.take())?;
             } else if run.is_none() {
@@ -335,8 +436,14 @@ fn layout_once(
     }
     flow.newline();
     super::line::settle(&mut context, &mut flow, &mut items, 0)?;
+    // The body's content box ends at its definite height, else at its in-flow content: the body
+    // is no formatting context root, so floats overflow it into the root's.
+    let content_end = flow
+        .definite
+        .map_or(flow.bottom.max(flow.y), |height| y + height);
     flow.bottom = flow.bottom.max(flow.floats_bottom());
     let truncated = context.exhausted();
+    context.body_block = positioned_body_block(body, [x, y, width], content_end);
     let positioned = match super::positioned::place(
         &mut context,
         &mut items,
@@ -355,16 +462,93 @@ fn layout_once(
             .fold(0.0, f64::max);
         flow.bottom = flow.bottom.max(painted);
     }
-    let bottom = if authored {
-        body.padding[2] + super::sizing::border_sides(body)[2] + body.margin[2]
+    let (edge, margin) = if authored {
+        (
+            body.padding[2] + super::sizing::border_sides(body)[2],
+            body.margin[2],
+        )
     } else {
-        MARGIN
+        (0.0, MARGIN)
     };
-    let height = super::body::clipped_height(document, flow.definite)
-        .map_or(flow.bottom.max(flow.y), |clip| y + clip)
-        + bottom;
-    let decoration = super::body::decoration(document, x, y, width, height - body.margin[2]);
+    let body_end = content_end + edge;
+    // The root's block formatting context holds the body's margin box and the floats past it.
+    let height = super::body::clipped_height(document, flow.definite).map_or_else(
+        || (body_end + margin).max(flow.bottom.max(flow.y)),
+        |clip| y + clip + edge + margin,
+    ) + root[2];
+    let height = (body_end + margin + root[2]).max(height);
+    // The root's `::after` boxes follow the body's margin box.
+    let after = (root[3], body_end + margin, inside);
+    let after = super::root_flow::root_boxes(&mut context, document, &mut items, after, true)?;
+    let height = height.max(after.end + after.margin + root[2]);
+    let top = collapsed_body_edge(document, &items, authored, 0).unwrap_or(y);
+    let end = collapsed_body_edge(document, &items, authored, 2).unwrap_or(body_end);
+    let decoration = super::body::decoration(document, x, top, width, end);
     Ok((items, height, decoration, context.exhausted()))
+}
+/** The padding box of a positioned body whose content box starts at (`x`, `y`), `width` wide,
+and ends at `end`; None for a static body, whose top-level absolute boxes use the viewport. */
+fn positioned_body_block(
+    body: &crate::document::ComputedStyle,
+    [x, y, width]: [f64; 3],
+    end: f64,
+) -> Option<[f64; 4]> {
+    if body.position == crate::document::Position::Static && body.transform.is_none() {
+        return None;
+    }
+    let [pt, pr, pb, pl] = body.padding;
+    Some([
+        x - pl,
+        y - pt,
+        width + pl + pr,
+        (end - y).max(0.0) + pt + pb,
+    ])
+}
+/** Where the body's border box starts (`side` 0) or ends (`side` 2) when the margin on that side
+collapses with its first or last in-flow child's (no border or padding between them, and an
+auto height for the end): at that block's border edge, as in Chromium, so the body's background
+does not show in the collapsed margin. */
+fn collapsed_body_edge(
+    document: &Document,
+    items: &[DisplayItem],
+    authored: bool,
+    side: usize,
+) -> Option<f64> {
+    let body = &document.formatting.body.style;
+    let open = body.padding[side] == 0.0 && super::sizing::border_sides(body)[side] == 0.0;
+    if !authored || !open || (side == 2 && body.height.is_some()) {
+        return None;
+    }
+    let mut flowing = document.nodes.iter().filter(|node| {
+        node.parent.is_none()
+            && !node.removed()
+            && !out_of_flow(node)
+            && node.style.float == crate::document::style::Float::None
+    });
+    let child = if side == 0 {
+        flowing.next()
+    } else {
+        flowing.next_back()
+    }?;
+    if inline_level(child) {
+        return None;
+    }
+    let item = items.iter().find(|item| item.local_id == child.local_id)?;
+    Some(if side == 0 {
+        item.y
+    } else {
+        item.y + item.height
+    })
+}
+/** The body style the wrapper lays out: a vertical body's margins belong to its rotated box
+instead (body.rs `layout_only`), so the wrapper leaves them out. */
+fn wrapper_body(document: &Document) -> crate::document::ComputedStyle {
+    let mut body = document.formatting.body.style.clone();
+    if body.vertical_writing {
+        body.margin = [0.0; 4];
+        body.margin_auto = [false; 4];
+    }
+    body
 }
 /** Consecutive root-level inline nodes share one anonymous body line, aligned like body text. */
 fn root_line(
@@ -388,14 +572,9 @@ pub(super) fn cleared_past(flow: &Flow, end: f64) -> bool {
 pub(super) fn strut(style: &crate::document::ComputedStyle) -> super::line::Strut {
     super::line::Strut::of(style)
 }
-/** text-align resolved against the base direction; justify lays out as start. */
-pub(super) fn alignment(style: &crate::document::ComputedStyle) -> super::line::Align {
-    use super::line::Align;
-    match (style.align.as_str(), style.rtl) {
-        ("center" | "webkit-center", _) => Align::Center,
-        ("right", _) | ("start", true) | ("end", false) => Align::Right,
-        _ => Align::Left,
-    }
+/** text-align and text-align-last resolved against the base direction. */
+pub(super) fn alignment(style: &crate::document::ComputedStyle) -> super::justify::Aligned {
+    super::justify::aligned(style)
 }
 /** Lays out one node, then records whether source whitespace separates it from the next run:
  * only when its own text ended in a space or whitespace followed it in the source, so adjacent
@@ -408,14 +587,20 @@ pub(super) fn node_layout(
     forced: Option<BorderBox>,
 ) -> EngineResult<()> {
     let inline_run = forced.is_none()
-        && !node.hidden()
+        && !node.removed()
         && !out_of_flow(node)
         && node.style.float == crate::document::style::Float::None
         && inline_level(node);
     if inline_run && atomic_inline(node) && flow.cursor > 0.0 && flow.space == Some(true) {
         // The space a preceding run ended with is drawn before an atomic box too; only words
         // added it, so Google's "Day: <a inline-block>" ran together.
-        let face = super::sizing::face_for(&node.style, Some(" "));
+        // The white space is the parent's text, so it takes the parent's font: under
+        // `font-size: 0` it has no width (table-vertical-align-baseline-009).
+        // A top-level box's white space is the body's.
+        let parent = node.parent.and_then(|parent| context.node(parent).ok());
+        let body = &context.document.formatting.body.style;
+        let style = parent.map_or(body, |parent| &parent.style);
+        let face = super::sizing::face_for(style, Some(" "));
         flow.cursor += context.measure(" ", face)?;
         flow.space = Some(false);
     }
@@ -429,6 +614,43 @@ pub(super) fn node_layout(
     }
     Ok(())
 }
+/** Where an out-of-flow box met in this flow would have started: below the current line for a
+block-level box, else after the line so far and a kept `space`; at the start edge, which is the
+right one in a right-to-left block (whose boxes then align their right edge there). */
+fn static_position(flow: &Flow, node: &Node, space: f64) -> (f64, f64) {
+    let block_level = !inline_level(node);
+    let (left, width) = flow.room_at(flow.y);
+    match (flow.rtl, block_level) {
+        (false, true) if flow.cursor > 0.0 => (flow.x, flow.y + flow.line),
+        // A block-level box starts at the content edge: floats shorten lines, not blocks
+        // (CSS2 abspos-028).
+        (false, true) => (flow.x, flow.y),
+        (false, false) if flow.cursor == 0.0 && flow.frags.is_empty() => {
+            (empty_line_start(flow, left, width), flow.y)
+        }
+        (false, false) => (flow.left() + flow.cursor + space, flow.y),
+        (true, true) if flow.cursor > 0.0 => (flow.x + flow.width, flow.y + flow.line),
+        (true, true) => (flow.x + flow.width, flow.y),
+        (true, false) if flow.cursor == 0.0 && flow.frags.is_empty() => {
+            (empty_line_start(flow, left, width), flow.y)
+        }
+        (true, false) => (left + width - flow.cursor - space, flow.y),
+    }
+}
+/** Where an inline-level box alone on a line starts: the line's start edge (its right one in a
+right-to-left block, where the box ends there) moved by its `text-align`, as the empty line is
+aligned in the room floats leave (inline-level-absolute-in-block-level-context-002, -008).
+Content that later joins the line moves it again in `line::place_statics`. */
+fn empty_line_start(flow: &Flow, left: f64, width: f64) -> f64 {
+    use super::line::Align;
+    match flow.align.last {
+        Align::Center => left + width / 2.0,
+        Align::Right => left + width,
+        Align::Left => left,
+        Align::Justify(_) if flow.rtl => left + width,
+        Align::Justify(_) => left,
+    }
+}
 /** Forced flex border boxes bypass authored sizing, while ordinary flow preserves its cursor. */
 fn dispatch(
     context: &mut LayoutContext<'_>,
@@ -438,29 +660,37 @@ fn dispatch(
     forced: Option<BorderBox>,
 ) -> EngineResult<()> {
     context.charge(1)?;
-    if node.hidden() {
+    if node.removed() {
         return Ok(());
     }
     if forced.is_none() && out_of_flow(node) {
-        let position = if flow.cursor > 0.0 && !inline_level(node) {
-            (flow.x, flow.y + flow.line)
+        // A collapsible space before the box is kept (the box is no break), so the static
+        // position is after it, as Blink's inline static positions are.
+        let pending = flow.cursor > 0.0 && flow.space == Some(true) && inline_level(node);
+        let space = if pending {
+            let face = super::sizing::face_for(&node.style, Some(" "));
+            context.measure(" ", face)?
         } else {
-            // A collapsible space before the box is kept (the box is no break), so the static
-            // position is after it, as Blink's inline static positions are.
-            let pending = flow.cursor > 0.0 && flow.space == Some(true);
-            let space = if pending {
-                let face = super::sizing::face_for(&node.style, Some(" "));
-                context.measure(" ", face)?
-            } else {
-                0.0
-            };
-            (flow.left() + flow.cursor + space, flow.y)
+            0.0
         };
+        let position = static_position(flow, node, space);
         context.defer(node.local_id, position);
+        if flow.rtl {
+            context.mark_static_end(node.local_id);
+        }
+        if inline_level(node) {
+            flow.statics
+                .push((node.local_id, flow.frags.len(), flow.y, space));
+        }
         return Ok(());
     }
     if forced.is_none() && node.style.float != crate::document::style::Float::None {
         return super::float::float(context, node, flow, items);
+    }
+    // A vertical subtree in a horizontal parent lays out in its own rotated space; an inline
+    // one reaches here through its atomic inline's forced box.
+    if super::vertical::is_root(context, node) && (forced.is_some() || !inline_level(node)) {
+        return super::vertical::layout(context, node, flow, items, forced);
     }
     if node.tag == "br" {
         // Blink's EnsureTextMetrics: a forced break directly in the block sits in the root box,
@@ -478,11 +708,15 @@ fn dispatch(
         flow.newline();
         return Ok(());
     }
-    if node.tag == "img" {
+    if replaced_image(node) {
         return super::image::image(context, node, flow, items, forced);
     }
     if node.tag == "svg" {
         return super::svg::svg(context, node, flow, items, forced);
+    }
+    // An inline-table goes on the line as an atomic inline; its table layout runs inside.
+    if forced.is_none() && node.style.inline_block && super::table::is_table(context, node) {
+        return super::text::atomic(context, node, flow, items);
     }
     if super::table::is_table(context, node) {
         return super::table::table(context, node, flow, items, forced);
@@ -498,10 +732,25 @@ fn dispatch(
     }
     block(context, node, flow, items, forced)
 }
+/** Replaced boxes sized from a natural size: images, canvases from their bitmap's `width` and
+`height` (render.rs `canvases`), and embedded frames. */
+pub(super) fn replaced_image(node: &Node) -> bool {
+    node.tag == "img" || node.tag == "canvas" || frame(node)
+}
+/** A box showing another document (HTML's iframe, or an object or embed the runtime loaded a
+document or drawing into): a replaced box whose content the runtime paints into its content box.
+Without a natural size it takes CSS 2.1's 300 by 150 default, never its fallback content's size. */
+pub(super) fn frame(node: &Node) -> bool {
+    node.tag == "iframe" || node.embedded && (node.tag == "object" || node.tag == "embed")
+}
 /** Boxes placed on a line as one unit: inline-blocks, replaced elements and controls. */
 fn atomic_inline(node: &Node) -> bool {
     node.style.inline_block
-        || ["img", "svg", "input", "button", "select", "textarea"].contains(&node.tag.as_str())
+        || frame(node)
+        || [
+            "img", "canvas", "svg", "input", "button", "select", "textarea",
+        ]
+        .contains(&node.tag.as_str())
 }
 /** Whitespace-only text, which a flex or grid container never makes an item of, even under
  * `white-space: pre` (the newlines between nodejs.org's grid code lines added blank rows). */
@@ -549,8 +798,10 @@ pub(super) fn block(
     // certain clearance, whatever the margin; otherwise clearance applies only when the
     // hypothetical border edge sits above the floats.
     let past_adjoining = flow.strut_open && clears_adjoining(flow, style.clear);
-    let cleared =
-        clearing.filter(|clear| past_adjoining || *clear > flow.block_top(style.margin[0]));
+    let cleared = clearing.filter(|clear| {
+        let margin = super::clearance::adjoining_top(context, node);
+        past_adjoining || *clear > flow.block_top(margin)
+    });
     if let Some(clear) = cleared {
         // Clearance separates the child's margin from its parent's open strut, which resolves
         // where the parent stands (Blink's ResolveBfcBlockOffset at the previous position).
@@ -559,45 +810,60 @@ pub(super) fn block(
         flow.collapsible = 0.0;
         flow.placed_at(clear);
     }
-    let above = (flow.y - flow.collapsible, flow.collapsible);
+    let above = (flow.y - flow.collapsible, flow.strut());
     let mut y = forced
         .map(|bounds| bounds.y)
         .or(cleared)
         .unwrap_or_else(|| flow.block_top(style.margin[0]));
     // A new formatting context sits beside floats instead of under them, in the first layout
     // opportunity its authored width fits (Blink's LayoutNewFormattingContext).
-    let (left, room) = if fresh && forced.is_none() {
+    let (left, room) = if let Some(frame) = super::multicol::spanning(context, flow, node, forced) {
+        frame
+    } else if fresh && forced.is_none() {
         let (top, left, room) = match separated_from_adjoining(flow, node, cleared) {
             Some(placed) => placed,
             None => beside_floats(flow, node, y),
         };
         y = top;
-        (left, room)
+        super::bfc_fit::refit(context, node, flow, (top, (left, room)))?
     } else {
         (flow.x, flow.width)
     };
     let width = match forced {
         Some(bounds) => bounds.width,
         // A content-sized width shrinks to fit the room, as floats do.
-        None if style.width_fit => super::float::shrink_width(
+        None if style.width_fit || super::table::shrinks(node) => super::float::shrink_width(
             context,
             node,
             room.min(flow.width),
             style.margin[1] + style.margin[3],
         )?,
-        None => border_width(
-            node,
-            flow.width,
-            (room - style.margin[1] - style.margin[3]).max(0.0),
-            None,
-        ),
+        None => {
+            let available = (room - style.margin[1] - style.margin[3]).max(0.0);
+            let aspect = aspect_width(context, node, flow.definite)?;
+            let natural =
+                aspect.or_else(|| super::sizing::transferred_width(node, flow.definite, available));
+            // A width the ratio transfers from a definite height may overflow the container.
+            let room = aspect.map_or(available, |w| available.max(w + horizontal_edges(node)));
+            border_width(node, flow.width, room, natural)
+        }
     };
     let x = forced
         .map(|bounds| bounds.x)
         .unwrap_or_else(|| left + start_margin(context, node, room, width));
     let sides = super::sizing::border_sides(style);
-    let specified = specified_height(node, forced, flow.definite)
-        .or_else(|| aspect_height(node, width, flow.definite));
+    let stretch = super::sizing::stretch_height(context, node, flow.definite);
+    let authored = specified_height(node, forced, flow.definite).or_else(|| {
+        super::sizing::stretched(node, stretch).map(|h| clamp_height(node, h, flow.definite))
+    });
+    // CSS Sizing 4's automatic minimum in the ratio-dependent axis: with `min-height: auto` and
+    // visible overflow, a height the ratio gives grows to fit the content.
+    let grows = authored.is_none()
+        && style.min_height.is_none()
+        && !style.height_bounds_fit[0]
+        && !style.height_stretch[1]
+        && style.overflow == crate::document::Overflow::Visible;
+    let specified = authored.or_else(|| aspect_height(node, width, flow.definite));
     let mut inner = flow.nested(
         x + style.padding[3] + sides[3],
         y + style.padding[0] + sides[0],
@@ -616,18 +882,40 @@ pub(super) fn block(
     ];
     inner.align = alignment(style);
     inner.ellipsis = ellipsis_owner(node);
-    inner.definite = specified.map(|height| (height - vertical_edges(node)).max(0.0));
+    inner.rtl = style.rtl;
+    if let Some(rtl) = super::plaintext::paragraph_rtl(context, node) {
+        let mut paragraph = style.clone();
+        paragraph.rtl = rtl;
+        inner.align = alignment(&paragraph);
+        inner.rtl = rtl;
+    }
+    inner.mirror_lines = style.writing_lr && !style.writing_sideways;
+    // A column flex item whose flexed height is indefinite lends its children no percentage basis.
+    // A grid still stretches its tracks to that height: its items resolve against their areas.
+    let indefinite = forced.is_some()
+        && context.indefinite_item.take() == Some(node.local_id)
+        && !style.display_grid;
+    let basis = specified.filter(|_| !indefinite);
+    inner.definite = basis
+        .map(|height| (height - vertical_edges(node)).max(0.0))
+        .or_else(|| super::sizing::quirk_definite(context, node, flow.definite));
     // A flex container is its own formatting context, so no margin collapses through it.
     let collapses = forced.is_none() && !fresh;
     let through_top = collapses && style.padding[0] == 0.0 && sides[0] == 0.0;
-    if through_top {
+    if through_top && cleared.is_some() {
+        // Clearance fixed this box's border edge; its children's adjoining top margins are
+        // spent there and leave its first child at its content top.
+        inner.set_strut(super::clearance::adjoining_strut(context, node));
+    } else if through_top {
         // A first child's top margin collapses through a parent with no top padding or border.
-        inner.collapsible = y - flow.y + flow.collapsible;
+        let joined = join(flow.strut(), style.margin[0]);
+        inner.set_strut((y - flow.y + flow.collapsible, joined.1));
         inner.strut_open = true;
         if flow.strut_open {
             inner.adjoining = flow.adjoining;
         }
     }
+    inner.trim_start = style.margin_trim[0];
     let index = items.len();
     items.push(box_item(node, x, y, width, 0.0, Vec::new()));
     if style.display_grid {
@@ -638,12 +926,17 @@ pub(super) fn block(
             node,
             &mut inner,
             items,
-            specified.map(|height| (height - vertical_edges(node)).max(0.0)),
+            basis.map(|height| (height - vertical_edges(node)).max(0.0)),
             (clamp_height(node, 0.0, flow.definite) - vertical_edges(node)).max(0.0),
         )?;
+    } else if super::multicol::applies(node) {
+        super::multicol::children(context, node, &mut inner, items, index)?;
     } else {
+        let letter = super::first_letter::open(context, node, forced.is_some());
+        let outer_open = flow.finished.is_empty() && flow.frags.is_empty();
+        let line = super::first_line_layout::open(context, node, (forced.is_some(), outer_open));
         super::generated::generated(context, node, &mut inner, items, false)?;
-        let own = super::text::own_text(node);
+        let own = super::first_letter::lead(context, node, &mut inner, items)?;
         let lines = super::text::text(context, &own, node, &mut inner, index)?;
         items[index].lines = lines;
         if !super::generated::is_generated(node) {
@@ -652,11 +945,20 @@ pub(super) fn block(
             }
         }
         super::generated::generated(context, node, &mut inner, items, true)?;
+        super::first_letter::close(context, letter);
+        super::first_line_layout::close(context, line);
     }
     inner.newline();
+    if style.margin_trim[1] {
+        trim_end(&mut inner);
+    }
     super::line::settle(context, &mut inner, items, index + 1)?;
     super::line::trim_end(&mut inner, items, style.text_box_trim[1]);
-    if through_top && let Some(top) = inner.resolved {
+    super::line_clamp::clamp(context, node, items, index, &mut inner)?;
+    if through_top
+        && cleared.is_none()
+        && let Some(top) = inner.resolved
+    {
         // The collapsed margins resolved at the first child's border edge, which is where this
         // box's border edge sits too (Blink resolves both at one BFC block offset).
         position_floats(&mut inner, items, top - y);
@@ -687,18 +989,37 @@ pub(super) fn block(
         && !inner.cleared_collapsing
         && inner.bottom <= inner.y;
     let trailing = if through { inner.collapsible } else { 0.0 };
+    let trailing_strut = if through { inner.strut() } else { (0.0, 0.0) };
     let natural =
         (inner.bottom - trailing - y + style.padding[2] + sides[2]).max(vertical_edges(node));
+    let natural = super::sizing::contained_height(node, natural);
     // A table cell's authored height is a minimum: Blink sizes the cell to the larger of it and
     // its content, and aligns the content by its own height (recorded here for the table).
     let cell =
         forced.is_none_or(|bounds| bounds.height.is_none()) && super::table::is_cell_box(node);
-    let specified = specified.map(|height| if cell { height.max(natural) } else { height });
+    let specified = specified.map(|height| {
+        if cell {
+            height.max(natural)
+        } else if grows {
+            height.max(calc_size_through(style, MIN_HEIGHT, natural))
+        } else {
+            height
+        }
+    });
     context.record_content_height(node.local_id, natural);
-    let height = clamp_height(node, specified.unwrap_or(natural), flow.definite);
+    let automatic = calc_size_through(style, HEIGHT, natural);
+    let height = clamp_height(node, specified.unwrap_or(automatic), flow.definite);
+    // A box with an aspect ratio has the height the ratio gives it as its content height.
+    let intrinsic = aspect_height(node, width, flow.definite).unwrap_or(natural);
+    let height = super::sizing::clamp_content_bounds(node, height, intrinsic, flow.definite);
+    let height = super::sizing::clamp_stretch(node, height, stretch);
     // Blink's FinishLayout: a block size other than the intrinsic one (min-height grew it, or
     // max-height cut it) separates the last child's bottom margin, which is then dropped.
-    let trailing = if height == natural { trailing } else { 0.0 };
+    let trailing_strut = if height == natural {
+        trailing_strut
+    } else {
+        (0.0, 0.0)
+    };
     items[index].height = height;
     if forced.is_none() {
         // Blink's UpdateTextBoxTrim: any in-flow block takes the first formatted line, and
@@ -723,24 +1044,42 @@ pub(super) fn block(
         flow.y = y + height;
         flow.collapsible = 0.0;
         flow.bottom = flow.bottom.max(flow.y);
-    } else if height == 0.0 {
-        // An empty block's own top and bottom margins collapse with the ones around it.
+    } else if height == 0.0 && !fresh {
+        // An empty block's own top and bottom margins collapse with the ones around it; a new
+        // formatting context's never collapse through it (CSS 2.1 8.3.1).
         // With clearance its border edge sits at the floats' bottom and the strut before the
         // clearance is separated: the margins restart at its own top margin edge (Blink's
         // ComputeInflowPosition for a self-collapsing cleared child).
         let (base, previous) = match cleared {
-            Some(clear) => (clear - style.margin[0], 0.0),
+            Some(clear) => (clear - style.margin[0], (0.0, 0.0)),
             None => above,
         };
-        let combined = collapse(collapse(previous, style.margin[0]), style.margin[2]);
-        flow.y = base + combined;
-        flow.collapsible = combined;
+        // Children whose margins collapsed through it already joined its top margin; else its
+        // own top and bottom margins join the strut before it.
+        let own = [flow.trimmed(style.margin[0]), flow.trimmed(style.margin[2])];
+        let combined = if through_top && through && cleared.is_none() && !style.margin_trim[1] {
+            join(trailing_strut, own[1])
+        } else {
+            join(join(previous, own[0]), own[1])
+        };
+        flow.y = base + combined.0;
+        flow.set_strut(combined);
         flow.bottom = flow.bottom.max(flow.y);
         flow.cleared_collapsing |= cleared.is_some();
     } else {
-        flow.after_block(y + height, collapse(style.margin[2], trailing));
+        flow.after_block_strut(y + height, join(trailing_strut, style.margin[2]));
     }
     Ok(())
+}
+/** `margin-trim: block-end`: the margins of the children adjoining the container's end are
+ * dropped, so its content ends at the last child's border edge (css-box-4). */
+fn trim_end(inner: &mut Flow) {
+    let (total, _) = inner.strut();
+    if total != 0.0 && inner.bottom == inner.y {
+        inner.y -= total;
+        inner.bottom = inner.y;
+    }
+    inner.set_strut((0.0, 0.0));
 }
 /** Blink's HandleNewFormattingContext abort: a formatting-context root with a top margin,
  * met while floats adjoin the open margin strut, is first tried with that margin collapsing
@@ -778,12 +1117,30 @@ fn clears_adjoining(flow: &Flow, clear: crate::document::style::Clear) -> bool {
         Clear::Both => left || right,
     }
 }
-/** The inline-start margin, with a legacy `<center>` parent centering narrower blocks. */
+/** The nearest ancestor that is no inline box: a block inside an inline takes its containing
+ * block's direction, not the inline's (CSS 2.1 9.2.1.1). None for the body's children. */
+fn containing_block<'a>(context: &LayoutContext<'a>, node: &Node) -> Option<&'a Node> {
+    let mut current = node.parent.and_then(|parent| context.node(parent).ok());
+    while let Some(ancestor) = current {
+        if !ancestor.style.inline || ancestor.style.inline_block {
+            return Some(ancestor);
+        }
+        current = ancestor.parent.and_then(|parent| context.node(parent).ok());
+    }
+    None
+}
+/** The inline-start margin, with a legacy `<center>` parent centering narrower blocks. In a
+ * right-to-left parent an over-constrained box keeps its right margin and the left one gives
+ * way (CSS 2.1 10.3.3). */
 fn start_margin(context: &LayoutContext<'_>, node: &Node, room: f64, width: f64) -> f64 {
-    let legacy = node
-        .parent
-        .and_then(|parent| context.node(parent).ok())
-        .is_some_and(|parent| parent.style.align == "webkit-center");
+    let parent = node.parent.and_then(|parent| context.node(parent).ok());
+    let auto = node.style.margin_auto;
+    let body = &context.document.formatting.body.style;
+    let rtl = containing_block(context, node).map_or(body.rtl, |block| block.style.rtl);
+    if rtl && !auto[1] && !auto[3] {
+        return room - width - node.style.margin[1];
+    }
+    let legacy = parent.is_some_and(|parent| parent.style.align == "webkit-center");
     if legacy && !node.style.margin_auto.iter().any(|auto| *auto) {
         let mut centered = node.style.clone();
         centered.margin_auto[1] = true;
@@ -800,6 +1157,7 @@ pub(super) fn new_context(node: &Node) -> bool {
         || style.display_grid
         || style.inline_block
         || style.flow_root
+        || style.multicol.container()
         || style.table_box == crate::document::style::TableBox::Table
         || style.float != crate::document::style::Float::None
         || out_of_flow(node)
@@ -823,12 +1181,52 @@ fn specified_height(node: &Node, forced: Option<BorderBox>, definite: Option<f64
  */
 fn aspect_height(node: &Node, width: f64, definite: Option<f64>) -> Option<f64> {
     let ratio = node.style.aspect_ratio?;
-    let height = if node.style.box_sizing == crate::document::BoxSizing::BorderBox {
+    let height = if ratio_sizes_border_box(node) {
         (width / ratio).max(vertical_edges(node))
     } else {
         (width - horizontal_edges(node)).max(0.0) / ratio + vertical_edges(node)
     };
+    let height = calc_size_through(&node.style, HEIGHT, height);
     Some(clamp_height(node, height, definite))
+}
+/** Whether `aspect-ratio` sizes the border box: under `box-sizing: border-box`, unless the
+value says `auto`, which makes a non-replaced box's ratio size its content box (CSS Sizing 4). */
+pub(super) fn ratio_sizes_border_box(node: &Node) -> bool {
+    node.style.box_sizing == crate::document::BoxSizing::BorderBox && !node.style.aspect_ratio_auto
+}
+/** The content-box width `aspect-ratio` gives an auto-width block whose height is definite (CSS
+Sizing 4's transferred size, Blink's ComputeInlineSizeForFragment), raised to its min-content
+as the automatic minimum size does; None when the width does not come from the ratio. */
+fn aspect_width(
+    context: &mut LayoutContext<'_>,
+    node: &Node,
+    definite: Option<f64>,
+) -> EngineResult<Option<f64>> {
+    let style = &node.style;
+    let Some(ratio) = style
+        .aspect_ratio
+        .filter(|_| style.width.is_none() && !style.width_fit)
+    else {
+        return Ok(None);
+    };
+    let Some(height) = specified_height(node, None, definite) else {
+        return Ok(None);
+    };
+    let content = if ratio_sizes_border_box(node) {
+        height * ratio - horizontal_edges(node)
+    } else {
+        (height - vertical_edges(node)).max(0.0) * ratio
+    };
+    let automatic = super::sizing::min_width_auto(style)
+        && style.overflow == crate::document::Overflow::Visible;
+    let minimum = if automatic {
+        let content = context.intrinsic_widths(node.local_id)?.min_content;
+        calc_size_through(style, MIN_WIDTH, content)
+    } else {
+        0.0
+    };
+    let content = calc_size_through(style, WIDTH, content);
+    Ok(Some(content.max(minimum).max(0.0)))
 }
 /** min-height and max-height bound the border-box height; min wins over max. */
 pub(super) fn clamp_height(node: &Node, height: f64, definite: Option<f64>) -> f64 {
@@ -906,6 +1304,7 @@ pub(super) fn box_item(
         rtl: false,
         vector: Vec::new(),
         radius: [0.0; 4],
+        radius_y: None,
         border_widths: if node.style.border == 0.0 && !node.style.border_style_none {
             node.style.border_widths.map(super::sizing::snap_border)
         } else {
@@ -927,6 +1326,9 @@ pub(super) fn box_item(
         font_weight: face.weight,
         font_family: face.family,
         letter_spacing: face.spacing,
+        word_spacing: node.style.word_spacing,
+        autospace: face.autospace,
+        upright: face.upright,
         underline: !node.style.text_decoration_none
             && (node.style.underline || (node.tag == "a" && node.href.is_some())),
         strikethrough: !node.style.text_decoration_none && node.style.strikethrough,
@@ -934,6 +1336,33 @@ pub(super) fn box_item(
         object_fit: crate::document::style::ObjectFit::Fill,
         object_position: super::display::default_object_position(),
         content_box: None,
+        overflow_visible: false,
         mask: None,
+        border_image: None,
+        background_clip: background_insets(node, node.style.background_clip),
+        background_border_area: node.style.background_clip == BackgroundBox::BorderArea,
+        background_rect: None,
+        slice_cut: [false; 2],
+        bare: false,
+        text_deferred: false,
+        text_echo: false,
+        paint_after: None,
+        inline_root: 0,
+        background_origin: (node.style.background_origin != BackgroundBox::PaddingBox)
+            .then(|| background_insets(node, node.style.background_origin)),
+        writing: 0,
+    }
+}
+use crate::document::style::BackgroundBox;
+use crate::document::style::{HEIGHT, MIN_HEIGHT, MIN_WIDTH, WIDTH, calc_size_through};
+/** A background box as insets from the border box: none for the border box (and the border
+area, which paints within it), the border widths for the padding box, and the padding too for
+the content box. */
+fn background_insets(node: &Node, area: BackgroundBox) -> [f64; 4] {
+    let sides = super::sizing::border_sides(&node.style);
+    match area {
+        BackgroundBox::BorderBox | BackgroundBox::BorderArea => [0.0; 4],
+        BackgroundBox::PaddingBox => sides,
+        BackgroundBox::ContentBox => std::array::from_fn(|i| sides[i] + node.style.padding[i]),
     }
 }

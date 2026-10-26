@@ -90,6 +90,8 @@ fn dispatch(name: &str, op: &str, id: &str, frame: &[u8]) -> EngineResult<Vec<u8
         ("document", "document.apply", apply),
         ("document", "document.render", render),
         ("document", "document.styles", styles),
+        ("document", "document.frame_styles", frame_styles),
+        ("document", "document.frame_render", frame_render),
         ("v9", "v9.page", page),
         ("v9", "v9.devtools", devtools),
     ];
@@ -254,6 +256,24 @@ fn styles(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
             &input.sheets,
             input.context.unwrap_or_default(),
         )
+    })
+}
+/** A frame's document styled for its content box: the same cascade under frame bounds. */
+fn frame_styles(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Styles| {
+        let context = input
+            .context
+            .ok_or_else(|| EngineError::invalid("A frame needs its viewport."))?;
+        document::compute_frame_styles(&input.document, &input.sheets, context)
+    })
+}
+/** A frame's document laid out in its content box, unscrolled. */
+fn frame_render(frame: &[u8], id: &str) -> EngineResult<Vec<u8>> {
+    typed(frame, id, |input: Render| {
+        let context = input
+            .context
+            .ok_or_else(|| EngineError::invalid("A frame needs its viewport."))?;
+        document::render_frame(&input.document, context)
     })
 }
 /** Input editing does not reinterpret its value as source. */

@@ -15,7 +15,7 @@ pub(super) fn image(
             (bounds.width - horizontal_edges(node)).max(0.0),
         );
         let top = inner.y;
-        let lines = if node.image_size.is_none() && !sized(node, flow.definite) {
+        let lines = if !shown(node) && !sized(node, flow.definite) {
             let lines = super::text::text(context, &node.text, node, &mut inner, usize::MAX)?;
             fitting_alt(lines, &node.text, inner.width)
         } else {
@@ -24,7 +24,7 @@ pub(super) fn image(
         if lines.is_empty() {
             inner.bottom = top;
         }
-        let natural_height = if node.image_size.is_some() || sized(node, flow.definite) {
+        let natural_height = if shown(node) || sized(node, flow.definite) {
             let mut fixed = node.clone();
             fixed.style.width = Some((bounds.width - horizontal_edges(node)).max(0.0));
             fixed.style.percent_width = false;
@@ -56,7 +56,7 @@ fn block_image(
 ) -> EngineResult<()> {
     flow.newline();
     let sized = sized(node, flow.definite);
-    if node.image_size.is_none() && !sized {
+    if !shown(node) && !sized {
         let lines = super::text::text(context, &node.text, node, flow, items.len())?;
         let width = lines
             .iter()
@@ -88,17 +88,72 @@ pub(super) fn intrinsic(
 ) -> EngineResult<super::sizing::IntrinsicWidths> {
     let authored_width = node.style.width.is_some() || node.attributes.contains_key("width");
     let empty_with_height = node.text.is_empty() && node.style.height.is_some();
-    let (min_content, max_content) =
-        if node.image_size.is_some() || authored_width || empty_with_height {
-            super::sizing::replaced_contribution(node)
-        } else {
-            let face = super::sizing::face_for(&node.style, Some(&node.text));
-            let width = context.measure(&node.text, face)?;
-            (width, width)
-        };
+    let (min_content, max_content) = if shown(node) || authored_width || empty_with_height {
+        super::sizing::replaced_contribution(node, percent_basis(context, node))
+    } else {
+        let face = super::sizing::face_for(&node.style, Some(&node.text));
+        let width = context.measure(&node.text, face)?;
+        (width, width)
+    };
     Ok(super::sizing::IntrinsicWidths {
         min_content,
         max_content,
+    })
+}
+/** The definite content height a replaced box's percentage height resolves against while its
+containing blocks are sized from their content (Blink resolves it for min- and max-content
+contributions too, so a float around a `height: 100%` canvas is as wide as the scaled canvas). */
+pub(super) fn percent_basis(context: &LayoutContext<'_>, node: &Node) -> Option<f64> {
+    let parent = context.node(node.parent?).ok()?;
+    // A grid or flex item's percentage resolves against its area or line, sized later.
+    if parent.style.display_grid || parent.style.display_flex {
+        return None;
+    }
+    definite_content_height(context, parent, crate::constants::DOCUMENT_DEPTH)
+}
+/** A box's definite content height: an authored length, a percentage of its own definite
+basis, the span between both insets of an absolutely positioned box, or in quirks mode an auto
+block's parent's (HTML's percentage height quirk); None when its content decides it. */
+pub(super) fn definite_content_height(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    depth: usize,
+) -> Option<f64> {
+    let style = &node.style;
+    let parent = || {
+        let parent = context.node(node.parent?).ok()?;
+        definite_content_height(context, parent, depth.checked_sub(1)?)
+    };
+    let content = match style.height {
+        Some(height) => super::sizing::content_height(style, height.resolve_size(parent())?),
+        None if super::flow::out_of_flow(node) => {
+            let basis = parent()?;
+            let top = super::positioned::inset(style, 0, basis)?;
+            let bottom = super::positioned::inset(style, 2, basis)?;
+            let margins = style.margin[0] + style.margin[2];
+            (basis - top - bottom - margins - vertical_edges(node)).max(0.0)
+        }
+        None => match ratio_height(node) {
+            Some(height) => height,
+            None if context.document.formatting.quirks && !style.inline && !style.display_flex => {
+                return parent();
+            }
+            None => return None,
+        },
+    };
+    Some(content.max(0.0))
+}
+/** The definite content height `aspect-ratio` gives a box with a fixed px width, which its
+children's percentage heights resolve against (an `aspect-ratio: 2/1; width: 200px` box is
+100px tall before layout). */
+fn ratio_height(node: &Node) -> Option<f64> {
+    let style = &node.style;
+    let ratio = style.aspect_ratio.filter(|_| !style.percent_width)?;
+    let width = super::sizing::content_size(node, style.width?, true);
+    Some(if super::flow::ratio_sizes_border_box(node) {
+        ((width + horizontal_edges(node)) / ratio - vertical_edges(node)).max(0.0)
+    } else {
+        width / ratio
     })
 }
 /** Chromium clips alt text to an image box it was given, so alt that only fits by breaking words
@@ -107,6 +162,11 @@ fn fitting_alt(lines: Vec<super::PaintLine>, alt: &str, width: f64) -> Vec<super
     let words = alt.split_whitespace().count();
     let broken = lines.len() > words || lines.iter().any(|line| line.width > width + 0.5);
     if broken { Vec::new() } else { lines }
+}
+/** Replaced content to lay out rather than alt text: a decoded image, or an embedded frame,
+which is replaced whether or not its document loaded. */
+fn shown(node: &Node) -> bool {
+    node.image_size.is_some() || super::flow::frame(node)
 }
 /** Authored CSS or HTML dimensions give an image a box even before its bytes arrive. */
 fn sized(node: &Node, definite: Option<f64>) -> bool {
@@ -140,12 +200,12 @@ fn inline_image(
     items: &mut Vec<DisplayItem>,
 ) -> EngineResult<()> {
     let (width, height) = image_size(node, flow.width, flow.definite);
-    if node.image_size.is_none() && !sized(node, flow.definite) {
+    if !shown(node) && !sized(node, flow.definite) {
         return inline_alt(context, node, flow, items);
     }
     let style = &node.style;
     let outer = width + style.margin[1] + style.margin[3];
-    if flow.cursor > 0.0 && !flow.fits(outer) {
+    if flow.cursor > 0.0 && !super::glue::held(flow) && !flow.fits(outer) {
         flow.wrap();
     }
     flow.fit(outer);
@@ -166,7 +226,7 @@ fn inline_image(
         (start, start + 1),
         outer,
         (margin_box, margin_box),
-        style,
+        (style, Some(super::text::central_offset(context, node))),
         (style.margin[3], style.margin[1]),
     );
     Ok(())

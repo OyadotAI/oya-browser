@@ -12,27 +12,26 @@ impl JsString {
     /** Default string iteration borrows code-point slices while preserving unmatched surrogates. */
     pub fn code_points(&self) -> CodePointCursor<'_> {
         CodePointCursor {
-            units: &self.0,
+            units: self.as_units(),
             offset: 0,
         }
     }
     /// Borrow raw code units for indexed reads without decoding or replacing surrogates.
     pub fn as_units(&self) -> &[u16] {
-        &self.0
+        self.0.units()
     }
     /// Only ECMAScript edge whitespace is removed; surrogate and interior units remain unchanged.
     pub fn trimmed(&self) -> EngineResult<Self> {
-        let start = self
-            .0
+        let units = self.as_units();
+        let start = units
             .iter()
             .position(|unit| !space(*unit))
             .unwrap_or(self.len());
-        let end = self
-            .0
+        let end = units
             .iter()
             .rposition(|unit| !space(*unit))
             .map_or(start, |index| index + 1);
-        Self::from_units(self.0[start..end].to_vec())
+        Self::from_units(units[start..end].to_vec())
     }
     /// Literal splitting follows requested limits while rejecting only an actual excess output field.
     pub fn split_literal(&self, separator: Option<&Self>, limit: u32) -> EngineResult<Vec<Self>> {
@@ -53,7 +52,7 @@ impl JsString {
         if count > VM_ARRAY_LENGTH {
             return Err(split_limit());
         }
-        self.0
+        self.as_units()
             .iter()
             .take(count)
             .map(|unit| Self::from_units(vec![*unit]))
@@ -61,21 +60,23 @@ impl JsString {
     }
     /** Prefix fallback keeps exact literal matching linear even for repeated near-matching text. */
     fn split_matches(&self, separator: &Self, limit: u32) -> EngineResult<Vec<Self>> {
-        let prefix = prefix_lengths(&separator.0);
+        let units = self.as_units();
+        let separator = separator.as_units();
+        let prefix = prefix_lengths(separator);
         let (mut parts, mut matched, mut start) = (Vec::new(), 0, 0);
-        for (index, unit) in self.0.iter().enumerate() {
-            matched = next_match(&separator.0, &prefix, matched, *unit);
+        for (index, unit) in units.iter().enumerate() {
+            matched = next_match(separator, &prefix, matched, *unit);
             if matched != separator.len() {
                 continue;
             }
-            push_part(&mut parts, &self.0[start..index + 1 - separator.len()])?;
+            push_part(&mut parts, &units[start..index + 1 - separator.len()])?;
             if parts.len() == limit as usize {
                 return Ok(parts);
             }
             start = index + 1;
             matched = 0;
         }
-        push_part(&mut parts, &self.0[start..])?;
+        push_part(&mut parts, &units[start..])?;
         Ok(parts)
     }
 }

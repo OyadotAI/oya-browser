@@ -24,7 +24,7 @@ fn color(document: &Document, id: &str) -> Option<String> {
 fn unknown_property_is_dropped_and_the_rest_of_the_sheet_applies() {
     let document = styled(
         "<p id=a>a</p><div id=b>b</div>",
-        "p{column-count:2;color:red} div{opacity:.5}",
+        "p{offset-path:none;color:red} div{opacity:.5}",
     );
     assert_eq!(color(&document, "a").as_deref(), Some("red"));
     assert_eq!(by_id(&document, "b").style.opacity, 0.5);
@@ -32,7 +32,7 @@ fn unknown_property_is_dropped_and_the_rest_of_the_sheet_applies() {
         document
             .diagnostics
             .iter()
-            .any(|d| d.contains("column-count"))
+            .any(|d| d.contains("offset-path"))
     );
 }
 
@@ -207,7 +207,7 @@ fn before_rules_style_only_the_generated_box() {
 
 #[test]
 fn other_pseudo_element_rules_are_dropped() {
-    let document = styled("<p id=a>a</p>", "p::first-line{color:red} p{opacity:.5}");
+    let document = styled("<p id=a>a</p>", "p::selection{color:red} p{opacity:.5}");
     assert_eq!(color(&document, "a"), None);
     assert!(
         document
@@ -256,7 +256,7 @@ fn hiding_rules_under_unknown_conditions_mask_their_targets() {
 fn offscreen_positioned_controls_are_not_actionable() {
     let document = styled(
         "<input id=a name=trap><input id=b>",
-        "#a{position:absolute;left:-9999px;top:0}",
+        "#a{position:absolute;left:-99999px;top:0}",
     );
     let a = &by_id(&document, "a").style;
     assert!(!a.interactive);

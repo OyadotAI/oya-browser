@@ -13,7 +13,9 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CFData, CFRetained};
 use objc2_core_text::CTFontManagerCreateFontDescriptorFromData;
-use objc2_foundation::{NSAttributedString, NSDictionary, NSNumber, NSString};
+use objc2_foundation::{
+    NSAttributedString, NSDictionary, NSMutableAttributedString, NSNumber, NSRange, NSString,
+};
 
 /// Loaded fonts this thread holds at once; past this the registry empties and the next
 /// `install_fonts` loads the current page's fonts again.
@@ -200,7 +202,7 @@ pub fn attributed(text: &str, size: f64, bold: bool) -> Retained<NSAttributedStr
 
 /// Link color changes presentation only; the exact font metrics remain shared.
 pub fn colored(text: &str, size: f64, bold: bool, color: &NSColor) -> Retained<NSAttributedString> {
-    styled(text, Face::system(size, bold), color, false)
+    run(text, Face::system(size, bold), color, None)
 }
 
 /// Right-to-left paragraphs set the base writing direction so AppKit shapes and orders them as RTL.
@@ -215,18 +217,29 @@ pub fn directed(
 }
 
 /// One attributed run for a full face: family, weight, letter spacing, color and direction.
-/// Paragraph style and kerning attributes are added only when they change shaping.
+/// A painted run's base direction is always its paragraph's: left unset, CoreText takes it from
+/// the first strong character and lays `א > a` out right to left in an LTR paragraph.
 pub fn styled(text: &str, face: Face, color: &NSColor, rtl: bool) -> Retained<NSAttributedString> {
+    run(text, face, color, Some(rtl))
+}
+
+/// `styled` with an optional base direction; None leaves CoreText's natural direction, which
+/// measurement keeps because it does not know the paragraph (joining Arabic measured in a forced
+/// LTR base came out wider than it paints). Kerning is added only when it changes shaping.
+fn run(text: &str, face: Face, color: &NSColor, rtl: Option<bool>) -> Retained<NSAttributedString> {
     let font = cached_font(face);
     let kern = NSNumber::new_f64(face.spacing);
     let style = NSMutableParagraphStyle::new();
-    style.setBaseWritingDirection(NSWritingDirection::RightToLeft);
+    style.setBaseWritingDirection(match rtl {
+        Some(true) => NSWritingDirection::RightToLeft,
+        _ => NSWritingDirection::LeftToRight,
+    });
     let mut objects: Vec<&AnyObject> = vec![font.as_ref(), color.as_ref()];
     // SAFETY: Apple's attribute key statics are immutable NSString constants.
     let mut keys = unsafe { vec![NSFontAttributeName, NSForegroundColorAttributeName] };
     // SAFETY: as above.
     unsafe {
-        if rtl {
+        if rtl.is_some() {
             keys.push(NSParagraphStyleAttributeName);
             objects.push(style.as_ref());
         }
@@ -236,14 +249,113 @@ pub fn styled(text: &str, face: Face, color: &NSColor, rtl: bool) -> Retained<NS
         }
     }
     // SAFETY: each key is Apple's attribute name paired with its documented value class.
-    unsafe {
+    let run = unsafe {
         let attributes = NSDictionary::from_slices(&keys, &objects);
         NSAttributedString::initWithString_attributes(
             NSAttributedString::alloc(),
             &NSString::from_str(text),
             Some(&attributes),
         )
+    };
+    let run = unspaced(run, text, face);
+    if face.autospace != super::autospace::OFF {
+        return autospaced(run, text, face);
     }
+    run
+}
+
+/// Whether the attributed run holds exactly `text`'s UTF-16 units, so ranges computed from
+/// `text` address it. Foundation drops a leading byte order mark (U+FEFF) when it builds the
+/// string, and a range past its end raises an exception that would abort the process.
+fn same_units(run: &NSAttributedString, text: &str) -> bool {
+    run.length() == text.encode_utf16().count()
+}
+
+/// A run whose zero-width controls (joiners, bidi marks and the like) take no letter spacing,
+/// as Blink's ShapeResultSpacing skips them; otherwise each added a gap of its own.
+fn unspaced(
+    run: Retained<NSAttributedString>,
+    text: &str,
+    face: Face,
+) -> Retained<NSAttributedString> {
+    let ranges = super::ignorable::ranges(text);
+    if face.spacing == 0.0 || ranges.is_empty() || !same_units(&run, text) {
+        return run;
+    }
+    let bare = NSMutableAttributedString::initWithAttributedString(
+        NSMutableAttributedString::alloc(),
+        &run,
+    );
+    let none = NSNumber::new_f64(0.0);
+    for (start, length) in ranges {
+        // SAFETY: Apple's kern key paired with its documented NSNumber value, on one scalar's
+        // range inside the string.
+        unsafe {
+            bare.addAttribute_value_range(NSKernAttributeName, &none, NSRange::new(start, length))
+        };
+    }
+    Retained::into_super(bare)
+}
+
+/// A run with `text-autospace`'s eighth of an em after each scalar before an ideograph-alpha
+/// boundary, on top of its letter spacing, so measuring and painting place the same gaps.
+fn autospaced(
+    run: Retained<NSAttributedString>,
+    text: &str,
+    face: Face,
+) -> Retained<NSAttributedString> {
+    let (at, gap) = super::autospace::gaps(text, face.size, face.autospace);
+    if at.is_empty() || !same_units(&run, text) {
+        return run;
+    }
+    let spaced = NSMutableAttributedString::initWithAttributedString(
+        NSMutableAttributedString::alloc(),
+        &run,
+    );
+    let kern = NSNumber::new_f64(face.spacing + gap);
+    for (start, length) in at {
+        // SAFETY: Apple's kern key paired with its documented NSNumber value, on one scalar's
+        // range inside the string.
+        unsafe {
+            spaced.addAttribute_value_range(NSKernAttributeName, &kern, NSRange::new(start, length))
+        };
+    }
+    Retained::into_super(spaced)
+}
+
+/// UTF-16 units of the characters CSS `word-spacing` widens: the space and the no-break space,
+/// the same two layout counts when it adds `word-spacing` to a run's width.
+const WORD_SEPARATORS: [u16; 2] = [0x20, 0xa0];
+
+/// A run as `styled` draws it, plus CSS `word-spacing`: each word separator carries `word` more
+/// advance after it. AppKit has no word spacing of its own, so without this a painter draws the
+/// words of a widened run bunched at its start while layout placed what follows past its width.
+pub fn spaced(
+    text: &str,
+    face: Face,
+    color: &NSColor,
+    rtl: bool,
+    word: f64,
+) -> Retained<NSAttributedString> {
+    let base = styled(text, face, color, rtl);
+    if word == 0.0 || !same_units(&base, text) {
+        return base;
+    }
+    let run = NSMutableAttributedString::initWithAttributedString(
+        NSMutableAttributedString::alloc(),
+        &base,
+    );
+    let kern = NSNumber::new_f64(face.spacing + word);
+    for (at, unit) in text.encode_utf16().enumerate() {
+        if WORD_SEPARATORS.contains(&unit) {
+            // SAFETY: Apple's kern key paired with its documented NSNumber value, on a one-unit
+            // range inside the string.
+            unsafe {
+                run.addAttribute_value_range(NSKernAttributeName, &kern, NSRange::new(at, 1))
+            };
+        }
+    }
+    Retained::into_super(run)
 }
 
 /// Distinct faces kept resolved; the cache resets rather than grow past this.
@@ -274,11 +386,7 @@ pub fn measure(text: &str, face: Face) -> f64 {
     if face.size <= 0.0 {
         return 0.0;
     }
-    autoreleasepool(|_| {
-        styled(text, face, &NSColor::textColor(), false)
-            .size()
-            .width
-    })
+    autoreleasepool(|_| run(text, face, &NSColor::textColor(), None).size().width)
 }
 
 /// Chromium grows the ascent of Times and Helvetica (and Courier) by this share of ascent plus descent

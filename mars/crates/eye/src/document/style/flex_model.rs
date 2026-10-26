@@ -26,6 +26,9 @@ pub enum FlexWrap {
 #[serde(rename_all = "snake_case")]
 pub enum FlexBasis {
     Auto,
+    /// `content`: sized from the item's content even when it has an authored main size, and
+    /// never definite, so a column item's percentage children stay unresolved.
+    Content,
     Pixels(f64),
     Percent(f64),
 }

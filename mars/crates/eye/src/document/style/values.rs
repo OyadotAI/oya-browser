@@ -85,9 +85,13 @@ pub(super) fn contextual_length(
     }
     let px = dimension(value, font, context)?.pixels()?;
     // A math function out of the property's range is clamped, not invalid (CSS Values 4
-    // section 10.12, Blink's CSSMathFunctionValue::ClampToPermittedRange).
+    // section 10.12, Blink's CSSMathFunctionValue::ClampToPermittedRange); a huge length is
+    // clamped too, as Blink saturates it at LayoutUnit's maximum, so `height: 100000px` is tall
+    // rather than ignored.
     let px = if is_math(value) {
         px.clamp(0.0, CSS_MAX_SCALAR)
+    } else if px > CSS_MAX_SCALAR {
+        CSS_MAX_SCALAR
     } else {
         px
     };
@@ -144,6 +148,16 @@ fn without_env(value: &str) -> EngineResult<std::borrow::Cow<'_, str>> {
 const PX_PER_IN: f64 = 96.0;
 /// Centimetres per inch.
 const CM_PER_IN: f64 = 2.54;
+/** The physical units, whose px factors are not binary fractions. */
+const PHYSICAL_UNITS: [&str; 6] = ["in", "cm", "mm", "q", "pt", "pc"];
+/** Physical unit conversions round to this many steps per px, far below a device pixel. */
+const UNIT_STEPS_PER_PX: f64 = 1.0e6;
+/** Drops the binary rounding error a unit conversion leaves: `25.4mm` is exactly 96px, not
+95.99999999999999, which a floored border width turned into 95px (CSS2 left-055). */
+fn snap_unit(px: f64) -> f64 {
+    let snapped = (px * UNIT_STEPS_PER_PX).round() / UNIT_STEPS_PER_PX;
+    if snapped.is_finite() { snapped } else { px }
+}
 /// Cap height as a share of the em, for `cap` (a typical Latin face's).
 const CAP_HEIGHT: f64 = 0.7;
 /// Blink's `line-height: normal` for the default faces, as a multiple of the font size.
@@ -153,6 +167,9 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
     // Blink stores lengths as floats and saturates them at layout, so a huge finite length such
     // as Tailwind's `calc(infinity * 1px)` (serialized `3.40282e38px`) is valid and as large as
     // a length can be; the caller's own bound then applies.
+    // Units are ASCII case-insensitive (`105Q`, `10PX`).
+    let lower = value.to_ascii_lowercase();
+    let value = lower.as_str();
     let scaled = |number: &str, scale: f64| -> EngineResult<Dimension> {
         Ok(Dimension {
             px: saturated(number)? * scale,
@@ -171,8 +188,8 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
     // as `em`. A desktop window has no dynamic toolbars, so the small, large and dynamic
     // viewport units equal the plain ones; `vi`/`vb` follow horizontal writing. `lh` uses the
     // `normal` line height, as the declared one is not known here.
-    // `ch` and `ic` measure the element's face (see `set_font_face`); ex and cap stay em ratios.
-    // ponytail: ex/cap/rch/ric from em ratios; use font metrics when the platform exposes them.
+    // `ch`, `ic`, `ex` and `cap` measure the element's face (see `set_font_face`).
+    // ponytail: rex/rcap/rch/ric from em ratios; measure the root face when a page needs them.
     let units: [(&str, f64); 37] = [
         ("svmin", width.min(height)),
         ("svmax", width.max(height)),
@@ -200,12 +217,12 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
         ("rex", root / 2.0),
         ("rch", root / 2.0),
         ("ric", root),
-        ("rlh", root * NORMAL_LINE_HEIGHT),
+        ("rlh", root_line()),
         ("em", font),
         ("ex", font / 2.0),
         ("ch", font / 2.0),
         ("ic", font),
-        ("lh", font * NORMAL_LINE_HEIGHT),
+        ("lh", own_line().unwrap_or(font * NORMAL_LINE_HEIGHT)),
         ("px", 1.0),
         ("pt", PX_PER_PT),
         ("pc", PX_PER_PT * 12.0),
@@ -225,9 +242,15 @@ pub(super) fn unit(value: &str, font: f64, context: RenderContext) -> EngineResu
             let scale = match suffix {
                 "ch" => font * zero_advance(),
                 "ic" => font * ideograph_advance(),
+                "ex" => font * edge_per_em(false).unwrap_or(EX_HEIGHT),
+                "cap" => font * edge_per_em(true).unwrap_or(CAP_HEIGHT),
                 _ => scale,
             };
-            return scaled(number, scale);
+            let mut length = scaled(number, scale)?;
+            if PHYSICAL_UNITS.contains(&suffix) {
+                length.px = snap_unit(length.px);
+            }
+            return Ok(length);
         }
     }
     if signed_number(value)? == 0.0 {
@@ -313,14 +336,18 @@ pub(super) fn contextual_color(
 thread_local! {
     /** The face of the element whose lengths are resolving, for `ch` and `ic`; None outside the
      * cascade. Font-size resolves against the parent's face, everything after against its own. */
-    static FONT_FACE: std::cell::Cell<Option<crate::platform::Face>> = const { std::cell::Cell::new(None) };
+    static FONT_FACE: std::cell::Cell<Option<StyleFaces>> = const { std::cell::Cell::new(None) };
 }
 thread_local! {
     /** Whether the current cascade measured a face for `ch` or `ic`. */
     static MEASURED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
-/** Sets (or clears) the face `ch` and `ic` measure for the lengths resolved next. */
-pub(super) fn set_font_face(face: Option<crate::platform::Face>) {
+/// A style's faces for font-relative units: its first available font (`ch`, `ex`, `cap`) and
+/// the face its family list draws U+6C34 with (`ic`, which CSS Values 4 measures in the font
+/// that has the ideograph, not in a Latin-only first font).
+pub(super) type StyleFaces = (crate::platform::Face, crate::platform::Face);
+/** Sets (or clears) the faces `ch` and `ic` measure for the lengths resolved next. */
+pub(super) fn set_font_face(face: Option<StyleFaces>) {
     if face.is_some() {
         MEASURED.with(|measured| measured.set(true));
     }
@@ -336,14 +363,23 @@ pub(super) fn take_measured() -> bool {
  * The face a computed style shapes text with, as layout picks it: a loaded page font the family
  * list names, else the generic family. Mirrors the render side so `ch` matches measured text.
  */
-pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face {
+pub(super) fn style_face(style: &super::ComputedStyle) -> StyleFaces {
+    // The first available font is the first whose faces cover a space (CSS Fonts 4 5.4), so a
+    // face whose `unicode-range` leaves the space out sets no `ex`, `cap` or `ch`.
+    (face_for(style, ' '), face_for(style, IDEOGRAPH))
+}
+/// The character `ic` measures: the CJK water ideograph.
+const IDEOGRAPH: char = '\u{6C34}';
+/** The face `style` draws `sample` with: the first loaded page font of its family list that
+ * covers it, else the generic family. */
+fn face_for(style: &super::ComputedStyle, sample: char) -> crate::platform::Face {
     use crate::{document::FontFamily, platform::Family};
     let weight = if style.bold && style.font_weight < 600 {
         700
     } else {
         style.font_weight
     };
-    let web = super::select_font(&style.font_families, weight, style.font_style, None);
+    let web = super::select_font(&style.font_families, weight, style.font_style, Some(sample));
     crate::platform::Face {
         size: style.font_size,
         weight: web.map_or(weight, |(_, clamped)| clamped),
@@ -356,14 +392,39 @@ pub(super) fn style_face(style: &super::ComputedStyle) -> crate::platform::Face 
         },
         spacing: 0.0,
         italic: style.font_style != crate::document::FontStyle::Normal,
+        autospace: crate::platform::autospace::OFF,
+        // Upright vertical text measures `ch` by the "0"'s vertical advance (CSS Values 6.1.1).
+        upright: match style.vertical_writing
+            && !style.writing_sideways
+            && style.text_orientation == 1
+        {
+            true => crate::platform::upright::UPRIGHT,
+            false => crate::platform::upright::TURNED,
+        },
     }
+}
+/** The current style's first available font, or None outside the cascade. */
+fn primary_face() -> Option<crate::platform::Face> {
+    FONT_FACE
+        .with(std::cell::Cell::get)
+        .map(|(primary, _)| primary)
 }
 /** The current face's advance of `sample` per em, or None outside the cascade. */
 fn advance_per_em(sample: &str) -> Option<f64> {
-    let face = FONT_FACE.with(std::cell::Cell::get)?;
+    let face = primary_face()?;
     let ratio = crate::platform::measure(sample, face) / face.size;
     (ratio.is_finite() && ratio > 0.0).then_some(ratio)
 }
+/** The primary font's cap height (`cap`) or x-height (`ex`) per em, as Blink's `FontMetrics`
+ * reads them; None before a face is known. */
+fn edge_per_em(cap: bool) -> Option<f64> {
+    let face = primary_face()?;
+    let (cap_height, x_height) = crate::platform::edges(face);
+    let ratio = if cap { cap_height } else { x_height } / face.size;
+    (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+}
+/// The x-height as a share of the em when no face is measured.
+const EX_HEIGHT: f64 = 0.5;
 /** Blink's `ch`: the advance of "0" in the primary font (FontMetrics zero width), else 0.5em. */
 fn zero_advance() -> f64 {
     advance_per_em("0").unwrap_or(0.5)
@@ -373,12 +434,15 @@ fn zero_advance() -> f64 {
  * fonts without that glyph, so only a page font is measured; the rest take the 1em fallback.
  */
 fn ideograph_advance() -> f64 {
-    let web = FONT_FACE.with(|face| {
-        face.get()
-            .is_some_and(|face| matches!(face.family, crate::platform::Family::Web(_)))
-    });
-    if web {
-        advance_per_em("\u{6C34}").unwrap_or(1.0)
+    let Some((_, face)) = FONT_FACE.with(std::cell::Cell::get) else {
+        return 1.0;
+    };
+    if !matches!(face.family, crate::platform::Family::Web(_)) {
+        return 1.0;
+    }
+    let ratio = crate::platform::measure(&IDEOGRAPH.to_string(), face) / face.size;
+    if ratio.is_finite() && ratio > 0.0 {
+        ratio
     } else {
         1.0
     }
@@ -386,6 +450,33 @@ fn ideograph_advance() -> f64 {
 thread_local! {
     /** The root element's font size for `rem`, set by the cascade once `html` is resolved. */
     static ROOT_FONT: std::cell::Cell<f64> = const { std::cell::Cell::new(CSS_ROOT_FONT_SIZE) };
+    /** The root element's used line height for `rlh`. */
+    static ROOT_LINE: std::cell::Cell<f64> =
+        const { std::cell::Cell::new(CSS_ROOT_FONT_SIZE * NORMAL_LINE_HEIGHT) };
+    /** The element being resolved's used line height for `lh`, once its own is computed; None
+    while the font and line-height properties themselves resolve (against the parent's). */
+    static OWN_LINE: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+}
+/** The current cascade's `rlh` size. */
+fn root_line() -> f64 {
+    ROOT_LINE.with(std::cell::Cell::get)
+}
+/** The current element's `lh` size, if it is known yet. */
+fn own_line() -> Option<f64> {
+    OWN_LINE.with(std::cell::Cell::get)
+}
+/** Sets the `rlh` size for the rest of this cascade, as `set_root_font` does `rem`. */
+pub(super) fn set_root_line(size: f64) {
+    let size = if size.is_finite() && size > 0.0 {
+        size
+    } else {
+        CSS_ROOT_FONT_SIZE * NORMAL_LINE_HEIGHT
+    };
+    ROOT_LINE.with(|root| root.set(size));
+}
+/** Sets (or with None clears) the element's own `lh` size. */
+pub(super) fn set_own_line(size: Option<f64>) {
+    OWN_LINE.with(|own| own.set(size.filter(|size| size.is_finite() && *size > 0.0)));
 }
 /** The current cascade's `rem` size. */
 fn root_font() -> f64 {
@@ -405,13 +496,14 @@ pub(super) fn set_root_font(size: f64) {
  * integer, halves toward positive infinity (CSS Values 4 "Range Checking", Blink's
  * CSSMathFunctionValue::ComputeInteger), so `z-index: calc(-10)` is -10 rather than invalid.
  */
-const INTEGER: [&str; 6] = [
+const INTEGER: [&str; 7] = [
     "z-index",
     "order",
     "orphans",
     "widows",
     "column-count",
     "-webkit-line-clamp",
+    "max-lines",
 ];
 /** `value` with a numeric math function rounded to an integer for `<integer>` properties. */
 pub(super) fn integer_math<'v>(key: &str, value: &'v str) -> std::borrow::Cow<'v, str> {
