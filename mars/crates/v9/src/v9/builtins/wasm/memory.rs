@@ -83,6 +83,9 @@ pub(super) fn storage(vm: &mut Vm, memory: &JsValue) -> Res<ObjectId> {
     let storage = get(vm, object, MEMORY)
         .and_then(|v| v.object())
         .ok_or_else(|| vm.type_error("invalid WebAssembly memory record"))?;
+    if super::super::buffer_immutable(vm, storage) {
+        return Err(vm.type_error("WebAssembly memory cannot have immutable backing"));
+    }
     let length = match vm.heap.get(storage).map(|o| &o.class) {
         Some(Class::ArrayBuffer(b)) => Some(b.0.len()),
         Some(Class::SharedArrayBuffer(b)) => Some(b.backing_len()),

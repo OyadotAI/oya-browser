@@ -4,6 +4,7 @@ use crate::v9::vm::data::{Class, IterKind, IterState, Table};
 use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{NativeFn, Static, realm, string, symbol};
 
+mod construct;
 mod set_algebra;
 mod set_predicates;
 mod set_record;
@@ -199,25 +200,7 @@ fn construct(vm: &mut Vm, call: Call, kind: Kind) -> Res<JsValue> {
     if source.nullish() {
         return Ok(JsValue::Object(id));
     }
-    let adder = vm.get(
-        &JsValue::Object(id),
-        &key(if matches!(kind, Kind::Map | Kind::WeakMap) {
-            "set"
-        } else {
-            "add"
-        }),
-    )?;
-    for item in vm.iterate_to_vec(&source)? {
-        let args = if matches!(kind, Kind::Map | Kind::WeakMap) {
-            if !matches!(item, JsValue::Object(_)) {
-                return Err(vm.type_error("Iterator value is not an entry object"));
-            }
-            vec![vm.get(&item, &key("0"))?, vm.get(&item, &key("1"))?]
-        } else {
-            vec![item]
-        };
-        vm.call(adder.clone(), JsValue::Object(id), args)?;
-    }
+    construct::populate(vm, id, kind, source)?;
     Ok(JsValue::Object(id))
 }
 

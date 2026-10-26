@@ -163,6 +163,9 @@ impl Vm<'_> {
         for value in &self.pins {
             marker.value(value);
         }
+        for holder in &self.async_drivers {
+            marker.object(*holder);
+        }
         for value in self.kept_weak.values() {
             marker.value(value);
         }

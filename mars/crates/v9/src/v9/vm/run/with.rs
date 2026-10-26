@@ -45,7 +45,7 @@ impl Vm<'_> {
         };
         let value = if self.has_property(id, &key)? {
             self.get(&JsValue::Object(id), &key)?
-        } else if self.frame().code.strict {
+        } else if self.reference_strict() {
             let name = self.constant(name).lossy();
             return Err(self.reference_error(&format!("{name} is not defined")));
         } else {
@@ -64,7 +64,7 @@ impl Vm<'_> {
             self.push(JsValue::Boolean(false));
             return Ok(());
         };
-        let strict = self.frame().code.strict;
+        let strict = self.reference_strict();
         if !self.has_property(id, &key)? && strict {
             let name = self.constant(name).lossy();
             return Err(self.reference_error(&format!("{name} is not defined")));

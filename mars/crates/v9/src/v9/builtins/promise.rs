@@ -1,11 +1,13 @@
 /** Promise, its reaction jobs, and the microtask queue every request drains. */
 use super::*;
+mod forwarding;
 use crate::protocol::EngineError;
 use crate::v9::vm::Resume;
 use crate::v9::vm::Thrown;
 use crate::v9::vm::data::{Class, Job, PromiseData, PromiseState, Reaction, ReactionHandler};
 use crate::v9::vm::heap::{CONFIGURABLE, Object};
 use crate::v9::vm::realm::{Static, realm, string, symbol};
+pub(in crate::v9) use forwarding::{forwarding_promise, resolving_promise};
 
 /** Native slots for the resolving functions and combinators. */
 struct Natives {

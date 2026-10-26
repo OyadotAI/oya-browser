@@ -88,6 +88,9 @@ pub(in crate::v9) fn is_extensible(vm: &mut Vm, id: ObjectId) -> Res<bool> {
 /** O.[[PreventExtensions]](). */
 pub(super) fn prevent_extensions(vm: &mut Vm, id: ObjectId) -> Res<bool> {
     let Some(proxy) = vm.proxy_of(id) else {
+        if !super::typed::can_prevent_extensions(vm, id) {
+            return Ok(false);
+        }
         vm.materialize(id)?;
         if let Some(object) = vm.heap.get_mut(id) {
             object.extensible = false;

@@ -165,7 +165,7 @@ impl Compiler {
     /** The caller's environment scopes at a direct eval call, as context text. */
     pub(super) fn eval_context(&self) -> String {
         let state = self.f_ref();
-        let mut text = String::from(match (state.strict, state.in_params) {
+        let mut text = String::from(match (state.effective_strict(), state.in_params) {
             (true, _) => "s|",
             (false, true) => "p|",
             (false, false) => "n|",

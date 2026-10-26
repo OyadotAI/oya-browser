@@ -2,11 +2,34 @@
 use super::*;
 use crate::v9::vm::heap::{CONFIGURABLE, Slot, WRITABLE};
 
+/** RAB-backed typed arrays and length-tracking shared views cannot commit a fixed property layout. */
+pub(in crate::v9::builtins) fn can_prevent_extensions(vm: &Vm, id: ObjectId) -> bool {
+    let Some(object) = vm.heap.get(id) else {
+        return true;
+    };
+    if !object.extensible {
+        return true;
+    }
+    let Class::View(view) = &object.class else {
+        return true;
+    };
+    if view.kind == ElementKind::DataView {
+        return true;
+    }
+    let backed_by_rab = matches!(
+        vm.heap.get(view.buffer).map(|buffer| &buffer.class),
+        Some(Class::ArrayBuffer(_))
+    ) && buffer_maximum(vm, view.buffer).is_some();
+    !view.tracking && !backed_by_rab
+}
+
 /** V8's fixed indexed storage is sealed when extension stops, but live elements remain mutable. */
 pub(in crate::v9::builtins) fn integrity_status(vm: &Vm, id: ObjectId, bits: u8) -> Option<bool> {
     let view = view_of(vm, id).filter(|view| view.kind != ElementKind::DataView)?;
     let object = vm.heap.get(id)?;
-    if object.extensible || bits & WRITABLE != 0 && view.length != 0 {
+    if object.extensible
+        || bits & WRITABLE != 0 && view.length != 0 && !buffer_state::immutable(vm, view.buffer)
+    {
         return Some(false);
     }
     Some(object.props.iter().all(|(key, prop)| {

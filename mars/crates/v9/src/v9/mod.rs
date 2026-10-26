@@ -26,6 +26,8 @@ pub use worker_runtime::{ConformanceWorkerHost, ConformanceWorkerSession};
 
 pub use binding::{Binding, BindingKind, Globals};
 pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSource};
+#[cfg(feature = "conformance")]
+pub use platform::CpuTraceMark;
 pub use platform::NodeBox;
 pub use platform::devtools;
 pub use platform::{
@@ -174,6 +176,8 @@ impl VmState {
     }
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
+        #[cfg(feature = "conformance")]
+        builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
         builtins::validate_shared(&self.heap)?;
         builtins::validate_shared_gc(&self.heap)?;
@@ -210,6 +214,8 @@ impl VmState {
             .map(|binding| binding.value.as_ref().map_or(0, JsValue::string_units))
             .sum();
         let global_bindings = self.globals.len();
+        #[cfg(feature = "conformance")]
+        let global_units = global_units + self.page.cpu_profile.units();
         #[cfg(feature = "conformance")]
         let (global_units, global_bindings) = (
             global_units + self.realms.units(),
@@ -607,6 +613,8 @@ fn session<'h>(
     }
     storage.validate()?;
     builtins::validate_timezone(environment)?;
+    #[cfg(feature = "conformance")]
+    builtins::validate_conformance_environment(environment)?;
     let languages = validate_languages(host.languages)?;
     let state = state.unwrap_or_default();
     state.validate(&limits)?;

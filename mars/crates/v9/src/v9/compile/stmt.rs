@@ -861,7 +861,10 @@ impl Compiler {
 }
 
 /** Loops take their labels directly so `continue label` reaches them. */
-fn is_loop(stmt: &Stmt) -> bool {
+fn is_loop(mut stmt: &Stmt) -> bool {
+    while let StmtKind::Labeled(_, body) = &stmt.kind {
+        stmt = body;
+    }
     matches!(
         stmt.kind,
         StmtKind::For { .. }

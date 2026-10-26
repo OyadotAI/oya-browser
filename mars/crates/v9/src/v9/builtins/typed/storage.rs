@@ -27,6 +27,9 @@ pub(in crate::v9) fn read_range(
 }
 /** Normal and shared writes use the same range checks, with synchronization only where necessary. */
 pub(in crate::v9) fn write_range(vm: &mut Vm, id: ObjectId, start: usize, bytes: &[u8]) -> bool {
+    if buffer_state::immutable(vm, id) {
+        return false;
+    }
     match vm.heap.get_mut(id).map(|object| &mut object.class) {
         Some(Class::ArrayBuffer(buffer)) => match start
             .checked_add(bytes.len())

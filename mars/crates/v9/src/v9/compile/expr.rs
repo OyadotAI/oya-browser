@@ -672,7 +672,10 @@ impl Compiler {
                     self.emit(Op::Pop);
                 }
             }
-            ExprKind::Member(object, prop, _) if !matches!(object.kind, ExprKind::Super) => {
+            ExprKind::Member(object, prop, _) if matches!(object.kind, ExprKind::Super) => {
+                return self.super_update(prop, increment, prefix, target.pos);
+            }
+            ExprKind::Member(object, prop, _) => {
                 self.expr(object)?;
                 match prop {
                     MemberProp::Computed(key) => {
@@ -802,7 +805,7 @@ impl Compiler {
         Ok(())
     }
     /** Push the home object of the method `super` refers to. */
-    fn load_home(&mut self) -> EngineResult<()> {
+    pub(super) fn load_home(&mut self) -> EngineResult<()> {
         if self.resolve("%home").is_some() {
             self.load_name(&Name::from("%home"), Pos::default())
         } else {

@@ -79,20 +79,6 @@ fn field(call: &Call) -> &'static str {
         .unwrap_or("")
 }
 
-/** Legacy getters require the intrinsic constructor rather than arbitrary inherited receivers. */
-fn owner(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
-    let proto = realm().ids.regexp_prototype;
-    let expected = realm()
-        .object(proto)
-        .and_then(|definition| definition.get(&key("constructor")));
-    if expected
-        .is_some_and(|(_, value, _)| matches!(value, Static::Value(value) if *value == call.this))
-    {
-        return Ok(proto);
-    }
-    Err(vm.type_error("RegExp static accessor called on an incompatible receiver"))
-}
-
 /** Read a private data record without invoking script accessors on a forged or changed value. */
 fn data(vm: &Vm, owner: ObjectId, name: &str) -> Option<JsValue> {
     match &vm.heap.get(owner)?.props.get(&Key::private(name))?.slot {
@@ -122,7 +108,7 @@ fn positions<'a>(vm: &'a Vm<'_>, owner: ObjectId) -> &'a [JsValue] {
 
 /** Match contexts and every numbered group are slices of the original UTF-16 subject. */
 fn get_stat(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let owner = owner(vm, &call)?;
+    let owner = realm().ids.regexp_prototype;
     let name = field(&call);
     if matches!(name, "input" | "$_") {
         return Ok(
@@ -173,7 +159,7 @@ fn span(values: &[JsValue], index: usize) -> Option<(usize, usize)> {
 
 /** Only input has a meaningful setter; readonly compatibility setters leave match facts intact. */
 fn set_stat(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let owner = owner(vm, &call)?;
+    let owner = realm().ids.regexp_prototype;
     if matches!(field(&call), "input" | "$_") {
         let value = vm.to_string(&call.arg(0))?;
         vm.materialize(owner)?;

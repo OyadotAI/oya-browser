@@ -104,6 +104,8 @@ impl Compiler {
         if self_name
             && let Some(name) = &func.name
             && !params.contains(name)
+            // The activation's implicit arguments object shadows the expression's outer self binding.
+            && !(uses.arguments && &**name == "arguments" && !func.flags.arrow && !func.flags.fields)
             && (!vars.contains(name) || super::parameters::expressions(func))
         {
             self.declare(name, Declared::FunctionName)?;
@@ -264,6 +266,10 @@ impl Compiler {
     }
     /** A computed field's anonymous class receives its captured name before static initialization. */
     fn class_named(&mut self, class: &Class, name: Option<Slot>) -> EngineResult<()> {
+        self.strict_region(|compiler| compiler.class_definition(class, name))
+    }
+    /** Class heritage and computed keys execute as strict expressions even in a sloppy outer function. */
+    fn class_definition(&mut self, class: &Class, name: Option<Slot>) -> EngineResult<()> {
         self.at(class.pos);
         let mark = self.f().registers;
         let named = class.name.clone();
@@ -558,7 +564,7 @@ impl Compiler {
                 self.emit(Op::ThrowConst(index));
             }
             Some((_, Declared::FunctionName, _)) => {
-                if self.f().strict {
+                if self.f().effective_strict() {
                     self.emit(Op::ThrowConst(index));
                 }
             }

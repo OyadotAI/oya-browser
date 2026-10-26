@@ -33,6 +33,13 @@ fn receiver(vm: &mut Vm, call: &Call) -> Res<ViewData> {
     Ok(view)
 }
 
+/** Mutating codecs reject read-only backing before observing input strings or option getters. */
+fn write_receiver(vm: &mut Vm, call: &Call) -> Res<ViewData> {
+    let view = receiver(vm, call)?;
+    immutable::writable(vm, view.buffer)?;
+    Ok(view)
+}
+
 /** Encoder options are observed before the final bounds witness, after an unobservable native brand check. */
 fn brand(vm: &mut Vm, call: &Call) -> Res<ViewData> {
     let view = call

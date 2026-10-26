@@ -38,7 +38,7 @@ enum Kind {
     Set(Vec<Atom>),
     Wrapper(JsValue),
     Error(String, Vec<(String, Atom)>),
-    Buffer(Vec<u8>, Option<usize>),
+    Buffer(Vec<u8>, Option<usize>, bool),
     Shared(SharedBytes),
     SharedGc(crate::v9::vm::data::SharedGc),
     WasmModule(crate::v9::builtins::WasmModulePacket),
@@ -223,6 +223,7 @@ fn atom(
                     } else {
                         crate::v9::builtins::buffer_maximum(vm, id)
                     },
+                    crate::v9::builtins::buffer_immutable(vm, id),
                 )
             }
             Class::SharedArrayBuffer(buffer) => Kind::Shared(buffer),
@@ -315,7 +316,7 @@ fn shell(vm: &mut Vm, kind: &Kind) -> Res<ObjectId> {
             Class::Set(Box::<Table>::default()),
             Some(ids.set_prototype),
         )),
-        Kind::Buffer(bytes, _) => vm.alloc(Object::new(
+        Kind::Buffer(bytes, _, _) => vm.alloc(Object::new(
             Class::ArrayBuffer(Bytes(bytes.clone())),
             Some(ids.array_buffer_prototype),
         )),
@@ -374,7 +375,14 @@ fn fill(vm: &mut Vm, id: ObjectId, node: Node, objects: &[ObjectId]) -> Res<()> 
                 Some(crate::v9::vm::realm::realm().ids.view_prototypes[kind as usize]),
             )?;
         }
-        Kind::Buffer(_, Some(maximum)) => crate::v9::builtins::set_buffer_maximum(vm, id, maximum),
+        Kind::Buffer(_, maximum, immutable) => {
+            if let Some(maximum) = maximum {
+                crate::v9::builtins::set_buffer_maximum(vm, id, maximum);
+            }
+            if immutable {
+                crate::v9::builtins::make_buffer_immutable(vm, id);
+            }
+        }
         Kind::Error(_, fields) => {
             for (name, value) in fields {
                 vm.define(

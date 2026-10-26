@@ -208,7 +208,13 @@ fn import_meta(vm: &mut Vm, key: &str) -> Res<ObjectId> {
         .modules
         .compiled
         .get(key)
-        .map(|module| module.base.to_string())
+        .map(|module| {
+            #[cfg(feature = "conformance")]
+            if vm.page.environment.conformance_d8 && key.starts_with("data:text/javascript,") {
+                return key.to_string();
+            }
+            module.base.to_string()
+        })
         .unwrap_or_default();
     let meta = vm.new_object()?;
     vm.pin(JsValue::Object(meta));

@@ -18,6 +18,8 @@ mod pattern;
 mod resources;
 mod scan;
 mod stmt;
+mod strict;
+mod super_update;
 
 use super::errors;
 use super::syntax::{Body, Expr, Func, FuncFlags, Name, Pos, Program, Stmt};
@@ -173,6 +175,12 @@ pub(in crate::v9) enum Op {
     SetSuper(u32),
     /** this home key value -> value */
     SetSuperElem,
+    /** home -> its captured prototype or null, before computed-key conversion. */
+    CaptureSuperBase,
+    /** receiver captured-base key -> same reference plus its value. */
+    ReadSuperReference,
+    /** receiver captured-base key value -> value, writing through the retained reference. */
+    WriteSuperReference,
     ToPropertyKey,
     /** object raw-key -> object canonical-key, checking the receiver before authored key coercion. */
     ToElementKey,
@@ -267,6 +275,8 @@ pub(in crate::v9) enum Op {
     IterNext(u32),
     /** iter -> iter value (undefined once done), for destructuring. */
     IterStep,
+    /** iter -> undefined, advancing an elision without observing the result's value property. */
+    IterSkip,
     /** iter -> array of the remaining values */
     IterRest,
     /** iter -> (closes it unless already done) */
@@ -313,8 +323,10 @@ pub(in crate::v9) struct Code {
     pub site: u32,
     /// Function kind.
     pub flags: FuncFlags,
-    /// Strict-mode code.
+    /// Function-level strict mode controls activation semantics and stack privacy.
     pub strict: bool,
+    /// Half-open instruction ranges whose references are strict inside an otherwise sloppy function.
+    pub strict_ranges: Vec<(u32, u32)>,
     /// Observable function name.
     pub name: JsString,
     /// Exact source is shared by all functions compiled from one source unit.
@@ -382,6 +394,7 @@ impl Code {
             + strings(&self.strings)
             + templates
             + self.positions.len() * std::mem::size_of::<(u32, Pos)>()
+            + self.strict_ranges.len() * std::mem::size_of::<(u32, u32)>()
             + self.caches.bytes()
     }
 }
@@ -652,6 +665,10 @@ struct FnState {
     /// Index of the first scope of this function in the shared stack.
     scope_base: usize,
     strict: bool,
+    /// A strict expression being emitted within this function, never an executing VM mode.
+    lexical_strict: bool,
+    /// Sorted strict instruction ranges for an otherwise sloppy activation.
+    strict_ranges: Vec<(u32, u32)>,
     flags: FuncFlags,
     /// Open optional chains.
     chains: Vec<expr::Chain>,
@@ -692,6 +709,7 @@ impl Compiler {
     /** Append an instruction, returning its index. */
     fn emit(&mut self, op: Op) -> usize {
         let state = self.f();
+        state.record_strict(state.ops.len() as u32);
         state.ops.push(op);
         state.ops.len() - 1
     }
@@ -868,6 +886,7 @@ impl Compiler {
             site,
             flags,
             strict,
+            strict_ranges: state.strict_ranges,
             name,
             source: None,
             source_span: func.and_then(|func| *func.source_span.borrow()),

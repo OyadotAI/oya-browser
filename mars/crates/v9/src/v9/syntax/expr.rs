@@ -466,6 +466,9 @@ impl Parser {
             } else {
                 list.push(Element::Value(self.assignment(false)?));
             }
+            if list.len() > crate::constants::FUNCTION_PARAMETERS {
+                return Err(self.error_at(self.pos(), "Too many arguments in function call"));
+            }
             if !self.at(")") {
                 self.expect(",")?;
             }

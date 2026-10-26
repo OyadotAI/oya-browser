@@ -555,7 +555,10 @@ impl Vm<'_> {
     /** Run (or resume) an async frame; on await, park it in `holder` and subscribe to the value. */
     pub fn drive_async(&mut self, holder: ObjectId, resume: Option<(Resume, JsValue)>) -> Res<()> {
         let bank = self.object_realm(holder);
-        self.with_realm(bank, |vm| vm.drive_async_in(holder, resume))
+        self.async_drivers.push(holder);
+        let result = self.with_realm(bank, |vm| vm.drive_async_in(holder, resume));
+        self.async_drivers.pop();
+        result
     }
     /** Module continuations have no function callee; their real async holder owns the execution realm. */
     fn drive_async_in(&mut self, holder: ObjectId, resume: Option<(Resume, JsValue)>) -> Res<()> {
@@ -716,7 +719,10 @@ impl Vm<'_> {
             return Ok(Exit::Return(JsValue::Undefined));
         };
         self.set_generator(generator, GeneratorState::Running, None);
-        self.restore_frame(frame, true)?;
+        if let Err(error) = self.restore_frame(frame, true) {
+            self.set_generator(generator, GeneratorState::Done, None);
+            return Err(error);
+        }
         if state == GeneratorState::Yielded {
             self.resume_with(mode, value)?;
         }

@@ -494,6 +494,9 @@ impl Parser {
             }
             Some(ForInit::Expr(value))
         };
+        if is_await {
+            return Err(self.error_at(self.pos(), "for await requires an of clause"));
+        }
         self.expect(";")?;
         let test = if self.at(";") {
             None
@@ -518,6 +521,9 @@ impl Parser {
     /** The rest of a for-in or for-of loop after its head. */
     fn for_each(&mut self, head: ForHead, is_await: bool) -> EngineResult<StmtKind> {
         let of = self.at_name("of");
+        if is_await && !of {
+            return Err(self.error_at(self.pos(), "for await requires an of clause"));
+        }
         if !of && matches!(head, ForHead::Declare(kind, _) if kind.resource()) {
             return Err(self.error_at(
                 self.pos(),
@@ -579,7 +585,7 @@ impl Parser {
         if self.labels.iter().any(|(label, _)| *label == name) {
             return Err(self.error_at(pos, &format!("Label '{name}' has already been declared")));
         }
-        let is_loop = matches!(&self.peek().kind, Kind::Name(n) if ["for", "while", "do"].contains(&n.as_str()));
+        let is_loop = self.labeled_loop();
         self.labels.push((name.clone(), is_loop));
         // A labelled function is sloppy Annex B grammar, and only where a declaration may stand.
         let body = if self.at_name("function") {
@@ -598,6 +604,18 @@ impl Parser {
         };
         self.labels.pop();
         Ok(StmtKind::Labeled(name, Box::new(body?)))
+    }
+    /** Direct chains share the loop's continue target; a block, conditional or function stops that chain. */
+    fn labeled_loop(&self) -> bool {
+        let mut offset = 0;
+        while matches!(self.peek_at(offset).kind, Kind::Name(_))
+            && matches!(self.peek_at(offset + 1).kind, Kind::Symbol(':'))
+        {
+            offset += 2;
+        }
+        let token = self.peek_at(offset);
+        !token.escaped
+            && matches!(&token.kind, Kind::Name(name) if matches!(name.as_str(), "for" | "while" | "do"))
     }
     /** `try {} catch (e) {} finally {}` */
     fn try_statement(&mut self) -> EngineResult<StmtKind> {

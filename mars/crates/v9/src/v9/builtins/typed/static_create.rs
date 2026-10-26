@@ -10,11 +10,12 @@ fn create(vm: &mut Vm, constructor: JsValue, length: usize) -> Res<JsValue> {
         .object()
         .and_then(|id| view_of(vm, id))
         .filter(|view| view.kind != ElementKind::DataView && !view.invalid);
-    if view.is_none_or(|view| view.length < length) {
+    if view.as_ref().is_none_or(|view| view.length < length) {
         return Err(
             vm.type_error("TypedArray constructor returned an invalid or short typed array")
         );
     }
+    immutable::writable(vm, view.expect("validated view").buffer)?;
     Ok(target)
 }
 

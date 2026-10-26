@@ -9,6 +9,10 @@ mod clone;
 mod collections;
 #[cfg(feature = "conformance")]
 mod conformance;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::{
+    ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state,
+};
 mod date;
 pub(in crate::v9) use date::validate_timezone;
 mod disposal;
@@ -32,6 +36,7 @@ mod object;
 pub(in crate::v9) use object::freeze_object;
 pub(in crate::v9) mod promise;
 mod promise_combinators;
+pub(in crate::v9) use promise_combinators::{AllTrace, all_trace as promise_all_trace};
 mod proxy;
 mod reflect;
 mod regexp;
@@ -42,6 +47,7 @@ mod temporal;
 pub(in crate::v9) mod typed;
 mod wasm;
 mod weak;
+pub(in crate::v9) use wasm::trace_metadata as wasm_trace_metadata;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use wasm::wasm_worker_restore_shared_gc;
 #[cfg(feature = "conformance")]
@@ -66,10 +72,11 @@ pub(in crate::v9) use object::{from_descriptor, to_descriptor};
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use typed::{buffer_detachable, buffer_detached};
 pub(in crate::v9) use typed::{
-    buffer_maximum, define_integer as typed_define_integer, detach_buffer,
+    buffer_immutable, buffer_maximum, define_integer as typed_define_integer, detach_buffer,
     integer_index as typed_index, keys_length as typed_keys_length, load as typed_load,
-    numeric_index as typed_numeric_index, protect_buffer, random_values, set_buffer_maximum,
-    set_integer as typed_set_integer, valid_buffer, valid_view as valid_typed_view, view_of,
+    make_buffer_immutable, numeric_index as typed_numeric_index, protect_buffer, random_values,
+    set_buffer_maximum, set_integer as typed_set_integer, valid_buffer, valid_immutable_brand,
+    valid_view as valid_typed_view, view_of,
 };
 pub(in crate::v9) use typed::{
     import_shared_buffer, initialize_shared, notify_shared, validate_shared,
@@ -80,7 +87,12 @@ pub(in crate::v9) use weak::schedule_cleanup as schedule_finalization;
 
 /** A symbol's description for display. */
 pub(in crate::v9) fn symbol_text(vm: &Vm, id: u32) -> String {
-    symbol::symbol_description(vm, id).unwrap_or_default()
+    symbol_description(vm, id).unwrap_or_default()
+}
+
+/** Native shell output distinguishes a missing symbol description from an explicitly empty description. */
+pub(in crate::v9) fn symbol_description(vm: &Vm, id: u32) -> Option<String> {
+    symbol::symbol_description(vm, id)
 }
 
 use super::value::{JsString, JsValue, ObjectId};
@@ -88,6 +100,8 @@ use super::vm::heap::Key;
 use super::vm::realm::Builder;
 use super::vm::{Call, Res, Vm};
 
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::enqueue_shell_microtask;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use conformance::is_test_exit;
 #[cfg(feature = "conformance")]
@@ -98,6 +112,11 @@ pub(in crate::v9) use conformance::{WorkerGraph, worker_activate, worker_decode}
 pub(in crate::v9) use conformance::{
     async_hook_after, async_hook_before, async_hook_init, async_hook_resolve, async_hook_resource,
     async_hook_unwind, conformance_host_object, expose_async_hooks, expose_conformance_globals,
+};
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::{
+    console_output as conformance_console,
+    validate_environment as validate_conformance_environment, validate_native_test_object,
 };
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use function::to_string as function_to_string;

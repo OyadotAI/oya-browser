@@ -52,6 +52,7 @@ fn trace(vm: &mut Vm, error: Thrown, index: u32, position: usize) -> Thrown {
 }
 /** A function activation owns its locals and operand stack for exactly one invocation. */
 struct Activation<'a> {
+    trace: Option<usize>,
     index: u32,
     instance: ObjectId,
     module: &'a Module,
@@ -166,7 +167,13 @@ fn activation(
     let body = &module.bodies[index as usize - module.imported_functions()];
     let mut locals = args;
     locals.extend(body.locals.iter().map(|t| global::default(*t)));
+    let position = match body.code.first() {
+        Some(Instruction::Located(position, _)) => *position,
+        _ => 0,
+    };
+    let trace = vm.begin_wasm_activation(instance, index, position);
     let mut activation = Activation {
+        trace: Some(trace),
         index,
         instance,
         module,
@@ -179,6 +186,7 @@ fn activation(
     };
     let result = activation.sequence(vm, &body.code);
     activation.roots.release(vm);
+    vm.end_native_activation(trace);
     match result? {
         Flow::Next => Ok(Flow::Return(activation.take(signature.results.len())?)),
         Flow::Branch(0, values) => Ok(Flow::Return(values)),
@@ -306,9 +314,13 @@ impl Activation<'_> {
                 )?;
             }
             let flow = match instruction {
-                Instruction::Located(position, inner) => self
-                    .sequence(vm, std::slice::from_ref(inner.as_ref()))
-                    .map_err(|error| trace(vm, error, self.index, *position))?,
+                Instruction::Located(position, inner) => {
+                    if let Some(trace) = self.trace {
+                        vm.set_wasm_position(trace, *position)?;
+                    }
+                    self.sequence(vm, std::slice::from_ref(inner.as_ref()))
+                        .map_err(|error| trace(vm, error, self.index, *position))?
+                }
                 Instruction::Constant(c) => {
                     self.stack
                         .push(instance::constant_value(vm, self.instance, c)?);

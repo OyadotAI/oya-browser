@@ -167,17 +167,21 @@ pub(in crate::v9) fn to_descriptor(vm: &mut Vm, value: &JsValue) -> Res<Descript
     };
     desc.enumerable = flag(vm, "enumerable")?;
     desc.configurable = flag(vm, "configurable")?;
-    desc.writable = flag(vm, "writable")?;
     if vm.has_property(*id, &key("value"))? {
         desc.value = Some(vm.get(&target, &key("value"))?);
     }
+    desc.writable = flag(vm, "writable")?;
     for (name, slot) in [("get", 0), ("set", 1)] {
         if vm.has_property(*id, &key(name))? {
             let function = vm.get(&target, &key(name))?;
             let function = match function {
                 JsValue::Undefined => None,
                 JsValue::Object(f) if vm.is_callable(&function) => Some(f),
-                _ => return Err(vm.type_error(&format!("Getter must be a function: {name}"))),
+                _ => {
+                    let kind = if slot == 0 { "Getter" } else { "Setter" };
+                    let description = super::function::diagnostic_receiver(vm, &function)?;
+                    return Err(vm.type_error(&format!("{kind} must be a function: {description}")));
+                }
             };
             if slot == 0 {
                 desc.get = Some(function);
@@ -368,15 +372,18 @@ fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     if !super::integrity::prevent_extensions(vm, id)? {
         return Err(vm.type_error("Cannot prevent extensions"));
     }
-    if super::typed::view_of(vm, id).is_some_and(|view| {
-        view.kind != crate::v9::vm::data::ElementKind::DataView && view.length != 0
-    }) {
+    if let Some(view) = super::typed::view_of(vm, id)
+        .filter(|view| view.kind != crate::v9::vm::data::ElementKind::DataView)
+    {
         super::typed::restrict_named_properties(vm, id, clear)?;
-        return Err(vm.type_error(if clear & WRITABLE != 0 {
-            "Cannot freeze array buffer views with elements"
-        } else {
-            "Cannot seal array buffer views with elements"
-        }));
+        if view.length != 0 && !super::typed::buffer_immutable(vm, view.buffer) {
+            return Err(vm.type_error(if clear & WRITABLE != 0 {
+                "Cannot freeze array buffer views with elements"
+            } else {
+                "Cannot seal array buffer views with elements"
+            }));
+        }
+        return Ok(());
     }
     // Proxies and module namespaces (whose exports refuse to freeze) answer through their own
     // [[DefineOwnProperty]].
@@ -564,18 +571,12 @@ fn has_own_property(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Object.prototype.isPrototypeOf. */
 fn is_prototype_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let JsValue::Object(mut current) = call.arg(0) else {
+    let JsValue::Object(current) = call.arg(0) else {
         return Ok(JsValue::Boolean(false));
     };
     let id = this_object(vm, &call, "Object.prototype.isPrototypeOf")?;
-    for _ in 0..crate::v9::vm::property::CHAIN_STEPS {
-        match super::integrity::get_prototype_of(vm, current)? {
-            Some(proto) if proto == id => return Ok(JsValue::Boolean(true)),
-            Some(proto) => current = proto,
-            None => break,
-        }
-    }
-    Ok(JsValue::Boolean(false))
+    vm.prototype_chain_contains(current, id)
+        .map(JsValue::Boolean)
 }
 
 /** Object.prototype.propertyIsEnumerable. */

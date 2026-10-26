@@ -70,7 +70,22 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "getThis" => object_reference(vm, id, "callSiteThis"),
         "getFunctionName" => nullable_name(vm, id),
         "getMethodName" => method_name(vm, id),
-        "getFileName" | "getScriptNameOrSourceURL" => Ok(data(vm, id, "callSiteFile")),
+        "getFileName" | "getScriptNameOrSourceURL"
+            if data(vm, id, "callSitePromiseAll") == JsValue::Boolean(true) =>
+        {
+            Ok(JsValue::Null)
+        }
+        "getLineNumber"
+        | "getEnclosingLineNumber"
+        | "getColumnNumber"
+        | "getEnclosingColumnNumber"
+            if data(vm, id, "callSitePromiseAll") == JsValue::Boolean(true) =>
+        {
+            Ok(JsValue::Null)
+        }
+        "getFileName" => Ok(data(vm, id, "callSiteFile")),
+        "getScriptNameOrSourceURL" => Ok(source_url(vm, id)),
+        "getEvalOrigin" => Ok(data(vm, id, "callSiteEvalOrigin")),
         "getLineNumber" | "getEnclosingLineNumber" => Ok(data(vm, id, "callSiteLine")),
         "getColumnNumber" | "getEnclosingColumnNumber" => Ok(data(vm, id, "callSiteColumn")),
         "getPosition" => Ok(data(vm, id, "callSitePosition")),
@@ -78,7 +93,13 @@ fn method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "isConstructor" => Ok(data(vm, id, "callSiteConstruct")),
         "isAsync" => Ok(data(vm, id, "callSiteAsync")),
         "isNative" => Ok(data(vm, id, "callSiteNative")),
-        "isPromiseAll" => Ok(JsValue::Boolean(false)),
+        "isPromiseAll" => Ok(JsValue::Boolean(
+            data(vm, id, "callSitePromiseAll") == JsValue::Boolean(true),
+        )),
+        "getPromiseIndex" => Ok(match data(vm, id, "callSitePromiseIndex") {
+            JsValue::Number(index) => JsValue::Number(index),
+            _ => JsValue::Null,
+        }),
         "isToplevel" => Ok(JsValue::Boolean(toplevel(vm, id))),
         "getTypeName" => type_name(vm, id),
         "toString" => text(vm, &render(vm, id)),
@@ -107,9 +128,27 @@ fn object_reference(vm: &mut Vm, id: ObjectId, name: &str) -> Res<JsValue> {
 
 /** Anonymous functions and top-level scripts have no FunctionName in the CallSite API. */
 fn nullable_name(vm: &Vm, id: ObjectId) -> Res<JsValue> {
+    if data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
+        return Ok(data(vm, id, "callSiteWasmFunctionName"));
+    }
     match data(vm, id, "callSiteName") {
         JsValue::String(name) if !name.as_units().is_empty() => Ok(JsValue::String(name)),
+        _ if data(vm, id, "callSiteEval") == JsValue::Boolean(true) => Ok(JsValue::string("eval")?),
         _ => Ok(JsValue::Null),
+    }
+}
+
+/** Older transported CallSites predate the distinct sourceURL slot and retain their original file metadata. */
+fn source_url(vm: &Vm, id: ObjectId) -> JsValue {
+    if vm.heap.get(id).is_some_and(|object| {
+        object
+            .props
+            .get(&Key::private("callSiteSourceURL"))
+            .is_some()
+    }) {
+        data(vm, id, "callSiteSourceURL")
+    } else {
+        data(vm, id, "callSiteFile")
     }
 }
 
@@ -135,7 +174,10 @@ fn toplevel(vm: &Vm, id: ObjectId) -> bool {
 
 /** Method calls retain their inferred source name without consulting mutable user descriptors. */
 fn method_name(vm: &Vm, id: ObjectId) -> Res<JsValue> {
-    if toplevel(vm, id) || data(vm, id, "callSiteConstruct") == JsValue::Boolean(true) {
+    if toplevel(vm, id)
+        || data(vm, id, "callSiteConstruct") == JsValue::Boolean(true)
+        || data(vm, id, "callSiteWasm") == JsValue::Boolean(true)
+    {
         Ok(JsValue::Null)
     } else {
         nullable_name(vm, id)
@@ -144,7 +186,7 @@ fn method_name(vm: &Vm, id: ObjectId) -> Res<JsValue> {
 
 /** Type names come from actual receiver storage and cannot call a user toString hook. */
 fn type_name(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
-    if toplevel(vm, id) {
+    if toplevel(vm, id) || data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
         return Ok(JsValue::Null);
     }
     let value = data(vm, id, "callSiteThis");
@@ -163,17 +205,70 @@ fn type_name(vm: &mut Vm, id: ObjectId) -> Res<JsValue> {
 
 /** Default formatting uses the same actual source coordinates exposed by the numeric accessors. */
 fn render(vm: &Vm, id: ObjectId) -> String {
-    let string = |key| match data(vm, id, key) {
-        JsValue::String(text) => text.lossy(),
-        other => format!("{other:?}"),
-    };
     let number = |key| match data(vm, id, key) {
-        JsValue::Number(value) => value as u32,
-        _ => 0,
+        JsValue::Number(value) => Some(value as u32),
+        _ => None,
     };
-    let name = string("callSiteName");
+    let name = match nullable_name(vm, id).ok() {
+        Some(JsValue::String(name)) => name.lossy(),
+        _ => String::new(),
+    };
+    if let JsValue::Number(index) = data(vm, id, "callSitePromiseIndex") {
+        return format!("async Promise.{name} (index {})", index as u32);
+    }
     if data(vm, id, "callSiteNative") == JsValue::Boolean(true) {
         return format!("{name} (native)");
+    }
+    if data(vm, id, "callSiteWasm") == JsValue::Boolean(true) {
+        let index = match data(vm, id, "callSiteFunction") {
+            JsValue::Number(index) => index as u32,
+            _ => 0,
+        };
+        let position = number("callSitePosition").unwrap_or_default();
+        let file = match source_url(vm, id) {
+            JsValue::String(file) => file.lossy(),
+            _ => "<anonymous>".to_owned(),
+        };
+        let location = format!("{file}:wasm-function[{index}]:0x{position:x}");
+        return match (
+            data(vm, id, "callSiteWasmModuleName"),
+            data(vm, id, "callSiteWasmFunctionName"),
+        ) {
+            (JsValue::String(module), JsValue::String(function)) => {
+                format!("{}.{} ({location})", module.lossy(), function.lossy())
+            }
+            (JsValue::String(module), _) => format!("{} ({location})", module.lossy()),
+            (_, JsValue::String(function)) => format!("{} ({location})", function.lossy()),
+            _ => location,
+        };
+    }
+    let source_url = source_url(vm, id);
+    let file = match &source_url {
+        JsValue::String(file) => file.lossy(),
+        _ => "<anonymous>".to_owned(),
+    };
+    let location = match (number("callSiteLine"), number("callSiteColumn")) {
+        (Some(line), Some(column)) => format!("{file}:{line}:{column}"),
+        (Some(line), None) => format!("{file}:{line}"),
+        _ => file,
+    };
+    let location = match data(vm, id, "callSiteEvalOrigin") {
+        JsValue::String(origin) if source_url == JsValue::Undefined => {
+            format!("{}, {location}", origin.lossy())
+        }
+        _ => location,
+    };
+    let prefix = if data(vm, id, "callSiteAsync") == JsValue::Boolean(true) {
+        "async "
+    } else {
+        ""
+    };
+    if name.is_empty()
+        && data(vm, id, "callSiteEval") != JsValue::Boolean(true)
+        && data(vm, id, "callSiteConstruct") != JsValue::Boolean(true)
+        && toplevel(vm, id)
+    {
+        return format!("{prefix}{location}");
     }
     let name = if name.is_empty() {
         if data(vm, id, "callSiteEval") == JsValue::Boolean(true) {
@@ -184,10 +279,5 @@ fn render(vm: &Vm, id: ObjectId) -> String {
     } else {
         &name
     };
-    format!(
-        "{name} ({} line {}, column {})",
-        string("callSiteFile"),
-        number("callSiteLine"),
-        number("callSiteColumn")
-    )
+    format!("{prefix}{name} ({location})")
 }

@@ -259,8 +259,9 @@ pub const VM_PROPERTY_KEY_UNITS: usize = 64 * 1024;
 /// Elements of one array. Wikipedia's startup builds a module registry past 1024 entries and
 /// YouTube's app bundle builds tables past 16384 while loading.
 pub const VM_ARRAY_LENGTH: usize = 262_144;
-/// Parameters per function and arguments per call; minified helpers occasionally pass dozens.
-pub const FUNCTION_PARAMETERS: usize = 64;
+/// Explicit formal parameters and syntactic call arguments, matching V8's receiver-inclusive
+/// 16-bit argument ceiling with its ten reserved implicit-argument positions.
+pub const FUNCTION_PARAMETERS: usize = u16::MAX as usize - 10;
 /// Retained lexical contexts and within-request allocations have explicit independent ceilings.
 /// Five large libraries together hold 680 live environments. Every live closure may hold its
 /// own captured environment, so this is at least VM_FUNCTIONS.

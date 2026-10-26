@@ -2,6 +2,7 @@
 use super::*;
 use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{NativeFn, Static, realm, string, symbol};
+mod diagnostics;
 
 /** The Reflect namespace. */
 pub(super) fn install(b: &mut Builder) {
@@ -44,7 +45,7 @@ fn target(vm: &mut Vm, call: &Call) -> Res<ObjectId> {
 /** Reflect.apply. */
 fn apply(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !vm.is_callable(&call.arg(0)) {
-        return Err(vm.type_error("Reflect.apply target is not callable"));
+        return diagnostics::reject_apply(vm, call.arg(0));
     }
     let args = super::function::list_from_array_like(vm, &call.arg(2))?;
     vm.forward_call(call.arg(0), call.arg(1), args)

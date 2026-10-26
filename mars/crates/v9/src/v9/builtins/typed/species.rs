@@ -62,6 +62,9 @@ fn create(
     if minimum.is_some_and(|minimum| view.length < minimum) || bigint(view.kind) != bigint(kind) {
         return Err(vm.type_error("TypedArray species returned a short or incompatible view"));
     }
+    if minimum.is_some() {
+        immutable::writable(vm, view.buffer)?;
+    }
     Ok(target)
 }
 
@@ -102,6 +105,7 @@ fn copy_buffer(
     };
     if source == target
         || buffer_state::detached(vm, target)
+        || buffer_state::immutable(vm, target)
         || buffer_bytes(vm, target).is_none_or(|bytes| bytes.len() < count)
     {
         return Err(vm.type_error("ArrayBuffer species returned an invalid buffer"));
@@ -120,7 +124,9 @@ fn copy_buffer(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    write_range(vm, target, 0, &bytes);
+    if !write_range(vm, target, 0, &bytes) {
+        return Err(vm.type_error("ArrayBuffer species returned unwritable backing"));
+    }
     Ok(())
 }
 
@@ -194,7 +200,7 @@ pub(super) fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(target)
 }
 
-/** Copying an overlapping species target snapshots the actual source range before the first write. */
+/** Same-buffer species copies observe preceding writes; separate equal-type buffers retain their raw copy path. */
 fn copy_view(
     vm: &mut Vm,
     source: ObjectId,
@@ -209,6 +215,9 @@ fn copy_view(
     let destination =
         view_of(vm, target.object().expect("validated target")).expect("validated view");
     if destination.kind == kind {
+        if current.buffer == destination.buffer {
+            return copy_live(vm, &current, &destination, start, count);
+        }
         let size = element_size(kind);
         let bytes = read_range(
             vm,
@@ -217,13 +226,40 @@ fn copy_view(
             count * size,
         )
         .ok_or_else(|| vm.type_error("Cannot read source typed array"))?;
-        write_range(vm, destination.buffer, destination.offset, &bytes);
+        if !write_range(vm, destination.buffer, destination.offset, &bytes) {
+            return Err(vm.type_error("TypedArray species returned unwritable backing"));
+        }
         return Ok(());
     }
     for index in 0..count {
         let value = load(vm, source, start + index).unwrap_or(JsValue::Undefined);
         vm.set(target, key(&index.to_string()), value, true)?;
         vm.charge(1)?
+    }
+    Ok(())
+}
+
+/** Reading one raw element immediately before its write preserves aliases, NaN payloads and integer no-tear access. */
+fn copy_live(
+    vm: &mut Vm,
+    source: &ViewData,
+    target: &ViewData,
+    start: usize,
+    count: usize,
+) -> Res<()> {
+    let size = element_size(source.kind);
+    for index in 0..count {
+        let bytes = read_range(
+            vm,
+            source.buffer,
+            source.offset + (start + index) * size,
+            size,
+        )
+        .ok_or_else(|| vm.type_error("Cannot read source typed array"))?;
+        if !write_range(vm, target.buffer, target.offset + index * size, &bytes) {
+            return Err(vm.type_error("TypedArray species returned unwritable backing"));
+        }
+        vm.charge(1)?;
     }
     Ok(())
 }

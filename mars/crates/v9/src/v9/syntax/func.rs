@@ -194,12 +194,8 @@ impl Parser {
         }
         let simple = rest.is_none() && params.iter().all(|p| matches!(p, Pattern::Ident(..)));
         let strict_names = self.strict || unique || !simple;
-        if strict_names
-            && names
-                .iter()
-                .enumerate()
-                .any(|(i, name)| names[..i].contains(name))
-        {
+        let mut seen = std::collections::HashSet::new();
+        if strict_names && names.iter().any(|name| !seen.insert(name)) {
             return Err(self.error_at(pos, "Duplicate parameter name not allowed in this context"));
         }
         Ok(())
@@ -219,25 +215,24 @@ impl Parser {
         while !self.eat(")") {
             if self.eat("...") {
                 rest = Some(self.binding_target()?);
+                self.check_parameter_count(params.len() + 1)?;
                 self.expect(")")?;
                 break;
             }
             params.push(self.binding_element()?);
-            if params.len() > crate::constants::FUNCTION_PARAMETERS {
-                return Err(errors::located(
-                    EngineError::limit(
-                        "V9 function parameters",
-                        crate::constants::FUNCTION_PARAMETERS,
-                    ),
-                    self.peek().location,
-                    "parse",
-                ));
-            }
+            self.check_parameter_count(params.len())?;
             if !self.at(")") {
                 self.expect(",")?;
             }
         }
         Ok((params, rest))
+    }
+    /** Native arity includes rest parameters independently of the observable function length. */
+    fn check_parameter_count(&self, count: usize) -> EngineResult<()> {
+        if count > crate::constants::FUNCTION_PARAMETERS {
+            return Err(self.error_at(self.pos(), "Too many parameters in function definition"));
+        }
+        Ok(())
     }
     /** An arrow function; `simple` means a single unparenthesized parameter. */
     pub(super) fn arrow_function(

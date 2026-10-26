@@ -47,10 +47,15 @@ pub(in crate::v9::builtins::wasm) fn start(
 }
 /** Every exit releases only the temporary native roots belonging to these explicit activations. */
 fn run(vm: &mut Vm, mut frames: Vec<Frame>, output: ObjectId) -> Res<()> {
-    let result = drive(vm, &mut frames, output);
+    let trace = vm.native_activations.len();
     for frame in &mut frames {
+        frame.enter_trace(vm);
+    }
+    let result = drive(vm, &mut frames, output);
+    for frame in frames.iter_mut().rev() {
         frame.roots.release(vm);
     }
+    vm.end_native_activation(trace);
     result
 }
 /** Child calls retain explicit bounded frames; completed frames transfer only their typed result values. */
@@ -83,17 +88,21 @@ fn drive(vm: &mut Vm, frames: &mut Vec<Frame>, output: ObjectId) -> Res<()> {
         match step {
             Step::Next => (),
             Step::Call(instance, module, index, args) => {
-                frames.push(Frame::new(vm, instance, module, index, args)?)
+                let mut frame = Frame::new(vm, instance, module, index, args)?;
+                frame.enter_trace(vm);
+                frames.push(frame)
             }
             Step::Tail(instance, module, index, args) => {
-                frames.pop().unwrap().roots.release(vm);
-                frames.push(Frame::new(vm, instance, module, index, args)?);
+                frames.pop().unwrap().release(vm);
+                let mut frame = Frame::new(vm, instance, module, index, args)?;
+                frame.enter_trace(vm);
+                frames.push(frame);
             }
             Step::Done(values) => {
                 for value in &values {
                     vm.pin(value.clone());
                 }
-                frames.pop().unwrap().roots.release(vm);
+                frames.pop().unwrap().release(vm);
                 if let Some(parent) = frames.last_mut() {
                     parent.stack.extend(values);
                 } else {

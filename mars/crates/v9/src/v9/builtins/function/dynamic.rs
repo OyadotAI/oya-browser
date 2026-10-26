@@ -4,7 +4,12 @@ use super::*;
 /** Reusing this exact global-scope expression does not retain another copy of its source. */
 pub(super) fn evaluate_function(vm: &mut Vm, source: String) -> Res<JsValue> {
     let existing = vm.dynamic.iter().position(|entry| {
-        entry.context.as_deref() == Some(INDIRECT_CONTEXT) && entry.source == source
+        entry.context.as_deref() == Some(INDIRECT_CONTEXT)
+            && entry.source == source
+            && entry
+                .origin
+                .as_ref()
+                .is_some_and(|origin| origin.realm == vm.active_realm)
     });
     if let Some(index) = existing {
         let offset = crate::v9::vm::dynamic_source_base(&vm.dynamic, index);

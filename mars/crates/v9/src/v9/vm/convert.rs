@@ -286,27 +286,6 @@ impl Vm<'_> {
         }
         self.ordinary_has_instance(constructor, value)
     }
-    /** OrdinaryHasInstance. */
-    pub fn ordinary_has_instance(&mut self, constructor: &JsValue, value: &JsValue) -> Res<bool> {
-        if let Some(target) = self.bound_target(constructor) {
-            return self.instance_of(value, &JsValue::Object(target));
-        }
-        let &JsValue::Object(mut id) = value else {
-            return Ok(false);
-        };
-        let prototype = self.get(constructor, &Key::from("prototype"))?;
-        let JsValue::Object(prototype) = prototype else {
-            return Err(self.type_error("Function has non-object prototype in instanceof check"));
-        };
-        for _ in 0..super::property::CHAIN_STEPS {
-            match self.proto_of(id) {
-                Some(proto) if proto == prototype => return Ok(true),
-                Some(proto) => id = proto,
-                None => return Ok(false),
-            }
-        }
-        Ok(false)
-    }
 }
 
 /** StringToNumber over UTF-16. */

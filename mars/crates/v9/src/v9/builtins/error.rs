@@ -4,6 +4,7 @@ use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::{HIDDEN_ATTRS, Object};
 use crate::v9::vm::property::Descriptor;
 use crate::v9::vm::realm::{NativeFn, realm, string};
+mod stack_entry;
 mod trace;
 #[cfg(feature = "conformance")]
 pub(in crate::v9) use trace::stack as formatted_stack;
@@ -262,7 +263,10 @@ fn aggregate(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** Error.prototype.toString. */
 fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if !matches!(call.this, JsValue::Object(_)) {
-        return Err(vm.type_error("Error.prototype.toString called on non-object"));
+        let receiver = super::function::diagnostic_receiver(vm, &call.this)?;
+        return Err(vm.type_error(&format!(
+            "Method Error.prototype.toString called on incompatible receiver {receiver}"
+        )));
     }
     let name = vm.get(&call.this, &key("name"))?;
     let name = if name == JsValue::Undefined {
@@ -284,9 +288,9 @@ fn to_string(vm: &mut Vm, call: Call) -> Res<JsValue> {
     text(vm, &result)
 }
 
-/** `stack`: the error's summary line; V9 records no call sites. */
+/** Borrowed stack accessors inspect the receiver's own trace record after native receiver conversion. */
 fn stack_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    match call.this.object() {
+    match stack_entry::receiver(vm, &call.this)? {
         Some(id) => trace::stack(vm, id),
         None => Ok(JsValue::Undefined),
     }
@@ -294,7 +298,7 @@ fn stack_get(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Assigning `stack` stores an own value. */
 fn stack_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    if let JsValue::Object(id) = call.this {
+    if let Some(id) = stack_entry::receiver(vm, &call.this)? {
         vm.define(
             id,
             key("stack"),
@@ -312,13 +316,9 @@ fn stack_set(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Error.captureStackTrace(object): gives the object a `stack` string. */
 fn capture_stack_trace(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let target = call.arg(0);
-    if let JsValue::Object(id) = target {
-        vm.record_trace(id)?;
-        trace::skip_constructor(vm, id, &call.arg(1));
-    } else {
-        return Err(vm.type_error("Error.captureStackTrace requires an object"));
-    }
+    let id = stack_entry::prepare_capture(vm, &call.arg(0))?;
+    vm.record_trace(id)?;
+    trace::skip_constructor(vm, id, &call.arg(1));
     Ok(JsValue::Undefined)
 }
 

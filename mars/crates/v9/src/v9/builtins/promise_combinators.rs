@@ -5,10 +5,12 @@ looks `resolve` up once, steps the iterator lazily and closes it when a step aft
 fails. The earlier shortcut collected the whole iterable first and always built a %Promise%,
 which looped forever on infinite iterators and ignored subclass constructors. */
 use super::*;
+mod trace;
 use crate::v9::vm::Thrown;
 use crate::v9::vm::data::{Class, ReactionHandler};
 use crate::v9::vm::property::Descriptor;
 use crate::v9::vm::realm::{realm, symbol};
+pub(in crate::v9) use trace::{AllTrace, all_trace};
 
 /** Native slots this file's closures run under, set once at install. */
 struct Natives {

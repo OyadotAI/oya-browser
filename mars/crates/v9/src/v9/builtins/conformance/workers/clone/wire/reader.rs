@@ -171,7 +171,8 @@ impl Reader<'_> {
         }
         let atom = self.value(tag, depth + 1)?;
         if let Atom::Reference(id) = atom {
-            if matches!(self.graph.nodes[id].kind, Kind::Buffer(_, _)) && self.peek() == Some(b'V')
+            if matches!(self.graph.nodes[id].kind, Kind::Buffer(_, _, _))
+                && self.peek() == Some(b'V')
             {
                 self.tag()?;
                 return self.view(id);
@@ -231,7 +232,7 @@ impl Reader<'_> {
         let offset = self.length()?;
         let bytes = self.length()?;
         let flags = self.var32()?;
-        let Kind::Buffer(data, maximum) = &self.graph.nodes[buffer].kind else {
+        let Kind::Buffer(data, maximum, _) = &self.graph.nodes[buffer].kind else {
             return Err(Failure::Invalid);
         };
         if flags & !3 != 0

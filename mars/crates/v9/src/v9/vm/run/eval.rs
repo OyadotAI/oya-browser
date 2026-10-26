@@ -58,8 +58,10 @@ impl Vm<'_> {
     }
     /** Compile direct eval source in the caller context and run it on the caller's frame state. */
     fn run_direct_eval(&mut self, source: String, context: String) -> Res<JsValue> {
+        self.check_string_codegen()?;
         self.check_eval_envs(&context)?;
-        self.prepare_dynamic(source.len())?;
+        let origin = self.capture_eval_origin()?;
+        self.prepare_dynamic(source.len().saturating_add(origin.bytes()))?;
         let base = dynamic_base(&self.dynamic);
         let code =
             match crate::v9::compile_dynamic(&mut self.registry, &source, base, Some(&context)) {
@@ -72,10 +74,12 @@ impl Vm<'_> {
                 }
                 Err(error) => return Err(error.into()),
             };
+        let origin = self.finish_eval_origin(&source, origin)?;
         self.dynamic.push(DynamicSource {
             source,
             context: Some(context),
             base: Some(base),
+            origin: Some(origin),
         });
         let caller = self.frame();
         let frame = Frame {

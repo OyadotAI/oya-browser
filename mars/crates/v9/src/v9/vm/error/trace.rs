@@ -1,11 +1,15 @@
 /** Error creation records actual JS activations as traced CallSite objects with inert private slots. */
 use super::*;
 use crate::v9::vm::Frame;
+mod async_frames;
+mod builtin;
 
 /** Error-owned callsites stay private until the realm's prepareStackTrace hook receives them. */
 pub(in crate::v9) const FRAMES_KEY: &str = "errorFrames";
 /** The brand and capture context accompany every structured frame across state transport. */
 pub(in crate::v9) const CALLSITE_KEY: &str = "callSiteRealm";
+/** Newly captured structured traces are authoritative; raw unwind text is a legacy-only fallback. */
+pub(in crate::v9) const STRUCTURED_KEY: &str = "errorStructuredTrace";
 
 /** A temporary copy releases the frame stack borrow before bounded heap allocations begin. */
 struct Captured {
@@ -20,15 +24,25 @@ struct Captured {
     strict: bool,
     construct: bool,
     eval: bool,
+    site: u32,
     asynchronous: bool,
     native: bool,
+    builtin: bool,
+    wasm: bool,
+    promise_index: Option<u32>,
 }
 impl Captured {
     /** Source coordinates and function identities come from the actual activation, never parsing text. */
     fn frame(vm: &Vm, frame: &Frame, strict: bool) -> Self {
         let pos = frame.code.position(frame.pc.saturating_sub(1));
         Self {
-            function: frame.callee.clone(),
+            function: if frame.code.site % crate::v9::syntax::SITE_TAGS
+                == crate::v9::syntax::SITE_SCRIPT
+            {
+                JsValue::Undefined
+            } else {
+                frame.callee.clone()
+            },
             receiver: frame.this.clone(),
             name: frame.code.name.clone(),
             file: vm.modules.source_name(pos.offset as usize),
@@ -39,25 +53,19 @@ impl Captured {
             strict,
             construct: frame.construct,
             eval: eval_source(vm, frame.code.site),
-            asynchronous: frame.code.flags.asynchronous,
+            site: frame.code.site,
+            asynchronous: false,
             native: false,
+            builtin: false,
+            wasm: false,
+            promise_index: None,
         }
     }
 }
 
-/** Dynamic Script sites, rather than ordinary dynamic Function bodies, identify eval activations. */
+/** Script compilation provenance applies to every activation born in that source, including named closures. */
 fn eval_source(vm: &Vm, site: u32) -> bool {
-    use crate::v9::syntax::{SITE_SCRIPT, SITE_TAGS};
-    if site % SITE_TAGS != SITE_SCRIPT {
-        return false;
-    }
-    let mut base = crate::v9::DYNAMIC_OFFSET;
-    vm.dynamic.iter().any(|source| {
-        let matches = (base..=base + source.source.len()).contains(&((site / SITE_TAGS) as usize))
-            && source.context.is_some();
-        base += source.source.len() + 1;
-        matches
-    })
+    vm.eval_origin(site).is_some()
 }
 impl Vm<'_> {
     /** d8 host evaluation has a real native activation even though it executes no JS bytecode itself. */
@@ -116,14 +124,29 @@ impl Vm<'_> {
             );
         }
         let mut strict = false;
-        let frames: Vec<_> = self
+        let mut frames: Vec<_> = self
             .frames
             .iter()
             .enumerate()
             .rev()
             .flat_map(|(_index, frame)| {
-                strict |= frame.code.strict;
                 let mut captures = Vec::new();
+                for activation in self
+                    .native_activations
+                    .iter()
+                    .rev()
+                    .filter(|activation| activation.depth == _index + 1)
+                {
+                    if self.trace_frame_visible(activation.realm) {
+                        // Real JS builtins have strict SharedFunctionInfo in V8; opacity starts
+                        // here, after younger callbacks and before this older script frame.
+                        if matches!(&activation.kind, super::super::NativeKind::Builtin { .. }) {
+                            strict = true;
+                        }
+                        captures.push(Captured::native(self, activation, strict));
+                    }
+                }
+                strict |= frame.code.strict;
                 #[cfg(feature = "conformance")]
                 for (_, callee, receiver, bank, name) in self
                     .trace_boundaries
@@ -144,8 +167,12 @@ impl Vm<'_> {
                             strict,
                             construct: false,
                             eval: false,
+                            site: 0,
                             asynchronous: false,
                             native: true,
+                            builtin: false,
+                            wasm: false,
+                            promise_index: None,
                         });
                     }
                 }
@@ -156,9 +183,45 @@ impl Vm<'_> {
             })
             .take(self.trace_limit())
             .collect();
+        // A genuine native timer entry can have no older physical JS caller at depth zero.
+        for activation in self
+            .native_activations
+            .iter()
+            .rev()
+            .filter(|activation| activation.depth == 0)
+        {
+            if frames.len() >= self.trace_limit() {
+                break;
+            }
+            if self.trace_frame_visible(activation.realm) {
+                if matches!(&activation.kind, super::super::NativeKind::Builtin { .. }) {
+                    strict = true;
+                }
+                frames.push(Captured::native(self, activation, strict));
+            }
+        }
+        self.append_async_trace(&mut frames, &mut strict, self.trace_limit());
+        let roots = self.pins.len();
+        self.pin(JsValue::Object(error));
+        for frame in &frames {
+            self.pin(frame.function.clone());
+            self.pin(frame.receiver.clone());
+        }
+        let result = self.store_trace_frames(error, frames);
+        self.pins.truncate(roots);
+        result
+    }
+    /** Every newly allocated callsite is pinned until its Error-owned array is installed. */
+    fn store_trace_frames(
+        &mut self,
+        error: ObjectId,
+        frames: Vec<Captured>,
+    ) -> Result<(), EngineError> {
         let mut values = Vec::with_capacity(frames.len());
         for frame in frames {
-            values.push(JsValue::Object(self.make_callsite(frame)?));
+            let id = self.make_callsite(frame)?;
+            self.pin(JsValue::Object(id));
+            values.push(JsValue::Object(id));
         }
         let frames = self.heap.insert(Object::new(
             Class::Array(values.into()),
@@ -173,6 +236,14 @@ impl Vm<'_> {
             },
         );
         self.install_stack_accessor(error);
+        self.heap.put(
+            error,
+            Key::private(STRUCTURED_KEY),
+            Prop {
+                slot: Slot::Data(JsValue::Boolean(true)),
+                attrs: 0,
+            },
+        );
         Ok(())
     }
     /** Context security tokens filter ordinary realms; ShadowRealm frames remain subject to access checks. */
@@ -207,22 +278,95 @@ impl Vm<'_> {
         }
     }
     /** Frame data is inaccessible to JavaScript except through the checked CallSite API. */
-    fn make_callsite(&mut self, frame: Captured) -> Result<ObjectId, EngineError> {
+    fn make_callsite(&mut self, mut frame: Captured) -> Result<ObjectId, EngineError> {
+        let mut wasm_function = JsValue::Null;
+        let mut wasm_module = JsValue::Null;
+        if frame.wasm {
+            let instance = frame
+                .receiver
+                .object()
+                .ok_or_else(|| EngineError::invalid("Invalid captured Wasm instance."))?;
+            let JsValue::Number(index) = &frame.function else {
+                return Err(EngineError::invalid(
+                    "Invalid captured Wasm function index.",
+                ));
+            };
+            let metadata = crate::v9::builtins::wasm_trace_metadata(self, instance, *index as u32)?;
+            frame.name = metadata.function.clone().unwrap_or_else(JsString::empty);
+            frame.file = metadata.file;
+            wasm_function = metadata.function.map_or(JsValue::Null, JsValue::String);
+            wasm_module = metadata.module.map_or(JsValue::Null, JsValue::String);
+        }
         let mut object = Object::new(Class::Plain, Some(realm().ids.call_site_prototype));
+        let origin = self.eval_origin(frame.site);
+        let eval_origin = origin.map_or(Ok(JsValue::Undefined), |origin| {
+            JsValue::string(origin.display())
+        })?;
+        let source_url = match origin {
+            Some(origin) => origin
+                .source_url
+                .as_deref()
+                .map_or(Ok(JsValue::Undefined), JsValue::string)?,
+            None if frame.builtin => JsValue::Undefined,
+            None => JsValue::string(&frame.file)?,
+        };
         let values = [
             (CALLSITE_KEY, JsValue::Number(frame.realm as f64)),
             ("callSiteFunction", frame.function),
             ("callSiteThis", frame.receiver),
             ("callSiteName", JsValue::String(frame.name)),
-            ("callSiteFile", JsValue::string(&frame.file)?),
-            ("callSiteLine", JsValue::Number(frame.line as f64)),
-            ("callSiteColumn", JsValue::Number(frame.column as f64)),
-            ("callSitePosition", JsValue::Number(frame.position as f64)),
+            (
+                "callSiteFile",
+                if frame.eval || frame.builtin {
+                    JsValue::Undefined
+                } else {
+                    JsValue::string(&frame.file)?
+                },
+            ),
+            ("callSiteSourceURL", source_url),
+            ("callSiteEvalOrigin", eval_origin),
+            (
+                "callSiteLine",
+                if frame.builtin {
+                    JsValue::Null
+                } else {
+                    JsValue::Number(frame.line as f64)
+                },
+            ),
+            (
+                "callSiteColumn",
+                if frame.builtin {
+                    JsValue::Null
+                } else {
+                    JsValue::Number(frame.column as f64)
+                },
+            ),
+            (
+                "callSitePosition",
+                if frame.builtin {
+                    JsValue::Null
+                } else {
+                    JsValue::Number(frame.position as f64)
+                },
+            ),
             ("callSiteStrict", JsValue::Boolean(frame.strict)),
             ("callSiteConstruct", JsValue::Boolean(frame.construct)),
             ("callSiteEval", JsValue::Boolean(frame.eval)),
             ("callSiteAsync", JsValue::Boolean(frame.asynchronous)),
             ("callSiteNative", JsValue::Boolean(frame.native)),
+            ("callSiteWasm", JsValue::Boolean(frame.wasm)),
+            ("callSiteWasmFunctionName", wasm_function),
+            ("callSiteWasmModuleName", wasm_module),
+            (
+                "callSitePromiseAll",
+                JsValue::Boolean(frame.promise_index.is_some()),
+            ),
+            (
+                "callSitePromiseIndex",
+                frame
+                    .promise_index
+                    .map_or(JsValue::Null, |index| JsValue::Number(index as f64)),
+            ),
         ];
         for (name, value) in values {
             object.props.insert(

@@ -99,6 +99,14 @@ impl State {
         {
             return Err(bad());
         }
+        if dynamic.iter().any(|source| {
+            source
+                .origin
+                .as_ref()
+                .is_some_and(|origin| origin.realm as usize >= self.contexts.len())
+        }) {
+            return Err(bad());
+        }
         if self.slots.iter().flatten().any(|bank| {
             self.contexts
                 .get(*bank as usize)

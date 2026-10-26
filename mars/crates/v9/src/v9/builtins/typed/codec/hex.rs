@@ -42,7 +42,7 @@ pub(super) fn from(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** A malformed pair leaves preceding decoded bytes visible before throwing SyntaxError. */
 pub(super) fn set(vm: &mut Vm, call: Call) -> Res<JsValue> {
-    let view = receiver(vm, &call)?;
+    let view = write_receiver(vm, &call)?;
     let input = input(vm, call.arg(0))?;
     let (bytes, valid) = decode(vm, &input, view.length)?;
     commit(vm, &view, &bytes)?;

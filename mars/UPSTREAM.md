@@ -36,12 +36,20 @@ and repair typed-array integrity and `includes` receiver/witness rules. Together
 the completed groups repair 24 original V8 failures. This targeted result is
 separate from the whole-suite scoreboard and its resource-limit failures.
 
-The subsequent isolated full inventory records 3,407 passes and 335 raw failures,
+The exact pushed checkpoint `e64334a2` records 3,443 passes and 299 raw failures,
 with the same 5,345 exclusions. Thirty-five baseline failures pass in that run;
-39 additional cases hit time limits and remain counted. Every additional failure
-is a timing failure, so the targeted semantic repairs and the whole-run timing
-result are reported separately. Compiler string and scope-name indices avoid structured hash collisions while
+three additional cases hit time limits and remain counted. Every additional
+failure is a timing failure. Newer working-tree repairs have separate targeted
+proofs and are not included in this full-inventory score. Compiler string and scope-name indices avoid structured hash collisions while
 preserving pool order, binding slots, source IDs and existing limits.
+
+The next isolated V9 batch records 3,474 passes and 268 raw failures, with the
+same 5,345 exclusions. Eighty-two of the original baseline failures pass in that
+inventory. Additional failures include timing limits, unsupported CPU profiling,
+and an incomplete native API stack entry; all remain visible. The batch includes
+immutable buffers, streaming collection construction, actual async/native/Wasm
+stack metadata, class-expression strictness and native shell test fixtures.
+These results exclude the unrelated Eye, Core and Intl working-tree changes.
 
 `crates/v9/src/v9/value/number/radix.rs` adapts the complete
 `DoubleToRadixStringView` routine from pinned `src/numbers/conversions.cc`, using
@@ -772,3 +780,11 @@ contains upstream tests with conflicting configuration assumptions: the pinned
 when i18n is enabled, and skips `regress/wasm/regress-1254675` when SIMD is
 available. These failures are reported in the fixed inventory; V9 must not adopt
 obsolete semantics or reject valid SIMD to manufacture a passing assertion.
+
+The following isolated profiler/admission batch records 3,476 passes and 266 raw
+failures with unchanged exclusions. Its nine targeted profiler and print-stack
+cases pass in release. Profiling records real stack samples at monotonic timed
+safepoints, exports bounded actual profiles through the governed test host, and
+preserves callback exceptions and fatal budgets. Dynamic constructors apply the
+pinned entered-context access policy before argument conversion; the legacy
+undefined-return expectation remains a raw conflict. Capacity limits are unchanged.

@@ -16,6 +16,7 @@ use crate::v9::value::{JsString, JsValue, to_int32, to_uint32};
 
 mod asyncgen;
 mod eval;
+mod super_update;
 mod with;
 
 /** Completion kinds a finally block's registers hold. */
@@ -192,6 +193,8 @@ impl Vm<'_> {
                 if self.expired() {
                     return Err(Thrown::Fatal(super::super::platform::timeout()));
                 }
+                #[cfg(feature = "conformance")]
+                crate::v9::builtins::profile_tick(self)?;
                 self.collect_if_needed()?;
             }
             self.collect_if_due()?;
@@ -208,6 +211,13 @@ impl Vm<'_> {
     /** The running frame. */
     fn frame(&mut self) -> &mut super::Frame {
         self.frames.last_mut().expect("running frame")
+    }
+    /** References use the current instruction's lexical strictness; activation and stack privacy keep the function's own mode. */
+    #[inline]
+    fn reference_strict(&self) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.code.strict_at(frame.pc.saturating_sub(1)))
     }
     /** Push onto the operand stack. */
     pub(in crate::v9) fn push(&mut self, value: JsValue) {
@@ -785,7 +795,7 @@ impl Vm<'_> {
                 self.check_element_base(&object, &key, true)?;
                 if !self.fast_store(&object, &key, &value) {
                     let key = self.to_key(&key)?;
-                    let strict = self.frame().code.strict;
+                    let strict = self.reference_strict();
                     self.set(&object, key, value.clone(), strict)?;
                 }
                 self.drop_n(3);
@@ -878,6 +888,9 @@ impl Vm<'_> {
                 self.drop_n(4);
                 self.push(value);
             }
+            Op::CaptureSuperBase => self.capture_super_base()?,
+            Op::ReadSuperReference => self.read_super_reference()?,
+            Op::WriteSuperReference => self.write_super_reference()?,
             Op::ToElementKey => {
                 let object = self.peek(1);
                 let value = self.peek(0);
@@ -1291,6 +1304,15 @@ impl Vm<'_> {
                 self.pop();
                 self.push(next.unwrap_or(JsValue::Undefined));
             }
+            Op::IterSkip => {
+                let iterator = self.peek(0);
+                let JsValue::Object(id) = iterator else {
+                    return Err(EngineError::invalid("Invalid V9 iterator.").into());
+                };
+                self.iter_skip(id)?;
+                self.pop();
+                self.push(JsValue::Undefined);
+            }
             Op::IterRest => {
                 let iterator = self.peek(0);
                 let JsValue::Object(id) = iterator else {
@@ -1476,7 +1498,7 @@ impl Vm<'_> {
         }
         let text = name.lossy();
         let key = Key::Str(name.clone());
-        let strict = self.frames.last().is_some_and(|frame| frame.code.strict);
+        let strict = self.reference_strict();
         if strict && !self.has_property(self.global_object(), &key)? {
             return Err(self.reference_error(&format!("{text} is not defined")));
         }
@@ -1677,7 +1699,7 @@ impl Vm<'_> {
         } else if self.store_cached(site, base, value, Some(&key)) {
             return Ok(());
         }
-        let strict = self.frame().code.strict;
+        let strict = self.reference_strict();
         self.set(base, key, value.clone(), strict)
     }
     /** One store attempt: through the cache when `key` is None, else by looking the key up and
@@ -1931,7 +1953,7 @@ impl Vm<'_> {
     fn delete_value(&mut self, object: &JsValue, key: &Key) -> Res<bool> {
         let id = self.to_object(object)?;
         let deleted = self.delete(id, key)?;
-        if !deleted && self.frame().code.strict {
+        if !deleted && self.reference_strict() {
             return Err(self.type_error(&format!(
                 "Cannot delete property '{}'",
                 super::property::key_text(key)
@@ -1970,7 +1992,7 @@ impl Vm<'_> {
         let Some(proto) = home.object().and_then(|id| self.proto_of(id)) else {
             return Err(self.type_error("Cannot set properties of null"));
         };
-        if !self.set_from(proto, key.clone(), value, this)? && self.frame().code.strict {
+        if !self.set_from(proto, key.clone(), value, this)? && self.reference_strict() {
             return Err(self.type_error(&format!(
                 "Cannot assign to read only property '{}' of object",
                 super::property::key_text(&key)

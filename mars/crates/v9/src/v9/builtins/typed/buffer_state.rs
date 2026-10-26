@@ -18,6 +18,27 @@ fn protected_key() -> Key {
     Key::private("array-buffer-detach-protected")
 }
 
+/** This internal capability is shared by every alias and cannot be supplied through a JS property. */
+fn immutable_key() -> Key {
+    Key::private("array-buffer-immutable")
+}
+
+/** Reads, clones and view construction may use immutable bytes; writes and detachment may not. */
+pub(in crate::v9) fn immutable(vm: &Vm, id: ObjectId) -> bool {
+    vm.heap
+        .get(id)
+        .is_some_and(|object| object.props.get(&immutable_key()).is_some())
+}
+
+/** Only freshly initialized fixed ordinary buffers receive this capability. */
+pub(in crate::v9) fn make_immutable(vm: &mut Vm, id: ObjectId) {
+    vm.heap.put(
+        id,
+        immutable_key(),
+        crate::v9::vm::heap::Prop::data(JsValue::Boolean(true)),
+    );
+}
+
 /** An engine-owned memory buffer cannot be transferred by author code. */
 pub(in crate::v9) fn protect_buffer(vm: &mut Vm, id: ObjectId) {
     vm.heap.put(
@@ -29,9 +50,9 @@ pub(in crate::v9) fn protect_buffer(vm: &mut Vm, id: ObjectId) {
 
 /** Internal memory growth may still detach a protected old backing through detach_buffer. */
 pub(in crate::v9) fn buffer_detachable(vm: &Vm, id: ObjectId) -> bool {
-    vm.heap
-        .get(id)
-        .is_some_and(|object| object.props.get(&protected_key()).is_none())
+    vm.heap.get(id).is_some_and(|object| {
+        object.props.get(&protected_key()).is_none() && object.props.get(&immutable_key()).is_none()
+    })
 }
 
 /** Fixed buffers have no maximum internal slot; resizable buffers retain it after detachment. */
@@ -92,6 +113,7 @@ pub(super) fn effective(vm: &Vm, mut view: ViewData) -> ViewData {
 
 /** Detachment invalidates all views through their shared buffer identity and releases byte accounting. */
 pub(in crate::v9) fn detach(vm: &mut Vm, id: ObjectId) {
+    debug_assert!(!immutable(vm, id), "immutable buffers cannot detach");
     if let Some(Class::ArrayBuffer(bytes)) = vm.heap.get_mut(id).map(|object| &mut object.class) {
         let units = bytes.0.len().div_ceil(2);
         bytes.0.clear();
@@ -130,8 +152,17 @@ pub(in crate::v9) fn valid(vm: &Vm, id: ObjectId) -> bool {
             crate::v9::vm::heap::Slot::Data(JsValue::Boolean(true))
         )
     });
+    let immutable = object.props.get(&immutable_key()).is_none_or(|prop| {
+        matches!(
+            prop.slot,
+            crate::v9::vm::heap::Slot::Data(JsValue::Boolean(true))
+        ) && object.props.get(&maximum_key()).is_none()
+            && object.props.get(&detached_key()).is_none()
+            && object.props.get(&protected_key()).is_none()
+    });
     maximum
         && protection
+        && immutable
         && object.props.get(&detached_key()).is_none_or(|prop| {
             length == 0
                 && matches!(
@@ -139,6 +170,15 @@ pub(in crate::v9) fn valid(vm: &Vm, id: ObjectId) -> bool {
                     crate::v9::vm::heap::Slot::Data(JsValue::Boolean(true))
                 )
         })
+}
+
+/** An inert saved record cannot attach the backing capability to any other object brand. */
+pub(in crate::v9) fn valid_immutable_brand(vm: &Vm, id: ObjectId) -> bool {
+    !immutable(vm, id)
+        || matches!(
+            vm.heap.get(id).map(|object| &object.class),
+            Some(Class::ArrayBuffer(_))
+        )
 }
 
 /** Saved views retain their original bounds but cannot forge tracking on fixed storage. */

@@ -50,6 +50,10 @@ pub(in crate::v9) fn set(vm: &mut Vm, id: ObjectId, key: &Key, value: &JsValue) 
     let Some(view) = view_of(vm, id) else {
         return Ok(true);
     };
+    if buffer_state::immutable(vm, view.buffer) && matches!(self::index(vm, id, key), Some(Some(_)))
+    {
+        return Ok(false);
+    }
     let bytes = encode(vm, view.kind, value)?;
     if let Some(Some(index)) = self::index(vm, id, key) {
         if let Some(current) = view_of(vm, id) {
@@ -67,6 +71,21 @@ pub(in crate::v9) fn define(
     descriptor: &Descriptor,
 ) -> Option<Res<bool>> {
     let index = self::index(vm, id, key)?;
+    if view_of(vm, id).is_some_and(|view| buffer_state::immutable(vm, view.buffer)) {
+        let compatible = index
+            .and_then(|index| load(vm, id, index))
+            .is_some_and(|value| {
+                !descriptor.accessor()
+                    && descriptor.configurable != Some(true)
+                    && descriptor.enumerable != Some(false)
+                    && descriptor.writable != Some(true)
+                    && descriptor
+                        .value
+                        .as_ref()
+                        .is_none_or(|next| value.same_value(next))
+            });
+        return Some(Ok(compatible));
+    }
     if index.is_none()
         || descriptor.accessor()
         || descriptor.configurable == Some(false)
