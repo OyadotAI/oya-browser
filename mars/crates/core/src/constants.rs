@@ -432,7 +432,9 @@ pub const VM_PENDING_JOBS: usize = 4096;
 /// YouTube's app keeps hundreds scheduled while it renders.
 pub const VM_TIMERS: usize = 4096;
 /// fetch and XMLHttpRequest calls waiting on the app at once; later calls fail like a network error.
-pub const VM_HOST_REQUESTS: usize = 32;
+/// YouTube fetches its icon set in a burst of over thirty while its telemetry and data requests
+/// are in flight; at 32 the overflow failed the requests that carry its content and icons.
+pub const VM_HOST_REQUESTS: usize = 256;
 /// Bytes of one request body a script may send through the app.
 pub const VM_REQUEST_BODY_BYTES: usize = 64 * 1024;
 /// Bytes of one response body the app may hand back to a script.

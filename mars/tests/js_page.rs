@@ -727,3 +727,25 @@ fn background_run_yields_to_waiting_input_after_one_step() {
     let now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
     assert!(texts(&now).contains("fetched"), "{now}");
 }
+
+/** A burst of fetches as large as YouTube's (its icon set plus telemetry and data, over forty
+at once) is answered in full: none fails for want of room in the page's request queue. */
+#[test]
+fn a_large_burst_of_fetches_all_succeed() {
+    let (_fixture, mut runtime, _page) = load(
+        "<p id=out>waiting</p><script>let ok=0;const n=48;for(let i=0;i<n;i++)\
+         fetch('/data.json').then(r=>r.json()).then(()=>{if(++ok===n)\
+         document.getElementById('out').textContent='all '+ok}).catch(e=>{\
+         document.getElementById('out').textContent='failed '+e.message})</script>",
+        vec![(
+            "/data.json",
+            reply("application/json", "", "{\"message\":\"fetched\"}"),
+        )],
+    );
+    for _ in 0..60 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        runtime.run_page_scripts();
+    }
+    let now = agent_call(&mut runtime, "page.inspect", json!({})).unwrap();
+    assert!(texts(&now).contains("all 48"), "{now}");
+}
