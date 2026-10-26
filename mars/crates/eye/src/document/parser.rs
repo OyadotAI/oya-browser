@@ -905,10 +905,17 @@ impl<'a> Tree<'a> {
             String::new()
         };
         self.metadata_bytes += bytes + text.len();
+        // Before any body content (no open element, no node yet) it belongs to the head, as
+        // HTML's "after head" mode puts it there; otherwise it stays where the source has it.
+        let in_head = self.head || self.stack.is_empty() && self.document.nodes.is_empty();
+        let in_body = !in_head;
         self.document.metadata.push(MetadataElement {
             tag: tag.into(),
             attributes,
             text,
+            in_body,
+            parent: self.stack.last().map(|index| self.local(*index)),
+            next: self.base + self.document.nodes.len(),
         });
     }
     /** Linked sheets load in source order; one with a media condition carries it to the cascade. */

@@ -207,7 +207,12 @@ impl Page<'_> {
                 if id == HEAD {
                     return self.head_children();
                 }
-                self.tree().children.get(&id).cloned().unwrap_or_default()
+                let mut children = self.tree().children.get(&id).cloned().unwrap_or_default();
+                for (child, before) in self.state.local_children.get(&id).into_iter().flatten() {
+                    let at = before.and_then(|b| children.iter().position(|c| *c == b));
+                    children.insert(at.unwrap_or(children.len()), *child);
+                }
+                children
             }
         }
     }
@@ -472,6 +477,9 @@ impl Page<'_> {
         };
         if let Some(record) = self.state.detached.get_mut(&parent) {
             record.children.retain(|child| *child != id);
+        }
+        if let Some(local) = self.state.local_children.get_mut(&parent) {
+            local.retain(|(child, _)| *child != id);
         }
         if parent == HEAD {
             self.state.head.retain(|child| *child != id);
