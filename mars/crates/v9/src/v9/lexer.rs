@@ -1,5 +1,6 @@
-mod legacy;
 /** V8 scanner-guided bounded lexical rules; upstream mapping and notices live beside this crate. */
+mod identifier;
+mod legacy;
 mod number;
 use super::{
     errors, literals,
@@ -11,6 +12,7 @@ use crate::{
     constants::{SCRIPT_BYTES, TOKENS},
     protocol::{EngineError, EngineResult, SourceLocation},
 };
+use identifier::{identifier_continue, identifier_start};
 use number::number;
 
 /** Tokens retain locations independently of the value or identifier they carry. */
@@ -377,12 +379,24 @@ fn identifier(source: &mut Source<'_>, start: SourceLocation) -> EngineResult<St
                     return Err(errors::syntax(start, "invalid identifier escape"));
                 }
                 let value = literals::unicode(source, start)?;
-                name.push(
-                    char::from_u32(value)
-                        .ok_or_else(|| errors::syntax(start, "invalid identifier escape"))?,
-                );
+                let character = char::from_u32(value)
+                    .ok_or_else(|| errors::syntax(start, "invalid identifier escape"))?;
+                if !(if name.is_empty() {
+                    identifier_start(character)
+                } else {
+                    identifier_continue(character)
+                }) {
+                    return Err(errors::syntax(start, "invalid identifier escape"));
+                }
+                name.push(character);
             }
-            Some(c) if identifier_start(c) || c.is_ascii_digit() => {
+            Some(c)
+                if if name.is_empty() {
+                    identifier_start(c)
+                } else {
+                    identifier_continue(c)
+                } =>
+            {
                 source.next();
                 name.push(c);
             }
@@ -416,10 +430,7 @@ fn regex_literal(source: &mut Source<'_>, start: SourceLocation) -> EngineResult
             Some('/') if !class => {
                 let pattern = body[..body.len() - before.len()].to_string();
                 let flags_start = source.rest();
-                while source
-                    .peek()
-                    .is_some_and(|c| identifier_start(c) || c.is_ascii_digit())
-                {
+                while source.peek().is_some_and(identifier_continue) {
                     source.next();
                 }
                 let flags = flags_start[..flags_start.len() - source.rest().len()].to_string();
@@ -442,11 +453,4 @@ fn mutation_token(source: &str) -> Option<(&'static str, Kind)> {
     ]
     .into_iter()
     .find(|(spelling, _)| source.starts_with(spelling))
-}
-/** Non-ASCII letters and marks count as identifier characters; non-ASCII space never reaches here. */
-fn identifier_start(character: char) -> bool {
-    character.is_ascii_alphabetic()
-        || character == '_'
-        || character == '$'
-        || !character.is_ascii() && !character.is_control() && !whitespace(character)
 }

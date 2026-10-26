@@ -7,6 +7,8 @@ mod binding;
 mod builtins;
 mod compile;
 mod errors;
+mod keyboard;
+pub use keyboard::{KeyboardKey, keyboard_page};
 mod lexer;
 mod literals;
 mod modules;
@@ -27,8 +29,9 @@ pub use modules::{EntryKind, ModuleEntry, ModuleInput, ModuleRequest, ModuleSour
 pub use platform::NodeBox;
 pub use platform::devtools;
 pub use platform::{
-    ConsoleEntry, DomLevel, HistoryRecord, HostEffects, HostRequest, HostResponse,
-    NavigationRequest, PageEnvironment, SimpleFragmentParser,
+    AnimationTarget, ConsoleEntry, DomLevel, HistoryRecord, HostEffects, HostRequest, HostResponse,
+    ImageAdoption, ImageRequest, ImageResponse, NavigationRequest, OpacityEffect, PageEnvironment,
+    SimpleFragmentParser,
 };
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
@@ -74,6 +77,8 @@ pub struct VmState {
     page: platform::PageState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dynamic: Vec<vm::DynamicSource>,
+    #[serde(default, skip_serializing_if = "vm::templates::Cache::is_empty")]
+    templates: vm::templates::Cache,
     #[serde(default, skip_serializing_if = "modules::ModuleState::is_empty")]
     modules: modules::ModuleState,
 }
@@ -152,6 +157,9 @@ impl VmState {
         ) {
             return Err(EngineError::invalid("Invalid V9 listener target."));
         }
+        if self.page.images.keys().any(|node| !known(node)) {
+            return Err(EngineError::invalid("Invalid V9 image target."));
+        }
         for node in self.page.wrappers.keys() {
             let known = projected.contains(node)
                 || self.page.detached.contains_key(node)
@@ -166,6 +174,7 @@ impl VmState {
     }
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
+        platform::images::validate(&self.page.images)?;
         builtins::validate_shared(&self.heap)?;
         builtins::validate_shared_gc(&self.heap)?;
         #[cfg(feature = "conformance")]
@@ -245,6 +254,7 @@ impl VmState {
             || self.page.detached.len() > crate::constants::VM_DETACHED_NODES
             || self.jobs.len() > limits.jobs
             || self.dynamic.len() > crate::constants::VM_DYNAMIC_SOURCES
+            || self.templates.len() > limits.objects
             || self.symbols.descriptions.len() > crate::constants::VM_SYMBOLS
         {
             return Err(EngineError::limit(
@@ -643,7 +653,9 @@ fn session<'h>(
         )?;
     }
     vm.dynamic = state.dynamic;
+    vm.templates = state.templates;
     vm.validate_graph()?;
+    platform::images::validate_targets(&vm.page)?;
     let loaded = vm.modules.loaded_codes();
     let mut scripts: Vec<&Code> = match &compiled {
         Compiled::All(codes) => codes.iter().map(|code| &**code).collect(),
@@ -747,6 +759,7 @@ struct Snapshot {
     script_changes: Vec<ScriptChange>,
     effects: HostEffects,
     dynamic: Vec<vm::DynamicSource>,
+    templates: vm::templates::Cache,
     modules: modules::ModuleState,
     next_id: usize,
     change_bytes: usize,
@@ -770,6 +783,7 @@ fn snapshot(vm: &Vm) -> Snapshot {
         script_changes: vm.page.script_changes.clone(),
         effects: vm.page.effects.clone(),
         dynamic: vm.dynamic.clone(),
+        templates: vm.templates.clone(),
         modules: vm.modules.state.clone(),
         next_id: vm.page.next_id,
         change_bytes: vm.page.change_bytes,
@@ -794,11 +808,14 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.page.changes = saved.changes;
     vm.page.script_changes = saved.script_changes;
     vm.page.effects.requests = saved.effects.requests;
+    vm.page.effects.image_requests = saved.effects.image_requests;
+    vm.page.effects.image_adoptions = saved.effects.image_adoptions;
     vm.page.effects.navigation = saved.effects.navigation;
     vm.page.effects.history = saved.effects.history;
     vm.page.effects.cookies = saved.effects.cookies;
     vm.page.effects.title = saved.effects.title;
     vm.dynamic = saved.dynamic;
+    vm.templates = saved.templates;
     vm.modules.state = saved.modules;
     vm.page.next_id = saved.next_id;
     vm.page.change_bytes = saved.change_bytes;
@@ -813,6 +830,8 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
 /** Collect, validate and package the request's outcome. */
 fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.select_realm(0).map_err(fatal)?;
+    platform::images::requests(&mut vm)?;
+    vm.page.effects.opacity_effects = platform::animations::snapshot(&mut vm);
     vm.frames.clear();
     vm.pins.clear();
     vm.collect_snapshot().map_err(fatal)?;
@@ -850,6 +869,7 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
         jobs: vm.jobs.into(),
         page,
         dynamic: vm.dynamic,
+        templates: vm.templates,
         modules: std::mem::take(&mut vm.modules.state),
     };
     state.validate(&vm.limits)?;
@@ -1291,6 +1311,19 @@ pub fn resume_requests(
         let (mut vm, _) = open(&input, state, Limits::default())?;
         vm.remaining = vm.limits.operations;
         vm.deliver(responses).map_err(fatal)?;
+        finish(vm)
+    })
+}
+
+/// Deliver actual host image fetch/decode outcomes in a later task, ignoring stale source generations.
+pub fn resume_images(
+    input: PageInput<'_>,
+    state: VmState,
+    responses: Vec<ImageResponse>,
+) -> EngineResult<Execution> {
+    on_v9_stack(|| {
+        let (mut vm, _) = open(&input, state, Limits::default())?;
+        platform::images::deliver(&mut vm, responses)?;
         finish(vm)
     })
 }

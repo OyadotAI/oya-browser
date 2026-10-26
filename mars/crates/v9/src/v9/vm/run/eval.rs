@@ -65,7 +65,7 @@ impl Vm<'_> {
             match crate::v9::compile_dynamic(&mut self.registry, &source, base, Some(&context)) {
                 Ok(code) => code,
                 Err(error) if error.code == "script_syntax_error" => {
-                    return Err(self.syntax_error(&error.message));
+                    return Err(self.syntax_error(&crate::v9::errors::syntax_reason(&error)));
                 }
                 Err(error) if error.code == "unsupported_feature" => {
                     return Err(self.unsupported_error("dynamic code with unsupported syntax"));

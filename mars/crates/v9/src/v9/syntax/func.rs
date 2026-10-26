@@ -511,10 +511,20 @@ impl Parser {
             self.next();
             if self.at("{") {
                 let body = self.static_block(pos)?;
-                statics.push(Stmt {
-                    kind: StmtKind::Block(body),
-                    pos,
-                });
+                if let Some(mut function) = initializer(pos, SITE_SOURCE, body) {
+                    // Each static block owns its vars while retaining lexical this and super.
+                    Rc::get_mut(&mut function)
+                        .expect("new static block")
+                        .flags
+                        .arrow = true;
+                    let callee = self.node(ExprKind::Function(function), pos)?;
+                    let call =
+                        self.node(ExprKind::Call(Box::new(callee), Vec::new(), false), pos)?;
+                    statics.push(Stmt {
+                        kind: StmtKind::Expr(call),
+                        pos,
+                    });
+                }
                 return Ok(());
             }
         }

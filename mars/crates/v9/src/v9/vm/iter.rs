@@ -1,9 +1,11 @@
 /** The iterator protocol, with native stepping for arrays, strings, maps and sets. */
 use super::data::{Class, IterKind, IterState};
-use super::heap::{ENUMERABLE, Key, Object};
+use super::heap::{Key, Object};
 use super::realm::{Static, realm, symbol};
-use super::{Res, Resume, Thrown, Vm};
+use super::{Exit, Res, Resume, Thrown, Vm};
 use crate::protocol::EngineError;
+mod diagnostics;
+mod enumeration;
 use crate::v9::value::{JsString, JsValue, ObjectId};
 
 impl Vm<'_> {
@@ -90,7 +92,7 @@ impl Vm<'_> {
                 }
                 let result = self.call(next, iterator, Vec::new())?;
                 if !matches!(result, JsValue::Object(_)) {
-                    return Err(self.type_error("Iterator result is not an object"));
+                    return Err(self.iterator_result_error(&result));
                 }
                 let roots = self.pins.len();
                 self.pin(result.clone());
@@ -249,7 +251,11 @@ impl Vm<'_> {
             _ => return Ok(()),
         };
         let iterator = match state {
-            IterState::Record { done: true, .. } => return Ok(()),
+            IterState::Record { done: true, .. }
+            | IterState::Array { done: true, .. }
+            | IterState::String { done: true, .. }
+            | IterState::Table { done: true, .. }
+            | IterState::Matches { done: true, .. } => return Ok(()),
             IterState::Record { iterator, .. } => {
                 self.mark_done(id);
                 iterator
@@ -277,6 +283,19 @@ impl Vm<'_> {
             }
         }
     }
+    /** Numeric rejection exhausts native backing first but still invokes its patched return exactly once. */
+    pub(in crate::v9) fn close_numeric_iterator(&mut self, id: ObjectId) -> Res<()> {
+        self.finish_numeric_iterator(id);
+        let iterator = match self.heap.get(id).map(|object| &object.class) {
+            Some(Class::Iter(state)) => match state.as_ref() {
+                IterState::Record { iterator, .. } => iterator.clone(),
+                _ => JsValue::Object(id),
+            },
+            _ => return Err(EngineError::invalid("Invalid V9 numeric iterator.").into()),
+        };
+        self.mark_done(id);
+        self.return_iterator(iterator)
+    }
     /** GetMethod and Call are observable even when internal stepping avoided a next lookup. */
     fn return_iterator(&mut self, iterator: JsValue) -> Res<()> {
         let method = self.get(&iterator, &Key::from("return"))?;
@@ -289,111 +308,51 @@ impl Vm<'_> {
         }
         Ok(())
     }
-    /** One `yield*` step: forward the resumption to the inner iterator. */
-    pub fn delegate_step(
-        &mut self,
-        id: ObjectId,
-        mode: Resume,
-        received: JsValue,
-    ) -> Res<(JsValue, bool)> {
-        let state = match self.heap.get(id).map(|o| &o.class) {
+    /** Delegation exposes a noncompleted iterator-result object without observing its value getter. */
+    pub fn delegate_step(&mut self, id: ObjectId, mode: Resume, received: JsValue) -> Res<Exit> {
+        let state = match self.heap.get(id).map(|object| &object.class) {
             Some(Class::Iter(state)) => (**state).clone(),
             _ => return Err(EngineError::invalid("Invalid V9 iterator.").into()),
         };
-        let IterState::Record { iterator, next, .. } = state else {
-            return match mode {
-                Resume::Next => Ok(match self.iter_step(id)? {
-                    Some(value) => (value, false),
-                    None => (JsValue::Undefined, true),
-                }),
-                Resume::Return => Ok((received, true)),
-                Resume::Throw => Err(Thrown::Value(received)),
-            };
+        let (iterator, next) = match state {
+            IterState::Record { iterator, next, .. } => (iterator, next),
+            _ if mode == Resume::Next => {
+                let owner = self.object_realm(id);
+                return self.with_realm(owner, |vm| match vm.native_step(id)? {
+                    Some(value) => {
+                        vm.pin(value.clone());
+                        vm.iter_result(value, false).map(Exit::YieldRaw)
+                    }
+                    None => Ok(Exit::Return(JsValue::Undefined)),
+                });
+            }
+            _ => (JsValue::Object(id), JsValue::Undefined),
         };
         let (method, name) = match mode {
             Resume::Next => (next, "next"),
             Resume::Throw => (self.get(&iterator, &Key::from("throw"))?, "throw"),
             Resume::Return => (self.get(&iterator, &Key::from("return"))?, "return"),
         };
-        if !self.is_callable(&method) {
-            return match mode {
-                Resume::Return => Ok((received, true)),
-                _ => {
-                    self.iter_close(id)?;
-                    Err(self
-                        .type_error(&format!("The iterator does not provide a '{name}' method")))
-                }
-            };
+        if method.nullish() {
+            if mode == Resume::Return {
+                return Ok(Exit::Return(received));
+            }
+            if mode == Resume::Throw {
+                self.iter_close(id)?;
+                return Err(
+                    self.type_error(&format!("The iterator does not provide a '{name}' method"))
+                );
+            }
         }
         let result = self.call(method, iterator, vec![received])?;
         if !matches!(result, JsValue::Object(_)) {
-            return Err(self.type_error("Iterator result is not an object"));
+            return Err(self.iterator_result_error(&result));
         }
-        let done = self.get(&result, &Key::from("done"))?.truthy();
-        let value = self.get(&result, &Key::from("value"))?;
-        Ok((value, done))
-    }
-    /** for-in: enumerable string keys along the prototype chain, shadowed names once. */
-    pub fn for_in_iterator(&mut self, value: &JsValue) -> Res<ObjectId> {
-        let mut keys: Vec<Key> = Vec::new();
-        if !value.nullish() {
-            let mut seen = std::collections::BTreeSet::new();
-            let mut current = Some(self.to_object(value)?);
-            let mut depth = 0;
-            while let Some(id) = current {
-                for key in self.own_keys(id)? {
-                    if !matches!(key, Key::Str(_)) || !seen.insert(key.clone()) {
-                        continue;
-                    }
-                    if let Some(prop) = self.own(id, &key)?
-                        && prop.attrs & ENUMERABLE != 0
-                    {
-                        keys.push(key);
-                    }
-                }
-                current = self.proto_of(id);
-                depth += 1;
-                if depth > FOR_IN_DEPTH {
-                    break;
-                }
-            }
+        self.pin(result.clone());
+        if !self.get(&result, &Key::from("done"))?.truthy() {
+            return Ok(Exit::YieldRaw(result));
         }
-        self.charge(keys.len())?;
-        let object = if value.nullish() {
-            JsValue::Undefined
-        } else {
-            JsValue::Object(self.to_object(value)?)
-        };
-        self.new_iterator(IterState::ForIn {
-            object,
-            keys,
-            index: 0,
-        })
-    }
-    /** The next for-in key still present on the object. */
-    pub fn for_in_step(&mut self, id: ObjectId) -> Res<Option<JsValue>> {
-        loop {
-            let (object, key, index) = match self.heap.get(id).map(|o| &o.class) {
-                Some(Class::Iter(state)) => match state.as_ref() {
-                    IterState::ForIn {
-                        object,
-                        keys,
-                        index,
-                    } => match keys.get(*index as usize) {
-                        Some(key) => (object.clone(), key.clone(), *index),
-                        None => return Ok(None),
-                    },
-                    _ => return Err(EngineError::invalid("Invalid V9 for-in iterator.").into()),
-                },
-                _ => return Err(EngineError::invalid("Invalid V9 for-in iterator.").into()),
-            };
-            self.set_index(id, index + 1);
-            if let JsValue::Object(target) = object
-                && self.has_property(target, &key)?
-            {
-                return Ok(Some(key.value()));
-            }
-        }
+        self.get(&result, &Key::from("value")).map(Exit::Return)
     }
     /** `length` of an array-like as an integer. */
     pub fn length_of(&mut self, value: &JsValue) -> Res<usize> {

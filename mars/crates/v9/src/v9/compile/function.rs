@@ -99,11 +99,8 @@ impl Compiler {
         let mut vars = Vec::new();
         scan::var_names(body, func.strict, true, &mut vars);
         self.hidden_bindings(func, uses, &params, &vars)?;
-        let mut skip = params.clone();
-        if uses.arguments && !func.flags.arrow && !func.flags.fields {
-            skip.push(Name::from("arguments"));
-        }
-        self.f().annex_skip = skip;
+        // Parameters block Annex B replacement; an implicit arguments binding does not.
+        self.f().annex_skip = params.clone();
         if self_name
             && let Some(name) = &func.name
             && !params.contains(name)
@@ -647,7 +644,7 @@ impl Compiler {
                     }
                     return Ok(());
                 }
-                if !own || at < base {
+                if !binding.block_function && (!own || at < base) {
                     return Ok(());
                 }
                 own = false;
@@ -661,6 +658,13 @@ impl Compiler {
         }
         let _ = pos;
         Ok(())
+    }
+    /** Distinguish a block function from an intervening let that forbids an Annex B var copy. */
+    pub(super) fn mark_block_function(&mut self, name: &Name) {
+        let scope = self.scopes.last_mut().expect("block scope");
+        if let Some(&at) = scope.index.get(name) {
+            scope.bindings[at].block_function = true;
+        }
     }
     /** Push `this`, checking a derived constructor's dead zone. */
     pub(super) fn load_this(&mut self) -> EngineResult<()> {

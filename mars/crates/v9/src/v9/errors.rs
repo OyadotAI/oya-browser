@@ -15,6 +15,19 @@ pub(super) fn syntax(location: SourceLocation, reason: &str) -> EngineError {
         "parse",
     )
 }
+/** JavaScript SyntaxError.message carries the parse reason; structured host errors keep their location prefix. */
+pub(super) fn syntax_reason(error: &EngineError) -> String {
+    let reason = error
+        .message
+        .split_once(": ")
+        .map_or(error.message.as_str(), |(_, reason)| reason);
+    let reason = reason.strip_suffix('.').unwrap_or(reason);
+    let mut chars = reason.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default()
+}
 /** Budget and DOM failures retain their stable error classification. */
 pub(super) fn located(
     mut error: EngineError,

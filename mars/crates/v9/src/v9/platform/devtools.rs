@@ -316,7 +316,7 @@ fn query_selector(vm: &mut Vm, node: usize, selector: &str, all: bool) -> Engine
     };
     let mut found = Vec::new();
     for candidate in candidates {
-        if super::selector::matches(&mut vm.page, candidate, &list, root) {
+        if super::selector::matches(&mut vm.page, &vm.heap, candidate, &list, root) {
             found.push(candidate);
             if !all {
                 break;

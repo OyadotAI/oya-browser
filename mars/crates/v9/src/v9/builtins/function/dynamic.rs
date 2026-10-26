@@ -13,7 +13,13 @@ pub(super) fn evaluate_function(vm: &mut Vm, source: String) -> Res<JsValue> {
             line: 1,
             column: 1,
         });
-        if let Some(code) = vm.registry.get(site).cloned() {
+        let has_templates = vm.registry.codes.values().any(|code| {
+            code.source
+                .as_ref()
+                .is_some_and(|(_, base)| *base == offset)
+                && !code.templates.is_empty()
+        });
+        if !has_templates && let Some(code) = vm.registry.get(site).cloned() {
             return vm.run_script(code);
         }
     }

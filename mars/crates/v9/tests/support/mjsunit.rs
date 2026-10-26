@@ -175,6 +175,18 @@ impl Scripts {
                 "builtin-subclassing",
                 true,
             ),
+            conformance_iterator_includes: boolean_flag_default(
+                &self.metadata_source,
+                "js-iterator-includes",
+                boolean_flag(&self.metadata_source, "js-staging")
+                    || boolean_flag(&self.metadata_source, "harmony"),
+            ),
+            conformance_iterator_join: boolean_flag_default(
+                &self.metadata_source,
+                "js-iterator-join",
+                boolean_flag(&self.metadata_source, "js-staging")
+                    || boolean_flag(&self.metadata_source, "harmony"),
+            ),
             conformance_ignore_unhandled_promises: boolean_flag(
                 &self.metadata_source,
                 "ignore-unhandled-promises",

@@ -11,6 +11,7 @@ mod catch_bindings;
 mod expr;
 mod function;
 mod iteration;
+mod member_reference;
 mod module;
 mod parameters;
 mod pattern;
@@ -78,6 +79,8 @@ pub(in crate::v9) enum Op {
     /** Top-level `var`: define the global property if it is missing; the flag marks a sloppy
     direct eval's var, which stays deletable. */
     DeclareVar(u32, bool),
+    /** Eval's Annex B global declaration or copy is suppressed by an existing global lexical. */
+    AnnexGlobal(u32, bool),
     /** Top-level `function`: define or overwrite the global property with the closure on the
     stack; the flag marks a sloppy direct eval's function, which stays deletable. */
     DeclareFunction(u32, bool),
@@ -171,6 +174,8 @@ pub(in crate::v9) enum Op {
     /** this home key value -> value */
     SetSuperElem,
     ToPropertyKey,
+    /** object raw-key -> object canonical-key, checking the receiver before authored key coercion. */
+    ToElementKey,
     /** callee this args... -> result */
     Call(u16),
     /** callee this array -> result */
@@ -576,6 +581,8 @@ struct Binding {
     name: Name,
     declared: Declared,
     place: Place,
+    /// Ordinary block-function bindings allow Annex B copies through them to an existing var.
+    block_function: bool,
 }
 
 /** One lexical scope during compilation. */
@@ -583,7 +590,7 @@ struct Scope {
     bindings: Vec<Binding>,
     /// Position of each name in `bindings`: a minified bundle declares thousands of names in one
     /// function scope and reads them millions of times, so lookups cannot scan the vector.
-    index: FastMap<Name, usize>,
+    index: std::collections::HashMap<Name, usize>,
     /// Whether this scope has a runtime environment record.
     env: bool,
     /// Slots allocated in that environment.
@@ -621,7 +628,8 @@ struct FnState {
     ops: Vec<Op>,
     positions: Vec<(u32, Pos)>,
     strings: Vec<JsString>,
-    string_index: FastMap<Vec<u16>, u32>,
+    /// Strong mixing avoids clustered UTF16 identifier hashes; keys share the pool's immutable string storage.
+    string_index: std::collections::HashMap<JsString, u32>,
     /// Private names interned apart from `string_index`, so they never share an entry.
     private_index: FastMap<Vec<u16>, u32>,
     templates: Vec<Vec<(Option<JsString>, JsString)>>,
@@ -654,7 +662,7 @@ struct FnState {
     /// Sloppy eval code: its var scope among the caller's scopes (None for the global scope),
     /// where Annex B block functions store their value.
     eval_vars: Option<Option<usize>>,
-    /// Parameter names (and `arguments` when the function has its own arguments object): an
+    /// Parameter names, excluding an implicit `arguments` object binding: an
     /// Annex B block function of such a name never updates the function-level binding (B.3.2.1).
     annex_skip: Vec<Name>,
     /// The last occurrence of each simple sloppy parameter is its mapped arguments index.
@@ -730,12 +738,12 @@ impl Compiler {
     /** Intern a string constant. */
     fn string(&mut self, value: &JsString) -> u32 {
         let state = self.f();
-        if let Some(index) = state.string_index.get(value.as_units()) {
+        if let Some(index) = state.string_index.get(value) {
             return *index;
         }
         let index = state.strings.len() as u32;
         state.strings.push(value.clone());
-        state.string_index.insert(value.as_units().to_vec(), index);
+        state.string_index.insert(value.clone(), index);
         index
     }
     /** Intern a private name in its own table: its index means a private key, never a string. */
@@ -773,7 +781,7 @@ impl Compiler {
     fn push_scope(&mut self, env: bool, boundary: bool) {
         self.scopes.push(Scope {
             bindings: Vec::new(),
-            index: FastMap::default(),
+            index: std::collections::HashMap::default(),
             env,
             slots: 0,
             boundary,
@@ -812,6 +820,7 @@ impl Compiler {
             name: name.clone(),
             declared,
             place,
+            block_function: false,
         });
         place
     }
@@ -879,7 +888,7 @@ impl Compiler {
         self.begin_function(program.strict, FuncFlags::default());
         self.scopes.push(Scope {
             bindings: Vec::new(),
-            index: FastMap::default(),
+            index: std::collections::HashMap::default(),
             env: false,
             slots: 0,
             boundary: true,

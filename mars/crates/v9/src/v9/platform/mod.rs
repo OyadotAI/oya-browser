@@ -4,6 +4,8 @@
  * the document is the app's inert projection, network calls and navigations are recorded for the
  * app to perform, and time is a virtual clock the app advances.
  */
+pub(in crate::v9) mod animations;
+pub use animations::{AnimationTarget, OpacityEffect};
 mod blob;
 mod channel;
 pub(in crate::v9) mod components;
@@ -18,8 +20,11 @@ mod form_data;
 mod form_submit;
 mod frames;
 pub(in crate::v9) mod html;
+pub(in crate::v9) mod images;
 mod install;
 mod interfaces;
+mod keyboard;
+pub(in crate::v9) use keyboard::press_key;
 mod net;
 mod nodes;
 mod offsets;
@@ -35,6 +40,7 @@ mod window;
 
 pub(in crate::v9) use dom::{focus, named_element, native_name};
 pub use html::SimpleFragmentParser;
+pub use images::{ImageAdoption, ImageRequest, ImageResponse};
 
 pub(in crate::v9) use install::install;
 pub(in crate::v9) use net::XhrState;
@@ -273,6 +279,12 @@ pub struct PageEnvironment {
     /// Preserve V8's default-true builtin-subclassing switch as actual opt-in test metadata.
     #[cfg(feature = "conformance")]
     pub conformance_builtin_subclassing: bool,
+    /// Original shell flags select the staged Iterator.includes extension.
+    #[cfg(feature = "conformance")]
+    pub conformance_iterator_includes: bool,
+    /// Join exposure is independent from includes, matching the native staging switches.
+    #[cfg(feature = "conformance")]
+    pub conformance_iterator_join: bool,
     /// Expose native test callbacks only when original d8 flags requested the FastCAPI helper.
     #[cfg(feature = "conformance")]
     pub conformance_expose_fast_api: bool,
@@ -367,6 +379,10 @@ impl Default for PageEnvironment {
             conformance_async_hooks: false,
             #[cfg(feature = "conformance")]
             conformance_builtin_subclassing: true,
+            #[cfg(feature = "conformance")]
+            conformance_iterator_includes: false,
+            #[cfg(feature = "conformance")]
+            conformance_iterator_join: false,
             #[cfg(feature = "conformance")]
             conformance_expose_fast_api: false,
             #[cfg(feature = "conformance")]
@@ -483,6 +499,14 @@ pub struct HistoryRecord {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostEffects {
+    /// Existing image identity associations move with real DOM adoption, without changing source generation.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub image_adoptions: Vec<ImageAdoption>,
+    /// Complete native opacity animation layer; omission restores the authored cascade.
+    pub opacity_effects: Vec<OpacityEffect>,
+    /// Source-generation requests; only actual host decoding may answer them with `resume_images`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub image_requests: Vec<ImageRequest>,
     /// Requests to perform; answer them with `resume_requests`.
     pub requests: Vec<HostRequest>,
     /// The last navigation request, if any.
@@ -620,6 +644,9 @@ pub(in crate::v9) struct ScriptLoad {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /** Inert source generations and actual image decode results; no additional heap roots. */
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub images: BTreeMap<usize, images::State>,
     pub identity: String,
     /** Virtual milliseconds since the time origin; performance.now(). */
     pub clock: f64,
@@ -628,6 +655,8 @@ pub(in crate::v9) struct PageState {
     pub random: u64,
     pub timers: Vec<Timer>,
     pub next_timer: u32,
+    /// Active and filling animations retain their actual effect and Promise graphs.
+    pub active_animations: Vec<ObjectId>,
     /** Next scheduling sequence number. */
     pub next_order: u32,
     pub listeners: Vec<Listener>,
@@ -790,6 +819,13 @@ impl<'h> Page<'h> {
     }
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
+        out.extend(
+            self.state
+                .active_animations
+                .iter()
+                .copied()
+                .map(JsValue::Object),
+        );
         for timer in &self.state.timers {
             out.push(timer.callback.clone());
             out.extend(timer.args.iter().cloned());
@@ -816,6 +852,7 @@ impl<'h> Page<'h> {
     }
     /** Forget wrappers and requests whose objects were collected. */
     pub fn sweep(&mut self, live: &super::vm::heap::FastSet<ObjectId>) {
+        self.state.active_animations.retain(|id| live.contains(id));
         self.state.wrappers.retain(|_, id| live.contains(id));
         self.state.xhrs.retain(|id, _| live.contains(id));
     }

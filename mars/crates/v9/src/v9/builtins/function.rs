@@ -99,7 +99,17 @@ pub(super) fn create_dynamic(vm: &mut Vm, call: Call, prefix: &str) -> Res<JsVal
     } else {
         arg_string(vm, &call, count - 1)?.lossy()
     };
-    let source = format!("({prefix}({}\n) {{\n{}\n}})", params.join(","), body);
+    let head = format!("({prefix}({}\n", params.join(","));
+    let parameters_end = head.len();
+    let source = format!("{head}) {{\n{body}\n}})");
+    if let Err(error) =
+        crate::v9::syntax::validate_dynamic_function(&source, parameters_end, source.len() - 2)
+    {
+        if error.code == "script_syntax_error" {
+            return Err(vm.syntax_error(&crate::v9::errors::syntax_reason(&error)));
+        }
+        return Err(error.into());
+    }
     let function = dynamic::evaluate_function(vm, source)?;
     dynamic_metadata(vm, &call, function)
 }
@@ -152,17 +162,7 @@ pub(in crate::v9) fn compile_indirect_eval(
         match crate::v9::compile_dynamic(&mut vm.registry, &source, base, Some(INDIRECT_CONTEXT)) {
             Ok(code) => code,
             Err(error) if error.code == "script_syntax_error" => {
-                let reason = error
-                    .message
-                    .split_once(": ")
-                    .map_or(error.message.as_str(), |(_, reason)| reason);
-                let reason = reason.strip_suffix('.').unwrap_or(reason);
-                let mut chars = reason.chars();
-                let message = chars
-                    .next()
-                    .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
-                    .unwrap_or_default();
-                return Err(vm.syntax_error(&message));
+                return Err(vm.syntax_error(&crate::v9::errors::syntax_reason(&error)));
             }
             Err(error) if error.code == "unsupported_feature" => {
                 return Err(vm.unsupported_error("dynamic code with unsupported syntax"));

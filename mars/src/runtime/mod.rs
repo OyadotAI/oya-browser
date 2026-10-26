@@ -1,5 +1,6 @@
 /** Composition root owns engine lifetimes, committed pages and native tools. */
 mod agent;
+mod animations;
 pub mod authority;
 mod batch;
 /** Bookmarks the person saves; desktop-owned, persisted through the profile record store. */

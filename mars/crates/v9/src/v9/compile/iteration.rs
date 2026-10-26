@@ -68,6 +68,32 @@ impl Compiler {
         self.release(mark);
         Ok(())
     }
+    /** Destructuring closes on normal completion and binding failures, but not failures advancing the record. */
+    pub(super) fn pattern_iterator_scope(
+        &mut self,
+        iterator: Slot,
+        closeable: Slot,
+        body: impl FnOnce(&mut Self) -> EngineResult<()>,
+    ) -> EngineResult<()> {
+        let mark = self.f().registers;
+        let completion = self.temp()?;
+        self.temp()?;
+        self.temp()?;
+        self.f().handlers += 1;
+        let handler = self.emit(Op::PushTry(0, 0, completion));
+        body(self)?;
+        self.emit(Op::PopTry);
+        self.f().handlers -= 1;
+        self.emit(Op::Normal(completion));
+        self.f().ops[handler] = Op::PushTry(0, self.here() as u32, completion);
+        self.emit(Op::GetReg(closeable));
+        let skip = self.emit(Op::JumpIfFalse(0));
+        self.iterator_close(iterator, completion, false)?;
+        self.patch(skip);
+        self.emit(Op::EndFinally(completion));
+        self.release(mark);
+        Ok(())
+    }
     /** A close error replaces return/break completion but cannot replace an existing body throw. */
     fn iterator_close(
         &mut self,

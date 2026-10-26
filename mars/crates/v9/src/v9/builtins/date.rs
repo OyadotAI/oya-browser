@@ -17,6 +17,10 @@ const MINUTE: f64 = 60_000.0;
 const SECOND: f64 = 1000.0;
 /** The largest time value. */
 const MAX_TIME: f64 = 8.64e15;
+/** Annex B legacy setters interpret integer years zero through 99 relative to 1900. */
+const LEGACY_YEAR_OFFSET: f64 = 1900.0;
+/** Largest legacy short year before ordinary full-year interpretation applies. */
+const LEGACY_YEAR_LAST: f64 = 99.0;
 /** Day names. */
 const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 /** Month names. */
@@ -124,14 +128,20 @@ pub(super) fn install(b: &mut Builder) {
     for (name, length, function) in setters {
         b.method(proto, name, length, function);
     }
-    let formats: [(&'static str, NativeFn); 10] = [
+    b.method(proto, "setYear", 1, set_legacy_year);
+    let utc_string = b.method(proto, "toUTCString", 0, to_utc_string);
+    b.value(
+        proto,
+        "toGMTString",
+        JsValue::Object(utc_string),
+        crate::v9::vm::heap::WRITABLE | crate::v9::vm::heap::CONFIGURABLE,
+    );
+    let formats: [(&'static str, NativeFn); 8] = [
         ("toISOString", to_iso),
         ("toJSON", to_json),
         ("toString", to_string),
         ("toDateString", to_date_string),
         ("toTimeString", to_time_string),
-        ("toUTCString", to_utc_string),
-        ("toGMTString", to_utc_string),
         ("toLocaleString", to_locale_string),
         ("toLocaleDateString", to_locale_date_string),
         ("toLocaleTimeString", to_locale_time_string),
@@ -506,6 +516,37 @@ fn set_time(vm: &mut Vm, call: Call) -> Res<JsValue> {
     this_time(vm, &call)?;
     let time = arg_number(vm, &call, 0)?;
     store(vm, &call, time)
+}
+
+/** Legacy setYear captures the original date before coercion and resets invalid dates from local +0. */
+fn set_legacy_year(vm: &mut Vm, call: Call) -> Res<JsValue> {
+    let time = this_time(vm, &call)?;
+    let year = arg_number(vm, &call, 0)?;
+    if year.is_nan() {
+        return store(vm, &call, f64::NAN);
+    }
+    let base = if time.is_nan() {
+        0.0
+    } else {
+        time + local_offset(vm, time)
+    };
+    let parts = parts(base);
+    let year = if (0.0..=LEGACY_YEAR_LAST).contains(&year.trunc()) {
+        year.trunc() + LEGACY_YEAR_OFFSET
+    } else {
+        year
+    };
+    let local = make_date(
+        year,
+        parts.month,
+        parts.date,
+        parts.hours,
+        parts.minutes,
+        parts.seconds,
+        parts.millis,
+    );
+    let utc = timezone::utc(&vm.page.environment, local);
+    store(vm, &call, utc)
 }
 
 /** The field setters: the field and the ones after it come from the arguments. */

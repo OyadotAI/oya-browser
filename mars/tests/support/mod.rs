@@ -21,6 +21,9 @@ const SLOW_RESPONSE: Duration = Duration::from_secs(4);
 /** Builds each fixture response from the raw request text. */
 type Responder = Box<dyn Fn(&str) -> Vec<u8> + Send>;
 
+/** Route-local request counts prove a resource was actually served without depending on global order. */
+pub type PathCounts = Arc<std::sync::Mutex<std::collections::BTreeMap<String, usize>>>;
+
 /** A disposable listener serves only synthetic in-memory data. */
 pub struct Fixture {
     /** URL is always an explicit literal loopback endpoint. */
@@ -36,6 +39,32 @@ pub struct Fixture {
 }
 
 impl Fixture {
+    /** Serve exact routes while recording only requests this fixture's actual responder received. */
+    pub fn routes_counted(routes: Vec<(&'static str, Vec<u8>)>) -> (Self, PathCounts) {
+        let counts = PathCounts::default();
+        let observed = Arc::clone(&counts);
+        let fixture = Self::start(
+            Box::new(move |request| {
+                let path = request.split_whitespace().nth(1).unwrap_or_default();
+                *observed
+                    .lock()
+                    .unwrap()
+                    .entry(path.to_string())
+                    .or_default() += 1;
+                routes
+                    .iter()
+                    .find(|(route, _)| *route == path)
+                    .map(|(_, response)| response.clone())
+                    .unwrap_or_else(|| {
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_vec()
+                    })
+            }),
+            false,
+        );
+        (fixture, counts)
+    }
+
     /** Different routes exercise complete, failing and partially valid navigations. */
     pub fn pages() -> Self {
         Self::start(Box::new(page_response), false)

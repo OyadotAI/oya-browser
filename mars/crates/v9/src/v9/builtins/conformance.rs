@@ -30,6 +30,7 @@ pub(in crate::v9) fn expose_conformance_globals(
 ) {
     super::expose_async_hooks(vm, global, bank);
     fast_api::expose(vm, bank);
+    expose_iterator_options(vm, bank);
 }
 
 /** Native embedder receiver state is not ordinary structured data and cannot acquire a fake clone brand. */
@@ -187,4 +188,28 @@ fn collect_task(vm: &mut Vm, call: Call) -> Res<JsValue> {
     }
     vm.settle(promise, PromiseState::Fulfilled(JsValue::Undefined))?;
     Ok(JsValue::Undefined)
+}
+
+/** Staged helpers are absent unless their real source flags enable them in a fresh shell realm. */
+fn expose_iterator_options(vm: &mut Vm, bank: u32) {
+    if !vm.page.environment.conformance_d8 {
+        return;
+    }
+    let prototype = crate::v9::vm::realm::banks::bank(bank)
+        .ids
+        .iterator_prototype;
+    vm.materialize(prototype)
+        .expect("installed iterator prototype");
+    for (name, enabled) in [
+        (
+            "includes",
+            vm.page.environment.conformance_iterator_includes,
+        ),
+        ("join", vm.page.environment.conformance_iterator_join),
+    ] {
+        if !enabled {
+            vm.heap
+                .remove(prototype, &crate::v9::vm::heap::Key::from(name));
+        }
+    }
 }

@@ -13,6 +13,36 @@ separate Script parsing, declared fixtures and timer/microtask delivery. Missing
 capabilities and resource-limit failures remain failures, and exclusions retain
 their own counts. These are compatibility measurements, not a claim of V8 parity.
 
+The checkpoint at `583ce4c0` has 3,411 passes and 331 raw failures, with the
+original 5,345 exclusions. `crates/v9/conformance/failure-groups.json` assigns
+each of those failures to exactly one group of at most eight cases. It preserves
+the original failure and distinguishes source diagnosis from a verified repair.
+The first four groups repair iterator protocols, Annex B block functions, class
+evaluation and function names. Their 13 original failures pass unchanged.
+
+The property-reference group repairs failed strict `super` writes, primitive
+string own-property precedence and computed-reference coercion order. Three more
+original failures pass. Two raw V8 expectations remain incompatible with current
+Test262 revision `d53ebc8b1931d9f1541e43d59650776e4b766248`: its `with` tests
+require separate HasBinding and GetBindingValue checks, and compound assignments
+coerce their property key once. All five unchanged Test262 cases cited in the
+ledger pass. Those two V8 cases remain failures; no assertions or exclusions were
+changed to hide them.
+
+Subsequent verified groups preserve proxy `for...in` traps and deferred descriptor
+filtering, enforce parser and dynamic-function grammar boundaries, cache genuinely
+frozen template objects by realm and parse site with conditional GC ownership,
+and repair typed-array integrity and `includes` receiver/witness rules. Together,
+the completed groups repair 24 original V8 failures. This targeted result is
+separate from the whole-suite scoreboard and its resource-limit failures.
+
+The subsequent isolated full inventory records 3,407 passes and 335 raw failures,
+with the same 5,345 exclusions. Thirty-five baseline failures pass in that run;
+39 additional cases hit time limits and remain counted. Every additional failure
+is a timing failure, so the targeted semantic repairs and the whole-run timing
+result are reported separately. Compiler string and scope-name indices avoid structured hash collisions while
+preserving pool order, binding slots, source IDs and existing limits.
+
 `crates/v9/src/v9/value/number/radix.rs` adapts the complete
 `DoubleToRadixStringView` routine from pinned `src/numbers/conversions.cc`, using
 Rust vectors instead of a shared character buffer. It retains the next-double
@@ -34,6 +64,36 @@ observable IsRegExp lookup. The pinned `MaybeCallFunctionAtSymbol` helper in
 `src/builtins/builtins-string-gen.cc` only dispatches pattern hooks on objects;
 primitive arguments do not consult inherited hooks. The unchanged mjsunit
 `es6/pattern-brand-check.js` and `regress/regress-1092896.js` pin those distinctions.
+
+## Native DOM completion work (2026-10-25)
+
+Image requests and their source generations cross the V9 boundary as inert data.
+The coordinator uses its governed resource path and bounded decoder, then delivers
+matching load/error tasks. A stale or duplicate response cannot dispatch a second
+event. Detached images and hidden decoded assets retain the existing resource
+budgets. Inline handlers in inserted markup retain their existing inert contract;
+programmatically registered image handlers receive real completion events. This
+does not claim complete HTML image selection or fractional-density parity.
+
+Web Animations currently supports finite, linear, two-endpoint numeric opacity
+effects. Native page-clock tasks drive readiness, completion, cancellation and
+Promise jobs. Samples form a separate effective style layer for native Eye paint;
+they never rewrite authored inline style. Live queries respect document and shadow
+tree boundaries. Other effect properties, unsupported composition and custom
+timelines fail explicitly. CSS transitions and full Web Animations compatibility
+remain outside this implemented subset.
+
+Popover type changes use the existing native show/hide state, event coalescing and
+reentrancy checks. `:popover-open` queries read that state. Trusted Escape input
+passes through the ordinary page/revision/ownership admission, dispatches real
+keyboard events and honors keydown cancellation before its default close action.
+The local WPT vendor adapter calls this native input path; it does not complete
+input promises by hiding an element in script. DOM timeout results are recorded
+separately in `crates/v9/conformance/dom-timeout-groups.json` and do not alter V8
+scores. The unchanged image-load reftest and popover change-type test pass,
+including real native Escape delivery. The animation waiter completes, while its
+reference pixels still differ. This is not a claim that every popover or animation
+WPT assertion passes.
 
 ## Pinned references
 

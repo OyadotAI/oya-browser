@@ -109,6 +109,8 @@ impl Compiler {
             StmtKind::Function(func) => {
                 // Hoisted; sloppy block functions also update the function-level var (Annex B).
                 if !self.f().strict
+                    && !func.flags.generator
+                    && !func.flags.asynchronous
                     && let Some(name) = &func.name
                     && self.scopes.last().is_some_and(|scope| !scope.boundary)
                     && !self.f().annex_skip.contains(name)
@@ -321,6 +323,9 @@ impl Compiler {
         }
         for func in scan::function_declarations(body) {
             let name = func.name.clone().expect("declaration name");
+            if !func.flags.generator && !func.flags.asynchronous {
+                self.mark_block_function(&name);
+            }
             self.closure(&func, false)?;
             self.initialize(&name, func.pos)?;
             self.emit(Op::Pop);
@@ -731,6 +736,9 @@ impl Compiler {
         }
         for func in functions {
             let name = func.name.clone().expect("declaration name");
+            if !func.flags.generator && !func.flags.asynchronous {
+                self.mark_block_function(&name);
+            }
             self.closure(&func, false)?;
             self.initialize(&name, func.pos)?;
             self.emit(Op::Pop);

@@ -6,6 +6,8 @@
  * have, which blanked every `data` and `text` binding while all elements shared one prototype.
  */
 use super::dom;
+#[path = "popover.rs"]
+pub(super) mod popover;
 #[path = "reflect.rs"]
 mod reflect;
 use crate::v9::vm::realm::{Builder, NativeFn};
@@ -470,6 +472,9 @@ pub(super) fn install(b: &mut Builder, html: u32) {
             .unwrap_or(html);
         let proto = b.object(Some(parent));
         members(b, proto, interface);
+        if interface.name == "HTMLImageElement" {
+            super::images::install(b, proto);
+        }
         registry.define(b, proto, interface.table);
         let ctor = b.constructor(interface.name, 0, dom::illegal_constructor, proto, None);
         b.global(interface.name, ctor);
@@ -478,6 +483,8 @@ pub(super) fn install(b: &mut Builder, html: u32) {
             tags.insert(*tag, proto);
         }
     }
+    let invokers = ["HTMLButtonElement", "HTMLInputElement"].map(|name| made[name]);
+    popover::install(b, html, &invokers);
     let _ = PROTOTYPES.set(tags);
     registry.finish();
     super::blob::install(b);

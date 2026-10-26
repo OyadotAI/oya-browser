@@ -331,7 +331,8 @@ pub(in crate::v9) fn fragment_method(vm: &mut Vm, call: Call) -> Res<JsValue> {
         }
         "getSelection" => super::super::range::selection(vm),
         "elementFromPoint" => Ok(JsValue::Null),
-        "elementsFromPoint" | "getAnimations" => Ok(JsValue::Object(vm.new_array(Vec::new())?)),
+        "getAnimations" => super::super::animations::shadow_animations(vm, node),
+        "elementsFromPoint" => Ok(JsValue::Object(vm.new_array(Vec::new())?)),
         _ => Ok(JsValue::Undefined),
     }
 }

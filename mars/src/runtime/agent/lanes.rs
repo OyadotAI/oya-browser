@@ -61,7 +61,7 @@ pub(super) fn describe(result: &mut Value) {
         ),
         (
             "page.press",
-            json!({"page_id":"string","expected_revision":"u64","node_id":"optional string (required for editing keys)","key":"optional: Enter, Space, Backspace, PageDown, PageUp, Home, End or one character","text":"optional: characters appended to the field","modifiers":"optional [Shift|Control|Alt|Meta]"}),
+            json!({"page_id":"string","expected_revision":"u64","node_id":"optional string (required for editing keys)","key":"optional: Escape, Enter, Space, Backspace, PageDown, PageUp, Home, End or one character","text":"optional: characters appended to the field","modifiers":"optional [Shift|Control|Alt|Meta]"}),
         ),
         ("page.console", json!({})),
         ("page.network", json!({})),

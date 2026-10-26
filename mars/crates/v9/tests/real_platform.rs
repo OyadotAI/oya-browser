@@ -28,12 +28,15 @@ fn bare_window_event_target_calls_use_the_window() {
     assert_eq!(eval(source, "r"), "1");
 }
 
-/** Element.animate is absent so Web Animations polyfills install their own. */
+/** Element.animate supplies a native animation whose finished promise stays pending until playback advances. */
 #[test]
-fn element_animate_is_left_for_polyfills() {
+fn element_animate_has_a_real_pending_playback_record() {
     assert_eq!(
-        eval("const r=typeof document.createElement('div').animate;", "r"),
-        "undefined"
+        eval(
+            "let r='';const element=document.createElement('div');const animation=element.animate({opacity:[0,1]},1);let done=false;animation.finished.then(()=>done=true);queueMicrotask(()=>{r=[typeof element.animate,animation instanceof Animation,animation.playState,animation.pending,animation.currentTime,done].join()});",
+            "r"
+        ),
+        "function,true,running,true,0,false"
     );
 }
 
