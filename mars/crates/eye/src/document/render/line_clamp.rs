@@ -52,7 +52,7 @@ pub(super) fn clamp(
     }
     let lines = line_boxes(runs(context, node, items, index)?);
     let count = match style.max_lines {
-        0 => fitting(node, &items[index], &lines),
+        0 => fitting(context, node, (items, index), &lines),
         max => max as usize,
     };
     if count == 0 || lines.len() < count {
@@ -386,14 +386,37 @@ fn kept_margin(parent: &Node, child: &Node) -> f64 {
 
 /** How many line boxes fit in the box's authored height or max-height, the clamp point of
 `line-clamp: auto`; all of them when neither bounds it. */
-fn fitting(node: &Node, item: &DisplayItem, lines: &[Vec<Run>]) -> usize {
-    let Some(limit) = auto_limit(node, item) else {
+fn fitting(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    (items, index): (&[DisplayItem], usize),
+    lines: &[Vec<Run>],
+) -> usize {
+    let Some(limit) = auto_limit(node, &items[index]) else {
         return lines.len();
     };
-    lines
-        .iter()
-        .take_while(|line| line.iter().all(|run| run.bottom <= limit))
-        .count()
+    // A line fits with the end edges of the boxes it would close: their padding, border and
+    // margin must fit the room too.
+    let fits = |line: &&Vec<Run>| {
+        let closing = trailing_edges(context, node, items[line[0].item].local_id);
+        line.iter().all(|run| run.bottom + closing <= limit)
+    };
+    lines.iter().take_while(fits).count()
+}
+
+/** The block-end padding, border and margin of every block between a node and the clamp
+container, which a clamp at that node's line keeps below it. */
+fn trailing_edges(context: &LayoutContext<'_>, container: &Node, local: usize) -> f64 {
+    let mut edges = 0.0;
+    let mut current = context.node(local).ok();
+    while let Some(node) = current.filter(|node| node.local_id != container.local_id) {
+        if !node.style.inline && node.tag != TEXT_TAG {
+            let border = super::sizing::border_sides(&node.style)[2];
+            edges += node.style.padding[2] + border + node.style.margin[2];
+        }
+        current = node.parent.and_then(|parent| context.node(parent).ok());
+    }
+    edges
 }
 
 /** Where `line-clamp: auto`'s room ends: the content edge its authored height or max-height
