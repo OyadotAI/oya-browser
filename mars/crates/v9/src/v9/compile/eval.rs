@@ -383,6 +383,9 @@ impl Compiler {
                 self.emit(Op::ThrowSyntax(index));
             }
             self.eval_conflicts(&names, var_scope)?;
+            if var_scope.is_none() {
+                self.check_global_declarations(&vars, &functions, true)?;
+            }
             let mut annex = Vec::new();
             scan::var_names(body, false, true, &mut annex);
             // A set, not `vars.contains`: an eval of n vars would otherwise cost n squared.

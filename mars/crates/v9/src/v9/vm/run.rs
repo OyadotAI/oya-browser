@@ -15,6 +15,7 @@ use crate::v9::compile::Op;
 use crate::v9::value::{JsString, JsValue, to_int32, to_uint32};
 
 mod asyncgen;
+mod declarations;
 mod eval;
 mod super_update;
 mod with;
@@ -473,57 +474,24 @@ impl Vm<'_> {
             }
             Op::DeclareVar(name, deletable) => {
                 let name = self.constant(name);
-                self.no_global_lexical(&name)?;
-                let key = Key::Str(name);
-                // Window's intrinsic properties are represented on its immediate prototype.
-                // Ordinary inherited properties do not satisfy CreateGlobalVarBinding.
-                let window = realm().ids.window_prototype;
-                let platform = self.proto_of(self.global_object()) == Some(window)
-                    && realm()
-                        .object(window)
-                        .is_some_and(|definition| definition.get(&key).is_some())
-                    && self.own(window, &key)?.is_some();
-                let inherited = self.own(self.global_object(), &key)?.is_some() || platform;
-                if !inherited {
-                    self.define(
-                        self.global_object(),
-                        key,
-                        Descriptor {
-                            value: Some(JsValue::Undefined),
-                            writable: Some(true),
-                            enumerable: Some(true),
-                            configurable: Some(deletable),
-                            ..Descriptor::default()
-                        },
-                    )?;
-                }
+                self.declare_global_var(name, deletable)?;
+            }
+            Op::DeclareOptionalVar(name) => {
+                let name = self.constant(name);
+                self.declare_optional_global_var(name)?;
+            }
+            Op::CheckGlobalVar(name, eval) => {
+                let name = self.constant(name);
+                self.check_global_var(&name, eval)?;
             }
             Op::DeclareFunction(name, deletable) => {
                 let name = self.constant(name);
-                self.no_global_lexical(&name)?;
-                if matches!(name.lossy().as_str(), "undefined" | "NaN" | "Infinity") {
-                    let message = "Identifier has already been declared";
-                    return Err(if deletable {
-                        self.type_error(message)
-                    } else {
-                        self.syntax_error(message)
-                    });
-                }
                 let value = self.pop();
-                let key = Key::Str(name);
-                if !self.define(
-                    self.global_object(),
-                    key.clone(),
-                    Descriptor {
-                        value: Some(value.clone()),
-                        writable: Some(true),
-                        enumerable: Some(true),
-                        configurable: Some(deletable),
-                        ..Descriptor::default()
-                    },
-                )? {
-                    self.write_own(self.global_object(), key, value)?;
-                }
+                self.declare_global_function(name, value, deletable)?;
+            }
+            Op::CheckGlobalFunction(name, eval) => {
+                let name = self.constant(name);
+                self.check_global_function(&name, eval)?;
             }
             Op::DirectEval(count, context) => return self.direct_eval(count, context),
             Op::GetExt(name, hops, slot) => self.get_ext(name, hops, slot)?,

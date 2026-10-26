@@ -674,10 +674,9 @@ fn to_upper(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn value_of(vm: &mut Vm, call: Call) -> Res<JsValue> {
     match &call.this {
         JsValue::String(text) => Ok(JsValue::String(text.clone())),
-        JsValue::Object(id) => match vm.heap.get(*id).map(|o| &o.class) {
-            Some(Class::String(text)) => Ok(JsValue::String(text.clone())),
-            _ => Err(vm.type_error("String.prototype.valueOf requires that 'this' be a String")),
-        },
+        JsValue::Object(id) => vm.string_data(*id).map(JsValue::String).ok_or_else(|| {
+            vm.type_error("String.prototype.valueOf requires that 'this' be a String")
+        }),
         _ => Err(vm.type_error("String.prototype.valueOf requires that 'this' be a String")),
     }
 }

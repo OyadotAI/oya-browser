@@ -6,7 +6,9 @@
 use crate::constants::{REGEXP_GROUPS, REGEXP_NODES, REGEXP_STEPS};
 mod case;
 mod case_data;
+mod modifiers;
 mod unicode;
+use modifiers::Modes;
 use unicode::property_ranges;
 
 /** A compiled pattern. */
@@ -40,6 +42,8 @@ enum Node {
     BufferEnd(bool),
     Boundary(bool),
     Group(Box<Node>, Option<usize>),
+    /** Effective i/m/s flags apply only while this subexpression is active. */
+    Scoped(Box<Node>, Modes),
     Look(Box<Node>, bool, bool),
     Back(usize),
     NamedBack(String),
@@ -110,7 +114,7 @@ pub(super) fn compile(
         names: Vec::new(),
         nodes: 0,
         unicode: program.unicode,
-        ignore_case: program.ignore_case,
+        modes: Modes::from_program(&program),
         buffer_boundaries,
         depth: 0,
     };
@@ -135,7 +139,7 @@ struct PatternParser<'a> {
     names: Vec<(String, usize)>,
     nodes: usize,
     unicode: bool,
-    ignore_case: bool,
+    modes: Modes,
     buffer_boundaries: bool,
     depth: usize,
 }
@@ -378,6 +382,9 @@ impl PatternParser<'_> {
     fn group(&mut self) -> Result<Node, PatternError> {
         self.position += 1;
         if self.eat('?') {
+            if matches!(self.peek_char(), Some('i' | 'm' | 's' | '-')) {
+                return self.modifier_group();
+            }
             if self.eat(':') {
                 let inner = self.disjunction()?;
                 self.close()?;
@@ -783,7 +790,7 @@ impl PatternParser<'_> {
         let c = self.peek_char().unwrap_or('\\');
         if let Some(Node::Class(set, negated)) = class_escape(c) {
             self.position += 1;
-            let set = if self.unicode && self.ignore_case {
+            let set = if self.unicode && self.modes.ignore_case {
                 case::closed_ranges(&set)
             } else {
                 set
@@ -873,6 +880,8 @@ const MAX_CODE_POINT: u32 = 0x10ffff;
 /** The matcher state for one attempt. */
 struct Matcher<'a> {
     program: &'a Program,
+    /** Current scoped flags are restored before the enclosing continuation runs. */
+    modes: Modes,
     input: &'a [u16],
     captures: Captures,
     steps: usize,
@@ -935,13 +944,13 @@ impl<'a> Matcher<'a> {
     }
     /** Case-folded comparison. */
     fn same(&self, a: u32, b: u32) -> bool {
-        a == b || self.program.ignore_case && case::same(a, b, self.program.unicode)
+        a == b || self.modes.ignore_case && case::same(a, b, self.program.unicode)
     }
     /** Whether a set contains a point. */
     fn in_set(&self, ranges: &[(u32, u32)], point: u32) -> bool {
         let contains = |p: u32| ranges.iter().any(|(low, high)| (*low..=*high).contains(&p));
         contains(point)
-            || self.program.ignore_case
+            || self.modes.ignore_case
                 && case::equivalents(point, self.program.unicode).any(contains)
     }
     /** Whether a word character sits at a position. */
@@ -951,7 +960,7 @@ impl<'a> Matcher<'a> {
             let contains = |p| WORD.iter().any(|(low, high)| (*low..=*high).contains(&p));
             contains(point)
                 || self.program.unicode
-                    && self.program.ignore_case
+                    && self.modes.ignore_case
                     && case::equivalents(point, true).any(contains)
         })
     }
@@ -971,7 +980,7 @@ impl<'a> Matcher<'a> {
                 _ => false,
             },
             Node::Any => match self.atom(position) {
-                Some((point, end)) if self.program.dot_all || !line_terminator(point) => {
+                Some((point, end)) if self.modes.dot_all || !line_terminator(point) => {
                     next(self, end)
                 }
                 _ => false,
@@ -982,13 +991,12 @@ impl<'a> Matcher<'a> {
             },
             Node::Start => {
                 (position == 0
-                    || self.program.multiline
-                        && line_terminator(u32::from(self.input[position - 1])))
+                    || self.modes.multiline && line_terminator(u32::from(self.input[position - 1])))
                     && next(self, position)
             }
             Node::End => {
                 (position == self.input.len()
-                    || self.program.multiline && line_terminator(u32::from(self.input[position])))
+                    || self.modes.multiline && line_terminator(u32::from(self.input[position])))
                     && next(self, position)
             }
             Node::BufferStart => position == 0 && next(self, position),
@@ -1003,6 +1011,7 @@ impl<'a> Matcher<'a> {
                 (before != after) == *expected && next(self, position)
             }
             Node::Group(inner, None) => self.node(inner, position, next),
+            Node::Scoped(inner, modes) => self.scoped(inner, *modes, position, next),
             Node::Group(inner, Some(index)) => {
                 let index = *index;
                 self.node(inner, position, &mut |matcher: &mut Matcher<'a>, end| {
@@ -1191,7 +1200,7 @@ pub(super) fn exec(
     let mut steps = 0;
     let last = if program.sticky {
         start
-    } else if !program.multiline && anchored(&program.root) {
+    } else if anchored(&program.root, Modes::from_program(program)) {
         0
     } else {
         input.len()
@@ -1208,6 +1217,7 @@ pub(super) fn exec(
     while position <= last && position <= input.len() {
         let mut matcher = Matcher {
             program,
+            modes: Modes::from_program(program),
             input,
             captures: vec![None; program.groups + 1],
             steps,
@@ -1245,13 +1255,15 @@ fn line_terminator(point: u32) -> bool {
     matches!(point, 0x0a | 0x0d | 0x2028 | 0x2029)
 }
 
-/** Anchors in groups, positive lookahead and every alternative restrict a non-multiline search to offset zero. */
-fn anchored(node: &Node) -> bool {
+/** Only start assertions effective in their local modes can restrict every alternative to offset zero. */
+fn anchored(node: &Node, modes: Modes) -> bool {
     match node {
-        Node::Start | Node::BufferStart => true,
-        Node::Group(inner, _) | Node::Look(inner, true, false) => anchored(inner),
-        Node::Alt(nodes) => !nodes.is_empty() && nodes.iter().all(anchored),
-        Node::Concat(nodes) => nodes.first().is_some_and(anchored),
+        Node::Start => !modes.multiline,
+        Node::BufferStart => true,
+        Node::Scoped(inner, inner_modes) => anchored(inner, *inner_modes),
+        Node::Group(inner, _) | Node::Look(inner, true, false) => anchored(inner, modes),
+        Node::Alt(nodes) => !nodes.is_empty() && nodes.iter().all(|node| anchored(node, modes)),
+        Node::Concat(nodes) => nodes.first().is_some_and(|node| anchored(node, modes)),
         _ => false,
     }
 }

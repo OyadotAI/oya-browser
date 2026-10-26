@@ -743,6 +743,13 @@ fn run_one(vm: &mut Vm, code: Arc<Code>, index: usize) -> EngineResult<()> {
     let result = vm.run_script(code).and_then(|_| vm.drain_jobs());
     result.map(|_| ()).map_err(|thrown| {
         let location = vm.page.throw_location.unwrap_or_default();
+        #[cfg(feature = "conformance")]
+        let mut error = if vm.page.environment.conformance_d8 {
+            builtins::report_terminal_exception(vm, thrown, location)
+        } else {
+            vm.uncaught(thrown, location)
+        };
+        #[cfg(not(feature = "conformance"))]
         let mut error = vm.uncaught(thrown, location);
         if let Some(location) = error.location.as_deref_mut() {
             location.script_index = Some(index + 1);

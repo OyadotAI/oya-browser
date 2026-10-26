@@ -22,6 +22,7 @@ pub(in crate::v9) use profiling::{
 };
 mod realms;
 mod reporting;
+pub(in crate::v9) use reporting::terminal as report_terminal_exception;
 mod serializer;
 mod shadow;
 mod strings;
@@ -77,7 +78,7 @@ const EXIT_CODE: &str = "conformance_exit";
 
 /** The loader must stop the whole source list when the test host requests process termination. */
 pub(in crate::v9) fn is_test_exit(error: &crate::protocol::EngineError) -> bool {
-    error.code == EXIT_CODE
+    error.code == EXIT_CODE || reporting::is_failed_exit(error)
 }
 
 /** Only real fixture operations are installed; absent d8 capabilities remain absent. */

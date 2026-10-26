@@ -7,6 +7,7 @@ pub(in crate::v9) use bigint::{MAX_BITS as BIGINT_MAX_BITS, ParseError as BigInt
 mod bigint_key;
 pub(super) use bigint_key::bigint_property_key;
 mod number;
+mod storage;
 mod string;
 mod wire;
 use crate::{
@@ -17,19 +18,46 @@ pub(super) use number::{
     literal, number_to_string, radix_string, string_number, to_int32, to_uint32,
 };
 use std::sync::Arc;
+use storage::Storage;
 pub use string::CodePointCursor;
 
 /** Heap object identities; intrinsic objects live in a reserved high range. */
 pub type ObjectId = u32;
 
 /// JavaScript strings keep UTF-16 code units, including lone surrogates, and share their buffer.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct JsString(Arc<[u16]>);
+#[derive(Clone)]
+pub struct JsString(Storage);
+
+impl PartialEq for JsString {
+    /** Strings compare UTF-16 content, independently of flat or concatenated storage. */
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && (self.0.same(&other.0) || self.as_units() == other.as_units())
+    }
+}
+impl Eq for JsString {}
+impl PartialOrd for JsString {
+    /** Ordering remains the existing code-unit ordering, including unmatched surrogates. */
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for JsString {
+    /** Tree shape and allocation identities never determine JavaScript key order. */
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_units().cmp(other.as_units())
+    }
+}
+impl std::hash::Hash for JsString {
+    /** Preserve exactly the slice hash bytes used by the former Arc-backed representation. */
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(self.as_units(), state);
+    }
+}
 
 impl std::fmt::Debug for JsString {
     /** Debug output shows the text, replacing unpaired surrogates. */
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{:?}", String::from_utf16_lossy(&self.0))
+        write!(formatter, "{:?}", String::from_utf16_lossy(self.as_units()))
     }
 }
 
@@ -46,7 +74,7 @@ impl JsString {
                 JS_STRING_UNITS,
             ));
         }
-        Ok(Self(units.into()))
+        Ok(Self(Storage::Flat(units.into())))
     }
     /// Build from a slice under the same limit.
     pub fn from_slice(units: &[u16]) -> EngineResult<Self> {
@@ -56,7 +84,7 @@ impl JsString {
                 JS_STRING_UNITS,
             ));
         }
-        Ok(Self(units.into()))
+        Ok(Self(Storage::Flat(units.into())))
     }
     /// Count code units rather than Rust Unicode scalar values or UTF-8 bytes.
     pub fn len(&self) -> usize {
@@ -64,15 +92,15 @@ impl JsString {
     }
     /// Environment validation can count an empty string without decoding it.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.len() == 0
     }
     /// The empty string.
     pub fn empty() -> Self {
-        Self(Arc::from(Vec::new()))
+        Self(Storage::Flat(Arc::from(Vec::new())))
     }
     /// DOMString support is incomplete; fail explicitly rather than silently replacing surrogates.
     pub fn to_dom(&self) -> EngineResult<String> {
-        String::from_utf16(&self.0).map_err(|_| {
+        String::from_utf16(self.as_units()).map_err(|_| {
             EngineError::unsupported(
                 "The UTF-8 document boundary cannot represent an unpaired JavaScript surrogate yet.",
             )
@@ -80,7 +108,7 @@ impl JsString {
     }
     /// Text for diagnostics and keys, replacing unpaired surrogates.
     pub fn lossy(&self) -> String {
-        String::from_utf16_lossy(&self.0)
+        String::from_utf16_lossy(self.as_units())
     }
     /** Concatenation checks the code-unit budget before reserving output. */
     pub fn concat(&self, other: &Self) -> EngineResult<Self> {
@@ -96,14 +124,21 @@ impl JsString {
         if self.is_empty() {
             return Ok(other.clone());
         }
-        let mut units = Vec::with_capacity(self.len() + other.len());
-        units.extend_from_slice(&self.0);
-        units.extend_from_slice(&other.0);
-        Ok(Self(units.into()))
+        Ok(Self(self.0.concat(&other.0)))
     }
     /// Whether the string equals ASCII text.
     pub fn is(&self, text: &str) -> bool {
-        self.0.len() == text.len() && self.0.iter().zip(text.bytes()).all(|(a, b)| *a == b as u16)
+        self.len() == text.len()
+            && self
+                .as_units()
+                .iter()
+                .zip(text.bytes())
+                .all(|(a, b)| *a == b as u16)
+    }
+    /** Native accounting observes actual shared allocations without forcing a flat string buffer. */
+    #[cfg(feature = "conformance")]
+    pub(in crate::v9) fn storage_allocations(&self, visit: impl FnMut(bool, usize, usize, usize)) {
+        self.0.allocations(visit);
     }
 }
 

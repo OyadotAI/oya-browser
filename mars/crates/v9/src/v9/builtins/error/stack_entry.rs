@@ -30,7 +30,7 @@ pub(super) fn prepare_capture(vm: &mut Vm, value: &JsValue) -> Res<ObjectId> {
     let id = value
         .object()
         .filter(|id| vm.proxy_of(*id).is_none())
-        .ok_or_else(|| vm.type_error("Error.captureStackTrace requires an ordinary object"))?;
+        .ok_or_else(|| vm.type_error("invalid_argument"))?;
     if vm.heap.get(id).is_some_and(|object| !object.extensible) {
         return Err(vm.type_error("Cannot define property stack, object is not extensible"));
     }

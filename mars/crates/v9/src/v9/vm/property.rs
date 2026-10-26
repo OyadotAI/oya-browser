@@ -72,6 +72,16 @@ fn ordinary_slot(class: &Class, key: &Key) -> bool {
 pub(in crate::v9) const CHAIN_STEPS: usize = 4096;
 
 impl Vm<'_> {
+    /** Native StringData belongs to real wrappers and the canonical empty intrinsic, never a public prototype/tag/name. */
+    pub(in crate::v9) fn string_data(&self, id: ObjectId) -> Option<JsString> {
+        match self.heap.get(id).map(|object| &object.class) {
+            Some(Class::String(value)) => Some(value.clone()),
+            None | Some(Class::Plain) if id == realm_for(id).ids.string_prototype => {
+                Some(JsString::empty())
+            }
+            _ => None,
+        }
+    }
     /** V8's interesting-property lookup skips records that cannot own either well-known hook. */
     pub(in crate::v9) fn interesting_holder(&self, start: ObjectId) -> Option<ObjectId> {
         let tag = Key::Sym(super::realm::symbol::TO_STRING_TAG);
@@ -155,6 +165,9 @@ impl Vm<'_> {
                     name: None,
                 })),
                 None if id == realm_for(id).ids.array_prototype => Class::Array(Vec::new().into()),
+                None if id == realm_for(id).ids.string_prototype => {
+                    Class::String(JsString::empty())
+                }
                 None => Class::Plain,
             };
             let mut object = Object::new(class, def.proto);
@@ -551,11 +564,6 @@ impl Vm<'_> {
         receiver: &JsValue,
     ) -> Res<bool> {
         self.guard_realm_global(start)?;
-        if *receiver == JsValue::Object(start)
-            && crate::v9::builtins::typed_index(self, start, &key).is_some()
-        {
-            return crate::v9::builtins::typed_set_integer(self, start, &key, &value);
-        }
         if *receiver == JsValue::Object(start) && self.fast_write(start, &key, &value) {
             return Ok(true);
         }
@@ -563,6 +571,14 @@ impl Vm<'_> {
         for _ in 0..CHAIN_STEPS {
             if let Some(proxy) = self.proxy_of(id).filter(|_| !key.hidden()) {
                 return self.proxy_set(id, &proxy, key, value, receiver);
+            }
+            if let Some(index) = crate::v9::builtins::typed_index(self, id, &key) {
+                if *receiver == JsValue::Object(id) {
+                    return crate::v9::builtins::typed_set_integer(self, id, &key, &value);
+                }
+                if index.is_none() {
+                    return Ok(true);
+                }
             }
             if let Some(prop) = self.own_for_write(id, &key)? {
                 match prop.slot {
