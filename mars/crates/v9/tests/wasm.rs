@@ -1701,8 +1701,10 @@ fn wasm_native_locals_enforce_the_live_value_budget() {
     section(&mut bytes, 2, &[1, 1, b'e', 1, b'g', 0, 0]);
     section(&mut bytes, 3, &[1, 1]);
     section(&mut bytes, 7, &[1, 1, b'f', 0, 1]);
-    let mut body = vec![1, 4, 0x6f];
-    for index in 0..4 {
+    // Enough locals that values at the single-string bound pass the aggregate quota.
+    let locals = (mars_core::constants::JS_ENVIRONMENT_UNITS / 700_000 + 1) as u8;
+    let mut body = vec![1, locals, 0x6f];
+    for index in 0..locals {
         body.extend([0x10, 0, 0x21, index]);
     }
     body.extend([0x41, 0, 0x0b]);
@@ -1711,7 +1713,7 @@ fn wasm_native_locals_enforce_the_live_value_budget() {
     section(&mut bytes, 10, &code);
     for expression in [
         "String.fromCharCode(65+n++).repeat(700000)",
-        "(1n<<10000000n)+BigInt(++n)",
+        "(1n<<11200000n)+BigInt(++n)",
     ] {
         let source = format!(
             "const bytes=new Uint8Array({bytes:?});let n=0;const f=new WebAssembly.Instance(new WebAssembly.Module(bytes),{{e:{{g(){{return {expression}}}}}}}).exports.f;f();"

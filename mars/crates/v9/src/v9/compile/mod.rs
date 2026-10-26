@@ -389,7 +389,8 @@ impl Code {
     every page, because the inline scripts before it differ. */
     fn rebased(&self, delta: i64) -> Code {
         let shift = |offset: u32| (i64::from(offset) + delta) as u32;
-        let site = |site: u32| (i64::from(site) + delta * i64::from(super::syntax::SITE_TAGS)) as u32;
+        let site =
+            |site: u32| (i64::from(site) + delta * i64::from(super::syntax::SITE_TAGS)) as u32;
         Code {
             site: site(self.site),
             flags: self.flags,
@@ -400,7 +401,9 @@ impl Code {
                 .source
                 .as_ref()
                 .map(|(text, base)| (text.clone(), (*base as i64 + delta) as usize)),
-            source_span: self.source_span.map(|(start, end)| (shift(start), shift(end))),
+            source_span: self
+                .source_span
+                .map(|(start, end)| (shift(start), shift(end))),
             length: self.length,
             ops: self
                 .ops
@@ -1094,8 +1097,7 @@ mod rebase_real_page {
     #[ignore = "needs MARS_REBASE_SOURCES"]
     fn real_page_scripts_rebase_exactly() {
         let path = std::env::var("MARS_REBASE_SOURCES").expect("MARS_REBASE_SOURCES");
-        let sources: Vec<String> =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let sources: Vec<String> = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         for (index, source) in sources.iter().enumerate() {
             let compile = |offset: usize| {
                 let program = crate::v9::parse_at(source, offset, Some(index)).ok()?;
@@ -1106,8 +1108,11 @@ mod rebase_real_page {
             };
             let moved = early.rebased(776_777);
             let shapes = |unit: &super::cache::Unit| {
-                let mut all: Vec<String> =
-                    unit.codes.iter().map(|code| super::rebase_tests::shape(code)).collect();
+                let mut all: Vec<String> = unit
+                    .codes
+                    .iter()
+                    .map(|code| super::rebase_tests::shape(code))
+                    .collect();
                 all.push(super::rebase_tests::shape(&unit.entry));
                 all
             };

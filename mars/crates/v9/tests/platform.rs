@@ -276,10 +276,10 @@ fn supported_and_absent_platform_apis_are_distinct() {
     );
 }
 
-/** Storage stays unchanged when a script fails. */
+/** Storage a script wrote before it failed stays written, as in browsers. */
 #[test]
-fn failed_scripts_roll_back_their_storage() {
+fn failed_scripts_keep_the_storage_they_wrote() {
     let execution = load("localStorage.setItem('k','v');throw new Error('stop');");
-    assert_eq!(execution.storage, StorageState::default());
+    assert_ne!(execution.storage, StorageState::default());
     assert_eq!(execution.failed.len(), 1);
 }

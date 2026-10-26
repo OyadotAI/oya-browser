@@ -4,9 +4,10 @@ use super::*;
 /** Distinct result strings count toward the aggregate string budget while a map is still running. */
 #[test]
 fn map_results_enforce_the_environment_string_budget() {
-    let unit = JS_ENVIRONMENT_UNITS / 8;
+    let unit = JS_STRING_UNITS / 2;
+    let count = 2 * JS_ENVIRONMENT_UNITS / unit + 1;
     let error = execute(&format!(
-        "const s='x'.repeat({unit});const r=Array.from({{length:10}},(v,i)=>i).map(i=>s+i);"
+        "const s='x'.repeat({unit});const r=Array.from({{length:{count}}},(v,i)=>i).map(i=>s+i);"
     ))
     .unwrap_err();
     assert_eq!(error.code, "limit_exceeded");
@@ -15,13 +16,16 @@ fn map_results_enforce_the_environment_string_budget() {
 /** The same string retained many times counts once: references are not copies. */
 #[test]
 fn repeated_references_to_one_string_share_its_units() {
-    let unit = JS_ENVIRONMENT_UNITS / 4;
+    // Twice the budget if every reference counted; once if the text counts once.
+    let copies = 2 * JS_ENVIRONMENT_UNITS / JS_STRING_UNITS;
     assert_eq!(
         result(
-            &format!("const s='x'.repeat({unit});const r=[0,0,0,0,0,0,0,0].map(()=>s);"),
+            &format!(
+                "const s='x'.repeat({JS_STRING_UNITS});const r=Array.from({{length:{copies}}},()=>s);"
+            ),
             "r.length"
         ),
-        "8"
+        copies.to_string()
     );
 }
 

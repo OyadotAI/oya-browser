@@ -17,8 +17,7 @@ const RESTARTS: usize = 3;
 const RESTART_WINDOW: Duration = Duration::from_secs(60);
 
 /** Shown with every restarted-engine failure; nothing is replayed automatically. */
-const RESTART_HINT: &str =
-    "Mars restarted the engine. Retry the operation; your tabs were kept, and a page that was running scripts reloads.";
+const RESTART_HINT: &str = "Mars restarted the engine. Retry the operation; your tabs were kept, and a page that was running scripts reloads.";
 
 /** Remembers each engine's executable and the recent restarts that spend the budget. */
 pub(super) struct Revival {

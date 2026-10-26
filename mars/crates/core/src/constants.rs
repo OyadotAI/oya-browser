@@ -140,7 +140,7 @@ pub const OPERATIONS: usize = 400_000_000;
 /// optimized build, so the guard allows what a real page load needs on this hardware.
 pub const SCRIPT_DEADLINE: Duration = Duration::from_millis(4000);
 /// Heap entries a page may add between end-of-request collections before one runs again.
-pub const GC_GROWTH_MIN: usize = 20_000;
+pub const GC_GROWTH_MIN: usize = 1_000;
 /// Or this fraction of the entries alive after the last collection, whichever is larger.
 pub const GC_GROWTH_DIVISOR: usize = 4;
 /// Real time one timer run may spend before it leaves the rest of its due callbacks for the

@@ -294,7 +294,7 @@ impl Activation<'_> {
                 return Err(crate::protocol::EngineError::new(
                     "limit_exceeded",
                     "Script execution stopped: time limit exceeded.",
-                    "Reduce the script work; that script's changes were not applied.",
+                    "Reduce the script work; what it did before it stopped stays, as in browsers.",
                 )
                 .into());
             }

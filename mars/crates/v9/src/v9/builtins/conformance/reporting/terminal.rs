@@ -118,7 +118,7 @@ fn root_failure(mut description: String, assertion: bool, location: SourceLocati
                 "Script execution failed at line {}, column {}: Uncaught {description}.",
                 location.line, location.column
             ),
-            "Correct the script; that script's changes were not applied.",
+            "Correct the script; what it did before the error stays, as in browsers.",
         ),
         location,
     )

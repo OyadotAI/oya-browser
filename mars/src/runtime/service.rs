@@ -971,7 +971,9 @@ mod tests {
     /** A step's outcome whose state belongs to the page `identity`. */
     fn execution(identity: &str) -> v9::Execution {
         serde_json::from_value(json!({
-            "changes": [], "storage": {}, "state": {"page": {"identity": identity}}
+            "changes": [],
+            "storage": v9::StorageState::default(),
+            "state": {"page": {"identity": identity}}
         }))
         .unwrap()
     }
@@ -1031,7 +1033,9 @@ mod tests {
         }))
         .unwrap();
         assert_ne!(
-            resident_modules(forged, Some(digest.clone())).unwrap_err().code,
+            resident_modules(forged, Some(digest.clone()))
+                .unwrap_err()
+                .code,
             SOURCES_MISSING
         );
         resident_modules(modules.clone(), Some(digest.clone())).unwrap();

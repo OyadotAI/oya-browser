@@ -161,6 +161,11 @@ fn concise_arrows_and_parenthesized_heads_remain_bounded() {
 fn arrows_reclaim_cycles_between_events() {
     let source = "function make(){let n=0;const box={n:0};return ()=>{n=n+1;box.n=box.n+1;document.getElementById('out').textContent=n+' '+box.n;};}const f=make();function run(){const box={};box.f=()=>box;f();}";
     let mut state = load(source, &[]).unwrap().state;
+    let wire = serde_json::to_value(&state).unwrap();
+    let baseline = (
+        wire["heap"][0].as_array().unwrap().len(),
+        wire["heap"][1].as_array().unwrap().len(),
+    );
     let mut sizes = Vec::new();
     for expected in 1..=600 {
         let result = event(source, "run()", state, &[]).unwrap();
@@ -175,5 +180,16 @@ fn arrows_reclaim_cycles_between_events() {
         ));
         state = result.state;
     }
-    assert_eq!(sizes[1], sizes[599]);
+    // Garbage waits for the heap to grow GC_GROWTH_MIN entries, then is reclaimed in full.
+    let bound = mars::constants::GC_GROWTH_MIN + EVENT_ALLOCATIONS;
+    assert!(
+        sizes
+            .iter()
+            .all(|(objects, envs)| objects + envs <= baseline.0 + baseline.1 + bound),
+        "{sizes:?}"
+    );
+    assert!(sizes.contains(&baseline), "{sizes:?}");
 }
+
+/** Heap entries one `run()` event allocates in these GC tests, an upper bound. */
+const EVENT_ALLOCATIONS: usize = 16;

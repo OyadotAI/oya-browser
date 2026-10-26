@@ -159,7 +159,12 @@ impl Vm<'_> {
         let description = self.describe(&value);
         #[cfg(feature = "conformance")]
         let description = if description == "object" || self.is_conformance_assertion(&value) {
-            self.conformance_description(&value).unwrap_or(description)
+            // The runner's lazy message getters are page code; a failing script keeps its own
+            // effects, but nothing the diagnostic itself runs may reach the page.
+            let saved = crate::v9::snapshot(self);
+            let read = self.conformance_description(&value);
+            crate::v9::restore(self, saved);
+            read.unwrap_or(description)
         } else {
             description
         };
@@ -172,7 +177,7 @@ impl Vm<'_> {
                     "Script execution failed at line {}, column {}: Uncaught {description}.",
                     location.line, location.column
                 ),
-                "Correct the script; that script's changes were not applied.",
+                "Correct the script; what it did before the error stays, as in browsers.",
             ),
             location,
         )

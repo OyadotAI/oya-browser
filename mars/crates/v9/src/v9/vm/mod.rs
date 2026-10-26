@@ -479,7 +479,7 @@ impl<'h> Vm<'h> {
             Thrown::Fatal(EngineError::new(
                 "limit_exceeded",
                 "Script execution stopped: operation limit exceeded.",
-                "Reduce the script work; that script's changes were not applied.",
+                "Reduce the script work; what it did before it stopped stays, as in browsers.",
             ))
         })?;
         #[cfg(feature = "conformance")]

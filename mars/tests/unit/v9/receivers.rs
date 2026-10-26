@@ -205,7 +205,8 @@ fn global_this_is_writable() {
     assert_eq!(result("globalThis=1;", "typeof globalThis"), "number");
     assert_eq!(result("this.globalThis=2;", "globalThis"), "2");
 }
-/** Receiver-only object edges remain live while discarded receiver cycles are reclaimed after each event. */
+/** Receiver-only object edges remain live while discarded receiver cycles are reclaimed once
+the heap has grown GC_GROWTH_MIN entries. */
 #[test]
 fn receiver_only_objects_survive_and_temporary_receiver_cycles_are_reclaimed() {
     let source = "function make(){return {n:0,create:function(){return ()=>{this.n=this.n+1;return this.n;};}}.create();}const saved=make();function run(){make();document.getElementById('out').textContent=saved();}";
@@ -218,13 +219,24 @@ fn receiver_only_objects_survive_and_temporary_receiver_cycles_are_reclaimed() {
     };
     let mut state = load(source, &[]).unwrap().state;
     let baseline = sizes(&state);
+    let bound = baseline.0 + baseline.1 + mars::constants::GC_GROWTH_MIN + EVENT_ALLOCATIONS;
+    let mut reclaimed = false;
     for expected in 1..=600 {
         let executed = event(source, "run()", state, &[]).unwrap();
         assert_eq!(executed.changes[0].text().unwrap(), expected.to_string());
         state = executed.state;
+        let (objects, envs) = sizes(&state);
+        assert!(
+            objects + envs <= bound,
+            "{objects} objects, {envs} environments"
+        );
+        reclaimed |= (objects, envs) == baseline;
     }
-    assert_eq!(sizes(&state), baseline);
+    assert!(reclaimed);
 }
+
+/** Heap entries one `run()` event allocates here, an upper bound. */
+const EVENT_ALLOCATIONS: usize = 16;
 /** Strings retained in saved environments count toward the aggregate string budget at the state
 boundary. Each string is distinct, since one text referenced many times counts once. */
 #[test]
