@@ -455,6 +455,8 @@ pub const REGEXP_STEPS_PER_UNIT: usize = 64;
 /// greedy loop over long text fails at this depth as a limit instead of overflowing
 /// V9_STACK_BYTES (an unoptimized build's frames are the largest).
 pub const REGEXP_DEPTH: usize = 50_000;
+/// A match reads the clock once per this many steps, keeping the deadline check cheap.
+pub const REGEXP_DEADLINE_STEPS: usize = 4096;
 /// Nodes in one compiled regular expression.
 pub const REGEXP_NODES: usize = 16_384;
 /// Capture groups in one regular expression.

@@ -388,12 +388,17 @@ impl Modules {
         {
             return match self.urls.get(index).filter(|url| !url.is_empty()) {
                 Some(url) => url.clone(),
-                // An inline script is named by its document's address, as in Chrome's stacks
-                // and console; a page without a web address keeps a numbered name.
+                // An inline script is named by its document's origin and path, as Chrome names
+                // it by the document, without the query, fragment or credentials that could
+                // carry a session or search terms into console output agents read. A page
+                // without a web address keeps a numbered name.
                 None => match &self.document {
                     Some(document) => {
                         let mut document = document.clone();
                         document.set_fragment(None);
+                        document.set_query(None);
+                        let _ = document.set_username("");
+                        let _ = document.set_password(None);
                         document.to_string()
                     }
                     None => format!("script {}", index + 1),

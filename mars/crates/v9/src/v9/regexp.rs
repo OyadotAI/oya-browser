@@ -4,7 +4,8 @@
  * bounded by REGEXP_STEPS, so catastrophic patterns fail as a limit instead of hanging the page.
  */
 use crate::constants::{
-    REGEXP_DEPTH, REGEXP_GROUPS, REGEXP_NODES, REGEXP_STEPS, REGEXP_STEPS_PER_UNIT,
+    REGEXP_DEADLINE_STEPS, REGEXP_DEPTH, REGEXP_GROUPS, REGEXP_NODES, REGEXP_STEPS,
+    REGEXP_STEPS_PER_UNIT,
 };
 mod case;
 mod case_data;
@@ -892,6 +893,9 @@ struct Matcher<'a> {
     /** Nested node calls now on the native stack: matching recurses once per repetition, so a
     greedy loop over long text would overflow the stack before running out of steps. */
     depth: usize,
+    /** The script deadline, checked every REGEXP_DEADLINE_STEPS steps, so a large budget can
+    never outlast the request. */
+    deadline: Option<std::time::Instant>,
     exceeded: bool,
     /** Lookbehind evaluates atoms and alternatives from right to left. */
     backward: bool,
@@ -974,7 +978,7 @@ impl<'a> Matcher<'a> {
     /** Match one node, then the continuation. */
     fn node(&mut self, node: &Node, position: usize, next: Next<'_, 'a>) -> bool {
         self.steps += 1;
-        if self.steps > self.budget || self.depth >= REGEXP_DEPTH {
+        if self.steps > self.budget || self.depth >= REGEXP_DEPTH || self.expired() {
             self.exceeded = true;
         }
         if self.exceeded {
@@ -984,6 +988,13 @@ impl<'a> Matcher<'a> {
         let matched = self.node_body(node, position, next);
         self.depth -= 1;
         matched
+    }
+    /** Whether the script deadline passed, read on every REGEXP_DEADLINE_STEPS-th step. */
+    fn expired(&self) -> bool {
+        self.steps.is_multiple_of(REGEXP_DEADLINE_STEPS)
+            && self
+                .deadline
+                .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     }
     /** `node` once its bounds hold. */
     fn node_body(&mut self, node: &Node, position: usize, next: Next<'_, 'a>) -> bool {
@@ -1210,12 +1221,15 @@ pub(super) fn exec(
     program: &Program,
     input: &[u16],
     start: usize,
+    deadline: Option<std::time::Instant>,
 ) -> Result<Option<Captures>, MatchError> {
     let mut steps = 0;
     // Every start position of an unanchored search costs steps, so a fixed budget failed plain
     // scans of long text (YouTube's megabyte page data) and stopped the page's scripts. The
-    // budget grows with the input; catastrophic backtracking on short text still trips it.
-    let budget = REGEXP_STEPS.max(input.len().saturating_mul(REGEXP_STEPS_PER_UNIT));
+    // budget grows with the text actually searched; catastrophic backtracking on short text
+    // still trips it, and the deadline bounds the rest.
+    let searched = input.len().saturating_sub(start);
+    let budget = REGEXP_STEPS.max(searched.saturating_mul(REGEXP_STEPS_PER_UNIT));
     let last = if program.sticky {
         start
     } else if anchored(&program.root, Modes::from_program(program)) {
@@ -1241,6 +1255,7 @@ pub(super) fn exec(
             steps,
             budget,
             depth: 0,
+            deadline,
             exceeded: false,
             backward: false,
         };

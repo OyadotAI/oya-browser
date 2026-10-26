@@ -187,7 +187,7 @@ impl Vm<'_> {
         start: usize,
     ) -> Res<Option<Captures>> {
         self.charge(text.len().saturating_sub(start) / crate::constants::JS_STRING_SCAN_UNITS + 1)?;
-        regexp::exec(program, text.as_units(), start).map_err(|MatchError::Limit| {
+        regexp::exec(program, text.as_units(), start, self.deadline).map_err(|MatchError::Limit| {
             self.range_error("Maximum regular expression steps exceeded")
         })
     }

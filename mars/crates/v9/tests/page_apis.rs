@@ -227,10 +227,10 @@ fn error_stack_names_the_frames() {
          let r = ''; try { outer() } catch (e) { r = e.stack.split('\\n').map(l => l.trim().split(' (')[0]).join('|') }",
         "r",
     );
-    // Top-level code is named by the inline script's document, as in Chrome.
+    // Top-level code is named by the inline script's document, without its query.
     assert_eq!(
         r,
-        "Error: boom|at inner|at outer|at https://example.com/app/page?x=1:2:28"
+        "Error: boom|at inner|at outer|at https://example.com/app/page:2:28"
     );
 }
 
