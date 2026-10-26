@@ -285,25 +285,73 @@ impl ScriptDocument {
         Ok(change)
     }
 
-    /// Inserts parsed fragment nodes atomically; a refused insert leaves the projection unchanged.
+    /// Inserts parsed fragment nodes atomically and returns where the first one landed; a
+    /// refused insert leaves the projection unchanged. Only the fragment is validated, against the depth of its insertion point: re-validating
+    /// the whole document on every insert made a page of thousands of inserts quadratic.
     pub fn insert(
         &mut self,
         target: Option<usize>,
         position: InsertPosition,
         inserted: Vec<ScriptNode>,
-    ) -> EngineResult<()> {
-        let mut next = self.clone();
+    ) -> EngineResult<usize> {
+        let (_, parent) = slot(&self.nodes, &node_key, target, position)?;
+        self.validate_fragment(parent, &inserted)?;
         place(
-            &mut next.nodes,
+            &mut self.nodes,
             node_key,
             reparent,
             target,
             position,
             inserted,
-        )?;
-        next.validate()?;
-        *self = next;
+        )
+    }
+
+    /** Every fragment node passes the per-node checks of `validate`, with its ancestor count
+    continuing from the node it is placed under, so the whole tree stays within DOCUMENT_DEPTH. */
+    fn validate_fragment(
+        &self,
+        parent: Option<usize>,
+        inserted: &[ScriptNode],
+    ) -> EngineResult<()> {
+        let mut seen = BTreeMap::new();
+        if let Some(parent) = parent {
+            seen.insert(parent, self.ancestors_of(parent)?);
+        }
+        for node in inserted {
+            let fragment_parent = node.parent.or(parent);
+            if !node.parent.is_none_or(|parent| seen.contains_key(&parent)) {
+                return Err(invalid_projection());
+            }
+            let probe = ScriptNode {
+                parent: fragment_parent,
+                ..node.clone()
+            };
+            let ancestors = Self::validate_node(&probe, &seen)?;
+            seen.insert(node.local_id, ancestors);
+        }
         Ok(())
+    }
+
+    /** How many ancestors a node has; walks parents through an id-to-parent index. */
+    fn ancestors_of(&self, id: usize) -> EngineResult<usize> {
+        let parents: BTreeMap<usize, Option<usize>> = self
+            .nodes
+            .iter()
+            .map(|node| (node.local_id, node.parent))
+            .collect();
+        let mut count = 0;
+        let mut current = parents.get(&id).copied().ok_or_else(invalid_projection)?;
+        while let Some(parent) = current {
+            count += 1;
+            if count >= DOCUMENT_DEPTH {
+                return Err(EngineError::limit("document depth", DOCUMENT_DEPTH));
+            }
+            current = parents
+                .get(&parent)
+                .copied()
+                .ok_or_else(invalid_projection)?;
+        }
+        Ok(count)
     }
 
     /// Moves a subtree atomically, keeping every identity.
@@ -453,7 +501,7 @@ pub fn place<T>(
     target: Option<usize>,
     position: InsertPosition,
     mut inserted: Vec<T>,
-) -> EngineResult<()> {
+) -> EngineResult<usize> {
     let existing: BTreeSet<usize> = nodes.iter().map(|node| key(node).0).collect();
     let mut fresh = BTreeSet::new();
     for node in &inserted {
@@ -474,7 +522,7 @@ pub fn place<T>(
         reparent(node, parent);
     }
     nodes.splice(index..index, inserted);
-    Ok(())
+    Ok(index)
 }
 
 /// Moves `node`'s subtree to `position` of `target`; moving into its own subtree is refused.

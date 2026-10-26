@@ -460,9 +460,17 @@ fn deep_nesting_flattens_instead_of_refusing() {
         "<div>".repeat(DOCUMENT_DEPTH * 3),
         "</div>".repeat(DOCUMENT_DEPTH * 3)
     );
-    let document = parse(&html).unwrap();
-    assert!(document.nodes.iter().any(|node| node.text == "deep"));
-    render(&compute_styles(&document, &[]).unwrap(), 640.0).unwrap();
+    // The document service runs on a SERVICE_STACK_BYTES thread; so does this test.
+    std::thread::Builder::new()
+        .stack_size(mars_eye::constants::SERVICE_STACK_BYTES)
+        .spawn(move || {
+            let document = parse(&html).unwrap();
+            assert!(document.nodes.iter().any(|node| node.text == "deep"));
+            render(&compute_styles(&document, &[]).unwrap(), 640.0).unwrap();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 /** A linked sheet's media condition travels with it, so the cascade decides when it applies. */

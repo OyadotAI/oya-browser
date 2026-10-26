@@ -85,6 +85,45 @@ fn enforces_projection_depth_at_the_shared_boundary() {
     assert_eq!(document.validate().unwrap_err().code, "limit_exceeded");
 }
 
+/** A fragment's depth counts from where it is placed: one level under the deepest allowed node
+is refused, one level under its parent is accepted, and a refusal changes nothing. */
+#[test]
+fn insert_counts_fragment_depth_from_the_insertion_point() {
+    let chain = || ScriptDocument {
+        identity: "page".into(),
+        nodes: (0..DOCUMENT_DEPTH)
+            .map(|id| node(id, id.checked_sub(1)))
+            .collect(),
+    };
+    let mut document = chain();
+    let deepest = DOCUMENT_DEPTH - 1;
+    let error = document
+        .insert(
+            Some(deepest),
+            InsertPosition::BeforeEnd,
+            vec![node(DOCUMENT_DEPTH, None)],
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+    assert_eq!(order(&document), order(&chain()));
+    document
+        .insert(
+            Some(deepest),
+            InsertPosition::AfterEnd,
+            vec![node(DOCUMENT_DEPTH, None)],
+        )
+        .unwrap();
+    assert_eq!(document.nodes.len(), DOCUMENT_DEPTH + 1);
+    let nested = vec![
+        node(DOCUMENT_DEPTH + 1, None),
+        node(DOCUMENT_DEPTH + 2, Some(DOCUMENT_DEPTH + 1)),
+    ];
+    let error = document
+        .insert(Some(deepest - 1), InsertPosition::BeforeEnd, nested)
+        .unwrap_err();
+    assert_eq!(error.code, "limit_exceeded");
+}
+
 /** Input values use the same UTF-8 byte budget before any engine receives the projection. */
 #[test]
 fn enforces_projection_input_text_at_the_shared_boundary() {

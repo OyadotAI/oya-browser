@@ -161,8 +161,8 @@ fn nested_documents_generate_stable_native_local_ids() {
     assert!(mars::document::set_value(&document, input.local_id, "changed").is_err());
     let deep = format!(
         "<html><body>{}x{}</body></html>",
-        "<div>".repeat(33),
-        "</div>".repeat(33)
+        "<div>".repeat(DOCUMENT_DEPTH + 1),
+        "</div>".repeat(DOCUMENT_DEPTH + 1)
     );
     let flattened = parse(&deep).unwrap();
     assert_eq!(

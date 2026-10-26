@@ -195,8 +195,14 @@ pub const WEB_RPC_TIMEOUT: Duration = Duration::from_secs(10);
 pub const REDIRECTS: usize = 5;
 /// Excessive or mixed DNS answer sets are rejected rather than partially trusted.
 pub const DNS_ANSWERS: usize = 16;
-/// Explicit supported markup depth prevents recursive parser/layout exhaustion.
-pub const DOCUMENT_DEPTH: usize = 32;
+/// Explicit supported markup depth prevents recursive parser/layout exhaustion. Real apps nest
+/// deep (YouTube's search results pass 32 levels of components); the document service runs on a
+/// SERVICE_STACK_BYTES stack so every recursive pass fits at this depth.
+pub const DOCUMENT_DEPTH: usize = 256;
+/// Engine services handle each request on a thread with this stack, so recursive passes over a
+/// DOCUMENT_DEPTH tree never overflow the process's small main-thread stack. It is reserved, not
+/// committed, so an idle service costs nothing for it.
+pub const SERVICE_STACK_BYTES: usize = 256 * 1024 * 1024;
 /// Committed history is a bounded local session resource.
 pub const HISTORY_ENTRIES: usize = 64;
 /// Native windows cap retained page documents to bound aggregate tab memory.

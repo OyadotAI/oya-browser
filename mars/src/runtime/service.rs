@@ -16,7 +16,26 @@ their exact parameter type from the frame and write their result straight into t
 type TypedHandler = fn(&[u8], &str) -> EngineResult<Vec<u8>>;
 
 /// Ownership-pipe EOF and failed writes terminate services without background descendants.
+/// The loop runs on a SERVICE_STACK_BYTES thread: deep documents recurse further than the main
+/// thread's stack allows.
 pub fn run_service(name: &str) -> EngineResult<()> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name(name.into())
+            .stack_size(crate::constants::SERVICE_STACK_BYTES)
+            .spawn_scoped(scope, || serve(name))
+            .map_err(|_| EngineError::unsupported("The service could not start its thread."))?
+            .join()
+            .unwrap_or_else(|_| {
+                Err(EngineError::invalid(
+                    "The service stopped on an internal error.",
+                ))
+            })
+    })
+}
+
+/** Reads framed requests until the owner's pipe closes, answering each in order. */
+fn serve(name: &str) -> EngineResult<()> {
     let _owner = super::lifetime::OwnerWatch::start()?;
     if !["network", "document", "v9"].contains(&name) {
         return Err(EngineError::invalid("Unknown engine service."));

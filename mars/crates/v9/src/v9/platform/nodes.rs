@@ -69,6 +69,45 @@ impl Page<'_> {
     pub fn invalidate(&mut self) {
         self.tree = None;
     }
+    /** Bring the index up to date after `count` nodes were spliced in at `at`, instead of
+    rebuilding it: a page that stamps thousands of elements (YouTube) would otherwise rebuild
+    the whole index on each insert. Nodes after the splice shift by `count`; only the one
+    parent whose child list gained the fragment's roots is reordered. */
+    fn tree_inserted(&mut self, at: usize, count: usize) {
+        let (Some(document), Some(tree)) = (&self.document, &mut self.tree) else {
+            return;
+        };
+        // ponytail: O(n - at) per insert; appends land at the end, so this stays small.
+        for (position, node) in document.nodes.iter().enumerate().skip(at) {
+            tree.index.insert(node.local_id, position);
+        }
+        let range = at..at + count;
+        let mut roots = Vec::new();
+        let mut roots_parent = None;
+        for node in &document.nodes[range.clone()] {
+            let parent = node.parent.unwrap_or(BODY);
+            tree.parents.insert(node.local_id, parent);
+            tree.shadow |= node.tag == super::components::SHADOW_ROOT;
+            if tree.index.get(&parent).is_some_and(|p| range.contains(p)) {
+                tree.children.entry(parent).or_default().push(node.local_id);
+            } else {
+                roots_parent = Some(parent);
+                roots.push(node.local_id);
+            }
+        }
+        let Some(parent) = roots_parent else {
+            return;
+        };
+        let existing = tree.children.remove(&parent).unwrap_or_default();
+        let split = existing
+            .iter()
+            .position(|child| tree.index.get(child).is_some_and(|p| *p >= range.end))
+            .unwrap_or(existing.len());
+        let mut children = existing[..split].to_vec();
+        children.extend(roots);
+        children.extend_from_slice(&existing[split..]);
+        tree.children.insert(parent, children);
+    }
     /** The projected node, if connected. */
     pub fn projected(&mut self, id: usize) -> Option<&ScriptNode> {
         let position = *self.tree().index.get(&id)?;
@@ -703,9 +742,10 @@ impl Page<'_> {
                 )
             })
             .collect();
+        let count = nodes.len();
         let document = self.document.as_mut().ok_or_else(invalid)?;
-        document.insert(target, position, nodes)?;
-        self.invalidate();
+        let at = document.insert(target, position, nodes)?;
+        self.tree_inserted(at, count);
         self.record(ScriptChange::Dom {
             change: DomChange::InsertHtml {
                 target,
@@ -1046,9 +1086,10 @@ impl Page<'_> {
             };
             let nodes = self.parse_fragment(&context, html)?;
             let first_id = nodes.first().map_or(self.next_id, |node| node.local_id);
+            let count = nodes.len();
             let document = self.document.as_mut().ok_or_else(invalid)?;
-            document.insert(target, position, nodes)?;
-            self.invalidate();
+            let at = document.insert(target, position, nodes)?;
+            self.tree_inserted(at, count);
             return self.record(ScriptChange::Dom {
                 change: DomChange::InsertHtml {
                     target,

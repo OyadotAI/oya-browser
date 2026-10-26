@@ -28,6 +28,9 @@ mod image_loading;
 const SETTLE_VIRTUAL_MS: f64 = 200.0;
 /// Real time one step may spend fetching the images its changes inserted.
 const INSERTED_IMAGE_WALL: Duration = Duration::from_millis(1500);
+/// Network time a started image fetch always gets, however much of the slice is left: a shared
+/// slice made every image after the first few in a batch fail at once (YouTube's thumbnails).
+const IMAGE_REQUEST_WALL: Duration = Duration::from_secs(5);
 /// Network time a started script request always gets, however much of the slice is left.
 const SCRIPT_REQUEST_WALL: Duration = Duration::from_secs(3);
 /// Real time the first commit may spend on that settling, inside the navigation deadline.

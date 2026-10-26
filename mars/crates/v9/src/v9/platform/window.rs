@@ -796,16 +796,21 @@ pub(in crate::v9) fn keep_observer_callback(
 
 /** A zero rectangle at the origin with a given size, as DOMRectReadOnly reads. */
 fn rect_object(vm: &mut Vm, width: f64, height: f64) -> Res<JsValue> {
+    rect_at(vm, (0.0, 0.0, width, height))
+}
+
+/** A DOMRect-shaped object for the box (x, y, width, height). */
+fn rect_at(vm: &mut Vm, (x, y, width, height): (f64, f64, f64, f64)) -> Res<JsValue> {
     let id = vm.new_object()?;
     for (name, value) in [
-        ("x", 0.0),
-        ("y", 0.0),
-        ("top", 0.0),
-        ("left", 0.0),
+        ("x", x),
+        ("y", y),
+        ("top", y),
+        ("left", x),
         ("width", width),
         ("height", height),
-        ("right", width),
-        ("bottom", height),
+        ("right", x + width),
+        ("bottom", y + height),
     ] {
         vm.put(id, name, JsValue::Number(value))?;
     }
@@ -814,9 +819,10 @@ fn rect_object(vm: &mut Vm, width: f64, height: f64) -> Res<JsValue> {
 
 /**
  * IntersectionObserver/ResizeObserver.observe(target): queue one task that calls the observer's
- * callback with an entry for the target. V9 has no layout, so a target always intersects the
- * viewport (lazy loaders load, which is what an agent reading the page wants) and has the zero
- * size the rest of V9's geometry reports.
+ * callback with an entry for the target, measured from the app's last layout. A target always
+ * intersects the viewport (lazy loaders load, which is what an agent reading the page wants), and
+ * its intersection is never empty: YouTube's lazy image loader keeps only entries whose
+ * intersectionRect has a height, and with an empty one no thumbnail ever got its src.
  */
 pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let target = call.arg(0);
@@ -841,8 +847,12 @@ pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
     };
     let entry = vm.new_object()?;
     vm.pin(JsValue::Object(entry));
+    let measured = match super::events::target_of(vm, &target) {
+        Some(super::Target::Node(node)) => super::dom::client_box(vm, node),
+        _ => (0.0, 0.0, 0.0, 0.0),
+    };
     vm.put(entry, "target", target)?;
-    let rect = rect_object(vm, 0.0, 0.0)?;
+    let rect = rect_at(vm, measured)?;
     let resize = vm
         .get(
             &JsValue::Object(observer),
@@ -852,8 +862,8 @@ pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if vm.to_text(&resize)? == "ResizeObserver" {
         vm.put(entry, "contentRect", rect)?;
         let size = vm.new_object()?;
-        vm.put(size, "inlineSize", JsValue::Number(0.0))?;
-        vm.put(size, "blockSize", JsValue::Number(0.0))?;
+        vm.put(size, "inlineSize", JsValue::Number(measured.2))?;
+        vm.put(size, "blockSize", JsValue::Number(measured.3))?;
         for name in [
             "borderBoxSize",
             "contentBoxSize",
@@ -868,8 +878,10 @@ pub(in crate::v9) fn observe(vm: &mut Vm, call: Call) -> Res<JsValue> {
             vm.page.environment.viewport_height,
         );
         let root = rect_object(vm, viewport.0, viewport.1)?;
-        vm.put(entry, "boundingClientRect", rect.clone())?;
-        vm.put(entry, "intersectionRect", rect)?;
+        let (x, y, width, height) = measured;
+        let intersection = rect_at(vm, (x, y, width.max(1.0), height.max(1.0)))?;
+        vm.put(entry, "boundingClientRect", rect)?;
+        vm.put(entry, "intersectionRect", intersection)?;
         vm.put(entry, "rootBounds", root)?;
         vm.put(entry, "isIntersecting", JsValue::Boolean(true))?;
         vm.put(entry, "isVisible", JsValue::Boolean(true))?;

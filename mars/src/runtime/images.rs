@@ -74,6 +74,21 @@ pub(super) fn dimensions(mime: &str, bytes: &[u8]) -> EngineResult<DecodedImage>
     Ok(image)
 }
 
+/** The raster format the bytes' signature names, as the image sniffing rules read it. */
+pub(super) fn sniffed(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
 /** PNG decoder expands palette data only after its dimensions fit the page budget. */
 fn png(bytes: &[u8]) -> EngineResult<DecodedImage> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
@@ -1197,6 +1212,9 @@ const SVG_DEFAULT: (f64, f64) = (300.0, 150.0);
 
 /** Bitmap bytes held to the decoder bounds. */
 pub(super) fn raster(mime: String, bytes: Vec<u8>) -> EngineResult<Fetched> {
+    // Browsers pick an image's format from its leading bytes, not its declared type: YouTube's
+    // placeholder is PNG data labeled image/gif, and every one of them failed to decode.
+    let mime = sniffed(&bytes).map_or(mime, str::to_owned);
     let size = dimensions(&mime, &bytes)?;
     Ok(Fetched::Raster(
         ImageAsset {
@@ -1588,6 +1606,17 @@ mod tests {
     }
 
     /** data: images decode base64 bitmaps and percent-encoded drawings locally. */
+    #[test]
+    fn mislabeled_bitmaps_decode_as_what_their_bytes_are() {
+        // YouTube's 1x1 placeholder: PNG bytes under an image/gif label.
+        let png = data_url(
+            "data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mN8XA8AAksBZG7LpHYAAAAASUVORK5CYII=",
+        );
+        assert!(matches!(png, Ok(Fetched::Raster(ref asset, (1, 1))) if asset.mime == "image/png"));
+        assert_eq!(sniffed(b"GIF89a...."), Some("image/gif"));
+        assert_eq!(sniffed(b"plain text"), None);
+    }
+
     #[test]
     fn data_urls_decode_bitmaps_and_drawings() {
         let gif = data_url("data:image/gif;base64,R0lGODlhAQABAAAAACw=").ok();

@@ -1,5 +1,5 @@
 /** Image lifecycle work uses the existing governed fetch/decoder and returns only inert outcomes to V9. */
-use super::{INSERTED_IMAGE_WALL, Page, Runtime};
+use super::{IMAGE_REQUEST_WALL, INSERTED_IMAGE_WALL, Page, Runtime};
 use crate::constants::{IMAGE_COUNT, NODES, URL_BYTES, VM_DETACHED_NODES};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{ImageAdoption, ImageRequest, ImageResponse};
@@ -268,7 +268,13 @@ impl Runtime {
         result
     }
 
-    /** An ordinary decode/network failure becomes error; authority and native service failures propagate. */
+    /**
+     * An ordinary decode/network failure becomes error; authority and native service failures
+     * propagate. The batch's document images are fetched together first, so it costs about one
+     * round trip; each image then started gets at least IMAGE_REQUEST_WALL, and once the slice
+     * has passed the rest wait for the next task instead of failing, as a browser's queued image
+     * loads wait rather than error.
+     */
     fn decode_image_batch(
         &mut self,
         page: &mut Page,
@@ -282,15 +288,39 @@ impl Runtime {
             .pending
             .drain(..count)
             .collect();
+        self.prefetch_batch(page, &requests)?;
         let mut responses = Vec::with_capacity(count);
-        for request in requests {
-            let dimensions = self.decode_image_request(page, &request, deadline, budget)?;
+        let mut requests = requests.into_iter();
+        for request in requests.by_ref() {
+            let started = Instant::now();
+            if !responses.is_empty() && started >= deadline {
+                // Past the slice: keep this one and the rest pending, in order.
+                let later = std::iter::once(request).chain(requests.by_ref());
+                let queued = std::mem::take(&mut page.scripting.image_loading.pending);
+                page.scripting.image_loading.pending = later.chain(queued).collect();
+                break;
+            }
+            let until = deadline.max(started + IMAGE_REQUEST_WALL);
+            let dimensions = self.decode_image_request(page, &request, until, budget)?;
             responses.push(ImageResponse {
                 request,
                 dimensions,
             });
         }
         Ok(responses)
+    }
+
+    /** Fetch the batch's in-document images in parallel; reads then find the answers waiting. */
+    fn prefetch_batch(&mut self, page: &Page, requests: &[ImageRequest]) -> EngineResult<()> {
+        let wanted: BTreeSet<usize> = requests.iter().map(|request| request.node).collect();
+        let url = page.url.clone();
+        self.prefetch_images(
+            &page.document,
+            &url,
+            Instant::now() + IMAGE_REQUEST_WALL,
+            &|node| wanted.contains(&node.local_id),
+            wanted.len(),
+        )
     }
 
     /** Reuse only a matching actual decode; source changes otherwise pass through the same decoder. */
