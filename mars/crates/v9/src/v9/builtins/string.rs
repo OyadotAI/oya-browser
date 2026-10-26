@@ -402,11 +402,14 @@ fn search(vm: &mut Vm, call: Call) -> Res<JsValue> {
 fn pad(vm: &mut Vm, call: &Call, start: bool) -> Res<JsValue> {
     let text = this_string(vm, call)?;
     let target = vm.to_integer(&call.arg(0))?.max(0.0) as usize;
+    if target <= text.len() {
+        return Ok(JsValue::String(text));
+    }
     let filler = match call.arg(1) {
         JsValue::Undefined => JsString::from_utf8(" ")?,
         value => vm.to_string(&value)?,
     };
-    if target <= text.len() || filler.is_empty() {
+    if filler.is_empty() {
         return Ok(JsValue::String(text));
     }
     if target > JS_STRING_UNITS {

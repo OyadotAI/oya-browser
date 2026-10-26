@@ -838,7 +838,7 @@
     },
     {
       "family": "parameters_representation_limit:1",
-      "status": "planned",
+      "status": "partial",
       "priority": 3,
       "kind": "limit",
       "tests": [
@@ -849,7 +849,48 @@
         "regress/regress-492.js"
       ],
       "id": "v8-054",
-      "size": 5
+      "size": 5,
+      "validation": {
+        "profile": "release",
+        "passed_tests": [
+          "regress/regress-11491.js",
+          "regress/regress-353058.js",
+          "regress/regress-481519344.js",
+          "regress/regress-492.js"
+        ],
+        "remaining_tests": [
+          "regress/regress-1122.js"
+        ],
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "combined_pass": 9,
+        "combined_fail": 2,
+        "selected_tests": [
+          "regress/regress-1122.js",
+          "regress/regress-11491.js",
+          "regress/regress-353058.js",
+          "regress/regress-481519344.js",
+          "regress/regress-492.js",
+          "stackoverflow-underapplication.js",
+          "regress/wasm/regress-810973.js",
+          "regress/wasm/regress-810973b.js",
+          "string-pad.js",
+          "regress/regress-crbug-1440685.js",
+          "regress/regress-crbug-478011.js"
+        ],
+        "followup_report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "followup_pass": 3,
+        "followup_fail": 0,
+        "followup_selected_tests": [
+          "regress/regress-481519344.js",
+          "regress/regress-6223.js",
+          "regress/regress-crbug-1360736.js"
+        ],
+        "public_report": "/private/tmp/mars-v9-capacity-pad-release.log",
+        "public_parameter_capacity_pass": 12,
+        "generator_public_report": "/private/tmp/mars-v9-generator-typed-capacity-release.log",
+        "generator_entry_failure_pass": 4
+      },
+      "progress": "Four of five complete originals pass after authorized explicit native arity65525 admission and genuine generator-entry-state repair. regress1122 now gets past the old64-formal blocker but still times out under the unchanged execution budget; do not close this group."
     },
     {
       "family": "global_eval_declarations:1",
@@ -1047,7 +1088,7 @@
       ],
       "id": "v8-069",
       "size": 4,
-      "progress": "The genuine per-bound-record argument limit case passes unchanged with the rebuilt native runner. Other argument/stack cases remain open; no parameter/call quotas were increased."
+      "progress": "The genuine per-bound-record argument limit case previously passed unchanged with the rebuilt native runner. Other argument/stack cases remain open. That initial bind repair did not expand capacity; the later authorized formal/static-call arity expansion is tracked separately in v8-054 and v8-140."
     },
     {
       "family": "activation_stack_representation:1",
@@ -1225,14 +1266,39 @@
     },
     {
       "family": "typedarray_slice_overlap:1",
-      "status": "planned",
+      "status": "verified",
       "priority": 3,
       "kind": "semantic",
       "tests": [
         "regress/regress-6223.js"
       ],
       "id": "v8-085",
-      "size": 1
+      "size": 1,
+      "validation": {
+        "profile": "release",
+        "passed_tests": [
+          "regress/regress-6223.js"
+        ],
+        "remaining_tests": [],
+        "followup_report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "followup_pass": 3,
+        "followup_fail": 0,
+        "followup_selected_tests": [
+          "regress/regress-481519344.js",
+          "regress/regress-6223.js",
+          "regress/regress-crbug-1360736.js"
+        ],
+        "report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "combined_pass": 3,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-generator-typed-capacity-release.log",
+        "public_overlap_pass": 8,
+        "test262_report": "/private/tmp/mars-v9-typed-slice-test262/results-test262.json",
+        "test262_pass": 1,
+        "test262_fail": 0,
+        "test262_case": "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js"
+      },
+      "progress": "The unchanged overlapping species original passes, all8 public overlap/raw-byte/shared/immutable/order controls pass, and the independent current Test262 same-buffer-offset case passes1/1. Separate-buffer and different-kind copy paths remain unchanged."
     },
     {
       "family": "diagnostic_reflect_apply_target:1",
@@ -1406,7 +1472,7 @@
     },
     {
       "family": "typed_array_exotics",
-      "status": "planned",
+      "status": "partial",
       "rows": [
         221,
         233,
@@ -1418,7 +1484,31 @@
         "regress/regress-crbug-1459172.js"
       ],
       "id": "v8-098",
-      "size": 3
+      "size": 3,
+      "validation": {
+        "profile": "release",
+        "passed_tests": [
+          "regress/regress-crbug-1360736.js"
+        ],
+        "remaining_tests": [
+          "regress/regress-crbug-1053939.js",
+          "regress/regress-crbug-1459172.js"
+        ],
+        "followup_report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "followup_pass": 3,
+        "followup_fail": 0,
+        "followup_selected_tests": [
+          "regress/regress-481519344.js",
+          "regress/regress-6223.js",
+          "regress/regress-crbug-1360736.js"
+        ],
+        "report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "combined_pass": 3,
+        "combined_fail": 0,
+        "public_report": "/private/tmp/mars-v9-generator-typed-capacity-release.log",
+        "public_variable_integrity_pass": 13
+      },
+      "progress": "The complete proxy-seal variable-view original regress1360736 passes and13 public RAB/GSAB/integrity/transport controls pass. The other two group originals were not selected in this proof and remain open; do not mark the whole group verified."
     },
     {
       "family": "identifier_validation",
@@ -1472,7 +1562,7 @@
     },
     {
       "family": "string_coercion_order",
-      "status": "planned",
+      "status": "partial",
       "rows": [
         323,
         261
@@ -1482,7 +1572,35 @@
         "regress/regress-crbug-902672.js"
       ],
       "id": "v8-103",
-      "size": 2
+      "size": 2,
+      "validation": {
+        "profile": "release",
+        "passed_tests": [
+          "string-pad.js"
+        ],
+        "remaining_tests": [
+          "regress/regress-crbug-902672.js"
+        ],
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "combined_pass": 9,
+        "combined_fail": 2,
+        "selected_tests": [
+          "regress/regress-1122.js",
+          "regress/regress-11491.js",
+          "regress/regress-353058.js",
+          "regress/regress-481519344.js",
+          "regress/regress-492.js",
+          "stackoverflow-underapplication.js",
+          "regress/wasm/regress-810973.js",
+          "regress/wasm/regress-810973b.js",
+          "string-pad.js",
+          "regress/regress-crbug-1440685.js",
+          "regress/regress-crbug-478011.js"
+        ],
+        "public_report": "/private/tmp/mars-v9-capacity-pad-release.log",
+        "public_pad_pass": 8
+      },
+      "progress": "The complete string-pad.js original passes with corrected filler coercion ordering; eight public padding controls pass. regress902672 still requires genuine large-string capacity and remains open; no string quota was changed by this repair."
     },
     {
       "family": "primitive_prototype_brand",
@@ -1584,7 +1702,7 @@
     },
     {
       "family": "stack_accessor_semantics",
-      "status": "planned",
+      "status": "verified",
       "rows": [
         236,
         244
@@ -1594,7 +1712,34 @@
         "regress/regress-crbug-478011.js"
       ],
       "id": "v8-110",
-      "size": 2
+      "size": 2,
+      "validation": {
+        "profile": "release",
+        "passed_tests": [
+          "regress/regress-crbug-1440685.js",
+          "regress/regress-crbug-478011.js"
+        ],
+        "remaining_tests": [],
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "combined_pass": 9,
+        "combined_fail": 2,
+        "selected_tests": [
+          "regress/regress-1122.js",
+          "regress/regress-11491.js",
+          "regress/regress-353058.js",
+          "regress/regress-481519344.js",
+          "regress/regress-492.js",
+          "stackoverflow-underapplication.js",
+          "regress/wasm/regress-810973.js",
+          "regress/wasm/regress-810973b.js",
+          "string-pad.js",
+          "regress/regress-crbug-1440685.js",
+          "regress/regress-crbug-478011.js"
+        ],
+        "public_report": "/private/tmp/mars-v9-error-admission-release.log",
+        "public_admission_pass": 11
+      },
+      "progress": "Both complete unchanged stack-admission originals pass; all11 public Error stack receiver/descriptor/transport controls pass. Capture rejects inadmissible targets before collecting or mutating stack properties."
     },
     {
       "family": "stack_metadata",
@@ -2030,7 +2175,7 @@
     },
     {
       "family": "audit_valid_parameter_limits",
-      "status": "planned",
+      "status": "verified",
       "rows": [
         307,
         308,
@@ -2042,7 +2187,35 @@
         "stackoverflow-underapplication.js"
       ],
       "id": "v8-140",
-      "size": 3
+      "size": 3,
+      "validation": {
+        "profile": "release",
+        "passed_tests": [
+          "regress/wasm/regress-810973.js",
+          "regress/wasm/regress-810973b.js",
+          "stackoverflow-underapplication.js"
+        ],
+        "remaining_tests": [],
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "combined_pass": 9,
+        "combined_fail": 2,
+        "selected_tests": [
+          "regress/regress-1122.js",
+          "regress/regress-11491.js",
+          "regress/regress-353058.js",
+          "regress/regress-481519344.js",
+          "regress/regress-492.js",
+          "stackoverflow-underapplication.js",
+          "regress/wasm/regress-810973.js",
+          "regress/wasm/regress-810973b.js",
+          "string-pad.js",
+          "regress/regress-crbug-1440685.js",
+          "regress/regress-crbug-478011.js"
+        ],
+        "public_report": "/private/tmp/mars-v9-capacity-pad-release.log",
+        "public_parameter_capacity_pass": 12
+      },
+      "progress": "All three unchanged large-arity originals pass in the9-pass release probe after the authorized logical-arity capacity expansion. Heap/source/frame/work budgets remain separate and enforced."
     },
     {
       "family": "audit_wasm_memory_and_thread_limits",
@@ -3880,7 +4053,17 @@
       "reason": "Fixed 64-formal parameter representation blocks valid functions with hundreds to 65k parameters; retain physical budgets, do not raise a counter blindly.",
       "suggested_batch": "parameters_representation_limit:1",
       "group": "v8-054",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "progress": "The64-formal admission blocker is repaired and public32000-formal/65525-boundary proofs pass; this complete original still fails its existing execution-time budget and remains unverified.",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2,
+        "remaining_error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded.",
+        "public_report": "/private/tmp/mars-v9-capacity-pad-release.log",
+        "public_parameter_capacity_pass": 12
+      }
     },
     "regress/regress-11491.js": {
       "triage_partition": "middle110",
@@ -3890,7 +4073,15 @@
       "reason": "Fixed 64-formal parameter representation blocks valid functions with hundreds to 65k parameters; retain physical budgets, do not raise a counter blindly.",
       "suggested_batch": "parameters_representation_limit:1",
       "group": "v8-054",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Authorized explicit native arity admits the exact valid65525-formal generator constructor without increasing unrelated physical storage/work budgets."
     },
     "regress/regress-115452.js": {
       "triage_partition": "middle110",
@@ -4187,7 +4378,15 @@
       "reason": "Fixed 64-formal parameter representation blocks valid functions with hundreds to 65k parameters; retain physical budgets, do not raise a counter blindly.",
       "suggested_batch": "parameters_representation_limit:1",
       "group": "v8-054",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Large duplicate formal lists execute with the authorized logical arity and preserve real mapped-argument behavior."
     },
     "regress/regress-353551.js": {
       "triage_partition": "middle110",
@@ -4359,7 +4558,15 @@
       "reason": "Fixed 64-formal parameter representation blocks valid functions with hundreds to 65k parameters; retain physical budgets, do not raise a counter blindly.",
       "suggested_batch": "parameters_representation_limit:1",
       "group": "v8-054",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 3,
+        "combined_fail": 0
+      },
+      "progress": "The first capacity probe exposed a genuine generator-entry failure; the followup restores suspendedStart when real frame admission fails before execution, and the complete original now passes."
     },
     "regress/regress-484904778.js": {
       "triage_partition": "middle110",
@@ -4426,7 +4633,15 @@
       "reason": "Fixed 64-formal parameter representation blocks valid functions with hundreds to 65k parameters; retain physical budgets, do not raise a counter blindly.",
       "suggested_batch": "parameters_representation_limit:1",
       "group": "v8-054",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Large valid formal and static actual lists now execute through the real bounded representation."
     },
     "regress/regress-499155348.js": {
       "triage_partition": "middle110",
@@ -4702,7 +4917,15 @@
       "note": "Verified primary typed-array-slice.tq: dest.buffer == src.buffer forces SlowCopy; elements.cc CopyTypedArrayElementsSliceImpl delegates sequential conversion/copy.",
       "suggested_batch": "typedarray_slice_overlap:1",
       "group": "v8-085",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (array element at index 2): expected <0> found <1>\n    at assertEquals              script 2 513:7\n    at assertArrayEquals         script 2 540:9\n    at                           script 3 19:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure (array element at index 2): expected <0> found <1>\n    at assertEquals              script 2 513:7\n    at assertArrayEquals         script 2 540:9\n    at                           script 3 19:1.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 3,
+        "combined_fail": 0
+      },
+      "progress": "Same-buffer same-type species copying reads each raw element immediately before writing; forward overlap stays live and preserves NaN bits."
     },
     "regress/regress-6288.js": {
       "triage_partition": "middle110",
@@ -5124,7 +5347,15 @@
       "family": "typed_array_proxy_seal",
       "batch": "typed_array_exotics",
       "group": "v8-098",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 9:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 9:1.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-generator-typed-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 3,
+        "combined_fail": 0
+      },
+      "progress": "Real variable-length typed views refuse PreventExtensions and proxy-delegated seal without partial descriptor mutation."
     },
     "regress/regress-crbug-1404820.js": {
       "triage_partition": "last111",
@@ -5153,7 +5384,15 @@
       "family": "error_stack_receiver",
       "batch": "stack_accessor_semantics",
       "group": "v8-110",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception, expected TypeError\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 6:1.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Native Error stack accessor receiver admission now preserves the pinned error/no-op behavior without running unrelated script getters."
     },
     "regress/regress-crbug-1459172.js": {
       "triage_partition": "last111",
@@ -5218,7 +5457,15 @@
       "family": "capture_stack_nonextensible",
       "batch": "stack_accessor_semantics",
       "group": "v8-110",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 398, column 5: Uncaught MjsUnitAssertionError: Did not throw exception\n    at failWithMessage           script 2 398:11\n    at assertThrows              script 2 624:5\n    at                           script 3 7:1.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Error.captureStackTrace rejects nonextensible/inadmissible targets before collecting or mutating stack properties."
     },
     "regress/regress-crbug-482998.js": {
       "triage_partition": "last111",
@@ -5733,7 +5980,15 @@
       "family": "function_parameter_capacity",
       "batch": "audit_valid_parameter_limits",
       "group": "v8-140",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Complete unchanged original passes after the authorized explicit native arity capacity expansion; physical heap/source/frame/work budgets remain enforced."
     },
     "regress/wasm/regress-810973b.js": {
       "triage_partition": "last111",
@@ -5741,7 +5996,15 @@
       "family": "function_parameter_capacity",
       "batch": "audit_valid_parameter_limits",
       "group": "v8-140",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Complete unchanged original passes after the authorized explicit native arity capacity expansion; physical heap/source/frame/work budgets remain enforced."
     },
     "regress/wasm/regress-985154.js": {
       "triage_partition": "last111",
@@ -5830,7 +6093,15 @@
       "family": "function_parameter_capacity",
       "batch": "audit_valid_parameter_limits",
       "group": "v8-140",
-      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64."
+      "baseline_error": "[sloppy] limit_exceeded: V9 function parameters exceeds the limit of 64.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "Complete unchanged original passes after the authorized explicit native arity capacity expansion; physical heap/source/frame/work budgets remain enforced."
     },
     "statistics-extension.js": {
       "triage_partition": "last111",
@@ -5862,7 +6133,15 @@
       "family": "string_pad_coercion_order",
       "batch": "string_coercion_order",
       "group": "v8-103",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 6, column 31: Uncaught object."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 6, column 31: Uncaught object.",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-arity-pad-admission-upstream/results-mjsunit.json",
+        "profile": "release",
+        "combined_pass": 9,
+        "combined_fail": 2
+      },
+      "progress": "A target at or below the actual UTF16 length returns before filler conversion; necessary throwing/empty fillers retain correct precedence even for huge requested targets."
     },
     "string-replace-with-empty.js": {
       "triage_partition": "last111",

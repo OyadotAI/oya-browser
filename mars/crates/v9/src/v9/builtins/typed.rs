@@ -32,7 +32,7 @@ mod codec;
 mod copy;
 mod indexed;
 mod integrity;
-pub(super) use integrity::{integrity_status, restrict_named_properties};
+pub(super) use integrity::{can_prevent_extensions, integrity_status, restrict_named_properties};
 mod search;
 mod species;
 mod static_create;

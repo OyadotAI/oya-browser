@@ -719,7 +719,10 @@ impl Vm<'_> {
             return Ok(Exit::Return(JsValue::Undefined));
         };
         self.set_generator(generator, GeneratorState::Running, None);
-        self.restore_frame(frame, true)?;
+        if let Err(error) = self.restore_frame(frame, true) {
+            self.set_generator(generator, GeneratorState::Done, None);
+            return Err(error);
+        }
         if state == GeneratorState::Yielded {
             self.resume_with(mode, value)?;
         }

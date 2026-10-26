@@ -200,7 +200,7 @@ pub(super) fn slice(vm: &mut Vm, call: Call) -> Res<JsValue> {
     Ok(target)
 }
 
-/** Copying an overlapping species target snapshots the actual source range before the first write. */
+/** Same-buffer species copies observe preceding writes; separate equal-type buffers retain their raw copy path. */
 fn copy_view(
     vm: &mut Vm,
     source: ObjectId,
@@ -215,6 +215,9 @@ fn copy_view(
     let destination =
         view_of(vm, target.object().expect("validated target")).expect("validated view");
     if destination.kind == kind {
+        if current.buffer == destination.buffer {
+            return copy_live(vm, &current, &destination, start, count);
+        }
         let size = element_size(kind);
         let bytes = read_range(
             vm,
@@ -232,6 +235,31 @@ fn copy_view(
         let value = load(vm, source, start + index).unwrap_or(JsValue::Undefined);
         vm.set(target, key(&index.to_string()), value, true)?;
         vm.charge(1)?
+    }
+    Ok(())
+}
+
+/** Reading one raw element immediately before its write preserves aliases, NaN payloads and integer no-tear access. */
+fn copy_live(
+    vm: &mut Vm,
+    source: &ViewData,
+    target: &ViewData,
+    start: usize,
+    count: usize,
+) -> Res<()> {
+    let size = element_size(source.kind);
+    for index in 0..count {
+        let bytes = read_range(
+            vm,
+            source.buffer,
+            source.offset + (start + index) * size,
+            size,
+        )
+        .ok_or_else(|| vm.type_error("Cannot read source typed array"))?;
+        if !write_range(vm, target.buffer, target.offset + index * size, &bytes) {
+            return Err(vm.type_error("TypedArray species returned unwritable backing"));
+        }
+        vm.charge(1)?;
     }
     Ok(())
 }
