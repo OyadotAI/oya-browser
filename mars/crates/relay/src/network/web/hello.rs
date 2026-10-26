@@ -1,10 +1,17 @@
 /**
  * The one TLS client configuration, shaped like Chrome's ClientHello as far as Rustls allows:
- * Chrome's cipher suite and signature scheme order, X25519 first, ALPN h2 then http/1.1, and
- * Brotli certificate compression. Rustls cannot send GREASE, ALPS, ECH GREASE (no HPKE in the
- * ring provider), X25519MLKEM768 (aws-lc-rs only), the legacy CBC and RSA key-exchange suites,
- * or Chrome's randomized extension order; README.md records what tls.peet.ws measured.
+ * Chrome's cipher suite and signature scheme order, Chrome's groups (X25519MLKEM768 from our
+ * own ML-KEM, then X25519, P-256, P-384) with Chrome's two key shares, ALPN h2 then http/1.1,
+ * Brotli certificate compression and a randomized extension order. Rustls cannot send GREASE,
+ * ALPS, the renegotiation_info extension (it sends the SCSV), signed_certificate_timestamp, or
+ * the legacy CBC and RSA key-exchange suites, and its ECH GREASE forces TLS 1.3 only, which
+ * would lose every TLS 1.2 server; README.md records what tls.peet.ws measured.
  */
+mod hybrid;
+mod mlkem;
+#[cfg(test)]
+mod tests_hello;
+
 use crate::protocol::{EngineError, EngineResult};
 use rustls::client::WebPkiServerVerifier;
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
@@ -99,6 +106,7 @@ fn build() -> Option<Arc<ClientConfig>> {
 /** The ring provider, reordered and trimmed to Chrome's lists. */
 fn provider() -> CryptoProvider {
     let mut provider = rustls::crypto::ring::default_provider();
+    provider.kx_groups.insert(0, &hybrid::X25519MlKem768);
     let available = provider.cipher_suites.clone();
     provider.cipher_suites = SUITES
         .iter()
@@ -157,6 +165,7 @@ mod tests {
         assert_eq!(
             groups,
             [
+                rustls::NamedGroup::X25519MLKEM768,
                 rustls::NamedGroup::X25519,
                 rustls::NamedGroup::secp256r1,
                 rustls::NamedGroup::secp384r1

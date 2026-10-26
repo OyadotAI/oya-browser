@@ -4,8 +4,11 @@
  * SetNumberFormatUnitOptions, SetNumberFormatDigitOptions), values are rounded exactly in
  * `decimal`, and the en-US patterns (sign, currency, percent, units, compact, scientific and
  * engineering) are assembled as typed parts so `format`, `formatToParts`, `formatRange` and
- * `formatRangeToParts` agree. Locale data is the small embedded en table below.
+ * `formatRangeToParts` agree. Unit and currency names are the small en tables below; symbols,
+ * grouping, patterns, compact names and plural rules come from `locale_data`.
  */
+#[path = "locale_data.rs"]
+mod locale_data;
 use super::decimal::{self, Dec, Num, Raw, raw_fixed, raw_precision, unsigned_mode};
 use super::display_names::resolve_locale;
 use super::locale::canonical_list;
@@ -14,6 +17,7 @@ use crate::v9::vm::data::{Class, HostData, IntlData};
 use crate::v9::vm::heap::{CONFIGURABLE, HIDDEN_ATTRS, Key, Object};
 use crate::v9::vm::realm::{Builder, Static, realm, string, symbol};
 use crate::v9::vm::{Call, Res, Vm};
+use locale_data::Symbols;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -126,17 +130,6 @@ const ZERO_DIGIT_CURRENCIES: [&str; 17] = [
 ];
 /** Currencies with three minor digits (CLDR). */
 const THREE_DIGIT_CURRENCIES: [&str; 7] = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
-/** en compact suffixes per exponent: short, long. */
-const COMPACT: [(i64, &str, &str); 4] = [
-    (3, "K", " thousand"),
-    (6, "M", " million"),
-    (9, "B", " billion"),
-    (12, "T", " trillion"),
-];
-/** Largest exponent en compact notation has a name for. */
-const COMPACT_MAX: i64 = 12;
-/** Digits between group separators. */
-const GROUP: usize = 3;
 /** The resolved locale when none is requested. */
 const DEFAULT_LOCALE: &str = "en-US";
 
@@ -516,6 +509,7 @@ fn construct_number(vm: &mut Vm, call: Call) -> Res<JsValue> {
         "auto",
     )?;
     kept.insert("signDisplay".into(), sign);
+    kept.insert("@locale".into(), locale.clone());
     allocate(vm, &call, "NumberFormat", locale, kept)
 }
 
@@ -683,13 +677,32 @@ fn numeric_to_string(options: &BTreeMap<String, String>, x: &Dec, negative: bool
     raw
 }
 
-/** ComputeExponentForMagnitude. */
+/** The locale data a formatter's resolved locale reads. */
+fn symbols(options: &BTreeMap<String, String>) -> &'static Symbols {
+    locale_data::symbols(opt(options, "@locale"))
+}
+
+/** The compact suffixes per exponent for the formatter's locale and display. */
+fn compact_table(options: &BTreeMap<String, String>) -> &'static [(i64, &'static str)] {
+    let s = symbols(options);
+    if opt(options, "compactDisplay") == "long" {
+        s.compact_long
+    } else {
+        s.compact_short
+    }
+}
+
+/** ComputeExponentForMagnitude; compact takes the largest exponent the locale names at or
+below the magnitude (en 10^5 is "100K", ja 10^7 is "1000万"). */
 fn exponent_for(options: &BTreeMap<String, String>, magnitude: i64) -> i64 {
     match opt(options, "notation") {
         "scientific" => magnitude,
         "engineering" => magnitude.div_euclid(3) * 3,
-        "compact" if magnitude < 3 => 0,
-        "compact" => (magnitude.div_euclid(3) * 3).min(COMPACT_MAX),
+        "compact" => compact_table(options)
+            .iter()
+            .rev()
+            .find(|row| row.0 <= magnitude)
+            .map_or(0, |row| row.0),
         _ => 0,
     }
 }
@@ -708,30 +721,35 @@ fn compute_exponent(options: &BTreeMap<String, String>, x: &Dec, negative: bool)
     exponent_for(options, magnitude + 1)
 }
 
-/** Digits with en grouping, as integer and group parts. */
+/** Digits with the locale's grouping (primary and secondary sizes, minimum grouping digits),
+as integer and group parts. */
 fn integer_parts(options: &BTreeMap<String, String>, int: &str, out: &mut Parts) {
+    let s = symbols(options);
     let group = match opt(options, "useGrouping") {
         "false" => false,
-        "min2" => int.len() > GROUP + 1,
-        _ => int.len() > GROUP,
+        "min2" => int.len() >= s.primary + 2.max(s.min_grouping),
+        "always" => int.len() > s.primary,
+        _ => int.len() >= s.primary + s.min_grouping,
     };
     if !group {
         out.push(("integer", int.into()));
         return;
     }
-    let head = int.len() % GROUP;
+    let (rest, last) = int.split_at(int.len() - s.primary);
+    let head = rest.len() % s.secondary;
     let mut chunks: Vec<&str> = Vec::new();
     if head > 0 {
-        chunks.push(&int[..head]);
+        chunks.push(&rest[..head]);
     }
     chunks.extend(
-        int.as_bytes()[head..]
-            .chunks(GROUP)
+        rest.as_bytes()[head..]
+            .chunks(s.secondary)
             .map(|c| std::str::from_utf8(c).unwrap_or("")),
     );
+    chunks.push(last);
     for (index, chunk) in chunks.into_iter().enumerate() {
         if index > 0 {
-            out.push(("group", ",".into()));
+            out.push(("group", s.group.into()));
         }
         out.push(("integer", chunk.into()));
     }
@@ -741,7 +759,7 @@ fn integer_parts(options: &BTreeMap<String, String>, int: &str, out: &mut Parts)
 fn number_parts(options: &BTreeMap<String, String>, value: &Num) -> (Parts, bool, bool) {
     let mut out = Parts::new();
     let (negative, x) = match value {
-        Num::NaN => return (vec![("nan", "NaN".into())], false, false),
+        Num::NaN => return (vec![("nan", symbols(options).nan.into())], false, false),
         Num::Inf(negative) => return (vec![("infinity", "∞".into())], false, *negative),
         Num::Fin(negative, x) => (*negative, x),
     };
@@ -754,7 +772,7 @@ fn number_parts(options: &BTreeMap<String, String>, value: &Num) -> (Parts, bool
     let raw = numeric_to_string(options, &x.shift(-exponent), negative);
     integer_parts(options, &raw.int, &mut out);
     if !raw.frac.is_empty() {
-        out.push(("decimal", ".".into()));
+        out.push(("decimal", symbols(options).decimal.into()));
         out.push(("fraction", raw.frac.clone()));
     }
     match opt(options, "notation") {
@@ -766,19 +784,24 @@ fn number_parts(options: &BTreeMap<String, String>, value: &Num) -> (Parts, bool
             out.push(("exponentInteger", exponent.abs().to_string()));
         }
         "compact" if exponent > 0 => {
-            let long = opt(options, "compactDisplay") == "long";
-            if let Some((_, short, long_name)) = COMPACT.iter().find(|row| row.0 == exponent) {
-                if long {
-                    out.push(("literal", " ".into()));
-                    out.push(("compact", long_name.trim_start().into()));
-                } else {
-                    out.push(("compact", (*short).into()));
-                }
+            if let Some((_, name)) = compact_table(options).iter().find(|row| row.0 == exponent) {
+                push_spaced(&mut out, "compact", name);
             }
         }
         _ => {}
     }
     (out, raw.value.is_zero(), negative)
+}
+
+/** A suffix whose leading space or no-break space is its own literal part. */
+fn push_spaced(out: &mut Parts, kind: &'static str, text: &str) {
+    match text.chars().next() {
+        Some(gap @ (' ' | '\u{a0}' | '\u{202f}')) => {
+            out.push(("literal", gap.to_string()));
+            out.push((kind, text[gap.len_utf8()..].into()));
+        }
+        _ => out.push((kind, text.into())),
+    }
 }
 
 /** The sign a value shows: None, Some('-') or Some('+'). */
@@ -847,8 +870,11 @@ pub(super) fn format_parts(options: &BTreeMap<String, String>, value: &Num) -> P
     let (number, zero, negative) = number_parts(options, value);
     let sign = sign_for(options, value, zero, negative);
     let style = opt(options, "style");
-    let accounting =
-        style == "currency" && opt(options, "currencySign") == "accounting" && sign == Some('-');
+    let sym = symbols(options);
+    let accounting = style == "currency"
+        && opt(options, "currencySign") == "accounting"
+        && sign == Some('-')
+        && sym.accounting_parens;
     let mut out = Parts::new();
     if accounting {
         out.push(("literal", "(".into()));
@@ -871,26 +897,35 @@ pub(super) fn format_parts(options: &BTreeMap<String, String>, value: &Num) -> P
                     out.push(("currency", name.into()));
                 }
                 display => {
+                    let local = locale_data::currency_symbol(opt(options, "@locale"), code);
                     let symbol = match (display, row) {
-                        ("code", _) | (_, None) => None,
+                        ("code", _) => None,
                         ("narrowSymbol", Some(r)) => Some(r.2),
-                        (_, Some(r)) => Some(r.1),
+                        _ => local.or(row.map(|r| r.1)),
                     };
-                    match symbol {
-                        Some(symbol) if !symbol.bytes().all(|b| b.is_ascii_alphabetic()) => {
-                            out.push(("currency", symbol.into()))
-                        }
-                        _ => {
-                            out.push(("currency", symbol.unwrap_or(code).into()));
-                            out.push(("literal", "\u{a0}".into()));
-                        }
+                    let symbol = symbol.unwrap_or(code);
+                    if !sym.currency_first {
+                        out.extend(number);
+                        out.push(("literal", sym.currency_gap.into()));
+                        out.push(("currency", symbol.into()));
+                    } else if sym.currency_gap.is_empty()
+                        && !symbol.ends_with(|c: char| c.is_alphabetic())
+                    {
+                        out.push(("currency", symbol.into()));
+                        out.extend(number);
+                    } else {
+                        out.push(("currency", symbol.into()));
+                        out.push(("literal", "\u{a0}".into()));
+                        out.extend(number);
                     }
-                    out.extend(number);
                 }
             }
         }
         "percent" => {
             out.extend(number);
+            if !sym.percent_gap.is_empty() {
+                out.push(("literal", sym.percent_gap.into()));
+            }
             out.push(("percentSign", "%".into()));
         }
         "unit" => {
@@ -964,7 +999,32 @@ fn range_ends(vm: &mut Vm, call: &Call) -> Res<(Num, Num)> {
     Ok((x, y))
 }
 
-/** PartitionNumberRangePattern in en: "3–5", "$3 – $5", or "~5" when both ends read the same. */
+/** A formatted value split the way ICU's range formatter sees it: the middle prefix (sign,
+currency, parenthesis), the number core (digits with any compact or exponent inner modifier),
+the middle suffix (currency, percent) and the outer suffix (a unit). */
+fn split_affixes(mut parts: Parts) -> (Parts, Parts, Parts, Parts) {
+    let core = |p: &(&str, String)| {
+        matches!(
+            p.0,
+            "integer" | "nan" | "infinity" | "fraction" | "compact" | "exponentInteger"
+        )
+    };
+    let first = parts.iter().position(core).unwrap_or(0);
+    let last = parts.iter().rposition(core).map_or(0, |i| i + 1);
+    let tail = parts.split_off(last.max(first));
+    let middle = parts.split_off(first);
+    let (suffix, outer) = if tail.iter().any(|p| p.0 == "unit") {
+        (Parts::new(), tail)
+    } else {
+        (tail, Parts::new())
+    };
+    (parts, middle, suffix, outer)
+}
+
+/** PartitionNumberRangePattern as ICU's AUTO collapse does it: equal outer affixes are shown
+once; equal middle affixes are shown once when they are wider than one code point ("+$2.90–3.10",
+"3 - 5 €" but "$3 – $5"); spaces go around the locale's separator when any affix repeats, and a
+range whose ends read the same is the approximately pattern ("~$3"). */
 fn range_parts(
     options: &BTreeMap<String, String>,
     x: &Num,
@@ -972,8 +1032,9 @@ fn range_parts(
 ) -> Vec<(&'static str, String, Option<&'static str>)> {
     let start = format_parts(options, x);
     let end = format_parts(options, y);
+    let sym = symbols(options);
     if start == end {
-        let mut out = vec![("approximatelySign", "~".to_string(), Some("shared"))];
+        let mut out = vec![("approximatelySign", sym.approx.to_string(), Some("shared"))];
         let at = start
             .iter()
             .position(|p| !matches!(p.0, "minusSign" | "plusSign"))
@@ -987,22 +1048,50 @@ fn range_parts(
         out.extend(tail);
         return out;
     }
-    let plain = |parts: &Parts| {
-        parts
-            .iter()
-            .all(|p| matches!(p.0, "integer" | "group" | "decimal" | "fraction"))
-    };
-    let separator = if plain(&start) && plain(&end) {
-        "–"
+    let (p1, c1, s1, o1) = split_affixes(start);
+    let (p2, c2, s2, o2) = split_affixes(end);
+    let outer = o1 == o2;
+    let width: usize = p1.iter().chain(&s1).map(|p| p.1.chars().count()).sum();
+    let middle = outer && p1 == p2 && s1 == s2 && width > 1;
+    let inner = c1
+        .iter()
+        .any(|p| matches!(p.0, "compact" | "exponentSeparator"));
+    let repeat = inner || !middle && width > 0 || !outer && !o1.is_empty();
+    let separator = if repeat && !sym.range.starts_with(' ') {
+        format!(" {} ", sym.range)
     } else {
-        " – "
+        sym.range.to_string()
     };
-    let mut out: Vec<_> = start
-        .into_iter()
-        .map(|(k, v)| (k, v, Some("startRange")))
-        .collect();
-    out.push(("literal", separator.into(), Some("shared")));
-    out.extend(end.into_iter().map(|(k, v)| (k, v, Some("endRange"))));
+    let mut out = Vec::new();
+    let mut put = |parts: &Parts, source: &'static str| {
+        out.extend(parts.iter().map(|(k, v)| (*k, v.clone(), Some(source))));
+    };
+    let side = |collapsed: bool, own: &'static str| if collapsed { "shared" } else { own };
+    put(&p1, side(middle, "startRange"));
+    put(&c1, "startRange");
+    if !middle {
+        put(&s1, "startRange");
+    }
+    if !outer {
+        put(&o1, "startRange");
+    }
+    put(&vec![("literal", separator)], "shared");
+    if !middle {
+        put(&p2, "endRange");
+    }
+    put(&c2, "endRange");
+    if !middle {
+        put(&s2, "endRange");
+    }
+    if !outer {
+        put(&o2, "endRange");
+    }
+    if middle {
+        put(&s1, "shared");
+    }
+    if outer {
+        put(&o1, "shared");
+    }
     out
 }
 
@@ -1111,29 +1200,43 @@ fn construct_plural(vm: &mut Vm, call: Call) -> Res<JsValue> {
     kept.insert("notation".into(), notation);
     kept.insert("style".into(), "decimal".into());
     kept.insert("useGrouping".into(), "false".into());
+    kept.insert("@locale".into(), locale.clone());
     allocate(vm, &call, "PluralRules", locale, kept)
 }
 
-/** The en plural category of a value under the rules' digit options. */
+/** The locale's plural category of a value under the rules' digit options, its operands taken
+from the formatted digits and the compact exponent. */
 fn category(options: &BTreeMap<String, String>, value: &Num) -> &'static str {
     let Num::Fin(_, x) = value else {
         return "other";
     };
     let (parts, _, _) = number_parts(options, &Num::Fin(false, x.clone()));
-    if opt(options, "type") != "ordinal" {
-        return if english_one(&parts) { "one" } else { "other" };
+    let digits = |kind: &str| -> String {
+        parts
+            .iter()
+            .filter(|p| p.0 == kind)
+            .map(|p| p.1.as_str())
+            .collect()
+    };
+    let exp = if opt(options, "notation") == "compact" {
+        compute_exponent(options, x, false)
+    } else {
+        0
+    };
+    let (mut int, mut frac) = (digits("integer"), digits("fraction"));
+    for _ in 0..exp {
+        int.push(if frac.is_empty() { '0' } else { frac.remove(0) });
     }
-    let int: String = parts
-        .iter()
-        .filter(|p| p.0 == "integer")
-        .map(|p| p.1.as_str())
-        .collect();
-    let tail: u32 = int[int.len().saturating_sub(2)..].parse().unwrap_or(0);
-    match (tail % 10, tail) {
-        (1, t) if t != 11 => "one",
-        (2, t) if t != 12 => "two",
-        (3, t) if t != 13 => "few",
-        _ => "other",
+    let operands = locale_data::Operands {
+        int: &int,
+        frac: &frac,
+        exp,
+    };
+    let lang = locale_data::plural_lang(opt(options, "@locale"));
+    if opt(options, "type") == "ordinal" {
+        locale_data::ordinal(lang, &operands)
+    } else {
+        locale_data::cardinal(lang, &operands)
     }
 }
 
@@ -1170,11 +1273,10 @@ fn plural_resolved_options(vm: &mut Vm, call: Call) -> Res<JsValue> {
     put_resolved(vm, id, &data.options, "notation")?;
     put_resolved(vm, id, &data.options, "compactDisplay")?;
     put_digit_options(vm, id, &data.options)?;
-    let names: &[&str] = if opt(&data.options, "type") == "ordinal" {
-        &["one", "two", "few", "other"]
-    } else {
-        &["one", "other"]
-    };
+    let names = locale_data::categories(
+        locale_data::plural_lang(&data.locale),
+        opt(&data.options, "type") == "ordinal",
+    );
     let values = names
         .iter()
         .map(|n| JsValue::string(n))

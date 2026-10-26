@@ -79,10 +79,10 @@ impl Page<'_> {
 
 impl Page<'_> {
     /// The app's metadata elements (`meta`, `link`, `style`, `title`, `base`, data-block
-    /// `script`) become head records in source order, so lookups such as
-    /// `querySelector('meta[name=locale]')` find them. Like other head content they stay V9-local.
-    /// ponytail: one placed in the body is a head child here too; give it its body position if
-    /// a page walks siblings around one.
+    /// `script`) become V9-local records at their source places, in source order: head ones in
+    /// the head, body ones under their parent before the first child parsed after them, so
+    /// `querySelector('meta[name=locale]')` and a `<react-partial>`'s lookup of its own embedded
+    /// data both find them. They never enter the projection, as Eye keeps them out of layout.
     fn metadata_elements(&mut self) -> EngineResult<()> {
         let metadata = std::mem::take(&mut self.environment.metadata);
         for element in &metadata {
@@ -91,9 +91,40 @@ impl Page<'_> {
             if let Some(record) = self.state.detached.get_mut(&node) {
                 record.attributes.clone_from(&element.attributes);
             }
-            self.insert(HEAD, node, None)?;
+            self.place_metadata(element, node)?;
         }
         self.environment.metadata = metadata;
+        Ok(())
+    }
+    /** Put one metadata record at its source place; a body one whose parent the projection no
+    longer holds falls back to the body's end. */
+    fn place_metadata(
+        &mut self,
+        element: &crate::document::MetadataElement,
+        node: usize,
+    ) -> EngineResult<()> {
+        if !element.in_body {
+            return self.insert(HEAD, node, None).map(|_| ());
+        }
+        let (parent, before) = match element.parent {
+            Some(parent) if !self.is_projected(parent) => (BODY, None),
+            parent => {
+                let parent = parent.unwrap_or(BODY);
+                let before = self
+                    .all_children(parent)
+                    .into_iter()
+                    .find(|child| *child >= element.next && *child < nodes::VIRTUAL_BASE);
+                (parent, before)
+            }
+        };
+        self.state
+            .local_children
+            .entry(parent)
+            .or_default()
+            .push((node, before));
+        if let Some(record) = self.state.detached.get_mut(&node) {
+            record.parent = Some(parent);
+        }
         Ok(())
     }
 }
@@ -763,6 +794,9 @@ pub(in crate::v9) struct PageState {
     pub head: Vec<usize>,
     /** Extra children of the virtual html element after head and body. */
     pub html: Vec<usize>,
+    /** V9-local children of a projected element (or the body), each with the projected sibling
+    it sits before (None: last): the page's metadata elements at their source places. */
+    pub local_children: BTreeMap<usize, Vec<(usize, Option<usize>)>>,
     /** Attributes of the virtual html/head/body nodes. */
     pub virtual_attributes: BTreeMap<usize, BTreeMap<String, String>>,
     pub initialized: bool,

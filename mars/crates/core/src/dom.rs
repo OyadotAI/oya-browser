@@ -42,6 +42,17 @@ pub struct MetadataElement {
     /// Raw text content (style sheet, title, data block); empty when it exceeded TEXT_BYTES.
     #[serde(default)]
     pub text: String,
+    /// Whether it sits in the body rather than the head. A data block inside an element is that
+    /// element's child in the DOM (`<react-partial>` reads its props from its own child
+    /// `<script type=application/json>`), so a head copy is not found by `querySelector` on it.
+    #[serde(default)]
+    pub in_body: bool,
+    /// The local id of the element it sits in, or None for a body child.
+    #[serde(default)]
+    pub parent: Option<usize>,
+    /// The first local id parsed after it: it sits before the parent's first child at or past it.
+    #[serde(default)]
+    pub next: usize,
 }
 
 /// Supported element capabilities are computed from the real owned document.
