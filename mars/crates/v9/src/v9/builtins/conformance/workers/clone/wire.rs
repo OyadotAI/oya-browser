@@ -42,7 +42,7 @@ pub(in crate::v9::builtins::conformance) fn deserialize(vm: &mut Vm, bytes: &[u8
         return Err(thrown(vm, Failure::Limit));
     }
     vm.charge(bytes.len())?;
-    let graph = reader::parse(bytes, vm.limits.objects, vm.limits.frames)
+    let graph = reader::parse(bytes, vm.limits.objects, crate::constants::VM_NESTING_DEPTH)
         .map_err(|failure| thrown(vm, failure))?;
     decode(vm, graph)
 }

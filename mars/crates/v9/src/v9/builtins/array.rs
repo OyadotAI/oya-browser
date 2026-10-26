@@ -174,7 +174,8 @@ pub(in crate::v9) fn is_array_for(vm: &mut Vm, value: &JsValue, operation: &str)
         match vm.heap.get(id).map(|object| &object.class) {
             Some(Class::Array(_)) => return Ok(true),
             Some(Class::Proxy(proxy)) => {
-                if depth >= vm.limits.frames {
+                // V8 walks a proxy chain natively here, so the chain keeps the native bound.
+                if depth >= crate::constants::VM_NESTING_DEPTH {
                     return Err(vm.range_error("Maximum call stack size exceeded"));
                 }
                 depth += 1;

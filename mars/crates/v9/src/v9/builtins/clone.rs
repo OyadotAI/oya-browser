@@ -41,7 +41,8 @@ fn clone(
     if let Some((_, copy)) = memo.iter().find(|(original, _)| *original == id) {
         return Ok(copy.clone());
     }
-    if depth >= vm.limits.frames {
+    // structuredClone recurses natively per level, so it keeps the native nesting bound.
+    if depth >= crate::constants::VM_NESTING_DEPTH {
         return Err(vm.range_error("Maximum call stack size exceeded"));
     }
     if vm.is_callable(value) {

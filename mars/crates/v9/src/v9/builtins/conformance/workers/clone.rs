@@ -90,7 +90,7 @@ fn atom(
     depth: usize,
 ) -> Res<Atom> {
     vm.charge(1)?;
-    if depth >= vm.limits.frames {
+    if depth >= crate::constants::VM_NESTING_DEPTH {
         return Err(vm.range_error("Maximum call stack size exceeded"));
     }
     *units += 1;

@@ -67,7 +67,10 @@ impl Vm<'_> {
     /** Run one level of native recursion: past the call-depth bound it throws a RangeError, as
     script recursion does, instead of overflowing the native stack. */
     pub(in crate::v9) fn deeper<T>(&mut self, run: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
-        if self.frames.len() + self.native_depth >= self.limits.frames {
+        // Native recursion keeps the native nesting bound even under the larger frame bound.
+        if self.frames.len() + self.native_depth >= self.limits.frames
+            || self.native_depth >= crate::constants::VM_NESTING_DEPTH
+        {
             return Err(self.range_error("Maximum call stack size exceeded"));
         }
         self.native_depth += 1;
