@@ -77,6 +77,14 @@ impl Vm<'_> {
     }
     /** Advance an iterator; None when done. */
     pub fn iter_step(&mut self, id: ObjectId) -> Res<Option<JsValue>> {
+        self.iter_step_value(id, true)
+    }
+    /** Elisions advance the cached next method and observe done, never the result's value property. */
+    pub(super) fn iter_skip(&mut self, id: ObjectId) -> Res<()> {
+        self.iter_step_value(id, false).map(|_| ())
+    }
+    /** Native next methods still perform their real work even when a destructuring hole discards the result. */
+    fn iter_step_value(&mut self, id: ObjectId, read_value: bool) -> Res<Option<JsValue>> {
         let state = match self.heap.get(id).map(|o| &o.class) {
             Some(Class::Iter(state)) => (**state).clone(),
             _ => return Err(EngineError::invalid("Invalid V9 iterator.").into()),
@@ -101,7 +109,11 @@ impl Vm<'_> {
                         self.mark_done(id);
                         return Ok(None);
                     }
-                    self.get(&result, &Key::from("value")).map(Some)
+                    if read_value {
+                        self.get(&result, &Key::from("value")).map(Some)
+                    } else {
+                        Ok(Some(JsValue::Undefined))
+                    }
                 })();
                 self.pins.truncate(roots);
                 step

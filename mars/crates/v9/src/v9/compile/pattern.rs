@@ -250,7 +250,11 @@ impl Compiler {
             };
             self.pattern_closeable(closeable, false);
             self.emit(Op::GetReg(iterator));
-            self.emit(Op::IterStep);
+            self.emit(if item.is_some() {
+                Op::IterStep
+            } else {
+                Op::IterSkip
+            });
             self.pattern_closeable(closeable, true);
             if let Some(item) = item {
                 self.pattern_into(item, store, target)?;

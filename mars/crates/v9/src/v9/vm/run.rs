@@ -1300,6 +1300,15 @@ impl Vm<'_> {
                 self.pop();
                 self.push(next.unwrap_or(JsValue::Undefined));
             }
+            Op::IterSkip => {
+                let iterator = self.peek(0);
+                let JsValue::Object(id) = iterator else {
+                    return Err(EngineError::invalid("Invalid V9 iterator.").into());
+                };
+                self.iter_skip(id)?;
+                self.pop();
+                self.push(JsValue::Undefined);
+            }
             Op::IterRest => {
                 let iterator = self.peek(0);
                 let JsValue::Object(id) = iterator else {

@@ -268,6 +268,8 @@ pub(in crate::v9) enum Op {
     IterNext(u32),
     /** iter -> iter value (undefined once done), for destructuring. */
     IterStep,
+    /** iter -> undefined, advancing an elision without observing the result's value property. */
+    IterSkip,
     /** iter -> array of the remaining values */
     IterRest,
     /** iter -> (closes it unless already done) */
