@@ -176,6 +176,8 @@ impl VmState {
     }
     /// Structural and size validation of untrusted saved state.
     fn validate(&self, limits: &Limits) -> EngineResult<()> {
+        #[cfg(feature = "conformance")]
+        builtins::validate_profile_state(&self.page.cpu_profile, limits)?;
         platform::images::validate(&self.page.images)?;
         builtins::validate_shared(&self.heap)?;
         builtins::validate_shared_gc(&self.heap)?;
@@ -212,6 +214,8 @@ impl VmState {
             .map(|binding| binding.value.as_ref().map_or(0, JsValue::string_units))
             .sum();
         let global_bindings = self.globals.len();
+        #[cfg(feature = "conformance")]
+        let global_units = global_units + self.page.cpu_profile.units();
         #[cfg(feature = "conformance")]
         let (global_units, global_bindings) = (
             global_units + self.realms.units(),

@@ -1,5 +1,6 @@
 /** Explicitly scoped d8 worker sessions own isolated V9 threads, queues and cancellation capabilities. */
 mod engine;
+mod profiles;
 mod shared_gc;
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::builtins::WorkerGraph;
@@ -44,6 +45,7 @@ impl ConformanceWorkerSession {
                 shared: Mutex::new(SharedRegistry::default()),
                 shared_gc: Mutex::new(shared_gc::Registry::default()),
                 available: Condvar::new(),
+                profiles: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -83,6 +85,8 @@ pub struct ConformanceWorkerHost {
     shared: Mutex<SharedRegistry>,
     shared_gc: Mutex<shared_gc::Registry>,
     available: Condvar,
+    /** Completed inert artifacts survive child shutdown until the owning runner consumes them. */
+    profiles: Mutex<Vec<(Option<u64>, String)>>,
 }
 /** An opaque snapshot identity has authority only in endpoints which were granted its actual Arc. */
 struct SharedGrant {

@@ -780,3 +780,11 @@ contains upstream tests with conflicting configuration assumptions: the pinned
 when i18n is enabled, and skips `regress/wasm/regress-1254675` when SIMD is
 available. These failures are reported in the fixed inventory; V9 must not adopt
 obsolete semantics or reject valid SIMD to manufacture a passing assertion.
+
+The following isolated profiler/admission batch records 3,476 passes and 266 raw
+failures with unchanged exclusions. Its nine targeted profiler and print-stack
+cases pass in release. Profiling records real stack samples at monotonic timed
+safepoints, exports bounded actual profiles through the governed test host, and
+preserves callback exceptions and fatal budgets. Dynamic constructors apply the
+pinned entered-context access policy before argument conversion; the legacy
+undefined-return expectation remains a raw conflict. Capacity limits are unchanged.

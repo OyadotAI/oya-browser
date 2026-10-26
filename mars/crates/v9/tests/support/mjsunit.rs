@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 mod bundle;
 mod data_modules;
+#[cfg(feature = "conformance")]
+#[path = "mjsunit/profiles.rs"]
+mod profiles;
 mod timezone;
 
 /** A runaway interval cannot turn an upstream case into an unbounded host event loop. */
@@ -194,11 +197,16 @@ impl Scripts {
             conformance_sources: self.fixtures.clone(),
             conformance_files: self.files.clone(),
             conformance_d8: true,
+            conformance_allow_unsafe_function_constructor: boolean_flag(
+                &self.metadata_source,
+                "allow-unsafe-function-constructor",
+            ),
             conformance_cpu_trace_name: string_flag(
                 &self.metadata_source,
                 "expose-cputracemark-as",
             )?,
             conformance_random_seed: random_seed_flag(&self.metadata_source)?,
+            conformance_cpu_profiler_interval_us: profile_interval(&self.metadata_source)?,
             conformance_fuzzing: boolean_flag(&self.metadata_source, "fuzzing"),
             conformance_expose_fast_api: boolean_flag(&self.metadata_source, "expose-fast-api")
                 && boolean_flag_default(&self.metadata_source, "turbo-fast-api-calls", true)
@@ -258,6 +266,8 @@ impl Scripts {
                 .finish()
                 .map_err(|error| format!("Worker {}: {}", error.code, error.message)),
         );
+        #[cfg(feature = "conformance")]
+        let result = result.and(profiles::write(&self.test_url, workers.take_cpu_profiles()));
         result
     }
 
@@ -477,6 +487,16 @@ fn declared_files(source: &str) -> Vec<String> {
         .collect()
 }
 
+/** Sampling metadata is an actual positive native microsecond interval, not an instruction count. */
+#[cfg(feature = "conformance")]
+fn profile_interval(source: &str) -> Result<u64, String> {
+    let interval = numeric_flag_limit(source, "--cpu-profiler-sampling-interval")?.unwrap_or(1_000);
+    if interval == 0 || i32::try_from(interval).is_err() {
+        return Err("Invalid --cpu-profiler-sampling-interval value".into());
+    }
+    Ok(interval as u64)
+}
+
 /** A real V8 limit flag may only lower the native engine's existing module-byte bound. */
 fn wasm_module_limit(source: &str) -> Result<Option<usize>, String> {
     numeric_flag_limit(source, "--wasm-max-module-size")
@@ -605,6 +625,58 @@ fn fixture_names(source: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /** Profiler metadata forwards real microseconds and rejects invalid native flag values. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn profiler_sampling_flags_preserve_real_interval_and_override_order() {
+        assert_eq!(profile_interval(""), Ok(1_000));
+        assert_eq!(
+            profile_interval(
+                "// Flags: --cpu-profiler-sampling-interval=10\n// Flags: --cpu-profiler-sampling-interval 1000000"
+            ),
+            Ok(1_000_000)
+        );
+        for source in [
+            "// Flags: --cpu-profiler-sampling-interval=0",
+            "// Flags: --cpu-profiler-sampling-interval=-1",
+            "// Flags: --cpu-profiler-sampling-interval=2147483648",
+            "// Flags: --cpu-profiler-sampling-interval=nope",
+        ] {
+            assert!(profile_interval(source).is_err());
+        }
+    }
+
+    /** A no-listener shell session delivers actual sampled JSON into the confined host-owned v8.prof artifact. */
+    #[cfg(feature = "conformance")]
+    #[test]
+    fn profiler_without_listener_writes_real_sample_artifact_through_the_runner() {
+        let checkout = Checkout::new();
+        let scripts = checkout.scripts("function artifactSample(){d8.profiler.triggerSample()}console.profile();artifactSample();console.profileEnd();", "");
+        assert_eq!(scripts.execute(), Ok(()));
+        let digest = ring::digest::digest(&ring::digest::SHA256, scripts.test_url.as_bytes());
+        let name: String = digest
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let file = crate::out_dir()
+            .join("cpu-profiles")
+            .join(name)
+            .join("root/v8.prof");
+        let json = std::fs::read_to_string(file).expect("real host artifact exists");
+        let profile: serde_json::Value =
+            serde_json::from_str(&json).expect("actual CpuProfile JSON");
+        assert!(profile["samples"].as_array().unwrap().len() >= 2);
+        assert!(
+            profile["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|node| node["callFrame"]["functionName"] == "artifactSample")
+        );
+        assert!(profile["endTime"].as_u64().unwrap() >= profile["startTime"].as_u64().unwrap());
+    }
 
     /** Literal data source reaches the real compiler and its exported value reaches the importer. */
     #[cfg(feature = "conformance")]
@@ -1303,6 +1375,29 @@ mod tests {
         std::fs::write(checkout.root().join("self.js"), "var calls = (globalThis.calls || 0) + 1; if (calls < 2) d8.file.execute('test/mjsunit/self.js');").unwrap();
         let scripts = checkout.scripts("d8.file.execute('test/mjsunit/self.js'); if (calls !== 2) throw Error('missing recursive source');", "");
         assert_eq!(scripts.execute(), Ok(()));
+    }
+
+    #[test]
+    /** The unsafe constructor flag defaults off and honors actual spellings and override order. */
+    fn unsafe_constructor_flag_is_an_explicit_metadata_choice() {
+        let name = "allow-unsafe-function-constructor";
+        assert!(!boolean_flag("", name));
+        assert!(boolean_flag(
+            "// Flags: --allow_unsafe_function_constructor",
+            name
+        ));
+        assert!(!boolean_flag(
+            "// Flags: --allow-unsafe-function-constructor --noallow-unsafe-function-constructor",
+            name
+        ));
+        assert!(boolean_flag(
+            "// Flags: --no-allow-unsafe-function-constructor --allow-unsafe-function-constructor=true",
+            name
+        ));
+        assert!(!boolean_flag(
+            "const text='--allow-unsafe-function-constructor'",
+            name
+        ));
     }
 
     #[cfg(not(feature = "conformance"))]

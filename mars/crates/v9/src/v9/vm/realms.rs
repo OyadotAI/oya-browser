@@ -13,6 +13,36 @@ mod state;
 pub(in crate::v9) use state::{Context, State};
 
 impl Vm<'_> {
+    /** Native dynamic constructors check the host-entered context before observing source arguments. */
+    pub(in crate::v9) fn check_dynamic_function_access(&mut self, callee: ObjectId) -> Res<()> {
+        #[cfg(feature = "conformance")]
+        {
+            if self
+                .page
+                .environment
+                .conformance_allow_unsafe_function_constructor
+            {
+                return Ok(());
+            }
+            let Some(entered) = self.realm_entries.last().copied() else {
+                return Ok(());
+            };
+            let target = self.object_realm(callee);
+            let context = &self.realms.contexts[target as usize];
+            if entered == target
+                || context.global.is_some()
+                    && !context.detached
+                    && context.token == self.realms.contexts[entered as usize].token
+            {
+                return Ok(());
+            }
+            return self.with_realm(entered, |vm| Err(vm.type_error("no access")));
+        }
+        #[cfg(not(feature = "conformance"))]
+        let _ = callee;
+        #[cfg(not(feature = "conformance"))]
+        Ok(())
+    }
     /** Independent contexts still share the existing isolate-wide module record and waiting quotas. */
     pub(in crate::v9) fn module_counts(&self) -> (usize, usize) {
         let counts = (

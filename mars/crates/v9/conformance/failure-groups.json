@@ -4003,7 +4003,12 @@
       "reason": "Missing profiler end-listener API and real console.profile/profileEnd lifecycle with reentrant callbacks; callbacks without a genuine profiling backend would be a stub.",
       "suggested_batch": "host_cpu_profiler:1",
       "group": "v8-063",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 6, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfileEndListener')."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 6, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfileEndListener').",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-profiler-print-upstream-dev-final/results-mjsunit.json",
+        "profile": "dev"
+      }
     },
     "regress/regress-1404863.js": {
       "triage_partition": "middle110",
@@ -4397,7 +4402,12 @@
       "reason": "Missing profiler end-listener API and real console.profile/profileEnd lifecycle with reentrant callbacks; callbacks without a genuine profiling backend would be a stub.",
       "suggested_batch": "host_cpu_profiler:1",
       "group": "v8-063",
-      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 9, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfileEndListener')."
+      "baseline_error": "[sloppy] script_execution_error: Script execution failed at line 9, column 1: Uncaught TypeError: Cannot read properties of undefined (reading 'setOnProfileEndListener').",
+      "status": "verified",
+      "validation": {
+        "report": "/private/tmp/mars-v9-profiler-print-upstream-dev-final/results-mjsunit.json",
+        "profile": "dev"
+      }
     },
     "regress/regress-492.js": {
       "triage_partition": "middle110",
@@ -5892,13 +5902,13 @@
   },
   "current_test262_revision": "d53ebc8b1931d9f1541e43d59650776e4b766248",
   "latest_full_run": {
-    "candidate_base": "e64334a2",
-    "changed_rust_sha256": "d8febac112834c3ca91b210df10119175783dc44f7ad246458a8b1590bed1c2f",
-    "report": "/private/tmp/mars-v9-next-isolated-full-v8/results-mjsunit.json",
+    "candidate_base": "ff04d634",
+    "changed_rust_sha256": "2dc7920a8fd9a9ba0e20da0e16a07e94622e723d69a017dfa3375ca2a0fe62a9",
+    "report": "/private/tmp/mars-v9-profiler-isolated-full-v8/results-mjsunit.json",
     "profile": "release",
     "jobs": 4,
-    "pass": 3474,
-    "fail": 268,
+    "pass": 3476,
+    "fail": 266,
     "excluded": 5345,
     "baseline_failures_now_passing": [
       "async-stack-traces-prepare-stacktrace-1.js",
@@ -5949,12 +5959,14 @@
       "regress/regress-1158124.js",
       "regress/regress-136048.js",
       "regress/regress-1364429.js",
+      "regress/regress-1394663.js",
       "regress/regress-1711.js",
       "regress/regress-2443.js",
       "regress/regress-2470.js",
       "regress/regress-2686.js",
       "regress/regress-344664770.js",
       "regress/regress-438732677.js",
+      "regress/regress-490446682.js",
       "regress/regress-515494863.js",
       "regress/regress-517406981.js",
       "regress/regress-578775.js",
@@ -5994,10 +6006,6 @@
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "copy-on-write-assert.js",
-        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
-      },
-      {
         "test": "deep-recursion.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
@@ -6010,20 +6018,36 @@
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "random-bit-correlations.js",
+        "test": "maglev/regress-464612781.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "regress-332570754.js",
-        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        "test": "random-bit-correlations.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
         "test": "regress/regress-1449567.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
+        "test": "regress/regress-2073.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
         "test": "regress/regress-381390367.js",
-        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "regress/regress-390568195.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "regress/regress-3976.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "regress/regress-439522866.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
         "test": "regress/regress-crbug-503557995-b.js",
@@ -6034,37 +6058,25 @@
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
-        "test": "regress/wasm/regress-392928805.js",
-        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
-      },
-      {
-        "test": "regress/wasm/regress-406043349.js",
-        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
-      },
-      {
-        "test": "regress/wasm/regress-413963387.js",
-        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
-      },
-      {
-        "test": "regress/wasm/regress-crbug-1502180.js",
-        "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
-      },
-      {
-        "test": "stack-trace-cpp-function-template-1.js",
-        "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <5> found <4>\n    at assertEquals (file:///Users/mk/Dev/upstream/v8/test/mjsunit/mjsunit.js:513:7)\n    at <anonymous> (file:///Users/mk/Dev/upstream/v8/test/mjsunit/stack-trace-cpp-function-template-1.js:17:3)\n    at file:///Users/mk/Dev/upstream/v8/test/mjsunit/stack-trace-cpp-function-template-1.js:35:3."
-      },
-      {
         "test": "string-replace-one-char.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       },
       {
         "test": "string-wrapper.js",
         "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "unicodelctest-no-optimization.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+      },
+      {
+        "test": "unicodelctest.js",
+        "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
       }
     ],
-    "note": "Isolated next checkpoint; user Eye/core/Intl/metadata edits excluded. Unsupported CPU profiling and the additional native API stack requirement remain explicit failures, alongside timing/resource failures. No exclusions or test bodies changed."
+    "note": "Genuine CPU profiling and modern dynamic-constructor admission. All nine targeted profiler/print regressions pass in release. Additional failures versus the prior inventory are time-limit failures and remain counted. Published capacity limits unchanged; user capacity choice pending."
   },
-  "targeted_verified_count": 65,
+  "targeted_verified_count": 67,
   "previous_full_runs": [
     {
       "report": "/private/tmp/mars-v9-groups01-09-isolated-v8/results-mjsunit.json",
@@ -6328,7 +6340,180 @@
         }
       ],
       "note": "Exact pushed checkpoint inventory after compiler name-index repairs. Raw timing failures remain counted. Newer working-tree repairs have separate targeted proofs and are not included in this full score."
+    },
+    {
+      "candidate_base": "e64334a2",
+      "changed_rust_sha256": "d8febac112834c3ca91b210df10119175783dc44f7ad246458a8b1590bed1c2f",
+      "report": "/private/tmp/mars-v9-next-isolated-full-v8/results-mjsunit.json",
+      "profile": "release",
+      "jobs": 4,
+      "pass": 3474,
+      "fail": 268,
+      "excluded": 5345,
+      "baseline_failures_now_passing": [
+        "async-stack-traces-prepare-stacktrace-1.js",
+        "async-stack-traces-prepare-stacktrace-2.js",
+        "async-stack-traces-prepare-stacktrace-3.js",
+        "async-stack-traces-prepare-stacktrace-4.js",
+        "compiler/regress-447567.js",
+        "console.js",
+        "disallow-codegen-from-strings.js",
+        "duplicate-parameters.js",
+        "error-tostring-omit.js",
+        "es6/block-sloppy-function.js",
+        "es6/classes-experimental.js",
+        "es6/computed-property-names-classes.js",
+        "es6/computed-property-names-object-literals-methods.js",
+        "es6/function-name.js",
+        "es6/iteration-semantics.js",
+        "es6/iterator-close.js",
+        "es6/iterator-prototype.js",
+        "es6/proxies-for.js",
+        "es6/regress/regress-4097.js",
+        "es6/sloppy-no-duplicate-generators.js",
+        "es6/templates.js",
+        "es7/typed-array-includes.js",
+        "es8/async-function-stacktrace.js",
+        "es8/sloppy-no-duplicate-async.js",
+        "eval-origin.js",
+        "eval-stack-trace.js",
+        "expose-cputracemark.js",
+        "function-names.js",
+        "fuzz-accessors.js",
+        "harmony/async-for-of-non-iterable.js",
+        "harmony/class-static-blocks.js",
+        "harmony/nullish.js",
+        "harmony/regress/regress-511329274.js",
+        "harmony/uint8array-base64-immutable.js",
+        "ignition/stack-trace-source-position.js",
+        "json-errors.js",
+        "math-random.js",
+        "mjsunit-assertion-error.js",
+        "new-function.js",
+        "object-create.js",
+        "parse-surrogates.js",
+        "primitive-keyed-access.js",
+        "print.js",
+        "regress-367066330.js",
+        "regress/regress-1062422.js",
+        "regress/regress-1158124.js",
+        "regress/regress-136048.js",
+        "regress/regress-1364429.js",
+        "regress/regress-1711.js",
+        "regress/regress-2443.js",
+        "regress/regress-2470.js",
+        "regress/regress-2686.js",
+        "regress/regress-344664770.js",
+        "regress/regress-438732677.js",
+        "regress/regress-515494863.js",
+        "regress/regress-517406981.js",
+        "regress/regress-578775.js",
+        "regress/regress-5927.js",
+        "regress/regress-649067.js",
+        "regress/regress-677055.js",
+        "regress/regress-7773.js",
+        "regress/regress-784862.js",
+        "regress/regress-8033.js",
+        "regress/regress-9036-1.js",
+        "regress/regress-9036-2.js",
+        "regress/regress-9036-3.js",
+        "regress/regress-91.js",
+        "regress/regress-926036.js",
+        "regress/regress-95920.js",
+        "regress/regress-crbug-109362.js",
+        "regress/regress-crbug-1308360.js",
+        "regress/regress-crbug-1357318.js",
+        "regress/regress-crbug-1404820.js",
+        "regress/regress-crbug-1509910.js",
+        "regress/regress-crbug-419454582.js",
+        "regress/regress-crbug-663410.js",
+        "regress/regress-crbug-798026.js",
+        "regress/regress-crbug-935800.js",
+        "regress/regress-v8-8799.js",
+        "regress/wasm/regress-985154.js",
+        "scanner.js",
+        "var.js"
+      ],
+      "additional_failures": [
+        {
+          "test": "array-from-large-set.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "compiler/regress-crbug-1399627.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "copy-on-write-assert.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "deep-recursion.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "ignition/regress-599001-verifyheap.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "maglev/regress-432847895.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "random-bit-correlations.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress-332570754.js",
+          "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        },
+        {
+          "test": "regress/regress-1449567.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/regress-381390367.js",
+          "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        },
+        {
+          "test": "regress/regress-crbug-503557995-b.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/wasm/regress-325359458.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "regress/wasm/regress-392928805.js",
+          "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        },
+        {
+          "test": "regress/wasm/regress-406043349.js",
+          "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        },
+        {
+          "test": "regress/wasm/regress-413963387.js",
+          "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        },
+        {
+          "test": "regress/wasm/regress-crbug-1502180.js",
+          "error": "[sloppy] unsupported_feature: This JavaScript feature is not supported yet: d8 CPU profiling."
+        },
+        {
+          "test": "stack-trace-cpp-function-template-1.js",
+          "error": "[sloppy] script_execution_error: Script execution failed at line 418, column 5: Uncaught MjsUnitAssertionError: Failure: expected <5> found <4>\n    at assertEquals (file:///Users/mk/Dev/upstream/v8/test/mjsunit/mjsunit.js:513:7)\n    at <anonymous> (file:///Users/mk/Dev/upstream/v8/test/mjsunit/stack-trace-cpp-function-template-1.js:17:3)\n    at file:///Users/mk/Dev/upstream/v8/test/mjsunit/stack-trace-cpp-function-template-1.js:35:3."
+        },
+        {
+          "test": "string-replace-one-char.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        },
+        {
+          "test": "string-wrapper.js",
+          "error": "[sloppy] limit_exceeded: Script execution stopped: time limit exceeded."
+        }
+      ],
+      "note": "Isolated next checkpoint; user Eye/core/Intl/metadata edits excluded. Unsupported CPU profiling and the additional native API stack requirement remain explicit failures, alongside timing/resource failures. No exclusions or test bodies changed."
     }
   ],
-  "full_inventory_baseline_failures_passing": 82
+  "full_inventory_baseline_failures_passing": 84
 }

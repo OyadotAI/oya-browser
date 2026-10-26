@@ -9,6 +9,8 @@ mod clone;
 mod collections;
 #[cfg(feature = "conformance")]
 mod conformance;
+#[cfg(feature = "conformance")]
+pub(in crate::v9) use conformance::{ProfileClock, ProfileState, profile_tick, validate_profile, validate_profile_state};
 mod date;
 pub(in crate::v9) use date::validate_timezone;
 mod disposal;

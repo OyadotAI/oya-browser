@@ -192,6 +192,8 @@ impl Vm<'_> {
                 if self.expired() {
                     return Err(Thrown::Fatal(super::super::platform::timeout()));
                 }
+                #[cfg(feature = "conformance")]
+                crate::v9::builtins::profile_tick(self)?;
                 self.collect_if_needed()?;
             }
             self.collect_if_due()?;

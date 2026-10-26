@@ -37,6 +37,7 @@ pub(in crate::v9) struct MemoryEstimate {
 /** Native shared allocations have opaque identities; no pointer is ever exposed to JavaScript. */
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Allocation {
+    CpuProfile,
     String(usize),
     BigInt(usize),
     Shared(u64),
@@ -176,6 +177,20 @@ impl Vm<'_> {
             shared: BTreeMap::new(),
             environments: BTreeMap::new(),
         };
+        // One isolate profile is shared native data, not separate fabricated allocations per realm.
+        let profile_bytes = self.page.state.cpu_profile.units() * size_of::<u16>();
+        if profile_bytes != 0 {
+            for bank in tracker.realms.keys().copied().collect::<Vec<_>>() {
+                tracker.allocation(
+                    bank,
+                    Allocation::CpuProfile,
+                    BytesRange {
+                        lower: profile_bytes.saturating_sub(1),
+                        upper: profile_bytes,
+                    },
+                );
+            }
+        }
         for (id, object) in &self.heap.objects {
             let bank = self.object_realm(*id);
             if !tracker.realms.contains_key(&bank) {

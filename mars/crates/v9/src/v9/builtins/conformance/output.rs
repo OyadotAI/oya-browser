@@ -43,7 +43,7 @@ fn assertion(vm: &mut Vm, call: &Call) -> Res<JsValue> {
     Err(Thrown::Value(JsValue::Object(error)))
 }
 
-/** Actual method callbacks preserve d8 prefixes and output levels; profiling remains explicitly unsupported. */
+/** Actual method callbacks preserve d8 prefixes and output levels and delegate genuine profiler sessions. */
 pub(in crate::v9) fn console(vm: &mut Vm, call: Call, method: &str) -> Res<JsValue> {
     let (level, prefix) = match method {
         "assert" => return assertion(vm, &call),
@@ -58,7 +58,7 @@ pub(in crate::v9) fn console(vm: &mut Vm, call: Call, method: &str) -> Res<JsVal
         "warn" => ("warn", "console.warn: "),
         "info" => ("info", "console.info: "),
         "debug" => ("debug", "console.debug: "),
-        "profile" | "profileEnd" => return Err(vm.unsupported_error("d8 CPU profiling")),
+        "profile" | "profileEnd" => return super::profile_console(vm, method),
         // The pinned d8 ConsoleDelegate does not override these callbacks.
         _ => return Ok(JsValue::Undefined),
     };

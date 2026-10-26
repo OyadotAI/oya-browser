@@ -13,6 +13,11 @@ mod test_dom;
 pub(in crate::v9) use test_dom::valid as validate_native_test_object;
 mod memory;
 mod output;
+mod profiling;
+pub(in crate::v9) use profiling::{
+    Clock as ProfileClock, State as ProfileState, console as profile_console,
+    tick as profile_tick, validate as validate_profile, validate_state as validate_profile_state,
+};
 mod realms;
 mod serializer;
 mod shadow;
@@ -87,6 +92,7 @@ pub(super) fn install(builder: &mut Builder) {
     serializer::install(builder, d8);
     fast_api::install(builder, d8);
     test_dom::install(builder, d8);
+    profiling::install(builder, d8);
     builder.method(d8, "terminate", 0, terminate);
     builder.method(d8, "terminateNow", 0, terminate);
     let file = builder.object(Some(builder.ids.object_prototype));

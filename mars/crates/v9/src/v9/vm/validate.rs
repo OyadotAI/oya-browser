@@ -69,6 +69,8 @@ impl Vm<'_> {
     /** Check the restored graph against the heap and the freshly compiled code. */
     pub fn validate_graph(&self) -> EngineResult<()> {
         #[cfg(feature = "conformance")]
+        crate::v9::builtins::validate_profile(self)?;
+        #[cfg(feature = "conformance")]
         crate::v9::platform::random::validate(self)?;
         crate::v9::platform::animations::validate(self)?;
         let marker = self.mark_everything();

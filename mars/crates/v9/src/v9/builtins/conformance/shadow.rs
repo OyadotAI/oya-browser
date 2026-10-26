@@ -38,7 +38,8 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
         .object()
         .expect("intrinsic prototype");
     let proto = vm.prototype_for(&new_target, fallback)?;
-    let bank = super::realms::create_bank(vm, None)?;
+    let token = vm.realms.contexts[vm.active_realm as usize].token;
+    let bank = super::realms::create_bank(vm, Some(token))?;
     vm.realms.contexts[bank as usize].shadow = true;
     let global = vm.realms.contexts[bank as usize]
         .global

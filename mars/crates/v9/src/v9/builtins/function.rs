@@ -91,6 +91,7 @@ fn construct(vm: &mut Vm, call: Call) -> Res<JsValue> {
 /** CreateDynamicFunction for Function, GeneratorFunction, AsyncFunction and
 AsyncGeneratorFunction: `prefix` is the kind's keyword form. */
 pub(super) fn create_dynamic(vm: &mut Vm, call: Call, prefix: &str) -> Res<JsValue> {
+    vm.check_dynamic_function_access(call.callee)?;
     let mut params = Vec::new();
     let count = call.args.len();
     for index in 0..count.saturating_sub(1) {

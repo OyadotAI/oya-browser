@@ -298,6 +298,9 @@ pub(in crate::v9) struct Vm<'h> {
     pub native_depth: usize,
     pub remaining: usize,
     pub deadline: Option<std::time::Instant>,
+    /** A fresh native clock anchors monotonic profiler timestamps across each execution request. */
+    #[cfg(feature = "conformance")]
+    pub profile_clock: crate::v9::builtins::ProfileClock,
     pub jobs: VecDeque<Job>,
     /** The frame a Yield or Await just suspended. */
     pub suspended: Option<data::SavedFrame>,
@@ -324,6 +327,8 @@ impl<'h> Vm<'h> {
     /** A VM over a heap, with the global object created if missing. */
     pub fn new(heap: Heap, page: Page<'h>, limits: Limits) -> Self {
         #[cfg(feature = "conformance")]
+        let profile_clock = crate::v9::builtins::ProfileClock::new(page.state.cpu_profile.last_time());
+        #[cfg(feature = "conformance")]
         realm::banks::select(0);
         let mut vm = Self {
             active_realm: 0,
@@ -348,6 +353,8 @@ impl<'h> Vm<'h> {
             native_depth: 0,
             remaining: limits.operations,
             deadline: None,
+            #[cfg(feature = "conformance")]
+            profile_clock,
             jobs: VecDeque::new(),
             suspended: None,
             regexps: FastMap::default(),
@@ -474,6 +481,8 @@ impl<'h> Vm<'h> {
                 "Reduce the script work; that script's changes were not applied.",
             ))
         })?;
+        #[cfg(feature = "conformance")]
+        crate::v9::builtins::profile_tick(self)?;
         Ok(())
     }
     /** True once the request deadline has passed. */
@@ -516,14 +525,22 @@ impl<'h> Vm<'h> {
     pub fn collect_if_needed(&mut self) -> Res<()> {
         let counts = self.heap.counts;
         let limits = self.limits;
+        #[cfg(feature = "conformance")]
+        let units = counts.units.saturating_add(self.page.state.cpu_profile.units());
+        #[cfg(not(feature = "conformance"))]
+        let units = counts.units;
         // Global let, const and class bindings live outside the heap but are bindings too.
         if counts.properties > limits.properties
-            || counts.units > limits.units
+            || units > limits.units
             || counts.environments >= limits.environments
             || counts.bindings + self.global_binding_count() > limits.bindings
         {
             self.collect_now()?;
             let counts = self.heap.counts;
+            #[cfg(feature = "conformance")]
+            let units = counts.units.saturating_add(self.page.state.cpu_profile.units());
+            #[cfg(not(feature = "conformance"))]
+            let units = counts.units;
             let bindings = counts.bindings + self.global_binding_count();
             for (count, limit, name) in [
                 (
@@ -531,7 +548,7 @@ impl<'h> Vm<'h> {
                     limits.properties,
                     "V9 aggregate own properties",
                 ),
-                (counts.units, limits.units, "V9 environment UTF-16 units"),
+                (units, limits.units, "V9 environment UTF-16 units"),
                 (counts.environments, limits.environments, "V9 environments"),
                 (bindings, limits.bindings, "V9 bindings"),
             ] {

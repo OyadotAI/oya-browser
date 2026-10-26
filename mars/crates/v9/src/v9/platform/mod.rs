@@ -263,6 +263,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_d8: bool,
+    /// The actual unsafe-constructor shell flag bypasses dynamic Function security-token checks.
+    #[cfg(feature = "conformance")]
+    #[serde(default)]
+    pub conformance_allow_unsafe_function_constructor: bool,
     /// The actual shell flag supplies a native extension name; absence never exposes a CPU marker global.
     #[cfg(feature = "conformance")]
     #[serde(default)]
@@ -271,6 +275,10 @@ pub struct PageEnvironment {
     #[cfg(feature = "conformance")]
     #[serde(default)]
     pub conformance_random_seed: Option<i32>,
+    /// Real cooperative CPU samples use the requested native interval, in microseconds.
+    #[cfg(feature = "conformance")]
+    #[serde(default = "default_cpu_profile_interval")]
+    pub conformance_cpu_profiler_interval_us: u64,
     /// Enable d8 Promise lifecycle hooks only when actual test metadata requested that extension.
     #[cfg(feature = "conformance")]
     pub conformance_async_hooks: bool,
@@ -378,9 +386,13 @@ impl Default for PageEnvironment {
             #[cfg(feature = "conformance")]
             conformance_d8: false,
             #[cfg(feature = "conformance")]
+            conformance_allow_unsafe_function_constructor: false,
+            #[cfg(feature = "conformance")]
             conformance_cpu_trace_name: None,
             #[cfg(feature = "conformance")]
             conformance_random_seed: None,
+            #[cfg(feature = "conformance")]
+            conformance_cpu_profiler_interval_us: default_cpu_profile_interval(),
             #[cfg(feature = "conformance")]
             conformance_async_hooks: false,
             #[cfg(feature = "conformance")]
@@ -547,6 +559,10 @@ pub struct HostEffects {
     /// Calls still execute their native marker instruction when bounded host records must be dropped.
     #[cfg(feature = "conformance")]
     pub conformance_trace_marks_dropped: usize,
+    /// Completed actual CPU profile JSON; only the owning test host chooses a confined artifact path.
+    #[cfg(feature = "conformance")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conformance_cpu_profiles: Vec<String>,
     /// The first actual uncaught callback or rejection, distinct from script console output.
     /// Only the opt-in upstream host uses this to score asynchronous tests honestly.
     #[cfg(feature = "conformance")]
@@ -658,10 +674,18 @@ pub(in crate::v9) struct ScriptLoad {
     pub done: bool,
 }
 
+/** Pinned d8's CPU profiler default is one real-time sample interval per millisecond. */
+#[cfg(feature = "conformance")]
+const fn default_cpu_profile_interval() -> u64 { 1_000 }
+
 /** Page state that survives between requests, inside VmState. */
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(in crate::v9) struct PageState {
+    /** The isolate's real unnamed session and callback survive requests without native thread handles. */
+    #[cfg(feature = "conformance")]
+    #[serde(default, skip_serializing_if = "crate::v9::builtins::ProfileState::is_empty")]
+    pub cpu_profile: crate::v9::builtins::ProfileState,
     /** Inert source generations and actual image decode results; no additional heap roots. */
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub images: BTreeMap<usize, images::State>,
@@ -844,6 +868,14 @@ impl<'h> Page<'h> {
     }
     /** Values the page keeps alive: timers, listeners, wrappers with data, pending requests. */
     pub fn roots(&self, out: &mut Vec<JsValue>) {
+        #[cfg(feature = "conformance")]
+        if let Some(listener) = self.state.cpu_profile.listener {
+            out.push(JsValue::Object(listener));
+        }
+        #[cfg(feature = "conformance")]
+        if let Some(context) = self.state.cpu_profile.context {
+            out.push(JsValue::Object(context));
+        }
         out.extend(
             self.state
                 .active_animations
