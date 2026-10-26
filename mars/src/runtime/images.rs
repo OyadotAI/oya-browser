@@ -32,6 +32,10 @@ const FONT_TABLES: usize = 64;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+#[cfg(test)]
+#[path = "images/lifecycle_tests.rs"]
+mod lifecycle_tests;
+
 /// Decoded metadata enforces a separate memory budget from transferred bytes.
 pub(super) struct DecodedImage {
     pub width: u32,
@@ -46,6 +50,8 @@ pub struct ImageAsset {
     /// Decoded bitmap bytes this image costs, so later script-inserted images are charged
     /// against what the page already holds; zero for a drawing.
     pub decoded: u64,
+    /// An actual image decode's selected request URL and density; backgrounds have no image provenance.
+    pub(super) image_source: Option<(String, f64)>,
 }
 
 /** PNG and JPEG are decoded by audited Rust libraries; WebP and GIF headers give their size. */
@@ -227,6 +233,34 @@ pub(super) fn sources(document: &Document, node: &Node, viewport: f64) -> Vec<(S
     let mut list = chosen.into_iter().chain(plain).collect::<Vec<_>>();
     list.dedup_by(|a, b| a.0 == b.0);
     list
+}
+
+/** Lifecycle selection reads only real HTML source attributes; paint-only lazy heuristics cannot report a load. */
+pub(super) fn selected_source(
+    document: &Document,
+    node: &Node,
+    viewport: f64,
+) -> Option<(String, f64)> {
+    let picture = node.parent.and_then(|parent| {
+        if !document
+            .nodes
+            .iter()
+            .any(|item| item.local_id == parent && item.tag == "picture")
+        {
+            return None;
+        }
+        document
+            .nodes
+            .iter()
+            .take_while(|item| item.local_id != node.local_id)
+            .filter(|item| item.parent == Some(parent) && item.tag == "source")
+            .take(CANDIDATES)
+            .filter(|item| supported_type(item) && media_attribute(item, viewport))
+            .find_map(|item| set_source(item, &first_attribute(item, &["srcset"])?, viewport))
+    });
+    picture
+        .or_else(|| set_source(node, &first_attribute(node, &["srcset"])?, viewport))
+        .or_else(|| first_attribute(node, &["src"]).map(|url| (url, 1.0)))
 }
 
 /// A placeholder img a script swaps out: its file is named as a placeholder and the very next
@@ -546,7 +580,70 @@ impl Fetched {
                 mime: SVG_MIME.into(),
                 bytes: std::sync::Arc::new(markup.into_bytes()),
                 decoded: 0,
+                image_source: None,
             },
+        }
+    }
+}
+
+impl super::supervisor::Runtime {
+    /** Publish a real decode to the owned layout node; hidden and detached images still load without paint assets. */
+    pub(super) fn commit_image_decode(
+        &self,
+        page: &mut super::page::Page,
+        id: usize,
+        fetched: Fetched,
+        density: f64,
+    ) -> (u32, u32) {
+        let size = match &fetched {
+            Fetched::Raster(_, size) => css_size(*size, density),
+            Fetched::Vector(_, size) => *size,
+        };
+        let Some(node) = page
+            .document
+            .nodes
+            .iter_mut()
+            .find(|node| node.local_id == id)
+        else {
+            page.scripting
+                .image_loading
+                .hidden
+                .insert(id, fetched.into_asset());
+            return size;
+        };
+        node.image_size = Some(size);
+        node.text.clear();
+        if let Fetched::Vector(markup, _) = &fetched {
+            node.image_src = Some(svg_url(markup));
+        }
+        page.images.remove(&id);
+        let hidden = node.hidden();
+        if hidden {
+            page.scripting
+                .image_loading
+                .hidden
+                .insert(id, fetched.into_asset());
+        } else {
+            page.scripting.image_loading.hidden.remove(&id);
+            page.images.insert(id, fetched.into_asset());
+        }
+        size
+    }
+
+    /** A style change moves already decoded pixels between native storage and the painted snapshot. */
+    pub(super) fn refresh_image_visibility(&self, page: &mut super::page::Page) {
+        for node in page.document.nodes.iter().filter(|node| node.tag == "img") {
+            let id = node.local_id;
+            if !page.scripting.image_loading.managed.contains(&id) {
+                continue;
+            }
+            if node.hidden() {
+                if let Some(asset) = page.images.remove(&id) {
+                    page.scripting.image_loading.hidden.insert(id, asset);
+                }
+            } else if let Some(asset) = page.scripting.image_loading.hidden.remove(&id) {
+                page.images.insert(id, asset);
+            }
         }
     }
 }
@@ -554,13 +651,35 @@ impl Fetched {
 /// Page-wide image bounds: IMAGE_COUNT requests, IMAGE_TOTAL_BYTES encoded bytes (Relay already
 /// holds each one to IMAGE_BYTES) and IMAGE_DECODED_BYTES of decoded bitmap pixels.
 /// Drawings decode to no bitmap, so only their markup counts.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Budget {
     requests: usize,
     bytes: usize,
     decoded: u64,
 }
 impl Budget {
+    /// Background or legacy image work may add assets between lifecycle batches; never undercount them.
+    pub(super) fn include_assets(
+        &mut self,
+        images: &BTreeMap<usize, ImageAsset>,
+        hidden: &BTreeMap<usize, ImageAsset>,
+    ) {
+        self.requests = self.requests.max(images.len() + hidden.len());
+        self.bytes = self.bytes.max(
+            images
+                .values()
+                .chain(hidden.values())
+                .map(|asset| asset.bytes.len())
+                .sum(),
+        );
+        self.decoded = self.decoded.max(
+            images
+                .values()
+                .chain(hidden.values())
+                .map(|asset| asset.decoded)
+                .sum(),
+        );
+    }
     /// The budget a committed page has left: its images count as made requests and their
     /// bytes as charged, so images scripts insert later share one page-wide bound.
     pub(super) fn spent(images: &BTreeMap<usize, ImageAsset>) -> Self {
@@ -631,12 +750,40 @@ impl super::supervisor::Runtime {
         wanted: &dyn Fn(&Node) -> bool,
         notes: &mut Vec<String>,
     ) -> EngineResult<BTreeMap<usize, ImageAsset>> {
+        self.load_images_skipping(
+            document,
+            base,
+            deadline,
+            budget,
+            wanted,
+            notes,
+            &std::collections::BTreeSet::new(),
+        )
+    }
+
+    /** Lifecycle-managed foreground images are excluded without suppressing their CSS backgrounds. */
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn load_images_skipping(
+        &mut self,
+        document: &mut Document,
+        base: &url::Url,
+        deadline: std::time::Instant,
+        budget: &mut Budget,
+        wanted: &dyn Fn(&Node) -> bool,
+        notes: &mut Vec<String>,
+        skip: &std::collections::BTreeSet<usize>,
+    ) -> EngineResult<BTreeMap<usize, ImageAsset>> {
         let viewport = self.render_context.width;
         let sources = document
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, node)| node.tag == "img" && !node.hidden() && wanted(node))
+            .filter(|(_, node)| {
+                node.tag == "img"
+                    && !node.hidden()
+                    && wanted(node)
+                    && !skip.contains(&node.local_id)
+            })
             .map(|(position, node)| (position, sources(document, node, viewport)))
             .collect::<Vec<_>>();
         let backgrounds = crate::document::background_urls(document, base.as_str())
@@ -655,18 +802,25 @@ impl super::supervisor::Runtime {
             for (src, density) in candidates {
                 fetched = self
                     .read_image(base, &src, deadline, budget, notes)?
-                    .map(|fetched| (fetched, density));
+                    .map(|fetched| {
+                        (
+                            fetched,
+                            density,
+                            base.join(src.trim()).ok().map(|url| url.to_string()),
+                        )
+                    });
                 if fetched.is_some() {
                     break;
                 }
             }
             let node = &mut document.nodes[position];
             match fetched {
-                Some((Fetched::Raster(asset, size), density)) => {
+                Some((Fetched::Raster(mut asset, size), density, selected)) => {
+                    asset.image_source = selected.map(|url| (url, density));
                     node.image_size = Some(css_size(size, density));
                     images.insert(node.local_id, asset);
                 }
-                Some((Fetched::Vector(markup, size), _)) => {
+                Some((Fetched::Vector(markup, size), _, _)) => {
                     node.image_src = Some(svg_url(&markup));
                     node.image_size = Some(size);
                 }
@@ -790,7 +944,7 @@ impl super::supervisor::Runtime {
      * service authority; `data:` images decode locally. None, noted, past IMAGE_COUNT or the
      * byte budgets, and None on an ordinary failure.
      */
-    fn read_image(
+    pub(super) fn read_image(
         &mut self,
         base: &url::Url,
         source: &str,
@@ -1012,6 +1166,7 @@ pub(super) fn raster(mime: String, bytes: Vec<u8>) -> EngineResult<Fetched> {
             mime,
             bytes: std::sync::Arc::new(bytes),
             decoded: u64::from(size.width) * u64::from(size.height) * 4,
+            image_source: None,
         },
         (size.width, size.height),
     ))
@@ -1385,6 +1540,7 @@ mod tests {
                     mime: "image/png".into(),
                     bytes: Default::default(),
                     decoded: 0,
+                    image_source: None,
                 },
                 (SIDE, SIDE),
             )
@@ -1400,6 +1556,7 @@ mod tests {
                 mime: "image/png".into(),
                 bytes: std::sync::Arc::new(vec![0; IMAGE_TOTAL_BYTES]),
                 decoded: 4,
+                image_source: None,
             },
         );
         let mut spent = Budget::spent(&images);

@@ -384,10 +384,18 @@ enum PageAction {
         #[serde(default)]
         value: Option<String>,
     },
+    /** A native key dispatches trusted events and only its typed implemented default action. */
+    Keyboard {
+        key: v9::KeyboardKey,
+        #[serde(default)]
+        target: Option<usize>,
+    },
     /** Advance the virtual clock and run due timers. */
     Timers { now_ms: f64, budget: usize },
     /** Hand back responses to the page's requests. */
     Resume { responses: Vec<v9::HostResponse> },
+    /** Commit real image decoding outcomes as asynchronous image lifecycle tasks. */
+    Images { responses: Vec<v9::ImageResponse> },
     /** Continue module graphs with the modules fetched since the last step. */
     Modules,
 }
@@ -470,8 +478,10 @@ fn run_page(mut call: PageCall) -> EngineResult<v9::Execution> {
         PageAction::Event { event } => v9::page_event(input, state()?, event),
         PageAction::Click { target } => v9::click_page(input, state()?, target),
         PageAction::Input { target, value } => v9::input_page(input, state()?, target, value),
+        PageAction::Keyboard { key, target } => v9::keyboard_page(input, state()?, key, target),
         PageAction::Timers { now_ms, budget } => v9::run_timers(input, state()?, now_ms, budget),
         PageAction::Resume { responses } => v9::resume_requests(input, state()?, responses),
+        PageAction::Images { responses } => v9::resume_images(input, state()?, responses),
         PageAction::Modules => v9::load_modules(input, state()?),
     }
 }

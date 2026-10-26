@@ -362,8 +362,21 @@ fn set_prototype(vm: &mut Vm, call: Call) -> Res<JsValue> {
 
 /** Clear attribute bits on every own property and stop extension. */
 fn restrict(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
+    if super::typed::integrity_status(vm, id, clear) == Some(true) {
+        return Ok(());
+    }
     if !super::integrity::prevent_extensions(vm, id)? {
         return Err(vm.type_error("Cannot prevent extensions"));
+    }
+    if super::typed::view_of(vm, id).is_some_and(|view| {
+        view.kind != crate::v9::vm::data::ElementKind::DataView && view.length != 0
+    }) {
+        super::typed::restrict_named_properties(vm, id, clear)?;
+        return Err(vm.type_error(if clear & WRITABLE != 0 {
+            "Cannot freeze array buffer views with elements"
+        } else {
+            "Cannot seal array buffer views with elements"
+        }));
     }
     // Proxies and module namespaces (whose exports refuse to freeze) answer through their own
     // [[DefineOwnProperty]].
@@ -415,6 +428,11 @@ fn restrict_generic(vm: &mut Vm, id: ObjectId, clear: u8) -> Res<()> {
     Ok(())
 }
 
+/** Internal literal creation uses the same array exotic descriptor freezing as Object.freeze. */
+pub(in crate::v9) fn freeze_object(vm: &mut Vm, id: ObjectId) -> Res<()> {
+    restrict(vm, id, WRITABLE | CONFIGURABLE)
+}
+
 /** Object.freeze. */
 fn freeze(vm: &mut Vm, call: Call) -> Res<JsValue> {
     let value = call.arg(0);
@@ -451,6 +469,9 @@ fn test_restricted(vm: &mut Vm, value: &JsValue, bits: u8) -> Res<bool> {
     };
     if super::integrity::is_extensible(vm, *id)? {
         return Ok(false);
+    }
+    if let Some(restricted) = super::typed::integrity_status(vm, *id, bits) {
+        return Ok(restricted);
     }
     for property in vm.own_keys(*id)? {
         if let Some(prop) = vm.own(*id, &property)? {

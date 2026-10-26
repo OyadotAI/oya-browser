@@ -164,7 +164,7 @@ impl Vm<'_> {
         self.select_realm(previous_realm)?;
         match result? {
             Exit::Return(value) => Ok(value),
-            Exit::Yield(_) | Exit::Await(_) => Err(EngineError::invalid(
+            Exit::Yield(_) | Exit::YieldRaw(_) | Exit::Await(_) => Err(EngineError::invalid(
                 "V9 suspended outside a generator or async function.",
             )
             .into()),
@@ -608,7 +608,7 @@ impl Vm<'_> {
                     Err(fatal) => Err(fatal),
                 }
             }
-            Ok(Exit::Yield(_)) => {
+            Ok(Exit::Yield(_) | Exit::YieldRaw(_)) => {
                 Err(EngineError::invalid("V9 yield in an async function.").into())
             }
             Err(Thrown::Value(error)) => self.settle(promise, PromiseState::Rejected(error)),
@@ -680,13 +680,13 @@ impl Vm<'_> {
             Some(proto),
         ))
     }
-    /** Resume a generator: next, throw or return. Returns the iterator result value and done. */
+    /** Resume a generator: next, throw or return. Preserve raw delegated results until the builtin boundary. */
     pub fn resume_generator(
         &mut self,
         generator: ObjectId,
         mode: Resume,
         value: JsValue,
-    ) -> Res<(JsValue, bool)> {
+    ) -> Res<Exit> {
         let (state, frame) = match self.heap.get_mut(generator).map(|object| &mut object.class) {
             Some(Class::Generator(data)) => (data.state, data.frame.take()),
             _ => return Err(self.type_error("next method called on incompatible receiver")),
@@ -698,22 +698,22 @@ impl Vm<'_> {
             }
             GeneratorState::Done => {
                 return match mode {
-                    Resume::Next => Ok((JsValue::Undefined, true)),
-                    Resume::Return => Ok((value, true)),
+                    Resume::Next => Ok(Exit::Return(JsValue::Undefined)),
+                    Resume::Return => Ok(Exit::Return(value)),
                     Resume::Throw => Err(Thrown::Value(value)),
                 };
             }
             GeneratorState::Start if mode != Resume::Next => {
                 self.set_generator(generator, GeneratorState::Done, None);
                 return match mode {
-                    Resume::Return => Ok((value, true)),
+                    Resume::Return => Ok(Exit::Return(value)),
                     _ => Err(Thrown::Value(value)),
                 };
             }
             _ => {}
         }
         let Some(frame) = frame else {
-            return Ok((JsValue::Undefined, true));
+            return Ok(Exit::Return(JsValue::Undefined));
         };
         self.set_generator(generator, GeneratorState::Running, None);
         self.restore_frame(frame, true)?;
@@ -727,14 +727,14 @@ impl Vm<'_> {
         self.native_depth -= 1;
         self.pinning = pinning;
         let result = match result {
-            Ok(Exit::Yield(value)) => {
+            Ok(exit @ (Exit::Yield(_) | Exit::YieldRaw(_))) => {
                 let frame = self.suspended.take();
                 self.set_generator(generator, GeneratorState::Yielded, frame);
-                Ok((value, false))
+                Ok(exit)
             }
             Ok(Exit::Return(value)) => {
                 self.set_generator(generator, GeneratorState::Done, None);
-                Ok((value, true))
+                Ok(Exit::Return(value))
             }
             Ok(Exit::Await(_)) => Err(EngineError::invalid("V9 await in a generator.").into()),
             Err(error) => {

@@ -509,6 +509,44 @@ pub(in crate::v9) fn fire(
     dispatch(vm, target, id)
 }
 
+/** Native keyboard events retain their intrinsic prototype across mutable global bindings and realm banks. */
+static KEYBOARD_PROTOTYPE: std::sync::OnceLock<ObjectId> = std::sync::OnceLock::new();
+
+/** Register the original intrinsic while the platform builds its deterministic native realm. */
+pub(in crate::v9::platform) fn keyboard_prototype(id: ObjectId) {
+    let _ = KEYBOARD_PROTOTYPE.set(id);
+}
+
+/** Dispatch a trusted cancelable keyboard event with native readonly key metadata. */
+pub(in crate::v9::platform) fn fire_keyboard(
+    vm: &mut Vm,
+    target: Target,
+    kind: &str,
+    key: &str,
+) -> Res<bool> {
+    let event = create_event(vm, kind, true, true)?;
+    let id = event.object().expect("native keyboard event");
+    vm.pin(event);
+    let proto = vm.intrinsic_id(
+        *KEYBOARD_PROTOTYPE
+            .get()
+            .expect("keyboard prototype installed"),
+    );
+    vm.set_proto(id, Some(proto))?;
+    for name in ["key", "code"] {
+        vm.heap.put(
+            id,
+            Key::from(name),
+            crate::v9::vm::heap::Prop {
+                slot: crate::v9::vm::heap::Slot::Data(JsValue::string(key)?),
+                attrs: crate::v9::vm::heap::ENUMERABLE,
+            },
+        );
+    }
+    with_event(vm, id, |data| data.trusted = true);
+    dispatch(vm, target, id)
+}
+
 /** `new Event(type, init)` and `new CustomEvent(type, init)`. */
 pub(in crate::v9) fn construct_event(vm: &mut Vm, call: Call) -> Res<JsValue> {
     if call.args.is_empty() {

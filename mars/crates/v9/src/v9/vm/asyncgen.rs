@@ -7,6 +7,7 @@ use super::data::{
 use super::heap::{Key, Object};
 use super::realm::realm;
 use super::{Exit, Res, Resume, Thrown, Vm};
+use crate::protocol::EngineError;
 use crate::v9::value::{JsValue, ObjectId};
 use std::collections::VecDeque;
 
@@ -228,6 +229,12 @@ impl Vm<'_> {
                     };
                     resume = Some((mode_of(request.mode), request.value));
                     at_yield = true;
+                }
+                Ok(Exit::YieldRaw(_)) => {
+                    self.finish_async_gen(generator);
+                    return Err(
+                        EngineError::invalid("V9 raw delegation in an async generator.").into(),
+                    );
                 }
                 Ok(Exit::Await(value)) => match self.async_gen_await(generator, value, false)? {
                     None => return Ok(()),

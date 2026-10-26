@@ -125,6 +125,7 @@ impl Vm<'_> {
                 .as_ref()
                 .is_none_or(|(_, base)| !removed.contains(base))
         });
+        self.prune_template_sources();
         #[cfg(feature = "conformance")]
         self.realms
             .scripts

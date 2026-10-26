@@ -29,6 +29,7 @@ mod json;
 mod math;
 mod number;
 mod object;
+pub(in crate::v9) use object::freeze_object;
 pub(in crate::v9) mod promise;
 mod promise_combinators;
 mod proxy;

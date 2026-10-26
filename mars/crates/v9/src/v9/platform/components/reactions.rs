@@ -48,6 +48,9 @@ fn react(vm: &mut Vm, mutation: Mutation) -> Res<()> {
         } => {
             let changed: Vec<usize> = added.iter().chain(&removed).copied().collect();
             signal(vm, parent, &changed)?;
+            for node in &removed {
+                super::super::interfaces::popover::removed(vm, *node);
+            }
             if components || !vm.page.state.components.connected.is_empty() {
                 for node in removed {
                     disconnect_tree(vm, node)?;
@@ -58,6 +61,9 @@ fn react(vm: &mut Vm, mutation: Mutation) -> Res<()> {
             }
         }
         Mutation::Attribute { node, name, old } => {
+            if name == "popover" {
+                super::super::interfaces::popover::attribute_changed(vm, node)?;
+            }
             if (name == "slot" || name == "name")
                 && let Some(parent) = vm.page.parent(node)
             {

@@ -325,8 +325,10 @@ impl Runtime {
     and wire checks `prepare_styled` adds, which the finished page gets. */
     pub(super) fn prepare_display(&mut self, page: &mut Page) -> EngineResult<()> {
         crate::document::validate_content(&page.document)?;
+        let effective =
+            super::animations::effective_document(&page.document, &page.scripting.opacity_effects)?;
         let call = RenderCall {
-            document: &page.document,
+            document: &effective,
             context: self.render_context,
             scroll: &page.element_scroll,
         };
@@ -334,27 +336,30 @@ impl Runtime {
         page.laid_out_before = next_node(&page.document);
         Ok(())
     }
-    /** Eye's layout of a styled `document` in the current context, checked like any other.
-    Inner scroll containers keep the current page's offsets, so a script that forces layout
-    measures boxes where they are painted (CSSOM View: rects are viewport-relative after every
-    ancestor scroller's offset), not where they would sit unscrolled. */
-    pub(super) fn render(&mut self, document: &Document) -> EngineResult<DisplayList> {
-        let scroll = self
-            .page
-            .as_ref()
-            .map(|page| page.element_scroll.clone())
-            .unwrap_or_default();
-        self.render_scrolled(document, &scroll)
-    }
     /** Eye's layout of a styled `document` with scroll containers at `scroll`. */
     pub(super) fn render_scrolled(
         &mut self,
         document: &Document,
         scroll: &crate::document::ScrollOffsets,
     ) -> EngineResult<DisplayList> {
+        let effects = self
+            .page
+            .as_ref()
+            .map(|page| page.scripting.opacity_effects.clone())
+            .unwrap_or_default();
+        self.render_effects(document, scroll, &effects)
+    }
+    /** Candidate layout uses its own sampled effects, including synchronous geometry before commit. */
+    pub(super) fn render_effects(
+        &mut self,
+        document: &Document,
+        scroll: &crate::document::ScrollOffsets,
+        effects: &[crate::v9::OpacityEffect],
+    ) -> EngineResult<DisplayList> {
         crate::document::validate_content(document)?;
+        let effective = super::animations::effective_document(document, effects)?;
         let call = RenderCall {
-            document,
+            document: &effective,
             context: self.render_context,
             scroll,
         };
@@ -470,8 +475,12 @@ impl Runtime {
                 &page.script_identity,
             )?)?;
         if self.web_origins.is_some() {
+            let effective = super::animations::effective_document(
+                &page.document,
+                &page.scripting.opacity_effects,
+            )?;
             let call = RenderCall {
-                document: &page.document,
+                document: &effective,
                 context,
                 scroll: &page.element_scroll,
             };

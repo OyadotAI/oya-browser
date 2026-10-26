@@ -15,8 +15,7 @@ pub(super) fn sum_precise(vm: &mut Vm, call: Call) -> Res<JsValue> {
         vm.charge(1)?;
         let result = add(vm, &mut sum, &mut count, value);
         if let Err(error) = result {
-            vm.finish_numeric_iterator(iterator);
-            if let Err(crate::v9::vm::Thrown::Fatal(fatal)) = vm.iter_close(iterator) {
+            if let Err(crate::v9::vm::Thrown::Fatal(fatal)) = vm.close_numeric_iterator(iterator) {
                 return Err(fatal.into());
             }
             return Err(error);

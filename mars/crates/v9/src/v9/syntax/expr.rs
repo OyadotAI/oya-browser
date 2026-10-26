@@ -118,12 +118,35 @@ impl Parser {
                 precedence + 1
             };
             let right = self.binary(right_minimum, no_in)?;
+            if let Binary::Logical(operator) = &operator {
+                self.check_logical_mixture(*operator, &left, &right)?;
+            }
             let kind = match operator {
                 Binary::Plain(op) => ExprKind::Binary(op, Box::new(left), Box::new(right)),
                 Binary::Logical(op) => ExprKind::Logical(op, Box::new(left), Box::new(right)),
             };
             left = self.node(kind, pos)?;
         }
+    }
+    /** CoalesceExpression and LogicalORExpression are separate grammar branches unless a parenthesis joins them. */
+    fn check_logical_mixture(
+        &self,
+        operator: LogicalOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> EngineResult<()> {
+        for operand in [left, right] {
+            if let ExprKind::Logical(inner, ..) = &operand.kind
+                && (*inner == LogicalOp::Nullish) != (operator == LogicalOp::Nullish)
+                && !self.parenthesized_logical.contains(&operand.pos.offset)
+            {
+                return Err(self.error_at(
+                    operand.pos,
+                    "Unexpected token in nullish coalescing expression",
+                ));
+            }
+        }
+        Ok(())
     }
     /** `#name in object`, the private brand check. */
     fn private_in(&mut self, no_in: bool) -> EngineResult<Expr> {
@@ -490,6 +513,9 @@ impl Parser {
                 if matches!(value.kind, ExprKind::Array(_) | ExprKind::Object(_)) {
                     self.parenthesized_patterns.insert(value.pos.offset);
                 }
+                if matches!(value.kind, ExprKind::Logical(..)) {
+                    self.parenthesized_logical.insert(value.pos.offset);
+                }
                 return Ok(value);
             }
             Kind::Symbol('[') => return self.array_literal(),
@@ -688,7 +714,9 @@ impl Parser {
         }
         self.expect(":")?;
         let mut value = self.assignment(false)?;
-        if let PropKey::Name(name) = &key {
+        if let PropKey::Name(name) = &key
+            && &**name != "__proto__"
+        {
             infer_name(&mut value, name);
         }
         Ok(PropDef::Value(key, value))

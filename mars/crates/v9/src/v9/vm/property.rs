@@ -506,7 +506,23 @@ impl Vm<'_> {
                     key_text(&key)
                 )));
             }
-            JsValue::String(_) => realm().ids.string_prototype,
+            JsValue::String(text) => {
+                // ToObject(string) owns its readonly UTF-16 indices and length before its prototype.
+                if key_is(&key, "length")
+                    || key
+                        .index()
+                        .is_some_and(|index| (index as usize) < text.len())
+                {
+                    if strict {
+                        return Err(self.type_error(&format!(
+                            "Cannot assign to read only property '{}' of object",
+                            key_text(&key)
+                        )));
+                    }
+                    return Ok(());
+                }
+                realm().ids.string_prototype
+            }
             JsValue::Number(_) => realm().ids.number_prototype,
             JsValue::Boolean(_) => realm().ids.boolean_prototype,
             JsValue::Symbol(_) => realm().ids.symbol_prototype,
@@ -1072,16 +1088,16 @@ impl Vm<'_> {
         // An array's property-list elements interleave with its dense ones.
         let leading = keys.iter().take_while(|key| key.index().is_some()).count();
         keys[..leading].sort_by_key(|key| key.index());
-        for name in virtual_names {
-            let key = Key::from(name);
-            if !own.contains(&key) {
-                keys.push(key);
-            }
+        for name in &virtual_names {
+            let key = Key::from(*name);
+            // Replacing an existing virtual property keeps its original insertion position.
+            keys.push(key);
         }
-        keys.extend(
-            own.into_iter()
-                .filter(|key| key.index().is_none() && !key.hidden()),
-        );
+        keys.extend(own.into_iter().filter(|key| {
+            key.index().is_none()
+                && !key.hidden()
+                && !virtual_names.iter().any(|name| key_is(key, name))
+        }));
         Ok(keys)
     }
     /** Enumerable own string keys, as Object.keys and for-in list them. */
@@ -1223,7 +1239,7 @@ pub(in crate::v9) fn key_text(key: &Key) -> String {
 /** The hidden key that records a deleted virtual `name` or `length` of a function. */
 /** The hidden mark an array carries once its `length` is non-writable. Private names compile
 to `site:name` with a numeric site, so no script name can spell it. */
-fn fixed_length_mark() -> Key {
+pub(super) fn fixed_length_mark() -> Key {
     Key::Private(JsString::from_utf8("fixed:length").expect("short key"))
 }
 

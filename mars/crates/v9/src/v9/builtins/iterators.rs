@@ -1,9 +1,10 @@
 /** Iterator prototypes and generator objects' next, return and throw. */
 use super::*;
-use crate::v9::vm::Resume;
+use crate::protocol::EngineError;
 use crate::v9::vm::data::Class;
 use crate::v9::vm::heap::CONFIGURABLE;
 use crate::v9::vm::realm::{Static, string, symbol};
+use crate::v9::vm::{Exit, Resume};
 
 mod asyncgen;
 mod dispose;
@@ -108,8 +109,12 @@ fn resume(vm: &mut Vm, call: Call, mode: Resume) -> Res<JsValue> {
     let JsValue::Object(id) = call.this else {
         return Err(vm.type_error("next method called on incompatible receiver"));
     };
-    let (value, done) = vm.resume_generator(id, mode, call.arg(0))?;
-    vm.iter_result(value, done)
+    match vm.resume_generator(id, mode, call.arg(0))? {
+        Exit::YieldRaw(result) => Ok(result),
+        Exit::Yield(value) => vm.iter_result(value, false),
+        Exit::Return(value) => vm.iter_result(value, true),
+        Exit::Await(_) => Err(EngineError::invalid("V9 await in a generator.").into()),
+    }
 }
 
 /** Generator.prototype.next. */

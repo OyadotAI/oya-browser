@@ -12,7 +12,7 @@ use crate::protocol::EngineError;
 use crate::v9::binding::{Binding, BindingKind};
 use crate::v9::builtins;
 use crate::v9::compile::Op;
-use crate::v9::value::{JsString, JsValue, ObjectId, to_int32, to_uint32};
+use crate::v9::value::{JsString, JsValue, to_int32, to_uint32};
 
 mod asyncgen;
 mod eval;
@@ -450,6 +450,17 @@ impl Vm<'_> {
                 };
                 self.push(JsValue::Boolean(deleted));
             }
+            Op::AnnexGlobal(name, store) => {
+                let name = self.constant(name);
+                if !self.globals.contains_key(&name.lossy()) {
+                    if store {
+                        let value = self.peek(0);
+                        self.global_set(&name, value)?;
+                    } else {
+                        self.declare_annex_global(name)?;
+                    }
+                }
+            }
             Op::DeclareVar(name, deletable) => {
                 let name = self.constant(name);
                 self.no_global_lexical(&name)?;
@@ -749,6 +760,7 @@ impl Vm<'_> {
             Op::GetElem => {
                 let key = self.peek(0);
                 let object = self.peek(1);
+                self.check_element_base(&object, &key, false)?;
                 let value = match self.fast_element(&object, &key) {
                     Some(value) => value,
                     None => {
@@ -770,6 +782,7 @@ impl Vm<'_> {
                 let value = self.peek(0);
                 let key = self.peek(1);
                 let object = self.peek(2);
+                self.check_element_base(&object, &key, true)?;
                 if !self.fast_store(&object, &key, &value) {
                     let key = self.to_key(&key)?;
                     let strict = self.frame().code.strict;
@@ -788,6 +801,7 @@ impl Vm<'_> {
             Op::DeleteElem => {
                 let key = self.peek(0);
                 let object = self.peek(1);
+                self.check_element_base(&object, &key, false)?;
                 let key = self.to_key(&key)?;
                 let result = self.delete_value(&object, &key)?;
                 self.drop_n(2);
@@ -863,6 +877,14 @@ impl Vm<'_> {
                 self.super_set(&this, &home, key, value.clone())?;
                 self.drop_n(4);
                 self.push(value);
+            }
+            Op::ToElementKey => {
+                let object = self.peek(1);
+                let value = self.peek(0);
+                self.check_element_base(&object, &value, false)?;
+                let key = self.to_key(&value)?.value();
+                self.pop();
+                self.push(key);
             }
             Op::ToPropertyKey => {
                 let value = self.peek(0);
@@ -1372,14 +1394,7 @@ impl Vm<'_> {
                 self.push(JsValue::Object(id));
             }
             Op::TemplateObject(index) => {
-                let chunks = self
-                    .frame()
-                    .code
-                    .templates
-                    .get(index as usize)
-                    .cloned()
-                    .unwrap_or_default();
-                let id = self.template_object(&chunks)?;
+                let id = self.cached_template(index)?;
                 self.push(JsValue::Object(id));
             }
         }
@@ -1736,7 +1751,8 @@ impl Vm<'_> {
             return false;
         }
         let index = *index as usize;
-        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if index < u32::MAX as usize && (elements.resident_len() < self.limits.array_length || elements.get(index).is_some_and(|value| *value != JsValue::Hole)));
+        // Creating an element must consult inherited setters and readonly data properties.
+        let fits = matches!(self.heap.get(*id).map(|o| (&o.class, o.extensible && o.props.is_empty())), Some((Class::Array(elements), true)) if index < u32::MAX as usize && elements.get(index).is_some_and(|value| *value != JsValue::Hole));
         if fits {
             self.array_store(*id, index, value.clone());
         }
@@ -1827,6 +1843,17 @@ impl Vm<'_> {
         let (JsValue::Object(id), JsValue::Object(function_id)) = (object, &function) else {
             return Ok(());
         };
+        let name = builtins::inferred_function_name(self, &key)?;
+        let prefix = match kind {
+            1 => "get ",
+            2 => "set ",
+            _ => "",
+        };
+        let name = crate::v9::value::JsString::from_utf8(prefix)?.concat(&name)?;
+        self.set_name_snapshot(
+            *function_id,
+            super::data::FunctionName::flat(JsValue::String(name)),
+        )?;
         if let Some(Class::Function(data)) = self.heap.get_mut(*function_id).map(|o| &mut o.class) {
             data.home = Some(*id);
         }
@@ -1853,8 +1880,11 @@ impl Vm<'_> {
         };
         if key.hidden() {
             self.define_private_method(*id, key, desc)?;
-        } else {
-            self.define(*id, key, desc)?;
+        } else if !self.define(*id, key.clone(), desc)? {
+            return Err(self.type_error(&format!(
+                "Cannot redefine property: {}",
+                super::property::key_text(&key)
+            )));
         }
         Ok(())
     }
@@ -1909,19 +1939,43 @@ impl Vm<'_> {
         }
         Ok(deleted)
     }
+    /** GetValue and PutValue reject null bases before attempting authored key conversion. */
+    fn check_element_base(&mut self, base: &JsValue, key: &JsValue, setting: bool) -> Res<()> {
+        if !matches!(base, JsValue::Null | JsValue::Undefined | JsValue::Hole) {
+            return Ok(());
+        }
+        let what = if *base == JsValue::Null {
+            "null"
+        } else {
+            "undefined"
+        };
+        let verb = if setting { "set" } else { "read" };
+        let detail = if let JsValue::String(key) = key {
+            let operation = if setting { "setting" } else { "reading" };
+            format!(" ({operation} '{}')", key.lossy())
+        } else {
+            String::new()
+        };
+        Err(self.type_error(&format!("Cannot {verb} properties of {what}{detail}")))
+    }
     /** `super.key` reads from the home object's prototype with `this` as receiver. */
     fn super_get(&mut self, this: &JsValue, home: &JsValue, key: &Key) -> Res<JsValue> {
         let Some(proto) = home.object().and_then(|id| self.proto_of(id)) else {
-            return Ok(JsValue::Undefined);
+            return Err(self.type_error("Cannot read properties of null"));
         };
         self.get_from(proto, key, this)
     }
     /** `super.key = value`. */
     fn super_set(&mut self, this: &JsValue, home: &JsValue, key: Key, value: JsValue) -> Res<()> {
         let Some(proto) = home.object().and_then(|id| self.proto_of(id)) else {
-            return Ok(());
+            return Err(self.type_error("Cannot set properties of null"));
         };
-        self.set_from(proto, key, value, this)?;
+        if !self.set_from(proto, key.clone(), value, this)? && self.frame().code.strict {
+            return Err(self.type_error(&format!(
+                "Cannot assign to read only property '{}' of object",
+                super::property::key_text(&key)
+            )));
+        }
         Ok(())
     }
     /** `super(...)`: construct the parent with the derived constructor's new.target. */
@@ -1935,15 +1989,16 @@ impl Vm<'_> {
         };
         let callee = self.frames[index].callee.clone();
         let new_target = self.frames[index].new_target.clone();
-        if self.frames[index].this != JsValue::Hole {
-            return Err(self.reference_error("Super constructor may only be called once"));
-        }
         let parent = callee.object().and_then(|id| self.proto_of(id));
         let Some(parent) = parent.filter(|parent| self.is_constructor(&JsValue::Object(*parent)))
         else {
             return Err(self.type_error("Super constructor is not a constructor"));
         };
         let this = self.construct(JsValue::Object(parent), args, Some(new_target))?;
+        // BindThisValue checks initialization after the parent constructor's observable work.
+        if self.frames[index].this != JsValue::Hole {
+            return Err(self.reference_error("Super constructor may only be called once"));
+        }
         self.frames[index].this = this.clone();
         Ok(this)
     }
@@ -2010,7 +2065,7 @@ impl Vm<'_> {
         self.push(JsValue::Object(prototype));
         Ok(())
     }
-    /** One step of `yield*`: the stack holds the inner iterator and the value received. */
+    /** A delegate's noncompleted result remains the exact object returned by next, throw or return. */
     fn yield_star(&mut self) -> Res<Flow> {
         let mode = std::mem::take(&mut self.frame().resume);
         let received = self.pop();
@@ -2018,44 +2073,20 @@ impl Vm<'_> {
             .peek(0)
             .object()
             .ok_or_else(|| EngineError::invalid("Invalid V9 delegation."))?;
-        let (value, done) = self.delegate_step(iterator, mode, received)?;
-        if !done {
-            self.frame().pc -= 1;
-            return Ok(self.suspend(Exit::Yield(value)));
-        }
+        let value = match self.delegate_step(iterator, mode, received)? {
+            Exit::YieldRaw(result) => {
+                self.frame().pc -= 1;
+                return Ok(self.suspend(Exit::YieldRaw(result)));
+            }
+            Exit::Return(value) => value,
+            _ => return Err(EngineError::invalid("Invalid V9 delegate completion.").into()),
+        };
         self.pop();
         if mode == Resume::Return {
             return self.do_return(value);
         }
         self.push(value);
         Ok(Flow::Next)
-    }
-    /** A template strings array with its raw strings, frozen. */
-    fn template_object(&mut self, chunks: &[(Option<JsString>, JsString)]) -> Res<ObjectId> {
-        let cooked: Vec<JsValue> = chunks
-            .iter()
-            .map(|(chunk, _)| chunk.clone().map_or(JsValue::Undefined, JsValue::String))
-            .collect();
-        let raw_values: Vec<JsValue> = chunks
-            .iter()
-            .map(|(_, raw)| JsValue::String(raw.clone()))
-            .collect();
-        let raw = self.new_array(raw_values)?;
-        let strings = self.new_array(cooked)?;
-        self.heap.put(
-            strings,
-            Key::from("raw"),
-            Prop {
-                slot: Slot::Data(JsValue::Object(raw)),
-                attrs: 0,
-            },
-        );
-        for id in [raw, strings] {
-            if let Some(object) = self.heap.get_mut(id) {
-                object.extensible = false;
-            }
-        }
-        Ok(strings)
     }
 }
 
@@ -2076,6 +2107,27 @@ pub(in crate::v9) fn js_power(a: f64, b: f64) -> f64 {
 }
 
 impl Vm<'_> {
+    /** Annex B eval creates a deletable global var only if that binding can actually be installed. */
+    fn declare_annex_global(&mut self, name: crate::v9::value::JsString) -> Res<()> {
+        let global = self.global_object();
+        let key = Key::Str(name);
+        if self.own(global, &key)?.is_some() {
+            return Ok(());
+        }
+        let descriptor = Descriptor {
+            value: Some(JsValue::Undefined),
+            writable: Some(true),
+            enumerable: Some(true),
+            configurable: Some(true),
+            ..Descriptor::default()
+        };
+        if !self.define(global, key, descriptor)? {
+            return Err(
+                self.type_error("Cannot declare a global variable on a non-extensible object")
+            );
+        }
+        Ok(())
+    }
     /** A var or function declaration of a name an earlier script declared with let, const or
     class is a SyntaxError, as for two declarations in one script. */
     fn no_global_lexical(&mut self, name: &crate::v9::value::JsString) -> Res<()> {

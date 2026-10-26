@@ -68,6 +68,7 @@ impl Vm<'_> {
     }
     /** Check the restored graph against the heap and the freshly compiled code. */
     pub fn validate_graph(&self) -> EngineResult<()> {
+        crate::v9::platform::animations::validate(self)?;
         let marker = self.mark_everything();
         if !marker.objects.iter().all(|id| self.resolves(*id))
             || !marker.envs.iter().all(|id| self.heap.envs.contains_key(id))
@@ -77,6 +78,7 @@ impl Vm<'_> {
         self.validate_environments()?;
         self.validate_objects()?;
         self.validate_weak()?;
+        self.validate_template_cache()?;
         self.validate_counters()
     }
     /** Every edge from every record and root, reachable or not. */

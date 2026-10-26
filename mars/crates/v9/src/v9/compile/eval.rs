@@ -137,7 +137,7 @@ fn parse_scope(text: &str) -> Option<Scope> {
     let global = parts.next()? == "g";
     let mut scope = Scope {
         bindings: Vec::new(),
-        index: FastMap::default(),
+        index: std::collections::HashMap::default(),
         env: !global,
         slots: 0,
         boundary: false,
@@ -155,6 +155,7 @@ fn parse_scope(text: &str) -> Option<Scope> {
             name,
             declared,
             place: Place::Env(slot),
+            block_function: fields.next() == Some("b"),
         });
     }
     Some(scope)
@@ -191,6 +192,9 @@ impl Compiler {
                     continue;
                 };
                 text.push_str(&format!(" {}:{code}:{slot}", binding.name));
+                if binding.block_function {
+                    text.push_str(":b");
+                }
             }
             text.push(';');
         }
@@ -384,8 +388,15 @@ impl Compiler {
             // A set, not `vars.contains`: an eval of n vars would otherwise cost n squared.
             let declared: super::super::vm::heap::FastSet<&Name> = vars.iter().collect();
             annex.retain(|name| !declared.contains(name) && !self.eval_blocked(name, var_scope));
-            names.extend(annex);
             self.eval_vars(&names, var_scope)?;
+            if var_scope.is_none() {
+                for name in annex {
+                    let index = self.name(&name)?;
+                    self.emit(Op::AnnexGlobal(index, false));
+                }
+            } else {
+                self.eval_vars(&annex, var_scope)?;
+            }
         }
         let env = scan::has_closure(body);
         self.push_scope(env, true);
@@ -481,7 +492,7 @@ impl Compiler {
         let index = self.name(name)?;
         match var_scope {
             None => {
-                self.emit(Op::SetGlobal(index));
+                self.emit(Op::AnnexGlobal(index, true));
             }
             Some(at) => {
                 let (hops, slot) = self.ext_slot(at);

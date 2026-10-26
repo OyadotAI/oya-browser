@@ -29,6 +29,9 @@ use storage::{read_range, storage_len, write_range};
 mod codec;
 mod copy;
 mod indexed;
+mod integrity;
+pub(super) use integrity::{integrity_status, restrict_named_properties};
+mod search;
 mod species;
 mod static_create;
 pub(in crate::v9) use indexed::{
@@ -91,6 +94,7 @@ pub(super) fn install(b: &mut Builder, array_methods: &[(&'static str, u32, Nati
             );
         }
     }
+    b.method(typed, "includes", 1, search::includes);
     let methods: [(&'static str, u32, NativeFn); 9] = [
         ("toReversed", 0, typed_to_reversed),
         ("toSorted", 1, typed_to_sorted),

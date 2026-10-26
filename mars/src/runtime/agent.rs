@@ -1,6 +1,8 @@
 /** Native agents manipulate browser-owned Rust state through a discoverable protocol. */
 #[path = "agent/input.rs"]
 mod input;
+#[path = "agent/keyboard.rs"]
+mod keyboard;
 #[path = "agent/lanes.rs"]
 mod lanes;
 #[path = "agent/raster.rs"]

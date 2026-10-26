@@ -12,6 +12,7 @@ use crate::document::{DomChange, InsertPosition, ScriptChange, ScriptNode};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::vm::heap::FastMap;
 use std::collections::BTreeMap;
+mod leading_text;
 
 /** What a blank script-created text node crosses to the document parser as: a zero-width
 space, which the parser keeps where it drops a blank run; the node's own text replaces it. */
@@ -620,6 +621,7 @@ impl Page<'_> {
         child: usize,
         reference: Option<usize>,
     ) -> EngineResult<Vec<(usize, usize)>> {
+        self.materialize_leading_text(child)?;
         let mut old = vec![child];
         old.extend(self.all_descendants(child));
         // The document parser keeps no blank text run, but a script's blank text node can be
@@ -879,6 +881,7 @@ impl Page<'_> {
             .view(id)
             .and_then(|view| view.attributes.get(&name).cloned());
         self.write_attribute(id, &name, value)?;
+        super::images::source_changed(self, id, &name)?;
         if self.mutations.len() < crate::constants::STATEMENTS {
             self.mutations.push(super::components::Mutation::Attribute {
                 node: id,

@@ -676,8 +676,7 @@ impl Compiler {
                 self.expr(object)?;
                 match prop {
                     MemberProp::Computed(key) => {
-                        self.expr(key)?;
-                        self.emit(Op::ToPropertyKey);
+                        self.element_key(key)?;
                         self.emit(Op::Dup2);
                         self.emit(Op::GetElem);
                         self.emit(Op::ToNumeric);
@@ -772,7 +771,9 @@ impl Compiler {
         match prop {
             MemberProp::Computed(key) => {
                 self.expr(key)?;
-                self.emit(Op::ToPropertyKey);
+                if is_super {
+                    self.emit(Op::ToPropertyKey);
+                }
                 value(self)?;
                 self.at(member.pos);
                 self.emit(if is_super {
@@ -822,8 +823,7 @@ impl Compiler {
         self.expr(object)?;
         match prop {
             MemberProp::Computed(key) => {
-                self.expr(key)?;
-                self.emit(Op::ToPropertyKey);
+                self.element_key(key)?;
                 self.emit(Op::Dup2);
                 self.emit(Op::GetElem);
                 self.expr(value)?;
@@ -864,8 +864,7 @@ impl Compiler {
         self.emit(Op::SetReg(holder));
         match prop {
             MemberProp::Computed(expr) => {
-                self.expr(expr)?;
-                self.emit(Op::ToPropertyKey);
+                self.element_key(expr)?;
                 self.emit(Op::SetReg(key));
                 self.emit(Op::GetElem);
             }

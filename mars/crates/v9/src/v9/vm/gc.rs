@@ -28,6 +28,8 @@ pub(super) struct Marker {
     pub symbols: FastSet<u32>,
     /** A strongly reached object's context retains that context's virtual intrinsic identities. */
     pub(super) live_banks: FastSet<u32>,
+    /** Each parsed source's conditional template roots are scanned at most once per collection. */
+    pub(super) template_sources: FastSet<(u32, usize)>,
     /** Newly reached identities wake ephemeron values in linear work rather than repeated scans. */
     pub(super) weak_live: Vec<TableKey>,
     values: Vec<JsValue>,
@@ -146,6 +148,7 @@ impl Vm<'_> {
             }
         }
         for frame in &self.frames {
+            self.trace_template_site(&mut marker, frame.realm, frame.code.site);
             for value in frame.stack.iter().chain(&frame.regs).chain(&frame.args) {
                 marker.value(value);
             }
@@ -224,6 +227,7 @@ impl Vm<'_> {
             .objects
             .retain(|id, _| marker.objects.contains(id));
         self.heap.envs.retain(|id, _| marker.envs.contains(id));
+        self.templates.retain_objects(&marker.objects);
         #[cfg(feature = "conformance")]
         if kind == Collection::Minor {
             for object in self.heap.objects.values_mut() {
@@ -261,7 +265,10 @@ impl Vm<'_> {
         loop {
             if let Some(value) = marker.values.pop() {
                 if let JsValue::Object(id) = &value {
-                    marker.live_banks.insert(self.object_realm(*id));
+                    let owner = self.object_realm(*id);
+                    if marker.live_banks.insert(owner) {
+                        self.trace_persistent_templates(marker, owner);
+                    }
                     self.trace_realm(*id, marker);
                 }
                 if let JsValue::Object(id) = value
@@ -286,6 +293,7 @@ impl Vm<'_> {
                             }
                         }
                     }
+                    self.trace_template_owner(marker, self.object_realm(id), &object.class);
                     trace_class(&object.class, marker);
                 }
                 continue;

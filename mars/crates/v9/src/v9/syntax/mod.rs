@@ -1,10 +1,12 @@
 /** V9's full classic-script parser: tokens become a bounded syntax tree that the compiler lowers. */
 mod ast;
+mod dynamic;
 mod expr;
 mod func;
 mod module;
 mod stmt;
 pub(in crate::v9) use ast::*;
+pub(in crate::v9) use dynamic::validate_dynamic_function;
 
 use super::{
     errors,
@@ -99,6 +101,8 @@ pub(in crate::v9) struct Parser {
     closers: Vec<u32>,
     /// Parenthesized object/array nodes cannot later become assignment patterns.
     parenthesized_patterns: std::collections::BTreeSet<u32>,
+    /// Parentheses permit mixing nullish and boolean logical expressions without changing the emitted AST.
+    parenthesized_logical: std::collections::BTreeSet<u32>,
     strict: bool,
     context: Context,
     /// Live recursion, bounded by SYNTAX_DEPTH so no input can exhaust the stack.
@@ -183,6 +187,7 @@ impl Parser {
             position: 0,
             closers,
             parenthesized_patterns: std::collections::BTreeSet::new(),
+            parenthesized_logical: std::collections::BTreeSet::new(),
             strict,
             context: Context::default(),
             depth: 0,

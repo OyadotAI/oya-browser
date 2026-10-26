@@ -1,3 +1,5 @@
+#[path = "wpt_harness/driver.rs"]
+mod driver;
 /** WPT testharness.js scoreboard: serves the upstream WPT checkout over loopback, navigates the
 full Mars runtime (V9, Eye and the runtime) to each testharness test, and counts the subtests.
 `/resources/testharnessreport.js` is replaced by a reporter that writes every result, percent
@@ -105,6 +107,9 @@ fn serve(root: PathBuf) -> String {
 
 /** The body for `path`: the reporter, a generated wrapper, or the file under `root`. */
 fn body(root: &Path, path: &str) -> Option<(Vec<u8>, &'static str)> {
+    if path == "/resources/testdriver-vendor.js" {
+        return Some((driver::VENDOR.as_bytes().to_vec(), "text/javascript"));
+    }
     if path == "/resources/testharnessreport.js" {
         return Some((REPORTER.as_bytes().to_vec(), "text/javascript"));
     }
@@ -247,8 +252,12 @@ struct Case {
     skip: Option<&'static str>,
 }
 
-/** Every file under `dir`, recursively, skipping helper folders. */
+/** Every file under a filtered path, including a single selected fixture, skipping helper folders. */
 fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
+    if dir.is_file() {
+        files.push(dir.to_path_buf());
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -408,6 +417,11 @@ fn run(runtime: &mut mars::runtime::Runtime, origin: &str, case: &Case) -> Outco
     for _ in 0..SETTLE_POLLS {
         if found.as_ref().is_some_and(|r| !r["harness"].is_null()) {
             break;
+        }
+        match driver::pump(runtime) {
+            Ok(true) => eprintln!("native WPT Escape request handled: {}", case.path),
+            Err(error) => eprintln!("native WPT input {}: {}", case.path, error.message),
+            Ok(false) => {}
         }
         let request = json!({"kind": "evaluate", "expression": "self.__wpt_done", "options": {"await_promise": true}});
         let _ = agent_call(runtime, "page.devtools", json!({"request": request}));

@@ -25,6 +25,7 @@ pub(in crate::v9) mod realm;
 pub(in crate::v9) mod realms;
 pub(in crate::v9) mod run;
 pub(in crate::v9) mod shape;
+pub(in crate::v9) mod templates;
 pub(in crate::v9) mod validate;
 pub(in crate::v9) use dynamic::{
     source_base as dynamic_source_base, validate_sources as validate_dynamic_sources,
@@ -118,6 +119,8 @@ pub(in crate::v9) enum Exit {
     Return(JsValue),
     /** The frame yielded and is now in `Vm::suspended`. */
     Yield(JsValue),
+    /** Synchronous delegation yielded an authored iterator-result object unchanged. */
+    YieldRaw(JsValue),
     /** The frame awaits and is now in `Vm::suspended`. */
     Await(JsValue),
 }
@@ -274,6 +277,8 @@ pub(in crate::v9) struct Vm<'h> {
     pub page: Page<'h>,
     /** Dynamic sources compiled by `new Function` and indirect eval, kept so state can recompile. */
     pub dynamic: Vec<DynamicSource>,
+    /** Frozen template identities belong to their parsed source and creation realm. */
+    pub templates: templates::Cache,
     /** Whether any Proxy exists, so ordinary property access skips the proxy check entirely. */
     pub proxies: bool,
     /** The page's module map: compiled module sources and their committed records. */
@@ -316,6 +321,7 @@ impl<'h> Vm<'h> {
             limits,
             page,
             dynamic: Vec::new(),
+            templates: templates::Cache::default(),
             proxies: false,
             modules: super::modules::Modules::default(),
         };

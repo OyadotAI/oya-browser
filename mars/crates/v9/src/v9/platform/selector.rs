@@ -5,6 +5,7 @@
  * as browsers throw, so libraries fall back to their own engines.
  */
 use super::Page;
+use crate::v9::vm::heap::Heap;
 
 /** A comma-separated selector list. */
 #[derive(Clone, Debug)]
@@ -62,6 +63,7 @@ enum Pseudo {
     Root,
     Scope,
     Checked,
+    PopoverOpen,
     Disabled,
     Enabled,
     Never,
@@ -334,6 +336,7 @@ impl Parser {
             ("root", false) => Pseudo::Root,
             ("scope", false) => Pseudo::Scope,
             ("checked", false) => Pseudo::Checked,
+            ("popover-open", false) => Pseudo::PopoverOpen,
             ("disabled", false) => Pseudo::Disabled,
             ("enabled", false) => Pseudo::Enabled,
             (
@@ -407,18 +410,20 @@ impl Parser {
 /** Whether a node matches any selector of a list; `scope` is the :scope element. */
 pub(in crate::v9) fn matches(
     page: &mut Page,
+    heap: &Heap,
     node: usize,
     list: &SelectorList,
     scope: Option<usize>,
 ) -> bool {
     list.0
         .iter()
-        .any(|complex| complex_matches(page, node, &complex.0, scope))
+        .any(|complex| complex_matches(page, heap, node, &complex.0, scope))
 }
 
 /** Right-to-left matching of a complex selector. */
 fn complex_matches(
     page: &mut Page,
+    heap: &Heap,
     node: usize,
     parts: &[(Compound, Combinator)],
     scope: Option<usize>,
@@ -426,7 +431,7 @@ fn complex_matches(
     let Some(((compound, combinator), rest)) = parts.split_last() else {
         return true;
     };
-    if !compound_matches(page, node, compound, scope) {
+    if !compound_matches(page, heap, node, compound, scope) {
         return false;
     }
     if rest.is_empty() {
@@ -436,21 +441,21 @@ fn complex_matches(
         Combinator::None => true,
         Combinator::Child => page
             .parent(node)
-            .is_some_and(|parent| complex_matches(page, parent, rest, scope)),
+            .is_some_and(|parent| complex_matches(page, heap, parent, rest, scope)),
         Combinator::Descendant => {
             let ancestors = page.ancestors(node);
             ancestors
                 .into_iter()
-                .any(|ancestor| complex_matches(page, ancestor, rest, scope))
+                .any(|ancestor| complex_matches(page, heap, ancestor, rest, scope))
         }
         Combinator::Adjacent => element_siblings(page, node, true)
             .last()
-            .is_some_and(|sibling| complex_matches(page, *sibling, rest, scope)),
+            .is_some_and(|sibling| complex_matches(page, heap, *sibling, rest, scope)),
         Combinator::Sibling => {
             let before = element_siblings(page, node, true);
             before
                 .into_iter()
-                .any(|sibling| complex_matches(page, sibling, rest, scope))
+                .any(|sibling| complex_matches(page, heap, sibling, rest, scope))
         }
     }
 }
@@ -480,6 +485,7 @@ fn element_siblings(page: &mut Page, node: usize, before: bool) -> Vec<usize> {
 /** Whether a node matches one compound. */
 fn compound_matches(
     page: &mut Page,
+    heap: &Heap,
     node: usize,
     compound: &Compound,
     scope: Option<usize>,
@@ -520,7 +526,7 @@ fn compound_matches(
     compound
         .pseudos
         .iter()
-        .all(|pseudo| pseudo_matches(page, node, &view, pseudo, scope))
+        .all(|pseudo| pseudo_matches(page, heap, node, &view, pseudo, scope))
 }
 
 /** One attribute operator. */
@@ -545,6 +551,7 @@ fn attribute_matches(attribute: &Attribute, actual: &str) -> bool {
 /** One pseudo-class. */
 fn pseudo_matches(
     page: &mut Page,
+    heap: &Heap,
     node: usize,
     view: &super::nodes::NodeView,
     pseudo: &Pseudo,
@@ -577,18 +584,19 @@ fn pseudo_matches(
             }
             before.is_empty() && after.is_empty()
         }
-        Pseudo::Not(list) => !matches(page, node, list, scope),
-        Pseudo::Is(list) => matches(page, node, list, scope),
+        Pseudo::Not(list) => !matches(page, heap, node, list, scope),
+        Pseudo::Is(list) => matches(page, heap, node, list, scope),
         Pseudo::Has(list) => page
             .descendants(node)
             .into_iter()
-            .any(|child| matches(page, child, list, scope)),
+            .any(|child| matches(page, heap, child, list, scope)),
         Pseudo::Empty => page.children(node).iter().all(|child| {
             page.tag(*child) == "#comment"
                 || page.tag(*child) == "#text" && page.text_content(*child).is_empty()
         }),
         Pseudo::Root => node == super::HTML,
         Pseudo::Scope => scope.map_or(node == super::HTML, |scope| scope == node),
+        Pseudo::PopoverOpen => super::interfaces::popover::matches_open(page, heap, node),
         Pseudo::Checked => {
             view.attributes.contains_key("checked") || view.attributes.contains_key("selected")
         }

@@ -549,6 +549,14 @@ impl Runtime {
         }
         let mut changed = loaded.changed;
         for event in ["dom_content_loaded", "load"] {
+            if event == "load" {
+                page.scripting.load_pending = true;
+                changed |= self.settle_images_before_load(page, deadline)?;
+                if !page.scripting.image_loading.pending.is_empty() {
+                    break;
+                }
+                page.scripting.load_pending = false;
+            }
             match self.script_step(page, json!({"kind":"event","event":event})) {
                 Ok(step) => changed |= step.changed,
                 Err(error) if fatal(&error) => return Err(error),
@@ -641,6 +649,26 @@ impl Runtime {
         wanted: &dyn Fn(&crate::document::Node) -> bool,
         limit: usize,
     ) -> EngineResult<()> {
+        self.prefetch_images_skipping(
+            document,
+            base,
+            deadline,
+            wanted,
+            limit,
+            &std::collections::BTreeSet::new(),
+        )
+    }
+
+    /** Omit only lifecycle-owned image sources; ordinary background prefetch remains unchanged. */
+    pub(super) fn prefetch_images_skipping(
+        &mut self,
+        document: &Document,
+        base: &str,
+        deadline: Instant,
+        wanted: &dyn Fn(&crate::document::Node) -> bool,
+        limit: usize,
+        skip: &std::collections::BTreeSet<usize>,
+    ) -> EngineResult<()> {
         let Ok(base) = url::Url::parse(base) else {
             return Ok(());
         };
@@ -648,7 +676,12 @@ impl Runtime {
         let firsts = document
             .nodes
             .iter()
-            .filter(|node| node.tag == "img" && !node.hidden() && wanted(node))
+            .filter(|node| {
+                node.tag == "img"
+                    && !node.hidden()
+                    && wanted(node)
+                    && !skip.contains(&node.local_id)
+            })
             .filter_map(|node| {
                 super::images::sources(document, node, viewport)
                     .into_iter()

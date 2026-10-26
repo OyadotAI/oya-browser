@@ -12,6 +12,8 @@ mod normalization;
 pub(super) fn install(b: &mut Builder) {
     let proto = b.object(Some(b.ids.object_prototype));
     b.ids.string_prototype = proto;
+    // The intrinsic prototype is the empty string wrapper, including its immutable own length.
+    b.value(proto, "length", JsValue::Number(0.0), 0);
     let ctor = b.constructor("String", 1, construct, proto, None);
     b.global("String", ctor);
     b.method(ctor, "fromCharCode", 1, from_char_code);
